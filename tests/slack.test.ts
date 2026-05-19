@@ -1,5 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { formatGitHubIdentityMessage, formatIssuesMessage } from "../src/slack";
+import {
+  formatConnectGitHubMessage,
+  formatGitHubIdentityMessage,
+  formatIssuesMessage
+} from "../src/slack";
 
 describe("formatIssuesMessage", () => {
   test("returns a helpful empty state", () => {
@@ -31,6 +35,14 @@ describe("formatGitHubIdentityMessage", () => {
   test("formats the connected GitHub identity", () => {
     expect(formatGitHubIdentityMessage("octocat", "person@example.com")).toBe(
       "Authenticated to GitHub as `octocat` for Slack email person@example.com."
+    );
+  });
+});
+
+describe("formatConnectGitHubMessage", () => {
+  test("formats the GitHub OAuth link", () => {
+    expect(formatConnectGitHubMessage("https://example.test/connect")).toBe(
+      "<https://example.test/connect|Connect your GitHub account>"
     );
   });
 });

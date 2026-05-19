@@ -1,5 +1,4 @@
 import { App } from "@slack/bolt";
-import type { WebClient } from "@slack/web-api";
 import type { Config } from "./config";
 import { buildGitHubOAuthUrl, getGitHubUser, listAssignedIssues } from "./github";
 import type { GitHubIssue } from "./github";
@@ -28,7 +27,7 @@ export function createSlackRuntime(config: Config, store: TokenStore): SlackRunt
     return email;
   }
 
-  app.command("/connect-github", async ({ ack, body, client, logger }) => {
+  app.command("/connect-github", async ({ ack, body, respond, logger }) => {
     await ack();
 
     try {
@@ -36,17 +35,20 @@ export function createSlackRuntime(config: Config, store: TokenStore): SlackRunt
       const state = store.createOAuthState(userId);
       const url = buildGitHubOAuthUrl(config, state);
 
-      await client.chat.postMessage({
-        channel: userId,
-        text: `<${url}|Connect your GitHub account>`
+      await respond({
+        response_type: "ephemeral",
+        text: formatConnectGitHubMessage(url)
       });
     } catch (error) {
       logger.error(error);
-      await postEphemeralFailure(client, body.channel_id, body.user_id);
+      await respond({
+        response_type: "ephemeral",
+        text: "I could not start the GitHub connection flow."
+      });
     }
   });
 
-  app.command("/issues", async ({ ack, body, client, logger }) => {
+  app.command("/issues", async ({ ack, body, respond, logger }) => {
     await ack();
 
     try {
@@ -54,8 +56,8 @@ export function createSlackRuntime(config: Config, store: TokenStore): SlackRunt
       const user = store.getConnectedUserByEmail(email);
 
       if (!user) {
-        await client.chat.postMessage({
-          channel: body.channel_id,
+        await respond({
+          response_type: "ephemeral",
           text: "Run `/connect-github` first."
         });
         return;
@@ -63,8 +65,8 @@ export function createSlackRuntime(config: Config, store: TokenStore): SlackRunt
 
       const issues = await listAssignedIssues(user.githubToken);
 
-      await client.chat.postMessage({
-        channel: body.channel_id,
+      await respond({
+        response_type: "ephemeral",
         text: formatIssuesMessage(issues)
       });
     } catch (error) {
@@ -74,14 +76,14 @@ export function createSlackRuntime(config: Config, store: TokenStore): SlackRunt
           ? "GitHub token rejected. Run `/connect-github` to reconnect."
           : "I could not list your GitHub issues.";
 
-      await client.chat.postMessage({
-        channel: body.channel_id,
+      await respond({
+        response_type: "ephemeral",
         text
       });
     }
   });
 
-  app.command("/github-me", async ({ ack, body, client, logger }) => {
+  app.command("/github-me", async ({ ack, body, respond, logger }) => {
     await ack();
 
     try {
@@ -89,8 +91,8 @@ export function createSlackRuntime(config: Config, store: TokenStore): SlackRunt
       const user = store.getConnectedUserByEmail(email);
 
       if (!user) {
-        await client.chat.postMessage({
-          channel: body.channel_id,
+        await respond({
+          response_type: "ephemeral",
           text: "Run `/connect-github` first."
         });
         return;
@@ -98,8 +100,8 @@ export function createSlackRuntime(config: Config, store: TokenStore): SlackRunt
 
       const githubUser = await getGitHubUser(user.githubToken);
 
-      await client.chat.postMessage({
-        channel: body.channel_id,
+      await respond({
+        response_type: "ephemeral",
         text: formatGitHubIdentityMessage(githubUser.login, email)
       });
     } catch (error) {
@@ -109,8 +111,8 @@ export function createSlackRuntime(config: Config, store: TokenStore): SlackRunt
           ? "GitHub token rejected. Run `/connect-github` to reconnect."
           : "I could not verify your GitHub identity.";
 
-      await client.chat.postMessage({
-        channel: body.channel_id,
+      await respond({
+        response_type: "ephemeral",
         text
       });
     }
@@ -136,14 +138,6 @@ export function formatGitHubIdentityMessage(
   return `Authenticated to GitHub as \`${githubLogin}\` for Slack email ${slackEmail}.`;
 }
 
-async function postEphemeralFailure(
-  client: WebClient,
-  channel: string,
-  user: string
-): Promise<void> {
-  await client.chat.postEphemeral({
-    channel,
-    user,
-    text: "I could not start the GitHub connection flow."
-  });
+export function formatConnectGitHubMessage(url: string): string {
+  return `<${url}|Connect your GitHub account>`;
 }
