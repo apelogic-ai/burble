@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { handleConversation } from "../../src/conversation/orchestrator";
 import type { ConversationDeps, ConversationRequest } from "../../src/conversation/types";
+import { createGitHubTools } from "../../src/tools/github";
 
 const baseRequest: ConversationRequest = {
   source: "slack",
@@ -16,22 +17,28 @@ const baseRequest: ConversationRequest = {
 };
 
 function createDeps(overrides: Partial<ConversationDeps> = {}): ConversationDeps {
-  return {
-    createGitHubOAuthUrl: () => "https://example.test/oauth/github",
-    getGitHubConnection: () => ({
-      email: "person@example.com",
-      slackUserId: "U123",
-      githubLogin: "octocat",
-      githubToken: "secret-token",
-      connectedAt: "2026-05-19T00:00:00Z"
-    }),
+  const connection = {
+    provider: "github" as const,
+    email: "person@example.com",
+    slackUserId: "U123",
+    providerLogin: "octocat",
+    accessToken: "secret-token",
+    connectedAt: "2026-05-19T00:00:00Z"
+  };
+  const githubTools = createGitHubTools({
     getGitHubUser: async () => ({ login: "octocat" }),
     listAssignedIssues: async () => [
       {
         html_url: "https://github.com/acme/app/issues/1",
         title: "Fix billing export"
       }
-    ],
+    ]
+  });
+
+  return {
+    createGitHubOAuthUrl: () => "https://example.test/oauth/github",
+    getConnection: () => connection,
+    githubTools,
     ...overrides
   };
 }
@@ -53,7 +60,7 @@ describe("handleConversation", () => {
   test("asks the user to connect GitHub before GitHub data requests", async () => {
     const response = await handleConversation(
       baseRequest,
-      createDeps({ getGitHubConnection: () => null })
+      createDeps({ getConnection: () => null })
     );
 
     expect(response.visibility).toBe("ephemeral");

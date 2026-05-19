@@ -14,6 +14,17 @@ export type ConnectedUser = {
   connectedAt: string;
 };
 
+export type Provider = "github" | "jira";
+
+export type ProviderConnection = {
+  provider: Provider;
+  email: string;
+  slackUserId: string;
+  providerLogin: string;
+  accessToken: string;
+  connectedAt: string;
+};
+
 export type TokenStore = ReturnType<typeof createTokenStore>;
 
 export function createTokenStore(path: string) {
@@ -107,6 +118,26 @@ export function createTokenStore(path: string) {
 
     getConnectedUserByEmail(email: string): ConnectedUser | null {
       return getUserByEmail.get(email);
+    },
+
+    getConnection(provider: Provider, email: string): ProviderConnection | null {
+      if (provider !== "github") {
+        return null;
+      }
+
+      const user = getUserByEmail.get(email);
+      if (!user) {
+        return null;
+      }
+
+      return {
+        provider,
+        email: user.email,
+        slackUserId: user.slackUserId,
+        providerLogin: user.githubLogin,
+        accessToken: user.githubToken,
+        connectedAt: user.connectedAt
+      };
     },
 
     close(): void {

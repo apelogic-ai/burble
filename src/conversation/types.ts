@@ -1,5 +1,5 @@
-import type { ConnectedUser } from "../db";
-import type { GitHubIssue, GitHubUser } from "../github";
+import type { Provider, ProviderConnection } from "../db";
+import type { createGitHubTools } from "../tools/github";
 
 export type ResponseVisibility = "public" | "ephemeral" | "dm";
 export type ToolClassification = "public" | "user_private" | "restricted";
@@ -27,7 +27,6 @@ export type ConversationResponse = {
 
 export type ConversationDeps = {
   createGitHubOAuthUrl: (slackUserId: string) => string;
-  getGitHubConnection: (email: string) => ConnectedUser | null;
-  getGitHubUser: (token: string) => Promise<GitHubUser>;
-  listAssignedIssues: (token: string) => Promise<GitHubIssue[]>;
+  getConnection: (provider: Provider, email: string) => ProviderConnection | null;
+  githubTools: ReturnType<typeof createGitHubTools>;
 };

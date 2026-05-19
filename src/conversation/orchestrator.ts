@@ -24,7 +24,7 @@ export async function handleConversation(
   }
 
   if (intent === "github_identity" || intent === "github_issues") {
-    const connection = deps.getGitHubConnection(request.user.email);
+    const connection = deps.getConnection("github", request.user.email);
     if (!connection) {
       return {
         visibility: "ephemeral",
@@ -34,13 +34,15 @@ export async function handleConversation(
     }
 
     if (intent === "github_identity") {
-      const githubUser = await deps.getGitHubUser(connection.githubToken);
+      const result = await deps.githubTools.getAuthenticatedUser.execute({
+        connection
+      });
       return enforceVisibility(
         {
           visibility: "public",
-          classification: "user_private",
+          classification: result.classification,
           text: formatGitHubIdentityMessage(
-            githubUser.login,
+            result.content.login,
             request.user.email
           )
         },
@@ -48,12 +50,19 @@ export async function handleConversation(
       );
     }
 
-    const issues = await deps.listAssignedIssues(connection.githubToken);
+    const result = await deps.githubTools.listAssignedIssues.execute({
+      connection
+    });
     return enforceVisibility(
       {
         visibility: "public",
-        classification: "user_private",
-        text: formatIssuesMessage(issues)
+        classification: result.classification,
+        text: formatIssuesMessage(
+          result.content.map((issue) => ({
+            title: issue.title,
+            html_url: issue.url
+          }))
+        )
       },
       request
     );

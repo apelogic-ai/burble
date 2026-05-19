@@ -6,6 +6,7 @@ import type { TokenStore } from "./db";
 import { handleConversation } from "./conversation/orchestrator";
 import { normalizeMentionText } from "./conversation/normalize";
 import type { ConversationResponse } from "./conversation/types";
+import { createGitHubTools } from "./tools/github";
 import {
   formatConnectGitHubMessage,
   formatGitHubIdentityMessage,
@@ -84,6 +85,11 @@ export function createSlackRuntime(config: Config, store: TokenStore): SlackRunt
     }
   });
 
+  const githubTools = createGitHubTools({
+    getGitHubUser,
+    listAssignedIssues
+  });
+
   app.event("app_mention", async ({ body, event, client, logger }) => {
     const mention = event as {
       user?: string;
@@ -122,10 +128,9 @@ export function createSlackRuntime(config: Config, store: TokenStore): SlackRunt
         {
           createGitHubOAuthUrl: (slackUserId) =>
             buildGitHubOAuthUrl(config, store.createOAuthState(slackUserId)),
-          getGitHubConnection: (emailAddress) =>
-            store.getConnectedUserByEmail(emailAddress),
-          getGitHubUser,
-          listAssignedIssues
+          getConnection: (provider, emailAddress) =>
+            store.getConnection(provider, emailAddress),
+          githubTools
         }
       );
 

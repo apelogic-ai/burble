@@ -31,6 +31,7 @@ function createFakeStore() {
       connectedUsers.push(input);
     },
     getConnectedUserByEmail: () => null,
+    getConnection: () => null,
     close: () => undefined
   } as TokenStore;
 
