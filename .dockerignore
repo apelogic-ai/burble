@@ -1,0 +1,11 @@
+node_modules
+.env
+*.db
+*.db-shm
+*.db-wal
+deploy/dev/terraform/.terraform
+deploy/dev/terraform/terraform.tfstate
+deploy/dev/terraform/terraform.tfstate.backup
+deploy/dev/terraform/terraform.tfvars
+deploy/dev/compose/.env
+deploy/dev/ansible/group_vars/secrets.yml

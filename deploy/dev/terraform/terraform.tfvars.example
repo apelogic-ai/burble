@@ -1,0 +1,4 @@
+# Copy to terraform.tfvars and fill in. terraform.tfvars is gitignored.
+
+aws_region               = "us-west-2"
+ssm_transfer_bucket_name = "burble-dev-CHANGE-ME-ssm-transfer"

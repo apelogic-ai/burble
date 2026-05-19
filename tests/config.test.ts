@@ -1,0 +1,42 @@
+import { describe, expect, test } from "bun:test";
+import { readConfig } from "../src/config";
+
+const validEnv = {
+  SLACK_BOT_TOKEN: "xoxb-test",
+  SLACK_APP_TOKEN: "xapp-test",
+  GITHUB_CLIENT_ID: "client-id",
+  GITHUB_CLIENT_SECRET: "client-secret",
+  BASE_URL: "https://example.ngrok-free.app/",
+  PORT: "4242",
+  DATABASE_PATH: "test.db"
+};
+
+describe("readConfig", () => {
+  test("normalizes base URL and parses optional settings", () => {
+    expect(readConfig(validEnv)).toEqual({
+      slackBotToken: "xoxb-test",
+      slackAppToken: "xapp-test",
+      githubClientId: "client-id",
+      githubClientSecret: "client-secret",
+      baseUrl: "https://example.ngrok-free.app",
+      port: 4242,
+      databasePath: "test.db"
+    });
+  });
+
+  test("rejects missing required settings", () => {
+    const env = { ...validEnv, SLACK_BOT_TOKEN: "" };
+
+    expect(() => readConfig(env)).toThrow(
+      "Missing required environment variable: SLACK_BOT_TOKEN"
+    );
+  });
+
+  test("rejects invalid port values", () => {
+    const env = { ...validEnv, PORT: "nope" };
+
+    expect(() => readConfig(env)).toThrow(
+      "Environment variable PORT must be a positive integer"
+    );
+  });
+});

@@ -1,0 +1,10 @@
+# Single-host inventory targeting the Burble EC2 instance via SSM.
+# No SSH key, no port 22; connection runs through AWS Systems Manager.
+all:
+  hosts:
+    burble:
+      ansible_connection: community.aws.aws_ssm
+      ansible_host: "{{ instance_id }}"
+      ansible_aws_ssm_region: "{{ aws_region }}"
+      ansible_aws_ssm_bucket_name: "{{ ssm_transfer_bucket }}"
+      ansible_python_interpreter: /usr/bin/python3

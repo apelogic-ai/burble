@@ -1,0 +1,13 @@
+# Per-environment, non-secret values. Fill these from `terraform output`.
+# Slack and GitHub secrets live in secrets.yml, which is gitignored.
+
+aws_region: us-west-2
+instance_id: i-CHANGEME
+ssm_transfer_bucket: burble-dev-CHANGEME-ssm-transfer
+
+# Terraform outputs this as `nip_io_domain`, e.g. 203.0.113.10.nip.io.
+domain: CHANGEME.nip.io
+
+burble_repo_url: CHANGEME
+burble_repo_ref: main
+burble_install_path: /home/ubuntu/burble

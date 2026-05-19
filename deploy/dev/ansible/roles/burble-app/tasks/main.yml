@@ -1,0 +1,81 @@
+- name: Sanity-check required variables
+  ansible.builtin.assert:
+    that:
+      - "'CHANGEME' not in (instance_id | string)"
+      - "'CHANGEME' not in (ssm_transfer_bucket | string)"
+      - "'CHANGEME' not in (domain | string)"
+      - "'CHANGEME' not in (burble_repo_url | string)"
+      - slack_bot_token is match('^xoxb-.+')
+      - slack_app_token is match('^xapp-.+')
+      - github_client_id | length > 0
+      - github_client_secret | length > 0
+    fail_msg: group_vars/all.yml or secrets.yml still has placeholder values.
+    success_msg: Required variables look filled in.
+  run_once: true
+  delegate_to: localhost
+  become: false
+
+- name: Ensure required packages are present
+  ansible.builtin.apt:
+    name:
+      - acl
+      - git
+      - docker-ce
+      - docker-ce-cli
+      - containerd.io
+      - docker-compose-plugin
+    state: present
+    update_cache: yes
+    cache_valid_time: 3600
+
+- name: Ensure docker service is running
+  ansible.builtin.systemd:
+    name: docker
+    state: started
+    enabled: yes
+
+- name: Ensure ubuntu user is in the docker group
+  ansible.builtin.user:
+    name: ubuntu
+    groups: docker
+    append: yes
+
+- name: Clone or update Burble repository
+  ansible.builtin.git:
+    repo: "{{ burble_repo_url }}"
+    dest: "{{ burble_install_path }}"
+    version: "{{ burble_repo_ref }}"
+    force: no
+  become_user: ubuntu
+
+- name: Render compose .env
+  ansible.builtin.template:
+    src: env.j2
+    dest: "{{ burble_install_path }}/deploy/dev/compose/.env"
+    owner: ubuntu
+    group: ubuntu
+    mode: "0600"
+    backup: yes
+  notify: Restart burble-app
+
+- name: Build images and bring the stack up
+  community.docker.docker_compose_v2:
+    project_src: "{{ burble_install_path }}/deploy/dev/compose"
+    state: present
+    build: always
+  become_user: ubuntu
+
+- name: Flush handlers before health check
+  ansible.builtin.meta: flush_handlers
+
+- name: Wait for /healthz to respond
+  ansible.builtin.uri:
+    url: "https://{{ domain }}/healthz"
+    status_code: 200
+    return_content: true
+  register: health
+  until: health.status == 200 and health.content == "ok"
+  retries: 30
+  delay: 2
+  delegate_to: localhost
+  become: false

@@ -1,0 +1,10 @@
+# Local terraform state — fine for one-developer dev. Promote to remote
+# state if/when this expands beyond a single operator.
+*.tfstate
+*.tfstate.*
+*.tfstate.backup
+.terraform/
+.terraform.lock.hcl
+
+# Per-deployment variables
+terraform.tfvars

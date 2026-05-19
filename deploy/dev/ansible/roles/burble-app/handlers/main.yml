@@ -1,0 +1,7 @@
+- name: Restart burble-app
+  community.docker.docker_compose_v2:
+    project_src: "{{ burble_install_path }}/deploy/dev/compose"
+    state: restarted
+    services:
+      - burble-app
+  become_user: ubuntu

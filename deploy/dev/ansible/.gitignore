@@ -1,0 +1,6 @@
+# Real secrets — never commit.
+group_vars/secrets.yml
+
+# Ansible runtime artifacts.
+*.retry
+.ansible/

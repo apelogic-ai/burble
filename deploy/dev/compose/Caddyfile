@@ -1,0 +1,15 @@
+# Caddy automatically provisions and renews a Let's Encrypt certificate
+# for {$DOMAIN} via the HTTP-01 challenge. With nip.io, {$DOMAIN} can be
+# the instance Elastic IP encoded as a hostname, e.g. 203.0.113.10.nip.io.
+
+{$DOMAIN} {
+  encode zstd gzip
+
+  reverse_proxy burble-app:3000
+
+  log {
+    output stdout
+    format console
+    level INFO
+  }
+}
