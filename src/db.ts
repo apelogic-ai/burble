@@ -39,7 +39,7 @@ export function createTokenStore(path: string) {
   `);
 
   const insertState = db.query(
-    "INSERT INTO oauth_state (state, slack_user_id, expires_at) VALUES ($state, $slackUserId, $expiresAt)"
+    "INSERT INTO oauth_state (state, slack_user_id, expires_at) VALUES (?, ?, ?)"
   );
   const getState = db.query<OAuthState, [string]>(`
     SELECT
@@ -51,11 +51,11 @@ export function createTokenStore(path: string) {
   `);
   const deleteState = db.query("DELETE FROM oauth_state WHERE state = ?");
   const deleteExpiredStates = db.query(
-    "DELETE FROM oauth_state WHERE expires_at <= $now"
+    "DELETE FROM oauth_state WHERE expires_at <= ?"
   );
   const upsertUser = db.query(`
     INSERT INTO users (email, slack_user_id, github_login, github_token, connected_at)
-    VALUES ($email, $slackUserId, $githubLogin, $githubToken, CURRENT_TIMESTAMP)
+    VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
     ON CONFLICT(email) DO UPDATE SET
       slack_user_id = excluded.slack_user_id,
       github_login = excluded.github_login,
@@ -77,12 +77,12 @@ export function createTokenStore(path: string) {
     createOAuthState(slackUserId: string, ttlMs = 10 * 60 * 1000): string {
       const state = crypto.randomUUID();
       const expiresAt = new Date(Date.now() + ttlMs).toISOString();
-      insertState.run({ state, slackUserId, expiresAt });
+      insertState.run(state, slackUserId, expiresAt);
       return state;
     },
 
     consumeOAuthState(state: string): OAuthState | null {
-      deleteExpiredStates.run({ now: new Date().toISOString() });
+      deleteExpiredStates.run(new Date().toISOString());
       const row = getState.get(state);
       if (!row) {
         return null;
@@ -97,7 +97,12 @@ export function createTokenStore(path: string) {
       githubLogin: string;
       githubToken: string;
     }): void {
-      upsertUser.run(input);
+      upsertUser.run(
+        input.email,
+        input.slackUserId,
+        input.githubLogin,
+        input.githubToken
+      );
     },
 
     getConnectedUserByEmail(email: string): ConnectedUser | null {
