@@ -42,4 +42,11 @@ Required Slack bot scopes:
 - `users:read`
 - `users:read.email`
 
+Required Slack event subscription:
+
+- Enable **Event Subscriptions**.
+- Subscribe to bot event `app_mention`.
+- With Socket Mode enabled, no Request URL is required.
+- Reinstall the app after adding the event.
+
 The architecture note is copied at `docs/slack-tui-architecture.md`.

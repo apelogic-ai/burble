@@ -353,7 +353,9 @@ Add Slack scope:
 app_mentions:read
 ```
 
-Then reinstall the app and invite Burble to test channels.
+Then enable Slack Event Subscriptions, subscribe the bot to `app_mention`,
+reinstall the app, and invite Burble to test channels. Socket Mode means Slack
+does not need a Request URL, but the event subscription is still required.
 
 Implement:
 
