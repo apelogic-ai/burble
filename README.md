@@ -25,6 +25,8 @@ Then set `BASE_URL` in `.env` and configure the GitHub OAuth callback URL as:
 ## Slack Commands
 
 - `/connect-github` starts a per-user GitHub OAuth flow.
+- `/auth` shows available auth connections.
+- `/auth github` starts the GitHub OAuth flow.
 - `/github-me` verifies the connected GitHub identity for the Slack user.
 - `/issues` lists open GitHub issues assigned to the connected user.
 

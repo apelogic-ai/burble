@@ -75,6 +75,7 @@ Set:
 DOMAIN=<nip_io_domain>
 SLACK_BOT_TOKEN=xoxb-...
 SLACK_APP_TOKEN=xapp-...
+SLACK_LOG_LEVEL=info
 GITHUB_CLIENT_ID=...
 GITHUB_CLIENT_SECRET=...
 ```
@@ -99,6 +100,7 @@ In Slack:
 
 ```text
 /connect-github
+/auth github
 /github-me
 ```
 

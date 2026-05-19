@@ -6,9 +6,12 @@ export type Config = {
   baseUrl: string;
   port: number;
   databasePath: string;
+  slackLogLevel: SlackLogLevel;
 };
 
 type Env = Record<string, string | undefined>;
+export type SlackLogLevel = "debug" | "info" | "warn" | "error";
+const slackLogLevels = ["debug", "info", "warn", "error"] as const;
 
 function requiredEnv(env: Env, name: string): string {
   const value = env[name];
@@ -31,6 +34,25 @@ function optionalIntEnv(env: Env, name: string, fallback: number): number {
   return parsed;
 }
 
+function optionalSlackLogLevelEnv(
+  env: Env,
+  name: string,
+  fallback: SlackLogLevel
+): SlackLogLevel {
+  const value = env[name]?.toLowerCase();
+  if (!value) {
+    return fallback;
+  }
+
+  if (!slackLogLevels.includes(value as SlackLogLevel)) {
+    throw new Error(
+      `Environment variable ${name} must be one of ${slackLogLevels.join(", ")}`
+    );
+  }
+
+  return value as SlackLogLevel;
+}
+
 export function readConfig(env: Env): Config {
   const baseUrl = requiredEnv(env, "BASE_URL").replace(/\/+$/, "");
 
@@ -41,7 +63,8 @@ export function readConfig(env: Env): Config {
     githubClientSecret: requiredEnv(env, "GITHUB_CLIENT_SECRET"),
     baseUrl,
     port: optionalIntEnv(env, "PORT", 3000),
-    databasePath: env.DATABASE_PATH ?? "burble.db"
+    databasePath: env.DATABASE_PATH ?? "burble.db",
+    slackLogLevel: optionalSlackLogLevelEnv(env, "SLACK_LOG_LEVEL", "info")
   };
 }
 

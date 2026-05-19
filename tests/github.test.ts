@@ -9,7 +9,8 @@ const config: Config = {
   githubClientSecret: "client-secret",
   baseUrl: "https://example.ngrok-free.app",
   port: 3000,
-  databasePath: ":memory:"
+  databasePath: ":memory:",
+  slackLogLevel: "info"
 };
 
 describe("buildGitHubOAuthUrl", () => {

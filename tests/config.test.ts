@@ -20,8 +20,21 @@ describe("readConfig", () => {
       githubClientSecret: "client-secret",
       baseUrl: "https://example.ngrok-free.app",
       port: 4242,
-      databasePath: "test.db"
+      databasePath: "test.db",
+      slackLogLevel: "info"
     });
+  });
+
+  test("allows Slack log level override", () => {
+    expect(readConfig({ ...validEnv, SLACK_LOG_LEVEL: "debug" }).slackLogLevel).toBe(
+      "debug"
+    );
+  });
+
+  test("rejects invalid Slack log levels", () => {
+    expect(() => readConfig({ ...validEnv, SLACK_LOG_LEVEL: "loud" })).toThrow(
+      "Environment variable SLACK_LOG_LEVEL must be one of debug, info, warn, error"
+    );
   });
 
   test("rejects missing required settings", () => {

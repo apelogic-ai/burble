@@ -1,5 +1,6 @@
 import { App, LogLevel } from "@slack/bolt";
 import type { Config } from "./config";
+import type { SlackLogLevel } from "./config";
 import { buildGitHubOAuthUrl, getGitHubUser, listAssignedIssues } from "./github";
 import type { GitHubIssue } from "./github";
 import type { TokenStore } from "./db";
@@ -14,7 +15,7 @@ export function createSlackRuntime(config: Config, store: TokenStore): SlackRunt
     token: config.slackBotToken,
     appToken: config.slackAppToken,
     socketMode: true,
-    logLevel: LogLevel.DEBUG
+    logLevel: toBoltLogLevel(config.slackLogLevel)
   });
 
   app.use(async ({ body, logger, next }) => {
@@ -64,6 +65,39 @@ export function createSlackRuntime(config: Config, store: TokenStore): SlackRunt
       await ack({
         response_type: "ephemeral",
         text: "I could not start the GitHub connection flow."
+      });
+    }
+  });
+
+  app.command("/auth", async ({ ack, body, logger }) => {
+    try {
+      logger.info(`Received /auth ${body.text} from ${body.user_id}`);
+      const action = parseAuthCommand(body.text);
+
+      if (action.kind === "unknown") {
+        await ack({
+          response_type: "ephemeral",
+          text: `Unknown auth target \`${action.value}\`. Try \`/auth connections\` or \`/auth github\`.`
+        });
+        return;
+      }
+
+      const state = store.createOAuthState(body.user_id);
+      const githubUrl = buildGitHubOAuthUrl(config, state);
+
+      await ack(
+        action.kind === "github"
+          ? {
+              response_type: "ephemeral",
+              text: formatConnectGitHubMessage(githubUrl)
+            }
+          : buildAuthResponse(githubUrl)
+      );
+    } catch (error) {
+      logger.error(error);
+      await ack({
+        response_type: "ephemeral",
+        text: "I could not open auth settings."
       });
     }
   });
@@ -172,4 +206,95 @@ export function formatConnectGitHubMessage(url: string): string {
 
 export function formatWorkingMessage(command: string): string {
   return `Working on \`${command}\`...`;
+}
+
+export type AuthCommand =
+  | { kind: "connections" }
+  | { kind: "github" }
+  | { kind: "unknown"; value: string };
+
+export function parseAuthCommand(text: string): AuthCommand {
+  const normalized = text.trim().toLowerCase().replace(/\s+/g, " ");
+  if (
+    normalized === "" ||
+    normalized === "connections" ||
+    normalized === "connection" ||
+    normalized === "connect"
+  ) {
+    return { kind: "connections" };
+  }
+
+  if (normalized === "github" || normalized === "connect github") {
+    return { kind: "github" };
+  }
+
+  return { kind: "unknown", value: normalized };
+}
+
+export function buildAuthResponse(githubUrl: string) {
+  return {
+    response_type: "ephemeral" as const,
+    text: "Connections: GitHub is available. Atlassian and Salesforce are coming later.",
+    blocks: [
+      {
+        type: "header",
+        text: {
+          type: "plain_text",
+          text: "Connections"
+        }
+      },
+      {
+        type: "section",
+        text: {
+          type: "mrkdwn",
+          text: "*GitHub*\nConnect your GitHub identity for issue and repository access."
+        },
+        accessory: {
+          type: "button",
+          text: {
+            type: "plain_text",
+            text: "Connect"
+          },
+          url: githubUrl,
+          action_id: "connect_github"
+        }
+      },
+      {
+        type: "section",
+        text: {
+          type: "mrkdwn",
+          text: "*Atlassian*\nJira and Confluence auth will be added after the GitHub PoC."
+        }
+      },
+      {
+        type: "section",
+        text: {
+          type: "mrkdwn",
+          text: "*Salesforce*\nPlanned for the semantic-layer authorization flow."
+        }
+      },
+      {
+        type: "context",
+        elements: [
+          {
+            type: "mrkdwn",
+            text: "Shortcuts: `/auth github`, `/github-me x`, `/issues x`"
+          }
+        ]
+      }
+    ]
+  };
+}
+
+function toBoltLogLevel(level: SlackLogLevel): LogLevel {
+  switch (level) {
+    case "debug":
+      return LogLevel.DEBUG;
+    case "warn":
+      return LogLevel.WARN;
+    case "error":
+      return LogLevel.ERROR;
+    case "info":
+      return LogLevel.INFO;
+  }
 }
