@@ -27,21 +27,20 @@ export function createSlackRuntime(config: Config, store: TokenStore): SlackRunt
     return email;
   }
 
-  app.command("/connect-github", async ({ ack, body, respond, logger }) => {
-    await ack();
-
+  app.command("/connect-github", async ({ ack, body, logger }) => {
     try {
+      logger.info(`Received /connect-github from ${body.user_id}`);
       const userId = body.user_id;
       const state = store.createOAuthState(userId);
       const url = buildGitHubOAuthUrl(config, state);
 
-      await respond({
+      await ack({
         response_type: "ephemeral",
         text: formatConnectGitHubMessage(url)
       });
     } catch (error) {
       logger.error(error);
-      await respond({
+      await ack({
         response_type: "ephemeral",
         text: "I could not start the GitHub connection flow."
       });
@@ -49,7 +48,11 @@ export function createSlackRuntime(config: Config, store: TokenStore): SlackRunt
   });
 
   app.command("/issues", async ({ ack, body, respond, logger }) => {
-    await ack();
+    logger.info(`Received /issues from ${body.user_id}`);
+    await ack({
+      response_type: "ephemeral",
+      text: formatWorkingMessage("/issues")
+    });
 
     try {
       const email = await getSlackEmail(body.user_id);
@@ -84,7 +87,11 @@ export function createSlackRuntime(config: Config, store: TokenStore): SlackRunt
   });
 
   app.command("/github-me", async ({ ack, body, respond, logger }) => {
-    await ack();
+    logger.info(`Received /github-me from ${body.user_id}`);
+    await ack({
+      response_type: "ephemeral",
+      text: formatWorkingMessage("/github-me")
+    });
 
     try {
       const email = await getSlackEmail(body.user_id);
@@ -140,4 +147,8 @@ export function formatGitHubIdentityMessage(
 
 export function formatConnectGitHubMessage(url: string): string {
   return `<${url}|Connect your GitHub account>`;
+}
+
+export function formatWorkingMessage(command: string): string {
+  return `Working on \`${command}\`...`;
 }

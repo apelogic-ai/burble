@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
   formatConnectGitHubMessage,
   formatGitHubIdentityMessage,
+  formatWorkingMessage,
   formatIssuesMessage
 } from "../src/slack";
 
@@ -44,5 +45,11 @@ describe("formatConnectGitHubMessage", () => {
     expect(formatConnectGitHubMessage("https://example.test/connect")).toBe(
       "<https://example.test/connect|Connect your GitHub account>"
     );
+  });
+});
+
+describe("formatWorkingMessage", () => {
+  test("names the command being processed", () => {
+    expect(formatWorkingMessage("/github-me")).toBe("Working on `/github-me`...");
   });
 });
