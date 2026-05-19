@@ -1,4 +1,4 @@
-import { App } from "@slack/bolt";
+import { App, LogLevel } from "@slack/bolt";
 import type { Config } from "./config";
 import { buildGitHubOAuthUrl, getGitHubUser, listAssignedIssues } from "./github";
 import type { GitHubIssue } from "./github";
@@ -13,7 +13,28 @@ export function createSlackRuntime(config: Config, store: TokenStore): SlackRunt
   const app = new App({
     token: config.slackBotToken,
     appToken: config.slackAppToken,
-    socketMode: true
+    socketMode: true,
+    logLevel: LogLevel.DEBUG
+  });
+
+  app.use(async ({ body, logger, next }) => {
+    const payload = body as {
+      type?: string;
+      command?: string;
+      user_id?: string;
+      channel_id?: string;
+      team_id?: string;
+    };
+
+    logger.info(
+      `Received Slack payload type=${payload.type ?? "unknown"} command=${
+        payload.command ?? "none"
+      } user=${payload.user_id ?? "unknown"} channel=${
+        payload.channel_id ?? "unknown"
+      } team=${payload.team_id ?? "unknown"}`
+    );
+
+    await next();
   });
 
   async function getSlackEmail(userId: string): Promise<string> {
