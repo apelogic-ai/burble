@@ -96,9 +96,15 @@ curl -fsSL https://<nip_io_domain>/healthz
 
 ## Authn Demo
 
+Add Slack scope `app_mentions:read`, reinstall the app, and invite Burble to a
+test channel.
+
 In Slack:
 
 ```text
+@Burble connect github
+@Burble who am I on GitHub?
+@Burble what issues are assigned to me?
 /connect-github
 /auth github
 /github-me

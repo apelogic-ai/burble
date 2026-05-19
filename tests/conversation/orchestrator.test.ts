@@ -1,0 +1,110 @@
+import { describe, expect, test } from "bun:test";
+import { handleConversation } from "../../src/conversation/orchestrator";
+import type { ConversationDeps, ConversationRequest } from "../../src/conversation/types";
+
+const baseRequest: ConversationRequest = {
+  source: "slack",
+  workspaceId: "T123",
+  channelId: "C123",
+  messageTs: "1710000000.000100",
+  isDirectMessage: false,
+  user: {
+    slackUserId: "U123",
+    email: "person@example.com"
+  },
+  text: "who am I on GitHub?"
+};
+
+function createDeps(overrides: Partial<ConversationDeps> = {}): ConversationDeps {
+  return {
+    createGitHubOAuthUrl: () => "https://example.test/oauth/github",
+    getGitHubConnection: () => ({
+      email: "person@example.com",
+      slackUserId: "U123",
+      githubLogin: "octocat",
+      githubToken: "secret-token",
+      connectedAt: "2026-05-19T00:00:00Z"
+    }),
+    getGitHubUser: async () => ({ login: "octocat" }),
+    listAssignedIssues: async () => [
+      {
+        html_url: "https://github.com/acme/app/issues/1",
+        title: "Fix billing export"
+      }
+    ],
+    ...overrides
+  };
+}
+
+describe("handleConversation", () => {
+  test("returns a private GitHub connect link", async () => {
+    const response = await handleConversation(
+      { ...baseRequest, text: "connect github" },
+      createDeps()
+    );
+
+    expect(response).toMatchObject({
+      visibility: "ephemeral",
+      classification: "user_private",
+      text: "<https://example.test/oauth/github|Connect your GitHub account>"
+    });
+  });
+
+  test("asks the user to connect GitHub before GitHub data requests", async () => {
+    const response = await handleConversation(
+      baseRequest,
+      createDeps({ getGitHubConnection: () => null })
+    );
+
+    expect(response.visibility).toBe("ephemeral");
+    expect(response.text).toBe("Connect GitHub first: `@Burble connect github`.");
+  });
+
+  test("answers GitHub identity requests without leaking tokens", async () => {
+    const response = await handleConversation(baseRequest, createDeps());
+
+    expect(response.visibility).toBe("ephemeral");
+    expect(response.text).toBe(
+      "Authenticated to GitHub as `octocat` for Slack email person@example.com."
+    );
+    expect(JSON.stringify(response)).not.toContain("secret-token");
+  });
+
+  test("answers assigned issue requests privately in channels", async () => {
+    const response = await handleConversation(
+      { ...baseRequest, text: "what issues are assigned to me?" },
+      createDeps()
+    );
+
+    expect(response.visibility).toBe("ephemeral");
+    expect(response.text).toContain("Fix billing export");
+  });
+
+  test("leaves private GitHub data visible in direct messages", async () => {
+    const response = await handleConversation(
+      {
+        ...baseRequest,
+        channelId: "D123",
+        isDirectMessage: true,
+        text: "what issues are assigned to me?"
+      },
+      createDeps()
+    );
+
+    expect(response.visibility).toBe("public");
+    expect(response.classification).toBe("user_private");
+  });
+
+  test("returns help for unknown deterministic requests", async () => {
+    const response = await handleConversation(
+      { ...baseRequest, text: "deploy the moon" },
+      createDeps()
+    );
+
+    expect(response).toMatchObject({
+      visibility: "public",
+      classification: "public"
+    });
+    expect(response.text).toContain("@Burble connect github");
+  });
+});

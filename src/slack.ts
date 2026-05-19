@@ -2,8 +2,23 @@ import { App, LogLevel } from "@slack/bolt";
 import type { Config } from "./config";
 import type { SlackLogLevel } from "./config";
 import { buildGitHubOAuthUrl, getGitHubUser, listAssignedIssues } from "./github";
-import type { GitHubIssue } from "./github";
 import type { TokenStore } from "./db";
+import { handleConversation } from "./conversation/orchestrator";
+import { normalizeMentionText } from "./conversation/normalize";
+import type { ConversationResponse } from "./conversation/types";
+import {
+  formatConnectGitHubMessage,
+  formatGitHubIdentityMessage,
+  formatIssuesMessage,
+  formatWorkingMessage
+} from "./formatting";
+
+export {
+  formatConnectGitHubMessage,
+  formatGitHubIdentityMessage,
+  formatIssuesMessage,
+  formatWorkingMessage
+} from "./formatting";
 
 export type SlackRuntime = {
   app: App;
@@ -65,6 +80,67 @@ export function createSlackRuntime(config: Config, store: TokenStore): SlackRunt
       await ack({
         response_type: "ephemeral",
         text: "I could not start the GitHub connection flow."
+      });
+    }
+  });
+
+  app.event("app_mention", async ({ body, event, client, logger }) => {
+    const mention = event as {
+      user?: string;
+      text?: string;
+      channel?: string;
+      ts?: string;
+      thread_ts?: string;
+      channel_type?: string;
+    };
+
+    logger.info(`Received app_mention from ${mention.user ?? "unknown"}`);
+
+    if (!mention.user || !mention.channel || !mention.ts) {
+      logger.warn("Ignoring malformed app_mention event");
+      return;
+    }
+
+    try {
+      const email = await getSlackEmail(mention.user);
+      const text = normalizeMentionText(mention.text ?? "");
+      const response = await handleConversation(
+        {
+          source: "slack",
+          workspaceId: body.team_id ?? "",
+          channelId: mention.channel,
+          threadTs: mention.thread_ts,
+          messageTs: mention.ts,
+          isDirectMessage:
+            mention.channel_type === "im" || mention.channel.startsWith("D"),
+          user: {
+            slackUserId: mention.user,
+            email
+          },
+          text
+        },
+        {
+          createGitHubOAuthUrl: (slackUserId) =>
+            buildGitHubOAuthUrl(config, store.createOAuthState(slackUserId)),
+          getGitHubConnection: (emailAddress) =>
+            store.getConnectedUserByEmail(emailAddress),
+          getGitHubUser,
+          listAssignedIssues
+        }
+      );
+
+      await postConversationResponse(client, {
+        response,
+        channel: mention.channel,
+        user: mention.user,
+        threadTs: mention.thread_ts ?? mention.ts
+      });
+    } catch (error) {
+      logger.error(error);
+      await client.chat.postEphemeral({
+        channel: mention.channel,
+        user: mention.user,
+        text: "I could not handle that mention."
       });
     }
   });
@@ -183,31 +259,6 @@ export function createSlackRuntime(config: Config, store: TokenStore): SlackRunt
   return { app, getSlackEmail };
 }
 
-export function formatIssuesMessage(issues: GitHubIssue[]): string {
-  if (issues.length === 0) {
-    return "No open issues assigned to you.";
-  }
-
-  return issues
-    .map((issue) => `- <${issue.html_url}|${issue.title}>`)
-    .join("\n");
-}
-
-export function formatGitHubIdentityMessage(
-  githubLogin: string,
-  slackEmail: string
-): string {
-  return `Authenticated to GitHub as \`${githubLogin}\` for Slack email ${slackEmail}.`;
-}
-
-export function formatConnectGitHubMessage(url: string): string {
-  return `<${url}|Connect your GitHub account>`;
-}
-
-export function formatWorkingMessage(command: string): string {
-  return `Working on \`${command}\`...`;
-}
-
 export type AuthCommand =
   | { kind: "connections" }
   | { kind: "github" }
@@ -297,4 +348,40 @@ function toBoltLogLevel(level: SlackLogLevel): LogLevel {
     case "info":
       return LogLevel.INFO;
   }
+}
+
+async function postConversationResponse(
+  client: App["client"],
+  input: {
+    response: ConversationResponse;
+    channel: string;
+    user: string;
+    threadTs: string;
+  }
+): Promise<void> {
+  if (input.response.visibility === "ephemeral") {
+    await client.chat.postEphemeral({
+      channel: input.channel,
+      user: input.user,
+      text: input.response.text,
+      ...(input.response.blocks ? { blocks: input.response.blocks } : {})
+    });
+    return;
+  }
+
+  if (input.response.visibility === "dm") {
+    await client.chat.postMessage({
+      channel: input.user,
+      text: input.response.text,
+      ...(input.response.blocks ? { blocks: input.response.blocks } : {})
+    });
+    return;
+  }
+
+  await client.chat.postMessage({
+    channel: input.channel,
+    thread_ts: input.threadTs,
+    text: input.response.text,
+    ...(input.response.blocks ? { blocks: input.response.blocks } : {})
+  });
 }
