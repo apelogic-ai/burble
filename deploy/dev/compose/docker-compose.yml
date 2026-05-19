@@ -16,7 +16,7 @@ services:
       - caddy_data:/data
       - caddy_config:/config
     environment:
-      - DOMAIN=${DOMAIN}
+      - DOMAIN=${DOMAIN:?DOMAIN is required}
     depends_on:
       - burble-app
 
@@ -30,12 +30,12 @@ services:
     environment:
       - NODE_ENV=production
       - PORT=3000
-      - BASE_URL=https://${DOMAIN}
+      - BASE_URL=https://${DOMAIN:?DOMAIN is required}
       - DATABASE_PATH=/data/burble.db
-      - SLACK_BOT_TOKEN=${SLACK_BOT_TOKEN}
-      - SLACK_APP_TOKEN=${SLACK_APP_TOKEN}
-      - GITHUB_CLIENT_ID=${GITHUB_CLIENT_ID}
-      - GITHUB_CLIENT_SECRET=${GITHUB_CLIENT_SECRET}
+      - SLACK_BOT_TOKEN=${SLACK_BOT_TOKEN:?SLACK_BOT_TOKEN is required}
+      - SLACK_APP_TOKEN=${SLACK_APP_TOKEN:?SLACK_APP_TOKEN is required}
+      - GITHUB_CLIENT_ID=${GITHUB_CLIENT_ID:?GITHUB_CLIENT_ID is required}
+      - GITHUB_CLIENT_SECRET=${GITHUB_CLIENT_SECRET:?GITHUB_CLIENT_SECRET is required}
     volumes:
       - burble_data:/data
     healthcheck:

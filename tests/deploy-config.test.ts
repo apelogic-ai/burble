@@ -14,15 +14,20 @@ describe("dev deploy config", () => {
 
   test("passes Slack and GitHub OAuth settings to the app", () => {
     for (const name of [
-      "SLACK_BOT_TOKEN",
-      "SLACK_APP_TOKEN",
-      "GITHUB_CLIENT_ID",
-      "GITHUB_CLIENT_SECRET",
+      "SLACK_BOT_TOKEN:?SLACK_BOT_TOKEN is required",
+      "SLACK_APP_TOKEN:?SLACK_APP_TOKEN is required",
+      "GITHUB_CLIENT_ID:?GITHUB_CLIENT_ID is required",
+      "GITHUB_CLIENT_SECRET:?GITHUB_CLIENT_SECRET is required",
       "BASE_URL",
       "DATABASE_PATH"
     ]) {
       expect(compose).toContain(name);
     }
+  });
+
+  test("requires the public domain before starting Caddy", () => {
+    expect(compose).toContain("DOMAIN=${DOMAIN:?DOMAIN is required}");
+    expect(compose).toContain("BASE_URL=https://${DOMAIN:?DOMAIN is required}");
   });
 
   test("does not reference Observer runtime service names", () => {
