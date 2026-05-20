@@ -19,6 +19,7 @@ describe("dev deploy config", () => {
       "SLACK_LOG_LEVEL",
       "AGENT_MODE",
       "AI_MODEL",
+      "AI_GATEWAY_API_KEY",
       "GITHUB_CLIENT_ID:?GITHUB_CLIENT_ID is required",
       "GITHUB_CLIENT_SECRET:?GITHUB_CLIENT_SECRET is required",
       "BASE_URL",

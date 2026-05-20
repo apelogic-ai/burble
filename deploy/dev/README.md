@@ -78,13 +78,14 @@ SLACK_APP_TOKEN=xapp-...
 SLACK_LOG_LEVEL=info
 AGENT_MODE=deterministic
 AI_MODEL=openai/gpt-5.4
+AI_GATEWAY_API_KEY=
 GITHUB_CLIENT_ID=...
 GITHUB_CLIENT_SECRET=...
 ```
 
 Use `AGENT_MODE=llm` to route mentions through the AI SDK runner. The default
-model string uses Vercel AI Gateway syntax; set the required gateway/provider
-credentials on the host before enabling it.
+model string uses Vercel AI Gateway syntax, so set `AI_GATEWAY_API_KEY` before
+enabling it.
 
 Bring it up:
 
