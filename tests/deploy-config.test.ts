@@ -1,6 +1,9 @@
 import { describe, expect, test } from "bun:test";
 
 const compose = await Bun.file("deploy/dev/compose/docker-compose.yml").text();
+const openClawCompose = await Bun.file(
+  "deploy/dev/compose/docker-compose.openclaw-nemoclaw.yml"
+).text();
 const caddyfile = await Bun.file("deploy/dev/compose/Caddyfile").text();
 
 describe("dev deploy config", () => {
@@ -18,7 +21,9 @@ describe("dev deploy config", () => {
       "SLACK_APP_TOKEN:?SLACK_APP_TOKEN is required",
       "SLACK_LOG_LEVEL",
       "AGENT_MODE",
+      "AGENT_RUNTIME",
       "AI_MODEL",
+      "OPENCLAW_NEMOCLAW_URL",
       "OPENAI_API_KEY",
       "ANTHROPIC_API_KEY",
       "GITHUB_CLIENT_ID:?GITHUB_CLIENT_ID is required",
@@ -40,5 +45,17 @@ describe("dev deploy config", () => {
     expect(compose).not.toContain("OBSERVER_");
     expect(compose).not.toContain("AI_GATEWAY");
     expect(caddyfile).not.toContain("ingestor");
+  });
+
+  test("provides an optional OpenClaw/NemoClaw compose override", () => {
+    expect(openClawCompose).toContain("openclaw-nemoclaw:");
+    expect(openClawCompose).toContain("AGENT_RUNTIME=openclaw-nemoclaw");
+    expect(openClawCompose).toContain(
+      "OPENCLAW_NEMOCLAW_URL=http://openclaw-nemoclaw:8080"
+    );
+    expect(openClawCompose).toContain(
+      "OPENCLAW_NEMOCLAW_IMAGE:?OPENCLAW_NEMOCLAW_IMAGE is required"
+    );
+    expect(openClawCompose).toContain("BURBLE_TOOL_GATEWAY_URL");
   });
 });

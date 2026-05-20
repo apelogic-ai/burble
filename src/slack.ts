@@ -12,7 +12,7 @@ import type { TokenStore } from "./db";
 import { handleConversation } from "./conversation/orchestrator";
 import { normalizeMentionText } from "./conversation/normalize";
 import type { ConversationResponse } from "./conversation/types";
-import { createAiSdkAgentRunner } from "./agent/runner";
+import { createConfiguredAgentRunner } from "./agent/runtime";
 import { createGitHubTools } from "./tools/github";
 import {
   formatConnectGitHubMessage,
@@ -99,9 +99,11 @@ export function createSlackRuntime(config: Config, store: TokenStore): SlackRunt
   });
   const agentRunner =
     config.agentMode === "llm"
-      ? createAiSdkAgentRunner({
+      ? createConfiguredAgentRunner({
+          runtime: config.agentRuntime,
           model: config.aiModel,
           githubTools,
+          openClawNemoClawUrl: config.openClawNemoClawUrl,
           logInfo: (message) => app.logger.info(message)
         })
       : undefined;

@@ -77,16 +77,19 @@ SLACK_BOT_TOKEN=xoxb-...
 SLACK_APP_TOKEN=xapp-...
 SLACK_LOG_LEVEL=info
 AGENT_MODE=deterministic
+AGENT_RUNTIME=ai-sdk
 AI_MODEL=openai:gpt-5.4
+OPENCLAW_NEMOCLAW_URL=
 OPENAI_API_KEY=
 ANTHROPIC_API_KEY=
 GITHUB_CLIENT_ID=...
 GITHUB_CLIENT_SECRET=...
 ```
 
-Use `AGENT_MODE=llm` to route mentions through the AI SDK runner. `AI_MODEL`
-uses `provider:model` format and resolves through direct provider packages, so
-set the matching provider key before enabling it.
+Use `AGENT_MODE=llm` to route mentions and DMs through an agent runner.
+`AGENT_RUNTIME=ai-sdk` is the default in-process runner. `AI_MODEL` uses
+`provider:model` format and resolves through direct provider packages, so set
+the matching provider key before enabling it.
 
 Bring it up:
 
@@ -94,6 +97,26 @@ Bring it up:
 docker compose up -d --build
 docker compose logs -f
 ```
+
+To run with the optional OpenClaw/NemoClaw runtime adapter, provide an image
+for the runtime service and include the override file:
+
+```env
+AGENT_MODE=llm
+AGENT_RUNTIME=openclaw-nemoclaw
+OPENCLAW_NEMOCLAW_IMAGE=<runtime-image>
+```
+
+```bash
+docker compose \
+  -f docker-compose.yml \
+  -f docker-compose.openclaw-nemoclaw.yml \
+  up -d --build
+```
+
+The override sets `OPENCLAW_NEMOCLAW_URL=http://openclaw-nemoclaw:8080` for
+`burble-app`. Burble still owns Slack delivery, OAuth tokens, and visibility
+policy; the remote runtime receives only sanitized connection summaries.
 
 Verify:
 

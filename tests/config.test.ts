@@ -23,7 +23,9 @@ describe("readConfig", () => {
       databasePath: "test.db",
       slackLogLevel: "info",
       agentMode: "deterministic",
-      aiModel: "openai:gpt-5.4"
+      agentRuntime: "ai-sdk",
+      aiModel: "openai:gpt-5.4",
+      openClawNemoClawUrl: null
     });
   });
 
@@ -43,10 +45,12 @@ describe("readConfig", () => {
     const config = readConfig({
       ...validEnv,
       AGENT_MODE: "llm",
+      AGENT_RUNTIME: "openclaw-nemoclaw",
       AI_MODEL: "anthropic:claude-opus-4.6"
     });
 
     expect(config.agentMode).toBe("llm");
+    expect(config.agentRuntime).toBe("openclaw-nemoclaw");
     expect(config.aiModel).toBe("anthropic:claude-opus-4.6");
   });
 
@@ -54,6 +58,22 @@ describe("readConfig", () => {
     expect(() => readConfig({ ...validEnv, AGENT_MODE: "robot" })).toThrow(
       "Environment variable AGENT_MODE must be one of deterministic, llm"
     );
+  });
+
+  test("rejects invalid agent runtimes", () => {
+    expect(() => readConfig({ ...validEnv, AGENT_RUNTIME: "robot" })).toThrow(
+      "Environment variable AGENT_RUNTIME must be one of ai-sdk, openclaw-nemoclaw"
+    );
+  });
+
+  test("normalizes OpenClaw/NemoClaw runtime URL", () => {
+    const config = readConfig({
+      ...validEnv,
+      AGENT_RUNTIME: "openclaw-nemoclaw",
+      OPENCLAW_NEMOCLAW_URL: "http://openclaw-runtime:8080/"
+    });
+
+    expect(config.openClawNemoClawUrl).toBe("http://openclaw-runtime:8080");
   });
 
   test("rejects gateway-style model ids", () => {

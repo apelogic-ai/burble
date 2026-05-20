@@ -10,14 +10,18 @@ export type Config = {
   databasePath: string;
   slackLogLevel: SlackLogLevel;
   agentMode: AgentMode;
+  agentRuntime: AgentRuntime;
   aiModel: string;
+  openClawNemoClawUrl: string | null;
 };
 
 type Env = Record<string, string | undefined>;
 export type SlackLogLevel = "debug" | "info" | "warn" | "error";
 export type AgentMode = "deterministic" | "llm";
+export type AgentRuntime = "ai-sdk" | "openclaw-nemoclaw";
 const slackLogLevels = ["debug", "info", "warn", "error"] as const;
 const agentModes = ["deterministic", "llm"] as const;
+const agentRuntimes = ["ai-sdk", "openclaw-nemoclaw"] as const;
 
 function requiredEnv(env: Env, name: string): string {
   const value = env[name];
@@ -78,6 +82,30 @@ function optionalAgentModeEnv(
   return value as AgentMode;
 }
 
+function optionalAgentRuntimeEnv(
+  env: Env,
+  name: string,
+  fallback: AgentRuntime
+): AgentRuntime {
+  const value = env[name]?.toLowerCase();
+  if (!value) {
+    return fallback;
+  }
+
+  if (!agentRuntimes.includes(value as AgentRuntime)) {
+    throw new Error(
+      `Environment variable ${name} must be one of ${agentRuntimes.join(", ")}`
+    );
+  }
+
+  return value as AgentRuntime;
+}
+
+function optionalUrlEnv(env: Env, name: string): string | null {
+  const value = env[name]?.trim();
+  return value ? value.replace(/\/+$/, "") : null;
+}
+
 export function readConfig(env: Env): Config {
   const baseUrl = requiredEnv(env, "BASE_URL").replace(/\/+$/, "");
 
@@ -91,7 +119,9 @@ export function readConfig(env: Env): Config {
     databasePath: env.DATABASE_PATH ?? "burble.db",
     slackLogLevel: optionalSlackLogLevelEnv(env, "SLACK_LOG_LEVEL", "info"),
     agentMode: optionalAgentModeEnv(env, "AGENT_MODE", "deterministic"),
-    aiModel: validateAgentModelId(env.AI_MODEL ?? "openai:gpt-5.4")
+    agentRuntime: optionalAgentRuntimeEnv(env, "AGENT_RUNTIME", "ai-sdk"),
+    aiModel: validateAgentModelId(env.AI_MODEL ?? "openai:gpt-5.4"),
+    openClawNemoClawUrl: optionalUrlEnv(env, "OPENCLAW_NEMOCLAW_URL")
   };
 }
 

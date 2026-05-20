@@ -71,7 +71,7 @@ publish it to a queue.
 
 ### Agent Runner
 
-Owns model interaction:
+Owns model/runtime interaction:
 
 - Supplies a small system prompt.
 - Supplies provider tool schemas.
@@ -79,6 +79,70 @@ Owns model interaction:
 - Produces a short Slack-ready answer.
 
 The model never receives access tokens.
+
+The runner is a pluggable boundary. Burble's conversation layer calls the
+same `AgentRunner` interface whether the implementation is the in-process AI
+SDK runner or an out-of-process OpenClaw/NemoClaw runtime.
+
+```ts
+type AgentRunner = {
+  name: string;
+  capabilities: {
+    streaming: boolean;
+    toolEvents: boolean;
+    remote: boolean;
+    requiresToolGateway?: boolean;
+  };
+  run(input: AgentInput): AsyncIterable<AgentRunEvent>;
+};
+```
+
+Current runners:
+
+- `ai-sdk` — direct TypeScript/Bun runner using AI SDK provider packages.
+- `openclaw-nemoclaw` — remote runner adapter that POSTs sanitized input to a
+  sandbox/runtime service.
+
+`AGENT_MODE=llm` enables agent routing. `AGENT_RUNTIME` selects the runtime.
+The default is `AGENT_RUNTIME=ai-sdk`.
+
+### OpenClaw/NemoClaw Packaging
+
+OpenClaw/NemoClaw runs outside the Burble process and is optional in dev
+deployment. Burble remains the product/security boundary:
+
+```text
+Slack
+  -> Burble Slack Adapter
+  -> Conversation Orchestrator
+  -> AgentRunner interface
+      -> ai-sdk
+      -> openclaw-nemoclaw adapter
+          -> OpenClaw/NemoClaw runtime service
+  -> Visibility Policy
+  -> Slack reply
+```
+
+The adapter sends only sanitized connection summaries to the remote runtime:
+
+```ts
+{
+  input: {
+    text: string;
+    connections: {
+      github: {
+        connected: boolean;
+        email?: string;
+        providerLogin?: string;
+      };
+    };
+  };
+}
+```
+
+Provider OAuth tokens remain inside Burble. A future OpenClaw plugin must call
+back through a Burble tool gateway rather than reaching GitHub/Jira/Slack
+directly.
 
 ### Tool Registry
 
@@ -267,7 +331,10 @@ src/conversation/
   visibility.ts
 
 src/agent/
+  runtime.ts
   runner.ts
+  runners/
+    openclaw-nemoclaw.ts
   prompts.ts
   types.ts
 
@@ -488,6 +555,28 @@ Tests:
 - unknown GitHub request asks a clarifying question.
 - unconnected user is not sent to the model for provider data requests.
 - provider selection works for GitHub vs Jira requests.
+
+### Slice 6b: Pluggable Runner Boundary
+
+Package the runner as an event-based interface:
+
+- `src/agent/types.ts` defines `AgentRunner`, `AgentRunEvent`, and collection
+  helpers.
+- `src/agent/runtime.ts` selects a configured runner.
+- `src/agent/runner.ts` remains the in-process AI SDK implementation.
+- `src/agent/runners/openclaw-nemoclaw.ts` is the remote runtime adapter.
+
+Deployment:
+
+- base compose runs `AGENT_RUNTIME=ai-sdk`.
+- optional compose override adds an `openclaw-nemoclaw` service and sets
+  `AGENT_RUNTIME=openclaw-nemoclaw`.
+
+Tests:
+
+- both runners satisfy the same contract.
+- remote adapter does not serialize provider access tokens.
+- missing remote runtime URL fails at startup.
 
 ### Slice 7: Audit Log
 

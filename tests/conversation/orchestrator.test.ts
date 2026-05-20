@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { handleConversation } from "../../src/conversation/orchestrator";
 import type { ConversationDeps, ConversationRequest } from "../../src/conversation/types";
+import type { AgentInput, AgentOutput, AgentRunner } from "../../src/agent/types";
 import { createGitHubTools } from "../../src/tools/github";
 
 const baseRequest: ConversationRequest = {
@@ -52,6 +53,22 @@ function createDeps(overrides: Partial<ConversationDeps> = {}): ConversationDeps
     getConnection: () => connection,
     githubTools,
     ...overrides
+  };
+}
+
+function stubAgentRunner(
+  run: (input: AgentInput) => Promise<AgentOutput> | AgentOutput
+): AgentRunner {
+  return {
+    name: "stub",
+    capabilities: {
+      streaming: false,
+      toolEvents: false,
+      remote: false
+    },
+    async *run(input) {
+      yield { type: "final", response: await run(input) };
+    }
   };
 }
 
@@ -153,14 +170,14 @@ describe("handleConversation", () => {
       { ...baseRequest, text: "summarize my GitHub work" },
       createDeps({
         agentMode: "llm",
-        agentRunner: async (input) => {
+        agentRunner: stubAgentRunner((input) => {
           calls.push(input.text);
           expect(input.connections.github?.providerLogin).toBe("octocat");
           return {
             classification: "user_private",
             text: "You have one issue and one pull request."
           };
-        }
+        })
       })
     );
 
@@ -174,10 +191,10 @@ describe("handleConversation", () => {
       { ...baseRequest, text: "what can you do?" },
       createDeps({
         agentMode: "llm",
-        agentRunner: async () => ({
+        agentRunner: stubAgentRunner(() => ({
           classification: "public",
           text: "I can help with GitHub work once connected."
-        })
+        }))
       })
     );
 
@@ -191,13 +208,13 @@ describe("handleConversation", () => {
       { ...baseRequest, text: "connect github" },
       createDeps({
         agentMode: "llm",
-        agentRunner: async () => {
+        agentRunner: stubAgentRunner(() => {
           called = true;
           return {
             classification: "public",
             text: "unexpected"
           };
-        }
+        })
       })
     );
 

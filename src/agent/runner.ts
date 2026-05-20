@@ -5,7 +5,7 @@ import type { createGitHubTools } from "../tools/github";
 import type { ToolClassification } from "../conversation/types";
 import { createDirectModelResolver } from "./providers";
 import type { DirectLanguageModel, ModelResolver } from "./providers";
-import type { AgentInput, AgentOutput, AgentRunner } from "./types";
+import type { AgentInput, AgentOutput, AgentRunEvent, AgentRunner } from "./types";
 
 type AgentToolResult<TContent> = {
   classification: ToolClassification;
@@ -55,7 +55,42 @@ export function createAiSdkAgentRunner(
   const model = resolveModel(deps.model);
   const logInfo = deps.logInfo ?? (() => undefined);
 
-  return async (input: AgentInput): Promise<AgentOutput> => {
+  return {
+    name: "ai-sdk",
+    capabilities: {
+      streaming: false,
+      toolEvents: true,
+      remote: false
+    },
+    async *run(input: AgentInput): AsyncIterable<AgentRunEvent> {
+      yield { type: "status", text: "Working on that..." };
+
+      const toolEvents: AgentRunEvent[] = [];
+      const response = await runAiSdkAgent(input, {
+        ...deps,
+        generateTextFn: generate,
+        resolvedModel: model,
+        logInfo,
+        recordToolEvent: (event) => toolEvents.push(event)
+      });
+
+      yield* toolEvents;
+      yield { type: "final", response };
+    }
+  };
+}
+
+type RunAiSdkAgentDeps = AiSdkAgentRunnerDeps & {
+  generateTextFn: AgentGenerateText;
+  resolvedModel: DirectLanguageModel;
+  logInfo: (message: string) => void;
+  recordToolEvent: (event: AgentRunEvent) => void;
+};
+
+async function runAiSdkAgent(
+  input: AgentInput,
+  deps: RunAiSdkAgentDeps
+): Promise<AgentOutput> {
     let classification: ToolClassification = "public";
 
     const record = <TContent>(
@@ -78,7 +113,7 @@ export function createAiSdkAgentRunner(
       name: string,
       result: AgentToolResult<unknown>
     ): AgentToolResult<unknown> => {
-      logInfo(
+      deps.logInfo(
         [
           `LLM tool finish name=${name}`,
           `classification=${result.classification}`,
@@ -92,8 +127,17 @@ export function createAiSdkAgentRunner(
       name: string,
       fn: () => Promise<AgentToolResult<unknown>> | AgentToolResult<unknown>
     ): Promise<AgentToolResult<unknown>> => {
-      logInfo(`LLM tool start name=${name}`);
-      return logToolResult(name, await fn());
+      const callId = crypto.randomUUID();
+      deps.logInfo(`LLM tool start name=${name}`);
+      deps.recordToolEvent({ type: "tool_call", toolName: name, callId });
+      const result = logToolResult(name, await fn());
+      deps.recordToolEvent({
+        type: "tool_result",
+        toolName: name,
+        callId,
+        classification: result.classification
+      });
+      return result;
     };
 
     const tools = {
@@ -170,17 +214,17 @@ export function createAiSdkAgentRunner(
       })
     };
 
-    logInfo(
+    deps.logInfo(
       [
         `LLM call start model=${deps.model}`,
-        `provider=${model.provider}`,
-        `modelId=${model.modelId}`,
+        `provider=${deps.resolvedModel.provider}`,
+        `modelId=${deps.resolvedModel.modelId}`,
         `textLength=${input.text.length}`
       ].join(" ")
     );
 
-    const result = await generate({
-      model,
+    const result = await deps.generateTextFn({
+      model: deps.resolvedModel,
       system: systemPrompt,
       prompt: input.text,
       tools,
@@ -194,7 +238,7 @@ export function createAiSdkAgentRunner(
     });
     const text = result.text.trim() || "I could not produce a response.";
 
-    logInfo(
+    deps.logInfo(
       [
         `LLM call finish model=${deps.model}`,
         `classification=${classification}`,
@@ -206,7 +250,6 @@ export function createAiSdkAgentRunner(
       classification,
       text
     };
-  };
 }
 
 async function defaultGenerateText(

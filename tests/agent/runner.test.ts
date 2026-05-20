@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import type { ProviderConnection } from "../../src/db";
 import { createAiSdkAgentRunner } from "../../src/agent/runner";
 import type { DirectLanguageModel } from "../../src/agent/providers";
+import { collectAgentRun } from "../../src/agent/types";
 import { createGitHubTools } from "../../src/tools/github";
 
 type ExecutableTool = {
@@ -58,7 +59,7 @@ describe("createAiSdkAgentRunner", () => {
       logInfo: (message) => logs.push(message)
     });
 
-    const response = await runner({
+    const response = await collectAgentRun(runner, {
       text: "what issues are assigned to me?",
       connections: { github: connection }
     });
@@ -102,7 +103,7 @@ describe("createAiSdkAgentRunner", () => {
       }
     });
 
-    const response = await runner({
+    const response = await collectAgentRun(runner, {
       text: "who am I on GitHub?",
       connections: { github: null }
     });

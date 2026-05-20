@@ -40,6 +40,7 @@ Required Slack bot scopes:
 - `app_mentions:read`
 - `chat:write`
 - `commands`
+- `im:history`
 - `im:write`
 - `users:read`
 - `users:read.email`
@@ -48,6 +49,7 @@ Required Slack event subscription:
 
 - Enable **Event Subscriptions**.
 - Subscribe to bot event `app_mention`.
+- Subscribe to bot event `message.im` for app DMs.
 - With Socket Mode enabled, no Request URL is required.
 - Reinstall the app after adding the event.
 

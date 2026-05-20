@@ -1,0 +1,30 @@
+# Optional OpenClaw/NemoClaw runner override.
+#
+# Usage:
+#   docker compose \
+#     -f docker-compose.yml \
+#     -f docker-compose.openclaw-nemoclaw.yml \
+#     up -d --build
+
+services:
+  burble-app:
+    environment:
+      - AGENT_MODE=llm
+      - AGENT_RUNTIME=openclaw-nemoclaw
+      - OPENCLAW_NEMOCLAW_URL=http://openclaw-nemoclaw:8080
+    depends_on:
+      - openclaw-nemoclaw
+
+  openclaw-nemoclaw:
+    image: ${OPENCLAW_NEMOCLAW_IMAGE:?OPENCLAW_NEMOCLAW_IMAGE is required}
+    restart: unless-stopped
+    expose:
+      - "8080"
+    environment:
+      - BURBLE_TOOL_GATEWAY_URL=http://burble-app:3000/internal/tools
+      - BURBLE_AGENT_RUN_EVENTS_URL=http://burble-app:3000/internal/agent-runs
+    volumes:
+      - openclaw_nemoclaw_data:/data
+
+volumes:
+  openclaw_nemoclaw_data:

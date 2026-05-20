@@ -1,5 +1,6 @@
 import { formatConnectGitHubMessage } from "../formatting";
 import { formatGitHubIdentityMessage, formatIssuesMessage } from "../formatting";
+import { collectAgentRun } from "../agent/types";
 import { enforceVisibility } from "./visibility";
 import type {
   ConversationDeps,
@@ -24,12 +25,15 @@ export async function handleConversation(
   }
 
   if (deps.agentMode === "llm" && deps.agentRunner) {
-    const result = await deps.agentRunner({
-      text: request.text,
-      connections: {
-        github: deps.getConnection("github", request.user.email)
+    const result = await collectAgentRun(
+      deps.agentRunner,
+      {
+        text: request.text,
+        connections: {
+          github: deps.getConnection("github", request.user.email)
+        }
       }
-    });
+    );
 
     return enforceVisibility(
       {

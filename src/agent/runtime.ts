@@ -1,0 +1,42 @@
+import type { AgentRuntime } from "../config";
+import type { createGitHubTools } from "../tools/github";
+import { createAiSdkAgentRunner } from "./runner";
+import type { AgentGenerateText } from "./runner";
+import { createOpenClawNemoClawAgentRunner } from "./runners/openclaw-nemoclaw";
+import type { ModelResolver } from "./providers";
+import type { AgentRunner } from "./types";
+
+export type ConfiguredAgentRunnerDeps = {
+  runtime: AgentRuntime;
+  model: string;
+  githubTools: ReturnType<typeof createGitHubTools>;
+  openClawNemoClawUrl?: string | null;
+  resolveModel?: ModelResolver;
+  generateText?: AgentGenerateText;
+  logInfo?: (message: string) => void;
+};
+
+export function createConfiguredAgentRunner(
+  deps: ConfiguredAgentRunnerDeps
+): AgentRunner {
+  switch (deps.runtime) {
+    case "ai-sdk":
+      return createAiSdkAgentRunner({
+        model: deps.model,
+        githubTools: deps.githubTools,
+        ...(deps.resolveModel ? { resolveModel: deps.resolveModel } : {}),
+        ...(deps.generateText ? { generateText: deps.generateText } : {}),
+        ...(deps.logInfo ? { logInfo: deps.logInfo } : {})
+      });
+
+    case "openclaw-nemoclaw":
+      if (!deps.openClawNemoClawUrl) {
+        throw new Error("OPENCLAW_NEMOCLAW_URL is required");
+      }
+
+      return createOpenClawNemoClawAgentRunner({
+        baseUrl: deps.openClawNemoClawUrl,
+        ...(deps.logInfo ? { logInfo: deps.logInfo } : {})
+      });
+  }
+}
