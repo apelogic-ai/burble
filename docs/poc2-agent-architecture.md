@@ -178,6 +178,10 @@ The repo-local runtime currently supports:
 - `OPENCLAW_NEMOCLAW_ENGINE=openclaw-cli` for invoking an OpenClaw CLI binary
   with sanitized Burble tool context.
 
+The optional `docker-compose.openclaw-cli.yml` override builds a runtime image
+from `Dockerfile.openclaw-cli` and installs the npm `openclaw` package. This
+keeps the CLI dependency out of the default deterministic runtime image.
+
 ### Tool Registry
 
 Owns allowed tool definitions and execution:

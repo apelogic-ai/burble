@@ -1,0 +1,19 @@
+# Optional override for the runtime image that installs the OpenClaw CLI.
+#
+# Usage:
+#   docker compose \
+#     -f docker-compose.yml \
+#     -f docker-compose.openclaw-nemoclaw.yml \
+#     -f docker-compose.openclaw-cli.yml \
+#     up -d --build
+
+services:
+  openclaw-nemoclaw:
+    image: ${OPENCLAW_NEMOCLAW_IMAGE:-burble-openclaw-nemoclaw-openclaw-cli:dev}
+    build:
+      context: ../../../runtimes/openclaw-nemoclaw
+      dockerfile: Dockerfile.openclaw-cli
+      args:
+        OPENCLAW_VERSION: ${OPENCLAW_VERSION:-2026.5.19}
+    environment:
+      - OPENCLAW_NEMOCLAW_ENGINE=openclaw-cli

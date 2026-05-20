@@ -141,9 +141,26 @@ OPENCLAW_TIMEOUT_MS=60000
 ```
 
 This calls an OpenClaw CLI binary from inside the runtime container using
-gateway-derived context. The default dev image does not install the OpenClaw
-CLI yet, so keep `deterministic` unless you provide a derived runtime image
-with the CLI available.
+gateway-derived context. To build the repo-provided image with the OpenClaw CLI
+installed, add the CLI override:
+
+```bash
+docker compose \
+  -f docker-compose.yml \
+  -f docker-compose.openclaw-nemoclaw.yml \
+  -f docker-compose.openclaw-cli.yml \
+  up -d --build
+```
+
+Optional version pin:
+
+```env
+OPENCLAW_VERSION=2026.5.19
+```
+
+The CLI image installs the `openclaw` npm package during Docker build. If that
+build fails, switch back to `OPENCLAW_NEMOCLAW_ENGINE=deterministic` and deploy
+with only the first two compose files.
 
 `/internal/*` is blocked by Caddy on the public HTTPS hostname. The
 OpenClaw/NemoClaw service calls `http://burble-app:3000/internal/tools` over

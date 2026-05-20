@@ -80,4 +80,6 @@ container-to-container calls inside the deployment network.
 
 The runtime defaults to `OPENCLAW_NEMOCLAW_ENGINE=deterministic`. Setting
 `OPENCLAW_NEMOCLAW_ENGINE=openclaw-cli` makes it invoke an `openclaw` CLI binary
-inside the runtime container with sanitized Burble tool context.
+inside the runtime container with sanitized Burble tool context. The optional
+`deploy/dev/compose/docker-compose.openclaw-cli.yml` override builds that image
+from `runtimes/openclaw-nemoclaw/Dockerfile.openclaw-cli`.

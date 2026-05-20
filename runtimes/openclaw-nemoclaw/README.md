@@ -30,3 +30,12 @@ Runtime engines:
 CLI mode is intentionally isolated behind the same `/runs` contract. A derived
 image can install OpenClaw/NemoClaw without changing Burble's Slack, OAuth,
 visibility, or deployment boundaries.
+
+Build the CLI image locally:
+
+```bash
+docker build \
+  -f runtimes/openclaw-nemoclaw/Dockerfile.openclaw-cli \
+  -t burble-openclaw-nemoclaw-openclaw-cli:dev \
+  runtimes/openclaw-nemoclaw
+```

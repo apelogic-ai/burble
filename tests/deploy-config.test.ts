@@ -4,6 +4,9 @@ const compose = await Bun.file("deploy/dev/compose/docker-compose.yml").text();
 const openClawCompose = await Bun.file(
   "deploy/dev/compose/docker-compose.openclaw-nemoclaw.yml"
 ).text();
+const openClawCliCompose = await Bun.file(
+  "deploy/dev/compose/docker-compose.openclaw-cli.yml"
+).text();
 const caddyfile = await Bun.file("deploy/dev/compose/Caddyfile").text();
 
 describe("dev deploy config", () => {
@@ -74,5 +77,24 @@ describe("dev deploy config", () => {
     );
     expect(openClawCompose).toContain("OPENCLAW_COMMAND=${OPENCLAW_COMMAND:-openclaw}");
     expect(openClawCompose).toContain("OPENCLAW_AGENT=${OPENCLAW_AGENT:-main}");
+  });
+
+  test("provides an optional OpenClaw CLI runtime build override", async () => {
+    const dockerfile = await Bun.file(
+      "runtimes/openclaw-nemoclaw/Dockerfile.openclaw-cli"
+    ).text();
+
+    expect(openClawCliCompose).toContain("dockerfile: Dockerfile.openclaw-cli");
+    expect(openClawCliCompose).toContain("OPENCLAW_VERSION");
+    expect(openClawCliCompose).toContain("OPENCLAW_NEMOCLAW_ENGINE=openclaw-cli");
+    expect(openClawCliCompose).toContain(
+      "burble-openclaw-nemoclaw-openclaw-cli:dev"
+    );
+    expect(dockerfile).toContain("FROM node:22.19-bookworm-slim");
+    expect(dockerfile).not.toContain("python");
+    expect(dockerfile).toContain("npm install -g bun");
+    expect(dockerfile).toContain("npm install -g \"openclaw@${OPENCLAW_VERSION}\"");
+    expect(dockerfile).toContain("command -v bun");
+    expect(dockerfile).toContain("command -v openclaw");
   });
 });
