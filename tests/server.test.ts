@@ -16,6 +16,7 @@ const config: Config = {
   agentMode: "deterministic",
   agentRuntime: "ai-sdk",
   openClawNemoClawUrl: null,
+  internalApiToken: null,
   aiModel: "openai:gpt-5.4"
 };
 

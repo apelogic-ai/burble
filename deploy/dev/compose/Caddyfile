@@ -5,6 +5,9 @@
 {$DOMAIN} {
   encode zstd gzip
 
+  @internal path /internal/*
+  respond @internal 404
+
   reverse_proxy burble-app:3000
 
   log {

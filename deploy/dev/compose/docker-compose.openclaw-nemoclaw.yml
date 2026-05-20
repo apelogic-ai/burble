@@ -12,6 +12,7 @@ services:
       - AGENT_MODE=llm
       - AGENT_RUNTIME=openclaw-nemoclaw
       - OPENCLAW_NEMOCLAW_URL=http://openclaw-nemoclaw:8080
+      - INTERNAL_API_TOKEN=${INTERNAL_API_TOKEN:?INTERNAL_API_TOKEN is required}
     depends_on:
       - openclaw-nemoclaw
 
@@ -23,6 +24,7 @@ services:
     environment:
       - BURBLE_TOOL_GATEWAY_URL=http://burble-app:3000/internal/tools
       - BURBLE_AGENT_RUN_EVENTS_URL=http://burble-app:3000/internal/agent-runs
+      - BURBLE_INTERNAL_TOKEN=${INTERNAL_API_TOKEN:?INTERNAL_API_TOKEN is required}
     volumes:
       - openclaw_nemoclaw_data:/data
 

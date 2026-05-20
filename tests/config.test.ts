@@ -25,7 +25,8 @@ describe("readConfig", () => {
       agentMode: "deterministic",
       agentRuntime: "ai-sdk",
       aiModel: "openai:gpt-5.4",
-      openClawNemoClawUrl: null
+      openClawNemoClawUrl: null,
+      internalApiToken: null
     });
   });
 
@@ -74,6 +75,13 @@ describe("readConfig", () => {
     });
 
     expect(config.openClawNemoClawUrl).toBe("http://openclaw-runtime:8080");
+  });
+
+  test("reads optional internal API token", () => {
+    expect(
+      readConfig({ ...validEnv, INTERNAL_API_TOKEN: "internal-secret" })
+        .internalApiToken
+    ).toBe("internal-secret");
   });
 
   test("rejects gateway-style model ids", () => {

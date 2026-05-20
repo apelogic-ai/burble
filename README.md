@@ -54,3 +54,26 @@ Required Slack event subscription:
 - Reinstall the app after adding the event.
 
 The architecture note is copied at `docs/slack-tui-architecture.md`.
+
+## Agent Runtime
+
+Default LLM mode uses the in-process AI SDK runner:
+
+```env
+AGENT_MODE=llm
+AGENT_RUNTIME=ai-sdk
+AI_MODEL=openai:gpt-5.4
+OPENAI_API_KEY=...
+```
+
+The optional OpenClaw/NemoClaw adapter uses the same runner contract and calls
+a remote runtime service. That runtime should call Burble's internal tool
+gateway, not provider APIs directly:
+
+```text
+POST /internal/tools/github.listAssignedIssues/execute
+Authorization: Bearer ${INTERNAL_API_TOKEN}
+```
+
+Caddy blocks `/internal/*` from the public HTTPS endpoint; the gateway is for
+container-to-container calls inside the deployment network.

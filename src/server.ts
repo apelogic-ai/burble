@@ -2,6 +2,7 @@ import type { Config } from "./config";
 import type { TokenStore } from "./db";
 import { exchangeGitHubCode, getGitHubUser } from "./github";
 import type { SlackRuntime } from "./slack";
+import { handleToolGatewayRequest } from "./tool-gateway";
 
 export type GitHubOAuthDeps = {
   exchangeGitHubCode: typeof exchangeGitHubCode;
@@ -25,6 +26,18 @@ export function startOAuthServer(
 
       if (url.pathname === "/healthz") {
         return new Response("ok");
+      }
+
+      const toolGatewayMatch = url.pathname.match(
+        /^\/internal\/tools\/([^/]+)\/execute$/
+      );
+      if (toolGatewayMatch) {
+        return handleToolGatewayRequest(
+          config,
+          store,
+          decodeURIComponent(toolGatewayMatch[1]),
+          request
+        );
       }
 
       if (url.pathname !== "/oauth/github/callback") {

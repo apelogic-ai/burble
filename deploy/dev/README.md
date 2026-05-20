@@ -80,6 +80,7 @@ AGENT_MODE=deterministic
 AGENT_RUNTIME=ai-sdk
 AI_MODEL=openai:gpt-5.4
 OPENCLAW_NEMOCLAW_URL=
+INTERNAL_API_TOKEN=
 OPENAI_API_KEY=
 ANTHROPIC_API_KEY=
 GITHUB_CLIENT_ID=...
@@ -105,6 +106,7 @@ for the runtime service and include the override file:
 AGENT_MODE=llm
 AGENT_RUNTIME=openclaw-nemoclaw
 OPENCLAW_NEMOCLAW_IMAGE=<runtime-image>
+INTERNAL_API_TOKEN=<long-random-secret>
 ```
 
 ```bash
@@ -117,6 +119,23 @@ docker compose \
 The override sets `OPENCLAW_NEMOCLAW_URL=http://openclaw-nemoclaw:8080` for
 `burble-app`. Burble still owns Slack delivery, OAuth tokens, and visibility
 policy; the remote runtime receives only sanitized connection summaries.
+
+`/internal/*` is blocked by Caddy on the public HTTPS hostname. The
+OpenClaw/NemoClaw service calls `http://burble-app:3000/internal/tools` over
+the Docker network with `BURBLE_INTERNAL_TOKEN`.
+
+You can smoke-test the gateway from the instance after GitHub auth is connected:
+
+```bash
+docker compose exec burble-app bun -e 'fetch("http://localhost:3000/internal/tools/github.getAuthenticatedUser/execute", { method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${process.env.INTERNAL_API_TOKEN}` }, body: JSON.stringify({ user: { email: "you@example.com" } }) }).then(r => r.text()).then(console.log)'
+```
+
+The public endpoint should not expose it:
+
+```bash
+curl -i https://<nip_io_domain>/internal/tools/github.getAuthenticatedUser/execute
+# HTTP 404
+```
 
 Verify:
 

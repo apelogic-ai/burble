@@ -144,6 +144,33 @@ Provider OAuth tokens remain inside Burble. A future OpenClaw plugin must call
 back through a Burble tool gateway rather than reaching GitHub/Jira/Slack
 directly.
 
+The first gateway endpoint is:
+
+```text
+POST /internal/tools/:toolName/execute
+Authorization: Bearer ${INTERNAL_API_TOKEN}
+```
+
+Initial tool names:
+
+- `github.getAuthenticatedUser`
+- `github.listAssignedIssues`
+- `github.searchIssues`
+- `github.listMyPullRequests`
+
+The request identifies the Burble user, not the provider token:
+
+```json
+{
+  "user": { "email": "person@example.com" },
+  "input": { "query": "is:issue billing" }
+}
+```
+
+The response is the same classified, sanitized tool result shape used by the
+in-process runner. `Caddyfile` blocks `/internal/*` from the public hostname;
+runtime services call the gateway over the private compose network.
+
 ### Tool Registry
 
 Owns allowed tool definitions and execution:

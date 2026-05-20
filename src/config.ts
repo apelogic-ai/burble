@@ -13,6 +13,7 @@ export type Config = {
   agentRuntime: AgentRuntime;
   aiModel: string;
   openClawNemoClawUrl: string | null;
+  internalApiToken: string | null;
 };
 
 type Env = Record<string, string | undefined>;
@@ -121,8 +122,14 @@ export function readConfig(env: Env): Config {
     agentMode: optionalAgentModeEnv(env, "AGENT_MODE", "deterministic"),
     agentRuntime: optionalAgentRuntimeEnv(env, "AGENT_RUNTIME", "ai-sdk"),
     aiModel: validateAgentModelId(env.AI_MODEL ?? "openai:gpt-5.4"),
-    openClawNemoClawUrl: optionalUrlEnv(env, "OPENCLAW_NEMOCLAW_URL")
+    openClawNemoClawUrl: optionalUrlEnv(env, "OPENCLAW_NEMOCLAW_URL"),
+    internalApiToken: optionalSecretEnv(env, "INTERNAL_API_TOKEN")
   };
+}
+
+function optionalSecretEnv(env: Env, name: string): string | null {
+  const value = env[name]?.trim();
+  return value ? value : null;
 }
 
 export function loadConfig(): Config {

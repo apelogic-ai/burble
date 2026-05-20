@@ -24,6 +24,7 @@ describe("dev deploy config", () => {
       "AGENT_RUNTIME",
       "AI_MODEL",
       "OPENCLAW_NEMOCLAW_URL",
+      "INTERNAL_API_TOKEN",
       "OPENAI_API_KEY",
       "ANTHROPIC_API_KEY",
       "GITHUB_CLIENT_ID:?GITHUB_CLIENT_ID is required",
@@ -47,6 +48,11 @@ describe("dev deploy config", () => {
     expect(caddyfile).not.toContain("ingestor");
   });
 
+  test("does not expose internal tool endpoints through Caddy", () => {
+    expect(caddyfile).toContain("@internal path /internal/*");
+    expect(caddyfile).toContain("respond @internal 404");
+  });
+
   test("provides an optional OpenClaw/NemoClaw compose override", () => {
     expect(openClawCompose).toContain("openclaw-nemoclaw:");
     expect(openClawCompose).toContain("AGENT_RUNTIME=openclaw-nemoclaw");
@@ -56,6 +62,10 @@ describe("dev deploy config", () => {
     expect(openClawCompose).toContain(
       "OPENCLAW_NEMOCLAW_IMAGE:?OPENCLAW_NEMOCLAW_IMAGE is required"
     );
+    expect(openClawCompose).toContain(
+      "INTERNAL_API_TOKEN:?INTERNAL_API_TOKEN is required"
+    );
     expect(openClawCompose).toContain("BURBLE_TOOL_GATEWAY_URL");
+    expect(openClawCompose).toContain("BURBLE_INTERNAL_TOKEN");
   });
 });
