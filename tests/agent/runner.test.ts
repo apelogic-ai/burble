@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { ProviderConnection } from "../../src/db";
 import { createAiSdkAgentRunner } from "../../src/agent/runner";
+import type { DirectLanguageModel } from "../../src/agent/providers";
 import { createGitHubTools } from "../../src/tools/github";
 
 type ExecutableTool = {
@@ -18,8 +19,13 @@ const connection: ProviderConnection = {
 
 describe("createAiSdkAgentRunner", () => {
   test("builds an LLM runner that can execute sanitized GitHub tools", async () => {
+    const model = { provider: "test", modelId: "model" } as DirectLanguageModel;
     const runner = createAiSdkAgentRunner({
-      model: "test/model",
+      model: "openai:test-model",
+      resolveModel: (modelId) => {
+        expect(modelId).toBe("openai:test-model");
+        return model;
+      },
       githubTools: createGitHubTools({
         getGitHubUser: async () => ({ login: "octocat" }),
         listAssignedIssues: async () => [
@@ -32,6 +38,12 @@ describe("createAiSdkAgentRunner", () => {
         listMyPullRequests: async () => []
       }),
       generateText: async (request) => {
+        expect(request.model).toBe(model);
+        expect(request.experimental_telemetry).toEqual({
+          isEnabled: false,
+          recordInputs: false,
+          recordOutputs: false
+        });
         expect(request.prompt).toContain("what issues are assigned to me?");
         const tools = request.tools as unknown as Record<string, ExecutableTool>;
         const toolResult = await tools.github_list_assigned_issues.execute({});
@@ -57,7 +69,9 @@ describe("createAiSdkAgentRunner", () => {
 
   test("returns a connect instruction when a GitHub tool is used without auth", async () => {
     const runner = createAiSdkAgentRunner({
-      model: "test/model",
+      model: "openai:test-model",
+      resolveModel: () =>
+        ({ provider: "test", modelId: "model" }) as DirectLanguageModel,
       githubTools: createGitHubTools({
         getGitHubUser: async () => ({ login: "octocat" }),
         listAssignedIssues: async () => [],

@@ -19,7 +19,8 @@ describe("dev deploy config", () => {
       "SLACK_LOG_LEVEL",
       "AGENT_MODE",
       "AI_MODEL",
-      "AI_GATEWAY_API_KEY",
+      "OPENAI_API_KEY",
+      "ANTHROPIC_API_KEY",
       "GITHUB_CLIENT_ID:?GITHUB_CLIENT_ID is required",
       "GITHUB_CLIENT_SECRET:?GITHUB_CLIENT_SECRET is required",
       "BASE_URL",
@@ -37,6 +38,7 @@ describe("dev deploy config", () => {
   test("does not reference Observer runtime service names", () => {
     expect(compose).not.toContain("observer-api");
     expect(compose).not.toContain("OBSERVER_");
+    expect(compose).not.toContain("AI_GATEWAY");
     expect(caddyfile).not.toContain("ingestor");
   });
 });

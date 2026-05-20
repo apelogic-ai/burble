@@ -1,8 +1,10 @@
 import { generateText, stepCountIs, tool } from "ai";
-import type { LanguageModel, StopCondition, ToolSet } from "ai";
+import type { StopCondition, TelemetrySettings, ToolSet } from "ai";
 import { z } from "zod";
 import type { createGitHubTools } from "../tools/github";
 import type { ToolClassification } from "../conversation/types";
+import { createDirectModelResolver } from "./providers";
+import type { DirectLanguageModel, ModelResolver } from "./providers";
 import type { AgentInput, AgentOutput, AgentRunner } from "./types";
 
 type AgentToolResult<TContent> = {
@@ -11,12 +13,13 @@ type AgentToolResult<TContent> = {
 };
 
 export type AgentGenerateRequest = {
-  model: LanguageModel;
+  model: DirectLanguageModel;
   system: string;
   prompt: string;
   tools: ToolSet;
   stopWhen: StopCondition<ToolSet> | Array<StopCondition<ToolSet>>;
   maxRetries: number;
+  experimental_telemetry: TelemetrySettings;
 };
 
 export type AgentGenerateResult = {
@@ -30,6 +33,7 @@ export type AgentGenerateText = (
 export type AiSdkAgentRunnerDeps = {
   model: string;
   githubTools: ReturnType<typeof createGitHubTools>;
+  resolveModel?: ModelResolver;
   generateText?: AgentGenerateText;
 };
 
@@ -46,6 +50,8 @@ export function createAiSdkAgentRunner(
   deps: AiSdkAgentRunnerDeps
 ): AgentRunner {
   const generate = deps.generateText ?? defaultGenerateText;
+  const resolveModel = deps.resolveModel ?? createDirectModelResolver();
+  const model = resolveModel(deps.model);
 
   return async (input: AgentInput): Promise<AgentOutput> => {
     let classification: ToolClassification = "public";
@@ -141,12 +147,17 @@ export function createAiSdkAgentRunner(
     };
 
     const result = await generate({
-      model: deps.model as LanguageModel,
+      model,
       system: systemPrompt,
       prompt: input.text,
       tools,
       stopWhen: stepCountIs(4),
-      maxRetries: 1
+      maxRetries: 1,
+      experimental_telemetry: {
+        isEnabled: false,
+        recordInputs: false,
+        recordOutputs: false
+      }
     });
 
     return {
@@ -165,7 +176,8 @@ async function defaultGenerateText(
     prompt: request.prompt,
     tools: request.tools,
     stopWhen: request.stopWhen,
-    maxRetries: request.maxRetries
+    maxRetries: request.maxRetries,
+    experimental_telemetry: request.experimental_telemetry
   });
 }
 

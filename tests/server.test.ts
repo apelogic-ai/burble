@@ -14,7 +14,7 @@ const config: Config = {
   databasePath: ":memory:",
   slackLogLevel: "info",
   agentMode: "deterministic",
-  aiModel: "openai/gpt-5.4"
+  aiModel: "openai:gpt-5.4"
 };
 
 function createFakeStore() {

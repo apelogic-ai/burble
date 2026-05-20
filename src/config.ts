@@ -1,3 +1,5 @@
+import { validateAgentModelId } from "./agent/providers";
+
 export type Config = {
   slackBotToken: string;
   slackAppToken: string;
@@ -89,7 +91,7 @@ export function readConfig(env: Env): Config {
     databasePath: env.DATABASE_PATH ?? "burble.db",
     slackLogLevel: optionalSlackLogLevelEnv(env, "SLACK_LOG_LEVEL", "info"),
     agentMode: optionalAgentModeEnv(env, "AGENT_MODE", "deterministic"),
-    aiModel: env.AI_MODEL ?? "openai/gpt-5.4"
+    aiModel: validateAgentModelId(env.AI_MODEL ?? "openai:gpt-5.4")
   };
 }
 
