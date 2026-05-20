@@ -67,8 +67,8 @@ OPENAI_API_KEY=...
 ```
 
 The optional OpenClaw/NemoClaw adapter uses the same runner contract and calls
-a remote runtime service. That runtime should call Burble's internal tool
-gateway, not provider APIs directly:
+the repo-local runtime service in `runtimes/openclaw-nemoclaw`. That runtime
+calls Burble's internal tool gateway, not provider APIs directly:
 
 ```text
 POST /internal/tools/github.listAssignedIssues/execute

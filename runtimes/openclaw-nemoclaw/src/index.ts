@@ -1,0 +1,23 @@
+import { readRuntimeConfig } from "./config";
+import { handleRuntimeRequest } from "./server";
+
+const config = readRuntimeConfig(Bun.env);
+
+const server = Bun.serve({
+  port: config.port,
+  fetch: (request) => handleRuntimeRequest(request, config)
+});
+
+console.log(
+  `OpenClaw/NemoClaw Burble runtime listening on http://localhost:${server.port}`
+);
+
+process.on("SIGINT", () => {
+  server.stop();
+  process.exit(0);
+});
+
+process.on("SIGTERM", () => {
+  server.stop();
+  process.exit(0);
+});

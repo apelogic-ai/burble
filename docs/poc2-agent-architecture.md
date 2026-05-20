@@ -596,8 +596,8 @@ Package the runner as an event-based interface:
 Deployment:
 
 - base compose runs `AGENT_RUNTIME=ai-sdk`.
-- optional compose override adds an `openclaw-nemoclaw` service and sets
-  `AGENT_RUNTIME=openclaw-nemoclaw`.
+- optional compose override builds `runtimes/openclaw-nemoclaw`, adds an
+  `openclaw-nemoclaw` service, and sets `AGENT_RUNTIME=openclaw-nemoclaw`.
 
 Tests:
 

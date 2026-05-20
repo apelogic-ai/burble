@@ -17,7 +17,10 @@ services:
       - openclaw-nemoclaw
 
   openclaw-nemoclaw:
-    image: ${OPENCLAW_NEMOCLAW_IMAGE:?OPENCLAW_NEMOCLAW_IMAGE is required}
+    image: ${OPENCLAW_NEMOCLAW_IMAGE:-burble-openclaw-nemoclaw:dev}
+    build:
+      context: ../../../runtimes/openclaw-nemoclaw
+      dockerfile: Dockerfile
     restart: unless-stopped
     expose:
       - "8080"

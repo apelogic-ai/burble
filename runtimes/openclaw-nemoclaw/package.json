@@ -1,0 +1,9 @@
+{
+  "name": "@burble/openclaw-nemoclaw-runtime",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "bun src/index.ts"
+  }
+}

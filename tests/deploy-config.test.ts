@@ -59,8 +59,10 @@ describe("dev deploy config", () => {
     expect(openClawCompose).toContain(
       "OPENCLAW_NEMOCLAW_URL=http://openclaw-nemoclaw:8080"
     );
+    expect(openClawCompose).toContain("context: ../../../runtimes/openclaw-nemoclaw");
+    expect(openClawCompose).toContain("dockerfile: Dockerfile");
     expect(openClawCompose).toContain(
-      "OPENCLAW_NEMOCLAW_IMAGE:?OPENCLAW_NEMOCLAW_IMAGE is required"
+      "OPENCLAW_NEMOCLAW_IMAGE:-burble-openclaw-nemoclaw:dev"
     );
     expect(openClawCompose).toContain(
       "INTERNAL_API_TOKEN:?INTERNAL_API_TOKEN is required"

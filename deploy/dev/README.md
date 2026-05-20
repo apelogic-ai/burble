@@ -99,13 +99,13 @@ docker compose up -d --build
 docker compose logs -f
 ```
 
-To run with the optional OpenClaw/NemoClaw runtime adapter, provide an image
-for the runtime service and include the override file:
+To run with the optional OpenClaw/NemoClaw runtime adapter, include the
+override file. Compose builds the runtime image from
+`runtimes/openclaw-nemoclaw` by default:
 
 ```env
 AGENT_MODE=llm
 AGENT_RUNTIME=openclaw-nemoclaw
-OPENCLAW_NEMOCLAW_IMAGE=<runtime-image>
 INTERNAL_API_TOKEN=<long-random-secret>
 ```
 
@@ -119,6 +119,9 @@ docker compose \
 The override sets `OPENCLAW_NEMOCLAW_URL=http://openclaw-nemoclaw:8080` for
 `burble-app`. Burble still owns Slack delivery, OAuth tokens, and visibility
 policy; the remote runtime receives only sanitized connection summaries.
+
+Set `OPENCLAW_NEMOCLAW_IMAGE=some-registry/image:tag` only if you want Compose
+to tag/push/use a different image name. It is not required for dev deployment.
 
 `/internal/*` is blocked by Caddy on the public HTTPS hostname. The
 OpenClaw/NemoClaw service calls `http://burble-app:3000/internal/tools` over
