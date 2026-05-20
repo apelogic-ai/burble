@@ -5,7 +5,9 @@ import {
   formatGitHubIdentityMessage,
   formatWorkingMessage,
   formatIssuesMessage,
-  parseAuthCommand
+  formatMentionWorkingMessage,
+  parseAuthCommand,
+  summarizeSlackPayload
 } from "../src/slack";
 
 describe("formatIssuesMessage", () => {
@@ -56,6 +58,12 @@ describe("formatWorkingMessage", () => {
   });
 });
 
+describe("formatMentionWorkingMessage", () => {
+  test("formats the LLM mention progress state", () => {
+    expect(formatMentionWorkingMessage()).toBe("Working on that...");
+  });
+});
+
 describe("parseAuthCommand", () => {
   test("defaults to the connections menu", () => {
     expect(parseAuthCommand("")).toEqual({ kind: "connections" });
@@ -83,5 +91,37 @@ describe("buildAuthResponse", () => {
     expect(JSON.stringify(response.blocks)).toContain("GitHub");
     expect(JSON.stringify(response.blocks)).toContain("Atlassian");
     expect(JSON.stringify(response.blocks)).toContain("https://example.test/github");
+  });
+});
+
+describe("summarizeSlackPayload", () => {
+  test("uses top-level fields for slash command payloads", () => {
+    expect(
+      summarizeSlackPayload({
+        type: "slash_command",
+        command: "/issues",
+        user_id: "U123",
+        channel_id: "C123",
+        team_id: "T123"
+      })
+    ).toBe(
+      "type=slash_command command=/issues event=none user=U123 channel=C123 team=T123"
+    );
+  });
+
+  test("uses nested event fields for event callbacks", () => {
+    expect(
+      summarizeSlackPayload({
+        type: "event_callback",
+        team_id: "T123",
+        event: {
+          type: "app_mention",
+          user: "U123",
+          channel: "C123"
+        }
+      })
+    ).toBe(
+      "type=event_callback command=none event=app_mention user=U123 channel=C123 team=T123"
+    );
   });
 });

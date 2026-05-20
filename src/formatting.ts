@@ -24,3 +24,7 @@ export function formatConnectGitHubMessage(url: string): string {
 export function formatWorkingMessage(command: string): string {
   return `Working on \`${command}\`...`;
 }
+
+export function formatMentionWorkingMessage(): string {
+  return "Working on that...";
+}

@@ -20,6 +20,7 @@ const connection: ProviderConnection = {
 describe("createAiSdkAgentRunner", () => {
   test("builds an LLM runner that can execute sanitized GitHub tools", async () => {
     const model = { provider: "test", modelId: "model" } as DirectLanguageModel;
+    const logs: string[] = [];
     const runner = createAiSdkAgentRunner({
       model: "openai:test-model",
       resolveModel: (modelId) => {
@@ -53,7 +54,8 @@ describe("createAiSdkAgentRunner", () => {
         return {
           text: "- <https://github.com/acme/app/issues/1|Fix billing export>"
         };
-      }
+      },
+      logInfo: (message) => logs.push(message)
     });
 
     const response = await runner({
@@ -65,6 +67,16 @@ describe("createAiSdkAgentRunner", () => {
       classification: "user_private",
       text: "- <https://github.com/acme/app/issues/1|Fix billing export>"
     });
+    expect(logs).toContain(
+      "LLM call start model=openai:test-model provider=test modelId=model textLength=31"
+    );
+    expect(logs).toContain("LLM tool start name=github_list_assigned_issues");
+    expect(logs).toContain(
+      "LLM tool finish name=github_list_assigned_issues classification=user_private itemCount=1"
+    );
+    expect(logs).toContain(
+      "LLM call finish model=openai:test-model classification=user_private textLength=59"
+    );
   });
 
   test("returns a connect instruction when a GitHub tool is used without auth", async () => {

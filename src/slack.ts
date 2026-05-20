@@ -18,6 +18,7 @@ import {
   formatConnectGitHubMessage,
   formatGitHubIdentityMessage,
   formatIssuesMessage,
+  formatMentionWorkingMessage,
   formatWorkingMessage
 } from "./formatting";
 
@@ -25,6 +26,7 @@ export {
   formatConnectGitHubMessage,
   formatGitHubIdentityMessage,
   formatIssuesMessage,
+  formatMentionWorkingMessage,
   formatWorkingMessage
 } from "./formatting";
 
@@ -42,21 +44,7 @@ export function createSlackRuntime(config: Config, store: TokenStore): SlackRunt
   });
 
   app.use(async ({ body, logger, next }) => {
-    const payload = body as {
-      type?: string;
-      command?: string;
-      user_id?: string;
-      channel_id?: string;
-      team_id?: string;
-    };
-
-    logger.info(
-      `Received Slack payload type=${payload.type ?? "unknown"} command=${
-        payload.command ?? "none"
-      } user=${payload.user_id ?? "unknown"} channel=${
-        payload.channel_id ?? "unknown"
-      } team=${payload.team_id ?? "unknown"}`
-    );
+    logger.info(`Received Slack payload ${summarizeSlackPayload(body)}`);
 
     await next();
   });
@@ -102,7 +90,8 @@ export function createSlackRuntime(config: Config, store: TokenStore): SlackRunt
     config.agentMode === "llm"
       ? createAiSdkAgentRunner({
           model: config.aiModel,
-          githubTools
+          githubTools,
+          logInfo: (message) => app.logger.info(message)
         })
       : undefined;
 
@@ -126,6 +115,16 @@ export function createSlackRuntime(config: Config, store: TokenStore): SlackRunt
     try {
       const email = await getSlackEmail(mention.user);
       const text = normalizeMentionText(mention.text ?? "");
+      if (config.agentMode === "llm") {
+        await postMentionWorkingState(client, {
+          channel: mention.channel,
+          user: mention.user,
+          isDirectMessage:
+            mention.channel_type === "im" || mention.channel.startsWith("D"),
+          threadTs: mention.thread_ts ?? mention.ts
+        });
+      }
+
       const response = await handleConversation(
         {
           source: "slack",
@@ -373,6 +372,30 @@ function toBoltLogLevel(level: SlackLogLevel): LogLevel {
   }
 }
 
+export function summarizeSlackPayload(body: unknown): string {
+  const payload = body as {
+    type?: string;
+    command?: string;
+    user_id?: string;
+    channel_id?: string;
+    team_id?: string;
+    event?: {
+      type?: string;
+      user?: string;
+      channel?: string;
+    };
+  };
+
+  return [
+    `type=${payload.type ?? "unknown"}`,
+    `command=${payload.command ?? "none"}`,
+    `event=${payload.event?.type ?? "none"}`,
+    `user=${payload.user_id ?? payload.event?.user ?? "unknown"}`,
+    `channel=${payload.channel_id ?? payload.event?.channel ?? "unknown"}`,
+    `team=${payload.team_id ?? "unknown"}`
+  ].join(" ");
+}
+
 async function postConversationResponse(
   client: App["client"],
   input: {
@@ -406,5 +429,33 @@ async function postConversationResponse(
     thread_ts: input.threadTs,
     text: input.response.text,
     ...(input.response.blocks ? { blocks: input.response.blocks } : {})
+  });
+}
+
+async function postMentionWorkingState(
+  client: App["client"],
+  input: {
+    channel: string;
+    user: string;
+    isDirectMessage: boolean;
+    threadTs: string;
+  }
+): Promise<void> {
+  const text = formatMentionWorkingMessage();
+
+  if (input.isDirectMessage) {
+    await client.chat.postMessage({
+      channel: input.channel,
+      thread_ts: input.threadTs,
+      text
+    });
+    return;
+  }
+
+  await client.chat.postEphemeral({
+    channel: input.channel,
+    user: input.user,
+    thread_ts: input.threadTs,
+    text
   });
 }

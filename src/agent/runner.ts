@@ -35,6 +35,7 @@ export type AiSdkAgentRunnerDeps = {
   githubTools: ReturnType<typeof createGitHubTools>;
   resolveModel?: ModelResolver;
   generateText?: AgentGenerateText;
+  logInfo?: (message: string) => void;
 };
 
 const systemPrompt = [
@@ -52,6 +53,7 @@ export function createAiSdkAgentRunner(
   const generate = deps.generateText ?? defaultGenerateText;
   const resolveModel = deps.resolveModel ?? createDirectModelResolver();
   const model = resolveModel(deps.model);
+  const logInfo = deps.logInfo ?? (() => undefined);
 
   return async (input: AgentInput): Promise<AgentOutput> => {
     let classification: ToolClassification = "public";
@@ -72,11 +74,33 @@ export function createAiSdkAgentRunner(
         }
       });
 
+    const logToolResult = (
+      name: string,
+      result: AgentToolResult<unknown>
+    ): AgentToolResult<unknown> => {
+      logInfo(
+        [
+          `LLM tool finish name=${name}`,
+          `classification=${result.classification}`,
+          `itemCount=${Array.isArray(result.content) ? result.content.length : "n/a"}`
+        ].join(" ")
+      );
+      return result;
+    };
+
+    const executeTool = async (
+      name: string,
+      fn: () => Promise<AgentToolResult<unknown>> | AgentToolResult<unknown>
+    ): Promise<AgentToolResult<unknown>> => {
+      logInfo(`LLM tool start name=${name}`);
+      return logToolResult(name, await fn());
+    };
+
     const tools = {
       github_get_authenticated_user: tool({
         description: "Return the authenticated GitHub login for the Slack user.",
         inputSchema: z.object({}),
-        execute: async () => {
+        execute: async () => executeTool("github_get_authenticated_user", async () => {
           const connection = input.connections.github;
           if (!connection) {
             return missingGitHubConnection();
@@ -87,12 +111,12 @@ export function createAiSdkAgentRunner(
               connection
             })
           );
-        }
+        })
       }),
       github_list_assigned_issues: tool({
         description: "List open GitHub issues assigned to the Slack user.",
         inputSchema: z.object({}),
-        execute: async () => {
+        execute: async () => executeTool("github_list_assigned_issues", async () => {
           const connection = input.connections.github;
           if (!connection) {
             return missingGitHubConnection();
@@ -103,7 +127,7 @@ export function createAiSdkAgentRunner(
               connection
             })
           );
-        }
+        })
       }),
       github_search_issues: tool({
         description:
@@ -114,7 +138,7 @@ export function createAiSdkAgentRunner(
             .min(1)
             .describe("A GitHub issue search query, for example: is:issue billing")
         }),
-        execute: async ({ query }) => {
+        execute: async ({ query }) => executeTool("github_search_issues", async () => {
           const connection = input.connections.github;
           if (!connection) {
             return missingGitHubConnection();
@@ -126,12 +150,12 @@ export function createAiSdkAgentRunner(
               input: { query }
             })
           );
-        }
+        })
       }),
       github_list_my_pull_requests: tool({
         description: "List open GitHub pull requests authored by the Slack user.",
         inputSchema: z.object({}),
-        execute: async () => {
+        execute: async () => executeTool("github_list_my_pull_requests", async () => {
           const connection = input.connections.github;
           if (!connection) {
             return missingGitHubConnection();
@@ -142,9 +166,18 @@ export function createAiSdkAgentRunner(
               connection
             })
           );
-        }
+        })
       })
     };
+
+    logInfo(
+      [
+        `LLM call start model=${deps.model}`,
+        `provider=${model.provider}`,
+        `modelId=${model.modelId}`,
+        `textLength=${input.text.length}`
+      ].join(" ")
+    );
 
     const result = await generate({
       model,
@@ -159,10 +192,19 @@ export function createAiSdkAgentRunner(
         recordOutputs: false
       }
     });
+    const text = result.text.trim() || "I could not produce a response.";
+
+    logInfo(
+      [
+        `LLM call finish model=${deps.model}`,
+        `classification=${classification}`,
+        `textLength=${text.length}`
+      ].join(" ")
+    );
 
     return {
       classification,
-      text: result.text.trim() || "I could not produce a response."
+      text
     };
   };
 }
