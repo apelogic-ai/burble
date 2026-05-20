@@ -23,6 +23,25 @@ export async function handleConversation(
     };
   }
 
+  if (deps.agentMode === "llm" && deps.agentRunner) {
+    const result = await deps.agentRunner({
+      text: request.text,
+      connections: {
+        github: deps.getConnection("github", request.user.email)
+      }
+    });
+
+    return enforceVisibility(
+      {
+        visibility: "public",
+        classification: result.classification,
+        text: result.text,
+        ...(result.blocks ? { blocks: result.blocks } : {})
+      },
+      request
+    );
+  }
+
   if (
     intent === "github_identity" ||
     intent === "github_issues" ||

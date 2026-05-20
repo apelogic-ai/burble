@@ -12,6 +12,7 @@ import type { TokenStore } from "./db";
 import { handleConversation } from "./conversation/orchestrator";
 import { normalizeMentionText } from "./conversation/normalize";
 import type { ConversationResponse } from "./conversation/types";
+import { createAiSdkAgentRunner } from "./agent/runner";
 import { createGitHubTools } from "./tools/github";
 import {
   formatConnectGitHubMessage,
@@ -97,6 +98,13 @@ export function createSlackRuntime(config: Config, store: TokenStore): SlackRunt
     searchIssues,
     listMyPullRequests
   });
+  const agentRunner =
+    config.agentMode === "llm"
+      ? createAiSdkAgentRunner({
+          model: config.aiModel,
+          githubTools
+        })
+      : undefined;
 
   app.event("app_mention", async ({ body, event, client, logger }) => {
     const mention = event as {
@@ -138,7 +146,9 @@ export function createSlackRuntime(config: Config, store: TokenStore): SlackRunt
             buildGitHubOAuthUrl(config, store.createOAuthState(slackUserId)),
           getConnection: (provider, emailAddress) =>
             store.getConnection(provider, emailAddress),
-          githubTools
+          githubTools,
+          agentMode: config.agentMode,
+          ...(agentRunner ? { agentRunner } : {})
         }
       );
 

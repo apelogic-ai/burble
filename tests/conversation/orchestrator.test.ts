@@ -146,4 +146,64 @@ describe("handleConversation", () => {
     });
     expect(response.text).toContain("@Burble connect github");
   });
+
+  test("delegates to the LLM runner when LLM mode is enabled", async () => {
+    const calls: string[] = [];
+    const response = await handleConversation(
+      { ...baseRequest, text: "summarize my GitHub work" },
+      createDeps({
+        agentMode: "llm",
+        agentRunner: async (input) => {
+          calls.push(input.text);
+          expect(input.connections.github?.providerLogin).toBe("octocat");
+          return {
+            classification: "user_private",
+            text: "You have one issue and one pull request."
+          };
+        }
+      })
+    );
+
+    expect(calls).toEqual(["summarize my GitHub work"]);
+    expect(response.visibility).toBe("ephemeral");
+    expect(response.text).toBe("You have one issue and one pull request.");
+  });
+
+  test("keeps LLM responses public when they are not provider-backed", async () => {
+    const response = await handleConversation(
+      { ...baseRequest, text: "what can you do?" },
+      createDeps({
+        agentMode: "llm",
+        agentRunner: async () => ({
+          classification: "public",
+          text: "I can help with GitHub work once connected."
+        })
+      })
+    );
+
+    expect(response.visibility).toBe("public");
+    expect(response.text).toBe("I can help with GitHub work once connected.");
+  });
+
+  test("does not call the LLM runner for explicit connection requests", async () => {
+    let called = false;
+    const response = await handleConversation(
+      { ...baseRequest, text: "connect github" },
+      createDeps({
+        agentMode: "llm",
+        agentRunner: async () => {
+          called = true;
+          return {
+            classification: "public",
+            text: "unexpected"
+          };
+        }
+      })
+    );
+
+    expect(called).toBe(false);
+    expect(response.text).toBe(
+      "<https://example.test/oauth/github|Connect your GitHub account>"
+    );
+  });
 });

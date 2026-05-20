@@ -35,6 +35,8 @@ services:
       - SLACK_BOT_TOKEN=${SLACK_BOT_TOKEN:?SLACK_BOT_TOKEN is required}
       - SLACK_APP_TOKEN=${SLACK_APP_TOKEN:?SLACK_APP_TOKEN is required}
       - SLACK_LOG_LEVEL=${SLACK_LOG_LEVEL:-info}
+      - AGENT_MODE=${AGENT_MODE:-deterministic}
+      - AI_MODEL=${AI_MODEL:-openai/gpt-5.4}
       - GITHUB_CLIENT_ID=${GITHUB_CLIENT_ID:?GITHUB_CLIENT_ID is required}
       - GITHUB_CLIENT_SECRET=${GITHUB_CLIENT_SECRET:?GITHUB_CLIENT_SECRET is required}
     volumes:

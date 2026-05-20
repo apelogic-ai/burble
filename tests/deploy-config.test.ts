@@ -17,6 +17,8 @@ describe("dev deploy config", () => {
       "SLACK_BOT_TOKEN:?SLACK_BOT_TOKEN is required",
       "SLACK_APP_TOKEN:?SLACK_APP_TOKEN is required",
       "SLACK_LOG_LEVEL",
+      "AGENT_MODE",
+      "AI_MODEL",
       "GITHUB_CLIENT_ID:?GITHUB_CLIENT_ID is required",
       "GITHUB_CLIENT_SECRET:?GITHUB_CLIENT_SECRET is required",
       "BASE_URL",

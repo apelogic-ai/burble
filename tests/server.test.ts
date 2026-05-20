@@ -12,7 +12,9 @@ const config: Config = {
   baseUrl: "https://example.ngrok-free.app",
   port: 3000,
   databasePath: ":memory:",
-  slackLogLevel: "info"
+  slackLogLevel: "info",
+  agentMode: "deterministic",
+  aiModel: "openai/gpt-5.4"
 };
 
 function createFakeStore() {

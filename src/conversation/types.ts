@@ -1,5 +1,7 @@
 import type { Provider, ProviderConnection } from "../db";
 import type { createGitHubTools } from "../tools/github";
+import type { AgentMode } from "../config";
+import type { AgentRunner } from "../agent/types";
 
 export type ResponseVisibility = "public" | "ephemeral" | "dm";
 export type ToolClassification = "public" | "user_private" | "restricted";
@@ -29,4 +31,6 @@ export type ConversationDeps = {
   createGitHubOAuthUrl: (slackUserId: string) => string;
   getConnection: (provider: Provider, email: string) => ProviderConnection | null;
   githubTools: ReturnType<typeof createGitHubTools>;
+  agentMode?: AgentMode;
+  agentRunner?: AgentRunner;
 };

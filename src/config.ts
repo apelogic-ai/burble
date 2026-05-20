@@ -7,11 +7,15 @@ export type Config = {
   port: number;
   databasePath: string;
   slackLogLevel: SlackLogLevel;
+  agentMode: AgentMode;
+  aiModel: string;
 };
 
 type Env = Record<string, string | undefined>;
 export type SlackLogLevel = "debug" | "info" | "warn" | "error";
+export type AgentMode = "deterministic" | "llm";
 const slackLogLevels = ["debug", "info", "warn", "error"] as const;
+const agentModes = ["deterministic", "llm"] as const;
 
 function requiredEnv(env: Env, name: string): string {
   const value = env[name];
@@ -53,6 +57,25 @@ function optionalSlackLogLevelEnv(
   return value as SlackLogLevel;
 }
 
+function optionalAgentModeEnv(
+  env: Env,
+  name: string,
+  fallback: AgentMode
+): AgentMode {
+  const value = env[name]?.toLowerCase();
+  if (!value) {
+    return fallback;
+  }
+
+  if (!agentModes.includes(value as AgentMode)) {
+    throw new Error(
+      `Environment variable ${name} must be one of ${agentModes.join(", ")}`
+    );
+  }
+
+  return value as AgentMode;
+}
+
 export function readConfig(env: Env): Config {
   const baseUrl = requiredEnv(env, "BASE_URL").replace(/\/+$/, "");
 
@@ -64,7 +87,9 @@ export function readConfig(env: Env): Config {
     baseUrl,
     port: optionalIntEnv(env, "PORT", 3000),
     databasePath: env.DATABASE_PATH ?? "burble.db",
-    slackLogLevel: optionalSlackLogLevelEnv(env, "SLACK_LOG_LEVEL", "info")
+    slackLogLevel: optionalSlackLogLevelEnv(env, "SLACK_LOG_LEVEL", "info"),
+    agentMode: optionalAgentModeEnv(env, "AGENT_MODE", "deterministic"),
+    aiModel: env.AI_MODEL ?? "openai/gpt-5.4"
   };
 }
 
