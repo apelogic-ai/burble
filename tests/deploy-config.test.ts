@@ -69,5 +69,10 @@ describe("dev deploy config", () => {
     );
     expect(openClawCompose).toContain("BURBLE_TOOL_GATEWAY_URL");
     expect(openClawCompose).toContain("BURBLE_INTERNAL_TOKEN");
+    expect(openClawCompose).toContain(
+      "OPENCLAW_NEMOCLAW_ENGINE=${OPENCLAW_NEMOCLAW_ENGINE:-deterministic}"
+    );
+    expect(openClawCompose).toContain("OPENCLAW_COMMAND=${OPENCLAW_COMMAND:-openclaw}");
+    expect(openClawCompose).toContain("OPENCLAW_AGENT=${OPENCLAW_AGENT:-main}");
   });
 });

@@ -5,7 +5,11 @@ import type { RuntimeConfig } from "../../../runtimes/openclaw-nemoclaw/src/conf
 const config: RuntimeConfig = {
   port: 8080,
   toolGatewayUrl: "http://burble-app:3000/internal/tools",
-  internalToken: "secret"
+  internalToken: "secret",
+  engine: "deterministic",
+  openClawCommand: "openclaw",
+  openClawAgent: "main",
+  openClawTimeoutMs: 60000
 };
 
 describe("handleRuntimeRequest", () => {

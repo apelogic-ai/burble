@@ -107,6 +107,7 @@ override file. Compose builds the runtime image from
 AGENT_MODE=llm
 AGENT_RUNTIME=openclaw-nemoclaw
 INTERNAL_API_TOKEN=<long-random-secret>
+OPENCLAW_NEMOCLAW_ENGINE=deterministic
 ```
 
 ```bash
@@ -122,6 +123,27 @@ policy; the remote runtime receives only sanitized connection summaries.
 
 Set `OPENCLAW_NEMOCLAW_IMAGE=some-registry/image:tag` only if you want Compose
 to tag/push/use a different image name. It is not required for dev deployment.
+
+The runtime supports two internal engines:
+
+```env
+OPENCLAW_NEMOCLAW_ENGINE=deterministic
+```
+
+This is the default deployable bridge. It calls the Burble tool gateway and
+formats the answer itself.
+
+```env
+OPENCLAW_NEMOCLAW_ENGINE=openclaw-cli
+OPENCLAW_COMMAND=openclaw
+OPENCLAW_AGENT=main
+OPENCLAW_TIMEOUT_MS=60000
+```
+
+This calls an OpenClaw CLI binary from inside the runtime container using
+gateway-derived context. The default dev image does not install the OpenClaw
+CLI yet, so keep `deterministic` unless you provide a derived runtime image
+with the CLI available.
 
 `/internal/*` is blocked by Caddy on the public HTTPS hostname. The
 OpenClaw/NemoClaw service calls `http://burble-app:3000/internal/tools` over

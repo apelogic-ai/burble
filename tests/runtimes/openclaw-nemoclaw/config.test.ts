@@ -7,13 +7,47 @@ describe("readRuntimeConfig", () => {
       readRuntimeConfig({
         PORT: "9090",
         BURBLE_TOOL_GATEWAY_URL: "http://burble-app:3000/internal/tools/",
-        BURBLE_INTERNAL_TOKEN: "secret"
+        BURBLE_INTERNAL_TOKEN: "secret",
+        OPENCLAW_NEMOCLAW_ENGINE: "openclaw-cli",
+        OPENCLAW_COMMAND: "/usr/local/bin/openclaw",
+        OPENCLAW_AGENT: "burble",
+        OPENCLAW_TIMEOUT_MS: "120000"
       })
     ).toEqual({
       port: 9090,
       toolGatewayUrl: "http://burble-app:3000/internal/tools",
-      internalToken: "secret"
+      internalToken: "secret",
+      engine: "openclaw-cli",
+      openClawCommand: "/usr/local/bin/openclaw",
+      openClawAgent: "burble",
+      openClawTimeoutMs: 120000
     });
+  });
+
+  test("defaults to the deterministic runtime engine", () => {
+    expect(
+      readRuntimeConfig({
+        BURBLE_TOOL_GATEWAY_URL: "http://burble-app:3000/internal/tools",
+        BURBLE_INTERNAL_TOKEN: "secret"
+      })
+    ).toMatchObject({
+      engine: "deterministic",
+      openClawCommand: "openclaw",
+      openClawAgent: "main",
+      openClawTimeoutMs: 60000
+    });
+  });
+
+  test("rejects invalid runtime engines", () => {
+    expect(() =>
+      readRuntimeConfig({
+        BURBLE_TOOL_GATEWAY_URL: "http://burble-app:3000/internal/tools",
+        BURBLE_INTERNAL_TOKEN: "secret",
+        OPENCLAW_NEMOCLAW_ENGINE: "magic"
+      })
+    ).toThrow(
+      "Environment variable OPENCLAW_NEMOCLAW_ENGINE must be one of deterministic, openclaw-cli"
+    );
   });
 
   test("requires gateway URL and internal token", () => {

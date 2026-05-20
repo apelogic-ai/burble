@@ -20,7 +20,13 @@ OAuth tokens stay in Burble. The runtime receives only sanitized connection
 summaries and user email, then gets classified/sanitized tool results back
 from the gateway.
 
-For the first deployable slice this runtime is a deterministic bridge over the
-Burble tool gateway. The OpenClaw/NemoClaw agent loop can replace the
-deterministic `runBurbleRequest` internals without changing Burble's Slack,
-OAuth, visibility, or deployment boundaries.
+Runtime engines:
+
+- `OPENCLAW_NEMOCLAW_ENGINE=deterministic` uses the deployable deterministic
+  bridge over the Burble tool gateway.
+- `OPENCLAW_NEMOCLAW_ENGINE=openclaw-cli` invokes an `openclaw` CLI binary from
+  inside the runtime container with sanitized Burble tool context.
+
+CLI mode is intentionally isolated behind the same `/runs` contract. A derived
+image can install OpenClaw/NemoClaw without changing Burble's Slack, OAuth,
+visibility, or deployment boundaries.

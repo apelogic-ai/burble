@@ -77,3 +77,7 @@ Authorization: Bearer ${INTERNAL_API_TOKEN}
 
 Caddy blocks `/internal/*` from the public HTTPS endpoint; the gateway is for
 container-to-container calls inside the deployment network.
+
+The runtime defaults to `OPENCLAW_NEMOCLAW_ENGINE=deterministic`. Setting
+`OPENCLAW_NEMOCLAW_ENGINE=openclaw-cli` makes it invoke an `openclaw` CLI binary
+inside the runtime container with sanitized Burble tool context.

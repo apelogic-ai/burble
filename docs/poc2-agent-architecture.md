@@ -171,6 +171,13 @@ The response is the same classified, sanitized tool result shape used by the
 in-process runner. `Caddyfile` blocks `/internal/*` from the public hostname;
 runtime services call the gateway over the private compose network.
 
+The repo-local runtime currently supports:
+
+- `OPENCLAW_NEMOCLAW_ENGINE=deterministic` for deployable gateway-backed
+  behavior.
+- `OPENCLAW_NEMOCLAW_ENGINE=openclaw-cli` for invoking an OpenClaw CLI binary
+  with sanitized Burble tool context.
+
 ### Tool Registry
 
 Owns allowed tool definitions and execution:

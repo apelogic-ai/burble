@@ -28,6 +28,10 @@ services:
       - BURBLE_TOOL_GATEWAY_URL=http://burble-app:3000/internal/tools
       - BURBLE_AGENT_RUN_EVENTS_URL=http://burble-app:3000/internal/agent-runs
       - BURBLE_INTERNAL_TOKEN=${INTERNAL_API_TOKEN:?INTERNAL_API_TOKEN is required}
+      - OPENCLAW_NEMOCLAW_ENGINE=${OPENCLAW_NEMOCLAW_ENGINE:-deterministic}
+      - OPENCLAW_COMMAND=${OPENCLAW_COMMAND:-openclaw}
+      - OPENCLAW_AGENT=${OPENCLAW_AGENT:-main}
+      - OPENCLAW_TIMEOUT_MS=${OPENCLAW_TIMEOUT_MS:-60000}
     volumes:
       - openclaw_nemoclaw_data:/data
 

@@ -1,5 +1,5 @@
 import type { RuntimeConfig } from "./config";
-import { runBurbleRequest } from "./runner";
+import { createRuntimeRunner } from "./runtime";
 import type { RunRequest, ToolExecutor } from "./types";
 
 export async function handleRuntimeRequest(
@@ -26,7 +26,7 @@ export async function handleRuntimeRequest(
     return new Response("Invalid run request", { status: 400 });
   }
 
-  const result = await runBurbleRequest(body, config, executeTool);
+  const result = await createRuntimeRunner(config).run(body, executeTool);
   return Response.json(result, {
     headers: {
       "cache-control": "no-store"
