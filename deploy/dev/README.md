@@ -104,9 +104,19 @@ curl -fsSL https://<nip_io_domain>/healthz
 
 ## Authn Demo
 
-Add Slack scope `app_mentions:read`. Then enable **Event Subscriptions** and
-subscribe the bot to `app_mention`. With Socket Mode enabled, Slack does not
-need a Request URL. Reinstall the app and invite Burble to a test channel.
+Add Slack scopes:
+
+- `app_mentions:read`
+- `im:history`
+
+Then enable **Event Subscriptions** and subscribe the bot to:
+
+- `app_mention`
+- `message.im`
+
+In **App Home**, enable the messages tab and allow users to send messages to
+the app. With Socket Mode enabled, Slack does not need a Request URL. Reinstall
+the app and invite Burble to a test channel.
 
 In Slack:
 
@@ -119,6 +129,13 @@ In Slack:
 /connect-github
 /auth github
 /github-me
+```
+
+In the Burble app DM:
+
+```text
+summarize my GitHub work
+prioritize my open GitHub PRs
 ```
 
 `/github-me` proves the stored GitHub token maps to the Slack user identity,

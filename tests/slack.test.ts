@@ -7,6 +7,7 @@ import {
   formatIssuesMessage,
   formatMentionWorkingMessage,
   parseAuthCommand,
+  shouldHandleDirectMessageEvent,
   summarizeSlackPayload
 } from "../src/slack";
 
@@ -123,5 +124,62 @@ describe("summarizeSlackPayload", () => {
     ).toBe(
       "type=event_callback command=none event=app_mention user=U123 channel=C123 team=T123"
     );
+  });
+});
+
+describe("shouldHandleDirectMessageEvent", () => {
+  test("handles user-authored IM messages", () => {
+    expect(
+      shouldHandleDirectMessageEvent({
+        channel_type: "im",
+        channel: "D123",
+        user: "U123",
+        text: "summarize my work",
+        ts: "1710000000.000100"
+      })
+    ).toBe(true);
+  });
+
+  test("ignores bot and subtype IM messages", () => {
+    expect(
+      shouldHandleDirectMessageEvent({
+        channel_type: "im",
+        channel: "D123",
+        user: "U123",
+        bot_id: "B123",
+        text: "Working on that...",
+        ts: "1710000000.000100"
+      })
+    ).toBe(false);
+    expect(
+      shouldHandleDirectMessageEvent({
+        channel_type: "im",
+        channel: "D123",
+        user: "U123",
+        subtype: "message_changed",
+        text: "edited",
+        ts: "1710000000.000100"
+      })
+    ).toBe(false);
+  });
+
+  test("ignores malformed or non-IM messages", () => {
+    expect(
+      shouldHandleDirectMessageEvent({
+        channel_type: "channel",
+        channel: "C123",
+        user: "U123",
+        text: "hello",
+        ts: "1710000000.000100"
+      })
+    ).toBe(false);
+    expect(
+      shouldHandleDirectMessageEvent({
+        channel_type: "im",
+        channel: "D123",
+        user: "U123",
+        text: "hello"
+      })
+    ).toBe(false);
   });
 });

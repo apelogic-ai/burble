@@ -35,6 +35,17 @@ export type SlackRuntime = {
   getSlackEmail: (userId: string) => Promise<string>;
 };
 
+type SlackDirectMessageEvent = {
+  channel_type?: string;
+  channel?: string;
+  user?: string;
+  text?: string;
+  ts?: string;
+  thread_ts?: string;
+  subtype?: string;
+  bot_id?: string;
+};
+
 export function createSlackRuntime(config: Config, store: TokenStore): SlackRuntime {
   const app = new App({
     token: config.slackBotToken,
@@ -163,6 +174,66 @@ export function createSlackRuntime(config: Config, store: TokenStore): SlackRunt
         channel: mention.channel,
         user: mention.user,
         text: "I could not handle that mention."
+      });
+    }
+  });
+
+  app.message(async ({ body, message, client, logger }) => {
+    const directMessage = message as SlackDirectMessageEvent;
+
+    if (!shouldHandleDirectMessageEvent(directMessage)) {
+      return;
+    }
+
+    logger.info(`Received message.im from ${directMessage.user}`);
+
+    try {
+      const email = await getSlackEmail(directMessage.user);
+      if (config.agentMode === "llm") {
+        await postMentionWorkingState(client, {
+          channel: directMessage.channel,
+          user: directMessage.user,
+          isDirectMessage: true,
+          threadTs: directMessage.thread_ts ?? directMessage.ts
+        });
+      }
+
+      const response = await handleConversation(
+        {
+          source: "slack",
+          workspaceId: body.team_id ?? "",
+          channelId: directMessage.channel,
+          threadTs: directMessage.thread_ts,
+          messageTs: directMessage.ts,
+          isDirectMessage: true,
+          user: {
+            slackUserId: directMessage.user,
+            email
+          },
+          text: directMessage.text.trim()
+        },
+        {
+          createGitHubOAuthUrl: (slackUserId) =>
+            buildGitHubOAuthUrl(config, store.createOAuthState(slackUserId)),
+          getConnection: (provider, emailAddress) =>
+            store.getConnection(provider, emailAddress),
+          githubTools,
+          agentMode: config.agentMode,
+          ...(agentRunner ? { agentRunner } : {})
+        }
+      );
+
+      await postConversationResponse(client, {
+        response,
+        channel: directMessage.channel,
+        user: directMessage.user,
+        threadTs: directMessage.thread_ts ?? directMessage.ts
+      });
+    } catch (error) {
+      logger.error(error);
+      await client.chat.postMessage({
+        channel: directMessage.channel,
+        text: "I could not handle that message."
       });
     }
   });
@@ -394,6 +465,23 @@ export function summarizeSlackPayload(body: unknown): string {
     `channel=${payload.channel_id ?? payload.event?.channel ?? "unknown"}`,
     `team=${payload.team_id ?? "unknown"}`
   ].join(" ");
+}
+
+export function shouldHandleDirectMessageEvent(
+  event: SlackDirectMessageEvent
+): event is Required<
+  Pick<SlackDirectMessageEvent, "channel" | "user" | "text" | "ts">
+> &
+  SlackDirectMessageEvent {
+  return (
+    event.channel_type === "im" &&
+    Boolean(event.channel) &&
+    Boolean(event.user) &&
+    typeof event.text === "string" &&
+    Boolean(event.ts) &&
+    !event.subtype &&
+    !event.bot_id
+  );
 }
 
 async function postConversationResponse(
