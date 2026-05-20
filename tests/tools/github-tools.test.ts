@@ -18,7 +18,9 @@ describe("createGitHubTools", () => {
         expect(token).toBe("secret-token");
         return { login: "octocat" };
       },
-      listAssignedIssues: async () => []
+      listAssignedIssues: async () => [],
+      searchIssues: async () => [],
+      listMyPullRequests: async () => []
     });
 
     const result = await tools.getAuthenticatedUser.execute({ connection });
@@ -43,7 +45,9 @@ describe("createGitHubTools", () => {
             title: "Fix billing export"
           }
         ];
-      }
+      },
+      searchIssues: async () => [],
+      listMyPullRequests: async () => []
     });
 
     const result = await tools.listAssignedIssues.execute({ connection });
@@ -54,6 +58,70 @@ describe("createGitHubTools", () => {
         {
           url: "https://github.com/acme/app/issues/1",
           title: "Fix billing export"
+        }
+      ]
+    });
+    expect(JSON.stringify(result)).not.toContain("secret-token");
+  });
+
+  test("searches issues with caller token and sanitized query results", async () => {
+    const tools = createGitHubTools({
+      getGitHubUser: async () => ({ login: "octocat" }),
+      listAssignedIssues: async () => [],
+      searchIssues: async (token, query) => {
+        expect(token).toBe("secret-token");
+        expect(query).toBe("repo:acme/app label:billing");
+        return [
+          {
+            html_url: "https://github.com/acme/app/issues/2",
+            title: "Repair billing search"
+          }
+        ];
+      },
+      listMyPullRequests: async () => []
+    });
+
+    const result = await tools.searchIssues.execute({
+      connection,
+      input: { query: "repo:acme/app label:billing" }
+    });
+
+    expect(result).toEqual({
+      classification: "user_private",
+      content: [
+        {
+          url: "https://github.com/acme/app/issues/2",
+          title: "Repair billing search"
+        }
+      ]
+    });
+    expect(JSON.stringify(result)).not.toContain("secret-token");
+  });
+
+  test("lists my pull requests with caller token and sanitized results", async () => {
+    const tools = createGitHubTools({
+      getGitHubUser: async () => ({ login: "octocat" }),
+      listAssignedIssues: async () => [],
+      searchIssues: async () => [],
+      listMyPullRequests: async (token) => {
+        expect(token).toBe("secret-token");
+        return [
+          {
+            html_url: "https://github.com/acme/app/pull/3",
+            title: "Add workspace auth"
+          }
+        ];
+      }
+    });
+
+    const result = await tools.listMyPullRequests.execute({ connection });
+
+    expect(result).toEqual({
+      classification: "user_private",
+      content: [
+        {
+          url: "https://github.com/acme/app/pull/3",
+          title: "Add workspace auth"
         }
       ]
     });

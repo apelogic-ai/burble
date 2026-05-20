@@ -1,5 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { buildGitHubOAuthUrl } from "../src/github";
+import {
+  buildGitHubOAuthUrl,
+  listAssignedIssues,
+  listMyPullRequests,
+  searchIssues
+} from "../src/github";
 import type { Config } from "../src/config";
 
 const config: Config = {
@@ -25,5 +30,64 @@ describe("buildGitHubOAuthUrl", () => {
     );
     expect(url.searchParams.get("scope")).toBe("repo read:user user:email");
     expect(url.searchParams.get("state")).toBe("state-123");
+  });
+});
+
+describe("GitHub search helpers", () => {
+  test("listAssignedIssues searches open issues assigned to the token owner", async () => {
+    const urls: string[] = [];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      urls.push(String(input));
+      return Response.json({ items: [] });
+    }) as typeof fetch;
+
+    try {
+      await listAssignedIssues("token");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+
+    const url = new URL(urls[0]);
+    expect(url.searchParams.get("q")).toBe("is:open is:issue assignee:@me");
+    expect(url.searchParams.get("per_page")).toBe("10");
+  });
+
+  test("searchIssues passes through caller query", async () => {
+    const urls: string[] = [];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      urls.push(String(input));
+      return Response.json({ items: [] });
+    }) as typeof fetch;
+
+    try {
+      await searchIssues("token", "repo:acme/app label:billing");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+
+    expect(new URL(urls[0]).searchParams.get("q")).toBe(
+      "repo:acme/app label:billing"
+    );
+  });
+
+  test("listMyPullRequests searches open pull requests authored by the user", async () => {
+    const urls: string[] = [];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      urls.push(String(input));
+      return Response.json({ items: [] });
+    }) as typeof fetch;
+
+    try {
+      await listMyPullRequests("token");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+
+    expect(new URL(urls[0]).searchParams.get("q")).toBe(
+      "is:open is:pr author:@me"
+    );
   });
 });

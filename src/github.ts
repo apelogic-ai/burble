@@ -9,6 +9,11 @@ export type GitHubIssue = {
   title: string;
 };
 
+export type GitHubPullRequest = {
+  html_url: string;
+  title: string;
+};
+
 type GitHubSearchResponse = {
   items?: GitHubIssue[];
   message?: string;
@@ -80,8 +85,15 @@ export async function getGitHubUser(token: string): Promise<GitHubUser> {
 }
 
 export async function listAssignedIssues(token: string): Promise<GitHubIssue[]> {
+  return searchIssues(token, "is:open is:issue assignee:@me");
+}
+
+export async function searchIssues(
+  token: string,
+  query: string
+): Promise<GitHubIssue[]> {
   const url = new URL("https://api.github.com/search/issues");
-  url.searchParams.set("q", "is:open is:issue assignee:@me");
+  url.searchParams.set("q", query);
   url.searchParams.set("per_page", "10");
 
   const response = await fetch(url, {
@@ -98,4 +110,14 @@ export async function listAssignedIssues(token: string): Promise<GitHubIssue[]> 
   }
 
   return body.items ?? [];
+}
+
+export async function listMyPullRequests(
+  token: string
+): Promise<GitHubPullRequest[]> {
+  const items = await searchIssues(token, "is:open is:pr author:@me");
+  return items.map((item) => ({
+    html_url: item.html_url,
+    title: item.title
+  }));
 }

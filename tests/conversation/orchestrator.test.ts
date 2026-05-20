@@ -32,6 +32,18 @@ function createDeps(overrides: Partial<ConversationDeps> = {}): ConversationDeps
         html_url: "https://github.com/acme/app/issues/1",
         title: "Fix billing export"
       }
+    ],
+    searchIssues: async () => [
+      {
+        html_url: "https://github.com/acme/app/issues/2",
+        title: "Search result issue"
+      }
+    ],
+    listMyPullRequests: async () => [
+      {
+        html_url: "https://github.com/acme/app/pull/3",
+        title: "Add workspace auth"
+      }
     ]
   });
 
@@ -85,6 +97,26 @@ describe("handleConversation", () => {
 
     expect(response.visibility).toBe("ephemeral");
     expect(response.text).toContain("Fix billing export");
+  });
+
+  test("answers pull request requests privately in channels", async () => {
+    const response = await handleConversation(
+      { ...baseRequest, text: "show my pull requests" },
+      createDeps()
+    );
+
+    expect(response.visibility).toBe("ephemeral");
+    expect(response.text).toContain("Add workspace auth");
+  });
+
+  test("answers simple issue search requests privately in channels", async () => {
+    const response = await handleConversation(
+      { ...baseRequest, text: "search github issues for billing" },
+      createDeps()
+    );
+
+    expect(response.visibility).toBe("ephemeral");
+    expect(response.text).toContain("Search result issue");
   });
 
   test("leaves private GitHub data visible in direct messages", async () => {

@@ -367,6 +367,8 @@ Implement:
   - `connect jira`
   - `who am I on GitHub`
   - `issues assigned to me`
+  - `my pull requests`
+  - `search GitHub issues`
   - `Jira tickets assigned to me`
 - Visibility enforcement.
 

@@ -23,7 +23,12 @@ export async function handleConversation(
     };
   }
 
-  if (intent === "github_identity" || intent === "github_issues") {
+  if (
+    intent === "github_identity" ||
+    intent === "github_issues" ||
+    intent === "github_issue_search" ||
+    intent === "github_pull_requests"
+  ) {
     const connection = deps.getConnection("github", request.user.email);
     if (!connection) {
       return {
@@ -50,9 +55,18 @@ export async function handleConversation(
       );
     }
 
-    const result = await deps.githubTools.listAssignedIssues.execute({
-      connection
-    });
+    const result =
+      intent === "github_pull_requests"
+        ? await deps.githubTools.listMyPullRequests.execute({ connection })
+        : intent === "github_issue_search"
+          ? await deps.githubTools.searchIssues.execute({
+              connection,
+              input: { query: buildIssueSearchQuery(request.text) }
+            })
+          : await deps.githubTools.listAssignedIssues.execute({
+              connection
+            });
+
     return enforceVisibility(
       {
         visibility: "public",
@@ -84,6 +98,8 @@ type DeterministicIntent =
   | "connect_github"
   | "github_identity"
   | "github_issues"
+  | "github_issue_search"
+  | "github_pull_requests"
   | "help";
 
 export function classifyDeterministicIntent(text: string): DeterministicIntent {
@@ -100,9 +116,28 @@ export function classifyDeterministicIntent(text: string): DeterministicIntent {
     return "github_identity";
   }
 
+  if (/\b(pull request|pull requests|prs?|reviews?)\b/.test(normalized)) {
+    return "github_pull_requests";
+  }
+
+  if (/\bsearch\b/.test(normalized) && /\b(issue|issues)\b/.test(normalized)) {
+    return "github_issue_search";
+  }
+
   if (/\b(issue|issues)\b/.test(normalized)) {
     return "github_issues";
   }
 
   return "help";
+}
+
+function buildIssueSearchQuery(text: string): string {
+  const normalized = text
+    .replace(/\b(search|github|issue|issues|for|about)\b/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  return normalized
+    ? `is:issue ${normalized}`
+    : "is:issue";
 }

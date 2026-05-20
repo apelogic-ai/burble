@@ -1,7 +1,13 @@
 import { App, LogLevel } from "@slack/bolt";
 import type { Config } from "./config";
 import type { SlackLogLevel } from "./config";
-import { buildGitHubOAuthUrl, getGitHubUser, listAssignedIssues } from "./github";
+import {
+  buildGitHubOAuthUrl,
+  getGitHubUser,
+  listAssignedIssues,
+  listMyPullRequests,
+  searchIssues
+} from "./github";
 import type { TokenStore } from "./db";
 import { handleConversation } from "./conversation/orchestrator";
 import { normalizeMentionText } from "./conversation/normalize";
@@ -87,7 +93,9 @@ export function createSlackRuntime(config: Config, store: TokenStore): SlackRunt
 
   const githubTools = createGitHubTools({
     getGitHubUser,
-    listAssignedIssues
+    listAssignedIssues,
+    searchIssues,
+    listMyPullRequests
   });
 
   app.event("app_mention", async ({ body, event, client, logger }) => {

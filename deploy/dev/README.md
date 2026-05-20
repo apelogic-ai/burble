@@ -106,6 +106,8 @@ In Slack:
 @Burble connect github
 @Burble who am I on GitHub?
 @Burble what issues are assigned to me?
+@Burble show my pull requests
+@Burble search GitHub issues for billing
 /connect-github
 /auth github
 /github-me

@@ -27,6 +27,8 @@ Then set `BASE_URL` in `.env` and configure the GitHub OAuth callback URL as:
 - `@Burble connect github` starts a per-user GitHub OAuth flow from a mention.
 - `@Burble who am I on GitHub?` verifies the connected GitHub identity.
 - `@Burble what issues are assigned to me?` lists assigned GitHub issues privately.
+- `@Burble show my pull requests` lists open pull requests authored by you.
+- `@Burble search GitHub issues for billing` searches GitHub issues privately.
 - `/connect-github` starts a per-user GitHub OAuth flow.
 - `/auth` shows available auth connections.
 - `/auth github` starts the GitHub OAuth flow.
