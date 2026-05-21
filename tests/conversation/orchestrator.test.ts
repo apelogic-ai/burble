@@ -1,7 +1,12 @@
 import { describe, expect, test } from "bun:test";
 import { handleConversation } from "../../src/conversation/orchestrator";
 import type { ConversationDeps, ConversationRequest } from "../../src/conversation/types";
-import type { AgentInput, AgentOutput, AgentRunner } from "../../src/agent/types";
+import type {
+  AgentInput,
+  AgentOutput,
+  AgentRunEvent,
+  AgentRunner
+} from "../../src/agent/types";
 import { createGitHubTools } from "../../src/tools/github";
 
 const baseRequest: ConversationRequest = {
@@ -57,7 +62,9 @@ function createDeps(overrides: Partial<ConversationDeps> = {}): ConversationDeps
 }
 
 function stubAgentRunner(
-  run: (input: AgentInput) => Promise<AgentOutput> | AgentOutput
+  run:
+    | ((input: AgentInput) => Promise<AgentOutput> | AgentOutput)
+    | AgentRunEvent[]
 ): AgentRunner {
   return {
     name: "stub",
@@ -67,6 +74,11 @@ function stubAgentRunner(
       remote: false
     },
     async *run(input) {
+      if (Array.isArray(run)) {
+        yield* run;
+        return;
+      }
+
       yield { type: "final", response: await run(input) };
     }
   };
@@ -188,6 +200,44 @@ describe("handleConversation", () => {
     expect(calls).toEqual(["summarize my GitHub work"]);
     expect(response.visibility).toBe("ephemeral");
     expect(response.text).toBe("You have one issue and one pull request.");
+  });
+
+  test("forwards LLM runner events before returning the final response", async () => {
+    const events: AgentRunEvent[] = [];
+    const response = await handleConversation(
+      { ...baseRequest, text: "summarize my GitHub work", isDirectMessage: true },
+      createDeps({
+        agentMode: "llm",
+        agentRunner: stubAgentRunner([
+          { type: "status", text: "Preparing runtime..." },
+          {
+            type: "tool_call",
+            toolName: "github_list_assigned_issues",
+            callId: "call-1"
+          },
+          {
+            type: "final",
+            response: {
+              classification: "user_private",
+              text: "One issue needs attention."
+            }
+          }
+        ]),
+        onAgentEvent: (event) => {
+          events.push(event);
+        }
+      })
+    );
+
+    expect(response.text).toBe("One issue needs attention.");
+    expect(events).toEqual([
+      { type: "status", text: "Preparing runtime..." },
+      {
+        type: "tool_call",
+        toolName: "github_list_assigned_issues",
+        callId: "call-1"
+      }
+    ]);
   });
 
   test("keeps LLM responses public when they are not provider-backed", async () => {

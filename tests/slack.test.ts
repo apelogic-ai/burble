@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   buildAuthResponse,
+  formatAgentProgressEvent,
   buildReplyThreadTs,
   formatConnectGitHubMessage,
   formatGitHubIdentityMessage,
@@ -63,6 +64,34 @@ describe("formatWorkingMessage", () => {
 describe("formatMentionWorkingMessage", () => {
   test("formats the LLM mention progress state", () => {
     expect(formatMentionWorkingMessage()).toBe("Working on that...");
+  });
+});
+
+describe("formatAgentProgressEvent", () => {
+  test("formats status and tool lifecycle updates", () => {
+    expect(
+      formatAgentProgressEvent({
+        type: "status",
+        text: "Preparing your OpenClaw/NemoClaw runtime..."
+      })
+    ).toBe("Preparing your OpenClaw/NemoClaw runtime...");
+
+    expect(
+      formatAgentProgressEvent({
+        type: "tool_call",
+        toolName: "github_list_assigned_issues",
+        callId: "call-1"
+      })
+    ).toBe("Using GitHub list assigned issues...");
+
+    expect(
+      formatAgentProgressEvent({
+        type: "tool_result",
+        toolName: "github_list_assigned_issues",
+        callId: "call-1",
+        classification: "user_private"
+      })
+    ).toBe("Finished GitHub list assigned issues.");
   });
 });
 

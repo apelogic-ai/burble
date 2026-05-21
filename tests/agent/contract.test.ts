@@ -9,6 +9,7 @@ const principal = {
 
 describe("agent runner contract", () => {
   test("collects the final event from an event-based runner", async () => {
+    const events: string[] = [];
     const runner: AgentRunner = {
       name: "stub",
       capabilities: {
@@ -40,15 +41,22 @@ describe("agent runner contract", () => {
     };
 
     await expect(
-      collectAgentRun(runner, {
-        principal,
-        text: "what needs attention?",
-        connections: { github: null }
-      })
+      collectAgentRun(
+        runner,
+        {
+          principal,
+          text: "what needs attention?",
+          connections: { github: null }
+        },
+        (event) => {
+          events.push(event.type);
+        }
+      )
     ).resolves.toEqual({
       classification: "user_private",
       text: "One issue needs attention."
     });
+    expect(events).toEqual(["status", "tool_call", "tool_result"]);
   });
 
   test("fails when a runner exits without a final response", async () => {

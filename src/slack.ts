@@ -13,6 +13,7 @@ import { handleConversation } from "./conversation/orchestrator";
 import { normalizeMentionText } from "./conversation/normalize";
 import type { ConversationResponse } from "./conversation/types";
 import { createConfiguredAgentRunner } from "./agent/runtime";
+import type { AgentRunEvent } from "./agent/types";
 import { createDockerRuntimeFactory } from "./agent/container-runtime-factory";
 import { createStaticRuntimeFactory } from "./agent/runtime-factory";
 import type { RuntimeFactory } from "./agent/runtime-factory";
@@ -49,6 +50,12 @@ type SlackDirectMessageEvent = {
   thread_ts?: string;
   subtype?: string;
   bot_id?: string;
+};
+
+type SlackProgressMessage = {
+  channel: string;
+  ts: string;
+  text: string;
 };
 
 export function createSlackRuntime(config: Config, store: TokenStore): SlackRuntime {
@@ -138,11 +145,12 @@ export function createSlackRuntime(config: Config, store: TokenStore): SlackRunt
       return;
     }
 
+    let progressMessage: SlackProgressMessage | undefined;
     try {
       const email = await getSlackEmail(mention.user);
       const text = normalizeMentionText(mention.text ?? "");
       if (config.agentMode === "llm") {
-        await postMentionWorkingState(client, {
+        progressMessage = await postMentionWorkingState(client, {
           channel: mention.channel,
           user: mention.user,
           isDirectMessage:
@@ -156,6 +164,7 @@ export function createSlackRuntime(config: Config, store: TokenStore): SlackRunt
         });
       }
 
+      const activeProgressMessage = progressMessage;
       const response = await handleConversation(
         {
           source: "slack",
@@ -178,7 +187,13 @@ export function createSlackRuntime(config: Config, store: TokenStore): SlackRunt
             store.getConnection(provider, emailAddress),
           githubTools,
           agentMode: config.agentMode,
-          ...(agentRunner ? { agentRunner } : {})
+          ...(agentRunner ? { agentRunner } : {}),
+          ...(activeProgressMessage
+            ? {
+                onAgentEvent: (event) =>
+                  updateAgentProgressMessage(client, activeProgressMessage, event)
+              }
+            : {})
         }
       );
 
@@ -186,6 +201,7 @@ export function createSlackRuntime(config: Config, store: TokenStore): SlackRunt
         response,
         channel: mention.channel,
         user: mention.user,
+        ...(progressMessage ? { progressMessage } : {}),
         threadTs: buildReplyThreadTs({
           isDirectMessage:
             mention.channel_type === "im" || mention.channel.startsWith("D"),
@@ -195,6 +211,15 @@ export function createSlackRuntime(config: Config, store: TokenStore): SlackRunt
       });
     } catch (error) {
       logger.error(formatLogError(error));
+      if (progressMessage) {
+        await client.chat.update({
+          channel: progressMessage.channel,
+          ts: progressMessage.ts,
+          text: "I could not handle that mention."
+        });
+        return;
+      }
+
       await client.chat.postEphemeral({
         channel: mention.channel,
         user: mention.user,
@@ -214,10 +239,11 @@ export function createSlackRuntime(config: Config, store: TokenStore): SlackRunt
       withUtcTimestamp(`Received message.im from ${directMessage.user}`)
     );
 
+    let progressMessage: SlackProgressMessage | undefined;
     try {
       const email = await getSlackEmail(directMessage.user);
       if (config.agentMode === "llm") {
-        await postMentionWorkingState(client, {
+        progressMessage = await postMentionWorkingState(client, {
           channel: directMessage.channel,
           user: directMessage.user,
           isDirectMessage: true,
@@ -229,6 +255,7 @@ export function createSlackRuntime(config: Config, store: TokenStore): SlackRunt
         });
       }
 
+      const activeProgressMessage = progressMessage;
       const response = await handleConversation(
         {
           source: "slack",
@@ -250,7 +277,13 @@ export function createSlackRuntime(config: Config, store: TokenStore): SlackRunt
             store.getConnection(provider, emailAddress),
           githubTools,
           agentMode: config.agentMode,
-          ...(agentRunner ? { agentRunner } : {})
+          ...(agentRunner ? { agentRunner } : {}),
+          ...(activeProgressMessage
+            ? {
+                onAgentEvent: (event) =>
+                  updateAgentProgressMessage(client, activeProgressMessage, event)
+              }
+            : {})
         }
       );
 
@@ -258,6 +291,7 @@ export function createSlackRuntime(config: Config, store: TokenStore): SlackRunt
         response,
         channel: directMessage.channel,
         user: directMessage.user,
+        ...(progressMessage ? { progressMessage } : {}),
         threadTs: buildReplyThreadTs({
           isDirectMessage: true,
           messageTs: directMessage.ts,
@@ -266,6 +300,15 @@ export function createSlackRuntime(config: Config, store: TokenStore): SlackRunt
       });
     } catch (error) {
       logger.error(formatLogError(error));
+      if (progressMessage) {
+        await client.chat.update({
+          channel: progressMessage.channel,
+          ts: progressMessage.ts,
+          text: "I could not handle that message."
+        });
+        return;
+      }
+
       await client.chat.postMessage({
         channel: directMessage.channel,
         text: "I could not handle that message."
@@ -585,9 +628,20 @@ async function postConversationResponse(
     response: ConversationResponse;
     channel: string;
     user: string;
+    progressMessage?: SlackProgressMessage;
     threadTs?: string;
   }
 ): Promise<void> {
+  if (input.progressMessage && input.response.visibility !== "ephemeral") {
+    await client.chat.update({
+      channel: input.progressMessage.channel,
+      ts: input.progressMessage.ts,
+      text: input.response.text,
+      ...(input.response.blocks ? { blocks: input.response.blocks } : {})
+    });
+    return;
+  }
+
   if (input.response.visibility === "ephemeral") {
     await client.chat.postEphemeral({
       channel: input.channel,
@@ -623,16 +677,22 @@ async function postMentionWorkingState(
     isDirectMessage: boolean;
     threadTs?: string;
   }
-): Promise<void> {
+): Promise<SlackProgressMessage | undefined> {
   const text = formatMentionWorkingMessage();
 
   if (input.isDirectMessage) {
-    await client.chat.postMessage({
+    const result = await client.chat.postMessage({
       channel: input.channel,
       ...(input.threadTs ? { thread_ts: input.threadTs } : {}),
       text
     });
-    return;
+    return result.ts
+      ? {
+          channel: input.channel,
+          ts: result.ts,
+          text
+        }
+      : undefined;
   }
 
   await client.chat.postEphemeral({
@@ -641,4 +701,57 @@ async function postMentionWorkingState(
     ...(input.threadTs ? { thread_ts: input.threadTs } : {}),
     text
   });
+  return undefined;
+}
+
+async function updateAgentProgressMessage(
+  client: App["client"],
+  progressMessage: SlackProgressMessage,
+  event: AgentRunEvent
+): Promise<void> {
+  const text = formatAgentProgressEvent(event, progressMessage.text);
+  if (!text || text === progressMessage.text) {
+    return;
+  }
+
+  progressMessage.text = text;
+  await client.chat.update({
+    channel: progressMessage.channel,
+    ts: progressMessage.ts,
+    text
+  });
+}
+
+export function formatAgentProgressEvent(
+  event: AgentRunEvent,
+  currentText = ""
+): string | undefined {
+  switch (event.type) {
+    case "status":
+      return event.text;
+    case "tool_call":
+      return `Using ${formatAgentToolName(event.toolName)}...`;
+    case "tool_result":
+      return `Finished ${formatAgentToolName(event.toolName)}.`;
+    case "message_delta": {
+      const delta = event.text.trim();
+      if (!delta) {
+        return undefined;
+      }
+
+      return currentText && !currentText.endsWith("...")
+        ? `${currentText}${delta}`
+        : delta;
+    }
+    case "final":
+    case "error":
+      return undefined;
+  }
+}
+
+function formatAgentToolName(toolName: string): string {
+  return toolName
+    .replace(/^github_/, "GitHub ")
+    .replaceAll("_", " ")
+    .trim();
 }

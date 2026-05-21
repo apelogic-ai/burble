@@ -44,7 +44,10 @@ export function createOpenClawNemoClawAgentRunner(
       requiresToolGateway: true
     },
     async *run(input: AgentInput): AsyncIterable<AgentRunEvent> {
-      yield { type: "status", text: "Starting OpenClaw/NemoClaw runner..." };
+      yield {
+        type: "status",
+        text: "Preparing your OpenClaw/NemoClaw runtime..."
+      };
       const runtime = deps.runtimeFactory
         ? await deps.runtimeFactory.getOrCreateRuntime(input.principal)
         : null;
@@ -52,6 +55,8 @@ export function createOpenClawNemoClawAgentRunner(
       if (!baseUrl) {
         throw new Error("OpenClaw/NemoClaw runtime endpoint is unavailable");
       }
+
+      yield { type: "status", text: "Running OpenClaw/NemoClaw..." };
 
       logInfo(
         [

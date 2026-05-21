@@ -42,9 +42,14 @@ export type AgentRunner = {
   run: (input: AgentInput) => AsyncIterable<AgentRunEvent>;
 };
 
+export type AgentRunEventHandler = (
+  event: AgentRunEvent
+) => void | Promise<void>;
+
 export async function collectAgentRun(
   runner: AgentRunner,
-  input: AgentInput
+  input: AgentInput,
+  onEvent?: AgentRunEventHandler
 ): Promise<AgentOutput> {
   for await (const event of runner.run(input)) {
     if (event.type === "error") {
@@ -54,6 +59,8 @@ export async function collectAgentRun(
     if (event.type === "final") {
       return event.response;
     }
+
+    await onEvent?.(event);
   }
 
   throw new Error(`Agent runner ${runner.name} finished without a final response`);

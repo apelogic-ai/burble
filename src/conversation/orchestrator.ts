@@ -36,7 +36,8 @@ export async function handleConversation(
         connections: {
           github: deps.getConnection("github", request.user.email)
         }
-      }
+      },
+      deps.onAgentEvent
     );
 
     return enforceVisibility(
