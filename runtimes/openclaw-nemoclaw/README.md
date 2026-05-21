@@ -34,7 +34,19 @@ visibility, or deployment boundaries.
 When `OPENCLAW_NEMOCLAW_ENGINE=openclaw-cli`, runtime startup runs:
 
 ```bash
-openclaw setup --non-interactive --workspace "${OPENCLAW_WORKSPACE_DIR}"
+openclaw onboard \
+  --non-interactive \
+  --accept-risk \
+  --flow quickstart \
+  --mode local \
+  --auth-choice skip \
+  --skip-daemon \
+  --skip-channels \
+  --skip-skills \
+  --skip-search \
+  --skip-health \
+  --workspace "${OPENCLAW_WORKSPACE_DIR}" \
+  --json
 ```
 
 with `OPENCLAW_STATE_DIR` and `OPENCLAW_CONFIG_PATH` passed to the CLI. The
@@ -44,7 +56,8 @@ volume has already been prepared.
 
 If `OPENCLAW_CONFIG_PATCH_PATH` is set, startup applies it with
 `openclaw config patch --file`. Startup then runs `openclaw config validate`
-unless `OPENCLAW_VALIDATE_ON_START=false`.
+unless `OPENCLAW_VALIDATE_ON_START=false`. Use the config patch file for
+non-interactive model/provider configuration.
 
 Build the CLI image locally:
 

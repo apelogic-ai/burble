@@ -63,10 +63,23 @@ describe("ensureOpenClawSetup", () => {
       {
         command: "openclaw",
         args: [
-          "setup",
+          "onboard",
           "--non-interactive",
+          "--accept-risk",
+          "--flow",
+          "quickstart",
+          "--mode",
+          "local",
+          "--auth-choice",
+          "skip",
+          "--skip-daemon",
+          "--skip-channels",
+          "--skip-skills",
+          "--skip-search",
+          "--skip-health",
           "--workspace",
-          "/data/openclaw/workspace"
+          "/data/openclaw/workspace",
+          "--json"
         ],
         env: {
           OPENCLAW_STATE_DIR: "/data/openclaw/state",
@@ -96,7 +109,25 @@ describe("ensureOpenClawSetup", () => {
     );
 
     expect(calls).toEqual([
-      ["setup", "--non-interactive", "--workspace", "/data/openclaw/workspace"],
+      [
+        "onboard",
+        "--non-interactive",
+        "--accept-risk",
+        "--flow",
+        "quickstart",
+        "--mode",
+        "local",
+        "--auth-choice",
+        "skip",
+        "--skip-daemon",
+        "--skip-channels",
+        "--skip-skills",
+        "--skip-search",
+        "--skip-health",
+        "--workspace",
+        "/data/openclaw/workspace",
+        "--json"
+      ],
       ["config", "patch", "--file", "/etc/openclaw/patch.json5"],
       ["config", "validate"]
     ]);
@@ -114,18 +145,36 @@ describe("ensureOpenClawSetup", () => {
     );
 
     expect(calls).toEqual([
-      ["setup", "--non-interactive", "--workspace", "/data/openclaw/workspace"]
+      [
+        "onboard",
+        "--non-interactive",
+        "--accept-risk",
+        "--flow",
+        "quickstart",
+        "--mode",
+        "local",
+        "--auth-choice",
+        "skip",
+        "--skip-daemon",
+        "--skip-channels",
+        "--skip-skills",
+        "--skip-search",
+        "--skip-health",
+        "--workspace",
+        "/data/openclaw/workspace",
+        "--json"
+      ]
     ]);
   });
 
-  test("surfaces setup failures without leaking stderr", async () => {
+  test("surfaces onboarding failures without leaking stderr", async () => {
     await expect(
       ensureOpenClawSetup(config, async () => ({
         exitCode: 1,
         stdout: "",
         stderr: "secret leaked"
       }))
-    ).rejects.toThrow("OpenClaw setup exited with code 1");
+    ).rejects.toThrow("OpenClaw onboard exited with code 1");
   });
 
   test("surfaces config patch failures without leaking stderr", async () => {

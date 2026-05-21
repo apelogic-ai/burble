@@ -13,10 +13,23 @@ export async function ensureOpenClawSetup(
   const result = await runCommand(
     config.openClawCommand,
     [
-      "setup",
+      "onboard",
       "--non-interactive",
+      "--accept-risk",
+      "--flow",
+      "quickstart",
+      "--mode",
+      "local",
+      "--auth-choice",
+      "skip",
+      "--skip-daemon",
+      "--skip-channels",
+      "--skip-skills",
+      "--skip-search",
+      "--skip-health",
       "--workspace",
-      config.openClawWorkspaceDir
+      config.openClawWorkspaceDir,
+      "--json"
     ],
     {
       timeoutMs: config.openClawTimeoutMs,
@@ -25,7 +38,7 @@ export async function ensureOpenClawSetup(
   );
 
   if (result.exitCode !== 0) {
-    throw new Error(`OpenClaw setup exited with code ${result.exitCode}`);
+    throw new Error(`OpenClaw onboard exited with code ${result.exitCode}`);
   }
 
   await ensureOpenClawConfig(config, runCommand);
