@@ -38,6 +38,12 @@ function createStore(foundConnection: ProviderConnection | null): TokenStore {
       provider === "github" && email === "person@example.com"
         ? foundConnection
         : null,
+    getOrCreateAgentRuntime: () => {
+      throw new Error("unexpected agent runtime call");
+    },
+    getAgentRuntime: () => null,
+    updateAgentRuntimeStatus: () => undefined,
+    touchAgentRuntime: () => undefined,
     close: () => undefined
   } as TokenStore;
 }

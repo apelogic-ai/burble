@@ -37,6 +37,12 @@ function createFakeStore() {
     },
     getConnectedUserByEmail: () => null,
     getConnection: () => null,
+    getOrCreateAgentRuntime: () => {
+      throw new Error("unexpected agent runtime call");
+    },
+    getAgentRuntime: () => null,
+    updateAgentRuntimeStatus: () => undefined,
+    touchAgentRuntime: () => undefined,
     close: () => undefined
   } as TokenStore;
 
