@@ -46,6 +46,40 @@ describe("runBurbleRequest", () => {
     });
   });
 
+  test("does not treat unsupported questions as GitHub work", async () => {
+    let called = false;
+    const response = await runBurbleRequest(
+      {
+        input: {
+          text: "what is the weather like in San Francisco now?",
+          connections: {
+            github: {
+              connected: true,
+              email: "person@example.com",
+              providerLogin: "octocat"
+            }
+          }
+        }
+      },
+      config,
+      async () => {
+        called = true;
+        throw new Error("unexpected tool call");
+      }
+    );
+
+    expect(called).toBe(false);
+    expect(response).toEqual({
+      response: {
+        classification: "user_private",
+        text: [
+          "I can help with GitHub work for this PoC.",
+          "Try asking about assigned issues, open PRs, issue search, or GitHub identity."
+        ].join("\n")
+      }
+    });
+  });
+
   test("answers identity requests through the Burble tool gateway", async () => {
     const calls: Array<{ toolName: string; body: unknown }> = [];
     const response = await runBurbleRequest(

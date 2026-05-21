@@ -12,7 +12,7 @@ export function createRuntimeRunner(config: RuntimeConfig): {
       switch (config.engine) {
         case "deterministic":
           return runBurbleRequest(request, config, executeTool);
-        case "openclaw-cli":
+        case "openclaw":
           return runOpenClawCliRequest(request, config, executeTool);
       }
     }

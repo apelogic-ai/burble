@@ -6,7 +6,7 @@ const config: RuntimeConfig = {
   port: 8080,
   toolGatewayUrl: "http://burble-app:3000/internal/tools",
   internalToken: "secret",
-  engine: "openclaw-cli",
+  engine: "openclaw",
   openClawCommand: "openclaw",
   openClawAgent: "main",
   openClawTimeoutMs: 60000,
@@ -25,6 +25,7 @@ describe("runOpenClawCliRequest", () => {
       args: string[];
       env: Record<string, string>;
     }> = [];
+    const logs: string[] = [];
     const response = await runOpenClawCliRequest(
       {
         input: {
@@ -68,7 +69,8 @@ describe("runOpenClawCliRequest", () => {
           }),
           stderr: ""
         };
-      }
+      },
+      (message) => logs.push(message)
     );
 
     expect(response).toEqual({
@@ -90,6 +92,10 @@ describe("runOpenClawCliRequest", () => {
       OPENCLAW_STATE_DIR: "/data/openclaw/state",
       OPENCLAW_CONFIG_PATH: "/data/openclaw/config/openclaw.json"
     });
+    expect(logs).toEqual([
+      "OpenClaw agent start agent=main textLength=25 classification=user_private",
+      "OpenClaw agent finish classification=user_private textLength=32"
+    ]);
   });
 
   test("does not invoke OpenClaw when GitHub is not connected", async () => {
@@ -110,13 +116,46 @@ describe("runOpenClawCliRequest", () => {
       async () => {
         called = true;
         throw new Error("unexpected cli call");
-      }
+      },
+      () => undefined
     );
 
     expect(called).toBe(false);
     expect(response.response.text).toBe(
       "Connect GitHub first: `@Burble connect github`."
     );
+  });
+
+  test("does not invoke OpenClaw for unsupported questions", async () => {
+    let called = false;
+    const logs: string[] = [];
+    const response = await runOpenClawCliRequest(
+      {
+        input: {
+          text: "what is the weather like in San Francisco now?",
+          connections: {
+            github: {
+              connected: true,
+              email: "person@example.com",
+              providerLogin: "octocat"
+            }
+          }
+        }
+      },
+      config,
+      async () => {
+        throw new Error("unexpected tool call");
+      },
+      async () => {
+        called = true;
+        throw new Error("unexpected cli call");
+      },
+      (message) => logs.push(message)
+    );
+
+    expect(called).toBe(false);
+    expect(response.response.text).toContain("I can help with GitHub work");
+    expect(logs).toEqual(["OpenClaw agent skipped supportedIntent=false"]);
   });
 
   test("surfaces OpenClaw CLI failures without leaking stderr", async () => {
@@ -142,7 +181,8 @@ describe("runOpenClawCliRequest", () => {
           exitCode: 2,
           stdout: "",
           stderr: "token leaked in stderr"
-        })
+        }),
+        () => undefined
       )
     ).rejects.toThrow("OpenClaw CLI exited with code 2");
   });

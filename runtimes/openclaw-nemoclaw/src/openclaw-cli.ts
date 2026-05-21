@@ -1,5 +1,6 @@
 import type { RuntimeConfig } from "./config";
-import { runBurbleRequest } from "./runner";
+import { info, type RuntimeLogger } from "./logger";
+import { isSupportedGitHubRequest, runBurbleRequest } from "./runner";
 import type { RunRequest, RunResponse, ToolExecutor } from "./types";
 
 export type CliCommandResult = {
@@ -18,14 +19,24 @@ export async function runOpenClawCliRequest(
   request: RunRequest,
   config: RuntimeConfig,
   executeTool: ToolExecutor,
-  runCommand: CliCommandRunner = runCliCommand
+  runCommand: CliCommandRunner = runCliCommand,
+  logInfo: RuntimeLogger = info
 ): Promise<RunResponse> {
   const baseline = await runBurbleRequest(request, config, executeTool);
   if (!request.input.connections.github.connected) {
+    logInfo("OpenClaw agent skipped githubConnected=false");
+    return baseline;
+  }
+
+  if (!isSupportedGitHubRequest(request.input.text)) {
+    logInfo("OpenClaw agent skipped supportedIntent=false");
     return baseline;
   }
 
   const prompt = buildOpenClawPrompt(request, baseline);
+  logInfo(
+    `OpenClaw agent start agent=${config.openClawAgent} textLength=${request.input.text.length} classification=${baseline.response.classification}`
+  );
   const result = await runCommand(
     config.openClawCommand,
     [
@@ -48,10 +59,15 @@ export async function runOpenClawCliRequest(
     throw new Error(`OpenClaw CLI exited with code ${result.exitCode}`);
   }
 
+  const text = extractOpenClawText(result.stdout) || baseline.response.text;
+  logInfo(
+    `OpenClaw agent finish classification=${baseline.response.classification} textLength=${text.length}`
+  );
+
   return {
     response: {
       classification: baseline.response.classification,
-      text: extractOpenClawText(result.stdout) || baseline.response.text
+      text
     }
   };
 }

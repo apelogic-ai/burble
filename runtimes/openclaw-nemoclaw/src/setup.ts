@@ -1,15 +1,23 @@
 import type { RuntimeConfig } from "./config";
+import { info, type RuntimeLogger } from "./logger";
 import { openClawEnv, runCliCommand, type CliCommandRunner } from "./openclaw-cli";
 
 export async function ensureOpenClawSetup(
   config: RuntimeConfig,
-  runCommand: CliCommandRunner = runCliCommand
+  runCommand: CliCommandRunner = runCliCommand,
+  logInfo: RuntimeLogger = info
 ): Promise<void> {
-  if (config.engine !== "openclaw-cli" || !config.openClawSetupOnStart) {
-    await ensureOpenClawConfig(config, runCommand);
+  if (config.engine !== "openclaw" || !config.openClawSetupOnStart) {
+    if (config.engine === "openclaw") {
+      logInfo("OpenClaw onboard skipped setupOnStart=false");
+    }
+    await ensureOpenClawConfig(config, runCommand, logInfo);
     return;
   }
 
+  logInfo(
+    `OpenClaw onboard start workspace=${config.openClawWorkspaceDir} hasPatch=${Boolean(config.openClawConfigPatchPath)}`
+  );
   const result = await runCommand(
     config.openClawCommand,
     [
@@ -40,19 +48,22 @@ export async function ensureOpenClawSetup(
   if (result.exitCode !== 0) {
     throw new Error(`OpenClaw onboard exited with code ${result.exitCode}`);
   }
+  logInfo("OpenClaw onboard finish");
 
-  await ensureOpenClawConfig(config, runCommand);
+  await ensureOpenClawConfig(config, runCommand, logInfo);
 }
 
 async function ensureOpenClawConfig(
   config: RuntimeConfig,
-  runCommand: CliCommandRunner
+  runCommand: CliCommandRunner,
+  logInfo: RuntimeLogger
 ): Promise<void> {
-  if (config.engine !== "openclaw-cli") {
+  if (config.engine !== "openclaw") {
     return;
   }
 
   if (config.openClawConfigPatchPath) {
+    logInfo(`OpenClaw config patch start path=${config.openClawConfigPatchPath}`);
     const result = await runCommand(
       config.openClawCommand,
       ["config", "patch", "--file", config.openClawConfigPatchPath],
@@ -65,12 +76,15 @@ async function ensureOpenClawConfig(
     if (result.exitCode !== 0) {
       throw new Error(`OpenClaw config patch exited with code ${result.exitCode}`);
     }
+    logInfo("OpenClaw config patch finish");
   }
 
   if (!config.openClawValidateOnStart) {
+    logInfo("OpenClaw config validate skipped validateOnStart=false");
     return;
   }
 
+  logInfo("OpenClaw config validate start");
   const result = await runCommand(
     config.openClawCommand,
     ["config", "validate"],
@@ -83,4 +97,5 @@ async function ensureOpenClawConfig(
   if (result.exitCode !== 0) {
     throw new Error(`OpenClaw config validate exited with code ${result.exitCode}`);
   }
+  logInfo("OpenClaw config validate finish");
 }

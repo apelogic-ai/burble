@@ -24,14 +24,14 @@ Runtime engines:
 
 - `OPENCLAW_NEMOCLAW_ENGINE=deterministic` uses the deployable deterministic
   bridge over the Burble tool gateway.
-- `OPENCLAW_NEMOCLAW_ENGINE=openclaw-cli` invokes an `openclaw` CLI binary from
+- `OPENCLAW_NEMOCLAW_ENGINE=openclaw` invokes an `openclaw` CLI binary from
   inside the runtime container with sanitized Burble tool context.
 
 CLI mode is intentionally isolated behind the same `/runs` contract. A derived
 image can install OpenClaw/NemoClaw without changing Burble's Slack, OAuth,
 visibility, or deployment boundaries.
 
-When `OPENCLAW_NEMOCLAW_ENGINE=openclaw-cli`, runtime startup runs:
+When `OPENCLAW_NEMOCLAW_ENGINE=openclaw`, runtime startup runs:
 
 ```bash
 openclaw onboard \

@@ -134,7 +134,7 @@ This is the default deployable bridge. It calls the Burble tool gateway and
 formats the answer itself.
 
 ```env
-OPENCLAW_NEMOCLAW_ENGINE=openclaw-cli
+OPENCLAW_NEMOCLAW_ENGINE=openclaw
 OPENCLAW_COMMAND=openclaw
 OPENCLAW_AGENT=main
 OPENCLAW_TIMEOUT_MS=60000

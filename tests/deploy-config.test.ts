@@ -137,7 +137,7 @@ describe("dev deploy config", () => {
 
     expect(openClawCliCompose).toContain("dockerfile: Dockerfile.openclaw-cli");
     expect(openClawCliCompose).toContain("OPENCLAW_VERSION");
-    expect(openClawCliCompose).toContain("OPENCLAW_NEMOCLAW_ENGINE=openclaw-cli");
+    expect(openClawCliCompose).toContain("OPENCLAW_NEMOCLAW_ENGINE=openclaw");
     expect(openClawCliCompose).toContain(
       "burble-openclaw-nemoclaw-openclaw-cli:dev"
     );

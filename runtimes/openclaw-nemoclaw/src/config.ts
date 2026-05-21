@@ -14,10 +14,10 @@ export type RuntimeConfig = {
   openClawValidateOnStart: boolean;
 };
 
-export type RuntimeEngine = "deterministic" | "openclaw-cli";
+export type RuntimeEngine = "deterministic" | "openclaw";
 
 type Env = Record<string, string | undefined>;
-const runtimeEngines = ["deterministic", "openclaw-cli"] as const;
+const runtimeEngines = ["deterministic", "openclaw"] as const;
 
 export function readRuntimeConfig(env: Env): RuntimeConfig {
   return {
@@ -75,6 +75,10 @@ function readPositiveInt(value: string, name: string): number {
 
 function readRuntimeEngine(value: string): RuntimeEngine {
   const normalized = value.trim().toLowerCase();
+  if (normalized === "openclaw-cli") {
+    return "openclaw";
+  }
+
   if (!runtimeEngines.includes(normalized as RuntimeEngine)) {
     throw new Error(
       `Environment variable OPENCLAW_NEMOCLAW_ENGINE must be one of ${runtimeEngines.join(", ")}`
@@ -85,7 +89,11 @@ function readRuntimeEngine(value: string): RuntimeEngine {
 }
 
 function readBooleanEnv(value: string, name: string): boolean {
-  const normalized = value.trim().toLowerCase();
+  const normalized = stripOptionalQuotes(value).trim().toLowerCase();
+  if (!normalized) {
+    return true;
+  }
+
   if (normalized === "true" || normalized === "1" || normalized === "yes") {
     return true;
   }
@@ -98,6 +106,18 @@ function readBooleanEnv(value: string, name: string): boolean {
 }
 
 function readOptionalEnv(value: string | undefined): string | null {
-  const trimmed = value?.trim();
+  const trimmed = stripOptionalQuotes(value ?? "").trim();
   return trimmed ? trimmed : null;
+}
+
+function stripOptionalQuotes(value: string): string {
+  const trimmed = value.trim();
+  if (
+    (trimmed.startsWith('"') && trimmed.endsWith('"')) ||
+    (trimmed.startsWith("'") && trimmed.endsWith("'"))
+  ) {
+    return trimmed.slice(1, -1);
+  }
+
+  return trimmed;
 }

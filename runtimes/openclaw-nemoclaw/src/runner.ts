@@ -12,12 +12,22 @@ export async function runBurbleRequest(
   config: RuntimeConfig,
   executeTool: ToolExecutor = createBurbleToolExecutor(config)
 ): Promise<RunResponse> {
+  const text = request.input.text.trim();
+  if (!isSupportedGitHubRequest(text)) {
+    return response(
+      "user_private",
+      [
+        "I can help with GitHub work for this PoC.",
+        "Try asking about assigned issues, open PRs, issue search, or GitHub identity."
+      ].join("\n")
+    );
+  }
+
   const github = request.input.connections.github;
   if (!github.connected || !github.email) {
     return response("user_private", "Connect GitHub first: `@Burble connect github`.");
   }
 
-  const text = request.input.text.trim();
   const normalized = text.toLowerCase();
   const user = { email: github.email };
 
@@ -71,6 +81,17 @@ export async function runBurbleRequest(
       "",
       formatItems("Your open PRs", prs)
     ].join("\n")
+  );
+}
+
+export function isSupportedGitHubRequest(text: string): boolean {
+  const normalized = text.toLowerCase();
+  return (
+    /\bgithub\b/.test(normalized) ||
+    /\bwho\s+am\s+i\b/.test(normalized) ||
+    /\b(issue|issues)\b/.test(normalized) ||
+    /\b(pull request|pull requests|prs?|reviews?)\b/.test(normalized) ||
+    /\b(summary|summarize|prioritize|attention|work)\b/.test(normalized)
   );
 }
 

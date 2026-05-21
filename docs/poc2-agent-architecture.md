@@ -175,7 +175,7 @@ The repo-local runtime currently supports:
 
 - `OPENCLAW_NEMOCLAW_ENGINE=deterministic` for deployable gateway-backed
   behavior.
-- `OPENCLAW_NEMOCLAW_ENGINE=openclaw-cli` for invoking an OpenClaw CLI binary
+- `OPENCLAW_NEMOCLAW_ENGINE=openclaw` for invoking an OpenClaw CLI binary
   with sanitized Burble tool context.
 
 The optional `docker-compose.openclaw-cli.yml` override builds a runtime image

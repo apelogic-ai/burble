@@ -8,7 +8,7 @@ describe("readRuntimeConfig", () => {
         PORT: "9090",
         BURBLE_TOOL_GATEWAY_URL: "http://burble-app:3000/internal/tools/",
         BURBLE_INTERNAL_TOKEN: "secret",
-        OPENCLAW_NEMOCLAW_ENGINE: "openclaw-cli",
+        OPENCLAW_NEMOCLAW_ENGINE: "openclaw",
         OPENCLAW_COMMAND: "/usr/local/bin/openclaw",
         OPENCLAW_AGENT: "burble",
         OPENCLAW_TIMEOUT_MS: "120000",
@@ -23,7 +23,7 @@ describe("readRuntimeConfig", () => {
       port: 9090,
       toolGatewayUrl: "http://burble-app:3000/internal/tools",
       internalToken: "secret",
-      engine: "openclaw-cli",
+      engine: "openclaw",
       openClawCommand: "/usr/local/bin/openclaw",
       openClawAgent: "burble",
       openClawTimeoutMs: 120000,
@@ -64,8 +64,34 @@ describe("readRuntimeConfig", () => {
         OPENCLAW_NEMOCLAW_ENGINE: "magic"
       })
     ).toThrow(
-      "Environment variable OPENCLAW_NEMOCLAW_ENGINE must be one of deterministic, openclaw-cli"
+      "Environment variable OPENCLAW_NEMOCLAW_ENGINE must be one of deterministic, openclaw"
     );
+  });
+
+  test("accepts the old openclaw-cli engine value as an alias", () => {
+    expect(
+      readRuntimeConfig({
+        BURBLE_TOOL_GATEWAY_URL: "http://burble-app:3000/internal/tools",
+        BURBLE_INTERNAL_TOKEN: "secret",
+        OPENCLAW_NEMOCLAW_ENGINE: "openclaw-cli"
+      }).engine
+    ).toBe("openclaw");
+  });
+
+  test("treats empty or quoted boolean settings as deploy-friendly values", () => {
+    expect(
+      readRuntimeConfig({
+        BURBLE_TOOL_GATEWAY_URL: "http://burble-app:3000/internal/tools",
+        BURBLE_INTERNAL_TOKEN: "secret",
+        OPENCLAW_VALIDATE_ON_START: "",
+        OPENCLAW_SETUP_ON_START: '"false"',
+        OPENCLAW_CONFIG_PATCH_PATH: '"/etc/openclaw/patch.json5"'
+      })
+    ).toMatchObject({
+      openClawValidateOnStart: true,
+      openClawSetupOnStart: false,
+      openClawConfigPatchPath: "/etc/openclaw/patch.json5"
+    });
   });
 
   test("requires gateway URL and internal token", () => {

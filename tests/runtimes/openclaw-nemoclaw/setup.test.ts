@@ -6,7 +6,7 @@ const config: RuntimeConfig = {
   port: 8080,
   toolGatewayUrl: "http://burble-app:3000/internal/tools",
   internalToken: "secret",
-  engine: "openclaw-cli",
+  engine: "openclaw",
   openClawCommand: "openclaw",
   openClawAgent: "main",
   openClawTimeoutMs: 60000,
@@ -94,6 +94,25 @@ describe("ensureOpenClawSetup", () => {
           OPENCLAW_CONFIG_PATH: "/data/openclaw/config/openclaw.json"
         }
       }
+    ]);
+  });
+
+  test("logs OpenClaw startup lifecycle", async () => {
+    const logs: string[] = [];
+
+    await ensureOpenClawSetup(
+      { ...config, openClawConfigPatchPath: "/etc/openclaw/patch.json5" },
+      async () => ({ exitCode: 0, stdout: "", stderr: "" }),
+      (message) => logs.push(message)
+    );
+
+    expect(logs).toEqual([
+      "OpenClaw onboard start workspace=/data/openclaw/workspace hasPatch=true",
+      "OpenClaw onboard finish",
+      "OpenClaw config patch start path=/etc/openclaw/patch.json5",
+      "OpenClaw config patch finish",
+      "OpenClaw config validate start",
+      "OpenClaw config validate finish"
     ]);
   });
 
