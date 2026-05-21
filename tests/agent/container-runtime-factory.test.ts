@@ -91,6 +91,7 @@ describe("createDockerRuntimeFactory", () => {
       openClawConfigPatchPath: "/opt/burble/openclaw-patches",
       env: { OPENAI_API_KEY: "openai-key", GITHUB_TOKEN: "github-secret" },
       healthCheckAttempts: 2,
+      healthCheckIntervalMs: 0,
       execute: async (command, args) => {
         commands.push({ command, args });
         if (args[0] === "inspect") {
@@ -142,6 +143,7 @@ describe("createDockerRuntimeFactory", () => {
       toolGatewayUrl: "http://burble-app:3000/internal/tools",
       runtimeTokenSecret: "runtime-secret",
       healthCheckAttempts: 1,
+      healthCheckIntervalMs: 0,
       execute: async (_command, args) =>
         args[0] === "inspect"
           ? { code: 1, stdout: "", stderr: "not found" }
@@ -157,13 +159,47 @@ describe("createDockerRuntimeFactory", () => {
     const runtimeId = `rt_${runtimeDataId}`;
     expect(store.getAgentRuntime(runtimeId)).toMatchObject({
       status: "failed",
-      failureReason: "Runtime health check failed"
+      failureReason: "Runtime health check failed: HTTP 503"
     });
     expect(
       store
         .listAgentRuntimeEvents(runtimeId)
         .map((event) => event.eventType)
     ).toEqual(["runtime_provision_requested", "runtime_provision_failed"]);
+
+    store.close();
+  });
+
+  test("retries health checks when the runtime port is not ready yet", async () => {
+    const store = createTokenStore(":memory:");
+    let healthChecks = 0;
+    const factory = createDockerRuntimeFactory({
+      store,
+      engine: "openclaw",
+      image: "burble-openclaw-nemoclaw:dev",
+      dataRoot: "/data/runtimes",
+      dockerNetwork: "compose_default",
+      toolGatewayUrl: "http://burble-app:3000/internal/tools",
+      runtimeTokenSecret: "runtime-secret",
+      healthCheckAttempts: 3,
+      healthCheckIntervalMs: 0,
+      execute: async (_command, args) =>
+        args[0] === "inspect"
+          ? { code: 1, stdout: "", stderr: "not found" }
+          : { code: 0, stdout: "container-id\n", stderr: "" },
+      fetch: async () => {
+        healthChecks += 1;
+        if (healthChecks < 3) {
+          throw new Error("ConnectionRefused");
+        }
+        return new Response("ok");
+      }
+    });
+
+    await expect(factory.getOrCreateRuntime(principal)).resolves.toMatchObject({
+      endpointUrl: expect.stringContaining("burble-rt-")
+    });
+    expect(healthChecks).toBe(3);
 
     store.close();
   });

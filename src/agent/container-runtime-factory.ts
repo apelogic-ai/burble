@@ -45,6 +45,7 @@ export function createDockerRuntimeFactory(input: {
   execute?: RuntimeCommandExecutor;
   fetch?: RuntimeFetch;
   healthCheckAttempts?: number;
+  healthCheckIntervalMs?: number;
   idleTtlMs?: number;
 }): RuntimeFactory {
   const execute = input.execute ?? executeCommand;
@@ -119,7 +120,8 @@ export function createDockerRuntimeFactory(input: {
         await waitForRuntimeHealth({
           endpointUrl: spec.endpointUrl,
           fetch: requestFetch,
-          attempts: input.healthCheckAttempts ?? 10
+          attempts: input.healthCheckAttempts ?? 30,
+          intervalMs: input.healthCheckIntervalMs ?? 1000
         });
         input.store.updateAgentRuntimeStatus(runtime.id, { status: "ready" });
         input.store.recordAgentRuntimeEvent({
@@ -293,15 +295,31 @@ async function waitForRuntimeHealth(input: {
   endpointUrl: string;
   fetch: RuntimeFetch;
   attempts: number;
+  intervalMs: number;
 }): Promise<void> {
+  let lastError: unknown = null;
   for (let attempt = 0; attempt < input.attempts; attempt += 1) {
-    const response = await input.fetch(`${input.endpointUrl}/healthz`);
-    if (response.ok) {
-      return;
+    try {
+      const response = await input.fetch(`${input.endpointUrl}/healthz`);
+      if (response.ok) {
+        return;
+      }
+      lastError = new Error(`HTTP ${response.status}`);
+    } catch (error) {
+      lastError = error;
+    }
+
+    if (attempt < input.attempts - 1) {
+      await sleep(input.intervalMs);
     }
   }
 
-  throw new Error("Runtime health check failed");
+  const detail = lastError instanceof Error ? `: ${lastError.message}` : "";
+  throw new Error(`Runtime health check failed${detail}`);
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 async function assertCommandOk(
