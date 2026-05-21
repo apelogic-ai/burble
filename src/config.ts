@@ -17,6 +17,8 @@ export type Config = {
   agentRuntimeDataRoot: string;
   agentRuntimeDockerNetwork: string;
   agentRuntimeImage: string;
+  agentRuntimeIdleTtlMs: number;
+  agentRuntimeReaperIntervalMs: number;
   agentRuntimeTokenSecret: string | null;
   agentRuntimeToolGatewayUrl: string;
   openClawConfigPatchHostPath: string | null;
@@ -164,6 +166,16 @@ export function readConfig(env: Env): Config {
       env.AGENT_RUNTIME_IMAGE ??
       env.OPENCLAW_NEMOCLAW_IMAGE ??
       "burble-openclaw-nemoclaw:dev",
+    agentRuntimeIdleTtlMs: optionalIntEnv(
+      env,
+      "AGENT_RUNTIME_IDLE_TTL_MS",
+      30 * 60 * 1000
+    ),
+    agentRuntimeReaperIntervalMs: optionalIntEnv(
+      env,
+      "AGENT_RUNTIME_REAPER_INTERVAL_MS",
+      60 * 1000
+    ),
     agentRuntimeTokenSecret:
       optionalSecretEnv(env, "AGENT_RUNTIME_TOKEN_SECRET") ?? internalApiToken,
     agentRuntimeToolGatewayUrl:

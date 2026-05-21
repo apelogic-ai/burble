@@ -35,6 +35,7 @@ export {
 
 export type SlackRuntime = {
   app: App;
+  runtimeFactory?: RuntimeFactory;
   getSlackEmail: (userId: string) => Promise<string>;
 };
 
@@ -374,7 +375,11 @@ export function createSlackRuntime(config: Config, store: TokenStore): SlackRunt
     }
   });
 
-  return { app, getSlackEmail };
+  return {
+    app,
+    ...(runtimeFactory ? { runtimeFactory } : {}),
+    getSlackEmail
+  };
 }
 
 function createOpenClawRuntimeFactory(
@@ -401,6 +406,7 @@ function createOpenClawRuntimeFactory(
       toolGatewayUrl: config.agentRuntimeToolGatewayUrl,
       runtimeTokenSecret: config.agentRuntimeTokenSecret,
       openClawConfigPatchPath: config.openClawConfigPatchHostPath,
+      idleTtlMs: config.agentRuntimeIdleTtlMs,
       env: Bun.env
     });
   }

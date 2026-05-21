@@ -30,6 +30,8 @@ describe("readConfig", () => {
       agentRuntimeDataRoot: "/data/runtimes",
       agentRuntimeDockerNetwork: "compose_default",
       agentRuntimeImage: "burble-openclaw-nemoclaw:dev",
+      agentRuntimeIdleTtlMs: 1800000,
+      agentRuntimeReaperIntervalMs: 60000,
       agentRuntimeTokenSecret: null,
       agentRuntimeToolGatewayUrl: "http://burble-app:3000/internal/tools",
       openClawConfigPatchHostPath: null,
@@ -68,6 +70,8 @@ describe("readConfig", () => {
       AGENT_RUNTIME_FACTORY: "docker",
       AGENT_RUNTIME_IMAGE: "burble-openclaw-nemoclaw-openclaw-cli:dev",
       AGENT_RUNTIME_DOCKER_NETWORK: "burble_default",
+      AGENT_RUNTIME_IDLE_TTL_MS: "120000",
+      AGENT_RUNTIME_REAPER_INTERVAL_MS: "5000",
       AGENT_RUNTIME_TOKEN_SECRET: "runtime-secret",
       AGENT_RUNTIME_TOOL_GATEWAY_URL: "http://burble-app:3000/internal/tools",
       OPENCLAW_CONFIG_PATCH_HOST_PATH: "/srv/burble/openclaw-patches"
@@ -78,6 +82,8 @@ describe("readConfig", () => {
       "burble-openclaw-nemoclaw-openclaw-cli:dev"
     );
     expect(config.agentRuntimeDockerNetwork).toBe("burble_default");
+    expect(config.agentRuntimeIdleTtlMs).toBe(120000);
+    expect(config.agentRuntimeReaperIntervalMs).toBe(5000);
     expect(config.agentRuntimeTokenSecret).toBe("runtime-secret");
     expect(config.openClawConfigPatchHostPath).toBe(
       "/srv/burble/openclaw-patches"

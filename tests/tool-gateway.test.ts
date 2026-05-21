@@ -23,6 +23,8 @@ const config: Config = {
   agentRuntimeDataRoot: "/data/runtimes",
   agentRuntimeDockerNetwork: "compose_default",
   agentRuntimeImage: "burble-openclaw-nemoclaw:dev",
+  agentRuntimeIdleTtlMs: 1800000,
+  agentRuntimeReaperIntervalMs: 60000,
   agentRuntimeTokenSecret: null,
   agentRuntimeToolGatewayUrl: "http://burble-app:3000/internal/tools",
   openClawConfigPatchHostPath: null,
