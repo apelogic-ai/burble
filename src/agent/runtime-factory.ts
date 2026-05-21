@@ -71,7 +71,7 @@ function toHandleStatus(status: string): RuntimeHandle["status"] {
   return status === "busy" || status === "idle" ? status : "ready";
 }
 
-function buildRuntimeDataId(
+export function buildRuntimeDataId(
   principal: PrincipalId,
   engine: AgentRuntimeEngine
 ): string {
@@ -81,6 +81,6 @@ function buildRuntimeDataId(
     .slice(0, 32);
 }
 
-function hashRuntimeToken(token: string): string {
+export function hashRuntimeToken(token: string): string {
   return createHash("sha256").update(token).digest("hex");
 }
