@@ -38,8 +38,11 @@ services:
       - OPENCLAW_SETUP_ON_START=${OPENCLAW_SETUP_ON_START:-true}
       - OPENCLAW_CONFIG_PATCH_PATH=${OPENCLAW_CONFIG_PATCH_PATH:-}
       - OPENCLAW_VALIDATE_ON_START=${OPENCLAW_VALIDATE_ON_START:-true}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
     volumes:
       - openclaw_nemoclaw_data:/data
+      - ./openclaw-patches:/etc/openclaw/patches:ro
 
 volumes:
   openclaw_nemoclaw_data:

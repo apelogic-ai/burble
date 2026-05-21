@@ -8,6 +8,9 @@ const openClawCliCompose = await Bun.file(
   "deploy/dev/compose/docker-compose.openclaw-cli.yml"
 ).text();
 const caddyfile = await Bun.file("deploy/dev/compose/Caddyfile").text();
+const openClawOpenAiPatch = await Bun.file(
+  "deploy/dev/compose/openclaw-patches/openai.json5"
+).text();
 const ansibleEnvTemplate = await Bun.file(
   "deploy/dev/ansible/roles/burble-app/templates/env.j2"
 ).text();
@@ -96,6 +99,16 @@ describe("dev deploy config", () => {
     expect(openClawCompose).toContain(
       "OPENCLAW_VALIDATE_ON_START=${OPENCLAW_VALIDATE_ON_START:-true}"
     );
+    expect(openClawCompose).toContain("OPENAI_API_KEY=${OPENAI_API_KEY:-}");
+    expect(openClawCompose).toContain("ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}");
+    expect(openClawCompose).toContain("./openclaw-patches:/etc/openclaw/patches:ro");
+  });
+
+  test("provides a no-secrets OpenClaw OpenAI config patch", () => {
+    expect(openClawOpenAiPatch).toContain('primary: "openai/gpt-5.5"');
+    expect(openClawOpenAiPatch).toContain("openai:default");
+    expect(openClawOpenAiPatch).not.toContain("sk-");
+    expect(openClawOpenAiPatch).not.toContain("apiKey");
   });
 
   test("templates OpenClaw/NemoClaw settings for Ansible deploys", () => {

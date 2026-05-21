@@ -142,8 +142,9 @@ OPENCLAW_STATE_DIR=/data/openclaw/state
 OPENCLAW_CONFIG_PATH=/data/openclaw/config/openclaw.json
 OPENCLAW_WORKSPACE_DIR=/data/openclaw/workspace
 OPENCLAW_SETUP_ON_START=true
-OPENCLAW_CONFIG_PATCH_PATH=
+OPENCLAW_CONFIG_PATCH_PATH=/etc/openclaw/patches/openai.json5
 OPENCLAW_VALIDATE_ON_START=true
+OPENAI_API_KEY=sk-...
 ```
 
 This calls an OpenClaw CLI binary from inside the runtime container using
@@ -155,7 +156,9 @@ state/config paths under the `openclaw_nemoclaw_data` Docker volume.
 If `OPENCLAW_CONFIG_PATCH_PATH` points to a JSON5 patch file inside the
 container, startup applies it with `openclaw config patch --file` and validates
 the resulting config. Use that patch file for non-interactive OpenClaw
-model/provider configuration.
+model/provider configuration. The checked-in
+`compose/openclaw-patches/openai.json5` patch enables OpenAI with
+`openai/gpt-5.5`; the API key is still supplied only through `OPENAI_API_KEY`.
 To build the repo-provided image with the OpenClaw CLI installed, add the CLI
 override:
 

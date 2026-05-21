@@ -1,0 +1,32 @@
+{
+  agents: {
+    defaults: {
+      model: {
+        primary: "openai/gpt-5.5"
+      },
+      models: {
+        "openai/gpt-5.5": {
+          alias: "GPT"
+        }
+      }
+    }
+  },
+  plugins: {
+    entries: {
+      openai: {
+        enabled: true
+      }
+    }
+  },
+  auth: {
+    profiles: {
+      "openai:default": {
+        provider: "openai",
+        mode: "api_key"
+      }
+    },
+    order: {
+      openai: ["openai:default"]
+    }
+  }
+}
