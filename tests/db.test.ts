@@ -117,4 +117,57 @@ describe("createTokenStore", () => {
 
     store.close();
   });
+
+  test("lists stale ready and idle runtimes for reaping", () => {
+    const store = createTokenStore(":memory:");
+    const staleReady = store.getOrCreateAgentRuntime({
+      workspaceId: "T123",
+      slackUserId: "U123",
+      engine: "openclaw",
+      endpointUrl: "http://runtime-u123:8080",
+      authTokenHash: "hash-u123",
+      statePath: "/data/runtimes/u123/state",
+      configPath: "/data/runtimes/u123/config/openclaw.json",
+      workspacePath: "/data/runtimes/u123/workspace",
+      now: new Date("2026-05-21T00:00:00.000Z")
+    });
+    const staleIdle = store.getOrCreateAgentRuntime({
+      workspaceId: "T123",
+      slackUserId: "U456",
+      engine: "openclaw",
+      endpointUrl: "http://runtime-u456:8080",
+      authTokenHash: "hash-u456",
+      statePath: "/data/runtimes/u456/state",
+      configPath: "/data/runtimes/u456/config/openclaw.json",
+      workspacePath: "/data/runtimes/u456/workspace",
+      now: new Date("2026-05-21T00:01:00.000Z")
+    });
+    const busy = store.getOrCreateAgentRuntime({
+      workspaceId: "T123",
+      slackUserId: "U789",
+      engine: "openclaw",
+      endpointUrl: "http://runtime-u789:8080",
+      authTokenHash: "hash-u789",
+      statePath: "/data/runtimes/u789/state",
+      configPath: "/data/runtimes/u789/config/openclaw.json",
+      workspacePath: "/data/runtimes/u789/workspace",
+      now: new Date("2026-05-21T00:02:00.000Z")
+    });
+    store.updateAgentRuntimeStatus(staleIdle.id, {
+      status: "idle",
+      now: new Date("2026-05-21T00:03:00.000Z")
+    });
+    store.updateAgentRuntimeStatus(busy.id, {
+      status: "busy",
+      now: new Date("2026-05-21T00:03:00.000Z")
+    });
+
+    expect(
+      store
+        .listIdleAgentRuntimes(new Date("2026-05-21T00:01:00.000Z"))
+        .map((runtime) => runtime.id)
+    ).toEqual([staleReady.id, staleIdle.id]);
+
+    store.close();
+  });
 });

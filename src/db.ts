@@ -181,6 +181,27 @@ export function createTokenStore(path: string) {
     FROM agent_runtimes
     WHERE workspace_id = ? AND slack_user_id = ? AND engine = ?
   `);
+  const listIdleAgentRuntimes = db.query<AgentRuntimeRecord, [string]>(`
+    SELECT
+      id,
+      workspace_id AS workspaceId,
+      slack_user_id AS slackUserId,
+      engine,
+      status,
+      endpoint_url AS endpointUrl,
+      auth_token_hash AS authTokenHash,
+      state_path AS statePath,
+      config_path AS configPath,
+      workspace_path AS workspacePath,
+      created_at AS createdAt,
+      last_seen_at AS lastSeenAt,
+      last_used_at AS lastUsedAt,
+      stopped_at AS stoppedAt,
+      failure_reason AS failureReason
+    FROM agent_runtimes
+    WHERE status IN ('ready', 'idle') AND last_used_at <= ?
+    ORDER BY last_used_at ASC
+  `);
   const insertAgentRuntime = db.query(`
     INSERT INTO agent_runtimes (
       id,
@@ -321,6 +342,10 @@ export function createTokenStore(path: string) {
 
     getAgentRuntime(id: string): AgentRuntimeRecord | null {
       return getAgentRuntimeById.get(id);
+    },
+
+    listIdleAgentRuntimes(idleBefore: Date): AgentRuntimeRecord[] {
+      return listIdleAgentRuntimes.all(idleBefore.toISOString());
     },
 
     updateAgentRuntimeStatus(

@@ -154,4 +154,60 @@ describe("createDockerRuntimeFactory", () => {
 
     store.close();
   });
+
+  test("reaps stale ready and idle containers only", async () => {
+    const store = createTokenStore(":memory:");
+    const stopped: string[] = [];
+    const factory = createDockerRuntimeFactory({
+      store,
+      engine: "openclaw",
+      image: "burble-openclaw-nemoclaw:dev",
+      dataRoot: "/data/runtimes",
+      dockerNetwork: "compose_default",
+      toolGatewayUrl: "http://burble-app:3000/internal/tools",
+      runtimeTokenSecret: "runtime-secret",
+      idleTtlMs: 5 * 60 * 1000,
+      execute: async (_command, args) => {
+        if (args[0] === "stop") {
+          stopped.push(args[1]);
+        }
+        return { code: 0, stdout: "true\n", stderr: "" };
+      },
+      fetch: async () => new Response("ok")
+    });
+
+    const stale = await factory.getOrCreateRuntime(principal);
+    const fresh = await factory.getOrCreateRuntime({
+      ...principal,
+      slackUserId: "U456"
+    });
+    const busy = await factory.getOrCreateRuntime({
+      ...principal,
+      slackUserId: "U789"
+    });
+    store.touchAgentRuntime(
+      stale.id,
+      new Date("2026-05-21T00:00:00.000Z")
+    );
+    store.touchAgentRuntime(
+      fresh.id,
+      new Date("2026-05-21T00:08:00.000Z")
+    );
+    store.touchAgentRuntime(busy.id, new Date("2026-05-21T00:00:00.000Z"));
+    store.updateAgentRuntimeStatus(busy.id, {
+      status: "busy",
+      now: new Date("2026-05-21T00:09:00.000Z")
+    });
+
+    await factory.reapIdleRuntimes(new Date("2026-05-21T00:10:00.000Z"));
+
+    expect(stopped).toEqual([
+      `burble-rt-${buildRuntimeDataId(principal, "openclaw")}`
+    ]);
+    expect(store.getAgentRuntime(stale.id)?.status).toBe("stopped");
+    expect(store.getAgentRuntime(fresh.id)?.status).toBe("ready");
+    expect(store.getAgentRuntime(busy.id)?.status).toBe("busy");
+
+    store.close();
+  });
 });

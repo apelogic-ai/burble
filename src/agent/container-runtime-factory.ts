@@ -45,9 +45,26 @@ export function createDockerRuntimeFactory(input: {
   execute?: RuntimeCommandExecutor;
   fetch?: RuntimeFetch;
   healthCheckAttempts?: number;
+  idleTtlMs?: number;
 }): RuntimeFactory {
   const execute = input.execute ?? executeCommand;
   const requestFetch = input.fetch ?? fetch;
+  const stopRuntime = async (runtimeId: string): Promise<void> => {
+    const runtime = input.store.getAgentRuntime(runtimeId);
+    if (!runtime) {
+      return;
+    }
+
+    const runtimeDataId = buildRuntimeDataId(
+      {
+        workspaceId: runtime.workspaceId,
+        slackUserId: runtime.slackUserId
+      },
+      runtime.engine
+    );
+    await execute("docker", ["stop", buildContainerName(runtimeDataId)]);
+    input.store.updateAgentRuntimeStatus(runtimeId, { status: "stopped" });
+  };
 
   return {
     async getOrCreateRuntime(principal) {
@@ -105,24 +122,20 @@ export function createDockerRuntimeFactory(input: {
     },
 
     async stopRuntime(runtimeId) {
-      const runtime = input.store.getAgentRuntime(runtimeId);
-      if (!runtime) {
-        return;
-      }
-
-      const runtimeDataId = buildRuntimeDataId(
-        {
-          workspaceId: runtime.workspaceId,
-          slackUserId: runtime.slackUserId
-        },
-        runtime.engine
-      );
-      await execute("docker", ["stop", buildContainerName(runtimeDataId)]);
-      input.store.updateAgentRuntimeStatus(runtimeId, { status: "stopped" });
+      await stopRuntime(runtimeId);
     },
 
-    async reapIdleRuntimes(_now) {
-      // Idle selection is DB-policy work; this factory owns only container actions.
+    async reapIdleRuntimes(now) {
+      const idleBefore = new Date(
+        now.getTime() - (input.idleTtlMs ?? 30 * 60 * 1000)
+      );
+      const staleRuntimes = input.store
+        .listIdleAgentRuntimes(idleBefore)
+        .filter((runtime) => runtime.engine === input.engine);
+
+      for (const runtime of staleRuntimes) {
+        await stopRuntime(runtime.id);
+      }
     }
   };
 }

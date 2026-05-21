@@ -48,6 +48,7 @@ function createFakeStore() {
       throw new Error("unexpected agent runtime call");
     },
     getAgentRuntime: () => null,
+    listIdleAgentRuntimes: () => [],
     updateAgentRuntimeStatus: () => undefined,
     touchAgentRuntime: () => undefined,
     close: () => undefined

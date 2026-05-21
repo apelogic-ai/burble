@@ -75,6 +75,7 @@ function createStore(
       throw new Error("unexpected agent runtime call");
     },
     getAgentRuntime: (id) => (id === foundRuntime?.id ? foundRuntime : null),
+    listIdleAgentRuntimes: () => [],
     updateAgentRuntimeStatus: () => undefined,
     touchAgentRuntime: () => undefined,
     close: () => undefined
