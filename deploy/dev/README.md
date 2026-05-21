@@ -138,11 +138,18 @@ OPENCLAW_NEMOCLAW_ENGINE=openclaw-cli
 OPENCLAW_COMMAND=openclaw
 OPENCLAW_AGENT=main
 OPENCLAW_TIMEOUT_MS=60000
+OPENCLAW_STATE_DIR=/data/openclaw/state
+OPENCLAW_CONFIG_PATH=/data/openclaw/config/openclaw.json
+OPENCLAW_WORKSPACE_DIR=/data/openclaw/workspace
+OPENCLAW_SETUP_ON_START=true
 ```
 
 This calls an OpenClaw CLI binary from inside the runtime container using
-gateway-derived context. To build the repo-provided image with the OpenClaw CLI
-installed, add the CLI override:
+gateway-derived context. On startup the runtime runs
+`openclaw setup --non-interactive --workspace "${OPENCLAW_WORKSPACE_DIR}"` with
+persistent state/config paths under the `openclaw_nemoclaw_data` Docker volume.
+To build the repo-provided image with the OpenClaw CLI installed, add the CLI
+override:
 
 ```bash
 docker compose \

@@ -11,7 +11,7 @@ export type CliCommandResult = {
 export type CliCommandRunner = (
   command: string,
   args: string[],
-  options: { timeoutMs: number }
+  options: { timeoutMs: number; env?: Record<string, string> }
 ) => Promise<CliCommandResult>;
 
 export async function runOpenClawCliRequest(
@@ -38,7 +38,10 @@ export async function runOpenClawCliRequest(
       "--session-id",
       buildSessionId(request)
     ],
-    { timeoutMs: config.openClawTimeoutMs }
+    {
+      timeoutMs: config.openClawTimeoutMs,
+      env: openClawEnv(config)
+    }
   );
 
   if (result.exitCode !== 0) {
@@ -53,14 +56,18 @@ export async function runOpenClawCliRequest(
   };
 }
 
-async function runCliCommand(
+export async function runCliCommand(
   command: string,
   args: string[],
-  options: { timeoutMs: number }
+  options: { timeoutMs: number; env?: Record<string, string> }
 ): Promise<CliCommandResult> {
   const proc = Bun.spawn([command, ...args], {
     stdout: "pipe",
-    stderr: "pipe"
+    stderr: "pipe",
+    env: {
+      ...Bun.env,
+      ...options.env
+    }
   });
   let timedOut = false;
   const timer = setTimeout(() => {
@@ -83,6 +90,13 @@ async function runCliCommand(
   } finally {
     clearTimeout(timer);
   }
+}
+
+export function openClawEnv(config: RuntimeConfig): Record<string, string> {
+  return {
+    OPENCLAW_STATE_DIR: config.openClawStateDir,
+    OPENCLAW_CONFIG_PATH: config.openClawConfigPath
+  };
 }
 
 function buildOpenClawPrompt(request: RunRequest, baseline: RunResponse): string {

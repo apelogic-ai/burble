@@ -6,6 +6,10 @@ export type RuntimeConfig = {
   openClawCommand: string;
   openClawAgent: string;
   openClawTimeoutMs: number;
+  openClawStateDir: string;
+  openClawConfigPath: string;
+  openClawWorkspaceDir: string;
+  openClawSetupOnStart: boolean;
 };
 
 export type RuntimeEngine = "deterministic" | "openclaw-cli";
@@ -24,7 +28,19 @@ export function readRuntimeConfig(env: Env): RuntimeConfig {
     engine: readRuntimeEngine(env.OPENCLAW_NEMOCLAW_ENGINE ?? "deterministic"),
     openClawCommand: env.OPENCLAW_COMMAND?.trim() || "openclaw",
     openClawAgent: env.OPENCLAW_AGENT?.trim() || "main",
-    openClawTimeoutMs: readPositiveInt(env.OPENCLAW_TIMEOUT_MS ?? "60000", "OPENCLAW_TIMEOUT_MS")
+    openClawTimeoutMs: readPositiveInt(
+      env.OPENCLAW_TIMEOUT_MS ?? "60000",
+      "OPENCLAW_TIMEOUT_MS"
+    ),
+    openClawStateDir: env.OPENCLAW_STATE_DIR?.trim() || "/data/openclaw/state",
+    openClawConfigPath:
+      env.OPENCLAW_CONFIG_PATH?.trim() || "/data/openclaw/config/openclaw.json",
+    openClawWorkspaceDir:
+      env.OPENCLAW_WORKSPACE_DIR?.trim() || "/data/openclaw/workspace",
+    openClawSetupOnStart: readBooleanEnv(
+      env.OPENCLAW_SETUP_ON_START ?? "true",
+      "OPENCLAW_SETUP_ON_START"
+    )
   };
 }
 
@@ -59,4 +75,17 @@ function readRuntimeEngine(value: string): RuntimeEngine {
   }
 
   return normalized as RuntimeEngine;
+}
+
+function readBooleanEnv(value: string, name: string): boolean {
+  const normalized = value.trim().toLowerCase();
+  if (normalized === "true" || normalized === "1" || normalized === "yes") {
+    return true;
+  }
+
+  if (normalized === "false" || normalized === "0" || normalized === "no") {
+    return false;
+  }
+
+  throw new Error(`Environment variable ${name} must be true or false`);
 }

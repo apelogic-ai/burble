@@ -32,6 +32,10 @@ services:
       - OPENCLAW_COMMAND=${OPENCLAW_COMMAND:-openclaw}
       - OPENCLAW_AGENT=${OPENCLAW_AGENT:-main}
       - OPENCLAW_TIMEOUT_MS=${OPENCLAW_TIMEOUT_MS:-60000}
+      - OPENCLAW_STATE_DIR=${OPENCLAW_STATE_DIR:-/data/openclaw/state}
+      - OPENCLAW_CONFIG_PATH=${OPENCLAW_CONFIG_PATH:-/data/openclaw/config/openclaw.json}
+      - OPENCLAW_WORKSPACE_DIR=${OPENCLAW_WORKSPACE_DIR:-/data/openclaw/workspace}
+      - OPENCLAW_SETUP_ON_START=${OPENCLAW_SETUP_ON_START:-true}
     volumes:
       - openclaw_nemoclaw_data:/data
 

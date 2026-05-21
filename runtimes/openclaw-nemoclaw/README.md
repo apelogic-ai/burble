@@ -31,6 +31,17 @@ CLI mode is intentionally isolated behind the same `/runs` contract. A derived
 image can install OpenClaw/NemoClaw without changing Burble's Slack, OAuth,
 visibility, or deployment boundaries.
 
+When `OPENCLAW_NEMOCLAW_ENGINE=openclaw-cli`, runtime startup runs:
+
+```bash
+openclaw setup --non-interactive --workspace "${OPENCLAW_WORKSPACE_DIR}"
+```
+
+with `OPENCLAW_STATE_DIR` and `OPENCLAW_CONFIG_PATH` passed to the CLI. The
+default paths live under `/data/openclaw`, which should be backed by a Docker
+volume in deployment. Set `OPENCLAW_SETUP_ON_START=false` only when the image or
+volume has already been prepared.
+
 Build the CLI image locally:
 
 ```bash

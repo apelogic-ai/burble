@@ -8,6 +8,9 @@ const openClawCliCompose = await Bun.file(
   "deploy/dev/compose/docker-compose.openclaw-cli.yml"
 ).text();
 const caddyfile = await Bun.file("deploy/dev/compose/Caddyfile").text();
+const ansibleEnvTemplate = await Bun.file(
+  "deploy/dev/ansible/roles/burble-app/templates/env.j2"
+).text();
 
 describe("dev deploy config", () => {
   test("runs the Burble Bun app behind Caddy", () => {
@@ -77,6 +80,33 @@ describe("dev deploy config", () => {
     );
     expect(openClawCompose).toContain("OPENCLAW_COMMAND=${OPENCLAW_COMMAND:-openclaw}");
     expect(openClawCompose).toContain("OPENCLAW_AGENT=${OPENCLAW_AGENT:-main}");
+    expect(openClawCompose).toContain("OPENCLAW_STATE_DIR=${OPENCLAW_STATE_DIR:-/data/openclaw/state}");
+    expect(openClawCompose).toContain(
+      "OPENCLAW_CONFIG_PATH=${OPENCLAW_CONFIG_PATH:-/data/openclaw/config/openclaw.json}"
+    );
+    expect(openClawCompose).toContain(
+      "OPENCLAW_WORKSPACE_DIR=${OPENCLAW_WORKSPACE_DIR:-/data/openclaw/workspace}"
+    );
+    expect(openClawCompose).toContain(
+      "OPENCLAW_SETUP_ON_START=${OPENCLAW_SETUP_ON_START:-true}"
+    );
+  });
+
+  test("templates OpenClaw/NemoClaw settings for Ansible deploys", () => {
+    for (const name of [
+      "OPENCLAW_NEMOCLAW_IMAGE",
+      "OPENCLAW_NEMOCLAW_ENGINE",
+      "OPENCLAW_COMMAND",
+      "OPENCLAW_AGENT",
+      "OPENCLAW_TIMEOUT_MS",
+      "OPENCLAW_STATE_DIR",
+      "OPENCLAW_CONFIG_PATH",
+      "OPENCLAW_WORKSPACE_DIR",
+      "OPENCLAW_SETUP_ON_START",
+      "OPENCLAW_VERSION"
+    ]) {
+      expect(ansibleEnvTemplate).toContain(name);
+    }
   });
 
   test("provides an optional OpenClaw CLI runtime build override", async () => {

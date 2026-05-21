@@ -1,7 +1,10 @@
 import { readRuntimeConfig } from "./config";
 import { handleRuntimeRequest } from "./server";
+import { ensureOpenClawSetup } from "./setup";
 
 const config = readRuntimeConfig(Bun.env);
+
+await ensureOpenClawSetup(config);
 
 const server = Bun.serve({
   port: config.port,

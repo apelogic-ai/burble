@@ -9,7 +9,11 @@ const config: RuntimeConfig = {
   engine: "deterministic",
   openClawCommand: "openclaw",
   openClawAgent: "main",
-  openClawTimeoutMs: 60000
+  openClawTimeoutMs: 60000,
+  openClawStateDir: "/data/openclaw/state",
+  openClawConfigPath: "/data/openclaw/config/openclaw.json",
+  openClawWorkspaceDir: "/data/openclaw/workspace",
+  openClawSetupOnStart: true
 };
 
 describe("handleRuntimeRequest", () => {

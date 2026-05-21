@@ -11,7 +11,11 @@ describe("readRuntimeConfig", () => {
         OPENCLAW_NEMOCLAW_ENGINE: "openclaw-cli",
         OPENCLAW_COMMAND: "/usr/local/bin/openclaw",
         OPENCLAW_AGENT: "burble",
-        OPENCLAW_TIMEOUT_MS: "120000"
+        OPENCLAW_TIMEOUT_MS: "120000",
+        OPENCLAW_STATE_DIR: "/data/openclaw/state",
+        OPENCLAW_CONFIG_PATH: "/data/openclaw/config/openclaw.json",
+        OPENCLAW_WORKSPACE_DIR: "/data/openclaw/workspace",
+        OPENCLAW_SETUP_ON_START: "false"
       })
     ).toEqual({
       port: 9090,
@@ -20,7 +24,11 @@ describe("readRuntimeConfig", () => {
       engine: "openclaw-cli",
       openClawCommand: "/usr/local/bin/openclaw",
       openClawAgent: "burble",
-      openClawTimeoutMs: 120000
+      openClawTimeoutMs: 120000,
+      openClawStateDir: "/data/openclaw/state",
+      openClawConfigPath: "/data/openclaw/config/openclaw.json",
+      openClawWorkspaceDir: "/data/openclaw/workspace",
+      openClawSetupOnStart: false
     });
   });
 
@@ -34,7 +42,11 @@ describe("readRuntimeConfig", () => {
       engine: "deterministic",
       openClawCommand: "openclaw",
       openClawAgent: "main",
-      openClawTimeoutMs: 60000
+      openClawTimeoutMs: 60000,
+      openClawStateDir: "/data/openclaw/state",
+      openClawConfigPath: "/data/openclaw/config/openclaw.json",
+      openClawWorkspaceDir: "/data/openclaw/workspace",
+      openClawSetupOnStart: true
     });
   });
 

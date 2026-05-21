@@ -9,12 +9,20 @@ const config: RuntimeConfig = {
   engine: "openclaw-cli",
   openClawCommand: "openclaw",
   openClawAgent: "main",
-  openClawTimeoutMs: 60000
+  openClawTimeoutMs: 60000,
+  openClawStateDir: "/data/openclaw/state",
+  openClawConfigPath: "/data/openclaw/config/openclaw.json",
+  openClawWorkspaceDir: "/data/openclaw/workspace",
+  openClawSetupOnStart: true
 };
 
 describe("runOpenClawCliRequest", () => {
   test("runs OpenClaw CLI with gateway-derived context", async () => {
-    const commands: Array<{ command: string; args: string[] }> = [];
+    const commands: Array<{
+      command: string;
+      args: string[];
+      env: Record<string, string>;
+    }> = [];
     const response = await runOpenClawCliRequest(
       {
         input: {
@@ -47,8 +55,8 @@ describe("runOpenClawCliRequest", () => {
           content: []
         };
       },
-      async (command, args) => {
-        commands.push({ command, args });
+      async (command, args, options) => {
+        commands.push({ command, args, env: options.env ?? {} });
         return {
           exitCode: 0,
           stdout: JSON.stringify({
@@ -76,6 +84,10 @@ describe("runOpenClawCliRequest", () => {
     expect(commands[0].args).toContain("--message");
     expect(commands[0].args.join(" ")).toContain("Fix billing export");
     expect(commands[0].args.join(" ")).not.toContain("secret");
+    expect(commands[0].env).toEqual({
+      OPENCLAW_STATE_DIR: "/data/openclaw/state",
+      OPENCLAW_CONFIG_PATH: "/data/openclaw/config/openclaw.json"
+    });
   });
 
   test("does not invoke OpenClaw when GitHub is not connected", async () => {
