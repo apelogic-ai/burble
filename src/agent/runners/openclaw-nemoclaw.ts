@@ -63,6 +63,15 @@ export function createOpenClawNemoClawAgentRunner(
           `githubConnected=${Boolean(input.connections.github)}`
         ].join(" ")
       );
+      if (runtime) {
+        deps.runtimeFactory?.recordRuntimeEvent?.(runtime.id, {
+          eventType: "runtime_run_started",
+          summary: {
+            textLength: input.text.length,
+            githubConnected: Boolean(input.connections.github)
+          }
+        });
+      }
 
       const response = await requestFetch(`${baseUrl}/runs`, {
         method: "POST",
@@ -96,6 +105,15 @@ export function createOpenClawNemoClawAgentRunner(
           `textLength=${agentResponse.text.length}`
         ].join(" ")
       );
+      if (runtime) {
+        deps.runtimeFactory?.recordRuntimeEvent?.(runtime.id, {
+          eventType: "runtime_run_finished",
+          summary: {
+            classification: agentResponse.classification,
+            textLength: agentResponse.text.length
+          }
+        });
+      }
 
       yield { type: "final", response: agentResponse };
     }

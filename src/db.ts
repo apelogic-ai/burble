@@ -55,6 +55,25 @@ export type AgentRuntimeRecord = {
   failureReason: string | null;
 };
 
+export type AgentRuntimeEventType =
+  | "runtime_provision_requested"
+  | "runtime_provision_finished"
+  | "runtime_provision_failed"
+  | "runtime_stopped"
+  | "runtime_run_started"
+  | "runtime_run_finished"
+  | "runtime_tool_called";
+
+export type AgentRuntimeEventRecord = {
+  id: string;
+  runtimeId: string;
+  workspaceId: string;
+  slackUserId: string;
+  eventType: AgentRuntimeEventType;
+  summaryJson: string;
+  createdAt: string;
+};
+
 export type TokenStore = ReturnType<typeof createTokenStore>;
 
 export function createTokenStore(path: string) {
@@ -102,6 +121,19 @@ export function createTokenStore(path: string) {
 
     CREATE INDEX IF NOT EXISTS idx_agent_runtimes_status_last_used
       ON agent_runtimes (status, last_used_at);
+
+    CREATE TABLE IF NOT EXISTS agent_runtime_events (
+      id TEXT PRIMARY KEY,
+      runtime_id TEXT NOT NULL,
+      workspace_id TEXT NOT NULL,
+      slack_user_id TEXT NOT NULL,
+      event_type TEXT NOT NULL,
+      summary_json TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_agent_runtime_events_runtime_created
+      ON agent_runtime_events (runtime_id, created_at);
   `);
 
   const insertState = db.query(
@@ -234,6 +266,31 @@ export function createTokenStore(path: string) {
     SET last_used_at = ?, last_seen_at = ?
     WHERE id = ?
   `);
+  const insertAgentRuntimeEvent = db.query(`
+    INSERT INTO agent_runtime_events (
+      id,
+      runtime_id,
+      workspace_id,
+      slack_user_id,
+      event_type,
+      summary_json,
+      created_at
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `);
+  const listAgentRuntimeEvents = db.query<AgentRuntimeEventRecord, [string]>(`
+    SELECT
+      id,
+      runtime_id AS runtimeId,
+      workspace_id AS workspaceId,
+      slack_user_id AS slackUserId,
+      event_type AS eventType,
+      summary_json AS summaryJson,
+      created_at AS createdAt
+    FROM agent_runtime_events
+    WHERE runtime_id = ?
+    ORDER BY created_at ASC
+  `);
 
   return {
     createOAuthState(slackUserId: string, ttlMs = 10 * 60 * 1000): string {
@@ -346,6 +403,33 @@ export function createTokenStore(path: string) {
 
     listIdleAgentRuntimes(idleBefore: Date): AgentRuntimeRecord[] {
       return listIdleAgentRuntimes.all(idleBefore.toISOString());
+    },
+
+    recordAgentRuntimeEvent(input: {
+      runtimeId: string;
+      eventType: AgentRuntimeEventType;
+      summary?: Record<string, unknown>;
+      now?: Date;
+    }): void {
+      const runtime = getAgentRuntimeById.get(input.runtimeId);
+      if (!runtime) {
+        return;
+      }
+
+      const now = (input.now ?? new Date()).toISOString();
+      insertAgentRuntimeEvent.run(
+        crypto.randomUUID(),
+        runtime.id,
+        runtime.workspaceId,
+        runtime.slackUserId,
+        input.eventType,
+        JSON.stringify(input.summary ?? {}),
+        now
+      );
+    },
+
+    listAgentRuntimeEvents(runtimeId: string): AgentRuntimeEventRecord[] {
+      return listAgentRuntimeEvents.all(runtimeId);
     },
 
     updateAgentRuntimeStatus(

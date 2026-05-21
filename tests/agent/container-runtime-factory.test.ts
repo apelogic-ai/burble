@@ -107,6 +107,7 @@ describe("createDockerRuntimeFactory", () => {
     const handle = await factory.getOrCreateRuntime(principal);
     const runtimeDataId = buildRuntimeDataId(principal, "openclaw");
     const stored = store.getAgentRuntime(handle.id);
+    const events = store.listAgentRuntimeEvents(handle.id);
 
     expect(handle.endpointUrl).toBe(`http://burble-rt-${runtimeDataId}:8080`);
     expect(handle.statePath).toBe(`/data/runtimes/${runtimeDataId}/state`);
@@ -119,6 +120,13 @@ describe("createDockerRuntimeFactory", () => {
     ]);
     expect(commands[1].args).toContain("OPENAI_API_KEY=openai-key");
     expect(commands[1].args.join(" ")).not.toContain("github-secret");
+    expect(events.map((event) => event.eventType)).toEqual([
+      "runtime_provision_requested",
+      "runtime_provision_finished"
+    ]);
+    expect(events.map((event) => event.summaryJson).join("\n")).not.toContain(
+      "github-secret"
+    );
 
     store.close();
   });
@@ -151,6 +159,11 @@ describe("createDockerRuntimeFactory", () => {
       status: "failed",
       failureReason: "Runtime health check failed"
     });
+    expect(
+      store
+        .listAgentRuntimeEvents(runtimeId)
+        .map((event) => event.eventType)
+    ).toEqual(["runtime_provision_requested", "runtime_provision_failed"]);
 
     store.close();
   });
@@ -204,6 +217,11 @@ describe("createDockerRuntimeFactory", () => {
     expect(stopped).toEqual([
       `burble-rt-${buildRuntimeDataId(principal, "openclaw")}`
     ]);
+    expect(
+      store
+        .listAgentRuntimeEvents(stale.id)
+        .some((event) => event.eventType === "runtime_stopped")
+    ).toBe(true);
     expect(store.getAgentRuntime(stale.id)?.status).toBe("stopped");
     expect(store.getAgentRuntime(fresh.id)?.status).toBe("ready");
     expect(store.getAgentRuntime(busy.id)?.status).toBe("busy");

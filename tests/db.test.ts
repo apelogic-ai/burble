@@ -170,4 +170,47 @@ describe("createTokenStore", () => {
 
     store.close();
   });
+
+  test("records runtime audit events without secrets", () => {
+    const store = createTokenStore(":memory:");
+    const runtime = store.getOrCreateAgentRuntime({
+      workspaceId: "T123",
+      slackUserId: "U123",
+      engine: "openclaw",
+      endpointUrl: "http://runtime-u123:8080",
+      authTokenHash: "hash-u123",
+      statePath: "/data/runtimes/u123/state",
+      configPath: "/data/runtimes/u123/config/openclaw.json",
+      workspacePath: "/data/runtimes/u123/workspace",
+      now: new Date("2026-05-21T00:00:00.000Z")
+    });
+
+    store.recordAgentRuntimeEvent({
+      runtimeId: runtime.id,
+      eventType: "runtime_tool_called",
+      summary: {
+        toolName: "github.listAssignedIssues",
+        classification: "user_private"
+      },
+      now: new Date("2026-05-21T00:01:00.000Z")
+    });
+
+    const events = store.listAgentRuntimeEvents(runtime.id);
+
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      runtimeId: runtime.id,
+      workspaceId: "T123",
+      slackUserId: "U123",
+      eventType: "runtime_tool_called",
+      createdAt: "2026-05-21T00:01:00.000Z"
+    });
+    expect(JSON.parse(events[0].summaryJson)).toEqual({
+      toolName: "github.listAssignedIssues",
+      classification: "user_private"
+    });
+    expect(events[0].summaryJson).not.toContain("token");
+
+    store.close();
+  });
 });

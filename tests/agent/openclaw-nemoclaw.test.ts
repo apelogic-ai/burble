@@ -75,6 +75,7 @@ describe("createOpenClawNemoClawAgentRunner", () => {
 
   test("routes requests through a principal-scoped runtime factory", async () => {
     const principals: unknown[] = [];
+    const runtimeEvents: unknown[] = [];
     const requests: Array<{ url: string; init: RequestInit }> = [];
     const runner = createOpenClawNemoClawAgentRunner({
       runtimeFactory: {
@@ -92,7 +93,10 @@ describe("createOpenClawNemoClawAgentRunner", () => {
           };
         },
         async stopRuntime() {},
-        async reapIdleRuntimes() {}
+        async reapIdleRuntimes() {},
+        recordRuntimeEvent(runtimeId, event) {
+          runtimeEvents.push({ runtimeId, ...event });
+        }
       },
       fetch: async (url, init) => {
         requests.push({ url: String(url), init: init ?? {} });
@@ -126,6 +130,24 @@ describe("createOpenClawNemoClawAgentRunner", () => {
       }
     });
     expect(String(requests[0].init.body)).not.toContain("runtime-token");
+    expect(runtimeEvents).toEqual([
+      {
+        runtimeId: "rt_u123",
+        eventType: "runtime_run_started",
+        summary: {
+          textLength: 24,
+          githubConnected: true
+        }
+      },
+      {
+        runtimeId: "rt_u123",
+        eventType: "runtime_run_finished",
+        summary: {
+          classification: "user_private",
+          textLength: 15
+        }
+      }
+    ]);
   });
 
   test("reports remote runtime failures without leaking response bodies", async () => {

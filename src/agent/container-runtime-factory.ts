@@ -64,6 +64,11 @@ export function createDockerRuntimeFactory(input: {
     );
     await execute("docker", ["stop", buildContainerName(runtimeDataId)]);
     input.store.updateAgentRuntimeStatus(runtimeId, { status: "stopped" });
+    input.store.recordAgentRuntimeEvent({
+      runtimeId,
+      eventType: "runtime_stopped",
+      summary: { reason: "idle_or_requested" }
+    });
   };
 
   return {
@@ -96,6 +101,14 @@ export function createDockerRuntimeFactory(input: {
         configPath: `${input.dataRoot}/${runtimeDataId}/config/openclaw.json`,
         workspacePath: `${input.dataRoot}/${runtimeDataId}/workspace`
       });
+      input.store.recordAgentRuntimeEvent({
+        runtimeId: runtime.id,
+        eventType: "runtime_provision_requested",
+        summary: {
+          engine: input.engine,
+          image: input.image
+        }
+      });
 
       input.store.updateAgentRuntimeStatus(runtime.id, {
         status: "provisioning"
@@ -109,11 +122,25 @@ export function createDockerRuntimeFactory(input: {
           attempts: input.healthCheckAttempts ?? 10
         });
         input.store.updateAgentRuntimeStatus(runtime.id, { status: "ready" });
+        input.store.recordAgentRuntimeEvent({
+          runtimeId: runtime.id,
+          eventType: "runtime_provision_finished",
+          summary: {
+            endpointUrl: spec.endpointUrl
+          }
+        });
         input.store.touchAgentRuntime(runtime.id);
       } catch (error) {
+        const failureReason =
+          error instanceof Error ? error.message : "unknown error";
         input.store.updateAgentRuntimeStatus(runtime.id, {
           status: "failed",
-          failureReason: error instanceof Error ? error.message : "unknown error"
+          failureReason
+        });
+        input.store.recordAgentRuntimeEvent({
+          runtimeId: runtime.id,
+          eventType: "runtime_provision_failed",
+          summary: { failureReason }
         });
         throw error;
       }
@@ -136,6 +163,14 @@ export function createDockerRuntimeFactory(input: {
       for (const runtime of staleRuntimes) {
         await stopRuntime(runtime.id);
       }
+    },
+
+    recordRuntimeEvent(runtimeId, event) {
+      input.store.recordAgentRuntimeEvent({
+        runtimeId,
+        eventType: event.eventType,
+        summary: event.summary
+      });
     }
   };
 }

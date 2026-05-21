@@ -51,6 +51,8 @@ function createFakeStore() {
     },
     getAgentRuntime: () => null,
     listIdleAgentRuntimes: () => [],
+    recordAgentRuntimeEvent: () => undefined,
+    listAgentRuntimeEvents: () => [],
     updateAgentRuntimeStatus: () => undefined,
     touchAgentRuntime: () => undefined,
     close: () => undefined

@@ -62,7 +62,8 @@ const runtime: AgentRuntimeRecord = {
 
 function createStore(
   foundConnection: ProviderConnection | null,
-  foundRuntime: AgentRuntimeRecord | null = null
+  foundRuntime: AgentRuntimeRecord | null = null,
+  runtimeEvents: unknown[] = []
 ): TokenStore {
   return {
     createOAuthState: () => "state",
@@ -78,6 +79,10 @@ function createStore(
     },
     getAgentRuntime: (id) => (id === foundRuntime?.id ? foundRuntime : null),
     listIdleAgentRuntimes: () => [],
+    recordAgentRuntimeEvent: (event) => {
+      runtimeEvents.push(event);
+    },
+    listAgentRuntimeEvents: () => [],
     updateAgentRuntimeStatus: () => undefined,
     touchAgentRuntime: () => undefined,
     close: () => undefined
@@ -156,9 +161,10 @@ describe("handleToolGatewayRequest", () => {
   });
 
   test("allows a principal-bound runtime token for its own provider account", async () => {
+    const runtimeEvents: unknown[] = [];
     const response = await handleToolGatewayRequest(
       config,
-      createStore(connection, runtime),
+      createStore(connection, runtime, runtimeEvents),
       "github.getAuthenticatedUser",
       request(
         "github.getAuthenticatedUser",
@@ -181,6 +187,17 @@ describe("handleToolGatewayRequest", () => {
       classification: "user_private",
       content: { login: "octocat" }
     });
+    expect(runtimeEvents).toEqual([
+      {
+        runtimeId: "rt_u123",
+        eventType: "runtime_tool_called",
+        summary: {
+          toolName: "github.getAuthenticatedUser",
+          classification: "user_private",
+          itemCount: null
+        }
+      }
+    ]);
   });
 
   test("rejects runtime tokens for another user's connected account", async () => {

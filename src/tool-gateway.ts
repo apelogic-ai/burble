@@ -73,19 +73,30 @@ export async function handleToolGatewayRequest(
 
   switch (toolName) {
     case "github.getAuthenticatedUser":
-      return jsonResponse(
+      return jsonResponseWithAudit(
+        store,
+        auth,
+        toolName,
         await tools.getAuthenticatedUser.execute({ connection })
       );
 
     case "github.listAssignedIssues":
-      return jsonResponse(await tools.listAssignedIssues.execute({ connection }));
+      return jsonResponseWithAudit(
+        store,
+        auth,
+        toolName,
+        await tools.listAssignedIssues.execute({ connection })
+      );
 
     case "github.searchIssues": {
       if (!isSearchIssuesInput(body.input)) {
         return new Response("Invalid tool input", { status: 400 });
       }
 
-      return jsonResponse(
+      return jsonResponseWithAudit(
+        store,
+        auth,
+        toolName,
         await tools.searchIssues.execute({
           connection,
           input: { query: body.input.query }
@@ -94,7 +105,12 @@ export async function handleToolGatewayRequest(
     }
 
     case "github.listMyPullRequests":
-      return jsonResponse(await tools.listMyPullRequests.execute({ connection }));
+      return jsonResponseWithAudit(
+        store,
+        auth,
+        toolName,
+        await tools.listMyPullRequests.execute({ connection })
+      );
   }
 
   return new Response("Unknown tool", { status: 404 });
@@ -181,4 +197,25 @@ function jsonResponse(result: ToolResult<unknown>): Response {
       "cache-control": "no-store"
     }
   });
+}
+
+function jsonResponseWithAudit(
+  store: TokenStore,
+  auth: ToolGatewayAuth,
+  toolName: string,
+  result: ToolResult<unknown>
+): Response {
+  if (auth.kind === "runtime") {
+    store.recordAgentRuntimeEvent({
+      runtimeId: auth.runtime.id,
+      eventType: "runtime_tool_called",
+      summary: {
+        toolName,
+        classification: result.classification,
+        itemCount: Array.isArray(result.content) ? result.content.length : null
+      }
+    });
+  }
+
+  return jsonResponse(result);
 }

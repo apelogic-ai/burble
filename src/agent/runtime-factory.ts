@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import type { AgentRuntimeEngine, TokenStore } from "../db";
+import type { AgentRuntimeEngine, AgentRuntimeEventType, TokenStore } from "../db";
 
 export type PrincipalId = {
   workspaceId: string;
@@ -21,6 +21,13 @@ export type RuntimeFactory = {
   getOrCreateRuntime(principal: PrincipalId): Promise<RuntimeHandle>;
   stopRuntime(runtimeId: string): Promise<void>;
   reapIdleRuntimes(now: Date): Promise<void>;
+  recordRuntimeEvent?: (
+    runtimeId: string,
+    input: {
+      eventType: AgentRuntimeEventType;
+      summary?: Record<string, unknown>;
+    }
+  ) => void;
 };
 
 export function createStaticRuntimeFactory(input: {
@@ -63,6 +70,14 @@ export function createStaticRuntimeFactory(input: {
 
     async reapIdleRuntimes(_now) {
       // The static factory does not own process/container lifecycle.
+    },
+
+    recordRuntimeEvent(runtimeId, event) {
+      input.store.recordAgentRuntimeEvent({
+        runtimeId,
+        eventType: event.eventType,
+        summary: event.summary
+      });
     }
   };
 }
