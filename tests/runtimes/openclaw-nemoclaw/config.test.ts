@@ -15,7 +15,9 @@ describe("readRuntimeConfig", () => {
         OPENCLAW_STATE_DIR: "/data/openclaw/state",
         OPENCLAW_CONFIG_PATH: "/data/openclaw/config/openclaw.json",
         OPENCLAW_WORKSPACE_DIR: "/data/openclaw/workspace",
-        OPENCLAW_SETUP_ON_START: "false"
+        OPENCLAW_SETUP_ON_START: "false",
+        OPENCLAW_CONFIG_PATCH_PATH: "/etc/openclaw/patch.json5",
+        OPENCLAW_VALIDATE_ON_START: "false"
       })
     ).toEqual({
       port: 9090,
@@ -28,7 +30,9 @@ describe("readRuntimeConfig", () => {
       openClawStateDir: "/data/openclaw/state",
       openClawConfigPath: "/data/openclaw/config/openclaw.json",
       openClawWorkspaceDir: "/data/openclaw/workspace",
-      openClawSetupOnStart: false
+      openClawSetupOnStart: false,
+      openClawConfigPatchPath: "/etc/openclaw/patch.json5",
+      openClawValidateOnStart: false
     });
   });
 
@@ -46,7 +50,9 @@ describe("readRuntimeConfig", () => {
       openClawStateDir: "/data/openclaw/state",
       openClawConfigPath: "/data/openclaw/config/openclaw.json",
       openClawWorkspaceDir: "/data/openclaw/workspace",
-      openClawSetupOnStart: true
+      openClawSetupOnStart: true,
+      openClawConfigPatchPath: null,
+      openClawValidateOnStart: true
     });
   });
 

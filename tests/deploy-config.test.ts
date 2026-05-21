@@ -90,6 +90,12 @@ describe("dev deploy config", () => {
     expect(openClawCompose).toContain(
       "OPENCLAW_SETUP_ON_START=${OPENCLAW_SETUP_ON_START:-true}"
     );
+    expect(openClawCompose).toContain(
+      "OPENCLAW_CONFIG_PATCH_PATH=${OPENCLAW_CONFIG_PATCH_PATH:-}"
+    );
+    expect(openClawCompose).toContain(
+      "OPENCLAW_VALIDATE_ON_START=${OPENCLAW_VALIDATE_ON_START:-true}"
+    );
   });
 
   test("templates OpenClaw/NemoClaw settings for Ansible deploys", () => {
@@ -103,6 +109,8 @@ describe("dev deploy config", () => {
       "OPENCLAW_CONFIG_PATH",
       "OPENCLAW_WORKSPACE_DIR",
       "OPENCLAW_SETUP_ON_START",
+      "OPENCLAW_CONFIG_PATCH_PATH",
+      "OPENCLAW_VALIDATE_ON_START",
       "OPENCLAW_VERSION"
     ]) {
       expect(ansibleEnvTemplate).toContain(name);

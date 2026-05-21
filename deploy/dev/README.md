@@ -142,12 +142,17 @@ OPENCLAW_STATE_DIR=/data/openclaw/state
 OPENCLAW_CONFIG_PATH=/data/openclaw/config/openclaw.json
 OPENCLAW_WORKSPACE_DIR=/data/openclaw/workspace
 OPENCLAW_SETUP_ON_START=true
+OPENCLAW_CONFIG_PATCH_PATH=
+OPENCLAW_VALIDATE_ON_START=true
 ```
 
 This calls an OpenClaw CLI binary from inside the runtime container using
 gateway-derived context. On startup the runtime runs
 `openclaw setup --non-interactive --workspace "${OPENCLAW_WORKSPACE_DIR}"` with
 persistent state/config paths under the `openclaw_nemoclaw_data` Docker volume.
+If `OPENCLAW_CONFIG_PATCH_PATH` points to a JSON5 patch file inside the
+container, startup applies it with `openclaw config patch --file` and validates
+the resulting config.
 To build the repo-provided image with the OpenClaw CLI installed, add the CLI
 override:
 

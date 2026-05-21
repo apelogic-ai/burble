@@ -36,6 +36,8 @@ services:
       - OPENCLAW_CONFIG_PATH=${OPENCLAW_CONFIG_PATH:-/data/openclaw/config/openclaw.json}
       - OPENCLAW_WORKSPACE_DIR=${OPENCLAW_WORKSPACE_DIR:-/data/openclaw/workspace}
       - OPENCLAW_SETUP_ON_START=${OPENCLAW_SETUP_ON_START:-true}
+      - OPENCLAW_CONFIG_PATCH_PATH=${OPENCLAW_CONFIG_PATCH_PATH:-}
+      - OPENCLAW_VALIDATE_ON_START=${OPENCLAW_VALIDATE_ON_START:-true}
     volumes:
       - openclaw_nemoclaw_data:/data
 

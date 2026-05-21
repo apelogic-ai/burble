@@ -42,6 +42,10 @@ default paths live under `/data/openclaw`, which should be backed by a Docker
 volume in deployment. Set `OPENCLAW_SETUP_ON_START=false` only when the image or
 volume has already been prepared.
 
+If `OPENCLAW_CONFIG_PATCH_PATH` is set, startup applies it with
+`openclaw config patch --file`. Startup then runs `openclaw config validate`
+unless `OPENCLAW_VALIDATE_ON_START=false`.
+
 Build the CLI image locally:
 
 ```bash

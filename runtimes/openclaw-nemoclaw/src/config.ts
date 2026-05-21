@@ -10,6 +10,8 @@ export type RuntimeConfig = {
   openClawConfigPath: string;
   openClawWorkspaceDir: string;
   openClawSetupOnStart: boolean;
+  openClawConfigPatchPath: string | null;
+  openClawValidateOnStart: boolean;
 };
 
 export type RuntimeEngine = "deterministic" | "openclaw-cli";
@@ -40,6 +42,11 @@ export function readRuntimeConfig(env: Env): RuntimeConfig {
     openClawSetupOnStart: readBooleanEnv(
       env.OPENCLAW_SETUP_ON_START ?? "true",
       "OPENCLAW_SETUP_ON_START"
+    ),
+    openClawConfigPatchPath: readOptionalEnv(env.OPENCLAW_CONFIG_PATCH_PATH),
+    openClawValidateOnStart: readBooleanEnv(
+      env.OPENCLAW_VALIDATE_ON_START ?? "true",
+      "OPENCLAW_VALIDATE_ON_START"
     )
   };
 }
@@ -88,4 +95,9 @@ function readBooleanEnv(value: string, name: string): boolean {
   }
 
   throw new Error(`Environment variable ${name} must be true or false`);
+}
+
+function readOptionalEnv(value: string | undefined): string | null {
+  const trimmed = value?.trim();
+  return trimmed ? trimmed : null;
 }
