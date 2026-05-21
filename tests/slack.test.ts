@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   buildAuthResponse,
+  buildReplyThreadTs,
   formatConnectGitHubMessage,
   formatGitHubIdentityMessage,
   formatWorkingMessage,
@@ -181,5 +182,35 @@ describe("shouldHandleDirectMessageEvent", () => {
         text: "hello"
       })
     ).toBe(false);
+  });
+});
+
+describe("buildReplyThreadTs", () => {
+  test("threads channel replies under the triggering message", () => {
+    expect(
+      buildReplyThreadTs({
+        isDirectMessage: false,
+        messageTs: "1710000000.000100"
+      })
+    ).toBe("1710000000.000100");
+  });
+
+  test("does not thread fresh direct message replies", () => {
+    expect(
+      buildReplyThreadTs({
+        isDirectMessage: true,
+        messageTs: "1710000000.000100"
+      })
+    ).toBeUndefined();
+  });
+
+  test("keeps replies inside an existing direct message thread", () => {
+    expect(
+      buildReplyThreadTs({
+        isDirectMessage: true,
+        messageTs: "1710000001.000100",
+        threadTs: "1710000000.000100"
+      })
+    ).toBe("1710000000.000100");
   });
 });

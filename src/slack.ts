@@ -134,7 +134,12 @@ export function createSlackRuntime(config: Config, store: TokenStore): SlackRunt
           user: mention.user,
           isDirectMessage:
             mention.channel_type === "im" || mention.channel.startsWith("D"),
-          threadTs: mention.thread_ts ?? mention.ts
+          threadTs: buildReplyThreadTs({
+            isDirectMessage:
+              mention.channel_type === "im" || mention.channel.startsWith("D"),
+            messageTs: mention.ts,
+            threadTs: mention.thread_ts
+          })
         });
       }
 
@@ -168,7 +173,12 @@ export function createSlackRuntime(config: Config, store: TokenStore): SlackRunt
         response,
         channel: mention.channel,
         user: mention.user,
-        threadTs: mention.thread_ts ?? mention.ts
+        threadTs: buildReplyThreadTs({
+          isDirectMessage:
+            mention.channel_type === "im" || mention.channel.startsWith("D"),
+          messageTs: mention.ts,
+          threadTs: mention.thread_ts
+        })
       });
     } catch (error) {
       logger.error(error);
@@ -196,7 +206,11 @@ export function createSlackRuntime(config: Config, store: TokenStore): SlackRunt
           channel: directMessage.channel,
           user: directMessage.user,
           isDirectMessage: true,
-          threadTs: directMessage.thread_ts ?? directMessage.ts
+          threadTs: buildReplyThreadTs({
+            isDirectMessage: true,
+            messageTs: directMessage.ts,
+            threadTs: directMessage.thread_ts
+          })
         });
       }
 
@@ -229,7 +243,11 @@ export function createSlackRuntime(config: Config, store: TokenStore): SlackRunt
         response,
         channel: directMessage.channel,
         user: directMessage.user,
-        threadTs: directMessage.thread_ts ?? directMessage.ts
+        threadTs: buildReplyThreadTs({
+          isDirectMessage: true,
+          messageTs: directMessage.ts,
+          threadTs: directMessage.thread_ts
+        })
       });
     } catch (error) {
       logger.error(error);
@@ -486,13 +504,25 @@ export function shouldHandleDirectMessageEvent(
   );
 }
 
+export function buildReplyThreadTs(input: {
+  isDirectMessage: boolean;
+  messageTs: string;
+  threadTs?: string;
+}): string | undefined {
+  if (input.threadTs) {
+    return input.threadTs;
+  }
+
+  return input.isDirectMessage ? undefined : input.messageTs;
+}
+
 async function postConversationResponse(
   client: App["client"],
   input: {
     response: ConversationResponse;
     channel: string;
     user: string;
-    threadTs: string;
+    threadTs?: string;
   }
 ): Promise<void> {
   if (input.response.visibility === "ephemeral") {
@@ -516,7 +546,7 @@ async function postConversationResponse(
 
   await client.chat.postMessage({
     channel: input.channel,
-    thread_ts: input.threadTs,
+    ...(input.threadTs ? { thread_ts: input.threadTs } : {}),
     text: input.response.text,
     ...(input.response.blocks ? { blocks: input.response.blocks } : {})
   });
@@ -528,7 +558,7 @@ async function postMentionWorkingState(
     channel: string;
     user: string;
     isDirectMessage: boolean;
-    threadTs: string;
+    threadTs?: string;
   }
 ): Promise<void> {
   const text = formatMentionWorkingMessage();
@@ -536,7 +566,7 @@ async function postMentionWorkingState(
   if (input.isDirectMessage) {
     await client.chat.postMessage({
       channel: input.channel,
-      thread_ts: input.threadTs,
+      ...(input.threadTs ? { thread_ts: input.threadTs } : {}),
       text
     });
     return;
@@ -545,7 +575,7 @@ async function postMentionWorkingState(
   await client.chat.postEphemeral({
     channel: input.channel,
     user: input.user,
-    thread_ts: input.threadTs,
+    ...(input.threadTs ? { thread_ts: input.threadTs } : {}),
     text
   });
 }
