@@ -3,6 +3,7 @@ import { createTokenStore } from "./db";
 import { startRuntimeReaper } from "./agent/runtime-reaper";
 import { startOAuthServer } from "./server";
 import { createSlackRuntime } from "./slack";
+import { formatLogError, withUtcTimestamp } from "./logging";
 
 const config = loadConfig();
 const store = createTokenStore(config.databasePath);
@@ -12,12 +13,16 @@ const runtimeReaper = slack.runtimeFactory
   ? startRuntimeReaper({
       factory: slack.runtimeFactory,
       intervalMs: config.agentRuntimeReaperIntervalMs,
-      logInfo: (message) => console.log(message),
-      logError: (error) => console.error(error)
+      logInfo: (message) => console.log(withUtcTimestamp(message)),
+      logError: (error) => console.error(formatLogError(error))
     })
   : undefined;
 
-console.log(`OAuth callback server listening on http://localhost:${server.port}`);
+console.log(
+  withUtcTimestamp(
+    `OAuth callback server listening on http://localhost:${server.port}`
+  )
+);
 
 process.on("SIGINT", async () => {
   await shutdown();
@@ -30,7 +35,7 @@ process.on("SIGTERM", async () => {
 });
 
 await slack.app.start();
-console.log("Slack Socket Mode app is running.");
+console.log(withUtcTimestamp("Slack Socket Mode app is running."));
 
 async function shutdown(): Promise<void> {
   runtimeReaper?.stop();

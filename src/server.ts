@@ -1,6 +1,7 @@
 import type { Config } from "./config";
 import type { TokenStore } from "./db";
 import { exchangeGitHubCode, getGitHubUser } from "./github";
+import { formatLogError } from "./logging";
 import type { SlackRuntime } from "./slack";
 import { handleToolGatewayRequest } from "./tool-gateway";
 
@@ -87,7 +88,7 @@ export async function handleGitHubCallback(
 
     return htmlResponse("Connected. You can close this tab.");
   } catch (error) {
-    console.error(error);
+    console.error(formatLogError(error));
     await slack.app.client.chat.postMessage({
       channel: stateRow.slackUserId,
       text: "GitHub connection failed. Run `/connect-github` and try again."

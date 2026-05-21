@@ -24,6 +24,7 @@ import {
   formatMentionWorkingMessage,
   formatWorkingMessage
 } from "./formatting";
+import { formatLogError, withUtcTimestamp } from "./logging";
 
 export {
   formatConnectGitHubMessage,
@@ -59,7 +60,9 @@ export function createSlackRuntime(config: Config, store: TokenStore): SlackRunt
   });
 
   app.use(async ({ body, logger, next }) => {
-    logger.info(`Received Slack payload ${summarizeSlackPayload(body)}`);
+    logger.info(
+      withUtcTimestamp(`Received Slack payload ${summarizeSlackPayload(body)}`)
+    );
 
     await next();
   });
@@ -77,7 +80,9 @@ export function createSlackRuntime(config: Config, store: TokenStore): SlackRunt
 
   app.command("/connect-github", async ({ ack, body, logger }) => {
     try {
-      logger.info(`Received /connect-github from ${body.user_id}`);
+      logger.info(
+        withUtcTimestamp(`Received /connect-github from ${body.user_id}`)
+      );
       const userId = body.user_id;
       const state = store.createOAuthState(userId);
       const url = buildGitHubOAuthUrl(config, state);
@@ -87,7 +92,7 @@ export function createSlackRuntime(config: Config, store: TokenStore): SlackRunt
         text: formatConnectGitHubMessage(url)
       });
     } catch (error) {
-      logger.error(error);
+      logger.error(formatLogError(error));
       await ack({
         response_type: "ephemeral",
         text: "I could not start the GitHub connection flow."
@@ -110,7 +115,7 @@ export function createSlackRuntime(config: Config, store: TokenStore): SlackRunt
           githubTools,
           openClawNemoClawUrl: config.openClawNemoClawUrl,
           ...(runtimeFactory ? { runtimeFactory } : {}),
-          logInfo: (message) => app.logger.info(message)
+          logInfo: (message) => app.logger.info(withUtcTimestamp(message))
         })
       : undefined;
 
@@ -124,10 +129,12 @@ export function createSlackRuntime(config: Config, store: TokenStore): SlackRunt
       channel_type?: string;
     };
 
-    logger.info(`Received app_mention from ${mention.user ?? "unknown"}`);
+    logger.info(
+      withUtcTimestamp(`Received app_mention from ${mention.user ?? "unknown"}`)
+    );
 
     if (!mention.user || !mention.channel || !mention.ts) {
-      logger.warn("Ignoring malformed app_mention event");
+      logger.warn(withUtcTimestamp("Ignoring malformed app_mention event"));
       return;
     }
 
@@ -187,7 +194,7 @@ export function createSlackRuntime(config: Config, store: TokenStore): SlackRunt
         })
       });
     } catch (error) {
-      logger.error(error);
+      logger.error(formatLogError(error));
       await client.chat.postEphemeral({
         channel: mention.channel,
         user: mention.user,
@@ -203,7 +210,9 @@ export function createSlackRuntime(config: Config, store: TokenStore): SlackRunt
       return;
     }
 
-    logger.info(`Received message.im from ${directMessage.user}`);
+    logger.info(
+      withUtcTimestamp(`Received message.im from ${directMessage.user}`)
+    );
 
     try {
       const email = await getSlackEmail(directMessage.user);
@@ -256,7 +265,7 @@ export function createSlackRuntime(config: Config, store: TokenStore): SlackRunt
         })
       });
     } catch (error) {
-      logger.error(error);
+      logger.error(formatLogError(error));
       await client.chat.postMessage({
         channel: directMessage.channel,
         text: "I could not handle that message."
@@ -266,7 +275,9 @@ export function createSlackRuntime(config: Config, store: TokenStore): SlackRunt
 
   app.command("/auth", async ({ ack, body, logger }) => {
     try {
-      logger.info(`Received /auth ${body.text} from ${body.user_id}`);
+      logger.info(
+        withUtcTimestamp(`Received /auth ${body.text} from ${body.user_id}`)
+      );
       const action = parseAuthCommand(body.text);
 
       if (action.kind === "unknown") {
@@ -289,7 +300,7 @@ export function createSlackRuntime(config: Config, store: TokenStore): SlackRunt
           : buildAuthResponse(githubUrl)
       );
     } catch (error) {
-      logger.error(error);
+      logger.error(formatLogError(error));
       await ack({
         response_type: "ephemeral",
         text: "I could not open auth settings."
@@ -298,7 +309,7 @@ export function createSlackRuntime(config: Config, store: TokenStore): SlackRunt
   });
 
   app.command("/issues", async ({ ack, body, respond, logger }) => {
-    logger.info(`Received /issues from ${body.user_id}`);
+    logger.info(withUtcTimestamp(`Received /issues from ${body.user_id}`));
     await ack({
       response_type: "ephemeral",
       text: formatWorkingMessage("/issues")
@@ -323,7 +334,7 @@ export function createSlackRuntime(config: Config, store: TokenStore): SlackRunt
         text: formatIssuesMessage(issues)
       });
     } catch (error) {
-      logger.error(error);
+      logger.error(formatLogError(error));
       const text =
         error instanceof Error && error.message === "GITHUB_TOKEN_REJECTED"
           ? "GitHub token rejected. Run `/connect-github` to reconnect."
@@ -337,7 +348,7 @@ export function createSlackRuntime(config: Config, store: TokenStore): SlackRunt
   });
 
   app.command("/github-me", async ({ ack, body, respond, logger }) => {
-    logger.info(`Received /github-me from ${body.user_id}`);
+    logger.info(withUtcTimestamp(`Received /github-me from ${body.user_id}`));
     await ack({
       response_type: "ephemeral",
       text: formatWorkingMessage("/github-me")
@@ -362,7 +373,7 @@ export function createSlackRuntime(config: Config, store: TokenStore): SlackRunt
         text: formatGitHubIdentityMessage(githubUser.login, email)
       });
     } catch (error) {
-      logger.error(error);
+      logger.error(formatLogError(error));
       const text =
         error instanceof Error && error.message === "GitHub user lookup failed with 401"
           ? "GitHub token rejected. Run `/connect-github` to reconnect."

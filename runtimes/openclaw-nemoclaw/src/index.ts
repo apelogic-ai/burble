@@ -1,4 +1,5 @@
 import { readRuntimeConfig } from "./config";
+import { info } from "./logger";
 import { handleRuntimeRequest } from "./server";
 import { ensureOpenClawSetup } from "./setup";
 
@@ -11,7 +12,7 @@ const server = Bun.serve({
   fetch: (request) => handleRuntimeRequest(request, config)
 });
 
-console.log(
+info(
   `OpenClaw/NemoClaw Burble runtime listening on http://localhost:${server.port}`
 );
 
