@@ -18,8 +18,14 @@ const config: Config = {
   slackLogLevel: "info",
   agentMode: "deterministic",
   agentRuntime: "ai-sdk",
+  agentRuntimeFactory: "static",
   openClawNemoClawUrl: null,
   agentRuntimeDataRoot: "/data/runtimes",
+  agentRuntimeDockerNetwork: "compose_default",
+  agentRuntimeImage: "burble-openclaw-nemoclaw:dev",
+  agentRuntimeTokenSecret: null,
+  agentRuntimeToolGatewayUrl: "http://burble-app:3000/internal/tools",
+  openClawConfigPatchHostPath: null,
   internalApiToken: "internal-secret",
   aiModel: "openai:gpt-5.4"
 };

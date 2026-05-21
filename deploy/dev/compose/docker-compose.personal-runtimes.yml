@@ -1,0 +1,42 @@
+# Optional PoC3 override for one OpenClaw/NemoClaw runtime container per user.
+#
+# First build the runtime image:
+#   docker compose \
+#     -f docker-compose.yml \
+#     -f docker-compose.personal-runtimes.yml \
+#     --profile runtime-image \
+#     build openclaw-nemoclaw-image
+#
+# Then start Burble with Docker-backed personal runtimes:
+#   docker compose \
+#     -f docker-compose.yml \
+#     -f docker-compose.personal-runtimes.yml \
+#     up -d --build
+
+services:
+  burble-app:
+    environment:
+      - AGENT_MODE=llm
+      - AGENT_RUNTIME=openclaw-nemoclaw
+      - AGENT_RUNTIME_FACTORY=docker
+      - AGENT_RUNTIME_IMAGE=${AGENT_RUNTIME_IMAGE:-burble-openclaw-nemoclaw-openclaw-cli:dev}
+      - AGENT_RUNTIME_DOCKER_NETWORK=${AGENT_RUNTIME_DOCKER_NETWORK:-compose_default}
+      - AGENT_RUNTIME_DATA_ROOT=${AGENT_RUNTIME_DATA_ROOT:-/opt/burble/runtimes}
+      - AGENT_RUNTIME_TOKEN_SECRET=${AGENT_RUNTIME_TOKEN_SECRET:?AGENT_RUNTIME_TOKEN_SECRET is required}
+      - AGENT_RUNTIME_TOOL_GATEWAY_URL=http://burble-app:3000/internal/tools
+      - OPENCLAW_CONFIG_PATCH_HOST_PATH=${OPENCLAW_CONFIG_PATCH_HOST_PATH:-}
+      - INTERNAL_API_TOKEN=${INTERNAL_API_TOKEN:?INTERNAL_API_TOKEN is required}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ${AGENT_RUNTIME_DATA_ROOT:-/opt/burble/runtimes}:${AGENT_RUNTIME_DATA_ROOT:-/opt/burble/runtimes}
+
+  openclaw-nemoclaw-image:
+    profiles:
+      - runtime-image
+    image: ${AGENT_RUNTIME_IMAGE:-burble-openclaw-nemoclaw-openclaw-cli:dev}
+    build:
+      context: ../../../runtimes/openclaw-nemoclaw
+      dockerfile: Dockerfile.openclaw-cli
+      args:
+        OPENCLAW_VERSION: ${OPENCLAW_VERSION:-2026.5.19}
+    command: ["bun", "--version"]

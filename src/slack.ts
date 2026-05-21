@@ -13,7 +13,9 @@ import { handleConversation } from "./conversation/orchestrator";
 import { normalizeMentionText } from "./conversation/normalize";
 import type { ConversationResponse } from "./conversation/types";
 import { createConfiguredAgentRunner } from "./agent/runtime";
+import { createDockerRuntimeFactory } from "./agent/container-runtime-factory";
 import { createStaticRuntimeFactory } from "./agent/runtime-factory";
+import type { RuntimeFactory } from "./agent/runtime-factory";
 import { createGitHubTools } from "./tools/github";
 import {
   formatConnectGitHubMessage,
@@ -98,16 +100,7 @@ export function createSlackRuntime(config: Config, store: TokenStore): SlackRunt
     searchIssues,
     listMyPullRequests
   });
-  const runtimeFactory =
-    config.agentRuntime === "openclaw-nemoclaw" && config.openClawNemoClawUrl
-      ? createStaticRuntimeFactory({
-          store,
-          engine: "openclaw",
-          endpointUrl: config.openClawNemoClawUrl,
-          authToken: config.internalApiToken ?? "",
-          dataRoot: config.agentRuntimeDataRoot
-        })
-      : undefined;
+  const runtimeFactory = createOpenClawRuntimeFactory(config, store);
   const agentRunner =
     config.agentMode === "llm"
       ? createConfiguredAgentRunner({
@@ -382,6 +375,47 @@ export function createSlackRuntime(config: Config, store: TokenStore): SlackRunt
   });
 
   return { app, getSlackEmail };
+}
+
+function createOpenClawRuntimeFactory(
+  config: Config,
+  store: TokenStore
+): RuntimeFactory | undefined {
+  if (config.agentRuntime !== "openclaw-nemoclaw") {
+    return undefined;
+  }
+
+  if (config.agentRuntimeFactory === "docker") {
+    if (!config.agentRuntimeTokenSecret) {
+      throw new Error(
+        "AGENT_RUNTIME_TOKEN_SECRET or INTERNAL_API_TOKEN is required for docker runtime factory"
+      );
+    }
+
+    return createDockerRuntimeFactory({
+      store,
+      engine: "openclaw",
+      image: config.agentRuntimeImage,
+      dataRoot: config.agentRuntimeDataRoot,
+      dockerNetwork: config.agentRuntimeDockerNetwork,
+      toolGatewayUrl: config.agentRuntimeToolGatewayUrl,
+      runtimeTokenSecret: config.agentRuntimeTokenSecret,
+      openClawConfigPatchPath: config.openClawConfigPatchHostPath,
+      env: Bun.env
+    });
+  }
+
+  if (!config.openClawNemoClawUrl) {
+    return undefined;
+  }
+
+  return createStaticRuntimeFactory({
+    store,
+    engine: "openclaw",
+    endpointUrl: config.openClawNemoClawUrl,
+    authToken: config.internalApiToken ?? "",
+    dataRoot: config.agentRuntimeDataRoot
+  });
 }
 
 export type AuthCommand =

@@ -7,6 +7,9 @@ const openClawCompose = await Bun.file(
 const openClawCliCompose = await Bun.file(
   "deploy/dev/compose/docker-compose.openclaw-cli.yml"
 ).text();
+const personalRuntimesCompose = await Bun.file(
+  "deploy/dev/compose/docker-compose.personal-runtimes.yml"
+).text();
 const caddyfile = await Bun.file("deploy/dev/compose/Caddyfile").text();
 const openClawOpenAiPatch = await Bun.file(
   "deploy/dev/compose/openclaw-patches/openai.json5"
@@ -14,6 +17,7 @@ const openClawOpenAiPatch = await Bun.file(
 const ansibleEnvTemplate = await Bun.file(
   "deploy/dev/ansible/roles/burble-app/templates/env.j2"
 ).text();
+const appDockerfile = await Bun.file("Dockerfile").text();
 
 describe("dev deploy config", () => {
   test("runs the Burble Bun app behind Caddy", () => {
@@ -21,6 +25,7 @@ describe("dev deploy config", () => {
     expect(compose).toContain("dockerfile: Dockerfile");
     expect(compose).toContain('"3000"');
     expect(compose).toContain("http://localhost:3000/healthz");
+    expect(appDockerfile).toContain("apk add --no-cache docker-cli");
     expect(caddyfile).toContain("reverse_proxy burble-app:3000");
   });
 
@@ -31,8 +36,15 @@ describe("dev deploy config", () => {
       "SLACK_LOG_LEVEL",
       "AGENT_MODE",
       "AGENT_RUNTIME",
+      "AGENT_RUNTIME_FACTORY",
+      "AGENT_RUNTIME_DATA_ROOT",
+      "AGENT_RUNTIME_IMAGE",
+      "AGENT_RUNTIME_DOCKER_NETWORK",
+      "AGENT_RUNTIME_TOKEN_SECRET",
+      "AGENT_RUNTIME_TOOL_GATEWAY_URL",
       "AI_MODEL",
       "OPENCLAW_NEMOCLAW_URL",
+      "OPENCLAW_CONFIG_PATCH_HOST_PATH",
       "INTERNAL_API_TOKEN",
       "OPENAI_API_KEY",
       "ANTHROPIC_API_KEY",
@@ -65,6 +77,7 @@ describe("dev deploy config", () => {
   test("provides an optional OpenClaw/NemoClaw compose override", () => {
     expect(openClawCompose).toContain("openclaw-nemoclaw:");
     expect(openClawCompose).toContain("AGENT_RUNTIME=openclaw-nemoclaw");
+    expect(openClawCompose).toContain("AGENT_RUNTIME_FACTORY=static");
     expect(openClawCompose).toContain(
       "OPENCLAW_NEMOCLAW_URL=http://openclaw-nemoclaw:8080"
     );
@@ -124,10 +137,34 @@ describe("dev deploy config", () => {
       "OPENCLAW_SETUP_ON_START",
       "OPENCLAW_CONFIG_PATCH_PATH",
       "OPENCLAW_VALIDATE_ON_START",
-      "OPENCLAW_VERSION"
+      "OPENCLAW_VERSION",
+      "AGENT_RUNTIME_FACTORY",
+      "AGENT_RUNTIME_DATA_ROOT",
+      "AGENT_RUNTIME_IMAGE",
+      "AGENT_RUNTIME_DOCKER_NETWORK",
+      "AGENT_RUNTIME_TOKEN_SECRET",
+      "AGENT_RUNTIME_TOOL_GATEWAY_URL",
+      "OPENCLAW_CONFIG_PATCH_HOST_PATH"
     ]) {
       expect(ansibleEnvTemplate).toContain(name);
     }
+  });
+
+  test("provides an optional personal runtime compose override", () => {
+    expect(personalRuntimesCompose).toContain("AGENT_RUNTIME_FACTORY=docker");
+    expect(personalRuntimesCompose).toContain("/var/run/docker.sock");
+    expect(personalRuntimesCompose).toContain(
+      "AGENT_RUNTIME_TOKEN_SECRET:?AGENT_RUNTIME_TOKEN_SECRET is required"
+    );
+    expect(personalRuntimesCompose).toContain(
+      "burble-openclaw-nemoclaw-openclaw-cli:dev"
+    );
+    expect(personalRuntimesCompose).toContain("openclaw-nemoclaw-image:");
+    expect(personalRuntimesCompose).toContain("profiles:");
+    expect(personalRuntimesCompose).toContain("dockerfile: Dockerfile.openclaw-cli");
+    expect(personalRuntimesCompose).toContain(
+      "AGENT_RUNTIME_DATA_ROOT:-/opt/burble/runtimes"
+    );
   });
 
   test("provides an optional OpenClaw CLI runtime build override", async () => {

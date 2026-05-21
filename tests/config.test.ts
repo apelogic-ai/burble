@@ -24,9 +24,15 @@ describe("readConfig", () => {
       slackLogLevel: "info",
       agentMode: "deterministic",
       agentRuntime: "ai-sdk",
+      agentRuntimeFactory: "static",
       aiModel: "openai:gpt-5.4",
       openClawNemoClawUrl: null,
       agentRuntimeDataRoot: "/data/runtimes",
+      agentRuntimeDockerNetwork: "compose_default",
+      agentRuntimeImage: "burble-openclaw-nemoclaw:dev",
+      agentRuntimeTokenSecret: null,
+      agentRuntimeToolGatewayUrl: "http://burble-app:3000/internal/tools",
+      openClawConfigPatchHostPath: null,
       internalApiToken: null
     });
   });
@@ -56,6 +62,37 @@ describe("readConfig", () => {
     expect(config.aiModel).toBe("anthropic:claude-opus-4.6");
   });
 
+  test("allows docker runtime factory override", () => {
+    const config = readConfig({
+      ...validEnv,
+      AGENT_RUNTIME_FACTORY: "docker",
+      AGENT_RUNTIME_IMAGE: "burble-openclaw-nemoclaw-openclaw-cli:dev",
+      AGENT_RUNTIME_DOCKER_NETWORK: "burble_default",
+      AGENT_RUNTIME_TOKEN_SECRET: "runtime-secret",
+      AGENT_RUNTIME_TOOL_GATEWAY_URL: "http://burble-app:3000/internal/tools",
+      OPENCLAW_CONFIG_PATCH_HOST_PATH: "/srv/burble/openclaw-patches"
+    });
+
+    expect(config.agentRuntimeFactory).toBe("docker");
+    expect(config.agentRuntimeImage).toBe(
+      "burble-openclaw-nemoclaw-openclaw-cli:dev"
+    );
+    expect(config.agentRuntimeDockerNetwork).toBe("burble_default");
+    expect(config.agentRuntimeTokenSecret).toBe("runtime-secret");
+    expect(config.openClawConfigPatchHostPath).toBe(
+      "/srv/burble/openclaw-patches"
+    );
+  });
+
+  test("falls back to the internal API token as the runtime token secret", () => {
+    const config = readConfig({
+      ...validEnv,
+      INTERNAL_API_TOKEN: "internal-secret"
+    });
+
+    expect(config.agentRuntimeTokenSecret).toBe("internal-secret");
+  });
+
   test("rejects invalid agent modes", () => {
     expect(() => readConfig({ ...validEnv, AGENT_MODE: "robot" })).toThrow(
       "Environment variable AGENT_MODE must be one of deterministic, llm"
@@ -66,6 +103,12 @@ describe("readConfig", () => {
     expect(() => readConfig({ ...validEnv, AGENT_RUNTIME: "robot" })).toThrow(
       "Environment variable AGENT_RUNTIME must be one of ai-sdk, openclaw-nemoclaw"
     );
+  });
+
+  test("rejects invalid runtime factories", () => {
+    expect(() =>
+      readConfig({ ...validEnv, AGENT_RUNTIME_FACTORY: "kubernetes" })
+    ).toThrow("Environment variable AGENT_RUNTIME_FACTORY must be one of static, docker");
   });
 
   test("normalizes OpenClaw/NemoClaw runtime URL", () => {
