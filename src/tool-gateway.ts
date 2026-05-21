@@ -1,5 +1,6 @@
 import type { Config } from "./config";
-import type { TokenStore } from "./db";
+import type { AgentRuntimeRecord, TokenStore } from "./db";
+import { createHash, timingSafeEqual } from "node:crypto";
 import {
   getGitHubUser,
   listAssignedIssues,
@@ -25,6 +26,10 @@ const defaultDeps = {
   listMyPullRequests
 };
 
+type ToolGatewayAuth =
+  | { kind: "legacy" }
+  | { kind: "runtime"; runtime: AgentRuntimeRecord };
+
 export async function handleToolGatewayRequest(
   config: Config,
   store: TokenStore,
@@ -36,7 +41,8 @@ export async function handleToolGatewayRequest(
     return new Response("Method not allowed", { status: 405 });
   }
 
-  if (!isAuthorized(config, request)) {
+  const auth = authorizeToolGateway(config, store, request);
+  if (!auth) {
     return new Response("Unauthorized", { status: 401 });
   }
 
@@ -58,6 +64,9 @@ export async function handleToolGatewayRequest(
         message: "Connect GitHub first: `@Burble connect github`."
       }
     });
+  }
+  if (auth.kind === "runtime" && connection.slackUserId !== auth.runtime.slackUserId) {
+    return new Response("Runtime principal mismatch", { status: 403 });
   }
 
   const tools = createGitHubTools({ ...defaultDeps, ...deps });
@@ -91,12 +100,50 @@ export async function handleToolGatewayRequest(
   return new Response("Unknown tool", { status: 404 });
 }
 
-function isAuthorized(config: Config, request: Request): boolean {
-  if (!config.internalApiToken) {
-    return true;
+function authorizeToolGateway(
+  config: Config,
+  store: TokenStore,
+  request: Request
+): ToolGatewayAuth | null {
+  const bearerToken = readBearerToken(request);
+  if (!config.internalApiToken && !bearerToken) {
+    return { kind: "legacy" };
   }
 
-  return request.headers.get("authorization") === `Bearer ${config.internalApiToken}`;
+  if (config.internalApiToken && bearerToken === config.internalApiToken) {
+    return { kind: "legacy" };
+  }
+
+  const runtimeId = request.headers.get("x-burble-runtime-id")?.trim();
+  if (!runtimeId || !bearerToken) {
+    return null;
+  }
+
+  const runtime = store.getAgentRuntime(runtimeId);
+  if (!runtime || !isRuntimeTokenValid(bearerToken, runtime.authTokenHash)) {
+    return null;
+  }
+
+  return { kind: "runtime", runtime };
+}
+
+function readBearerToken(request: Request): string | null {
+  const authorization = request.headers.get("authorization")?.trim();
+  if (!authorization?.startsWith("Bearer ")) {
+    return null;
+  }
+
+  const token = authorization.slice("Bearer ".length).trim();
+  return token ? token : null;
+}
+
+function isRuntimeTokenValid(token: string, tokenHash: string): boolean {
+  const actual = createHash("sha256").update(token).digest("hex");
+  if (actual.length !== tokenHash.length) {
+    return false;
+  }
+
+  return timingSafeEqual(Buffer.from(actual), Buffer.from(tokenHash));
 }
 
 function isKnownTool(toolName: string): boolean {

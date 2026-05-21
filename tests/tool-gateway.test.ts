@@ -1,6 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import type { Config } from "../src/config";
-import type { ProviderConnection, TokenStore } from "../src/db";
+import type {
+  AgentRuntimeRecord,
+  ProviderConnection,
+  TokenStore
+} from "../src/db";
 import { handleToolGatewayRequest } from "../src/tool-gateway";
 
 const config: Config = {
@@ -28,7 +32,29 @@ const connection: ProviderConnection = {
   connectedAt: "2026-05-19T00:00:00Z"
 };
 
-function createStore(foundConnection: ProviderConnection | null): TokenStore {
+const runtime: AgentRuntimeRecord = {
+  id: "rt_u123",
+  workspaceId: "T123",
+  slackUserId: "U123",
+  engine: "openclaw",
+  status: "ready",
+  endpointUrl: "http://runtime-u123:8080",
+  authTokenHash:
+    "d61d816e93bafb888da9bccc1fe342e978ee8619f396b6a1dbb9eaa09584eaba",
+  statePath: "/data/runtimes/u123/state",
+  configPath: "/data/runtimes/u123/config/openclaw.json",
+  workspacePath: "/data/runtimes/u123/workspace",
+  createdAt: "2026-05-21T00:00:00.000Z",
+  lastSeenAt: "2026-05-21T00:00:00.000Z",
+  lastUsedAt: "2026-05-21T00:00:00.000Z",
+  stoppedAt: null,
+  failureReason: null
+};
+
+function createStore(
+  foundConnection: ProviderConnection | null,
+  foundRuntime: AgentRuntimeRecord | null = null
+): TokenStore {
   return {
     createOAuthState: () => "state",
     consumeOAuthState: () => null,
@@ -41,7 +67,7 @@ function createStore(foundConnection: ProviderConnection | null): TokenStore {
     getOrCreateAgentRuntime: () => {
       throw new Error("unexpected agent runtime call");
     },
-    getAgentRuntime: () => null,
+    getAgentRuntime: (id) => (id === foundRuntime?.id ? foundRuntime : null),
     updateAgentRuntimeStatus: () => undefined,
     touchAgentRuntime: () => undefined,
     close: () => undefined
@@ -51,14 +77,20 @@ function createStore(foundConnection: ProviderConnection | null): TokenStore {
 function request(
   toolName: string,
   body: unknown,
-  token = "internal-secret"
+  token = "internal-secret",
+  runtimeId?: string
 ): Request {
+  const headers = new Headers({
+    "content-type": "application/json",
+    authorization: `Bearer ${token}`
+  });
+  if (runtimeId) {
+    headers.set("x-burble-runtime-id", runtimeId);
+  }
+
   return new Request(`https://example.test/internal/tools/${toolName}/execute`, {
     method: "POST",
-    headers: {
-      "content-type": "application/json",
-      authorization: `Bearer ${token}`
-    },
+    headers,
     body: JSON.stringify(body)
   });
 }
@@ -107,6 +139,72 @@ describe("handleToolGatewayRequest", () => {
       request("github.getAuthenticatedUser", {
         user: { email: "person@example.com" }
       }, "wrong-token")
+    );
+
+    expect(response.status).toBe(401);
+    expect(await response.text()).toBe("Unauthorized");
+  });
+
+  test("allows a principal-bound runtime token for its own provider account", async () => {
+    const response = await handleToolGatewayRequest(
+      config,
+      createStore(connection, runtime),
+      "github.getAuthenticatedUser",
+      request(
+        "github.getAuthenticatedUser",
+        {
+          user: { email: "person@example.com" }
+        },
+        "runtime-token-u123",
+        "rt_u123"
+      ),
+      {
+        getGitHubUser: async (token) => {
+          expect(token).toBe("secret-token");
+          return { login: "octocat" };
+        }
+      }
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      classification: "user_private",
+      content: { login: "octocat" }
+    });
+  });
+
+  test("rejects runtime tokens for another user's connected account", async () => {
+    const response = await handleToolGatewayRequest(
+      config,
+      createStore({ ...connection, slackUserId: "U456" }, runtime),
+      "github.getAuthenticatedUser",
+      request(
+        "github.getAuthenticatedUser",
+        {
+          user: { email: "person@example.com" }
+        },
+        "runtime-token-u123",
+        "rt_u123"
+      )
+    );
+
+    expect(response.status).toBe(403);
+    expect(await response.text()).toBe("Runtime principal mismatch");
+  });
+
+  test("rejects invalid runtime tokens", async () => {
+    const response = await handleToolGatewayRequest(
+      config,
+      createStore(connection, runtime),
+      "github.getAuthenticatedUser",
+      request(
+        "github.getAuthenticatedUser",
+        {
+          user: { email: "person@example.com" }
+        },
+        "wrong-runtime-token",
+        "rt_u123"
+      )
     );
 
     expect(response.status).toBe(401);
