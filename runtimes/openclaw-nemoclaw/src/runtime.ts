@@ -8,7 +8,10 @@ export function createRuntimeRunner(config: RuntimeConfig): {
   run: (request: RunRequest, executeTool?: ToolExecutor) => Promise<RunResponse>;
 } {
   return {
-    run: (request, executeTool = createBurbleToolExecutor(config)) => {
+    run: (
+      request,
+      executeTool = createBurbleToolExecutor(config, request.runtime?.id)
+    ) => {
       switch (config.engine) {
         case "deterministic":
           return runBurbleRequest(request, config, executeTool);

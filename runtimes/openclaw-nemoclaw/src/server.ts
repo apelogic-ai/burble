@@ -49,6 +49,14 @@ function isRunRequest(body: unknown): body is RunRequest {
 
   const input = body.input;
   if (
+    "runtime" in body &&
+    body.runtime !== undefined &&
+    !isRuntimeSummary(body.runtime)
+  ) {
+    return false;
+  }
+
+  if (
     typeof input !== "object" ||
     input === null ||
     !("text" in input) ||
@@ -74,5 +82,15 @@ function isRunRequest(body: unknown): body is RunRequest {
     github !== null &&
     "connected" in github &&
     typeof github.connected === "boolean"
+  );
+}
+
+function isRuntimeSummary(runtime: unknown): runtime is RunRequest["runtime"] {
+  return (
+    typeof runtime === "object" &&
+    runtime !== null &&
+    "id" in runtime &&
+    typeof runtime.id === "string" &&
+    runtime.id.trim().length > 0
   );
 }

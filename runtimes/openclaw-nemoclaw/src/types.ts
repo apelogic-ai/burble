@@ -6,6 +6,9 @@ export type ToolResult<TContent = unknown> = {
 };
 
 export type RunRequest = {
+  runtime?: {
+    id: string;
+  };
   input: {
     text: string;
     connections: {

@@ -35,6 +35,7 @@ describe("handleRuntimeRequest", () => {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
+          runtime: { id: "rt_u123" },
           input: {
             text: "who am I on GitHub?",
             connections: {
@@ -67,6 +68,27 @@ describe("handleRuntimeRequest", () => {
       new Request("http://runtime/runs", {
         method: "POST",
         body: JSON.stringify({ input: { text: "" } })
+      }),
+      config
+    );
+
+    expect(response.status).toBe(400);
+    expect(await response.text()).toBe("Invalid run request");
+  });
+
+  test("rejects malformed runtime metadata", async () => {
+    const response = await handleRuntimeRequest(
+      new Request("http://runtime/runs", {
+        method: "POST",
+        body: JSON.stringify({
+          runtime: { id: "" },
+          input: {
+            text: "who am I on GitHub?",
+            connections: {
+              github: { connected: true }
+            }
+          }
+        })
       }),
       config
     );
