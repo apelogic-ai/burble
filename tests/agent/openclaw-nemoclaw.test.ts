@@ -12,6 +12,11 @@ const connection: ProviderConnection = {
   connectedAt: "2026-05-19T00:00:00Z"
 };
 
+const principal = {
+  workspaceId: "T123",
+  slackUserId: "U123"
+};
+
 describe("createOpenClawNemoClawAgentRunner", () => {
   test("posts a sanitized run request to the remote runtime", async () => {
     const requests: Array<{ url: string; init: RequestInit }> = [];
@@ -36,6 +41,7 @@ describe("createOpenClawNemoClawAgentRunner", () => {
     });
 
     const result = await collectAgentRun(runner, {
+      principal,
       text: "summarize my GitHub work",
       connections: { github: connection }
     });
@@ -67,6 +73,61 @@ describe("createOpenClawNemoClawAgentRunner", () => {
     expect(JSON.stringify(body)).not.toContain("secret-token");
   });
 
+  test("routes requests through a principal-scoped runtime factory", async () => {
+    const principals: unknown[] = [];
+    const requests: Array<{ url: string; init: RequestInit }> = [];
+    const runner = createOpenClawNemoClawAgentRunner({
+      runtimeFactory: {
+        async getOrCreateRuntime(runtimePrincipal) {
+          principals.push(runtimePrincipal);
+          return {
+            id: "rt_u123",
+            engine: "openclaw",
+            endpointUrl: "http://runtime-u123:8080/",
+            authToken: "runtime-token",
+            status: "ready",
+            statePath: "/data/runtimes/rt_u123/state",
+            configPath: "/data/runtimes/rt_u123/config/openclaw.json",
+            workspacePath: "/data/runtimes/rt_u123/workspace"
+          };
+        },
+        async stopRuntime() {},
+        async reapIdleRuntimes() {}
+      },
+      fetch: async (url, init) => {
+        requests.push({ url: String(url), init: init ?? {} });
+        return Response.json({
+          response: {
+            classification: "user_private",
+            text: "Runtime answer."
+          }
+        });
+      }
+    });
+
+    const result = await collectAgentRun(runner, {
+      principal,
+      text: "summarize my GitHub work",
+      connections: { github: connection }
+    });
+
+    expect(result.text).toBe("Runtime answer.");
+    expect(principals).toEqual([principal]);
+    expect(requests[0].url).toBe("http://runtime-u123:8080/runs");
+    expect(requests[0].init.headers).toEqual({
+      "content-type": "application/json",
+      "x-burble-runtime-id": "rt_u123"
+    });
+    expect(JSON.parse(String(requests[0].init.body))).toMatchObject({
+      runtime: {
+        id: "rt_u123",
+        engine: "openclaw",
+        status: "ready"
+      }
+    });
+    expect(String(requests[0].init.body)).not.toContain("runtime-token");
+  });
+
   test("reports remote runtime failures without leaking response bodies", async () => {
     const runner = createOpenClawNemoClawAgentRunner({
       baseUrl: "http://openclaw-runtime:8080",
@@ -78,6 +139,7 @@ describe("createOpenClawNemoClawAgentRunner", () => {
 
     await expect(
       collectAgentRun(runner, {
+        principal,
         text: "hello",
         connections: { github: null }
       })
@@ -98,6 +160,7 @@ describe("createOpenClawNemoClawAgentRunner", () => {
 
     await expect(
       collectAgentRun(runner, {
+        principal,
         text: "hello",
         connections: { github: null }
       })

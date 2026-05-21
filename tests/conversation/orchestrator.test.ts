@@ -172,6 +172,10 @@ describe("handleConversation", () => {
         agentMode: "llm",
         agentRunner: stubAgentRunner((input) => {
           calls.push(input.text);
+          expect(input.principal).toEqual({
+            workspaceId: "T123",
+            slackUserId: "U123"
+          });
           expect(input.connections.github?.providerLogin).toBe("octocat");
           return {
             classification: "user_private",

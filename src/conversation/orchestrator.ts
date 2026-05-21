@@ -28,6 +28,10 @@ export async function handleConversation(
     const result = await collectAgentRun(
       deps.agentRunner,
       {
+        principal: {
+          workspaceId: request.workspaceId,
+          slackUserId: request.user.slackUserId
+        },
         text: request.text,
         connections: {
           github: deps.getConnection("github", request.user.email)

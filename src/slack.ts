@@ -13,6 +13,7 @@ import { handleConversation } from "./conversation/orchestrator";
 import { normalizeMentionText } from "./conversation/normalize";
 import type { ConversationResponse } from "./conversation/types";
 import { createConfiguredAgentRunner } from "./agent/runtime";
+import { createStaticRuntimeFactory } from "./agent/runtime-factory";
 import { createGitHubTools } from "./tools/github";
 import {
   formatConnectGitHubMessage,
@@ -97,6 +98,16 @@ export function createSlackRuntime(config: Config, store: TokenStore): SlackRunt
     searchIssues,
     listMyPullRequests
   });
+  const runtimeFactory =
+    config.agentRuntime === "openclaw-nemoclaw" && config.openClawNemoClawUrl
+      ? createStaticRuntimeFactory({
+          store,
+          engine: "openclaw",
+          endpointUrl: config.openClawNemoClawUrl,
+          authToken: config.internalApiToken ?? "",
+          dataRoot: config.agentRuntimeDataRoot
+        })
+      : undefined;
   const agentRunner =
     config.agentMode === "llm"
       ? createConfiguredAgentRunner({
@@ -104,6 +115,7 @@ export function createSlackRuntime(config: Config, store: TokenStore): SlackRunt
           model: config.aiModel,
           githubTools,
           openClawNemoClawUrl: config.openClawNemoClawUrl,
+          ...(runtimeFactory ? { runtimeFactory } : {}),
           logInfo: (message) => app.logger.info(message)
         })
       : undefined;

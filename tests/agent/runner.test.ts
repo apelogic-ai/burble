@@ -18,6 +18,11 @@ const connection: ProviderConnection = {
   connectedAt: "2026-05-19T00:00:00Z"
 };
 
+const principal = {
+  workspaceId: "T123",
+  slackUserId: "U123"
+};
+
 describe("createAiSdkAgentRunner", () => {
   test("builds an LLM runner that can execute sanitized GitHub tools", async () => {
     const model = { provider: "test", modelId: "model" } as DirectLanguageModel;
@@ -60,6 +65,7 @@ describe("createAiSdkAgentRunner", () => {
     });
 
     const response = await collectAgentRun(runner, {
+      principal,
       text: "what issues are assigned to me?",
       connections: { github: connection }
     });
@@ -104,6 +110,7 @@ describe("createAiSdkAgentRunner", () => {
     });
 
     const response = await collectAgentRun(runner, {
+      principal,
       text: "who am I on GitHub?",
       connections: { github: null }
     });

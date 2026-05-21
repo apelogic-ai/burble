@@ -26,6 +26,7 @@ describe("readConfig", () => {
       agentRuntime: "ai-sdk",
       aiModel: "openai:gpt-5.4",
       openClawNemoClawUrl: null,
+      agentRuntimeDataRoot: "/data/runtimes",
       internalApiToken: null
     });
   });
@@ -75,6 +76,13 @@ describe("readConfig", () => {
     });
 
     expect(config.openClawNemoClawUrl).toBe("http://openclaw-runtime:8080");
+  });
+
+  test("reads optional agent runtime data root", () => {
+    expect(
+      readConfig({ ...validEnv, AGENT_RUNTIME_DATA_ROOT: "/var/lib/burble" })
+        .agentRuntimeDataRoot
+    ).toBe("/var/lib/burble");
   });
 
   test("reads optional internal API token", () => {

@@ -42,6 +42,23 @@ describe("createConfiguredAgentRunner", () => {
     });
   });
 
+  test("selects the OpenClaw/NemoClaw runner with a runtime factory", () => {
+    const runner = createConfiguredAgentRunner({
+      runtime: "openclaw-nemoclaw",
+      model: "openai:test-model",
+      githubTools,
+      runtimeFactory: {
+        async getOrCreateRuntime() {
+          throw new Error("not called during construction");
+        },
+        async stopRuntime() {},
+        async reapIdleRuntimes() {}
+      }
+    });
+
+    expect(runner.name).toBe("openclaw-nemoclaw");
+  });
+
   test("requires a runtime URL for OpenClaw/NemoClaw", () => {
     expect(() =>
       createConfiguredAgentRunner({

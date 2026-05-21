@@ -13,6 +13,7 @@ export type Config = {
   agentRuntime: AgentRuntime;
   aiModel: string;
   openClawNemoClawUrl: string | null;
+  agentRuntimeDataRoot: string;
   internalApiToken: string | null;
 };
 
@@ -123,6 +124,7 @@ export function readConfig(env: Env): Config {
     agentRuntime: optionalAgentRuntimeEnv(env, "AGENT_RUNTIME", "ai-sdk"),
     aiModel: validateAgentModelId(env.AI_MODEL ?? "openai:gpt-5.4"),
     openClawNemoClawUrl: optionalUrlEnv(env, "OPENCLAW_NEMOCLAW_URL"),
+    agentRuntimeDataRoot: env.AGENT_RUNTIME_DATA_ROOT ?? "/data/runtimes",
     internalApiToken: optionalSecretEnv(env, "INTERNAL_API_TOKEN")
   };
 }

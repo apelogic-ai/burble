@@ -2,6 +2,11 @@ import { describe, expect, test } from "bun:test";
 import { collectAgentRun } from "../../src/agent/types";
 import type { AgentRunner } from "../../src/agent/types";
 
+const principal = {
+  workspaceId: "T123",
+  slackUserId: "U123"
+};
+
 describe("agent runner contract", () => {
   test("collects the final event from an event-based runner", async () => {
     const runner: AgentRunner = {
@@ -36,6 +41,7 @@ describe("agent runner contract", () => {
 
     await expect(
       collectAgentRun(runner, {
+        principal,
         text: "what needs attention?",
         connections: { github: null }
       })
@@ -60,6 +66,7 @@ describe("agent runner contract", () => {
 
     await expect(
       collectAgentRun(runner, {
+        principal,
         text: "hello",
         connections: { github: null }
       })

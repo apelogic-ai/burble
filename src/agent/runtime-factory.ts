@@ -43,6 +43,7 @@ export function createStaticRuntimeFactory(input: {
         configPath: `${input.dataRoot}/${runtimeId}/config/openclaw.json`,
         workspacePath: `${input.dataRoot}/${runtimeId}/workspace`
       });
+      input.store.touchAgentRuntime(runtime.id);
 
       return {
         id: runtime.id,

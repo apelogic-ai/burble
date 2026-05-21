@@ -4,6 +4,7 @@ import { createAiSdkAgentRunner } from "./runner";
 import type { AgentGenerateText } from "./runner";
 import { createOpenClawNemoClawAgentRunner } from "./runners/openclaw-nemoclaw";
 import type { ModelResolver } from "./providers";
+import type { RuntimeFactory } from "./runtime-factory";
 import type { AgentRunner } from "./types";
 
 export type ConfiguredAgentRunnerDeps = {
@@ -11,6 +12,7 @@ export type ConfiguredAgentRunnerDeps = {
   model: string;
   githubTools: ReturnType<typeof createGitHubTools>;
   openClawNemoClawUrl?: string | null;
+  runtimeFactory?: RuntimeFactory;
   resolveModel?: ModelResolver;
   generateText?: AgentGenerateText;
   logInfo?: (message: string) => void;
@@ -30,12 +32,15 @@ export function createConfiguredAgentRunner(
       });
 
     case "openclaw-nemoclaw":
-      if (!deps.openClawNemoClawUrl) {
+      if (!deps.openClawNemoClawUrl && !deps.runtimeFactory) {
         throw new Error("OPENCLAW_NEMOCLAW_URL is required");
       }
 
       return createOpenClawNemoClawAgentRunner({
-        baseUrl: deps.openClawNemoClawUrl,
+        ...(deps.openClawNemoClawUrl
+          ? { baseUrl: deps.openClawNemoClawUrl }
+          : {}),
+        ...(deps.runtimeFactory ? { runtimeFactory: deps.runtimeFactory } : {}),
         ...(deps.logInfo ? { logInfo: deps.logInfo } : {})
       });
   }

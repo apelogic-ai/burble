@@ -1,5 +1,6 @@
 import type { ProviderConnection } from "../db";
 import type { ToolClassification } from "../conversation/types";
+import type { PrincipalId } from "./runtime-factory";
 
 export type AgentRunnerCapabilities = {
   streaming: boolean;
@@ -9,6 +10,7 @@ export type AgentRunnerCapabilities = {
 };
 
 export type AgentInput = {
+  principal: PrincipalId;
   text: string;
   connections: {
     github: ProviderConnection | null;
