@@ -224,6 +224,22 @@ Preferred when a trustworthy MCP server is available for the provider:
 
 MCP does not remove authz responsibility. It is an execution substrate.
 
+For OpenClaw/NemoClaw, MCP servers are not mounted directly inside the agent
+runtime. The runtime calls Burble's internal tool gateway with a
+principal-scoped runtime token, and Burble invokes the provider backend. That
+backend can be typed HTTP, a local CLI adapter, or an MCP client. This keeps
+OAuth tokens, allowlists, result caps, and audit logs in one trusted service
+instead of spreading provider credentials into every agent sandbox.
+
+Current PoC2 implementation status:
+
+- GitHub and Jira share a `provider_connections` connection shape.
+- Burble exposes allowlisted gateway tools for `github.*` and `jira.*`.
+- A small MCP stdio client adapter exists in `src/tools/mcp.ts` for provider
+  backends that should be backed by an MCP server.
+- Concrete GitHub/Jira MCP server command selection and tool-name mapping are
+  next-slice work; the OpenClaw contract does not change when that lands.
+
 #### Sandboxed CLI Wrappers
 
 Useful for PoC breadth or providers whose CLI is better than their SDK:

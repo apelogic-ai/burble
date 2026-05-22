@@ -35,7 +35,8 @@ export async function handleConversation(
         conversation: buildAgentConversation(request),
         text: request.text,
         connections: {
-          github: deps.getConnection("github", request.user.email)
+          github: deps.getConnection("github", request.user.email),
+          jira: deps.getConnection("jira", request.user.email)
         }
       },
       deps.onAgentEvent

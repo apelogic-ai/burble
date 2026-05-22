@@ -87,6 +87,19 @@ export function createTokenStore(path: string) {
       connected_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
 
+    CREATE TABLE IF NOT EXISTS provider_connections (
+      provider TEXT NOT NULL,
+      email TEXT NOT NULL,
+      slack_user_id TEXT NOT NULL,
+      provider_login TEXT NOT NULL,
+      access_token TEXT NOT NULL,
+      connected_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY(provider, email)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_provider_connections_slack_user
+      ON provider_connections (provider, slack_user_id);
+
     CREATE TABLE IF NOT EXISTS oauth_state (
       state TEXT PRIMARY KEY,
       slack_user_id TEXT NOT NULL,
@@ -160,6 +173,22 @@ export function createTokenStore(path: string) {
       github_token = excluded.github_token,
       connected_at = CURRENT_TIMESTAMP
   `);
+  const upsertProviderConnection = db.query(`
+    INSERT INTO provider_connections (
+      provider,
+      email,
+      slack_user_id,
+      provider_login,
+      access_token,
+      connected_at
+    )
+    VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+    ON CONFLICT(provider, email) DO UPDATE SET
+      slack_user_id = excluded.slack_user_id,
+      provider_login = excluded.provider_login,
+      access_token = excluded.access_token,
+      connected_at = CURRENT_TIMESTAMP
+  `);
   const getUserByEmail = db.query<ConnectedUser, [string]>(`
     SELECT
       email,
@@ -169,6 +198,17 @@ export function createTokenStore(path: string) {
       connected_at AS connectedAt
     FROM users
     WHERE email = ?
+  `);
+  const getProviderConnection = db.query<ProviderConnection, [Provider, string]>(`
+    SELECT
+      provider,
+      email,
+      slack_user_id AS slackUserId,
+      provider_login AS providerLogin,
+      access_token AS accessToken,
+      connected_at AS connectedAt
+    FROM provider_connections
+    WHERE provider = ? AND email = ?
   `);
   const getAgentRuntimeById = db.query<AgentRuntimeRecord, [string]>(`
     SELECT
@@ -322,6 +362,29 @@ export function createTokenStore(path: string) {
         input.githubLogin,
         input.githubToken
       );
+      upsertProviderConnection.run(
+        "github",
+        input.email,
+        input.slackUserId,
+        input.githubLogin,
+        input.githubToken
+      );
+    },
+
+    upsertProviderConnection(input: {
+      provider: Provider;
+      email: string;
+      slackUserId: string;
+      providerLogin: string;
+      accessToken: string;
+    }): void {
+      upsertProviderConnection.run(
+        input.provider,
+        input.email,
+        input.slackUserId,
+        input.providerLogin,
+        input.accessToken
+      );
     },
 
     getConnectedUserByEmail(email: string): ConnectedUser | null {
@@ -329,6 +392,11 @@ export function createTokenStore(path: string) {
     },
 
     getConnection(provider: Provider, email: string): ProviderConnection | null {
+      const connection = getProviderConnection.get(provider, email);
+      if (connection) {
+        return connection;
+      }
+
       if (provider !== "github") {
         return null;
       }

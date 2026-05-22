@@ -1,7 +1,11 @@
 import { createHash } from "node:crypto";
 import type { RuntimeConfig } from "./config";
 import { info, type RuntimeLogger } from "./logger";
-import { isSupportedGitHubRequest, runBurbleRequest } from "./runner";
+import {
+  isSupportedGitHubRequest,
+  isSupportedJiraRequest,
+  runBurbleRequest
+} from "./runner";
 import type { RunEvent, RunRequest, RunResponse, ToolExecutor } from "./types";
 
 export type CliCommandResult = {
@@ -41,6 +45,13 @@ export async function runOpenClawCliRequest(
     !request.input.connections.github.connected
   ) {
     logInfo("OpenClaw agent skipped githubConnected=false");
+    return baseline;
+  }
+  if (
+    isSupportedJiraRequest(request.input.text) &&
+    !request.input.connections.jira?.connected
+  ) {
+    logInfo("OpenClaw agent skipped jiraConnected=false");
     return baseline;
   }
 
@@ -90,6 +101,14 @@ export async function* runOpenClawCliRequestStream(
     !request.input.connections.github.connected
   ) {
     logInfo("OpenClaw agent skipped githubConnected=false");
+    yield { type: "final", response: baseline.response };
+    return;
+  }
+  if (
+    isSupportedJiraRequest(request.input.text) &&
+    !request.input.connections.jira?.connected
+  ) {
+    logInfo("OpenClaw agent skipped jiraConnected=false");
     yield { type: "final", response: baseline.response };
     return;
   }

@@ -2,6 +2,7 @@ import { generateText, stepCountIs, tool } from "ai";
 import type { StopCondition, TelemetrySettings, ToolSet } from "ai";
 import { z } from "zod";
 import type { createGitHubTools } from "../tools/github";
+import type { createJiraTools } from "../tools/jira";
 import type { ToolClassification } from "../conversation/types";
 import { createDirectModelResolver } from "./providers";
 import type { DirectLanguageModel, ModelResolver } from "./providers";
@@ -33,6 +34,7 @@ export type AgentGenerateText = (
 export type AiSdkAgentRunnerDeps = {
   model: string;
   githubTools: ReturnType<typeof createGitHubTools>;
+  jiraTools?: ReturnType<typeof createJiraTools>;
   resolveModel?: ModelResolver;
   generateText?: AgentGenerateText;
   logInfo?: (message: string) => void;
@@ -41,9 +43,10 @@ export type AiSdkAgentRunnerDeps = {
 const systemPrompt = [
   "You are Burble, a Slack-native work assistant.",
   "Answer in concise Slack mrkdwn.",
-  "Use provider tools for GitHub facts. Do not invent GitHub data.",
+  "Use provider tools for GitHub and Jira facts. Do not invent provider data.",
   "Never ask for, print, or expose access tokens.",
   "When a tool says GitHub is not connected, tell the user to run `@Burble connect github`.",
+  "When a tool says Jira is not connected, tell the user Jira needs to be connected.",
   "Prefer short lists with links when showing issues or pull requests."
 ].join("\n");
 
@@ -108,6 +111,14 @@ async function runAiSdkAgent(
           message: "Connect GitHub first: `@Burble connect github`."
         }
       });
+    const missingJiraConnection = () =>
+      record({
+        classification: "user_private",
+        content: {
+          error: "jira_not_connected",
+          message: "Connect Jira first."
+        }
+      });
 
     const logToolResult = (
       name: string,
@@ -140,7 +151,7 @@ async function runAiSdkAgent(
       return result;
     };
 
-    const tools = {
+    const tools: ToolSet = {
       github_get_authenticated_user: tool({
         description: "Return the authenticated GitHub login for the Slack user.",
         inputSchema: z.object({}),
@@ -213,6 +224,63 @@ async function runAiSdkAgent(
         })
       })
     };
+
+    if (deps.jiraTools) {
+      tools.jira_get_authenticated_user = tool({
+        description: "Return the authenticated Jira user for the Slack user.",
+        inputSchema: z.object({}),
+        execute: async () => executeTool("jira_get_authenticated_user", async () => {
+          const connection = input.connections.jira;
+          if (!connection) {
+            return missingJiraConnection();
+          }
+
+          return record(
+            await deps.jiraTools!.getAuthenticatedUser.execute({
+              connection
+            })
+          );
+        })
+      });
+      tools.jira_list_assigned_issues = tool({
+        description: "List Jira issues assigned to the Slack user.",
+        inputSchema: z.object({}),
+        execute: async () => executeTool("jira_list_assigned_issues", async () => {
+          const connection = input.connections.jira;
+          if (!connection) {
+            return missingJiraConnection();
+          }
+
+          return record(
+            await deps.jiraTools!.listAssignedIssues.execute({
+              connection
+            })
+          );
+        })
+      });
+      tools.jira_search_issues = tool({
+        description: "Search Jira issues visible to the authenticated Slack user.",
+        inputSchema: z.object({
+          jql: z
+            .string()
+            .min(1)
+            .describe("A Jira JQL query, for example: project = ENG AND status != Done")
+        }),
+        execute: async ({ jql }) => executeTool("jira_search_issues", async () => {
+          const connection = input.connections.jira;
+          if (!connection) {
+            return missingJiraConnection();
+          }
+
+          return record(
+            await deps.jiraTools!.searchIssues.execute({
+              connection,
+              input: { jql }
+            })
+          );
+        })
+      });
+    }
 
     deps.logInfo(
       [

@@ -4,6 +4,7 @@ import { createAiSdkAgentRunner } from "../../src/agent/runner";
 import type { DirectLanguageModel } from "../../src/agent/providers";
 import { collectAgentRun } from "../../src/agent/types";
 import { createGitHubTools } from "../../src/tools/github";
+import { createJiraTools } from "../../src/tools/jira";
 
 type ExecutableTool = {
   execute: (input: unknown) => Promise<unknown>;
@@ -15,6 +16,15 @@ const connection: ProviderConnection = {
   slackUserId: "U123",
   providerLogin: "octocat",
   accessToken: "secret-token",
+  connectedAt: "2026-05-19T00:00:00Z"
+};
+
+const jiraConnection: ProviderConnection = {
+  provider: "jira",
+  email: "person@example.com",
+  slackUserId: "U123",
+  providerLogin: "5f123",
+  accessToken: "jira-secret-token",
   connectedAt: "2026-05-19T00:00:00Z"
 };
 
@@ -118,6 +128,57 @@ describe("createAiSdkAgentRunner", () => {
     expect(response).toEqual({
       classification: "user_private",
       text: "Connect GitHub first: `@Burble connect github`."
+    });
+  });
+
+  test("builds an LLM runner that can execute sanitized Jira tools", async () => {
+    const runner = createAiSdkAgentRunner({
+      model: "openai:test-model",
+      resolveModel: () =>
+        ({ provider: "test", modelId: "model" }) as DirectLanguageModel,
+      githubTools: createGitHubTools({
+        getGitHubUser: async () => ({ login: "octocat" }),
+        listAssignedIssues: async () => [],
+        searchIssues: async () => [],
+        listMyPullRequests: async () => []
+      }),
+      jiraTools: createJiraTools({
+        getJiraUser: async () => ({
+          accountId: "5f123",
+          displayName: "Leo"
+        }),
+        listAssignedJiraIssues: async () => [
+          {
+            key: "ENG-17",
+            summary: "Fix deploy dashboard",
+            url: "https://jira.example/browse/ENG-17",
+            status: "In Progress"
+          }
+        ],
+        searchJiraIssues: async () => []
+      }),
+      generateText: async (request) => {
+        const tools = request.tools as unknown as Record<string, ExecutableTool>;
+        const toolResult = await tools.jira_list_assigned_issues.execute({});
+
+        expect(JSON.stringify(toolResult)).toContain("ENG-17");
+        expect(JSON.stringify(toolResult)).not.toContain("jira-secret-token");
+
+        return {
+          text: "- <https://jira.example/browse/ENG-17|ENG-17 Fix deploy dashboard>"
+        };
+      }
+    });
+
+    const response = await collectAgentRun(runner, {
+      principal,
+      text: "what Jira tickets are assigned to me?",
+      connections: { github: null, jira: jiraConnection }
+    });
+
+    expect(response).toEqual({
+      classification: "user_private",
+      text: "- <https://jira.example/browse/ENG-17|ENG-17 Fix deploy dashboard>"
     });
   });
 });

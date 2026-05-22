@@ -199,4 +199,103 @@ describe("runBurbleRequest", () => {
       }
     ]);
   });
+
+  test("asks the user to connect Jira when Jira context is requested without auth", async () => {
+    const response = await runBurbleRequest(
+      {
+        input: {
+          text: "what Jira tickets are assigned to me?",
+          connections: {
+            github: { connected: false },
+            jira: { connected: false }
+          }
+        }
+      },
+      config,
+      async () => {
+        throw new Error("unexpected tool call");
+      }
+    );
+
+    expect(response.response.text).toBe("Connect Jira first.");
+  });
+
+  test("summarizes Jira issues through gateway tools", async () => {
+    const calls: Array<{ toolName: string; body: unknown }> = [];
+    const response = await runBurbleRequest(
+      {
+        input: {
+          text: "what Jira tickets are assigned to me?",
+          connections: {
+            github: { connected: false },
+            jira: {
+              connected: true,
+              email: "person@example.com",
+              providerLogin: "person@atlassian.example"
+            }
+          }
+        }
+      },
+      config,
+      async (toolName, body) => {
+        calls.push({ toolName, body });
+        return {
+          classification: "user_private",
+          content: [
+            {
+              key: "ENG-123",
+              title: "Fix deploy dashboard",
+              url: "https://example.atlassian.net/browse/ENG-123"
+            }
+          ]
+        };
+      }
+    );
+
+    expect(calls).toEqual([
+      {
+        toolName: "jira.listAssignedIssues",
+        body: { user: { email: "person@example.com" } }
+      }
+    ]);
+    expect(response.response.text).toContain("Assigned Jira issues");
+    expect(response.response.text).toContain("Fix deploy dashboard");
+  });
+
+  test("searches Jira issues when the prompt asks for Jira search", async () => {
+    const calls: Array<{ toolName: string; body: unknown }> = [];
+    await runBurbleRequest(
+      {
+        input: {
+          text: "search Jira tickets for deploy dashboard",
+          connections: {
+            github: { connected: false },
+            jira: {
+              connected: true,
+              email: "person@example.com",
+              providerLogin: "person@atlassian.example"
+            }
+          }
+        }
+      },
+      config,
+      async (toolName, body) => {
+        calls.push({ toolName, body });
+        return {
+          classification: "user_private",
+          content: []
+        };
+      }
+    );
+
+    expect(calls).toEqual([
+      {
+        toolName: "jira.searchIssues",
+        body: {
+          user: { email: "person@example.com" },
+          input: { jql: 'text ~ "deploy dashboard"' }
+        }
+      }
+    ]);
+  });
 });

@@ -44,6 +44,7 @@ function createFakeStore() {
     upsertConnectedUser: (input: unknown) => {
       connectedUsers.push(input);
     },
+    upsertProviderConnection: () => undefined,
     getConnectedUserByEmail: () => null,
     getConnection: () => null,
     getOrCreateAgentRuntime: () => {

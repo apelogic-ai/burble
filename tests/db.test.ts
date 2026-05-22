@@ -34,6 +34,35 @@ describe("createTokenStore", () => {
       githubLogin: "octocat",
       githubToken: "gh-token"
     });
+    expect(store.getConnection("github", "person@example.com")).toMatchObject({
+      provider: "github",
+      email: "person@example.com",
+      slackUserId: "U123",
+      providerLogin: "octocat",
+      accessToken: "gh-token"
+    });
+
+    store.close();
+  });
+
+  test("stores provider-shaped Jira connections", () => {
+    const store = createTokenStore(":memory:");
+
+    store.upsertProviderConnection({
+      provider: "jira",
+      email: "person@example.com",
+      slackUserId: "U123",
+      providerLogin: "person@atlassian.example",
+      accessToken: "jira-token"
+    });
+
+    expect(store.getConnection("jira", "person@example.com")).toMatchObject({
+      provider: "jira",
+      email: "person@example.com",
+      slackUserId: "U123",
+      providerLogin: "person@atlassian.example",
+      accessToken: "jira-token"
+    });
 
     store.close();
   });

@@ -13,10 +13,22 @@ export async function runBurbleRequest(
   executeTool: ToolExecutor = createBurbleToolExecutor(config)
 ): Promise<RunResponse> {
   const text = request.input.text.trim();
-  if (!isSupportedGitHubRequest(text)) {
+  if (!isSupportedProviderRequest(text)) {
     return response("user_private", "No Burble tool context is needed for this request.");
   }
 
+  if (isSupportedJiraRequest(text)) {
+    return runJiraRequest(request, executeTool);
+  }
+
+  return runGitHubRequest(request, executeTool);
+}
+
+async function runGitHubRequest(
+  request: RunRequest,
+  executeTool: ToolExecutor
+): Promise<RunResponse> {
+  const text = request.input.text.trim();
   const github = request.input.connections.github;
   if (!github.connected || !github.email) {
     return response("user_private", "Connect GitHub first: `@Burble connect github`.");
@@ -78,6 +90,46 @@ export async function runBurbleRequest(
   );
 }
 
+async function runJiraRequest(
+  request: RunRequest,
+  executeTool: ToolExecutor
+): Promise<RunResponse> {
+  const text = request.input.text.trim();
+  const jira = request.input.connections.jira;
+  if (!jira?.connected || !jira.email) {
+    return response("user_private", "Connect Jira first.");
+  }
+
+  const normalized = text.toLowerCase();
+  const user = { email: jira.email };
+
+  if (/\bwho\s+am\s+i\b/.test(normalized) || /\bjira\s+(me|identity|login)\b/.test(normalized)) {
+    const result = await executeTool("jira.getAuthenticatedUser", { user });
+    const displayName = readDisplayName(result);
+    return response(
+      result.classification,
+      displayName
+        ? `Authenticated to Jira as \`${displayName}\`.`
+        : "I could not determine your Jira identity."
+    );
+  }
+
+  if (/\bsearch\b/.test(normalized) && /\b(issue|issues|ticket|tickets)\b/.test(normalized)) {
+    const result = await executeTool("jira.searchIssues", {
+      user,
+      input: { jql: buildJiraSearchQuery(text) }
+    });
+    return response(result.classification, formatItems("Jira issue matches", result));
+  }
+
+  const result = await executeTool("jira.listAssignedIssues", { user });
+  return response(result.classification, formatItems("Assigned Jira issues", result));
+}
+
+export function isSupportedProviderRequest(text: string): boolean {
+  return isSupportedGitHubRequest(text) || isSupportedJiraRequest(text);
+}
+
 export function isSupportedGitHubRequest(text: string): boolean {
   const normalized = text.toLowerCase();
   return (
@@ -86,6 +138,14 @@ export function isSupportedGitHubRequest(text: string): boolean {
     /\b(issue|issues)\b/.test(normalized) ||
     /\b(pull request|pull requests|prs?|reviews?)\b/.test(normalized) ||
     /\b(summary|summarize|prioritize|attention|work)\b/.test(normalized)
+  );
+}
+
+export function isSupportedJiraRequest(text: string): boolean {
+  const normalized = text.toLowerCase();
+  return (
+    /\bjira\b/.test(normalized) ||
+    /\b(ticket|tickets)\b/.test(normalized)
   );
 }
 
@@ -110,6 +170,20 @@ function readLogin(result: ToolResult): string | null {
     typeof content.login === "string"
   ) {
     return content.login;
+  }
+
+  return null;
+}
+
+function readDisplayName(result: ToolResult): string | null {
+  const content = result.content;
+  if (
+    typeof content === "object" &&
+    content !== null &&
+    "displayName" in content &&
+    typeof content.displayName === "string"
+  ) {
+    return content.displayName;
   }
 
   return null;
@@ -151,6 +225,17 @@ function buildIssueSearchQuery(text: string): string {
     .trim();
 
   return normalized ? `is:issue ${normalized}` : "is:issue";
+}
+
+function buildJiraSearchQuery(text: string): string {
+  const normalized = text
+    .replace(/\b(search|jira|issue|issues|ticket|tickets|for|about)\b/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  return normalized
+    ? `text ~ "${normalized.replace(/"/g, '\\"')}"`
+    : "assignee = currentUser() AND statusCategory != Done";
 }
 
 function mergeClassification(

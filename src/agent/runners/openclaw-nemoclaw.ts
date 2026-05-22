@@ -74,7 +74,8 @@ export function createOpenClawNemoClawAgentRunner(
           `principal=${input.principal.workspaceId}:${input.principal.slackUserId}`,
           `conversationRoot=${input.conversation?.rootId ?? "unknown"}`,
           `textLength=${input.text.length}`,
-          `githubConnected=${Boolean(input.connections.github)}`
+          `githubConnected=${Boolean(input.connections.github)}`,
+          `jiraConnected=${Boolean(input.connections.jira)}`
         ].join(" ")
       );
       if (runtime) {
@@ -83,7 +84,8 @@ export function createOpenClawNemoClawAgentRunner(
           summary: {
             conversationRoot: input.conversation?.rootId ?? "unknown",
             textLength: input.text.length,
-            githubConnected: Boolean(input.connections.github)
+            githubConnected: Boolean(input.connections.github),
+            jiraConnected: Boolean(input.connections.jira)
           }
         });
       }
@@ -282,9 +284,10 @@ function validateRemoteRunEvent(payload: unknown): RemoteRunEvent | null {
 function sanitizeAgentInput(input: AgentInput): {
   text: string;
   conversation?: NonNullable<AgentInput["conversation"]>;
-  connections: { github: ConnectionSummary };
+  connections: { github: ConnectionSummary; jira: ConnectionSummary };
 } {
   const github = input.connections.github;
+  const jira = input.connections.jira;
 
   return {
     text: input.text,
@@ -295,6 +298,15 @@ function sanitizeAgentInput(input: AgentInput): {
             connected: true,
             email: github.email,
             providerLogin: github.providerLogin
+          }
+        : {
+            connected: false
+          },
+      jira: jira
+        ? {
+            connected: true,
+            email: jira.email,
+            providerLogin: jira.providerLogin
           }
         : {
             connected: false

@@ -21,6 +21,7 @@ export type AgentInput = {
   text: string;
   connections: {
     github: ProviderConnection | null;
+    jira?: ProviderConnection | null;
   };
 };
 

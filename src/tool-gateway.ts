@@ -8,9 +8,11 @@ import {
   searchIssues
 } from "./github";
 import { createGitHubTools } from "./tools/github";
+import { createJiraTools, type JiraToolDeps } from "./tools/jira";
 import type { ToolResult } from "./tools/types";
 
-type ToolGatewayDeps = Partial<Parameters<typeof createGitHubTools>[0]>;
+type ToolGatewayDeps = Partial<Parameters<typeof createGitHubTools>[0]> &
+  Partial<JiraToolDeps>;
 
 type ToolGatewayBody = {
   user?: {
@@ -23,7 +25,16 @@ const defaultDeps = {
   getGitHubUser,
   listAssignedIssues,
   searchIssues,
-  listMyPullRequests
+  listMyPullRequests,
+  getJiraUser: async (_token: string) => {
+    throw new Error("Jira MCP backend is not configured");
+  },
+  listAssignedJiraIssues: async (_token: string) => {
+    throw new Error("Jira MCP backend is not configured");
+  },
+  searchJiraIssues: async (_token: string, _jql: string) => {
+    throw new Error("Jira MCP backend is not configured");
+  }
 };
 
 type ToolGatewayAuth =
@@ -55,13 +66,17 @@ export async function handleToolGatewayRequest(
     return new Response("Invalid tool input", { status: 400 });
   }
 
-  const connection = store.getConnection("github", body.user.email);
+  const provider = readToolProvider(toolName);
+  const connection = store.getConnection(provider, body.user.email);
   if (!connection) {
     return jsonResponse({
       classification: "user_private",
       content: {
-        error: "github_not_connected",
-        message: "Connect GitHub first: `@Burble connect github`."
+        error: `${provider}_not_connected`,
+        message:
+          provider === "github"
+            ? "Connect GitHub first: `@Burble connect github`."
+            : "Connect Jira first."
       }
     });
   }
@@ -70,6 +85,7 @@ export async function handleToolGatewayRequest(
   }
 
   const tools = createGitHubTools({ ...defaultDeps, ...deps });
+  const jiraTools = createJiraTools({ ...defaultDeps, ...deps });
 
   switch (toolName) {
     case "github.getAuthenticatedUser":
@@ -111,6 +127,38 @@ export async function handleToolGatewayRequest(
         toolName,
         await tools.listMyPullRequests.execute({ connection })
       );
+
+    case "jira.getAuthenticatedUser":
+      return jsonResponseWithAudit(
+        store,
+        auth,
+        toolName,
+        await jiraTools.getAuthenticatedUser.execute({ connection })
+      );
+
+    case "jira.listAssignedIssues":
+      return jsonResponseWithAudit(
+        store,
+        auth,
+        toolName,
+        await jiraTools.listAssignedIssues.execute({ connection })
+      );
+
+    case "jira.searchIssues": {
+      if (!isSearchJiraIssuesInput(body.input)) {
+        return new Response("Invalid tool input", { status: 400 });
+      }
+
+      return jsonResponseWithAudit(
+        store,
+        auth,
+        toolName,
+        await jiraTools.searchIssues.execute({
+          connection,
+          input: { jql: body.input.jql }
+        })
+      );
+    }
   }
 
   return new Response("Unknown tool", { status: 404 });
@@ -167,8 +215,15 @@ function isKnownTool(toolName: string): boolean {
     toolName === "github.getAuthenticatedUser" ||
     toolName === "github.listAssignedIssues" ||
     toolName === "github.searchIssues" ||
-    toolName === "github.listMyPullRequests"
+    toolName === "github.listMyPullRequests" ||
+    toolName === "jira.getAuthenticatedUser" ||
+    toolName === "jira.listAssignedIssues" ||
+    toolName === "jira.searchIssues"
   );
+}
+
+function readToolProvider(toolName: string): "github" | "jira" {
+  return toolName.startsWith("jira.") ? "jira" : "github";
 }
 
 async function readToolGatewayBody(
@@ -188,6 +243,16 @@ function isSearchIssuesInput(input: unknown): input is { query: string } {
     "query" in input &&
     typeof input.query === "string" &&
     input.query.trim().length > 0
+  );
+}
+
+function isSearchJiraIssuesInput(input: unknown): input is { jql: string } {
+  return (
+    typeof input === "object" &&
+    input !== null &&
+    "jql" in input &&
+    typeof input.jql === "string" &&
+    input.jql.trim().length > 0
   );
 }
 

@@ -152,11 +152,27 @@ function isRunRequest(body: unknown): body is RunRequest {
   }
 
   const github = connections.github;
+  if (!isConnectionSummary(github)) {
+    return false;
+  }
+
+  if (
+    "jira" in connections &&
+    connections.jira !== undefined &&
+    !isConnectionSummary(connections.jira)
+  ) {
+    return false;
+  }
+
+  return true;
+}
+
+function isConnectionSummary(value: unknown): boolean {
   return (
-    typeof github === "object" &&
-    github !== null &&
-    "connected" in github &&
-    typeof github.connected === "boolean"
+    typeof value === "object" &&
+    value !== null &&
+    "connected" in value &&
+    typeof value.connected === "boolean"
   );
 }
 

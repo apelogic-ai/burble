@@ -41,6 +41,15 @@ const connection: ProviderConnection = {
   connectedAt: "2026-05-19T00:00:00Z"
 };
 
+const jiraConnection: ProviderConnection = {
+  provider: "jira",
+  email: "person@example.com",
+  slackUserId: "U123",
+  providerLogin: "person@atlassian.example",
+  accessToken: "jira-token",
+  connectedAt: "2026-05-22T00:00:00Z"
+};
+
 const runtime: AgentRuntimeRecord = {
   id: "rt_u123",
   workspaceId: "T123",
@@ -69,9 +78,10 @@ function createStore(
     createOAuthState: () => "state",
     consumeOAuthState: () => null,
     upsertConnectedUser: () => undefined,
+    upsertProviderConnection: () => undefined,
     getConnectedUserByEmail: () => null,
     getConnection: (provider, email) =>
-      provider === "github" && email === "person@example.com"
+      provider === foundConnection?.provider && email === "person@example.com"
         ? foundConnection
         : null,
     getOrCreateAgentRuntime: () => {
@@ -258,6 +268,65 @@ describe("handleToolGatewayRequest", () => {
     });
   });
 
+  test("executes an allowlisted Jira tool with the stored caller token", async () => {
+    const response = await handleToolGatewayRequest(
+      config,
+      createStore(jiraConnection),
+      "jira.searchIssues",
+      request("jira.searchIssues", {
+        user: { email: "person@example.com" },
+        input: { jql: "assignee = currentUser() AND status != Done" }
+      }),
+      {
+        searchJiraIssues: async (token, jql) => {
+          expect(token).toBe("jira-token");
+          expect(jql).toBe("assignee = currentUser() AND status != Done");
+          return [
+            {
+              key: "ENG-123",
+              summary: "Fix deploy dashboard",
+              url: "https://example.atlassian.net/browse/ENG-123"
+            }
+          ];
+        }
+      }
+    );
+
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body).toEqual({
+      classification: "user_private",
+      content: [
+        {
+          key: "ENG-123",
+          title: "Fix deploy dashboard",
+          url: "https://example.atlassian.net/browse/ENG-123"
+        }
+      ]
+    });
+    expect(JSON.stringify(body)).not.toContain("jira-token");
+  });
+
+  test("returns a private Jira connect instruction when Jira is not connected", async () => {
+    const response = await handleToolGatewayRequest(
+      config,
+      createStore(null),
+      "jira.listAssignedIssues",
+      request("jira.listAssignedIssues", {
+        user: { email: "person@example.com" }
+      })
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      classification: "user_private",
+      content: {
+        error: "jira_not_connected",
+        message: "Connect Jira first."
+      }
+    });
+  });
+
   test("rejects unknown tools", async () => {
     const response = await handleToolGatewayRequest(
       config,
@@ -278,6 +347,21 @@ describe("handleToolGatewayRequest", () => {
       createStore(connection),
       "github.searchIssues",
       request("github.searchIssues", {
+        user: { email: "person@example.com" },
+        input: {}
+      })
+    );
+
+    expect(response.status).toBe(400);
+    expect(await response.text()).toBe("Invalid tool input");
+  });
+
+  test("validates Jira search input before execution", async () => {
+    const response = await handleToolGatewayRequest(
+      config,
+      createStore(jiraConnection),
+      "jira.searchIssues",
+      request("jira.searchIssues", {
         user: { email: "person@example.com" },
         input: {}
       })
