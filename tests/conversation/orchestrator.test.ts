@@ -55,7 +55,8 @@ function createDeps(overrides: Partial<ConversationDeps> = {}): ConversationDeps
 
   return {
     createGitHubOAuthUrl: () => "https://example.test/oauth/github",
-    getConnection: () => connection,
+    createJiraOAuthUrl: () => "https://example.test/oauth/jira",
+    getConnection: (provider) => (provider === "github" ? connection : null),
     githubTools,
     ...overrides
   };
@@ -95,6 +96,19 @@ describe("handleConversation", () => {
       visibility: "ephemeral",
       classification: "user_private",
       text: "<https://example.test/oauth/github|Connect your GitHub account>"
+    });
+  });
+
+  test("returns a private Jira connect link", async () => {
+    const response = await handleConversation(
+      { ...baseRequest, text: "connect jira" },
+      createDeps()
+    );
+
+    expect(response).toMatchObject({
+      visibility: "ephemeral",
+      classification: "user_private",
+      text: "<https://example.test/oauth/jira|Connect your Jira account>"
     });
   });
 
@@ -196,6 +210,7 @@ describe("handleConversation", () => {
             isDirectMessage: false
           });
           expect(input.connections.github?.providerLogin).toBe("octocat");
+          expect(input.connections.jira).toBeNull();
           return {
             classification: "user_private",
             text: "You have one issue and one pull request."

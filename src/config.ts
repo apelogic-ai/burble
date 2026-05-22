@@ -5,6 +5,8 @@ export type Config = {
   slackAppToken: string;
   githubClientId: string;
   githubClientSecret: string;
+  jiraClientId: string | null;
+  jiraClientSecret: string | null;
   baseUrl: string;
   port: number;
   databasePath: string;
@@ -146,6 +148,8 @@ export function readConfig(env: Env): Config {
     slackAppToken: requiredEnv(env, "SLACK_APP_TOKEN"),
     githubClientId: requiredEnv(env, "GITHUB_CLIENT_ID"),
     githubClientSecret: requiredEnv(env, "GITHUB_CLIENT_SECRET"),
+    jiraClientId: optionalSecretEnv(env, "JIRA_CLIENT_ID"),
+    jiraClientSecret: optionalSecretEnv(env, "JIRA_CLIENT_SECRET"),
     baseUrl,
     port: optionalIntEnv(env, "PORT", 3000),
     databasePath: env.DATABASE_PATH ?? "burble.db",

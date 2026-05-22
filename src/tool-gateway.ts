@@ -7,6 +7,11 @@ import {
   listMyPullRequests,
   searchIssues
 } from "./github";
+import {
+  getJiraUser,
+  listAssignedJiraIssues,
+  searchJiraIssues
+} from "./jira";
 import { createGitHubTools } from "./tools/github";
 import { createJiraTools, type JiraToolDeps } from "./tools/jira";
 import type { ToolResult } from "./tools/types";
@@ -26,15 +31,9 @@ const defaultDeps = {
   listAssignedIssues,
   searchIssues,
   listMyPullRequests,
-  getJiraUser: async (_token: string) => {
-    throw new Error("Jira MCP backend is not configured");
-  },
-  listAssignedJiraIssues: async (_token: string) => {
-    throw new Error("Jira MCP backend is not configured");
-  },
-  searchJiraIssues: async (_token: string, _jql: string) => {
-    throw new Error("Jira MCP backend is not configured");
-  }
+  getJiraUser,
+  listAssignedJiraIssues,
+  searchJiraIssues
 };
 
 type ToolGatewayAuth =

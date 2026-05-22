@@ -12,6 +12,8 @@ const config: Config = {
   slackAppToken: "xapp-test",
   githubClientId: "client-id",
   githubClientSecret: "client-secret",
+  jiraClientId: null,
+  jiraClientSecret: null,
   baseUrl: "https://example.ngrok-free.app",
   port: 3000,
   databasePath: ":memory:",

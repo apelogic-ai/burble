@@ -29,6 +29,7 @@ export type ConversationResponse = {
 
 export type ConversationDeps = {
   createGitHubOAuthUrl: (slackUserId: string) => string;
+  createJiraOAuthUrl?: (slackUserId: string) => string;
   getConnection: (provider: Provider, email: string) => ProviderConnection | null;
   githubTools: ReturnType<typeof createGitHubTools>;
   agentMode?: AgentMode;

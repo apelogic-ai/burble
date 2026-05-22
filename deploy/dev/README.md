@@ -85,12 +85,23 @@ OPENAI_API_KEY=
 ANTHROPIC_API_KEY=
 GITHUB_CLIENT_ID=...
 GITHUB_CLIENT_SECRET=...
+JIRA_CLIENT_ID=
+JIRA_CLIENT_SECRET=
 ```
 
 Use `AGENT_MODE=llm` to route mentions and DMs through an agent runner.
 `AGENT_RUNTIME=ai-sdk` is the default in-process runner. `AI_MODEL` uses
 `provider:model` format and resolves through direct provider packages, so set
 the matching provider key before enabling it.
+
+For Jira hand testing, create an Atlassian OAuth 2.0 3LO app, add:
+
+```text
+https://<DOMAIN>/oauth/jira/callback
+```
+
+Then grant scopes `read:jira-user read:jira-work` and set
+`JIRA_CLIENT_ID` / `JIRA_CLIENT_SECRET` in `deploy/dev/compose/.env`.
 
 Bring it up:
 

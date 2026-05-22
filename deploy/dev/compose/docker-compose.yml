@@ -53,6 +53,8 @@ services:
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
       - GITHUB_CLIENT_ID=${GITHUB_CLIENT_ID:?GITHUB_CLIENT_ID is required}
       - GITHUB_CLIENT_SECRET=${GITHUB_CLIENT_SECRET:?GITHUB_CLIENT_SECRET is required}
+      - JIRA_CLIENT_ID=${JIRA_CLIENT_ID:-}
+      - JIRA_CLIENT_SECRET=${JIRA_CLIENT_SECRET:-}
     volumes:
       - burble_data:/data
     healthcheck:

@@ -24,6 +24,22 @@ export async function handleConversation(
     };
   }
 
+  if (intent === "connect_jira") {
+    if (!deps.createJiraOAuthUrl) {
+      return {
+        visibility: "ephemeral",
+        classification: "user_private",
+        text: "Jira OAuth is not configured."
+      };
+    }
+
+    return {
+      visibility: "ephemeral",
+      classification: "user_private",
+      text: `<${deps.createJiraOAuthUrl(request.user.slackUserId)}|Connect your Jira account>`
+    };
+  }
+
   if (deps.agentMode === "llm" && deps.agentRunner) {
     const result = await collectAgentRun(
       deps.agentRunner,
@@ -146,6 +162,7 @@ function buildConversationRootId(request: ConversationRequest): string {
 
 type DeterministicIntent =
   | "connect_github"
+  | "connect_jira"
   | "github_identity"
   | "github_issues"
   | "github_issue_search"
@@ -157,6 +174,10 @@ export function classifyDeterministicIntent(text: string): DeterministicIntent {
 
   if (/\bconnect\s+github\b/.test(normalized)) {
     return "connect_github";
+  }
+
+  if (/\bconnect\s+(jira|atlassian)\b/.test(normalized)) {
+    return "connect_jira";
   }
 
   if (

@@ -1,6 +1,7 @@
 import type { Config } from "./config";
 import type { TokenStore } from "./db";
 import { exchangeGitHubCode, getGitHubUser } from "./github";
+import { exchangeJiraCode, getJiraUser } from "./jira";
 import { formatLogError } from "./logging";
 import type { SlackRuntime } from "./slack";
 import { handleToolGatewayRequest } from "./tool-gateway";
@@ -10,9 +11,19 @@ export type GitHubOAuthDeps = {
   getGitHubUser: typeof getGitHubUser;
 };
 
+export type JiraOAuthDeps = {
+  exchangeJiraCode: typeof exchangeJiraCode;
+  getJiraUser: typeof getJiraUser;
+};
+
 const defaultGitHubOAuthDeps: GitHubOAuthDeps = {
   exchangeGitHubCode,
   getGitHubUser
+};
+
+const defaultJiraOAuthDeps: JiraOAuthDeps = {
+  exchangeJiraCode,
+  getJiraUser
 };
 
 export function startOAuthServer(
@@ -41,11 +52,15 @@ export function startOAuthServer(
         );
       }
 
-      if (url.pathname !== "/oauth/github/callback") {
-        return new Response("Not found", { status: 404 });
+      if (url.pathname === "/oauth/github/callback") {
+        return handleGitHubCallback(config, store, slack, url);
       }
 
-      return handleGitHubCallback(config, store, slack, url);
+      if (url.pathname === "/oauth/jira/callback") {
+        return handleJiraCallback(config, store, slack, url);
+      }
+
+      return new Response("Not found", { status: 404 });
     }
   });
 }
@@ -94,6 +109,54 @@ export async function handleGitHubCallback(
       text: "GitHub connection failed. Run `/connect-github` and try again."
     });
     return new Response("GitHub connection failed", { status: 400 });
+  }
+}
+
+export async function handleJiraCallback(
+  config: Config,
+  store: TokenStore,
+  slack: SlackRuntime,
+  url: URL,
+  deps: JiraOAuthDeps = defaultJiraOAuthDeps
+): Promise<Response> {
+  const code = url.searchParams.get("code");
+  const state = url.searchParams.get("state");
+
+  if (!code || !state) {
+    return new Response("Missing code or state", { status: 400 });
+  }
+
+  const stateRow = store.consumeOAuthState(state);
+  if (!stateRow) {
+    return new Response("Invalid or expired OAuth state", { status: 400 });
+  }
+
+  try {
+    const token = await deps.exchangeJiraCode(config, code);
+    const jiraUser = await deps.getJiraUser(token);
+    const email = await slack.getSlackEmail(stateRow.slackUserId);
+
+    store.upsertProviderConnection({
+      provider: "jira",
+      email,
+      slackUserId: stateRow.slackUserId,
+      providerLogin: jiraUser.displayName,
+      accessToken: token
+    });
+
+    await slack.app.client.chat.postMessage({
+      channel: stateRow.slackUserId,
+      text: `Connected to Jira as \`${jiraUser.displayName}\` (${email}).`
+    });
+
+    return htmlResponse("Connected. You can close this tab.");
+  } catch (error) {
+    console.error(formatLogError(error));
+    await slack.app.client.chat.postMessage({
+      channel: stateRow.slackUserId,
+      text: "Jira connection failed. Run `/auth jira` and try again."
+    });
+    return new Response("Jira connection failed", { status: 400 });
   }
 }
 

@@ -1,6 +1,6 @@
 # Burble
 
-Slack-as-TUI PoC for identity-scoped GitHub access.
+Slack-as-TUI PoC for identity-scoped GitHub and Jira access.
 
 ## Run
 
@@ -16,10 +16,11 @@ Expose the local callback server with a tunnel such as:
 ngrok http 3000
 ```
 
-Then set `BASE_URL` in `.env` and configure the GitHub OAuth callback URL as:
+Then set `BASE_URL` in `.env` and configure OAuth callback URLs:
 
 ```text
 {BASE_URL}/oauth/github/callback
+{BASE_URL}/oauth/jira/callback
 ```
 
 ## Slack Commands
@@ -32,8 +33,15 @@ Then set `BASE_URL` in `.env` and configure the GitHub OAuth callback URL as:
 - `/connect-github` starts a per-user GitHub OAuth flow.
 - `/auth` shows available auth connections.
 - `/auth github` starts the GitHub OAuth flow.
+- `/auth jira` starts the Jira OAuth flow.
 - `/github-me` verifies the connected GitHub identity for the Slack user.
 - `/issues` lists open GitHub issues assigned to the connected user.
+
+Jira OAuth uses Atlassian 3LO with these scopes:
+
+```text
+read:jira-user read:jira-work
+```
 
 Required Slack bot scopes:
 

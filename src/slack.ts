@@ -8,6 +8,12 @@ import {
   listMyPullRequests,
   searchIssues
 } from "./github";
+import {
+  buildJiraOAuthUrl,
+  getJiraUser,
+  listAssignedJiraIssues,
+  searchJiraIssues
+} from "./jira";
 import type { TokenStore } from "./db";
 import { handleConversation } from "./conversation/orchestrator";
 import { normalizeMentionText } from "./conversation/normalize";
@@ -18,6 +24,7 @@ import { createDockerRuntimeFactory } from "./agent/container-runtime-factory";
 import { createStaticRuntimeFactory } from "./agent/runtime-factory";
 import type { RuntimeFactory } from "./agent/runtime-factory";
 import { createGitHubTools } from "./tools/github";
+import { createJiraTools } from "./tools/jira";
 import {
   formatConnectGitHubMessage,
   formatGitHubIdentityMessage,
@@ -113,6 +120,11 @@ export function createSlackRuntime(config: Config, store: TokenStore): SlackRunt
     searchIssues,
     listMyPullRequests
   });
+  const jiraTools = createJiraTools({
+    getJiraUser,
+    listAssignedJiraIssues,
+    searchJiraIssues
+  });
   const runtimeFactory = createOpenClawRuntimeFactory(config, store);
   const agentRunner =
     config.agentMode === "llm"
@@ -120,6 +132,7 @@ export function createSlackRuntime(config: Config, store: TokenStore): SlackRunt
           runtime: config.agentRuntime,
           model: config.aiModel,
           githubTools,
+          jiraTools,
           openClawNemoClawUrl: config.openClawNemoClawUrl,
           ...(runtimeFactory ? { runtimeFactory } : {}),
           logInfo: (message) => app.logger.info(withUtcTimestamp(message))
@@ -183,6 +196,12 @@ export function createSlackRuntime(config: Config, store: TokenStore): SlackRunt
         {
           createGitHubOAuthUrl: (slackUserId) =>
             buildGitHubOAuthUrl(config, store.createOAuthState(slackUserId)),
+          ...(config.jiraClientId && config.jiraClientSecret
+            ? {
+                createJiraOAuthUrl: (slackUserId: string) =>
+                  buildJiraOAuthUrl(config, store.createOAuthState(slackUserId))
+              }
+            : {}),
           getConnection: (provider, emailAddress) =>
             store.getConnection(provider, emailAddress),
           githubTools,
@@ -273,6 +292,12 @@ export function createSlackRuntime(config: Config, store: TokenStore): SlackRunt
         {
           createGitHubOAuthUrl: (slackUserId) =>
             buildGitHubOAuthUrl(config, store.createOAuthState(slackUserId)),
+          ...(config.jiraClientId && config.jiraClientSecret
+            ? {
+                createJiraOAuthUrl: (slackUserId: string) =>
+                  buildJiraOAuthUrl(config, store.createOAuthState(slackUserId))
+              }
+            : {}),
           getConnection: (provider, emailAddress) =>
             store.getConnection(provider, emailAddress),
           githubTools,
@@ -326,13 +351,19 @@ export function createSlackRuntime(config: Config, store: TokenStore): SlackRunt
       if (action.kind === "unknown") {
         await ack({
           response_type: "ephemeral",
-          text: `Unknown auth target \`${action.value}\`. Try \`/auth connections\` or \`/auth github\`.`
+          text: `Unknown auth target \`${action.value}\`. Try \`/auth connections\`, \`/auth github\`, or \`/auth jira\`.`
         });
         return;
       }
 
-      const state = store.createOAuthState(body.user_id);
-      const githubUrl = buildGitHubOAuthUrl(config, state);
+      const githubUrl = buildGitHubOAuthUrl(
+        config,
+        store.createOAuthState(body.user_id)
+      );
+      const jiraUrl = tryBuildJiraOAuthUrl(
+        config,
+        store.createOAuthState(body.user_id)
+      );
 
       await ack(
         action.kind === "github"
@@ -340,7 +371,17 @@ export function createSlackRuntime(config: Config, store: TokenStore): SlackRunt
               response_type: "ephemeral",
               text: formatConnectGitHubMessage(githubUrl)
             }
-          : buildAuthResponse(githubUrl)
+          : action.kind === "jira"
+            ? jiraUrl
+              ? {
+                  response_type: "ephemeral",
+                  text: `<${jiraUrl}|Connect your Jira account>`
+                }
+              : {
+                  response_type: "ephemeral",
+                  text: "Jira OAuth is not configured."
+                }
+            : buildAuthResponse({ githubUrl, jiraUrl })
       );
     } catch (error) {
       logger.error(formatLogError(error));
@@ -481,6 +522,7 @@ function createOpenClawRuntimeFactory(
 export type AuthCommand =
   | { kind: "connections" }
   | { kind: "github" }
+  | { kind: "jira" }
   | { kind: "unknown"; value: string };
 
 export function parseAuthCommand(text: string): AuthCommand {
@@ -498,13 +540,25 @@ export function parseAuthCommand(text: string): AuthCommand {
     return { kind: "github" };
   }
 
+  if (
+    normalized === "jira" ||
+    normalized === "atlassian" ||
+    normalized === "connect jira" ||
+    normalized === "connect atlassian"
+  ) {
+    return { kind: "jira" };
+  }
+
   return { kind: "unknown", value: normalized };
 }
 
-export function buildAuthResponse(githubUrl: string) {
+export function buildAuthResponse(input: {
+  githubUrl: string;
+  jiraUrl: string | null;
+}) {
   return {
     response_type: "ephemeral" as const,
-    text: "Connections: GitHub is available. Atlassian and Salesforce are coming later.",
+    text: "Connections: GitHub and Jira are available. Salesforce is coming later.",
     blocks: [
       {
         type: "header",
@@ -525,7 +579,7 @@ export function buildAuthResponse(githubUrl: string) {
             type: "plain_text",
             text: "Connect"
           },
-          url: githubUrl,
+          url: input.githubUrl,
           action_id: "connect_github"
         }
       },
@@ -533,8 +587,23 @@ export function buildAuthResponse(githubUrl: string) {
         type: "section",
         text: {
           type: "mrkdwn",
-          text: "*Atlassian*\nJira and Confluence auth will be added after the GitHub PoC."
-        }
+          text: input.jiraUrl
+            ? "*Atlassian Jira*\nConnect your Jira identity for assigned tickets and issue search."
+            : "*Atlassian Jira*\nJira OAuth is not configured."
+        },
+        ...(input.jiraUrl
+          ? {
+              accessory: {
+                type: "button",
+                text: {
+                  type: "plain_text",
+                  text: "Connect"
+                },
+                url: input.jiraUrl,
+                action_id: "connect_jira"
+              }
+            }
+          : {})
       },
       {
         type: "section",
@@ -548,7 +617,7 @@ export function buildAuthResponse(githubUrl: string) {
         elements: [
           {
             type: "mrkdwn",
-            text: "Shortcuts: `/auth github`, `/github-me x`, `/issues x`"
+            text: "Shortcuts: `/auth github`, `/auth jira`, `/github-me x`, `/issues x`"
           }
         ]
       }
@@ -751,6 +820,19 @@ export function formatAgentProgressEvent(
 function formatAgentToolName(toolName: string): string {
   return toolName
     .replace(/^github_/, "GitHub ")
+    .replace(/^jira_/, "Jira ")
     .replaceAll("_", " ")
     .trim();
+}
+
+function tryBuildJiraOAuthUrl(config: Config, state: string): string | null {
+  try {
+    return buildJiraOAuthUrl(config, state);
+  } catch (error) {
+    if (error instanceof Error && error.message === "Jira OAuth is not configured") {
+      return null;
+    }
+
+    throw error;
+  }
 }

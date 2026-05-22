@@ -18,6 +18,8 @@ describe("readConfig", () => {
       slackAppToken: "xapp-test",
       githubClientId: "client-id",
       githubClientSecret: "client-secret",
+      jiraClientId: null,
+      jiraClientSecret: null,
       baseUrl: "https://example.ngrok-free.app",
       port: 4242,
       databasePath: "test.db",
@@ -43,6 +45,17 @@ describe("readConfig", () => {
     expect(readConfig({ ...validEnv, SLACK_LOG_LEVEL: "debug" }).slackLogLevel).toBe(
       "debug"
     );
+  });
+
+  test("reads optional Jira OAuth settings", () => {
+    const config = readConfig({
+      ...validEnv,
+      JIRA_CLIENT_ID: "jira-client-id",
+      JIRA_CLIENT_SECRET: "jira-client-secret"
+    });
+
+    expect(config.jiraClientId).toBe("jira-client-id");
+    expect(config.jiraClientSecret).toBe("jira-client-secret");
   });
 
   test("rejects invalid Slack log levels", () => {

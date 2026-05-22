@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { Config } from "../src/config";
 import type { TokenStore } from "../src/db";
-import { handleGitHubCallback } from "../src/server";
+import { handleGitHubCallback, handleJiraCallback } from "../src/server";
 import type { SlackRuntime } from "../src/slack";
 
 const config: Config = {
@@ -9,6 +9,8 @@ const config: Config = {
   slackAppToken: "xapp-test",
   githubClientId: "client-id",
   githubClientSecret: "client-secret",
+  jiraClientId: "jira-client-id",
+  jiraClientSecret: "jira-client-secret",
   baseUrl: "https://example.ngrok-free.app",
   port: 3000,
   databasePath: ":memory:",
@@ -31,6 +33,7 @@ const config: Config = {
 
 function createFakeStore() {
   const connectedUsers: unknown[] = [];
+  const providerConnections: unknown[] = [];
   const store = {
     createOAuthState: () => "state",
     consumeOAuthState: (state: string) =>
@@ -44,7 +47,9 @@ function createFakeStore() {
     upsertConnectedUser: (input: unknown) => {
       connectedUsers.push(input);
     },
-    upsertProviderConnection: () => undefined,
+    upsertProviderConnection: (input: unknown) => {
+      providerConnections.push(input);
+    },
     getConnectedUserByEmail: () => null,
     getConnection: () => null,
     getOrCreateAgentRuntime: () => {
@@ -59,7 +64,7 @@ function createFakeStore() {
     close: () => undefined
   } as TokenStore;
 
-  return { store, connectedUsers };
+  return { store, connectedUsers, providerConnections };
 }
 
 function createFakeSlack() {
@@ -162,6 +167,69 @@ describe("handleGitHubCallback", () => {
       {
         channel: "U123",
         text: "Connected as `octocat` (person@example.com)."
+      }
+    ]);
+  });
+});
+
+describe("handleJiraCallback", () => {
+  test("rejects missing code or state", async () => {
+    const { store } = createFakeStore();
+    const { slack } = createFakeSlack();
+
+    const response = await handleJiraCallback(
+      config,
+      store,
+      slack,
+      new URL("https://example.test/oauth/jira/callback?state=valid-state"),
+      {
+        exchangeJiraCode: async () => "token",
+        getJiraUser: async () => ({ accountId: "account-123", displayName: "Leo" })
+      }
+    );
+
+    expect(response.status).toBe(400);
+    expect(await response.text()).toBe("Missing code or state");
+  });
+
+  test("stores the Jira provider connection and DMs Slack on success", async () => {
+    const { store, providerConnections } = createFakeStore();
+    const { slack, messages } = createFakeSlack();
+
+    const response = await handleJiraCallback(
+      config,
+      store,
+      slack,
+      new URL(
+        "https://example.test/oauth/jira/callback?code=abc&state=valid-state"
+      ),
+      {
+        exchangeJiraCode: async (_config, code) => {
+          expect(code).toBe("abc");
+          return "jira-token";
+        },
+        getJiraUser: async (token) => {
+          expect(token).toBe("jira-token");
+          return { accountId: "account-123", displayName: "Leo" };
+        }
+      }
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.text()).toContain("Connected. You can close this tab.");
+    expect(providerConnections).toEqual([
+      {
+        provider: "jira",
+        email: "person@example.com",
+        slackUserId: "U123",
+        providerLogin: "Leo",
+        accessToken: "jira-token"
+      }
+    ]);
+    expect(messages).toEqual([
+      {
+        channel: "U123",
+        text: "Connected to Jira as `Leo` (person@example.com)."
       }
     ]);
   });

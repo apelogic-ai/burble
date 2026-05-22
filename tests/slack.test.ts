@@ -118,6 +118,12 @@ describe("parseAuthCommand", () => {
     expect(parseAuthCommand("connect github")).toEqual({ kind: "github" });
   });
 
+  test("routes Jira aliases", () => {
+    expect(parseAuthCommand("jira")).toEqual({ kind: "jira" });
+    expect(parseAuthCommand("atlassian")).toEqual({ kind: "jira" });
+    expect(parseAuthCommand("connect jira")).toEqual({ kind: "jira" });
+  });
+
   test("reports unknown auth targets", () => {
     expect(parseAuthCommand("salesforce")).toEqual({
       kind: "unknown",
@@ -128,12 +134,25 @@ describe("parseAuthCommand", () => {
 
 describe("buildAuthResponse", () => {
   test("builds a connections menu with GitHub and future providers", () => {
-    const response = buildAuthResponse("https://example.test/github");
+    const response = buildAuthResponse({
+      githubUrl: "https://example.test/github",
+      jiraUrl: "https://example.test/jira"
+    });
 
     expect(response.text).toContain("Connections");
     expect(JSON.stringify(response.blocks)).toContain("GitHub");
     expect(JSON.stringify(response.blocks)).toContain("Atlassian");
     expect(JSON.stringify(response.blocks)).toContain("https://example.test/github");
+    expect(JSON.stringify(response.blocks)).toContain("https://example.test/jira");
+  });
+
+  test("marks Jira unavailable when no Jira OAuth URL is configured", () => {
+    const response = buildAuthResponse({
+      githubUrl: "https://example.test/github",
+      jiraUrl: null
+    });
+
+    expect(JSON.stringify(response.blocks)).toContain("Jira OAuth is not configured");
   });
 });
 

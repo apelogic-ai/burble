@@ -32,7 +32,7 @@ describe("dev deploy config", () => {
     expect(caddyfile).toContain("reverse_proxy burble-app:3000");
   });
 
-  test("passes Slack and GitHub OAuth settings to the app", () => {
+  test("passes Slack, GitHub, and Jira OAuth settings to the app", () => {
     for (const name of [
       "SLACK_BOT_TOKEN:?SLACK_BOT_TOKEN is required",
       "SLACK_APP_TOKEN:?SLACK_APP_TOKEN is required",
@@ -55,6 +55,8 @@ describe("dev deploy config", () => {
       "ANTHROPIC_API_KEY",
       "GITHUB_CLIENT_ID:?GITHUB_CLIENT_ID is required",
       "GITHUB_CLIENT_SECRET:?GITHUB_CLIENT_SECRET is required",
+      "JIRA_CLIENT_ID",
+      "JIRA_CLIENT_SECRET",
       "BASE_URL",
       "DATABASE_PATH"
     ]) {
