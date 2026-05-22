@@ -35,13 +35,11 @@ export async function runOpenClawCliRequest(
   logInfo: RuntimeLogger = info
 ): Promise<RunResponse> {
   const baseline = await runBurbleRequest(request, config, executeTool);
-  if (!request.input.connections.github.connected) {
+  if (
+    isSupportedGitHubRequest(request.input.text) &&
+    !request.input.connections.github.connected
+  ) {
     logInfo("OpenClaw agent skipped githubConnected=false");
-    return baseline;
-  }
-
-  if (!isSupportedGitHubRequest(request.input.text)) {
-    logInfo("OpenClaw agent skipped supportedIntent=false");
     return baseline;
   }
 
@@ -83,16 +81,13 @@ export async function* runOpenClawCliRequestStream(
   logInfo: RuntimeLogger = info,
   heartbeatMs = streamHeartbeatMs
 ): AsyncIterable<RunEvent> {
-  yield { type: "status", text: "Loading Burble GitHub context..." };
+  yield { type: "status", text: "Loading Burble context..." };
   const baseline = await runBurbleRequest(request, config, executeTool);
-  if (!request.input.connections.github.connected) {
+  if (
+    isSupportedGitHubRequest(request.input.text) &&
+    !request.input.connections.github.connected
+  ) {
     logInfo("OpenClaw agent skipped githubConnected=false");
-    yield { type: "final", response: baseline.response };
-    return;
-  }
-
-  if (!isSupportedGitHubRequest(request.input.text)) {
-    logInfo("OpenClaw agent skipped supportedIntent=false");
     yield { type: "final", response: baseline.response };
     return;
   }
@@ -337,7 +332,9 @@ function buildOpenClawPrompt(request: RunRequest, baseline: RunResponse): string
   return [
     "You are Burble's OpenClaw runtime.",
     "Answer in concise Slack mrkdwn.",
-    "Use only the provided Burble tool context. Do not invent GitHub data.",
+    "Answer general questions directly when no Burble tool context is needed.",
+    "For GitHub or provider-specific data, use only the provided Burble tool context. Do not invent provider data.",
+    "Do not reveal hidden chain-of-thought. You may give a concise rationale or progress summary when useful.",
     "Never mention tokens, credentials, or internal URLs.",
     "",
     `User request: ${request.input.text}`,

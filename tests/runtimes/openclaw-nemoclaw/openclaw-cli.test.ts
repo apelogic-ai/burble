@@ -130,8 +130,7 @@ describe("runOpenClawCliRequest", () => {
     );
   });
 
-  test("does not invoke OpenClaw for unsupported questions", async () => {
-    let called = false;
+  test("invokes OpenClaw for general questions without GitHub tool context", async () => {
     const logs: string[] = [];
     const response = await runOpenClawCliRequest(
       {
@@ -150,16 +149,58 @@ describe("runOpenClawCliRequest", () => {
       async () => {
         throw new Error("unexpected tool call");
       },
-      async () => {
-        called = true;
-        throw new Error("unexpected cli call");
+      async (_command, args) => {
+        expect(args.join(" ")).toContain(
+          "No Burble tool context is needed for this request."
+        );
+        expect(args.join(" ")).toContain("Do not reveal hidden chain-of-thought");
+        return {
+          exitCode: 0,
+          stdout: JSON.stringify({
+            response: {
+              text: "San Francisco is mild today."
+            }
+          }),
+          stderr: ""
+        };
       },
       (message) => logs.push(message)
     );
 
-    expect(called).toBe(false);
-    expect(response.response.text).toContain("I can help with GitHub work");
-    expect(logs).toEqual(["OpenClaw agent skipped supportedIntent=false"]);
+    expect(response.response.text).toBe("San Francisco is mild today.");
+    expect(logs).toEqual([
+      "OpenClaw agent start runId=unknown agent=main textLength=46 classification=user_private",
+      "OpenClaw agent finish runId=unknown classification=user_private textLength=28"
+    ]);
+  });
+
+  test("invokes OpenClaw for general questions before GitHub is connected", async () => {
+    const response = await runOpenClawCliRequest(
+      {
+        input: {
+          text: "what is a good lunch near me?",
+          connections: {
+            github: { connected: false }
+          }
+        }
+      },
+      config,
+      async () => {
+        throw new Error("unexpected tool call");
+      },
+      async () => ({
+        exitCode: 0,
+        stdout: JSON.stringify({
+          response: {
+            text: "I can help with general questions too."
+          }
+        }),
+        stderr: ""
+      }),
+      () => undefined
+    );
+
+    expect(response.response.text).toBe("I can help with general questions too.");
   });
 
   test("surfaces OpenClaw CLI failures without leaking stderr", async () => {
@@ -241,7 +282,7 @@ describe("runOpenClawCliRequest", () => {
     }
 
     expect(events).toEqual([
-      { type: "status", text: "Loading Burble GitHub context..." },
+      { type: "status", text: "Loading Burble context..." },
       { type: "status", text: "Running OpenClaw/NemoClaw..." },
       { type: "message_delta", text: "Security first." },
       { type: "message_delta", text: "Then fix CI." },

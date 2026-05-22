@@ -100,7 +100,7 @@ describe("handleRuntimeRequest", () => {
       .map((line) => JSON.parse(line));
 
     expect(events).toEqual([
-      { type: "status", text: "Loading Burble GitHub context..." },
+      { type: "status", text: "Loading Burble context..." },
       {
         type: "final",
         response: {

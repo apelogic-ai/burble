@@ -32,7 +32,7 @@ export function createRuntimeRunner(config: RuntimeConfig): {
     ) {
       switch (config.engine) {
         case "deterministic": {
-          yield { type: "status", text: "Loading Burble GitHub context..." };
+          yield { type: "status", text: "Loading Burble context..." };
           const result = await runBurbleRequest(request, config, executeTool);
           yield { type: "final", response: result.response };
           return;

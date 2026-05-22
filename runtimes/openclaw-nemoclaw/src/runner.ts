@@ -14,13 +14,7 @@ export async function runBurbleRequest(
 ): Promise<RunResponse> {
   const text = request.input.text.trim();
   if (!isSupportedGitHubRequest(text)) {
-    return response(
-      "user_private",
-      [
-        "I can help with GitHub work for this PoC.",
-        "Try asking about assigned issues, open PRs, issue search, or GitHub identity."
-      ].join("\n")
-    );
+    return response("user_private", "No Burble tool context is needed for this request.");
   }
 
   const github = request.input.connections.github;

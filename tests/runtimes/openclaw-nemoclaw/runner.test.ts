@@ -47,7 +47,7 @@ describe("runBurbleRequest", () => {
     });
   });
 
-  test("does not treat unsupported questions as GitHub work", async () => {
+  test("returns generic context for non-GitHub questions", async () => {
     let called = false;
     const response = await runBurbleRequest(
       {
@@ -73,10 +73,7 @@ describe("runBurbleRequest", () => {
     expect(response).toEqual({
       response: {
         classification: "user_private",
-        text: [
-          "I can help with GitHub work for this PoC.",
-          "Try asking about assigned issues, open PRs, issue search, or GitHub identity."
-        ].join("\n")
+        text: "No Burble tool context is needed for this request."
       }
     });
   });
