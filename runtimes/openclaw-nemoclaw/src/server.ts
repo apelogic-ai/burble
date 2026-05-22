@@ -26,12 +26,56 @@ export async function handleRuntimeRequest(
     return new Response("Invalid run request", { status: 400 });
   }
 
-  const result = await createRuntimeRunner(config).run(body, executeTool);
+  const runner = createRuntimeRunner(config);
+  if (acceptsNdjson(request)) {
+    return streamRunResponse(runner.stream(body, executeTool));
+  }
+
+  const result = await runner.run(body, executeTool);
   return Response.json(result, {
     headers: {
       "cache-control": "no-store"
     }
   });
+}
+
+function acceptsNdjson(request: Request): boolean {
+  return (request.headers.get("accept") ?? "")
+    .split(",")
+    .some((value) => value.trim().toLowerCase().startsWith("application/x-ndjson"));
+}
+
+function streamRunResponse(events: AsyncIterable<unknown>): Response {
+  const encoder = new TextEncoder();
+
+  return new Response(
+    new ReadableStream({
+      async start(controller) {
+        try {
+          for await (const event of events) {
+            controller.enqueue(encoder.encode(`${JSON.stringify(event)}\n`));
+          }
+        } catch {
+          controller.enqueue(
+            encoder.encode(
+              `${JSON.stringify({
+                type: "error",
+                message: "Runtime run failed"
+              })}\n`
+            )
+          );
+        } finally {
+          controller.close();
+        }
+      }
+    }),
+    {
+      headers: {
+        "cache-control": "no-store",
+        "content-type": "application/x-ndjson; charset=utf-8"
+      }
+    }
+  );
 }
 
 async function readRunRequest(request: Request): Promise<unknown> {

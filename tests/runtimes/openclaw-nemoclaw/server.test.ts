@@ -63,6 +63,53 @@ describe("handleRuntimeRequest", () => {
     });
   });
 
+  test("streams run events as ndjson when requested", async () => {
+    const response = await handleRuntimeRequest(
+      new Request("http://runtime/runs", {
+        method: "POST",
+        headers: {
+          accept: "application/x-ndjson",
+          "content-type": "application/json"
+        },
+        body: JSON.stringify({
+          runtime: { id: "rt_u123" },
+          input: {
+            text: "who am I on GitHub?",
+            connections: {
+              github: {
+                connected: true,
+                email: "person@example.com"
+              }
+            }
+          }
+        })
+      }),
+      config,
+      async () => ({
+        classification: "user_private",
+        content: { login: "octocat" }
+      })
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toContain("application/x-ndjson");
+    const events = (await response.text())
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+
+    expect(events).toEqual([
+      { type: "status", text: "Loading Burble GitHub context..." },
+      {
+        type: "final",
+        response: {
+          classification: "user_private",
+          text: "Authenticated to GitHub as `octocat`."
+        }
+      }
+    ]);
+  });
+
   test("rejects malformed run requests", async () => {
     const response = await handleRuntimeRequest(
       new Request("http://runtime/runs", {

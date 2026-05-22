@@ -734,14 +734,13 @@ export function formatAgentProgressEvent(
     case "tool_result":
       return `Finished ${formatAgentToolName(event.toolName)}.`;
     case "message_delta": {
-      const delta = event.text.trim();
-      if (!delta) {
+      if (!event.text.trim()) {
         return undefined;
       }
 
       return currentText && !currentText.endsWith("...")
-        ? `${currentText}${delta}`
-        : delta;
+        ? `${currentText}${event.text}`
+        : event.text.trimStart();
     }
     case "final":
     case "error":

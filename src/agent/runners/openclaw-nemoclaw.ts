@@ -18,6 +18,12 @@ type RemoteRunResponse = {
   response?: AgentOutput;
 };
 
+type RemoteRunEvent =
+  | { type: "status"; text: string }
+  | { type: "message_delta"; text: string }
+  | { type: "final"; response: AgentOutput }
+  | { type: "error"; message: string };
+
 type ConnectionSummary = {
   connected: boolean;
   email?: string;
@@ -38,7 +44,7 @@ export function createOpenClawNemoClawAgentRunner(
   return {
     name: "openclaw-nemoclaw",
     capabilities: {
-      streaming: false,
+      streaming: true,
       toolEvents: false,
       remote: true,
       requiresToolGateway: true
@@ -81,6 +87,7 @@ export function createOpenClawNemoClawAgentRunner(
       const response = await requestFetch(`${baseUrl}/runs`, {
         method: "POST",
         headers: {
+          accept: "application/x-ndjson, application/json",
           "content-type": "application/json",
           ...runtimeHeaders(runtime)
         },
@@ -96,8 +103,9 @@ export function createOpenClawNemoClawAgentRunner(
         );
       }
 
-      const payload = (await response.json()) as RemoteRunResponse;
-      const agentResponse = validateRemoteRunResponse(payload);
+      const agentResponse = isNdjsonResponse(response)
+        ? yield* readStreamingRunResponse(response)
+        : await readJsonRunResponse(response);
       if (!agentResponse) {
         throw new Error("OpenClaw/NemoClaw runtime returned an invalid response");
       }
@@ -123,6 +131,81 @@ export function createOpenClawNemoClawAgentRunner(
       yield { type: "final", response: agentResponse };
     }
   };
+}
+
+async function readJsonRunResponse(
+  response: Response
+): Promise<AgentOutput | null> {
+  const payload = (await response.json()) as RemoteRunResponse;
+  return validateRemoteRunResponse(payload);
+}
+
+async function* readStreamingRunResponse(
+  response: Response
+): AsyncIterable<AgentRunEvent, AgentOutput | null> {
+  if (!response.body) {
+    return null;
+  }
+
+  for await (const payload of readNdjson(response.body)) {
+    const event = validateRemoteRunEvent(payload);
+    if (!event) {
+      throw new Error("OpenClaw/NemoClaw runtime returned an invalid stream event");
+    }
+
+    if (event.type === "error") {
+      throw new Error(event.message);
+    }
+
+    if (event.type === "final") {
+      return event.response;
+    }
+
+    yield event;
+  }
+
+  return null;
+}
+
+async function* readNdjson(
+  body: ReadableStream<Uint8Array>
+): AsyncIterable<unknown> {
+  const reader = body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+
+  try {
+    while (true) {
+      const result = await reader.read();
+      if (result.done) {
+        break;
+      }
+
+      buffer += decoder.decode(result.value, { stream: true });
+      const lines = buffer.split(/\r?\n/);
+      buffer = lines.pop() ?? "";
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (trimmed) {
+          yield JSON.parse(trimmed);
+        }
+      }
+    }
+
+    buffer += decoder.decode();
+    const trimmed = buffer.trim();
+    if (trimmed) {
+      yield JSON.parse(trimmed);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+}
+
+function isNdjsonResponse(response: Response): boolean {
+  return (response.headers.get("content-type") ?? "")
+    .toLowerCase()
+    .startsWith("application/x-ndjson");
 }
 
 function runtimeHeaders(runtime: RuntimeHandle | null): Record<string, string> {
@@ -167,6 +250,27 @@ function validateRemoteRunResponse(payload: RemoteRunResponse): AgentOutput | nu
   }
 
   return response;
+}
+
+function validateRemoteRunEvent(payload: unknown): RemoteRunEvent | null {
+  if (typeof payload !== "object" || payload === null || !("type" in payload)) {
+    return null;
+  }
+
+  const event = payload as RemoteRunEvent;
+  switch (event.type) {
+    case "status":
+    case "message_delta":
+      return typeof event.text === "string" ? event : null;
+    case "error":
+      return typeof event.message === "string" ? event : null;
+    case "final":
+      return validateRemoteRunResponse({ response: event.response })
+        ? event
+        : null;
+    default:
+      return null;
+  }
 }
 
 function sanitizeAgentInput(input: AgentInput): {

@@ -1,5 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { runOpenClawCliRequest } from "../../../runtimes/openclaw-nemoclaw/src/openclaw-cli";
+import {
+  runOpenClawCliRequest,
+  runOpenClawCliRequestStream
+} from "../../../runtimes/openclaw-nemoclaw/src/openclaw-cli";
 import type { RuntimeConfig } from "../../../runtimes/openclaw-nemoclaw/src/config";
 
 const config: RuntimeConfig = {
@@ -185,5 +188,69 @@ describe("runOpenClawCliRequest", () => {
         () => undefined
       )
     ).rejects.toThrow("OpenClaw CLI exited with code 2");
+  });
+
+  test("streams OpenClaw stdout deltas before the final response", async () => {
+    const events = [];
+
+    for await (const event of runOpenClawCliRequestStream(
+      {
+        input: {
+          text: "prioritize my GitHub work",
+          connections: {
+            github: {
+              connected: true,
+              email: "person@example.com",
+              providerLogin: "octocat"
+            }
+          }
+        }
+      },
+      config,
+      async (toolName) =>
+        toolName === "github.listAssignedIssues"
+          ? {
+              classification: "user_private",
+              content: [
+                {
+                  title: "Fix billing export",
+                  url: "https://github.com/acme/app/issues/1"
+                }
+              ]
+            }
+          : {
+              classification: "user_private",
+              content: []
+            },
+      async function* () {
+        yield { type: "stdout" as const, text: "Security first.\n" };
+        yield {
+          type: "stdout" as const,
+          text: JSON.stringify({ delta: "Then fix CI." }) + "\n"
+        };
+        yield {
+          type: "stdout" as const,
+          text: JSON.stringify({ response: { text: "Final ranking." } })
+        };
+        yield { type: "exit" as const, exitCode: 0 };
+      },
+      () => undefined
+    )) {
+      events.push(event);
+    }
+
+    expect(events).toEqual([
+      { type: "status", text: "Loading Burble GitHub context..." },
+      { type: "status", text: "Running OpenClaw/NemoClaw..." },
+      { type: "message_delta", text: "Security first." },
+      { type: "message_delta", text: "Then fix CI." },
+      {
+        type: "final",
+        response: {
+          classification: "user_private",
+          text: "Final ranking."
+        }
+      }
+    ]);
   });
 });

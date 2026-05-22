@@ -1,7 +1,7 @@
 import type { RuntimeConfig } from "./config";
 import { info, type RuntimeLogger } from "./logger";
 import { isSupportedGitHubRequest, runBurbleRequest } from "./runner";
-import type { RunRequest, RunResponse, ToolExecutor } from "./types";
+import type { RunEvent, RunRequest, RunResponse, ToolExecutor } from "./types";
 
 export type CliCommandResult = {
   exitCode: number;
@@ -14,6 +14,16 @@ export type CliCommandRunner = (
   args: string[],
   options: { timeoutMs: number; env?: Record<string, string> }
 ) => Promise<CliCommandResult>;
+
+export type CliCommandStreamEvent =
+  | { type: "stdout"; text: string }
+  | { type: "exit"; exitCode: number };
+
+export type CliCommandStreamer = (
+  command: string,
+  args: string[],
+  options: { timeoutMs: number; env?: Record<string, string> }
+) => AsyncIterable<CliCommandStreamEvent>;
 
 export async function runOpenClawCliRequest(
   request: RunRequest,
@@ -39,16 +49,7 @@ export async function runOpenClawCliRequest(
   );
   const result = await runCommand(
     config.openClawCommand,
-    [
-      "agent",
-      "--agent",
-      config.openClawAgent,
-      "--local",
-      "--message",
-      prompt,
-      "--session-id",
-      buildSessionId(request)
-    ],
+    buildOpenClawArgs(config, prompt, request),
     {
       timeoutMs: config.openClawTimeoutMs,
       env: openClawEnv(config)
@@ -65,6 +66,73 @@ export async function runOpenClawCliRequest(
   );
 
   return {
+    response: {
+      classification: baseline.response.classification,
+      text
+    }
+  };
+}
+
+export async function* runOpenClawCliRequestStream(
+  request: RunRequest,
+  config: RuntimeConfig,
+  executeTool: ToolExecutor,
+  runCommandStream: CliCommandStreamer = runCliCommandStream,
+  logInfo: RuntimeLogger = info
+): AsyncIterable<RunEvent> {
+  yield { type: "status", text: "Loading Burble GitHub context..." };
+  const baseline = await runBurbleRequest(request, config, executeTool);
+  if (!request.input.connections.github.connected) {
+    logInfo("OpenClaw agent skipped githubConnected=false");
+    yield { type: "final", response: baseline.response };
+    return;
+  }
+
+  if (!isSupportedGitHubRequest(request.input.text)) {
+    logInfo("OpenClaw agent skipped supportedIntent=false");
+    yield { type: "final", response: baseline.response };
+    return;
+  }
+
+  const prompt = buildOpenClawPrompt(request, baseline);
+  logInfo(
+    `OpenClaw agent start agent=${config.openClawAgent} textLength=${request.input.text.length} classification=${baseline.response.classification}`
+  );
+  yield { type: "status", text: "Running OpenClaw/NemoClaw..." };
+
+  let stdout = "";
+  let exitCode: number | null = null;
+  for await (const event of runCommandStream(
+    config.openClawCommand,
+    buildOpenClawArgs(config, prompt, request),
+    {
+      timeoutMs: config.openClawTimeoutMs,
+      env: openClawEnv(config)
+    }
+  )) {
+    if (event.type === "stdout") {
+      stdout += event.text;
+      const delta = extractOpenClawStreamDelta(event.text);
+      if (delta) {
+        yield { type: "message_delta", text: delta };
+      }
+      continue;
+    }
+
+    exitCode = event.exitCode;
+  }
+
+  if (exitCode !== 0) {
+    throw new Error(`OpenClaw CLI exited with code ${exitCode ?? "unknown"}`);
+  }
+
+  const text = extractOpenClawText(stdout) || baseline.response.text;
+  logInfo(
+    `OpenClaw agent finish classification=${baseline.response.classification} textLength=${text.length}`
+  );
+
+  yield {
+    type: "final",
     response: {
       classification: baseline.response.classification,
       text
@@ -108,6 +176,58 @@ export async function runCliCommand(
   }
 }
 
+export async function* runCliCommandStream(
+  command: string,
+  args: string[],
+  options: { timeoutMs: number; env?: Record<string, string> }
+): AsyncIterable<CliCommandStreamEvent> {
+  const proc = Bun.spawn([command, ...args], {
+    stdout: "pipe",
+    stderr: "pipe",
+    env: {
+      ...Bun.env,
+      ...options.env
+    }
+  });
+  const stderr = new Response(proc.stderr).text();
+  let timedOut = false;
+  const timer = setTimeout(() => {
+    timedOut = true;
+    proc.kill();
+  }, options.timeoutMs);
+
+  try {
+    const reader = proc.stdout.getReader();
+    const decoder = new TextDecoder();
+    while (true) {
+      const result = await reader.read();
+      if (result.done) {
+        break;
+      }
+
+      yield {
+        type: "stdout",
+        text: decoder.decode(result.value, { stream: true })
+      };
+    }
+
+    const remaining = decoder.decode();
+    if (remaining) {
+      yield { type: "stdout", text: remaining };
+    }
+
+    const exitCode = await proc.exited;
+    await stderr;
+    if (timedOut) {
+      throw new Error("OpenClaw CLI timed out");
+    }
+
+    yield { type: "exit", exitCode };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export function openClawEnv(config: RuntimeConfig): Record<string, string> {
   return {
     OPENCLAW_STATE_DIR: config.openClawStateDir,
@@ -131,6 +251,23 @@ function buildOpenClawPrompt(request: RunRequest, baseline: RunResponse): string
   ].join("\n");
 }
 
+function buildOpenClawArgs(
+  config: RuntimeConfig,
+  prompt: string,
+  request: RunRequest
+): string[] {
+  return [
+    "agent",
+    "--agent",
+    config.openClawAgent,
+    "--local",
+    "--message",
+    prompt,
+    "--session-id",
+    buildSessionId(request)
+  ];
+}
+
 function buildSessionId(request: RunRequest): string {
   const email = request.input.connections.github.email ?? "anonymous";
   return `burble-${email.replace(/[^a-zA-Z0-9_.-]/g, "_")}`;
@@ -140,6 +277,11 @@ function extractOpenClawText(stdout: string): string | null {
   const trimmed = stdout.trim();
   if (!trimmed) {
     return null;
+  }
+
+  const lineText = readLastJsonResponseText(trimmed);
+  if (lineText) {
+    return lineText;
   }
 
   const parsed = parseJsonObject(trimmed);
@@ -152,6 +294,61 @@ function extractOpenClawText(stdout: string): string | null {
     readNestedText(parsed, ["message"]);
 
   return text?.trim() || null;
+}
+
+function readLastJsonResponseText(value: string): string | null {
+  const lines = value
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .reverse();
+
+  for (const line of lines) {
+    const parsed = parseJsonObject(line);
+    if (!parsed) {
+      continue;
+    }
+
+    const text =
+      readNestedText(parsed, ["response", "text"]) ??
+      readNestedText(parsed, ["text"]) ??
+      readNestedText(parsed, ["message"]);
+    if (text?.trim()) {
+      return text.trim();
+    }
+  }
+
+  return null;
+}
+
+function extractOpenClawStreamDelta(chunk: string): string | null {
+  const lines = chunk
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  const deltas = lines
+    .map(readStreamLineText)
+    .filter((value): value is string => Boolean(value));
+
+  return deltas.length > 0 ? deltas.join("\n") : null;
+}
+
+function readStreamLineText(line: string): string | null {
+  const parsed = parseJsonObject(line);
+  if (parsed) {
+    return (
+      readNestedText(parsed, ["delta"]) ??
+      readNestedText(parsed, ["message_delta", "text"]) ??
+      readNestedText(parsed, ["event", "text"]) ??
+      null
+    );
+  }
+
+  if (line.startsWith("{") || line.startsWith("[")) {
+    return null;
+  }
+
+  return line;
 }
 
 function parseJsonObject(value: string): Record<string, unknown> | null {

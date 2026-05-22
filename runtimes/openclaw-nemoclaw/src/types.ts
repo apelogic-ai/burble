@@ -28,6 +28,12 @@ export type RunResponse = {
   };
 };
 
+export type RunEvent =
+  | { type: "status"; text: string }
+  | { type: "message_delta"; text: string }
+  | { type: "final"; response: RunResponse["response"] }
+  | { type: "error"; message: string };
+
 export type ToolExecutor = (
   toolName: string,
   body: unknown

@@ -93,6 +93,18 @@ describe("formatAgentProgressEvent", () => {
       })
     ).toBe("Finished GitHub list assigned issues.");
   });
+
+  test("appends streaming message deltas without stripping spacing", () => {
+    expect(
+      formatAgentProgressEvent(
+        {
+          type: "message_delta",
+          text: " world"
+        },
+        "hello"
+      )
+    ).toBe("hello world");
+  });
 });
 
 describe("parseAuthCommand", () => {

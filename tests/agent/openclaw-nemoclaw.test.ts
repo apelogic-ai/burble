@@ -54,6 +54,7 @@ describe("createOpenClawNemoClawAgentRunner", () => {
     expect(requests[0].url).toBe("http://openclaw-runtime:8080/runs");
     expect(requests[0].init.method).toBe("POST");
     expect(requests[0].init.headers).toEqual({
+      accept: "application/x-ndjson, application/json",
       "content-type": "application/json"
     });
 
@@ -119,6 +120,7 @@ describe("createOpenClawNemoClawAgentRunner", () => {
     expect(principals).toEqual([principal]);
     expect(requests[0].url).toBe("http://runtime-u123:8080/runs");
     expect(requests[0].init.headers).toEqual({
+      accept: "application/x-ndjson, application/json",
       "content-type": "application/json",
       "x-burble-runtime-id": "rt_u123"
     });
@@ -148,6 +150,54 @@ describe("createOpenClawNemoClawAgentRunner", () => {
         }
       }
     ]);
+  });
+
+  test("streams remote runtime events before returning the final response", async () => {
+    const runner = createOpenClawNemoClawAgentRunner({
+      baseUrl: "http://openclaw-runtime:8080",
+      fetch: async () =>
+        new Response(
+          [
+            JSON.stringify({ type: "status", text: "Loading context..." }),
+            JSON.stringify({ type: "message_delta", text: "Partial answer" }),
+            JSON.stringify({
+              type: "final",
+              response: {
+                classification: "user_private",
+                text: "Final answer"
+              }
+            })
+          ].join("\n"),
+          {
+            status: 200,
+            headers: { "content-type": "application/x-ndjson; charset=utf-8" }
+          }
+        )
+    });
+    const events: string[] = [];
+
+    const result = await collectAgentRun(
+      runner,
+      {
+        principal,
+        text: "summarize my GitHub work",
+        connections: { github: connection }
+      },
+      (event) => {
+        events.push(`${event.type}:${"text" in event ? event.text : ""}`);
+      }
+    );
+
+    expect(events).toEqual([
+      "status:Preparing your OpenClaw/NemoClaw runtime...",
+      "status:Running OpenClaw/NemoClaw...",
+      "status:Loading context...",
+      "message_delta:Partial answer"
+    ]);
+    expect(result).toEqual({
+      classification: "user_private",
+      text: "Final answer"
+    });
   });
 
   test("reports remote runtime failures without leaking response bodies", async () => {
