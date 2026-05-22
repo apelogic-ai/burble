@@ -59,6 +59,10 @@ If `OPENCLAW_CONFIG_PATCH_PATH` is set, startup applies it with
 unless `OPENCLAW_VALIDATE_ON_START=false`. Use the config patch file for
 non-interactive model/provider configuration.
 
+Set `OPENCLAW_STREAM_DEBUG=true` temporarily to log stdout chunk timing, parsed
+delta counts, and redacted previews while diagnosing whether the CLI streams
+incremental output or buffers until completion.
+
 Build the CLI image locally:
 
 ```bash

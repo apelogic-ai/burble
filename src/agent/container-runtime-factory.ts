@@ -30,7 +30,11 @@ export type ContainerRuntimeSpec = {
   volumes: Array<{ source: string; target: string; readonly?: boolean }>;
 };
 
-const approvedForwardedEnv = new Set(["OPENAI_API_KEY", "ANTHROPIC_API_KEY"]);
+const approvedForwardedEnv = new Set([
+  "OPENAI_API_KEY",
+  "ANTHROPIC_API_KEY",
+  "OPENCLAW_STREAM_DEBUG"
+]);
 
 export function createDockerRuntimeFactory(input: {
   store: TokenStore;

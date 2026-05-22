@@ -18,7 +18,8 @@ const config: RuntimeConfig = {
   openClawWorkspaceDir: "/data/openclaw/workspace",
   openClawSetupOnStart: true,
   openClawConfigPatchPath: null,
-  openClawValidateOnStart: true
+  openClawValidateOnStart: true,
+  openClawStreamDebug: false
 };
 
 describe("runOpenClawCliRequest", () => {
@@ -252,5 +253,47 @@ describe("runOpenClawCliRequest", () => {
         }
       }
     ]);
+  });
+
+  test("logs stream debug details only when enabled", async () => {
+    const logs: string[] = [];
+
+    for await (const _event of runOpenClawCliRequestStream(
+      {
+        input: {
+          text: "prioritize my GitHub work",
+          connections: {
+            github: {
+              connected: true,
+              email: "person@example.com",
+              providerLogin: "octocat"
+            }
+          }
+        }
+      },
+      { ...config, openClawStreamDebug: true },
+      async () => ({
+        classification: "user_private",
+        content: []
+      }),
+      async function* () {
+        yield {
+          type: "stdout" as const,
+          text: "partial sk-secretsecretsecret output\n"
+        };
+        yield { type: "exit" as const, exitCode: 0 };
+      },
+      (message) => logs.push(message)
+    )) {
+      // drain stream
+    }
+
+    expect(logs.some((line) => line.includes("OpenClaw stream debug"))).toBe(
+      true
+    );
+    expect(logs.join("\n")).toContain("event=stdout chunk");
+    expect(logs.join("\n")).toContain("event=delta parsed");
+    expect(logs.join("\n")).toContain("[redacted-openai-key]");
+    expect(logs.join("\n")).not.toContain("sk-secretsecretsecret");
   });
 });

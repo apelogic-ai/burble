@@ -12,6 +12,7 @@ export type RuntimeConfig = {
   openClawSetupOnStart: boolean;
   openClawConfigPatchPath: string | null;
   openClawValidateOnStart: boolean;
+  openClawStreamDebug: boolean;
 };
 
 export type RuntimeEngine = "deterministic" | "openclaw";
@@ -47,6 +48,10 @@ export function readRuntimeConfig(env: Env): RuntimeConfig {
     openClawValidateOnStart: readBooleanEnv(
       env.OPENCLAW_VALIDATE_ON_START ?? "true",
       "OPENCLAW_VALIDATE_ON_START"
+    ),
+    openClawStreamDebug: readBooleanEnv(
+      env.OPENCLAW_STREAM_DEBUG ?? "false",
+      "OPENCLAW_STREAM_DEBUG"
     )
   };
 }

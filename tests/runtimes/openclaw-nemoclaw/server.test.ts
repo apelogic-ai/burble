@@ -15,7 +15,8 @@ const config: RuntimeConfig = {
   openClawWorkspaceDir: "/data/openclaw/workspace",
   openClawSetupOnStart: true,
   openClawConfigPatchPath: null,
-  openClawValidateOnStart: true
+  openClawValidateOnStart: true,
+  openClawStreamDebug: false
 };
 
 describe("handleRuntimeRequest", () => {

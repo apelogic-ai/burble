@@ -102,6 +102,9 @@ export async function* runOpenClawCliRequestStream(
 
   let stdout = "";
   let exitCode: number | null = null;
+  let chunkCount = 0;
+  let deltaCount = 0;
+  const startedAt = Date.now();
   for await (const event of runCommandStream(
     config.openClawCommand,
     buildOpenClawArgs(config, prompt, request),
@@ -111,9 +114,24 @@ export async function* runOpenClawCliRequestStream(
     }
   )) {
     if (event.type === "stdout") {
+      chunkCount += 1;
       stdout += event.text;
+      logStreamDebug(config, logInfo, "stdout chunk", {
+        elapsedMs: Date.now() - startedAt,
+        chunkCount,
+        bytes: new TextEncoder().encode(event.text).length,
+        chars: event.text.length,
+        preview: event.text
+      });
       const delta = extractOpenClawStreamDelta(event.text);
       if (delta) {
+        deltaCount += 1;
+        logStreamDebug(config, logInfo, "delta parsed", {
+          elapsedMs: Date.now() - startedAt,
+          deltaCount,
+          chars: delta.length,
+          preview: delta
+        });
         yield { type: "message_delta", text: delta };
       }
       continue;
@@ -121,6 +139,13 @@ export async function* runOpenClawCliRequestStream(
 
     exitCode = event.exitCode;
   }
+  logStreamDebug(config, logInfo, "stdout complete", {
+    elapsedMs: Date.now() - startedAt,
+    chunkCount,
+    deltaCount,
+    stdoutChars: stdout.length,
+    exitCode: exitCode ?? "unknown"
+  });
 
   if (exitCode !== 0) {
     throw new Error(`OpenClaw CLI exited with code ${exitCode ?? "unknown"}`);
@@ -349,6 +374,38 @@ function readStreamLineText(line: string): string | null {
   }
 
   return line;
+}
+
+function logStreamDebug(
+  config: RuntimeConfig,
+  logInfo: RuntimeLogger,
+  event: string,
+  fields: Record<string, string | number>
+): void {
+  if (!config.openClawStreamDebug) {
+    return;
+  }
+
+  logInfo(
+    [
+      `OpenClaw stream debug event=${event}`,
+      ...Object.entries(fields).map(([key, value]) =>
+        key === "preview"
+          ? `${key}="${redactPreview(String(value))}"`
+          : `${key}=${value}`
+      )
+    ].join(" ")
+  );
+}
+
+function redactPreview(value: string): string {
+  return value
+    .replace(/sk-[A-Za-z0-9_-]{12,}/g, "[redacted-openai-key]")
+    .replace(/xox[baprs]-[A-Za-z0-9-]+/g, "[redacted-slack-token]")
+    .replace(/gh[pousr]_[A-Za-z0-9_]+/g, "[redacted-github-token]")
+    .replace(/burble_rt_[a-f0-9]+/g, "[redacted-runtime-token]")
+    .replace(/\s+/g, " ")
+    .slice(0, 180);
 }
 
 function parseJsonObject(value: string): Record<string, unknown> | null {

@@ -144,6 +144,7 @@ OPENCLAW_WORKSPACE_DIR=/data/openclaw/workspace
 OPENCLAW_SETUP_ON_START=true
 OPENCLAW_CONFIG_PATCH_PATH=/etc/openclaw/patches/openai.json5
 OPENCLAW_VALIDATE_ON_START=true
+OPENCLAW_STREAM_DEBUG=false
 OPENAI_API_KEY=sk-...
 ```
 
@@ -159,6 +160,8 @@ the resulting config. Use that patch file for non-interactive OpenClaw
 model/provider configuration. The checked-in
 `compose/openclaw-patches/openai.json5` patch enables OpenAI with
 `openai/gpt-5.5`; the API key is still supplied only through `OPENAI_API_KEY`.
+Set `OPENCLAW_STREAM_DEBUG=true` temporarily to log OpenClaw stdout chunk
+timing, parsed delta counts, and redacted previews while debugging streaming.
 To build the repo-provided image with the OpenClaw CLI installed, add the CLI
 override:
 

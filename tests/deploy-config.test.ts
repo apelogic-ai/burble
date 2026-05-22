@@ -114,6 +114,9 @@ describe("dev deploy config", () => {
     expect(openClawCompose).toContain(
       "OPENCLAW_VALIDATE_ON_START=${OPENCLAW_VALIDATE_ON_START:-true}"
     );
+    expect(openClawCompose).toContain(
+      "OPENCLAW_STREAM_DEBUG=${OPENCLAW_STREAM_DEBUG:-false}"
+    );
     expect(openClawCompose).toContain("OPENAI_API_KEY=${OPENAI_API_KEY:-}");
     expect(openClawCompose).toContain("ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}");
     expect(openClawCompose).toContain("./openclaw-patches:/etc/openclaw/patches:ro");
@@ -139,6 +142,7 @@ describe("dev deploy config", () => {
       "OPENCLAW_SETUP_ON_START",
       "OPENCLAW_CONFIG_PATCH_PATH",
       "OPENCLAW_VALIDATE_ON_START",
+      "OPENCLAW_STREAM_DEBUG",
       "OPENCLAW_VERSION",
       "AGENT_RUNTIME_FACTORY",
       "AGENT_RUNTIME_DATA_ROOT",
@@ -171,6 +175,7 @@ describe("dev deploy config", () => {
     );
     expect(personalRuntimesCompose).toContain("AGENT_RUNTIME_IDLE_TTL_MS");
     expect(personalRuntimesCompose).toContain("AGENT_RUNTIME_REAPER_INTERVAL_MS");
+    expect(personalRuntimesCompose).toContain("OPENCLAW_STREAM_DEBUG");
   });
 
   test("provides an optional OpenClaw CLI runtime build override", async () => {
