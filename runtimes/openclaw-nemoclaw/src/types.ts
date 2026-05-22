@@ -6,6 +6,7 @@ export type ToolResult<TContent = unknown> = {
 };
 
 export type RunRequest = {
+  runId?: string;
   runtime?: {
     id: string;
   };

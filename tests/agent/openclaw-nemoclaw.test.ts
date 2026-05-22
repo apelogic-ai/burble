@@ -59,7 +59,7 @@ describe("createOpenClawNemoClawAgentRunner", () => {
     });
 
     const body = JSON.parse(String(requests[0].init.body));
-    expect(body).toEqual({
+    expect(body).toMatchObject({
       input: {
         text: "summarize my GitHub work",
         connections: {
@@ -71,6 +71,7 @@ describe("createOpenClawNemoClawAgentRunner", () => {
         }
       }
     });
+    expect(body.runId).toBeString();
     expect(JSON.stringify(body)).not.toContain("secret-token");
   });
 

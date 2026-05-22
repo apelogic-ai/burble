@@ -50,6 +50,7 @@ export function createOpenClawNemoClawAgentRunner(
       requiresToolGateway: true
     },
     async *run(input: AgentInput): AsyncIterable<AgentRunEvent> {
+      const runId = crypto.randomUUID();
       yield {
         type: "status",
         text: "Preparing your OpenClaw/NemoClaw runtime..."
@@ -67,6 +68,7 @@ export function createOpenClawNemoClawAgentRunner(
       logInfo(
         [
           "OpenClaw/NemoClaw run start",
+          `runId=${runId}`,
           `url=${baseUrl}/runs`,
           `runtimeId=${runtime?.id ?? "static"}`,
           `principal=${input.principal.workspaceId}:${input.principal.slackUserId}`,
@@ -92,6 +94,7 @@ export function createOpenClawNemoClawAgentRunner(
           ...runtimeHeaders(runtime)
         },
         body: JSON.stringify({
+          runId,
           ...(runtime ? { runtime: sanitizeRuntimeHandle(runtime) } : {}),
           input: sanitizeAgentInput(input)
         })
@@ -113,6 +116,7 @@ export function createOpenClawNemoClawAgentRunner(
       logInfo(
         [
           "OpenClaw/NemoClaw run finish",
+          `runId=${runId}`,
           `runtimeId=${runtime?.id ?? "static"}`,
           `classification=${agentResponse.classification}`,
           `textLength=${agentResponse.text.length}`

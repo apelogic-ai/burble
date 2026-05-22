@@ -25,6 +25,8 @@ export type CliCommandStreamer = (
   options: { timeoutMs: number; env?: Record<string, string> }
 ) => AsyncIterable<CliCommandStreamEvent>;
 
+const streamHeartbeatMs = 8_000;
+
 export async function runOpenClawCliRequest(
   request: RunRequest,
   config: RuntimeConfig,
@@ -45,7 +47,7 @@ export async function runOpenClawCliRequest(
 
   const prompt = buildOpenClawPrompt(request, baseline);
   logInfo(
-    `OpenClaw agent start agent=${config.openClawAgent} textLength=${request.input.text.length} classification=${baseline.response.classification}`
+    `OpenClaw agent start runId=${request.runId ?? "unknown"} agent=${config.openClawAgent} textLength=${request.input.text.length} classification=${baseline.response.classification}`
   );
   const result = await runCommand(
     config.openClawCommand,
@@ -62,7 +64,7 @@ export async function runOpenClawCliRequest(
 
   const text = extractOpenClawText(result.stdout) || baseline.response.text;
   logInfo(
-    `OpenClaw agent finish classification=${baseline.response.classification} textLength=${text.length}`
+    `OpenClaw agent finish runId=${request.runId ?? "unknown"} classification=${baseline.response.classification} textLength=${text.length}`
   );
 
   return {
@@ -78,7 +80,8 @@ export async function* runOpenClawCliRequestStream(
   config: RuntimeConfig,
   executeTool: ToolExecutor,
   runCommandStream: CliCommandStreamer = runCliCommandStream,
-  logInfo: RuntimeLogger = info
+  logInfo: RuntimeLogger = info,
+  heartbeatMs = streamHeartbeatMs
 ): AsyncIterable<RunEvent> {
   yield { type: "status", text: "Loading Burble GitHub context..." };
   const baseline = await runBurbleRequest(request, config, executeTool);
@@ -96,7 +99,7 @@ export async function* runOpenClawCliRequestStream(
 
   const prompt = buildOpenClawPrompt(request, baseline);
   logInfo(
-    `OpenClaw agent start agent=${config.openClawAgent} textLength=${request.input.text.length} classification=${baseline.response.classification}`
+    `OpenClaw agent start runId=${request.runId ?? "unknown"} agent=${config.openClawAgent} textLength=${request.input.text.length} classification=${baseline.response.classification}`
   );
   yield { type: "status", text: "Running OpenClaw/NemoClaw..." };
 
@@ -105,18 +108,36 @@ export async function* runOpenClawCliRequestStream(
   let chunkCount = 0;
   let deltaCount = 0;
   const startedAt = Date.now();
-  for await (const event of runCommandStream(
-    config.openClawCommand,
-    buildOpenClawArgs(config, prompt, request),
-    {
-      timeoutMs: config.openClawTimeoutMs,
-      env: openClawEnv(config)
-    }
+  for await (const event of withHeartbeat(
+    runCommandStream(
+      config.openClawCommand,
+      buildOpenClawArgs(config, prompt, request),
+      {
+        timeoutMs: config.openClawTimeoutMs,
+        env: openClawEnv(config)
+      }
+    ),
+    heartbeatMs
   )) {
+    if (event.type === "heartbeat") {
+      yield {
+        type: "status",
+        text: `Still running OpenClaw... ${Math.round(
+          (Date.now() - startedAt) / 1000
+        )}s`
+      };
+      logStreamDebug(config, logInfo, "heartbeat", {
+        runId: request.runId ?? "unknown",
+        elapsedMs: Date.now() - startedAt
+      });
+      continue;
+    }
+
     if (event.type === "stdout") {
       chunkCount += 1;
       stdout += event.text;
       logStreamDebug(config, logInfo, "stdout chunk", {
+        runId: request.runId ?? "unknown",
         elapsedMs: Date.now() - startedAt,
         chunkCount,
         bytes: new TextEncoder().encode(event.text).length,
@@ -127,6 +148,7 @@ export async function* runOpenClawCliRequestStream(
       if (delta) {
         deltaCount += 1;
         logStreamDebug(config, logInfo, "delta parsed", {
+          runId: request.runId ?? "unknown",
           elapsedMs: Date.now() - startedAt,
           deltaCount,
           chars: delta.length,
@@ -140,6 +162,7 @@ export async function* runOpenClawCliRequestStream(
     exitCode = event.exitCode;
   }
   logStreamDebug(config, logInfo, "stdout complete", {
+    runId: request.runId ?? "unknown",
     elapsedMs: Date.now() - startedAt,
     chunkCount,
     deltaCount,
@@ -148,12 +171,27 @@ export async function* runOpenClawCliRequestStream(
   });
 
   if (exitCode !== 0) {
+    const partialText = extractOpenClawText(stdout);
+    if (partialText) {
+      logInfo(
+        `OpenClaw agent partial finish runId=${request.runId ?? "unknown"} exitCode=${exitCode ?? "unknown"} classification=${baseline.response.classification} textLength=${partialText.length}`
+      );
+      yield {
+        type: "final",
+        response: {
+          classification: baseline.response.classification,
+          text: partialText
+        }
+      };
+      return;
+    }
+
     throw new Error(`OpenClaw CLI exited with code ${exitCode ?? "unknown"}`);
   }
 
   const text = extractOpenClawText(stdout) || baseline.response.text;
   logInfo(
-    `OpenClaw agent finish classification=${baseline.response.classification} textLength=${text.length}`
+    `OpenClaw agent finish runId=${request.runId ?? "unknown"} classification=${baseline.response.classification} textLength=${text.length}`
   );
 
   yield {
@@ -163,6 +201,41 @@ export async function* runOpenClawCliRequestStream(
       text
     }
   };
+}
+
+async function* withHeartbeat(
+  events: AsyncIterable<CliCommandStreamEvent>,
+  intervalMs: number
+): AsyncIterable<CliCommandStreamEvent | { type: "heartbeat" }> {
+  const iterator = events[Symbol.asyncIterator]();
+  let next = iterator.next();
+
+  try {
+    while (true) {
+      const result = await Promise.race([
+        next.then((value) => ({ type: "event" as const, value })),
+        sleep(intervalMs).then(() => ({ type: "heartbeat" as const }))
+      ]);
+
+      if (result.type === "heartbeat") {
+        yield { type: "heartbeat" };
+        continue;
+      }
+
+      if (result.value.done) {
+        return;
+      }
+
+      yield result.value.value;
+      next = iterator.next();
+    }
+  } finally {
+    await iterator.return?.();
+  }
+}
+
+async function sleep(ms: number): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 export async function runCliCommand(

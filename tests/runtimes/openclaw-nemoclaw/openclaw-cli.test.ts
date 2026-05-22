@@ -97,8 +97,8 @@ describe("runOpenClawCliRequest", () => {
       OPENCLAW_CONFIG_PATH: "/data/openclaw/config/openclaw.json"
     });
     expect(logs).toEqual([
-      "OpenClaw agent start agent=main textLength=25 classification=user_private",
-      "OpenClaw agent finish classification=user_private textLength=32"
+      "OpenClaw agent start runId=unknown agent=main textLength=25 classification=user_private",
+      "OpenClaw agent finish runId=unknown classification=user_private textLength=32"
     ]);
   });
 
@@ -295,5 +295,51 @@ describe("runOpenClawCliRequest", () => {
     expect(logs.join("\n")).toContain("event=delta parsed");
     expect(logs.join("\n")).toContain("[redacted-openai-key]");
     expect(logs.join("\n")).not.toContain("sk-secretsecretsecret");
+  });
+
+  test("emits heartbeat status events while waiting for OpenClaw stdout", async () => {
+    const events = [];
+
+    for await (const event of runOpenClawCliRequestStream(
+      {
+        runId: "run-heartbeat",
+        input: {
+          text: "prioritize my GitHub work",
+          connections: {
+            github: {
+              connected: true,
+              email: "person@example.com",
+              providerLogin: "octocat"
+            }
+          }
+        }
+      },
+      config,
+      async () => ({
+        classification: "user_private",
+        content: []
+      }),
+      async function* () {
+        await Bun.sleep(5);
+        yield { type: "stdout" as const, text: "Final after wait." };
+        yield { type: "exit" as const, exitCode: 0 };
+      },
+      () => undefined,
+      1
+    )) {
+      events.push(event);
+    }
+
+    expect(events).toContainEqual({
+      type: "status",
+      text: "Still running OpenClaw... 0s"
+    });
+    expect(events.at(-1)).toEqual({
+      type: "final",
+      response: {
+        classification: "user_private",
+        text: "Final after wait."
+      }
+    });
   });
 });

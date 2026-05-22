@@ -93,6 +93,14 @@ function isRunRequest(body: unknown): body is RunRequest {
 
   const input = body.input;
   if (
+    "runId" in body &&
+    body.runId !== undefined &&
+    (typeof body.runId !== "string" || body.runId.trim().length === 0)
+  ) {
+    return false;
+  }
+
+  if (
     "runtime" in body &&
     body.runtime !== undefined &&
     !isRuntimeSummary(body.runtime)
