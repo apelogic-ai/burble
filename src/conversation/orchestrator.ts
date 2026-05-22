@@ -32,6 +32,7 @@ export async function handleConversation(
           workspaceId: request.workspaceId,
           slackUserId: request.user.slackUserId
         },
+        conversation: buildAgentConversation(request),
         text: request.text,
         connections: {
           github: deps.getConnection("github", request.user.email)
@@ -120,6 +121,26 @@ export async function handleConversation(
       "`@Burble what issues are assigned to me?`"
     ].join("\n")
   };
+}
+
+function buildAgentConversation(request: ConversationRequest) {
+  return {
+    source: request.source,
+    workspaceId: request.workspaceId,
+    channelId: request.channelId,
+    rootId: buildConversationRootId(request),
+    isDirectMessage: request.isDirectMessage
+  };
+}
+
+function buildConversationRootId(request: ConversationRequest): string {
+  if (request.isDirectMessage) {
+    return request.threadTs
+      ? `dm:${request.channelId}:thread:${request.threadTs}`
+      : `dm:${request.channelId}`;
+  }
+
+  return `channel:${request.channelId}:thread:${request.threadTs ?? request.messageTs}`;
 }
 
 type DeterministicIntent =

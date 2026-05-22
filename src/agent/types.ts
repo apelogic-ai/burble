@@ -11,6 +11,13 @@ export type AgentRunnerCapabilities = {
 
 export type AgentInput = {
   principal: PrincipalId;
+  conversation?: {
+    source: "slack";
+    workspaceId: string;
+    channelId: string;
+    rootId: string;
+    isDirectMessage: boolean;
+  };
   text: string;
   connections: {
     github: ProviderConnection | null;

@@ -188,6 +188,13 @@ describe("handleConversation", () => {
             workspaceId: "T123",
             slackUserId: "U123"
           });
+          expect(input.conversation).toEqual({
+            source: "slack",
+            workspaceId: "T123",
+            channelId: "C123",
+            rootId: "channel:C123:thread:1710000000.000100",
+            isDirectMessage: false
+          });
           expect(input.connections.github?.providerLogin).toBe("octocat");
           return {
             classification: "user_private",

@@ -72,6 +72,7 @@ export function createOpenClawNemoClawAgentRunner(
           `url=${baseUrl}/runs`,
           `runtimeId=${runtime?.id ?? "static"}`,
           `principal=${input.principal.workspaceId}:${input.principal.slackUserId}`,
+          `conversationRoot=${input.conversation?.rootId ?? "unknown"}`,
           `textLength=${input.text.length}`,
           `githubConnected=${Boolean(input.connections.github)}`
         ].join(" ")
@@ -80,6 +81,7 @@ export function createOpenClawNemoClawAgentRunner(
         deps.runtimeFactory?.recordRuntimeEvent?.(runtime.id, {
           eventType: "runtime_run_started",
           summary: {
+            conversationRoot: input.conversation?.rootId ?? "unknown",
             textLength: input.text.length,
             githubConnected: Boolean(input.connections.github)
           }
@@ -279,12 +281,14 @@ function validateRemoteRunEvent(payload: unknown): RemoteRunEvent | null {
 
 function sanitizeAgentInput(input: AgentInput): {
   text: string;
+  conversation?: NonNullable<AgentInput["conversation"]>;
   connections: { github: ConnectionSummary };
 } {
   const github = input.connections.github;
 
   return {
     text: input.text,
+    ...(input.conversation ? { conversation: input.conversation } : {}),
     connections: {
       github: github
         ? {

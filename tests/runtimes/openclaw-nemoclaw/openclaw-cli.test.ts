@@ -90,6 +90,8 @@ describe("runOpenClawCliRequest", () => {
     expect(commands[0].args).toContain("main");
     expect(commands[0].args).toContain("--local");
     expect(commands[0].args).toContain("--message");
+    expect(commands[0].args).toContain("--session-id");
+    expect(commands[0].args).toContain("burble-person_example.com");
     expect(commands[0].args.join(" ")).toContain("Fix billing export");
     expect(commands[0].args.join(" ")).not.toContain("secret");
     expect(commands[0].env).toEqual({
@@ -97,7 +99,7 @@ describe("runOpenClawCliRequest", () => {
       OPENCLAW_CONFIG_PATH: "/data/openclaw/config/openclaw.json"
     });
     expect(logs).toEqual([
-      "OpenClaw agent start runId=unknown agent=main textLength=25 classification=user_private",
+      "OpenClaw agent start runId=unknown agent=main sessionId=burble-person_example.com textLength=25 classification=user_private",
       "OpenClaw agent finish runId=unknown classification=user_private textLength=32"
     ]);
   });
@@ -169,9 +171,67 @@ describe("runOpenClawCliRequest", () => {
 
     expect(response.response.text).toBe("San Francisco is mild today.");
     expect(logs).toEqual([
-      "OpenClaw agent start runId=unknown agent=main textLength=46 classification=user_private",
+      "OpenClaw agent start runId=unknown agent=main sessionId=burble-person_example.com textLength=46 classification=user_private",
       "OpenClaw agent finish runId=unknown classification=user_private textLength=28"
     ]);
+  });
+
+  test("maps distinct Slack conversation roots to distinct OpenClaw sessions", async () => {
+    const sessionIds: string[] = [];
+    const baseRequest = {
+      input: {
+        text: "summarize this thread",
+        connections: {
+          github: {
+            connected: true,
+            email: "person@example.com",
+            providerLogin: "octocat"
+          }
+        }
+      }
+    };
+
+    for (const rootId of [
+      "channel:C123:thread:1710000000.000100",
+      "channel:C123:thread:1710000001.000100"
+    ]) {
+      await runOpenClawCliRequest(
+        {
+          ...baseRequest,
+          input: {
+            ...baseRequest.input,
+            conversation: {
+              source: "slack",
+              workspaceId: "T123",
+              channelId: "C123",
+              rootId,
+              isDirectMessage: false
+            }
+          }
+        },
+        config,
+        async () => ({
+          classification: "user_private",
+          content: []
+        }),
+        async (_command, args) => {
+          const sessionIndex = args.indexOf("--session-id") + 1;
+          sessionIds.push(args[sessionIndex]);
+          return {
+            exitCode: 0,
+            stdout: "Thread summary.",
+            stderr: ""
+          };
+        },
+        () => undefined
+      );
+    }
+
+    expect(sessionIds).toHaveLength(2);
+    expect(sessionIds[0]).toStartWith("burble-slack-");
+    expect(sessionIds[1]).toStartWith("burble-slack-");
+    expect(sessionIds[0]).not.toBe(sessionIds[1]);
+    expect(sessionIds.join(" ")).not.toContain("person@example.com");
   });
 
   test("invokes OpenClaw for general questions before GitHub is connected", async () => {

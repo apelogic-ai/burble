@@ -17,6 +17,14 @@ const principal = {
   slackUserId: "U123"
 };
 
+const conversation = {
+  source: "slack" as const,
+  workspaceId: "T123",
+  channelId: "D123",
+  rootId: "dm:D123",
+  isDirectMessage: true
+};
+
 describe("createOpenClawNemoClawAgentRunner", () => {
   test("posts a sanitized run request to the remote runtime", async () => {
     const requests: Array<{ url: string; init: RequestInit }> = [];
@@ -42,6 +50,7 @@ describe("createOpenClawNemoClawAgentRunner", () => {
 
     const result = await collectAgentRun(runner, {
       principal,
+      conversation,
       text: "summarize my GitHub work",
       connections: { github: connection }
     });
@@ -62,6 +71,7 @@ describe("createOpenClawNemoClawAgentRunner", () => {
     expect(body).toMatchObject({
       input: {
         text: "summarize my GitHub work",
+        conversation,
         connections: {
           github: {
             connected: true,
@@ -113,6 +123,7 @@ describe("createOpenClawNemoClawAgentRunner", () => {
 
     const result = await collectAgentRun(runner, {
       principal,
+      conversation,
       text: "summarize my GitHub work",
       connections: { github: connection }
     });
@@ -138,6 +149,7 @@ describe("createOpenClawNemoClawAgentRunner", () => {
         runtimeId: "rt_u123",
         eventType: "runtime_run_started",
         summary: {
+          conversationRoot: "dm:D123",
           textLength: 24,
           githubConnected: true
         }
@@ -181,6 +193,7 @@ describe("createOpenClawNemoClawAgentRunner", () => {
       runner,
       {
         principal,
+        conversation,
         text: "summarize my GitHub work",
         connections: { github: connection }
       },

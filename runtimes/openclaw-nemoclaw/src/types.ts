@@ -12,6 +12,13 @@ export type RunRequest = {
   };
   input: {
     text: string;
+    conversation?: {
+      source: "slack";
+      workspaceId: string;
+      channelId: string;
+      rootId: string;
+      isDirectMessage: boolean;
+    };
     connections: {
       github: {
         connected: boolean;

@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type { RuntimeConfig } from "./config";
 import { info, type RuntimeLogger } from "./logger";
 import { isSupportedGitHubRequest, runBurbleRequest } from "./runner";
@@ -44,12 +45,13 @@ export async function runOpenClawCliRequest(
   }
 
   const prompt = buildOpenClawPrompt(request, baseline);
+  const sessionId = buildSessionId(request);
   logInfo(
-    `OpenClaw agent start runId=${request.runId ?? "unknown"} agent=${config.openClawAgent} textLength=${request.input.text.length} classification=${baseline.response.classification}`
+    `OpenClaw agent start runId=${request.runId ?? "unknown"} agent=${config.openClawAgent} sessionId=${sessionId} textLength=${request.input.text.length} classification=${baseline.response.classification}`
   );
   const result = await runCommand(
     config.openClawCommand,
-    buildOpenClawArgs(config, prompt, request),
+    buildOpenClawArgs(config, prompt, sessionId),
     {
       timeoutMs: config.openClawTimeoutMs,
       env: openClawEnv(config)
@@ -93,8 +95,9 @@ export async function* runOpenClawCliRequestStream(
   }
 
   const prompt = buildOpenClawPrompt(request, baseline);
+  const sessionId = buildSessionId(request);
   logInfo(
-    `OpenClaw agent start runId=${request.runId ?? "unknown"} agent=${config.openClawAgent} textLength=${request.input.text.length} classification=${baseline.response.classification}`
+    `OpenClaw agent start runId=${request.runId ?? "unknown"} agent=${config.openClawAgent} sessionId=${sessionId} textLength=${request.input.text.length} classification=${baseline.response.classification}`
   );
   yield { type: "status", text: "Running OpenClaw/NemoClaw..." };
 
@@ -106,7 +109,7 @@ export async function* runOpenClawCliRequestStream(
   for await (const event of withHeartbeat(
     runCommandStream(
       config.openClawCommand,
-      buildOpenClawArgs(config, prompt, request),
+      buildOpenClawArgs(config, prompt, sessionId),
       {
         timeoutMs: config.openClawTimeoutMs,
         env: openClawEnv(config)
@@ -349,7 +352,7 @@ function buildOpenClawPrompt(request: RunRequest, baseline: RunResponse): string
 function buildOpenClawArgs(
   config: RuntimeConfig,
   prompt: string,
-  request: RunRequest
+  sessionId: string
 ): string[] {
   return [
     "agent",
@@ -359,13 +362,29 @@ function buildOpenClawArgs(
     "--message",
     prompt,
     "--session-id",
-    buildSessionId(request)
+    sessionId
   ];
 }
 
 function buildSessionId(request: RunRequest): string {
+  const conversation = request.input.conversation;
+  if (conversation) {
+    return `burble-${conversation.source}-${hashSessionKey(
+      [
+        conversation.workspaceId,
+        conversation.channelId,
+        conversation.rootId,
+        conversation.isDirectMessage ? "dm" : "channel"
+      ].join(":")
+    )}`;
+  }
+
   const email = request.input.connections.github.email ?? "anonymous";
   return `burble-${email.replace(/[^a-zA-Z0-9_.-]/g, "_")}`;
+}
+
+function hashSessionKey(value: string): string {
+  return createHash("sha256").update(value).digest("hex").slice(0, 32);
 }
 
 function extractOpenClawText(stdout: string): string | null {

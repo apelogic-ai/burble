@@ -119,6 +119,14 @@ function isRunRequest(body: unknown): body is RunRequest {
     return false;
   }
 
+  if (
+    "conversation" in input &&
+    input.conversation !== undefined &&
+    !isConversationSummary(input.conversation)
+  ) {
+    return false;
+  }
+
   const connections = input.connections;
   if (
     typeof connections !== "object" ||
@@ -134,6 +142,28 @@ function isRunRequest(body: unknown): body is RunRequest {
     github !== null &&
     "connected" in github &&
     typeof github.connected === "boolean"
+  );
+}
+
+function isConversationSummary(
+  conversation: unknown
+): conversation is RunRequest["input"]["conversation"] {
+  return (
+    typeof conversation === "object" &&
+    conversation !== null &&
+    "source" in conversation &&
+    conversation.source === "slack" &&
+    "workspaceId" in conversation &&
+    typeof conversation.workspaceId === "string" &&
+    conversation.workspaceId.trim().length > 0 &&
+    "channelId" in conversation &&
+    typeof conversation.channelId === "string" &&
+    conversation.channelId.trim().length > 0 &&
+    "rootId" in conversation &&
+    typeof conversation.rootId === "string" &&
+    conversation.rootId.trim().length > 0 &&
+    "isDirectMessage" in conversation &&
+    typeof conversation.isDirectMessage === "boolean"
   );
 }
 
