@@ -28,7 +28,7 @@ export async function handleRuntimeRequest(
 
   const runner = createRuntimeRunner(config);
   if (acceptsNdjson(request)) {
-    return streamRunResponse(runner.stream(body, executeTool));
+    return streamRunResponse(runner.stream(body, executeTool), body.runId);
   }
 
   const result = await runner.run(body, executeTool);
@@ -45,7 +45,10 @@ function acceptsNdjson(request: Request): boolean {
     .some((value) => value.trim().toLowerCase().startsWith("application/x-ndjson"));
 }
 
-function streamRunResponse(events: AsyncIterable<unknown>): Response {
+function streamRunResponse(
+  events: AsyncIterable<unknown>,
+  runId?: string
+): Response {
   const encoder = new TextEncoder();
 
   return new Response(
@@ -55,12 +58,16 @@ function streamRunResponse(events: AsyncIterable<unknown>): Response {
           for await (const event of events) {
             controller.enqueue(encoder.encode(`${JSON.stringify(event)}\n`));
           }
-        } catch {
+        } catch (error) {
+          const message = formatRuntimeError(error);
+          console.error(
+            `[ERROR] ${new Date().toISOString()} Runtime run failed runId=${runId ?? "unknown"} error=${message}`
+          );
           controller.enqueue(
             encoder.encode(
               `${JSON.stringify({
                 type: "error",
-                message: "Runtime run failed"
+                message: `Runtime run failed: ${message}`
               })}\n`
             )
           );
@@ -76,6 +83,14 @@ function streamRunResponse(events: AsyncIterable<unknown>): Response {
       }
     }
   );
+}
+
+function formatRuntimeError(error: unknown): string {
+  if (error instanceof Error && error.message) {
+    return error.message;
+  }
+
+  return "unknown error";
 }
 
 async function readRunRequest(request: Request): Promise<unknown> {

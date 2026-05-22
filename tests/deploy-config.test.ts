@@ -178,6 +178,9 @@ describe("dev deploy config", () => {
     );
     expect(personalRuntimesCompose).toContain("AGENT_RUNTIME_IDLE_TTL_MS");
     expect(personalRuntimesCompose).toContain("AGENT_RUNTIME_REAPER_INTERVAL_MS");
+    expect(personalRuntimesCompose).toContain(
+      "OPENCLAW_TIMEOUT_MS=${OPENCLAW_TIMEOUT_MS:-180000}"
+    );
     expect(personalRuntimesCompose).toContain("OPENCLAW_STREAM_DEBUG");
   });
 

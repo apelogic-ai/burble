@@ -33,6 +33,7 @@ export type ContainerRuntimeSpec = {
 const approvedForwardedEnv = new Set([
   "OPENAI_API_KEY",
   "ANTHROPIC_API_KEY",
+  "OPENCLAW_TIMEOUT_MS",
   "OPENCLAW_STREAM_DEBUG"
 ]);
 

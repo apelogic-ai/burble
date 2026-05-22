@@ -28,6 +28,7 @@ describe("buildContainerRuntimeSpec", () => {
       env: {
         OPENAI_API_KEY: "openai-key",
         ANTHROPIC_API_KEY: "anthropic-key",
+        OPENCLAW_TIMEOUT_MS: "180000",
         OPENCLAW_STREAM_DEBUG: "true",
         GITHUB_TOKEN: "github-secret",
         SLACK_BOT_TOKEN: "slack-secret"
@@ -42,6 +43,7 @@ describe("buildContainerRuntimeSpec", () => {
       OPENCLAW_NEMOCLAW_ENGINE: "openclaw",
       OPENAI_API_KEY: "openai-key",
       ANTHROPIC_API_KEY: "anthropic-key",
+      OPENCLAW_TIMEOUT_MS: "180000",
       OPENCLAW_STREAM_DEBUG: "true"
     });
     expect(spec.env.GITHUB_TOKEN).toBeUndefined();
