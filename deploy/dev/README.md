@@ -183,6 +183,18 @@ The CLI image installs the `openclaw` npm package during Docker build. If that
 build fails, switch back to `OPENCLAW_NEMOCLAW_ENGINE=deterministic` and deploy
 with only the first two compose files.
 
+For the Docker-backed personal runtime path, the compose directory includes a
+convenience helper:
+
+```bash
+./deploy-personal-runtimes.sh
+```
+
+It runs `git pull --ff-only`, rebuilds the Burble app and personal runtime
+image, restarts Compose, and removes existing `burble-rt-*` containers so the
+next DM provisions a runtime with the latest image and environment. Use
+`--no-pull` or `--keep-runtimes` when you want to skip those steps.
+
 `/internal/*` is blocked by Caddy on the public HTTPS hostname. The
 OpenClaw/NemoClaw service calls `http://burble-app:3000/internal/tools` over
 the Docker network with `BURBLE_INTERNAL_TOKEN`.

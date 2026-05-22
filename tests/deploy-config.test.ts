@@ -10,6 +10,9 @@ const openClawCliCompose = await Bun.file(
 const personalRuntimesCompose = await Bun.file(
   "deploy/dev/compose/docker-compose.personal-runtimes.yml"
 ).text();
+const personalRuntimeDeployScript = await Bun.file(
+  "deploy/dev/compose/deploy-personal-runtimes.sh"
+).text();
 const caddyfile = await Bun.file("deploy/dev/compose/Caddyfile").text();
 const openClawOpenAiPatch = await Bun.file(
   "deploy/dev/compose/openclaw-patches/openai.json5"
@@ -176,6 +179,17 @@ describe("dev deploy config", () => {
     expect(personalRuntimesCompose).toContain("AGENT_RUNTIME_IDLE_TTL_MS");
     expect(personalRuntimesCompose).toContain("AGENT_RUNTIME_REAPER_INTERVAL_MS");
     expect(personalRuntimesCompose).toContain("OPENCLAW_STREAM_DEBUG");
+  });
+
+  test("provides a personal runtime deployment helper", () => {
+    expect(personalRuntimeDeployScript).toContain("git pull --ff-only");
+    expect(personalRuntimeDeployScript).toContain("--profile runtime-image build openclaw-nemoclaw-image");
+    expect(personalRuntimeDeployScript).toContain("docker-compose.personal-runtimes.yml");
+    expect(personalRuntimeDeployScript).toContain("up -d --build");
+    expect(personalRuntimeDeployScript).toContain("docker ps -aq --filter \"name=burble-rt-\"");
+    expect(personalRuntimeDeployScript).toContain("docker stop");
+    expect(personalRuntimeDeployScript).toContain("docker rm");
+    expect(personalRuntimeDeployScript).toContain("--keep-runtimes");
   });
 
   test("provides an optional OpenClaw CLI runtime build override", async () => {
