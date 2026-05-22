@@ -1,6 +1,11 @@
+import { createHash } from "node:crypto";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import type { RuntimeConfig } from "./config";
 import { info, type RuntimeLogger } from "./logger";
 import { openClawEnv, runCliCommand, type CliCommandRunner } from "./openclaw-cli";
+
+const setupMarkerFile = ".burble-openclaw-setup.json";
 
 export async function ensureOpenClawSetup(
   config: RuntimeConfig,
@@ -12,6 +17,12 @@ export async function ensureOpenClawSetup(
       logInfo("OpenClaw onboard skipped setupOnStart=false");
     }
     await ensureOpenClawConfig(config, runCommand, logInfo);
+    return;
+  }
+
+  const setupCacheKey = await buildSetupCacheKey(config);
+  if (await isSetupCacheValid(config, setupCacheKey)) {
+    logInfo("OpenClaw setup cached");
     return;
   }
 
@@ -51,6 +62,7 @@ export async function ensureOpenClawSetup(
   logInfo("OpenClaw onboard finish");
 
   await ensureOpenClawConfig(config, runCommand, logInfo);
+  await writeSetupCache(config, setupCacheKey);
 }
 
 async function ensureOpenClawConfig(
@@ -98,4 +110,63 @@ async function ensureOpenClawConfig(
     throw new Error(`OpenClaw config validate exited with code ${result.exitCode}`);
   }
   logInfo("OpenClaw config validate finish");
+}
+
+async function buildSetupCacheKey(config: RuntimeConfig): Promise<string> {
+  const patchHash = config.openClawConfigPatchPath
+    ? await hashFile(config.openClawConfigPatchPath)
+    : "none";
+
+  return createHash("sha256")
+    .update(
+      JSON.stringify({
+        version: 1,
+        command: config.openClawCommand,
+        agent: config.openClawAgent,
+        stateDir: config.openClawStateDir,
+        configPath: config.openClawConfigPath,
+        workspaceDir: config.openClawWorkspaceDir,
+        configPatchPath: config.openClawConfigPatchPath,
+        patchHash,
+        validateOnStart: config.openClawValidateOnStart
+      })
+    )
+    .digest("hex");
+}
+
+async function hashFile(path: string): Promise<string> {
+  const content = await readFile(path);
+  return createHash("sha256").update(content).digest("hex");
+}
+
+async function isSetupCacheValid(
+  config: RuntimeConfig,
+  setupCacheKey: string
+): Promise<boolean> {
+  try {
+    const marker = JSON.parse(
+      await readFile(setupMarkerPath(config), "utf8")
+    ) as { setupCacheKey?: unknown };
+    return marker.setupCacheKey === setupCacheKey;
+  } catch {
+    return false;
+  }
+}
+
+async function writeSetupCache(
+  config: RuntimeConfig,
+  setupCacheKey: string
+): Promise<void> {
+  await mkdir(config.openClawStateDir, { recursive: true });
+  await writeFile(
+    setupMarkerPath(config),
+    `${JSON.stringify({
+      setupCacheKey,
+      writtenAt: new Date().toISOString()
+    })}\n`
+  );
+}
+
+function setupMarkerPath(config: RuntimeConfig): string {
+  return join(config.openClawStateDir, setupMarkerFile);
 }

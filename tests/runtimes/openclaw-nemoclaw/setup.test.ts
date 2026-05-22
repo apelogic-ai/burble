@@ -1,4 +1,7 @@
 import { describe, expect, test } from "bun:test";
+import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 import { ensureOpenClawSetup } from "../../../runtimes/openclaw-nemoclaw/src/setup";
 import type { RuntimeConfig } from "../../../runtimes/openclaw-nemoclaw/src/config";
 
@@ -54,8 +57,9 @@ describe("ensureOpenClawSetup", () => {
       args: string[];
       env: Record<string, string>;
     }> = [];
+    const runtimeConfig = await configWithState();
 
-    await ensureOpenClawSetup(config, async (command, args, options) => {
+    await ensureOpenClawSetup(runtimeConfig, async (command, args, options) => {
       calls.push({ command, args, env: options.env ?? {} });
       return { exitCode: 0, stdout: "", stderr: "" };
     });
@@ -83,7 +87,7 @@ describe("ensureOpenClawSetup", () => {
           "--json"
         ],
         env: {
-          OPENCLAW_STATE_DIR: "/data/openclaw/state",
+          OPENCLAW_STATE_DIR: runtimeConfig.openClawStateDir,
           OPENCLAW_CONFIG_PATH: "/data/openclaw/config/openclaw.json"
         }
       },
@@ -91,7 +95,7 @@ describe("ensureOpenClawSetup", () => {
         command: "openclaw",
         args: ["config", "validate"],
         env: {
-          OPENCLAW_STATE_DIR: "/data/openclaw/state",
+          OPENCLAW_STATE_DIR: runtimeConfig.openClawStateDir,
           OPENCLAW_CONFIG_PATH: "/data/openclaw/config/openclaw.json"
         }
       }
@@ -100,9 +104,10 @@ describe("ensureOpenClawSetup", () => {
 
   test("logs OpenClaw startup lifecycle", async () => {
     const logs: string[] = [];
+    const patchPath = await writePatchFile("{ model: 'test' }\n");
 
     await ensureOpenClawSetup(
-      { ...config, openClawConfigPatchPath: "/etc/openclaw/patch.json5" },
+      await configWithState({ openClawConfigPatchPath: patchPath }),
       async () => ({ exitCode: 0, stdout: "", stderr: "" }),
       (message) => logs.push(message)
     );
@@ -110,7 +115,7 @@ describe("ensureOpenClawSetup", () => {
     expect(logs).toEqual([
       "OpenClaw onboard start workspace=/data/openclaw/workspace hasPatch=true",
       "OpenClaw onboard finish",
-      "OpenClaw config patch start path=/etc/openclaw/patch.json5",
+      `OpenClaw config patch start path=${patchPath}`,
       "OpenClaw config patch finish",
       "OpenClaw config validate start",
       "OpenClaw config validate finish"
@@ -119,9 +124,10 @@ describe("ensureOpenClawSetup", () => {
 
   test("applies an optional config patch before validation", async () => {
     const calls: string[][] = [];
+    const patchPath = await writePatchFile("{ model: 'test' }\n");
 
     await ensureOpenClawSetup(
-      { ...config, openClawConfigPatchPath: "/etc/openclaw/patch.json5" },
+      await configWithState({ openClawConfigPatchPath: patchPath }),
       async (_command, args) => {
         calls.push(args);
         return { exitCode: 0, stdout: "", stderr: "" };
@@ -148,7 +154,7 @@ describe("ensureOpenClawSetup", () => {
         "/data/openclaw/workspace",
         "--json"
       ],
-      ["config", "patch", "--file", "/etc/openclaw/patch.json5"],
+      ["config", "patch", "--file", patchPath],
       ["config", "validate"]
     ]);
   });
@@ -157,7 +163,7 @@ describe("ensureOpenClawSetup", () => {
     const calls: string[][] = [];
 
     await ensureOpenClawSetup(
-      { ...config, openClawValidateOnStart: false },
+      await configWithState({ openClawValidateOnStart: false }),
       async (_command, args) => {
         calls.push(args);
         return { exitCode: 0, stdout: "", stderr: "" };
@@ -185,6 +191,56 @@ describe("ensureOpenClawSetup", () => {
         "--json"
       ]
     ]);
+  });
+
+  test("skips repeated setup when persisted state is already initialized", async () => {
+    const stateDir = await mkdtemp(join(tmpdir(), "burble-openclaw-state-"));
+    const calls: string[][] = [];
+    const runtimeConfig = {
+      ...config,
+      openClawStateDir: stateDir
+    };
+
+    await ensureOpenClawSetup(runtimeConfig, async (_command, args) => {
+      calls.push(args);
+      return { exitCode: 0, stdout: "", stderr: "" };
+    });
+    await ensureOpenClawSetup(runtimeConfig, async (_command, args) => {
+      calls.push(args);
+      return { exitCode: 0, stdout: "", stderr: "" };
+    });
+
+    expect(calls).toHaveLength(2);
+    expect(calls[0][0]).toBe("onboard");
+    expect(calls[1]).toEqual(["config", "validate"]);
+  });
+
+  test("reruns setup when the config patch changes", async () => {
+    const stateDir = await mkdtemp(join(tmpdir(), "burble-openclaw-state-"));
+    const patchDir = await mkdtemp(join(tmpdir(), "burble-openclaw-patch-"));
+    const patchPath = join(patchDir, "openai.json5");
+    await mkdir(patchDir, { recursive: true });
+    await writeFile(patchPath, "{ model: 'first' }\n");
+
+    const calls: string[][] = [];
+    const runtimeConfig = {
+      ...config,
+      openClawStateDir: stateDir,
+      openClawConfigPatchPath: patchPath
+    };
+
+    await ensureOpenClawSetup(runtimeConfig, async (_command, args) => {
+      calls.push(args);
+      return { exitCode: 0, stdout: "", stderr: "" };
+    });
+    await writeFile(patchPath, "{ model: 'second' }\n");
+    await ensureOpenClawSetup(runtimeConfig, async (_command, args) => {
+      calls.push(args);
+      return { exitCode: 0, stdout: "", stderr: "" };
+    });
+
+    expect(calls.filter((args) => args[0] === "onboard")).toHaveLength(2);
+    expect(calls.filter((args) => args[0] === "config")).toHaveLength(4);
   });
 
   test("surfaces onboarding failures without leaking stderr", async () => {
@@ -227,3 +283,20 @@ describe("ensureOpenClawSetup", () => {
     ).rejects.toThrow("OpenClaw config validate exited with code 1");
   });
 });
+
+async function configWithState(
+  overrides: Partial<RuntimeConfig> = {}
+): Promise<RuntimeConfig> {
+  return {
+    ...config,
+    openClawStateDir: await mkdtemp(join(tmpdir(), "burble-openclaw-state-")),
+    ...overrides
+  };
+}
+
+async function writePatchFile(content: string): Promise<string> {
+  const patchDir = await mkdtemp(join(tmpdir(), "burble-openclaw-patch-"));
+  const patchPath = join(patchDir, "openai.json5");
+  await writeFile(patchPath, content);
+  return patchPath;
+}
