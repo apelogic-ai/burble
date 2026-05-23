@@ -1,6 +1,15 @@
 import type { RuntimeConfig } from "./config";
 import { createRuntimeRunner } from "./runtime";
-import type { RunRequest, ToolExecutor } from "./types";
+import type { RunEvent, RunRequest, RunResponse, ToolExecutor } from "./types";
+
+type SharedRun = {
+  events: RunEvent[];
+  subscribers: Set<() => void>;
+  completed: boolean;
+  finalPromise: Promise<RunResponse>;
+};
+
+const sharedRuns = new Map<string, SharedRun>();
 
 export async function handleRuntimeRequest(
   request: Request,
@@ -27,16 +36,127 @@ export async function handleRuntimeRequest(
   }
 
   const runner = createRuntimeRunner(config);
+  const sharedRun = body.runId
+    ? getOrStartSharedRun(body.runId, () =>
+        runner.stream(body, executeTool)
+      )
+    : null;
+
   if (acceptsNdjson(request)) {
-    return streamRunResponse(runner.stream(body, executeTool), body.runId);
+    return streamRunResponse(
+      sharedRun ? subscribeSharedRun(sharedRun) : runner.stream(body, executeTool),
+      body.runId
+    );
   }
 
-  const result = await runner.run(body, executeTool);
+  const result = sharedRun
+    ? await sharedRun.finalPromise
+    : await runner.run(body, executeTool);
   return Response.json(result, {
     headers: {
       "cache-control": "no-store"
     }
   });
+}
+
+function getOrStartSharedRun(
+  runId: string,
+  createEvents: () => AsyncIterable<RunEvent>
+): SharedRun {
+  const existing = sharedRuns.get(runId);
+  if (existing) {
+    return existing;
+  }
+
+  const sharedRun: SharedRun = {
+    events: [],
+    subscribers: new Set(),
+    completed: false,
+    finalPromise: Promise.resolve({
+      response: {
+        classification: "user_private",
+        text: ""
+      }
+    })
+  };
+
+  sharedRun.finalPromise = consumeSharedRun(runId, sharedRun, createEvents());
+  sharedRun.finalPromise.catch(() => undefined);
+  sharedRuns.set(runId, sharedRun);
+  return sharedRun;
+}
+
+async function consumeSharedRun(
+  runId: string,
+  sharedRun: SharedRun,
+  events: AsyncIterable<RunEvent>
+): Promise<RunResponse> {
+  try {
+    for await (const event of events) {
+      publishSharedRunEvent(sharedRun, event);
+      if (event.type === "error") {
+        throw new Error(event.message);
+      }
+      if (event.type === "final") {
+        return { response: event.response };
+      }
+    }
+
+    throw new Error("Runtime run finished without a final response");
+  } catch (error) {
+    const message = formatRuntimeError(error);
+    console.error(
+      `[ERROR] ${new Date().toISOString()} Runtime run failed runId=${runId} error=${message}`
+    );
+    publishSharedRunEvent(sharedRun, {
+      type: "error",
+      message: `Runtime run failed: ${message}`
+    });
+    throw error;
+  } finally {
+    sharedRun.completed = true;
+    queueMicrotask(() => {
+      sharedRuns.delete(runId);
+    });
+  }
+}
+
+function publishSharedRunEvent(sharedRun: SharedRun, event: RunEvent): void {
+  sharedRun.events.push(event);
+  for (const subscriber of sharedRun.subscribers) {
+    subscriber();
+  }
+}
+
+async function* subscribeSharedRun(
+  sharedRun: SharedRun
+): AsyncIterable<RunEvent> {
+  let offset = 0;
+  let wake: (() => void) | undefined;
+  const subscriber = () => {
+    wake?.();
+  };
+
+  sharedRun.subscribers.add(subscriber);
+  try {
+    while (true) {
+      while (offset < sharedRun.events.length) {
+        yield sharedRun.events[offset];
+        offset += 1;
+      }
+
+      if (sharedRun.completed) {
+        return;
+      }
+
+      await new Promise<void>((resolve) => {
+        wake = resolve;
+      });
+      wake = undefined;
+    }
+  } finally {
+    sharedRun.subscribers.delete(subscriber);
+  }
 }
 
 function acceptsNdjson(request: Request): boolean {

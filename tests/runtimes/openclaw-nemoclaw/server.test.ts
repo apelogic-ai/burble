@@ -113,6 +113,85 @@ describe("handleRuntimeRequest", () => {
     ]);
   });
 
+  test("shares in-flight runs by run id across streaming and json clients", async () => {
+    let toolCalls = 0;
+    let resolveTool!: () => void;
+    const toolGate = new Promise<void>((resolve) => {
+      resolveTool = resolve;
+    });
+    const body = JSON.stringify({
+      runId: "run-shared",
+      runtime: { id: "rt_u123" },
+      input: {
+        text: "who am I on GitHub?",
+        connections: {
+          github: {
+            connected: true,
+            email: "person@example.com"
+          }
+        }
+      }
+    });
+    const executeTool = async () => {
+      toolCalls += 1;
+      await toolGate;
+      return {
+        classification: "user_private" as const,
+        content: { login: "octocat" }
+      };
+    };
+
+    const streamResponse = await handleRuntimeRequest(
+      new Request("http://runtime/runs", {
+        method: "POST",
+        headers: {
+          accept: "application/x-ndjson",
+          "content-type": "application/json"
+        },
+        body
+      }),
+      config,
+      executeTool
+    );
+    const reader = streamResponse.body!.getReader();
+    const decoder = new TextDecoder();
+    const first = await reader.read();
+    expect(decoder.decode(first.value)).toContain("Loading Burble context");
+
+    const jsonResponsePromise = handleRuntimeRequest(
+      new Request("http://runtime/runs", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body
+      }),
+      config,
+      executeTool
+    );
+
+    resolveTool();
+
+    let streamText = "";
+    while (true) {
+      const chunk = await reader.read();
+      if (chunk.done) {
+        break;
+      }
+      streamText += decoder.decode(chunk.value);
+    }
+
+    const jsonResponse = await jsonResponsePromise;
+    expect(jsonResponse.status).toBe(200);
+    expect(await jsonResponse.json()).toEqual({
+      response: {
+        classification: "user_private",
+        text: "Authenticated to GitHub as `octocat`."
+      }
+    });
+    expect(streamText).toContain("\"type\":\"final\"");
+    expect(streamText).toContain("Authenticated to GitHub as `octocat`.");
+    expect(toolCalls).toBe(1);
+  });
+
   test("streams sanitized runtime errors with the underlying message", async () => {
     const errors: string[] = [];
     const originalError = console.error;
