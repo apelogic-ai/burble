@@ -50,30 +50,43 @@ function streamRunResponse(
   runId?: string
 ): Response {
   const encoder = new TextEncoder();
+  let cancelled = false;
 
   return new Response(
     new ReadableStream({
       async start(controller) {
         try {
           for await (const event of events) {
-            controller.enqueue(encoder.encode(`${JSON.stringify(event)}\n`));
+            if (
+              !enqueueNdjson(controller, encoder, event, () => cancelled)
+            ) {
+              return;
+            }
           }
         } catch (error) {
+          if (isClosedStreamError(error) || cancelled) {
+            return;
+          }
+
           const message = formatRuntimeError(error);
           console.error(
             `[ERROR] ${new Date().toISOString()} Runtime run failed runId=${runId ?? "unknown"} error=${message}`
           );
-          controller.enqueue(
-            encoder.encode(
-              `${JSON.stringify({
-                type: "error",
-                message: `Runtime run failed: ${message}`
-              })}\n`
-            )
+          enqueueNdjson(
+            controller,
+            encoder,
+            {
+              type: "error",
+              message: `Runtime run failed: ${message}`
+            },
+            () => cancelled
           );
         } finally {
-          controller.close();
+          closeStream(controller);
         }
+      },
+      cancel() {
+        cancelled = true;
       }
     }),
     {
@@ -82,6 +95,46 @@ function streamRunResponse(
         "content-type": "application/x-ndjson; charset=utf-8"
       }
     }
+  );
+}
+
+function enqueueNdjson(
+  controller: ReadableStreamDefaultController<Uint8Array>,
+  encoder: TextEncoder,
+  event: unknown,
+  isCancelled: () => boolean
+): boolean {
+  if (isCancelled()) {
+    return false;
+  }
+
+  try {
+    controller.enqueue(encoder.encode(`${JSON.stringify(event)}\n`));
+    return true;
+  } catch (error) {
+    if (isClosedStreamError(error)) {
+      return false;
+    }
+    throw error;
+  }
+}
+
+function closeStream(
+  controller: ReadableStreamDefaultController<Uint8Array>
+): void {
+  try {
+    controller.close();
+  } catch (error) {
+    if (!isClosedStreamError(error)) {
+      throw error;
+    }
+  }
+}
+
+function isClosedStreamError(error: unknown): boolean {
+  return (
+    error instanceof TypeError &&
+    /controller is already closed|invalid state/i.test(error.message)
   );
 }
 

@@ -164,6 +164,66 @@ describe("handleRuntimeRequest", () => {
     }
   });
 
+  test("does not report a runtime failure when the stream client disconnects", async () => {
+    const errors: string[] = [];
+    const originalError = console.error;
+    console.error = (message?: unknown) => {
+      errors.push(String(message));
+    };
+    let resolveTool!: () => void;
+    const toolGate = new Promise<void>((resolve) => {
+      resolveTool = resolve;
+    });
+
+    try {
+      const response = await handleRuntimeRequest(
+        new Request("http://runtime/runs", {
+          method: "POST",
+          headers: {
+            accept: "application/x-ndjson",
+            "content-type": "application/json"
+          },
+          body: JSON.stringify({
+            runId: "run-cancelled",
+            runtime: { id: "rt_u123" },
+            input: {
+              text: "who am I on GitHub?",
+              connections: {
+                github: {
+                  connected: true,
+                  email: "person@example.com"
+                }
+              }
+            }
+          })
+        }),
+        config,
+        async () => {
+          await toolGate;
+          return {
+            classification: "user_private",
+            content: { login: "octocat" }
+          };
+        }
+      );
+
+      const reader = response.body?.getReader();
+      expect(reader).toBeDefined();
+      const first = await reader!.read();
+      expect(new TextDecoder().decode(first.value)).toContain(
+        "Loading Burble context"
+      );
+
+      await reader!.cancel();
+      resolveTool();
+      await Bun.sleep(5);
+
+      expect(errors).toEqual([]);
+    } finally {
+      console.error = originalError;
+    }
+  });
+
   test("rejects malformed run requests", async () => {
     const response = await handleRuntimeRequest(
       new Request("http://runtime/runs", {
