@@ -243,6 +243,9 @@ describe("dev deploy config", () => {
     expect(personalRuntimeDeployScript).toContain("--agentgateway");
     expect(personalRuntimeDeployScript).toContain("docker-compose.agentgateway.yml");
     expect(personalRuntimeDeployScript).toContain("up -d --build");
+    expect(personalRuntimeDeployScript).toContain(
+      "up -d --force-recreate --no-deps agentgateway"
+    );
     expect(personalRuntimeDeployScript).toContain("docker ps -aq --filter \"name=burble-rt-\"");
     expect(personalRuntimeDeployScript).toContain("docker stop");
     expect(personalRuntimeDeployScript).toContain("docker rm");

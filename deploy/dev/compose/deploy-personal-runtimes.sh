@@ -70,6 +70,10 @@ fi
 docker compose "${compose_files[@]}" --profile runtime-image build openclaw-nemoclaw-image
 docker compose "${compose_files[@]}" up -d --build
 
+if [[ "${use_agentgateway}" == "true" ]]; then
+  docker compose "${compose_files[@]}" up -d --force-recreate --no-deps agentgateway
+fi
+
 if [[ "${recycle_runtimes}" == "true" ]]; then
   mapfile -t runtime_containers < <(docker ps -aq --filter "name=burble-rt-")
   if [[ "${#runtime_containers[@]}" -gt 0 ]]; then
