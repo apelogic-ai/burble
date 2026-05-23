@@ -59,6 +59,44 @@ describe("agent runner contract", () => {
     expect(events).toEqual(["status", "tool_call", "tool_result"]);
   });
 
+  test("does not fail the run when progress delivery fails", async () => {
+    const runner: AgentRunner = {
+      name: "stub",
+      capabilities: {
+        streaming: true,
+        toolEvents: false,
+        remote: true
+      },
+      async *run() {
+        yield { type: "status", text: "Working..." };
+        yield {
+          type: "final",
+          response: {
+            classification: "user_private",
+            text: "Finished."
+          }
+        };
+      }
+    };
+
+    await expect(
+      collectAgentRun(
+        runner,
+        {
+          principal,
+          text: "what needs attention?",
+          connections: { github: null }
+        },
+        () => {
+          throw new Error("The socket connection was closed unexpectedly.");
+        }
+      )
+    ).resolves.toEqual({
+      classification: "user_private",
+      text: "Finished."
+    });
+  });
+
   test("fails when a runner exits without a final response", async () => {
     const runner: AgentRunner = {
       name: "broken",

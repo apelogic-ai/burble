@@ -68,7 +68,12 @@ export async function collectAgentRun(
       return event.response;
     }
 
-    await onEvent?.(event);
+    try {
+      await onEvent?.(event);
+    } catch {
+      // Progress delivery is best-effort. A Slack update failure must not abort
+      // the underlying agent run or be mistaken for a runtime stream failure.
+    }
   }
 
   throw new Error(`Agent runner ${runner.name} finished without a final response`);

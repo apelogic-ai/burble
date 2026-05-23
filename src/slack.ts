@@ -222,8 +222,15 @@ export function createSlackRuntime(
           ...(agentRunner ? { agentRunner } : {}),
           ...(activeProgressMessage
             ? {
-                onAgentEvent: (event) =>
-                  updateAgentProgressMessage(client, activeProgressMessage, event)
+                onAgentEvent: (event) => {
+                  void updateAgentProgressMessage(
+                    client,
+                    activeProgressMessage,
+                    event
+                  ).catch((error) => {
+                    logger.warn(formatLogError(error));
+                  });
+                }
               }
             : {})
         }
@@ -318,8 +325,15 @@ export function createSlackRuntime(
           ...(agentRunner ? { agentRunner } : {}),
           ...(activeProgressMessage
             ? {
-                onAgentEvent: (event) =>
-                  updateAgentProgressMessage(client, activeProgressMessage, event)
+                onAgentEvent: (event) => {
+                  void updateAgentProgressMessage(
+                    client,
+                    activeProgressMessage,
+                    event
+                  ).catch((error) => {
+                    logger.warn(formatLogError(error));
+                  });
+                }
               }
             : {})
         }
