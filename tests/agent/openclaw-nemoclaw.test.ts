@@ -279,6 +279,85 @@ describe("createOpenClawNemoClawAgentRunner", () => {
     });
   });
 
+  test("falls back to a JSON run when the runtime stream closes before any answer", async () => {
+    const requests: Array<{ accept: string; body: { runId?: string } }> = [];
+    const runner = createOpenClawNemoClawAgentRunner({
+      baseUrl: "http://openclaw-runtime:8080",
+      fetch: async (_url, init) => {
+        const headers = init.headers as Record<string, string>;
+        requests.push({
+          accept: headers.accept,
+          body: JSON.parse(String(init.body)) as { runId?: string }
+        });
+
+        if (headers.accept.startsWith("application/x-ndjson")) {
+          let chunksSent = 0;
+          return new Response(
+            new ReadableStream({
+              pull(controller) {
+                if (chunksSent === 0) {
+                  chunksSent += 1;
+                  controller.enqueue(
+                    new TextEncoder().encode(
+                      `${JSON.stringify({
+                        type: "status",
+                        text: "Running OpenClaw/NemoClaw..."
+                      })}\n`
+                    )
+                  );
+                  return;
+                }
+
+                controller.error(
+                  new Error("The socket connection was closed unexpectedly.")
+                );
+              }
+            }),
+            {
+              status: 200,
+              headers: { "content-type": "application/x-ndjson; charset=utf-8" }
+            }
+          );
+        }
+
+        return Response.json({
+          response: {
+            classification: "user_private",
+            text: "Final answer from JSON fallback."
+          }
+        });
+      }
+    });
+    const events: string[] = [];
+
+    const result = await collectAgentRun(
+      runner,
+      {
+        principal,
+        conversation,
+        text: "which jira tickets mention onboarding?",
+        connections: { github: connection }
+      },
+      (event) => {
+        events.push(`${event.type}:${"text" in event ? event.text : ""}`);
+      }
+    );
+
+    expect(events).toContain(
+      "status:Runtime stream closed; fetching final answer..."
+    );
+    expect(result).toEqual({
+      classification: "user_private",
+      text: "Final answer from JSON fallback."
+    });
+    expect(requests).toHaveLength(2);
+    expect(requests[0].accept).toBe("application/x-ndjson, application/json");
+    expect(requests[1].accept).toBe("application/json");
+    expect(requests[1].body).toMatchObject({
+      runId: requests[0].body.runId
+    });
+  });
+
   test("reports remote runtime failures without leaking response bodies", async () => {
     const runner = createOpenClawNemoClawAgentRunner({
       baseUrl: "http://openclaw-runtime:8080",

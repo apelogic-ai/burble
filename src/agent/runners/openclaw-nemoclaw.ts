@@ -90,19 +90,19 @@ export function createOpenClawNemoClawAgentRunner(
         });
       }
 
-      const response = await requestFetch(`${baseUrl}/runs`, {
-        method: "POST",
-        headers: {
-          accept: "application/x-ndjson, application/json",
-          "content-type": "application/json",
-          ...runtimeHeaders(runtime)
-        },
-        body: JSON.stringify({
-          runId,
-          ...(runtime ? { runtime: sanitizeRuntimeHandle(runtime) } : {}),
-          input: sanitizeAgentInput(input)
-        })
-      });
+      const runBody = {
+        runId,
+        ...(runtime ? { runtime: sanitizeRuntimeHandle(runtime) } : {}),
+        input: sanitizeAgentInput(input)
+      };
+      const runUrl = `${baseUrl}/runs`;
+      const response = await postRuntimeRun(
+        requestFetch,
+        runUrl,
+        runtime,
+        runBody,
+        "application/x-ndjson, application/json"
+      );
 
       if (!response.ok) {
         throw new Error(
@@ -110,9 +110,44 @@ export function createOpenClawNemoClawAgentRunner(
         );
       }
 
-      const agentResponse = isNdjsonResponse(response)
-        ? yield* readStreamingRunResponse(response)
-        : await readJsonRunResponse(response);
+      let agentResponse: AgentOutput | null;
+      if (isNdjsonResponse(response)) {
+        try {
+          agentResponse = yield* readStreamingRunResponse(response);
+        } catch (error) {
+          if (!isRuntimeStreamClosedError(error)) {
+            throw error;
+          }
+
+          logInfo(
+            [
+              "OpenClaw/NemoClaw stream closed before final",
+              `runId=${runId}`,
+              `runtimeId=${runtime?.id ?? "static"}`,
+              "fallback=json"
+            ].join(" ")
+          );
+          yield {
+            type: "status",
+            text: "Runtime stream closed; fetching final answer..."
+          };
+          const fallbackResponse = await postRuntimeRun(
+            requestFetch,
+            runUrl,
+            runtime,
+            runBody,
+            "application/json"
+          );
+          if (!fallbackResponse.ok) {
+            throw new Error(
+              `OpenClaw/NemoClaw runtime returned HTTP ${fallbackResponse.status}`
+            );
+          }
+          agentResponse = await readJsonRunResponse(fallbackResponse);
+        }
+      } else {
+        agentResponse = await readJsonRunResponse(response);
+      }
       if (!agentResponse) {
         throw new Error("OpenClaw/NemoClaw runtime returned an invalid response");
       }
@@ -139,6 +174,24 @@ export function createOpenClawNemoClawAgentRunner(
       yield { type: "final", response: agentResponse };
     }
   };
+}
+
+function postRuntimeRun(
+  requestFetch: AgentRuntimeFetch,
+  url: string,
+  runtime: RuntimeHandle | null,
+  body: unknown,
+  accept: string
+): Promise<Response> {
+  return requestFetch(url, {
+    method: "POST",
+    headers: {
+      accept,
+      "content-type": "application/json",
+      ...runtimeHeaders(runtime)
+    },
+    body: JSON.stringify(body)
+  });
 }
 
 async function readJsonRunResponse(
