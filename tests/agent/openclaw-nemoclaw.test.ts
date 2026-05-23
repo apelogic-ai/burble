@@ -33,6 +33,52 @@ function sseEvent(event: unknown): string {
   return `event: ${type}\ndata: ${JSON.stringify(event)}\n\n`;
 }
 
+class FakeRuntimeWebSocket {
+  readonly listeners = {
+    message: [] as Array<(event: { data?: unknown }) => void>,
+    error: [] as Array<(event: { data?: unknown }) => void>,
+    close: [] as Array<(event: { data?: unknown }) => void>
+  };
+  closed = false;
+
+  constructor(readonly url: string) {}
+
+  addEventListener(
+    type: "message" | "error" | "close",
+    listener: (event: { data?: unknown }) => void
+  ): void {
+    this.listeners[type].push(listener);
+  }
+
+  sendEvent(event: unknown): void {
+    for (const listener of this.listeners.message) {
+      listener({ data: JSON.stringify(event) });
+    }
+  }
+
+  closeFromRuntime(): void {
+    for (const listener of this.listeners.close) {
+      listener({});
+    }
+  }
+
+  close(): void {
+    this.closed = true;
+  }
+}
+
+async function waitForSocket(
+  sockets: FakeRuntimeWebSocket[]
+): Promise<FakeRuntimeWebSocket> {
+  for (let index = 0; index < 20; index += 1) {
+    if (sockets[0]) {
+      return sockets[0];
+    }
+    await Bun.sleep(1);
+  }
+  throw new Error("Timed out waiting for fake runtime WebSocket");
+}
+
 describe("createOpenClawNemoClawAgentRunner", () => {
   test("posts a sanitized run request to the remote runtime", async () => {
     const requests: Array<{ url: string; init: RequestInit }> = [];
@@ -71,8 +117,9 @@ describe("createOpenClawNemoClawAgentRunner", () => {
     expect(requests[0].url).toBe("http://openclaw-runtime:8080/runs");
     expect(requests[0].init.method).toBe("POST");
     expect(requests[0].init.headers).toEqual({
-      accept: "text/event-stream, application/x-ndjson, application/json",
-      "content-type": "application/json"
+      accept: "application/json",
+      "content-type": "application/json",
+      prefer: "respond-async"
     });
 
     const body = JSON.parse(String(requests[0].init.body));
@@ -140,8 +187,9 @@ describe("createOpenClawNemoClawAgentRunner", () => {
     expect(principals).toEqual([principal]);
     expect(requests[0].url).toBe("http://runtime-u123:8080/runs");
     expect(requests[0].init.headers).toEqual({
-      accept: "text/event-stream, application/x-ndjson, application/json",
+      accept: "application/json",
       "content-type": "application/json",
+      prefer: "respond-async",
       "x-burble-runtime-id": "rt_u123"
     });
     expect(JSON.parse(String(requests[0].init.body))).toMatchObject({
@@ -174,31 +222,24 @@ describe("createOpenClawNemoClawAgentRunner", () => {
     ]);
   });
 
-  test("streams remote runtime events before returning the final response", async () => {
+  test("streams remote runtime events over WebSocket before returning the final response", async () => {
+    const sockets: FakeRuntimeWebSocket[] = [];
     const runner = createOpenClawNemoClawAgentRunner({
       baseUrl: "http://openclaw-runtime:8080",
       fetch: async () =>
-        new Response(
-          [
-            sseEvent({ type: "status", text: "Loading context..." }),
-            sseEvent({ type: "message_delta", text: "Partial answer" }),
-            sseEvent({
-              type: "final",
-              response: {
-                classification: "user_private",
-                text: "Final answer"
-              }
-            })
-          ].join(""),
-          {
-            status: 200,
-            headers: { "content-type": "text/event-stream; charset=utf-8" }
-          }
-        )
+        Response.json({
+          runId: "run-1",
+          eventsUrl: "/runs/run-1/events"
+        }),
+      webSocketFactory: (url) => {
+        const socket = new FakeRuntimeWebSocket(url);
+        sockets.push(socket);
+        return socket;
+      }
     });
     const events: string[] = [];
 
-    const result = await collectAgentRun(
+    const resultPromise = collectAgentRun(
       runner,
       {
         principal,
@@ -210,6 +251,20 @@ describe("createOpenClawNemoClawAgentRunner", () => {
         events.push(`${event.type}:${"text" in event ? event.text : ""}`);
       }
     );
+    const socket = await waitForSocket(sockets);
+
+    expect(socket.url).toBe("ws://openclaw-runtime:8080/runs/run-1/events");
+    socket.sendEvent({ type: "status", text: "Loading context..." });
+    socket.sendEvent({ type: "message_delta", text: "Partial answer" });
+    socket.sendEvent({
+      type: "final",
+      response: {
+        classification: "user_private",
+        text: "Final answer"
+      }
+    });
+
+    const result = await resultPromise;
 
     expect(events).toEqual([
       "status:Preparing your OpenClaw/NemoClaw runtime...",
@@ -223,108 +278,30 @@ describe("createOpenClawNemoClawAgentRunner", () => {
     });
   });
 
-  test("uses the streamed answer when the runtime stream closes before final", async () => {
+  test("falls back to the run snapshot when the runtime event socket closes before final", async () => {
+    const requests: Array<{
+      url: string;
+      method: string;
+      body?: { runId?: string };
+    }> = [];
+    const sockets: FakeRuntimeWebSocket[] = [];
     const runner = createOpenClawNemoClawAgentRunner({
       baseUrl: "http://openclaw-runtime:8080",
-      fetch: async () => {
-        let chunksSent = 0;
-        return new Response(
-          new ReadableStream({
-            pull(controller) {
-              if (chunksSent === 0) {
-                chunksSent += 1;
-                controller.enqueue(
-                  new TextEncoder().encode(
-                    [
-                      sseEvent({
-                        type: "status",
-                        text: "Running OpenClaw/NemoClaw..."
-                      }),
-                      sseEvent({
-                        type: "message_delta",
-                        text: "Tickets mentioning onboarding: DM-1 and ECS-313."
-                      })
-                    ].join("")
-                  )
-                );
-                return;
-              }
-
-              controller.error(
-                new Error("The socket connection was closed unexpectedly.")
-              );
-            }
-          }),
-          {
-            status: 200,
-            headers: { "content-type": "text/event-stream; charset=utf-8" }
-          }
-        );
-      }
-    });
-    const events: string[] = [];
-
-    const result = await collectAgentRun(
-      runner,
-      {
-        principal,
-        conversation,
-        text: "which jira tickets mention onboarding?",
-        connections: { github: connection }
-      },
-      (event) => {
-        events.push(`${event.type}:${"text" in event ? event.text : ""}`);
-      }
-    );
-
-    expect(events).toContain(
-      "message_delta:Tickets mentioning onboarding: DM-1 and ECS-313."
-    );
-    expect(result).toEqual({
-      classification: "user_private",
-      text: "Tickets mentioning onboarding: DM-1 and ECS-313."
-    });
-  });
-
-  test("falls back to a JSON run when the runtime stream closes before any answer", async () => {
-    const requests: Array<{ accept: string; body: { runId?: string } }> = [];
-    const runner = createOpenClawNemoClawAgentRunner({
-      baseUrl: "http://openclaw-runtime:8080",
-      fetch: async (_url, init) => {
+      fetch: async (url, init) => {
         const headers = init.headers as Record<string, string>;
         requests.push({
-          accept: headers.accept,
-          body: JSON.parse(String(init.body)) as { runId?: string }
+          url,
+          method: init.method ?? "GET",
+          ...(init.body
+            ? { body: JSON.parse(String(init.body)) as { runId?: string } }
+            : {})
         });
 
-        if (headers.accept.startsWith("text/event-stream")) {
-          let chunksSent = 0;
-          return new Response(
-            new ReadableStream({
-              pull(controller) {
-                if (chunksSent === 0) {
-                  chunksSent += 1;
-                  controller.enqueue(
-                    new TextEncoder().encode(
-                      sseEvent({
-                        type: "status",
-                        text: "Running OpenClaw/NemoClaw..."
-                      })
-                    )
-                  );
-                  return;
-                }
-
-                controller.error(
-                  new Error("The socket connection was closed unexpectedly.")
-                );
-              }
-            }),
-            {
-              status: 200,
-              headers: { "content-type": "text/event-stream; charset=utf-8" }
-            }
-          );
+        if (init.method === "POST") {
+          return Response.json({
+            runId: "run-closed",
+            eventsUrl: "/runs/run-closed/events"
+          });
         }
 
         return Response.json({
@@ -333,11 +310,16 @@ describe("createOpenClawNemoClawAgentRunner", () => {
             text: "Final answer from JSON fallback."
           }
         });
+      },
+      webSocketFactory: (url) => {
+        const socket = new FakeRuntimeWebSocket(url);
+        sockets.push(socket);
+        return socket;
       }
     });
     const events: string[] = [];
 
-    const result = await collectAgentRun(
+    const resultPromise = collectAgentRun(
       runner,
       {
         principal,
@@ -349,6 +331,14 @@ describe("createOpenClawNemoClawAgentRunner", () => {
         events.push(`${event.type}:${"text" in event ? event.text : ""}`);
       }
     );
+    const socket = await waitForSocket(sockets);
+    socket.sendEvent({
+      type: "status",
+      text: "Running OpenClaw/NemoClaw..."
+    });
+    socket.closeFromRuntime();
+
+    const result = await resultPromise;
 
     expect(events).not.toContain(
       "status:Runtime stream closed; fetching final answer..."
@@ -358,13 +348,15 @@ describe("createOpenClawNemoClawAgentRunner", () => {
       text: "Final answer from JSON fallback."
     });
     expect(requests).toHaveLength(2);
-    expect(requests[0].accept).toBe(
-      "text/event-stream, application/x-ndjson, application/json"
-    );
-    expect(requests[1].accept).toBe("application/json");
-    expect(requests[1].body).toMatchObject({
-      runId: requests[0].body.runId
+    expect(requests[0]).toMatchObject({
+      url: "http://openclaw-runtime:8080/runs",
+      method: "POST"
     });
+    expect(requests[1]).toMatchObject({
+      url: "http://openclaw-runtime:8080/runs/run-closed",
+      method: "GET"
+    });
+    expect(requests[0].body?.runId).toBeString();
   });
 
   test("reports remote runtime failures without leaking response bodies", async () => {

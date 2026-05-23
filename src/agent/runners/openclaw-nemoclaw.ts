@@ -8,15 +8,33 @@ export type AgentRuntimeFetch = (
   init: RequestInit
 ) => Promise<Response>;
 
+export type AgentRuntimeWebSocket = {
+  addEventListener: (
+    type: "message" | "error" | "close",
+    listener: (event: { data?: unknown }) => void
+  ) => void;
+  close: () => void;
+};
+
+export type AgentRuntimeWebSocketFactory = (
+  url: string
+) => AgentRuntimeWebSocket;
+
 export type OpenClawNemoClawAgentRunnerDeps = {
   baseUrl?: string;
   runtimeFactory?: RuntimeFactory;
   fetch?: AgentRuntimeFetch;
+  webSocketFactory?: AgentRuntimeWebSocketFactory;
   logInfo?: (message: string) => void;
 };
 
 type RemoteRunResponse = {
   response?: AgentOutput;
+};
+
+type RemoteRunStartResponse = {
+  runId?: string;
+  eventsUrl?: string;
 };
 
 type RemoteRunEvent =
@@ -40,6 +58,8 @@ export function createOpenClawNemoClawAgentRunner(
 
   const fallbackBaseUrl = deps.baseUrl?.replace(/\/+$/, "");
   const requestFetch: AgentRuntimeFetch = deps.fetch ?? fetch;
+  const createWebSocket: AgentRuntimeWebSocketFactory =
+    deps.webSocketFactory ?? ((url) => new WebSocket(url));
   const logInfo = deps.logInfo ?? (() => undefined);
 
   return {
@@ -102,7 +122,8 @@ export function createOpenClawNemoClawAgentRunner(
         runUrl,
         runtime,
         runBody,
-        "text/event-stream, application/x-ndjson, application/json"
+        "application/json",
+        "respond-async"
       );
 
       if (!response.ok) {
@@ -112,9 +133,28 @@ export function createOpenClawNemoClawAgentRunner(
       }
 
       let agentResponse: AgentOutput | null;
-      if (isStreamingResponse(response)) {
+      const startPayload = (await response.json()) as RemoteRunResponse &
+        RemoteRunStartResponse;
+      const legacyResponse = validateRemoteRunResponse(startPayload);
+      if (legacyResponse) {
+        agentResponse = legacyResponse;
+      } else {
+        const startedRunId = validateRemoteRunStartResponse(startPayload);
+        if (!startedRunId) {
+          throw new Error("OpenClaw/NemoClaw runtime returned an invalid response");
+        }
+
+        const eventsUrl = toWebSocketUrl(
+          new URL(
+            startPayload.eventsUrl ?? `/runs/${encodeURIComponent(startedRunId)}/events`,
+            `${baseUrl}/`
+          ).toString()
+        );
+
         try {
-          agentResponse = yield* readStreamingRunResponse(response);
+          agentResponse = yield* readWebSocketRunResponse(
+            createWebSocket(eventsUrl)
+          );
         } catch (error) {
           if (!isRuntimeStreamClosedError(error)) {
             throw error;
@@ -122,18 +162,16 @@ export function createOpenClawNemoClawAgentRunner(
 
           logInfo(
             [
-              "OpenClaw/NemoClaw stream closed before final",
-              `runId=${runId}`,
+              "OpenClaw/NemoClaw event socket closed before final",
+              `runId=${startedRunId}`,
               `runtimeId=${runtime?.id ?? "static"}`,
               "fallback=json"
             ].join(" ")
           );
-          const fallbackResponse = await postRuntimeRun(
+          const fallbackResponse = await getRuntimeRun(
             requestFetch,
-            runUrl,
-            runtime,
-            runBody,
-            "application/json"
+            `${baseUrl}/runs/${encodeURIComponent(startedRunId)}`,
+            runtime
           );
           if (!fallbackResponse.ok) {
             throw new Error(
@@ -142,8 +180,6 @@ export function createOpenClawNemoClawAgentRunner(
           }
           agentResponse = await readJsonRunResponse(fallbackResponse);
         }
-      } else {
-        agentResponse = await readJsonRunResponse(response);
       }
       if (!agentResponse) {
         throw new Error("OpenClaw/NemoClaw runtime returned an invalid response");
@@ -178,16 +214,32 @@ function postRuntimeRun(
   url: string,
   runtime: RuntimeHandle | null,
   body: unknown,
-  accept: string
+  accept: string,
+  prefer?: string
 ): Promise<Response> {
   return requestFetch(url, {
     method: "POST",
     headers: {
       accept,
       "content-type": "application/json",
+      ...(prefer ? { prefer } : {}),
       ...runtimeHeaders(runtime)
     },
     body: JSON.stringify(body)
+  });
+}
+
+function getRuntimeRun(
+  requestFetch: AgentRuntimeFetch,
+  url: string,
+  runtime: RuntimeHandle | null
+): Promise<Response> {
+  return requestFetch(url, {
+    method: "GET",
+    headers: {
+      accept: "application/json",
+      ...runtimeHeaders(runtime)
+    }
   });
 }
 
@@ -196,6 +248,72 @@ async function readJsonRunResponse(
 ): Promise<AgentOutput | null> {
   const payload = (await response.json()) as RemoteRunResponse;
   return validateRemoteRunResponse(payload);
+}
+
+async function* readWebSocketRunResponse(
+  socket: AgentRuntimeWebSocket
+): AsyncIterable<AgentRunEvent, AgentOutput | null> {
+  const queue: unknown[] = [];
+  let closed = false;
+  let failed: Error | null = null;
+  let wake: (() => void) | undefined;
+
+  const wakeReader = () => {
+    wake?.();
+    wake = undefined;
+  };
+
+  socket.addEventListener("message", (event) => {
+    try {
+      queue.push(JSON.parse(String(event.data ?? "")));
+    } catch (error) {
+      failed = error instanceof Error ? error : new Error("Invalid runtime event");
+    }
+    wakeReader();
+  });
+  socket.addEventListener("error", () => {
+    failed = new Error("Runtime event socket errored");
+    wakeReader();
+  });
+  socket.addEventListener("close", () => {
+    closed = true;
+    wakeReader();
+  });
+
+  try {
+    while (true) {
+      while (queue.length > 0) {
+        const event = validateRemoteRunEvent(queue.shift());
+        if (!event) {
+          throw new Error("OpenClaw/NemoClaw runtime returned an invalid stream event");
+        }
+
+        if (event.type === "error") {
+          throw new Error(event.message);
+        }
+
+        if (event.type === "final") {
+          socket.close();
+          return event.response;
+        }
+
+        yield event;
+      }
+
+      if (failed) {
+        throw failed;
+      }
+      if (closed) {
+        throw new Error("Runtime event socket closed before final");
+      }
+
+      await new Promise<void>((resolve) => {
+        wake = resolve;
+      });
+    }
+  } finally {
+    socket.close();
+  }
 }
 
 async function* readStreamingRunResponse(
@@ -270,7 +388,7 @@ function isRuntimeStreamClosedError(error: unknown): boolean {
     return false;
   }
 
-  return /socket connection was closed|connection.*closed|stream.*closed|terminated|econnreset/i.test(
+  return /socket connection was closed|event socket closed before final|connection.*closed|stream.*closed|terminated|econnreset/i.test(
     error.message
   );
 }
@@ -420,6 +538,14 @@ function validateRemoteRunResponse(payload: RemoteRunResponse): AgentOutput | nu
   return response;
 }
 
+function validateRemoteRunStartResponse(
+  payload: RemoteRunStartResponse
+): string | null {
+  return typeof payload.runId === "string" && payload.runId.trim().length > 0
+    ? payload.runId
+    : null;
+}
+
 function validateRemoteRunEvent(payload: unknown): RemoteRunEvent | null {
   if (typeof payload !== "object" || payload === null || !("type" in payload)) {
     return null;
@@ -439,6 +565,16 @@ function validateRemoteRunEvent(payload: unknown): RemoteRunEvent | null {
     default:
       return null;
   }
+}
+
+function toWebSocketUrl(url: string): string {
+  const parsed = new URL(url);
+  if (parsed.protocol === "https:") {
+    parsed.protocol = "wss:";
+  } else if (parsed.protocol === "http:") {
+    parsed.protocol = "ws:";
+  }
+  return parsed.toString();
 }
 
 function sanitizeAgentInput(input: AgentInput): {

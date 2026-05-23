@@ -1,6 +1,24 @@
 import { describe, expect, test } from "bun:test";
-import { handleRuntimeRequest } from "../../../runtimes/openclaw-nemoclaw/src/server";
+import {
+  attachRuntimeEventWebSocket,
+  handleRuntimeRequest
+} from "../../../runtimes/openclaw-nemoclaw/src/server";
 import type { RuntimeConfig } from "../../../runtimes/openclaw-nemoclaw/src/config";
+
+class FakeRuntimeWebSocket {
+  readonly messages: string[] = [];
+  closeCode: number | undefined;
+  closeReason: string | undefined;
+
+  send(message: string): void {
+    this.messages.push(message);
+  }
+
+  close(code?: number, reason?: string): void {
+    this.closeCode = code;
+    this.closeReason = reason;
+  }
+}
 
 const config: RuntimeConfig = {
   port: 8080,
@@ -193,6 +211,126 @@ describe("handleRuntimeRequest", () => {
     expect(streamText).toContain("\"type\":\"final\"");
     expect(streamText).toContain("Authenticated to GitHub as `octocat`.");
     expect(toolCalls).toBe(1);
+  });
+
+  test("starts runs asynchronously and exposes the final run snapshot", async () => {
+    let resolveTool!: () => void;
+    const toolGate = new Promise<void>((resolve) => {
+      resolveTool = resolve;
+    });
+
+    const startResponse = await handleRuntimeRequest(
+      new Request("http://runtime/runs", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          prefer: "respond-async"
+        },
+        body: JSON.stringify({
+          runId: "run-async",
+          runtime: { id: "rt_u123" },
+          input: {
+            text: "who am I on GitHub?",
+            connections: {
+              github: {
+                connected: true,
+                email: "person@example.com"
+              }
+            }
+          }
+        })
+      }),
+      config,
+      async () => {
+        await toolGate;
+        return {
+          classification: "user_private" as const,
+          content: { login: "octocat" }
+        };
+      }
+    );
+
+    expect(startResponse.status).toBe(200);
+    expect(await startResponse.json()).toEqual({
+      runId: "run-async",
+      eventsUrl: "/runs/run-async/events"
+    });
+
+    const snapshotPromise = handleRuntimeRequest(
+      new Request("http://runtime/runs/run-async"),
+      config
+    );
+    resolveTool();
+
+    const snapshotResponse = await snapshotPromise;
+    expect(snapshotResponse.status).toBe(200);
+    expect(await snapshotResponse.json()).toEqual({
+      response: {
+        classification: "user_private",
+        text: "Authenticated to GitHub as `octocat`."
+      }
+    });
+  });
+
+  test("attaches WebSocket clients to existing run events", async () => {
+    let resolveTool!: () => void;
+    const toolGate = new Promise<void>((resolve) => {
+      resolveTool = resolve;
+    });
+
+    const startResponse = await handleRuntimeRequest(
+      new Request("http://runtime/runs", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          prefer: "respond-async"
+        },
+        body: JSON.stringify({
+          runId: "run-ws",
+          runtime: { id: "rt_u123" },
+          input: {
+            text: "who am I on GitHub?",
+            connections: {
+              github: {
+                connected: true,
+                email: "person@example.com"
+              }
+            }
+          }
+        })
+      }),
+      config,
+      async () => {
+        await toolGate;
+        return {
+          classification: "user_private" as const,
+          content: { login: "octocat" }
+        };
+      }
+    );
+    expect(await startResponse.json()).toMatchObject({ runId: "run-ws" });
+
+    const ws = new FakeRuntimeWebSocket();
+    attachRuntimeEventWebSocket("run-ws", ws);
+
+    resolveTool();
+    for (let index = 0; index < 20 && ws.closeCode === undefined; index += 1) {
+      await Bun.sleep(1);
+    }
+
+    const events = ws.messages.map((message) => JSON.parse(message));
+    expect(events).toContainEqual({
+      type: "status",
+      text: "Loading Burble context..."
+    });
+    expect(events.at(-1)).toEqual({
+      type: "final",
+      response: {
+        classification: "user_private",
+        text: "Authenticated to GitHub as `octocat`."
+      }
+    });
+    expect(ws.closeCode).toBe(1000);
   });
 
   test("streams sanitized runtime errors with the underlying message", async () => {
