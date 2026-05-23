@@ -234,6 +234,8 @@ describe("dev deploy config", () => {
     expect(personalRuntimeDeployScript).toContain("git pull --ff-only");
     expect(personalRuntimeDeployScript).toContain("--profile runtime-image build openclaw-nemoclaw-image");
     expect(personalRuntimeDeployScript).toContain("docker-compose.personal-runtimes.yml");
+    expect(personalRuntimeDeployScript).toContain("--agentgateway");
+    expect(personalRuntimeDeployScript).toContain("docker-compose.agentgateway.yml");
     expect(personalRuntimeDeployScript).toContain("up -d --build");
     expect(personalRuntimeDeployScript).toContain("docker ps -aq --filter \"name=burble-rt-\"");
     expect(personalRuntimeDeployScript).toContain("docker stop");

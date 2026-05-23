@@ -10,10 +10,11 @@ compose_files=(
 
 pull_latest=true
 recycle_runtimes=true
+use_agentgateway=false
 
 usage() {
   cat <<'USAGE'
-Usage: ./deploy-personal-runtimes.sh [--no-pull] [--keep-runtimes]
+Usage: ./deploy-personal-runtimes.sh [--no-pull] [--keep-runtimes] [--agentgateway]
 
 Pulls the latest repo state, rebuilds Burble plus the personal OpenClaw runtime
 image, restarts Docker Compose, and removes existing burble-rt-* containers so
@@ -22,6 +23,7 @@ new DMs create runtimes with the latest image/env.
 Options:
   --no-pull         Skip git pull --ff-only
   --keep-runtimes  Do not stop/remove existing burble-rt-* containers
+  --agentgateway    Include the agentgateway MCP compose override
 USAGE
 }
 
@@ -33,6 +35,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --keep-runtimes)
       recycle_runtimes=false
+      shift
+      ;;
+    --agentgateway)
+      use_agentgateway=true
       shift
       ;;
     -h|--help)
@@ -55,6 +61,12 @@ fi
 
 cd "${script_dir}"
 
+if [[ "${use_agentgateway}" == "true" ]]; then
+  compose_files+=(
+    -f docker-compose.agentgateway.yml
+  )
+fi
+
 docker compose "${compose_files[@]}" --profile runtime-image build openclaw-nemoclaw-image
 docker compose "${compose_files[@]}" up -d --build
 
@@ -69,4 +81,4 @@ fi
 docker compose "${compose_files[@]}" ps
 echo
 echo "Tail logs with:"
-echo "docker compose -f docker-compose.yml -f docker-compose.personal-runtimes.yml logs -f burble-app"
+echo "docker compose ${compose_files[*]} logs -f burble-app agentgateway"
