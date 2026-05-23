@@ -62,6 +62,26 @@ describe("createBurbleToolExecutor", () => {
     globalThis.fetch = (async (input, init) => {
       const request = new Request(input, init);
       requests.push(request);
+      const payload = await request.clone().json();
+      if (payload.method === "initialize") {
+        return Response.json(
+          {
+            result: {
+              protocolVersion: "2025-06-18",
+              capabilities: {},
+              serverInfo: { name: "agentgateway", version: "test" }
+            }
+          },
+          {
+            headers: {
+              "mcp-session-id": "session-123"
+            }
+          }
+        );
+      }
+      if (payload.method === "notifications/initialized") {
+        return new Response(null, { status: 202 });
+      }
       return new Response(
         [
           "event: message",
@@ -107,6 +127,17 @@ describe("createBurbleToolExecutor", () => {
       );
       expect(requests[0].headers.get("mcp-protocol-version")).toBe("2025-06-18");
       expect(await requests[0].json()).toMatchObject({
+        method: "initialize",
+        params: {
+          protocolVersion: "2025-06-18"
+        }
+      });
+      expect(requests[1].headers.get("mcp-session-id")).toBe("session-123");
+      expect(await requests[1].json()).toMatchObject({
+        method: "notifications/initialized"
+      });
+      expect(requests[2].headers.get("mcp-session-id")).toBe("session-123");
+      expect(await requests[2].json()).toMatchObject({
         method: "tools/call",
         params: {
           name: "github_get_authenticated_user",
@@ -123,7 +154,17 @@ describe("createBurbleToolExecutor", () => {
     const payloads: unknown[] = [];
     globalThis.fetch = (async (input, init) => {
       const request = new Request(input, init);
-      payloads.push(await request.json());
+      const payload = await request.json();
+      payloads.push(payload);
+      if (payload.method === "initialize") {
+        return Response.json(
+          { result: { protocolVersion: "2025-06-18", capabilities: {} } },
+          { headers: { "mcp-session-id": "session-123" } }
+        );
+      }
+      if (payload.method === "notifications/initialized") {
+        return new Response(null, { status: 202 });
+      }
       return Response.json({
         result: {
           content: [
@@ -156,12 +197,20 @@ describe("createBurbleToolExecutor", () => {
 
       expect(payloads).toMatchObject([
         {
+          method: "initialize"
+        },
+        {
+          method: "notifications/initialized"
+        },
+        {
+          method: "tools/call",
           params: {
             name: "github_search_issues",
             arguments: { query: "is:issue billing" }
           }
         },
         {
+          method: "tools/call",
           params: {
             name: "jira_search_issues",
             arguments: { jql: 'text ~ "billing"' }

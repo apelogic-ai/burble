@@ -42,18 +42,19 @@ export function createBurbleToolExecutor(
 }
 
 function createBurbleMcpToolExecutor(config: RuntimeConfig): ToolExecutor {
+  let sessionIdPromise: Promise<string> | null = null;
   return async (toolName, body) => {
     const mcpToolName = toMcpToolName(toolName);
     const args = toMcpToolArguments(toolName, body);
+    sessionIdPromise ??= initializeMcpSession(config);
+    const sessionId = await sessionIdPromise;
     info(`Burble MCP tool start tool=${mcpToolName}`);
 
     const response = await fetch(config.mcpGatewayUrl!, {
       method: "POST",
       headers: {
-        "content-type": "application/json",
-        accept: "application/json, text/event-stream",
-        "mcp-protocol-version": "2025-06-18",
-        authorization: `Bearer ${config.runtimeJwt}`
+        ...mcpHeaders(config),
+        "mcp-session-id": sessionId
       },
       body: JSON.stringify({
         jsonrpc: "2.0",
@@ -67,7 +68,9 @@ function createBurbleMcpToolExecutor(config: RuntimeConfig): ToolExecutor {
     });
 
     if (!response.ok) {
-      throw new Error(`Burble MCP gateway returned HTTP ${response.status}`);
+      throw new Error(
+        `Burble MCP gateway returned HTTP ${response.status}${await readErrorDetail(response)}`
+      );
     }
 
     const result = await readMcpToolResult(response);
@@ -75,6 +78,74 @@ function createBurbleMcpToolExecutor(config: RuntimeConfig): ToolExecutor {
       `Burble MCP tool finish tool=${mcpToolName} classification=${result.classification}`
     );
     return result;
+  };
+}
+
+async function initializeMcpSession(config: RuntimeConfig): Promise<string> {
+  info("Burble MCP session initialize start");
+  const response = await fetch(config.mcpGatewayUrl!, {
+    method: "POST",
+    headers: mcpHeaders(config),
+    body: JSON.stringify({
+      jsonrpc: "2.0",
+      id: crypto.randomUUID(),
+      method: "initialize",
+      params: {
+        protocolVersion: "2025-06-18",
+        capabilities: {},
+        clientInfo: {
+          name: "burble-openclaw-nemoclaw-runtime",
+          version: "0.1.0"
+        }
+      }
+    })
+  });
+
+  if (!response.ok) {
+    throw new Error(
+      `Burble MCP initialize returned HTTP ${response.status}${await readErrorDetail(response)}`
+    );
+  }
+
+  const sessionId = response.headers.get("mcp-session-id")?.trim();
+  if (!sessionId) {
+    throw new Error("Burble MCP initialize did not return mcp-session-id");
+  }
+
+  await sendMcpInitializedNotification(config, sessionId);
+  info("Burble MCP session initialize finish");
+  return sessionId;
+}
+
+async function sendMcpInitializedNotification(
+  config: RuntimeConfig,
+  sessionId: string
+): Promise<void> {
+  const response = await fetch(config.mcpGatewayUrl!, {
+    method: "POST",
+    headers: {
+      ...mcpHeaders(config),
+      "mcp-session-id": sessionId
+    },
+    body: JSON.stringify({
+      jsonrpc: "2.0",
+      method: "notifications/initialized"
+    })
+  });
+
+  if (!response.ok) {
+    throw new Error(
+      `Burble MCP initialized notification returned HTTP ${response.status}${await readErrorDetail(response)}`
+    );
+  }
+}
+
+function mcpHeaders(config: RuntimeConfig): Record<string, string> {
+  return {
+    "content-type": "application/json",
+    accept: "application/json, text/event-stream",
+    "mcp-protocol-version": "2025-06-18",
+    authorization: `Bearer ${config.runtimeJwt}`
   };
 }
 
@@ -191,6 +262,11 @@ function parseMcpResponsePayload(body: string): {
   } catch {
     throw new Error("Burble MCP gateway returned invalid JSON");
   }
+}
+
+async function readErrorDetail(response: Response): Promise<string> {
+  const text = (await response.text()).trim().replace(/\s+/g, " ");
+  return text ? `: ${text.slice(0, 300)}` : "";
 }
 
 function isToolResult(value: unknown): value is ToolResult {
