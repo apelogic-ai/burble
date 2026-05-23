@@ -3,7 +3,7 @@ import { createTokenStore } from "./db";
 import { startRuntimeReaper } from "./agent/runtime-reaper";
 import { startOAuthServer } from "./server";
 import { createSlackRuntime } from "./slack";
-import { formatLogError, withUtcTimestamp } from "./logging";
+import { formatLogError, formatLogLine, withUtcTimestamp } from "./logging";
 import { createRuntimeJwtIssuer } from "./runtime-jwt";
 
 const config = loadConfig();
@@ -14,11 +14,15 @@ const runtimeJwtIssuer = createRuntimeJwtIssuer({
 });
 const slack = createSlackRuntime(config, store, runtimeJwtIssuer);
 const server = startOAuthServer(config, store, slack, runtimeJwtIssuer);
+const logDebug =
+  config.slackLogLevel === "debug"
+    ? (message: string) => console.debug(formatLogLine("debug", message))
+    : () => undefined;
 const runtimeReaper = slack.runtimeFactory
   ? startRuntimeReaper({
       factory: slack.runtimeFactory,
       intervalMs: config.agentRuntimeReaperIntervalMs,
-      logInfo: (message) => console.log(withUtcTimestamp(message)),
+      logDebug,
       logError: (error) => console.error(formatLogError(error))
     })
   : undefined;

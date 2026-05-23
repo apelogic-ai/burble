@@ -32,7 +32,7 @@ describe("startRuntimeReaper", () => {
       clearIntervalFn: () => {
         cleared = true;
       },
-      logInfo: (message) => logs.push(message)
+      logDebug: (message) => logs.push(message)
     });
 
     await reaper.tick();
@@ -69,7 +69,7 @@ describe("startRuntimeReaper", () => {
       intervalMs: 1000,
       setIntervalFn: () => 123,
       clearIntervalFn: () => undefined,
-      logInfo: (message) => logs.push(message)
+      logDebug: (message) => logs.push(message)
     });
 
     const firstTick = reaper.tick();

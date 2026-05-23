@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { formatLogError, withUtcTimestamp } from "../src/logging";
+import { formatLogError, formatLogLine, withUtcTimestamp } from "../src/logging";
 
 describe("logging", () => {
   test("prefixes log messages with an ISO UTC timestamp", () => {
@@ -18,5 +18,15 @@ describe("logging", () => {
     expect(formatLogError(error, new Date("2026-05-21T12:34:56.789Z"))).toBe(
       "2026-05-21T12:34:56.789Z Error: boom"
     );
+  });
+
+  test("formats level-labelled log lines", () => {
+    expect(
+      formatLogLine(
+        "debug",
+        "Runtime reaper start",
+        new Date("2026-05-21T12:34:56.789Z")
+      )
+    ).toBe("[DEBUG] 2026-05-21T12:34:56.789Z Runtime reaper start");
   });
 });

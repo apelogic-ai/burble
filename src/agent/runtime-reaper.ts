@@ -18,7 +18,7 @@ export function startRuntimeReaper(input: {
   now?: () => Date;
   setIntervalFn?: RuntimeReaperSetInterval;
   clearIntervalFn?: RuntimeReaperClearInterval;
-  logInfo?: (message: string) => void;
+  logDebug?: (message: string) => void;
   logError?: (error: unknown) => void;
 }): RuntimeReaper {
   const now = input.now ?? (() => new Date());
@@ -27,21 +27,21 @@ export function startRuntimeReaper(input: {
   const clearIntervalFn: RuntimeReaperClearInterval =
     input.clearIntervalFn ??
     ((timer) => clearInterval(timer as ReturnType<typeof setInterval>));
-  const logInfo = input.logInfo ?? (() => undefined);
+  const logDebug = input.logDebug ?? (() => undefined);
   const logError = input.logError ?? (() => undefined);
   let running = false;
 
   const tick = async (): Promise<void> => {
     if (running) {
-      logInfo("Runtime reaper skipped overlap");
+      logDebug("Runtime reaper skipped overlap");
       return;
     }
 
     running = true;
     try {
-      logInfo("Runtime reaper start");
+      logDebug("Runtime reaper start");
       await input.factory.reapIdleRuntimes(now());
-      logInfo("Runtime reaper finish");
+      logDebug("Runtime reaper finish");
     } catch (error) {
       logError(error);
     } finally {
