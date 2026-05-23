@@ -238,7 +238,16 @@ async function readMcpToolResult(response: Response): Promise<ToolResult> {
     throw new Error("Burble MCP gateway returned no text tool result");
   }
 
-  const parsed = JSON.parse(text);
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    return {
+      classification: "user_private",
+      content: text
+    };
+  }
+
   if (!isToolResult(parsed)) {
     throw new Error("Burble MCP gateway returned invalid Burble tool result");
   }

@@ -221,4 +221,49 @@ describe("createBurbleToolExecutor", () => {
       globalThis.fetch = originalFetch;
     }
   });
+
+  test("accepts plain text MCP tool results from gateways", async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input, init) => {
+      const request = new Request(input, init);
+      const payload = await request.json();
+      if (payload.method === "initialize") {
+        return Response.json(
+          { result: { protocolVersion: "2025-06-18", capabilities: {} } },
+          { headers: { "mcp-session-id": "session-123" } }
+        );
+      }
+      if (payload.method === "notifications/initialized") {
+        return new Response(null, { status: 202 });
+      }
+      return Response.json({
+        result: {
+          content: [
+            {
+              type: "text",
+              text: "Jira assigned issues: none found."
+            }
+          ]
+        }
+      });
+    }) as typeof fetch;
+
+    try {
+      const executor = createBurbleToolExecutor({
+        ...config,
+        mcpGatewayUrl: "http://agentgateway:3000/mcp",
+        runtimeJwt: "runtime-jwt"
+      });
+      const result = await executor("jira.listAssignedIssues", {
+        user: { email: "person@example.com" }
+      });
+
+      expect(result).toEqual({
+        classification: "user_private",
+        content: "Jira assigned issues: none found."
+      });
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
 });

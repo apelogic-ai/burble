@@ -163,6 +163,10 @@ function response(
 
 function readLogin(result: ToolResult): string | null {
   const content = result.content;
+  if (typeof content === "string" && content.trim()) {
+    return content.trim();
+  }
+
   if (
     typeof content === "object" &&
     content !== null &&
@@ -177,6 +181,10 @@ function readLogin(result: ToolResult): string | null {
 
 function readDisplayName(result: ToolResult): string | null {
   const content = result.content;
+  if (typeof content === "string" && content.trim()) {
+    return content.trim();
+  }
+
   if (
     typeof content === "object" &&
     content !== null &&
@@ -190,6 +198,10 @@ function readDisplayName(result: ToolResult): string | null {
 }
 
 function formatItems(title: string, result: ToolResult): string {
+  if (typeof result.content === "string" && result.content.trim()) {
+    return result.content.trim();
+  }
+
   const items = readLinkedItems(result);
   if (items.length === 0) {
     return `${title}: none found.`;

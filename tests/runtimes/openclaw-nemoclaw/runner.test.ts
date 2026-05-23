@@ -264,6 +264,34 @@ describe("runBurbleRequest", () => {
     expect(response.response.text).toContain("Fix deploy dashboard");
   });
 
+  test("preserves plain text Jira tool output", async () => {
+    const response = await runBurbleRequest(
+      {
+        input: {
+          text: "what Jira tickets are assigned to me?",
+          connections: {
+            github: { connected: false },
+            jira: {
+              connected: true,
+              email: "person@example.com",
+              providerLogin: "person@atlassian.example"
+            }
+          }
+        }
+      },
+      config,
+      async () => ({
+        classification: "user_private",
+        content: "Jira assigned issues: none found."
+      })
+    );
+
+    expect(response.response).toEqual({
+      classification: "user_private",
+      text: "Jira assigned issues: none found."
+    });
+  });
+
   test("searches Jira issues when the prompt asks for Jira search", async () => {
     const calls: Array<{ toolName: string; body: unknown }> = [];
     await runBurbleRequest(
