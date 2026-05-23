@@ -6,7 +6,13 @@ import {
   isSupportedJiraRequest,
   runBurbleRequest
 } from "./runner";
-import type { RunEvent, RunRequest, RunResponse, ToolExecutor } from "./types";
+import type {
+  RunEvent,
+  RunRequest,
+  RunResponse,
+  ToolExecutor,
+  ToolResult
+} from "./types";
 
 export type CliCommandResult = {
   exitCode: number;
@@ -32,6 +38,22 @@ export type CliCommandStreamer = (
 
 const streamHeartbeatMs = 8_000;
 
+type ToolCatalogItem = {
+  name: string;
+  description: string;
+  inputSchema: Record<string, unknown>;
+};
+
+type PlannedToolCall = {
+  name: string;
+  arguments: Record<string, unknown>;
+};
+
+type BurbleToolContext = {
+  baseline: RunResponse;
+  catalog: ToolCatalogItem[];
+};
+
 export async function runOpenClawCliRequest(
   request: RunRequest,
   config: RuntimeConfig,
@@ -39,7 +61,8 @@ export async function runOpenClawCliRequest(
   runCommand: CliCommandRunner = runCliCommand,
   logInfo: RuntimeLogger = info
 ): Promise<RunResponse> {
-  const baseline = await runBurbleRequest(request, config, executeTool);
+  const toolContext = await buildBurbleToolContext(request, config, executeTool);
+  const baseline = toolContext.baseline;
   if (
     isSupportedGitHubRequest(request.input.text) &&
     !request.input.connections.github.connected
@@ -55,11 +78,76 @@ export async function runOpenClawCliRequest(
     return baseline;
   }
 
-  const prompt = buildOpenClawPrompt(request, baseline);
   const sessionId = buildSessionId(request);
   logInfo(
     `OpenClaw agent start runId=${request.runId ?? "unknown"} agent=${config.openClawAgent} sessionId=${sessionId} textLength=${request.input.text.length} classification=${baseline.response.classification}`
   );
+  const first = await runOpenClawCommand(
+    request,
+    config,
+    buildOpenClawPrompt(request, toolContext),
+    sessionId,
+    runCommand
+  );
+  const plannedToolCall = readPlannedToolCall(first.stdout, toolContext.catalog);
+
+  if (!plannedToolCall) {
+    const text = extractOpenClawText(first.stdout) || baseline.response.text;
+    logInfo(
+      `OpenClaw agent finish runId=${request.runId ?? "unknown"} classification=${baseline.response.classification} textLength=${text.length}`
+    );
+
+    return {
+      response: {
+        classification: baseline.response.classification,
+        text
+      }
+    };
+  }
+
+  logInfo(
+    `OpenClaw tool requested runId=${request.runId ?? "unknown"} tool=${plannedToolCall.name}`
+  );
+  const toolResult = await executePlannedToolCall(
+    plannedToolCall,
+    request,
+    executeTool
+  );
+  const second = await runOpenClawCommand(
+    request,
+    config,
+    buildOpenClawPrompt(request, toolContext, {
+      toolCall: plannedToolCall,
+      toolResult
+    }),
+    sessionId,
+    runCommand
+  );
+
+  const text = extractOpenClawText(second.stdout) || formatToolResult(toolResult);
+  const classification = mergeClassification(
+    baseline.response.classification,
+    toolResult.classification
+  );
+  logInfo(
+    `OpenClaw agent finish runId=${request.runId ?? "unknown"} classification=${classification} textLength=${text.length}`
+  );
+
+  return {
+    response: {
+      classification,
+      text
+    }
+  };
+}
+
+async function runOpenClawCommand(
+  request: RunRequest,
+  config: RuntimeConfig,
+  prompt: string,
+  sessionId: string,
+  runCommand: CliCommandRunner
+): Promise<CliCommandResult> {
   const result = await runCommand(
     config.openClawCommand,
     buildOpenClawArgs(config, prompt, sessionId),
@@ -72,18 +160,7 @@ export async function runOpenClawCliRequest(
   if (result.exitCode !== 0) {
     throw new Error(`OpenClaw CLI exited with code ${result.exitCode}`);
   }
-
-  const text = extractOpenClawText(result.stdout) || baseline.response.text;
-  logInfo(
-    `OpenClaw agent finish runId=${request.runId ?? "unknown"} classification=${baseline.response.classification} textLength=${text.length}`
-  );
-
-  return {
-    response: {
-      classification: baseline.response.classification,
-      text
-    }
-  };
+  return result;
 }
 
 export async function* runOpenClawCliRequestStream(
@@ -95,7 +172,8 @@ export async function* runOpenClawCliRequestStream(
   heartbeatMs = streamHeartbeatMs
 ): AsyncIterable<RunEvent> {
   yield { type: "status", text: "Loading Burble context..." };
-  const baseline = await runBurbleRequest(request, config, executeTool);
+  const toolContext = await buildBurbleToolContext(request, config, executeTool);
+  const baseline = toolContext.baseline;
   if (
     isSupportedGitHubRequest(request.input.text) &&
     !request.input.connections.github.connected
@@ -113,18 +191,99 @@ export async function* runOpenClawCliRequestStream(
     return;
   }
 
-  const prompt = buildOpenClawPrompt(request, baseline);
   const sessionId = buildSessionId(request);
   logInfo(
     `OpenClaw agent start runId=${request.runId ?? "unknown"} agent=${config.openClawAgent} sessionId=${sessionId} textLength=${request.input.text.length} classification=${baseline.response.classification}`
   );
   yield { type: "status", text: "Running OpenClaw/NemoClaw..." };
 
+  const first = await collectOpenClawStream(
+    request,
+    config,
+    buildOpenClawPrompt(request, toolContext),
+    sessionId,
+    runCommandStream,
+    logInfo,
+    heartbeatMs,
+    true
+  );
+  const plannedToolCall = readPlannedToolCall(first.stdout, toolContext.catalog);
+
+  if (!plannedToolCall) {
+    yield* first.events;
+    const text = extractOpenClawText(first.stdout) || baseline.response.text;
+    logInfo(
+      `OpenClaw agent finish runId=${request.runId ?? "unknown"} classification=${baseline.response.classification} textLength=${text.length}`
+    );
+    yield {
+      type: "final",
+      response: {
+        classification: baseline.response.classification,
+        text
+      }
+    };
+    return;
+  }
+
+  logInfo(
+    `OpenClaw tool requested runId=${request.runId ?? "unknown"} tool=${plannedToolCall.name}`
+  );
+  yield { type: "status", text: "Calling Burble tool..." };
+  const toolResult = await executePlannedToolCall(
+    plannedToolCall,
+    request,
+    executeTool
+  );
+  const classification = mergeClassification(
+    baseline.response.classification,
+    toolResult.classification
+  );
+  const second = await collectOpenClawStream(
+    request,
+    config,
+    buildOpenClawPrompt(request, toolContext, {
+      toolCall: plannedToolCall,
+      toolResult
+    }),
+    sessionId,
+    runCommandStream,
+    logInfo,
+    heartbeatMs,
+    false
+  );
+
+  yield* second.events;
+  const text = extractOpenClawText(second.stdout) || formatToolResult(toolResult);
+  logInfo(
+    `OpenClaw agent finish runId=${request.runId ?? "unknown"} classification=${classification} textLength=${text.length}`
+  );
+
+  yield {
+    type: "final",
+    response: {
+      classification,
+      text
+    }
+  };
+}
+
+async function collectOpenClawStream(
+  request: RunRequest,
+  config: RuntimeConfig,
+  prompt: string,
+  sessionId: string,
+  runCommandStream: CliCommandStreamer,
+  logInfo: RuntimeLogger,
+  heartbeatMs: number,
+  bufferDeltas: boolean
+): Promise<{ stdout: string; events: RunEvent[] }> {
   let stdout = "";
   let exitCode: number | null = null;
   let chunkCount = 0;
   let deltaCount = 0;
+  const events: RunEvent[] = [];
   const startedAt = Date.now();
+
   for await (const event of withHeartbeat(
     runCommandStream(
       config.openClawCommand,
@@ -137,12 +296,12 @@ export async function* runOpenClawCliRequestStream(
     heartbeatMs
   )) {
     if (event.type === "heartbeat") {
-      yield {
+      events.push({
         type: "status",
         text: `Still running OpenClaw... ${Math.round(
           (Date.now() - startedAt) / 1000
         )}s`
-      };
+      });
       logStreamDebug(config, logInfo, "heartbeat", {
         runId: request.runId ?? "unknown",
         elapsedMs: Date.now() - startedAt
@@ -171,13 +330,14 @@ export async function* runOpenClawCliRequestStream(
           chars: delta.length,
           preview: delta
         });
-        yield { type: "message_delta", text: delta };
+        events.push({ type: "message_delta", text: delta });
       }
       continue;
     }
 
     exitCode = event.exitCode;
   }
+
   logStreamDebug(config, logInfo, "stdout complete", {
     runId: request.runId ?? "unknown",
     elapsedMs: Date.now() - startedAt,
@@ -191,33 +351,22 @@ export async function* runOpenClawCliRequestStream(
     const partialText = extractOpenClawText(stdout);
     if (partialText) {
       logInfo(
-        `OpenClaw agent partial finish runId=${request.runId ?? "unknown"} exitCode=${exitCode ?? "unknown"} classification=${baseline.response.classification} textLength=${partialText.length}`
+        `OpenClaw agent partial finish runId=${request.runId ?? "unknown"} exitCode=${exitCode ?? "unknown"} textLength=${partialText.length}`
       );
-      yield {
+      events.push({
         type: "final",
         response: {
-          classification: baseline.response.classification,
+          classification: "user_private",
           text: partialText
         }
-      };
-      return;
+      });
+      return { stdout, events };
     }
 
     throw new Error(`OpenClaw CLI exited with code ${exitCode ?? "unknown"}`);
   }
 
-  const text = extractOpenClawText(stdout) || baseline.response.text;
-  logInfo(
-    `OpenClaw agent finish runId=${request.runId ?? "unknown"} classification=${baseline.response.classification} textLength=${text.length}`
-  );
-
-  yield {
-    type: "final",
-    response: {
-      classification: baseline.response.classification,
-      text
-    }
-  };
+  return { stdout, events };
 }
 
 async function* withHeartbeat(
@@ -350,22 +499,300 @@ export function openClawEnv(config: RuntimeConfig): Record<string, string> {
   };
 }
 
-function buildOpenClawPrompt(request: RunRequest, baseline: RunResponse): string {
-  return [
+async function buildBurbleToolContext(
+  request: RunRequest,
+  config: RuntimeConfig,
+  executeTool: ToolExecutor
+): Promise<BurbleToolContext> {
+  const [baseline, catalog] = await Promise.all([
+    runBurbleRequest(request, config, executeTool),
+    buildToolCatalog(request, executeTool)
+  ]);
+
+  return { baseline, catalog };
+}
+
+async function buildToolCatalog(
+  request: RunRequest,
+  executeTool: ToolExecutor
+): Promise<ToolCatalogItem[]> {
+  const catalog: ToolCatalogItem[] = [];
+  const github = request.input.connections.github;
+  if (github.connected && github.email) {
+    catalog.push(
+      {
+        name: "github.getAuthenticatedUser",
+        description:
+          "Return the GitHub identity connected to the requesting Slack user.",
+        inputSchema: {}
+      },
+      {
+        name: "github.listAssignedIssues",
+        description: "List GitHub issues assigned to the requesting Slack user.",
+        inputSchema: {}
+      },
+      {
+        name: "github.searchIssues",
+        description:
+          "Search GitHub issues and pull requests visible to the requesting Slack user's connected GitHub account.",
+        inputSchema: {
+          query: "string GitHub search query, for example: is:issue assignee:@me"
+        }
+      },
+      {
+        name: "github.listMyPullRequests",
+        description:
+          "List open GitHub pull requests authored by the requesting Slack user's connected GitHub account.",
+        inputSchema: {}
+      }
+    );
+  }
+
+  const jira = request.input.connections.jira;
+  if (jira?.connected && jira.email) {
+    catalog.push(
+      {
+        name: "jira.getAuthenticatedUser",
+        description:
+          "Return the Jira identity connected to the requesting Slack user.",
+        inputSchema: {}
+      },
+      {
+        name: "jira.listAssignedIssues",
+        description: "List Jira issues assigned to the requesting Slack user.",
+        inputSchema: {}
+      },
+      {
+        name: "jira.searchIssues",
+        description:
+          "Search Jira issues visible to the requesting Slack user's connected Jira account.",
+        inputSchema: {
+          jql: "string Jira JQL query, for example: assignee = currentUser() AND statusCategory != Done"
+        }
+      },
+      {
+        name: "atlassian.listMcpTools",
+        description:
+          "List read-only upstream Atlassian MCP tools available through Burble for this user's Jira connection.",
+        inputSchema: {}
+      }
+    );
+
+    const upstreamTools = await readAtlassianMcpToolNames(jira.email, executeTool);
+    catalog.push({
+      name: "atlassian.callMcpTool",
+      description: [
+        "Call a read-only upstream Atlassian MCP tool through Burble for Jira/Atlassian questions that need provider-native tools.",
+        upstreamTools.length > 0
+          ? `Known read-only Atlassian MCP tools include: ${upstreamTools.slice(0, 30).join(", ")}.`
+          : "Use this only when you know the upstream read-only tool name."
+      ].join(" "),
+      inputSchema: {
+        name: "string upstream Atlassian MCP tool name",
+        arguments: "object JSON arguments for the upstream Atlassian MCP tool"
+      }
+    });
+  }
+
+  return catalog;
+}
+
+async function readAtlassianMcpToolNames(
+  email: string,
+  executeTool: ToolExecutor
+): Promise<string[]> {
+  try {
+    const result = await executeTool("atlassian.listMcpTools", {
+      user: { email }
+    });
+    if (!Array.isArray(result.content)) {
+      return [];
+    }
+
+    return result.content.flatMap((item) => {
+      if (
+        item &&
+        typeof item === "object" &&
+        "name" in item &&
+        typeof item.name === "string"
+      ) {
+        return [item.name];
+      }
+      return [];
+    });
+  } catch {
+    return [];
+  }
+}
+
+function buildOpenClawPrompt(
+  request: RunRequest,
+  toolContext: BurbleToolContext,
+  executedTool?: { toolCall: PlannedToolCall; toolResult: ToolResult }
+): string {
+  const sections = [
     "You are Burble's OpenClaw runtime.",
     "Answer in concise Slack mrkdwn.",
-    "Answer general questions directly when no Burble tool context is needed.",
-    "For GitHub or provider-specific data, use only the provided Burble tool context. Do not invent provider data.",
+    "Answer general questions directly when no Burble tool is needed.",
+    "For GitHub, Jira, or provider-specific data, use only Burble-provided context or a Burble tool call. Do not invent provider data.",
     "Do not reveal hidden chain-of-thought. You may give a concise rationale or progress summary when useful.",
-    "Never mention tokens, credentials, or internal URLs.",
+    "Never mention tokens, credentials, internal URLs, or implementation details.",
+    "",
+    "Burble tool-call protocol:",
+    "If you need fresh provider data or an action from an available tool, return exactly one JSON object and no prose:",
+    `{"tool_call":{"name":"jira.searchIssues","arguments":{"jql":"assignee = currentUser() AND statusCategory != Done"}}}`,
+    "Burble injects user identity and credentials. Do not include user email, tokens, or credentials in tool arguments.",
+    "Use only tool names listed in Available Burble tools.",
+    "",
+    "Available Burble tools:",
+    formatToolCatalog(toolContext.catalog),
     "",
     `User request: ${request.input.text}`,
     "",
-    "Burble tool context:",
-    baseline.response.text,
-    "",
-    "Return only the final Slack-ready answer."
-  ].join("\n");
+    "Burble baseline context:",
+    toolContext.baseline.response.text
+  ];
+
+  if (executedTool) {
+    sections.push(
+      "",
+      "Burble executed tool:",
+      JSON.stringify({
+        tool_call: executedTool.toolCall,
+        result: executedTool.toolResult
+      }),
+      "",
+      "Return only the final Slack-ready answer."
+    );
+  } else {
+    sections.push("", "Return either exactly one tool_call JSON object or the final Slack-ready answer.");
+  }
+
+  return sections.join("\n");
+}
+
+function formatToolCatalog(catalog: ToolCatalogItem[]): string {
+  if (catalog.length === 0) {
+    return "[]";
+  }
+
+  return JSON.stringify(
+    catalog.map((tool) => ({
+      name: tool.name,
+      description: tool.description,
+      input_schema: tool.inputSchema
+    }))
+  );
+}
+
+function readPlannedToolCall(
+  stdout: string,
+  catalog: ToolCatalogItem[]
+): PlannedToolCall | null {
+  const parsed = readLastJsonObject(stdout);
+  const toolCall =
+    parsed && typeof parsed.tool_call === "object" && parsed.tool_call !== null
+      ? (parsed.tool_call as Record<string, unknown>)
+      : null;
+  if (!toolCall || typeof toolCall.name !== "string") {
+    return null;
+  }
+
+  if (!catalog.some((tool) => tool.name === toolCall.name)) {
+    return null;
+  }
+
+  const args = toolCall.arguments;
+  return {
+    name: toolCall.name,
+    arguments:
+      args && typeof args === "object" && !Array.isArray(args)
+        ? (args as Record<string, unknown>)
+        : {}
+  };
+}
+
+function readLastJsonObject(stdout: string): Record<string, unknown> | null {
+  const trimmed = stdout.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  const whole = parseJsonObject(trimmed);
+  if (whole) {
+    return whole;
+  }
+
+  const lines = trimmed
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .reverse();
+  for (const line of lines) {
+    const parsed = parseJsonObject(line);
+    if (parsed) {
+      return parsed;
+    }
+  }
+
+  return null;
+}
+
+async function executePlannedToolCall(
+  toolCall: PlannedToolCall,
+  request: RunRequest,
+  executeTool: ToolExecutor
+): Promise<ToolResult> {
+  const email = readToolEmail(toolCall.name, request);
+  if (!email) {
+    return {
+      classification: "user_private",
+      content: {
+        error: "provider_not_connected",
+        message: `No connected provider account is available for \`${toolCall.name}\`.`
+      }
+    };
+  }
+
+  return executeTool(toolCall.name, {
+    user: { email },
+    input: toolCall.arguments
+  });
+}
+
+function readToolEmail(toolName: string, request: RunRequest): string | null {
+  if (toolName.startsWith("github.")) {
+    return request.input.connections.github.email ?? null;
+  }
+
+  if (toolName.startsWith("jira.") || toolName.startsWith("atlassian.")) {
+    return request.input.connections.jira?.email ?? null;
+  }
+
+  return null;
+}
+
+function formatToolResult(result: ToolResult): string {
+  if (typeof result.content === "string") {
+    return result.content;
+  }
+
+  return JSON.stringify(result.content);
+}
+
+function mergeClassification(
+  left: RunResponse["response"]["classification"],
+  right: ToolResult["classification"]
+): RunResponse["response"]["classification"] {
+  if (left === "restricted" || right === "restricted") {
+    return "restricted";
+  }
+
+  if (left === "user_private" || right === "user_private") {
+    return "user_private";
+  }
+
+  return "public";
 }
 
 function buildOpenClawArgs(

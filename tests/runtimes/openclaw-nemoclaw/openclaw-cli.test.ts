@@ -178,6 +178,200 @@ describe("runOpenClawCliRequest", () => {
     ]);
   });
 
+  test("lets OpenClaw plan a Jira REST tool call and reruns with the result", async () => {
+    const toolCalls: Array<{ toolName: string; body: unknown }> = [];
+    const prompts: string[] = [];
+
+    const response = await runOpenClawCliRequest(
+      {
+        input: {
+          text: "which Jira tickets are blocked?",
+          connections: {
+            github: {
+              connected: true,
+              email: "person@example.com",
+              providerLogin: "octocat"
+            },
+            jira: {
+              connected: true,
+              email: "person@example.com",
+              providerLogin: "person@atlassian.example"
+            }
+          }
+        }
+      },
+      config,
+      async (toolName, body) => {
+        toolCalls.push({ toolName, body });
+        if (toolName === "atlassian.listMcpTools") {
+          return {
+            classification: "user_private",
+            content: []
+          };
+        }
+        if (toolName === "jira.searchIssues") {
+          return {
+            classification: "user_private",
+            content: [
+              {
+                key: "ENG-7",
+                title: "Deploy is blocked",
+                url: "https://example.atlassian.net/browse/ENG-7"
+              }
+            ]
+          };
+        }
+
+        return {
+          classification: "user_private",
+          content: []
+        };
+      },
+      async (_command, args) => {
+        const prompt = args[args.indexOf("--message") + 1];
+        prompts.push(prompt);
+        return prompts.length === 1
+          ? {
+              exitCode: 0,
+              stdout: JSON.stringify({
+                tool_call: {
+                  name: "jira.searchIssues",
+                  arguments: {
+                    jql: 'text ~ "blocked" AND statusCategory != Done'
+                  }
+                }
+              }),
+              stderr: ""
+            }
+          : {
+              exitCode: 0,
+              stdout: JSON.stringify({
+                response: {
+                  text: "ENG-7 looks blocked."
+                }
+              }),
+              stderr: ""
+            };
+      },
+      () => undefined
+    );
+
+    expect(response.response.text).toBe("ENG-7 looks blocked.");
+    expect(prompts).toHaveLength(2);
+    expect(prompts[0]).toContain("Available Burble tools:");
+    expect(prompts[0]).toContain("jira.searchIssues");
+    expect(prompts[0]).not.toContain("person@example.com");
+    expect(prompts[1]).toContain("Burble executed tool:");
+    expect(prompts[1]).toContain("Deploy is blocked");
+    expect(toolCalls).toContainEqual({
+      toolName: "jira.searchIssues",
+      body: {
+        user: { email: "person@example.com" },
+        input: {
+          jql: 'text ~ "blocked" AND statusCategory != Done'
+        }
+      }
+    });
+  });
+
+  test("lets OpenClaw plan a read-only Atlassian MCP tool call", async () => {
+    const toolCalls: Array<{ toolName: string; body: unknown }> = [];
+    const response = await runOpenClawCliRequest(
+      {
+        input: {
+          text: "find Jira issues mentioning onboarding",
+          connections: {
+            github: {
+              connected: true,
+              email: "person@example.com",
+              providerLogin: "octocat"
+            },
+            jira: {
+              connected: true,
+              email: "person@example.com",
+              providerLogin: "person@atlassian.example"
+            }
+          }
+        }
+      },
+      config,
+      async (toolName, body) => {
+        toolCalls.push({ toolName, body });
+        if (toolName === "atlassian.listMcpTools") {
+          return {
+            classification: "user_private",
+            content: [
+              {
+                name: "searchJiraIssuesUsingJql",
+                description: "Search Jira issues using JQL"
+              }
+            ]
+          };
+        }
+        if (toolName === "atlassian.callMcpTool") {
+          return {
+            classification: "user_private",
+            content: {
+              toolName: "searchJiraIssuesUsingJql",
+              result: {
+                content: [
+                  {
+                    type: "text",
+                    text: "ECS-313 onboarding crash loop"
+                  }
+                ]
+              }
+            }
+          };
+        }
+
+        return {
+          classification: "user_private",
+          content: []
+        };
+      },
+      async (_command, args) => {
+        const prompt = args[args.indexOf("--message") + 1];
+        return prompt.includes("Burble executed tool:")
+          ? {
+              exitCode: 0,
+              stdout: "ECS-313 is the likely match.",
+              stderr: ""
+            }
+          : {
+              exitCode: 0,
+              stdout: JSON.stringify({
+                tool_call: {
+                  name: "atlassian.callMcpTool",
+                  arguments: {
+                    name: "searchJiraIssuesUsingJql",
+                    arguments: {
+                      jql: 'text ~ "onboarding"'
+                    }
+                  }
+                }
+              }),
+              stderr: ""
+            };
+      },
+      () => undefined
+    );
+
+    expect(response.response.text).toBe("ECS-313 is the likely match.");
+    expect(toolCalls).toContainEqual({
+      toolName: "atlassian.callMcpTool",
+      body: {
+        user: { email: "person@example.com" },
+        input: {
+          name: "searchJiraIssuesUsingJql",
+          arguments: {
+            jql: 'text ~ "onboarding"'
+          }
+        }
+      }
+    });
+  });
+
   test("maps distinct Slack conversation roots to distinct OpenClaw sessions", async () => {
     const sessionIds: string[] = [];
     const baseRequest = {
@@ -353,6 +547,83 @@ describe("runOpenClawCliRequest", () => {
         response: {
           classification: "user_private",
           text: "Final ranking."
+        }
+      }
+    ]);
+  });
+
+  test("streams a planned tool call without showing the JSON protocol to Slack", async () => {
+    const events = [];
+    let commandCount = 0;
+
+    for await (const event of runOpenClawCliRequestStream(
+      {
+        input: {
+          text: "which Jira tickets are blocked?",
+          connections: {
+            github: {
+              connected: true,
+              email: "person@example.com",
+              providerLogin: "octocat"
+            },
+            jira: {
+              connected: true,
+              email: "person@example.com",
+              providerLogin: "person@atlassian.example"
+            }
+          }
+        }
+      },
+      config,
+      async (toolName) =>
+        toolName === "jira.searchIssues"
+          ? {
+              classification: "user_private",
+              content: [
+                {
+                  key: "ENG-7",
+                  title: "Deploy is blocked",
+                  url: "https://example.atlassian.net/browse/ENG-7"
+                }
+              ]
+            }
+          : {
+              classification: "user_private",
+              content: []
+            },
+      async function* () {
+        commandCount += 1;
+        if (commandCount === 1) {
+          yield {
+            type: "stdout" as const,
+            text:
+              JSON.stringify({
+                tool_call: {
+                  name: "jira.searchIssues",
+                  arguments: { jql: 'text ~ "blocked"' }
+                }
+              }) + "\n"
+          };
+        } else {
+          yield { type: "stdout" as const, text: "ENG-7 is blocked." };
+        }
+        yield { type: "exit" as const, exitCode: 0 };
+      },
+      () => undefined
+    )) {
+      events.push(event);
+    }
+
+    expect(events).toEqual([
+      { type: "status", text: "Loading Burble context..." },
+      { type: "status", text: "Running OpenClaw/NemoClaw..." },
+      { type: "status", text: "Calling Burble tool..." },
+      { type: "message_delta", text: "ENG-7 is blocked." },
+      {
+        type: "final",
+        response: {
+          classification: "user_private",
+          text: "ENG-7 is blocked."
         }
       }
     ]);

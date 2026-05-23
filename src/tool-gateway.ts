@@ -13,12 +13,34 @@ import {
   refreshJiraAccessToken,
   searchJiraIssues
 } from "./jira";
+import {
+  callUpstreamMcpTool,
+  listUpstreamMcpTools,
+  type UpstreamMcpTool,
+  type UpstreamMcpToolResult
+} from "./mcp/upstream-http-client";
 import { createGitHubTools } from "./tools/github";
-import { createJiraTools, type JiraToolDeps } from "./tools/jira";
+import {
+  createJiraTools,
+  isJiraAuthErrorResult,
+  type JiraToolDeps,
+  withFreshJiraToken
+} from "./tools/jira";
 import type { ToolResult } from "./tools/types";
 
 type ToolGatewayDeps = Partial<Parameters<typeof createGitHubTools>[0]> &
-  Partial<JiraToolDeps>;
+  Partial<JiraToolDeps> & {
+    listAtlassianMcpTools?: (input: {
+      url: string;
+      accessToken: string;
+    }) => Promise<UpstreamMcpTool[]>;
+    callAtlassianMcpTool?: (input: {
+      url: string;
+      accessToken: string;
+      name: string;
+      arguments?: Record<string, unknown>;
+    }) => Promise<UpstreamMcpToolResult>;
+  };
 
 type ToolGatewayBody = {
   user?: {
@@ -165,6 +187,96 @@ export async function handleToolGatewayRequest(
         })
       );
     }
+
+    case "atlassian.listMcpTools": {
+      const result = await withFreshJiraToken(
+        {
+          ...defaultDeps,
+          refreshJiraAccessToken: (refreshToken) =>
+            refreshJiraAccessToken(config, refreshToken),
+          saveJiraConnection: (updatedConnection) =>
+            store.upsertProviderConnection(updatedConnection),
+          ...deps
+        },
+        connection,
+        async (accessToken) => {
+          const tools = await (deps.listAtlassianMcpTools ??
+            defaultListAtlassianMcpTools)({
+            url: config.atlassianMcpUrl,
+            accessToken
+          });
+
+          return {
+            classification: "user_private" as const,
+            content: tools.slice(0, 50).map((tool) => ({
+              name: tool.name,
+              ...(tool.title ? { title: tool.title } : {}),
+              ...(tool.description ? { description: tool.description } : {})
+            }))
+          };
+        }
+      );
+
+      return jsonResponseWithAudit(
+        store,
+        auth,
+        toolName,
+        isJiraAuthErrorResult(result) ? result : result
+      );
+    }
+
+    case "atlassian.callMcpTool": {
+      if (!isAtlassianMcpToolCallInput(body.input)) {
+        return new Response("Invalid tool input", { status: 400 });
+      }
+      const atlassianInput = body.input;
+
+      if (!isReadOnlyAtlassianMcpToolName(atlassianInput.name)) {
+        return jsonResponseWithAudit(store, auth, toolName, {
+          classification: "user_private",
+          content: {
+            error: "atlassian_mcp_tool_not_allowed",
+            message: `Atlassian MCP tool \`${atlassianInput.name}\` is not enabled for read-only use.`
+          }
+        });
+      }
+
+      const result = await withFreshJiraToken(
+        {
+          ...defaultDeps,
+          refreshJiraAccessToken: (refreshToken) =>
+            refreshJiraAccessToken(config, refreshToken),
+          saveJiraConnection: (updatedConnection) =>
+            store.upsertProviderConnection(updatedConnection),
+          ...deps
+        },
+        connection,
+        async (accessToken) => {
+          const upstreamResult = await (deps.callAtlassianMcpTool ??
+            defaultCallAtlassianMcpTool)({
+            url: config.atlassianMcpUrl,
+            accessToken,
+            name: atlassianInput.name,
+            arguments: atlassianInput.arguments
+          });
+
+          return {
+            classification: "user_private" as const,
+            content: {
+              toolName: atlassianInput.name,
+              result: sanitizeUpstreamMcpToolResult(upstreamResult)
+            }
+          };
+        }
+      );
+
+      return jsonResponseWithAudit(
+        store,
+        auth,
+        toolName,
+        isJiraAuthErrorResult(result) ? result : result
+      );
+    }
   }
 
   return new Response("Unknown tool", { status: 404 });
@@ -224,12 +336,16 @@ function isKnownTool(toolName: string): boolean {
     toolName === "github.listMyPullRequests" ||
     toolName === "jira.getAuthenticatedUser" ||
     toolName === "jira.listAssignedIssues" ||
-    toolName === "jira.searchIssues"
+    toolName === "jira.searchIssues" ||
+    toolName === "atlassian.listMcpTools" ||
+    toolName === "atlassian.callMcpTool"
   );
 }
 
 function readToolProvider(toolName: string): "github" | "jira" {
-  return toolName.startsWith("jira.") ? "jira" : "github";
+  return toolName.startsWith("jira.") || toolName.startsWith("atlassian.")
+    ? "jira"
+    : "github";
 }
 
 async function readToolGatewayBody(
@@ -260,6 +376,104 @@ function isSearchJiraIssuesInput(input: unknown): input is { jql: string } {
     typeof input.jql === "string" &&
     input.jql.trim().length > 0
   );
+}
+
+function isAtlassianMcpToolCallInput(
+  input: unknown
+): input is { name: string; arguments?: Record<string, unknown> } {
+  if (
+    typeof input !== "object" ||
+    input === null ||
+    !("name" in input) ||
+    typeof input.name !== "string" ||
+    input.name.trim().length === 0
+  ) {
+    return false;
+  }
+
+  return (
+    !("arguments" in input) ||
+    input.arguments === undefined ||
+    (typeof input.arguments === "object" &&
+      input.arguments !== null &&
+      !Array.isArray(input.arguments))
+  );
+}
+
+function defaultListAtlassianMcpTools(input: {
+  url: string;
+  accessToken: string;
+}): Promise<UpstreamMcpTool[]> {
+  return listUpstreamMcpTools({
+    url: input.url,
+    authorization: `Bearer ${input.accessToken}`,
+    clientName: "burble-atlassian-mcp-facade",
+    clientVersion: "0.1.0"
+  });
+}
+
+function defaultCallAtlassianMcpTool(input: {
+  url: string;
+  accessToken: string;
+  name: string;
+  arguments?: Record<string, unknown>;
+}): Promise<UpstreamMcpToolResult> {
+  return callUpstreamMcpTool(
+    {
+      url: input.url,
+      authorization: `Bearer ${input.accessToken}`,
+      clientName: "burble-atlassian-mcp-facade",
+      clientVersion: "0.1.0"
+    },
+    {
+      name: input.name,
+      arguments: input.arguments
+    }
+  );
+}
+
+function isReadOnlyAtlassianMcpToolName(name: string): boolean {
+  const normalized = name.trim().toLowerCase();
+  if (!normalized) {
+    return false;
+  }
+
+  if (
+    /(create|update|delete|remove|transition|assign|comment|attach|add|set|edit|move|link)/.test(
+      normalized
+    )
+  ) {
+    return false;
+  }
+
+  return /^(get|list|search|find|read|lookup|fetch|describe)/.test(normalized);
+}
+
+function sanitizeUpstreamMcpToolResult(
+  result: UpstreamMcpToolResult
+): UpstreamMcpToolResult {
+  return {
+    ...(Array.isArray(result.content)
+      ? { content: result.content.slice(0, 20).map(sanitizeMcpContentItem) }
+      : {}),
+    ...(typeof result.isError === "boolean" ? { isError: result.isError } : {})
+  };
+}
+
+function sanitizeMcpContentItem(item: unknown): unknown {
+  if (!item || typeof item !== "object") {
+    return item;
+  }
+
+  const record = item as Record<string, unknown>;
+  if (record.type === "text" && typeof record.text === "string") {
+    return {
+      type: "text",
+      text: record.text.slice(0, 12_000)
+    };
+  }
+
+  return record;
 }
 
 function jsonResponse(result: ToolResult<unknown>): Response {

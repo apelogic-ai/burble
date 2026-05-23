@@ -319,6 +319,123 @@ describe("handleToolGatewayRequest", () => {
     expect(JSON.stringify(body)).not.toContain("jira-token");
   });
 
+  test("executes Atlassian MCP tool discovery through the HTTP fallback gateway", async () => {
+    const response = await handleToolGatewayRequest(
+      config,
+      createStore(jiraConnection),
+      "atlassian.listMcpTools",
+      request("atlassian.listMcpTools", {
+        user: { email: "person@example.com" }
+      }),
+      {
+        listAtlassianMcpTools: async ({ url, accessToken }) => {
+          expect(url).toBe("https://mcp.atlassian.com/v1/mcp");
+          expect(accessToken).toBe("jira-token");
+          return [
+            {
+              name: "searchJiraIssuesUsingJql",
+              description: "Search Jira issues using JQL"
+            }
+          ];
+        }
+      }
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      classification: "user_private",
+      content: [
+        {
+          name: "searchJiraIssuesUsingJql",
+          description: "Search Jira issues using JQL"
+        }
+      ]
+    });
+  });
+
+  test("executes read-only Atlassian MCP calls through the HTTP fallback gateway", async () => {
+    const response = await handleToolGatewayRequest(
+      config,
+      createStore(jiraConnection),
+      "atlassian.callMcpTool",
+      request("atlassian.callMcpTool", {
+        user: { email: "person@example.com" },
+        input: {
+          name: "searchJiraIssuesUsingJql",
+          arguments: {
+            jql: 'text ~ "onboarding"'
+          }
+        }
+      }),
+      {
+        callAtlassianMcpTool: async ({ url, accessToken, name, arguments: args }) => {
+          expect(url).toBe("https://mcp.atlassian.com/v1/mcp");
+          expect(accessToken).toBe("jira-token");
+          expect(name).toBe("searchJiraIssuesUsingJql");
+          expect(args).toEqual({
+            jql: 'text ~ "onboarding"'
+          });
+          return {
+            content: [
+              {
+                type: "text",
+                text: "ECS-313 onboarding crash loop"
+              }
+            ]
+          };
+        }
+      }
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      classification: "user_private",
+      content: {
+        toolName: "searchJiraIssuesUsingJql",
+        result: {
+          content: [
+            {
+              type: "text",
+              text: "ECS-313 onboarding crash loop"
+            }
+          ]
+        }
+      }
+    });
+  });
+
+  test("rejects mutating Atlassian MCP calls in the HTTP fallback gateway", async () => {
+    const response = await handleToolGatewayRequest(
+      config,
+      createStore(jiraConnection),
+      "atlassian.callMcpTool",
+      request("atlassian.callMcpTool", {
+        user: { email: "person@example.com" },
+        input: {
+          name: "updateJiraIssue",
+          arguments: {
+            key: "ENG-7"
+          }
+        }
+      }),
+      {
+        callAtlassianMcpTool: async () => {
+          throw new Error("unexpected upstream call");
+        }
+      }
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      classification: "user_private",
+      content: {
+        error: "atlassian_mcp_tool_not_allowed",
+        message:
+          "Atlassian MCP tool `updateJiraIssue` is not enabled for read-only use."
+      }
+    });
+  });
+
   test("returns a private Jira connect instruction when Jira is not connected", async () => {
     const response = await handleToolGatewayRequest(
       config,
