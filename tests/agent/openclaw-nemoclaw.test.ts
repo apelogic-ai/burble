@@ -343,7 +343,7 @@ describe("createOpenClawNemoClawAgentRunner", () => {
       }
     );
 
-    expect(events).toContain(
+    expect(events).not.toContain(
       "status:Runtime stream closed; fetching final answer..."
     );
     expect(result).toEqual({

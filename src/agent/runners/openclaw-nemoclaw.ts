@@ -127,10 +127,6 @@ export function createOpenClawNemoClawAgentRunner(
               "fallback=json"
             ].join(" ")
           );
-          yield {
-            type: "status",
-            text: "Runtime stream closed; fetching final answer..."
-          };
           const fallbackResponse = await postRuntimeRun(
             requestFetch,
             runUrl,
