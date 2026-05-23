@@ -155,24 +155,66 @@ async function* readStreamingRunResponse(
     return null;
   }
 
-  for await (const payload of readNdjson(response.body)) {
-    const event = validateRemoteRunEvent(payload);
-    if (!event) {
-      throw new Error("OpenClaw/NemoClaw runtime returned an invalid stream event");
+  let streamedText = "";
+  try {
+    for await (const payload of readNdjson(response.body)) {
+      const event = validateRemoteRunEvent(payload);
+      if (!event) {
+        throw new Error("OpenClaw/NemoClaw runtime returned an invalid stream event");
+      }
+
+      if (event.type === "error") {
+        throw new Error(event.message);
+      }
+
+      if (event.type === "final") {
+        return event.response;
+      }
+
+      if (event.type === "message_delta") {
+        streamedText = appendStreamedText(streamedText, event.text);
+      }
+
+      yield event;
+    }
+  } catch (error) {
+    if (streamedText.trim() && isRuntimeStreamClosedError(error)) {
+      return {
+        classification: "user_private",
+        text: streamedText.trim()
+      };
     }
 
-    if (event.type === "error") {
-      throw new Error(event.message);
-    }
-
-    if (event.type === "final") {
-      return event.response;
-    }
-
-    yield event;
+    throw error;
   }
 
+  if (streamedText.trim()) {
+    return {
+      classification: "user_private",
+      text: streamedText.trim()
+    };
+  }
   return null;
+}
+
+function appendStreamedText(currentText: string, delta: string): string {
+  if (!delta.trim()) {
+    return currentText;
+  }
+
+  return currentText && !currentText.endsWith("...")
+    ? `${currentText}${delta}`
+    : delta.trimStart();
+}
+
+function isRuntimeStreamClosedError(error: unknown): boolean {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+
+  return /socket connection was closed|connection.*closed|stream.*closed|terminated|econnreset/i.test(
+    error.message
+  );
 }
 
 async function* readNdjson(

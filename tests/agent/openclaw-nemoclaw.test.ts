@@ -215,6 +215,70 @@ describe("createOpenClawNemoClawAgentRunner", () => {
     });
   });
 
+  test("uses the streamed answer when the runtime stream closes before final", async () => {
+    const runner = createOpenClawNemoClawAgentRunner({
+      baseUrl: "http://openclaw-runtime:8080",
+      fetch: async () => {
+        let chunksSent = 0;
+        return new Response(
+          new ReadableStream({
+            pull(controller) {
+              if (chunksSent === 0) {
+                chunksSent += 1;
+                controller.enqueue(
+                  new TextEncoder().encode(
+                    [
+                      JSON.stringify({
+                        type: "status",
+                        text: "Running OpenClaw/NemoClaw..."
+                      }),
+                      JSON.stringify({
+                        type: "message_delta",
+                        text: "Tickets mentioning onboarding: DM-1 and ECS-313."
+                      }),
+                      ""
+                    ].join("\n")
+                  )
+                );
+                return;
+              }
+
+              controller.error(
+                new Error("The socket connection was closed unexpectedly.")
+              );
+            }
+          }),
+          {
+            status: 200,
+            headers: { "content-type": "application/x-ndjson; charset=utf-8" }
+          }
+        );
+      }
+    });
+    const events: string[] = [];
+
+    const result = await collectAgentRun(
+      runner,
+      {
+        principal,
+        conversation,
+        text: "which jira tickets mention onboarding?",
+        connections: { github: connection }
+      },
+      (event) => {
+        events.push(`${event.type}:${"text" in event ? event.text : ""}`);
+      }
+    );
+
+    expect(events).toContain(
+      "message_delta:Tickets mentioning onboarding: DM-1 and ECS-313."
+    );
+    expect(result).toEqual({
+      classification: "user_private",
+      text: "Tickets mentioning onboarding: DM-1 and ECS-313."
+    });
+  });
+
   test("reports remote runtime failures without leaking response bodies", async () => {
     const runner = createOpenClawNemoClawAgentRunner({
       baseUrl: "http://openclaw-runtime:8080",
