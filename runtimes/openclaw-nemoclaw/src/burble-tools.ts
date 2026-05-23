@@ -167,6 +167,8 @@ function toMcpToolName(toolName: string): string {
       return "jira_search_issues";
     case "atlassian.listMcpTools":
       return "atlassian_list_mcp_tools";
+    case "atlassian.callMcpTool":
+      return "atlassian_call_mcp_tool";
     default:
       throw new Error(`Unsupported Burble MCP tool: ${toolName}`);
   }
@@ -192,6 +194,18 @@ function toMcpToolArguments(
     return { jql };
   }
 
+  if (toolName === "atlassian.callMcpTool") {
+    const name = readNestedString(body, "input", "name");
+    if (!name) {
+      throw new Error("atlassian.callMcpTool requires input.name");
+    }
+
+    return {
+      name,
+      arguments: readNestedRecord(body, "input", "arguments") ?? {}
+    };
+  }
+
   return {};
 }
 
@@ -209,6 +223,24 @@ function readNestedString(
   }
   const inner = (outer as Record<string, unknown>)[innerKey];
   return typeof inner === "string" && inner.trim() ? inner : null;
+}
+
+function readNestedRecord(
+  value: unknown,
+  outerKey: string,
+  innerKey: string
+): Record<string, unknown> | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+  const outer = (value as Record<string, unknown>)[outerKey];
+  if (!outer || typeof outer !== "object") {
+    return null;
+  }
+  const inner = (outer as Record<string, unknown>)[innerKey];
+  return inner && typeof inner === "object" && !Array.isArray(inner)
+    ? (inner as Record<string, unknown>)
+    : null;
 }
 
 async function readMcpToolResult(response: Response): Promise<ToolResult> {

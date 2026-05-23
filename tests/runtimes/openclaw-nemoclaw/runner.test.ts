@@ -306,6 +306,60 @@ describe("runBurbleRequest", () => {
     expect(response.response.text).toContain("searchJiraIssuesUsingJql");
   });
 
+  test("calls an explicit Atlassian MCP tool through the Jira connection", async () => {
+    const calls: Array<{ toolName: string; body: unknown }> = [];
+    const response = await runBurbleRequest(
+      {
+        input: {
+          text: 'call Atlassian MCP tool searchJiraIssuesUsingJql with {"jql":"assignee = currentUser()"}',
+          connections: {
+            github: { connected: false },
+            jira: {
+              connected: true,
+              email: "person@example.com",
+              providerLogin: "person@atlassian.example"
+            }
+          }
+        }
+      },
+      config,
+      async (toolName, body) => {
+        calls.push({ toolName, body });
+        return {
+          classification: "user_private",
+          content: {
+            toolName: "searchJiraIssuesUsingJql",
+            result: {
+              content: [
+                {
+                  type: "text",
+                  text: "ECS-123 Fix dashboard"
+                }
+              ]
+            }
+          }
+        };
+      }
+    );
+
+    expect(calls).toEqual([
+      {
+        toolName: "atlassian.callMcpTool",
+        body: {
+          user: { email: "person@example.com" },
+          input: {
+            name: "searchJiraIssuesUsingJql",
+            arguments: { jql: "assignee = currentUser()" }
+          }
+        }
+      }
+    ]);
+    expect(response.response.text).toContain(
+      "Atlassian MCP searchJiraIssuesUsingJql"
+    );
+    expect(response.response.text).toContain("ECS-123 Fix dashboard");
+  });
+
   test("preserves plain text Jira tool output", async () => {
     const response = await runBurbleRequest(
       {

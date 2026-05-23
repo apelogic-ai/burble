@@ -1,7 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import type { Config } from "../../src/config";
 import { createTokenStore } from "../../src/db";
-import { handleProviderMcpRequest } from "../../src/mcp/provider-server";
+import {
+  handleProviderMcpRequest,
+  isReadOnlyAtlassianMcpToolName
+} from "../../src/mcp/provider-server";
 import { createRuntimeJwtIssuer } from "../../src/runtime-jwt";
 
 const config: Config = {
@@ -182,6 +185,98 @@ describe("handleProviderMcpRequest", () => {
       ]
     });
     store.close();
+  });
+
+  test("calls allowlisted upstream Atlassian MCP tools with the connected Jira token", async () => {
+    const issuer = createRuntimeJwtIssuer({ issuer: config.runtimeJwtIssuer });
+    const store = createTokenStore(":memory:");
+    const runtime = store.getOrCreateAgentRuntime({
+      workspaceId: "T123",
+      slackUserId: "U123",
+      engine: "openclaw",
+      endpointUrl: "http://runtime-u123:8080",
+      authTokenHash: "hash-u123",
+      statePath: "/data/runtimes/u123/state",
+      configPath: "/data/runtimes/u123/config/openclaw.json",
+      workspacePath: "/data/runtimes/u123/workspace"
+    });
+    store.upsertProviderConnection({
+      provider: "jira",
+      email: "person@example.com",
+      slackUserId: "U123",
+      providerLogin: "Person",
+      accessToken: "jira-token",
+      refreshToken: null,
+      accessTokenExpiresAt: null
+    });
+    const token = issuer.issueRuntimeJwt({
+      audience: "http://agentgateway:3000/mcp",
+      runtimeId: runtime.id,
+      workspaceId: "T123",
+      slackUserId: "U123"
+    });
+
+    const response = await handleProviderMcpRequest(
+      config,
+      store,
+      issuer,
+      mcpRequest(
+        {
+          method: "tools/call",
+          params: {
+            name: "atlassian_call_mcp_tool",
+            arguments: {
+              name: "searchJiraIssuesUsingJql",
+              arguments: { jql: "assignee = currentUser()" }
+            }
+          }
+        },
+        token
+      ),
+      {
+        callAtlassianMcpTool: async ({ url, accessToken, name, arguments: args }) => {
+          expect(url).toBe("https://mcp.atlassian.com/v1/mcp");
+          expect(accessToken).toBe("jira-token");
+          expect(name).toBe("searchJiraIssuesUsingJql");
+          expect(args).toEqual({ jql: "assignee = currentUser()" });
+          return {
+            content: [
+              {
+                type: "text",
+                text: "ECS-123 Fix dashboard"
+              }
+            ]
+          };
+        }
+      }
+    );
+    const body = readMcpBody(await response.text());
+    const toolResult = JSON.parse(body.result.content[0].text);
+
+    expect(response.status).toBe(200);
+    expect(toolResult).toEqual({
+      classification: "user_private",
+      content: {
+        toolName: "searchJiraIssuesUsingJql",
+        result: {
+          content: [
+            {
+              type: "text",
+              text: "ECS-123 Fix dashboard"
+            }
+          ]
+        }
+      }
+    });
+    store.close();
+  });
+
+  test("blocks mutating upstream Atlassian MCP tool names", async () => {
+    expect(isReadOnlyAtlassianMcpToolName("searchJiraIssuesUsingJql")).toBe(true);
+    expect(isReadOnlyAtlassianMcpToolName("getJiraIssue")).toBe(true);
+    expect(isReadOnlyAtlassianMcpToolName("createJiraIssue")).toBe(false);
+    expect(isReadOnlyAtlassianMcpToolName("updateJiraIssue")).toBe(false);
+    expect(isReadOnlyAtlassianMcpToolName("deleteConfluencePage")).toBe(false);
   });
 });
 

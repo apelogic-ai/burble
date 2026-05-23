@@ -106,10 +106,20 @@ async function runJiraRequest(
   if (
     /\batlassian\b/.test(normalized) &&
     /\bmcp\b/.test(normalized) &&
+    /\b(list|show)\b/.test(normalized) &&
     /\b(tool|tools)\b/.test(normalized)
   ) {
     const result = await executeTool("atlassian.listMcpTools", { user });
     return response(result.classification, formatAtlassianMcpTools(result));
+  }
+
+  const atlassianCall = parseAtlassianMcpToolCall(text);
+  if (atlassianCall) {
+    const result = await executeTool("atlassian.callMcpTool", {
+      user,
+      input: atlassianCall
+    });
+    return response(result.classification, formatAtlassianMcpToolCall(result));
   }
 
   if (
@@ -283,6 +293,80 @@ function readAtlassianMcpTools(
       );
     }
   );
+}
+
+function formatAtlassianMcpToolCall(result: ToolResult): string {
+  if (typeof result.content === "string" && result.content.trim()) {
+    return result.content.trim();
+  }
+
+  const content = result.content;
+  if (!content || typeof content !== "object") {
+    return "Atlassian MCP tool returned no readable content.";
+  }
+
+  if ("message" in content && typeof content.message === "string") {
+    return content.message;
+  }
+
+  const record = content as Record<string, unknown>;
+  const toolName = typeof record.toolName === "string" ? record.toolName : "tool";
+  const toolResult = record.result;
+  const text = extractMcpToolResultText(toolResult);
+  return text
+    ? `*Atlassian MCP ${toolName}*\n${text}`
+    : `Atlassian MCP \`${toolName}\` returned no text content.`;
+}
+
+function extractMcpToolResultText(value: unknown): string | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+  const content = (value as Record<string, unknown>).content;
+  if (!Array.isArray(content)) {
+    return null;
+  }
+
+  const text = content
+    .flatMap((item) => {
+      if (!item || typeof item !== "object") {
+        return [];
+      }
+      const record = item as Record<string, unknown>;
+      return record.type === "text" && typeof record.text === "string"
+        ? [record.text]
+        : [];
+    })
+    .join("\n")
+    .trim();
+
+  return text || null;
+}
+
+function parseAtlassianMcpToolCall(
+  text: string
+): { name: string; arguments: Record<string, unknown> } | null {
+  const match = text.match(
+    /\bcall\s+atlassian\s+mcp\s+tool\s+([A-Za-z0-9_.:-]+)(?:\s+with\s+(.+))?$/i
+  );
+  if (!match) {
+    return null;
+  }
+
+  const name = match[1].trim();
+  const rawArguments = match[2]?.trim();
+  if (!rawArguments) {
+    return { name, arguments: {} };
+  }
+
+  try {
+    const parsed = JSON.parse(rawArguments);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? { name, arguments: parsed as Record<string, unknown> }
+      : null;
+  } catch {
+    return null;
+  }
 }
 
 function buildIssueSearchQuery(text: string): string {

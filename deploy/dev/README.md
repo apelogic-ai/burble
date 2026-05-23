@@ -223,6 +223,17 @@ list Atlassian MCP tools
 That should route through `agentgateway`, Burble's MCP facade, and the upstream
 Atlassian MCP endpoint using the connected Jira identity.
 
+After the tool list returns, you can hand-test a read-only upstream tool call
+with the exact tool name and JSON arguments:
+
+```text
+call Atlassian MCP tool searchJiraIssuesUsingJql with {"jql":"assignee = currentUser() AND statusCategory != Done ORDER BY updated DESC"}
+```
+
+Only read-style upstream tool names are allowed at this stage. Mutating tool
+names such as create, update, delete, transition, assign, and comment are
+blocked by Burble before reaching Atlassian.
+
 `/internal/*` is blocked by Caddy on the public HTTPS hostname. The
 OpenClaw/NemoClaw service calls `http://burble-app:3000/internal/tools` over
 the Docker network with `BURBLE_INTERNAL_TOKEN`.

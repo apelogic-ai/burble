@@ -16,8 +16,10 @@ import {
   searchJiraIssues
 } from "../jira";
 import {
+  callUpstreamMcpTool,
   listUpstreamMcpTools,
-  type UpstreamMcpTool
+  type UpstreamMcpTool,
+  type UpstreamMcpToolResult
 } from "./upstream-http-client";
 import { createGitHubTools, type GitHubToolDeps } from "../tools/github";
 import {
@@ -35,6 +37,12 @@ type ProviderMcpDeps = Partial<GitHubToolDeps> &
       url: string;
       accessToken: string;
     }) => Promise<UpstreamMcpTool[]>;
+    callAtlassianMcpTool?: (input: {
+      url: string;
+      accessToken: string;
+      name: string;
+      arguments?: Record<string, unknown>;
+    }) => Promise<UpstreamMcpToolResult>;
   };
 
 const defaultDeps = {
@@ -254,6 +262,69 @@ function createProviderMcpServer(
       )
   );
 
+  server.registerTool(
+    "atlassian_call_mcp_tool",
+    {
+      title: "Atlassian MCP read-only tool call",
+      description:
+        "Call an allowlisted read-only upstream Atlassian MCP tool with this Slack user's connected Jira identity.",
+      inputSchema: {
+        name: z.string().min(1).describe("Upstream Atlassian MCP tool name"),
+        arguments: z
+          .record(z.string(), z.unknown())
+          .optional()
+          .describe("JSON arguments for the upstream MCP tool")
+      }
+    },
+    async ({ name, arguments: args }) =>
+      mcpToolResult(
+        await withConnection<
+          | { toolName: string; result: UpstreamMcpToolResult }
+          | { error: string; message: string }
+        >(store, runtime, "jira", async (connection) => {
+          if (!isReadOnlyAtlassianMcpToolName(name)) {
+            return {
+              classification: "user_private",
+              content: {
+                error: "atlassian_mcp_tool_not_allowed",
+                message: `Atlassian MCP tool \`${name}\` is not enabled for read-only use.`
+              }
+            };
+          }
+
+          const result = await withFreshJiraToken(
+            {
+              ...defaultDeps,
+              refreshJiraAccessToken: (refreshToken) =>
+                refreshJiraAccessToken(config, refreshToken),
+              saveJiraConnection: (updatedConnection) =>
+                store.upsertProviderConnection(updatedConnection),
+              ...deps
+            },
+            connection,
+            (accessToken) =>
+              (deps.callAtlassianMcpTool ?? defaultCallAtlassianMcpTool)({
+                url: config.atlassianMcpUrl,
+                accessToken,
+                name,
+                arguments: args
+              })
+          );
+          if (isJiraAuthErrorResult(result)) {
+            return result;
+          }
+
+          return {
+            classification: "user_private",
+            content: {
+              toolName: name,
+              result: sanitizeUpstreamMcpToolResult(result)
+            }
+          };
+        })
+      )
+  );
+
   return server;
 }
 
@@ -267,6 +338,70 @@ function defaultListAtlassianMcpTools(input: {
     clientName: "burble-atlassian-mcp-facade",
     clientVersion: "0.1.0"
   });
+}
+
+function defaultCallAtlassianMcpTool(input: {
+  url: string;
+  accessToken: string;
+  name: string;
+  arguments?: Record<string, unknown>;
+}): Promise<UpstreamMcpToolResult> {
+  return callUpstreamMcpTool(
+    {
+      url: input.url,
+      authorization: `Bearer ${input.accessToken}`,
+      clientName: "burble-atlassian-mcp-facade",
+      clientVersion: "0.1.0"
+    },
+    {
+      name: input.name,
+      arguments: input.arguments
+    }
+  );
+}
+
+export function isReadOnlyAtlassianMcpToolName(name: string): boolean {
+  const normalized = name.trim().toLowerCase();
+  if (!normalized) {
+    return false;
+  }
+
+  if (
+    /(create|update|delete|remove|transition|assign|comment|attach|add|set|edit|move|link)/.test(
+      normalized
+    )
+  ) {
+    return false;
+  }
+
+  return /^(get|list|search|find|read|lookup|fetch|describe)/.test(normalized);
+}
+
+function sanitizeUpstreamMcpToolResult(
+  result: UpstreamMcpToolResult
+): UpstreamMcpToolResult {
+  return {
+    ...(Array.isArray(result.content)
+      ? { content: result.content.slice(0, 20).map(sanitizeMcpContentItem) }
+      : {}),
+    ...(typeof result.isError === "boolean" ? { isError: result.isError } : {})
+  };
+}
+
+function sanitizeMcpContentItem(item: unknown): unknown {
+  if (!item || typeof item !== "object") {
+    return item;
+  }
+
+  const record = item as Record<string, unknown>;
+  if (record.type === "text" && typeof record.text === "string") {
+    return {
+      type: "text",
+      text: record.text.slice(0, 12_000)
+    };
+  }
+
+  return record;
 }
 
 function authorizeProviderMcpRequest(

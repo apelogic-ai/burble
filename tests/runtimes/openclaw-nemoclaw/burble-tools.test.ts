@@ -197,6 +197,13 @@ describe("createBurbleToolExecutor", () => {
       await executor("atlassian.listMcpTools", {
         user: { email: "person@example.com" }
       });
+      await executor("atlassian.callMcpTool", {
+        user: { email: "person@example.com" },
+        input: {
+          name: "searchJiraIssuesUsingJql",
+          arguments: { jql: "assignee = currentUser()" }
+        }
+      });
 
       expect(payloads).toMatchObject([
         {
@@ -224,6 +231,16 @@ describe("createBurbleToolExecutor", () => {
           params: {
             name: "atlassian_list_mcp_tools",
             arguments: {}
+          }
+        },
+        {
+          method: "tools/call",
+          params: {
+            name: "atlassian_call_mcp_tool",
+            arguments: {
+              name: "searchJiraIssuesUsingJql",
+              arguments: { jql: "assignee = currentUser()" }
+            }
           }
         }
       ]);
