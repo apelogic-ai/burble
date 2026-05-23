@@ -23,6 +23,9 @@ export type Config = {
   agentRuntimeReaperIntervalMs: number;
   agentRuntimeTokenSecret: string | null;
   agentRuntimeToolGatewayUrl: string;
+  agentRuntimeMcpGatewayUrl: string | null;
+  agentRuntimeMcpAudience: string | null;
+  runtimeJwtIssuer: string;
   openClawConfigPatchHostPath: string | null;
   internalApiToken: string | null;
 };
@@ -185,6 +188,15 @@ export function readConfig(env: Env): Config {
     agentRuntimeToolGatewayUrl:
       env.AGENT_RUNTIME_TOOL_GATEWAY_URL ??
       "http://burble-app:3000/internal/tools",
+    agentRuntimeMcpGatewayUrl: optionalUrlEnv(
+      env,
+      "AGENT_RUNTIME_MCP_GATEWAY_URL"
+    ),
+    agentRuntimeMcpAudience:
+      optionalUrlEnv(env, "AGENT_RUNTIME_MCP_AUDIENCE") ??
+      optionalUrlEnv(env, "AGENT_RUNTIME_MCP_GATEWAY_URL"),
+    runtimeJwtIssuer:
+      optionalUrlEnv(env, "RUNTIME_JWT_ISSUER") ?? baseUrl,
     openClawConfigPatchHostPath: optionalSecretEnv(
       env,
       "OPENCLAW_CONFIG_PATCH_HOST_PATH"

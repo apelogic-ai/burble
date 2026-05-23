@@ -3,6 +3,8 @@ import type { TokenStore } from "./db";
 import { exchangeGitHubCode, getGitHubUser } from "./github";
 import { exchangeJiraCode, getJiraUser } from "./jira";
 import { formatLogError } from "./logging";
+import { handleProviderMcpRequest } from "./mcp/provider-server";
+import type { RuntimeJwtIssuer } from "./runtime-jwt";
 import type { SlackRuntime } from "./slack";
 import { handleToolGatewayRequest } from "./tool-gateway";
 
@@ -29,7 +31,8 @@ const defaultJiraOAuthDeps: JiraOAuthDeps = {
 export function startOAuthServer(
   config: Config,
   store: TokenStore,
-  slack: SlackRuntime
+  slack: SlackRuntime,
+  runtimeJwtIssuer: RuntimeJwtIssuer
 ): ReturnType<typeof Bun.serve> {
   return Bun.serve({
     port: config.port,
@@ -38,6 +41,19 @@ export function startOAuthServer(
 
       if (url.pathname === "/healthz") {
         return new Response("ok");
+      }
+
+      if (url.pathname === "/oauth/jwks") {
+        return jsonResponse(runtimeJwtIssuer.jwks());
+      }
+
+      if (url.pathname === "/mcp") {
+        return handleProviderMcpRequest(
+          config,
+          store,
+          runtimeJwtIssuer,
+          request
+        );
       }
 
       const toolGatewayMatch = url.pathname.match(
@@ -61,6 +77,14 @@ export function startOAuthServer(
       }
 
       return new Response("Not found", { status: 404 });
+    }
+  });
+}
+
+function jsonResponse(value: unknown): Response {
+  return new Response(JSON.stringify(value), {
+    headers: {
+      "Content-Type": "application/json; charset=utf-8"
     }
   });
 }

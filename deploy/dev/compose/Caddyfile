@@ -8,6 +8,9 @@
   @internal path /internal/*
   respond @internal 404
 
+  @mcp path /mcp*
+  respond @mcp 404
+
   reverse_proxy burble-app:3000
 
   log {

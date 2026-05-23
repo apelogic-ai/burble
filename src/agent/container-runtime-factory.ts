@@ -1,5 +1,6 @@
 import { createHmac } from "node:crypto";
 import type { AgentRuntimeEngine, TokenStore } from "../db";
+import type { RuntimeJwtIssuer } from "../runtime-jwt";
 import {
   buildRuntimeDataId,
   hashRuntimeToken,
@@ -44,6 +45,9 @@ export function createDockerRuntimeFactory(input: {
   dataRoot: string;
   dockerNetwork: string;
   toolGatewayUrl: string;
+  mcpGatewayUrl?: string | null;
+  mcpAudience?: string | null;
+  runtimeJwtIssuer?: RuntimeJwtIssuer | null;
   runtimeTokenSecret: string;
   openClawConfigPatchPath?: string | null;
   env?: Record<string, string | undefined>;
@@ -85,6 +89,26 @@ export function createDockerRuntimeFactory(input: {
         principal,
         engine: input.engine
       });
+      const endpointUrl = `http://${buildContainerName(runtimeDataId)}:8080`;
+      const runtime = input.store.getOrCreateAgentRuntime({
+        workspaceId: principal.workspaceId,
+        slackUserId: principal.slackUserId,
+        engine: input.engine,
+        endpointUrl,
+        authTokenHash: hashRuntimeToken(token),
+        statePath: `${input.dataRoot}/${runtimeDataId}/state`,
+        configPath: `${input.dataRoot}/${runtimeDataId}/config/openclaw.json`,
+        workspacePath: `${input.dataRoot}/${runtimeDataId}/workspace`
+      });
+      const runtimeJwt =
+        input.runtimeJwtIssuer && input.mcpGatewayUrl
+          ? input.runtimeJwtIssuer.issueRuntimeJwt({
+              audience: input.mcpAudience ?? input.mcpGatewayUrl,
+              runtimeId: runtime.id,
+              workspaceId: principal.workspaceId,
+              slackUserId: principal.slackUserId
+            })
+          : null;
       const spec = buildContainerRuntimeSpec({
         principal,
         engine: input.engine,
@@ -92,20 +116,13 @@ export function createDockerRuntimeFactory(input: {
         dataRoot: input.dataRoot,
         dockerNetwork: input.dockerNetwork,
         toolGatewayUrl: input.toolGatewayUrl,
+        mcpGatewayUrl: input.mcpGatewayUrl ?? null,
         runtimeToken: token,
+        runtimeId: runtime.id,
+        runtimeJwt,
         runtimeDataId,
         openClawConfigPatchPath: input.openClawConfigPatchPath ?? null,
         env: input.env ?? {}
-      });
-      const runtime = input.store.getOrCreateAgentRuntime({
-        workspaceId: principal.workspaceId,
-        slackUserId: principal.slackUserId,
-        engine: input.engine,
-        endpointUrl: spec.endpointUrl,
-        authTokenHash: hashRuntimeToken(token),
-        statePath: `${input.dataRoot}/${runtimeDataId}/state`,
-        configPath: `${input.dataRoot}/${runtimeDataId}/config/openclaw.json`,
-        workspacePath: `${input.dataRoot}/${runtimeDataId}/workspace`
       });
       input.store.recordAgentRuntimeEvent({
         runtimeId: runtime.id,
@@ -189,7 +206,10 @@ export function buildContainerRuntimeSpec(input: {
   dataRoot: string;
   dockerNetwork: string;
   toolGatewayUrl: string;
+  mcpGatewayUrl?: string | null;
   runtimeToken: string;
+  runtimeId?: string;
+  runtimeJwt?: string | null;
   runtimeDataId: string;
   openClawConfigPatchPath?: string | null;
   env?: Record<string, string | undefined>;
@@ -204,6 +224,15 @@ export function buildContainerRuntimeSpec(input: {
     OPENCLAW_CONFIG_PATH: "/data/openclaw/config/openclaw.json",
     OPENCLAW_WORKSPACE_DIR: "/data/openclaw/workspace"
   };
+
+  if (input.runtimeId) {
+    env.BURBLE_RUNTIME_ID = input.runtimeId;
+  }
+
+  if (input.mcpGatewayUrl && input.runtimeJwt) {
+    env.BURBLE_MCP_GATEWAY_URL = input.mcpGatewayUrl;
+    env.BURBLE_RUNTIME_JWT = input.runtimeJwt;
+  }
 
   for (const key of approvedForwardedEnv) {
     const value = input.env?.[key]?.trim();

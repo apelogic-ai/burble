@@ -1,0 +1,33 @@
+# Optional MCP gateway override.
+#
+# This runs agentgateway as the MCP ingress for isolated runtimes. Burble remains
+# the provider-tool authority for now; agentgateway validates Burble runtime JWTs
+# and proxies MCP traffic to the internal Burble MCP endpoint.
+#
+# Usage:
+#   docker compose \
+#     -f docker-compose.yml \
+#     -f docker-compose.personal-runtimes.yml \
+#     -f docker-compose.agentgateway.yml \
+#     up -d --build
+
+services:
+  burble-app:
+    environment:
+      - AGENT_RUNTIME_MCP_GATEWAY_URL=http://agentgateway:3000/mcp
+      - AGENT_RUNTIME_MCP_AUDIENCE=http://agentgateway:3000/mcp
+      - RUNTIME_JWT_ISSUER=http://burble-app:3000
+
+  agentgateway:
+    image: ghcr.io/agentgateway/agentgateway:v1.1.0
+    restart: unless-stopped
+    expose:
+      - "3000"
+    volumes:
+      - ./agentgateway/config.yaml:/etc/agentgateway/config.yaml:ro
+    command:
+      - --file
+      - /etc/agentgateway/config.yaml
+    depends_on:
+      burble-app:
+        condition: service_healthy

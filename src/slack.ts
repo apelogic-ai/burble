@@ -33,6 +33,7 @@ import {
   formatWorkingMessage
 } from "./formatting";
 import { formatLogError, withUtcTimestamp } from "./logging";
+import type { RuntimeJwtIssuer } from "./runtime-jwt";
 
 export {
   formatConnectGitHubMessage,
@@ -65,7 +66,11 @@ type SlackProgressMessage = {
   text: string;
 };
 
-export function createSlackRuntime(config: Config, store: TokenStore): SlackRuntime {
+export function createSlackRuntime(
+  config: Config,
+  store: TokenStore,
+  runtimeJwtIssuer?: RuntimeJwtIssuer
+): SlackRuntime {
   const app = new App({
     token: config.slackBotToken,
     appToken: config.slackAppToken,
@@ -125,7 +130,11 @@ export function createSlackRuntime(config: Config, store: TokenStore): SlackRunt
     listAssignedJiraIssues,
     searchJiraIssues
   });
-  const runtimeFactory = createOpenClawRuntimeFactory(config, store);
+  const runtimeFactory = createOpenClawRuntimeFactory(
+    config,
+    store,
+    runtimeJwtIssuer
+  );
   const agentRunner =
     config.agentMode === "llm"
       ? createConfiguredAgentRunner({
@@ -479,7 +488,8 @@ export function createSlackRuntime(config: Config, store: TokenStore): SlackRunt
 
 function createOpenClawRuntimeFactory(
   config: Config,
-  store: TokenStore
+  store: TokenStore,
+  runtimeJwtIssuer?: RuntimeJwtIssuer
 ): RuntimeFactory | undefined {
   if (config.agentRuntime !== "openclaw-nemoclaw") {
     return undefined;
@@ -499,6 +509,9 @@ function createOpenClawRuntimeFactory(
       dataRoot: config.agentRuntimeDataRoot,
       dockerNetwork: config.agentRuntimeDockerNetwork,
       toolGatewayUrl: config.agentRuntimeToolGatewayUrl,
+      mcpGatewayUrl: config.agentRuntimeMcpGatewayUrl,
+      mcpAudience: config.agentRuntimeMcpAudience,
+      runtimeJwtIssuer,
       runtimeTokenSecret: config.agentRuntimeTokenSecret,
       openClawConfigPatchPath: config.openClawConfigPatchHostPath,
       idleTtlMs: config.agentRuntimeIdleTtlMs,

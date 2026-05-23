@@ -36,6 +36,9 @@ describe("readConfig", () => {
       agentRuntimeReaperIntervalMs: 60000,
       agentRuntimeTokenSecret: null,
       agentRuntimeToolGatewayUrl: "http://burble-app:3000/internal/tools",
+      agentRuntimeMcpGatewayUrl: null,
+      agentRuntimeMcpAudience: null,
+      runtimeJwtIssuer: "https://example.ngrok-free.app",
       openClawConfigPatchHostPath: null,
       internalApiToken: null
     });
@@ -87,6 +90,9 @@ describe("readConfig", () => {
       AGENT_RUNTIME_REAPER_INTERVAL_MS: "5000",
       AGENT_RUNTIME_TOKEN_SECRET: "runtime-secret",
       AGENT_RUNTIME_TOOL_GATEWAY_URL: "http://burble-app:3000/internal/tools",
+      AGENT_RUNTIME_MCP_GATEWAY_URL: "http://agentgateway:3000/mcp/",
+      AGENT_RUNTIME_MCP_AUDIENCE: "http://agentgateway:3000/mcp/",
+      RUNTIME_JWT_ISSUER: "http://burble-app:3000/",
       OPENCLAW_CONFIG_PATCH_HOST_PATH: "/srv/burble/openclaw-patches"
     });
 
@@ -98,6 +104,9 @@ describe("readConfig", () => {
     expect(config.agentRuntimeIdleTtlMs).toBe(120000);
     expect(config.agentRuntimeReaperIntervalMs).toBe(5000);
     expect(config.agentRuntimeTokenSecret).toBe("runtime-secret");
+    expect(config.agentRuntimeMcpGatewayUrl).toBe("http://agentgateway:3000/mcp");
+    expect(config.agentRuntimeMcpAudience).toBe("http://agentgateway:3000/mcp");
+    expect(config.runtimeJwtIssuer).toBe("http://burble-app:3000");
     expect(config.openClawConfigPatchHostPath).toBe(
       "/srv/burble/openclaw-patches"
     );

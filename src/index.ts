@@ -4,11 +4,15 @@ import { startRuntimeReaper } from "./agent/runtime-reaper";
 import { startOAuthServer } from "./server";
 import { createSlackRuntime } from "./slack";
 import { formatLogError, withUtcTimestamp } from "./logging";
+import { createRuntimeJwtIssuer } from "./runtime-jwt";
 
 const config = loadConfig();
 const store = createTokenStore(config.databasePath);
-const slack = createSlackRuntime(config, store);
-const server = startOAuthServer(config, store, slack);
+const runtimeJwtIssuer = createRuntimeJwtIssuer({
+  issuer: config.runtimeJwtIssuer
+});
+const slack = createSlackRuntime(config, store, runtimeJwtIssuer);
+const server = startOAuthServer(config, store, slack, runtimeJwtIssuer);
 const runtimeReaper = slack.runtimeFactory
   ? startRuntimeReaper({
       factory: slack.runtimeFactory,

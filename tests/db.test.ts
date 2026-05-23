@@ -41,6 +41,13 @@ describe("createTokenStore", () => {
       providerLogin: "octocat",
       accessToken: "gh-token"
     });
+    expect(store.getConnectionForSlackUser("github", "U123")).toMatchObject({
+      provider: "github",
+      email: "person@example.com",
+      slackUserId: "U123",
+      providerLogin: "octocat",
+      accessToken: "gh-token"
+    });
 
     store.close();
   });
@@ -57,6 +64,13 @@ describe("createTokenStore", () => {
     });
 
     expect(store.getConnection("jira", "person@example.com")).toMatchObject({
+      provider: "jira",
+      email: "person@example.com",
+      slackUserId: "U123",
+      providerLogin: "person@atlassian.example",
+      accessToken: "jira-token"
+    });
+    expect(store.getConnectionForSlackUser("jira", "U123")).toMatchObject({
       provider: "jira",
       email: "person@example.com",
       slackUserId: "U123",

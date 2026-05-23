@@ -1,0 +1,37 @@
+binds:
+  - port: 3000
+    listeners:
+      - routes:
+          - matches:
+              - path:
+                  exact: /mcp
+              - path:
+                  exact: /.well-known/oauth-protected-resource/mcp
+            policies:
+              cors:
+                allowOrigins: ["*"]
+                allowHeaders:
+                  - mcp-protocol-version
+                  - content-type
+                  - authorization
+                exposeHeaders:
+                  - Mcp-Session-Id
+              mcpAuthentication:
+                mode: strict
+                issuer: http://burble-app:3000
+                audiences:
+                  - http://agentgateway:3000/mcp
+                jwks:
+                  url: http://burble-app:3000/oauth/jwks
+                resourceMetadata:
+                  resource: http://agentgateway:3000/mcp
+                  scopesSupported:
+                    - read:all
+                  bearerMethodsSupported:
+                    - header
+            backends:
+              - mcp:
+                  targets:
+                    - name: burble
+                      mcp:
+                        host: http://burble-app:3000/mcp

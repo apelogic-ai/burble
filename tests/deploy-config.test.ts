@@ -10,6 +10,12 @@ const openClawCliCompose = await Bun.file(
 const personalRuntimesCompose = await Bun.file(
   "deploy/dev/compose/docker-compose.personal-runtimes.yml"
 ).text();
+const agentGatewayCompose = await Bun.file(
+  "deploy/dev/compose/docker-compose.agentgateway.yml"
+).text();
+const agentGatewayConfig = await Bun.file(
+  "deploy/dev/compose/agentgateway/config.yaml"
+).text();
 const personalRuntimeDeployScript = await Bun.file(
   "deploy/dev/compose/deploy-personal-runtimes.sh"
 ).text();
@@ -47,6 +53,9 @@ describe("dev deploy config", () => {
       "AGENT_RUNTIME_REAPER_INTERVAL_MS",
       "AGENT_RUNTIME_TOKEN_SECRET",
       "AGENT_RUNTIME_TOOL_GATEWAY_URL",
+      "AGENT_RUNTIME_MCP_GATEWAY_URL",
+      "AGENT_RUNTIME_MCP_AUDIENCE",
+      "RUNTIME_JWT_ISSUER",
       "AI_MODEL",
       "OPENCLAW_NEMOCLAW_URL",
       "OPENCLAW_CONFIG_PATCH_HOST_PATH",
@@ -79,6 +88,8 @@ describe("dev deploy config", () => {
   test("does not expose internal tool endpoints through Caddy", () => {
     expect(caddyfile).toContain("@internal path /internal/*");
     expect(caddyfile).toContain("respond @internal 404");
+    expect(caddyfile).toContain("@mcp path /mcp*");
+    expect(caddyfile).toContain("respond @mcp 404");
   });
 
   test("provides an optional OpenClaw/NemoClaw compose override", () => {
@@ -157,6 +168,9 @@ describe("dev deploy config", () => {
       "AGENT_RUNTIME_REAPER_INTERVAL_MS",
       "AGENT_RUNTIME_TOKEN_SECRET",
       "AGENT_RUNTIME_TOOL_GATEWAY_URL",
+      "AGENT_RUNTIME_MCP_GATEWAY_URL",
+      "AGENT_RUNTIME_MCP_AUDIENCE",
+      "RUNTIME_JWT_ISSUER",
       "OPENCLAW_CONFIG_PATCH_HOST_PATH"
     ]) {
       expect(ansibleEnvTemplate).toContain(name);
@@ -180,10 +194,40 @@ describe("dev deploy config", () => {
     );
     expect(personalRuntimesCompose).toContain("AGENT_RUNTIME_IDLE_TTL_MS");
     expect(personalRuntimesCompose).toContain("AGENT_RUNTIME_REAPER_INTERVAL_MS");
+    expect(personalRuntimesCompose).toContain("AGENT_RUNTIME_MCP_GATEWAY_URL");
+    expect(personalRuntimesCompose).toContain("AGENT_RUNTIME_MCP_AUDIENCE");
+    expect(personalRuntimesCompose).toContain("RUNTIME_JWT_ISSUER");
     expect(personalRuntimesCompose).toContain(
       "OPENCLAW_TIMEOUT_MS=${OPENCLAW_TIMEOUT_MS:-180000}"
     );
     expect(personalRuntimesCompose).toContain("OPENCLAW_STREAM_DEBUG");
+  });
+
+  test("provides an optional agentgateway MCP override", () => {
+    expect(agentGatewayCompose).toContain("agentgateway:");
+    expect(agentGatewayCompose).toContain(
+      "ghcr.io/agentgateway/agentgateway:v1.1.0"
+    );
+    expect(agentGatewayCompose).toContain("--file");
+    expect(agentGatewayCompose).toContain(
+      "AGENT_RUNTIME_MCP_GATEWAY_URL=http://agentgateway:3000/mcp"
+    );
+    expect(agentGatewayCompose).toContain(
+      "AGENT_RUNTIME_MCP_AUDIENCE=http://agentgateway:3000/mcp"
+    );
+    expect(agentGatewayCompose).toContain(
+      "RUNTIME_JWT_ISSUER=http://burble-app:3000"
+    );
+    expect(agentGatewayConfig).toContain("issuer: http://burble-app:3000");
+    expect(agentGatewayConfig).toContain(
+      "url: http://burble-app:3000/oauth/jwks"
+    );
+    expect(agentGatewayConfig).toContain(
+      "host: http://burble-app:3000/mcp"
+    );
+    expect(agentGatewayConfig).toContain(
+      "resource: http://agentgateway:3000/mcp"
+    );
   });
 
   test("provides a personal runtime deployment helper", () => {

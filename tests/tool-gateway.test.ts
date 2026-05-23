@@ -29,6 +29,9 @@ const config: Config = {
   agentRuntimeReaperIntervalMs: 60000,
   agentRuntimeTokenSecret: null,
   agentRuntimeToolGatewayUrl: "http://burble-app:3000/internal/tools",
+  agentRuntimeMcpGatewayUrl: null,
+  agentRuntimeMcpAudience: null,
+  runtimeJwtIssuer: "https://example.ngrok-free.app",
   openClawConfigPatchHostPath: null,
   internalApiToken: "internal-secret",
   aiModel: "openai:gpt-5.4"
@@ -84,6 +87,11 @@ function createStore(
     getConnectedUserByEmail: () => null,
     getConnection: (provider, email) =>
       provider === foundConnection?.provider && email === "person@example.com"
+        ? foundConnection
+        : null,
+    getConnectionForSlackUser: (provider, slackUserId) =>
+      provider === foundConnection?.provider &&
+      slackUserId === foundConnection.slackUserId
         ? foundConnection
         : null,
     getOrCreateAgentRuntime: () => {

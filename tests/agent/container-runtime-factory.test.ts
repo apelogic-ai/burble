@@ -22,7 +22,10 @@ describe("buildContainerRuntimeSpec", () => {
       dataRoot: "/data/runtimes",
       dockerNetwork: "compose_default",
       toolGatewayUrl: "http://burble-app:3000/internal/tools",
+      mcpGatewayUrl: "http://agentgateway:3000/mcp",
       runtimeToken: "runtime-token",
+      runtimeId: "rt_u123",
+      runtimeJwt: "runtime-jwt",
       runtimeDataId,
       openClawConfigPatchPath: "/opt/burble/openclaw-patches",
       env: {
@@ -40,6 +43,9 @@ describe("buildContainerRuntimeSpec", () => {
     expect(spec.env).toMatchObject({
       BURBLE_TOOL_GATEWAY_URL: "http://burble-app:3000/internal/tools",
       BURBLE_INTERNAL_TOKEN: "runtime-token",
+      BURBLE_RUNTIME_ID: "rt_u123",
+      BURBLE_MCP_GATEWAY_URL: "http://agentgateway:3000/mcp",
+      BURBLE_RUNTIME_JWT: "runtime-jwt",
       OPENCLAW_NEMOCLAW_ENGINE: "openclaw",
       OPENAI_API_KEY: "openai-key",
       ANTHROPIC_API_KEY: "anthropic-key",
@@ -91,6 +97,17 @@ describe("createDockerRuntimeFactory", () => {
       dataRoot: "/data/runtimes",
       dockerNetwork: "compose_default",
       toolGatewayUrl: "http://burble-app:3000/internal/tools",
+      mcpGatewayUrl: "http://agentgateway:3000/mcp",
+      mcpAudience: "http://agentgateway:3000/mcp",
+      runtimeJwtIssuer: {
+        issueRuntimeJwt: (claims: {
+          audience: string;
+          runtimeId: string;
+          workspaceId: string;
+          slackUserId: string;
+        }) =>
+          `jwt:${claims.audience}:${claims.runtimeId}:${claims.workspaceId}:${claims.slackUserId}`
+      } as never,
       runtimeTokenSecret: "runtime-secret",
       openClawConfigPatchPath: "/opt/burble/openclaw-patches",
       env: { OPENAI_API_KEY: "openai-key", GITHUB_TOKEN: "github-secret" },
@@ -124,6 +141,8 @@ describe("createDockerRuntimeFactory", () => {
       "run"
     ]);
     expect(commands[1].args).toContain("OPENAI_API_KEY=openai-key");
+    expect(commands[1].args).toContain("BURBLE_MCP_GATEWAY_URL=http://agentgateway:3000/mcp");
+    expect(commands[1].args.join(" ")).toContain(`BURBLE_RUNTIME_JWT=jwt:http://agentgateway:3000/mcp:${handle.id}:T123:U123`);
     expect(commands[1].args.join(" ")).not.toContain("github-secret");
     expect(events.map((event) => event.eventType)).toEqual([
       "runtime_provision_requested",

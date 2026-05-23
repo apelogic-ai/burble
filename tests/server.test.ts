@@ -26,6 +26,9 @@ const config: Config = {
   agentRuntimeReaperIntervalMs: 60000,
   agentRuntimeTokenSecret: null,
   agentRuntimeToolGatewayUrl: "http://burble-app:3000/internal/tools",
+  agentRuntimeMcpGatewayUrl: null,
+  agentRuntimeMcpAudience: null,
+  runtimeJwtIssuer: "https://example.ngrok-free.app",
   openClawConfigPatchHostPath: null,
   internalApiToken: null,
   aiModel: "openai:gpt-5.4"
@@ -52,6 +55,7 @@ function createFakeStore() {
     },
     getConnectedUserByEmail: () => null,
     getConnection: () => null,
+    getConnectionForSlackUser: () => null,
     getOrCreateAgentRuntime: () => {
       throw new Error("unexpected agent runtime call");
     },

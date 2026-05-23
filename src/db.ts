@@ -210,6 +210,34 @@ export function createTokenStore(path: string) {
     FROM provider_connections
     WHERE provider = ? AND email = ?
   `);
+  const getProviderConnectionBySlackUser = db.query<
+    ProviderConnection,
+    [Provider, string]
+  >(`
+    SELECT
+      provider,
+      email,
+      slack_user_id AS slackUserId,
+      provider_login AS providerLogin,
+      access_token AS accessToken,
+      connected_at AS connectedAt
+    FROM provider_connections
+    WHERE provider = ? AND slack_user_id = ?
+    ORDER BY connected_at DESC
+    LIMIT 1
+  `);
+  const getUserBySlackUser = db.query<ConnectedUser, [string]>(`
+    SELECT
+      email,
+      slack_user_id AS slackUserId,
+      github_login AS githubLogin,
+      github_token AS githubToken,
+      connected_at AS connectedAt
+    FROM users
+    WHERE slack_user_id = ?
+    ORDER BY connected_at DESC
+    LIMIT 1
+  `);
   const getAgentRuntimeById = db.query<AgentRuntimeRecord, [string]>(`
     SELECT
       id,
@@ -402,6 +430,37 @@ export function createTokenStore(path: string) {
       }
 
       const user = getUserByEmail.get(email);
+      if (!user) {
+        return null;
+      }
+
+      return {
+        provider,
+        email: user.email,
+        slackUserId: user.slackUserId,
+        providerLogin: user.githubLogin,
+        accessToken: user.githubToken,
+        connectedAt: user.connectedAt
+      };
+    },
+
+    getConnectionForSlackUser(
+      provider: Provider,
+      slackUserId: string
+    ): ProviderConnection | null {
+      const connection = getProviderConnectionBySlackUser.get(
+        provider,
+        slackUserId
+      );
+      if (connection) {
+        return connection;
+      }
+
+      if (provider !== "github") {
+        return null;
+      }
+
+      const user = getUserBySlackUser.get(slackUserId);
       if (!user) {
         return null;
       }
