@@ -25,6 +25,14 @@ const conversation = {
   isDirectMessage: true
 };
 
+function sseEvent(event: unknown): string {
+  const type =
+    typeof event === "object" && event !== null && "type" in event
+      ? String(event.type)
+      : "message";
+  return `event: ${type}\ndata: ${JSON.stringify(event)}\n\n`;
+}
+
 describe("createOpenClawNemoClawAgentRunner", () => {
   test("posts a sanitized run request to the remote runtime", async () => {
     const requests: Array<{ url: string; init: RequestInit }> = [];
@@ -63,7 +71,7 @@ describe("createOpenClawNemoClawAgentRunner", () => {
     expect(requests[0].url).toBe("http://openclaw-runtime:8080/runs");
     expect(requests[0].init.method).toBe("POST");
     expect(requests[0].init.headers).toEqual({
-      accept: "application/x-ndjson, application/json",
+      accept: "text/event-stream, application/x-ndjson, application/json",
       "content-type": "application/json"
     });
 
@@ -132,7 +140,7 @@ describe("createOpenClawNemoClawAgentRunner", () => {
     expect(principals).toEqual([principal]);
     expect(requests[0].url).toBe("http://runtime-u123:8080/runs");
     expect(requests[0].init.headers).toEqual({
-      accept: "application/x-ndjson, application/json",
+      accept: "text/event-stream, application/x-ndjson, application/json",
       "content-type": "application/json",
       "x-burble-runtime-id": "rt_u123"
     });
@@ -172,19 +180,19 @@ describe("createOpenClawNemoClawAgentRunner", () => {
       fetch: async () =>
         new Response(
           [
-            JSON.stringify({ type: "status", text: "Loading context..." }),
-            JSON.stringify({ type: "message_delta", text: "Partial answer" }),
-            JSON.stringify({
+            sseEvent({ type: "status", text: "Loading context..." }),
+            sseEvent({ type: "message_delta", text: "Partial answer" }),
+            sseEvent({
               type: "final",
               response: {
                 classification: "user_private",
                 text: "Final answer"
               }
             })
-          ].join("\n"),
+          ].join(""),
           {
             status: 200,
-            headers: { "content-type": "application/x-ndjson; charset=utf-8" }
+            headers: { "content-type": "text/event-stream; charset=utf-8" }
           }
         )
     });
@@ -228,16 +236,15 @@ describe("createOpenClawNemoClawAgentRunner", () => {
                 controller.enqueue(
                   new TextEncoder().encode(
                     [
-                      JSON.stringify({
+                      sseEvent({
                         type: "status",
                         text: "Running OpenClaw/NemoClaw..."
                       }),
-                      JSON.stringify({
+                      sseEvent({
                         type: "message_delta",
                         text: "Tickets mentioning onboarding: DM-1 and ECS-313."
-                      }),
-                      ""
-                    ].join("\n")
+                      })
+                    ].join("")
                   )
                 );
                 return;
@@ -250,7 +257,7 @@ describe("createOpenClawNemoClawAgentRunner", () => {
           }),
           {
             status: 200,
-            headers: { "content-type": "application/x-ndjson; charset=utf-8" }
+            headers: { "content-type": "text/event-stream; charset=utf-8" }
           }
         );
       }
@@ -290,7 +297,7 @@ describe("createOpenClawNemoClawAgentRunner", () => {
           body: JSON.parse(String(init.body)) as { runId?: string }
         });
 
-        if (headers.accept.startsWith("application/x-ndjson")) {
+        if (headers.accept.startsWith("text/event-stream")) {
           let chunksSent = 0;
           return new Response(
             new ReadableStream({
@@ -299,10 +306,10 @@ describe("createOpenClawNemoClawAgentRunner", () => {
                   chunksSent += 1;
                   controller.enqueue(
                     new TextEncoder().encode(
-                      `${JSON.stringify({
+                      sseEvent({
                         type: "status",
                         text: "Running OpenClaw/NemoClaw..."
-                      })}\n`
+                      })
                     )
                   );
                   return;
@@ -315,7 +322,7 @@ describe("createOpenClawNemoClawAgentRunner", () => {
             }),
             {
               status: 200,
-              headers: { "content-type": "application/x-ndjson; charset=utf-8" }
+              headers: { "content-type": "text/event-stream; charset=utf-8" }
             }
           );
         }
@@ -351,7 +358,9 @@ describe("createOpenClawNemoClawAgentRunner", () => {
       text: "Final answer from JSON fallback."
     });
     expect(requests).toHaveLength(2);
-    expect(requests[0].accept).toBe("application/x-ndjson, application/json");
+    expect(requests[0].accept).toBe(
+      "text/event-stream, application/x-ndjson, application/json"
+    );
     expect(requests[1].accept).toBe("application/json");
     expect(requests[1].body).toMatchObject({
       runId: requests[0].body.runId

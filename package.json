@@ -15,6 +15,7 @@
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@slack/bolt": "^4.4.0",
     "ai": "^6.0.185",
+    "eventsource-parser": "^3.0.8",
     "zod": "^4.4.3"
   },
   "devDependencies": {

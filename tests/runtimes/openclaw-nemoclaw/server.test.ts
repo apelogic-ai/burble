@@ -66,12 +66,12 @@ describe("handleRuntimeRequest", () => {
     });
   });
 
-  test("streams run events as ndjson when requested", async () => {
+  test("streams run events as SSE when requested", async () => {
     const response = await handleRuntimeRequest(
       new Request("http://runtime/runs", {
         method: "POST",
         headers: {
-          accept: "application/x-ndjson",
+          accept: "text/event-stream",
           "content-type": "application/json"
         },
         body: JSON.stringify({
@@ -95,22 +95,25 @@ describe("handleRuntimeRequest", () => {
     );
 
     expect(response.status).toBe(200);
-    expect(response.headers.get("content-type")).toContain("application/x-ndjson");
-    const events = (await response.text())
-      .trim()
-      .split("\n")
-      .map((line) => JSON.parse(line));
+    expect(response.headers.get("content-type")).toContain("text/event-stream");
+    const stream = await response.text();
 
-    expect(events).toEqual([
-      { type: "status", text: "Loading Burble context..." },
-      {
+    expect(stream).toContain(": stream-start\n\n");
+    expect(stream).toContain(
+      `event: status\ndata: ${JSON.stringify({
+        type: "status",
+        text: "Loading Burble context..."
+      })}\n\n`
+    );
+    expect(stream).toContain(
+      `event: final\ndata: ${JSON.stringify({
         type: "final",
         response: {
           classification: "user_private",
           text: "Authenticated to GitHub as `octocat`."
         }
-      }
-    ]);
+      })}\n\n`
+    );
   });
 
   test("shares in-flight runs by run id across streaming and json clients", async () => {

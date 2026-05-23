@@ -42,6 +42,13 @@ export async function handleRuntimeRequest(
       )
     : null;
 
+  if (acceptsEventStream(request)) {
+    return streamSseRunResponse(
+      sharedRun ? subscribeSharedRun(sharedRun) : runner.stream(body, executeTool),
+      body.runId
+    );
+  }
+
   if (acceptsNdjson(request)) {
     return streamRunResponse(
       sharedRun ? subscribeSharedRun(sharedRun) : runner.stream(body, executeTool),
@@ -159,10 +166,72 @@ async function* subscribeSharedRun(
   }
 }
 
+function acceptsEventStream(request: Request): boolean {
+  return (request.headers.get("accept") ?? "")
+    .split(",")
+    .some((value) => value.trim().toLowerCase().startsWith("text/event-stream"));
+}
+
 function acceptsNdjson(request: Request): boolean {
   return (request.headers.get("accept") ?? "")
     .split(",")
     .some((value) => value.trim().toLowerCase().startsWith("application/x-ndjson"));
+}
+
+function streamSseRunResponse(
+  events: AsyncIterable<RunEvent>,
+  runId?: string
+): Response {
+  const encoder = new TextEncoder();
+  let cancelled = false;
+
+  return new Response(
+    new ReadableStream({
+      async start(controller) {
+        enqueueSseComment(controller, encoder, "stream-start", () => cancelled);
+        try {
+          for await (const event of events) {
+            if (
+              !enqueueSseEvent(controller, encoder, event, () => cancelled)
+            ) {
+              return;
+            }
+          }
+        } catch (error) {
+          if (isClosedStreamError(error) || cancelled) {
+            return;
+          }
+
+          const message = formatRuntimeError(error);
+          console.error(
+            `[ERROR] ${new Date().toISOString()} Runtime run failed runId=${runId ?? "unknown"} error=${message}`
+          );
+          enqueueSseEvent(
+            controller,
+            encoder,
+            {
+              type: "error",
+              message: `Runtime run failed: ${message}`
+            },
+            () => cancelled
+          );
+        } finally {
+          closeStream(controller);
+        }
+      },
+      cancel() {
+        cancelled = true;
+      }
+    }),
+    {
+      headers: {
+        "cache-control": "no-store",
+        "connection": "keep-alive",
+        "content-type": "text/event-stream; charset=utf-8",
+        "x-accel-buffering": "no"
+      }
+    }
+  );
 }
 
 function streamRunResponse(
@@ -218,10 +287,47 @@ function streamRunResponse(
   );
 }
 
+function enqueueSseEvent(
+  controller: ReadableStreamDefaultController<Uint8Array>,
+  encoder: TextEncoder,
+  event: RunEvent,
+  isCancelled: () => boolean
+): boolean {
+  return enqueueText(
+    controller,
+    encoder,
+    `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`,
+    isCancelled
+  );
+}
+
+function enqueueSseComment(
+  controller: ReadableStreamDefaultController<Uint8Array>,
+  encoder: TextEncoder,
+  comment: string,
+  isCancelled: () => boolean
+): boolean {
+  return enqueueText(controller, encoder, `: ${comment}\n\n`, isCancelled);
+}
+
 function enqueueNdjson(
   controller: ReadableStreamDefaultController<Uint8Array>,
   encoder: TextEncoder,
   event: unknown,
+  isCancelled: () => boolean
+): boolean {
+  return enqueueText(
+    controller,
+    encoder,
+    `${JSON.stringify(event)}\n`,
+    isCancelled
+  );
+}
+
+function enqueueText(
+  controller: ReadableStreamDefaultController<Uint8Array>,
+  encoder: TextEncoder,
+  text: string,
   isCancelled: () => boolean
 ): boolean {
   if (isCancelled()) {
@@ -229,7 +335,7 @@ function enqueueNdjson(
   }
 
   try {
-    controller.enqueue(encoder.encode(`${JSON.stringify(event)}\n`));
+    controller.enqueue(encoder.encode(text));
     return true;
   } catch (error) {
     if (isClosedStreamError(error)) {

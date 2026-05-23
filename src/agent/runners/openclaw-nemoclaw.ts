@@ -1,3 +1,4 @@
+import { createParser } from "eventsource-parser";
 import type { AgentInput, AgentOutput, AgentRunEvent, AgentRunner } from "../types";
 import type { ToolClassification } from "../../conversation/types";
 import type { RuntimeFactory, RuntimeHandle } from "../runtime-factory";
@@ -101,7 +102,7 @@ export function createOpenClawNemoClawAgentRunner(
         runUrl,
         runtime,
         runBody,
-        "application/x-ndjson, application/json"
+        "text/event-stream, application/x-ndjson, application/json"
       );
 
       if (!response.ok) {
@@ -111,7 +112,7 @@ export function createOpenClawNemoClawAgentRunner(
       }
 
       let agentResponse: AgentOutput | null;
-      if (isNdjsonResponse(response)) {
+      if (isStreamingResponse(response)) {
         try {
           agentResponse = yield* readStreamingRunResponse(response);
         } catch (error) {
@@ -206,7 +207,7 @@ async function* readStreamingRunResponse(
 
   let streamedText = "";
   try {
-    for await (const payload of readNdjson(response.body)) {
+    for await (const payload of readRuntimeEventStream(response)) {
       const event = validateRemoteRunEvent(payload);
       if (!event) {
         throw new Error("OpenClaw/NemoClaw runtime returned an invalid stream event");
@@ -244,6 +245,14 @@ async function* readStreamingRunResponse(
     };
   }
   return null;
+}
+
+function readRuntimeEventStream(
+  response: Response
+): AsyncIterable<unknown> {
+  return isSseResponse(response)
+    ? readSse(response.body!)
+    : readNdjson(response.body!);
 }
 
 function appendStreamedText(currentText: string, delta: string): string {
@@ -299,6 +308,66 @@ async function* readNdjson(
   } finally {
     reader.releaseLock();
   }
+}
+
+async function* readSse(
+  body: ReadableStream<Uint8Array>
+): AsyncIterable<unknown> {
+  const reader = body.getReader();
+  const decoder = new TextDecoder();
+  const events: unknown[] = [];
+  let parseError: Error | null = null;
+  const parser = createParser({
+    onEvent(event) {
+      events.push(JSON.parse(event.data));
+    },
+    onError(error) {
+      parseError = error;
+    }
+  });
+
+  try {
+    while (true) {
+      const result = await reader.read();
+      if (result.done) {
+        break;
+      }
+
+      parser.feed(decoder.decode(result.value, { stream: true }));
+      if (parseError) {
+        throw parseError;
+      }
+
+      while (events.length > 0) {
+        yield events.shift();
+      }
+    }
+
+    const remaining = decoder.decode();
+    if (remaining) {
+      parser.feed(remaining);
+    }
+    parser.reset({ consume: true });
+    if (parseError) {
+      throw parseError;
+    }
+
+    while (events.length > 0) {
+      yield events.shift();
+    }
+  } finally {
+    reader.releaseLock();
+  }
+}
+
+function isStreamingResponse(response: Response): boolean {
+  return isSseResponse(response) || isNdjsonResponse(response);
+}
+
+function isSseResponse(response: Response): boolean {
+  return (response.headers.get("content-type") ?? "")
+    .toLowerCase()
+    .startsWith("text/event-stream");
 }
 
 function isNdjsonResponse(response: Response): boolean {
