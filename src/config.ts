@@ -25,6 +25,7 @@ export type Config = {
   agentRuntimeToolGatewayUrl: string;
   agentRuntimeMcpGatewayUrl: string | null;
   agentRuntimeMcpAudience: string | null;
+  atlassianMcpUrl: string;
   runtimeJwtIssuer: string;
   runtimeJwtPrivateKeyPath: string | null;
   openClawConfigPatchHostPath: string | null;
@@ -196,6 +197,9 @@ export function readConfig(env: Env): Config {
     agentRuntimeMcpAudience:
       optionalUrlEnv(env, "AGENT_RUNTIME_MCP_AUDIENCE") ??
       optionalUrlEnv(env, "AGENT_RUNTIME_MCP_GATEWAY_URL"),
+    atlassianMcpUrl:
+      optionalUrlEnv(env, "ATLASSIAN_MCP_URL") ??
+      "https://mcp.atlassian.com/v1/mcp",
     runtimeJwtIssuer:
       optionalUrlEnv(env, "RUNTIME_JWT_ISSUER") ?? baseUrl,
     runtimeJwtPrivateKeyPath: optionalSecretEnv(

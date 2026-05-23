@@ -194,6 +194,9 @@ describe("createBurbleToolExecutor", () => {
         user: { email: "person@example.com" },
         input: { jql: 'text ~ "billing"' }
       });
+      await executor("atlassian.listMcpTools", {
+        user: { email: "person@example.com" }
+      });
 
       expect(payloads).toMatchObject([
         {
@@ -214,6 +217,13 @@ describe("createBurbleToolExecutor", () => {
           params: {
             name: "jira_search_issues",
             arguments: { jql: 'text ~ "billing"' }
+          }
+        },
+        {
+          method: "tools/call",
+          params: {
+            name: "atlassian_list_mcp_tools",
+            arguments: {}
           }
         }
       ]);

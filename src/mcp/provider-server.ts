@@ -15,12 +15,27 @@ import {
   refreshJiraAccessToken,
   searchJiraIssues
 } from "../jira";
+import {
+  listUpstreamMcpTools,
+  type UpstreamMcpTool
+} from "./upstream-http-client";
 import { createGitHubTools, type GitHubToolDeps } from "../tools/github";
-import { createJiraTools, type JiraToolDeps } from "../tools/jira";
+import {
+  createJiraTools,
+  isJiraAuthErrorResult,
+  type JiraToolDeps,
+  withFreshJiraToken
+} from "../tools/jira";
 import type { ToolResult } from "../tools/types";
 import type { RuntimeJwtIssuer } from "../runtime-jwt";
 
-type ProviderMcpDeps = Partial<GitHubToolDeps> & Partial<JiraToolDeps>;
+type ProviderMcpDeps = Partial<GitHubToolDeps> &
+  Partial<JiraToolDeps> & {
+    listAtlassianMcpTools?: (input: {
+      url: string;
+      accessToken: string;
+    }) => Promise<UpstreamMcpTool[]>;
+  };
 
 const defaultDeps = {
   getGitHubUser,
@@ -193,7 +208,65 @@ function createProviderMcpServer(
       )
   );
 
+  server.registerTool(
+    "atlassian_list_mcp_tools",
+    {
+      title: "Atlassian MCP tools",
+      description:
+        "List read-only tool metadata advertised by the upstream Atlassian MCP server for this Slack user's connected Jira account.",
+      inputSchema: {}
+    },
+    async () =>
+      mcpToolResult(
+        await withConnection<
+          | Array<{ name: string; title?: string; description?: string }>
+          | { error: string; message: string }
+        >(store, runtime, "jira", async (connection) => {
+          const tools = await withFreshJiraToken(
+            {
+              ...defaultDeps,
+              refreshJiraAccessToken: (refreshToken) =>
+                refreshJiraAccessToken(config, refreshToken),
+              saveJiraConnection: (updatedConnection) =>
+                store.upsertProviderConnection(updatedConnection),
+              ...deps
+            },
+            connection,
+            (accessToken) =>
+              (deps.listAtlassianMcpTools ?? defaultListAtlassianMcpTools)({
+                url: config.atlassianMcpUrl,
+                accessToken
+              })
+          );
+          if (isJiraAuthErrorResult(tools)) {
+            return tools;
+          }
+
+          return {
+            classification: "user_private",
+            content: tools.slice(0, 50).map((tool) => ({
+              name: tool.name,
+              ...(tool.title ? { title: tool.title } : {}),
+              ...(tool.description ? { description: tool.description } : {})
+            }))
+          };
+        })
+      )
+  );
+
   return server;
+}
+
+function defaultListAtlassianMcpTools(input: {
+  url: string;
+  accessToken: string;
+}): Promise<UpstreamMcpTool[]> {
+  return listUpstreamMcpTools({
+    url: input.url,
+    authorization: `Bearer ${input.accessToken}`,
+    clientName: "burble-atlassian-mcp-facade",
+    clientVersion: "0.1.0"
+  });
 }
 
 function authorizeProviderMcpRequest(

@@ -100,8 +100,10 @@ For Jira hand testing, create an Atlassian OAuth 2.0 3LO app, add:
 https://<DOMAIN>/oauth/jira/callback
 ```
 
-Then grant scopes `read:jira-user read:jira-work` and set
+Then grant scopes `read:jira-user read:jira-work offline_access` and set
 `JIRA_CLIENT_ID` / `JIRA_CLIENT_SECRET` in `deploy/dev/compose/.env`.
+`ATLASSIAN_MCP_URL` defaults to `https://mcp.atlassian.com/v1/mcp`; override it
+only when testing a different Atlassian MCP endpoint.
 
 Bring it up:
 
@@ -205,6 +207,21 @@ It runs `git pull --ff-only`, rebuilds the Burble app and personal runtime
 image, restarts Compose, and removes existing `burble-rt-*` containers so the
 next DM provisions a runtime with the latest image and environment. Use
 `--no-pull` or `--keep-runtimes` when you want to skip those steps.
+
+Add `--agentgateway` when testing the MCP path:
+
+```bash
+./deploy-personal-runtimes.sh --agentgateway
+```
+
+After connecting Jira, a hand-test for the upstream MCP path is:
+
+```text
+list Atlassian MCP tools
+```
+
+That should route through `agentgateway`, Burble's MCP facade, and the upstream
+Atlassian MCP endpoint using the connected Jira identity.
 
 `/internal/*` is blocked by Caddy on the public HTTPS hostname. The
 OpenClaw/NemoClaw service calls `http://burble-app:3000/internal/tools` over

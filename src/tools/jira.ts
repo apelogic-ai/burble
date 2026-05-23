@@ -109,6 +109,14 @@ export function createJiraTools(deps: JiraToolDeps) {
   };
 }
 
+export async function withFreshJiraToken<T>(
+  deps: JiraToolDeps,
+  connection: ProviderConnection,
+  callback: (accessToken: string) => Promise<T>
+): Promise<T | JiraAuthErrorResult> {
+  return withJiraToken(deps, connection, callback);
+}
+
 async function withJiraToken<T>(
   deps: JiraToolDeps,
   connection: ProviderConnection,
@@ -188,7 +196,7 @@ function jiraReconnectResult(): JiraAuthErrorResult {
   };
 }
 
-function isJiraAuthErrorResult(value: unknown): value is JiraAuthErrorResult {
+export function isJiraAuthErrorResult(value: unknown): value is JiraAuthErrorResult {
   return (
     typeof value === "object" &&
     value !== null &&

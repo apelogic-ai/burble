@@ -264,6 +264,48 @@ describe("runBurbleRequest", () => {
     expect(response.response.text).toContain("Fix deploy dashboard");
   });
 
+  test("lists Atlassian MCP tools through the Jira connection", async () => {
+    const calls: Array<{ toolName: string; body: unknown }> = [];
+    const response = await runBurbleRequest(
+      {
+        input: {
+          text: "list Atlassian MCP tools",
+          connections: {
+            github: { connected: false },
+            jira: {
+              connected: true,
+              email: "person@example.com",
+              providerLogin: "person@atlassian.example"
+            }
+          }
+        }
+      },
+      config,
+      async (toolName, body) => {
+        calls.push({ toolName, body });
+        return {
+          classification: "user_private",
+          content: [
+            {
+              name: "searchJiraIssuesUsingJql",
+              title: "Search Jira issues using JQL",
+              description: "Search Jira issues visible to the user"
+            }
+          ]
+        };
+      }
+    );
+
+    expect(calls).toEqual([
+      {
+        toolName: "atlassian.listMcpTools",
+        body: { user: { email: "person@example.com" } }
+      }
+    ]);
+    expect(response.response.text).toContain("Atlassian MCP tools");
+    expect(response.response.text).toContain("searchJiraIssuesUsingJql");
+  });
+
   test("preserves plain text Jira tool output", async () => {
     const response = await runBurbleRequest(
       {

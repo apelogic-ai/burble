@@ -165,6 +165,8 @@ function toMcpToolName(toolName: string): string {
       return "jira_list_assigned_issues";
     case "jira.searchIssues":
       return "jira_search_issues";
+    case "atlassian.listMcpTools":
+      return "atlassian_list_mcp_tools";
     default:
       throw new Error(`Unsupported Burble MCP tool: ${toolName}`);
   }

@@ -31,6 +31,7 @@ const config: Config = {
   agentRuntimeToolGatewayUrl: "http://burble-app:3000/internal/tools",
   agentRuntimeMcpGatewayUrl: null,
   agentRuntimeMcpAudience: null,
+  atlassianMcpUrl: "https://mcp.atlassian.com/v1/mcp",
   runtimeJwtIssuer: "https://example.ngrok-free.app",
   runtimeJwtPrivateKeyPath: null,
   openClawConfigPatchHostPath: null,

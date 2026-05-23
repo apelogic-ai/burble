@@ -103,7 +103,19 @@ async function runJiraRequest(
   const normalized = text.toLowerCase();
   const user = { email: jira.email };
 
-  if (/\bwho\s+am\s+i\b/.test(normalized) || /\bjira\s+(me|identity|login)\b/.test(normalized)) {
+  if (
+    /\batlassian\b/.test(normalized) &&
+    /\bmcp\b/.test(normalized) &&
+    /\b(tool|tools)\b/.test(normalized)
+  ) {
+    const result = await executeTool("atlassian.listMcpTools", { user });
+    return response(result.classification, formatAtlassianMcpTools(result));
+  }
+
+  if (
+    /\bwho\s+am\s+i\b/.test(normalized) ||
+    /\bjira\s+(me|identity|login)\b/.test(normalized)
+  ) {
     const result = await executeTool("jira.getAuthenticatedUser", { user });
     const displayName = readDisplayName(result);
     return response(
@@ -145,6 +157,7 @@ export function isSupportedJiraRequest(text: string): boolean {
   const normalized = text.toLowerCase();
   return (
     /\bjira\b/.test(normalized) ||
+    /\batlassian\b/.test(normalized) ||
     /\b(ticket|tickets)\b/.test(normalized)
   );
 }
@@ -228,6 +241,48 @@ function readLinkedItems(result: ToolResult): LinkedItem[] {
       typeof item.url === "string"
     );
   });
+}
+
+function formatAtlassianMcpTools(result: ToolResult): string {
+  if (typeof result.content === "string" && result.content.trim()) {
+    return result.content.trim();
+  }
+
+  const tools = readAtlassianMcpTools(result);
+  if (tools.length === 0) {
+    return "Atlassian MCP tools: none found.";
+  }
+
+  return [
+    "*Atlassian MCP tools*",
+    ...tools.map((tool) => {
+      const label = tool.title ? `${tool.name} - ${tool.title}` : tool.name;
+      return tool.description
+        ? `- \`${label}\`: ${tool.description}`
+        : `- \`${label}\``;
+    })
+  ].join("\n");
+}
+
+function readAtlassianMcpTools(
+  result: ToolResult
+): Array<{ name: string; title?: string; description?: string }> {
+  if (!Array.isArray(result.content)) {
+    return [];
+  }
+
+  return result.content.filter(
+    (item): item is { name: string; title?: string; description?: string } => {
+      return (
+        typeof item === "object" &&
+        item !== null &&
+        "name" in item &&
+        typeof item.name === "string" &&
+        (!("title" in item) || typeof item.title === "string") &&
+        (!("description" in item) || typeof item.description === "string")
+      );
+    }
+  );
 }
 
 function buildIssueSearchQuery(text: string): string {

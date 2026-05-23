@@ -38,6 +38,7 @@ describe("readConfig", () => {
       agentRuntimeToolGatewayUrl: "http://burble-app:3000/internal/tools",
       agentRuntimeMcpGatewayUrl: null,
       agentRuntimeMcpAudience: null,
+      atlassianMcpUrl: "https://mcp.atlassian.com/v1/mcp",
       runtimeJwtIssuer: "https://example.ngrok-free.app",
       runtimeJwtPrivateKeyPath: null,
       openClawConfigPatchHostPath: null,
@@ -113,6 +114,15 @@ describe("readConfig", () => {
     expect(config.openClawConfigPatchHostPath).toBe(
       "/srv/burble/openclaw-patches"
     );
+  });
+
+  test("allows Atlassian MCP URL override", () => {
+    expect(
+      readConfig({
+        ...validEnv,
+        ATLASSIAN_MCP_URL: "https://mcp.atlassian.com/v1/mcp/authv2/"
+      }).atlassianMcpUrl
+    ).toBe("https://mcp.atlassian.com/v1/mcp/authv2");
   });
 
   test("falls back to the internal API token as the runtime token secret", () => {

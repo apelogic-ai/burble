@@ -28,6 +28,7 @@ const config: Config = {
   agentRuntimeToolGatewayUrl: "http://burble-app:3000/internal/tools",
   agentRuntimeMcpGatewayUrl: "http://agentgateway:3000/mcp",
   agentRuntimeMcpAudience: "http://agentgateway:3000/mcp",
+  atlassianMcpUrl: "https://mcp.atlassian.com/v1/mcp",
   runtimeJwtIssuer: "http://burble-app:3000",
   runtimeJwtPrivateKeyPath: null,
   openClawConfigPatchHostPath: null,
@@ -105,6 +106,80 @@ describe("handleProviderMcpRequest", () => {
     expect(toolResult).toEqual({
       classification: "user_private",
       content: { login: "octocat" }
+    });
+    store.close();
+  });
+
+  test("lists upstream Atlassian MCP tools with the connected Jira token", async () => {
+    const issuer = createRuntimeJwtIssuer({ issuer: config.runtimeJwtIssuer });
+    const store = createTokenStore(":memory:");
+    const runtime = store.getOrCreateAgentRuntime({
+      workspaceId: "T123",
+      slackUserId: "U123",
+      engine: "openclaw",
+      endpointUrl: "http://runtime-u123:8080",
+      authTokenHash: "hash-u123",
+      statePath: "/data/runtimes/u123/state",
+      configPath: "/data/runtimes/u123/config/openclaw.json",
+      workspacePath: "/data/runtimes/u123/workspace"
+    });
+    store.upsertProviderConnection({
+      provider: "jira",
+      email: "person@example.com",
+      slackUserId: "U123",
+      providerLogin: "Person",
+      accessToken: "jira-token",
+      refreshToken: null,
+      accessTokenExpiresAt: null
+    });
+    const token = issuer.issueRuntimeJwt({
+      audience: "http://agentgateway:3000/mcp",
+      runtimeId: runtime.id,
+      workspaceId: "T123",
+      slackUserId: "U123"
+    });
+
+    const response = await handleProviderMcpRequest(
+      config,
+      store,
+      issuer,
+      mcpRequest(
+        {
+          method: "tools/call",
+          params: {
+            name: "atlassian_list_mcp_tools",
+            arguments: {}
+          }
+        },
+        token
+      ),
+      {
+        listAtlassianMcpTools: async ({ url, accessToken }) => {
+          expect(url).toBe("https://mcp.atlassian.com/v1/mcp");
+          expect(accessToken).toBe("jira-token");
+          return [
+            {
+              name: "searchJiraIssuesUsingJql",
+              title: "Search Jira issues using JQL",
+              description: "Search Jira issues visible to the connected user"
+            }
+          ];
+        }
+      }
+    );
+    const body = readMcpBody(await response.text());
+    const toolResult = JSON.parse(body.result.content[0].text);
+
+    expect(response.status).toBe(200);
+    expect(toolResult).toEqual({
+      classification: "user_private",
+      content: [
+        {
+          name: "searchJiraIssuesUsingJql",
+          title: "Search Jira issues using JQL",
+          description: "Search Jira issues visible to the connected user"
+        }
+      ]
     });
     store.close();
   });
