@@ -12,6 +12,7 @@ import {
 import {
   getJiraUser,
   listAssignedJiraIssues,
+  refreshJiraAccessToken,
   searchJiraIssues
 } from "../jira";
 import { createGitHubTools, type GitHubToolDeps } from "../tools/github";
@@ -48,7 +49,7 @@ export async function handleProviderMcpRequest(
     return new Response("Unauthorized", { status: 401 });
   }
 
-  const server = createProviderMcpServer(store, runtime, deps);
+  const server = createProviderMcpServer(config, store, runtime, deps);
   const transport = new WebStandardStreamableHTTPServerTransport();
 
   await server.connect(transport);
@@ -56,6 +57,7 @@ export async function handleProviderMcpRequest(
 }
 
 function createProviderMcpServer(
+  config: Config,
   store: TokenStore,
   runtime: AgentRuntimeRecord,
   deps: ProviderMcpDeps
@@ -65,7 +67,13 @@ function createProviderMcpServer(
     version: "0.1.0"
   });
   const githubTools = createGitHubTools({ ...defaultDeps, ...deps });
-  const jiraTools = createJiraTools({ ...defaultDeps, ...deps });
+  const jiraTools = createJiraTools({
+    ...defaultDeps,
+    refreshJiraAccessToken: (refreshToken) =>
+      refreshJiraAccessToken(config, refreshToken),
+    saveJiraConnection: (connection) => store.upsertProviderConnection(connection),
+    ...deps
+  });
 
   server.registerTool(
     "github_get_authenticated_user",

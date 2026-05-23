@@ -10,6 +10,7 @@ import {
 import {
   getJiraUser,
   listAssignedJiraIssues,
+  refreshJiraAccessToken,
   searchJiraIssues
 } from "./jira";
 import { createGitHubTools } from "./tools/github";
@@ -84,7 +85,13 @@ export async function handleToolGatewayRequest(
   }
 
   const tools = createGitHubTools({ ...defaultDeps, ...deps });
-  const jiraTools = createJiraTools({ ...defaultDeps, ...deps });
+  const jiraTools = createJiraTools({
+    ...defaultDeps,
+    refreshJiraAccessToken: (refreshToken) =>
+      refreshJiraAccessToken(config, refreshToken),
+    saveJiraConnection: (connection) => store.upsertProviderConnection(connection),
+    ...deps
+  });
 
   switch (toolName) {
     case "github.getAuthenticatedUser":

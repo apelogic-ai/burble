@@ -13,6 +13,22 @@ export type JiraIssue = {
   status?: string;
 };
 
+export type JiraTokenSet = {
+  accessToken: string;
+  refreshToken: string | null;
+  accessTokenExpiresAt: string | null;
+};
+
+export class JiraApiError extends Error {
+  constructor(
+    message: string,
+    readonly status: number
+  ) {
+    super(message);
+    this.name = "JiraApiError";
+  }
+}
+
 type JiraAccessibleResource = {
   id: string;
   url: string;
@@ -39,7 +55,7 @@ export function buildJiraOAuthUrl(config: Config, state: string): string {
   const url = new URL("https://auth.atlassian.com/authorize");
   url.searchParams.set("audience", "api.atlassian.com");
   url.searchParams.set("client_id", config.jiraClientId);
-  url.searchParams.set("scope", "read:jira-user read:jira-work");
+  url.searchParams.set("scope", "read:jira-user read:jira-work offline_access");
   url.searchParams.set("redirect_uri", `${config.baseUrl}/oauth/jira/callback`);
   url.searchParams.set("state", state);
   url.searchParams.set("response_type", "code");
@@ -50,7 +66,7 @@ export function buildJiraOAuthUrl(config: Config, state: string): string {
 export async function exchangeJiraCode(
   config: Config,
   code: string
-): Promise<string> {
+): Promise<JiraTokenSet> {
   if (!config.jiraClientId || !config.jiraClientSecret) {
     throw new Error("Jira OAuth is not configured");
   }
@@ -72,6 +88,8 @@ export async function exchangeJiraCode(
 
   const body = (await response.json()) as {
     access_token?: string;
+    refresh_token?: string;
+    expires_in?: number;
     error?: string;
     error_description?: string;
   };
@@ -82,7 +100,46 @@ export async function exchangeJiraCode(
     );
   }
 
-  return body.access_token;
+  return jiraTokenSetFromResponse(body);
+}
+
+export async function refreshJiraAccessToken(
+  config: Config,
+  refreshToken: string
+): Promise<JiraTokenSet> {
+  if (!config.jiraClientId || !config.jiraClientSecret) {
+    throw new Error("Jira OAuth is not configured");
+  }
+
+  const response = await fetch("https://auth.atlassian.com/oauth/token", {
+    method: "POST",
+    headers: {
+      Accept: "application/json",
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      grant_type: "refresh_token",
+      client_id: config.jiraClientId,
+      client_secret: config.jiraClientSecret,
+      refresh_token: refreshToken
+    })
+  });
+
+  const body = (await response.json()) as {
+    access_token?: string;
+    refresh_token?: string;
+    expires_in?: number;
+    error?: string;
+    error_description?: string;
+  };
+
+  if (!response.ok || !body.access_token) {
+    throw new Error(
+      body.error_description ?? body.error ?? "Jira token refresh failed"
+    );
+  }
+
+  return jiraTokenSetFromResponse(body);
 }
 
 export async function getJiraUser(token: string): Promise<JiraUser> {
@@ -95,7 +152,7 @@ export async function getJiraUser(token: string): Promise<JiraUser> {
   );
 
   if (!response.ok) {
-    throw new Error(`Jira user lookup failed with ${response.status}`);
+    throw new JiraApiError(`Jira user lookup failed with ${response.status}`, response.status);
   }
 
   return (await response.json()) as JiraUser;
@@ -130,8 +187,9 @@ export async function searchJiraIssues(
   };
 
   if (!response.ok) {
-    throw new Error(
-      body.errorMessages?.join("; ") ?? `Jira issue search failed with ${response.status}`
+    throw new JiraApiError(
+      body.errorMessages?.join("; ") ?? `Jira issue search failed with ${response.status}`,
+      response.status
     );
   }
 
@@ -152,7 +210,10 @@ async function resolveJiraResource(token: string): Promise<JiraAccessibleResourc
   );
 
   if (!response.ok) {
-    throw new Error(`Jira accessible resources lookup failed with ${response.status}`);
+    throw new JiraApiError(
+      `Jira accessible resources lookup failed with ${response.status}`,
+      response.status
+    );
   }
 
   const resources = (await response.json()) as JiraAccessibleResource[];
@@ -165,6 +226,29 @@ async function resolveJiraResource(token: string): Promise<JiraAccessibleResourc
   }
 
   return resource;
+}
+
+function jiraTokenSetFromResponse(body: {
+  access_token?: string;
+  refresh_token?: string;
+  expires_in?: number;
+}): JiraTokenSet {
+  if (!body.access_token) {
+    throw new Error("Jira token response did not include an access token");
+  }
+
+  return {
+    accessToken: body.access_token,
+    refreshToken: body.refresh_token ?? null,
+    accessTokenExpiresAt:
+      typeof body.expires_in === "number" && body.expires_in > 0
+        ? new Date(Date.now() + body.expires_in * 1000).toISOString()
+        : null
+  };
+}
+
+export function isJiraAuthorizationError(error: unknown): boolean {
+  return error instanceof JiraApiError && error.status === 401;
 }
 
 function jiraHeaders(token: string): HeadersInit {

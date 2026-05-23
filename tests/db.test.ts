@@ -1,4 +1,8 @@
 import { describe, expect, test } from "bun:test";
+import { Database } from "bun:sqlite";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { createTokenStore } from "../src/db";
 
 describe("createTokenStore", () => {
@@ -60,7 +64,9 @@ describe("createTokenStore", () => {
       email: "person@example.com",
       slackUserId: "U123",
       providerLogin: "person@atlassian.example",
-      accessToken: "jira-token"
+      accessToken: "jira-token",
+      refreshToken: "jira-refresh-token",
+      accessTokenExpiresAt: "2026-05-23T06:00:00.000Z"
     });
 
     expect(store.getConnection("jira", "person@example.com")).toMatchObject({
@@ -68,14 +74,53 @@ describe("createTokenStore", () => {
       email: "person@example.com",
       slackUserId: "U123",
       providerLogin: "person@atlassian.example",
-      accessToken: "jira-token"
+      accessToken: "jira-token",
+      refreshToken: "jira-refresh-token",
+      accessTokenExpiresAt: "2026-05-23T06:00:00.000Z"
     });
     expect(store.getConnectionForSlackUser("jira", "U123")).toMatchObject({
       provider: "jira",
       email: "person@example.com",
       slackUserId: "U123",
       providerLogin: "person@atlassian.example",
-      accessToken: "jira-token"
+      accessToken: "jira-token",
+      refreshToken: "jira-refresh-token",
+      accessTokenExpiresAt: "2026-05-23T06:00:00.000Z"
+    });
+
+    store.close();
+  });
+
+  test("migrates existing provider connections with refresh-token columns", () => {
+    const path = join(mkdtempSync(join(tmpdir(), "burble-db-")), "burble.db");
+    const db = new Database(path);
+    db.exec(`
+      CREATE TABLE provider_connections (
+        provider TEXT NOT NULL,
+        email TEXT NOT NULL,
+        slack_user_id TEXT NOT NULL,
+        provider_login TEXT NOT NULL,
+        access_token TEXT NOT NULL,
+        connected_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY(provider, email)
+      );
+    `);
+    db.close();
+
+    const store = createTokenStore(path);
+    store.upsertProviderConnection({
+      provider: "jira",
+      email: "person@example.com",
+      slackUserId: "U123",
+      providerLogin: "person@atlassian.example",
+      accessToken: "jira-token",
+      refreshToken: "jira-refresh-token",
+      accessTokenExpiresAt: "2026-05-23T06:00:00.000Z"
+    });
+
+    expect(store.getConnection("jira", "person@example.com")).toMatchObject({
+      refreshToken: "jira-refresh-token",
+      accessTokenExpiresAt: "2026-05-23T06:00:00.000Z"
     });
 
     store.close();

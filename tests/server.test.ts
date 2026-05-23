@@ -188,7 +188,11 @@ describe("handleJiraCallback", () => {
       slack,
       new URL("https://example.test/oauth/jira/callback?state=valid-state"),
       {
-        exchangeJiraCode: async () => "token",
+        exchangeJiraCode: async () => ({
+          accessToken: "token",
+          refreshToken: null,
+          accessTokenExpiresAt: null
+        }),
         getJiraUser: async () => ({ accountId: "account-123", displayName: "Leo" })
       }
     );
@@ -211,7 +215,11 @@ describe("handleJiraCallback", () => {
       {
         exchangeJiraCode: async (_config, code) => {
           expect(code).toBe("abc");
-          return "jira-token";
+          return {
+            accessToken: "jira-token",
+            refreshToken: "jira-refresh-token",
+            accessTokenExpiresAt: "2026-05-23T06:00:00.000Z"
+          };
         },
         getJiraUser: async (token) => {
           expect(token).toBe("jira-token");
@@ -228,7 +236,9 @@ describe("handleJiraCallback", () => {
         email: "person@example.com",
         slackUserId: "U123",
         providerLogin: "Leo",
-        accessToken: "jira-token"
+        accessToken: "jira-token",
+        refreshToken: "jira-refresh-token",
+        accessTokenExpiresAt: "2026-05-23T06:00:00.000Z"
       }
     ]);
     expect(messages).toEqual([

@@ -157,7 +157,7 @@ export async function handleJiraCallback(
 
   try {
     const token = await deps.exchangeJiraCode(config, code);
-    const jiraUser = await deps.getJiraUser(token);
+    const jiraUser = await deps.getJiraUser(token.accessToken);
     const email = await slack.getSlackEmail(stateRow.slackUserId);
 
     store.upsertProviderConnection({
@@ -165,7 +165,9 @@ export async function handleJiraCallback(
       email,
       slackUserId: stateRow.slackUserId,
       providerLogin: jiraUser.displayName,
-      accessToken: token
+      accessToken: token.accessToken,
+      refreshToken: token.refreshToken,
+      accessTokenExpiresAt: token.accessTokenExpiresAt
     });
 
     await slack.app.client.chat.postMessage({

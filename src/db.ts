@@ -23,6 +23,8 @@ export type ProviderConnection = {
   slackUserId: string;
   providerLogin: string;
   accessToken: string;
+  refreshToken?: string | null;
+  accessTokenExpiresAt?: string | null;
   connectedAt: string;
 };
 
@@ -93,6 +95,8 @@ export function createTokenStore(path: string) {
       slack_user_id TEXT NOT NULL,
       provider_login TEXT NOT NULL,
       access_token TEXT NOT NULL,
+      refresh_token TEXT,
+      access_token_expires_at TEXT,
       connected_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       PRIMARY KEY(provider, email)
     );
@@ -148,6 +152,8 @@ export function createTokenStore(path: string) {
     CREATE INDEX IF NOT EXISTS idx_agent_runtime_events_runtime_created
       ON agent_runtime_events (runtime_id, created_at);
   `);
+  ensureProviderConnectionColumn(db, "refresh_token", "TEXT");
+  ensureProviderConnectionColumn(db, "access_token_expires_at", "TEXT");
 
   const insertState = db.query(
     "INSERT INTO oauth_state (state, slack_user_id, expires_at) VALUES (?, ?, ?)"
@@ -180,13 +186,17 @@ export function createTokenStore(path: string) {
       slack_user_id,
       provider_login,
       access_token,
+      refresh_token,
+      access_token_expires_at,
       connected_at
     )
-    VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+    VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
     ON CONFLICT(provider, email) DO UPDATE SET
       slack_user_id = excluded.slack_user_id,
       provider_login = excluded.provider_login,
       access_token = excluded.access_token,
+      refresh_token = excluded.refresh_token,
+      access_token_expires_at = excluded.access_token_expires_at,
       connected_at = CURRENT_TIMESTAMP
   `);
   const getUserByEmail = db.query<ConnectedUser, [string]>(`
@@ -206,6 +216,8 @@ export function createTokenStore(path: string) {
       slack_user_id AS slackUserId,
       provider_login AS providerLogin,
       access_token AS accessToken,
+      refresh_token AS refreshToken,
+      access_token_expires_at AS accessTokenExpiresAt,
       connected_at AS connectedAt
     FROM provider_connections
     WHERE provider = ? AND email = ?
@@ -220,6 +232,8 @@ export function createTokenStore(path: string) {
       slack_user_id AS slackUserId,
       provider_login AS providerLogin,
       access_token AS accessToken,
+      refresh_token AS refreshToken,
+      access_token_expires_at AS accessTokenExpiresAt,
       connected_at AS connectedAt
     FROM provider_connections
     WHERE provider = ? AND slack_user_id = ?
@@ -395,7 +409,9 @@ export function createTokenStore(path: string) {
         input.email,
         input.slackUserId,
         input.githubLogin,
-        input.githubToken
+        input.githubToken,
+        null,
+        null
       );
     },
 
@@ -405,13 +421,17 @@ export function createTokenStore(path: string) {
       slackUserId: string;
       providerLogin: string;
       accessToken: string;
+      refreshToken?: string | null;
+      accessTokenExpiresAt?: string | null;
     }): void {
       upsertProviderConnection.run(
         input.provider,
         input.email,
         input.slackUserId,
         input.providerLogin,
-        input.accessToken
+        input.accessToken,
+        input.refreshToken ?? null,
+        input.accessTokenExpiresAt ?? null
       );
     },
 
@@ -440,6 +460,8 @@ export function createTokenStore(path: string) {
         slackUserId: user.slackUserId,
         providerLogin: user.githubLogin,
         accessToken: user.githubToken,
+        refreshToken: null,
+        accessTokenExpiresAt: null,
         connectedAt: user.connectedAt
       };
     },
@@ -471,6 +493,8 @@ export function createTokenStore(path: string) {
         slackUserId: user.slackUserId,
         providerLogin: user.githubLogin,
         accessToken: user.githubToken,
+        refreshToken: null,
+        accessTokenExpiresAt: null,
         connectedAt: user.connectedAt
       };
     },
@@ -586,6 +610,20 @@ export function createTokenStore(path: string) {
       db.close();
     }
   };
+}
+
+function ensureProviderConnectionColumn(
+  db: Database,
+  name: string,
+  definition: string
+): void {
+  const columns = db
+    .query<{ name: string }, []>("PRAGMA table_info(provider_connections)")
+    .all()
+    .map((column) => column.name);
+  if (!columns.includes(name)) {
+    db.exec(`ALTER TABLE provider_connections ADD COLUMN ${name} ${definition}`);
+  }
 }
 
 function buildAgentRuntimeId(

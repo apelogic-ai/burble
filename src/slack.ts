@@ -12,6 +12,7 @@ import {
   buildJiraOAuthUrl,
   getJiraUser,
   listAssignedJiraIssues,
+  refreshJiraAccessToken,
   searchJiraIssues
 } from "./jira";
 import type { TokenStore } from "./db";
@@ -128,7 +129,10 @@ export function createSlackRuntime(
   const jiraTools = createJiraTools({
     getJiraUser,
     listAssignedJiraIssues,
-    searchJiraIssues
+    searchJiraIssues,
+    refreshJiraAccessToken: (refreshToken) =>
+      refreshJiraAccessToken(config, refreshToken),
+    saveJiraConnection: (connection) => store.upsertProviderConnection(connection)
   });
   const runtimeFactory = createOpenClawRuntimeFactory(
     config,

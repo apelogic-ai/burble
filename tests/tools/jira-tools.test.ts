@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { ProviderConnection } from "../../src/db";
+import { JiraApiError } from "../../src/jira";
 import { createJiraTools } from "../../src/tools/jira";
 
 const connection: ProviderConnection = {
@@ -110,5 +111,81 @@ describe("createJiraTools", () => {
       ]
     });
     expect(JSON.stringify(result)).not.toContain("jira-token");
+  });
+
+  test("refreshes an expired Jira token and persists the rotated token", async () => {
+    const saved: ProviderConnection[] = [];
+    const tools = createJiraTools({
+      getJiraUser: async () => ({
+        accountId: "account-123",
+        displayName: "Person Example"
+      }),
+      listAssignedJiraIssues: async (token) => {
+        expect(token).toBe("new-jira-token");
+        return [
+          {
+            key: "ENG-125",
+            summary: "Refresh token support",
+            url: "https://example.atlassian.net/browse/ENG-125"
+          }
+        ];
+      },
+      searchJiraIssues: async () => [],
+      refreshJiraAccessToken: async (refreshToken) => {
+        expect(refreshToken).toBe("old-refresh-token");
+        return {
+          accessToken: "new-jira-token",
+          refreshToken: "new-refresh-token",
+          accessTokenExpiresAt: "2026-05-23T07:00:00.000Z"
+        };
+      },
+      saveJiraConnection: (refreshed) => saved.push(refreshed),
+      now: () => new Date("2026-05-23T06:00:00.000Z")
+    });
+
+    const result = await tools.listAssignedIssues.execute({
+      connection: {
+        ...connection,
+        refreshToken: "old-refresh-token",
+        accessTokenExpiresAt: "2026-05-23T06:00:30.000Z"
+      }
+    });
+
+    expect(result.content).toEqual([
+      {
+        key: "ENG-125",
+        title: "Refresh token support",
+        url: "https://example.atlassian.net/browse/ENG-125"
+      }
+    ]);
+    expect(saved).toHaveLength(1);
+    expect(saved[0]).toMatchObject({
+      accessToken: "new-jira-token",
+      refreshToken: "new-refresh-token",
+      accessTokenExpiresAt: "2026-05-23T07:00:00.000Z"
+    });
+  });
+
+  test("asks for reconnect when Jira returns 401 without a refresh token", async () => {
+    const tools = createJiraTools({
+      getJiraUser: async () => ({
+        accountId: "account-123",
+        displayName: "Person Example"
+      }),
+      listAssignedJiraIssues: async () => {
+        throw new JiraApiError("expired", 401);
+      },
+      searchJiraIssues: async () => []
+    });
+
+    const result = await tools.listAssignedIssues.execute({ connection });
+
+    expect(result).toEqual({
+      classification: "user_private",
+      content: {
+        error: "jira_authorization_failed",
+        message: "Jira authorization expired. Reconnect Jira with `@Burble connect jira`."
+      }
+    });
   });
 });

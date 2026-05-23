@@ -5,6 +5,7 @@ import {
   exchangeJiraCode,
   getJiraUser,
   listAssignedJiraIssues,
+  refreshJiraAccessToken,
   searchJiraIssues
 } from "../src/jira";
 
@@ -50,7 +51,9 @@ describe("buildJiraOAuthUrl", () => {
     expect(url.searchParams.get("redirect_uri")).toBe(
       "https://example.ngrok-free.app/oauth/jira/callback"
     );
-    expect(url.searchParams.get("scope")).toBe("read:jira-user read:jira-work");
+    expect(url.searchParams.get("scope")).toBe(
+      "read:jira-user read:jira-work offline_access"
+    );
     expect(url.searchParams.get("state")).toBe("state-123");
     expect(url.searchParams.get("response_type")).toBe("code");
     expect(url.searchParams.get("prompt")).toBe("consent");
@@ -72,13 +75,19 @@ describe("Jira OAuth and REST helpers", () => {
         url: String(input),
         body: JSON.parse(String(init?.body))
       });
-      return Response.json({ access_token: "jira-token" });
+      return Response.json({
+        access_token: "jira-token",
+        refresh_token: "jira-refresh-token",
+        expires_in: 3600
+      });
     }) as typeof fetch;
 
     try {
-      await expect(exchangeJiraCode(config, "code-123")).resolves.toBe(
-        "jira-token"
-      );
+      await expect(exchangeJiraCode(config, "code-123")).resolves.toMatchObject({
+        accessToken: "jira-token",
+        refreshToken: "jira-refresh-token",
+        accessTokenExpiresAt: expect.any(String)
+      });
     } finally {
       globalThis.fetch = originalFetch;
     }
@@ -92,6 +101,46 @@ describe("Jira OAuth and REST helpers", () => {
           client_secret: "jira-client-secret",
           code: "code-123",
           redirect_uri: "https://example.ngrok-free.app/oauth/jira/callback"
+        }
+      }
+    ]);
+  });
+
+  test("refreshes an Atlassian access token", async () => {
+    const calls: Array<{ url: string; body: unknown }> = [];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      calls.push({
+        url: String(input),
+        body: JSON.parse(String(init?.body))
+      });
+      return Response.json({
+        access_token: "new-jira-token",
+        refresh_token: "new-jira-refresh-token",
+        expires_in: 3600
+      });
+    }) as typeof fetch;
+
+    try {
+      await expect(
+        refreshJiraAccessToken(config, "old-refresh-token")
+      ).resolves.toMatchObject({
+        accessToken: "new-jira-token",
+        refreshToken: "new-jira-refresh-token",
+        accessTokenExpiresAt: expect.any(String)
+      });
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+
+    expect(calls).toEqual([
+      {
+        url: "https://auth.atlassian.com/oauth/token",
+        body: {
+          grant_type: "refresh_token",
+          client_id: "jira-client-id",
+          client_secret: "jira-client-secret",
+          refresh_token: "old-refresh-token"
         }
       }
     ]);
