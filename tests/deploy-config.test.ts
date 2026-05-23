@@ -231,6 +231,10 @@ describe("dev deploy config", () => {
     expect(agentGatewayConfig).toContain(
       "host: http://burble-app:3000/mcp"
     );
+    expect(agentGatewayConfig).toContain("backendAuth:");
+    expect(agentGatewayConfig).toContain("passthrough:");
+    expect(agentGatewayConfig).toContain("name: Authorization");
+    expect(agentGatewayConfig).toContain('prefix: "Bearer "');
     expect(agentGatewayConfig).toContain(
       "resource: http://agentgateway:3000/mcp"
     );

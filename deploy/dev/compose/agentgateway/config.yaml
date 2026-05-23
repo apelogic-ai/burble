@@ -33,5 +33,12 @@ binds:
               - mcp:
                   targets:
                     - name: burble
+                      policies:
+                        backendAuth:
+                          passthrough:
+                            location:
+                              header:
+                                name: Authorization
+                                prefix: "Bearer "
                       mcp:
                         host: http://burble-app:3000/mcp
