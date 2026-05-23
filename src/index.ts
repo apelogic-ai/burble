@@ -9,7 +9,8 @@ import { createRuntimeJwtIssuer } from "./runtime-jwt";
 const config = loadConfig();
 const store = createTokenStore(config.databasePath);
 const runtimeJwtIssuer = createRuntimeJwtIssuer({
-  issuer: config.runtimeJwtIssuer
+  issuer: config.runtimeJwtIssuer,
+  privateKeyPath: config.runtimeJwtPrivateKeyPath
 });
 const slack = createSlackRuntime(config, store, runtimeJwtIssuer);
 const server = startOAuthServer(config, store, slack, runtimeJwtIssuer);

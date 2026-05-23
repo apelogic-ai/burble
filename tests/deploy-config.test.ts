@@ -56,6 +56,7 @@ describe("dev deploy config", () => {
       "AGENT_RUNTIME_MCP_GATEWAY_URL",
       "AGENT_RUNTIME_MCP_AUDIENCE",
       "RUNTIME_JWT_ISSUER",
+      "RUNTIME_JWT_PRIVATE_KEY_PATH",
       "AI_MODEL",
       "OPENCLAW_NEMOCLAW_URL",
       "OPENCLAW_CONFIG_PATCH_HOST_PATH",
@@ -171,6 +172,7 @@ describe("dev deploy config", () => {
       "AGENT_RUNTIME_MCP_GATEWAY_URL",
       "AGENT_RUNTIME_MCP_AUDIENCE",
       "RUNTIME_JWT_ISSUER",
+      "RUNTIME_JWT_PRIVATE_KEY_PATH",
       "OPENCLAW_CONFIG_PATCH_HOST_PATH"
     ]) {
       expect(ansibleEnvTemplate).toContain(name);
@@ -197,6 +199,7 @@ describe("dev deploy config", () => {
     expect(personalRuntimesCompose).toContain("AGENT_RUNTIME_MCP_GATEWAY_URL");
     expect(personalRuntimesCompose).toContain("AGENT_RUNTIME_MCP_AUDIENCE");
     expect(personalRuntimesCompose).toContain("RUNTIME_JWT_ISSUER");
+    expect(personalRuntimesCompose).toContain("RUNTIME_JWT_PRIVATE_KEY_PATH");
     expect(personalRuntimesCompose).toContain(
       "OPENCLAW_TIMEOUT_MS=${OPENCLAW_TIMEOUT_MS:-180000}"
     );
@@ -217,6 +220,9 @@ describe("dev deploy config", () => {
     );
     expect(agentGatewayCompose).toContain(
       "RUNTIME_JWT_ISSUER=http://burble-app:3000"
+    );
+    expect(agentGatewayCompose).toContain(
+      "RUNTIME_JWT_PRIVATE_KEY_PATH=/data/runtime-jwt-private.pem"
     );
     expect(agentGatewayConfig).toContain("issuer: http://burble-app:3000");
     expect(agentGatewayConfig).toContain(

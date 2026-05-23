@@ -17,6 +17,7 @@ services:
       - AGENT_RUNTIME_MCP_GATEWAY_URL=http://agentgateway:3000/mcp
       - AGENT_RUNTIME_MCP_AUDIENCE=http://agentgateway:3000/mcp
       - RUNTIME_JWT_ISSUER=http://burble-app:3000
+      - RUNTIME_JWT_PRIVATE_KEY_PATH=/data/runtime-jwt-private.pem
 
   agentgateway:
     image: ghcr.io/agentgateway/agentgateway:v1.1.0

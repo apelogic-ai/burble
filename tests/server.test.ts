@@ -29,6 +29,7 @@ const config: Config = {
   agentRuntimeMcpGatewayUrl: null,
   agentRuntimeMcpAudience: null,
   runtimeJwtIssuer: "https://example.ngrok-free.app",
+  runtimeJwtPrivateKeyPath: null,
   openClawConfigPatchHostPath: null,
   internalApiToken: null,
   aiModel: "openai:gpt-5.4"

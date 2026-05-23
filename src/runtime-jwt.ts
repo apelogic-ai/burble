@@ -1,10 +1,14 @@
 import {
+  createPrivateKey,
   createHash,
+  createPublicKey,
   createSign,
   createVerify,
   generateKeyPairSync,
   type KeyObject
 } from "node:crypto";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname } from "node:path";
 
 export type RuntimeJwtIssuer = ReturnType<typeof createRuntimeJwtIssuer>;
 
@@ -22,13 +26,10 @@ export type RuntimeJwtClaims = {
 export function createRuntimeJwtIssuer(input: {
   issuer: string;
   keyPair?: { publicKey: KeyObject; privateKey: KeyObject };
+  privateKeyPath?: string | null;
   now?: () => Date;
 }) {
-  const keyPair =
-    input.keyPair ??
-    generateKeyPairSync("rsa", {
-      modulusLength: 2048
-    });
+  const keyPair = input.keyPair ?? loadOrCreateKeyPair(input.privateKeyPath);
   const publicJwk = keyPair.publicKey.export({ format: "jwk" }) as JsonWebKey;
   const kid = buildKeyId(publicJwk);
   const now = input.now ?? (() => new Date());
@@ -119,6 +120,37 @@ export function createRuntimeJwtIssuer(input: {
       return payload;
     }
   };
+}
+
+function loadOrCreateKeyPair(path: string | null | undefined): {
+  publicKey: KeyObject;
+  privateKey: KeyObject;
+} {
+  if (!path) {
+    return generateKeyPairSync("rsa", {
+      modulusLength: 2048
+    });
+  }
+
+  if (existsSync(path)) {
+    const privateKey = createPrivateKey(readFileSync(path, "utf8"));
+    return {
+      privateKey,
+      publicKey: createPublicKey(privateKey)
+    };
+  }
+
+  const keyPair = generateKeyPairSync("rsa", {
+    modulusLength: 2048
+  });
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(
+    path,
+    keyPair.privateKey.export({ type: "pkcs8", format: "pem" }),
+    { mode: 0o600 }
+  );
+
+  return keyPair;
 }
 
 function buildKeyId(jwk: JsonWebKey): string {

@@ -1,4 +1,7 @@
 import { describe, expect, test } from "bun:test";
+import { mkdtempSync, readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { createRuntimeJwtIssuer } from "../src/runtime-jwt";
 
 describe("createRuntimeJwtIssuer", () => {
@@ -65,5 +68,42 @@ describe("createRuntimeJwtIssuer", () => {
         now: new Date("2026-05-22T12:00:02.000Z")
       })
     ).toBeNull();
+  });
+
+  test("reuses a persistent private key across issuer restarts", () => {
+    const privateKeyPath = join(
+      mkdtempSync(join(tmpdir(), "burble-runtime-jwt-")),
+      "runtime-jwt-private.pem"
+    );
+    const first = createRuntimeJwtIssuer({
+      issuer: "http://burble-app:3000",
+      privateKeyPath,
+      now: () => new Date("2026-05-22T12:00:00.000Z")
+    });
+    const token = first.issueRuntimeJwt({
+      audience: "http://agentgateway:3000/mcp",
+      runtimeId: "rt_u123",
+      workspaceId: "T123",
+      slackUserId: "U123"
+    });
+    const second = createRuntimeJwtIssuer({
+      issuer: "http://burble-app:3000",
+      privateKeyPath,
+      now: () => new Date("2026-05-22T12:00:30.000Z")
+    });
+
+    expect(readFileSync(privateKeyPath, "utf8")).toContain("PRIVATE KEY");
+    expect(second.jwks().keys[0]?.kid).toBe(first.jwks().keys[0]?.kid);
+    expect(
+      second.verifyRuntimeJwt({
+        token,
+        audience: "http://agentgateway:3000/mcp",
+        now: new Date("2026-05-22T12:00:30.000Z")
+      })
+    ).toMatchObject({
+      runtime_id: "rt_u123",
+      workspace_id: "T123",
+      slack_user_id: "U123"
+    });
   });
 });

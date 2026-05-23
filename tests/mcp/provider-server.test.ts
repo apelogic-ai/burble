@@ -29,6 +29,7 @@ const config: Config = {
   agentRuntimeMcpGatewayUrl: "http://agentgateway:3000/mcp",
   agentRuntimeMcpAudience: "http://agentgateway:3000/mcp",
   runtimeJwtIssuer: "http://burble-app:3000",
+  runtimeJwtPrivateKeyPath: null,
   openClawConfigPatchHostPath: null,
   internalApiToken: null,
   aiModel: "openai:gpt-5.4"

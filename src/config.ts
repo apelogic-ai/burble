@@ -26,6 +26,7 @@ export type Config = {
   agentRuntimeMcpGatewayUrl: string | null;
   agentRuntimeMcpAudience: string | null;
   runtimeJwtIssuer: string;
+  runtimeJwtPrivateKeyPath: string | null;
   openClawConfigPatchHostPath: string | null;
   internalApiToken: string | null;
 };
@@ -197,6 +198,10 @@ export function readConfig(env: Env): Config {
       optionalUrlEnv(env, "AGENT_RUNTIME_MCP_GATEWAY_URL"),
     runtimeJwtIssuer:
       optionalUrlEnv(env, "RUNTIME_JWT_ISSUER") ?? baseUrl,
+    runtimeJwtPrivateKeyPath: optionalSecretEnv(
+      env,
+      "RUNTIME_JWT_PRIVATE_KEY_PATH"
+    ),
     openClawConfigPatchHostPath: optionalSecretEnv(
       env,
       "OPENCLAW_CONFIG_PATCH_HOST_PATH"
