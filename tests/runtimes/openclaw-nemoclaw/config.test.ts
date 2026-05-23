@@ -8,6 +8,8 @@ describe("readRuntimeConfig", () => {
         PORT: "9090",
         BURBLE_TOOL_GATEWAY_URL: "http://burble-app:3000/internal/tools/",
         BURBLE_INTERNAL_TOKEN: "secret",
+        BURBLE_MCP_GATEWAY_URL: "http://agentgateway:3000/mcp/",
+        BURBLE_RUNTIME_JWT: "runtime-jwt",
         OPENCLAW_NEMOCLAW_ENGINE: "openclaw",
         OPENCLAW_COMMAND: "/usr/local/bin/openclaw",
         OPENCLAW_AGENT: "burble",
@@ -24,6 +26,8 @@ describe("readRuntimeConfig", () => {
       port: 9090,
       toolGatewayUrl: "http://burble-app:3000/internal/tools",
       internalToken: "secret",
+      mcpGatewayUrl: "http://agentgateway:3000/mcp",
+      runtimeJwt: "runtime-jwt",
       engine: "openclaw",
       openClawCommand: "/usr/local/bin/openclaw",
       openClawAgent: "burble",
@@ -46,6 +50,8 @@ describe("readRuntimeConfig", () => {
       })
     ).toMatchObject({
       engine: "deterministic",
+      mcpGatewayUrl: null,
+      runtimeJwt: null,
       openClawCommand: "openclaw",
       openClawAgent: "main",
       openClawTimeoutMs: 60000,

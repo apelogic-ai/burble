@@ -6,6 +6,8 @@ const config: RuntimeConfig = {
   port: 8080,
   toolGatewayUrl: "http://burble-app:3000/internal/tools",
   internalToken: "secret",
+  mcpGatewayUrl: null,
+  runtimeJwt: null,
   engine: "deterministic",
   openClawCommand: "openclaw",
   openClawAgent: "main",

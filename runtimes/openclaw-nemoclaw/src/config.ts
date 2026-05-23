@@ -2,6 +2,8 @@ export type RuntimeConfig = {
   port: number;
   toolGatewayUrl: string;
   internalToken: string;
+  mcpGatewayUrl: string | null;
+  runtimeJwt: string | null;
   engine: RuntimeEngine;
   openClawCommand: string;
   openClawAgent: string;
@@ -28,6 +30,8 @@ export function readRuntimeConfig(env: Env): RuntimeConfig {
       ""
     ),
     internalToken: requiredEnv(env, "BURBLE_INTERNAL_TOKEN"),
+    mcpGatewayUrl: readOptionalUrlEnv(env.BURBLE_MCP_GATEWAY_URL),
+    runtimeJwt: readOptionalEnv(env.BURBLE_RUNTIME_JWT),
     engine: readRuntimeEngine(env.OPENCLAW_NEMOCLAW_ENGINE ?? "deterministic"),
     openClawCommand: env.OPENCLAW_COMMAND?.trim() || "openclaw",
     openClawAgent: env.OPENCLAW_AGENT?.trim() || "main",
@@ -113,6 +117,10 @@ function readBooleanEnv(value: string, name: string): boolean {
 function readOptionalEnv(value: string | undefined): string | null {
   const trimmed = stripOptionalQuotes(value ?? "").trim();
   return trimmed ? trimmed : null;
+}
+
+function readOptionalUrlEnv(value: string | undefined): string | null {
+  return readOptionalEnv(value)?.replace(/\/+$/, "") ?? null;
 }
 
 function stripOptionalQuotes(value: string): string {
