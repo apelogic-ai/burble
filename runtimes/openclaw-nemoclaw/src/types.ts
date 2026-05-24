@@ -43,6 +43,13 @@ export type RunResponse = {
 
 export type RunEvent =
   | { type: "status"; text: string }
+  | { type: "tool_call"; toolName: string; callId: string }
+  | {
+      type: "tool_result";
+      toolName: string;
+      callId: string;
+      classification: ToolClassification;
+    }
   | { type: "message_delta"; text: string }
   | { type: "final"; response: RunResponse["response"] }
   | { type: "error"; message: string };

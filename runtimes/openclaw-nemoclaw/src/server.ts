@@ -211,6 +211,9 @@ async function consumeSharedRun(
     throw error;
   } finally {
     sharedRun.completed = true;
+    for (const subscriber of sharedRun.subscribers) {
+      subscriber();
+    }
     const cleanupTimer = setTimeout(() => {
       if (sharedRuns.get(runId) === sharedRun) {
         sharedRuns.delete(runId);

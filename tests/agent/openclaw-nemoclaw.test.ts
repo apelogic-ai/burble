@@ -255,6 +255,17 @@ describe("createOpenClawNemoClawAgentRunner", () => {
 
     expect(socket.url).toBe("ws://openclaw-runtime:8080/runs/run-1/events");
     socket.sendEvent({ type: "status", text: "Loading context..." });
+    socket.sendEvent({
+      type: "tool_call",
+      toolName: "jira.searchIssues",
+      callId: "call-1"
+    });
+    socket.sendEvent({
+      type: "tool_result",
+      toolName: "jira.searchIssues",
+      callId: "call-1",
+      classification: "user_private"
+    });
     socket.sendEvent({ type: "message_delta", text: "Partial answer" });
     socket.sendEvent({
       type: "final",
@@ -270,6 +281,8 @@ describe("createOpenClawNemoClawAgentRunner", () => {
       "status:Preparing your OpenClaw/NemoClaw runtime...",
       "status:Running OpenClaw/NemoClaw...",
       "status:Loading context...",
+      "tool_call:",
+      "tool_result:",
       "message_delta:Partial answer"
     ]);
     expect(result).toEqual({

@@ -617,7 +617,17 @@ describe("runOpenClawCliRequest", () => {
     expect(events).toEqual([
       { type: "status", text: "Loading Burble context..." },
       { type: "status", text: "Running OpenClaw/NemoClaw..." },
-      { type: "status", text: "Calling Burble tool..." },
+      {
+        type: "tool_call",
+        toolName: "jira.searchIssues",
+        callId: expect.any(String)
+      },
+      {
+        type: "tool_result",
+        toolName: "jira.searchIssues",
+        callId: expect.any(String),
+        classification: "user_private"
+      },
       { type: "message_delta", text: "ENG-7 is blocked." },
       {
         type: "final",
@@ -627,6 +637,99 @@ describe("runOpenClawCliRequest", () => {
         }
       }
     ]);
+    expect(events[2]).toMatchObject({ type: "tool_call" });
+    expect(events[3]).toMatchObject({
+      type: "tool_result",
+      callId: (events[2] as { callId: string }).callId
+    });
+  });
+
+  test("yields stdout deltas before the OpenClaw process exits", async () => {
+    let resolveExit!: () => void;
+    const exitGate = new Promise<void>((resolve) => {
+      resolveExit = resolve;
+    });
+
+    const stream = runOpenClawCliRequestStream(
+      {
+        input: {
+          text: "prioritize my GitHub work",
+          connections: {
+            github: {
+              connected: true,
+              email: "person@example.com",
+              providerLogin: "octocat"
+            }
+          }
+        }
+      },
+      config,
+      async () => ({
+        classification: "user_private",
+        content: []
+      }),
+      async function* () {
+        yield { type: "stdout" as const, text: "Early token." };
+        await exitGate;
+        yield { type: "exit" as const, exitCode: 0 };
+      },
+      () => undefined
+    )[Symbol.asyncIterator]();
+
+    expect(await stream.next()).toEqual({
+      done: false,
+      value: { type: "status", text: "Loading Burble context..." }
+    });
+    expect(await stream.next()).toEqual({
+      done: false,
+      value: { type: "status", text: "Running OpenClaw/NemoClaw..." }
+    });
+    expect(await stream.next()).toEqual({
+      done: false,
+      value: { type: "message_delta", text: "Early token." }
+    });
+
+    resolveExit();
+    expect((await stream.next()).value).toEqual({
+      type: "final",
+      response: {
+        classification: "user_private",
+        text: "Early token."
+      }
+    });
+  });
+
+  test("can invoke OpenClaw through Gateway mode without local CLI execution", async () => {
+    const commands: Array<{ args: string[] }> = [];
+    const response = await runOpenClawCliRequest(
+      {
+        input: {
+          text: "what can you do?",
+          connections: {
+            github: { connected: false }
+          }
+        }
+      },
+      { ...config, engine: "openclaw-gateway" },
+      async () => {
+        throw new Error("unexpected tool call");
+      },
+      async (_command, args) => {
+        commands.push({ args });
+        return {
+          exitCode: 0,
+          stdout: "Gateway answer.",
+          stderr: ""
+        };
+      },
+      () => undefined
+    );
+
+    expect(response.response.text).toBe("Gateway answer.");
+    expect(commands).toHaveLength(1);
+    expect(commands[0].args).toContain("agent");
+    expect(commands[0].args).toContain("--session-id");
+    expect(commands[0].args).not.toContain("--local");
   });
 
   test("logs stream debug details only when enabled", async () => {

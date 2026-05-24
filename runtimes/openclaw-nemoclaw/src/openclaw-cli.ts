@@ -197,7 +197,7 @@ export async function* runOpenClawCliRequestStream(
   );
   yield { type: "status", text: "Running OpenClaw/NemoClaw..." };
 
-  const first = await collectOpenClawStream(
+  const first = yield* collectOpenClawStream(
     request,
     config,
     buildOpenClawPrompt(request, toolContext),
@@ -210,7 +210,6 @@ export async function* runOpenClawCliRequestStream(
   const plannedToolCall = readPlannedToolCall(first.stdout, toolContext.catalog);
 
   if (!plannedToolCall) {
-    yield* first.events;
     const text = extractOpenClawText(first.stdout) || baseline.response.text;
     logInfo(
       `OpenClaw agent finish runId=${request.runId ?? "unknown"} classification=${baseline.response.classification} textLength=${text.length}`
@@ -228,17 +227,28 @@ export async function* runOpenClawCliRequestStream(
   logInfo(
     `OpenClaw tool requested runId=${request.runId ?? "unknown"} tool=${plannedToolCall.name}`
   );
-  yield { type: "status", text: "Calling Burble tool..." };
+  const callId = crypto.randomUUID();
+  yield {
+    type: "tool_call",
+    toolName: plannedToolCall.name,
+    callId
+  };
   const toolResult = await executePlannedToolCall(
     plannedToolCall,
     request,
     executeTool
   );
+  yield {
+    type: "tool_result",
+    toolName: plannedToolCall.name,
+    callId,
+    classification: toolResult.classification
+  };
   const classification = mergeClassification(
     baseline.response.classification,
     toolResult.classification
   );
-  const second = await collectOpenClawStream(
+  const second = yield* collectOpenClawStream(
     request,
     config,
     buildOpenClawPrompt(request, toolContext, {
@@ -249,10 +259,9 @@ export async function* runOpenClawCliRequestStream(
     runCommandStream,
     logInfo,
     heartbeatMs,
-    false
+    true
   );
 
-  yield* second.events;
   const text = extractOpenClawText(second.stdout) || formatToolResult(toolResult);
   logInfo(
     `OpenClaw agent finish runId=${request.runId ?? "unknown"} classification=${classification} textLength=${text.length}`
@@ -267,7 +276,7 @@ export async function* runOpenClawCliRequestStream(
   };
 }
 
-async function collectOpenClawStream(
+async function* collectOpenClawStream(
   request: RunRequest,
   config: RuntimeConfig,
   prompt: string,
@@ -275,13 +284,12 @@ async function collectOpenClawStream(
   runCommandStream: CliCommandStreamer,
   logInfo: RuntimeLogger,
   heartbeatMs: number,
-  bufferDeltas: boolean
-): Promise<{ stdout: string; events: RunEvent[] }> {
+  emitDeltas: boolean
+): AsyncGenerator<RunEvent, { stdout: string }, void> {
   let stdout = "";
   let exitCode: number | null = null;
   let chunkCount = 0;
   let deltaCount = 0;
-  const events: RunEvent[] = [];
   const startedAt = Date.now();
 
   for await (const event of withHeartbeat(
@@ -296,12 +304,12 @@ async function collectOpenClawStream(
     heartbeatMs
   )) {
     if (event.type === "heartbeat") {
-      events.push({
+      yield {
         type: "status",
         text: `Still running OpenClaw... ${Math.round(
           (Date.now() - startedAt) / 1000
         )}s`
-      });
+      };
       logStreamDebug(config, logInfo, "heartbeat", {
         runId: request.runId ?? "unknown",
         elapsedMs: Date.now() - startedAt
@@ -321,7 +329,7 @@ async function collectOpenClawStream(
         preview: event.text
       });
       const delta = extractOpenClawStreamDelta(event.text);
-      if (delta) {
+      if (delta && emitDeltas) {
         deltaCount += 1;
         logStreamDebug(config, logInfo, "delta parsed", {
           runId: request.runId ?? "unknown",
@@ -330,7 +338,7 @@ async function collectOpenClawStream(
           chars: delta.length,
           preview: delta
         });
-        events.push({ type: "message_delta", text: delta });
+        yield { type: "message_delta", text: delta };
       }
       continue;
     }
@@ -353,20 +361,13 @@ async function collectOpenClawStream(
       logInfo(
         `OpenClaw agent partial finish runId=${request.runId ?? "unknown"} exitCode=${exitCode ?? "unknown"} textLength=${partialText.length}`
       );
-      events.push({
-        type: "final",
-        response: {
-          classification: "user_private",
-          text: partialText
-        }
-      });
-      return { stdout, events };
+      return { stdout };
     }
 
     throw new Error(`OpenClaw CLI exited with code ${exitCode ?? "unknown"}`);
   }
 
-  return { stdout, events };
+  return { stdout };
 }
 
 async function* withHeartbeat(
@@ -800,16 +801,21 @@ function buildOpenClawArgs(
   prompt: string,
   sessionId: string
 ): string[] {
-  return [
+  const args = [
     "agent",
     "--agent",
     config.openClawAgent,
-    "--local",
     "--message",
     prompt,
     "--session-id",
     sessionId
   ];
+
+  if (config.engine !== "openclaw-gateway") {
+    args.splice(3, 0, "--local");
+  }
+
+  return args;
 }
 
 function buildSessionId(request: RunRequest): string {

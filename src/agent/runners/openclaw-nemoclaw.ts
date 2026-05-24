@@ -39,6 +39,13 @@ type RemoteRunStartResponse = {
 
 type RemoteRunEvent =
   | { type: "status"; text: string }
+  | { type: "tool_call"; toolName: string; callId: string }
+  | {
+      type: "tool_result";
+      toolName: string;
+      callId: string;
+      classification: ToolClassification;
+    }
   | { type: "message_delta"; text: string }
   | { type: "final"; response: AgentOutput }
   | { type: "error"; message: string };
@@ -66,9 +73,9 @@ export function createOpenClawNemoClawAgentRunner(
     name: "openclaw-nemoclaw",
     capabilities: {
       streaming: true,
-      toolEvents: false,
       remote: true,
-      requiresToolGateway: true
+      requiresToolGateway: true,
+      toolEvents: true
     },
     async *run(input: AgentInput): AsyncIterable<AgentRunEvent> {
       const runId = crypto.randomUUID();
@@ -556,6 +563,17 @@ function validateRemoteRunEvent(payload: unknown): RemoteRunEvent | null {
     case "status":
     case "message_delta":
       return typeof event.text === "string" ? event : null;
+    case "tool_call":
+      return typeof event.toolName === "string" &&
+        typeof event.callId === "string"
+        ? event
+        : null;
+    case "tool_result":
+      return typeof event.toolName === "string" &&
+        typeof event.callId === "string" &&
+        classifications.has(event.classification)
+        ? event
+        : null;
     case "error":
       return typeof event.message === "string" ? event : null;
     case "final":

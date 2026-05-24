@@ -79,19 +79,19 @@ describe("formatAgentProgressEvent", () => {
     expect(
       formatAgentProgressEvent({
         type: "tool_call",
-        toolName: "github_list_assigned_issues",
+        toolName: "github.listAssignedIssues",
         callId: "call-1"
       })
-    ).toBe("Using GitHub list assigned issues...");
+    ).toBe("Using GitHub assigned issues...");
 
     expect(
       formatAgentProgressEvent({
         type: "tool_result",
-        toolName: "github_list_assigned_issues",
+        toolName: "jira.searchIssues",
         callId: "call-1",
         classification: "user_private"
       })
-    ).toBe("Finished GitHub list assigned issues.");
+    ).toBe("Finished Jira search.");
   });
 
   test("appends streaming message deltas without stripping spacing", () => {

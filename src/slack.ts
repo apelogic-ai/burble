@@ -849,10 +849,35 @@ export function formatAgentProgressEvent(
 }
 
 function formatAgentToolName(toolName: string): string {
+  const labels: Record<string, string> = {
+    "github.getAuthenticatedUser": "GitHub identity",
+    "github.listAssignedIssues": "GitHub assigned issues",
+    "github.searchIssues": "GitHub search",
+    "github.listMyPullRequests": "GitHub pull requests",
+    "jira.getAuthenticatedUser": "Jira identity",
+    "jira.listAssignedIssues": "Jira assigned issues",
+    "jira.searchIssues": "Jira search",
+    "atlassian.listMcpTools": "Atlassian MCP tools",
+    "atlassian.callMcpTool": "Atlassian MCP tool"
+  };
+  const known = labels[toolName];
+  if (known) {
+    return known;
+  }
+
+  return titleCaseProviderToolName(toolName);
+}
+
+function titleCaseProviderToolName(toolName: string): string {
   return toolName
-    .replace(/^github_/, "GitHub ")
-    .replace(/^jira_/, "Jira ")
-    .replaceAll("_", " ")
+    .replace(/[._]/g, " ")
+    .replace(/([a-z])([A-Z])/g, "$1 $2")
+    .replace(/\bmcp\b/gi, "MCP")
+    .replace(/\bapi\b/gi, "API")
+    .replace(/\bgithub\b/gi, "GitHub")
+    .replace(/\bjira\b/gi, "Jira")
+    .replace(/\batlassian\b/gi, "Atlassian")
+    .replace(/\s+/g, " ")
     .trim();
 }
 

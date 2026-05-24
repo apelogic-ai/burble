@@ -17,10 +17,10 @@ export type RuntimeConfig = {
   openClawStreamDebug: boolean;
 };
 
-export type RuntimeEngine = "deterministic" | "openclaw";
+export type RuntimeEngine = "deterministic" | "openclaw" | "openclaw-gateway";
 
 type Env = Record<string, string | undefined>;
-const runtimeEngines = ["deterministic", "openclaw"] as const;
+const runtimeEngines = ["deterministic", "openclaw", "openclaw-gateway"] as const;
 
 export function readRuntimeConfig(env: Env): RuntimeConfig {
   return {

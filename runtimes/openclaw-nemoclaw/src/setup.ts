@@ -12,8 +12,8 @@ export async function ensureOpenClawSetup(
   runCommand: CliCommandRunner = runCliCommand,
   logInfo: RuntimeLogger = info
 ): Promise<void> {
-  if (config.engine !== "openclaw" || !config.openClawSetupOnStart) {
-    if (config.engine === "openclaw") {
+  if (!isOpenClawBackedEngine(config) || !config.openClawSetupOnStart) {
+    if (isOpenClawBackedEngine(config)) {
       logInfo("OpenClaw onboard skipped setupOnStart=false");
     }
     await ensureOpenClawConfig(config, runCommand, logInfo);
@@ -70,7 +70,7 @@ async function ensureOpenClawConfig(
   runCommand: CliCommandRunner,
   logInfo: RuntimeLogger
 ): Promise<void> {
-  if (config.engine !== "openclaw") {
+  if (!isOpenClawBackedEngine(config)) {
     return;
   }
 
@@ -112,6 +112,10 @@ async function ensureOpenClawConfig(
   logInfo("OpenClaw config validate finish");
 }
 
+function isOpenClawBackedEngine(config: RuntimeConfig): boolean {
+  return config.engine === "openclaw" || config.engine === "openclaw-gateway";
+}
+
 async function buildSetupCacheKey(config: RuntimeConfig): Promise<string> {
   const patchHash = config.openClawConfigPatchPath
     ? await hashFile(config.openClawConfigPatchPath)
@@ -121,6 +125,7 @@ async function buildSetupCacheKey(config: RuntimeConfig): Promise<string> {
     .update(
       JSON.stringify({
         version: 1,
+        engine: config.engine,
         command: config.openClawCommand,
         agent: config.openClawAgent,
         stateDir: config.openClawStateDir,

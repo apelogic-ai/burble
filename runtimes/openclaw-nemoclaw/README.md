@@ -26,12 +26,18 @@ Runtime engines:
   bridge over the Burble tool gateway.
 - `OPENCLAW_NEMOCLAW_ENGINE=openclaw` invokes an `openclaw` CLI binary from
   inside the runtime container with sanitized Burble tool context.
+- `OPENCLAW_NEMOCLAW_ENGINE=openclaw-gateway` invokes `openclaw agent` without
+  `--local`, preserving the same Burble runtime API while letting OpenClaw use
+  its Gateway-backed execution path.
 
-CLI mode is intentionally isolated behind the same `/runs` contract. A derived
-image can install OpenClaw/NemoClaw without changing Burble's Slack, OAuth,
-visibility, or deployment boundaries.
+OpenClaw modes are intentionally isolated behind the same `/runs` contract. A
+derived image can install OpenClaw/NemoClaw without changing Burble's Slack,
+OAuth, visibility, or deployment boundaries. Runtime events are normalized to
+status, tool lifecycle, answer delta, final, and error events before they reach
+Slack or any future messaging surface.
 
-When `OPENCLAW_NEMOCLAW_ENGINE=openclaw`, runtime startup runs:
+When `OPENCLAW_NEMOCLAW_ENGINE=openclaw` or `openclaw-gateway`, runtime startup
+runs:
 
 ```bash
 openclaw onboard \
