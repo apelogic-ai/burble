@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
 import type { RuntimeConfig } from "./config";
 import { info, type RuntimeLogger } from "./logger";
 import {
@@ -25,6 +26,11 @@ export type CliCommandRunner = (
   args: string[],
   options: { timeoutMs: number; env?: Record<string, string> }
 ) => Promise<CliCommandResult>;
+
+const preloadedRuntimeSkillNames = ["core", "github", "atlassian-jira"] as const;
+const preloadedRuntimeSkills = preloadedRuntimeSkillNames
+  .map((name) => loadRuntimeSkill(name))
+  .join("\n\n");
 
 export type CliCommandStreamEvent =
   | { type: "stdout"; text: string }
@@ -637,7 +643,10 @@ async function readAtlassianMcpToolSummaries(
             : "";
         const schema =
           "inputSchema" in item && item.inputSchema !== undefined
-            ? ` inputSchema=${truncate(JSON.stringify(item.inputSchema), 600)}`
+            ? ` inputSchema=${truncate(
+                JSON.stringify(item.inputSchema),
+                atlassianMcpToolSchemaPromptLength(item.name)
+              )}`
             : "";
         return [`${item.name}${title}${description}${schema}`];
       }
@@ -646,6 +655,24 @@ async function readAtlassianMcpToolSummaries(
   } catch {
     return [];
   }
+}
+
+function atlassianMcpToolSchemaPromptLength(toolName: string): number {
+  return isAllowedJiraWriteMcpToolName(toolName) ? 3_000 : 900;
+}
+
+function isAllowedJiraWriteMcpToolName(toolName: string): boolean {
+  return [
+    "addcommenttojiraissue",
+    "addworklogtojiraissue",
+    "createjiraissue",
+    "editjiraissue",
+    "transitionjiraissue"
+  ].includes(toolName.trim().toLowerCase());
+}
+
+function loadRuntimeSkill(name: string): string {
+  return readFileSync(new URL(`../skills/${name}.md`, import.meta.url), "utf8").trim();
 }
 
 function truncate(value: string | undefined, maxLength: number): string {
@@ -664,25 +691,8 @@ function buildOpenClawPrompt(
   executedTools: ExecutedToolCall[] = []
 ): string {
   const sections = [
-    "You are Burble's OpenClaw runtime.",
-    "Answer in concise Slack mrkdwn.",
-    "Answer general questions directly when no Burble tool is needed.",
-    "For GitHub, Jira, or provider-specific data, use only Burble-provided context or a Burble tool call. Do not invent provider data.",
-    "Do not reveal hidden chain-of-thought. You may give a concise rationale or progress summary when useful.",
-    "Never mention tokens, credentials, internal URLs, or implementation details.",
-    "",
-    "Burble tool-call protocol:",
-    "If you need fresh provider data or an action from an available tool, return exactly one JSON object and no prose:",
-    `{"tool_call":{"name":"jira.searchIssues","arguments":{"jql":"assignee = currentUser() AND statusCategory != Done"}}}`,
-    "Burble injects user identity and credentials. Do not include user email, tokens, or credentials in tool arguments.",
-    "Use only tool names listed in Available Burble tools.",
-    "For Atlassian/Jira actions, call atlassian.callMcpTool with the upstream tool name in arguments.name and the upstream tool arguments in arguments.arguments.",
-    "Use upstream MCP tool schemas from Available Burble tools. Do not invent argument names when a schema is available.",
-    "For Jira issue creation/editing, first resolve site/project/user identifiers with available Atlassian MCP lookup tools when required by the schema.",
-    "When a user provides an assignee email, use that email for Jira account lookup before trying the display name.",
-    "For Jira issue creation, do not let optional assignee lookup failure block creating the issue. If project, issue type, and summary can be resolved but the assignee cannot, create the issue unassigned and clearly say assignment was skipped because the account could not be resolved.",
-    "For Jira edit or assign-only requests, unresolved target accounts may block the requested edit; ask one concise clarifying question instead of guessing.",
-    "If required Jira fields such as project, issue type, or issue key cannot be resolved from tools or the request, ask one concise clarifying question instead of guessing.",
+    "Preloaded Burble runtime skills:",
+    preloadedRuntimeSkills,
     "",
     "Available Burble tools:",
     formatToolCatalog(toolContext.catalog),

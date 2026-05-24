@@ -20,6 +20,12 @@ OAuth tokens stay in Burble. The runtime receives only sanitized connection
 summaries and user email, then gets classified/sanitized tool results back
 from the gateway.
 
+Agent operating instructions live in `skills/*.md`. The runtime preloads those
+skill files into each OpenClaw prompt, while `src/openclaw-cli.ts` only appends
+dynamic context such as the current tool catalog, executed tool results, and the
+user request. Keep provider behavior in skills instead of scattering prompt
+rules through TypeScript.
+
 Runtime engines:
 
 - `OPENCLAW_NEMOCLAW_ENGINE=deterministic` uses the deployable deterministic

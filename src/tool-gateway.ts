@@ -27,6 +27,11 @@ import {
   withFreshJiraToken
 } from "./tools/jira";
 import type { ToolResult } from "./tools/types";
+import {
+  logAtlassianMcpCallFailure,
+  logAtlassianMcpCallFinish,
+  logAtlassianMcpCallStart
+} from "./mcp/atlassian-logging";
 
 type ToolGatewayDeps = Partial<Parameters<typeof createGitHubTools>[0]> &
   Partial<JiraToolDeps> & {
@@ -258,13 +263,36 @@ export async function handleToolGatewayRequest(
         },
         connection,
         async (accessToken) => {
-          const upstreamResult = await (deps.callAtlassianMcpTool ??
-            defaultCallAtlassianMcpTool)({
-            url: config.atlassianMcpUrl,
-            accessToken,
-            name: atlassianInput.name,
-            arguments: atlassianInput.arguments
-          });
+          logAtlassianMcpCallStart(
+            "http",
+            auth.kind === "runtime" ? auth.runtime.id : "legacy",
+            atlassianInput.name,
+            atlassianInput.arguments
+          );
+          let upstreamResult: UpstreamMcpToolResult;
+          try {
+            upstreamResult = await (deps.callAtlassianMcpTool ??
+              defaultCallAtlassianMcpTool)({
+              url: config.atlassianMcpUrl,
+              accessToken,
+              name: atlassianInput.name,
+              arguments: atlassianInput.arguments
+            });
+          } catch (error) {
+            logAtlassianMcpCallFailure(
+              "http",
+              auth.kind === "runtime" ? auth.runtime.id : "legacy",
+              atlassianInput.name,
+              error
+            );
+            throw error;
+          }
+          logAtlassianMcpCallFinish(
+            "http",
+            auth.kind === "runtime" ? auth.runtime.id : "legacy",
+            atlassianInput.name,
+            upstreamResult
+          );
 
           return {
             classification: "user_private" as const,
