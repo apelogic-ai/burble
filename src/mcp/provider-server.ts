@@ -30,6 +30,11 @@ import {
 } from "../tools/jira";
 import type { ToolResult } from "../tools/types";
 import type { RuntimeJwtIssuer } from "../runtime-jwt";
+import {
+  logAtlassianMcpCallFailure,
+  logAtlassianMcpCallFinish,
+  logAtlassianMcpCallStart
+} from "./atlassian-logging";
 
 type ProviderMcpDeps = Partial<GitHubToolDeps> &
   Partial<JiraToolDeps> & {
@@ -308,13 +313,23 @@ function createProviderMcpServer(
               ...deps
             },
             connection,
-            (accessToken) =>
-              (deps.callAtlassianMcpTool ?? defaultCallAtlassianMcpTool)({
-                url: config.atlassianMcpUrl,
-                accessToken,
-                name,
-                arguments: args
-              })
+            async (accessToken) => {
+              logAtlassianMcpCallStart("mcp", runtime.id, name, args);
+              try {
+                const upstreamResult = await (deps.callAtlassianMcpTool ??
+                  defaultCallAtlassianMcpTool)({
+                  url: config.atlassianMcpUrl,
+                  accessToken,
+                  name,
+                  arguments: args
+                });
+                logAtlassianMcpCallFinish("mcp", runtime.id, name, upstreamResult);
+                return upstreamResult;
+              } catch (error) {
+                logAtlassianMcpCallFailure("mcp", runtime.id, name, error);
+                throw error;
+              }
+            }
           );
           if (isJiraAuthErrorResult(result)) {
             return result;

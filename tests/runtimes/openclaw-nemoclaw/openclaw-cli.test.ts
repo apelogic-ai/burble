@@ -635,8 +635,8 @@ describe("runOpenClawCliRequest", () => {
       "Created DM-100, but I could not assign it because Jira could not resolve Boris Renski."
     );
     expect(prompts).toHaveLength(4);
-    expect(prompts[0]).toContain(
-      "do not let optional assignee lookup failure block creating the issue"
+    expect(prompts[0]).toMatch(
+      /do not let optional assignee lookup failure block\s+creating the issue/
     );
     expect(toolCalls).toContainEqual({
       toolName: "atlassian.callMcpTool",

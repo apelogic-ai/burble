@@ -273,5 +273,6 @@ describe("dev deploy config", () => {
     expect(dockerfile).toContain("npm install -g \"openclaw@${OPENCLAW_VERSION}\"");
     expect(dockerfile).toContain("command -v bun");
     expect(dockerfile).toContain("command -v openclaw");
+    expect(dockerfile).toContain("COPY skills ./skills");
   });
 });
