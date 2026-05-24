@@ -261,7 +261,7 @@ describe("runOpenClawCliRequest", () => {
     expect(prompts[0]).toContain("Available Burble tools:");
     expect(prompts[0]).toContain("jira.searchIssues");
     expect(prompts[0]).not.toContain("person@example.com");
-    expect(prompts[1]).toContain("Burble executed tool:");
+    expect(prompts[1]).toContain("Burble executed tools:");
     expect(prompts[1]).toContain("Deploy is blocked");
     expect(toolCalls).toContainEqual({
       toolName: "jira.searchIssues",
@@ -274,8 +274,9 @@ describe("runOpenClawCliRequest", () => {
     });
   });
 
-  test("lets OpenClaw plan a read-only Atlassian MCP tool call", async () => {
+  test("lets OpenClaw plan an allowed Atlassian MCP tool call", async () => {
     const toolCalls: Array<{ toolName: string; body: unknown }> = [];
+    const prompts: string[] = [];
     const response = await runOpenClawCliRequest(
       {
         input: {
@@ -303,7 +304,14 @@ describe("runOpenClawCliRequest", () => {
             content: [
               {
                 name: "searchJiraIssuesUsingJql",
-                description: "Search Jira issues using JQL"
+                description: "Search Jira issues using JQL",
+                inputSchema: {
+                  type: "object",
+                  properties: {
+                    jql: { type: "string" }
+                  },
+                  required: ["jql"]
+                }
               }
             ]
           };
@@ -332,7 +340,8 @@ describe("runOpenClawCliRequest", () => {
       },
       async (_command, args) => {
         const prompt = args[args.indexOf("--message") + 1];
-        return prompt.includes("Burble executed tool:")
+        prompts.push(prompt);
+        return prompt.includes("Burble executed tools:")
           ? {
               exitCode: 0,
               stdout: "ECS-313 is the likely match.",
@@ -358,6 +367,9 @@ describe("runOpenClawCliRequest", () => {
     );
 
     expect(response.response.text).toBe("ECS-313 is the likely match.");
+    expect(prompts[0]).toContain("Use upstream MCP tool schemas");
+    expect(prompts[0]).toContain("searchJiraIssuesUsingJql");
+    expect(prompts[0]).toContain("inputSchema");
     expect(toolCalls).toContainEqual({
       toolName: "atlassian.callMcpTool",
       body: {
@@ -366,6 +378,146 @@ describe("runOpenClawCliRequest", () => {
           name: "searchJiraIssuesUsingJql",
           arguments: {
             jql: 'text ~ "onboarding"'
+          }
+        }
+      }
+    });
+  });
+
+  test("lets OpenClaw chain multiple Atlassian MCP calls for a Jira action", async () => {
+    const toolCalls: Array<{ toolName: string; body: unknown }> = [];
+    const prompts: string[] = [];
+    const response = await runOpenClawCliRequest(
+      {
+        input: {
+          text: "create new Jira ticket in DM workspace, titled 'test ticket from slack' and assign it to Alex Reviewer (alex.reviewer@example.com)",
+          connections: {
+            github: { connected: false },
+            jira: {
+              connected: true,
+              email: "person@example.com",
+              providerLogin: "person@atlassian.example"
+            }
+          }
+        }
+      },
+      config,
+      async (toolName, body) => {
+        toolCalls.push({ toolName, body });
+        const input = (body as { input?: { name?: string } }).input;
+        if (toolName === "atlassian.listMcpTools") {
+          return {
+            classification: "user_private",
+            content: [
+              {
+                name: "getAccessibleAtlassianResources",
+                inputSchema: { type: "object", properties: {} }
+              },
+              {
+                name: "lookupJiraAccountId",
+                inputSchema: {
+                  type: "object",
+                  properties: {
+                    cloudId: { type: "string" },
+                    searchString: { type: "string" }
+                  }
+                }
+              },
+              {
+                name: "createJiraIssue",
+                inputSchema: {
+                  type: "object",
+                  properties: {
+                    cloudId: { type: "string" },
+                    projectKey: { type: "string" },
+                    summary: { type: "string" },
+                    assignee_account_id: { type: "string" }
+                  }
+                }
+              }
+            ]
+          };
+        }
+        if (input?.name === "getAccessibleAtlassianResources") {
+          return mcpText("getAccessibleAtlassianResources", '[{"id":"cloud-123"}]');
+        }
+        if (input?.name === "lookupJiraAccountId") {
+          return mcpText("lookupJiraAccountId", '[{"accountId":"acct-boris"}]');
+        }
+        if (input?.name === "createJiraIssue") {
+          return mcpText("createJiraIssue", "Created DM-100");
+        }
+
+        return {
+          classification: "user_private",
+          content: []
+        };
+      },
+      async (_command, args) => {
+        const prompt = args[args.indexOf("--message") + 1];
+        prompts.push(prompt);
+        if (prompts.length === 1) {
+          return openClawToolCall("atlassian.callMcpTool", {
+            name: "getAccessibleAtlassianResources",
+            arguments: {}
+          });
+        }
+        if (prompts.length === 2) {
+          return openClawToolCall("atlassian.callMcpTool", {
+            name: "lookupJiraAccountId",
+            arguments: {
+              cloudId: "cloud-123",
+              searchString: "alex.reviewer@example.com"
+            }
+          });
+        }
+        if (prompts.length === 3) {
+          return openClawToolCall("atlassian.callMcpTool", {
+            name: "createJiraIssue",
+            arguments: {
+              cloudId: "cloud-123",
+              projectKey: "DM",
+              summary: "test ticket from slack",
+              assignee_account_id: "acct-boris"
+            }
+          });
+        }
+
+        return {
+          exitCode: 0,
+          stdout: "Created DM-100.",
+          stderr: ""
+        };
+      },
+      () => undefined
+    );
+
+    expect(response.response.text).toBe("Created DM-100.");
+    expect(prompts).toHaveLength(4);
+    expect(toolCalls).toContainEqual({
+      toolName: "atlassian.callMcpTool",
+      body: {
+        user: { email: "person@example.com" },
+        input: {
+          name: "lookupJiraAccountId",
+          arguments: {
+            cloudId: "cloud-123",
+            searchString: "alex.reviewer@example.com"
+          }
+        }
+      }
+    });
+    expect(toolCalls).toContainEqual({
+      toolName: "atlassian.callMcpTool",
+      body: {
+        user: { email: "person@example.com" },
+        input: {
+          name: "createJiraIssue",
+          arguments: {
+            cloudId: "cloud-123",
+            projectKey: "DM",
+            summary: "test ticket from slack",
+            assignee_account_id: "acct-boris"
           }
         }
       }
@@ -820,3 +972,36 @@ describe("runOpenClawCliRequest", () => {
     });
   });
 });
+
+function mcpText(toolName: string, text: string) {
+  return {
+    classification: "user_private" as const,
+    content: {
+      toolName,
+      result: {
+        content: [
+          {
+            type: "text",
+            text
+          }
+        ]
+      }
+    }
+  };
+}
+
+function openClawToolCall(
+  name: string,
+  args: Record<string, unknown>
+) {
+  return {
+    exitCode: 0,
+    stdout: JSON.stringify({
+      tool_call: {
+        name,
+        arguments: args
+      }
+    }),
+    stderr: ""
+  };
+}

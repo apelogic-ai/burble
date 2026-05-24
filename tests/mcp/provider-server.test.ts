@@ -3,7 +3,7 @@ import type { Config } from "../../src/config";
 import { createTokenStore } from "../../src/db";
 import {
   handleProviderMcpRequest,
-  isReadOnlyAtlassianMcpToolName
+  isAllowedAtlassianMcpToolName
 } from "../../src/mcp/provider-server";
 import { createRuntimeJwtIssuer } from "../../src/runtime-jwt";
 
@@ -164,7 +164,19 @@ describe("handleProviderMcpRequest", () => {
             {
               name: "searchJiraIssuesUsingJql",
               title: "Search Jira issues using JQL",
-              description: "Search Jira issues visible to the connected user"
+              description: "Search Jira issues visible to the connected user",
+              inputSchema: {
+                type: "object",
+                properties: {
+                  jql: { type: "string" }
+                },
+                required: ["jql"]
+              }
+            },
+            {
+              name: "deleteConfluencePage",
+              title: "Delete Confluence page",
+              description: "Delete a Confluence page"
             }
           ];
         }
@@ -180,7 +192,14 @@ describe("handleProviderMcpRequest", () => {
         {
           name: "searchJiraIssuesUsingJql",
           title: "Search Jira issues using JQL",
-          description: "Search Jira issues visible to the connected user"
+          description: "Search Jira issues visible to the connected user",
+          inputSchema: {
+            type: "object",
+            properties: {
+              jql: { type: "string" }
+            },
+            required: ["jql"]
+          }
         }
       ]
     });
@@ -271,12 +290,16 @@ describe("handleProviderMcpRequest", () => {
     store.close();
   });
 
-  test("blocks mutating upstream Atlassian MCP tool names", async () => {
-    expect(isReadOnlyAtlassianMcpToolName("searchJiraIssuesUsingJql")).toBe(true);
-    expect(isReadOnlyAtlassianMcpToolName("getJiraIssue")).toBe(true);
-    expect(isReadOnlyAtlassianMcpToolName("createJiraIssue")).toBe(false);
-    expect(isReadOnlyAtlassianMcpToolName("updateJiraIssue")).toBe(false);
-    expect(isReadOnlyAtlassianMcpToolName("deleteConfluencePage")).toBe(false);
+  test("allows read tools and selected Jira write MCP tool names", async () => {
+    expect(isAllowedAtlassianMcpToolName("searchJiraIssuesUsingJql")).toBe(true);
+    expect(isAllowedAtlassianMcpToolName("getJiraIssue")).toBe(true);
+    expect(isAllowedAtlassianMcpToolName("createJiraIssue")).toBe(true);
+    expect(isAllowedAtlassianMcpToolName("editJiraIssue")).toBe(true);
+    expect(isAllowedAtlassianMcpToolName("transitionJiraIssue")).toBe(true);
+    expect(isAllowedAtlassianMcpToolName("addCommentToJiraIssue")).toBe(true);
+    expect(isAllowedAtlassianMcpToolName("addWorklogToJiraIssue")).toBe(true);
+    expect(isAllowedAtlassianMcpToolName("updateJiraIssue")).toBe(false);
+    expect(isAllowedAtlassianMcpToolName("deleteConfluencePage")).toBe(false);
   });
 });
 

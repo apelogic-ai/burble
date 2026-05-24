@@ -360,6 +360,33 @@ describe("runBurbleRequest", () => {
     expect(response.response.text).toContain("ECS-123 Fix dashboard");
   });
 
+  test("leaves natural language Jira actions for the agent to plan with MCP tools", async () => {
+    const calls: Array<{ toolName: string; body: unknown }> = [];
+    const response = await runBurbleRequest(
+      {
+        input: {
+          text: "create new Jira ticket in DM workspace, titled 'test ticket from slack' and assign it to Alex Reviewer (alex.reviewer@example.com)",
+          connections: {
+            github: { connected: false },
+            jira: {
+              connected: true,
+              email: "person@example.com",
+              providerLogin: "person@atlassian.example"
+            }
+          }
+        }
+      },
+      config,
+      async (toolName, body) => {
+        calls.push({ toolName, body });
+        throw new Error("unexpected deterministic tool call");
+      }
+    );
+
+    expect(calls).toEqual([]);
+    expect(response.response.text).toContain("Use the available Atlassian MCP tools");
+  });
+
   test("preserves plain text Jira tool output", async () => {
     const response = await runBurbleRequest(
       {

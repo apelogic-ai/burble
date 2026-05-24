@@ -55,7 +55,10 @@ export function buildJiraOAuthUrl(config: Config, state: string): string {
   const url = new URL("https://auth.atlassian.com/authorize");
   url.searchParams.set("audience", "api.atlassian.com");
   url.searchParams.set("client_id", config.jiraClientId);
-  url.searchParams.set("scope", "read:jira-user read:jira-work offline_access");
+  url.searchParams.set(
+    "scope",
+    "read:jira-user read:jira-work write:jira-work offline_access"
+  );
   url.searchParams.set("redirect_uri", `${config.baseUrl}/oauth/jira/callback`);
   url.searchParams.set("state", state);
   url.searchParams.set("response_type", "code");

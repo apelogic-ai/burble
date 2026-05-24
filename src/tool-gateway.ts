@@ -208,11 +208,17 @@ export async function handleToolGatewayRequest(
 
           return {
             classification: "user_private" as const,
-            content: tools.slice(0, 50).map((tool) => ({
-              name: tool.name,
-              ...(tool.title ? { title: tool.title } : {}),
-              ...(tool.description ? { description: tool.description } : {})
-            }))
+            content: tools
+              .filter((tool) => isAllowedAtlassianMcpToolName(tool.name))
+              .slice(0, 50)
+              .map((tool) => ({
+                name: tool.name,
+                ...(tool.title ? { title: tool.title } : {}),
+                ...(tool.description ? { description: tool.description } : {}),
+                ...("inputSchema" in tool
+                  ? { inputSchema: sanitizeMcpInputSchema(tool.inputSchema) }
+                  : {})
+              }))
           };
         }
       );
@@ -231,12 +237,12 @@ export async function handleToolGatewayRequest(
       }
       const atlassianInput = body.input;
 
-      if (!isReadOnlyAtlassianMcpToolName(atlassianInput.name)) {
+      if (!isAllowedAtlassianMcpToolName(atlassianInput.name)) {
         return jsonResponseWithAudit(store, auth, toolName, {
           classification: "user_private",
           content: {
             error: "atlassian_mcp_tool_not_allowed",
-            message: `Atlassian MCP tool \`${atlassianInput.name}\` is not enabled for read-only use.`
+            message: `Atlassian MCP tool \`${atlassianInput.name}\` is not enabled for use.`
           }
         });
       }
@@ -432,10 +438,22 @@ function defaultCallAtlassianMcpTool(input: {
   );
 }
 
-function isReadOnlyAtlassianMcpToolName(name: string): boolean {
+const allowedMutatingAtlassianMcpTools = new Set([
+  "addcommenttojiraissue",
+  "addworklogtojiraissue",
+  "createjiraissue",
+  "editjiraissue",
+  "transitionjiraissue"
+]);
+
+function isAllowedAtlassianMcpToolName(name: string): boolean {
   const normalized = name.trim().toLowerCase();
   if (!normalized) {
     return false;
+  }
+
+  if (allowedMutatingAtlassianMcpTools.has(normalized)) {
+    return true;
   }
 
   if (
@@ -458,6 +476,19 @@ function sanitizeUpstreamMcpToolResult(
       : {}),
     ...(typeof result.isError === "boolean" ? { isError: result.isError } : {})
   };
+}
+
+function sanitizeMcpInputSchema(schema: unknown): unknown {
+  if (schema === undefined) {
+    return undefined;
+  }
+
+  try {
+    const text = JSON.stringify(schema);
+    return text.length <= 12_000 ? JSON.parse(text) : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 function sanitizeMcpContentItem(item: unknown): unknown {

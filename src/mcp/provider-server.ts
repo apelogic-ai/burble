@@ -221,7 +221,7 @@ function createProviderMcpServer(
     {
       title: "Atlassian MCP tools",
       description:
-        "List read-only tool metadata advertised by the upstream Atlassian MCP server for this Slack user's connected Jira account.",
+        "List allowed tool metadata advertised by the upstream Atlassian MCP server for this Slack user's connected Jira account.",
       inputSchema: {}
     },
     async () =>
@@ -252,11 +252,17 @@ function createProviderMcpServer(
 
           return {
             classification: "user_private",
-            content: tools.slice(0, 50).map((tool) => ({
-              name: tool.name,
-              ...(tool.title ? { title: tool.title } : {}),
-              ...(tool.description ? { description: tool.description } : {})
-            }))
+            content: tools
+              .filter((tool) => isAllowedAtlassianMcpToolName(tool.name))
+              .slice(0, 50)
+              .map((tool) => ({
+                name: tool.name,
+                ...(tool.title ? { title: tool.title } : {}),
+                ...(tool.description ? { description: tool.description } : {}),
+                ...("inputSchema" in tool
+                  ? { inputSchema: sanitizeMcpInputSchema(tool.inputSchema) }
+                  : {})
+              }))
           };
         })
       )
@@ -265,9 +271,9 @@ function createProviderMcpServer(
   server.registerTool(
     "atlassian_call_mcp_tool",
     {
-      title: "Atlassian MCP read-only tool call",
+      title: "Atlassian MCP allowed tool call",
       description:
-        "Call an allowlisted read-only upstream Atlassian MCP tool with this Slack user's connected Jira identity.",
+        "Call an allowlisted upstream Atlassian MCP tool with this Slack user's connected Jira identity.",
       inputSchema: {
         name: z.string().min(1).describe("Upstream Atlassian MCP tool name"),
         arguments: z
@@ -282,12 +288,12 @@ function createProviderMcpServer(
           | { toolName: string; result: UpstreamMcpToolResult }
           | { error: string; message: string }
         >(store, runtime, "jira", async (connection) => {
-          if (!isReadOnlyAtlassianMcpToolName(name)) {
+          if (!isAllowedAtlassianMcpToolName(name)) {
             return {
               classification: "user_private",
               content: {
                 error: "atlassian_mcp_tool_not_allowed",
-                message: `Atlassian MCP tool \`${name}\` is not enabled for read-only use.`
+                message: `Atlassian MCP tool \`${name}\` is not enabled for use.`
               }
             };
           }
@@ -360,10 +366,22 @@ function defaultCallAtlassianMcpTool(input: {
   );
 }
 
-export function isReadOnlyAtlassianMcpToolName(name: string): boolean {
+const allowedMutatingAtlassianMcpTools = new Set([
+  "addcommenttojiraissue",
+  "addworklogtojiraissue",
+  "createjiraissue",
+  "editjiraissue",
+  "transitionjiraissue"
+]);
+
+export function isAllowedAtlassianMcpToolName(name: string): boolean {
   const normalized = name.trim().toLowerCase();
   if (!normalized) {
     return false;
+  }
+
+  if (allowedMutatingAtlassianMcpTools.has(normalized)) {
+    return true;
   }
 
   if (
@@ -377,6 +395,8 @@ export function isReadOnlyAtlassianMcpToolName(name: string): boolean {
   return /^(get|list|search|find|read|lookup|fetch|describe)/.test(normalized);
 }
 
+export const isReadOnlyAtlassianMcpToolName = isAllowedAtlassianMcpToolName;
+
 function sanitizeUpstreamMcpToolResult(
   result: UpstreamMcpToolResult
 ): UpstreamMcpToolResult {
@@ -386,6 +406,19 @@ function sanitizeUpstreamMcpToolResult(
       : {}),
     ...(typeof result.isError === "boolean" ? { isError: result.isError } : {})
   };
+}
+
+function sanitizeMcpInputSchema(schema: unknown): unknown {
+  if (schema === undefined) {
+    return undefined;
+  }
+
+  try {
+    const text = JSON.stringify(schema);
+    return text.length <= 12_000 ? JSON.parse(text) : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 function sanitizeMcpContentItem(item: unknown): unknown {

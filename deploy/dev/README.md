@@ -100,7 +100,7 @@ For Jira hand testing, create an Atlassian OAuth 2.0 3LO app, add:
 https://<DOMAIN>/oauth/jira/callback
 ```
 
-Then grant scopes `read:jira-user read:jira-work offline_access` and set
+Then grant scopes `read:jira-user read:jira-work write:jira-work offline_access` and set
 `JIRA_CLIENT_ID` / `JIRA_CLIENT_SECRET` in `deploy/dev/compose/.env`.
 `ATLASSIAN_MCP_URL` defaults to `https://mcp.atlassian.com/v1/mcp`; override it
 only when testing a different Atlassian MCP endpoint.
@@ -223,16 +223,17 @@ list Atlassian MCP tools
 That should route through `agentgateway`, Burble's MCP facade, and the upstream
 Atlassian MCP endpoint using the connected Jira identity.
 
-After the tool list returns, you can hand-test a read-only upstream tool call
+After the tool list returns, you can hand-test an allowed upstream tool call
 with the exact tool name and JSON arguments:
 
 ```text
 call Atlassian MCP tool searchJiraIssuesUsingJql with {"jql":"assignee = currentUser() AND statusCategory != Done ORDER BY updated DESC"}
 ```
 
-Only read-style upstream tool names are allowed at this stage. Mutating tool
-names such as create, update, delete, transition, assign, and comment are
-blocked by Burble before reaching Atlassian.
+Read-style upstream tool names and selected Jira write tools are allowed at this
+stage. Burble currently allows `createJiraIssue`, `editJiraIssue`,
+`transitionJiraIssue`, `addCommentToJiraIssue`, and `addWorklogToJiraIssue`.
+Other mutating tool names are blocked before reaching Atlassian.
 
 `/internal/*` is blocked by Caddy on the public HTTPS hostname. The
 OpenClaw/NemoClaw service calls `http://burble-app:3000/internal/tools` over

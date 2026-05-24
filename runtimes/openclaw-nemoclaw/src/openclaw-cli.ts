@@ -37,6 +37,7 @@ export type CliCommandStreamer = (
 ) => AsyncIterable<CliCommandStreamEvent>;
 
 const streamHeartbeatMs = 8_000;
+const maxPlannedToolCalls = 5;
 
 type ToolCatalogItem = {
   name: string;
@@ -47,6 +48,11 @@ type ToolCatalogItem = {
 type PlannedToolCall = {
   name: string;
   arguments: Record<string, unknown>;
+};
+
+type ExecutedToolCall = {
+  toolCall: PlannedToolCall;
+  toolResult: ToolResult;
 };
 
 type BurbleToolContext = {
@@ -82,61 +88,65 @@ export async function runOpenClawCliRequest(
   logInfo(
     `OpenClaw agent start runId=${request.runId ?? "unknown"} agent=${config.openClawAgent} sessionId=${sessionId} textLength=${request.input.text.length} classification=${baseline.response.classification}`
   );
-  const first = await runOpenClawCommand(
-    request,
-    config,
-    buildOpenClawPrompt(request, toolContext),
-    sessionId,
-    runCommand
-  );
-  const plannedToolCall = readPlannedToolCall(first.stdout, toolContext.catalog);
+  const executedTools: ExecutedToolCall[] = [];
+  let classification = baseline.response.classification;
 
-  if (!plannedToolCall) {
-    const text = extractOpenClawText(first.stdout) || baseline.response.text;
-    logInfo(
-      `OpenClaw agent finish runId=${request.runId ?? "unknown"} classification=${baseline.response.classification} textLength=${text.length}`
+  for (let step = 0; step <= maxPlannedToolCalls; step += 1) {
+    const result = await runOpenClawCommand(
+      request,
+      config,
+      buildOpenClawPrompt(request, toolContext, executedTools),
+      sessionId,
+      runCommand
     );
+    const plannedToolCall = readPlannedToolCall(result.stdout, toolContext.catalog);
 
-    return {
-      response: {
-        classification: baseline.response.classification,
-        text
-      }
-    };
+    if (!plannedToolCall) {
+      const lastToolResult = executedTools.at(-1)?.toolResult;
+      const text =
+        extractOpenClawText(result.stdout) ||
+        (lastToolResult ? formatToolResult(lastToolResult) : baseline.response.text);
+      logInfo(
+        `OpenClaw agent finish runId=${request.runId ?? "unknown"} classification=${classification} textLength=${text.length}`
+      );
+
+      return {
+        response: {
+          classification,
+          text
+        }
+      };
+    }
+
+    if (executedTools.length >= maxPlannedToolCalls) {
+      const text = "I stopped after several provider tool calls. Please narrow the request and try again.";
+      logInfo(
+        `OpenClaw agent finish runId=${request.runId ?? "unknown"} classification=${classification} textLength=${text.length} maxToolCalls=true`
+      );
+      return {
+        response: {
+          classification,
+          text
+        }
+      };
+    }
+
+    logInfo(
+      `OpenClaw tool requested runId=${request.runId ?? "unknown"} tool=${plannedToolCall.name}`
+    );
+    const toolResult = await executePlannedToolCall(
+      plannedToolCall,
+      request,
+      executeTool
+    );
+    classification = mergeClassification(classification, toolResult.classification);
+    executedTools.push({ toolCall: plannedToolCall, toolResult });
   }
-
-  logInfo(
-    `OpenClaw tool requested runId=${request.runId ?? "unknown"} tool=${plannedToolCall.name}`
-  );
-  const toolResult = await executePlannedToolCall(
-    plannedToolCall,
-    request,
-    executeTool
-  );
-  const second = await runOpenClawCommand(
-    request,
-    config,
-    buildOpenClawPrompt(request, toolContext, {
-      toolCall: plannedToolCall,
-      toolResult
-    }),
-    sessionId,
-    runCommand
-  );
-
-  const text = extractOpenClawText(second.stdout) || formatToolResult(toolResult);
-  const classification = mergeClassification(
-    baseline.response.classification,
-    toolResult.classification
-  );
-  logInfo(
-    `OpenClaw agent finish runId=${request.runId ?? "unknown"} classification=${classification} textLength=${text.length}`
-  );
 
   return {
     response: {
       classification,
-      text
+      text: baseline.response.text
     }
   };
 }
@@ -197,83 +207,79 @@ export async function* runOpenClawCliRequestStream(
   );
   yield { type: "status", text: "Running OpenClaw/NemoClaw..." };
 
-  const first = yield* collectOpenClawStream(
-    request,
-    config,
-    buildOpenClawPrompt(request, toolContext),
-    sessionId,
-    runCommandStream,
-    logInfo,
-    heartbeatMs,
-    true
-  );
-  const plannedToolCall = readPlannedToolCall(first.stdout, toolContext.catalog);
+  const executedTools: ExecutedToolCall[] = [];
+  let classification = baseline.response.classification;
 
-  if (!plannedToolCall) {
-    const text = extractOpenClawText(first.stdout) || baseline.response.text;
+  for (let step = 0; step <= maxPlannedToolCalls; step += 1) {
+    const result = yield* collectOpenClawStream(
+      request,
+      config,
+      buildOpenClawPrompt(request, toolContext, executedTools),
+      sessionId,
+      runCommandStream,
+      logInfo,
+      heartbeatMs,
+      true
+    );
+    const plannedToolCall = readPlannedToolCall(result.stdout, toolContext.catalog);
+
+    if (!plannedToolCall) {
+      const lastToolResult = executedTools.at(-1)?.toolResult;
+      const text =
+        extractOpenClawText(result.stdout) ||
+        (lastToolResult ? formatToolResult(lastToolResult) : baseline.response.text);
+      logInfo(
+        `OpenClaw agent finish runId=${request.runId ?? "unknown"} classification=${classification} textLength=${text.length}`
+      );
+
+      yield {
+        type: "final",
+        response: {
+          classification,
+          text
+        }
+      };
+      return;
+    }
+
+    if (executedTools.length >= maxPlannedToolCalls) {
+      const text = "I stopped after several provider tool calls. Please narrow the request and try again.";
+      logInfo(
+        `OpenClaw agent finish runId=${request.runId ?? "unknown"} classification=${classification} textLength=${text.length} maxToolCalls=true`
+      );
+      yield {
+        type: "final",
+        response: {
+          classification,
+          text
+        }
+      };
+      return;
+    }
+
     logInfo(
-      `OpenClaw agent finish runId=${request.runId ?? "unknown"} classification=${baseline.response.classification} textLength=${text.length}`
+      `OpenClaw tool requested runId=${request.runId ?? "unknown"} tool=${plannedToolCall.name}`
+    );
+    const callId = crypto.randomUUID();
+    yield {
+      type: "tool_call",
+      toolName: plannedToolCall.name,
+      callId
+    };
+    const toolResult = await executePlannedToolCall(
+      plannedToolCall,
+      request,
+      executeTool
     );
     yield {
-      type: "final",
-      response: {
-        classification: baseline.response.classification,
-        text
-      }
+      type: "tool_result",
+      toolName: plannedToolCall.name,
+      callId,
+      classification: toolResult.classification
     };
-    return;
+    classification = mergeClassification(classification, toolResult.classification);
+    executedTools.push({ toolCall: plannedToolCall, toolResult });
   }
-
-  logInfo(
-    `OpenClaw tool requested runId=${request.runId ?? "unknown"} tool=${plannedToolCall.name}`
-  );
-  const callId = crypto.randomUUID();
-  yield {
-    type: "tool_call",
-    toolName: plannedToolCall.name,
-    callId
-  };
-  const toolResult = await executePlannedToolCall(
-    plannedToolCall,
-    request,
-    executeTool
-  );
-  yield {
-    type: "tool_result",
-    toolName: plannedToolCall.name,
-    callId,
-    classification: toolResult.classification
-  };
-  const classification = mergeClassification(
-    baseline.response.classification,
-    toolResult.classification
-  );
-  const second = yield* collectOpenClawStream(
-    request,
-    config,
-    buildOpenClawPrompt(request, toolContext, {
-      toolCall: plannedToolCall,
-      toolResult
-    }),
-    sessionId,
-    runCommandStream,
-    logInfo,
-    heartbeatMs,
-    true
-  );
-
-  const text = extractOpenClawText(second.stdout) || formatToolResult(toolResult);
-  logInfo(
-    `OpenClaw agent finish runId=${request.runId ?? "unknown"} classification=${classification} textLength=${text.length}`
-  );
-
-  yield {
-    type: "final",
-    response: {
-      classification,
-      text
-    }
-  };
 }
 
 async function* collectOpenClawStream(
@@ -574,19 +580,23 @@ async function buildToolCatalog(
       {
         name: "atlassian.listMcpTools",
         description:
-          "List read-only upstream Atlassian MCP tools available through Burble for this user's Jira connection.",
+          "List allowed upstream Atlassian MCP tools available through Burble for this user's Jira connection.",
         inputSchema: {}
       }
     );
 
-    const upstreamTools = await readAtlassianMcpToolNames(jira.email, executeTool);
+    const upstreamTools = await readAtlassianMcpToolSummaries(
+      jira.email,
+      executeTool
+    );
     catalog.push({
       name: "atlassian.callMcpTool",
       description: [
-        "Call a read-only upstream Atlassian MCP tool through Burble for Jira/Atlassian questions that need provider-native tools.",
+        "Call an allowlisted upstream Atlassian MCP tool through Burble for Jira/Atlassian questions that need provider-native tools. Selected Jira write tools are allowed.",
+        "For Jira create/edit/transition/comment/worklog requests, choose the relevant upstream Atlassian MCP tool from the known tool list and fill arguments from its inputSchema.",
         upstreamTools.length > 0
-          ? `Known read-only Atlassian MCP tools include: ${upstreamTools.slice(0, 30).join(", ")}.`
-          : "Use this only when you know the upstream read-only tool name."
+          ? `Known allowed Atlassian MCP tools include: ${upstreamTools.slice(0, 30).join("; ")}.`
+          : "Use this only when you know the upstream allowed tool name."
       ].join(" "),
       inputSchema: {
         name: "string upstream Atlassian MCP tool name",
@@ -598,7 +608,7 @@ async function buildToolCatalog(
   return catalog;
 }
 
-async function readAtlassianMcpToolNames(
+async function readAtlassianMcpToolSummaries(
   email: string,
   executeTool: ToolExecutor
 ): Promise<string[]> {
@@ -617,7 +627,19 @@ async function readAtlassianMcpToolNames(
         "name" in item &&
         typeof item.name === "string"
       ) {
-        return [item.name];
+        const title =
+          "title" in item && typeof item.title === "string"
+            ? ` title=${item.title}`
+            : "";
+        const description =
+          "description" in item && typeof item.description === "string"
+            ? ` description=${truncate(item.description, 240)}`
+            : "";
+        const schema =
+          "inputSchema" in item && item.inputSchema !== undefined
+            ? ` inputSchema=${truncate(JSON.stringify(item.inputSchema), 600)}`
+            : "";
+        return [`${item.name}${title}${description}${schema}`];
       }
       return [];
     });
@@ -626,10 +648,20 @@ async function readAtlassianMcpToolNames(
   }
 }
 
+function truncate(value: string | undefined, maxLength: number): string {
+  if (!value) {
+    return "";
+  }
+
+  return value.length <= maxLength
+    ? value
+    : `${value.slice(0, maxLength - 3)}...`;
+}
+
 function buildOpenClawPrompt(
   request: RunRequest,
   toolContext: BurbleToolContext,
-  executedTool?: { toolCall: PlannedToolCall; toolResult: ToolResult }
+  executedTools: ExecutedToolCall[] = []
 ): string {
   const sections = [
     "You are Burble's OpenClaw runtime.",
@@ -644,6 +676,11 @@ function buildOpenClawPrompt(
     `{"tool_call":{"name":"jira.searchIssues","arguments":{"jql":"assignee = currentUser() AND statusCategory != Done"}}}`,
     "Burble injects user identity and credentials. Do not include user email, tokens, or credentials in tool arguments.",
     "Use only tool names listed in Available Burble tools.",
+    "For Atlassian/Jira actions, call atlassian.callMcpTool with the upstream tool name in arguments.name and the upstream tool arguments in arguments.arguments.",
+    "Use upstream MCP tool schemas from Available Burble tools. Do not invent argument names when a schema is available.",
+    "For Jira issue creation/editing, first resolve site/project/user identifiers with available Atlassian MCP lookup tools when required by the schema.",
+    "When a user provides an assignee email, use that email for Jira account lookup before trying the display name.",
+    "If required Jira fields such as project, issue type, issue key, or target account cannot be resolved from tools or the request, ask one concise clarifying question instead of guessing.",
     "",
     "Available Burble tools:",
     formatToolCatalog(toolContext.catalog),
@@ -654,16 +691,18 @@ function buildOpenClawPrompt(
     toolContext.baseline.response.text
   ];
 
-  if (executedTool) {
+  if (executedTools.length > 0) {
     sections.push(
       "",
-      "Burble executed tool:",
-      JSON.stringify({
-        tool_call: executedTool.toolCall,
-        result: executedTool.toolResult
-      }),
+      "Burble executed tools:",
+      JSON.stringify(
+        executedTools.map((executedTool) => ({
+          tool_call: executedTool.toolCall,
+          result: executedTool.toolResult
+        }))
+      ),
       "",
-      "Return only the final Slack-ready answer."
+      "Return either exactly one more tool_call JSON object if another provider action is required, or the final Slack-ready answer."
     );
   } else {
     sections.push("", "Return either exactly one tool_call JSON object or the final Slack-ready answer.");
