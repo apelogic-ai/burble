@@ -53,7 +53,7 @@ describe("buildJiraOAuthUrl", () => {
       "https://example.ngrok-free.app/oauth/jira/callback"
     );
     expect(url.searchParams.get("scope")).toBe(
-      "read:jira-user read:jira-work offline_access"
+      "read:jira-user read:jira-work write:jira-work offline_access"
     );
     expect(url.searchParams.get("state")).toBe("state-123");
     expect(url.searchParams.get("response_type")).toBe("code");

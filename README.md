@@ -40,7 +40,7 @@ Then set `BASE_URL` in `.env` and configure OAuth callback URLs:
 Jira OAuth uses Atlassian 3LO with these scopes:
 
 ```text
-read:jira-user read:jira-work
+read:jira-user read:jira-work write:jira-work
 ```
 
 Required Slack bot scopes:

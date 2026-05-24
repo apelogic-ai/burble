@@ -334,7 +334,18 @@ describe("handleToolGatewayRequest", () => {
           return [
             {
               name: "searchJiraIssuesUsingJql",
-              description: "Search Jira issues using JQL"
+              description: "Search Jira issues using JQL",
+              inputSchema: {
+                type: "object",
+                properties: {
+                  jql: { type: "string" }
+                },
+                required: ["jql"]
+              }
+            },
+            {
+              name: "deleteConfluencePage",
+              description: "Delete a Confluence page"
             }
           ];
         }
@@ -347,13 +358,20 @@ describe("handleToolGatewayRequest", () => {
       content: [
         {
           name: "searchJiraIssuesUsingJql",
-          description: "Search Jira issues using JQL"
+          description: "Search Jira issues using JQL",
+          inputSchema: {
+            type: "object",
+            properties: {
+              jql: { type: "string" }
+            },
+            required: ["jql"]
+          }
         }
       ]
     });
   });
 
-  test("executes read-only Atlassian MCP calls through the HTTP fallback gateway", async () => {
+  test("executes allowed Atlassian MCP calls through the HTTP fallback gateway", async () => {
     const response = await handleToolGatewayRequest(
       config,
       createStore(jiraConnection),
@@ -404,7 +422,61 @@ describe("handleToolGatewayRequest", () => {
     });
   });
 
-  test("rejects mutating Atlassian MCP calls in the HTTP fallback gateway", async () => {
+  test("executes allowlisted Jira write MCP calls through the HTTP fallback gateway", async () => {
+    const response = await handleToolGatewayRequest(
+      config,
+      createStore(jiraConnection),
+      "atlassian.callMcpTool",
+      request("atlassian.callMcpTool", {
+        user: { email: "person@example.com" },
+        input: {
+          name: "createJiraIssue",
+          arguments: {
+            projectKey: "ENG",
+            issueType: "Task",
+            summary: "Follow up on deploy dashboard"
+          }
+        }
+      }),
+      {
+        callAtlassianMcpTool: async ({ accessToken, name, arguments: args }) => {
+          expect(accessToken).toBe("jira-token");
+          expect(name).toBe("createJiraIssue");
+          expect(args).toEqual({
+            projectKey: "ENG",
+            issueType: "Task",
+            summary: "Follow up on deploy dashboard"
+          });
+          return {
+            content: [
+              {
+                type: "text",
+                text: "Created ENG-124"
+              }
+            ]
+          };
+        }
+      }
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      classification: "user_private",
+      content: {
+        toolName: "createJiraIssue",
+        result: {
+          content: [
+            {
+              type: "text",
+              text: "Created ENG-124"
+            }
+          ]
+        }
+      }
+    });
+  });
+
+  test("rejects non-allowlisted mutating Atlassian MCP calls in the HTTP fallback gateway", async () => {
     const response = await handleToolGatewayRequest(
       config,
       createStore(jiraConnection),
@@ -431,7 +503,7 @@ describe("handleToolGatewayRequest", () => {
       content: {
         error: "atlassian_mcp_tool_not_allowed",
         message:
-          "Atlassian MCP tool `updateJiraIssue` is not enabled for read-only use."
+          "Atlassian MCP tool `updateJiraIssue` is not enabled for use."
       }
     });
   });

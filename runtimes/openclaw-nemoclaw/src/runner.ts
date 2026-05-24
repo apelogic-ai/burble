@@ -122,6 +122,13 @@ async function runJiraRequest(
     return response(result.classification, formatAtlassianMcpToolCall(result));
   }
 
+  if (isJiraActionRequest(text)) {
+    return response(
+      "user_private",
+      "Use the available Atlassian MCP tools for this Jira action. Inspect tool schemas and ask a clarifying question if required Jira fields are missing."
+    );
+  }
+
   if (
     /\bwho\s+am\s+i\b/.test(normalized) ||
     /\bjira\s+(me|identity|login)\b/.test(normalized)
@@ -168,7 +175,19 @@ export function isSupportedJiraRequest(text: string): boolean {
   return (
     /\bjira\b/.test(normalized) ||
     /\batlassian\b/.test(normalized) ||
-    /\b(ticket|tickets)\b/.test(normalized)
+    /\b(ticket|tickets)\b/.test(normalized) ||
+    isJiraActionRequest(text)
+  );
+}
+
+function isJiraActionRequest(text: string): boolean {
+  const normalized = text.toLowerCase();
+  return (
+    (/\b(create|open|file|edit|update|change|assign|transition|comment|worklog)\b/.test(
+      normalized
+    ) &&
+      /\b(jira|atlassian|ticket|tickets|issue|issues)\b/.test(normalized)) ||
+    /\b[A-Z][A-Z0-9]+-\d+\b/.test(text)
   );
 }
 
