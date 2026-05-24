@@ -524,6 +524,149 @@ describe("runOpenClawCliRequest", () => {
     });
   });
 
+  test("guides OpenClaw to create Jira issues unassigned when assignee lookup misses", async () => {
+    const toolCalls: Array<{ toolName: string; body: unknown }> = [];
+    const prompts: string[] = [];
+    const response = await runOpenClawCliRequest(
+      {
+        input: {
+          text: "create new Jira ticket in DM workspace, titled 'test ticket from slack' and assign it to Boris Renski (brenski@apegpt.ai)",
+          connections: {
+            github: { connected: false },
+            jira: {
+              connected: true,
+              email: "person@example.com",
+              providerLogin: "person@atlassian.example"
+            }
+          }
+        }
+      },
+      config,
+      async (toolName, body) => {
+        toolCalls.push({ toolName, body });
+        const input = (body as { input?: { name?: string } }).input;
+        if (toolName === "atlassian.listMcpTools") {
+          return {
+            classification: "user_private",
+            content: [
+              {
+                name: "getAccessibleAtlassianResources",
+                inputSchema: { type: "object", properties: {} }
+              },
+              {
+                name: "lookupJiraAccountId",
+                inputSchema: {
+                  type: "object",
+                  properties: {
+                    cloudId: { type: "string" },
+                    searchString: { type: "string" }
+                  }
+                }
+              },
+              {
+                name: "createJiraIssue",
+                inputSchema: {
+                  type: "object",
+                  properties: {
+                    cloudId: { type: "string" },
+                    projectKey: { type: "string" },
+                    summary: { type: "string" },
+                    assignee_account_id: { type: "string" }
+                  }
+                }
+              }
+            ]
+          };
+        }
+        if (input?.name === "getAccessibleAtlassianResources") {
+          return mcpText("getAccessibleAtlassianResources", '[{"id":"cloud-123"}]');
+        }
+        if (input?.name === "lookupJiraAccountId") {
+          return mcpText("lookupJiraAccountId", "[]");
+        }
+        if (input?.name === "createJiraIssue") {
+          return mcpText("createJiraIssue", "Created DM-100");
+        }
+
+        return {
+          classification: "user_private",
+          content: []
+        };
+      },
+      async (_command, args) => {
+        const prompt = args[args.indexOf("--message") + 1];
+        prompts.push(prompt);
+        if (prompts.length === 1) {
+          return openClawToolCall("atlassian.callMcpTool", {
+            name: "getAccessibleAtlassianResources",
+            arguments: {}
+          });
+        }
+        if (prompts.length === 2) {
+          return openClawToolCall("atlassian.callMcpTool", {
+            name: "lookupJiraAccountId",
+            arguments: {
+              cloudId: "cloud-123",
+              searchString: "brenski@apegpt.ai"
+            }
+          });
+        }
+        if (prompts.length === 3) {
+          return openClawToolCall("atlassian.callMcpTool", {
+            name: "createJiraIssue",
+            arguments: {
+              cloudId: "cloud-123",
+              projectKey: "DM",
+              summary: "test ticket from slack"
+            }
+          });
+        }
+
+        return {
+          exitCode: 0,
+          stdout: "Created DM-100, but I could not assign it because Jira could not resolve Boris Renski.",
+          stderr: ""
+        };
+      },
+      () => undefined
+    );
+
+    expect(response.response.text).toBe(
+      "Created DM-100, but I could not assign it because Jira could not resolve Boris Renski."
+    );
+    expect(prompts).toHaveLength(4);
+    expect(prompts[0]).toContain(
+      "do not let optional assignee lookup failure block creating the issue"
+    );
+    expect(toolCalls).toContainEqual({
+      toolName: "atlassian.callMcpTool",
+      body: {
+        user: { email: "person@example.com" },
+        input: {
+          name: "lookupJiraAccountId",
+          arguments: {
+            cloudId: "cloud-123",
+            searchString: "brenski@apegpt.ai"
+          }
+        }
+      }
+    });
+    expect(toolCalls).toContainEqual({
+      toolName: "atlassian.callMcpTool",
+      body: {
+        user: { email: "person@example.com" },
+        input: {
+          name: "createJiraIssue",
+          arguments: {
+            cloudId: "cloud-123",
+            projectKey: "DM",
+            summary: "test ticket from slack"
+          }
+        }
+      }
+    });
+  });
+
   test("maps distinct Slack conversation roots to distinct OpenClaw sessions", async () => {
     const sessionIds: string[] = [];
     const baseRequest = {
