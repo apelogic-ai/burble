@@ -286,12 +286,20 @@ describe("runOpenClawCliRequest", () => {
         classification: "user_private",
         content: []
       }),
-      async () => {
+      async (_command, args) => {
+        const sessionId = args[args.indexOf("--session-id") + 1];
         recordGatewayDiagnosticText(
           [
+            "[agent/embedded] embedded run start: runId=heartbeat sessionId=sidecar-heartbeat provider=openai model=gpt-5.4 thinking=medium messageChannel=heartbeat",
             "[openai-transport] [responses] start provider=openai api=openai-responses model=gpt-5.4",
             "[provider-transport-fetch] [model-fetch] start provider=openai api=openai-responses model=gpt-5.4",
-            "[openai-transport] [responses] stream_done provider=openai api=openai-responses model=gpt-5.4 elapsedMs=6929 events=123"
+            "[openai-transport] [responses] stream_done provider=openai api=openai-responses model=gpt-5.4 elapsedMs=2482 events=15",
+            "[agent/embedded] embedded run done: runId=heartbeat sessionId=sidecar-heartbeat durationMs=5938 aborted=false",
+            `[agent/embedded] embedded run start: runId=user-run sessionId=${sessionId} provider=openai model=gpt-5.4 thinking=medium messageChannel=webchat`,
+            "[openai-transport] [responses] start provider=openai api=openai-responses model=gpt-5.4",
+            "[provider-transport-fetch] [model-fetch] start provider=openai api=openai-responses model=gpt-5.4",
+            "[openai-transport] [responses] stream_done provider=openai api=openai-responses model=gpt-5.4 elapsedMs=6929 events=123",
+            `[agent/embedded] embedded run done: runId=user-run sessionId=${sessionId} durationMs=12226 aborted=false`
           ].join("\n")
         );
         return {

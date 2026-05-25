@@ -229,6 +229,7 @@ async function runOpenClawCommand(
       result.stderr,
       rawStream,
       gatewayDiagnostics,
+      sessionId,
       logInfo
     );
     logInfo(
@@ -246,6 +247,7 @@ async function runOpenClawCommand(
     result.stderr,
     rawStream,
     gatewayDiagnostics,
+    sessionId,
     logInfo
   );
   logInfo(
@@ -535,6 +537,7 @@ async function* collectOpenClawStream(
     stderr,
     rawStream,
     gatewayDiagnostics,
+    sessionId,
     logInfo
   );
 
@@ -1322,9 +1325,15 @@ function logOpenClawUsageFromOutput(
   stderr: string,
   rawStream: string | null,
   gatewayDiagnostics: string,
+  sessionId: string,
   logInfo: RuntimeLogger
 ): void {
-  const output = [stdout, stderr, rawStream ?? "", gatewayDiagnostics].join("\n");
+  const output = [
+    stdout,
+    stderr,
+    rawStream ?? "",
+    selectGatewayDiagnosticsForSession(gatewayDiagnostics, sessionId)
+  ].join("\n");
   const usage = readModelUsage(output);
   const diagnostics = summarizeModelDiagnostics(output);
   logInfo(
@@ -1355,6 +1364,51 @@ function logOpenClawUsageFromOutput(
       `rawStreamBytes=${rawStream ? new TextEncoder().encode(rawStream).length : 0}`
     ].join(" ")
   );
+}
+
+function selectGatewayDiagnosticsForSession(
+  gatewayDiagnostics: string,
+  sessionId: string
+): string {
+  if (!gatewayDiagnostics) {
+    return "";
+  }
+
+  const lines = gatewayDiagnostics.split(/\r?\n/);
+  const selected: string[] = [];
+  let inTargetSession = false;
+  let sawEmbeddedSession = false;
+  let sawTargetSession = false;
+
+  for (const line of lines) {
+    if (line.includes("[agent/embedded] embedded run start:")) {
+      sawEmbeddedSession = true;
+      inTargetSession = line.includes(`sessionId=${sessionId}`);
+      if (inTargetSession) {
+        sawTargetSession = true;
+        selected.push(line);
+      }
+      continue;
+    }
+
+    if (!inTargetSession) {
+      continue;
+    }
+
+    selected.push(line);
+    if (
+      line.includes("[agent/embedded] embedded run done:") &&
+      line.includes(`sessionId=${sessionId}`)
+    ) {
+      inTargetSession = false;
+    }
+  }
+
+  if (sawTargetSession) {
+    return selected.join("\n");
+  }
+
+  return sawEmbeddedSession ? "" : gatewayDiagnostics;
 }
 
 type ModelUsage = {
