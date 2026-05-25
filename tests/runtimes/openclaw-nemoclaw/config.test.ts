@@ -28,6 +28,9 @@ describe("readRuntimeConfig", () => {
         OPENCLAW_DEBUG_SSE: "events",
         OPENCLAW_DEBUG_CODE_MODE: "true",
         OPENCLAW_RAW_STREAM_DEBUG: "true",
+        OPENCLAW_GATEWAY_PORT: "18790",
+        OPENCLAW_GATEWAY_BIND: "loopback",
+        OPENCLAW_GATEWAY_TOKEN: "configured-gateway-token",
         AI_MODEL: "ollama:qwen3-coder:30b-cloud",
         OLLAMA_BASE_URL: "https://ollama.com/"
       })
@@ -55,6 +58,9 @@ describe("readRuntimeConfig", () => {
       openClawDebugSse: "events",
       openClawDebugCodeMode: "true",
       openClawRawStreamDebug: true,
+      openClawGatewayPort: 18790,
+      openClawGatewayBind: "loopback",
+      openClawGatewayToken: "configured-gateway-token",
       llmModel: "ollama:qwen3-coder:30b-cloud",
       ollamaBaseUrl: "https://ollama.com"
     });
@@ -81,6 +87,8 @@ describe("readRuntimeConfig", () => {
       openClawValidateOnStart: true,
       openClawStreamDebug: false,
       openClawRawStreamDebug: false,
+      openClawGatewayPort: 18789,
+      openClawGatewayBind: "loopback",
       llmModel: "openai:gpt-5.4",
       ollamaBaseUrl: "https://ollama.com"
     });

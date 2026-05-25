@@ -33,8 +33,9 @@ Runtime engines:
 - `OPENCLAW_NEMOCLAW_ENGINE=openclaw` invokes an `openclaw` CLI binary from
   inside the runtime container with sanitized Burble tool context.
 - `OPENCLAW_NEMOCLAW_ENGINE=openclaw-gateway` invokes `openclaw agent` without
-  `--local`, preserving the same Burble runtime API while letting OpenClaw use
-  its Gateway-backed execution path.
+  `--local` and starts a private `openclaw gateway run` process at runtime boot,
+  preserving the same Burble runtime API while letting OpenClaw use its
+  Gateway-backed execution path.
 
 OpenClaw modes are intentionally isolated behind the same `/runs` contract. A
 derived image can install OpenClaw/NemoClaw without changing Burble's Slack,
@@ -88,6 +89,9 @@ Set `OPENCLAW_RAW_STREAM_DEBUG=true` temporarily to pass OpenClaw
 `--raw-stream --raw-stream-path`; the runtime stores raw JSONL under
 `/data/openclaw/state/raw-streams`, parses token usage from it, and logs only
 the summarized counts.
+Gateway mode uses `OPENCLAW_GATEWAY_PORT` (default `18789`),
+`OPENCLAW_GATEWAY_BIND` (default `loopback`), and token auth. Leave
+`OPENCLAW_GATEWAY_TOKEN` unset to generate an ephemeral token for the process.
 The dev OpenAI patch writes file logs to `/data/openclaw/logs/openclaw.log`.
 
 Build the CLI image locally:

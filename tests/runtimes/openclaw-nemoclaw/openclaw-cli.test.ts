@@ -26,6 +26,9 @@ const config: RuntimeConfig = {
   openClawValidateOnStart: true,
   openClawStreamDebug: false,
   openClawRawStreamDebug: false,
+  openClawGatewayPort: 18789,
+  openClawGatewayBind: "loopback",
+  openClawGatewayToken: "gateway-token",
   llmModel: "openai:gpt-5.4",
   ollamaBaseUrl: "https://ollama.com"
 };

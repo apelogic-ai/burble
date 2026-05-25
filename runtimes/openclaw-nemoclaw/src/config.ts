@@ -1,3 +1,5 @@
+import { randomUUID } from "node:crypto";
+
 export type RuntimeConfig = {
   port: number;
   toolGatewayUrl: string;
@@ -22,6 +24,9 @@ export type RuntimeConfig = {
   openClawDebugSse?: string | null;
   openClawDebugCodeMode?: string | null;
   openClawRawStreamDebug: boolean;
+  openClawGatewayPort: number;
+  openClawGatewayBind: string;
+  openClawGatewayToken: string;
   llmModel: string;
   ollamaBaseUrl: string;
 };
@@ -78,6 +83,13 @@ export function readRuntimeConfig(env: Env): RuntimeConfig {
       env.OPENCLAW_RAW_STREAM_DEBUG ?? "false",
       "OPENCLAW_RAW_STREAM_DEBUG"
     ),
+    openClawGatewayPort: readPositiveInt(
+      env.OPENCLAW_GATEWAY_PORT ?? "18789",
+      "OPENCLAW_GATEWAY_PORT"
+    ),
+    openClawGatewayBind: env.OPENCLAW_GATEWAY_BIND?.trim() || "loopback",
+    openClawGatewayToken:
+      env.OPENCLAW_GATEWAY_TOKEN?.trim() || randomUUID().replace(/-/g, ""),
     llmModel: validateLlmModelId(
       readOptionalEnv(env.AI_MODEL) ??
         readOptionalEnv(env.OPENCLAW_MODEL) ??

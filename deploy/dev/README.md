@@ -169,6 +169,9 @@ OPENCLAW_DEBUG_MODEL_PAYLOAD=
 OPENCLAW_DEBUG_SSE=
 OPENCLAW_DEBUG_CODE_MODE=
 OPENCLAW_RAW_STREAM_DEBUG=false
+OPENCLAW_GATEWAY_PORT=18789
+OPENCLAW_GATEWAY_BIND=loopback
+OPENCLAW_GATEWAY_TOKEN=
 OPENAI_API_KEY=sk-...
 ```
 
@@ -196,6 +199,10 @@ involved.
 Set `OPENCLAW_RAW_STREAM_DEBUG=true` temporarily to ask OpenClaw for per-run
 raw stream JSONL under `/data/openclaw/state/raw-streams`; Burble parses those
 files for token usage and logs only the summarized counts.
+When `OPENCLAW_NEMOCLAW_ENGINE=openclaw-gateway`, the runtime starts a private
+`openclaw gateway run` process once at boot using `OPENCLAW_GATEWAY_PORT`,
+`OPENCLAW_GATEWAY_BIND`, and token auth. Leave `OPENCLAW_GATEWAY_TOKEN` empty
+to generate an ephemeral per-process token.
 The patch writes OpenClaw file logs to `/data/openclaw/logs/openclaw.log` inside
 the runtime container.
 To build the repo-provided image with the OpenClaw CLI installed, add the CLI

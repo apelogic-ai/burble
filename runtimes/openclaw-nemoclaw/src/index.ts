@@ -1,4 +1,5 @@
 import { readRuntimeConfig } from "./config";
+import { startOpenClawGatewayIfNeeded } from "./gateway";
 import { info } from "./logger";
 import { attachRuntimeEventWebSocket, handleRuntimeRequest } from "./server";
 import { ensureOpenClawSetup } from "./setup";
@@ -6,6 +7,7 @@ import { ensureOpenClawSetup } from "./setup";
 const config = readRuntimeConfig(Bun.env);
 
 await ensureOpenClawSetup(config);
+const gateway = startOpenClawGatewayIfNeeded(config);
 
 type RuntimeWebSocketData = {
   runId: string;
@@ -34,11 +36,13 @@ info(
 );
 
 process.on("SIGINT", () => {
+  gateway?.stop();
   server.stop();
   process.exit(0);
 });
 
 process.on("SIGTERM", () => {
+  gateway?.stop();
   server.stop();
   process.exit(0);
 });

@@ -44,6 +44,9 @@ describe("buildContainerRuntimeSpec", () => {
         OPENCLAW_DEBUG_SSE: "events",
         OPENCLAW_DEBUG_CODE_MODE: "true",
         OPENCLAW_RAW_STREAM_DEBUG: "true",
+        OPENCLAW_GATEWAY_PORT: "18790",
+        OPENCLAW_GATEWAY_BIND: "loopback",
+        OPENCLAW_GATEWAY_TOKEN: "gateway-token",
         GITHUB_TOKEN: "github-secret",
         SLACK_BOT_TOKEN: "slack-secret"
       }
@@ -72,7 +75,10 @@ describe("buildContainerRuntimeSpec", () => {
       OPENCLAW_DEBUG_MODEL_PAYLOAD: "summary",
       OPENCLAW_DEBUG_SSE: "events",
       OPENCLAW_DEBUG_CODE_MODE: "true",
-      OPENCLAW_RAW_STREAM_DEBUG: "true"
+      OPENCLAW_RAW_STREAM_DEBUG: "true",
+      OPENCLAW_GATEWAY_PORT: "18790",
+      OPENCLAW_GATEWAY_BIND: "loopback",
+      OPENCLAW_GATEWAY_TOKEN: "gateway-token"
     });
     expect(spec.env.GITHUB_TOKEN).toBeUndefined();
     expect(spec.env.SLACK_BOT_TOKEN).toBeUndefined();
