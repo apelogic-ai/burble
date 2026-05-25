@@ -81,7 +81,7 @@ export function createOpenClawNemoClawAgentRunner(
       const runId = crypto.randomUUID();
       yield {
         type: "status",
-        text: "Preparing your OpenClaw/NemoClaw runtime..."
+        text: "Starting agent runtime..."
       };
       const runtime = deps.runtimeFactory
         ? await deps.runtimeFactory.getOrCreateRuntime(input.principal)
@@ -91,7 +91,7 @@ export function createOpenClawNemoClawAgentRunner(
         throw new Error("OpenClaw/NemoClaw runtime endpoint is unavailable");
       }
 
-      yield { type: "status", text: "Running OpenClaw/NemoClaw..." };
+      yield { type: "status", text: "Agent is thinking..." };
 
       const runStartedAt = Date.now();
       logInfo(

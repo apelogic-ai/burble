@@ -63,7 +63,7 @@ describe("formatWorkingMessage", () => {
 
 describe("formatMentionWorkingMessage", () => {
   test("formats the LLM mention progress state", () => {
-    expect(formatMentionWorkingMessage()).toBe("Working on that...");
+    expect(formatMentionWorkingMessage()).toBe("Starting agent runtime...");
   });
 });
 
@@ -74,27 +74,33 @@ describe("formatAgentProgressEvent", () => {
         type: "status",
         text: "Preparing your OpenClaw/NemoClaw runtime..."
       })
-    ).toBe("Preparing your OpenClaw/NemoClaw runtime...");
+    ).toBe("Preparing your agent runtime...");
 
     expect(
-      formatAgentProgressEvent({
-        type: "tool_call",
-        toolName: "github.listAssignedIssues",
-        callId: "call-1"
-      })
-    ).toBe("Using GitHub assigned issues...");
+      formatAgentProgressEvent(
+        {
+          type: "tool_call",
+          toolName: "github.listAssignedIssues",
+          callId: "call-1"
+        },
+        "Preparing your agent runtime..."
+      )
+    ).toBe("Preparing your agent runtime...\nAgent is calling GitHub assigned issues...");
 
     expect(
-      formatAgentProgressEvent({
-        type: "tool_result",
-        toolName: "jira.searchIssues",
-        callId: "call-1",
-        classification: "user_private"
-      })
-    ).toBe("Finished Jira search.");
+      formatAgentProgressEvent(
+        {
+          type: "tool_result",
+          toolName: "jira.searchIssues",
+          callId: "call-1",
+          classification: "user_private"
+        },
+        "Agent is calling Jira search..."
+      )
+    ).toBe("Agent is calling Jira search...\nAgent called Jira search.");
   });
 
-  test("appends streaming message deltas without stripping spacing", () => {
+  test("renders streaming message deltas as response progress", () => {
     expect(
       formatAgentProgressEvent(
         {
@@ -103,7 +109,7 @@ describe("formatAgentProgressEvent", () => {
         },
         "hello"
       )
-    ).toBe("hello world");
+    ).toBe("hello\nAgent is responding...");
   });
 });
 

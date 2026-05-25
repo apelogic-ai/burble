@@ -1439,7 +1439,7 @@ describe("runOpenClawCliRequest", () => {
 
     expect(events).toEqual([
       { type: "status", text: "Loading Burble context..." },
-      { type: "status", text: "Running OpenClaw/NemoClaw..." },
+      { type: "status", text: "Agent is thinking..." },
       { type: "message_delta", text: "Security first." },
       { type: "message_delta", text: "Then fix CI." },
       {
@@ -1516,7 +1516,7 @@ describe("runOpenClawCliRequest", () => {
 
     expect(events).toEqual([
       { type: "status", text: "Loading Burble context..." },
-      { type: "status", text: "Running OpenClaw/NemoClaw..." },
+      { type: "status", text: "Agent is thinking..." },
       {
         type: "tool_call",
         toolName: "jira.searchIssues",
@@ -1582,7 +1582,7 @@ describe("runOpenClawCliRequest", () => {
     });
     expect(await stream.next()).toEqual({
       done: false,
-      value: { type: "status", text: "Running OpenClaw/NemoClaw..." }
+      value: { type: "status", text: "Agent is thinking..." }
     });
     expect(await stream.next()).toEqual({
       done: false,
@@ -1911,7 +1911,7 @@ describe("runOpenClawCliRequest", () => {
 
     expect(events).toContainEqual({
       type: "status",
-      text: "Still running OpenClaw... 0s"
+      text: "Agent has thought for 0s"
     });
     expect(events.at(-1)).toEqual({
       type: "final",

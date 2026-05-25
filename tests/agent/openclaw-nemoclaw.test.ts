@@ -278,8 +278,8 @@ describe("createOpenClawNemoClawAgentRunner", () => {
     const result = await resultPromise;
 
     expect(events).toEqual([
-      "status:Preparing your OpenClaw/NemoClaw runtime...",
-      "status:Running OpenClaw/NemoClaw...",
+      "status:Starting agent runtime...",
+      "status:Agent is thinking...",
       "status:Loading context...",
       "tool_call:",
       "tool_result:",
@@ -347,7 +347,7 @@ describe("createOpenClawNemoClawAgentRunner", () => {
     const socket = await waitForSocket(sockets);
     socket.sendEvent({
       type: "status",
-      text: "Running OpenClaw/NemoClaw..."
+      text: "Agent is thinking..."
     });
     socket.closeFromRuntime();
 

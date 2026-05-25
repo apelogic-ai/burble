@@ -468,7 +468,7 @@ function isClosedStreamError(error: unknown): boolean {
 function formatRuntimeError(error: unknown): string {
   if (error instanceof Error && error.message) {
     if (isModelQuotaError(error.message)) {
-      return "OpenClaw model provider quota is exhausted. Update the selected provider key/billing or switch AI_MODEL to a provider/model with available quota.";
+      return "Agent model provider quota is exhausted. Update the selected provider key/billing or switch AI_MODEL to a provider/model with available quota.";
     }
     return error.message;
   }

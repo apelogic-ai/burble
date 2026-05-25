@@ -72,7 +72,7 @@ export function createAiSdkAgentRunner(
       remote: false
     },
     async *run(input: AgentInput): AsyncIterable<AgentRunEvent> {
-      yield { type: "status", text: "Working on that..." };
+      yield { type: "status", text: "Agent is thinking..." };
 
       const toolEvents: AgentRunEvent[] = [];
       const response = await runAiSdkAgent(input, {
