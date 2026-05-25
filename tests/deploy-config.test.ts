@@ -149,6 +149,7 @@ describe("dev deploy config", () => {
     expect(openClawOpenAiPatch).toContain(
       'file: "/data/openclaw/logs/openclaw.log"'
     );
+    expect(openClawOpenAiPatch).toContain('allow: ["openai"]');
     expect(openClawOpenAiPatch).toContain("openai:default");
     expect(openClawOpenAiPatch).not.toContain("sk-");
     expect(openClawOpenAiPatch).not.toContain("apiKey");

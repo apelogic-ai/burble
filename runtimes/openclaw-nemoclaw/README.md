@@ -69,7 +69,8 @@ volume has already been prepared.
 If `OPENCLAW_CONFIG_PATCH_PATH` is set, startup applies it with
 `openclaw config patch --file`. Startup then runs `openclaw config validate`
 unless `OPENCLAW_VALIDATE_ON_START=false`. Use the config patch file for
-non-interactive model/provider configuration.
+non-interactive model/provider configuration. The dev OpenAI patch allowlists
+only the OpenAI plugin to avoid repeatedly loading unrelated bundled plugins.
 
 Set `OPENCLAW_STREAM_DEBUG=true` temporarily to log stdout chunk timing, parsed
 delta counts, and redacted previews while diagnosing whether the CLI streams

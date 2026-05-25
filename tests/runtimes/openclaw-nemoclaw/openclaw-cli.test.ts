@@ -959,6 +959,43 @@ describe("runOpenClawCliRequest", () => {
     ).rejects.toThrow("OpenClaw CLI exited with code 2");
   });
 
+  test("does not treat diagnostic stdout as a partial answer after CLI failure", async () => {
+    await expect(async () => {
+      for await (const _event of runOpenClawCliRequestStream(
+        {
+          input: {
+            text: "prioritize my GitHub work",
+            connections: {
+              github: {
+                connected: true,
+                email: "person@example.com",
+                providerLogin: "octocat"
+              }
+            }
+          }
+        },
+        config,
+        async () => ({
+          classification: "user_private",
+          content: []
+        }),
+        async function* () {
+          yield {
+            type: "stdout" as const,
+            text: "[plugins] loading openai\n[openai-transport] [responses] start\n"
+          };
+          yield {
+            type: "stderr" as const,
+            text: "code=insufficient_quota message=You exceeded your current quota"
+          };
+          yield { type: "exit" as const, exitCode: 1 };
+        }
+      )) {
+        // drain stream until failure
+      }
+    }).toThrow("OpenClaw CLI exited with code 1");
+  });
+
   test("streams OpenClaw stdout deltas before the final response", async () => {
     const events = [];
 
