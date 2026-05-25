@@ -113,6 +113,48 @@ describe("createJiraTools", () => {
     expect(JSON.stringify(result)).not.toContain("jira-token");
   });
 
+  test("lists accessible Jira resources with sanitized content", async () => {
+    const tools = createJiraTools({
+      getJiraUser: async () => ({
+        accountId: "account-123",
+        displayName: "Person Example"
+      }),
+      listJiraAccessibleResources: async (token) => {
+        expect(token).toBe("jira-token");
+        return [
+          {
+            id: "cloud-123",
+            name: "APE GPT",
+            url: "https://apegpt.atlassian.net",
+            scopes: ["read:jira-work", "write:jira-work"]
+          },
+          {
+            id: "conf-123",
+            name: "Docs",
+            url: "https://docs.atlassian.net",
+            scopes: ["read:confluence-content.summary"]
+          }
+        ];
+      },
+      listAssignedJiraIssues: async () => [],
+      searchJiraIssues: async () => []
+    });
+
+    const result = await tools.listAccessibleResources.execute({ connection });
+
+    expect(result).toEqual({
+      classification: "user_private",
+      content: [
+        {
+          id: "cloud-123",
+          name: "APE GPT",
+          url: "https://apegpt.atlassian.net"
+        }
+      ]
+    });
+    expect(JSON.stringify(result)).not.toContain("jira-token");
+  });
+
   test("refreshes an expired Jira token and persists the rotated token", async () => {
     const saved: ProviderConnection[] = [];
     const tools = createJiraTools({

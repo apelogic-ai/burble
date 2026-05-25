@@ -194,6 +194,9 @@ describe("createBurbleToolExecutor", () => {
         user: { email: "person@example.com" },
         input: { jql: 'text ~ "billing"' }
       });
+      await executor("jira.listAccessibleResources", {
+        user: { email: "person@example.com" }
+      });
       await executor("atlassian.listMcpTools", {
         user: { email: "person@example.com" }
       });
@@ -224,6 +227,13 @@ describe("createBurbleToolExecutor", () => {
           params: {
             name: "jira_search_issues",
             arguments: { jql: 'text ~ "billing"' }
+          }
+        },
+        {
+          method: "tools/call",
+          params: {
+            name: "jira_list_accessible_resources",
+            arguments: {}
           }
         },
         {

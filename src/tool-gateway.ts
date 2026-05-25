@@ -9,6 +9,7 @@ import {
 } from "./github";
 import {
   getJiraUser,
+  listJiraAccessibleResources,
   listAssignedJiraIssues,
   refreshJiraAccessToken,
   searchJiraIssues
@@ -60,6 +61,7 @@ const defaultDeps = {
   searchIssues,
   listMyPullRequests,
   getJiraUser,
+  listJiraAccessibleResources,
   listAssignedJiraIssues,
   searchJiraIssues
 };
@@ -167,6 +169,14 @@ export async function handleToolGatewayRequest(
         auth,
         toolName,
         await jiraTools.getAuthenticatedUser.execute({ connection })
+      );
+
+    case "jira.listAccessibleResources":
+      return jsonResponseWithAudit(
+        store,
+        auth,
+        toolName,
+        await jiraTools.listAccessibleResources.execute({ connection })
       );
 
     case "jira.listAssignedIssues":
@@ -369,6 +379,7 @@ function isKnownTool(toolName: string): boolean {
     toolName === "github.searchIssues" ||
     toolName === "github.listMyPullRequests" ||
     toolName === "jira.getAuthenticatedUser" ||
+    toolName === "jira.listAccessibleResources" ||
     toolName === "jira.listAssignedIssues" ||
     toolName === "jira.searchIssues" ||
     toolName === "atlassian.listMcpTools" ||

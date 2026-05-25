@@ -1,6 +1,7 @@
 import type { ProviderConnection } from "../db";
 import {
   isJiraAuthorizationError,
+  type JiraAccessibleResource,
   type JiraTokenSet
 } from "../jira";
 import type { ToolResult } from "./types";
@@ -20,6 +21,7 @@ export type JiraIssue = {
 
 export type JiraToolDeps = {
   getJiraUser: (token: string) => Promise<JiraUser>;
+  listJiraAccessibleResources?: (token: string) => Promise<JiraAccessibleResource[]>;
   listAssignedJiraIssues: (token: string) => Promise<JiraIssue[]>;
   searchJiraIssues: (token: string, jql: string) => Promise<JiraIssue[]>;
   refreshJiraAccessToken?: (refreshToken: string) => Promise<JiraTokenSet>;
@@ -38,6 +40,11 @@ type JiraIssueContent = Array<{
   title: string;
   url: string;
   status?: string;
+}>;
+type JiraAccessibleResourceContent = Array<{
+  id: string;
+  url: string;
+  name?: string;
 }>;
 
 export function createJiraTools(deps: JiraToolDeps) {
@@ -63,6 +70,41 @@ export function createJiraTools(deps: JiraToolDeps) {
             accountId: user.accountId,
             displayName: user.displayName
           }
+        };
+      }
+    },
+
+    listAccessibleResources: {
+      async execute(
+        context: JiraToolContext
+      ): Promise<ToolResult<JiraAccessibleResourceContent | JiraAuthErrorContent>> {
+        const resources = await withJiraToken(
+          deps,
+          context.connection,
+          (accessToken) => {
+            if (!deps.listJiraAccessibleResources) {
+              throw new Error("Jira accessible resources lookup is not configured");
+            }
+
+            return deps.listJiraAccessibleResources(accessToken);
+          }
+        );
+        if (isJiraAuthErrorResult(resources)) {
+          return resources;
+        }
+
+        return {
+          classification: "user_private",
+          content: resources
+            .filter((resource) =>
+              resource.scopes?.some((scope) => scope.includes("jira"))
+            )
+            .slice(0, 20)
+            .map((resource) => ({
+              id: resource.id,
+              url: resource.url,
+              ...(resource.name ? { name: resource.name } : {})
+            }))
         };
       }
     },

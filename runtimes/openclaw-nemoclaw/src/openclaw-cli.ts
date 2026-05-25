@@ -106,7 +106,9 @@ export async function runOpenClawCliRequest(
       sessionId,
       runCommand
     );
-    const plannedToolCall = readPlannedToolCall(result.stdout, toolContext.catalog);
+    const plannedToolCall = normalizePlannedToolCall(
+      readPlannedToolCall(result.stdout, toolContext.catalog)
+    );
 
     if (!plannedToolCall) {
       const lastToolResult = executedTools.at(-1)?.toolResult;
@@ -232,7 +234,9 @@ export async function* runOpenClawCliRequestStream(
       heartbeatMs,
       true
     );
-    const plannedToolCall = readPlannedToolCall(result.stdout, toolContext.catalog);
+    const plannedToolCall = normalizePlannedToolCall(
+      readPlannedToolCall(result.stdout, toolContext.catalog)
+    );
 
     if (!plannedToolCall) {
       const lastToolResult = executedTools.at(-1)?.toolResult;
@@ -588,6 +592,12 @@ async function buildToolCatalog(
         inputSchema: {}
       },
       {
+        name: "jira.listAccessibleResources",
+        description:
+          "List Atlassian resources visible to the requesting Slack user's connected Jira account. Use the resource url as Jira MCP cloudId when Atlassian Rovo MCP tools require cloudId.",
+        inputSchema: {}
+      },
+      {
         name: "jira.listAssignedIssues",
         description: "List Jira issues assigned to the requesting Slack user.",
         inputSchema: {}
@@ -791,6 +801,45 @@ function readPlannedToolCall(
   };
 }
 
+function normalizePlannedToolCall(toolCall: PlannedToolCall | null): PlannedToolCall | null {
+  if (!toolCall || toolCall.name !== "atlassian.callMcpTool") {
+    return toolCall;
+  }
+
+  const upstreamArguments =
+    toolCall.arguments.arguments &&
+    typeof toolCall.arguments.arguments === "object" &&
+    !Array.isArray(toolCall.arguments.arguments)
+      ? (toolCall.arguments.arguments as Record<string, unknown>)
+      : null;
+  if (!upstreamArguments || typeof upstreamArguments.cloudId !== "string") {
+    return toolCall;
+  }
+
+  const normalizedCloudId = normalizeAtlassianCloudId(upstreamArguments.cloudId);
+  if (normalizedCloudId === upstreamArguments.cloudId) {
+    return toolCall;
+  }
+
+  return {
+    ...toolCall,
+    arguments: {
+      ...toolCall.arguments,
+      arguments: {
+        ...upstreamArguments,
+        cloudId: normalizedCloudId
+      }
+    }
+  };
+}
+
+function normalizeAtlassianCloudId(value: string): string {
+  const trimmed = value.trim();
+  return /^[a-z0-9-]+\.atlassian\.net$/i.test(trimmed)
+    ? `https://${trimmed}`
+    : trimmed;
+}
+
 function readLastJsonObject(stdout: string): Record<string, unknown> | null {
   const trimmed = stdout.trim();
   if (!trimmed) {
@@ -873,11 +922,6 @@ function validatePlannedToolCall(
     !Array.isArray(toolCall.arguments.arguments)
       ? (toolCall.arguments.arguments as Record<string, unknown>)
       : {};
-  const cloudIdError = validateCloudIdArgument(upstreamToolName, upstreamArguments);
-  if (cloudIdError) {
-    return cloudIdError;
-  }
-
   const missing = required.filter(
     (field) => !hasPresentSchemaValue(upstreamArguments, field)
   );
@@ -892,33 +936,6 @@ function validatePlannedToolCall(
       message: `The planned Atlassian MCP call \`${upstreamToolName}\` is missing required arguments: ${missing.join(", ")}. Use available lookup tools to resolve them, or ask one concise clarifying question before calling \`${upstreamToolName}\`.`
     }
   };
-}
-
-function validateCloudIdArgument(
-  upstreamToolName: string,
-  upstreamArguments: Record<string, unknown>
-): ToolResult | null {
-  const cloudId = upstreamArguments.cloudId;
-  if (typeof cloudId !== "string" || !looksLikeAtlassianSiteLocator(cloudId)) {
-    return null;
-  }
-
-  return {
-    classification: "user_private",
-    content: {
-      error: "mcp_schema_validation_failed",
-      message: `The planned Atlassian MCP call \`${upstreamToolName}\` uses \`${cloudId}\` as cloudId, but cloudId must be the resource id returned by \`getAccessibleAtlassianResources\`, not a hostname or URL. Call \`getAccessibleAtlassianResources\` and retry with its id.`
-    }
-  };
-}
-
-function looksLikeAtlassianSiteLocator(value: string): boolean {
-  const trimmed = value.trim().toLowerCase();
-  return (
-    /^https?:\/\//.test(trimmed) ||
-    trimmed.includes(".atlassian.net") ||
-    /^[a-z0-9-]+\.[a-z0-9.-]+$/.test(trimmed)
-  );
 }
 
 function readRequiredSchemaFields(schema: unknown): string[] {
