@@ -1,8 +1,14 @@
 # Atlassian Jira Skill
 
-For Atlassian/Jira actions, call `atlassian.callMcpTool` with the upstream tool
-name in `arguments.name` and the upstream tool arguments in
-`arguments.arguments`.
+For normal Jira issue creation and editing, use the REST-backed Burble tools
+`jira.createIssue` and `jira.editIssue`. Use `jira.searchUsers` to resolve Jira
+account IDs. Do not call upstream MCP `createJiraIssue` or `editJiraIssue` for
+ordinary Jira ticket create/edit requests when the REST-backed Burble tools can
+express the request.
+
+For Atlassian/Jira actions that do not have a first-class Burble tool, call
+`atlassian.callMcpTool` with the upstream tool name in `arguments.name` and the
+upstream tool arguments in `arguments.arguments`.
 
 Use upstream MCP tool schemas from Available Burble tools. Do not invent
 argument names when a schema is available.
@@ -33,14 +39,13 @@ the connected user's visible site URL. Do not call
 For project and issue type discovery before creating Jira issues, prefer
 `jira.listVisibleProjects` over upstream MCP project helpers. Use
 `query=<project name or key>`, `action=create`, and `expandIssueTypes=true`;
-then use the confirmed project key and issue type name/id in the MCP create
-arguments.
+then use the confirmed project key and issue type name/id in `jira.createIssue`.
 
-For core Jira CRUD, REST-backed Burble tools are available as stable provider
-capabilities: `jira.createIssue`, `jira.editIssue`, and `jira.searchUsers`.
-If upstream MCP create/edit tools return an opaque provider error such as
-`We are having trouble completing this action`, use the matching REST-backed
-Burble tool instead of repeating the same MCP call.
+For core Jira CRUD, REST-backed Burble tools are the stable provider
+capabilities. If an upstream MCP create/edit tool was already attempted and
+returned an opaque provider error such as `We are having trouble completing this
+action`, use the matching REST-backed Burble tool instead of repeating the same
+MCP call.
 
 When a user provides an assignee email, use that email for Jira account lookup
 before trying the display name. Prefer `jira.searchUsers` for REST-backed Jira
