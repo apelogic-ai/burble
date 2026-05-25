@@ -49,6 +49,7 @@ export type CliCommandStreamer = (
 
 const streamHeartbeatMs = 8_000;
 const maxPlannedToolCalls = 5;
+const maxDirectBootstrapRetries = 1;
 
 type ToolCatalogItem = {
   name: string;
@@ -106,10 +107,17 @@ export async function runOpenClawCliRequest(
     `OpenClaw agent start runId=${request.runId ?? "unknown"} agent=${config.openClawAgent} sessionId=${sessionId} sessionScope=run textLength=${request.input.text.length} classification=${baseline.response.classification}`
   );
   const executedTools: ExecutedToolCall[] = [];
+  const rejectedDirectResponses: string[] = [];
   let classification = baseline.response.classification;
 
   for (let step = 0; step <= maxPlannedToolCalls; step += 1) {
-    const prompt = buildOpenClawPrompt(request, toolContext, executedTools);
+    const prompt = buildPlanningPrompt(
+      config,
+      request,
+      toolContext,
+      executedTools,
+      rejectedDirectResponses
+    );
     logInfo(
       `OpenClaw planning start runId=${request.runId ?? "unknown"} step=${step + 1} executedTools=${executedTools.length} promptChars=${prompt.length}`
     );
@@ -132,6 +140,17 @@ export async function runOpenClawCliRequest(
       const text =
         extractOpenClawText(result.stdout) ||
         (lastToolResult ? formatToolResult(lastToolResult) : baseline.response.text);
+      if (
+        config.engine === "burble-direct" &&
+        rejectedDirectResponses.length < maxDirectBootstrapRetries &&
+        isBootstrapSetupAnswer(text)
+      ) {
+        rejectedDirectResponses.push(text);
+        logInfo(
+          `Burble direct model retry runId=${request.runId ?? "unknown"} step=${step + 1} reason=bootstrap_response`
+        );
+        continue;
+      }
       logInfo(
         `OpenClaw agent finish runId=${request.runId ?? "unknown"} classification=${classification} textLength=${text.length}`
       );
@@ -622,10 +641,12 @@ type DirectModelRequest = {
 };
 
 const directPlanningSystemPrompt = [
-  "You are Burble's planning model.",
+  "You are Burble's direct planning model for Slack.",
   "Follow the user prompt exactly.",
+  "The requester is already known through Burble's Slack and provider connections.",
+  "Words like me, my, and assign to me refer to the requesting Slack user, never to the assistant.",
   "Return either concise Slack mrkdwn or the exact JSON tool_call object requested by the prompt.",
-  "Do not call tools, inspect files, mention bootstrap, or ask for identity setup."
+  "Do not inspect files, mention bootstrap, ask who you are, ask who the user is, ask for vibe/persona/emoji setup, or ask for identity setup."
 ].join(" ");
 
 function buildDirectModelRequest(
@@ -822,10 +843,17 @@ export async function* runOpenClawCliRequestStream(
   yield { type: "status", text: "Running OpenClaw/NemoClaw..." };
 
   const executedTools: ExecutedToolCall[] = [];
+  const rejectedDirectResponses: string[] = [];
   let classification = baseline.response.classification;
 
   for (let step = 0; step <= maxPlannedToolCalls; step += 1) {
-    const prompt = buildOpenClawPrompt(request, toolContext, executedTools);
+    const prompt = buildPlanningPrompt(
+      config,
+      request,
+      toolContext,
+      executedTools,
+      rejectedDirectResponses
+    );
     logInfo(
       `OpenClaw planning start runId=${request.runId ?? "unknown"} step=${step + 1} executedTools=${executedTools.length} promptChars=${prompt.length}`
     );
@@ -850,6 +878,17 @@ export async function* runOpenClawCliRequestStream(
       const text =
         extractOpenClawText(result.stdout) ||
         (lastToolResult ? formatToolResult(lastToolResult) : baseline.response.text);
+      if (
+        config.engine === "burble-direct" &&
+        rejectedDirectResponses.length < maxDirectBootstrapRetries &&
+        isBootstrapSetupAnswer(text)
+      ) {
+        rejectedDirectResponses.push(text);
+        logInfo(
+          `Burble direct model retry runId=${request.runId ?? "unknown"} step=${step + 1} reason=bootstrap_response`
+        );
+        continue;
+      }
       logInfo(
         `OpenClaw agent finish runId=${request.runId ?? "unknown"} classification=${classification} textLength=${text.length}`
       );
@@ -1552,6 +1591,25 @@ function truncate(value: string | undefined, maxLength: number): string {
     : `${value.slice(0, maxLength - 3)}...`;
 }
 
+function buildPlanningPrompt(
+  config: RuntimeConfig,
+  request: RunRequest,
+  toolContext: BurbleToolContext,
+  executedTools: ExecutedToolCall[] = [],
+  rejectedDirectResponses: string[] = []
+): string {
+  if (config.engine === "burble-direct") {
+    return buildBurbleDirectPrompt(
+      request,
+      toolContext,
+      executedTools,
+      rejectedDirectResponses
+    );
+  }
+
+  return buildOpenClawPrompt(request, toolContext, executedTools);
+}
+
 function buildOpenClawPrompt(
   request: RunRequest,
   toolContext: BurbleToolContext,
@@ -1590,6 +1648,64 @@ function buildOpenClawPrompt(
   return sections.join("\n");
 }
 
+function buildBurbleDirectPrompt(
+  request: RunRequest,
+  toolContext: BurbleToolContext,
+  executedTools: ExecutedToolCall[] = [],
+  rejectedDirectResponses: string[] = []
+): string {
+  const sections = [
+    "Burble direct runtime instructions:",
+    [
+      "You are Burble, a Slack assistant running inside Burble's runtime.",
+      "The requesting Slack user is already authenticated through Burble connections; do not ask who you are, who the user is, what kind of assistant you are, what vibe you should have, or for an emoji/persona setup.",
+      "Interpret me, my, and assign to me as the requesting Slack user.",
+      "The Burble tool gateway injects the connected provider identity and credentials; do not include emails, tokens, or credentials in tool arguments.",
+      "For provider data or actions, return exactly one JSON object and no prose: {\"tool_call\":{\"name\":\"tool.name\",\"arguments\":{}}}.",
+      "Use only tool names listed in Available Burble tools.",
+      "For Jira assign-to-me requests, call jira.getAuthenticatedUser when you need the requester's Jira accountId, then call jira.editIssue with assigneeAccountId.",
+      "For final answers, return concise Slack mrkdwn."
+    ].join(" "),
+    "",
+    "Available Burble tools:",
+    formatToolCatalog(toolContext.catalog),
+    "",
+    `User request: ${request.input.text}`,
+    "",
+    "Burble baseline context:",
+    toolContext.baseline.response.text
+  ];
+
+  if (executedTools.length > 0) {
+    sections.push(
+      "",
+      "Burble executed tools:",
+      JSON.stringify(
+        executedTools.map((executedTool) => ({
+          tool_call: executedTool.toolCall,
+          result: executedTool.toolResult
+        }))
+      ),
+      "",
+      "Return either exactly one more tool_call JSON object if another provider action is required, or the final Slack-ready answer."
+    );
+  } else {
+    sections.push("", "Return either exactly one tool_call JSON object or the final Slack-ready answer.");
+  }
+
+  if (rejectedDirectResponses.length > 0) {
+    sections.push(
+      "",
+      "Rejected previous provider response:",
+      truncate(rejectedDirectResponses.at(-1), 600),
+      "",
+      "The rejected response asked for assistant/user bootstrap setup. That is invalid in Burble direct mode. Do not repeat it; return a valid tool_call JSON object or final Slack-ready answer."
+    );
+  }
+
+  return sections.join("\n");
+}
+
 function formatToolCatalog(catalog: ToolCatalogItem[]): string {
   if (catalog.length === 0) {
     return "[]";
@@ -1601,6 +1717,20 @@ function formatToolCatalog(catalog: ToolCatalogItem[]): string {
       description: tool.description,
       input_schema: tool.inputSchema
     }))
+  );
+}
+
+function isBootstrapSetupAnswer(text: string): boolean {
+  const normalized = text.toLowerCase();
+  return (
+    /\bwho am i\b/.test(normalized) ||
+    /\bwho are you\b/.test(normalized) ||
+    /\bidentity setup\b/.test(normalized) ||
+    /\bbootstrap\b/.test(normalized) ||
+    /\bsignature emoji\b/.test(normalized) ||
+    /\bwhat vibe\b/.test(normalized) ||
+    /\bwhat kind of assistant\b/.test(normalized) ||
+    /\bi just came online\b/.test(normalized)
   );
 }
 

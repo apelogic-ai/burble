@@ -1655,7 +1655,123 @@ describe("runOpenClawCliRequest", () => {
     expect(requests[0].body.model).toBe("gpt-5.4");
     expect(requests[0].body.input).toContain("what can you do?");
     expect(requests[0].body.parallel_tool_calls).toBe(false);
-    expect(requests[0].body.instructions).toContain("Do not call tools");
+    expect(requests[0].body.instructions).toContain("ask who you are");
+    expect(requests[0].body.input).toContain("Burble direct runtime instructions:");
+    expect(requests[0].body.input).not.toContain("You are Burble's OpenClaw runtime");
+  });
+
+  test("retries burble-direct bootstrap answers instead of returning them", async () => {
+    const requests: Array<Record<string, unknown>> = [];
+    const toolCalls: Array<{ toolName: string; body: unknown }> = [];
+    const logs: string[] = [];
+    const providerTexts = [
+      "Hey. I just came online. Who am I? Who are you? Pick me a signature emoji.",
+      JSON.stringify({ tool_call: { name: "jira.getAuthenticatedUser", arguments: {} } }),
+      JSON.stringify({
+        tool_call: {
+          name: "jira.editIssue",
+          arguments: {
+            issueKey: "DM-12",
+            assigneeAccountId: "acct-me"
+          }
+        }
+      })
+    ];
+
+    const response = await withEnv(
+      { OPENAI_API_KEY: "test-openai-key" },
+      async () =>
+        await withMockFetch(
+          (async (_input, init) => {
+            requests.push(
+              JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>
+            );
+            const text = providerTexts.shift();
+            if (!text) {
+              throw new Error("unexpected provider call");
+            }
+            return new Response(JSON.stringify(openResponsesText(text)), {
+              status: 200,
+              headers: { "content-type": "application/json" }
+            });
+          }) as typeof fetch,
+          async () =>
+            runOpenClawCliRequest(
+              {
+                runId: "run-direct-bootstrap",
+                input: {
+                  text: "assign DM-12 jira ticket to me",
+                  connections: {
+                    github: { connected: false },
+                    jira: {
+                      connected: true,
+                      email: "person@example.com",
+                      providerLogin: "person@atlassian.example"
+                    }
+                  }
+                }
+              },
+              { ...config, engine: "burble-direct" },
+              async (toolName, body) => {
+                toolCalls.push({ toolName, body });
+                if (toolName === "jira.getAuthenticatedUser") {
+                  return {
+                    classification: "user_private",
+                    content: { accountId: "acct-me", displayName: "Leo" }
+                  };
+                }
+                if (toolName === "jira.editIssue") {
+                  return {
+                    classification: "user_private",
+                    content: {
+                      key: "DM-12",
+                      title: "test task ticket #9 from slack",
+                      url: "https://apegpt.atlassian.net/browse/DM-12",
+                      status: "Backlog"
+                    }
+                  };
+                }
+                throw new Error(`unexpected tool call: ${toolName}`);
+              },
+              async () => {
+                throw new Error("unexpected cli call");
+              },
+              (message) => logs.push(message)
+            )
+        )
+    );
+
+    expect(response.response.text).toBe(
+      "Updated Jira issue DM-12: test task ticket #9 from slack\nhttps://apegpt.atlassian.net/browse/DM-12"
+    );
+    expect(toolCalls).toEqual([
+      {
+        toolName: "jira.getAuthenticatedUser",
+        body: { user: { email: "person@example.com" }, input: {} }
+      },
+      {
+        toolName: "jira.editIssue",
+        body: {
+          user: { email: "person@example.com" },
+          input: {
+            issueKey: "DM-12",
+            assigneeAccountId: "acct-me"
+          }
+        }
+      }
+    ]);
+    expect(requests).toHaveLength(3);
+    expect(String(requests[0].input)).toContain("assign to me as the requesting Slack user");
+    expect(String(requests[0].input)).toContain("call jira.getAuthenticatedUser");
+    expect(String(requests[1].input)).toContain("Rejected previous provider response:");
+    expect(response.response.text).not.toContain("Who am I");
+    expect(
+      logs.some((line) =>
+        line.includes(
+          "Burble direct model retry runId=run-direct-bootstrap step=1 reason=bootstrap_response"
+        )
+      )
+    ).toBe(true);
   });
 
   test("can invoke OpenClaw through Gateway mode without local CLI execution", async () => {
