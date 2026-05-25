@@ -309,18 +309,26 @@ describe("runOpenClawCliRequest", () => {
         const sessionKey = (init?.headers as Record<string, string>)[
           "x-openclaw-session-key"
         ];
+        const startedAt = Date.now();
+        const timestamp = (offsetMs: number) =>
+          new Date(startedAt + offsetMs).toISOString();
         recordGatewayDiagnosticText(
           [
-            "[agent/embedded] embedded run start: runId=heartbeat sessionId=sidecar-heartbeat provider=openai model=gpt-5.4 thinking=medium messageChannel=heartbeat",
-            "[openai-transport] [responses] start provider=openai api=openai-responses model=gpt-5.4",
-            "[provider-transport-fetch] [model-fetch] start provider=openai api=openai-responses model=gpt-5.4",
-            "[openai-transport] [responses] stream_done provider=openai api=openai-responses model=gpt-5.4 elapsedMs=2482 events=15",
-            "[agent/embedded] embedded run done: runId=heartbeat sessionId=sidecar-heartbeat durationMs=5938 aborted=false",
-            `[agent/embedded] embedded run start: runId=user-run sessionKey=${sessionKey} provider=openai model=gpt-5.4 thinking=medium messageChannel=webchat`,
-            "[openai-transport] [responses] start provider=openai api=openai-responses model=gpt-5.4",
-            "[provider-transport-fetch] [model-fetch] start provider=openai api=openai-responses model=gpt-5.4",
-            "[openai-transport] [responses] stream_done provider=openai api=openai-responses model=gpt-5.4 elapsedMs=6929 events=123",
-            `[agent/embedded] embedded run done: runId=user-run sessionKey=${sessionKey} durationMs=12226 aborted=false`
+            `${timestamp(10)} [agent/embedded] embedded run start: runId=heartbeat sessionId=sidecar-heartbeat provider=openai model=gpt-5.4 thinking=medium messageChannel=heartbeat`,
+            `${timestamp(20)} [openai-transport] [responses] start provider=openai api=openai-responses model=gpt-5.4`,
+            `${timestamp(30)} [provider-transport-fetch] [model-fetch] start provider=openai api=openai-responses model=gpt-5.4`,
+            `${timestamp(40)} [openai-transport] [responses] stream_done provider=openai api=openai-responses model=gpt-5.4 elapsedMs=2482 events=15`,
+            `${timestamp(50)} [agent/embedded] embedded run done: runId=heartbeat sessionId=sidecar-heartbeat durationMs=5938 aborted=false`,
+            `${timestamp(100)} [diagnostic] lane enqueue: lane=session:agent:main:explicit:${sessionKey} queueSize=1`,
+            `${timestamp(104)} [diagnostic] lane dequeue: lane=session:agent:main:explicit:${sessionKey} waitMs=4 queueSize=0`,
+            `${timestamp(1500)} [agent/embedded] embedded run start: runId=user-run sessionKey=${sessionKey} provider=openai model=gpt-5.4 thinking=medium messageChannel=webchat`,
+            `${timestamp(1800)} [agent/embedded] embedded run prompt start: runId=user-run sessionKey=${sessionKey} provider=openai api=openai-responses endpoint=custom route=proxy-like policy=none`,
+            `${timestamp(1810)} [agent/embedded] [context-diag] pre-prompt: sessionKey=${sessionKey} messages=0 roleCounts=none historyTextChars=0 maxMessageTextChars=0 historyImageBlocks=0 systemPromptChars=29632 promptChars=4261 promptImages=0 provider=openai/gpt-5.4`,
+            `${timestamp(2500)} [openai-transport] [responses] start provider=openai api=openai-responses model=gpt-5.4`,
+            `${timestamp(2600)} [provider-transport-fetch] [model-fetch] start provider=openai api=openai-responses model=gpt-5.4`,
+            `${timestamp(2630)} [openai-transport] [responses] first_event provider=openai api=openai-responses model=gpt-5.4 elapsedMs=30 type=response.created`,
+            `${timestamp(9130)} [openai-transport] [responses] stream_done provider=openai api=openai-responses model=gpt-5.4 elapsedMs=6929 events=123`,
+            `${timestamp(9300)} [agent/embedded] embedded run done: runId=user-run sessionKey=${sessionKey} durationMs=7800 aborted=false`
           ].join("\n")
         );
         return new Response(JSON.stringify(openResponsesText("Done.")), {
@@ -359,6 +367,16 @@ describe("runOpenClawCliRequest", () => {
     expect(logs).toContain(
       "OpenClaw model usage diagnostics runId=run-gateway-diagnostics step=1 modelStarts=1 fetchStarts=1 streamDone=1 streamDoneElapsedMs=6929 streamDoneEvents=123 compactions=0 exactUsageFields=3 exactUsageAvailable=true rawStreamBytes=0"
     );
+    const phaseLog = logs.find((line) =>
+      line.includes(
+        "OpenClaw gateway phase timings runId=run-gateway-diagnostics step=1"
+      )
+    );
+    expect(phaseLog).toContain("laneWaitMs=4");
+    expect(phaseLog).toContain("providerStreamMs=6500");
+    expect(phaseLog).toContain("providerElapsedMs=6929");
+    expect(phaseLog).toContain("systemPromptChars=29632");
+    expect(phaseLog).toContain("gatewayPromptChars=4261");
     clearGatewayDiagnosticText();
   });
 

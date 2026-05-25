@@ -24,6 +24,13 @@ describe("buildOpenClawLlmPatch", () => {
 
     expect(patch.agents.defaults.model.primary).toBe("openai/gpt-5.4");
     expect(patch.agents.defaults.heartbeat.every).toBe("0m");
+    expect(patch.agents.defaults.skills).toEqual([]);
+    expect(patch.agents.defaults.contextInjection).toBe("never");
+    expect(patch.agents.defaults.skipBootstrap).toBe(true);
+    expect(patch.agents.defaults.systemPromptOverride).toContain(
+      "Burble's OpenClaw runtime"
+    );
+    expect(patch.skills.allowBundled).toEqual([]);
     expect(patch.gateway.http.endpoints.responses.enabled).toBe(true);
     expect(patch.logging.file).toBe("/data/openclaw/logs/openclaw.log");
     expect(patch.plugins.allow).toEqual(["openai"]);
