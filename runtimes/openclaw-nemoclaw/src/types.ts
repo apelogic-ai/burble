@@ -19,6 +19,12 @@ export type RunRequest = {
       rootId: string;
       isDirectMessage: boolean;
     };
+    context?: {
+      recentMessages: Array<{
+        author: "user" | "assistant";
+        text: string;
+      }>;
+    };
     connections: {
       github: {
         connected: boolean;

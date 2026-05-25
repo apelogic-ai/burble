@@ -544,6 +544,14 @@ function isRunRequest(body: unknown): body is RunRequest {
     return false;
   }
 
+  if (
+    "context" in input &&
+    input.context !== undefined &&
+    !isRequestContext(input.context)
+  ) {
+    return false;
+  }
+
   const connections = input.connections;
   if (
     typeof connections !== "object" ||
@@ -597,6 +605,27 @@ function isConversationSummary(
     conversation.rootId.trim().length > 0 &&
     "isDirectMessage" in conversation &&
     typeof conversation.isDirectMessage === "boolean"
+  );
+}
+
+function isRequestContext(context: unknown): context is RunRequest["input"]["context"] {
+  if (
+    typeof context !== "object" ||
+    context === null ||
+    !("recentMessages" in context) ||
+    !Array.isArray(context.recentMessages)
+  ) {
+    return false;
+  }
+
+  return context.recentMessages.every(
+    (message) =>
+      typeof message === "object" &&
+      message !== null &&
+      "author" in message &&
+      (message.author === "user" || message.author === "assistant") &&
+      "text" in message &&
+      typeof message.text === "string"
   );
 }
 

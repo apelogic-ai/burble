@@ -13,6 +13,12 @@ export type ConversationRequest = {
   threadTs?: string;
   messageTs: string;
   isDirectMessage: boolean;
+  context?: {
+    recentMessages: Array<{
+      author: "user" | "assistant";
+      text: string;
+    }>;
+  };
   user: {
     slackUserId: string;
     email: string;

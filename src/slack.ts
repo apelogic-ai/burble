@@ -61,6 +61,19 @@ type SlackDirectMessageEvent = {
   bot_id?: string;
 };
 
+type SlackRecentMessage = {
+  author: "user" | "assistant";
+  text: string;
+};
+
+type SlackHistoryMessage = {
+  text?: string;
+  user?: string;
+  bot_id?: string;
+  subtype?: string;
+  ts?: string;
+};
+
 type SlackProgressMessage = {
   channel: string;
   ts: string;
@@ -179,15 +192,22 @@ export function createSlackRuntime(
     try {
       const email = await getSlackEmail(mention.user);
       const text = normalizeMentionText(mention.text ?? "");
+      const isDirectMessage =
+        mention.channel_type === "im" || mention.channel.startsWith("D");
+      const recentMessages = isDirectMessage
+        ? await readRecentSlackMessages(client, {
+            channel: mention.channel,
+            latestTs: mention.ts,
+            user: mention.user
+          })
+        : [];
       if (config.agentMode === "llm") {
         progressMessage = await postMentionWorkingState(client, {
           channel: mention.channel,
           user: mention.user,
-          isDirectMessage:
-            mention.channel_type === "im" || mention.channel.startsWith("D"),
+          isDirectMessage,
           threadTs: buildReplyThreadTs({
-            isDirectMessage:
-              mention.channel_type === "im" || mention.channel.startsWith("D"),
+            isDirectMessage,
             messageTs: mention.ts,
             threadTs: mention.thread_ts
           })
@@ -202,8 +222,10 @@ export function createSlackRuntime(
           channelId: mention.channel,
           threadTs: mention.thread_ts,
           messageTs: mention.ts,
-          isDirectMessage:
-            mention.channel_type === "im" || mention.channel.startsWith("D"),
+          isDirectMessage,
+          ...(recentMessages.length > 0
+            ? { context: { recentMessages } }
+            : {}),
           user: {
             slackUserId: mention.user,
             email
@@ -246,8 +268,7 @@ export function createSlackRuntime(
         user: mention.user,
         ...(progressMessage ? { progressMessage } : {}),
         threadTs: buildReplyThreadTs({
-          isDirectMessage:
-            mention.channel_type === "im" || mention.channel.startsWith("D"),
+          isDirectMessage,
           messageTs: mention.ts,
           threadTs: mention.thread_ts
         })
@@ -285,6 +306,11 @@ export function createSlackRuntime(
     let progressMessage: SlackProgressMessage | undefined;
     try {
       const email = await getSlackEmail(directMessage.user);
+      const recentMessages = await readRecentSlackMessages(client, {
+        channel: directMessage.channel,
+        latestTs: directMessage.ts,
+        user: directMessage.user
+      });
       if (config.agentMode === "llm") {
         progressMessage = await postMentionWorkingState(client, {
           channel: directMessage.channel,
@@ -307,6 +333,9 @@ export function createSlackRuntime(
           threadTs: directMessage.thread_ts,
           messageTs: directMessage.ts,
           isDirectMessage: true,
+          ...(recentMessages.length > 0
+            ? { context: { recentMessages } }
+            : {}),
           user: {
             slackUserId: directMessage.user,
             email
@@ -726,6 +755,60 @@ export function buildReplyThreadTs(input: {
   return input.isDirectMessage ? undefined : input.messageTs;
 }
 
+async function readRecentSlackMessages(
+  client: App["client"],
+  input: {
+    channel: string;
+    latestTs: string;
+    user: string;
+  }
+): Promise<SlackRecentMessage[]> {
+  try {
+    const result = await client.conversations.history({
+      channel: input.channel,
+      latest: input.latestTs,
+      inclusive: false,
+      limit: 8
+    });
+    const messages = ((result.messages ?? []) as SlackHistoryMessage[])
+      .slice()
+      .reverse();
+
+    return messages.flatMap<SlackRecentMessage>((message) => {
+      const text = sanitizeRecentSlackText(message.text);
+      if (!text || isProgressOnlyMessage(text)) {
+        return [];
+      }
+
+      if (message.user === input.user) {
+        return [{ author: "user" as const, text }];
+      }
+
+      if (message.bot_id || message.user) {
+        return [{ author: "assistant" as const, text }];
+      }
+
+      return [];
+    });
+  } catch {
+    return [];
+  }
+}
+
+function sanitizeRecentSlackText(text: string | undefined): string {
+  return text?.replace(/\s+/g, " ").trim() ?? "";
+}
+
+function isProgressOnlyMessage(text: string): boolean {
+  return (
+    /^Starting agent runtime/i.test(text) ||
+    /^Agent is /i.test(text) ||
+    /^Calling /i.test(text) ||
+    /^Final result in /i.test(text) ||
+    /completed in \d+(?:ms|s).*\bresult\)/i.test(text)
+  );
+}
+
 async function postConversationResponse(
   client: App["client"],
   input: {
@@ -1023,6 +1106,7 @@ function formatAgentToolName(toolName: string): string {
     "github.searchIssues": "GitHub search",
     "github.listMyPullRequests": "GitHub pull requests",
     "jira.getAuthenticatedUser": "Jira identity",
+    "jira.searchUsers": "Jira user search",
     "jira.createIssue": "Jira issue create",
     "jira.editIssue": "Jira issue edit",
     "jira.listAssignedIssues": "Jira assigned issues",

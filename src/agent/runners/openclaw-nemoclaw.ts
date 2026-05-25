@@ -623,6 +623,7 @@ function toWebSocketUrl(url: string): string {
 function sanitizeAgentInput(input: AgentInput): {
   text: string;
   conversation?: NonNullable<AgentInput["conversation"]>;
+  context?: NonNullable<AgentInput["context"]>;
   connections: { github: ConnectionSummary; jira: ConnectionSummary };
 } {
   const github = input.connections.github;
@@ -631,6 +632,7 @@ function sanitizeAgentInput(input: AgentInput): {
   return {
     text: input.text,
     ...(input.conversation ? { conversation: input.conversation } : {}),
+    ...(input.context ? { context: input.context } : {}),
     connections: {
       github: github
         ? {
