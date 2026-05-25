@@ -267,6 +267,10 @@ describe("runOpenClawCliRequest", () => {
     expect(prompts).toHaveLength(2);
     expect(prompts[0]).toContain("Available Burble tools:");
     expect(prompts[0]).toContain("jira.searchIssues");
+    expect(prompts[0]).not.toContain('"name":"atlassian.callMcpTool"');
+    expect(
+      toolCalls.some((call) => call.toolName === "atlassian.listMcpTools")
+    ).toBe(false);
     expect(prompts[0]).not.toContain("person@example.com");
     expect(prompts[1]).toContain("Burble executed tools:");
     expect(prompts[1]).toContain("Deploy is blocked");
@@ -287,7 +291,7 @@ describe("runOpenClawCliRequest", () => {
     const response = await runOpenClawCliRequest(
       {
         input: {
-          text: "find Jira issues mentioning onboarding",
+          text: "find Jira issues mentioning onboarding using Atlassian MCP",
           connections: {
             github: {
               connected: true,
@@ -397,7 +401,7 @@ describe("runOpenClawCliRequest", () => {
     const response = await runOpenClawCliRequest(
       {
         input: {
-          text: "create new Jira ticket in DM workspace, titled 'test ticket from slack'",
+          text: "create new Jira ticket in DM workspace using Atlassian MCP, titled 'test ticket from slack'",
           connections: {
             github: { connected: false },
             jira: {
@@ -473,7 +477,7 @@ describe("runOpenClawCliRequest", () => {
     const response = await runOpenClawCliRequest(
       {
         input: {
-          text: "create new Jira ticket in DM workspace, titled 'test ticket from slack'",
+          text: "create new Jira ticket in DM workspace using Atlassian MCP, titled 'test ticket from slack'",
           connections: {
             github: { connected: false },
             jira: {
@@ -562,7 +566,7 @@ describe("runOpenClawCliRequest", () => {
     const response = await runOpenClawCliRequest(
       {
         input: {
-          text: "create new Jira ticket in DM workspace, titled 'test ticket from slack' and assign it to Alex Reviewer (alex.reviewer@example.com)",
+          text: "create new Jira ticket in DM workspace using Atlassian MCP, titled 'test ticket from slack' and assign it to Alex Reviewer (alex.reviewer@example.com)",
           connections: {
             github: { connected: false },
             jira: {
@@ -702,7 +706,7 @@ describe("runOpenClawCliRequest", () => {
     const response = await runOpenClawCliRequest(
       {
         input: {
-          text: "create new Jira ticket in DM workspace, titled 'test ticket from slack' and assign it to Alex Reviewer (alex.reviewer@example.com)",
+          text: "create new Jira ticket in DM workspace using Atlassian MCP, titled 'test ticket from slack' and assign it to Alex Reviewer (alex.reviewer@example.com)",
           connections: {
             github: { connected: false },
             jira: {
