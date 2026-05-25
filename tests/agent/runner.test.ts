@@ -96,7 +96,14 @@ describe("createAiSdkAgentRunner", () => {
 
     expect(response).toEqual({
       classification: "user_private",
-      text: "- <https://github.com/acme/app/issues/1|Fix billing export>"
+      text: "- <https://github.com/acme/app/issues/1|Fix billing export>",
+      usage: {
+        inputTokens: 1200,
+        outputTokens: 80,
+        totalTokens: 1280,
+        cachedInputTokens: 300,
+        reasoningTokens: 25
+      }
     });
     expect(logs).toContain(
       "LLM call start model=openai:test-model provider=test modelId=model textLength=31"

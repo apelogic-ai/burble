@@ -63,7 +63,8 @@ export async function handleConversation(
         visibility: "public",
         classification: result.classification,
         text: result.text,
-        ...(result.blocks ? { blocks: result.blocks } : {})
+        ...(result.blocks ? { blocks: result.blocks } : {}),
+        ...(result.usage ? { usage: result.usage } : {})
       },
       request
     );

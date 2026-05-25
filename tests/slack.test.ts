@@ -85,7 +85,7 @@ describe("formatAgentProgressEvent", () => {
         },
         "Preparing your agent runtime..."
       )
-    ).toBe("Preparing your agent runtime...\nAgent is calling GitHub assigned issues...");
+    ).toBe("Preparing your agent runtime...\nCalling GitHub assigned issues...");
 
     expect(
       formatAgentProgressEvent(
@@ -95,9 +95,9 @@ describe("formatAgentProgressEvent", () => {
           callId: "call-1",
           classification: "user_private"
         },
-        "Agent is calling Jira search..."
+        "Calling Jira search..."
       )
-    ).toBe("Agent is calling Jira search...\nAgent called Jira search.");
+    ).toBe("Calling Jira search...\nJira search completed (user-private result).");
   });
 
   test("renders streaming message deltas as response progress", () => {
@@ -107,9 +107,9 @@ describe("formatAgentProgressEvent", () => {
           type: "message_delta",
           text: " world"
         },
-        "hello"
+        ""
       )
-    ).toBe("hello\nAgent is responding...");
+    ).toBe("Agent is responding...");
   });
 });
 

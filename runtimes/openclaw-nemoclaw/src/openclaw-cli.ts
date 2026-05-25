@@ -15,6 +15,7 @@ import type {
   RunEvent,
   RunRequest,
   RunResponse,
+  RunUsage,
   ToolExecutor,
   ToolResult
 } from "./types";
@@ -23,6 +24,7 @@ export type CliCommandResult = {
   exitCode: number;
   stdout: string;
   stderr: string;
+  usage?: RunUsage;
 };
 
 export type CliCommandRunner = (
@@ -109,6 +111,7 @@ export async function runOpenClawCliRequest(
   const executedTools: ExecutedToolCall[] = [];
   const rejectedDirectResponses: string[] = [];
   let classification = baseline.response.classification;
+  let totalUsage: RunUsage | undefined;
 
   for (let step = 0; step <= maxPlannedToolCalls; step += 1) {
     const prompt = buildPlanningPrompt(
@@ -134,6 +137,7 @@ export async function runOpenClawCliRequest(
     const plannedToolCall = normalizePlannedToolCall(
       readPlannedToolCall(result.stdout, toolContext.catalog)
     );
+    totalUsage = addRunUsage(totalUsage, result.usage);
 
     if (!plannedToolCall) {
       const lastToolResult = executedTools.at(-1)?.toolResult;
@@ -158,7 +162,8 @@ export async function runOpenClawCliRequest(
       return {
         response: {
           classification,
-          text
+          text,
+          ...(totalUsage ? { usage: totalUsage } : {})
         }
       };
     }
@@ -171,7 +176,8 @@ export async function runOpenClawCliRequest(
       return {
         response: {
           classification,
-          text
+          text,
+          ...(totalUsage ? { usage: totalUsage } : {})
         }
       };
     }
@@ -198,7 +204,8 @@ export async function runOpenClawCliRequest(
       return {
         response: {
           classification,
-          text
+          text,
+          ...(totalUsage ? { usage: totalUsage } : {})
         }
       };
     }
@@ -208,7 +215,8 @@ export async function runOpenClawCliRequest(
   return {
     response: {
       classification,
-      text: baseline.response.text
+      text: baseline.response.text,
+      ...(totalUsage ? { usage: totalUsage } : {})
     }
   };
 }
@@ -292,7 +300,7 @@ async function runOpenClawCommand(
   }
   const rawStream = await readRawStreamForUsage(rawStreamPath, logInfo, request, step);
   const gatewayDiagnostics = readGatewayDiagnosticTextSince(startedAt);
-  logOpenClawUsageFromOutput(
+  const usage = logOpenClawUsageFromOutput(
     request,
     step,
     prompt,
@@ -306,7 +314,7 @@ async function runOpenClawCommand(
   logInfo(
     `OpenClaw command finish runId=${request.runId ?? "unknown"} step=${step} elapsedMs=${Date.now() - startedAt} stdoutChars=${result.stdout.length} stderrChars=${result.stderr.length}${summarizeLogObject("stderrPreview", result.stderr)}`
   );
-  return result;
+  return { ...result, usage };
 }
 
 async function runOpenClawGatewayHttpRequest(
@@ -433,7 +441,7 @@ async function runBurbleDirectProviderRequest(
     const responseText = await response.text();
     if (!response.ok) {
       stderr = responseText;
-      logOpenClawUsageFromOutput(
+      const usage = logOpenClawUsageFromOutput(
         request,
         step,
         prompt,
@@ -448,12 +456,12 @@ async function runBurbleDirectProviderRequest(
       logInfo(
         `Burble direct model error runId=${request.runId ?? "unknown"} step=${step} status=${response.status}${summarizeLogObject("bodyPreview", responseText)}`
       );
-      return { exitCode: 1, stdout, stderr };
+      return { exitCode: 1, stdout, stderr, usage };
     }
 
     stdout =
       extractDirectModelText(parsedModel.provider, responseText) ?? responseText;
-    logOpenClawUsageFromOutput(
+    const usage = logOpenClawUsageFromOutput(
       request,
       step,
       prompt,
@@ -468,10 +476,10 @@ async function runBurbleDirectProviderRequest(
     logInfo(
       `Burble direct model finish runId=${request.runId ?? "unknown"} step=${step} elapsedMs=${Date.now() - startedAt} status=${response.status} stdoutChars=${stdout.length} responseChars=${responseText.length}`
     );
-    return { exitCode: 0, stdout, stderr };
+    return { exitCode: 0, stdout, stderr, usage };
   } catch (error) {
     stderr = error instanceof Error ? error.message : String(error);
-    logOpenClawUsageFromOutput(
+    const usage = logOpenClawUsageFromOutput(
       request,
       step,
       prompt,
@@ -486,7 +494,7 @@ async function runBurbleDirectProviderRequest(
     logInfo(
       `Burble direct model error runId=${request.runId ?? "unknown"} step=${step}${summarizeLogObject("error", stderr)}`
     );
-    return { exitCode: 1, stdout, stderr };
+    return { exitCode: 1, stdout, stderr, usage };
   }
 }
 
@@ -499,7 +507,7 @@ async function* collectOpenClawGatewayHttpResponse(
   heartbeatMs: number,
   emitDeltas: boolean,
   step: number
-): AsyncGenerator<RunEvent, { stdout: string }, void> {
+): AsyncGenerator<RunEvent, { stdout: string; usage?: RunUsage }, void> {
   const startedAt = Date.now();
   const resultPromise =
     config.engine === "burble-direct"
@@ -576,7 +584,7 @@ async function* collectOpenClawGatewayHttpResponse(
     yield { type: "message_delta", text: result.stdout };
   }
 
-  return { stdout: result.stdout };
+  return { stdout: result.stdout, usage: result.usage };
 }
 
 function shouldEmitGatewayHttpDelta(stdout: string): boolean {
@@ -845,6 +853,7 @@ export async function* runOpenClawCliRequestStream(
   const executedTools: ExecutedToolCall[] = [];
   const rejectedDirectResponses: string[] = [];
   let classification = baseline.response.classification;
+  let totalUsage: RunUsage | undefined;
 
   for (let step = 0; step <= maxPlannedToolCalls; step += 1) {
     const prompt = buildPlanningPrompt(
@@ -872,6 +881,7 @@ export async function* runOpenClawCliRequestStream(
     const plannedToolCall = normalizePlannedToolCall(
       readPlannedToolCall(result.stdout, toolContext.catalog)
     );
+    totalUsage = addRunUsage(totalUsage, result.usage);
 
     if (!plannedToolCall) {
       const lastToolResult = executedTools.at(-1)?.toolResult;
@@ -897,7 +907,8 @@ export async function* runOpenClawCliRequestStream(
         type: "final",
         response: {
           classification,
-          text
+          text,
+          ...(totalUsage ? { usage: totalUsage } : {})
         }
       };
       return;
@@ -912,7 +923,8 @@ export async function* runOpenClawCliRequestStream(
         type: "final",
         response: {
           classification,
-          text
+          text,
+          ...(totalUsage ? { usage: totalUsage } : {})
         }
       };
       return;
@@ -953,7 +965,8 @@ export async function* runOpenClawCliRequestStream(
         type: "final",
         response: {
           classification,
-          text
+          text,
+          ...(totalUsage ? { usage: totalUsage } : {})
         }
       };
       return;
@@ -972,7 +985,7 @@ async function* collectOpenClawStream(
   heartbeatMs: number,
   emitDeltas: boolean,
   step: number
-): AsyncGenerator<RunEvent, { stdout: string }, void> {
+): AsyncGenerator<RunEvent, { stdout: string; usage?: RunUsage }, void> {
   if (config.engine === "openclaw-gateway" || config.engine === "burble-direct") {
     return yield* collectOpenClawGatewayHttpResponse(
       request,
@@ -1107,7 +1120,7 @@ async function* collectOpenClawStream(
   );
   const rawStream = await readRawStreamForUsage(rawStreamPath, logInfo, request, step);
   const gatewayDiagnostics = readGatewayDiagnosticTextSince(startedAt);
-  logOpenClawUsageFromOutput(
+  const usage = logOpenClawUsageFromOutput(
     request,
     step,
     prompt,
@@ -1125,7 +1138,7 @@ async function* collectOpenClawStream(
     );
   }
 
-  return { stdout };
+  return { stdout, usage };
 }
 
 async function* withHeartbeat(
@@ -1970,6 +1983,42 @@ function summarizeToolResultForLog(result: ToolResult): string {
   return summarizeLogObject("result", result.content);
 }
 
+function addRunUsage(
+  current: RunUsage | undefined,
+  next: RunUsage | undefined
+): RunUsage | undefined {
+  if (!next) {
+    return current;
+  }
+
+  return {
+    inputTokens: addOptionalUsageNumber(current?.inputTokens, next.inputTokens),
+    outputTokens: addOptionalUsageNumber(current?.outputTokens, next.outputTokens),
+    totalTokens: addOptionalUsageNumber(current?.totalTokens, next.totalTokens),
+    cachedInputTokens: addOptionalUsageNumber(
+      current?.cachedInputTokens,
+      next.cachedInputTokens
+    ),
+    reasoningTokens: addOptionalUsageNumber(
+      current?.reasoningTokens,
+      next.reasoningTokens
+    )
+  };
+}
+
+function addOptionalUsageNumber(
+  current: number | undefined,
+  next: number | undefined
+): number | undefined {
+  if (typeof current !== "number") {
+    return next;
+  }
+  if (typeof next !== "number") {
+    return current;
+  }
+  return current + next;
+}
+
 function logPromptTokenEstimate(
   request: RunRequest,
   prompt: string,
@@ -1997,7 +2046,7 @@ function logOpenClawUsageFromOutput(
   sessionId: string,
   logInfo: RuntimeLogger,
   startedAt?: number
-): void {
+): RunUsage | undefined {
   const selectedGatewayDiagnostics = selectGatewayDiagnosticsForSession(
     gatewayDiagnostics,
     sessionId
@@ -2062,6 +2111,7 @@ function logOpenClawUsageFromOutput(
       ].join(" ")
     );
   }
+  return usage ?? undefined;
 }
 
 function selectGatewayDiagnosticsForSession(

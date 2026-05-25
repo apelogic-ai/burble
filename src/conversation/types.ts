@@ -1,7 +1,7 @@
 import type { Provider, ProviderConnection } from "../db";
 import type { createGitHubTools } from "../tools/github";
 import type { AgentMode } from "../config";
-import type { AgentRunEventHandler, AgentRunner } from "../agent/types";
+import type { AgentRunEventHandler, AgentRunner, AgentUsage } from "../agent/types";
 
 export type ResponseVisibility = "public" | "ephemeral" | "dm";
 export type ToolClassification = "public" | "user_private" | "restricted";
@@ -25,6 +25,7 @@ export type ConversationResponse = {
   classification: ToolClassification;
   text: string;
   blocks?: unknown[];
+  usage?: AgentUsage;
 };
 
 export type ConversationDeps = {

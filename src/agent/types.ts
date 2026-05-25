@@ -29,6 +29,15 @@ export type AgentOutput = {
   classification: ToolClassification;
   text: string;
   blocks?: unknown[];
+  usage?: AgentUsage;
+};
+
+export type AgentUsage = {
+  inputTokens?: number;
+  outputTokens?: number;
+  totalTokens?: number;
+  cachedInputTokens?: number;
+  reasoningTokens?: number;
 };
 
 export type AgentRunEvent =

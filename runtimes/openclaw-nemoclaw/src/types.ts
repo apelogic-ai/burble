@@ -38,7 +38,16 @@ export type RunResponse = {
   response: {
     classification: ToolClassification;
     text: string;
+    usage?: RunUsage;
   };
+};
+
+export type RunUsage = {
+  inputTokens?: number;
+  outputTokens?: number;
+  totalTokens?: number;
+  cachedInputTokens?: number;
+  reasoningTokens?: number;
 };
 
 export type RunEvent =

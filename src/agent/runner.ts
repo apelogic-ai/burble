@@ -11,7 +11,13 @@ import type { createJiraTools } from "../tools/jira";
 import type { ToolClassification } from "../conversation/types";
 import { createDirectModelResolver } from "./providers";
 import type { DirectLanguageModel, ModelResolver } from "./providers";
-import type { AgentInput, AgentOutput, AgentRunEvent, AgentRunner } from "./types";
+import type {
+  AgentInput,
+  AgentOutput,
+  AgentRunEvent,
+  AgentRunner,
+  AgentUsage
+} from "./types";
 
 type AgentToolResult<TContent> = {
   classification: ToolClassification;
@@ -332,7 +338,8 @@ async function runAiSdkAgent(
 
     return {
       classification,
-      text
+      text,
+      ...(result.usage ? { usage: toAgentUsage(result.usage) } : {})
     };
 }
 
@@ -370,6 +377,28 @@ function summarizeLanguageModelUsage(usage: LanguageModelUsage): string {
     `cachedInputTokens=${formatOptionalNumber(cachedInputTokens)}`,
     `reasoningTokens=${formatOptionalNumber(reasoningTokens)}`
   ].join(" ");
+}
+
+function toAgentUsage(usage: LanguageModelUsage): AgentUsage {
+  const inputTokens = usage.inputTokens;
+  const outputTokens = usage.outputTokens;
+  const totalTokens =
+    usage.totalTokens ??
+    (typeof inputTokens === "number" && typeof outputTokens === "number"
+      ? inputTokens + outputTokens
+      : undefined);
+  const cachedInputTokens =
+    usage.inputTokenDetails?.cacheReadTokens ?? usage.cachedInputTokens;
+  const reasoningTokens =
+    usage.outputTokenDetails?.reasoningTokens ?? usage.reasoningTokens;
+
+  return {
+    inputTokens,
+    outputTokens,
+    totalTokens,
+    cachedInputTokens,
+    reasoningTokens
+  };
 }
 
 function formatOptionalNumber(value: number | undefined): string {
