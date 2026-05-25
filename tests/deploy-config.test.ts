@@ -145,6 +145,15 @@ describe("dev deploy config", () => {
     expect(openClawCompose).toContain(
       "OPENCLAW_RAW_STREAM_DEBUG=${OPENCLAW_RAW_STREAM_DEBUG:-false}"
     );
+    expect(openClawCompose).toContain(
+      "OPENCLAW_GATEWAY_PORT=${OPENCLAW_GATEWAY_PORT:-18789}"
+    );
+    expect(openClawCompose).toContain(
+      "OPENCLAW_GATEWAY_BIND=${OPENCLAW_GATEWAY_BIND:-loopback}"
+    );
+    expect(openClawCompose).toContain(
+      "OPENCLAW_GATEWAY_TOKEN=${OPENCLAW_GATEWAY_TOKEN:-}"
+    );
     expect(openClawCompose).toContain("OPENAI_API_KEY=${OPENAI_API_KEY:-}");
     expect(openClawCompose).toContain("ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}");
     expect(openClawCompose).toContain("AI_MODEL=${AI_MODEL:-openai:gpt-5.4}");
@@ -187,6 +196,9 @@ describe("dev deploy config", () => {
       "OPENCLAW_DEBUG_SSE",
       "OPENCLAW_DEBUG_CODE_MODE",
       "OPENCLAW_RAW_STREAM_DEBUG",
+      "OPENCLAW_GATEWAY_PORT",
+      "OPENCLAW_GATEWAY_BIND",
+      "OPENCLAW_GATEWAY_TOKEN",
       "OPENCLAW_VERSION",
       "OLLAMA_API_KEY",
       "OLLAMA_BASE_URL",
@@ -239,6 +251,9 @@ describe("dev deploy config", () => {
     expect(personalRuntimesCompose).toContain("OPENCLAW_DEBUG_MODEL_PAYLOAD");
     expect(personalRuntimesCompose).toContain("OPENCLAW_DEBUG_CODE_MODE");
     expect(personalRuntimesCompose).toContain("OPENCLAW_RAW_STREAM_DEBUG");
+    expect(personalRuntimesCompose).toContain("OPENCLAW_GATEWAY_PORT");
+    expect(personalRuntimesCompose).toContain("OPENCLAW_GATEWAY_BIND");
+    expect(personalRuntimesCompose).toContain("OPENCLAW_GATEWAY_TOKEN");
   });
 
   test("provides an optional agentgateway MCP override", () => {

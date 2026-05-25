@@ -694,7 +694,15 @@ export function openClawEnv(config: RuntimeConfig): Record<string, string> {
     OPENCLAW_DEBUG_MODEL_TRANSPORT: config.openClawDebugModelTransport,
     OPENCLAW_DEBUG_MODEL_PAYLOAD: config.openClawDebugModelPayload,
     OPENCLAW_DEBUG_SSE: config.openClawDebugSse,
-    OPENCLAW_DEBUG_CODE_MODE: config.openClawDebugCodeMode
+    OPENCLAW_DEBUG_CODE_MODE: config.openClawDebugCodeMode,
+    OPENCLAW_GATEWAY_TOKEN:
+      config.engine === "openclaw-gateway"
+        ? config.openClawGatewayToken
+        : undefined,
+    OPENCLAW_GATEWAY_PORT:
+      config.engine === "openclaw-gateway"
+        ? String(config.openClawGatewayPort)
+        : undefined
   });
 }
 
