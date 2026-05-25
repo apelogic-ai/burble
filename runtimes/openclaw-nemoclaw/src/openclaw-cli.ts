@@ -1574,11 +1574,13 @@ function buildOpenClawArgs(
 }
 
 function buildRunSessionId(request: RunRequest): string {
-  return `${buildSessionRoot(request)}-run-${buildRunSessionKey(request)}`;
+  return `burble-run-${hashSessionKey(
+    `${buildSessionRoot(request)}:${buildRunSessionKey(request)}`
+  )}`;
 }
 
 function buildStepSessionId(runSessionId: string, step: number): string {
-  return `${runSessionId}-step-${step}`;
+  return `burble-step-${hashSessionKey(`${runSessionId}:step:${step}`)}`;
 }
 
 function buildRunSessionKey(request: RunRequest): string {

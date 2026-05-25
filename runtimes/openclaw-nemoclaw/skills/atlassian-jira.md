@@ -1,68 +1,32 @@
 # Atlassian Jira Skill
 
-For normal Jira issue creation and editing, use the REST-backed Burble tools
-`jira.createIssue` and `jira.editIssue`. Use `jira.searchUsers` to resolve Jira
-account IDs. Do not call upstream MCP `createJiraIssue` or `editJiraIssue` for
-ordinary Jira ticket create/edit requests when the REST-backed Burble tools can
-express the request.
+Prefer REST-backed Burble tools for ordinary Jira CRUD:
 
-For Atlassian/Jira actions that do not have a first-class Burble tool, call
-`atlassian.callMcpTool` with the upstream tool name in `arguments.name` and the
-upstream tool arguments in `arguments.arguments`.
+- Create/edit: `jira.createIssue`, `jira.editIssue`.
+- Lookup project/type/create access: `jira.listVisibleProjects` with
+  `query=<name or key>`, `action=create`, `expandIssueTypes=true`.
+- Lookup assignees: `jira.searchUsers`; use email before display name.
 
-Use upstream MCP tool schemas from Available Burble tools. Do not invent
-argument names when a schema is available.
+Use `atlassian.callMcpTool` only for Atlassian operations not covered by
+first-class Burble tools, such as transition, comment, or worklog. Put the
+upstream tool name in `arguments.name` and its JSON input in
+`arguments.arguments`. Follow schemas shown in Available Burble tools; never
+invent required argument names.
 
-Do not call an upstream MCP tool until every field listed in that tool schema's
-`required` array is present in `arguments.arguments`. If a required create field
-cannot be resolved from tools or the user request, ask one concise clarifying
-question instead of trying the create call.
+For Rovo MCP `cloudId`, use the Jira site URL, for example
+`https://example.atlassian.net`. Prefer `jira.listAccessibleResources` for the
+visible site URL. Do not call `getAccessibleAtlassianResources` just to resolve
+cloudId.
 
-The runtime also validates required upstream MCP schema fields before provider
-calls. If a Burble tool result has `error=mcp_schema_validation_failed`, fix the
-missing arguments with lookup tools or ask the user for the missing required
-field; do not repeat the same invalid call.
+If an MCP result has `isError=true`, report the concise provider error or retry
+once only when the error identifies a concrete schema fix. If MCP create/edit
+returns an opaque provider error, use the matching REST-backed Burble tool
+instead.
 
-If an Atlassian MCP result has `isError=true`, treat its text content as the
-provider error. Retry once with corrected schema arguments when the error
-identifies a fix; otherwise report the concise provider error instead of calling
-it a temporary error.
+For Jira issue creation, do not block on optional assignee lookup failure. If
+project, type, and summary are known, create unassigned and say assignment was
+skipped. For edit/assign-only requests, unresolved target accounts may block the
+edit; ask one concise clarifying question.
 
-For Jira issue creation/editing, first resolve site, project, issue type, and
-user identifiers with available lookup tools when required by the schema.
-
-For the Atlassian Rovo MCP server, Jira `cloudId` must be the site URL, such as
-`https://example.atlassian.net`. Prefer `jira.listAccessibleResources` to get
-the connected user's visible site URL. Do not call
-`getAccessibleAtlassianResources` for this server's `cloudId`.
-
-For project and issue type discovery before creating Jira issues, prefer
-`jira.listVisibleProjects` over upstream MCP project helpers. Use
-`query=<project name or key>`, `action=create`, and `expandIssueTypes=true`;
-then use the confirmed project key and issue type name/id in `jira.createIssue`.
-
-For core Jira CRUD, REST-backed Burble tools are the stable provider
-capabilities. If an upstream MCP create/edit tool was already attempted and
-returned an opaque provider error such as `We are having trouble completing this
-action`, use the matching REST-backed Burble tool instead of repeating the same
-MCP call.
-
-When a user provides an assignee email, use that email for Jira account lookup
-before trying the display name. Prefer `jira.searchUsers` for REST-backed Jira
-account resolution.
-
-For Jira issue creation, do not let optional assignee lookup failure block
-creating the issue. If project, issue type, and summary can be resolved but the
-assignee cannot, create the issue unassigned and clearly say assignment was
-skipped because the account could not be resolved.
-
-For Jira edit or assign-only requests, unresolved target accounts may block the
-requested edit; ask one concise clarifying question instead of guessing.
-
-If required Jira fields such as project, issue type, or issue key cannot be
-resolved from tools or the request, ask one concise clarifying question instead
-of guessing.
-
-Do not treat a natural-language workspace or project name as a Jira project key
-unless a lookup/search/list tool confirms it. Do not choose a default issue type
-unless a lookup/search/list tool or the user request confirms it.
+Do not treat a workspace/project name as a Jira key unless lookup confirms it.
+Do not choose a default issue type unless lookup or the user confirms it.

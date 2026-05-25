@@ -101,10 +101,8 @@ describe("runOpenClawCliRequest", () => {
     expect(commands[0].args).toContain("--local");
     expect(commands[0].args).toContain("--message");
     expect(commands[0].args).toContain("--session-id");
-    expect(readSessionIdArg(commands[0].args)).toStartWith(
-      "burble-person_example.com-run-"
-    );
-    expect(readSessionIdArg(commands[0].args)).toEndWith("-step-1");
+    expect(readSessionIdArg(commands[0].args)).toStartWith("burble-step-");
+    expect(readSessionIdArg(commands[0].args).length).toBeLessThanOrEqual(64);
     expect(commands[0].args.join(" ")).toContain("Fix billing export");
     expect(commands[0].args.join(" ")).not.toContain("secret");
     expect(commands[0].env).toEqual({
@@ -115,7 +113,7 @@ describe("runOpenClawCliRequest", () => {
       logs.some(
         (line) =>
           line.startsWith(
-            "OpenClaw agent start runId=unknown agent=main sessionId=burble-person_example.com-run-"
+            "OpenClaw agent start runId=unknown agent=main sessionId=burble-run-"
           ) &&
           line.includes(" sessionScope=run textLength=25 classification=user_private")
       )
@@ -200,7 +198,7 @@ describe("runOpenClawCliRequest", () => {
     );
 
     expect(logs).toContain(
-      "OpenClaw usage runId=run-usage step=1 promptApproxTokens=1564 inputTokens=1200 outputTokens=75 totalTokens=1275 cachedInputTokens=300 reasoningTokens=20 source=provider-output"
+      "OpenClaw usage runId=run-usage step=1 promptApproxTokens=1066 inputTokens=1200 outputTokens=75 totalTokens=1275 cachedInputTokens=300 reasoningTokens=20 source=provider-output"
     );
     expect(logs).toContain(
       "OpenClaw model usage diagnostics runId=run-usage step=1 modelStarts=0 fetchStarts=0 streamDone=0 streamDoneElapsedMs=none streamDoneEvents=none compactions=0 exactUsageFields=5 exactUsageAvailable=true"
@@ -247,7 +245,7 @@ describe("runOpenClawCliRequest", () => {
     );
 
     expect(logs).toContain(
-      "OpenClaw usage runId=run-diagnostics step=1 promptApproxTokens=1564 inputTokens=unknown outputTokens=unknown totalTokens=unknown cachedInputTokens=unknown reasoningTokens=unknown source=estimate-only"
+      "OpenClaw usage runId=run-diagnostics step=1 promptApproxTokens=1066 inputTokens=unknown outputTokens=unknown totalTokens=unknown cachedInputTokens=unknown reasoningTokens=unknown source=estimate-only"
     );
     expect(logs).toContain(
       "OpenClaw model usage diagnostics runId=run-diagnostics step=1 modelStarts=2 fetchStarts=2 streamDone=2 streamDoneElapsedMs=3522,29406 streamDoneEvents=38,1731 compactions=1 exactUsageFields=0 exactUsageAvailable=false"
@@ -301,10 +299,10 @@ describe("runOpenClawCliRequest", () => {
     );
 
     expect(sessionIds).toHaveLength(2);
-    expect(sessionIds[0]).toStartWith("burble-person_example.com-run-");
-    expect(sessionIds[1]).toStartWith("burble-person_example.com-run-");
-    expect(sessionIds[0]).toEndWith("-step-1");
-    expect(sessionIds[1]).toEndWith("-step-2");
+    expect(sessionIds[0]).toStartWith("burble-step-");
+    expect(sessionIds[1]).toStartWith("burble-step-");
+    expect(sessionIds[0].length).toBeLessThanOrEqual(64);
+    expect(sessionIds[1].length).toBeLessThanOrEqual(64);
     expect(sessionIds[0]).not.toBe(sessionIds[1]);
   });
 
@@ -350,7 +348,7 @@ describe("runOpenClawCliRequest", () => {
       logs.some(
         (line) =>
           line.startsWith(
-            "OpenClaw agent start runId=unknown agent=main sessionId=burble-person_example.com-run-"
+            "OpenClaw agent start runId=unknown agent=main sessionId=burble-run-"
           ) &&
           line.includes(" sessionScope=run textLength=46 classification=user_private")
       )
@@ -553,7 +551,7 @@ describe("runOpenClawCliRequest", () => {
     );
 
     expect(response.response.text).toBe("ECS-313 is the likely match.");
-    expect(prompts[0]).toContain("Use upstream MCP tool schemas");
+    expect(prompts[0]).toContain("Follow schemas shown in Available Burble tools");
     expect(prompts[0]).toContain("searchJiraIssuesUsingJql");
     expect(prompts[0]).toContain("inputSchema");
     expect(toolCalls).toContainEqual({
@@ -986,9 +984,7 @@ describe("runOpenClawCliRequest", () => {
       "Created DM-100, but I could not assign it because Jira could not resolve Alex Reviewer."
     );
     expect(prompts).toHaveLength(4);
-    expect(prompts[0]).toMatch(
-      /do not let optional assignee lookup failure block\s+creating the issue/
-    );
+    expect(prompts[0]).toContain("do not block on optional assignee lookup failure");
     expect(toolCalls).toContainEqual({
       toolName: "atlassian.callMcpTool",
       body: {
@@ -1069,8 +1065,10 @@ describe("runOpenClawCliRequest", () => {
     }
 
     expect(sessionIds).toHaveLength(2);
-    expect(sessionIds[0]).toStartWith("burble-slack-");
-    expect(sessionIds[1]).toStartWith("burble-slack-");
+    expect(sessionIds[0]).toStartWith("burble-step-");
+    expect(sessionIds[1]).toStartWith("burble-step-");
+    expect(sessionIds[0].length).toBeLessThanOrEqual(64);
+    expect(sessionIds[1].length).toBeLessThanOrEqual(64);
     expect(sessionIds[0]).not.toBe(sessionIds[1]);
     expect(sessionIds.join(" ")).not.toContain("person@example.com");
   });
