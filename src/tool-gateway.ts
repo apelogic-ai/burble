@@ -37,6 +37,7 @@ import {
   logAtlassianMcpCallFinish,
   logAtlassianMcpCallStart
 } from "./mcp/atlassian-logging";
+import { verifyJiraAuthForOpaqueAtlassianMcpError } from "./mcp/atlassian-auth";
 
 type ToolGatewayDeps = Partial<Parameters<typeof createGitHubTools>[0]> &
   Partial<JiraToolDeps> & {
@@ -374,6 +375,11 @@ export async function handleToolGatewayRequest(
             auth.kind === "runtime" ? auth.runtime.id : "legacy",
             atlassianInput.name,
             upstreamResult
+          );
+          await verifyJiraAuthForOpaqueAtlassianMcpError(
+            upstreamResult,
+            accessToken,
+            { getJiraUser: deps.getJiraUser ?? defaultDeps.getJiraUser }
           );
 
           return {

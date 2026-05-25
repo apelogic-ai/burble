@@ -5,6 +5,7 @@ import type {
   ProviderConnection,
   TokenStore
 } from "../src/db";
+import { JiraApiError } from "../src/jira";
 import { handleToolGatewayRequest } from "../src/tool-gateway";
 
 const config: Config = {
@@ -635,6 +636,52 @@ describe("handleToolGatewayRequest", () => {
             }
           ]
         }
+      }
+    });
+  });
+
+  test("classifies opaque Atlassian MCP errors as expired Jira auth when REST auth check fails", async () => {
+    const response = await handleToolGatewayRequest(
+      config,
+      createStore(jiraConnection),
+      "atlassian.callMcpTool",
+      request("atlassian.callMcpTool", {
+        user: { email: "person@example.com" },
+        input: {
+          name: "createJiraIssue",
+          arguments: {
+            cloudId: "https://apegpt.atlassian.net",
+            projectKey: "DM",
+            issueTypeName: "Task",
+            summary: "test ticket from slack"
+          }
+        }
+      }),
+      {
+        callAtlassianMcpTool: async () => ({
+          isError: true,
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify({
+                error: true,
+                message: "We are having trouble completing this action. Please try again shortly."
+              })
+            }
+          ]
+        }),
+        getJiraUser: async () => {
+          throw new JiraApiError("expired", 401);
+        }
+      }
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      classification: "user_private",
+      content: {
+        error: "jira_authorization_failed",
+        message: "Jira authorization expired. Reconnect Jira with `@Burble connect jira`."
       }
     });
   });

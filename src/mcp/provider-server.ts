@@ -40,6 +40,7 @@ import {
   logAtlassianMcpCallFinish,
   logAtlassianMcpCallStart
 } from "./atlassian-logging";
+import { verifyJiraAuthForOpaqueAtlassianMcpError } from "./atlassian-auth";
 
 type ProviderMcpDeps = Partial<GitHubToolDeps> &
   Partial<JiraToolDeps> & {
@@ -476,6 +477,11 @@ function createProviderMcpServer(
                   arguments: args
                 });
                 logAtlassianMcpCallFinish("mcp", runtime.id, name, upstreamResult);
+                await verifyJiraAuthForOpaqueAtlassianMcpError(
+                  upstreamResult,
+                  accessToken,
+                  { getJiraUser: deps.getJiraUser ?? defaultDeps.getJiraUser }
+                );
                 return upstreamResult;
               } catch (error) {
                 logAtlassianMcpCallFailure("mcp", runtime.id, name, error);

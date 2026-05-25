@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { Config } from "../../src/config";
 import { createTokenStore } from "../../src/db";
+import { JiraApiError } from "../../src/jira";
 import {
   handleProviderMcpRequest,
   isAllowedAtlassianMcpToolName
@@ -367,6 +368,89 @@ describe("handleProviderMcpRequest", () => {
             }
           ]
         }
+      }
+    });
+    store.close();
+  });
+
+  test("classifies opaque Atlassian MCP errors as expired Jira auth", async () => {
+    const issuer = createRuntimeJwtIssuer({ issuer: config.runtimeJwtIssuer });
+    const store = createTokenStore(":memory:");
+    const runtime = store.getOrCreateAgentRuntime({
+      workspaceId: "T123",
+      slackUserId: "U123",
+      engine: "openclaw",
+      endpointUrl: "http://runtime-u123:8080",
+      authTokenHash: "hash-u123",
+      statePath: "/data/runtimes/u123/state",
+      configPath: "/data/runtimes/u123/config/openclaw.json",
+      workspacePath: "/data/runtimes/u123/workspace"
+    });
+    store.upsertProviderConnection({
+      provider: "jira",
+      email: "person@example.com",
+      slackUserId: "U123",
+      providerLogin: "Person",
+      accessToken: "jira-token",
+      refreshToken: null,
+      accessTokenExpiresAt: null
+    });
+    const token = issuer.issueRuntimeJwt({
+      audience: "http://agentgateway:3000/mcp",
+      runtimeId: runtime.id,
+      workspaceId: "T123",
+      slackUserId: "U123"
+    });
+
+    const response = await handleProviderMcpRequest(
+      config,
+      store,
+      issuer,
+      mcpRequest(
+        {
+          method: "tools/call",
+          params: {
+            name: "atlassian_call_mcp_tool",
+            arguments: {
+              name: "createJiraIssue",
+              arguments: {
+                cloudId: "https://apegpt.atlassian.net",
+                projectKey: "DM",
+                issueTypeName: "Task",
+                summary: "test ticket from slack"
+              }
+            }
+          }
+        },
+        token
+      ),
+      {
+        callAtlassianMcpTool: async () => ({
+          isError: true,
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify({
+                error: true,
+                message: "We are having trouble completing this action. Please try again shortly."
+              })
+            }
+          ]
+        }),
+        getJiraUser: async () => {
+          throw new JiraApiError("expired", 401);
+        }
+      }
+    );
+    const body = readMcpBody(await response.text());
+    const toolResult = JSON.parse(body.result.content[0].text);
+
+    expect(response.status).toBe(200);
+    expect(toolResult).toEqual({
+      classification: "user_private",
+      content: {
+        error: "jira_authorization_failed",
+        message: "Jira authorization expired. Reconnect Jira with `@Burble connect jira`."
       }
     });
     store.close();
