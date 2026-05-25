@@ -1432,7 +1432,7 @@ async function buildToolCatalog(
       {
         name: "jira.searchUsers",
         description:
-          "Search Jira users visible to the requesting Slack user's connected Jira account. Use this to resolve assignee account IDs from names or emails.",
+          "Search Jira users visible to the requesting Slack user's connected Jira account. Use this to resolve assignee account IDs from names or emails. For named-person Jira questions, search users before asking who the person is.",
         inputSchema: {
           query: "string Jira user email, display name, or search query"
         }
@@ -1469,20 +1469,20 @@ async function buildToolCatalog(
       {
         name: "jira.searchIssues",
         description:
-          "Search Jira issues visible to the requesting Slack user's connected Jira account.",
+          "Search Jira issues visible to the requesting Slack user's connected Jira account. For a resolved named assignee, use that Jira accountId in JQL.",
         inputSchema: {
           jql: "string Jira JQL query, for example: assignee = currentUser() AND statusCategory != Done"
         }
-      },
-      {
-        name: "atlassian.listMcpTools",
-        description:
-          "List allowed upstream Atlassian MCP tools available through Burble for this user's Jira connection.",
-        inputSchema: {}
       }
     );
 
     if (shouldLoadAtlassianMcpTools(request.input.text)) {
+      catalog.push({
+        name: "atlassian.listMcpTools",
+        description:
+          "List allowed upstream Atlassian MCP tools available through Burble for this user's Jira connection.",
+        inputSchema: {}
+      });
       const upstreamTools = await readAtlassianMcpToolSummaries(
         jira.email,
         executeTool
@@ -1635,6 +1635,8 @@ function buildOpenClawPrompt(
     "Available Burble tools:",
     formatToolCatalog(toolContext.catalog),
     "",
+    ...formatRecentSlackContext(request),
+    "",
     `User request: ${request.input.text}`,
     "",
     "Burble baseline context:",
@@ -1673,15 +1675,20 @@ function buildBurbleDirectPrompt(
       "You are Burble, a Slack assistant running inside Burble's runtime.",
       "The requesting Slack user is already authenticated through Burble connections; do not ask who you are, who the user is, what kind of assistant you are, what vibe you should have, or for an emoji/persona setup.",
       "Interpret me, my, and assign to me as the requesting Slack user.",
+      "Use Recent Slack context to resolve pronouns and short follow-ups such as 'look him up'.",
       "The Burble tool gateway injects the connected provider identity and credentials; do not include emails, tokens, or credentials in tool arguments.",
       "For provider data or actions, return exactly one JSON object and no prose: {\"tool_call\":{\"name\":\"tool.name\",\"arguments\":{}}}.",
       "Use only tool names listed in Available Burble tools.",
       "For Jira assign-to-me requests, call jira.getAuthenticatedUser when you need the requester's Jira accountId, then call jira.editIssue with assigneeAccountId.",
+      "For Jira questions involving a named person, call jira.searchUsers with the exact name or email before asking who they are. If the current request uses him/her/them, use the most recent named person in Recent Slack context.",
+      "For Jira tickets assigned to a resolved person, call jira.searchIssues with that person's Jira accountId in JQL. If the user asks who they assigned to that person, state that the result reflects current visible assignee unless Jira changelog data is explicitly available.",
       "For final answers, return concise Slack mrkdwn."
     ].join(" "),
     "",
     "Available Burble tools:",
     formatToolCatalog(toolContext.catalog),
+    "",
+    ...formatRecentSlackContext(request),
     "",
     `User request: ${request.input.text}`,
     "",
@@ -1717,6 +1724,21 @@ function buildBurbleDirectPrompt(
   }
 
   return sections.join("\n");
+}
+
+function formatRecentSlackContext(request: RunRequest): string[] {
+  const messages = request.input.context?.recentMessages ?? [];
+  if (messages.length === 0) {
+    return [];
+  }
+
+  return [
+    "Recent Slack context (oldest to newest):",
+    ...messages.map(
+      (message) =>
+        `${message.author === "assistant" ? "Burble" : "User"}: ${truncate(message.text, 500)}`
+    )
+  ];
 }
 
 function formatToolCatalog(catalog: ToolCatalogItem[]): string {

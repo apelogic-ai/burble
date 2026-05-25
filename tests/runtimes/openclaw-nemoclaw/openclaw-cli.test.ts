@@ -265,9 +265,15 @@ describe("runOpenClawCliRequest", () => {
       (message) => logs.push(message)
     );
 
-    expect(logs).toContain(
-      "OpenClaw usage runId=run-usage step=1 promptApproxTokens=1066 inputTokens=1200 outputTokens=75 totalTokens=1275 cachedInputTokens=300 reasoningTokens=20 source=provider-output"
-    );
+    expect(
+      logs.some(
+        (line) =>
+          line.startsWith("OpenClaw usage runId=run-usage step=1 ") &&
+          line.includes("inputTokens=1200 outputTokens=75 totalTokens=1275") &&
+          line.includes("cachedInputTokens=300 reasoningTokens=20") &&
+          line.includes("source=provider-output")
+      )
+    ).toBe(true);
     expect(logs).toContain(
       "OpenClaw model usage diagnostics runId=run-usage step=1 modelStarts=0 fetchStarts=0 streamDone=0 streamDoneElapsedMs=none streamDoneEvents=none compactions=0 exactUsageFields=5 exactUsageAvailable=true rawStreamBytes=0"
     );
@@ -312,9 +318,15 @@ describe("runOpenClawCliRequest", () => {
       (message) => logs.push(message)
     );
 
-    expect(logs).toContain(
-      "OpenClaw usage runId=run-diagnostics step=1 promptApproxTokens=1066 inputTokens=unknown outputTokens=unknown totalTokens=unknown cachedInputTokens=unknown reasoningTokens=unknown source=estimate-only"
-    );
+    expect(
+      logs.some(
+        (line) =>
+          line.startsWith("OpenClaw usage runId=run-diagnostics step=1 ") &&
+          line.includes("inputTokens=unknown outputTokens=unknown totalTokens=unknown") &&
+          line.includes("cachedInputTokens=unknown reasoningTokens=unknown") &&
+          line.includes("source=estimate-only")
+      )
+    ).toBe(true);
     expect(logs).toContain(
       "OpenClaw model usage diagnostics runId=run-diagnostics step=1 modelStarts=2 fetchStarts=2 streamDone=2 streamDoneElapsedMs=3522,29406 streamDoneEvents=38,1731 compactions=1 exactUsageFields=0 exactUsageAvailable=false rawStreamBytes=0"
     );
@@ -458,9 +470,15 @@ describe("runOpenClawCliRequest", () => {
     );
 
     expect(commands[0].args).toContain("--raw-stream");
-    expect(logs).toContain(
-      "OpenClaw usage runId=run-raw-usage step=1 promptApproxTokens=1066 inputTokens=1400 outputTokens=90 totalTokens=1490 cachedInputTokens=400 reasoningTokens=30 source=provider-output"
-    );
+    expect(
+      logs.some(
+        (line) =>
+          line.startsWith("OpenClaw usage runId=run-raw-usage step=1 ") &&
+          line.includes("inputTokens=1400 outputTokens=90 totalTokens=1490") &&
+          line.includes("cachedInputTokens=400 reasoningTokens=30") &&
+          line.includes("source=provider-output")
+      )
+    ).toBe(true);
     expect(
       logs.some((line) =>
         line.startsWith(
@@ -674,6 +692,87 @@ describe("runOpenClawCliRequest", () => {
         input: {
           jql: 'text ~ "blocked" AND statusCategory != Done'
         }
+      }
+    });
+  });
+
+  test("uses recent Slack context to resolve Jira user lookup follow-ups", async () => {
+    const toolCalls: Array<{ toolName: string; body: unknown }> = [];
+    const prompts: string[] = [];
+
+    const response = await runOpenClawCliRequest(
+      {
+        input: {
+          text: "look him up",
+          context: {
+            recentMessages: [
+              {
+                author: "user",
+                text: "which Jira tickets did I assign to Alex Reviewer?"
+              }
+            ]
+          },
+          connections: {
+            github: { connected: false },
+            jira: {
+              connected: true,
+              email: "person@example.com",
+              providerLogin: "person@atlassian.example"
+            }
+          }
+        }
+      },
+      config,
+      async (toolName, body) => {
+        toolCalls.push({ toolName, body });
+        if (toolName === "jira.searchUsers") {
+          return {
+            classification: "user_private",
+            content: [
+              {
+                accountId: "acct-boris",
+                displayName: "Alex Reviewer",
+                emailAddress: "alex.reviewer@example.com"
+              }
+            ]
+          };
+        }
+        return {
+          classification: "user_private",
+          content: []
+        };
+      },
+      async (_command, args) => {
+        const prompt = args[args.indexOf("--message") + 1];
+        prompts.push(prompt);
+        return prompts.length === 1
+          ? openClawToolCall("jira.searchUsers", {
+              query: "Alex Reviewer"
+            })
+          : {
+              exitCode: 0,
+              stdout:
+                "Alex Reviewer resolved to Jira account `acct-boris` (`alex.reviewer@example.com`).",
+              stderr: ""
+            };
+      },
+      () => undefined
+    );
+
+    expect(response.response.text).toBe(
+      "Alex Reviewer resolved to Jira account `acct-boris` (`alex.reviewer@example.com`)."
+    );
+    expect(prompts[0]).toContain("Recent Slack context (oldest to newest):");
+    expect(prompts[0]).toContain("Alex Reviewer");
+    expect(prompts[0]).toContain(
+      "For named-person Jira questions, search users before asking who the person is."
+    );
+    expect(prompts[0]).not.toContain("atlassian.listMcpTools");
+    expect(toolCalls).toContainEqual({
+      toolName: "jira.searchUsers",
+      body: {
+        user: { email: "person@example.com" },
+        input: { query: "Alex Reviewer" }
       }
     });
   });

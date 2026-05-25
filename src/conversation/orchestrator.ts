@@ -49,6 +49,7 @@ export async function handleConversation(
           slackUserId: request.user.slackUserId
         },
         conversation: buildAgentConversation(request),
+        ...(request.context ? { context: request.context } : {}),
         text: request.text,
         connections: {
           github: deps.getConnection("github", request.user.email),

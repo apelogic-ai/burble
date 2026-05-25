@@ -59,6 +59,8 @@ const systemPrompt = [
   "Never ask for, print, or expose access tokens.",
   "When a tool says GitHub is not connected, tell the user to run `@Burble connect github`.",
   "When a tool says Jira is not connected, tell the user Jira needs to be connected.",
+  "Use recent Slack context to resolve pronouns and short follow-ups.",
+  "For Jira questions involving a named person, search Jira users first instead of asking who they are.",
   "Prefer short lists with links when showing issues or pull requests."
 ].join("\n");
 
@@ -254,6 +256,29 @@ async function runAiSdkAgent(
           );
         })
       });
+      tools.jira_search_users = tool({
+        description:
+          "Search Jira users visible to the authenticated Slack user. Use this to resolve a person's name or email to a Jira accountId before assignee queries or assignment edits.",
+        inputSchema: z.object({
+          query: z
+            .string()
+            .min(1)
+            .describe("Jira user email, display name, or search query")
+        }),
+        execute: async ({ query }) => executeTool("jira_search_users", async () => {
+          const connection = input.connections.jira;
+          if (!connection) {
+            return missingJiraConnection();
+          }
+
+          return record(
+            await deps.jiraTools!.searchUsers.execute({
+              connection,
+              input: { query }
+            })
+          );
+        })
+      });
       tools.jira_list_assigned_issues = tool({
         description: "List Jira issues assigned to the Slack user.",
         inputSchema: z.object({}),
@@ -306,7 +331,7 @@ async function runAiSdkAgent(
     const result = await deps.generateTextFn({
       model: deps.resolvedModel,
       system: systemPrompt,
-      prompt: input.text,
+      prompt: formatAgentPrompt(input),
       tools,
       stopWhen: stepCountIs(4),
       maxRetries: 1,
@@ -341,6 +366,22 @@ async function runAiSdkAgent(
       text,
       ...(result.usage ? { usage: toAgentUsage(result.usage) } : {})
     };
+}
+
+function formatAgentPrompt(input: AgentInput): string {
+  const recentMessages = input.context?.recentMessages ?? [];
+  if (recentMessages.length === 0) {
+    return input.text;
+  }
+
+  return [
+    "Recent Slack context (oldest to newest):",
+    ...recentMessages.map(
+      (message) => `${message.author === "assistant" ? "Burble" : "User"}: ${message.text}`
+    ),
+    "",
+    `Current request: ${input.text}`
+  ].join("\n");
 }
 
 async function defaultGenerateText(

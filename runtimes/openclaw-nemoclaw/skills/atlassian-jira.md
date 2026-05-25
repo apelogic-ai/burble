@@ -6,6 +6,13 @@ Prefer REST-backed Burble tools for ordinary Jira CRUD:
 - Lookup project/type/create access: `jira.listVisibleProjects` with
   `query=<name or key>`, `action=create`, `expandIssueTypes=true`.
 - Lookup assignees: `jira.searchUsers`; use email before display name.
+- For questions involving a named person, call `jira.searchUsers` with the
+  exact name/email before asking who the person is. If a follow-up says "him",
+  "her", or "them", resolve it from Recent Slack context.
+- For tickets assigned to a resolved person, use the resolved Jira `accountId`
+  in `jira.searchIssues` JQL. If the user asks who they assigned to that
+  person, say results reflect current visible assignee unless Jira changelog
+  data is explicitly available.
 
 Use `atlassian.callMcpTool` only for Atlassian operations not covered by
 first-class Burble tools, such as transition, comment, or worklog. Put the

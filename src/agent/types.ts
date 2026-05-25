@@ -18,6 +18,12 @@ export type AgentInput = {
     rootId: string;
     isDirectMessage: boolean;
   };
+  context?: {
+    recentMessages: Array<{
+      author: "user" | "assistant";
+      text: string;
+    }>;
+  };
   text: string;
   connections: {
     github: ProviderConnection | null;
