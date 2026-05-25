@@ -33,6 +33,12 @@ describe("buildContainerRuntimeSpec", () => {
         ANTHROPIC_API_KEY: "anthropic-key",
         OPENCLAW_TIMEOUT_MS: "180000",
         OPENCLAW_STREAM_DEBUG: "true",
+        OPENCLAW_LOG_LEVEL: "debug",
+        OPENCLAW_DIAGNOSTICS: "model.*",
+        OPENCLAW_DEBUG_MODEL_TRANSPORT: "true",
+        OPENCLAW_DEBUG_MODEL_PAYLOAD: "summary",
+        OPENCLAW_DEBUG_SSE: "events",
+        OPENCLAW_DEBUG_CODE_MODE: "true",
         GITHUB_TOKEN: "github-secret",
         SLACK_BOT_TOKEN: "slack-secret"
       }
@@ -50,7 +56,13 @@ describe("buildContainerRuntimeSpec", () => {
       OPENAI_API_KEY: "openai-key",
       ANTHROPIC_API_KEY: "anthropic-key",
       OPENCLAW_TIMEOUT_MS: "180000",
-      OPENCLAW_STREAM_DEBUG: "true"
+      OPENCLAW_STREAM_DEBUG: "true",
+      OPENCLAW_LOG_LEVEL: "debug",
+      OPENCLAW_DIAGNOSTICS: "model.*",
+      OPENCLAW_DEBUG_MODEL_TRANSPORT: "true",
+      OPENCLAW_DEBUG_MODEL_PAYLOAD: "summary",
+      OPENCLAW_DEBUG_SSE: "events",
+      OPENCLAW_DEBUG_CODE_MODE: "true"
     });
     expect(spec.env.GITHUB_TOKEN).toBeUndefined();
     expect(spec.env.SLACK_BOT_TOKEN).toBeUndefined();

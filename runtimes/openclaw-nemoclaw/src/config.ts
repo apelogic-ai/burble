@@ -15,6 +15,12 @@ export type RuntimeConfig = {
   openClawConfigPatchPath: string | null;
   openClawValidateOnStart: boolean;
   openClawStreamDebug: boolean;
+  openClawLogLevel?: string | null;
+  openClawDiagnostics?: string | null;
+  openClawDebugModelTransport?: string | null;
+  openClawDebugModelPayload?: string | null;
+  openClawDebugSse?: string | null;
+  openClawDebugCodeMode?: string | null;
 };
 
 export type RuntimeEngine = "deterministic" | "openclaw" | "openclaw-gateway";
@@ -56,7 +62,15 @@ export function readRuntimeConfig(env: Env): RuntimeConfig {
     openClawStreamDebug: readBooleanEnv(
       env.OPENCLAW_STREAM_DEBUG ?? "false",
       "OPENCLAW_STREAM_DEBUG"
-    )
+    ),
+    openClawLogLevel: readOptionalEnv(env.OPENCLAW_LOG_LEVEL),
+    openClawDiagnostics: readOptionalEnv(env.OPENCLAW_DIAGNOSTICS),
+    openClawDebugModelTransport: readOptionalEnv(
+      env.OPENCLAW_DEBUG_MODEL_TRANSPORT
+    ),
+    openClawDebugModelPayload: readOptionalEnv(env.OPENCLAW_DEBUG_MODEL_PAYLOAD),
+    openClawDebugSse: readOptionalEnv(env.OPENCLAW_DEBUG_SSE),
+    openClawDebugCodeMode: readOptionalEnv(env.OPENCLAW_DEBUG_CODE_MODE)
   };
 }
 

@@ -467,10 +467,17 @@ function isClosedStreamError(error: unknown): boolean {
 
 function formatRuntimeError(error: unknown): string {
   if (error instanceof Error && error.message) {
+    if (isModelQuotaError(error.message)) {
+      return "OpenClaw model provider quota is exhausted. Update OPENAI_API_KEY billing/quota or switch the OpenClaw model config to a provider/model with available quota.";
+    }
     return error.message;
   }
 
   return "unknown error";
+}
+
+function isModelQuotaError(message: string): boolean {
+  return /insufficient_quota|exceeded your current quota/i.test(message);
 }
 
 async function readRunRequest(request: Request): Promise<unknown> {

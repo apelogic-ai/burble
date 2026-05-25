@@ -680,10 +680,26 @@ async function readDecodedStreamChunk(
 }
 
 export function openClawEnv(config: RuntimeConfig): Record<string, string> {
-  return {
+  return compactStringEnv({
     OPENCLAW_STATE_DIR: config.openClawStateDir,
-    OPENCLAW_CONFIG_PATH: config.openClawConfigPath
-  };
+    OPENCLAW_CONFIG_PATH: config.openClawConfigPath,
+    OPENCLAW_LOG_LEVEL: config.openClawLogLevel,
+    OPENCLAW_DIAGNOSTICS: config.openClawDiagnostics,
+    OPENCLAW_DEBUG_MODEL_TRANSPORT: config.openClawDebugModelTransport,
+    OPENCLAW_DEBUG_MODEL_PAYLOAD: config.openClawDebugModelPayload,
+    OPENCLAW_DEBUG_SSE: config.openClawDebugSse,
+    OPENCLAW_DEBUG_CODE_MODE: config.openClawDebugCodeMode
+  });
+}
+
+function compactStringEnv(
+  values: Record<string, string | null | undefined>
+): Record<string, string> {
+  return Object.fromEntries(
+    Object.entries(values).filter(
+      (entry): entry is [string, string] => Boolean(entry[1]?.trim())
+    )
+  );
 }
 
 async function buildBurbleToolContext(

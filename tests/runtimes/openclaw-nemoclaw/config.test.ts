@@ -20,7 +20,13 @@ describe("readRuntimeConfig", () => {
         OPENCLAW_SETUP_ON_START: "false",
         OPENCLAW_CONFIG_PATCH_PATH: "/etc/openclaw/patch.json5",
         OPENCLAW_VALIDATE_ON_START: "false",
-        OPENCLAW_STREAM_DEBUG: "true"
+        OPENCLAW_STREAM_DEBUG: "true",
+        OPENCLAW_LOG_LEVEL: "debug",
+        OPENCLAW_DIAGNOSTICS: "model.*",
+        OPENCLAW_DEBUG_MODEL_TRANSPORT: "true",
+        OPENCLAW_DEBUG_MODEL_PAYLOAD: "summary",
+        OPENCLAW_DEBUG_SSE: "events",
+        OPENCLAW_DEBUG_CODE_MODE: "true"
       })
     ).toEqual({
       port: 9090,
@@ -38,7 +44,13 @@ describe("readRuntimeConfig", () => {
       openClawSetupOnStart: false,
       openClawConfigPatchPath: "/etc/openclaw/patch.json5",
       openClawValidateOnStart: false,
-      openClawStreamDebug: true
+      openClawStreamDebug: true,
+      openClawLogLevel: "debug",
+      openClawDiagnostics: "model.*",
+      openClawDebugModelTransport: "true",
+      openClawDebugModelPayload: "summary",
+      openClawDebugSse: "events",
+      openClawDebugCodeMode: "true"
     });
   });
 
