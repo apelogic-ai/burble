@@ -155,6 +155,67 @@ describe("createJiraTools", () => {
     expect(JSON.stringify(result)).not.toContain("jira-token");
   });
 
+  test("lists visible Jira projects with sanitized issue types", async () => {
+    const tools = createJiraTools({
+      getJiraUser: async () => ({
+        accountId: "account-123",
+        displayName: "Person Example"
+      }),
+      listVisibleJiraProjects: async (token, input) => {
+        expect(token).toBe("jira-token");
+        expect(input).toEqual({
+          query: "DM",
+          action: "create",
+          expandIssueTypes: true
+        });
+        return [
+          {
+            id: "10000",
+            key: "DM",
+            name: "DM Workspace",
+            url: "https://example.atlassian.net/jira/projects/DM",
+            issueTypes: [
+              {
+                id: "10001",
+                name: "Task",
+                description: "A unit of work",
+                subtask: false
+              }
+            ]
+          }
+        ];
+      },
+      listAssignedJiraIssues: async () => [],
+      searchJiraIssues: async () => []
+    });
+
+    const result = await tools.listVisibleProjects.execute({
+      connection,
+      input: { query: "DM", action: "create", expandIssueTypes: true }
+    });
+
+    expect(result).toEqual({
+      classification: "user_private",
+      content: [
+        {
+          id: "10000",
+          key: "DM",
+          name: "DM Workspace",
+          url: "https://example.atlassian.net/jira/projects/DM",
+          issueTypes: [
+            {
+              id: "10001",
+              name: "Task",
+              description: "A unit of work",
+              subtask: false
+            }
+          ]
+        }
+      ]
+    });
+    expect(JSON.stringify(result)).not.toContain("jira-token");
+  });
+
   test("refreshes an expired Jira token and persists the rotated token", async () => {
     const saved: ProviderConnection[] = [];
     const tools = createJiraTools({

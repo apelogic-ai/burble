@@ -5,6 +5,7 @@ import {
   exchangeJiraCode,
   getJiraUser,
   listAssignedJiraIssues,
+  listVisibleJiraProjects,
   refreshJiraAccessToken,
   searchJiraIssues
 } from "../src/jira";
@@ -258,5 +259,74 @@ describe("Jira OAuth and REST helpers", () => {
     expect(new URL(urls[1]).searchParams.get("jql")).toBe(
       "assignee = currentUser() AND statusCategory != Done ORDER BY updated DESC"
     );
+  });
+
+  test("lists visible Jira projects with create permission and issue types", async () => {
+    const urls: string[] = [];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      urls.push(String(input));
+      if (String(input).endsWith("/accessible-resources")) {
+        return Response.json([
+          {
+            id: "cloud-123",
+            url: "https://acme.atlassian.net",
+            scopes: ["read:jira-work", "write:jira-work"]
+          }
+        ]);
+      }
+
+      return Response.json({
+        values: [
+          {
+            id: "10000",
+            key: "DM",
+            name: "DM Workspace",
+            issueTypes: [
+              {
+                id: "10001",
+                name: "Task",
+                description: "A unit of work",
+                subtask: false
+              }
+            ]
+          }
+        ]
+      });
+    }) as typeof fetch;
+
+    try {
+      await expect(
+        listVisibleJiraProjects("jira-token", {
+          query: " DM ",
+          action: "create",
+          expandIssueTypes: true
+        })
+      ).resolves.toEqual([
+        {
+          id: "10000",
+          key: "DM",
+          name: "DM Workspace",
+          url: "https://acme.atlassian.net/jira/projects/DM",
+          issueTypes: [
+            {
+              id: "10001",
+              name: "Task",
+              description: "A unit of work",
+              subtask: false
+            }
+          ]
+        }
+      ]);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+
+    const url = new URL(urls[1]);
+    expect(url.pathname).toBe("/ex/jira/cloud-123/rest/api/3/project/search");
+    expect(url.searchParams.get("query")).toBe("DM");
+    expect(url.searchParams.get("action")).toBe("create");
+    expect(url.searchParams.get("expand")).toBe("issueTypes");
+    expect(url.searchParams.get("maxResults")).toBe("20");
   });
 });

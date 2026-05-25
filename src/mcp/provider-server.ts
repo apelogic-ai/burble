@@ -13,6 +13,7 @@ import {
   getJiraUser,
   listJiraAccessibleResources,
   listAssignedJiraIssues,
+  listVisibleJiraProjects,
   refreshJiraAccessToken,
   searchJiraIssues
 } from "../jira";
@@ -59,6 +60,7 @@ const defaultDeps = {
   getJiraUser,
   listJiraAccessibleResources,
   listAssignedJiraIssues,
+  listVisibleJiraProjects,
   searchJiraIssues
 };
 
@@ -214,6 +216,35 @@ function createProviderMcpServer(
       mcpToolResult(
         await withConnection(store, runtime, "jira", (connection) =>
           jiraTools.listAccessibleResources.execute({ connection })
+        )
+      )
+  );
+
+  server.registerTool(
+    "jira_list_visible_projects",
+    {
+      title: "Jira visible projects",
+      description:
+        "List Jira projects visible to this Slack user's connected Jira account. Use query='DM', action='create', and expandIssueTypes=true to confirm create access and issue types before creating a Jira issue.",
+      inputSchema: {
+        query: z.string().optional().describe("Optional project key or name search"),
+        action: z
+          .enum(["view", "browse", "edit", "create"])
+          .optional()
+          .describe("Optional Jira project action permission filter"),
+        expandIssueTypes: z
+          .boolean()
+          .optional()
+          .describe("Whether to include project issue types")
+      }
+    },
+    async ({ query, action, expandIssueTypes }) =>
+      mcpToolResult(
+        await withConnection(store, runtime, "jira", (connection) =>
+          jiraTools.listVisibleProjects.execute({
+            connection,
+            input: { query, action, expandIssueTypes }
+          })
         )
       )
   );

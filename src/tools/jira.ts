@@ -2,6 +2,7 @@ import type { ProviderConnection } from "../db";
 import {
   isJiraAuthorizationError,
   type JiraAccessibleResource,
+  type JiraVisibleProject,
   type JiraTokenSet
 } from "../jira";
 import type { ToolResult } from "./types";
@@ -22,6 +23,14 @@ export type JiraIssue = {
 export type JiraToolDeps = {
   getJiraUser: (token: string) => Promise<JiraUser>;
   listJiraAccessibleResources?: (token: string) => Promise<JiraAccessibleResource[]>;
+  listVisibleJiraProjects?: (
+    token: string,
+    input: {
+      query?: string;
+      action?: "view" | "browse" | "edit" | "create";
+      expandIssueTypes?: boolean;
+    }
+  ) => Promise<JiraVisibleProject[]>;
   listAssignedJiraIssues: (token: string) => Promise<JiraIssue[]>;
   searchJiraIssues: (token: string, jql: string) => Promise<JiraIssue[]>;
   refreshJiraAccessToken?: (refreshToken: string) => Promise<JiraTokenSet>;
@@ -45,6 +54,18 @@ type JiraAccessibleResourceContent = Array<{
   id: string;
   url: string;
   name?: string;
+}>;
+type JiraVisibleProjectContent = Array<{
+  id: string;
+  key: string;
+  name: string;
+  url: string;
+  issueTypes?: Array<{
+    id: string;
+    name: string;
+    description?: string;
+    subtask?: boolean;
+  }>;
 }>;
 
 export function createJiraTools(deps: JiraToolDeps) {
@@ -105,6 +126,57 @@ export function createJiraTools(deps: JiraToolDeps) {
               url: resource.url,
               ...(resource.name ? { name: resource.name } : {})
             }))
+        };
+      }
+    },
+
+    listVisibleProjects: {
+      async execute(
+        context: JiraToolContext & {
+          input?: {
+            query?: string;
+            action?: "view" | "browse" | "edit" | "create";
+            expandIssueTypes?: boolean;
+          };
+        }
+      ): Promise<ToolResult<JiraVisibleProjectContent | JiraAuthErrorContent>> {
+        const projects = await withJiraToken(
+          deps,
+          context.connection,
+          (accessToken) => {
+            if (!deps.listVisibleJiraProjects) {
+              throw new Error("Jira project lookup is not configured");
+            }
+
+            return deps.listVisibleJiraProjects(accessToken, context.input ?? {});
+          }
+        );
+        if (isJiraAuthErrorResult(projects)) {
+          return projects;
+        }
+
+        return {
+          classification: "user_private",
+          content: projects.slice(0, 20).map((project) => ({
+            id: project.id,
+            key: project.key,
+            name: project.name,
+            url: project.url,
+            ...(project.issueTypes
+              ? {
+                  issueTypes: project.issueTypes.slice(0, 50).map((issueType) => ({
+                    id: issueType.id,
+                    name: issueType.name,
+                    ...(issueType.description
+                      ? { description: issueType.description }
+                      : {}),
+                    ...(typeof issueType.subtask === "boolean"
+                      ? { subtask: issueType.subtask }
+                      : {})
+                  }))
+                }
+              : {})
+          }))
         };
       }
     },

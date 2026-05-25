@@ -11,6 +11,7 @@ import {
   getJiraUser,
   listJiraAccessibleResources,
   listAssignedJiraIssues,
+  listVisibleJiraProjects,
   refreshJiraAccessToken,
   searchJiraIssues
 } from "./jira";
@@ -63,6 +64,7 @@ const defaultDeps = {
   getJiraUser,
   listJiraAccessibleResources,
   listAssignedJiraIssues,
+  listVisibleJiraProjects,
   searchJiraIssues
 };
 
@@ -178,6 +180,22 @@ export async function handleToolGatewayRequest(
         toolName,
         await jiraTools.listAccessibleResources.execute({ connection })
       );
+
+    case "jira.listVisibleProjects": {
+      if (!isListVisibleJiraProjectsInput(body.input)) {
+        return new Response("Invalid tool input", { status: 400 });
+      }
+
+      return jsonResponseWithAudit(
+        store,
+        auth,
+        toolName,
+        await jiraTools.listVisibleProjects.execute({
+          connection,
+          input: body.input
+        })
+      );
+    }
 
     case "jira.listAssignedIssues":
       return jsonResponseWithAudit(
@@ -380,6 +398,7 @@ function isKnownTool(toolName: string): boolean {
     toolName === "github.listMyPullRequests" ||
     toolName === "jira.getAuthenticatedUser" ||
     toolName === "jira.listAccessibleResources" ||
+    toolName === "jira.listVisibleProjects" ||
     toolName === "jira.listAssignedIssues" ||
     toolName === "jira.searchIssues" ||
     toolName === "atlassian.listMcpTools" ||
@@ -420,6 +439,37 @@ function isSearchJiraIssuesInput(input: unknown): input is { jql: string } {
     "jql" in input &&
     typeof input.jql === "string" &&
     input.jql.trim().length > 0
+  );
+}
+
+function isListVisibleJiraProjectsInput(
+  input: unknown
+): input is {
+  query?: string;
+  action?: "view" | "browse" | "edit" | "create";
+  expandIssueTypes?: boolean;
+} {
+  if (input === undefined) {
+    return true;
+  }
+  if (typeof input !== "object" || input === null || Array.isArray(input)) {
+    return false;
+  }
+
+  const record = input as Record<string, unknown>;
+  return (
+    (!("query" in record) ||
+      record.query === undefined ||
+      typeof record.query === "string") &&
+    (!("action" in record) ||
+      record.action === undefined ||
+      record.action === "view" ||
+      record.action === "browse" ||
+      record.action === "edit" ||
+      record.action === "create") &&
+    (!("expandIssueTypes" in record) ||
+      record.expandIssueTypes === undefined ||
+      typeof record.expandIssueTypes === "boolean")
   );
 }
 
