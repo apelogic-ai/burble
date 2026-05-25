@@ -165,6 +165,18 @@ export async function runOpenClawCliRequest(
       `OpenClaw tool result runId=${request.runId ?? "unknown"} tool=${plannedToolCall.name} classification=${toolResult.classification} elapsedMs=${Date.now() - toolStartedAt}${summarizeToolResultForLog(toolResult)}`
     );
     classification = mergeClassification(classification, toolResult.classification);
+    if (isTerminalToolCall(plannedToolCall.name)) {
+      const text = formatTerminalToolResult(plannedToolCall.name, toolResult);
+      logInfo(
+        `OpenClaw agent finish runId=${request.runId ?? "unknown"} classification=${classification} textLength=${text.length} terminalTool=${plannedToolCall.name}`
+      );
+      return {
+        response: {
+          classification,
+          text
+        }
+      };
+    }
     executedTools.push({ toolCall: plannedToolCall, toolResult });
   }
 
@@ -328,6 +340,20 @@ export async function* runOpenClawCliRequestStream(
       classification: toolResult.classification
     };
     classification = mergeClassification(classification, toolResult.classification);
+    if (isTerminalToolCall(plannedToolCall.name)) {
+      const text = formatTerminalToolResult(plannedToolCall.name, toolResult);
+      logInfo(
+        `OpenClaw agent finish runId=${request.runId ?? "unknown"} classification=${classification} textLength=${text.length} terminalTool=${plannedToolCall.name}`
+      );
+      yield {
+        type: "final",
+        response: {
+          classification,
+          text
+        }
+      };
+      return;
+    }
     executedTools.push({ toolCall: plannedToolCall, toolResult });
   }
 }
@@ -710,28 +736,46 @@ async function buildToolCatalog(
       }
     );
 
-    const upstreamTools = await readAtlassianMcpToolSummaries(
-      jira.email,
-      executeTool
-    );
-    Object.assign(upstreamMcpSchemas, upstreamTools.inputSchemas);
-    catalog.push({
-      name: "atlassian.callMcpTool",
-      description: [
-        "Call an allowlisted upstream Atlassian MCP tool through Burble for Jira/Atlassian questions that need provider-native tools and do not have a first-class Burble tool.",
-        "For ordinary Jira issue create/edit requests, prefer jira.createIssue or jira.editIssue. Use MCP for operations such as transition/comment/worklog or specialized provider-native lookups.",
-        upstreamTools.summaries.length > 0
-          ? `Known allowed Atlassian MCP tools include: ${upstreamTools.summaries.slice(0, 30).join("; ")}.`
-          : "Use this only when you know the upstream allowed tool name."
-      ].join(" "),
-      inputSchema: {
-        name: "string upstream Atlassian MCP tool name",
-        arguments: "object JSON arguments for the upstream Atlassian MCP tool"
-      }
-    });
+    if (shouldLoadAtlassianMcpTools(request.input.text)) {
+      const upstreamTools = await readAtlassianMcpToolSummaries(
+        jira.email,
+        executeTool
+      );
+      Object.assign(upstreamMcpSchemas, upstreamTools.inputSchemas);
+      catalog.push({
+        name: "atlassian.callMcpTool",
+        description: [
+          "Call an allowlisted upstream Atlassian MCP tool through Burble for Jira/Atlassian questions that need provider-native tools and do not have a first-class Burble tool.",
+          "For ordinary Jira issue create/edit requests, prefer jira.createIssue or jira.editIssue. Use MCP for operations such as transition/comment/worklog or specialized provider-native lookups.",
+          upstreamTools.summaries.length > 0
+            ? `Known allowed Atlassian MCP tools include: ${upstreamTools.summaries.slice(0, 30).join("; ")}.`
+            : "Use this only when you know the upstream allowed tool name."
+        ].join(" "),
+        inputSchema: {
+          name: "string upstream Atlassian MCP tool name",
+          arguments: "object JSON arguments for the upstream Atlassian MCP tool"
+        }
+      });
+    }
   }
 
   return { catalog, upstreamMcpSchemas };
+}
+
+function shouldLoadAtlassianMcpTools(text: string): boolean {
+  const normalized = text.toLowerCase();
+  return (
+    /\bmcp\b/.test(normalized) ||
+    /\batlassian\b/.test(normalized) ||
+    /\bconfluence\b/.test(normalized) ||
+    /\b(comment|transition|worklog|log work|status change|move ticket|move issue)\b/.test(
+      normalized
+    )
+  );
+}
+
+function isTerminalToolCall(toolName: string): boolean {
+  return toolName === "jira.createIssue" || toolName === "jira.editIssue";
 }
 
 async function readAtlassianMcpToolSummaries(
@@ -1071,6 +1115,31 @@ function formatToolResult(result: ToolResult): string {
   }
 
   return JSON.stringify(result.content);
+}
+
+function formatTerminalToolResult(toolName: string, result: ToolResult): string {
+  const issue = readIssueResult(result.content);
+  if (issue) {
+    const verb = toolName === "jira.editIssue" ? "Updated" : "Created";
+    return `${verb} Jira issue ${issue.key}: ${issue.title}\n${issue.url}`;
+  }
+
+  return formatToolResult(result);
+}
+
+function readIssueResult(
+  value: unknown
+): { key: string; title: string; url: string } | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+
+  const record = value as Record<string, unknown>;
+  return typeof record.key === "string" &&
+    typeof record.title === "string" &&
+    typeof record.url === "string"
+    ? { key: record.key, title: record.title, url: record.url }
+    : null;
 }
 
 function summarizeToolResultForLog(result: ToolResult): string {
