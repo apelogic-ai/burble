@@ -68,7 +68,21 @@ describe("createAiSdkAgentRunner", () => {
         expect(JSON.stringify(toolResult)).not.toContain("secret-token");
 
         return {
-          text: "- <https://github.com/acme/app/issues/1|Fix billing export>"
+          text: "- <https://github.com/acme/app/issues/1|Fix billing export>",
+          usage: {
+            inputTokens: 1200,
+            outputTokens: 80,
+            totalTokens: 1280,
+            inputTokenDetails: {
+              noCacheTokens: 900,
+              cacheReadTokens: 300,
+              cacheWriteTokens: undefined
+            },
+            outputTokenDetails: {
+              textTokens: 55,
+              reasoningTokens: 25
+            }
+          }
         };
       },
       logInfo: (message) => logs.push(message)
@@ -90,6 +104,9 @@ describe("createAiSdkAgentRunner", () => {
     expect(logs).toContain("LLM tool start name=github_list_assigned_issues");
     expect(logs).toContain(
       "LLM tool finish name=github_list_assigned_issues classification=user_private itemCount=1"
+    );
+    expect(logs).toContain(
+      "LLM usage model=openai:test-model provider=test modelId=model inputTokens=1200 outputTokens=80 totalTokens=1280 cachedInputTokens=300 reasoningTokens=25"
     );
     expect(logs).toContain(
       "LLM call finish model=openai:test-model classification=user_private textLength=59"
