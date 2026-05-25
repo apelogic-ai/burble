@@ -384,6 +384,82 @@ describe("runOpenClawCliRequest", () => {
     });
   });
 
+  test("validates required upstream Atlassian MCP arguments before provider calls", async () => {
+    const toolCalls: Array<{ toolName: string; body: unknown }> = [];
+    const prompts: string[] = [];
+    const response = await runOpenClawCliRequest(
+      {
+        input: {
+          text: "create new Jira ticket in DM workspace, titled 'test ticket from slack'",
+          connections: {
+            github: { connected: false },
+            jira: {
+              connected: true,
+              email: "person@example.com",
+              providerLogin: "person@atlassian.example"
+            }
+          }
+        }
+      },
+      config,
+      async (toolName, body) => {
+        toolCalls.push({ toolName, body });
+        if (toolName === "atlassian.listMcpTools") {
+          return {
+            classification: "user_private",
+            content: [
+              {
+                name: "createJiraIssue",
+                inputSchema: {
+                  type: "object",
+                  properties: {
+                    cloudId: { type: "string" },
+                    projectKey: { type: "string" },
+                    issueType: { type: "string" },
+                    summary: { type: "string" }
+                  },
+                  required: ["cloudId", "projectKey", "issueType", "summary"]
+                }
+              }
+            ]
+          };
+        }
+        throw new Error(`Unexpected provider call: ${toolName}`);
+      },
+      async (_command, args) => {
+        const prompt = args[args.indexOf("--message") + 1];
+        prompts.push(prompt);
+        return prompt.includes("Burble executed tools:") &&
+          prompt.includes("mcp_schema_validation_failed")
+          ? {
+              exitCode: 0,
+              stdout:
+                "I need the Jira issue type for the DM project before I can create it.",
+              stderr: ""
+            }
+          : openClawToolCall("atlassian.callMcpTool", {
+              name: "createJiraIssue",
+              arguments: {
+                cloudId: "cloud-123",
+                projectKey: "DM",
+                summary: "test ticket from slack"
+              }
+            });
+      },
+      () => undefined
+    );
+
+    expect(response.response.text).toBe(
+      "I need the Jira issue type for the DM project before I can create it."
+    );
+    expect(prompts).toHaveLength(2);
+    expect(prompts[1]).toContain("mcp_schema_validation_failed");
+    expect(prompts[1]).toContain("issueType");
+    expect(
+      toolCalls.some((call) => call.toolName === "atlassian.callMcpTool")
+    ).toBe(false);
+  });
+
   test("lets OpenClaw chain multiple Atlassian MCP calls for a Jira action", async () => {
     const toolCalls: Array<{ toolName: string; body: unknown }> = [];
     const prompts: string[] = [];

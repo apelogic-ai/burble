@@ -64,6 +64,7 @@ type ExecutedToolCall = {
 type BurbleToolContext = {
   baseline: RunResponse;
   catalog: ToolCatalogItem[];
+  upstreamMcpSchemas: Record<string, unknown>;
 };
 
 export async function runOpenClawCliRequest(
@@ -138,12 +139,16 @@ export async function runOpenClawCliRequest(
     }
 
     logInfo(
-      `OpenClaw tool requested runId=${request.runId ?? "unknown"} tool=${plannedToolCall.name}`
+      `OpenClaw tool requested runId=${request.runId ?? "unknown"} tool=${plannedToolCall.name}${summarizeLogObject("args", plannedToolCall.arguments)}`
     );
     const toolResult = await executePlannedToolCall(
       plannedToolCall,
       request,
+      toolContext,
       executeTool
+    );
+    logInfo(
+      `OpenClaw tool result runId=${request.runId ?? "unknown"} tool=${plannedToolCall.name} classification=${toolResult.classification}${summarizeToolResultForLog(toolResult)}`
     );
     classification = mergeClassification(classification, toolResult.classification);
     executedTools.push({ toolCall: plannedToolCall, toolResult });
@@ -264,7 +269,7 @@ export async function* runOpenClawCliRequestStream(
     }
 
     logInfo(
-      `OpenClaw tool requested runId=${request.runId ?? "unknown"} tool=${plannedToolCall.name}`
+      `OpenClaw tool requested runId=${request.runId ?? "unknown"} tool=${plannedToolCall.name}${summarizeLogObject("args", plannedToolCall.arguments)}`
     );
     const callId = crypto.randomUUID();
     yield {
@@ -275,7 +280,11 @@ export async function* runOpenClawCliRequestStream(
     const toolResult = await executePlannedToolCall(
       plannedToolCall,
       request,
+      toolContext,
       executeTool
+    );
+    logInfo(
+      `OpenClaw tool result runId=${request.runId ?? "unknown"} tool=${plannedToolCall.name} classification=${toolResult.classification}${summarizeToolResultForLog(toolResult)}`
     );
     yield {
       type: "tool_result",
@@ -517,19 +526,27 @@ async function buildBurbleToolContext(
   config: RuntimeConfig,
   executeTool: ToolExecutor
 ): Promise<BurbleToolContext> {
-  const [baseline, catalog] = await Promise.all([
+  const [baseline, catalogBuild] = await Promise.all([
     runBurbleRequest(request, config, executeTool),
     buildToolCatalog(request, executeTool)
   ]);
 
-  return { baseline, catalog };
+  return {
+    baseline,
+    catalog: catalogBuild.catalog,
+    upstreamMcpSchemas: catalogBuild.upstreamMcpSchemas
+  };
 }
 
 async function buildToolCatalog(
   request: RunRequest,
   executeTool: ToolExecutor
-): Promise<ToolCatalogItem[]> {
+): Promise<{
+  catalog: ToolCatalogItem[];
+  upstreamMcpSchemas: Record<string, unknown>;
+}> {
   const catalog: ToolCatalogItem[] = [];
+  const upstreamMcpSchemas: Record<string, unknown> = {};
   const github = request.input.connections.github;
   if (github.connected && github.email) {
     catalog.push(
@@ -595,13 +612,14 @@ async function buildToolCatalog(
       jira.email,
       executeTool
     );
+    Object.assign(upstreamMcpSchemas, upstreamTools.inputSchemas);
     catalog.push({
       name: "atlassian.callMcpTool",
       description: [
         "Call an allowlisted upstream Atlassian MCP tool through Burble for Jira/Atlassian questions that need provider-native tools. Selected Jira write tools are allowed.",
         "For Jira create/edit/transition/comment/worklog requests, choose the relevant upstream Atlassian MCP tool from the known tool list and fill arguments from its inputSchema.",
-        upstreamTools.length > 0
-          ? `Known allowed Atlassian MCP tools include: ${upstreamTools.slice(0, 30).join("; ")}.`
+        upstreamTools.summaries.length > 0
+          ? `Known allowed Atlassian MCP tools include: ${upstreamTools.summaries.slice(0, 30).join("; ")}.`
           : "Use this only when you know the upstream allowed tool name."
       ].join(" "),
       inputSchema: {
@@ -611,28 +629,35 @@ async function buildToolCatalog(
     });
   }
 
-  return catalog;
+  return { catalog, upstreamMcpSchemas };
 }
 
 async function readAtlassianMcpToolSummaries(
   email: string,
   executeTool: ToolExecutor
-): Promise<string[]> {
+): Promise<{
+  summaries: string[];
+  inputSchemas: Record<string, unknown>;
+}> {
   try {
     const result = await executeTool("atlassian.listMcpTools", {
       user: { email }
     });
     if (!Array.isArray(result.content)) {
-      return [];
+      return { summaries: [], inputSchemas: {} };
     }
 
-    return result.content.flatMap((item) => {
+    const inputSchemas: Record<string, unknown> = {};
+    const summaries = result.content.flatMap((item) => {
       if (
         item &&
         typeof item === "object" &&
         "name" in item &&
         typeof item.name === "string"
       ) {
+        if ("inputSchema" in item && item.inputSchema !== undefined) {
+          inputSchemas[item.name] = item.inputSchema;
+        }
         const title =
           "title" in item && typeof item.title === "string"
             ? ` title=${item.title}`
@@ -652,8 +677,10 @@ async function readAtlassianMcpToolSummaries(
       }
       return [];
     });
+
+    return { summaries, inputSchemas };
   } catch {
-    return [];
+    return { summaries: [], inputSchemas: {} };
   }
 }
 
@@ -793,6 +820,7 @@ function readLastJsonObject(stdout: string): Record<string, unknown> | null {
 async function executePlannedToolCall(
   toolCall: PlannedToolCall,
   request: RunRequest,
+  toolContext: BurbleToolContext,
   executeTool: ToolExecutor
 ): Promise<ToolResult> {
   const email = readToolEmail(toolCall.name, request);
@@ -806,10 +834,82 @@ async function executePlannedToolCall(
     };
   }
 
+  const validationError = validatePlannedToolCall(toolCall, toolContext);
+  if (validationError) {
+    return validationError;
+  }
+
   return executeTool(toolCall.name, {
     user: { email },
     input: toolCall.arguments
   });
+}
+
+function validatePlannedToolCall(
+  toolCall: PlannedToolCall,
+  toolContext: BurbleToolContext
+): ToolResult | null {
+  if (toolCall.name !== "atlassian.callMcpTool") {
+    return null;
+  }
+
+  const upstreamToolName =
+    typeof toolCall.arguments.name === "string"
+      ? toolCall.arguments.name.trim()
+      : "";
+  if (!upstreamToolName) {
+    return null;
+  }
+
+  const schema = toolContext.upstreamMcpSchemas[upstreamToolName];
+  const required = readRequiredSchemaFields(schema);
+  if (required.length === 0) {
+    return null;
+  }
+
+  const upstreamArguments =
+    toolCall.arguments.arguments &&
+    typeof toolCall.arguments.arguments === "object" &&
+    !Array.isArray(toolCall.arguments.arguments)
+      ? (toolCall.arguments.arguments as Record<string, unknown>)
+      : {};
+  const missing = required.filter(
+    (field) => !hasPresentSchemaValue(upstreamArguments, field)
+  );
+  if (missing.length === 0) {
+    return null;
+  }
+
+  return {
+    classification: "user_private",
+    content: {
+      error: "mcp_schema_validation_failed",
+      message: `The planned Atlassian MCP call \`${upstreamToolName}\` is missing required arguments: ${missing.join(", ")}. Use available lookup tools to resolve them, or ask one concise clarifying question before calling \`${upstreamToolName}\`.`
+    }
+  };
+}
+
+function readRequiredSchemaFields(schema: unknown): string[] {
+  if (!schema || typeof schema !== "object" || Array.isArray(schema)) {
+    return [];
+  }
+
+  const required = (schema as Record<string, unknown>).required;
+  return Array.isArray(required)
+    ? required.filter((field): field is string => typeof field === "string")
+    : [];
+}
+
+function hasPresentSchemaValue(
+  value: Record<string, unknown>,
+  field: string
+): boolean {
+  if (!Object.hasOwn(value, field)) {
+    return false;
+  }
+
+  const fieldValue = value[field];
+  return fieldValue !== undefined && fieldValue !== null && fieldValue !== "";
 }
 
 function readToolEmail(toolName: string, request: RunRequest): string | null {
@@ -830,6 +930,68 @@ function formatToolResult(result: ToolResult): string {
   }
 
   return JSON.stringify(result.content);
+}
+
+function summarizeToolResultForLog(result: ToolResult): string {
+  return summarizeLogObject("result", result.content);
+}
+
+function summarizeLogObject(label: string, value: unknown): string {
+  return ` ${label}=${JSON.stringify(sanitizeLogValue(value, 0))}`;
+}
+
+function sanitizeLogValue(value: unknown, depth: number): unknown {
+  if (depth > 3) {
+    return "[depth-limit]";
+  }
+
+  if (typeof value === "string") {
+    return sanitizeLogString(value);
+  }
+
+  if (typeof value === "number" || typeof value === "boolean" || value === null) {
+    return value;
+  }
+
+  if (Array.isArray(value)) {
+    return value.slice(0, 10).map((item) => sanitizeLogValue(item, depth + 1));
+  }
+
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>)
+        .slice(0, 30)
+        .map(([key, item]) => [
+          key,
+          shouldRedactLogKey(key) ? "[redacted]" : sanitizeLogValue(item, depth + 1)
+        ])
+    );
+  }
+
+  return String(value);
+}
+
+function sanitizeLogString(value: string): string {
+  return truncate(
+    value.replace(
+      /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi,
+      (email) => redactEmail(email)
+    ),
+    300
+  );
+}
+
+function shouldRedactLogKey(key: string): boolean {
+  return /(authorization|token|secret|password|credential|jwt|cookie)/i.test(key);
+}
+
+function redactEmail(email: string): string {
+  const [local, domain] = email.split("@");
+  if (!local || !domain) {
+    return "[redacted-email]";
+  }
+
+  return `${local.slice(0, 2)}***@${domain}`;
 }
 
 function mergeClassification(
