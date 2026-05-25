@@ -11,6 +11,7 @@ import {
 } from "../github";
 import {
   getJiraUser,
+  listJiraAccessibleResources,
   listAssignedJiraIssues,
   refreshJiraAccessToken,
   searchJiraIssues
@@ -56,6 +57,7 @@ const defaultDeps = {
   searchIssues,
   listMyPullRequests,
   getJiraUser,
+  listJiraAccessibleResources,
   listAssignedJiraIssues,
   searchJiraIssues
 };
@@ -196,6 +198,22 @@ function createProviderMcpServer(
       mcpToolResult(
         await withConnection(store, runtime, "jira", (connection) =>
           jiraTools.listAssignedIssues.execute({ connection })
+        )
+      )
+  );
+
+  server.registerTool(
+    "jira_list_accessible_resources",
+    {
+      title: "Jira accessible resources",
+      description:
+        "List Atlassian resources visible to this Slack user's connected Jira account. Use the resource url as Jira MCP cloudId for the Atlassian Rovo MCP server.",
+      inputSchema: {}
+    },
+    async () =>
+      mcpToolResult(
+        await withConnection(store, runtime, "jira", (connection) =>
+          jiraTools.listAccessibleResources.execute({ connection })
         )
       )
   );

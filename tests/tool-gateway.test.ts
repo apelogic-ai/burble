@@ -319,6 +319,42 @@ describe("handleToolGatewayRequest", () => {
     expect(JSON.stringify(body)).not.toContain("jira-token");
   });
 
+  test("executes Jira accessible resource lookup through the HTTP fallback gateway", async () => {
+    const response = await handleToolGatewayRequest(
+      config,
+      createStore(jiraConnection),
+      "jira.listAccessibleResources",
+      request("jira.listAccessibleResources", {
+        user: { email: "person@example.com" }
+      }),
+      {
+        listJiraAccessibleResources: async (token) => {
+          expect(token).toBe("jira-token");
+          return [
+            {
+              id: "cloud-123",
+              name: "APE GPT",
+              url: "https://apegpt.atlassian.net",
+              scopes: ["read:jira-work", "write:jira-work"]
+            }
+          ];
+        }
+      }
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      classification: "user_private",
+      content: [
+        {
+          id: "cloud-123",
+          name: "APE GPT",
+          url: "https://apegpt.atlassian.net"
+        }
+      ]
+    });
+  });
+
   test("executes Atlassian MCP tool discovery through the HTTP fallback gateway", async () => {
     const response = await handleToolGatewayRequest(
       config,

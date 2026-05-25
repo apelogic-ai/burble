@@ -29,9 +29,10 @@ export class JiraApiError extends Error {
   }
 }
 
-type JiraAccessibleResource = {
+export type JiraAccessibleResource = {
   id: string;
   url: string;
+  name?: string;
   scopes?: string[];
 };
 
@@ -204,7 +205,9 @@ export async function searchJiraIssues(
   }));
 }
 
-async function resolveJiraResource(token: string): Promise<JiraAccessibleResource> {
+export async function listJiraAccessibleResources(
+  token: string
+): Promise<JiraAccessibleResource[]> {
   const response = await fetch(
     "https://api.atlassian.com/oauth/token/accessible-resources",
     {
@@ -219,7 +222,11 @@ async function resolveJiraResource(token: string): Promise<JiraAccessibleResourc
     );
   }
 
-  const resources = (await response.json()) as JiraAccessibleResource[];
+  return (await response.json()) as JiraAccessibleResource[];
+}
+
+async function resolveJiraResource(token: string): Promise<JiraAccessibleResource> {
+  const resources = await listJiraAccessibleResources(token);
   const resource = resources.find((candidate) =>
     candidate.scopes?.some((scope) => scope.includes("jira"))
   ) ?? resources[0];

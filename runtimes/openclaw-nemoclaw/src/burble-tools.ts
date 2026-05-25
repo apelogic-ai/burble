@@ -161,6 +161,8 @@ function toMcpToolName(toolName: string): string {
       return "github_list_my_pull_requests";
     case "jira.getAuthenticatedUser":
       return "jira_get_authenticated_user";
+    case "jira.listAccessibleResources":
+      return "jira_list_accessible_resources";
     case "jira.listAssignedIssues":
       return "jira_list_assigned_issues";
     case "jira.searchIssues":

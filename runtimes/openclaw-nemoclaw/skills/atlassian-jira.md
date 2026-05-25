@@ -23,13 +23,12 @@ identifies a fix; otherwise report the concise provider error instead of calling
 it a temporary error.
 
 For Jira issue creation/editing, first resolve site, project, issue type, and
-user identifiers with available Atlassian MCP lookup tools when required by the
-schema.
+user identifiers with available lookup tools when required by the schema.
 
-When an upstream Jira MCP schema requires `cloudId`, first call
-`getAccessibleAtlassianResources` and use that tool result's resource `id`
-exactly. Do not use the Atlassian site hostname, base URL, or display URL as
-`cloudId`.
+For the Atlassian Rovo MCP server, Jira `cloudId` must be the site URL, such as
+`https://example.atlassian.net`. Prefer `jira.listAccessibleResources` to get
+the connected user's visible site URL. Do not call
+`getAccessibleAtlassianResources` for this server's `cloudId`.
 
 When a user provides an assignee email, use that email for Jira account lookup
 before trying the display name.
