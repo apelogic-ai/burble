@@ -32,6 +32,7 @@ export type AgentRuntimeEngine =
   | "deterministic"
   | "openclaw"
   | "openclaw-gateway"
+  | "burble-direct"
   | "hermes";
 
 export type AgentRuntimeStatus =

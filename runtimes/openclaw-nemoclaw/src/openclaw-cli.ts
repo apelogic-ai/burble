@@ -219,6 +219,22 @@ async function runOpenClawCommand(
     }
     return result;
   }
+  if (config.engine === "burble-direct") {
+    const result = await runBurbleDirectProviderRequest(
+      request,
+      config,
+      prompt,
+      sessionId,
+      logInfo,
+      step
+    );
+    if (result.exitCode !== 0) {
+      throw new Error(
+        `Burble direct model request failed${result.stderr ? `: ${truncate(redactPreview(result.stderr), 300)}` : ""}`
+      );
+    }
+    return result;
+  }
 
   const startedAt = Date.now();
   const rawStreamPath = await prepareRawStreamPath(config, request, step);
@@ -284,9 +300,9 @@ async function runOpenClawGatewayHttpRequest(
 ): Promise<CliCommandResult> {
   const startedAt = Date.now();
   const sessionKey = buildGatewayHttpSessionKey(config, sessionId);
-  const parsedModel = parseLlmModelId(config.llmModel);
+  const endpoint = buildGatewayHttpResponsesUrl(config);
   logInfo(
-    `OpenClaw gateway direct model start runId=${request.runId ?? "unknown"} step=${step} provider=${parsedModel.provider} model=${parsedModel.model} timeoutMs=${config.openClawTimeoutMs}${summarizePromptForLog(prompt)} sessionKey=${sessionKey}`
+    `OpenClaw gateway http start runId=${request.runId ?? "unknown"} step=${step} agent=${config.openClawAgent} endpoint=/v1/responses timeoutMs=${config.openClawTimeoutMs}${summarizePromptForLog(prompt)} sessionKey=${sessionKey}`
   );
   logStreamDebug(config, logInfo, "prompt preview", {
     runId: request.runId ?? "unknown",
@@ -298,9 +314,10 @@ async function runOpenClawGatewayHttpRequest(
   let stdout = "";
   let stderr = "";
   try {
-    const response = await fetchDirectModelResponse(
+    const response = await fetchGatewayHttpResponse(
+      endpoint,
       config,
-      parsedModel,
+      sessionKey,
       prompt
     );
     const responseText = await response.text();
@@ -320,13 +337,12 @@ async function runOpenClawGatewayHttpRequest(
         startedAt
       );
       logInfo(
-        `OpenClaw gateway direct model error runId=${request.runId ?? "unknown"} step=${step} status=${response.status}${summarizeLogObject("bodyPreview", responseText)}`
+        `OpenClaw gateway http error runId=${request.runId ?? "unknown"} step=${step} status=${response.status}${summarizeLogObject("bodyPreview", responseText)}`
       );
       return { exitCode: 1, stdout, stderr };
     }
 
-    stdout =
-      extractDirectModelText(parsedModel.provider, responseText) ?? responseText;
+    stdout = extractOpenResponsesText(responseText) ?? responseText;
     const gatewayDiagnostics = readGatewayDiagnosticTextSince(startedAt);
     logOpenClawUsageFromOutput(
       request,
@@ -341,7 +357,7 @@ async function runOpenClawGatewayHttpRequest(
       startedAt
     );
     logInfo(
-      `OpenClaw gateway direct model finish runId=${request.runId ?? "unknown"} step=${step} elapsedMs=${Date.now() - startedAt} status=${response.status} stdoutChars=${stdout.length} responseChars=${responseText.length}`
+      `OpenClaw gateway http finish runId=${request.runId ?? "unknown"} step=${step} elapsedMs=${Date.now() - startedAt} status=${response.status} stdoutChars=${stdout.length} responseChars=${responseText.length}`
     );
     return { exitCode: 0, stdout, stderr };
   } catch (error) {
@@ -360,7 +376,96 @@ async function runOpenClawGatewayHttpRequest(
       startedAt
     );
     logInfo(
-      `OpenClaw gateway direct model error runId=${request.runId ?? "unknown"} step=${step}${summarizeLogObject("error", stderr)}`
+      `OpenClaw gateway http error runId=${request.runId ?? "unknown"} step=${step}${summarizeLogObject("error", stderr)}`
+    );
+    return { exitCode: 1, stdout, stderr };
+  }
+}
+
+async function runBurbleDirectProviderRequest(
+  request: RunRequest,
+  config: RuntimeConfig,
+  prompt: string,
+  sessionId: string,
+  logInfo: RuntimeLogger,
+  step: number
+): Promise<CliCommandResult> {
+  const startedAt = Date.now();
+  const sessionKey = buildGatewayHttpSessionKey(config, sessionId);
+  const parsedModel = parseLlmModelId(config.llmModel);
+  logInfo(
+    `Burble direct model start runId=${request.runId ?? "unknown"} step=${step} provider=${parsedModel.provider} model=${parsedModel.model} timeoutMs=${config.openClawTimeoutMs}${summarizePromptForLog(prompt)} sessionKey=${sessionKey}`
+  );
+  logStreamDebug(config, logInfo, "prompt preview", {
+    runId: request.runId ?? "unknown",
+    promptHash: hashLogValue(prompt),
+    chars: prompt.length,
+    preview: prompt
+  });
+
+  let stdout = "";
+  let stderr = "";
+  try {
+    const response = await fetchDirectModelResponse(
+      config,
+      parsedModel,
+      prompt
+    );
+    const responseText = await response.text();
+    if (!response.ok) {
+      stderr = responseText;
+      logOpenClawUsageFromOutput(
+        request,
+        step,
+        prompt,
+        stdout,
+        stderr,
+        null,
+        "",
+        sessionId,
+        logInfo,
+        startedAt
+      );
+      logInfo(
+        `Burble direct model error runId=${request.runId ?? "unknown"} step=${step} status=${response.status}${summarizeLogObject("bodyPreview", responseText)}`
+      );
+      return { exitCode: 1, stdout, stderr };
+    }
+
+    stdout =
+      extractDirectModelText(parsedModel.provider, responseText) ?? responseText;
+    logOpenClawUsageFromOutput(
+      request,
+      step,
+      prompt,
+      [responseText, stdout].join("\n"),
+      stderr,
+      null,
+      "",
+      sessionId,
+      logInfo,
+      startedAt
+    );
+    logInfo(
+      `Burble direct model finish runId=${request.runId ?? "unknown"} step=${step} elapsedMs=${Date.now() - startedAt} status=${response.status} stdoutChars=${stdout.length} responseChars=${responseText.length}`
+    );
+    return { exitCode: 0, stdout, stderr };
+  } catch (error) {
+    stderr = error instanceof Error ? error.message : String(error);
+    logOpenClawUsageFromOutput(
+      request,
+      step,
+      prompt,
+      stdout,
+      stderr,
+      null,
+      "",
+      sessionId,
+      logInfo,
+      startedAt
+    );
+    logInfo(
+      `Burble direct model error runId=${request.runId ?? "unknown"} step=${step}${summarizeLogObject("error", stderr)}`
     );
     return { exitCode: 1, stdout, stderr };
   }
@@ -377,14 +482,24 @@ async function* collectOpenClawGatewayHttpResponse(
   step: number
 ): AsyncGenerator<RunEvent, { stdout: string }, void> {
   const startedAt = Date.now();
-  const resultPromise = runOpenClawGatewayHttpRequest(
-    request,
-    config,
-    prompt,
-    sessionId,
-    logInfo,
-    step
-  );
+  const resultPromise =
+    config.engine === "burble-direct"
+      ? runBurbleDirectProviderRequest(
+          request,
+          config,
+          prompt,
+          sessionId,
+          logInfo,
+          step
+        )
+      : runOpenClawGatewayHttpRequest(
+          request,
+          config,
+          prompt,
+          sessionId,
+          logInfo,
+          step
+        );
   let result: CliCommandResult | null = null;
 
   while (!result) {
@@ -427,7 +542,7 @@ async function* collectOpenClawGatewayHttpResponse(
 
   if (result.exitCode !== 0) {
     throw new Error(
-      `OpenClaw Gateway HTTP request failed${result.stderr ? `: ${truncate(redactPreview(result.stderr), 300)}` : ""}`
+      `${config.engine === "burble-direct" ? "Burble direct model request" : "OpenClaw Gateway HTTP request"} failed${result.stderr ? `: ${truncate(redactPreview(result.stderr), 300)}` : ""}`
     );
   }
 
@@ -463,6 +578,36 @@ async function fetchDirectModelResponse(
       method: "POST",
       headers: request.headers,
       body: JSON.stringify(request.body),
+      signal: controller.signal
+    });
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function fetchGatewayHttpResponse(
+  endpoint: string,
+  config: RuntimeConfig,
+  sessionKey: string,
+  prompt: string
+): Promise<Response> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), config.openClawTimeoutMs);
+  try {
+    return await fetch(endpoint, {
+      method: "POST",
+      headers: {
+        "authorization": `Bearer ${config.openClawGatewayToken}`,
+        "content-type": "application/json",
+        "x-openclaw-agent-id": config.openClawAgent,
+        "x-openclaw-message-channel": "webchat",
+        "x-openclaw-session-key": sessionKey
+      },
+      body: JSON.stringify({
+        model: `openclaw/${config.openClawAgent}`,
+        input: prompt,
+        stream: false
+      }),
       signal: controller.signal
     });
   } finally {
@@ -633,6 +778,10 @@ function buildGatewayHttpSessionKey(
   return `agent:${config.openClawAgent}:explicit:${sessionId}`;
 }
 
+function buildGatewayHttpResponsesUrl(config: RuntimeConfig): string {
+  return `http://127.0.0.1:${config.openClawGatewayPort}/v1/responses`;
+}
+
 export async function* runOpenClawCliRequestStream(
   request: RunRequest,
   config: RuntimeConfig,
@@ -785,7 +934,7 @@ async function* collectOpenClawStream(
   emitDeltas: boolean,
   step: number
 ): AsyncGenerator<RunEvent, { stdout: string }, void> {
-  if (config.engine === "openclaw-gateway") {
+  if (config.engine === "openclaw-gateway" || config.engine === "burble-direct") {
     return yield* collectOpenClawGatewayHttpResponse(
       request,
       config,

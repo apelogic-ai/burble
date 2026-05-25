@@ -141,7 +141,7 @@ policy; the remote runtime receives only sanitized connection summaries.
 Set `OPENCLAW_NEMOCLAW_IMAGE=some-registry/image:tag` only if you want Compose
 to tag/push/use a different image name. It is not required for dev deployment.
 
-The runtime supports two internal engines:
+The runtime supports these internal engines:
 
 ```env
 OPENCLAW_NEMOCLAW_ENGINE=deterministic
@@ -149,6 +149,15 @@ OPENCLAW_NEMOCLAW_ENGINE=deterministic
 
 This is the default deployable bridge. It calls the Burble tool gateway and
 formats the answer itself.
+
+```env
+OPENCLAW_NEMOCLAW_ENGINE=burble-direct
+AI_MODEL=openai:gpt-5.4
+OPENAI_API_KEY=sk-...
+```
+
+This is the low-latency LLM path for Slack. It uses Burble's prompt and MCP
+tool loop, and sends planning turns directly to the selected model provider.
 
 ```env
 OPENCLAW_NEMOCLAW_ENGINE=openclaw
@@ -199,7 +208,11 @@ involved.
 Set `OPENCLAW_RAW_STREAM_DEBUG=true` temporarily to ask OpenClaw for per-run
 raw stream JSONL under `/data/openclaw/state/raw-streams`; Burble parses those
 files for token usage and logs only the summarized counts.
-When `OPENCLAW_NEMOCLAW_ENGINE=openclaw-gateway`, the runtime starts a private
+Use `OPENCLAW_NEMOCLAW_ENGINE=burble-direct` for the low-latency Slack path:
+Burble keeps its own prompt and MCP tool loop, but sends planning turns directly
+to the selected provider from `AI_MODEL`.
+Use `OPENCLAW_NEMOCLAW_ENGINE=openclaw-gateway` only when you want the real
+OpenClaw Gateway agent path. In that mode the runtime starts a private
 `openclaw gateway run` process once at boot using `OPENCLAW_GATEWAY_PORT`,
 `OPENCLAW_GATEWAY_BIND`, and token auth. Leave `OPENCLAW_GATEWAY_TOKEN` empty
 to generate an ephemeral per-process token.

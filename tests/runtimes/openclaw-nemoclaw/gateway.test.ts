@@ -46,6 +46,21 @@ describe("startOpenClawGatewayIfNeeded", () => {
     expect(called).toBe(false);
   });
 
+  test("does not start a gateway for burble-direct engine", () => {
+    let called = false;
+
+    const handle = startOpenClawGatewayIfNeeded(
+      { ...config, engine: "burble-direct" },
+      () => {
+        called = true;
+        throw new Error("unexpected gateway spawn");
+      }
+    );
+
+    expect(handle).toBeNull();
+    expect(called).toBe(false);
+  });
+
   test("starts a private token-authenticated gateway process", async () => {
     const logs: string[] = [];
     let killedWith: NodeJS.Signals | number | undefined;

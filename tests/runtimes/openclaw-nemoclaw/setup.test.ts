@@ -45,6 +45,20 @@ describe("ensureOpenClawSetup", () => {
     expect(called).toBe(false);
   });
 
+  test("skips setup for burble-direct engine", async () => {
+    let called = false;
+
+    await ensureOpenClawSetup(
+      { ...config, engine: "burble-direct" },
+      async () => {
+        called = true;
+        return { exitCode: 0, stdout: "", stderr: "" };
+      }
+    );
+
+    expect(called).toBe(false);
+  });
+
   test("skips setup command when setup is disabled", async () => {
     const calls: string[][] = [];
     const runtimeConfig = await configWithState({ openClawSetupOnStart: false });
