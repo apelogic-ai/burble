@@ -74,7 +74,12 @@ export async function runOpenClawCliRequest(
   runCommand: CliCommandRunner = runCliCommand,
   logInfo: RuntimeLogger = info
 ): Promise<RunResponse> {
-  const toolContext = await buildBurbleToolContext(request, config, executeTool);
+  const toolContext = await buildBurbleToolContext(
+    request,
+    config,
+    executeTool,
+    logInfo
+  );
   const baseline = toolContext.baseline;
   if (
     isSupportedGitHubRequest(request.input.text) &&
@@ -99,12 +104,18 @@ export async function runOpenClawCliRequest(
   let classification = baseline.response.classification;
 
   for (let step = 0; step <= maxPlannedToolCalls; step += 1) {
+    const prompt = buildOpenClawPrompt(request, toolContext, executedTools);
+    logInfo(
+      `OpenClaw planning start runId=${request.runId ?? "unknown"} step=${step + 1} executedTools=${executedTools.length} promptChars=${prompt.length}`
+    );
     const result = await runOpenClawCommand(
       request,
       config,
-      buildOpenClawPrompt(request, toolContext, executedTools),
+      prompt,
       sessionId,
-      runCommand
+      runCommand,
+      logInfo,
+      step + 1
     );
     const plannedToolCall = normalizePlannedToolCall(
       readPlannedToolCall(result.stdout, toolContext.catalog)
@@ -143,6 +154,7 @@ export async function runOpenClawCliRequest(
     logInfo(
       `OpenClaw tool requested runId=${request.runId ?? "unknown"} tool=${plannedToolCall.name}${summarizeLogObject("args", plannedToolCall.arguments)}`
     );
+    const toolStartedAt = Date.now();
     const toolResult = await executePlannedToolCall(
       plannedToolCall,
       request,
@@ -150,7 +162,7 @@ export async function runOpenClawCliRequest(
       executeTool
     );
     logInfo(
-      `OpenClaw tool result runId=${request.runId ?? "unknown"} tool=${plannedToolCall.name} classification=${toolResult.classification}${summarizeToolResultForLog(toolResult)}`
+      `OpenClaw tool result runId=${request.runId ?? "unknown"} tool=${plannedToolCall.name} classification=${toolResult.classification} elapsedMs=${Date.now() - toolStartedAt}${summarizeToolResultForLog(toolResult)}`
     );
     classification = mergeClassification(classification, toolResult.classification);
     executedTools.push({ toolCall: plannedToolCall, toolResult });
@@ -169,8 +181,14 @@ async function runOpenClawCommand(
   config: RuntimeConfig,
   prompt: string,
   sessionId: string,
-  runCommand: CliCommandRunner
+  runCommand: CliCommandRunner,
+  logInfo: RuntimeLogger,
+  step: number
 ): Promise<CliCommandResult> {
+  const startedAt = Date.now();
+  logInfo(
+    `OpenClaw command start runId=${request.runId ?? "unknown"} step=${step} command=${config.openClawCommand} agent=${config.openClawAgent} promptChars=${prompt.length}`
+  );
   const result = await runCommand(
     config.openClawCommand,
     buildOpenClawArgs(config, prompt, sessionId),
@@ -183,6 +201,9 @@ async function runOpenClawCommand(
   if (result.exitCode !== 0) {
     throw new Error(`OpenClaw CLI exited with code ${result.exitCode}`);
   }
+  logInfo(
+    `OpenClaw command finish runId=${request.runId ?? "unknown"} step=${step} elapsedMs=${Date.now() - startedAt} stdoutChars=${result.stdout.length} stderrChars=${result.stderr.length}`
+  );
   return result;
 }
 
@@ -195,7 +216,12 @@ export async function* runOpenClawCliRequestStream(
   heartbeatMs = streamHeartbeatMs
 ): AsyncIterable<RunEvent> {
   yield { type: "status", text: "Loading Burble context..." };
-  const toolContext = await buildBurbleToolContext(request, config, executeTool);
+  const toolContext = await buildBurbleToolContext(
+    request,
+    config,
+    executeTool,
+    logInfo
+  );
   const baseline = toolContext.baseline;
   if (
     isSupportedGitHubRequest(request.input.text) &&
@@ -224,10 +250,14 @@ export async function* runOpenClawCliRequestStream(
   let classification = baseline.response.classification;
 
   for (let step = 0; step <= maxPlannedToolCalls; step += 1) {
+    const prompt = buildOpenClawPrompt(request, toolContext, executedTools);
+    logInfo(
+      `OpenClaw planning start runId=${request.runId ?? "unknown"} step=${step + 1} executedTools=${executedTools.length} promptChars=${prompt.length}`
+    );
     const result = yield* collectOpenClawStream(
       request,
       config,
-      buildOpenClawPrompt(request, toolContext, executedTools),
+      prompt,
       sessionId,
       runCommandStream,
       logInfo,
@@ -281,6 +311,7 @@ export async function* runOpenClawCliRequestStream(
       toolName: plannedToolCall.name,
       callId
     };
+    const toolStartedAt = Date.now();
     const toolResult = await executePlannedToolCall(
       plannedToolCall,
       request,
@@ -288,7 +319,7 @@ export async function* runOpenClawCliRequestStream(
       executeTool
     );
     logInfo(
-      `OpenClaw tool result runId=${request.runId ?? "unknown"} tool=${plannedToolCall.name} classification=${toolResult.classification}${summarizeToolResultForLog(toolResult)}`
+      `OpenClaw tool result runId=${request.runId ?? "unknown"} tool=${plannedToolCall.name} classification=${toolResult.classification} elapsedMs=${Date.now() - toolStartedAt}${summarizeToolResultForLog(toolResult)}`
     );
     yield {
       type: "tool_result",
@@ -315,7 +346,11 @@ async function* collectOpenClawStream(
   let exitCode: number | null = null;
   let chunkCount = 0;
   let deltaCount = 0;
+  let firstStdoutLogged = false;
   const startedAt = Date.now();
+  logInfo(
+    `OpenClaw command stream start runId=${request.runId ?? "unknown"} command=${config.openClawCommand} agent=${config.openClawAgent} promptChars=${prompt.length}`
+  );
 
   for await (const event of withHeartbeat(
     runCommandStream(
@@ -345,6 +380,12 @@ async function* collectOpenClawStream(
     if (event.type === "stdout") {
       chunkCount += 1;
       stdout += event.text;
+      if (!firstStdoutLogged) {
+        firstStdoutLogged = true;
+        logInfo(
+          `OpenClaw command stream first_stdout runId=${request.runId ?? "unknown"} elapsedMs=${Date.now() - startedAt} bytes=${new TextEncoder().encode(event.text).length} chars=${event.text.length}`
+        );
+      }
       logStreamDebug(config, logInfo, "stdout chunk", {
         runId: request.runId ?? "unknown",
         elapsedMs: Date.now() - startedAt,
@@ -379,6 +420,9 @@ async function* collectOpenClawStream(
     stdoutChars: stdout.length,
     exitCode: exitCode ?? "unknown"
   });
+  logInfo(
+    `OpenClaw command stream finish runId=${request.runId ?? "unknown"} elapsedMs=${Date.now() - startedAt} exitCode=${exitCode ?? "unknown"} chunkCount=${chunkCount} deltaCount=${deltaCount} stdoutChars=${stdout.length}`
+  );
 
   if (exitCode !== 0) {
     const partialText = extractOpenClawText(stdout);
@@ -528,12 +572,18 @@ export function openClawEnv(config: RuntimeConfig): Record<string, string> {
 async function buildBurbleToolContext(
   request: RunRequest,
   config: RuntimeConfig,
-  executeTool: ToolExecutor
+  executeTool: ToolExecutor,
+  logInfo: RuntimeLogger
 ): Promise<BurbleToolContext> {
+  const startedAt = Date.now();
+  logInfo(`OpenClaw context start runId=${request.runId ?? "unknown"}`);
   const [baseline, catalogBuild] = await Promise.all([
     runBurbleRequest(request, config, executeTool),
     buildToolCatalog(request, executeTool)
   ]);
+  logInfo(
+    `OpenClaw context finish runId=${request.runId ?? "unknown"} elapsedMs=${Date.now() - startedAt} catalogTools=${catalogBuild.catalog.length} upstreamSchemas=${Object.keys(catalogBuild.upstreamMcpSchemas).length} baselineClassification=${baseline.response.classification}`
+  );
 
   return {
     baseline,
