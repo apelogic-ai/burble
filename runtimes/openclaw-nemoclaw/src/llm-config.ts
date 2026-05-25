@@ -40,6 +40,18 @@ export function buildOpenClawLlmPatch(input: OpenClawPatchInput): string {
           [modelRef]: {
             alias: modelAlias(parsed.provider)
           }
+        },
+        heartbeat: {
+          every: "0m"
+        }
+      }
+    },
+    gateway: {
+      http: {
+        endpoints: {
+          responses: {
+            enabled: true
+          }
         }
       }
     },

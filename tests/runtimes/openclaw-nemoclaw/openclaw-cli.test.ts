@@ -43,6 +43,43 @@ function readSessionIdArg(args: string[]): string {
   return args[index + 1] ?? "";
 }
 
+async function withMockFetch<T>(
+  mock: typeof fetch,
+  run: () => Promise<T>
+): Promise<T> {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = mock;
+  try {
+    return await run();
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+}
+
+function openResponsesText(text: string, usage = {
+  input_tokens: 100,
+  output_tokens: 20,
+  total_tokens: 120
+}): Record<string, unknown> {
+  return {
+    id: "resp_test",
+    object: "response",
+    created_at: 1,
+    status: "completed",
+    model: "openclaw/main",
+    output: [
+      {
+        type: "message",
+        id: "msg_test",
+        role: "assistant",
+        content: [{ type: "output_text", text }],
+        status: "completed"
+      }
+    ],
+    usage
+  };
+}
+
 describe("runOpenClawCliRequest", () => {
   test("runs OpenClaw CLI with gateway-derived context", async () => {
     const commands: Array<{
@@ -267,27 +304,11 @@ describe("runOpenClawCliRequest", () => {
     const logs: string[] = [];
     clearGatewayDiagnosticText();
 
-    await runOpenClawCliRequest(
-      {
-        runId: "run-gateway-diagnostics",
-        input: {
-          text: "prioritize my GitHub work",
-          connections: {
-            github: {
-              connected: true,
-              email: "person@example.com",
-              providerLogin: "octocat"
-            }
-          }
-        }
-      },
-      { ...config, engine: "openclaw-gateway" },
-      async () => ({
-        classification: "user_private",
-        content: []
-      }),
-      async (_command, args) => {
-        const sessionId = args[args.indexOf("--session-id") + 1];
+    await withMockFetch(
+      (async (_input, init) => {
+        const sessionKey = (init?.headers as Record<string, string>)[
+          "x-openclaw-session-key"
+        ];
         recordGatewayDiagnosticText(
           [
             "[agent/embedded] embedded run start: runId=heartbeat sessionId=sidecar-heartbeat provider=openai model=gpt-5.4 thinking=medium messageChannel=heartbeat",
@@ -295,24 +316,48 @@ describe("runOpenClawCliRequest", () => {
             "[provider-transport-fetch] [model-fetch] start provider=openai api=openai-responses model=gpt-5.4",
             "[openai-transport] [responses] stream_done provider=openai api=openai-responses model=gpt-5.4 elapsedMs=2482 events=15",
             "[agent/embedded] embedded run done: runId=heartbeat sessionId=sidecar-heartbeat durationMs=5938 aborted=false",
-            `[agent/embedded] embedded run start: runId=user-run sessionId=${sessionId} provider=openai model=gpt-5.4 thinking=medium messageChannel=webchat`,
+            `[agent/embedded] embedded run start: runId=user-run sessionKey=${sessionKey} provider=openai model=gpt-5.4 thinking=medium messageChannel=webchat`,
             "[openai-transport] [responses] start provider=openai api=openai-responses model=gpt-5.4",
             "[provider-transport-fetch] [model-fetch] start provider=openai api=openai-responses model=gpt-5.4",
             "[openai-transport] [responses] stream_done provider=openai api=openai-responses model=gpt-5.4 elapsedMs=6929 events=123",
-            `[agent/embedded] embedded run done: runId=user-run sessionId=${sessionId} durationMs=12226 aborted=false`
+            `[agent/embedded] embedded run done: runId=user-run sessionKey=${sessionKey} durationMs=12226 aborted=false`
           ].join("\n")
         );
-        return {
-          exitCode: 0,
-          stdout: JSON.stringify({ response: { text: "Done." } }),
-          stderr: ""
-        };
-      },
-      (message) => logs.push(message)
+        return new Response(JSON.stringify(openResponsesText("Done.")), {
+          status: 200,
+          headers: { "content-type": "application/json" }
+        });
+      }) as typeof fetch,
+      async () => {
+        await runOpenClawCliRequest(
+          {
+            runId: "run-gateway-diagnostics",
+            input: {
+              text: "prioritize my GitHub work",
+              connections: {
+                github: {
+                  connected: true,
+                  email: "person@example.com",
+                  providerLogin: "octocat"
+                }
+              }
+            }
+          },
+          { ...config, engine: "openclaw-gateway" },
+          async () => ({
+            classification: "user_private",
+            content: []
+          }),
+          async () => {
+            throw new Error("unexpected cli call");
+          },
+          (message) => logs.push(message)
+        );
+      }
     );
 
     expect(logs).toContain(
-      "OpenClaw model usage diagnostics runId=run-gateway-diagnostics step=1 modelStarts=1 fetchStarts=1 streamDone=1 streamDoneElapsedMs=6929 streamDoneEvents=123 compactions=0 exactUsageFields=0 exactUsageAvailable=false rawStreamBytes=0"
+      "OpenClaw model usage diagnostics runId=run-gateway-diagnostics step=1 modelStarts=1 fetchStarts=1 streamDone=1 streamDoneElapsedMs=6929 streamDoneEvents=123 compactions=0 exactUsageFields=3 exactUsageAvailable=true rawStreamBytes=0"
     );
     clearGatewayDiagnosticText();
   });
@@ -1521,35 +1566,56 @@ describe("runOpenClawCliRequest", () => {
 
   test("can invoke OpenClaw through Gateway mode without local CLI execution", async () => {
     const commands: Array<{ args: string[] }> = [];
-    const response = await runOpenClawCliRequest(
-      {
-        input: {
-          text: "what can you do?",
-          connections: {
-            github: { connected: false }
-          }
-        }
-      },
-      { ...config, engine: "openclaw-gateway" },
-      async () => {
-        throw new Error("unexpected tool call");
-      },
-      async (_command, args) => {
-        commands.push({ args });
-        return {
-          exitCode: 0,
-          stdout: "Gateway answer.",
-          stderr: ""
-        };
-      },
-      () => undefined
+    const requests: Array<{
+      url: string;
+      headers: Headers;
+      body: Record<string, unknown>;
+    }> = [];
+    const response = await withMockFetch(
+      (async (input, init) => {
+        requests.push({
+          url: String(input),
+          headers: new Headers(init?.headers),
+          body: JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>
+        });
+        return new Response(JSON.stringify(openResponsesText("Gateway answer.")), {
+          status: 200,
+          headers: { "content-type": "application/json" }
+        });
+      }) as typeof fetch,
+      async () =>
+        runOpenClawCliRequest(
+          {
+            input: {
+              text: "what can you do?",
+              connections: {
+                github: { connected: false }
+              }
+            }
+          },
+          { ...config, engine: "openclaw-gateway" },
+          async () => {
+            throw new Error("unexpected tool call");
+          },
+          async (_command, args) => {
+            commands.push({ args });
+            throw new Error("unexpected cli call");
+          },
+          () => undefined
+        )
     );
 
     expect(response.response.text).toBe("Gateway answer.");
-    expect(commands).toHaveLength(1);
-    expect(commands[0].args).toContain("agent");
-    expect(commands[0].args).toContain("--session-id");
-    expect(commands[0].args).not.toContain("--local");
+    expect(commands).toHaveLength(0);
+    expect(requests).toHaveLength(1);
+    expect(requests[0].url).toBe("http://127.0.0.1:18789/v1/responses");
+    expect(requests[0].headers.get("authorization")).toBe("Bearer gateway-token");
+    expect(requests[0].headers.get("x-openclaw-agent-id")).toBe("main");
+    expect(requests[0].headers.get("x-openclaw-session-key")).toStartWith(
+      "agent:main:explicit:burble-step-"
+    );
+    expect(requests[0].body.model).toBe("openclaw/main");
+    expect(requests[0].body.input).toContain("what can you do?");
   });
 
   test("logs stream debug details only when enabled", async () => {

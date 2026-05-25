@@ -23,6 +23,8 @@ describe("buildOpenClawLlmPatch", () => {
     );
 
     expect(patch.agents.defaults.model.primary).toBe("openai/gpt-5.4");
+    expect(patch.agents.defaults.heartbeat.every).toBe("0m");
+    expect(patch.gateway.http.endpoints.responses.enabled).toBe(true);
     expect(patch.logging.file).toBe("/data/openclaw/logs/openclaw.log");
     expect(patch.plugins.allow).toEqual(["openai"]);
     expect(patch.auth.profiles["openai:default"]).toEqual({
