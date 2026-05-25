@@ -202,6 +202,56 @@ describe("runOpenClawCliRequest", () => {
     expect(logs).toContain(
       "OpenClaw usage runId=run-usage step=1 promptApproxTokens=1564 inputTokens=1200 outputTokens=75 totalTokens=1275 cachedInputTokens=300 reasoningTokens=20 source=provider-output"
     );
+    expect(logs).toContain(
+      "OpenClaw model usage diagnostics runId=run-usage step=1 modelStarts=0 fetchStarts=0 streamDone=0 streamDoneElapsedMs=none streamDoneEvents=none compactions=0 exactUsageFields=5 exactUsageAvailable=true"
+    );
+  });
+
+  test("logs OpenClaw internal model usage diagnostics when exact tokens are absent", async () => {
+    const logs: string[] = [];
+
+    await runOpenClawCliRequest(
+      {
+        runId: "run-diagnostics",
+        input: {
+          text: "prioritize my GitHub work",
+          connections: {
+            github: {
+              connected: true,
+              email: "person@example.com",
+              providerLogin: "octocat"
+            }
+          }
+        }
+      },
+      config,
+      async () => ({
+        classification: "user_private",
+        content: []
+      }),
+      async () => ({
+        exitCode: 0,
+        stdout: [
+          "[openai-transport] [responses] start provider=openai api=openai-responses model=gpt-5.4",
+          "[provider-transport-fetch] [model-fetch] start provider=openai api=openai-responses model=gpt-5.4",
+          "[openai-transport] [responses] stream_done provider=openai api=openai-responses model=gpt-5.4 elapsedMs=3522 events=38",
+          "[agent/embedded] [compaction-diag] start runId=session-1",
+          "[openai-transport] [responses] start provider=openai api=openai-responses model=gpt-5.4",
+          "[provider-transport-fetch] [model-fetch] start provider=openai api=openai-responses model=gpt-5.4",
+          "[openai-transport] [responses] stream_done provider=openai api=openai-responses model=gpt-5.4 elapsedMs=29406 events=1731",
+          JSON.stringify({ response: { text: "Done." } })
+        ].join("\n"),
+        stderr: ""
+      }),
+      (message) => logs.push(message)
+    );
+
+    expect(logs).toContain(
+      "OpenClaw usage runId=run-diagnostics step=1 promptApproxTokens=1564 inputTokens=unknown outputTokens=unknown totalTokens=unknown cachedInputTokens=unknown reasoningTokens=unknown source=estimate-only"
+    );
+    expect(logs).toContain(
+      "OpenClaw model usage diagnostics runId=run-diagnostics step=1 modelStarts=2 fetchStarts=2 streamDone=2 streamDoneElapsedMs=3522,29406 streamDoneEvents=38,1731 compactions=1 exactUsageFields=0 exactUsageAvailable=false"
+    );
   });
 
   test("uses isolated OpenClaw sessions for each planning step", async () => {

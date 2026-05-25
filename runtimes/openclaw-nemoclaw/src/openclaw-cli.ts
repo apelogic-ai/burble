@@ -1276,7 +1276,9 @@ function logOpenClawUsageFromOutput(
   stderr: string,
   logInfo: RuntimeLogger
 ): void {
-  const usage = readModelUsage(`${stdout}\n${stderr}`);
+  const output = `${stdout}\n${stderr}`;
+  const usage = readModelUsage(output);
+  const diagnostics = summarizeModelDiagnostics(output);
   logInfo(
     [
       `OpenClaw usage runId=${request.runId ?? "unknown"}`,
@@ -1290,6 +1292,20 @@ function logOpenClawUsageFromOutput(
       `source=${usage ? "provider-output" : "estimate-only"}`
     ].join(" ")
   );
+  logInfo(
+    [
+      `OpenClaw model usage diagnostics runId=${request.runId ?? "unknown"}`,
+      `step=${step}`,
+      `modelStarts=${diagnostics.modelStarts}`,
+      `fetchStarts=${diagnostics.fetchStarts}`,
+      `streamDone=${diagnostics.streamDone}`,
+      `streamDoneElapsedMs=${formatNumberList(diagnostics.streamDoneElapsedMs)}`,
+      `streamDoneEvents=${formatNumberList(diagnostics.streamDoneEvents)}`,
+      `compactions=${diagnostics.compactions}`,
+      `exactUsageFields=${diagnostics.exactUsageFields}`,
+      `exactUsageAvailable=${diagnostics.exactUsageFields > 0 ? "true" : "false"}`
+    ].join(" ")
+  );
 }
 
 type ModelUsage = {
@@ -1301,29 +1317,29 @@ type ModelUsage = {
 };
 
 function readModelUsage(text: string): ModelUsage | null {
-  const inputTokens = readLastNumberField(text, [
+  const inputTokens = readNumberFieldTotal(text, [
     "input_tokens",
     "inputTokens",
     "prompt_tokens",
     "promptTokens"
   ]);
-  const outputTokens = readLastNumberField(text, [
+  const outputTokens = readNumberFieldTotal(text, [
     "output_tokens",
     "outputTokens",
     "completion_tokens",
     "completionTokens"
   ]);
   const totalTokens =
-    readLastNumberField(text, ["total_tokens", "totalTokens"]) ??
+    readNumberFieldTotal(text, ["total_tokens", "totalTokens"]) ??
     (typeof inputTokens === "number" && typeof outputTokens === "number"
       ? inputTokens + outputTokens
       : undefined);
-  const cachedInputTokens = readLastNumberField(text, [
+  const cachedInputTokens = readNumberFieldTotal(text, [
     "cached_tokens",
     "cachedInputTokens",
     "cache_read_input_tokens"
   ]);
-  const reasoningTokens = readLastNumberField(text, [
+  const reasoningTokens = readNumberFieldTotal(text, [
     "reasoning_tokens",
     "reasoningTokens"
   ]);
@@ -1347,16 +1363,82 @@ function readModelUsage(text: string): ModelUsage | null {
   };
 }
 
-function readLastNumberField(text: string, fieldNames: string[]): number | undefined {
-  let value: number | undefined;
+type ModelDiagnostics = {
+  modelStarts: number;
+  fetchStarts: number;
+  streamDone: number;
+  streamDoneElapsedMs: number[];
+  streamDoneEvents: number[];
+  compactions: number;
+  exactUsageFields: number;
+};
+
+function summarizeModelDiagnostics(text: string): ModelDiagnostics {
+  const streamDoneLines = text
+    .split(/\r?\n/)
+    .filter((line) => line.includes("[openai-transport] [responses] stream_done"));
+
+  return {
+    modelStarts: countOccurrences(text, "[openai-transport] [responses] start"),
+    fetchStarts: countOccurrences(text, "[provider-transport-fetch] [model-fetch] start"),
+    streamDone: streamDoneLines.length,
+    streamDoneElapsedMs: streamDoneLines
+      .map((line) => readFirstNumberField(line, ["elapsedMs"]))
+      .filter((value): value is number => typeof value === "number"),
+    streamDoneEvents: streamDoneLines
+      .map((line) => readFirstNumberField(line, ["events"]))
+      .filter((value): value is number => typeof value === "number"),
+    compactions: countOccurrences(text, "[compaction-diag] start"),
+    exactUsageFields: countUsageFieldOccurrences(text)
+  };
+}
+
+function readNumberFieldTotal(text: string, fieldNames: string[]): number | undefined {
+  const values = readNumberFields(text, fieldNames);
+  return values.length ? values.reduce((total, value) => total + value, 0) : undefined;
+}
+
+function readFirstNumberField(text: string, fieldNames: string[]): number | undefined {
+  return readNumberFields(text, fieldNames)[0];
+}
+
+function readNumberFields(text: string, fieldNames: string[]): number[] {
+  const values: number[] = [];
   for (const fieldName of fieldNames) {
     const escapedField = fieldName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     const regex = new RegExp(`["']?${escapedField}["']?\\s*[:=]\\s*(\\d+)`, "gi");
     for (const match of text.matchAll(regex)) {
-      value = Number.parseInt(match[1] ?? "", 10);
+      const value = Number.parseInt(match[1] ?? "", 10);
+      if (Number.isInteger(value)) {
+        values.push(value);
+      }
     }
   }
-  return value;
+  return values;
+}
+
+function countUsageFieldOccurrences(text: string): number {
+  return readNumberFields(text, [
+    "input_tokens",
+    "inputTokens",
+    "prompt_tokens",
+    "promptTokens",
+    "output_tokens",
+    "outputTokens",
+    "completion_tokens",
+    "completionTokens",
+    "total_tokens",
+    "totalTokens",
+    "cached_tokens",
+    "cachedInputTokens",
+    "cache_read_input_tokens",
+    "reasoning_tokens",
+    "reasoningTokens"
+  ]).length;
+}
+
+function countOccurrences(text: string, pattern: string): number {
+  return text.split(pattern).length - 1;
 }
 
 function estimateTokens(text: string): number {
@@ -1365,6 +1447,10 @@ function estimateTokens(text: string): number {
 
 function formatUsageNumber(value: number | undefined): string {
   return typeof value === "number" ? String(value) : "unknown";
+}
+
+function formatNumberList(values: number[]): string {
+  return values.length ? values.join(",") : "none";
 }
 
 function summarizePromptForLog(prompt: string): string {
