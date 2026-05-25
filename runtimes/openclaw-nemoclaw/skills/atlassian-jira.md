@@ -26,6 +26,11 @@ For Jira issue creation/editing, first resolve site, project, issue type, and
 user identifiers with available Atlassian MCP lookup tools when required by the
 schema.
 
+When an upstream Jira MCP schema requires `cloudId`, first call
+`getAccessibleAtlassianResources` and use that tool result's resource `id`
+exactly. Do not use the Atlassian site hostname, base URL, or display URL as
+`cloudId`.
+
 When a user provides an assignee email, use that email for Jira account lookup
 before trying the display name.
 

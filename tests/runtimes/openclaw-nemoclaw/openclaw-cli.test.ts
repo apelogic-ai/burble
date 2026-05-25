@@ -460,6 +460,83 @@ describe("runOpenClawCliRequest", () => {
     ).toBe(false);
   });
 
+  test("rejects Atlassian hostnames used as Jira MCP cloudId values", async () => {
+    const toolCalls: Array<{ toolName: string; body: unknown }> = [];
+    const prompts: string[] = [];
+    const response = await runOpenClawCliRequest(
+      {
+        input: {
+          text: "create new Jira ticket in DM workspace, titled 'test ticket from slack'",
+          connections: {
+            github: { connected: false },
+            jira: {
+              connected: true,
+              email: "person@example.com",
+              providerLogin: "person@atlassian.example"
+            }
+          }
+        }
+      },
+      config,
+      async (toolName, body) => {
+        toolCalls.push({ toolName, body });
+        if (toolName === "atlassian.listMcpTools") {
+          return {
+            classification: "user_private",
+            content: [
+              {
+                name: "getVisibleJiraProjects",
+                inputSchema: {
+                  type: "object",
+                  properties: {
+                    cloudId: { type: "string" },
+                    searchString: { type: "string" },
+                    action: { type: "string" },
+                    expandIssueTypes: { type: "boolean" }
+                  },
+                  required: ["cloudId"]
+                }
+              }
+            ]
+          };
+        }
+        throw new Error(`Unexpected provider call: ${toolName}`);
+      },
+      async (_command, args) => {
+        const prompt = args[args.indexOf("--message") + 1];
+        prompts.push(prompt);
+        return prompt.includes("Burble executed tools:") &&
+          prompt.includes("not a hostname or URL")
+          ? {
+              exitCode: 0,
+              stdout:
+                "I need to resolve the Atlassian site id before creating the Jira ticket.",
+              stderr: ""
+            }
+          : openClawToolCall("atlassian.callMcpTool", {
+              name: "getVisibleJiraProjects",
+              arguments: {
+                cloudId: "apegpt.atlassian.net",
+                searchString: "DM",
+                action: "create",
+                expandIssueTypes: true
+              }
+            });
+      },
+      () => undefined
+    );
+
+    expect(response.response.text).toBe(
+      "I need to resolve the Atlassian site id before creating the Jira ticket."
+    );
+    expect(prompts).toHaveLength(2);
+    expect(prompts[1]).toContain("not a hostname or URL");
+    expect(prompts[1]).toContain("getAccessibleAtlassianResources");
+    expect(
+      toolCalls.some((call) => call.toolName === "atlassian.callMcpTool")
+    ).toBe(false);
+  });
+
   test("lets OpenClaw chain multiple Atlassian MCP calls for a Jira action", async () => {
     const toolCalls: Array<{ toolName: string; body: unknown }> = [];
     const prompts: string[] = [];

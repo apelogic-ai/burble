@@ -873,6 +873,11 @@ function validatePlannedToolCall(
     !Array.isArray(toolCall.arguments.arguments)
       ? (toolCall.arguments.arguments as Record<string, unknown>)
       : {};
+  const cloudIdError = validateCloudIdArgument(upstreamToolName, upstreamArguments);
+  if (cloudIdError) {
+    return cloudIdError;
+  }
+
   const missing = required.filter(
     (field) => !hasPresentSchemaValue(upstreamArguments, field)
   );
@@ -887,6 +892,33 @@ function validatePlannedToolCall(
       message: `The planned Atlassian MCP call \`${upstreamToolName}\` is missing required arguments: ${missing.join(", ")}. Use available lookup tools to resolve them, or ask one concise clarifying question before calling \`${upstreamToolName}\`.`
     }
   };
+}
+
+function validateCloudIdArgument(
+  upstreamToolName: string,
+  upstreamArguments: Record<string, unknown>
+): ToolResult | null {
+  const cloudId = upstreamArguments.cloudId;
+  if (typeof cloudId !== "string" || !looksLikeAtlassianSiteLocator(cloudId)) {
+    return null;
+  }
+
+  return {
+    classification: "user_private",
+    content: {
+      error: "mcp_schema_validation_failed",
+      message: `The planned Atlassian MCP call \`${upstreamToolName}\` uses \`${cloudId}\` as cloudId, but cloudId must be the resource id returned by \`getAccessibleAtlassianResources\`, not a hostname or URL. Call \`getAccessibleAtlassianResources\` and retry with its id.`
+    }
+  };
+}
+
+function looksLikeAtlassianSiteLocator(value: string): boolean {
+  const trimmed = value.trim().toLowerCase();
+  return (
+    /^https?:\/\//.test(trimmed) ||
+    trimmed.includes(".atlassian.net") ||
+    /^[a-z0-9-]+\.[a-z0-9.-]+$/.test(trimmed)
+  );
 }
 
 function readRequiredSchemaFields(schema: unknown): string[] {
