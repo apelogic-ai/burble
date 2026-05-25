@@ -34,6 +34,7 @@ const preloadedRuntimeSkills = preloadedRuntimeSkillNames
 
 export type CliCommandStreamEvent =
   | { type: "stdout"; text: string }
+  | { type: "stderr"; text: string }
   | { type: "exit"; exitCode: number };
 
 export type CliCommandStreamer = (
@@ -198,23 +199,28 @@ async function runOpenClawCommand(
   step: number
 ): Promise<CliCommandResult> {
   const startedAt = Date.now();
+  const args = buildOpenClawArgs(config, prompt, sessionId);
+  const env = openClawEnv(config);
   logInfo(
-    `OpenClaw command start runId=${request.runId ?? "unknown"} step=${step} command=${config.openClawCommand} agent=${config.openClawAgent} promptChars=${prompt.length}`
+    `OpenClaw command start runId=${request.runId ?? "unknown"} step=${step} command=${config.openClawCommand} agent=${config.openClawAgent} timeoutMs=${config.openClawTimeoutMs}${summarizePromptForLog(prompt)}${summarizeOpenClawArgsForLog(args)}${summarizeLogObject("env", env)}`
   );
   const result = await runCommand(
     config.openClawCommand,
-    buildOpenClawArgs(config, prompt, sessionId),
+    args,
     {
       timeoutMs: config.openClawTimeoutMs,
-      env: openClawEnv(config)
+      env
     }
   );
 
   if (result.exitCode !== 0) {
+    logInfo(
+      `OpenClaw command error runId=${request.runId ?? "unknown"} step=${step} exitCode=${result.exitCode}${summarizeLogObject("stdoutPreview", result.stdout)}${summarizeLogObject("stderrPreview", result.stderr)}`
+    );
     throw new Error(`OpenClaw CLI exited with code ${result.exitCode}`);
   }
   logInfo(
-    `OpenClaw command finish runId=${request.runId ?? "unknown"} step=${step} elapsedMs=${Date.now() - startedAt} stdoutChars=${result.stdout.length} stderrChars=${result.stderr.length}`
+    `OpenClaw command finish runId=${request.runId ?? "unknown"} step=${step} elapsedMs=${Date.now() - startedAt} stdoutChars=${result.stdout.length} stderrChars=${result.stderr.length}${summarizeLogObject("stderrPreview", result.stderr)}`
   );
   return result;
 }
@@ -369,22 +375,33 @@ async function* collectOpenClawStream(
   emitDeltas: boolean
 ): AsyncGenerator<RunEvent, { stdout: string }, void> {
   let stdout = "";
+  let stderr = "";
   let exitCode: number | null = null;
   let chunkCount = 0;
+  let stderrChunkCount = 0;
   let deltaCount = 0;
   let firstStdoutLogged = false;
+  let firstStderrLogged = false;
   const startedAt = Date.now();
+  const args = buildOpenClawArgs(config, prompt, sessionId);
+  const env = openClawEnv(config);
   logInfo(
-    `OpenClaw command stream start runId=${request.runId ?? "unknown"} command=${config.openClawCommand} agent=${config.openClawAgent} promptChars=${prompt.length}`
+    `OpenClaw command stream start runId=${request.runId ?? "unknown"} command=${config.openClawCommand} agent=${config.openClawAgent} engine=${config.engine} timeoutMs=${config.openClawTimeoutMs}${summarizePromptForLog(prompt)}${summarizeOpenClawArgsForLog(args)}${summarizeLogObject("env", env)}`
   );
+  logStreamDebug(config, logInfo, "prompt preview", {
+    runId: request.runId ?? "unknown",
+    promptHash: hashLogValue(prompt),
+    chars: prompt.length,
+    preview: prompt
+  });
 
   for await (const event of withHeartbeat(
     runCommandStream(
       config.openClawCommand,
-      buildOpenClawArgs(config, prompt, sessionId),
+      args,
       {
         timeoutMs: config.openClawTimeoutMs,
-        env: openClawEnv(config)
+        env
       }
     ),
     heartbeatMs
@@ -398,7 +415,11 @@ async function* collectOpenClawStream(
       };
       logStreamDebug(config, logInfo, "heartbeat", {
         runId: request.runId ?? "unknown",
-        elapsedMs: Date.now() - startedAt
+        elapsedMs: Date.now() - startedAt,
+        stdoutChunks: chunkCount,
+        stderrChunks: stderrChunkCount,
+        stdoutChars: stdout.length,
+        stderrChars: stderr.length
       });
       continue;
     }
@@ -435,6 +456,26 @@ async function* collectOpenClawStream(
       continue;
     }
 
+    if (event.type === "stderr") {
+      stderrChunkCount += 1;
+      stderr += event.text;
+      if (!firstStderrLogged) {
+        firstStderrLogged = true;
+        logInfo(
+          `OpenClaw command stream first_stderr runId=${request.runId ?? "unknown"} elapsedMs=${Date.now() - startedAt} bytes=${new TextEncoder().encode(event.text).length} chars=${event.text.length}`
+        );
+      }
+      logStreamDebug(config, logInfo, "stderr chunk", {
+        runId: request.runId ?? "unknown",
+        elapsedMs: Date.now() - startedAt,
+        chunkCount: stderrChunkCount,
+        bytes: new TextEncoder().encode(event.text).length,
+        chars: event.text.length,
+        preview: event.text
+      });
+      continue;
+    }
+
     exitCode = event.exitCode;
   }
 
@@ -442,12 +483,14 @@ async function* collectOpenClawStream(
     runId: request.runId ?? "unknown",
     elapsedMs: Date.now() - startedAt,
     chunkCount,
+    stderrChunkCount,
     deltaCount,
     stdoutChars: stdout.length,
+    stderrChars: stderr.length,
     exitCode: exitCode ?? "unknown"
   });
   logInfo(
-    `OpenClaw command stream finish runId=${request.runId ?? "unknown"} elapsedMs=${Date.now() - startedAt} exitCode=${exitCode ?? "unknown"} chunkCount=${chunkCount} deltaCount=${deltaCount} stdoutChars=${stdout.length}`
+    `OpenClaw command stream finish runId=${request.runId ?? "unknown"} elapsedMs=${Date.now() - startedAt} exitCode=${exitCode ?? "unknown"} stdoutChunks=${chunkCount} stderrChunks=${stderrChunkCount} deltaCount=${deltaCount} stdoutChars=${stdout.length} stderrChars=${stderr.length}${summarizeLogObject("stderrPreview", stderr)}`
   );
 
   if (exitCode !== 0) {
@@ -459,7 +502,9 @@ async function* collectOpenClawStream(
       return { stdout };
     }
 
-    throw new Error(`OpenClaw CLI exited with code ${exitCode ?? "unknown"}`);
+    throw new Error(
+      `OpenClaw CLI exited with code ${exitCode ?? "unknown"}${stderr ? `: ${truncate(redactPreview(stderr), 300)}` : ""}`
+    );
   }
 
   return { stdout };
@@ -549,7 +594,6 @@ export async function* runCliCommandStream(
       ...options.env
     }
   });
-  const stderr = new Response(proc.stderr).text();
   let timedOut = false;
   const timer = setTimeout(() => {
     timedOut = true;
@@ -557,27 +601,47 @@ export async function* runCliCommandStream(
   }, options.timeoutMs);
 
   try {
-    const reader = proc.stdout.getReader();
-    const decoder = new TextDecoder();
-    while (true) {
-      const result = await reader.read();
-      if (result.done) {
-        break;
+    const stdoutReader = proc.stdout.getReader();
+    const stderrReader = proc.stderr.getReader();
+    const stdoutDecoder = new TextDecoder();
+    const stderrDecoder = new TextDecoder();
+    let stdoutNext: Promise<DecodedStreamChunk> | null = readDecodedStreamChunk(
+      "stdout",
+      stdoutReader,
+      stdoutDecoder
+    );
+    let stderrNext: Promise<DecodedStreamChunk> | null = readDecodedStreamChunk(
+      "stderr",
+      stderrReader,
+      stderrDecoder
+    );
+
+    while (stdoutNext || stderrNext) {
+      const pending = [stdoutNext, stderrNext].filter(
+        (item): item is Promise<DecodedStreamChunk> => Boolean(item)
+      );
+      const result = await Promise.race(pending);
+      if (result.text) {
+        yield {
+          type: result.stream,
+          text: result.text
+        };
       }
 
-      yield {
-        type: "stdout",
-        text: decoder.decode(result.value, { stream: true })
-      };
-    }
-
-    const remaining = decoder.decode();
-    if (remaining) {
-      yield { type: "stdout", text: remaining };
+      if (result.done) {
+        if (result.stream === "stdout") {
+          stdoutNext = null;
+        } else {
+          stderrNext = null;
+        }
+      } else if (result.stream === "stdout") {
+        stdoutNext = readDecodedStreamChunk("stdout", stdoutReader, stdoutDecoder);
+      } else {
+        stderrNext = readDecodedStreamChunk("stderr", stderrReader, stderrDecoder);
+      }
     }
 
     const exitCode = await proc.exited;
-    await stderr;
     if (timedOut) {
       throw new Error("OpenClaw CLI timed out");
     }
@@ -586,6 +650,33 @@ export async function* runCliCommandStream(
   } finally {
     clearTimeout(timer);
   }
+}
+
+type DecodedStreamChunk = {
+  stream: "stdout" | "stderr";
+  done: boolean;
+  text: string;
+};
+
+async function readDecodedStreamChunk(
+  stream: "stdout" | "stderr",
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+  decoder: TextDecoder
+): Promise<DecodedStreamChunk> {
+  const result = await reader.read();
+  if (result.done) {
+    return {
+      stream,
+      done: true,
+      text: decoder.decode()
+    };
+  }
+
+  return {
+    stream,
+    done: false,
+    text: decoder.decode(result.value, { stream: true })
+  };
 }
 
 export function openClawEnv(config: RuntimeConfig): Record<string, string> {
@@ -1146,6 +1237,31 @@ function summarizeToolResultForLog(result: ToolResult): string {
   return summarizeLogObject("result", result.content);
 }
 
+function summarizePromptForLog(prompt: string): string {
+  return ` promptChars=${prompt.length} promptHash=${hashLogValue(prompt)}`;
+}
+
+function summarizeOpenClawArgsForLog(args: string[]): string {
+  const sanitizedArgs: string[] = [];
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index];
+    sanitizedArgs.push(arg);
+    if (arg === "--message") {
+      const message = args[index + 1] ?? "";
+      sanitizedArgs.push(
+        `[prompt:${message.length}:${hashLogValue(message)}]`
+      );
+      index += 1;
+    }
+  }
+
+  return summarizeLogObject("args", sanitizedArgs);
+}
+
+function hashLogValue(value: string): string {
+  return createHash("sha256").update(value).digest("hex").slice(0, 16);
+}
+
 function summarizeLogObject(label: string, value: unknown): string {
   return ` ${label}=${JSON.stringify(sanitizeLogValue(value, 0))}`;
 }
@@ -1183,7 +1299,7 @@ function sanitizeLogValue(value: unknown, depth: number): unknown {
 
 function sanitizeLogString(value: string): string {
   return truncate(
-    value.replace(
+    redactLogSecrets(value).replace(
       /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi,
       (email) => redactEmail(email)
     ),
@@ -1363,13 +1479,21 @@ function logStreamDebug(
 }
 
 function redactPreview(value: string): string {
+  return redactLogSecrets(value)
+    .replace(
+      /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi,
+      (email) => redactEmail(email)
+    )
+    .replace(/\s+/g, " ")
+    .slice(0, 180);
+}
+
+function redactLogSecrets(value: string): string {
   return value
     .replace(/sk-[A-Za-z0-9_-]{12,}/g, "[redacted-openai-key]")
     .replace(/xox[baprs]-[A-Za-z0-9-]+/g, "[redacted-slack-token]")
     .replace(/gh[pousr]_[A-Za-z0-9_]+/g, "[redacted-github-token]")
-    .replace(/burble_rt_[a-f0-9]+/g, "[redacted-runtime-token]")
-    .replace(/\s+/g, " ")
-    .slice(0, 180);
+    .replace(/burble_rt_[a-f0-9]+/g, "[redacted-runtime-token]");
 }
 
 function parseJsonObject(value: string): Record<string, unknown> | null {

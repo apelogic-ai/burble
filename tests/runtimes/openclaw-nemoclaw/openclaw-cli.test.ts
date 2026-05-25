@@ -1226,6 +1226,10 @@ describe("runOpenClawCliRequest", () => {
       }),
       async function* () {
         yield {
+          type: "stderr" as const,
+          text: "trace sk-stderrsecretsecret\n"
+        };
+        yield {
           type: "stdout" as const,
           text: "partial sk-secretsecretsecret output\n"
         };
@@ -1240,9 +1244,11 @@ describe("runOpenClawCliRequest", () => {
       true
     );
     expect(logs.join("\n")).toContain("event=stdout chunk");
+    expect(logs.join("\n")).toContain("event=stderr chunk");
     expect(logs.join("\n")).toContain("event=delta parsed");
     expect(logs.join("\n")).toContain("[redacted-openai-key]");
     expect(logs.join("\n")).not.toContain("sk-secretsecretsecret");
+    expect(logs.join("\n")).not.toContain("sk-stderrsecretsecret");
   });
 
   test("emits heartbeat status events while waiting for OpenClaw stdout", async () => {
