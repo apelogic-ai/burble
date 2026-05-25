@@ -216,6 +216,133 @@ describe("createJiraTools", () => {
     expect(JSON.stringify(result)).not.toContain("jira-token");
   });
 
+  test("searches Jira users with sanitized content", async () => {
+    const tools = createJiraTools({
+      getJiraUser: async () => ({
+        accountId: "account-123",
+        displayName: "Person Example"
+      }),
+      searchJiraUsers: async (token, query) => {
+        expect(token).toBe("jira-token");
+        expect(query).toBe("alex.reviewer@example.com");
+        return [
+          {
+            accountId: "acct-boris",
+            displayName: "Alex Reviewer",
+            emailAddress: "alex.reviewer@example.com"
+          }
+        ];
+      },
+      listAssignedJiraIssues: async () => [],
+      searchJiraIssues: async () => []
+    });
+
+    const result = await tools.searchUsers.execute({
+      connection,
+      input: { query: "alex.reviewer@example.com" }
+    });
+
+    expect(result).toEqual({
+      classification: "user_private",
+      content: [
+        {
+          accountId: "acct-boris",
+          displayName: "Alex Reviewer",
+          emailAddress: "alex.reviewer@example.com"
+        }
+      ]
+    });
+    expect(JSON.stringify(result)).not.toContain("jira-token");
+  });
+
+  test("creates Jira issues with sanitized content", async () => {
+    const tools = createJiraTools({
+      getJiraUser: async () => ({
+        accountId: "account-123",
+        displayName: "Person Example"
+      }),
+      createJiraIssue: async (token, input) => {
+        expect(token).toBe("jira-token");
+        expect(input).toEqual({
+          projectKey: "DM",
+          issueTypeName: "Task",
+          summary: "test ticket from slack",
+          assigneeAccountId: "acct-boris"
+        });
+        return {
+          key: "DM-100",
+          summary: input.summary,
+          url: "https://example.atlassian.net/browse/DM-100"
+        };
+      },
+      listAssignedJiraIssues: async () => [],
+      searchJiraIssues: async () => []
+    });
+
+    const result = await tools.createIssue.execute({
+      connection,
+      input: {
+        projectKey: "DM",
+        issueTypeName: "Task",
+        summary: "test ticket from slack",
+        assigneeAccountId: "acct-boris"
+      }
+    });
+
+    expect(result).toEqual({
+      classification: "user_private",
+      content: {
+        key: "DM-100",
+        title: "test ticket from slack",
+        url: "https://example.atlassian.net/browse/DM-100"
+      }
+    });
+    expect(JSON.stringify(result)).not.toContain("jira-token");
+  });
+
+  test("edits Jira issues with sanitized content", async () => {
+    const tools = createJiraTools({
+      getJiraUser: async () => ({
+        accountId: "account-123",
+        displayName: "Person Example"
+      }),
+      editJiraIssue: async (token, input) => {
+        expect(token).toBe("jira-token");
+        expect(input).toEqual({
+          issueKey: "DM-100",
+          summary: "updated title",
+          assigneeAccountId: null
+        });
+        return {
+          key: "DM-100",
+          summary: "updated title",
+          url: "https://example.atlassian.net/browse/DM-100"
+        };
+      },
+      listAssignedJiraIssues: async () => [],
+      searchJiraIssues: async () => []
+    });
+
+    const result = await tools.editIssue.execute({
+      connection,
+      input: {
+        issueKey: "DM-100",
+        summary: "updated title",
+        assigneeAccountId: null
+      }
+    });
+
+    expect(result).toEqual({
+      classification: "user_private",
+      content: {
+        key: "DM-100",
+        title: "updated title",
+        url: "https://example.atlassian.net/browse/DM-100"
+      }
+    });
+    expect(JSON.stringify(result)).not.toContain("jira-token");
+  });
+
   test("refreshes an expired Jira token and persists the rotated token", async () => {
     const saved: ProviderConnection[] = [];
     const tools = createJiraTools({

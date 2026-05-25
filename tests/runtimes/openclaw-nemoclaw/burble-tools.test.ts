@@ -201,6 +201,27 @@ describe("createBurbleToolExecutor", () => {
         user: { email: "person@example.com" },
         input: { query: "DM", action: "create", expandIssueTypes: true }
       });
+      await executor("jira.searchUsers", {
+        user: { email: "person@example.com" },
+        input: { query: "alex.reviewer@example.com" }
+      });
+      await executor("jira.createIssue", {
+        user: { email: "person@example.com" },
+        input: {
+          projectKey: "DM",
+          issueTypeName: "Task",
+          summary: "test ticket from slack",
+          assigneeAccountId: "acct-boris"
+        }
+      });
+      await executor("jira.editIssue", {
+        user: { email: "person@example.com" },
+        input: {
+          issueKey: "DM-100",
+          summary: "updated title",
+          assigneeAccountId: null
+        }
+      });
       await executor("atlassian.listMcpTools", {
         user: { email: "person@example.com" }
       });
@@ -248,6 +269,36 @@ describe("createBurbleToolExecutor", () => {
               query: "DM",
               action: "create",
               expandIssueTypes: true
+            }
+          }
+        },
+        {
+          method: "tools/call",
+          params: {
+            name: "jira_search_users",
+            arguments: { query: "alex.reviewer@example.com" }
+          }
+        },
+        {
+          method: "tools/call",
+          params: {
+            name: "jira_create_issue",
+            arguments: {
+              projectKey: "DM",
+              issueTypeName: "Task",
+              summary: "test ticket from slack",
+              assigneeAccountId: "acct-boris"
+            }
+          }
+        },
+        {
+          method: "tools/call",
+          params: {
+            name: "jira_edit_issue",
+            arguments: {
+              issueKey: "DM-100",
+              summary: "updated title",
+              assigneeAccountId: null
             }
           }
         },

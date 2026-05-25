@@ -2,11 +2,14 @@ import { describe, expect, test } from "bun:test";
 import type { Config } from "../src/config";
 import {
   buildJiraOAuthUrl,
+  createJiraIssue,
+  editJiraIssue,
   exchangeJiraCode,
   getJiraUser,
   listAssignedJiraIssues,
   listVisibleJiraProjects,
   refreshJiraAccessToken,
+  searchJiraUsers,
   searchJiraIssues
 } from "../src/jira";
 
@@ -328,5 +331,152 @@ describe("Jira OAuth and REST helpers", () => {
     expect(url.searchParams.get("action")).toBe("create");
     expect(url.searchParams.get("expand")).toBe("issueTypes");
     expect(url.searchParams.get("maxResults")).toBe("20");
+  });
+
+  test("searches Jira users by query", async () => {
+    const urls: string[] = [];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      urls.push(String(input));
+      if (String(input).endsWith("/accessible-resources")) {
+        return Response.json([
+          {
+            id: "cloud-123",
+            url: "https://acme.atlassian.net",
+            scopes: ["read:jira-user", "read:jira-work"]
+          }
+        ]);
+      }
+
+      return Response.json([
+        {
+          accountId: "acct-boris",
+          displayName: "Alex Reviewer",
+          emailAddress: "alex.reviewer@example.com"
+        }
+      ]);
+    }) as typeof fetch;
+
+    try {
+      await expect(searchJiraUsers("jira-token", "alex.reviewer@example.com")).resolves.toEqual([
+        {
+          accountId: "acct-boris",
+          displayName: "Alex Reviewer",
+          emailAddress: "alex.reviewer@example.com"
+        }
+      ]);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+
+    const url = new URL(urls[1]);
+    expect(url.pathname).toBe("/ex/jira/cloud-123/rest/api/3/user/search");
+    expect(url.searchParams.get("query")).toBe("alex.reviewer@example.com");
+    expect(url.searchParams.get("maxResults")).toBe("10");
+  });
+
+  test("creates Jira issues with REST fields", async () => {
+    const calls: Array<{ url: string; method?: string; body?: unknown }> = [];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      calls.push({
+        url: String(input),
+        method: init?.method,
+        body: init?.body ? JSON.parse(String(init.body)) : undefined
+      });
+      if (String(input).endsWith("/accessible-resources")) {
+        return Response.json([
+          {
+            id: "cloud-123",
+            url: "https://acme.atlassian.net",
+            scopes: ["read:jira-work", "write:jira-work"]
+          }
+        ]);
+      }
+
+      return Response.json({ key: "DM-100" }, { status: 201 });
+    }) as typeof fetch;
+
+    try {
+      await expect(
+        createJiraIssue("jira-token", {
+          projectKey: "DM",
+          issueTypeName: "Task",
+          summary: "test ticket from slack",
+          description: "created from Slack",
+          assigneeAccountId: "acct-boris"
+        })
+      ).resolves.toEqual({
+        key: "DM-100",
+        summary: "test ticket from slack",
+        url: "https://acme.atlassian.net/browse/DM-100"
+      });
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+
+    expect(calls[1]).toMatchObject({
+      url: "https://api.atlassian.com/ex/jira/cloud-123/rest/api/3/issue",
+      method: "POST",
+      body: {
+        fields: {
+          project: { key: "DM" },
+          summary: "test ticket from slack",
+          issuetype: { name: "Task" },
+          assignee: { id: "acct-boris" }
+        }
+      }
+    });
+    expect(calls[1].body).toHaveProperty("fields.description.type", "doc");
+  });
+
+  test("edits Jira issues with REST fields", async () => {
+    const calls: Array<{ url: string; method?: string; body?: unknown }> = [];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      calls.push({
+        url: String(input),
+        method: init?.method,
+        body: init?.body ? JSON.parse(String(init.body)) : undefined
+      });
+      if (String(input).endsWith("/accessible-resources")) {
+        return Response.json([
+          {
+            id: "cloud-123",
+            url: "https://acme.atlassian.net",
+            scopes: ["read:jira-work", "write:jira-work"]
+          }
+        ]);
+      }
+
+      return new Response(null, { status: 204 });
+    }) as typeof fetch;
+
+    try {
+      await expect(
+        editJiraIssue("jira-token", {
+          issueKey: "DM-100",
+          summary: "updated title",
+          assigneeAccountId: null
+        })
+      ).resolves.toEqual({
+        key: "DM-100",
+        summary: "updated title",
+        url: "https://acme.atlassian.net/browse/DM-100"
+      });
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+
+    expect(calls[1]).toEqual({
+      url: "https://api.atlassian.com/ex/jira/cloud-123/rest/api/3/issue/DM-100",
+      method: "PUT",
+      body: {
+        fields: {
+          summary: "updated title",
+          assignee: null
+        }
+      }
+    });
   });
 });

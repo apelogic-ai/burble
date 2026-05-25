@@ -608,6 +608,38 @@ async function buildToolCatalog(
         }
       },
       {
+        name: "jira.searchUsers",
+        description:
+          "Search Jira users visible to the requesting Slack user's connected Jira account. Use this to resolve assignee account IDs from names or emails.",
+        inputSchema: {
+          query: "string Jira user email, display name, or search query"
+        }
+      },
+      {
+        name: "jira.createIssue",
+        description:
+          "Create a Jira issue via Jira REST. Use after confirming project and issue type; use this when Atlassian MCP createJiraIssue returns an opaque provider error.",
+        inputSchema: {
+          projectKey: "string Jira project key",
+          issueTypeName: "optional string Jira issue type name",
+          issueTypeId: "optional string Jira issue type ID",
+          summary: "string issue summary",
+          description: "optional string plain text description",
+          assigneeAccountId: "optional string Jira account ID"
+        }
+      },
+      {
+        name: "jira.editIssue",
+        description:
+          "Edit Jira issue fields via Jira REST. Resolve assignees with jira.searchUsers before setting assigneeAccountId.",
+        inputSchema: {
+          issueKey: "string Jira issue key",
+          summary: "optional string new issue summary",
+          description: "optional string new plain text description",
+          assigneeAccountId: "optional string Jira account ID, or null to unassign"
+        }
+      },
+      {
         name: "jira.listAssignedIssues",
         description: "List Jira issues assigned to the requesting Slack user.",
         inputSchema: {}
