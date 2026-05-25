@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import type { RuntimeConfig } from "./config";
 import { info, type RuntimeLogger } from "./logger";
@@ -97,9 +97,9 @@ export async function runOpenClawCliRequest(
     return baseline;
   }
 
-  const sessionId = buildSessionId(request);
+  const sessionId = buildRunSessionId(request);
   logInfo(
-    `OpenClaw agent start runId=${request.runId ?? "unknown"} agent=${config.openClawAgent} sessionId=${sessionId} textLength=${request.input.text.length} classification=${baseline.response.classification}`
+    `OpenClaw agent start runId=${request.runId ?? "unknown"} agent=${config.openClawAgent} sessionId=${sessionId} sessionScope=run textLength=${request.input.text.length} classification=${baseline.response.classification}`
   );
   const executedTools: ExecutedToolCall[] = [];
   let classification = baseline.response.classification;
@@ -114,7 +114,7 @@ export async function runOpenClawCliRequest(
       request,
       config,
       prompt,
-      sessionId,
+      buildStepSessionId(sessionId, step + 1),
       runCommand,
       logInfo,
       step + 1
@@ -261,9 +261,9 @@ export async function* runOpenClawCliRequestStream(
     return;
   }
 
-  const sessionId = buildSessionId(request);
+  const sessionId = buildRunSessionId(request);
   logInfo(
-    `OpenClaw agent start runId=${request.runId ?? "unknown"} agent=${config.openClawAgent} sessionId=${sessionId} textLength=${request.input.text.length} classification=${baseline.response.classification}`
+    `OpenClaw agent start runId=${request.runId ?? "unknown"} agent=${config.openClawAgent} sessionId=${sessionId} sessionScope=run textLength=${request.input.text.length} classification=${baseline.response.classification}`
   );
   yield { type: "status", text: "Running OpenClaw/NemoClaw..." };
 
@@ -280,7 +280,7 @@ export async function* runOpenClawCliRequestStream(
       request,
       config,
       prompt,
-      sessionId,
+      buildStepSessionId(sessionId, step + 1),
       runCommandStream,
       logInfo,
       heartbeatMs,
@@ -1487,7 +1487,23 @@ function buildOpenClawArgs(
   return args;
 }
 
-function buildSessionId(request: RunRequest): string {
+function buildRunSessionId(request: RunRequest): string {
+  return `${buildSessionRoot(request)}-run-${buildRunSessionKey(request)}`;
+}
+
+function buildStepSessionId(runSessionId: string, step: number): string {
+  return `${runSessionId}-step-${step}`;
+}
+
+function buildRunSessionKey(request: RunRequest): string {
+  if (request.runId) {
+    return hashSessionKey(request.runId);
+  }
+
+  return randomUUID().replace(/-/g, "");
+}
+
+function buildSessionRoot(request: RunRequest): string {
   const conversation = request.input.conversation;
   if (conversation) {
     return `burble-${conversation.source}-${hashSessionKey(

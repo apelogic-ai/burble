@@ -26,6 +26,12 @@ const config: RuntimeConfig = {
   ollamaBaseUrl: "https://ollama.com"
 };
 
+function readSessionIdArg(args: string[]): string {
+  const index = args.indexOf("--session-id");
+  expect(index).toBeGreaterThan(-1);
+  return args[index + 1] ?? "";
+}
+
 describe("runOpenClawCliRequest", () => {
   test("runs OpenClaw CLI with gateway-derived context", async () => {
     const commands: Array<{
@@ -95,16 +101,25 @@ describe("runOpenClawCliRequest", () => {
     expect(commands[0].args).toContain("--local");
     expect(commands[0].args).toContain("--message");
     expect(commands[0].args).toContain("--session-id");
-    expect(commands[0].args).toContain("burble-person_example.com");
+    expect(readSessionIdArg(commands[0].args)).toStartWith(
+      "burble-person_example.com-run-"
+    );
+    expect(readSessionIdArg(commands[0].args)).toEndWith("-step-1");
     expect(commands[0].args.join(" ")).toContain("Fix billing export");
     expect(commands[0].args.join(" ")).not.toContain("secret");
     expect(commands[0].env).toEqual({
       OPENCLAW_STATE_DIR: "/data/openclaw/state",
       OPENCLAW_CONFIG_PATH: "/data/openclaw/config/openclaw.json"
     });
-    expect(logs).toContain(
-      "OpenClaw agent start runId=unknown agent=main sessionId=burble-person_example.com textLength=25 classification=user_private"
-    );
+    expect(
+      logs.some(
+        (line) =>
+          line.startsWith(
+            "OpenClaw agent start runId=unknown agent=main sessionId=burble-person_example.com-run-"
+          ) &&
+          line.includes(" sessionScope=run textLength=25 classification=user_private")
+      )
+    ).toBe(true);
     expect(logs).toContain(
       "OpenClaw agent finish runId=unknown classification=user_private textLength=32"
     );
@@ -189,6 +204,60 @@ describe("runOpenClawCliRequest", () => {
     );
   });
 
+  test("uses isolated OpenClaw sessions for each planning step", async () => {
+    const sessionIds: string[] = [];
+
+    await runOpenClawCliRequest(
+      {
+        runId: "run-session-scope",
+        input: {
+          text: "which Jira tickets are blocked?",
+          connections: {
+            github: {
+              connected: true,
+              email: "person@example.com",
+              providerLogin: "octocat"
+            },
+            jira: {
+              connected: true,
+              email: "person@example.com",
+              providerLogin: "person@atlassian.example"
+            }
+          }
+        }
+      },
+      config,
+      async () => ({
+        classification: "user_private",
+        content: [{ key: "DM-1", title: "Blocked deploy" }]
+      }),
+      async (_command, args) => {
+        sessionIds.push(readSessionIdArg(args));
+        return {
+          exitCode: 0,
+          stdout:
+            sessionIds.length === 1
+              ? JSON.stringify({
+                  tool_call: {
+                    name: "jira.searchIssues",
+                    arguments: { jql: "status = Blocked" }
+                  }
+                })
+              : JSON.stringify({ response: { text: "DM-1 is blocked." } }),
+          stderr: ""
+        };
+      },
+      () => undefined
+    );
+
+    expect(sessionIds).toHaveLength(2);
+    expect(sessionIds[0]).toStartWith("burble-person_example.com-run-");
+    expect(sessionIds[1]).toStartWith("burble-person_example.com-run-");
+    expect(sessionIds[0]).toEndWith("-step-1");
+    expect(sessionIds[1]).toEndWith("-step-2");
+    expect(sessionIds[0]).not.toBe(sessionIds[1]);
+  });
+
   test("invokes OpenClaw for general questions without GitHub tool context", async () => {
     const logs: string[] = [];
     const response = await runOpenClawCliRequest(
@@ -227,9 +296,15 @@ describe("runOpenClawCliRequest", () => {
     );
 
     expect(response.response.text).toBe("San Francisco is mild today.");
-    expect(logs).toContain(
-      "OpenClaw agent start runId=unknown agent=main sessionId=burble-person_example.com textLength=46 classification=user_private"
-    );
+    expect(
+      logs.some(
+        (line) =>
+          line.startsWith(
+            "OpenClaw agent start runId=unknown agent=main sessionId=burble-person_example.com-run-"
+          ) &&
+          line.includes(" sessionScope=run textLength=46 classification=user_private")
+      )
+    ).toBe(true);
     expect(logs).toContain(
       "OpenClaw agent finish runId=unknown classification=user_private textLength=28"
     );
@@ -932,8 +1007,7 @@ describe("runOpenClawCliRequest", () => {
           content: []
         }),
         async (_command, args) => {
-          const sessionIndex = args.indexOf("--session-id") + 1;
-          sessionIds.push(args[sessionIndex]);
+          sessionIds.push(readSessionIdArg(args));
           return {
             exitCode: 0,
             stdout: "Thread summary.",
