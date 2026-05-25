@@ -31,10 +31,19 @@ export type RuntimeConfig = {
   ollamaBaseUrl: string;
 };
 
-export type RuntimeEngine = "deterministic" | "openclaw" | "openclaw-gateway";
+export type RuntimeEngine =
+  | "deterministic"
+  | "openclaw"
+  | "openclaw-gateway"
+  | "burble-direct";
 
 type Env = Record<string, string | undefined>;
-const runtimeEngines = ["deterministic", "openclaw", "openclaw-gateway"] as const;
+const runtimeEngines = [
+  "deterministic",
+  "openclaw",
+  "openclaw-gateway",
+  "burble-direct"
+] as const;
 
 export function readRuntimeConfig(env: Env): RuntimeConfig {
   return {
@@ -126,6 +135,9 @@ function readRuntimeEngine(value: string): RuntimeEngine {
   const normalized = value.trim().toLowerCase();
   if (normalized === "openclaw-cli") {
     return "openclaw";
+  }
+  if (normalized === "direct-provider") {
+    return "burble-direct";
   }
 
   if (!runtimeEngines.includes(normalized as RuntimeEngine)) {

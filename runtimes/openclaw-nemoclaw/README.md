@@ -36,6 +36,10 @@ Runtime engines:
   `--local` and starts a private `openclaw gateway run` process at runtime boot,
   preserving the same Burble runtime API while letting OpenClaw use its
   Gateway-backed execution path.
+- `OPENCLAW_NEMOCLAW_ENGINE=burble-direct` uses Burble's prompt and MCP tool
+  loop, but sends planning turns directly to the selected model provider. This
+  avoids OpenClaw agent bootstrap and native tools in latency-sensitive Slack
+  flows.
 
 OpenClaw modes are intentionally isolated behind the same `/runs` contract. A
 derived image can install OpenClaw/NemoClaw without changing Burble's Slack,

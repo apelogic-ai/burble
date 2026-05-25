@@ -112,7 +112,7 @@ describe("readRuntimeConfig", () => {
         OPENCLAW_NEMOCLAW_ENGINE: "magic"
       })
     ).toThrow(
-      "Environment variable OPENCLAW_NEMOCLAW_ENGINE must be one of deterministic, openclaw, openclaw-gateway"
+      "Environment variable OPENCLAW_NEMOCLAW_ENGINE must be one of deterministic, openclaw, openclaw-gateway, burble-direct"
     );
   });
 
@@ -134,6 +134,26 @@ describe("readRuntimeConfig", () => {
         OPENCLAW_NEMOCLAW_ENGINE: "openclaw-gateway"
       }).engine
     ).toBe("openclaw-gateway");
+  });
+
+  test("accepts the Burble direct provider runtime engine", () => {
+    expect(
+      readRuntimeConfig({
+        BURBLE_TOOL_GATEWAY_URL: "http://burble-app:3000/internal/tools",
+        BURBLE_INTERNAL_TOKEN: "secret",
+        OPENCLAW_NEMOCLAW_ENGINE: "burble-direct"
+      }).engine
+    ).toBe("burble-direct");
+  });
+
+  test("accepts direct-provider as a Burble direct alias", () => {
+    expect(
+      readRuntimeConfig({
+        BURBLE_TOOL_GATEWAY_URL: "http://burble-app:3000/internal/tools",
+        BURBLE_INTERNAL_TOKEN: "secret",
+        OPENCLAW_NEMOCLAW_ENGINE: "direct-provider"
+      }).engine
+    ).toBe("burble-direct");
   });
 
   test("treats empty or quoted boolean settings as deploy-friendly values", () => {

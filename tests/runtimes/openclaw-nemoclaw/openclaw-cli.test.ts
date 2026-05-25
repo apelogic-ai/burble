@@ -320,7 +320,7 @@ describe("runOpenClawCliRequest", () => {
     );
   });
 
-  test("logs gateway-mode model diagnostics from direct provider response", async () => {
+  test("logs burble-direct model diagnostics from direct provider response", async () => {
     const logs: string[] = [];
     clearGatewayDiagnosticText();
 
@@ -348,7 +348,7 @@ describe("runOpenClawCliRequest", () => {
                   }
                 }
               },
-              { ...config, engine: "openclaw-gateway" },
+              { ...config, engine: "burble-direct" },
               async () => ({
                 classification: "user_private",
                 content: []
@@ -368,14 +368,14 @@ describe("runOpenClawCliRequest", () => {
     expect(
       logs.some((line) =>
         line.includes(
-          "OpenClaw gateway direct model start runId=run-gateway-diagnostics step=1 provider=openai model=gpt-5.4"
+          "Burble direct model start runId=run-gateway-diagnostics step=1 provider=openai model=gpt-5.4"
         )
       )
     ).toBe(true);
     expect(
       logs.some((line) =>
         line.includes(
-          "OpenClaw gateway direct model finish runId=run-gateway-diagnostics step=1"
+          "Burble direct model finish runId=run-gateway-diagnostics step=1"
         )
       )
     ).toBe(true);
@@ -1599,7 +1599,7 @@ describe("runOpenClawCliRequest", () => {
     });
   });
 
-  test("can invoke OpenClaw through Gateway mode without local CLI execution", async () => {
+  test("can invoke burble-direct mode without local CLI execution", async () => {
     const commands: Array<{ args: string[] }> = [];
     const requests: Array<{
       url: string;
@@ -1634,7 +1634,7 @@ describe("runOpenClawCliRequest", () => {
                   }
                 }
               },
-              { ...config, engine: "openclaw-gateway" },
+              { ...config, engine: "burble-direct" },
               async () => {
                 throw new Error("unexpected tool call");
               },
@@ -1656,6 +1656,60 @@ describe("runOpenClawCliRequest", () => {
     expect(requests[0].body.input).toContain("what can you do?");
     expect(requests[0].body.parallel_tool_calls).toBe(false);
     expect(requests[0].body.instructions).toContain("Do not call tools");
+  });
+
+  test("can invoke OpenClaw through Gateway mode without local CLI execution", async () => {
+    const commands: Array<{ args: string[] }> = [];
+    const requests: Array<{
+      url: string;
+      headers: Headers;
+      body: Record<string, unknown>;
+    }> = [];
+    const response = await withMockFetch(
+      (async (input, init) => {
+        requests.push({
+          url: String(input),
+          headers: new Headers(init?.headers),
+          body: JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>
+        });
+        return new Response(JSON.stringify(openResponsesText("Gateway answer.")), {
+          status: 200,
+          headers: { "content-type": "application/json" }
+        });
+      }) as typeof fetch,
+      async () =>
+        runOpenClawCliRequest(
+          {
+            input: {
+              text: "what can you do?",
+              connections: {
+                github: { connected: false }
+              }
+            }
+          },
+          { ...config, engine: "openclaw-gateway" },
+          async () => {
+            throw new Error("unexpected tool call");
+          },
+          async (_command, args) => {
+            commands.push({ args });
+            throw new Error("unexpected cli call");
+          },
+          () => undefined
+        )
+    );
+
+    expect(response.response.text).toBe("Gateway answer.");
+    expect(commands).toHaveLength(0);
+    expect(requests).toHaveLength(1);
+    expect(requests[0].url).toBe("http://127.0.0.1:18789/v1/responses");
+    expect(requests[0].headers.get("authorization")).toBe("Bearer gateway-token");
+    expect(requests[0].headers.get("x-openclaw-agent-id")).toBe("main");
+    expect(requests[0].headers.get("x-openclaw-session-key")).toStartWith(
+      "agent:main:explicit:burble-step-"
+    );
+    expect(requests[0].body.model).toBe("openclaw/main");
+    expect(requests[0].body.input).toContain("what can you do?");
   });
 
   test("logs stream debug details only when enabled", async () => {

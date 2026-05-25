@@ -145,11 +145,20 @@ describe("readConfig", () => {
     expect(config.openClawNemoClawEngine).toBe("openclaw-gateway");
   });
 
+  test("allows Burble direct provider runtime engine override", () => {
+    const config = readConfig({
+      ...validEnv,
+      OPENCLAW_NEMOCLAW_ENGINE: "burble-direct"
+    });
+
+    expect(config.openClawNemoClawEngine).toBe("burble-direct");
+  });
+
   test("rejects invalid OpenClaw runtime engines", () => {
     expect(() =>
       readConfig({ ...validEnv, OPENCLAW_NEMOCLAW_ENGINE: "magic" })
     ).toThrow(
-      "Environment variable OPENCLAW_NEMOCLAW_ENGINE must be one of deterministic, openclaw, openclaw-gateway"
+      "Environment variable OPENCLAW_NEMOCLAW_ENGINE must be one of deterministic, openclaw, openclaw-gateway, burble-direct"
     );
   });
 

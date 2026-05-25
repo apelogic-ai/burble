@@ -41,7 +41,8 @@ export type AgentRuntimeFactory = "static" | "docker";
 export type OpenClawNemoClawEngine =
   | "deterministic"
   | "openclaw"
-  | "openclaw-gateway";
+  | "openclaw-gateway"
+  | "burble-direct";
 const slackLogLevels = ["debug", "info", "warn", "error"] as const;
 const agentModes = ["deterministic", "llm"] as const;
 const agentRuntimes = ["ai-sdk", "openclaw-nemoclaw"] as const;
@@ -49,7 +50,8 @@ const agentRuntimeFactories = ["static", "docker"] as const;
 const openClawNemoClawEngines = [
   "deterministic",
   "openclaw",
-  "openclaw-gateway"
+  "openclaw-gateway",
+  "burble-direct"
 ] as const;
 
 function requiredEnv(env: Env, name: string): string {
@@ -159,7 +161,12 @@ function optionalOpenClawNemoClawEngineEnv(
     return fallback;
   }
 
-  const normalized = value === "openclaw-cli" ? "openclaw" : value;
+  const normalized =
+    value === "openclaw-cli"
+      ? "openclaw"
+      : value === "direct-provider"
+        ? "burble-direct"
+        : value;
   if (!openClawNemoClawEngines.includes(normalized as OpenClawNemoClawEngine)) {
     throw new Error(
       `Environment variable ${name} must be one of ${openClawNemoClawEngines.join(", ")}`

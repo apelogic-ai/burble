@@ -49,6 +49,8 @@ export function createRuntimeAgentAdapter(
       return createOpenClawCliAdapter(config, "openclaw-cli");
     case "openclaw-gateway":
       return createOpenClawCliAdapter(config, "openclaw-gateway");
+    case "burble-direct":
+      return createOpenClawCliAdapter(config, "burble-direct");
   }
 }
 
@@ -66,7 +68,7 @@ function createDeterministicAdapter(config: RuntimeConfig): RuntimeAgentAdapter 
 
 function createOpenClawCliAdapter(
   config: RuntimeConfig,
-  name: "openclaw-cli" | "openclaw-gateway"
+  name: "openclaw-cli" | "openclaw-gateway" | "burble-direct"
 ): RuntimeAgentAdapter {
   return {
     name,
