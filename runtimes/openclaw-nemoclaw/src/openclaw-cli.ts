@@ -494,14 +494,6 @@ async function* collectOpenClawStream(
   );
 
   if (exitCode !== 0) {
-    const partialText = extractOpenClawText(stdout);
-    if (partialText) {
-      logInfo(
-        `OpenClaw agent partial finish runId=${request.runId ?? "unknown"} exitCode=${exitCode ?? "unknown"} textLength=${partialText.length}`
-      );
-      return { stdout };
-    }
-
     throw new Error(
       `OpenClaw CLI exited with code ${exitCode ?? "unknown"}${stderr ? `: ${truncate(redactPreview(stderr), 300)}` : ""}`
     );

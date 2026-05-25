@@ -19,6 +19,9 @@
     redactSensitive: "tools"
   },
   plugins: {
+    enabled: true,
+    bundledDiscovery: "allowlist",
+    allow: ["openai"],
     entries: {
       openai: {
         enabled: true

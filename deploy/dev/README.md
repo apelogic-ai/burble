@@ -179,6 +179,8 @@ the resulting config. Use that patch file for non-interactive OpenClaw
 model/provider configuration. The checked-in
 `compose/openclaw-patches/openai.json5` patch enables OpenAI with
 `openai/gpt-5.4`; the API key is still supplied only through `OPENAI_API_KEY`.
+The same patch allowlists only the OpenAI plugin so this runtime does not spend
+every request discovering and loading unrelated bundled plugins.
 Set `OPENCLAW_STREAM_DEBUG=true` temporarily to log OpenClaw stdout chunk
 timing, parsed delta counts, and redacted previews while debugging streaming.
 For deeper OpenClaw internals, set `OPENCLAW_LOG_LEVEL=debug` or `trace` and
