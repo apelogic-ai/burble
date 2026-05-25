@@ -15,5 +15,6 @@ burble_install_path: /home/ubuntu/burble
 agent_mode: deterministic
 agent_runtime: ai-sdk
 ai_model: openai:gpt-5.4
+ollama_base_url: https://ollama.com
 openclaw_nemoclaw_url: ""
 internal_api_token: ""

@@ -32,8 +32,12 @@ export type ContainerRuntimeSpec = {
 };
 
 const approvedForwardedEnv = new Set([
+  "AI_MODEL",
   "OPENAI_API_KEY",
   "ANTHROPIC_API_KEY",
+  "OLLAMA_API_KEY",
+  "OLLAMA_BASE_URL",
+  "OLLAMA_OPENAI_BASE_URL",
   "OPENCLAW_TIMEOUT_MS",
   "OPENCLAW_STREAM_DEBUG",
   "OPENCLAW_LOG_LEVEL",

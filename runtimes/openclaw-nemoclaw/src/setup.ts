@@ -2,10 +2,12 @@ import { createHash } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { RuntimeConfig } from "./config";
+import { buildOpenClawLlmPatch } from "./llm-config";
 import { info, type RuntimeLogger } from "./logger";
 import { openClawEnv, runCliCommand, type CliCommandRunner } from "./openclaw-cli";
 
 const setupMarkerFile = ".burble-openclaw-setup.json";
+const generatedLlmPatchFile = "burble-llm.json";
 
 export async function ensureOpenClawSetup(
   config: RuntimeConfig,
@@ -75,21 +77,19 @@ async function ensureOpenClawConfig(
   }
 
   if (config.openClawConfigPatchPath) {
-    logInfo(`OpenClaw config patch start path=${config.openClawConfigPatchPath}`);
-    const result = await runCommand(
-      config.openClawCommand,
-      ["config", "patch", "--file", config.openClawConfigPatchPath],
-      {
-        timeoutMs: config.openClawTimeoutMs,
-        env: openClawEnv(config)
-      }
+    await applyOpenClawConfigPatch(
+      config.openClawConfigPatchPath,
+      config,
+      runCommand,
+      logInfo
     );
-
-    if (result.exitCode !== 0) {
-      throw new Error(`OpenClaw config patch exited with code ${result.exitCode}`);
-    }
-    logInfo("OpenClaw config patch finish");
   }
+
+  const llmPatchPath = await writeGeneratedLlmPatch(config);
+  logInfo(
+    `OpenClaw LLM config selected model=${config.llmModel} ollamaBaseUrl=${config.ollamaBaseUrl}`
+  );
+  await applyOpenClawConfigPatch(llmPatchPath, config, runCommand, logInfo);
 
   if (!config.openClawValidateOnStart) {
     logInfo("OpenClaw config validate skipped validateOnStart=false");
@@ -110,6 +110,41 @@ async function ensureOpenClawConfig(
     throw new Error(`OpenClaw config validate exited with code ${result.exitCode}`);
   }
   logInfo("OpenClaw config validate finish");
+}
+
+async function applyOpenClawConfigPatch(
+  path: string,
+  config: RuntimeConfig,
+  runCommand: CliCommandRunner,
+  logInfo: RuntimeLogger
+): Promise<void> {
+  logInfo(`OpenClaw config patch start path=${path}`);
+  const result = await runCommand(
+    config.openClawCommand,
+    ["config", "patch", "--file", path],
+    {
+      timeoutMs: config.openClawTimeoutMs,
+      env: openClawEnv(config)
+    }
+  );
+
+  if (result.exitCode !== 0) {
+    throw new Error(`OpenClaw config patch exited with code ${result.exitCode}`);
+  }
+  logInfo("OpenClaw config patch finish");
+}
+
+async function writeGeneratedLlmPatch(config: RuntimeConfig): Promise<string> {
+  await mkdir(config.openClawStateDir, { recursive: true });
+  const path = join(config.openClawStateDir, generatedLlmPatchFile);
+  await writeFile(
+    path,
+    buildOpenClawLlmPatch({
+      modelId: config.llmModel,
+      ollamaBaseUrl: config.ollamaBaseUrl
+    })
+  );
+  return path;
 }
 
 function isOpenClawBackedEngine(config: RuntimeConfig): boolean {
@@ -133,7 +168,9 @@ async function buildSetupCacheKey(config: RuntimeConfig): Promise<string> {
         workspaceDir: config.openClawWorkspaceDir,
         configPatchPath: config.openClawConfigPatchPath,
         patchHash,
-        validateOnStart: config.openClawValidateOnStart
+        validateOnStart: config.openClawValidateOnStart,
+        llmModel: config.llmModel,
+        ollamaBaseUrl: config.ollamaBaseUrl
       })
     )
     .digest("hex");

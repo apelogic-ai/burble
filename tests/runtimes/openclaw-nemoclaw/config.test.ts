@@ -26,7 +26,9 @@ describe("readRuntimeConfig", () => {
         OPENCLAW_DEBUG_MODEL_TRANSPORT: "true",
         OPENCLAW_DEBUG_MODEL_PAYLOAD: "summary",
         OPENCLAW_DEBUG_SSE: "events",
-        OPENCLAW_DEBUG_CODE_MODE: "true"
+        OPENCLAW_DEBUG_CODE_MODE: "true",
+        AI_MODEL: "ollama:qwen3-coder:30b-cloud",
+        OLLAMA_BASE_URL: "https://ollama.com/"
       })
     ).toEqual({
       port: 9090,
@@ -50,7 +52,9 @@ describe("readRuntimeConfig", () => {
       openClawDebugModelTransport: "true",
       openClawDebugModelPayload: "summary",
       openClawDebugSse: "events",
-      openClawDebugCodeMode: "true"
+      openClawDebugCodeMode: "true",
+      llmModel: "ollama:qwen3-coder:30b-cloud",
+      ollamaBaseUrl: "https://ollama.com"
     });
   });
 
@@ -73,8 +77,20 @@ describe("readRuntimeConfig", () => {
       openClawSetupOnStart: true,
       openClawConfigPatchPath: null,
       openClawValidateOnStart: true,
-      openClawStreamDebug: false
+      openClawStreamDebug: false,
+      llmModel: "openai:gpt-5.4",
+      ollamaBaseUrl: "https://ollama.com"
     });
+  });
+
+  test("accepts Ollama model tags in normalized model ids", () => {
+    expect(
+      readRuntimeConfig({
+        BURBLE_TOOL_GATEWAY_URL: "http://burble-app:3000/internal/tools",
+        BURBLE_INTERNAL_TOKEN: "secret",
+        AI_MODEL: "ollama:qwen3-coder:30b-cloud"
+      }).llmModel
+    ).toBe("ollama:qwen3-coder:30b-cloud");
   });
 
   test("rejects invalid runtime engines", () => {

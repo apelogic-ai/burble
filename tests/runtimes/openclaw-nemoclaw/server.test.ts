@@ -36,7 +36,9 @@ const config: RuntimeConfig = {
   openClawSetupOnStart: true,
   openClawConfigPatchPath: null,
   openClawValidateOnStart: true,
-  openClawStreamDebug: false
+  openClawStreamDebug: false,
+  llmModel: "openai:gpt-5.4",
+  ollamaBaseUrl: "https://ollama.com"
 };
 
 describe("handleRuntimeRequest", () => {
@@ -429,7 +431,7 @@ describe("handleRuntimeRequest", () => {
       expect(events.at(-1)).toEqual({
         type: "error",
         message:
-          "Runtime run failed: OpenClaw model provider quota is exhausted. Update OPENAI_API_KEY billing/quota or switch the OpenClaw model config to a provider/model with available quota."
+          "Runtime run failed: OpenClaw model provider quota is exhausted. Update the selected provider key/billing or switch AI_MODEL to a provider/model with available quota."
       });
       expect(errors.join("\n")).toContain("runId=run-quota");
       expect(errors.join("\n")).toContain("model provider quota is exhausted");

@@ -82,6 +82,15 @@ describe("readConfig", () => {
     expect(config.aiModel).toBe("anthropic:claude-opus-4.6");
   });
 
+  test("allows Ollama model tags in normalized model ids", () => {
+    const config = readConfig({
+      ...validEnv,
+      AI_MODEL: "ollama:qwen3-coder:30b-cloud"
+    });
+
+    expect(config.aiModel).toBe("ollama:qwen3-coder:30b-cloud");
+  });
+
   test("allows docker runtime factory override", () => {
     const config = readConfig({
       ...validEnv,

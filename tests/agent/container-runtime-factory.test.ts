@@ -29,8 +29,12 @@ describe("buildContainerRuntimeSpec", () => {
       runtimeDataId,
       openClawConfigPatchPath: "/opt/burble/openclaw-patches",
       env: {
+        AI_MODEL: "ollama:qwen3-coder:30b-cloud",
         OPENAI_API_KEY: "openai-key",
         ANTHROPIC_API_KEY: "anthropic-key",
+        OLLAMA_API_KEY: "ollama-key",
+        OLLAMA_BASE_URL: "https://ollama.com",
+        OLLAMA_OPENAI_BASE_URL: "https://ollama.com/v1",
         OPENCLAW_TIMEOUT_MS: "180000",
         OPENCLAW_STREAM_DEBUG: "true",
         OPENCLAW_LOG_LEVEL: "debug",
@@ -53,8 +57,12 @@ describe("buildContainerRuntimeSpec", () => {
       BURBLE_MCP_GATEWAY_URL: "http://agentgateway:3000/mcp",
       BURBLE_RUNTIME_JWT: "runtime-jwt",
       OPENCLAW_NEMOCLAW_ENGINE: "openclaw",
+      AI_MODEL: "ollama:qwen3-coder:30b-cloud",
       OPENAI_API_KEY: "openai-key",
       ANTHROPIC_API_KEY: "anthropic-key",
+      OLLAMA_API_KEY: "ollama-key",
+      OLLAMA_BASE_URL: "https://ollama.com",
+      OLLAMA_OPENAI_BASE_URL: "https://ollama.com/v1",
       OPENCLAW_TIMEOUT_MS: "180000",
       OPENCLAW_STREAM_DEBUG: "true",
       OPENCLAW_LOG_LEVEL: "debug",
@@ -122,7 +130,11 @@ describe("createDockerRuntimeFactory", () => {
       } as never,
       runtimeTokenSecret: "runtime-secret",
       openClawConfigPatchPath: "/opt/burble/openclaw-patches",
-      env: { OPENAI_API_KEY: "openai-key", GITHUB_TOKEN: "github-secret" },
+      env: {
+        AI_MODEL: "ollama:qwen3-coder:30b-cloud",
+        OPENAI_API_KEY: "openai-key",
+        GITHUB_TOKEN: "github-secret"
+      },
       healthCheckAttempts: 2,
       healthCheckIntervalMs: 0,
       execute: async (command, args) => {
@@ -153,6 +165,7 @@ describe("createDockerRuntimeFactory", () => {
       "run"
     ]);
     expect(commands[1].args).toContain("OPENAI_API_KEY=openai-key");
+    expect(commands[1].args).toContain("AI_MODEL=ollama:qwen3-coder:30b-cloud");
     expect(commands[1].args).toContain("BURBLE_MCP_GATEWAY_URL=http://agentgateway:3000/mcp");
     expect(commands[1].args.join(" ")).toContain(`BURBLE_RUNTIME_JWT=jwt:http://agentgateway:3000/mcp:${handle.id}:T123:U123`);
     expect(commands[1].args.join(" ")).not.toContain("github-secret");

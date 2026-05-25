@@ -21,7 +21,9 @@ const config: RuntimeConfig = {
   openClawSetupOnStart: true,
   openClawConfigPatchPath: null,
   openClawValidateOnStart: true,
-  openClawStreamDebug: false
+  openClawStreamDebug: false,
+  llmModel: "openai:gpt-5.4",
+  ollamaBaseUrl: "https://ollama.com"
 };
 
 describe("runOpenClawCliRequest", () => {

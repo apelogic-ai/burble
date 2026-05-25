@@ -83,6 +83,8 @@ OPENCLAW_NEMOCLAW_URL=
 INTERNAL_API_TOKEN=
 OPENAI_API_KEY=
 ANTHROPIC_API_KEY=
+OLLAMA_API_KEY=
+OLLAMA_BASE_URL=https://ollama.com
 GITHUB_CLIENT_ID=...
 GITHUB_CLIENT_SECRET=...
 JIRA_CLIENT_ID=
@@ -90,9 +92,11 @@ JIRA_CLIENT_SECRET=
 ```
 
 Use `AGENT_MODE=llm` to route mentions and DMs through an agent runner.
-`AGENT_RUNTIME=ai-sdk` is the default in-process runner. `AI_MODEL` uses
-`provider:model` format and resolves through direct provider packages, so set
-the matching provider key before enabling it.
+`AGENT_RUNTIME=ai-sdk` is the default in-process runner. `AI_MODEL` is the
+normalized model selector for both AI SDK and OpenClaw/NemoClaw runtimes. Use
+`provider:model` format, for example `openai:gpt-5.4`,
+`anthropic:claude-opus-4.6`, or `ollama:qwen3-coder:30b-cloud`, and set the
+matching provider key before enabling it.
 
 For Jira hand testing, create an Atlassian OAuth 2.0 3LO app, add:
 
@@ -175,12 +179,12 @@ gateway-derived context. On startup the runtime runs
 state/config paths under the `openclaw_nemoclaw_data` Docker volume.
 If `OPENCLAW_CONFIG_PATCH_PATH` points to a JSON5 patch file inside the
 container, startup applies it with `openclaw config patch --file` and validates
-the resulting config. Use that patch file for non-interactive OpenClaw
-model/provider configuration. The checked-in
-`compose/openclaw-patches/openai.json5` patch enables OpenAI with
-`openai/gpt-5.4`; the API key is still supplied only through `OPENAI_API_KEY`.
-The same patch allowlists only the OpenAI plugin so this runtime does not spend
-every request discovering and loading unrelated bundled plugins.
+the resulting config. The runtime then generates and applies a provider patch
+from `AI_MODEL`, so provider/model swaps do not require editing JSON5. The
+checked-in `compose/openclaw-patches/openai.json5` patch remains available for
+extra OpenClaw defaults; the generated `AI_MODEL` patch is applied after it so
+the selected provider wins. Provider secrets are still supplied only through env
+vars such as `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, or `OLLAMA_API_KEY`.
 Set `OPENCLAW_STREAM_DEBUG=true` temporarily to log OpenClaw stdout chunk
 timing, parsed delta counts, and redacted previews while debugging streaming.
 For deeper OpenClaw internals, set `OPENCLAW_LOG_LEVEL=debug` or `trace` and

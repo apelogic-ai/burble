@@ -21,6 +21,8 @@ export type RuntimeConfig = {
   openClawDebugModelPayload?: string | null;
   openClawDebugSse?: string | null;
   openClawDebugCodeMode?: string | null;
+  llmModel: string;
+  ollamaBaseUrl: string;
 };
 
 export type RuntimeEngine = "deterministic" | "openclaw" | "openclaw-gateway";
@@ -70,7 +72,14 @@ export function readRuntimeConfig(env: Env): RuntimeConfig {
     ),
     openClawDebugModelPayload: readOptionalEnv(env.OPENCLAW_DEBUG_MODEL_PAYLOAD),
     openClawDebugSse: readOptionalEnv(env.OPENCLAW_DEBUG_SSE),
-    openClawDebugCodeMode: readOptionalEnv(env.OPENCLAW_DEBUG_CODE_MODE)
+    openClawDebugCodeMode: readOptionalEnv(env.OPENCLAW_DEBUG_CODE_MODE),
+    llmModel: validateLlmModelId(
+      readOptionalEnv(env.AI_MODEL) ??
+        readOptionalEnv(env.OPENCLAW_MODEL) ??
+        "openai:gpt-5.4"
+    ),
+    ollamaBaseUrl:
+      readOptionalUrlEnv(env.OLLAMA_BASE_URL) ?? "https://ollama.com"
   };
 }
 
@@ -147,4 +156,20 @@ function stripOptionalQuotes(value: string): string {
   }
 
   return trimmed;
+}
+
+function validateLlmModelId(modelId: string): string {
+  const separatorIndex = modelId.indexOf(":");
+  const provider = separatorIndex >= 0 ? modelId.slice(0, separatorIndex) : "";
+  const model = separatorIndex >= 0 ? modelId.slice(separatorIndex + 1) : "";
+
+  if (!provider || !model) {
+    throw new Error("AI_MODEL must use provider:model format");
+  }
+
+  if (!["openai", "anthropic", "ollama"].includes(provider)) {
+    throw new Error("AI_MODEL provider must be one of openai, anthropic, ollama");
+  }
+
+  return modelId;
 }
