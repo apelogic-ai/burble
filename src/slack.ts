@@ -223,7 +223,7 @@ export function createSlackRuntime(
           ...(activeProgressMessage
             ? {
                 onAgentEvent: (event) => {
-                  void updateAgentProgressMessage(
+                  return updateAgentProgressMessage(
                     client,
                     activeProgressMessage,
                     event
@@ -326,7 +326,7 @@ export function createSlackRuntime(
           ...(activeProgressMessage
             ? {
                 onAgentEvent: (event) => {
-                  void updateAgentProgressMessage(
+                  return updateAgentProgressMessage(
                     client,
                     activeProgressMessage,
                     event
