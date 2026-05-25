@@ -111,6 +111,16 @@ describe("runOpenClawCliRequest", () => {
     expect(logs.some((line) => line.startsWith("OpenClaw command start"))).toBe(
       true
     );
+    expect(logs.some((line) => line.startsWith("OpenClaw token estimate"))).toBe(
+      true
+    );
+    expect(
+      logs.some(
+        (line) =>
+          line.startsWith("OpenClaw usage") &&
+          line.includes("source=estimate-only")
+      )
+    ).toBe(true);
   });
 
   test("does not invoke OpenClaw when GitHub is not connected", async () => {
@@ -138,6 +148,44 @@ describe("runOpenClawCliRequest", () => {
     expect(called).toBe(false);
     expect(response.response.text).toBe(
       "Connect GitHub first: `@Burble connect github`."
+    );
+  });
+
+  test("logs provider token usage from OpenClaw diagnostics when present", async () => {
+    const logs: string[] = [];
+
+    await runOpenClawCliRequest(
+      {
+        runId: "run-usage",
+        input: {
+          text: "prioritize my GitHub work",
+          connections: {
+            github: {
+              connected: true,
+              email: "person@example.com",
+              providerLogin: "octocat"
+            }
+          }
+        }
+      },
+      config,
+      async () => ({
+        classification: "user_private",
+        content: []
+      }),
+      async () => ({
+        exitCode: 0,
+        stdout: [
+          '[openai-transport] usage={"input_tokens":1200,"output_tokens":75,"total_tokens":1275,"cached_tokens":300,"reasoning_tokens":20}',
+          JSON.stringify({ response: { text: "Done." } })
+        ].join("\n"),
+        stderr: ""
+      }),
+      (message) => logs.push(message)
+    );
+
+    expect(logs).toContain(
+      "OpenClaw usage runId=run-usage step=1 promptApproxTokens=1564 inputTokens=1200 outputTokens=75 totalTokens=1275 cachedInputTokens=300 reasoningTokens=20 source=provider-output"
     );
   });
 

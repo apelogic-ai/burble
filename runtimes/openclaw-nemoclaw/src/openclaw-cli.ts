@@ -109,6 +109,7 @@ export async function runOpenClawCliRequest(
     logInfo(
       `OpenClaw planning start runId=${request.runId ?? "unknown"} step=${step + 1} executedTools=${executedTools.length} promptChars=${prompt.length}`
     );
+    logPromptTokenEstimate(request, prompt, step + 1, logInfo);
     const result = await runOpenClawCommand(
       request,
       config,
@@ -214,11 +215,13 @@ async function runOpenClawCommand(
   );
 
   if (result.exitCode !== 0) {
+    logOpenClawUsageFromOutput(request, step, prompt, result.stdout, result.stderr, logInfo);
     logInfo(
       `OpenClaw command error runId=${request.runId ?? "unknown"} step=${step} exitCode=${result.exitCode}${summarizeLogObject("stdoutPreview", result.stdout)}${summarizeLogObject("stderrPreview", result.stderr)}`
     );
     throw new Error(`OpenClaw CLI exited with code ${result.exitCode}`);
   }
+  logOpenClawUsageFromOutput(request, step, prompt, result.stdout, result.stderr, logInfo);
   logInfo(
     `OpenClaw command finish runId=${request.runId ?? "unknown"} step=${step} elapsedMs=${Date.now() - startedAt} stdoutChars=${result.stdout.length} stderrChars=${result.stderr.length}${summarizeLogObject("stderrPreview", result.stderr)}`
   );
@@ -272,6 +275,7 @@ export async function* runOpenClawCliRequestStream(
     logInfo(
       `OpenClaw planning start runId=${request.runId ?? "unknown"} step=${step + 1} executedTools=${executedTools.length} promptChars=${prompt.length}`
     );
+    logPromptTokenEstimate(request, prompt, step + 1, logInfo);
     const result = yield* collectOpenClawStream(
       request,
       config,
@@ -280,7 +284,8 @@ export async function* runOpenClawCliRequestStream(
       runCommandStream,
       logInfo,
       heartbeatMs,
-      true
+      true,
+      step + 1
     );
     const plannedToolCall = normalizePlannedToolCall(
       readPlannedToolCall(result.stdout, toolContext.catalog)
@@ -372,7 +377,8 @@ async function* collectOpenClawStream(
   runCommandStream: CliCommandStreamer,
   logInfo: RuntimeLogger,
   heartbeatMs: number,
-  emitDeltas: boolean
+  emitDeltas: boolean,
+  step: number
 ): AsyncGenerator<RunEvent, { stdout: string }, void> {
   let stdout = "";
   let stderr = "";
@@ -492,6 +498,7 @@ async function* collectOpenClawStream(
   logInfo(
     `OpenClaw command stream finish runId=${request.runId ?? "unknown"} elapsedMs=${Date.now() - startedAt} exitCode=${exitCode ?? "unknown"} stdoutChunks=${chunkCount} stderrChunks=${stderrChunkCount} deltaCount=${deltaCount} stdoutChars=${stdout.length} stderrChars=${stderr.length}${summarizeLogObject("stderrPreview", stderr)}`
   );
+  logOpenClawUsageFromOutput(request, step, prompt, stdout, stderr, logInfo);
 
   if (exitCode !== 0) {
     throw new Error(
@@ -1243,6 +1250,121 @@ function readIssueResult(
 
 function summarizeToolResultForLog(result: ToolResult): string {
   return summarizeLogObject("result", result.content);
+}
+
+function logPromptTokenEstimate(
+  request: RunRequest,
+  prompt: string,
+  step: number,
+  logInfo: RuntimeLogger
+): void {
+  logInfo(
+    [
+      `OpenClaw token estimate runId=${request.runId ?? "unknown"}`,
+      `step=${step}`,
+      `promptChars=${prompt.length}`,
+      `promptApproxTokens=${estimateTokens(prompt)}`
+    ].join(" ")
+  );
+}
+
+function logOpenClawUsageFromOutput(
+  request: RunRequest,
+  step: number,
+  prompt: string,
+  stdout: string,
+  stderr: string,
+  logInfo: RuntimeLogger
+): void {
+  const usage = readModelUsage(`${stdout}\n${stderr}`);
+  logInfo(
+    [
+      `OpenClaw usage runId=${request.runId ?? "unknown"}`,
+      `step=${step}`,
+      `promptApproxTokens=${estimateTokens(prompt)}`,
+      `inputTokens=${formatUsageNumber(usage?.inputTokens)}`,
+      `outputTokens=${formatUsageNumber(usage?.outputTokens)}`,
+      `totalTokens=${formatUsageNumber(usage?.totalTokens)}`,
+      `cachedInputTokens=${formatUsageNumber(usage?.cachedInputTokens)}`,
+      `reasoningTokens=${formatUsageNumber(usage?.reasoningTokens)}`,
+      `source=${usage ? "provider-output" : "estimate-only"}`
+    ].join(" ")
+  );
+}
+
+type ModelUsage = {
+  inputTokens?: number;
+  outputTokens?: number;
+  totalTokens?: number;
+  cachedInputTokens?: number;
+  reasoningTokens?: number;
+};
+
+function readModelUsage(text: string): ModelUsage | null {
+  const inputTokens = readLastNumberField(text, [
+    "input_tokens",
+    "inputTokens",
+    "prompt_tokens",
+    "promptTokens"
+  ]);
+  const outputTokens = readLastNumberField(text, [
+    "output_tokens",
+    "outputTokens",
+    "completion_tokens",
+    "completionTokens"
+  ]);
+  const totalTokens =
+    readLastNumberField(text, ["total_tokens", "totalTokens"]) ??
+    (typeof inputTokens === "number" && typeof outputTokens === "number"
+      ? inputTokens + outputTokens
+      : undefined);
+  const cachedInputTokens = readLastNumberField(text, [
+    "cached_tokens",
+    "cachedInputTokens",
+    "cache_read_input_tokens"
+  ]);
+  const reasoningTokens = readLastNumberField(text, [
+    "reasoning_tokens",
+    "reasoningTokens"
+  ]);
+
+  if (
+    inputTokens === undefined &&
+    outputTokens === undefined &&
+    totalTokens === undefined &&
+    cachedInputTokens === undefined &&
+    reasoningTokens === undefined
+  ) {
+    return null;
+  }
+
+  return {
+    inputTokens,
+    outputTokens,
+    totalTokens,
+    cachedInputTokens,
+    reasoningTokens
+  };
+}
+
+function readLastNumberField(text: string, fieldNames: string[]): number | undefined {
+  let value: number | undefined;
+  for (const fieldName of fieldNames) {
+    const escapedField = fieldName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const regex = new RegExp(`["']?${escapedField}["']?\\s*[:=]\\s*(\\d+)`, "gi");
+    for (const match of text.matchAll(regex)) {
+      value = Number.parseInt(match[1] ?? "", 10);
+    }
+  }
+  return value;
+}
+
+function estimateTokens(text: string): number {
+  return Math.ceil(text.length / 4);
+}
+
+function formatUsageNumber(value: number | undefined): string {
+  return typeof value === "number" ? String(value) : "unknown";
 }
 
 function summarizePromptForLog(prompt: string): string {

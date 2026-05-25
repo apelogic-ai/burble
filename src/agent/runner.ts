@@ -1,5 +1,10 @@
 import { generateText, stepCountIs, tool } from "ai";
-import type { StopCondition, TelemetrySettings, ToolSet } from "ai";
+import type {
+  LanguageModelUsage,
+  StopCondition,
+  TelemetrySettings,
+  ToolSet
+} from "ai";
 import { z } from "zod";
 import type { createGitHubTools } from "../tools/github";
 import type { createJiraTools } from "../tools/jira";
@@ -25,6 +30,7 @@ export type AgentGenerateRequest = {
 
 export type AgentGenerateResult = {
   text: string;
+  usage?: LanguageModelUsage;
 };
 
 export type AgentGenerateText = (
@@ -305,6 +311,16 @@ async function runAiSdkAgent(
       }
     });
     const text = result.text.trim() || "I could not produce a response.";
+    if (result.usage) {
+      deps.logInfo(
+        [
+          `LLM usage model=${deps.model}`,
+          `provider=${deps.resolvedModel.provider}`,
+          `modelId=${deps.resolvedModel.modelId}`,
+          summarizeLanguageModelUsage(result.usage)
+        ].join(" ")
+      );
+    }
 
     deps.logInfo(
       [
@@ -332,6 +348,32 @@ async function defaultGenerateText(
     maxRetries: request.maxRetries,
     experimental_telemetry: request.experimental_telemetry
   });
+}
+
+function summarizeLanguageModelUsage(usage: LanguageModelUsage): string {
+  const inputTokens = usage.inputTokens;
+  const outputTokens = usage.outputTokens;
+  const totalTokens =
+    usage.totalTokens ??
+    (typeof inputTokens === "number" && typeof outputTokens === "number"
+      ? inputTokens + outputTokens
+      : undefined);
+  const cachedInputTokens =
+    usage.inputTokenDetails?.cacheReadTokens ?? usage.cachedInputTokens;
+  const reasoningTokens =
+    usage.outputTokenDetails?.reasoningTokens ?? usage.reasoningTokens;
+
+  return [
+    `inputTokens=${formatOptionalNumber(inputTokens)}`,
+    `outputTokens=${formatOptionalNumber(outputTokens)}`,
+    `totalTokens=${formatOptionalNumber(totalTokens)}`,
+    `cachedInputTokens=${formatOptionalNumber(cachedInputTokens)}`,
+    `reasoningTokens=${formatOptionalNumber(reasoningTokens)}`
+  ].join(" ");
+}
+
+function formatOptionalNumber(value: number | undefined): string {
+  return typeof value === "number" ? String(value) : "unknown";
 }
 
 function mergeClassification(
