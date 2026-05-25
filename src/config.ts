@@ -16,6 +16,7 @@ export type Config = {
   agentRuntimeFactory: AgentRuntimeFactory;
   aiModel: string;
   openClawNemoClawUrl: string | null;
+  openClawNemoClawEngine: OpenClawNemoClawEngine;
   agentRuntimeDataRoot: string;
   agentRuntimeDockerNetwork: string;
   agentRuntimeImage: string;
@@ -37,10 +38,19 @@ export type SlackLogLevel = "debug" | "info" | "warn" | "error";
 export type AgentMode = "deterministic" | "llm";
 export type AgentRuntime = "ai-sdk" | "openclaw-nemoclaw";
 export type AgentRuntimeFactory = "static" | "docker";
+export type OpenClawNemoClawEngine =
+  | "deterministic"
+  | "openclaw"
+  | "openclaw-gateway";
 const slackLogLevels = ["debug", "info", "warn", "error"] as const;
 const agentModes = ["deterministic", "llm"] as const;
 const agentRuntimes = ["ai-sdk", "openclaw-nemoclaw"] as const;
 const agentRuntimeFactories = ["static", "docker"] as const;
+const openClawNemoClawEngines = [
+  "deterministic",
+  "openclaw",
+  "openclaw-gateway"
+] as const;
 
 function requiredEnv(env: Env, name: string): string {
   const value = env[name];
@@ -139,6 +149,26 @@ function optionalAgentRuntimeFactoryEnv(
   return value as AgentRuntimeFactory;
 }
 
+function optionalOpenClawNemoClawEngineEnv(
+  env: Env,
+  name: string,
+  fallback: OpenClawNemoClawEngine
+): OpenClawNemoClawEngine {
+  const value = env[name]?.trim().toLowerCase();
+  if (!value) {
+    return fallback;
+  }
+
+  const normalized = value === "openclaw-cli" ? "openclaw" : value;
+  if (!openClawNemoClawEngines.includes(normalized as OpenClawNemoClawEngine)) {
+    throw new Error(
+      `Environment variable ${name} must be one of ${openClawNemoClawEngines.join(", ")}`
+    );
+  }
+
+  return normalized as OpenClawNemoClawEngine;
+}
+
 function optionalUrlEnv(env: Env, name: string): string | null {
   const value = env[name]?.trim();
   return value ? value.replace(/\/+$/, "") : null;
@@ -168,6 +198,11 @@ export function readConfig(env: Env): Config {
     ),
     aiModel: validateAgentModelId(env.AI_MODEL ?? "openai:gpt-5.4"),
     openClawNemoClawUrl: optionalUrlEnv(env, "OPENCLAW_NEMOCLAW_URL"),
+    openClawNemoClawEngine: optionalOpenClawNemoClawEngineEnv(
+      env,
+      "OPENCLAW_NEMOCLAW_ENGINE",
+      "openclaw"
+    ),
     agentRuntimeDataRoot: env.AGENT_RUNTIME_DATA_ROOT ?? "/data/runtimes",
     agentRuntimeDockerNetwork:
       env.AGENT_RUNTIME_DOCKER_NETWORK ?? "compose_default",

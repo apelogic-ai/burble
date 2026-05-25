@@ -522,7 +522,7 @@ function createOpenClawRuntimeFactory(
 
     return createDockerRuntimeFactory({
       store,
-      engine: "openclaw",
+      engine: config.openClawNemoClawEngine,
       image: config.agentRuntimeImage,
       dataRoot: config.agentRuntimeDataRoot,
       dockerNetwork: config.agentRuntimeDockerNetwork,
@@ -543,7 +543,7 @@ function createOpenClawRuntimeFactory(
 
   return createStaticRuntimeFactory({
     store,
-    engine: "openclaw",
+    engine: config.openClawNemoClawEngine,
     endpointUrl: config.openClawNemoClawUrl,
     authToken: config.internalApiToken ?? "",
     dataRoot: config.agentRuntimeDataRoot

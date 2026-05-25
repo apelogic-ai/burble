@@ -28,7 +28,11 @@ export type ProviderConnection = {
   connectedAt: string;
 };
 
-export type AgentRuntimeEngine = "deterministic" | "openclaw" | "hermes";
+export type AgentRuntimeEngine =
+  | "deterministic"
+  | "openclaw"
+  | "openclaw-gateway"
+  | "hermes";
 
 export type AgentRuntimeStatus =
   | "provisioning"
