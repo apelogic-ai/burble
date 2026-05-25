@@ -600,11 +600,11 @@ async function buildToolCatalog(
       {
         name: "jira.listVisibleProjects",
         description:
-          "List Jira projects visible to the requesting Slack user's connected Jira account. Use query='DM', action='create', and expandIssueTypes=true to confirm create access and issue types before calling Atlassian MCP createJiraIssue.",
+          "List Jira projects visible to the requesting Slack user's connected Jira account. Use query='DM', action='create', and expandIssueTypes=true to confirm create access and issue types before jira.createIssue.",
         inputSchema: {
           query: "optional string project key or name search, for example: DM",
           action: "optional string permission filter: view, browse, edit, or create",
-          expandIssueTypes: "optional boolean; set true when selecting an issue type for createJiraIssue"
+          expandIssueTypes: "optional boolean; set true when selecting an issue type for jira.createIssue"
         }
       },
       {
@@ -618,7 +618,7 @@ async function buildToolCatalog(
       {
         name: "jira.createIssue",
         description:
-          "Create a Jira issue via Jira REST. Use after confirming project and issue type; use this when Atlassian MCP createJiraIssue returns an opaque provider error.",
+          "Create a Jira issue via Jira REST. Use this first for ordinary Jira ticket creation after confirming project and issue type.",
         inputSchema: {
           projectKey: "string Jira project key",
           issueTypeName: "optional string Jira issue type name",
@@ -668,8 +668,8 @@ async function buildToolCatalog(
     catalog.push({
       name: "atlassian.callMcpTool",
       description: [
-        "Call an allowlisted upstream Atlassian MCP tool through Burble for Jira/Atlassian questions that need provider-native tools. Selected Jira write tools are allowed.",
-        "For Jira create/edit/transition/comment/worklog requests, choose the relevant upstream Atlassian MCP tool from the known tool list and fill arguments from its inputSchema.",
+        "Call an allowlisted upstream Atlassian MCP tool through Burble for Jira/Atlassian questions that need provider-native tools and do not have a first-class Burble tool.",
+        "For ordinary Jira issue create/edit requests, prefer jira.createIssue or jira.editIssue. Use MCP for operations such as transition/comment/worklog or specialized provider-native lookups.",
         upstreamTools.summaries.length > 0
           ? `Known allowed Atlassian MCP tools include: ${upstreamTools.summaries.slice(0, 30).join("; ")}.`
           : "Use this only when you know the upstream allowed tool name."
