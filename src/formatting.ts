@@ -26,5 +26,5 @@ export function formatWorkingMessage(command: string): string {
 }
 
 export function formatMentionWorkingMessage(): string {
-  return "Working on that...";
+  return "Starting agent runtime...";
 }

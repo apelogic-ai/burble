@@ -530,7 +530,7 @@ async function* collectOpenClawGatewayHttpResponse(
     if (raced.type === "heartbeat") {
       yield {
         type: "status",
-        text: `Still running OpenClaw... ${Math.round(
+        text: `Agent has thought for ${Math.round(
           (Date.now() - startedAt) / 1000
         )}s`
       };
@@ -840,7 +840,7 @@ export async function* runOpenClawCliRequestStream(
   logInfo(
     `OpenClaw agent start runId=${request.runId ?? "unknown"} agent=${config.openClawAgent} sessionId=${sessionId} sessionScope=run textLength=${request.input.text.length} classification=${baseline.response.classification}`
   );
-  yield { type: "status", text: "Running OpenClaw/NemoClaw..." };
+  yield { type: "status", text: "Agent is thinking..." };
 
   const executedTools: ExecutedToolCall[] = [];
   const rejectedDirectResponses: string[] = [];
@@ -1022,7 +1022,7 @@ async function* collectOpenClawStream(
     if (event.type === "heartbeat") {
       yield {
         type: "status",
-        text: `Still running OpenClaw... ${Math.round(
+        text: `Agent has thought for ${Math.round(
           (Date.now() - startedAt) / 1000
         )}s`
       };

@@ -18,7 +18,7 @@ import {
 import type { TokenStore } from "./db";
 import { handleConversation } from "./conversation/orchestrator";
 import { normalizeMentionText } from "./conversation/normalize";
-import type { ConversationResponse } from "./conversation/types";
+import type { ConversationResponse, ToolClassification } from "./conversation/types";
 import { createConfiguredAgentRunner } from "./agent/runtime";
 import type { AgentRunEvent } from "./agent/types";
 import { createDockerRuntimeFactory } from "./agent/container-runtime-factory";
@@ -65,6 +65,8 @@ type SlackProgressMessage = {
   channel: string;
   ts: string;
   text: string;
+  startedAtMs: number;
+  toolStartedAtMs: Record<string, number>;
 };
 
 export function createSlackRuntime(
@@ -733,9 +735,21 @@ async function postConversationResponse(
   }
 ): Promise<void> {
   if (input.progressMessage && input.response.visibility !== "ephemeral") {
+    const finishedText = appendProgressLine(
+      input.progressMessage.text,
+      `Agent finished in ${formatElapsedMs(Date.now() - input.progressMessage.startedAtMs)}.`
+    );
+    input.progressMessage.text = finishedText;
     await client.chat.update({
       channel: input.progressMessage.channel,
       ts: input.progressMessage.ts,
+      text: finishedText
+    });
+    await client.chat.postMessage({
+      channel: input.response.visibility === "dm" ? input.user : input.channel,
+      ...(input.threadTs && input.response.visibility !== "dm"
+        ? { thread_ts: input.threadTs }
+        : {}),
       text: input.response.text,
       ...(input.response.blocks ? { blocks: input.response.blocks } : {})
     });
@@ -790,7 +804,9 @@ async function postMentionWorkingState(
       ? {
           channel: input.channel,
           ts: result.ts,
-          text
+          text,
+          startedAtMs: Date.now(),
+          toolStartedAtMs: {}
         }
       : undefined;
   }
@@ -809,7 +825,7 @@ async function updateAgentProgressMessage(
   progressMessage: SlackProgressMessage,
   event: AgentRunEvent
 ): Promise<void> {
-  const text = formatAgentProgressEvent(event, progressMessage.text);
+  const text = formatAgentProgressMessage(event, progressMessage);
   if (!text || text === progressMessage.text) {
     return;
   }
@@ -828,24 +844,102 @@ export function formatAgentProgressEvent(
 ): string | undefined {
   switch (event.type) {
     case "status":
-      return event.text;
+      return appendProgressLine(currentText, normalizeAgentStatus(event.text));
     case "tool_call":
-      return `Using ${formatAgentToolName(event.toolName)}...`;
+      return appendProgressLine(
+        currentText,
+        `Agent is calling ${formatAgentToolName(event.toolName)}...`
+      );
     case "tool_result":
-      return `Finished ${formatAgentToolName(event.toolName)}.`;
+      return appendProgressLine(
+        currentText,
+        `Agent called ${formatAgentToolName(event.toolName)}.`
+      );
     case "message_delta": {
       if (!event.text.trim()) {
         return undefined;
       }
 
-      return currentText && !currentText.endsWith("...")
-        ? `${currentText}${event.text}`
-        : event.text.trimStart();
+      return appendProgressLine(currentText, "Agent is responding...");
     }
     case "final":
     case "error":
       return undefined;
   }
+}
+
+function formatAgentProgressMessage(
+  event: AgentRunEvent,
+  progressMessage: SlackProgressMessage
+): string | undefined {
+  if (event.type === "tool_call") {
+    progressMessage.toolStartedAtMs[event.callId] = Date.now();
+    return appendProgressLine(
+      progressMessage.text,
+      `Agent is calling ${formatAgentToolName(event.toolName)}...`
+    );
+  }
+
+  if (event.type === "tool_result") {
+    const startedAt = progressMessage.toolStartedAtMs[event.callId];
+    const elapsed =
+      typeof startedAt === "number" ? ` in ${formatElapsedMs(Date.now() - startedAt)}` : "";
+    delete progressMessage.toolStartedAtMs[event.callId];
+    return appendProgressLine(
+      progressMessage.text,
+      `Agent called ${formatAgentToolName(event.toolName)}${elapsed} (${formatToolClassification(event.classification)} result).`
+    );
+  }
+
+  return formatAgentProgressEvent(event, progressMessage.text);
+}
+
+function normalizeAgentStatus(text: string): string {
+  const trimmed = text.trim();
+  const thoughtMatch = /(?:still running|agent has thought for)\s+(?:agent|openclaw)?\.{0,3}\s*(\d+)s/i.exec(
+    trimmed
+  );
+  if (thoughtMatch) {
+    return `Agent has thought for ${thoughtMatch[1]}s...`;
+  }
+
+  if (/running\s+(openclaw\/nemoclaw|agent)/i.test(trimmed)) {
+    return "Agent is thinking...";
+  }
+
+  return trimmed
+    .replace(/OpenClaw\/NemoClaw/gi, "agent")
+    .replace(/OpenClaw/gi, "agent")
+    .replace(/\bagent agent\b/gi, "agent");
+}
+
+function appendProgressLine(currentText: string, line: string): string {
+  const trimmedLine = line.trim();
+  if (!trimmedLine) {
+    return currentText;
+  }
+
+  const lines = currentText
+    .split(/\r?\n/)
+    .map((part) => part.trim())
+    .filter(Boolean);
+  if (lines.at(-1) === trimmedLine) {
+    return currentText;
+  }
+
+  return [...lines, trimmedLine].join("\n");
+}
+
+function formatElapsedMs(ms: number): string {
+  if (ms < 1_000) {
+    return `${Math.max(0, ms)}ms`;
+  }
+
+  return `${(ms / 1_000).toFixed(ms < 10_000 ? 1 : 0)}s`;
+}
+
+function formatToolClassification(classification: ToolClassification): string {
+  return String(classification).replace(/_/g, "-");
 }
 
 function formatAgentToolName(toolName: string): string {
@@ -855,6 +949,8 @@ function formatAgentToolName(toolName: string): string {
     "github.searchIssues": "GitHub search",
     "github.listMyPullRequests": "GitHub pull requests",
     "jira.getAuthenticatedUser": "Jira identity",
+    "jira.createIssue": "Jira issue create",
+    "jira.editIssue": "Jira issue edit",
     "jira.listAssignedIssues": "Jira assigned issues",
     "jira.searchIssues": "Jira search",
     "atlassian.listMcpTools": "Atlassian MCP tools",
