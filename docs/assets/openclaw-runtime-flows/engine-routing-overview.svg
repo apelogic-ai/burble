@@ -1,0 +1,92 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1440" height="880" viewBox="0 0 1440 880" role="img" aria-labelledby="title desc">
+  <title id="title">Burble OpenClaw runtime engine routing overview</title>
+  <desc id="desc">OPENCLAW_NEMOCLAW_ENGINE selects deterministic, OpenClaw CLI, OpenClaw Gateway, or Burble direct planning. Tool execution stays in the Burble MCP loop.</desc>
+  <defs>
+    <marker id="arrow" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto" markerUnits="strokeWidth">
+      <path d="M2,2 L10,6 L2,10 Z" fill="#263238"/>
+    </marker>
+    <style>
+      .bg { fill: #f7f8fa; }
+      .title { font: 700 34px Arial, sans-serif; fill: #172026; }
+      .subtitle { font: 400 18px Arial, sans-serif; fill: #4b5b64; }
+      .label { font: 700 18px Arial, sans-serif; fill: #172026; }
+      .small { font: 400 15px Arial, sans-serif; fill: #34444d; }
+      .tiny { font: 400 13px Arial, sans-serif; fill: #52636d; }
+      .box { fill: #ffffff; stroke: #a9b5bc; stroke-width: 2; rx: 8; }
+      .config { fill: #e8f4ff; stroke: #3584c5; }
+      .burble { fill: #eef8f1; stroke: #3c9151; }
+      .openclaw { fill: #fff3e3; stroke: #c27a21; }
+      .direct { fill: #f2edff; stroke: #7b5cc7; }
+      .provider { fill: #fcecef; stroke: #b94f61; }
+      .shared { fill: #edf7f8; stroke: #2f8a94; }
+      .line { fill: none; stroke: #263238; stroke-width: 2.5; marker-end: url(#arrow); }
+      .dash { fill: none; stroke: #6b7a82; stroke-width: 2; stroke-dasharray: 7 7; marker-end: url(#arrow); }
+      .note { fill: #fffde8; stroke: #c0a63a; stroke-width: 1.5; rx: 8; }
+    </style>
+  </defs>
+  <rect class="bg" width="1440" height="880"/>
+  <text class="title" x="70" y="70">Burble runtime engine routing</text>
+  <text class="subtitle" x="70" y="104">The engine chooses who performs model planning. Burble still owns the HTTP contract, MCP tool execution, and Slack response normalization.</text>
+
+  <rect class="box config" x="90" y="170" width="270" height="96"/>
+  <text class="label" x="120" y="207">Runtime config</text>
+  <text class="small" x="120" y="236">OPENCLAW_NEMOCLAW_ENGINE</text>
+
+  <rect class="box burble" x="510" y="156" width="310" height="124"/>
+  <text class="label" x="545" y="194">createRuntimeAgentAdapter</text>
+  <text class="small" x="545" y="224">Selects deterministic, CLI,</text>
+  <text class="small" x="545" y="248">Gateway, or direct adapter</text>
+
+  <rect class="box shared" x="1010" y="170" width="300" height="96"/>
+  <text class="label" x="1040" y="207">Burble run loop</text>
+  <text class="small" x="1040" y="236">prompt, tool parsing, final response</text>
+
+  <path class="line" d="M360 218 H510"/>
+  <path class="line" d="M820 218 H1010"/>
+
+  <rect class="box" x="90" y="390" width="250" height="116"/>
+  <text class="label" x="120" y="428">deterministic</text>
+  <text class="small" x="120" y="458">No model planning</text>
+  <text class="small" x="120" y="482">Rule-based Burble runner</text>
+
+  <rect class="box openclaw" x="410" y="390" width="250" height="116"/>
+  <text class="label" x="440" y="428">openclaw</text>
+  <text class="small" x="440" y="458">Spawns OpenClaw CLI</text>
+  <text class="small" x="440" y="482">Embedded local execution</text>
+
+  <rect class="box openclaw" x="730" y="390" width="250" height="116"/>
+  <text class="label" x="760" y="428">openclaw-gateway</text>
+  <text class="small" x="760" y="458">Calls local Gateway</text>
+  <text class="small" x="760" y="482">OpenClaw plans</text>
+
+  <rect class="box direct" x="1050" y="390" width="250" height="116"/>
+  <text class="label" x="1080" y="428">burble-direct</text>
+  <text class="small" x="1080" y="458">Calls provider directly</text>
+  <text class="small" x="1080" y="482">Burble plans prompt shape</text>
+
+  <path class="line" d="M620 280 C560 320, 260 325, 215 390"/>
+  <path class="line" d="M650 280 C610 325, 550 335, 535 390"/>
+  <path class="line" d="M690 280 C735 325, 835 335, 855 390"/>
+  <path class="line" d="M740 280 C830 325, 1125 335, 1175 390"/>
+
+  <rect class="box provider" x="845" y="600" width="240" height="100"/>
+  <text class="label" x="880" y="637">Model provider</text>
+  <text class="small" x="880" y="666">OpenAI, Anthropic,</text>
+  <text class="small" x="880" y="690">Ollama compatible</text>
+
+  <rect class="box shared" x="350" y="610" width="300" height="112"/>
+  <text class="label" x="385" y="648">Burble MCP tools</text>
+  <text class="small" x="385" y="678">Jira, GitHub, and other</text>
+  <text class="small" x="385" y="702">catalog tools execute here</text>
+
+  <path class="line" d="M855 506 C855 555, 900 565, 945 600"/>
+  <path class="line" d="M1175 506 C1175 555, 1055 570, 1005 600"/>
+  <path class="dash" d="M980 218 C1120 300, 1190 330, 1190 390"/>
+  <path class="dash" d="M980 218 C850 300, 840 330, 855 390"/>
+  <path class="line" d="M965 700 C900 790, 575 795, 505 722"/>
+  <path class="line" d="M500 610 C560 550, 740 530, 850 506"/>
+  <path class="line" d="M500 610 C700 535, 1020 535, 1170 506"/>
+
+  <rect class="note" x="90" y="780" width="1220" height="58"/>
+  <text class="small" x="120" y="815">Important: the direct path is not a tool-specific shortcut. It only changes the model planning transport. Tool calls still return to Burble MCP execution.</text>
+</svg>
