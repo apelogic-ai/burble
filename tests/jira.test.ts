@@ -28,6 +28,7 @@ const config: Config = {
   agentRuntime: "ai-sdk",
   agentRuntimeFactory: "static",
   openClawNemoClawUrl: null,
+  openClawNemoClawEngine: "openclaw",
   agentRuntimeDataRoot: "/data/runtimes",
   agentRuntimeDockerNetwork: "compose_default",
   agentRuntimeImage: "burble-openclaw-nemoclaw:dev",

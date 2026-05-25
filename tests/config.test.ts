@@ -29,6 +29,7 @@ describe("readConfig", () => {
       agentRuntimeFactory: "static",
       aiModel: "openai:gpt-5.4",
       openClawNemoClawUrl: null,
+      openClawNemoClawEngine: "openclaw",
       agentRuntimeDataRoot: "/data/runtimes",
       agentRuntimeDockerNetwork: "compose_default",
       agentRuntimeImage: "burble-openclaw-nemoclaw:dev",
@@ -109,6 +110,7 @@ describe("readConfig", () => {
     });
 
     expect(config.agentRuntimeFactory).toBe("docker");
+    expect(config.openClawNemoClawEngine).toBe("openclaw");
     expect(config.agentRuntimeImage).toBe(
       "burble-openclaw-nemoclaw-openclaw-cli:dev"
     );
@@ -132,6 +134,23 @@ describe("readConfig", () => {
         ATLASSIAN_MCP_URL: "https://mcp.atlassian.com/v1/mcp/authv2/"
       }).atlassianMcpUrl
     ).toBe("https://mcp.atlassian.com/v1/mcp/authv2");
+  });
+
+  test("allows OpenClaw gateway runtime engine override", () => {
+    const config = readConfig({
+      ...validEnv,
+      OPENCLAW_NEMOCLAW_ENGINE: "openclaw-gateway"
+    });
+
+    expect(config.openClawNemoClawEngine).toBe("openclaw-gateway");
+  });
+
+  test("rejects invalid OpenClaw runtime engines", () => {
+    expect(() =>
+      readConfig({ ...validEnv, OPENCLAW_NEMOCLAW_ENGINE: "magic" })
+    ).toThrow(
+      "Environment variable OPENCLAW_NEMOCLAW_ENGINE must be one of deterministic, openclaw, openclaw-gateway"
+    );
   });
 
   test("falls back to the internal API token as the runtime token secret", () => {

@@ -244,6 +244,9 @@ describe("dev deploy config", () => {
     expect(personalRuntimesCompose).toContain("RUNTIME_JWT_ISSUER");
     expect(personalRuntimesCompose).toContain("RUNTIME_JWT_PRIVATE_KEY_PATH");
     expect(personalRuntimesCompose).toContain(
+      "OPENCLAW_NEMOCLAW_ENGINE=${OPENCLAW_NEMOCLAW_ENGINE:-openclaw}"
+    );
+    expect(personalRuntimesCompose).toContain(
       "OPENCLAW_TIMEOUT_MS=${OPENCLAW_TIMEOUT_MS:-180000}"
     );
     expect(personalRuntimesCompose).toContain("OPENCLAW_STREAM_DEBUG");
@@ -311,7 +314,9 @@ describe("dev deploy config", () => {
 
     expect(openClawCliCompose).toContain("dockerfile: Dockerfile.openclaw-cli");
     expect(openClawCliCompose).toContain("OPENCLAW_VERSION");
-    expect(openClawCliCompose).toContain("OPENCLAW_NEMOCLAW_ENGINE=openclaw");
+    expect(openClawCliCompose).toContain(
+      "OPENCLAW_NEMOCLAW_ENGINE=${OPENCLAW_NEMOCLAW_ENGINE:-openclaw}"
+    );
     expect(openClawCliCompose).toContain(
       "burble-openclaw-nemoclaw-openclaw-cli:dev"
     );

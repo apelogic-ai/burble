@@ -16,4 +16,4 @@ services:
       args:
         OPENCLAW_VERSION: ${OPENCLAW_VERSION:-2026.5.19}
     environment:
-      - OPENCLAW_NEMOCLAW_ENGINE=openclaw
+      - OPENCLAW_NEMOCLAW_ENGINE=${OPENCLAW_NEMOCLAW_ENGINE:-openclaw}

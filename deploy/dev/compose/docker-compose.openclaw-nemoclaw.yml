@@ -13,6 +13,7 @@ services:
       - AGENT_RUNTIME=openclaw-nemoclaw
       - AGENT_RUNTIME_FACTORY=static
       - OPENCLAW_NEMOCLAW_URL=http://openclaw-nemoclaw:8080
+      - OPENCLAW_NEMOCLAW_ENGINE=${OPENCLAW_NEMOCLAW_ENGINE:-deterministic}
       - INTERNAL_API_TOKEN=${INTERNAL_API_TOKEN:?INTERNAL_API_TOKEN is required}
     depends_on:
       - openclaw-nemoclaw
