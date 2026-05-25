@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { ensureOpenClawSetup } from "../../../runtimes/openclaw-nemoclaw/src/setup";
@@ -21,7 +21,9 @@ const config: RuntimeConfig = {
   openClawSetupOnStart: true,
   openClawConfigPatchPath: null,
   openClawValidateOnStart: true,
-  openClawStreamDebug: false
+  openClawStreamDebug: false,
+  llmModel: "openai:gpt-5.4",
+  ollamaBaseUrl: "https://ollama.com"
 };
 
 describe("ensureOpenClawSetup", () => {
@@ -41,16 +43,20 @@ describe("ensureOpenClawSetup", () => {
 
   test("skips setup command when setup is disabled", async () => {
     const calls: string[][] = [];
+    const runtimeConfig = await configWithState({ openClawSetupOnStart: false });
 
     await ensureOpenClawSetup(
-      { ...config, openClawSetupOnStart: false },
+      runtimeConfig,
       async (_command, args) => {
         calls.push(args);
         return { exitCode: 0, stdout: "", stderr: "" };
       }
     );
 
-    expect(calls).toEqual([["config", "validate"]]);
+    expect(calls).toEqual([
+      ["config", "patch", "--file", llmPatchPath(runtimeConfig)],
+      ["config", "validate"]
+    ]);
   });
 
   test("runs non-interactive setup with persistent state paths", async () => {
@@ -95,6 +101,14 @@ describe("ensureOpenClawSetup", () => {
       },
       {
         command: "openclaw",
+        args: ["config", "patch", "--file", llmPatchPath(runtimeConfig)],
+        env: {
+          OPENCLAW_STATE_DIR: runtimeConfig.openClawStateDir,
+          OPENCLAW_CONFIG_PATH: "/data/openclaw/config/openclaw.json"
+        }
+      },
+      {
+        command: "openclaw",
         args: ["config", "validate"],
         env: {
           OPENCLAW_STATE_DIR: runtimeConfig.openClawStateDir,
@@ -119,6 +133,9 @@ describe("ensureOpenClawSetup", () => {
       "OpenClaw onboard finish",
       `OpenClaw config patch start path=${patchPath}`,
       "OpenClaw config patch finish",
+      "OpenClaw LLM config selected model=openai:gpt-5.4 ollamaBaseUrl=https://ollama.com",
+      expect.stringContaining("OpenClaw config patch start path="),
+      "OpenClaw config patch finish",
       "OpenClaw config validate start",
       "OpenClaw config validate finish"
     ]);
@@ -127,9 +144,10 @@ describe("ensureOpenClawSetup", () => {
   test("applies an optional config patch before validation", async () => {
     const calls: string[][] = [];
     const patchPath = await writePatchFile("{ model: 'test' }\n");
+    const runtimeConfig = await configWithState({ openClawConfigPatchPath: patchPath });
 
     await ensureOpenClawSetup(
-      await configWithState({ openClawConfigPatchPath: patchPath }),
+      runtimeConfig,
       async (_command, args) => {
         calls.push(args);
         return { exitCode: 0, stdout: "", stderr: "" };
@@ -157,15 +175,17 @@ describe("ensureOpenClawSetup", () => {
         "--json"
       ],
       ["config", "patch", "--file", patchPath],
+      ["config", "patch", "--file", llmPatchPath(runtimeConfig)],
       ["config", "validate"]
     ]);
   });
 
   test("can disable startup validation", async () => {
     const calls: string[][] = [];
+    const runtimeConfig = await configWithState({ openClawValidateOnStart: false });
 
     await ensureOpenClawSetup(
-      await configWithState({ openClawValidateOnStart: false }),
+      runtimeConfig,
       async (_command, args) => {
         calls.push(args);
         return { exitCode: 0, stdout: "", stderr: "" };
@@ -191,7 +211,8 @@ describe("ensureOpenClawSetup", () => {
         "--workspace",
         "/data/openclaw/workspace",
         "--json"
-      ]
+      ],
+      ["config", "patch", "--file", llmPatchPath(runtimeConfig)]
     ]);
   });
 
@@ -212,9 +233,10 @@ describe("ensureOpenClawSetup", () => {
       return { exitCode: 0, stdout: "", stderr: "" };
     });
 
-    expect(calls).toHaveLength(2);
+    expect(calls).toHaveLength(3);
     expect(calls[0][0]).toBe("onboard");
-    expect(calls[1]).toEqual(["config", "validate"]);
+    expect(calls[1]).toEqual(["config", "patch", "--file", llmPatchPath(runtimeConfig)]);
+    expect(calls[2]).toEqual(["config", "validate"]);
   });
 
   test("reruns setup when the config patch changes", async () => {
@@ -242,7 +264,29 @@ describe("ensureOpenClawSetup", () => {
     });
 
     expect(calls.filter((args) => args[0] === "onboard")).toHaveLength(2);
-    expect(calls.filter((args) => args[0] === "config")).toHaveLength(4);
+    expect(calls.filter((args) => args[0] === "config")).toHaveLength(6);
+  });
+
+  test("writes a normalized Ollama OpenClaw model patch", async () => {
+    const runtimeConfig = await configWithState({
+      llmModel: "ollama:qwen3-coder:30b-cloud",
+      ollamaBaseUrl: "https://ollama.com",
+      openClawSetupOnStart: false,
+      openClawValidateOnStart: false
+    });
+
+    await ensureOpenClawSetup(runtimeConfig, async () => ({
+      exitCode: 0,
+      stdout: "",
+      stderr: ""
+    }));
+
+    const patch = await readFile(llmPatchPath(runtimeConfig), "utf8");
+    expect(patch).toContain('"primary": "ollama/qwen3-coder:30b-cloud"');
+    expect(patch).toContain('"baseUrl": "https://ollama.com"');
+    expect(patch).toContain('"apiKey": "OLLAMA_API_KEY"');
+    expect(patch).toContain('"allow": [');
+    expect(patch).toContain('"ollama"');
   });
 
   test("surfaces onboarding failures without leaking stderr", async () => {
@@ -258,11 +302,10 @@ describe("ensureOpenClawSetup", () => {
   test("surfaces config patch failures without leaking stderr", async () => {
     await expect(
       ensureOpenClawSetup(
-        {
-          ...config,
+        await configWithState({
           openClawSetupOnStart: false,
           openClawConfigPatchPath: "/patch.json5"
-        },
+        }),
         async () => ({
           exitCode: 1,
           stdout: "",
@@ -273,11 +316,12 @@ describe("ensureOpenClawSetup", () => {
   });
 
   test("surfaces validation failures without leaking stderr", async () => {
+    let callCount = 0;
     await expect(
       ensureOpenClawSetup(
-        { ...config, openClawSetupOnStart: false },
+        await configWithState({ openClawSetupOnStart: false }),
         async () => ({
-          exitCode: 1,
+          exitCode: ++callCount === 1 ? 0 : 1,
           stdout: "",
           stderr: "secret leaked"
         })
@@ -301,4 +345,8 @@ async function writePatchFile(content: string): Promise<string> {
   const patchPath = join(patchDir, "openai.json5");
   await writeFile(patchPath, content);
   return patchPath;
+}
+
+function llmPatchPath(config: RuntimeConfig): string {
+  return join(config.openClawStateDir, "burble-llm.json");
 }

@@ -68,9 +68,11 @@ volume has already been prepared.
 
 If `OPENCLAW_CONFIG_PATCH_PATH` is set, startup applies it with
 `openclaw config patch --file`. Startup then runs `openclaw config validate`
-unless `OPENCLAW_VALIDATE_ON_START=false`. Use the config patch file for
-non-interactive model/provider configuration. The dev OpenAI patch allowlists
-only the OpenAI plugin to avoid repeatedly loading unrelated bundled plugins.
+unless `OPENCLAW_VALIDATE_ON_START=false`. The runtime then generates and
+applies an OpenClaw provider patch from the normalized `AI_MODEL` value. Use
+`provider:model`, for example `openai:gpt-5.4`,
+`anthropic:claude-opus-4.6`, or `ollama:qwen3-coder:30b-cloud`. For Ollama
+Cloud, set `OLLAMA_API_KEY` and leave `OLLAMA_BASE_URL=https://ollama.com`.
 
 Set `OPENCLAW_STREAM_DEBUG=true` temporarily to log stdout chunk timing, parsed
 delta counts, and redacted previews while diagnosing whether the CLI streams

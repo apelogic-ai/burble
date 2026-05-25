@@ -2,10 +2,15 @@ import { createProviderRegistry } from "ai";
 import type { LanguageModel } from "ai";
 import { createAnthropic } from "@ai-sdk/anthropic";
 import { createOpenAI } from "@ai-sdk/openai";
+import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 
-const supportedProviders = ["openai", "anthropic"] as const;
+const supportedProviders = ["openai", "anthropic", "ollama"] as const;
 type SupportedProvider = (typeof supportedProviders)[number];
 export type AgentModelId = `${SupportedProvider}:${string}`;
+export type ParsedAgentModelId = {
+  provider: SupportedProvider;
+  model: string;
+};
 export type DirectLanguageModel = Extract<
   LanguageModel,
   { provider: string; modelId: string }
@@ -14,9 +19,16 @@ export type DirectLanguageModel = Extract<
 export type ModelResolver = (modelId: string) => DirectLanguageModel;
 
 export function validateAgentModelId(modelId: string): AgentModelId {
-  const [provider, model, extra] = modelId.split(":");
+  parseAgentModelId(modelId);
+  return modelId as AgentModelId;
+}
 
-  if (!provider || !model || extra !== undefined) {
+export function parseAgentModelId(modelId: string): ParsedAgentModelId {
+  const separatorIndex = modelId.indexOf(":");
+  const provider = separatorIndex >= 0 ? modelId.slice(0, separatorIndex) : "";
+  const model = separatorIndex >= 0 ? modelId.slice(separatorIndex + 1) : "";
+
+  if (!provider || !model) {
     throw new Error("AI_MODEL must use provider:model format");
   }
 
@@ -26,7 +38,10 @@ export function validateAgentModelId(modelId: string): AgentModelId {
     );
   }
 
-  return modelId as AgentModelId;
+  return {
+    provider: provider as SupportedProvider,
+    model
+  };
 }
 
 export function createDirectModelResolver(): ModelResolver {
@@ -34,7 +49,31 @@ export function createDirectModelResolver(): ModelResolver {
     openai: createOpenAI(),
     anthropic: createAnthropic()
   });
+  const ollama = createOpenAICompatible({
+    name: "ollama",
+    baseURL: readOllamaOpenAiBaseUrl(),
+    apiKey: Bun.env.OLLAMA_API_KEY || "ollama-local"
+  });
 
-  return (modelId: string) =>
-    registry.languageModel(validateAgentModelId(modelId)) as DirectLanguageModel;
+  return (modelId: string) => {
+    const parsed = parseAgentModelId(modelId);
+    if (parsed.provider === "ollama") {
+      return ollama.chatModel(parsed.model) as DirectLanguageModel;
+    }
+
+    return registry.languageModel(
+      modelId as `openai:${string}` | `anthropic:${string}`
+    ) as DirectLanguageModel;
+  };
+}
+
+function readOllamaOpenAiBaseUrl(): string {
+  const explicit = Bun.env.OLLAMA_OPENAI_BASE_URL?.trim();
+  if (explicit) {
+    return explicit.replace(/\/+$/, "");
+  }
+
+  const nativeBaseUrl = (Bun.env.OLLAMA_BASE_URL?.trim() || "https://ollama.com")
+    .replace(/\/+$/, "");
+  return nativeBaseUrl.endsWith("/v1") ? nativeBaseUrl : `${nativeBaseUrl}/v1`;
 }

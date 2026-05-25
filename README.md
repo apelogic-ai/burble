@@ -74,6 +74,17 @@ AI_MODEL=openai:gpt-5.4
 OPENAI_API_KEY=...
 ```
 
+`AI_MODEL` is the normalized LLM selector for both the in-process AI SDK
+runner and the OpenClaw/NemoClaw runtime. Use `provider:model`:
+
+```env
+AI_MODEL=openai:gpt-5.4
+AI_MODEL=anthropic:claude-opus-4.6
+AI_MODEL=ollama:qwen3-coder:30b-cloud
+OLLAMA_API_KEY=...
+OLLAMA_BASE_URL=https://ollama.com
+```
+
 The optional OpenClaw/NemoClaw adapter uses the same runner contract and calls
 the repo-local runtime service in `runtimes/openclaw-nemoclaw`. That runtime
 calls Burble's internal tool gateway, not provider APIs directly:

@@ -64,6 +64,9 @@ describe("dev deploy config", () => {
       "INTERNAL_API_TOKEN",
       "OPENAI_API_KEY",
       "ANTHROPIC_API_KEY",
+      "OLLAMA_API_KEY",
+      "OLLAMA_BASE_URL",
+      "OLLAMA_OPENAI_BASE_URL",
       "GITHUB_CLIENT_ID:?GITHUB_CLIENT_ID is required",
       "GITHUB_CLIENT_SECRET:?GITHUB_CLIENT_SECRET is required",
       "JIRA_CLIENT_ID",
@@ -141,6 +144,11 @@ describe("dev deploy config", () => {
     );
     expect(openClawCompose).toContain("OPENAI_API_KEY=${OPENAI_API_KEY:-}");
     expect(openClawCompose).toContain("ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}");
+    expect(openClawCompose).toContain("AI_MODEL=${AI_MODEL:-openai:gpt-5.4}");
+    expect(openClawCompose).toContain("OLLAMA_API_KEY=${OLLAMA_API_KEY:-}");
+    expect(openClawCompose).toContain(
+      "OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-https://ollama.com}"
+    );
     expect(openClawCompose).toContain("./openclaw-patches:/etc/openclaw/patches:ro");
   });
 
@@ -176,6 +184,9 @@ describe("dev deploy config", () => {
       "OPENCLAW_DEBUG_SSE",
       "OPENCLAW_DEBUG_CODE_MODE",
       "OPENCLAW_VERSION",
+      "OLLAMA_API_KEY",
+      "OLLAMA_BASE_URL",
+      "OLLAMA_OPENAI_BASE_URL",
       "AGENT_RUNTIME_FACTORY",
       "AGENT_RUNTIME_DATA_ROOT",
       "AGENT_RUNTIME_IMAGE",
