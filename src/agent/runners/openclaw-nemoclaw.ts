@@ -93,6 +93,7 @@ export function createOpenClawNemoClawAgentRunner(
 
       yield { type: "status", text: "Running OpenClaw/NemoClaw..." };
 
+      const runStartedAt = Date.now();
       logInfo(
         [
           "OpenClaw/NemoClaw run start",
@@ -124,6 +125,7 @@ export function createOpenClawNemoClawAgentRunner(
         input: sanitizeAgentInput(input)
       };
       const runUrl = `${baseUrl}/runs`;
+      const postStartedAt = Date.now();
       const response = await postRuntimeRun(
         requestFetch,
         runUrl,
@@ -138,6 +140,15 @@ export function createOpenClawNemoClawAgentRunner(
           `OpenClaw/NemoClaw runtime returned HTTP ${response.status}`
         );
       }
+      logInfo(
+        [
+          "OpenClaw/NemoClaw run accepted",
+          `runId=${runId}`,
+          `runtimeId=${runtime?.id ?? "static"}`,
+          `elapsedMs=${Date.now() - postStartedAt}`,
+          `status=${response.status}`
+        ].join(" ")
+      );
 
       let agentResponse: AgentOutput | null;
       const startPayload = (await response.json()) as RemoteRunResponse &
@@ -160,7 +171,17 @@ export function createOpenClawNemoClawAgentRunner(
 
         try {
           agentResponse = yield* readWebSocketRunResponse(
-            createWebSocket(eventsUrl)
+            createWebSocket(eventsUrl),
+            (event) =>
+              logInfo(
+                [
+                  "OpenClaw/NemoClaw stream event",
+                  `runId=${startedRunId}`,
+                  `runtimeId=${runtime?.id ?? "static"}`,
+                  `elapsedMs=${Date.now() - runStartedAt}`,
+                  `type=${event.type}`
+                ].join(" ")
+              )
           );
         } catch (error) {
           if (!isRuntimeStreamClosedError(error)) {
@@ -198,7 +219,8 @@ export function createOpenClawNemoClawAgentRunner(
           `runId=${runId}`,
           `runtimeId=${runtime?.id ?? "static"}`,
           `classification=${agentResponse.classification}`,
-          `textLength=${agentResponse.text.length}`
+          `textLength=${agentResponse.text.length}`,
+          `elapsedMs=${Date.now() - runStartedAt}`
         ].join(" ")
       );
       if (runtime) {
@@ -258,7 +280,8 @@ async function readJsonRunResponse(
 }
 
 async function* readWebSocketRunResponse(
-  socket: AgentRuntimeWebSocket
+  socket: AgentRuntimeWebSocket,
+  onEvent?: (event: AgentRunEvent) => void
 ): AsyncIterable<AgentRunEvent, AgentOutput | null> {
   const queue: unknown[] = [];
   let closed = false;
@@ -300,10 +323,12 @@ async function* readWebSocketRunResponse(
         }
 
         if (event.type === "final") {
+          onEvent?.(event);
           socket.close();
           return event.response;
         }
 
+        onEvent?.(event);
         yield event;
       }
 

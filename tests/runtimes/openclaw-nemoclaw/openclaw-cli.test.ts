@@ -100,10 +100,15 @@ describe("runOpenClawCliRequest", () => {
       OPENCLAW_STATE_DIR: "/data/openclaw/state",
       OPENCLAW_CONFIG_PATH: "/data/openclaw/config/openclaw.json"
     });
-    expect(logs).toEqual([
-      "OpenClaw agent start runId=unknown agent=main sessionId=burble-person_example.com textLength=25 classification=user_private",
+    expect(logs).toContain(
+      "OpenClaw agent start runId=unknown agent=main sessionId=burble-person_example.com textLength=25 classification=user_private"
+    );
+    expect(logs).toContain(
       "OpenClaw agent finish runId=unknown classification=user_private textLength=32"
-    ]);
+    );
+    expect(logs.some((line) => line.startsWith("OpenClaw command start"))).toBe(
+      true
+    );
   });
 
   test("does not invoke OpenClaw when GitHub is not connected", async () => {
@@ -172,10 +177,12 @@ describe("runOpenClawCliRequest", () => {
     );
 
     expect(response.response.text).toBe("San Francisco is mild today.");
-    expect(logs).toEqual([
-      "OpenClaw agent start runId=unknown agent=main sessionId=burble-person_example.com textLength=46 classification=user_private",
+    expect(logs).toContain(
+      "OpenClaw agent start runId=unknown agent=main sessionId=burble-person_example.com textLength=46 classification=user_private"
+    );
+    expect(logs).toContain(
       "OpenClaw agent finish runId=unknown classification=user_private textLength=28"
-    ]);
+    );
   });
 
   test("lets OpenClaw plan a Jira REST tool call and reruns with the result", async () => {
