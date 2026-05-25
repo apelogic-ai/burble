@@ -155,11 +155,19 @@ async function buildSetupCacheKey(config: RuntimeConfig): Promise<string> {
   const patchHash = config.openClawConfigPatchPath
     ? await hashFile(config.openClawConfigPatchPath)
     : "none";
+  const generatedLlmPatchHash = createHash("sha256")
+    .update(
+      buildOpenClawLlmPatch({
+        modelId: config.llmModel,
+        ollamaBaseUrl: config.ollamaBaseUrl
+      })
+    )
+    .digest("hex");
 
   return createHash("sha256")
     .update(
       JSON.stringify({
-        version: 1,
+        version: 2,
         engine: config.engine,
         command: config.openClawCommand,
         agent: config.openClawAgent,
@@ -168,6 +176,7 @@ async function buildSetupCacheKey(config: RuntimeConfig): Promise<string> {
         workspaceDir: config.openClawWorkspaceDir,
         configPatchPath: config.openClawConfigPatchPath,
         patchHash,
+        generatedLlmPatchHash,
         validateOnStart: config.openClawValidateOnStart,
         llmModel: config.llmModel,
         ollamaBaseUrl: config.ollamaBaseUrl

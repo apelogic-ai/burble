@@ -271,6 +271,30 @@ describe("ensureOpenClawSetup", () => {
     expect(calls.filter((args) => args[0] === "config")).toHaveLength(6);
   });
 
+  test("reruns setup when the generated LLM patch changes", async () => {
+    const stateDir = await mkdtemp(join(tmpdir(), "burble-openclaw-state-"));
+    const calls: string[][] = [];
+    const runtimeConfig = {
+      ...config,
+      openClawStateDir: stateDir
+    };
+
+    await ensureOpenClawSetup(runtimeConfig, async (_command, args) => {
+      calls.push(args);
+      return { exitCode: 0, stdout: "", stderr: "" };
+    });
+    await ensureOpenClawSetup(
+      { ...runtimeConfig, llmModel: "openai:gpt-5.5" },
+      async (_command, args) => {
+        calls.push(args);
+        return { exitCode: 0, stdout: "", stderr: "" };
+      }
+    );
+
+    expect(calls.filter((args) => args[0] === "onboard")).toHaveLength(2);
+    expect(calls.filter((args) => args[0] === "config")).toHaveLength(4);
+  });
+
   test("writes a normalized Ollama OpenClaw model patch", async () => {
     const runtimeConfig = await configWithState({
       llmModel: "ollama:qwen3-coder:30b-cloud",

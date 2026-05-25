@@ -202,6 +202,23 @@ async function runOpenClawCommand(
   logInfo: RuntimeLogger,
   step: number
 ): Promise<CliCommandResult> {
+  if (config.engine === "openclaw-gateway") {
+    const result = await runOpenClawGatewayHttpRequest(
+      request,
+      config,
+      prompt,
+      sessionId,
+      logInfo,
+      step
+    );
+    if (result.exitCode !== 0) {
+      throw new Error(
+        `OpenClaw Gateway HTTP request failed${result.stderr ? `: ${truncate(redactPreview(result.stderr), 300)}` : ""}`
+      );
+    }
+    return result;
+  }
+
   const startedAt = Date.now();
   const rawStreamPath = await prepareRawStreamPath(config, request, step);
   const args = buildOpenClawArgs(config, prompt, sessionId, rawStreamPath);
@@ -254,6 +271,220 @@ async function runOpenClawCommand(
     `OpenClaw command finish runId=${request.runId ?? "unknown"} step=${step} elapsedMs=${Date.now() - startedAt} stdoutChars=${result.stdout.length} stderrChars=${result.stderr.length}${summarizeLogObject("stderrPreview", result.stderr)}`
   );
   return result;
+}
+
+async function runOpenClawGatewayHttpRequest(
+  request: RunRequest,
+  config: RuntimeConfig,
+  prompt: string,
+  sessionId: string,
+  logInfo: RuntimeLogger,
+  step: number
+): Promise<CliCommandResult> {
+  const startedAt = Date.now();
+  const sessionKey = buildGatewayHttpSessionKey(config, sessionId);
+  const endpoint = buildGatewayHttpResponsesUrl(config);
+  logInfo(
+    `OpenClaw gateway http start runId=${request.runId ?? "unknown"} step=${step} agent=${config.openClawAgent} endpoint=/v1/responses timeoutMs=${config.openClawTimeoutMs}${summarizePromptForLog(prompt)} sessionKey=${sessionKey}`
+  );
+  logStreamDebug(config, logInfo, "prompt preview", {
+    runId: request.runId ?? "unknown",
+    promptHash: hashLogValue(prompt),
+    chars: prompt.length,
+    preview: prompt
+  });
+
+  let stdout = "";
+  let stderr = "";
+  try {
+    const response = await fetchGatewayHttpResponse(
+      endpoint,
+      config,
+      sessionKey,
+      prompt
+    );
+    const responseText = await response.text();
+    if (!response.ok) {
+      stderr = responseText;
+      const gatewayDiagnostics = readGatewayDiagnosticTextSince(startedAt);
+      logOpenClawUsageFromOutput(
+        request,
+        step,
+        prompt,
+        stdout,
+        stderr,
+        null,
+        gatewayDiagnostics,
+        sessionId,
+        logInfo
+      );
+      logInfo(
+        `OpenClaw gateway http error runId=${request.runId ?? "unknown"} step=${step} status=${response.status}${summarizeLogObject("bodyPreview", responseText)}`
+      );
+      return { exitCode: 1, stdout, stderr };
+    }
+
+    stdout = extractOpenResponsesText(responseText) ?? responseText;
+    const gatewayDiagnostics = readGatewayDiagnosticTextSince(startedAt);
+    logOpenClawUsageFromOutput(
+      request,
+      step,
+      prompt,
+      [responseText, stdout].join("\n"),
+      stderr,
+      null,
+      gatewayDiagnostics,
+      sessionId,
+      logInfo
+    );
+    logInfo(
+      `OpenClaw gateway http finish runId=${request.runId ?? "unknown"} step=${step} elapsedMs=${Date.now() - startedAt} status=${response.status} stdoutChars=${stdout.length} responseChars=${responseText.length}`
+    );
+    return { exitCode: 0, stdout, stderr };
+  } catch (error) {
+    stderr = error instanceof Error ? error.message : String(error);
+    const gatewayDiagnostics = readGatewayDiagnosticTextSince(startedAt);
+    logOpenClawUsageFromOutput(
+      request,
+      step,
+      prompt,
+      stdout,
+      stderr,
+      null,
+      gatewayDiagnostics,
+      sessionId,
+      logInfo
+    );
+    logInfo(
+      `OpenClaw gateway http error runId=${request.runId ?? "unknown"} step=${step}${summarizeLogObject("error", stderr)}`
+    );
+    return { exitCode: 1, stdout, stderr };
+  }
+}
+
+async function* collectOpenClawGatewayHttpResponse(
+  request: RunRequest,
+  config: RuntimeConfig,
+  prompt: string,
+  sessionId: string,
+  logInfo: RuntimeLogger,
+  heartbeatMs: number,
+  emitDeltas: boolean,
+  step: number
+): AsyncGenerator<RunEvent, { stdout: string }, void> {
+  const startedAt = Date.now();
+  const resultPromise = runOpenClawGatewayHttpRequest(
+    request,
+    config,
+    prompt,
+    sessionId,
+    logInfo,
+    step
+  );
+  let result: CliCommandResult | null = null;
+
+  while (!result) {
+    const raced = await Promise.race([
+      resultPromise.then((value) => ({ type: "result" as const, value })),
+      sleep(heartbeatMs).then(() => ({ type: "heartbeat" as const }))
+    ]);
+
+    if (raced.type === "heartbeat") {
+      yield {
+        type: "status",
+        text: `Still running OpenClaw... ${Math.round(
+          (Date.now() - startedAt) / 1000
+        )}s`
+      };
+      logStreamDebug(config, logInfo, "heartbeat", {
+        runId: request.runId ?? "unknown",
+        elapsedMs: Date.now() - startedAt,
+        stdoutChunks: 0,
+        stderrChunks: 0,
+        stdoutChars: 0,
+        stderrChars: 0
+      });
+      continue;
+    }
+
+    result = raced.value;
+  }
+
+  logStreamDebug(config, logInfo, "stdout complete", {
+    runId: request.runId ?? "unknown",
+    elapsedMs: Date.now() - startedAt,
+    chunkCount: result.stdout ? 1 : 0,
+    stderrChunkCount: result.stderr ? 1 : 0,
+    deltaCount: shouldEmitGatewayHttpDelta(result.stdout) ? 1 : 0,
+    stdoutChars: result.stdout.length,
+    stderrChars: result.stderr.length,
+    exitCode: result.exitCode
+  });
+
+  if (result.exitCode !== 0) {
+    throw new Error(
+      `OpenClaw Gateway HTTP request failed${result.stderr ? `: ${truncate(redactPreview(result.stderr), 300)}` : ""}`
+    );
+  }
+
+  if (emitDeltas && shouldEmitGatewayHttpDelta(result.stdout)) {
+    logStreamDebug(config, logInfo, "delta parsed", {
+      runId: request.runId ?? "unknown",
+      elapsedMs: Date.now() - startedAt,
+      deltaCount: 1,
+      chars: result.stdout.length,
+      preview: result.stdout
+    });
+    yield { type: "message_delta", text: result.stdout };
+  }
+
+  return { stdout: result.stdout };
+}
+
+function shouldEmitGatewayHttpDelta(stdout: string): boolean {
+  const parsed = parseJsonObject(stdout.trim());
+  return !(parsed && typeof parsed.tool_call === "object" && parsed.tool_call !== null);
+}
+
+async function fetchGatewayHttpResponse(
+  endpoint: string,
+  config: RuntimeConfig,
+  sessionKey: string,
+  prompt: string
+): Promise<Response> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), config.openClawTimeoutMs);
+  try {
+    return await fetch(endpoint, {
+      method: "POST",
+      headers: {
+        "authorization": `Bearer ${config.openClawGatewayToken}`,
+        "content-type": "application/json",
+        "x-openclaw-agent-id": config.openClawAgent,
+        "x-openclaw-message-channel": "webchat",
+        "x-openclaw-session-key": sessionKey
+      },
+      body: JSON.stringify({
+        model: `openclaw/${config.openClawAgent}`,
+        input: prompt,
+        stream: false
+      }),
+      signal: controller.signal
+    });
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function buildGatewayHttpResponsesUrl(config: RuntimeConfig): string {
+  return `http://127.0.0.1:${config.openClawGatewayPort}/v1/responses`;
+}
+
+function buildGatewayHttpSessionKey(
+  config: RuntimeConfig,
+  sessionId: string
+): string {
+  return `agent:${config.openClawAgent}:explicit:${sessionId}`;
 }
 
 export async function* runOpenClawCliRequestStream(
@@ -408,6 +639,19 @@ async function* collectOpenClawStream(
   emitDeltas: boolean,
   step: number
 ): AsyncGenerator<RunEvent, { stdout: string }, void> {
+  if (config.engine === "openclaw-gateway") {
+    return yield* collectOpenClawGatewayHttpResponse(
+      request,
+      config,
+      prompt,
+      sessionId,
+      logInfo,
+      heartbeatMs,
+      emitDeltas,
+      step
+    );
+  }
+
   let stdout = "";
   let stderr = "";
   let exitCode: number | null = null;
@@ -1383,7 +1627,7 @@ function selectGatewayDiagnosticsForSession(
   for (const line of lines) {
     if (line.includes("[agent/embedded] embedded run start:")) {
       sawEmbeddedSession = true;
-      inTargetSession = line.includes(`sessionId=${sessionId}`);
+      inTargetSession = line.includes(`sessionId=${sessionId}`) || line.includes(sessionId);
       if (inTargetSession) {
         sawTargetSession = true;
         selected.push(line);
@@ -1398,7 +1642,7 @@ function selectGatewayDiagnosticsForSession(
     selected.push(line);
     if (
       line.includes("[agent/embedded] embedded run done:") &&
-      line.includes(`sessionId=${sessionId}`)
+      (line.includes(`sessionId=${sessionId}`) || line.includes(sessionId))
     ) {
       inTargetSession = false;
     }
@@ -1780,6 +2024,65 @@ function extractOpenClawText(stdout: string): string | null {
     readNestedText(parsed, ["message"]);
 
   return text?.trim() || null;
+}
+
+function extractOpenResponsesText(responseText: string): string | null {
+  const parsed = parseJsonObject(responseText);
+  if (!parsed) {
+    return null;
+  }
+
+  const outputText = readNestedText(parsed, ["output_text"]);
+  if (outputText?.trim()) {
+    return outputText.trim();
+  }
+
+  const output = parsed.output;
+  if (!Array.isArray(output)) {
+    return null;
+  }
+
+  const functionCall = output.find(
+    (item): item is Record<string, unknown> =>
+      Boolean(item) &&
+      typeof item === "object" &&
+      !Array.isArray(item) &&
+      (item as Record<string, unknown>).type === "function_call"
+  );
+  if (functionCall && typeof functionCall.name === "string") {
+    return JSON.stringify({
+      tool_call: {
+        name: functionCall.name,
+        arguments: parseJsonObject(String(functionCall.arguments ?? "")) ?? {}
+      }
+    });
+  }
+
+  const texts = output
+    .flatMap((item) => {
+      if (!item || typeof item !== "object" || Array.isArray(item)) {
+        return [];
+      }
+      const content = (item as Record<string, unknown>).content;
+      if (!Array.isArray(content)) {
+        return [];
+      }
+      return content
+        .map((part) => {
+          if (!part || typeof part !== "object" || Array.isArray(part)) {
+            return null;
+          }
+          const record = part as Record<string, unknown>;
+          return record.type === "output_text" && typeof record.text === "string"
+            ? record.text
+            : null;
+        })
+        .filter((value): value is string => Boolean(value?.trim()));
+    })
+    .join("\n\n")
+    .trim();
+
+  return texts || null;
 }
 
 function readLastJsonResponseText(value: string): string | null {
