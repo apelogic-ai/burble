@@ -8,11 +8,14 @@ import {
   searchIssues
 } from "./github";
 import {
+  createJiraIssue,
+  editJiraIssue,
   getJiraUser,
   listJiraAccessibleResources,
   listAssignedJiraIssues,
   listVisibleJiraProjects,
   refreshJiraAccessToken,
+  searchJiraUsers,
   searchJiraIssues
 } from "./jira";
 import {
@@ -65,6 +68,9 @@ const defaultDeps = {
   listJiraAccessibleResources,
   listAssignedJiraIssues,
   listVisibleJiraProjects,
+  searchJiraUsers,
+  createJiraIssue,
+  editJiraIssue,
   searchJiraIssues
 };
 
@@ -191,6 +197,54 @@ export async function handleToolGatewayRequest(
         auth,
         toolName,
         await jiraTools.listVisibleProjects.execute({
+          connection,
+          input: body.input
+        })
+      );
+    }
+
+    case "jira.searchUsers": {
+      if (!isSearchJiraUsersInput(body.input)) {
+        return new Response("Invalid tool input", { status: 400 });
+      }
+
+      return jsonResponseWithAudit(
+        store,
+        auth,
+        toolName,
+        await jiraTools.searchUsers.execute({
+          connection,
+          input: { query: body.input.query }
+        })
+      );
+    }
+
+    case "jira.createIssue": {
+      if (!isCreateJiraIssueInput(body.input)) {
+        return new Response("Invalid tool input", { status: 400 });
+      }
+
+      return jsonResponseWithAudit(
+        store,
+        auth,
+        toolName,
+        await jiraTools.createIssue.execute({
+          connection,
+          input: body.input
+        })
+      );
+    }
+
+    case "jira.editIssue": {
+      if (!isEditJiraIssueInput(body.input)) {
+        return new Response("Invalid tool input", { status: 400 });
+      }
+
+      return jsonResponseWithAudit(
+        store,
+        auth,
+        toolName,
+        await jiraTools.editIssue.execute({
           connection,
           input: body.input
         })
@@ -399,6 +453,9 @@ function isKnownTool(toolName: string): boolean {
     toolName === "jira.getAuthenticatedUser" ||
     toolName === "jira.listAccessibleResources" ||
     toolName === "jira.listVisibleProjects" ||
+    toolName === "jira.searchUsers" ||
+    toolName === "jira.createIssue" ||
+    toolName === "jira.editIssue" ||
     toolName === "jira.listAssignedIssues" ||
     toolName === "jira.searchIssues" ||
     toolName === "atlassian.listMcpTools" ||
@@ -442,6 +499,67 @@ function isSearchJiraIssuesInput(input: unknown): input is { jql: string } {
   );
 }
 
+function isSearchJiraUsersInput(input: unknown): input is { query: string } {
+  return (
+    typeof input === "object" &&
+    input !== null &&
+    "query" in input &&
+    typeof input.query === "string" &&
+    input.query.trim().length > 0
+  );
+}
+
+function isCreateJiraIssueInput(input: unknown): input is {
+  projectKey: string;
+  issueTypeName?: string;
+  issueTypeId?: string;
+  summary: string;
+  description?: string;
+  assigneeAccountId?: string;
+} {
+  if (typeof input !== "object" || input === null || Array.isArray(input)) {
+    return false;
+  }
+  const record = input as Record<string, unknown>;
+  return (
+    typeof record.projectKey === "string" &&
+    record.projectKey.trim().length > 0 &&
+    ((typeof record.issueTypeName === "string" &&
+      record.issueTypeName.trim().length > 0) ||
+      (typeof record.issueTypeId === "string" &&
+        record.issueTypeId.trim().length > 0)) &&
+    typeof record.summary === "string" &&
+    record.summary.trim().length > 0 &&
+    optionalString(record.description) &&
+    optionalString(record.assigneeAccountId)
+  );
+}
+
+function isEditJiraIssueInput(input: unknown): input is {
+  issueKey: string;
+  summary?: string;
+  description?: string;
+  assigneeAccountId?: string | null;
+} {
+  if (typeof input !== "object" || input === null || Array.isArray(input)) {
+    return false;
+  }
+  const record = input as Record<string, unknown>;
+  return (
+    typeof record.issueKey === "string" &&
+    record.issueKey.trim().length > 0 &&
+    optionalString(record.summary) &&
+    optionalString(record.description) &&
+    (record.assigneeAccountId === undefined ||
+      record.assigneeAccountId === null ||
+      typeof record.assigneeAccountId === "string") &&
+    (typeof record.summary === "string" ||
+      typeof record.description === "string" ||
+      typeof record.assigneeAccountId === "string" ||
+      record.assigneeAccountId === null)
+  );
+}
+
 function isListVisibleJiraProjectsInput(
   input: unknown
 ): input is {
@@ -471,6 +589,10 @@ function isListVisibleJiraProjectsInput(
       record.expandIssueTypes === undefined ||
       typeof record.expandIssueTypes === "boolean")
   );
+}
+
+function optionalString(value: unknown): boolean {
+  return value === undefined || typeof value === "string";
 }
 
 function isAtlassianMcpToolCallInput(

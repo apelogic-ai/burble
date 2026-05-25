@@ -400,6 +400,88 @@ describe("handleToolGatewayRequest", () => {
     });
   });
 
+  test("executes Jira REST write helpers through the HTTP fallback gateway", async () => {
+    const createResponse = await handleToolGatewayRequest(
+      config,
+      createStore(jiraConnection),
+      "jira.createIssue",
+      request("jira.createIssue", {
+        user: { email: "person@example.com" },
+        input: {
+          projectKey: "DM",
+          issueTypeName: "Task",
+          summary: "test ticket from slack",
+          assigneeAccountId: "acct-boris"
+        }
+      }),
+      {
+        createJiraIssue: async (token, input) => {
+          expect(token).toBe("jira-token");
+          expect(input).toEqual({
+            projectKey: "DM",
+            issueTypeName: "Task",
+            summary: "test ticket from slack",
+            assigneeAccountId: "acct-boris"
+          });
+          return {
+            key: "DM-100",
+            summary: input.summary,
+            url: "https://apegpt.atlassian.net/browse/DM-100"
+          };
+        }
+      }
+    );
+
+    expect(createResponse.status).toBe(200);
+    expect(await createResponse.json()).toEqual({
+      classification: "user_private",
+      content: {
+        key: "DM-100",
+        title: "test ticket from slack",
+        url: "https://apegpt.atlassian.net/browse/DM-100"
+      }
+    });
+
+    const editResponse = await handleToolGatewayRequest(
+      config,
+      createStore(jiraConnection),
+      "jira.editIssue",
+      request("jira.editIssue", {
+        user: { email: "person@example.com" },
+        input: {
+          issueKey: "DM-100",
+          summary: "updated title",
+          assigneeAccountId: null
+        }
+      }),
+      {
+        editJiraIssue: async (token, input) => {
+          expect(token).toBe("jira-token");
+          expect(input).toEqual({
+            issueKey: "DM-100",
+            summary: "updated title",
+            assigneeAccountId: null
+          });
+          return {
+            key: "DM-100",
+            summary: "updated title",
+            url: "https://apegpt.atlassian.net/browse/DM-100"
+          };
+        }
+      }
+    );
+
+    expect(editResponse.status).toBe(200);
+    expect(await editResponse.json()).toEqual({
+      classification: "user_private",
+      content: {
+        key: "DM-100",
+        title: "updated title",
+        url: "https://apegpt.atlassian.net/browse/DM-100"
+      }
+    });
+  });
+
   test("executes Atlassian MCP tool discovery through the HTTP fallback gateway", async () => {
     const response = await handleToolGatewayRequest(
       config,

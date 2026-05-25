@@ -36,8 +36,15 @@ For project and issue type discovery before creating Jira issues, prefer
 then use the confirmed project key and issue type name/id in the MCP create
 arguments.
 
+For core Jira CRUD, REST-backed Burble tools are available as stable provider
+capabilities: `jira.createIssue`, `jira.editIssue`, and `jira.searchUsers`.
+If upstream MCP create/edit tools return an opaque provider error such as
+`We are having trouble completing this action`, use the matching REST-backed
+Burble tool instead of repeating the same MCP call.
+
 When a user provides an assignee email, use that email for Jira account lookup
-before trying the display name.
+before trying the display name. Prefer `jira.searchUsers` for REST-backed Jira
+account resolution.
 
 For Jira issue creation, do not let optional assignee lookup failure block
 creating the issue. If project, issue type, and summary can be resolved but the

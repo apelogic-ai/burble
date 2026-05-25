@@ -10,11 +10,14 @@ import {
   searchIssues
 } from "../github";
 import {
+  createJiraIssue,
+  editJiraIssue,
   getJiraUser,
   listJiraAccessibleResources,
   listAssignedJiraIssues,
   listVisibleJiraProjects,
   refreshJiraAccessToken,
+  searchJiraUsers,
   searchJiraIssues
 } from "../jira";
 import {
@@ -61,6 +64,9 @@ const defaultDeps = {
   listJiraAccessibleResources,
   listAssignedJiraIssues,
   listVisibleJiraProjects,
+  searchJiraUsers,
+  createJiraIssue,
+  editJiraIssue,
   searchJiraIssues
 };
 
@@ -244,6 +250,103 @@ function createProviderMcpServer(
           jiraTools.listVisibleProjects.execute({
             connection,
             input: { query, action, expandIssueTypes }
+          })
+        )
+      )
+  );
+
+  server.registerTool(
+    "jira_search_users",
+    {
+      title: "Jira user search",
+      description:
+        "Search Jira users visible to this Slack user's connected Jira account. Use this to resolve assignee account IDs from emails or names.",
+      inputSchema: {
+        query: z.string().min(1).describe("Jira user email, display name, or query")
+      }
+    },
+    async ({ query }) =>
+      mcpToolResult(
+        await withConnection(store, runtime, "jira", (connection) =>
+          jiraTools.searchUsers.execute({
+            connection,
+            input: { query }
+          })
+        )
+      )
+  );
+
+  server.registerTool(
+    "jira_create_issue",
+    {
+      title: "Jira create issue",
+      description:
+        "Create a Jira issue via Jira REST with this Slack user's connected Jira account. Use after confirming project and issue type.",
+      inputSchema: {
+        projectKey: z.string().min(1).describe("Jira project key"),
+        issueTypeName: z.string().optional().describe("Jira issue type name"),
+        issueTypeId: z.string().optional().describe("Jira issue type ID"),
+        summary: z.string().min(1).describe("Issue summary"),
+        description: z.string().optional().describe("Plain text issue description"),
+        assigneeAccountId: z
+          .string()
+          .optional()
+          .describe("Optional Jira account ID for the assignee")
+      }
+    },
+    async ({
+      projectKey,
+      issueTypeName,
+      issueTypeId,
+      summary,
+      description,
+      assigneeAccountId
+    }) =>
+      mcpToolResult(
+        await withConnection(store, runtime, "jira", (connection) =>
+          jiraTools.createIssue.execute({
+            connection,
+            input: {
+              projectKey,
+              ...(issueTypeName ? { issueTypeName } : {}),
+              ...(issueTypeId ? { issueTypeId } : {}),
+              summary,
+              ...(description ? { description } : {}),
+              ...(assigneeAccountId ? { assigneeAccountId } : {})
+            }
+          })
+        )
+      )
+  );
+
+  server.registerTool(
+    "jira_edit_issue",
+    {
+      title: "Jira edit issue",
+      description:
+        "Edit Jira issue fields via Jira REST with this Slack user's connected Jira account.",
+      inputSchema: {
+        issueKey: z.string().min(1).describe("Jira issue key"),
+        summary: z.string().optional().describe("New issue summary"),
+        description: z.string().optional().describe("New plain text description"),
+        assigneeAccountId: z
+          .string()
+          .nullable()
+          .optional()
+          .describe("Jira account ID for assignee, or null to unassign")
+      }
+    },
+    async ({ issueKey, summary, description, assigneeAccountId }) =>
+      mcpToolResult(
+        await withConnection(store, runtime, "jira", (connection) =>
+          jiraTools.editIssue.execute({
+            connection,
+            input: {
+              issueKey,
+              ...(summary ? { summary } : {}),
+              ...(description !== undefined ? { description } : {}),
+              ...(assigneeAccountId !== undefined ? { assigneeAccountId } : {})
+            }
           })
         )
       )

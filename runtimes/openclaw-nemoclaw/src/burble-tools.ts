@@ -165,6 +165,12 @@ function toMcpToolName(toolName: string): string {
       return "jira_list_accessible_resources";
     case "jira.listVisibleProjects":
       return "jira_list_visible_projects";
+    case "jira.searchUsers":
+      return "jira_search_users";
+    case "jira.createIssue":
+      return "jira_create_issue";
+    case "jira.editIssue":
+      return "jira_edit_issue";
     case "jira.listAssignedIssues":
       return "jira_list_assigned_issues";
     case "jira.searchIssues":
@@ -218,6 +224,34 @@ function toMcpToolArguments(
         ? { expandIssueTypes: input.expandIssueTypes }
         : {})
     };
+  }
+
+  if (toolName === "jira.searchUsers") {
+    const query = readNestedString(body, "input", "query");
+    if (!query) {
+      throw new Error("jira.searchUsers requires input.query");
+    }
+    return { query };
+  }
+
+  if (toolName === "jira.createIssue") {
+    return compactToolInput(readRecordKey(body, "input"), [
+      "projectKey",
+      "issueTypeName",
+      "issueTypeId",
+      "summary",
+      "description",
+      "assigneeAccountId"
+    ]);
+  }
+
+  if (toolName === "jira.editIssue") {
+    return compactToolInput(readRecordKey(body, "input"), [
+      "issueKey",
+      "summary",
+      "description",
+      "assigneeAccountId"
+    ]);
   }
 
   if (toolName === "atlassian.callMcpTool") {
@@ -280,6 +314,28 @@ function readRecordKey(
   return inner && typeof inner === "object" && !Array.isArray(inner)
     ? (inner as Record<string, unknown>)
     : null;
+}
+
+function compactToolInput(
+  input: Record<string, unknown> | null,
+  keys: string[]
+): Record<string, unknown> {
+  if (!input) {
+    return {};
+  }
+
+  const output: Record<string, unknown> = {};
+  for (const key of keys) {
+    const value = input[key];
+    if (
+      value === null ||
+      (typeof value === "string" && value.trim()) ||
+      typeof value === "boolean"
+    ) {
+      output[key] = value;
+    }
+  }
+  return output;
 }
 
 async function readMcpToolResult(response: Response): Promise<ToolResult> {

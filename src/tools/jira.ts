@@ -31,6 +31,27 @@ export type JiraToolDeps = {
       expandIssueTypes?: boolean;
     }
   ) => Promise<JiraVisibleProject[]>;
+  searchJiraUsers?: (token: string, query: string) => Promise<JiraUser[]>;
+  createJiraIssue?: (
+    token: string,
+    input: {
+      projectKey: string;
+      issueTypeName?: string;
+      issueTypeId?: string;
+      summary: string;
+      description?: string;
+      assigneeAccountId?: string;
+    }
+  ) => Promise<JiraIssue>;
+  editJiraIssue?: (
+    token: string,
+    input: {
+      issueKey: string;
+      summary?: string;
+      description?: string;
+      assigneeAccountId?: string | null;
+    }
+  ) => Promise<JiraIssue>;
   listAssignedJiraIssues: (token: string) => Promise<JiraIssue[]>;
   searchJiraIssues: (token: string, jql: string) => Promise<JiraIssue[]>;
   refreshJiraAccessToken?: (refreshToken: string) => Promise<JiraTokenSet>;
@@ -66,6 +87,11 @@ type JiraVisibleProjectContent = Array<{
     description?: string;
     subtask?: boolean;
   }>;
+}>;
+type JiraUserContent = Array<{
+  accountId: string;
+  displayName: string;
+  emailAddress?: string;
 }>;
 
 export function createJiraTools(deps: JiraToolDeps) {
@@ -177,6 +203,104 @@ export function createJiraTools(deps: JiraToolDeps) {
                 }
               : {})
           }))
+        };
+      }
+    },
+
+    searchUsers: {
+      async execute(
+        context: JiraToolContext & { input: { query: string } }
+      ): Promise<ToolResult<JiraUserContent | JiraAuthErrorContent>> {
+        const users = await withJiraToken(
+          deps,
+          context.connection,
+          (accessToken) => {
+            if (!deps.searchJiraUsers) {
+              throw new Error("Jira user search is not configured");
+            }
+
+            return deps.searchJiraUsers(accessToken, context.input.query);
+          }
+        );
+        if (isJiraAuthErrorResult(users)) {
+          return users;
+        }
+
+        return {
+          classification: "user_private",
+          content: users.slice(0, 10).map((user) => ({
+            accountId: user.accountId,
+            displayName: user.displayName,
+            ...(user.emailAddress ? { emailAddress: user.emailAddress } : {})
+          }))
+        };
+      }
+    },
+
+    createIssue: {
+      async execute(
+        context: JiraToolContext & {
+          input: {
+            projectKey: string;
+            issueTypeName?: string;
+            issueTypeId?: string;
+            summary: string;
+            description?: string;
+            assigneeAccountId?: string;
+          };
+        }
+      ): Promise<ToolResult<JiraIssueContent[number] | JiraAuthErrorContent>> {
+        const issue = await withJiraToken(
+          deps,
+          context.connection,
+          (accessToken) => {
+            if (!deps.createJiraIssue) {
+              throw new Error("Jira issue create is not configured");
+            }
+
+            return deps.createJiraIssue(accessToken, context.input);
+          }
+        );
+        if (isJiraAuthErrorResult(issue)) {
+          return issue;
+        }
+
+        return {
+          classification: "user_private",
+          content: sanitizeIssue(issue)
+        };
+      }
+    },
+
+    editIssue: {
+      async execute(
+        context: JiraToolContext & {
+          input: {
+            issueKey: string;
+            summary?: string;
+            description?: string;
+            assigneeAccountId?: string | null;
+          };
+        }
+      ): Promise<ToolResult<JiraIssueContent[number] | JiraAuthErrorContent>> {
+        const issue = await withJiraToken(
+          deps,
+          context.connection,
+          (accessToken) => {
+            if (!deps.editJiraIssue) {
+              throw new Error("Jira issue edit is not configured");
+            }
+
+            return deps.editJiraIssue(accessToken, context.input);
+          }
+        );
+        if (isJiraAuthErrorResult(issue)) {
+          return issue;
+        }
+
+        return {
+          classification: "user_private",
+          content: sanitizeIssue(issue)
         };
       }
     },
@@ -320,10 +444,14 @@ export function isJiraAuthErrorResult(value: unknown): value is JiraAuthErrorRes
 }
 
 function sanitizeIssues(issues: JiraIssue[]) {
-  return issues.slice(0, 10).map((issue) => ({
+  return issues.slice(0, 10).map(sanitizeIssue);
+}
+
+function sanitizeIssue(issue: JiraIssue) {
+  return {
     key: issue.key,
     title: issue.summary,
     url: issue.url,
     ...(issue.status ? { status: issue.status } : {})
-  }));
+  };
 }

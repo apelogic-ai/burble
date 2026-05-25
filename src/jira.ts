@@ -77,6 +77,15 @@ type JiraProjectSearchResponse = {
   }>;
 };
 
+type JiraCreateIssueResponse = {
+  key?: string;
+};
+
+type JiraErrorResponse = {
+  errorMessages?: string[];
+  errors?: Record<string, string>;
+};
+
 export function buildJiraOAuthUrl(config: Config, state: string): string {
   if (!config.jiraClientId || !config.jiraClientSecret) {
     throw new Error("Jira OAuth is not configured");
@@ -306,6 +315,140 @@ export async function listVisibleJiraProjects(
     }));
 }
 
+export async function searchJiraUsers(
+  token: string,
+  query: string
+): Promise<JiraUser[]> {
+  const resource = await resolveJiraResource(token);
+  const url = new URL(
+    `https://api.atlassian.com/ex/jira/${resource.id}/rest/api/3/user/search`
+  );
+  url.searchParams.set("query", query.trim());
+  url.searchParams.set("maxResults", "10");
+
+  const response = await fetch(url, {
+    headers: jiraHeaders(token)
+  });
+  const body = (await response.json()) as JiraUser[] | JiraErrorResponse;
+
+  if (!response.ok || !Array.isArray(body)) {
+    throw new JiraApiError(
+      formatJiraError(body, `Jira user search failed with ${response.status}`),
+      response.status
+    );
+  }
+
+  return body.slice(0, 10).map((user) => ({
+    accountId: user.accountId,
+    displayName: user.displayName,
+    ...(user.emailAddress ? { emailAddress: user.emailAddress } : {})
+  }));
+}
+
+export async function createJiraIssue(
+  token: string,
+  input: {
+    projectKey: string;
+    issueTypeName?: string;
+    issueTypeId?: string;
+    summary: string;
+    description?: string;
+    assigneeAccountId?: string;
+  }
+): Promise<JiraIssue> {
+  if (!input.issueTypeName?.trim() && !input.issueTypeId?.trim()) {
+    throw new Error("Jira issue creation requires an issue type name or ID");
+  }
+
+  const resource = await resolveJiraResource(token);
+  const response = await fetch(
+    `https://api.atlassian.com/ex/jira/${resource.id}/rest/api/3/issue`,
+    {
+      method: "POST",
+      headers: jiraJsonHeaders(token),
+      body: JSON.stringify({
+        fields: {
+          project: { key: input.projectKey },
+          summary: input.summary,
+          issuetype: input.issueTypeId
+            ? { id: input.issueTypeId }
+            : { name: input.issueTypeName },
+          ...(input.description
+            ? { description: plainTextToAdf(input.description) }
+            : {}),
+          ...(input.assigneeAccountId
+            ? { assignee: { id: input.assigneeAccountId } }
+            : {})
+        }
+      })
+    }
+  );
+  const body = (await response.json()) as JiraCreateIssueResponse | JiraErrorResponse;
+
+  if (!response.ok || !("key" in body) || !body.key) {
+    throw new JiraApiError(
+      formatJiraError(body, `Jira issue create failed with ${response.status}`),
+      response.status
+    );
+  }
+
+  return {
+    key: body.key,
+    summary: input.summary,
+    url: `${resource.url.replace(/\/+$/, "")}/browse/${body.key}`
+  };
+}
+
+export async function editJiraIssue(
+  token: string,
+  input: {
+    issueKey: string;
+    summary?: string;
+    description?: string;
+    assigneeAccountId?: string | null;
+  }
+): Promise<JiraIssue> {
+  const resource = await resolveJiraResource(token);
+  const fields: Record<string, unknown> = {};
+  if (input.summary?.trim()) {
+    fields.summary = input.summary.trim();
+  }
+  if (input.description !== undefined) {
+    fields.description = plainTextToAdf(input.description);
+  }
+  if (input.assigneeAccountId !== undefined) {
+    fields.assignee = input.assigneeAccountId
+      ? { id: input.assigneeAccountId }
+      : null;
+  }
+  if (Object.keys(fields).length === 0) {
+    throw new Error("No editable Jira issue fields were provided");
+  }
+
+  const response = await fetch(
+    `https://api.atlassian.com/ex/jira/${resource.id}/rest/api/3/issue/${encodeURIComponent(input.issueKey)}`,
+    {
+      method: "PUT",
+      headers: jiraJsonHeaders(token),
+      body: JSON.stringify({ fields })
+    }
+  );
+  const body = await readOptionalJiraJson(response);
+
+  if (!response.ok) {
+    throw new JiraApiError(
+      formatJiraError(body, `Jira issue edit failed with ${response.status}`),
+      response.status
+    );
+  }
+
+  return {
+    key: input.issueKey,
+    summary: input.summary ?? input.issueKey,
+    url: `${resource.url.replace(/\/+$/, "")}/browse/${input.issueKey}`
+  };
+}
+
 async function resolveJiraResource(token: string): Promise<JiraAccessibleResource> {
   const resources = await listJiraAccessibleResources(token);
   const resource = resources.find((candidate) =>
@@ -317,6 +460,52 @@ async function resolveJiraResource(token: string): Promise<JiraAccessibleResourc
   }
 
   return resource;
+}
+
+function plainTextToAdf(text: string) {
+  return {
+    type: "doc",
+    version: 1,
+    content: [
+      {
+        type: "paragraph",
+        content: text
+          ? [
+              {
+                type: "text",
+                text
+              }
+            ]
+          : []
+      }
+    ]
+  };
+}
+
+async function readOptionalJiraJson(response: Response): Promise<unknown> {
+  const text = await response.text();
+  if (!text.trim()) {
+    return {};
+  }
+
+  try {
+    return JSON.parse(text);
+  } catch {
+    return {};
+  }
+}
+
+function formatJiraError(body: unknown, fallback: string): string {
+  if (!body || typeof body !== "object") {
+    return fallback;
+  }
+
+  const record = body as JiraErrorResponse;
+  const messages = [
+    ...(record.errorMessages ?? []),
+    ...Object.values(record.errors ?? {})
+  ].filter(Boolean);
+  return messages.length > 0 ? messages.join("; ") : fallback;
 }
 
 function sanitizeProjectIssueTypes(
@@ -361,5 +550,12 @@ function jiraHeaders(token: string): HeadersInit {
   return {
     Accept: "application/json",
     Authorization: `Bearer ${token}`
+  };
+}
+
+function jiraJsonHeaders(token: string): HeadersInit {
+  return {
+    ...jiraHeaders(token),
+    "Content-Type": "application/json"
   };
 }
