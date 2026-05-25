@@ -11,7 +11,7 @@ export function createBurbleToolExecutor(
   }
 
   return async (toolName, body) => {
-    info(`Burble HTTP tool start tool=${toolName}`);
+    info(`Burble HTTP tool start tool=${toolName}${summarizeLogObject("body", body)}`);
     const headers = new Headers({
       "content-type": "application/json",
       authorization: `Bearer ${config.internalToken}`
@@ -35,7 +35,7 @@ export function createBurbleToolExecutor(
 
     const result = (await response.json()) as ToolResult;
     info(
-      `Burble HTTP tool finish tool=${toolName} classification=${result.classification}`
+      `Burble HTTP tool finish tool=${toolName} classification=${result.classification}${summarizeLogObject("result", result.content)}`
     );
     return result;
   };
@@ -48,7 +48,7 @@ function createBurbleMcpToolExecutor(config: RuntimeConfig): ToolExecutor {
     const args = toMcpToolArguments(toolName, body);
     sessionIdPromise ??= initializeMcpSession(config);
     const sessionId = await sessionIdPromise;
-    info(`Burble MCP tool start tool=${mcpToolName}`);
+    info(`Burble MCP tool start tool=${mcpToolName}${summarizeLogObject("args", args)}`);
 
     const response = await fetch(config.mcpGatewayUrl!, {
       method: "POST",
@@ -75,7 +75,7 @@ function createBurbleMcpToolExecutor(config: RuntimeConfig): ToolExecutor {
 
     const result = await readMcpToolResult(response);
     info(
-      `Burble MCP tool finish tool=${mcpToolName} classification=${result.classification}`
+      `Burble MCP tool finish tool=${mcpToolName} classification=${result.classification}${summarizeLogObject("result", result.content)}`
     );
     return result;
   };
@@ -310,6 +310,70 @@ function parseMcpResponsePayload(body: string): {
 async function readErrorDetail(response: Response): Promise<string> {
   const text = (await response.text()).trim().replace(/\s+/g, " ");
   return text ? `: ${text.slice(0, 300)}` : "";
+}
+
+function summarizeLogObject(label: string, value: unknown): string {
+  return ` ${label}=${JSON.stringify(sanitizeLogValue(value, 0))}`;
+}
+
+function sanitizeLogValue(value: unknown, depth: number): unknown {
+  if (depth > 3) {
+    return "[depth-limit]";
+  }
+
+  if (typeof value === "string") {
+    return sanitizeLogString(value);
+  }
+
+  if (typeof value === "number" || typeof value === "boolean" || value === null) {
+    return value;
+  }
+
+  if (Array.isArray(value)) {
+    return value.slice(0, 10).map((item) => sanitizeLogValue(item, depth + 1));
+  }
+
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>)
+        .slice(0, 30)
+        .map(([key, item]) => [
+          key,
+          shouldRedactLogKey(key) ? "[redacted]" : sanitizeLogValue(item, depth + 1)
+        ])
+    );
+  }
+
+  return String(value);
+}
+
+function sanitizeLogString(value: string): string {
+  return truncateLogValue(
+    value.replace(
+      /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi,
+      (email) => redactEmail(email)
+    ),
+    300
+  );
+}
+
+function shouldRedactLogKey(key: string): boolean {
+  return /(authorization|token|secret|password|credential|jwt|cookie)/i.test(key);
+}
+
+function redactEmail(email: string): string {
+  const [local, domain] = email.split("@");
+  if (!local || !domain) {
+    return "[redacted-email]";
+  }
+
+  return `${local.slice(0, 2)}***@${domain}`;
+}
+
+function truncateLogValue(value: string, maxLength: number): string {
+  return value.length <= maxLength
+    ? value
+    : `${value.slice(0, maxLength - 3)}...`;
 }
 
 function isToolResult(value: unknown): value is ToolResult {

@@ -10,7 +10,7 @@ export function logAtlassianMcpCallStart(
   console.info(
     formatLogLine(
       "info",
-      `Atlassian MCP call start transport=${transport} runtimeId=${runtimeId} tool=${toolName}${summarizeMcpArgumentKeys(args)}`
+      `Atlassian MCP call start transport=${transport} runtimeId=${runtimeId} tool=${toolName}${summarizeMcpArgumentKeys(args)}${summarizeMcpArgumentPreview(args)}`
     )
   );
 }
@@ -50,6 +50,16 @@ function summarizeMcpArgumentKeys(
   return keys.length > 0 ? ` argKeys=${keys.join(",")}` : " argKeys=none";
 }
 
+function summarizeMcpArgumentPreview(
+  args: Record<string, unknown> | undefined
+): string {
+  if (!args) {
+    return "";
+  }
+
+  return ` argPreview=${JSON.stringify(sanitizeLogValue(args, 0))}`;
+}
+
 function summarizeUpstreamMcpToolResult(result: UpstreamMcpToolResult): string {
   const firstText = result.content
     ?.map((item) =>
@@ -84,3 +94,56 @@ function truncateLogValue(value: string, maxLength: number): string {
     : `${value.slice(0, maxLength - 3)}...`;
 }
 
+function sanitizeLogValue(value: unknown, depth: number): unknown {
+  if (depth > 3) {
+    return "[depth-limit]";
+  }
+
+  if (typeof value === "string") {
+    return sanitizeLogString(value);
+  }
+
+  if (typeof value === "number" || typeof value === "boolean" || value === null) {
+    return value;
+  }
+
+  if (Array.isArray(value)) {
+    return value.slice(0, 10).map((item) => sanitizeLogValue(item, depth + 1));
+  }
+
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>)
+        .slice(0, 30)
+        .map(([key, item]) => [
+          key,
+          shouldRedactLogKey(key) ? "[redacted]" : sanitizeLogValue(item, depth + 1)
+        ])
+    );
+  }
+
+  return String(value);
+}
+
+function sanitizeLogString(value: string): string {
+  return truncateLogValue(
+    value.replace(
+      /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi,
+      (email) => redactEmail(email)
+    ),
+    160
+  );
+}
+
+function shouldRedactLogKey(key: string): boolean {
+  return /(authorization|token|secret|password|credential|jwt|cookie)/i.test(key);
+}
+
+function redactEmail(email: string): string {
+  const [local, domain] = email.split("@");
+  if (!local || !domain) {
+    return "[redacted-email]";
+  }
+
+  return `${local.slice(0, 2)}***@${domain}`;
+}
