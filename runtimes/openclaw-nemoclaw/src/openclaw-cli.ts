@@ -1,5 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
+import { mkdir, readFile } from "node:fs/promises";
+import { join } from "node:path";
 import type { RuntimeConfig } from "./config";
 import { info, type RuntimeLogger } from "./logger";
 import {
@@ -200,7 +202,8 @@ async function runOpenClawCommand(
   step: number
 ): Promise<CliCommandResult> {
   const startedAt = Date.now();
-  const args = buildOpenClawArgs(config, prompt, sessionId);
+  const rawStreamPath = await prepareRawStreamPath(config, request, step);
+  const args = buildOpenClawArgs(config, prompt, sessionId, rawStreamPath);
   const env = openClawEnv(config);
   logInfo(
     `OpenClaw command start runId=${request.runId ?? "unknown"} step=${step} command=${config.openClawCommand} agent=${config.openClawAgent} timeoutMs=${config.openClawTimeoutMs}${summarizePromptForLog(prompt)}${summarizeOpenClawArgsForLog(args)}${summarizeLogObject("env", env)}`
@@ -215,13 +218,15 @@ async function runOpenClawCommand(
   );
 
   if (result.exitCode !== 0) {
-    logOpenClawUsageFromOutput(request, step, prompt, result.stdout, result.stderr, logInfo);
+    const rawStream = await readRawStreamForUsage(rawStreamPath, logInfo, request, step);
+    logOpenClawUsageFromOutput(request, step, prompt, result.stdout, result.stderr, rawStream, logInfo);
     logInfo(
       `OpenClaw command error runId=${request.runId ?? "unknown"} step=${step} exitCode=${result.exitCode}${summarizeLogObject("stdoutPreview", result.stdout)}${summarizeLogObject("stderrPreview", result.stderr)}`
     );
     throw new Error(`OpenClaw CLI exited with code ${result.exitCode}`);
   }
-  logOpenClawUsageFromOutput(request, step, prompt, result.stdout, result.stderr, logInfo);
+  const rawStream = await readRawStreamForUsage(rawStreamPath, logInfo, request, step);
+  logOpenClawUsageFromOutput(request, step, prompt, result.stdout, result.stderr, rawStream, logInfo);
   logInfo(
     `OpenClaw command finish runId=${request.runId ?? "unknown"} step=${step} elapsedMs=${Date.now() - startedAt} stdoutChars=${result.stdout.length} stderrChars=${result.stderr.length}${summarizeLogObject("stderrPreview", result.stderr)}`
   );
@@ -389,7 +394,8 @@ async function* collectOpenClawStream(
   let firstStdoutLogged = false;
   let firstStderrLogged = false;
   const startedAt = Date.now();
-  const args = buildOpenClawArgs(config, prompt, sessionId);
+  const rawStreamPath = await prepareRawStreamPath(config, request, step);
+  const args = buildOpenClawArgs(config, prompt, sessionId, rawStreamPath);
   const env = openClawEnv(config);
   logInfo(
     `OpenClaw command stream start runId=${request.runId ?? "unknown"} command=${config.openClawCommand} agent=${config.openClawAgent} engine=${config.engine} timeoutMs=${config.openClawTimeoutMs}${summarizePromptForLog(prompt)}${summarizeOpenClawArgsForLog(args)}${summarizeLogObject("env", env)}`
@@ -498,7 +504,8 @@ async function* collectOpenClawStream(
   logInfo(
     `OpenClaw command stream finish runId=${request.runId ?? "unknown"} elapsedMs=${Date.now() - startedAt} exitCode=${exitCode ?? "unknown"} stdoutChunks=${chunkCount} stderrChunks=${stderrChunkCount} deltaCount=${deltaCount} stdoutChars=${stdout.length} stderrChars=${stderr.length}${summarizeLogObject("stderrPreview", stderr)}`
   );
-  logOpenClawUsageFromOutput(request, step, prompt, stdout, stderr, logInfo);
+  const rawStream = await readRawStreamForUsage(rawStreamPath, logInfo, request, step);
+  logOpenClawUsageFromOutput(request, step, prompt, stdout, stderr, rawStream, logInfo);
 
   if (exitCode !== 0) {
     throw new Error(
@@ -1274,9 +1281,10 @@ function logOpenClawUsageFromOutput(
   prompt: string,
   stdout: string,
   stderr: string,
+  rawStream: string | null,
   logInfo: RuntimeLogger
 ): void {
-  const output = `${stdout}\n${stderr}`;
+  const output = `${stdout}\n${stderr}${rawStream ? `\n${rawStream}` : ""}`;
   const usage = readModelUsage(output);
   const diagnostics = summarizeModelDiagnostics(output);
   logInfo(
@@ -1303,7 +1311,8 @@ function logOpenClawUsageFromOutput(
       `streamDoneEvents=${formatNumberList(diagnostics.streamDoneEvents)}`,
       `compactions=${diagnostics.compactions}`,
       `exactUsageFields=${diagnostics.exactUsageFields}`,
-      `exactUsageAvailable=${diagnostics.exactUsageFields > 0 ? "true" : "false"}`
+      `exactUsageAvailable=${diagnostics.exactUsageFields > 0 ? "true" : "false"}`,
+      `rawStreamBytes=${rawStream ? new TextEncoder().encode(rawStream).length : 0}`
     ].join(" ")
   );
 }
@@ -1554,7 +1563,8 @@ function mergeClassification(
 function buildOpenClawArgs(
   config: RuntimeConfig,
   prompt: string,
-  sessionId: string
+  sessionId: string,
+  rawStreamPath: string | null = null
 ): string[] {
   const args = [
     "agent",
@@ -1566,11 +1576,54 @@ function buildOpenClawArgs(
     sessionId
   ];
 
+  if (rawStreamPath) {
+    args.push("--raw-stream", "--raw-stream-path", rawStreamPath);
+  }
+
   if (config.engine !== "openclaw-gateway") {
     args.splice(3, 0, "--local");
   }
 
   return args;
+}
+
+async function prepareRawStreamPath(
+  config: RuntimeConfig,
+  request: RunRequest,
+  step: number
+): Promise<string | null> {
+  if (!config.openClawRawStreamDebug) {
+    return null;
+  }
+
+  const dir = join(config.openClawStateDir, "raw-streams");
+  await mkdir(dir, { recursive: true });
+  const runKey = hashSessionKey(request.runId ?? randomUUID());
+  return join(dir, `${runKey}-step-${step}-${Date.now()}.jsonl`);
+}
+
+async function readRawStreamForUsage(
+  rawStreamPath: string | null,
+  logInfo: RuntimeLogger,
+  request: RunRequest,
+  step: number
+): Promise<string | null> {
+  if (!rawStreamPath) {
+    return null;
+  }
+
+  try {
+    const content = await readFile(rawStreamPath, "utf8");
+    logInfo(
+      `OpenClaw raw stream captured runId=${request.runId ?? "unknown"} step=${step} path=${rawStreamPath} bytes=${new TextEncoder().encode(content).length}`
+    );
+    return content;
+  } catch (error) {
+    logInfo(
+      `OpenClaw raw stream unavailable runId=${request.runId ?? "unknown"} step=${step} path=${rawStreamPath} error=${error instanceof Error ? error.message : String(error)}`
+    );
+    return null;
+  }
 }
 
 function buildRunSessionId(request: RunRequest): string {

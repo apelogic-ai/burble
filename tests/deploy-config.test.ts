@@ -142,6 +142,9 @@ describe("dev deploy config", () => {
     expect(openClawCompose).toContain(
       "OPENCLAW_DEBUG_MODEL_TRANSPORT=${OPENCLAW_DEBUG_MODEL_TRANSPORT:-}"
     );
+    expect(openClawCompose).toContain(
+      "OPENCLAW_RAW_STREAM_DEBUG=${OPENCLAW_RAW_STREAM_DEBUG:-false}"
+    );
     expect(openClawCompose).toContain("OPENAI_API_KEY=${OPENAI_API_KEY:-}");
     expect(openClawCompose).toContain("ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}");
     expect(openClawCompose).toContain("AI_MODEL=${AI_MODEL:-openai:gpt-5.4}");
@@ -183,6 +186,7 @@ describe("dev deploy config", () => {
       "OPENCLAW_DEBUG_MODEL_PAYLOAD",
       "OPENCLAW_DEBUG_SSE",
       "OPENCLAW_DEBUG_CODE_MODE",
+      "OPENCLAW_RAW_STREAM_DEBUG",
       "OPENCLAW_VERSION",
       "OLLAMA_API_KEY",
       "OLLAMA_BASE_URL",
@@ -234,6 +238,7 @@ describe("dev deploy config", () => {
     expect(personalRuntimesCompose).toContain("OPENCLAW_LOG_LEVEL");
     expect(personalRuntimesCompose).toContain("OPENCLAW_DEBUG_MODEL_PAYLOAD");
     expect(personalRuntimesCompose).toContain("OPENCLAW_DEBUG_CODE_MODE");
+    expect(personalRuntimesCompose).toContain("OPENCLAW_RAW_STREAM_DEBUG");
   });
 
   test("provides an optional agentgateway MCP override", () => {

@@ -27,6 +27,7 @@ describe("readRuntimeConfig", () => {
         OPENCLAW_DEBUG_MODEL_PAYLOAD: "summary",
         OPENCLAW_DEBUG_SSE: "events",
         OPENCLAW_DEBUG_CODE_MODE: "true",
+        OPENCLAW_RAW_STREAM_DEBUG: "true",
         AI_MODEL: "ollama:qwen3-coder:30b-cloud",
         OLLAMA_BASE_URL: "https://ollama.com/"
       })
@@ -53,6 +54,7 @@ describe("readRuntimeConfig", () => {
       openClawDebugModelPayload: "summary",
       openClawDebugSse: "events",
       openClawDebugCodeMode: "true",
+      openClawRawStreamDebug: true,
       llmModel: "ollama:qwen3-coder:30b-cloud",
       ollamaBaseUrl: "https://ollama.com"
     });
@@ -78,6 +80,7 @@ describe("readRuntimeConfig", () => {
       openClawConfigPatchPath: null,
       openClawValidateOnStart: true,
       openClawStreamDebug: false,
+      openClawRawStreamDebug: false,
       llmModel: "openai:gpt-5.4",
       ollamaBaseUrl: "https://ollama.com"
     });
@@ -138,7 +141,8 @@ describe("readRuntimeConfig", () => {
       openClawValidateOnStart: true,
       openClawSetupOnStart: false,
       openClawConfigPatchPath: "/etc/openclaw/patch.json5",
-      openClawStreamDebug: false
+      openClawStreamDebug: false,
+      openClawRawStreamDebug: false
     });
   });
 

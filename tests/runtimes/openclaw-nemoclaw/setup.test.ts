@@ -22,6 +22,7 @@ const config: RuntimeConfig = {
   openClawConfigPatchPath: null,
   openClawValidateOnStart: true,
   openClawStreamDebug: false,
+  openClawRawStreamDebug: false,
   llmModel: "openai:gpt-5.4",
   ollamaBaseUrl: "https://ollama.com"
 };

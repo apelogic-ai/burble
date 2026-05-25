@@ -4,6 +4,9 @@ import {
   runOpenClawCliRequestStream
 } from "../../../runtimes/openclaw-nemoclaw/src/openclaw-cli";
 import type { RuntimeConfig } from "../../../runtimes/openclaw-nemoclaw/src/config";
+import { mkdtemp, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 const config: RuntimeConfig = {
   port: 8080,
@@ -22,6 +25,7 @@ const config: RuntimeConfig = {
   openClawConfigPatchPath: null,
   openClawValidateOnStart: true,
   openClawStreamDebug: false,
+  openClawRawStreamDebug: false,
   llmModel: "openai:gpt-5.4",
   ollamaBaseUrl: "https://ollama.com"
 };
@@ -201,7 +205,7 @@ describe("runOpenClawCliRequest", () => {
       "OpenClaw usage runId=run-usage step=1 promptApproxTokens=1066 inputTokens=1200 outputTokens=75 totalTokens=1275 cachedInputTokens=300 reasoningTokens=20 source=provider-output"
     );
     expect(logs).toContain(
-      "OpenClaw model usage diagnostics runId=run-usage step=1 modelStarts=0 fetchStarts=0 streamDone=0 streamDoneElapsedMs=none streamDoneEvents=none compactions=0 exactUsageFields=5 exactUsageAvailable=true"
+      "OpenClaw model usage diagnostics runId=run-usage step=1 modelStarts=0 fetchStarts=0 streamDone=0 streamDoneElapsedMs=none streamDoneEvents=none compactions=0 exactUsageFields=5 exactUsageAvailable=true rawStreamBytes=0"
     );
   });
 
@@ -248,8 +252,83 @@ describe("runOpenClawCliRequest", () => {
       "OpenClaw usage runId=run-diagnostics step=1 promptApproxTokens=1066 inputTokens=unknown outputTokens=unknown totalTokens=unknown cachedInputTokens=unknown reasoningTokens=unknown source=estimate-only"
     );
     expect(logs).toContain(
-      "OpenClaw model usage diagnostics runId=run-diagnostics step=1 modelStarts=2 fetchStarts=2 streamDone=2 streamDoneElapsedMs=3522,29406 streamDoneEvents=38,1731 compactions=1 exactUsageFields=0 exactUsageAvailable=false"
+      "OpenClaw model usage diagnostics runId=run-diagnostics step=1 modelStarts=2 fetchStarts=2 streamDone=2 streamDoneElapsedMs=3522,29406 streamDoneEvents=38,1731 compactions=1 exactUsageFields=0 exactUsageAvailable=false rawStreamBytes=0"
     );
+  });
+
+  test("parses provider token usage from raw stream files when enabled", async () => {
+    const logs: string[] = [];
+    const stateDir = await mkdtemp(join(tmpdir(), "burble-openclaw-raw-"));
+    const commands: Array<{ args: string[] }> = [];
+
+    await runOpenClawCliRequest(
+      {
+        runId: "run-raw-usage",
+        input: {
+          text: "prioritize my GitHub work",
+          connections: {
+            github: {
+              connected: true,
+              email: "person@example.com",
+              providerLogin: "octocat"
+            }
+          }
+        }
+      },
+      {
+        ...config,
+        openClawStateDir: stateDir,
+        openClawRawStreamDebug: true
+      },
+      async () => ({
+        classification: "user_private",
+        content: []
+      }),
+      async (_command, args) => {
+        commands.push({ args });
+        const rawPath = args[args.indexOf("--raw-stream-path") + 1];
+        expect(rawPath).toBeTruthy();
+        await writeFile(
+          rawPath,
+          `${JSON.stringify({
+            type: "response.completed",
+            response: {
+              usage: {
+                input_tokens: 1400,
+                output_tokens: 90,
+                total_tokens: 1490,
+                input_tokens_details: {
+                  cached_tokens: 400
+                },
+                output_tokens_details: {
+                  reasoning_tokens: 30
+                }
+              }
+            }
+          })}\n`
+        );
+        return {
+          exitCode: 0,
+          stdout: JSON.stringify({ response: { text: "Done." } }),
+          stderr: ""
+        };
+      },
+      (message) => logs.push(message)
+    );
+
+    expect(commands[0].args).toContain("--raw-stream");
+    expect(logs).toContain(
+      "OpenClaw usage runId=run-raw-usage step=1 promptApproxTokens=1066 inputTokens=1400 outputTokens=90 totalTokens=1490 cachedInputTokens=400 reasoningTokens=30 source=provider-output"
+    );
+    expect(
+      logs.some((line) =>
+        line.startsWith(
+          "OpenClaw model usage diagnostics runId=run-raw-usage step=1"
+        ) &&
+        line.includes("exactUsageAvailable=true") &&
+        !line.includes("rawStreamBytes=0")
+      )
+    ).toBe(true);
   });
 
   test("uses isolated OpenClaw sessions for each planning step", async () => {
