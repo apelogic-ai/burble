@@ -598,6 +598,16 @@ async function buildToolCatalog(
         inputSchema: {}
       },
       {
+        name: "jira.listVisibleProjects",
+        description:
+          "List Jira projects visible to the requesting Slack user's connected Jira account. Use query='DM', action='create', and expandIssueTypes=true to confirm create access and issue types before calling Atlassian MCP createJiraIssue.",
+        inputSchema: {
+          query: "optional string project key or name search, for example: DM",
+          action: "optional string permission filter: view, browse, edit, or create",
+          expandIssueTypes: "optional boolean; set true when selecting an issue type for createJiraIssue"
+        }
+      },
+      {
         name: "jira.listAssignedIssues",
         description: "List Jira issues assigned to the requesting Slack user.",
         inputSchema: {}

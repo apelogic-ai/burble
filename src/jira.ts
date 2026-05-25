@@ -36,6 +36,21 @@ export type JiraAccessibleResource = {
   scopes?: string[];
 };
 
+export type JiraProjectIssueType = {
+  id: string;
+  name: string;
+  description?: string;
+  subtask?: boolean;
+};
+
+export type JiraVisibleProject = {
+  id: string;
+  key: string;
+  name: string;
+  url: string;
+  issueTypes?: JiraProjectIssueType[];
+};
+
 type JiraSearchResponse = {
   issues?: Array<{
     key: string;
@@ -45,6 +60,20 @@ type JiraSearchResponse = {
         name?: string;
       };
     };
+  }>;
+};
+
+type JiraProjectSearchResponse = {
+  values?: Array<{
+    id?: string;
+    key?: string;
+    name?: string;
+    issueTypes?: Array<{
+      id?: string;
+      name?: string;
+      description?: string;
+      subtask?: boolean;
+    }>;
   }>;
 };
 
@@ -225,6 +254,58 @@ export async function listJiraAccessibleResources(
   return (await response.json()) as JiraAccessibleResource[];
 }
 
+export async function listVisibleJiraProjects(
+  token: string,
+  input: {
+    query?: string;
+    action?: "view" | "browse" | "edit" | "create";
+    expandIssueTypes?: boolean;
+  } = {}
+): Promise<JiraVisibleProject[]> {
+  const resource = await resolveJiraResource(token);
+  const url = new URL(
+    `https://api.atlassian.com/ex/jira/${resource.id}/rest/api/3/project/search`
+  );
+  url.searchParams.set("maxResults", "20");
+  if (input.query?.trim()) {
+    url.searchParams.set("query", input.query.trim());
+  }
+  if (input.action) {
+    url.searchParams.set("action", input.action);
+  }
+  if (input.expandIssueTypes) {
+    url.searchParams.set("expand", "issueTypes");
+  }
+
+  const response = await fetch(url, {
+    headers: jiraHeaders(token)
+  });
+  const body = (await response.json()) as JiraProjectSearchResponse & {
+    errorMessages?: string[];
+  };
+
+  if (!response.ok) {
+    throw new JiraApiError(
+      body.errorMessages?.join("; ") ??
+        `Jira project search failed with ${response.status}`,
+      response.status
+    );
+  }
+
+  return (body.values ?? [])
+    .filter((project) => project.key && project.name)
+    .slice(0, 20)
+    .map((project) => ({
+      id: project.id ?? project.key!,
+      key: project.key!,
+      name: project.name!,
+      url: `${resource.url.replace(/\/+$/, "")}/jira/projects/${project.key}`,
+      ...(input.expandIssueTypes
+        ? { issueTypes: sanitizeProjectIssueTypes(project.issueTypes ?? []) }
+        : {})
+    }));
+}
+
 async function resolveJiraResource(token: string): Promise<JiraAccessibleResource> {
   const resources = await listJiraAccessibleResources(token);
   const resource = resources.find((candidate) =>
@@ -236,6 +317,21 @@ async function resolveJiraResource(token: string): Promise<JiraAccessibleResourc
   }
 
   return resource;
+}
+
+function sanitizeProjectIssueTypes(
+  issueTypes: NonNullable<JiraProjectSearchResponse["values"]>[number]["issueTypes"]
+): JiraProjectIssueType[] {
+  return (issueTypes ?? [])
+    .filter((issueType) => issueType.id && issueType.name)
+    .map((issueType) => ({
+      id: issueType.id!,
+      name: issueType.name!,
+      ...(issueType.description ? { description: issueType.description } : {}),
+      ...(typeof issueType.subtask === "boolean"
+        ? { subtask: issueType.subtask }
+        : {})
+    }));
 }
 
 function jiraTokenSetFromResponse(body: {

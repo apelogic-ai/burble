@@ -197,6 +197,10 @@ describe("createBurbleToolExecutor", () => {
       await executor("jira.listAccessibleResources", {
         user: { email: "person@example.com" }
       });
+      await executor("jira.listVisibleProjects", {
+        user: { email: "person@example.com" },
+        input: { query: "DM", action: "create", expandIssueTypes: true }
+      });
       await executor("atlassian.listMcpTools", {
         user: { email: "person@example.com" }
       });
@@ -234,6 +238,17 @@ describe("createBurbleToolExecutor", () => {
           params: {
             name: "jira_list_accessible_resources",
             arguments: {}
+          }
+        },
+        {
+          method: "tools/call",
+          params: {
+            name: "jira_list_visible_projects",
+            arguments: {
+              query: "DM",
+              action: "create",
+              expandIssueTypes: true
+            }
           }
         },
         {

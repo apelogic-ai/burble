@@ -163,6 +163,8 @@ function toMcpToolName(toolName: string): string {
       return "jira_get_authenticated_user";
     case "jira.listAccessibleResources":
       return "jira_list_accessible_resources";
+    case "jira.listVisibleProjects":
+      return "jira_list_visible_projects";
     case "jira.listAssignedIssues":
       return "jira_list_assigned_issues";
     case "jira.searchIssues":
@@ -194,6 +196,28 @@ function toMcpToolArguments(
       throw new Error("jira.searchIssues requires input.jql");
     }
     return { jql };
+  }
+
+  if (toolName === "jira.listVisibleProjects") {
+    const input = readNestedRecord(body, "input", "input") ??
+      readNestedRecord(body, "input", "arguments") ??
+      readNestedRecord(body, "input", "params") ??
+      readRecordKey(body, "input");
+    if (!input) {
+      return {};
+    }
+
+    return {
+      ...(typeof input.query === "string" && input.query.trim()
+        ? { query: input.query }
+        : {}),
+      ...(typeof input.action === "string" && input.action.trim()
+        ? { action: input.action }
+        : {}),
+      ...(typeof input.expandIssueTypes === "boolean"
+        ? { expandIssueTypes: input.expandIssueTypes }
+        : {})
+    };
   }
 
   if (toolName === "atlassian.callMcpTool") {
@@ -240,6 +264,19 @@ function readNestedRecord(
     return null;
   }
   const inner = (outer as Record<string, unknown>)[innerKey];
+  return inner && typeof inner === "object" && !Array.isArray(inner)
+    ? (inner as Record<string, unknown>)
+    : null;
+}
+
+function readRecordKey(
+  value: unknown,
+  key: string
+): Record<string, unknown> | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+  const inner = (value as Record<string, unknown>)[key];
   return inner && typeof inner === "object" && !Array.isArray(inner)
     ? (inner as Record<string, unknown>)
     : null;

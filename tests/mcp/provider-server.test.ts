@@ -206,6 +206,88 @@ describe("handleProviderMcpRequest", () => {
     store.close();
   });
 
+  test("lists visible Jira projects through provider MCP", async () => {
+    const issuer = createRuntimeJwtIssuer({ issuer: config.runtimeJwtIssuer });
+    const store = createTokenStore(":memory:");
+    const runtime = store.getOrCreateAgentRuntime({
+      workspaceId: "T123",
+      slackUserId: "U123",
+      engine: "openclaw",
+      endpointUrl: "http://runtime-u123:8080",
+      authTokenHash: "hash-u123",
+      statePath: "/data/runtimes/u123/state",
+      configPath: "/data/runtimes/u123/config/openclaw.json",
+      workspacePath: "/data/runtimes/u123/workspace"
+    });
+    store.upsertProviderConnection({
+      provider: "jira",
+      email: "person@example.com",
+      slackUserId: "U123",
+      providerLogin: "Person",
+      accessToken: "jira-token",
+      refreshToken: null,
+      accessTokenExpiresAt: null
+    });
+    const token = issuer.issueRuntimeJwt({
+      audience: "http://agentgateway:3000/mcp",
+      runtimeId: runtime.id,
+      workspaceId: "T123",
+      slackUserId: "U123"
+    });
+
+    const response = await handleProviderMcpRequest(
+      config,
+      store,
+      issuer,
+      mcpRequest(
+        {
+          method: "tools/call",
+          params: {
+            name: "jira_list_visible_projects",
+            arguments: { query: "DM", action: "create", expandIssueTypes: true }
+          }
+        },
+        token
+      ),
+      {
+        listVisibleJiraProjects: async (accessToken, input) => {
+          expect(accessToken).toBe("jira-token");
+          expect(input).toEqual({
+            query: "DM",
+            action: "create",
+            expandIssueTypes: true
+          });
+          return [
+            {
+              id: "10000",
+              key: "DM",
+              name: "DM Workspace",
+              url: "https://apegpt.atlassian.net/jira/projects/DM",
+              issueTypes: [{ id: "10001", name: "Task", subtask: false }]
+            }
+          ];
+        }
+      }
+    );
+    const body = readMcpBody(await response.text());
+    const toolResult = JSON.parse(body.result.content[0].text);
+
+    expect(response.status).toBe(200);
+    expect(toolResult).toEqual({
+      classification: "user_private",
+      content: [
+        {
+          id: "10000",
+          key: "DM",
+          name: "DM Workspace",
+          url: "https://apegpt.atlassian.net/jira/projects/DM",
+          issueTypes: [{ id: "10001", name: "Task", subtask: false }]
+        }
+      ]
+    });
+    store.close();
+  });
+
   test("calls allowlisted upstream Atlassian MCP tools with the connected Jira token", async () => {
     const issuer = createRuntimeJwtIssuer({ issuer: config.runtimeJwtIssuer });
     const store = createTokenStore(":memory:");

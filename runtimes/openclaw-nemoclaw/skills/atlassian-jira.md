@@ -30,6 +30,12 @@ For the Atlassian Rovo MCP server, Jira `cloudId` must be the site URL, such as
 the connected user's visible site URL. Do not call
 `getAccessibleAtlassianResources` for this server's `cloudId`.
 
+For project and issue type discovery before creating Jira issues, prefer
+`jira.listVisibleProjects` over upstream MCP project helpers. Use
+`query=<project name or key>`, `action=create`, and `expandIssueTypes=true`;
+then use the confirmed project key and issue type name/id in the MCP create
+arguments.
+
 When a user provides an assignee email, use that email for Jira account lookup
 before trying the display name.
 

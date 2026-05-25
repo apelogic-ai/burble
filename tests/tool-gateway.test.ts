@@ -355,6 +355,51 @@ describe("handleToolGatewayRequest", () => {
     });
   });
 
+  test("executes Jira visible project lookup through the HTTP fallback gateway", async () => {
+    const response = await handleToolGatewayRequest(
+      config,
+      createStore(jiraConnection),
+      "jira.listVisibleProjects",
+      request("jira.listVisibleProjects", {
+        user: { email: "person@example.com" },
+        input: { query: "DM", action: "create", expandIssueTypes: true }
+      }),
+      {
+        listVisibleJiraProjects: async (token, input) => {
+          expect(token).toBe("jira-token");
+          expect(input).toEqual({
+            query: "DM",
+            action: "create",
+            expandIssueTypes: true
+          });
+          return [
+            {
+              id: "10000",
+              key: "DM",
+              name: "DM Workspace",
+              url: "https://apegpt.atlassian.net/jira/projects/DM",
+              issueTypes: [{ id: "10001", name: "Task", subtask: false }]
+            }
+          ];
+        }
+      }
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      classification: "user_private",
+      content: [
+        {
+          id: "10000",
+          key: "DM",
+          name: "DM Workspace",
+          url: "https://apegpt.atlassian.net/jira/projects/DM",
+          issueTypes: [{ id: "10001", name: "Task", subtask: false }]
+        }
+      ]
+    });
+  });
+
   test("executes Atlassian MCP tool discovery through the HTTP fallback gateway", async () => {
     const response = await handleToolGatewayRequest(
       config,
