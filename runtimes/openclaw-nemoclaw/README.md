@@ -47,6 +47,9 @@ OAuth, visibility, or deployment boundaries. Runtime events are normalized to
 status, tool lifecycle, answer delta, final, and error events before they reach
 Slack or any future messaging surface.
 
+For routing diagrams of the `openclaw-gateway` and `burble-direct` paths, see
+[OpenClaw Runtime Flows](../../docs/openclaw-runtime-flows.md).
+
 When `OPENCLAW_NEMOCLAW_ENGINE=openclaw` or `openclaw-gateway`, runtime startup
 runs:
 

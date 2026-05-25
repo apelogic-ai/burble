@@ -1,0 +1,87 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1440" height="920" viewBox="0 0 1440 920" role="img" aria-labelledby="title desc">
+  <title id="title">OpenClaw Gateway runtime flow</title>
+  <desc id="desc">Burble sends planning turns to the OpenClaw Gateway. OpenClaw runs its agent runtime and calls the provider. Burble executes MCP tools and sends a second planning turn when needed.</desc>
+  <defs>
+    <marker id="arrow" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto" markerUnits="strokeWidth">
+      <path d="M2,2 L10,6 L2,10 Z" fill="#263238"/>
+    </marker>
+    <style>
+      .bg { fill: #f8f8f6; }
+      .title { font: 700 34px Arial, sans-serif; fill: #172026; }
+      .subtitle { font: 400 18px Arial, sans-serif; fill: #4b5b64; }
+      .laneTitle { font: 700 17px Arial, sans-serif; fill: #3d4d55; }
+      .label { font: 700 18px Arial, sans-serif; fill: #172026; }
+      .small { font: 400 15px Arial, sans-serif; fill: #34444d; }
+      .tiny { font: 400 13px Arial, sans-serif; fill: #52636d; }
+      .box { fill: #ffffff; stroke: #a9b5bc; stroke-width: 2; rx: 8; }
+      .burble { fill: #eef8f1; stroke: #3c9151; }
+      .openclaw { fill: #fff3e3; stroke: #c27a21; }
+      .provider { fill: #fcecef; stroke: #b94f61; }
+      .mcp { fill: #edf7f8; stroke: #2f8a94; }
+      .line { fill: none; stroke: #263238; stroke-width: 2.5; marker-end: url(#arrow); }
+      .return { fill: none; stroke: #56656d; stroke-width: 2.2; stroke-dasharray: 8 6; marker-end: url(#arrow); }
+      .lane { fill: #ffffff; stroke: #d3d9dd; stroke-width: 1.5; rx: 10; }
+      .note { fill: #fffde8; stroke: #c0a63a; stroke-width: 1.5; rx: 8; }
+    </style>
+  </defs>
+  <rect class="bg" width="1440" height="920"/>
+  <text class="title" x="70" y="70">OpenClaw Gateway path</text>
+  <text class="subtitle" x="70" y="104">OPENCLAW_NEMOCLAW_ENGINE=openclaw-gateway. Burble delegates planning to the real OpenClaw Gateway and agent runtime.</text>
+
+  <rect class="lane" x="55" y="145" width="320" height="610"/>
+  <text class="laneTitle" x="80" y="178">Burble runtime container</text>
+  <rect class="lane" x="405" y="145" width="380" height="610"/>
+  <text class="laneTitle" x="430" y="178">OpenClaw Gateway and agent</text>
+  <rect class="lane" x="815" y="145" width="270" height="610"/>
+  <text class="laneTitle" x="840" y="178">Provider</text>
+  <rect class="lane" x="1115" y="145" width="270" height="610"/>
+  <text class="laneTitle" x="1140" y="178">Burble MCP gateway</text>
+
+  <rect class="box burble" x="95" y="225" width="230" height="92"/>
+  <text class="label" x="125" y="263">Slack request</text>
+  <text class="small" x="125" y="291">POST /runs</text>
+
+  <rect class="box burble" x="95" y="380" width="230" height="118"/>
+  <text class="label" x="125" y="418">Burble planner</text>
+  <text class="small" x="125" y="448">Build prompt with skills,</text>
+  <text class="small" x="125" y="472">catalog, context, results</text>
+
+  <rect class="box openclaw" x="455" y="365" width="280" height="148"/>
+  <text class="label" x="485" y="403">OpenClaw Gateway</text>
+  <text class="small" x="485" y="433">POST /v1/responses</text>
+  <text class="small" x="485" y="457">model: openclaw/main</text>
+  <text class="small" x="485" y="481">agent/embedded runtime</text>
+
+  <rect class="box provider" x="850" y="390" width="200" height="98"/>
+  <text class="label" x="880" y="428">LLM provider</text>
+  <text class="small" x="880" y="458">OpenClaw transport</text>
+
+  <rect class="box mcp" x="1145" y="380" width="210" height="118"/>
+  <text class="label" x="1175" y="418">MCP tools</text>
+  <text class="small" x="1175" y="448">Jira, GitHub,</text>
+  <text class="small" x="1175" y="472">catalog tools</text>
+
+  <rect class="box burble" x="95" y="610" width="230" height="100"/>
+  <text class="label" x="125" y="648">Slack response</text>
+  <text class="small" x="125" y="678">normalized Burble event</text>
+
+  <path class="line" d="M210 317 V380"/>
+  <path class="line" d="M325 438 H455"/>
+  <path class="line" d="M735 438 H850"/>
+  <path class="return" d="M850 488 C790 575, 620 585, 325 500"/>
+  <path class="line" d="M325 455 C590 570, 920 580, 1145 455"/>
+  <path class="return" d="M1145 420 C875 315, 575 315, 325 400"/>
+  <path class="line" d="M325 470 H455"/>
+  <path class="line" d="M735 470 H850"/>
+  <path class="return" d="M850 430 C710 270, 420 275, 210 610"/>
+  <path class="line" d="M210 498 V610"/>
+
+  <text class="tiny" x="360" y="426">planning turn 1</text>
+  <text class="tiny" x="770" y="426">provider call</text>
+  <text class="tiny" x="930" y="565">tool_call JSON returns to Burble</text>
+  <text class="tiny" x="770" y="630">tool result goes into next prompt</text>
+  <text class="tiny" x="360" y="492">planning turn 2 if needed</text>
+
+  <rect class="note" x="95" y="805" width="1260" height="58"/>
+  <text class="small" x="125" y="840">Expected logs include "OpenClaw gateway start", "OpenClaw gateway http start", "[agent/embedded] embedded run start", and provider transport logs.</text>
+</svg>
