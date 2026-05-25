@@ -75,6 +75,14 @@ Set `OPENCLAW_STREAM_DEBUG=true` temporarily to log stdout chunk timing, parsed
 delta counts, and redacted previews while diagnosing whether the CLI streams
 incremental output or buffers until completion.
 
+For deeper OpenClaw internals, pass OpenClaw's own debug env vars through the
+runtime: `OPENCLAW_LOG_LEVEL=debug` or `trace`,
+`OPENCLAW_DIAGNOSTICS=<flags>`, `OPENCLAW_DEBUG_MODEL_TRANSPORT=true`,
+`OPENCLAW_DEBUG_MODEL_PAYLOAD=summary`, and `OPENCLAW_DEBUG_SSE=events`.
+Use `OPENCLAW_DEBUG_CODE_MODE=true` when code-mode tool-surface diagnostics are
+relevant.
+The dev OpenAI patch writes file logs to `/data/openclaw/logs/openclaw.log`.
+
 Build the CLI image locally:
 
 ```bash

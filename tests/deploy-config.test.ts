@@ -135,13 +135,20 @@ describe("dev deploy config", () => {
     expect(openClawCompose).toContain(
       "OPENCLAW_STREAM_DEBUG=${OPENCLAW_STREAM_DEBUG:-false}"
     );
+    expect(openClawCompose).toContain("OPENCLAW_LOG_LEVEL=${OPENCLAW_LOG_LEVEL:-}");
+    expect(openClawCompose).toContain(
+      "OPENCLAW_DEBUG_MODEL_TRANSPORT=${OPENCLAW_DEBUG_MODEL_TRANSPORT:-}"
+    );
     expect(openClawCompose).toContain("OPENAI_API_KEY=${OPENAI_API_KEY:-}");
     expect(openClawCompose).toContain("ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}");
     expect(openClawCompose).toContain("./openclaw-patches:/etc/openclaw/patches:ro");
   });
 
   test("provides a no-secrets OpenClaw OpenAI config patch", () => {
-    expect(openClawOpenAiPatch).toContain('primary: "openai/gpt-5.5"');
+    expect(openClawOpenAiPatch).toContain('primary: "openai/gpt-5.4"');
+    expect(openClawOpenAiPatch).toContain(
+      'file: "/data/openclaw/logs/openclaw.log"'
+    );
     expect(openClawOpenAiPatch).toContain("openai:default");
     expect(openClawOpenAiPatch).not.toContain("sk-");
     expect(openClawOpenAiPatch).not.toContain("apiKey");
@@ -161,6 +168,12 @@ describe("dev deploy config", () => {
       "OPENCLAW_CONFIG_PATCH_PATH",
       "OPENCLAW_VALIDATE_ON_START",
       "OPENCLAW_STREAM_DEBUG",
+      "OPENCLAW_LOG_LEVEL",
+      "OPENCLAW_DIAGNOSTICS",
+      "OPENCLAW_DEBUG_MODEL_TRANSPORT",
+      "OPENCLAW_DEBUG_MODEL_PAYLOAD",
+      "OPENCLAW_DEBUG_SSE",
+      "OPENCLAW_DEBUG_CODE_MODE",
       "OPENCLAW_VERSION",
       "AGENT_RUNTIME_FACTORY",
       "AGENT_RUNTIME_DATA_ROOT",
@@ -206,6 +219,9 @@ describe("dev deploy config", () => {
       "OPENCLAW_TIMEOUT_MS=${OPENCLAW_TIMEOUT_MS:-180000}"
     );
     expect(personalRuntimesCompose).toContain("OPENCLAW_STREAM_DEBUG");
+    expect(personalRuntimesCompose).toContain("OPENCLAW_LOG_LEVEL");
+    expect(personalRuntimesCompose).toContain("OPENCLAW_DEBUG_MODEL_PAYLOAD");
+    expect(personalRuntimesCompose).toContain("OPENCLAW_DEBUG_CODE_MODE");
   });
 
   test("provides an optional agentgateway MCP override", () => {

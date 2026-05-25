@@ -2,14 +2,21 @@
   agents: {
     defaults: {
       model: {
-        primary: "openai/gpt-5.5"
+        primary: "openai/gpt-5.4"
       },
       models: {
-        "openai/gpt-5.5": {
+        "openai/gpt-5.4": {
           alias: "GPT"
         }
       }
     }
+  },
+  logging: {
+    level: "info",
+    consoleLevel: "info",
+    consoleStyle: "compact",
+    file: "/data/openclaw/logs/openclaw.log",
+    redactSensitive: "tools"
   },
   plugins: {
     entries: {

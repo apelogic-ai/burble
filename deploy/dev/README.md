@@ -158,6 +158,12 @@ OPENCLAW_SETUP_ON_START=true
 OPENCLAW_CONFIG_PATCH_PATH=/etc/openclaw/patches/openai.json5
 OPENCLAW_VALIDATE_ON_START=true
 OPENCLAW_STREAM_DEBUG=false
+OPENCLAW_LOG_LEVEL=
+OPENCLAW_DIAGNOSTICS=
+OPENCLAW_DEBUG_MODEL_TRANSPORT=
+OPENCLAW_DEBUG_MODEL_PAYLOAD=
+OPENCLAW_DEBUG_SSE=
+OPENCLAW_DEBUG_CODE_MODE=
 OPENAI_API_KEY=sk-...
 ```
 
@@ -172,9 +178,16 @@ container, startup applies it with `openclaw config patch --file` and validates
 the resulting config. Use that patch file for non-interactive OpenClaw
 model/provider configuration. The checked-in
 `compose/openclaw-patches/openai.json5` patch enables OpenAI with
-`openai/gpt-5.5`; the API key is still supplied only through `OPENAI_API_KEY`.
+`openai/gpt-5.4`; the API key is still supplied only through `OPENAI_API_KEY`.
 Set `OPENCLAW_STREAM_DEBUG=true` temporarily to log OpenClaw stdout chunk
 timing, parsed delta counts, and redacted previews while debugging streaming.
+For deeper OpenClaw internals, set `OPENCLAW_LOG_LEVEL=debug` or `trace` and
+enable targeted diagnostics such as `OPENCLAW_DEBUG_MODEL_TRANSPORT=true`,
+`OPENCLAW_DEBUG_MODEL_PAYLOAD=summary`, and `OPENCLAW_DEBUG_SSE=events`.
+Use `OPENCLAW_DEBUG_CODE_MODE=true` if OpenClaw's code-mode tool surface is
+involved.
+The patch writes OpenClaw file logs to `/data/openclaw/logs/openclaw.log` inside
+the runtime container.
 To build the repo-provided image with the OpenClaw CLI installed, add the CLI
 override:
 
