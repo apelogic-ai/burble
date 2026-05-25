@@ -45,7 +45,8 @@ const approvedForwardedEnv = new Set([
   "OPENCLAW_DEBUG_MODEL_TRANSPORT",
   "OPENCLAW_DEBUG_MODEL_PAYLOAD",
   "OPENCLAW_DEBUG_SSE",
-  "OPENCLAW_DEBUG_CODE_MODE"
+  "OPENCLAW_DEBUG_CODE_MODE",
+  "OPENCLAW_RAW_STREAM_DEBUG"
 ]);
 
 export function createDockerRuntimeFactory(input: {

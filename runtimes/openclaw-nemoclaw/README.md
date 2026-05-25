@@ -84,6 +84,10 @@ runtime: `OPENCLAW_LOG_LEVEL=debug` or `trace`,
 `OPENCLAW_DEBUG_MODEL_PAYLOAD=summary`, and `OPENCLAW_DEBUG_SSE=events`.
 Use `OPENCLAW_DEBUG_CODE_MODE=true` when code-mode tool-surface diagnostics are
 relevant.
+Set `OPENCLAW_RAW_STREAM_DEBUG=true` temporarily to pass OpenClaw
+`--raw-stream --raw-stream-path`; the runtime stores raw JSONL under
+`/data/openclaw/state/raw-streams`, parses token usage from it, and logs only
+the summarized counts.
 The dev OpenAI patch writes file logs to `/data/openclaw/logs/openclaw.log`.
 
 Build the CLI image locally:

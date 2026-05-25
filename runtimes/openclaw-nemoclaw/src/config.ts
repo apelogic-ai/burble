@@ -21,6 +21,7 @@ export type RuntimeConfig = {
   openClawDebugModelPayload?: string | null;
   openClawDebugSse?: string | null;
   openClawDebugCodeMode?: string | null;
+  openClawRawStreamDebug: boolean;
   llmModel: string;
   ollamaBaseUrl: string;
 };
@@ -73,6 +74,10 @@ export function readRuntimeConfig(env: Env): RuntimeConfig {
     openClawDebugModelPayload: readOptionalEnv(env.OPENCLAW_DEBUG_MODEL_PAYLOAD),
     openClawDebugSse: readOptionalEnv(env.OPENCLAW_DEBUG_SSE),
     openClawDebugCodeMode: readOptionalEnv(env.OPENCLAW_DEBUG_CODE_MODE),
+    openClawRawStreamDebug: readBooleanEnv(
+      env.OPENCLAW_RAW_STREAM_DEBUG ?? "false",
+      "OPENCLAW_RAW_STREAM_DEBUG"
+    ),
     llmModel: validateLlmModelId(
       readOptionalEnv(env.AI_MODEL) ??
         readOptionalEnv(env.OPENCLAW_MODEL) ??

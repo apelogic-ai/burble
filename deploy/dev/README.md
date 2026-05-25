@@ -168,6 +168,7 @@ OPENCLAW_DEBUG_MODEL_TRANSPORT=
 OPENCLAW_DEBUG_MODEL_PAYLOAD=
 OPENCLAW_DEBUG_SSE=
 OPENCLAW_DEBUG_CODE_MODE=
+OPENCLAW_RAW_STREAM_DEBUG=false
 OPENAI_API_KEY=sk-...
 ```
 
@@ -192,6 +193,9 @@ enable targeted diagnostics such as `OPENCLAW_DEBUG_MODEL_TRANSPORT=true`,
 `OPENCLAW_DEBUG_MODEL_PAYLOAD=summary`, and `OPENCLAW_DEBUG_SSE=events`.
 Use `OPENCLAW_DEBUG_CODE_MODE=true` if OpenClaw's code-mode tool surface is
 involved.
+Set `OPENCLAW_RAW_STREAM_DEBUG=true` temporarily to ask OpenClaw for per-run
+raw stream JSONL under `/data/openclaw/state/raw-streams`; Burble parses those
+files for token usage and logs only the summarized counts.
 The patch writes OpenClaw file logs to `/data/openclaw/logs/openclaw.log` inside
 the runtime container.
 To build the repo-provided image with the OpenClaw CLI installed, add the CLI
