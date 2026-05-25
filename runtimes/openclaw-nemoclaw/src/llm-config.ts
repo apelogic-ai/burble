@@ -30,6 +30,12 @@ export function buildOpenClawLlmPatch(input: OpenClawPatchInput): string {
   const parsed = parseLlmModelId(input.modelId);
   const modelRef = `${parsed.provider}/${parsed.model}`;
   const providerConfig = buildProviderConfig(parsed, input.ollamaBaseUrl);
+  const systemPromptOverride = [
+    "You are Burble's OpenClaw runtime.",
+    "Follow the user prompt exactly.",
+    "Answer final responses in concise Slack mrkdwn.",
+    "When the user prompt requests a JSON tool_call object, output only that JSON object and no prose."
+  ].join(" ");
   const patch = {
     agents: {
       defaults: {
@@ -43,8 +49,15 @@ export function buildOpenClawLlmPatch(input: OpenClawPatchInput): string {
         },
         heartbeat: {
           every: "0m"
-        }
+        },
+        skills: [],
+        contextInjection: "never",
+        skipBootstrap: true,
+        systemPromptOverride
       }
+    },
+    skills: {
+      allowBundled: []
     },
     gateway: {
       http: {

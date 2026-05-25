@@ -316,7 +316,8 @@ async function runOpenClawGatewayHttpRequest(
         null,
         gatewayDiagnostics,
         sessionId,
-        logInfo
+        logInfo,
+        startedAt
       );
       logInfo(
         `OpenClaw gateway http error runId=${request.runId ?? "unknown"} step=${step} status=${response.status}${summarizeLogObject("bodyPreview", responseText)}`
@@ -335,7 +336,8 @@ async function runOpenClawGatewayHttpRequest(
       null,
       gatewayDiagnostics,
       sessionId,
-      logInfo
+      logInfo,
+      startedAt
     );
     logInfo(
       `OpenClaw gateway http finish runId=${request.runId ?? "unknown"} step=${step} elapsedMs=${Date.now() - startedAt} status=${response.status} stdoutChars=${stdout.length} responseChars=${responseText.length}`
@@ -353,7 +355,8 @@ async function runOpenClawGatewayHttpRequest(
       null,
       gatewayDiagnostics,
       sessionId,
-      logInfo
+      logInfo,
+      startedAt
     );
     logInfo(
       `OpenClaw gateway http error runId=${request.runId ?? "unknown"} step=${step}${summarizeLogObject("error", stderr)}`
@@ -1570,13 +1573,18 @@ function logOpenClawUsageFromOutput(
   rawStream: string | null,
   gatewayDiagnostics: string,
   sessionId: string,
-  logInfo: RuntimeLogger
+  logInfo: RuntimeLogger,
+  startedAt?: number
 ): void {
+  const selectedGatewayDiagnostics = selectGatewayDiagnosticsForSession(
+    gatewayDiagnostics,
+    sessionId
+  );
   const output = [
     stdout,
     stderr,
     rawStream ?? "",
-    selectGatewayDiagnosticsForSession(gatewayDiagnostics, sessionId)
+    selectedGatewayDiagnostics
   ].join("\n");
   const usage = readModelUsage(output);
   const diagnostics = summarizeModelDiagnostics(output);
@@ -1608,6 +1616,30 @@ function logOpenClawUsageFromOutput(
       `rawStreamBytes=${rawStream ? new TextEncoder().encode(rawStream).length : 0}`
     ].join(" ")
   );
+  const phaseTimings = summarizeGatewayPhaseTimings(
+    selectedGatewayDiagnostics,
+    startedAt
+  );
+  if (phaseTimings) {
+    logInfo(
+      [
+        `OpenClaw gateway phase timings runId=${request.runId ?? "unknown"}`,
+        `step=${step}`,
+        `requestToLaneMs=${formatUsageNumber(phaseTimings.requestToLaneMs)}`,
+        `laneWaitMs=${formatUsageNumber(phaseTimings.laneWaitMs)}`,
+        `laneToRunStartMs=${formatUsageNumber(phaseTimings.laneToRunStartMs)}`,
+        `runStartToPromptMs=${formatUsageNumber(phaseTimings.runStartToPromptMs)}`,
+        `promptToProviderMs=${formatUsageNumber(phaseTimings.promptToProviderMs)}`,
+        `providerToFirstEventMs=${formatUsageNumber(phaseTimings.providerToFirstEventMs)}`,
+        `providerStreamMs=${formatUsageNumber(phaseTimings.providerStreamMs)}`,
+        `providerElapsedMs=${formatUsageNumber(phaseTimings.providerElapsedMs)}`,
+        `gatewayRunDurationMs=${formatUsageNumber(phaseTimings.gatewayRunDurationMs)}`,
+        `systemPromptChars=${formatUsageNumber(phaseTimings.systemPromptChars)}`,
+        `gatewayPromptChars=${formatUsageNumber(phaseTimings.gatewayPromptChars)}`,
+        `historyTextChars=${formatUsageNumber(phaseTimings.historyTextChars)}`
+      ].join(" ")
+    );
+  }
 }
 
 function selectGatewayDiagnosticsForSession(
@@ -1635,6 +1667,12 @@ function selectGatewayDiagnosticsForSession(
       continue;
     }
 
+    if (!inTargetSession && line.includes(sessionId)) {
+      sawTargetSession = true;
+      selected.push(line);
+      continue;
+    }
+
     if (!inTargetSession) {
       continue;
     }
@@ -1653,6 +1691,131 @@ function selectGatewayDiagnosticsForSession(
   }
 
   return sawEmbeddedSession ? "" : gatewayDiagnostics;
+}
+
+type GatewayLogEvent = {
+  timestampMs: number;
+  text: string;
+};
+
+type GatewayPhaseTimings = {
+  requestToLaneMs?: number;
+  laneWaitMs?: number;
+  laneToRunStartMs?: number;
+  runStartToPromptMs?: number;
+  promptToProviderMs?: number;
+  providerToFirstEventMs?: number;
+  providerStreamMs?: number;
+  providerElapsedMs?: number;
+  gatewayRunDurationMs?: number;
+  systemPromptChars?: number;
+  gatewayPromptChars?: number;
+  historyTextChars?: number;
+};
+
+function summarizeGatewayPhaseTimings(
+  gatewayDiagnostics: string,
+  requestStartedAt?: number
+): GatewayPhaseTimings | null {
+  const events = readGatewayLogEvents(gatewayDiagnostics);
+  if (events.length === 0) {
+    return null;
+  }
+
+  const laneEnqueue = findGatewayEvent(events, "[diagnostic] lane enqueue:");
+  const laneDequeue = findGatewayEvent(events, "[diagnostic] lane dequeue:");
+  const embeddedRunStart = findGatewayEvent(
+    events,
+    "[agent/embedded] embedded run start:"
+  );
+  const promptStart = findGatewayEvent(
+    events,
+    "[agent/embedded] embedded run prompt start:"
+  );
+  const contextDiag = findGatewayEvent(events, "[context-diag] pre-prompt:");
+  const providerStart = findGatewayEvent(
+    events,
+    "[provider-transport-fetch] [model-fetch] start"
+  );
+  const firstEvent = findGatewayEvent(
+    events,
+    "[openai-transport] [responses] first_event"
+  );
+  const streamDone = findGatewayEvent(
+    events,
+    "[openai-transport] [responses] stream_done"
+  );
+  const embeddedRunDone = findGatewayEvent(
+    events,
+    "[agent/embedded] embedded run done:"
+  );
+
+  const result: GatewayPhaseTimings = {
+    requestToLaneMs: diffMs(requestStartedAt, laneEnqueue?.timestampMs),
+    laneWaitMs: readFirstNumberField(laneDequeue?.text ?? "", ["waitMs"]),
+    laneToRunStartMs: diffMs(laneDequeue?.timestampMs, embeddedRunStart?.timestampMs),
+    runStartToPromptMs: diffMs(embeddedRunStart?.timestampMs, promptStart?.timestampMs),
+    promptToProviderMs: diffMs(promptStart?.timestampMs, providerStart?.timestampMs),
+    providerToFirstEventMs: diffMs(providerStart?.timestampMs, firstEvent?.timestampMs),
+    providerStreamMs: diffMs(firstEvent?.timestampMs, streamDone?.timestampMs),
+    providerElapsedMs: readFirstNumberField(streamDone?.text ?? "", ["elapsedMs"]),
+    gatewayRunDurationMs: readFirstNumberField(embeddedRunDone?.text ?? "", [
+      "durationMs"
+    ]),
+    systemPromptChars: readFirstNumberField(contextDiag?.text ?? "", [
+      "systemPromptChars"
+    ]),
+    gatewayPromptChars: readFirstNumberField(contextDiag?.text ?? "", [
+      "promptChars"
+    ]),
+    historyTextChars: readFirstNumberField(contextDiag?.text ?? "", [
+      "historyTextChars"
+    ])
+  };
+
+  return Object.values(result).some((value) => typeof value === "number")
+    ? result
+    : null;
+}
+
+function readGatewayLogEvents(text: string): GatewayLogEvent[] {
+  const events: GatewayLogEvent[] = [];
+  const timestampPattern =
+    /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}(?:Z|[+-]\d{2}:\d{2})/g;
+  const matches = [...text.matchAll(timestampPattern)];
+  for (let index = 0; index < matches.length; index += 1) {
+    const match = matches[index];
+    if (typeof match.index !== "number") {
+      continue;
+    }
+    const nextIndex = matches[index + 1]?.index ?? text.length;
+    const timestamp = match[0];
+    const timestampMs = Date.parse(timestamp);
+    if (Number.isNaN(timestampMs)) {
+      continue;
+    }
+    events.push({
+      timestampMs,
+      text: text.slice(match.index + timestamp.length, nextIndex).trim()
+    });
+  }
+  return events;
+}
+
+function findGatewayEvent(
+  events: GatewayLogEvent[],
+  marker: string
+): GatewayLogEvent | undefined {
+  return events.find((event) => event.text.includes(marker));
+}
+
+function diffMs(
+  start: number | undefined,
+  finish: number | undefined
+): number | undefined {
+  return typeof start === "number" && typeof finish === "number"
+    ? Math.max(0, finish - start)
+    : undefined;
 }
 
 type ModelUsage = {
@@ -1753,7 +1916,10 @@ function readNumberFields(text: string, fieldNames: string[]): number[] {
   const values: number[] = [];
   for (const fieldName of fieldNames) {
     const escapedField = fieldName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    const regex = new RegExp(`["']?${escapedField}["']?\\s*[:=]\\s*(\\d+)`, "gi");
+    const regex = new RegExp(
+      `(?:^|[^A-Za-z0-9_])["']?${escapedField}["']?\\s*[:=]\\s*(\\d+)`,
+      "gi"
+    );
     for (const match of text.matchAll(regex)) {
       const value = Number.parseInt(match[1] ?? "", 10);
       if (Number.isInteger(value)) {
