@@ -4,6 +4,10 @@ import {
   runOpenClawCliRequestStream
 } from "../../../runtimes/openclaw-nemoclaw/src/openclaw-cli";
 import type { RuntimeConfig } from "../../../runtimes/openclaw-nemoclaw/src/config";
+import {
+  clearGatewayDiagnosticText,
+  recordGatewayDiagnosticText
+} from "../../../runtimes/openclaw-nemoclaw/src/gateway-diagnostics";
 import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -257,6 +261,52 @@ describe("runOpenClawCliRequest", () => {
     expect(logs).toContain(
       "OpenClaw model usage diagnostics runId=run-diagnostics step=1 modelStarts=2 fetchStarts=2 streamDone=2 streamDoneElapsedMs=3522,29406 streamDoneEvents=38,1731 compactions=1 exactUsageFields=0 exactUsageAvailable=false rawStreamBytes=0"
     );
+  });
+
+  test("logs gateway-mode model diagnostics from gateway stdout", async () => {
+    const logs: string[] = [];
+    clearGatewayDiagnosticText();
+
+    await runOpenClawCliRequest(
+      {
+        runId: "run-gateway-diagnostics",
+        input: {
+          text: "prioritize my GitHub work",
+          connections: {
+            github: {
+              connected: true,
+              email: "person@example.com",
+              providerLogin: "octocat"
+            }
+          }
+        }
+      },
+      { ...config, engine: "openclaw-gateway" },
+      async () => ({
+        classification: "user_private",
+        content: []
+      }),
+      async () => {
+        recordGatewayDiagnosticText(
+          [
+            "[openai-transport] [responses] start provider=openai api=openai-responses model=gpt-5.4",
+            "[provider-transport-fetch] [model-fetch] start provider=openai api=openai-responses model=gpt-5.4",
+            "[openai-transport] [responses] stream_done provider=openai api=openai-responses model=gpt-5.4 elapsedMs=6929 events=123"
+          ].join("\n")
+        );
+        return {
+          exitCode: 0,
+          stdout: JSON.stringify({ response: { text: "Done." } }),
+          stderr: ""
+        };
+      },
+      (message) => logs.push(message)
+    );
+
+    expect(logs).toContain(
+      "OpenClaw model usage diagnostics runId=run-gateway-diagnostics step=1 modelStarts=1 fetchStarts=1 streamDone=1 streamDoneElapsedMs=6929 streamDoneEvents=123 compactions=0 exactUsageFields=0 exactUsageAvailable=false rawStreamBytes=0"
+    );
+    clearGatewayDiagnosticText();
   });
 
   test("parses provider token usage from raw stream files when enabled", async () => {

@@ -76,6 +76,10 @@ describe("startOpenClawGatewayIfNeeded", () => {
     );
 
     expect(handle).not.toBeNull();
+    expect(await Promise.race([
+      handle?.ready.then(() => "ready"),
+      Promise.resolve("pending")
+    ])).toBe("pending");
     expect(calls).toEqual([
       {
         command: "openclaw",
@@ -112,5 +116,31 @@ describe("startOpenClawGatewayIfNeeded", () => {
     expect(logs.some((line) => line.includes("OpenClaw gateway exit pid=123"))).toBe(
       true
     );
+  });
+
+  test("resolves readiness when gateway stdout reports ready", async () => {
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(
+          new TextEncoder().encode(
+            "2026-05-25T18:26:10.756+00:00 [gateway] ready\n"
+          )
+        );
+      }
+    });
+    const logs: string[] = [];
+    const handle = startOpenClawGatewayIfNeeded(
+      config,
+      (): GatewayProcess => ({
+        pid: 123,
+        exited: new Promise(() => {}),
+        kill() {},
+        stdout: stream
+      }),
+      (message) => logs.push(message)
+    );
+
+    await expect(handle?.ready).resolves.toBeUndefined();
+    expect(logs).toContain("OpenClaw gateway ready pid=123");
   });
 });

@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { mkdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { RuntimeConfig } from "./config";
+import { readGatewayDiagnosticTextSince } from "./gateway-diagnostics";
 import { info, type RuntimeLogger } from "./logger";
 import {
   isSupportedGitHubRequest,
@@ -219,14 +220,34 @@ async function runOpenClawCommand(
 
   if (result.exitCode !== 0) {
     const rawStream = await readRawStreamForUsage(rawStreamPath, logInfo, request, step);
-    logOpenClawUsageFromOutput(request, step, prompt, result.stdout, result.stderr, rawStream, logInfo);
+    const gatewayDiagnostics = readGatewayDiagnosticTextSince(startedAt);
+    logOpenClawUsageFromOutput(
+      request,
+      step,
+      prompt,
+      result.stdout,
+      result.stderr,
+      rawStream,
+      gatewayDiagnostics,
+      logInfo
+    );
     logInfo(
       `OpenClaw command error runId=${request.runId ?? "unknown"} step=${step} exitCode=${result.exitCode}${summarizeLogObject("stdoutPreview", result.stdout)}${summarizeLogObject("stderrPreview", result.stderr)}`
     );
     throw new Error(`OpenClaw CLI exited with code ${result.exitCode}`);
   }
   const rawStream = await readRawStreamForUsage(rawStreamPath, logInfo, request, step);
-  logOpenClawUsageFromOutput(request, step, prompt, result.stdout, result.stderr, rawStream, logInfo);
+  const gatewayDiagnostics = readGatewayDiagnosticTextSince(startedAt);
+  logOpenClawUsageFromOutput(
+    request,
+    step,
+    prompt,
+    result.stdout,
+    result.stderr,
+    rawStream,
+    gatewayDiagnostics,
+    logInfo
+  );
   logInfo(
     `OpenClaw command finish runId=${request.runId ?? "unknown"} step=${step} elapsedMs=${Date.now() - startedAt} stdoutChars=${result.stdout.length} stderrChars=${result.stderr.length}${summarizeLogObject("stderrPreview", result.stderr)}`
   );
@@ -505,7 +526,17 @@ async function* collectOpenClawStream(
     `OpenClaw command stream finish runId=${request.runId ?? "unknown"} elapsedMs=${Date.now() - startedAt} exitCode=${exitCode ?? "unknown"} stdoutChunks=${chunkCount} stderrChunks=${stderrChunkCount} deltaCount=${deltaCount} stdoutChars=${stdout.length} stderrChars=${stderr.length}${summarizeLogObject("stderrPreview", stderr)}`
   );
   const rawStream = await readRawStreamForUsage(rawStreamPath, logInfo, request, step);
-  logOpenClawUsageFromOutput(request, step, prompt, stdout, stderr, rawStream, logInfo);
+  const gatewayDiagnostics = readGatewayDiagnosticTextSince(startedAt);
+  logOpenClawUsageFromOutput(
+    request,
+    step,
+    prompt,
+    stdout,
+    stderr,
+    rawStream,
+    gatewayDiagnostics,
+    logInfo
+  );
 
   if (exitCode !== 0) {
     throw new Error(
@@ -1290,9 +1321,10 @@ function logOpenClawUsageFromOutput(
   stdout: string,
   stderr: string,
   rawStream: string | null,
+  gatewayDiagnostics: string,
   logInfo: RuntimeLogger
 ): void {
-  const output = `${stdout}\n${stderr}${rawStream ? `\n${rawStream}` : ""}`;
+  const output = [stdout, stderr, rawStream ?? "", gatewayDiagnostics].join("\n");
   const usage = readModelUsage(output);
   const diagnostics = summarizeModelDiagnostics(output);
   logInfo(

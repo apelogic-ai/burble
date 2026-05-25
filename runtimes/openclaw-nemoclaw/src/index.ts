@@ -8,6 +8,7 @@ const config = readRuntimeConfig(Bun.env);
 
 await ensureOpenClawSetup(config);
 const gateway = startOpenClawGatewayIfNeeded(config);
+await gateway?.ready;
 
 type RuntimeWebSocketData = {
   runId: string;
