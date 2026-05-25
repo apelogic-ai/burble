@@ -4,10 +4,7 @@ import {
   runOpenClawCliRequestStream
 } from "../../../runtimes/openclaw-nemoclaw/src/openclaw-cli";
 import type { RuntimeConfig } from "../../../runtimes/openclaw-nemoclaw/src/config";
-import {
-  clearGatewayDiagnosticText,
-  recordGatewayDiagnosticText
-} from "../../../runtimes/openclaw-nemoclaw/src/gateway-diagnostics";
+import { clearGatewayDiagnosticText } from "../../../runtimes/openclaw-nemoclaw/src/gateway-diagnostics";
 import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -53,6 +50,29 @@ async function withMockFetch<T>(
     return await run();
   } finally {
     globalThis.fetch = originalFetch;
+  }
+}
+
+async function withEnv<T>(
+  values: Record<string, string>,
+  run: () => Promise<T>
+): Promise<T> {
+  const previous = new Map<string, string | undefined>();
+  for (const [key, value] of Object.entries(values)) {
+    previous.set(key, process.env[key]);
+    process.env[key] = value;
+  }
+
+  try {
+    return await run();
+  } finally {
+    for (const [key, value] of previous) {
+      if (value === undefined) {
+        delete process.env[key];
+      } else {
+        process.env[key] = value;
+      }
+    }
   }
 }
 
@@ -300,83 +320,80 @@ describe("runOpenClawCliRequest", () => {
     );
   });
 
-  test("logs gateway-mode model diagnostics from gateway stdout", async () => {
+  test("logs gateway-mode model diagnostics from direct provider response", async () => {
     const logs: string[] = [];
     clearGatewayDiagnosticText();
 
-    await withMockFetch(
-      (async (_input, init) => {
-        const sessionKey = (init?.headers as Record<string, string>)[
-          "x-openclaw-session-key"
-        ];
-        const startedAt = Date.now();
-        const timestamp = (offsetMs: number) =>
-          new Date(startedAt + offsetMs).toISOString();
-        recordGatewayDiagnosticText(
-          [
-            `${timestamp(10)} [agent/embedded] embedded run start: runId=heartbeat sessionId=sidecar-heartbeat provider=openai model=gpt-5.4 thinking=medium messageChannel=heartbeat`,
-            `${timestamp(20)} [openai-transport] [responses] start provider=openai api=openai-responses model=gpt-5.4`,
-            `${timestamp(30)} [provider-transport-fetch] [model-fetch] start provider=openai api=openai-responses model=gpt-5.4`,
-            `${timestamp(40)} [openai-transport] [responses] stream_done provider=openai api=openai-responses model=gpt-5.4 elapsedMs=2482 events=15`,
-            `${timestamp(50)} [agent/embedded] embedded run done: runId=heartbeat sessionId=sidecar-heartbeat durationMs=5938 aborted=false`,
-            `${timestamp(100)} [diagnostic] lane enqueue: lane=session:agent:main:explicit:${sessionKey} queueSize=1`,
-            `${timestamp(104)} [diagnostic] lane dequeue: lane=session:agent:main:explicit:${sessionKey} waitMs=4 queueSize=0`,
-            `${timestamp(1500)} [agent/embedded] embedded run start: runId=user-run sessionKey=${sessionKey} provider=openai model=gpt-5.4 thinking=medium messageChannel=webchat`,
-            `${timestamp(1800)} [agent/embedded] embedded run prompt start: runId=user-run sessionKey=${sessionKey} provider=openai api=openai-responses endpoint=custom route=proxy-like policy=none`,
-            `${timestamp(1810)} [agent/embedded] [context-diag] pre-prompt: sessionKey=${sessionKey} messages=0 roleCounts=none historyTextChars=0 maxMessageTextChars=0 historyImageBlocks=0 systemPromptChars=29632 promptChars=4261 promptImages=0 provider=openai/gpt-5.4`,
-            `${timestamp(2500)} [openai-transport] [responses] start provider=openai api=openai-responses model=gpt-5.4`,
-            `${timestamp(2600)} [provider-transport-fetch] [model-fetch] start provider=openai api=openai-responses model=gpt-5.4`,
-            `${timestamp(2630)} [openai-transport] [responses] first_event provider=openai api=openai-responses model=gpt-5.4 elapsedMs=30 type=response.created`,
-            `${timestamp(9130)} [openai-transport] [responses] stream_done provider=openai api=openai-responses model=gpt-5.4 elapsedMs=6929 events=123`,
-            `${timestamp(9300)} [agent/embedded] embedded run done: runId=user-run sessionKey=${sessionKey} durationMs=7800 aborted=false`
-          ].join("\n")
-        );
-        return new Response(JSON.stringify(openResponsesText("Done.")), {
-          status: 200,
-          headers: { "content-type": "application/json" }
-        });
-      }) as typeof fetch,
-      async () => {
-        await runOpenClawCliRequest(
-          {
-            runId: "run-gateway-diagnostics",
-            input: {
-              text: "prioritize my GitHub work",
-              connections: {
-                github: {
-                  connected: true,
-                  email: "person@example.com",
-                  providerLogin: "octocat"
-                }
-              }
-            }
-          },
-          { ...config, engine: "openclaw-gateway" },
-          async () => ({
-            classification: "user_private",
-            content: []
-          }),
+    await withEnv(
+      { OPENAI_API_KEY: "test-openai-key" },
+      async () =>
+        await withMockFetch(
+          (async () =>
+            new Response(JSON.stringify(openResponsesText("Done.")), {
+              status: 200,
+              headers: { "content-type": "application/json" }
+            })) as unknown as typeof fetch,
           async () => {
-            throw new Error("unexpected cli call");
-          },
-          (message) => logs.push(message)
-        );
-      }
+            await runOpenClawCliRequest(
+              {
+                runId: "run-gateway-diagnostics",
+                input: {
+                  text: "prioritize my GitHub work",
+                  connections: {
+                    github: {
+                      connected: true,
+                      email: "person@example.com",
+                      providerLogin: "octocat"
+                    }
+                  }
+                }
+              },
+              { ...config, engine: "openclaw-gateway" },
+              async () => ({
+                classification: "user_private",
+                content: []
+              }),
+              async () => {
+                throw new Error("unexpected cli call");
+              },
+              (message) => logs.push(message)
+            );
+          }
+        )
     );
 
     expect(logs).toContain(
-      "OpenClaw model usage diagnostics runId=run-gateway-diagnostics step=1 modelStarts=1 fetchStarts=1 streamDone=1 streamDoneElapsedMs=6929 streamDoneEvents=123 compactions=0 exactUsageFields=3 exactUsageAvailable=true rawStreamBytes=0"
+      "OpenClaw model usage diagnostics runId=run-gateway-diagnostics step=1 modelStarts=0 fetchStarts=0 streamDone=0 streamDoneElapsedMs=none streamDoneEvents=none compactions=0 exactUsageFields=3 exactUsageAvailable=true rawStreamBytes=0"
     );
-    const phaseLog = logs.find((line) =>
+    expect(
+      logs.some((line) =>
+        line.includes(
+          "OpenClaw gateway direct model start runId=run-gateway-diagnostics step=1 provider=openai model=gpt-5.4"
+        )
+      )
+    ).toBe(true);
+    expect(
+      logs.some((line) =>
+        line.includes(
+          "OpenClaw gateway direct model finish runId=run-gateway-diagnostics step=1"
+        )
+      )
+    ).toBe(true);
+    expect(
+      logs.find((line) =>
+        line.includes(
+          "OpenClaw gateway phase timings runId=run-gateway-diagnostics step=1"
+        )
+      )
+    ).toBeUndefined();
+    const usageLog = logs.find((line) =>
       line.includes(
-        "OpenClaw gateway phase timings runId=run-gateway-diagnostics step=1"
+        "OpenClaw usage runId=run-gateway-diagnostics step=1"
       )
     );
-    expect(phaseLog).toContain("laneWaitMs=4");
-    expect(phaseLog).toContain("providerStreamMs=6500");
-    expect(phaseLog).toContain("providerElapsedMs=6929");
-    expect(phaseLog).toContain("systemPromptChars=29632");
-    expect(phaseLog).toContain("gatewayPromptChars=4261");
+    expect(usageLog).toContain("inputTokens=100");
+    expect(usageLog).toContain("outputTokens=20");
+    expect(usageLog).toContain("totalTokens=120");
     clearGatewayDiagnosticText();
   });
 
@@ -1589,51 +1606,56 @@ describe("runOpenClawCliRequest", () => {
       headers: Headers;
       body: Record<string, unknown>;
     }> = [];
-    const response = await withMockFetch(
-      (async (input, init) => {
-        requests.push({
-          url: String(input),
-          headers: new Headers(init?.headers),
-          body: JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>
-        });
-        return new Response(JSON.stringify(openResponsesText("Gateway answer.")), {
-          status: 200,
-          headers: { "content-type": "application/json" }
-        });
-      }) as typeof fetch,
+    const response = await withEnv(
+      { OPENAI_API_KEY: "test-openai-key" },
       async () =>
-        runOpenClawCliRequest(
-          {
-            input: {
-              text: "what can you do?",
-              connections: {
-                github: { connected: false }
-              }
-            }
-          },
-          { ...config, engine: "openclaw-gateway" },
-          async () => {
-            throw new Error("unexpected tool call");
-          },
-          async (_command, args) => {
-            commands.push({ args });
-            throw new Error("unexpected cli call");
-          },
-          () => undefined
+        await withMockFetch(
+          (async (input, init) => {
+            requests.push({
+              url: String(input),
+              headers: new Headers(init?.headers),
+              body: JSON.parse(String(init?.body ?? "{}")) as Record<
+                string,
+                unknown
+              >
+            });
+            return new Response(JSON.stringify(openResponsesText("Gateway answer.")), {
+              status: 200,
+              headers: { "content-type": "application/json" }
+            });
+          }) as typeof fetch,
+          async () =>
+            runOpenClawCliRequest(
+              {
+                input: {
+                  text: "what can you do?",
+                  connections: {
+                    github: { connected: false }
+                  }
+                }
+              },
+              { ...config, engine: "openclaw-gateway" },
+              async () => {
+                throw new Error("unexpected tool call");
+              },
+              async (_command, args) => {
+                commands.push({ args });
+                throw new Error("unexpected cli call");
+              },
+              () => undefined
+            )
         )
     );
 
     expect(response.response.text).toBe("Gateway answer.");
     expect(commands).toHaveLength(0);
     expect(requests).toHaveLength(1);
-    expect(requests[0].url).toBe("http://127.0.0.1:18789/v1/responses");
-    expect(requests[0].headers.get("authorization")).toBe("Bearer gateway-token");
-    expect(requests[0].headers.get("x-openclaw-agent-id")).toBe("main");
-    expect(requests[0].headers.get("x-openclaw-session-key")).toStartWith(
-      "agent:main:explicit:burble-step-"
-    );
-    expect(requests[0].body.model).toBe("openclaw/main");
+    expect(requests[0].url).toBe("https://api.openai.com/v1/responses");
+    expect(requests[0].headers.get("authorization")).toBe("Bearer test-openai-key");
+    expect(requests[0].body.model).toBe("gpt-5.4");
     expect(requests[0].body.input).toContain("what can you do?");
+    expect(requests[0].body.parallel_tool_calls).toBe(false);
+    expect(requests[0].body.instructions).toContain("Do not call tools");
   });
 
   test("logs stream debug details only when enabled", async () => {

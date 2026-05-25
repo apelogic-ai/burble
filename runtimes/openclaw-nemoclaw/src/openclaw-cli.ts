@@ -4,6 +4,7 @@ import { mkdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { RuntimeConfig } from "./config";
 import { readGatewayDiagnosticTextSince } from "./gateway-diagnostics";
+import { parseLlmModelId, type ParsedLlmModel } from "./llm-config";
 import { info, type RuntimeLogger } from "./logger";
 import {
   isSupportedGitHubRequest,
@@ -283,9 +284,9 @@ async function runOpenClawGatewayHttpRequest(
 ): Promise<CliCommandResult> {
   const startedAt = Date.now();
   const sessionKey = buildGatewayHttpSessionKey(config, sessionId);
-  const endpoint = buildGatewayHttpResponsesUrl(config);
+  const parsedModel = parseLlmModelId(config.llmModel);
   logInfo(
-    `OpenClaw gateway http start runId=${request.runId ?? "unknown"} step=${step} agent=${config.openClawAgent} endpoint=/v1/responses timeoutMs=${config.openClawTimeoutMs}${summarizePromptForLog(prompt)} sessionKey=${sessionKey}`
+    `OpenClaw gateway direct model start runId=${request.runId ?? "unknown"} step=${step} provider=${parsedModel.provider} model=${parsedModel.model} timeoutMs=${config.openClawTimeoutMs}${summarizePromptForLog(prompt)} sessionKey=${sessionKey}`
   );
   logStreamDebug(config, logInfo, "prompt preview", {
     runId: request.runId ?? "unknown",
@@ -297,10 +298,9 @@ async function runOpenClawGatewayHttpRequest(
   let stdout = "";
   let stderr = "";
   try {
-    const response = await fetchGatewayHttpResponse(
-      endpoint,
+    const response = await fetchDirectModelResponse(
       config,
-      sessionKey,
+      parsedModel,
       prompt
     );
     const responseText = await response.text();
@@ -320,12 +320,13 @@ async function runOpenClawGatewayHttpRequest(
         startedAt
       );
       logInfo(
-        `OpenClaw gateway http error runId=${request.runId ?? "unknown"} step=${step} status=${response.status}${summarizeLogObject("bodyPreview", responseText)}`
+        `OpenClaw gateway direct model error runId=${request.runId ?? "unknown"} step=${step} status=${response.status}${summarizeLogObject("bodyPreview", responseText)}`
       );
       return { exitCode: 1, stdout, stderr };
     }
 
-    stdout = extractOpenResponsesText(responseText) ?? responseText;
+    stdout =
+      extractDirectModelText(parsedModel.provider, responseText) ?? responseText;
     const gatewayDiagnostics = readGatewayDiagnosticTextSince(startedAt);
     logOpenClawUsageFromOutput(
       request,
@@ -340,7 +341,7 @@ async function runOpenClawGatewayHttpRequest(
       startedAt
     );
     logInfo(
-      `OpenClaw gateway http finish runId=${request.runId ?? "unknown"} step=${step} elapsedMs=${Date.now() - startedAt} status=${response.status} stdoutChars=${stdout.length} responseChars=${responseText.length}`
+      `OpenClaw gateway direct model finish runId=${request.runId ?? "unknown"} step=${step} elapsedMs=${Date.now() - startedAt} status=${response.status} stdoutChars=${stdout.length} responseChars=${responseText.length}`
     );
     return { exitCode: 0, stdout, stderr };
   } catch (error) {
@@ -359,7 +360,7 @@ async function runOpenClawGatewayHttpRequest(
       startedAt
     );
     logInfo(
-      `OpenClaw gateway http error runId=${request.runId ?? "unknown"} step=${step}${summarizeLogObject("error", stderr)}`
+      `OpenClaw gateway direct model error runId=${request.runId ?? "unknown"} step=${step}${summarizeLogObject("error", stderr)}`
     );
     return { exitCode: 1, stdout, stderr };
   }
@@ -449,29 +450,19 @@ function shouldEmitGatewayHttpDelta(stdout: string): boolean {
   return !(parsed && typeof parsed.tool_call === "object" && parsed.tool_call !== null);
 }
 
-async function fetchGatewayHttpResponse(
-  endpoint: string,
+async function fetchDirectModelResponse(
   config: RuntimeConfig,
-  sessionKey: string,
+  parsedModel: ParsedLlmModel,
   prompt: string
 ): Promise<Response> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), config.openClawTimeoutMs);
   try {
-    return await fetch(endpoint, {
+    const request = buildDirectModelRequest(config, parsedModel, prompt);
+    return await fetch(request.endpoint, {
       method: "POST",
-      headers: {
-        "authorization": `Bearer ${config.openClawGatewayToken}`,
-        "content-type": "application/json",
-        "x-openclaw-agent-id": config.openClawAgent,
-        "x-openclaw-message-channel": "webchat",
-        "x-openclaw-session-key": sessionKey
-      },
-      body: JSON.stringify({
-        model: `openclaw/${config.openClawAgent}`,
-        input: prompt,
-        stream: false
-      }),
+      headers: request.headers,
+      body: JSON.stringify(request.body),
       signal: controller.signal
     });
   } finally {
@@ -479,8 +470,160 @@ async function fetchGatewayHttpResponse(
   }
 }
 
-function buildGatewayHttpResponsesUrl(config: RuntimeConfig): string {
-  return `http://127.0.0.1:${config.openClawGatewayPort}/v1/responses`;
+type DirectModelRequest = {
+  endpoint: string;
+  headers: Record<string, string>;
+  body: Record<string, unknown>;
+};
+
+const directPlanningSystemPrompt = [
+  "You are Burble's planning model.",
+  "Follow the user prompt exactly.",
+  "Return either concise Slack mrkdwn or the exact JSON tool_call object requested by the prompt.",
+  "Do not call tools, inspect files, mention bootstrap, or ask for identity setup."
+].join(" ");
+
+function buildDirectModelRequest(
+  config: RuntimeConfig,
+  parsedModel: ParsedLlmModel,
+  prompt: string
+): DirectModelRequest {
+  if (parsedModel.provider === "openai") {
+    return {
+      endpoint: "https://api.openai.com/v1/responses",
+      headers: {
+        "authorization": `Bearer ${readProviderApiKey("OPENAI_API_KEY")}`,
+        "content-type": "application/json"
+      },
+      body: {
+        model: parsedModel.model,
+        instructions: directPlanningSystemPrompt,
+        input: prompt,
+        stream: false,
+        parallel_tool_calls: false
+      }
+    };
+  }
+
+  if (parsedModel.provider === "anthropic") {
+    return {
+      endpoint: "https://api.anthropic.com/v1/messages",
+      headers: {
+        "anthropic-version": "2023-06-01",
+        "content-type": "application/json",
+        "x-api-key": readProviderApiKey("ANTHROPIC_API_KEY")
+      },
+      body: {
+        model: parsedModel.model,
+        max_tokens: 2048,
+        system: directPlanningSystemPrompt,
+        messages: [{ role: "user", content: prompt }]
+      }
+    };
+  }
+
+  const baseUrl = config.ollamaBaseUrl.replace(/\/+$/, "");
+  const endpointBase = baseUrl.endsWith("/v1") ? baseUrl : `${baseUrl}/v1`;
+  return {
+    endpoint: `${endpointBase}/chat/completions`,
+    headers: {
+      "authorization": `Bearer ${readOllamaApiKey(baseUrl)}`,
+      "content-type": "application/json"
+    },
+    body: {
+      model: parsedModel.model,
+      messages: [
+        { role: "system", content: directPlanningSystemPrompt },
+        { role: "user", content: prompt }
+      ],
+      stream: false
+    }
+  };
+}
+
+function readProviderApiKey(name: string): string {
+  const value = process.env[name]?.trim();
+  if (!value) {
+    throw new Error(`Missing required environment variable: ${name}`);
+  }
+
+  return value;
+}
+
+function readOllamaApiKey(baseUrl: string): string {
+  if (isLocalOllamaBaseUrl(baseUrl)) {
+    return process.env.OLLAMA_API_KEY?.trim() || "ollama-local";
+  }
+
+  return readProviderApiKey("OLLAMA_API_KEY");
+}
+
+function isLocalOllamaBaseUrl(baseUrl: string): boolean {
+  try {
+    const parsed = new URL(baseUrl);
+    return ["localhost", "127.0.0.1", "::1"].includes(parsed.hostname);
+  } catch {
+    return false;
+  }
+}
+
+function extractDirectModelText(
+  provider: ParsedLlmModel["provider"],
+  responseText: string
+): string | null {
+  if (provider === "openai") {
+    return extractOpenResponsesText(responseText);
+  }
+
+  const parsed = parseJsonObject(responseText);
+  if (!parsed) {
+    return null;
+  }
+
+  if (provider === "anthropic") {
+    const content = parsed.content;
+    if (!Array.isArray(content)) {
+      return null;
+    }
+
+    const text = content
+      .map((part) =>
+        part &&
+        typeof part === "object" &&
+        !Array.isArray(part) &&
+        (part as Record<string, unknown>).type === "text" &&
+        typeof (part as Record<string, unknown>).text === "string"
+          ? String((part as Record<string, unknown>).text)
+          : null
+      )
+      .filter((part): part is string => Boolean(part?.trim()))
+      .join("\n\n")
+      .trim();
+    return text || null;
+  }
+
+  const choices = parsed.choices;
+  if (!Array.isArray(choices)) {
+    return null;
+  }
+
+  for (const choice of choices) {
+    if (!choice || typeof choice !== "object" || Array.isArray(choice)) {
+      continue;
+    }
+
+    const message = (choice as Record<string, unknown>).message;
+    if (!message || typeof message !== "object" || Array.isArray(message)) {
+      continue;
+    }
+
+    const content = (message as Record<string, unknown>).content;
+    if (typeof content === "string" && content.trim()) {
+      return content.trim();
+    }
+  }
+
+  return null;
 }
 
 function buildGatewayHttpSessionKey(
