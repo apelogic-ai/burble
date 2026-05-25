@@ -20,7 +20,7 @@ import { handleConversation } from "./conversation/orchestrator";
 import { normalizeMentionText } from "./conversation/normalize";
 import type { ConversationResponse, ToolClassification } from "./conversation/types";
 import { createConfiguredAgentRunner } from "./agent/runtime";
-import type { AgentRunEvent } from "./agent/types";
+import type { AgentRunEvent, AgentUsage } from "./agent/types";
 import { createDockerRuntimeFactory } from "./agent/container-runtime-factory";
 import { createStaticRuntimeFactory } from "./agent/runtime-factory";
 import type { RuntimeFactory } from "./agent/runtime-factory";
@@ -67,6 +67,8 @@ type SlackProgressMessage = {
   text: string;
   startedAtMs: number;
   toolStartedAtMs: Record<string, number>;
+  toolLinesByCallId: Record<string, string>;
+  toolCallOrder: string[];
 };
 
 export function createSlackRuntime(
@@ -735,10 +737,12 @@ async function postConversationResponse(
   }
 ): Promise<void> {
   if (input.progressMessage && input.response.visibility !== "ephemeral") {
-    const finishedText = appendProgressLine(
-      input.progressMessage.text,
-      `Agent finished in ${formatElapsedMs(Date.now() - input.progressMessage.startedAtMs)}.`
-    );
+    const finishedText = renderProgressLines(input.progressMessage, [
+      formatFinalProgressLine(
+        Date.now() - input.progressMessage.startedAtMs,
+        input.response.usage
+      )
+    ]);
     input.progressMessage.text = finishedText;
     await client.chat.update({
       channel: input.progressMessage.channel,
@@ -806,7 +810,9 @@ async function postMentionWorkingState(
           ts: result.ts,
           text,
           startedAtMs: Date.now(),
-          toolStartedAtMs: {}
+          toolStartedAtMs: {},
+          toolLinesByCallId: {},
+          toolCallOrder: []
         }
       : undefined;
   }
@@ -844,23 +850,23 @@ export function formatAgentProgressEvent(
 ): string | undefined {
   switch (event.type) {
     case "status":
-      return appendProgressLine(currentText, normalizeAgentStatus(event.text));
+      return currentText.trim() ? undefined : normalizeAgentStatus(event.text);
     case "tool_call":
-      return appendProgressLine(
+      return replaceOrAppendProgressLine(
         currentText,
-        `Agent is calling ${formatAgentToolName(event.toolName)}...`
+        "",
+        `Calling ${formatAgentToolName(event.toolName)}...`
       );
     case "tool_result":
-      return appendProgressLine(
+      return replaceOrAppendProgressLine(
         currentText,
-        `Agent called ${formatAgentToolName(event.toolName)}.`
+        "",
+        `${formatAgentToolName(event.toolName)} completed (${formatToolClassification(event.classification)} result).`
       );
     case "message_delta": {
-      if (!event.text.trim()) {
-        return undefined;
-      }
-
-      return appendProgressLine(currentText, "Agent is responding...");
+      return event.text.trim() && !currentText.trim()
+        ? "Agent is responding..."
+        : undefined;
     }
     case "final":
     case "error":
@@ -874,10 +880,12 @@ function formatAgentProgressMessage(
 ): string | undefined {
   if (event.type === "tool_call") {
     progressMessage.toolStartedAtMs[event.callId] = Date.now();
-    return appendProgressLine(
-      progressMessage.text,
-      `Agent is calling ${formatAgentToolName(event.toolName)}...`
-    );
+    progressMessage.toolLinesByCallId[event.callId] =
+      `Calling ${formatAgentToolName(event.toolName)}...`;
+    if (!progressMessage.toolCallOrder.includes(event.callId)) {
+      progressMessage.toolCallOrder.push(event.callId);
+    }
+    return renderProgressLines(progressMessage);
   }
 
   if (event.type === "tool_result") {
@@ -885,13 +893,27 @@ function formatAgentProgressMessage(
     const elapsed =
       typeof startedAt === "number" ? ` in ${formatElapsedMs(Date.now() - startedAt)}` : "";
     delete progressMessage.toolStartedAtMs[event.callId];
-    return appendProgressLine(
-      progressMessage.text,
-      `Agent called ${formatAgentToolName(event.toolName)}${elapsed} (${formatToolClassification(event.classification)} result).`
-    );
+    progressMessage.toolLinesByCallId[event.callId] =
+      `${formatAgentToolName(event.toolName)} completed${elapsed} (${formatToolClassification(event.classification)} result).`;
+    if (!progressMessage.toolCallOrder.includes(event.callId)) {
+      progressMessage.toolCallOrder.push(event.callId);
+    }
+    return renderProgressLines(progressMessage);
   }
 
-  return formatAgentProgressEvent(event, progressMessage.text);
+  if (event.type === "status") {
+    return renderProgressLines(progressMessage, [
+      normalizeAgentStatus(event.text)
+    ]);
+  }
+
+  if (event.type === "message_delta") {
+    return event.text.trim()
+      ? renderProgressLines(progressMessage, ["Agent is responding..."])
+      : undefined;
+  }
+
+  return undefined;
 }
 
 function normalizeAgentStatus(text: string): string {
@@ -913,9 +935,29 @@ function normalizeAgentStatus(text: string): string {
     .replace(/\bagent agent\b/gi, "agent");
 }
 
-function appendProgressLine(currentText: string, line: string): string {
-  const trimmedLine = line.trim();
-  if (!trimmedLine) {
+function renderProgressLines(
+  progressMessage: SlackProgressMessage,
+  fallbackLines: string[] = []
+): string {
+  const toolLines = progressMessage.toolCallOrder
+    .map((callId) => progressMessage.toolLinesByCallId[callId])
+    .filter((line): line is string => Boolean(line?.trim()));
+  const lines =
+    toolLines.length > 0 ? [...toolLines, ...fallbackLines] : fallbackLines;
+  const rendered = lines
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .join("\n");
+  return rendered || progressMessage.text;
+}
+
+function replaceOrAppendProgressLine(
+  currentText: string,
+  previousLine: string,
+  nextLine: string
+): string {
+  const trimmedNext = nextLine.trim();
+  if (!trimmedNext) {
     return currentText;
   }
 
@@ -923,11 +965,14 @@ function appendProgressLine(currentText: string, line: string): string {
     .split(/\r?\n/)
     .map((part) => part.trim())
     .filter(Boolean);
-  if (lines.at(-1) === trimmedLine) {
-    return currentText;
+  const previousIndex = previousLine
+    ? lines.findIndex((line) => line === previousLine.trim())
+    : -1;
+  if (previousIndex >= 0) {
+    lines[previousIndex] = trimmedNext;
+    return lines.join("\n");
   }
-
-  return [...lines, trimmedLine].join("\n");
+  return [...lines, trimmedNext].join("\n");
 }
 
 function formatElapsedMs(ms: number): string {
@@ -940,6 +985,35 @@ function formatElapsedMs(ms: number): string {
 
 function formatToolClassification(classification: ToolClassification): string {
   return String(classification).replace(/_/g, "-");
+}
+
+function formatFinalProgressLine(elapsedMs: number, usage?: AgentUsage): string {
+  const usageText = formatUsageSummary(usage);
+  return `Final result in ${formatElapsedMs(elapsedMs)}${usageText ? ` (${usageText})` : ""}.`;
+}
+
+function formatUsageSummary(usage?: AgentUsage): string | null {
+  if (!usage) {
+    return null;
+  }
+
+  const totalTokens =
+    usage.totalTokens ??
+    (typeof usage.inputTokens === "number" && typeof usage.outputTokens === "number"
+      ? usage.inputTokens + usage.outputTokens
+      : undefined);
+  if (typeof totalTokens !== "number") {
+    return null;
+  }
+
+  const parts = [`${totalTokens} tokens`];
+  if (typeof usage.cachedInputTokens === "number" && usage.cachedInputTokens > 0) {
+    parts.push(`${usage.cachedInputTokens} cached`);
+  }
+  if (typeof usage.reasoningTokens === "number" && usage.reasoningTokens > 0) {
+    parts.push(`${usage.reasoningTokens} reasoning`);
+  }
+  return parts.join(", ");
 }
 
 function formatAgentToolName(toolName: string): string {
