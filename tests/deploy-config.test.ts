@@ -245,6 +245,9 @@ describe("dev deploy config", () => {
     expect(personalRuntimesCompose).toContain("AGENT_RUNTIME_IDLE_TTL_MS");
     expect(personalRuntimesCompose).toContain("AGENT_RUNTIME_REAPER_INTERVAL_MS");
     expect(personalRuntimesCompose).toContain("AGENT_RUNTIME_JWT_TTL_SECONDS");
+    expect(personalRuntimesCompose).toContain(
+      "AGENT_RUNTIME_MCP_GATEWAY_URL:-http://burble-app:3000/mcp"
+    );
     expect(personalRuntimesCompose).toContain("AGENT_RUNTIME_MCP_GATEWAY_URL");
     expect(personalRuntimesCompose).toContain("AGENT_RUNTIME_MCP_AUDIENCE");
     expect(personalRuntimesCompose).toContain("RUNTIME_JWT_ISSUER");
@@ -290,6 +293,13 @@ describe("dev deploy config", () => {
     expect(agentGatewayConfig).toContain(
       "host: http://burble-app:3000/mcp"
     );
+    expect(agentGatewayConfig).toContain("exact: /mcp/github");
+    expect(agentGatewayConfig).toContain(
+      "host: http://burble-app:3000/mcp/github"
+    );
+    expect(agentGatewayConfig).toContain("exact: /mcp/jira");
+    expect(agentGatewayConfig).toContain("exact: /mcp/slack");
+    expect(agentGatewayConfig).toContain("exact: /mcp/atlassian");
     expect(agentGatewayConfig).toContain("backendAuth:");
     expect(agentGatewayConfig).toContain("passthrough: {}");
     expect(agentGatewayConfig).toContain(

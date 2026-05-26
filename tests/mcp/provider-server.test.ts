@@ -142,6 +142,44 @@ describe("handleProviderMcpRequest", () => {
     store.close();
   });
 
+  test("can expose a provider-scoped MCP tool surface", async () => {
+    const issuer = createRuntimeJwtIssuer({ issuer: config.runtimeJwtIssuer });
+    const store = createTokenStore(":memory:");
+    const runtime = store.getOrCreateAgentRuntime({
+      workspaceId: "T123",
+      slackUserId: "U123",
+      engine: "openclaw",
+      endpointUrl: "http://runtime-u123:8080",
+      authTokenHash: "hash-u123",
+      statePath: "/data/runtimes/u123/state",
+      configPath: "/data/runtimes/u123/config/openclaw.json",
+      workspacePath: "/data/runtimes/u123/workspace"
+    });
+    const token = issuer.issueRuntimeJwt({
+      audience: "http://agentgateway:3000/mcp",
+      runtimeId: runtime.id,
+      workspaceId: "T123",
+      slackUserId: "U123"
+    });
+
+    const response = await handleProviderMcpRequest(
+      config,
+      store,
+      issuer,
+      mcpRequest({ method: "tools/list" }, token),
+      {},
+      "github"
+    );
+    const body = readMcpBody(await response.text());
+    const toolNames = body.result.tools.map((tool) => tool.name);
+
+    expect(toolNames).toContain("github_search_issues");
+    expect(toolNames).not.toContain("jira_search_issues");
+    expect(toolNames).not.toContain("slack_search_messages");
+
+    store.close();
+  });
+
   test("executes Slack search tools under the runtime principal", async () => {
     const issuer = createRuntimeJwtIssuer({ issuer: config.runtimeJwtIssuer });
     const store = createTokenStore(":memory:");
@@ -582,7 +620,7 @@ function mcpRequest(
 }
 
 function readMcpBody(text: string): {
-  result: { content: Array<{ text: string }> };
+  result: { content: Array<{ text: string }>; tools: Array<{ name: string }> };
 } {
   const dataLine = text
     .split("\n")

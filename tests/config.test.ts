@@ -148,6 +148,16 @@ describe("readConfig", () => {
     );
   });
 
+  test("defaults Docker runtimes to Burble MCP", () => {
+    const config = readConfig({
+      ...validEnv,
+      AGENT_RUNTIME_FACTORY: "docker"
+    });
+
+    expect(config.agentRuntimeMcpGatewayUrl).toBe("http://burble-app:3000/mcp");
+    expect(config.agentRuntimeMcpAudience).toBe("http://burble-app:3000/mcp");
+  });
+
   test("allows Atlassian MCP URL override", () => {
     expect(
       readConfig({

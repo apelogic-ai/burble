@@ -56,12 +56,22 @@ export function startOAuthServer(
         return jsonResponse(runtimeJwtIssuer.jwks());
       }
 
-      if (url.pathname === "/mcp") {
+      const providerMcpMatch = url.pathname.match(
+        /^\/mcp(?:\/(github|jira|slack|atlassian))?$/
+      );
+      if (providerMcpMatch) {
         return handleProviderMcpRequest(
           config,
           store,
           runtimeJwtIssuer,
-          request
+          request,
+          {},
+          (providerMcpMatch[1] ?? "all") as
+            | "all"
+            | "github"
+            | "jira"
+            | "slack"
+            | "atlassian"
         );
       }
 

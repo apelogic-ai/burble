@@ -28,38 +28,10 @@ const config: RuntimeConfig = {
 };
 
 describe("createBurbleToolExecutor", () => {
-  test("uses the HTTP gateway and sends the runtime id header when MCP is not configured", async () => {
-    const originalFetch = globalThis.fetch;
-    const requests: Request[] = [];
-    globalThis.fetch = (async (input, init) => {
-      const request = new Request(input, init);
-      requests.push(request);
-      return Response.json({
-        classification: "user_private",
-        content: { login: "octocat" }
-      });
-    }) as typeof fetch;
-
-    try {
-      const executor = createBurbleToolExecutor(config, "rt_u123");
-      const result = await executor("github.getAuthenticatedUser", {
-        user: { email: "person@example.com" }
-      });
-
-      expect(result.content).toEqual({ login: "octocat" });
-      expect(requests[0].url).toBe(
-        "http://burble-app:3000/internal/tools/github.getAuthenticatedUser/execute"
-      );
-      expect(requests[0].headers.get("authorization")).toBe(
-        "Bearer runtime-secret"
-      );
-      expect(requests[0].headers.get("x-burble-runtime-id")).toBe("rt_u123");
-      expect(await requests[0].json()).toEqual({
-        user: { email: "person@example.com" }
-      });
-    } finally {
-      globalThis.fetch = originalFetch;
-    }
+  test("requires MCP gateway settings for provider tools", () => {
+    expect(() => createBurbleToolExecutor(config, "rt_u123")).toThrow(
+      "Burble MCP gateway URL and runtime JWT are required for provider tools"
+    );
   });
 
   test("uses the MCP gateway when runtime JWT settings are present", async () => {
