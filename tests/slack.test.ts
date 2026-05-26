@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
+  buildAgentConfigResponse,
   buildAuthResponse,
   buildHelpResponse,
   formatAgentProgressEvent,
@@ -14,6 +15,44 @@ import {
   shouldHandleDirectMessageEvent,
   summarizeSlackPayload
 } from "../src/slack";
+import type { Config } from "../src/config";
+
+const agentConfig: Config = {
+  slackBotToken: "xoxb-test",
+  slackAppToken: "xapp-test",
+  slackClientId: "slack-client-id",
+  slackClientSecret: "slack-client-secret",
+  slackRedirectUri: "https://example.test/oauth/slack/callback",
+  githubClientId: "github-client-id",
+  githubClientSecret: "github-client-secret",
+  jiraClientId: "jira-client-id",
+  jiraClientSecret: "jira-client-secret",
+  baseUrl: "https://example.test",
+  port: 3000,
+  databasePath: ":memory:",
+  slackLogLevel: "info",
+  agentMode: "llm",
+  agentRuntime: "openclaw-nemoclaw",
+  agentRuntimeFactory: "docker",
+  aiModel: "openai:gpt-5.4",
+  openClawNemoClawUrl: null,
+  openClawNemoClawEngine: "burble-direct",
+  agentRuntimeDataRoot: "/data/runtimes",
+  agentRuntimeDockerNetwork: "compose_default",
+  agentRuntimeImage: "burble-openclaw-nemoclaw:dev",
+  agentRuntimeIdleTtlMs: 1800000,
+  agentRuntimeReaperIntervalMs: 60000,
+  agentRuntimeJwtTtlSeconds: 604800,
+  agentRuntimeTokenSecret: "runtime-secret",
+  agentRuntimeToolGatewayUrl: "http://burble-app:3000/internal/tools",
+  agentRuntimeMcpGatewayUrl: "http://burble-app:3000/mcp",
+  agentRuntimeMcpAudience: "http://burble-app:3000/mcp",
+  atlassianMcpUrl: "https://mcp.atlassian.com/v1/mcp",
+  runtimeJwtIssuer: "http://burble-app:3000",
+  runtimeJwtPrivateKeyPath: "/data/runtime-jwt-private.pem",
+  openClawConfigPatchHostPath: null,
+  internalApiToken: "internal-token"
+};
 
 describe("formatIssuesMessage", () => {
   test("returns a helpful empty state", () => {
@@ -219,7 +258,53 @@ describe("buildHelpResponse", () => {
     expect(response.text).toBe("Burble help");
     expect(JSON.stringify(response.blocks)).toContain("/auth");
     expect(JSON.stringify(response.blocks)).toContain("/help");
+    expect(JSON.stringify(response.blocks)).toContain("/agent-config");
     expect(JSON.stringify(response.blocks)).toContain("assign DM-12 to me");
+  });
+});
+
+describe("buildAgentConfigResponse", () => {
+  test("shows configured runtime values without a runtime record", () => {
+    const response = buildAgentConfigResponse({
+      config: agentConfig,
+      runtime: null
+    });
+
+    const blocks = JSON.stringify(response.blocks);
+    expect(response.text).toBe("Agent configuration");
+    expect(blocks).toContain("openclaw-nemoclaw");
+    expect(blocks).toContain("burble-direct");
+    expect(blocks).toContain("openai:gpt-5.4");
+    expect(blocks).toContain("No runtime record exists yet");
+  });
+
+  test("shows the current user runtime record when present", () => {
+    const response = buildAgentConfigResponse({
+      config: agentConfig,
+      runtime: {
+        id: "rt_123",
+        workspaceId: "T123",
+        slackUserId: "U123",
+        engine: "burble-direct",
+        status: "ready",
+        endpointUrl: "http://runtime:8080",
+        authTokenHash: "hash",
+        statePath: "/data/state",
+        configPath: "/data/config/openclaw.json",
+        workspacePath: "/data/workspace",
+        createdAt: "2026-05-26T00:00:00.000Z",
+        lastSeenAt: "2026-05-26T00:01:00.000Z",
+        lastUsedAt: "2026-05-26T00:02:00.000Z",
+        stoppedAt: null,
+        failureReason: null
+      }
+    });
+
+    const blocks = JSON.stringify(response.blocks);
+    expect(blocks).toContain("rt_123");
+    expect(blocks).toContain("ready");
+    expect(blocks).toContain("http://runtime:8080");
+    expect(blocks).not.toContain("hash");
   });
 });
 

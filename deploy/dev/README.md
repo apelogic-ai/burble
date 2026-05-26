@@ -350,6 +350,7 @@ In Slack:
 /auth
 /auth github
 /auth slack
+/agent-config
 /help
 ```
 

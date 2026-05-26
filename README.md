@@ -36,6 +36,7 @@ Then set `BASE_URL` in `.env` and configure OAuth callback URLs:
 - `/auth github` starts the GitHub OAuth flow.
 - `/auth jira` starts the Jira OAuth flow.
 - `/auth slack` starts the Slack user OAuth flow for message search.
+- `/agent-config` shows the current agent/runtime configuration for the Slack user.
 
 Jira OAuth uses Atlassian 3LO with these scopes:
 

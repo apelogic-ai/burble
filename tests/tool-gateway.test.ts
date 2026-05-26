@@ -115,6 +115,7 @@ function createStore(
       throw new Error("unexpected agent runtime call");
     },
     getAgentRuntime: (id) => (id === foundRuntime?.id ? foundRuntime : null),
+    getAgentRuntimeForPrincipal: () => foundRuntime,
     listIdleAgentRuntimes: () => [],
     recordAgentRuntimeEvent: (event) => {
       runtimeEvents.push(event);
