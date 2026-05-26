@@ -1,4 +1,5 @@
 import { App, LogLevel } from "@slack/bolt";
+import { readFile } from "node:fs/promises";
 import type { Config } from "./config";
 import type { SlackLogLevel } from "./config";
 import {
@@ -513,21 +514,70 @@ export function createSlackRuntime(
     }
   });
 
-  app.command("/agent-config", async ({ ack, body, logger }) => {
+  app.command("/agent-status", async ({ ack, body, logger, respond }) => {
+    try {
+      logger.info(
+        withUtcTimestamp(`Received /agent-status from ${body.user_id}`)
+      );
+      await ack(buildAgentStatusLoadingResponse());
+      try {
+        const runtime = await getOrStartAgentStatusRuntime({
+          config,
+          store,
+          runtimeFactory,
+          workspaceId: body.team_id ?? "",
+          slackUserId: body.user_id
+        });
+
+        await respond({
+          ...buildAgentStatusResponse({ config, runtime }),
+          replace_original: true
+        });
+      } catch (error) {
+        logger.error(formatLogError(error));
+        await respond({
+          response_type: "ephemeral",
+          replace_original: true,
+          text: formatAgentStatusFailureMessage(error)
+        });
+      }
+    } catch (error) {
+      logger.error(formatLogError(error));
+      await ack({
+        response_type: "ephemeral",
+        text: "I could not open agent status."
+      });
+    }
+  });
+
+  app.command("/agent-config", async ({ ack, body, logger, respond }) => {
     try {
       logger.info(
         withUtcTimestamp(`Received /agent-config from ${body.user_id}`)
       );
-      const runtime =
-        config.agentRuntime === "openclaw-nemoclaw"
-          ? store.getAgentRuntimeForPrincipal({
-              workspaceId: body.team_id ?? "",
-              slackUserId: body.user_id,
-              engine: config.openClawNemoClawEngine
-            })
-          : null;
+      await ack(buildAgentConfigLoadingResponse());
+      try {
+        const runtime = await getOrStartAgentStatusRuntime({
+          config,
+          store,
+          runtimeFactory,
+          workspaceId: body.team_id ?? "",
+          slackUserId: body.user_id
+        });
+        const configFile = await readAgentConfigFile(runtime);
 
-      await ack(buildAgentConfigResponse({ config, runtime }));
+        await respond({
+          ...buildAgentConfigResponse({ runtime, configFile }),
+          replace_original: true
+        });
+      } catch (error) {
+        logger.error(formatLogError(error));
+        await respond({
+          response_type: "ephemeral",
+          replace_original: true,
+          text: formatAgentConfigFailureMessage(error)
+        });
+      }
     } catch (error) {
       logger.error(formatLogError(error));
       await ack({
@@ -542,6 +592,77 @@ export function createSlackRuntime(
     ...(runtimeFactory ? { runtimeFactory } : {}),
     getSlackEmail
   };
+}
+
+export async function getOrStartAgentStatusRuntime(input: {
+  config: Config;
+  store: TokenStore;
+  runtimeFactory?: RuntimeFactory;
+  workspaceId: string;
+  slackUserId: string;
+}): Promise<AgentRuntimeRecord | null> {
+  if (input.config.agentRuntime !== "openclaw-nemoclaw") {
+    return null;
+  }
+
+  const principal = {
+    workspaceId: input.workspaceId,
+    slackUserId: input.slackUserId
+  };
+  await input.runtimeFactory?.getOrCreateRuntime(principal);
+
+  return input.store.getAgentRuntimeForPrincipal({
+    ...principal,
+    engine: input.config.openClawNemoClawEngine
+  });
+}
+
+export type AgentConfigFileRead = {
+  path: string | null;
+  rawText: string | null;
+  redactedText: string | null;
+  topLevelKeys: string[];
+  error: string | null;
+};
+
+export async function readAgentConfigFile(
+  runtime: AgentRuntimeRecord | null,
+  readText: (path: string) => Promise<string> = (path) => readFile(path, "utf8")
+): Promise<AgentConfigFileRead> {
+  if (!runtime) {
+    return {
+      path: null,
+      rawText: null,
+      redactedText: null,
+      topLevelKeys: [],
+      error: "No runtime record exists yet."
+    };
+  }
+
+  try {
+    const rawText = await readText(runtime.configPath);
+    const parsed = JSON.parse(rawText) as unknown;
+    const redacted = redactConfigValue(parsed);
+    return {
+      path: runtime.configPath,
+      rawText,
+      redactedText: JSON.stringify(redacted, null, 2),
+      topLevelKeys:
+        parsed && typeof parsed === "object" && !Array.isArray(parsed)
+          ? Object.keys(parsed as Record<string, unknown>)
+          : [],
+      error: null
+    };
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : "unknown error";
+    return {
+      path: runtime.configPath,
+      rawText: null,
+      redactedText: null,
+      topLevelKeys: [],
+      error: detail
+    };
+  }
 }
 
 function createOpenClawRuntimeFactory(
@@ -764,7 +885,8 @@ export function buildHelpResponse() {
             "• `/auth github` - connect or reconnect GitHub",
             "• `/auth jira` - connect or reconnect Jira",
             "• `/auth slack` - connect or reconnect Slack search",
-            "• `/agent-config` - show your current agent runtime configuration",
+            "• `/agent-status` - show and power up your current agent runtime",
+            "• `/agent-config` - inspect your current runtime config file",
             "• `/help` - show this help"
           ].join("\n")
         }
@@ -774,9 +896,13 @@ export function buildHelpResponse() {
 }
 
 export function buildAgentConfigResponse(input: {
-  config: Config;
   runtime: AgentRuntimeRecord | null;
+  configFile: AgentConfigFileRead;
 }) {
+  const configPreview = input.configFile.redactedText
+    ? truncateSlackCodeBlock(input.configFile.redactedText, 2400)
+    : null;
+
   return {
     response_type: "ephemeral" as const,
     text: "Agent configuration",
@@ -786,6 +912,75 @@ export function buildAgentConfigResponse(input: {
         text: {
           type: "plain_text",
           text: "Agent configuration"
+        }
+      },
+      {
+        type: "section",
+        text: {
+          type: "mrkdwn",
+          text: [
+            "*Runtime config file*",
+            `• Runtime: \`${input.runtime?.id ?? "not ready"}\``,
+            `• Path: \`${input.configFile.path ?? "not available"}\``,
+            input.configFile.topLevelKeys.length > 0
+              ? `• Top-level keys: \`${input.configFile.topLevelKeys.join("`, `")}\``
+              : "• Top-level keys: `not available`"
+          ].join("\n")
+        }
+      },
+      ...(input.configFile.error
+        ? [
+            {
+              type: "section",
+              text: {
+                type: "mrkdwn",
+                text: `Could not read or parse the config file: \`${truncateSlackConfigValue(input.configFile.error, 240)}\``
+              }
+            }
+          ]
+        : []),
+      ...(configPreview
+        ? [
+            {
+              type: "section",
+              text: {
+                type: "mrkdwn",
+                text: ["*Redacted JSON preview*", "```", configPreview, "```"].join(
+                  "\n"
+                )
+              }
+            }
+          ]
+        : [])
+    ]
+  };
+}
+
+export function buildAgentConfigLoadingResponse() {
+  return {
+    response_type: "ephemeral" as const,
+    text: "Powering up agent runtime and reading configuration..."
+  };
+}
+
+function formatAgentConfigFailureMessage(error: unknown): string {
+  const detail = error instanceof Error ? ` ${error.message}` : "";
+  return `I could not power up the agent runtime or read configuration.${detail}`;
+}
+
+export function buildAgentStatusResponse(input: {
+  config: Config;
+  runtime: AgentRuntimeRecord | null;
+}) {
+  return {
+    response_type: "ephemeral" as const,
+    text: "Agent status",
+    blocks: [
+      {
+        type: "header",
+        text: {
+          type: "plain_text",
+          text: "Agent status"
         }
       },
       {
@@ -825,6 +1020,53 @@ export function buildAgentConfigResponse(input: {
   };
 }
 
+export function buildAgentStatusLoadingResponse() {
+  return {
+    response_type: "ephemeral" as const,
+    text: "Powering up agent runtime and reading status..."
+  };
+}
+
+function formatAgentStatusFailureMessage(error: unknown): string {
+  const detail = error instanceof Error ? ` ${error.message}` : "";
+  return `I could not power up the agent runtime or read status.${detail}`;
+}
+
+function redactConfigValue(value: unknown, key = ""): unknown {
+  if (isSensitiveConfigKey(key)) {
+    return "[redacted]";
+  }
+
+  if (Array.isArray(value)) {
+    return value.map((item) => redactConfigValue(item));
+  }
+
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>).map(([entryKey, entryValue]) => [
+        entryKey,
+        redactConfigValue(entryValue, entryKey)
+      ])
+    );
+  }
+
+  if (typeof value === "string" && looksSensitiveConfigString(value)) {
+    return "[redacted]";
+  }
+
+  return value;
+}
+
+function isSensitiveConfigKey(key: string): boolean {
+  return /(?:api[_-]?key|token|secret|password|credential|authorization|private[_-]?key)/i.test(
+    key
+  );
+}
+
+function looksSensitiveConfigString(value: string): boolean {
+  return /^(?:sk-[a-z0-9_-]{16,}|xox[a-z]-|gh[pousr]_|burble_rt_)/i.test(value);
+}
+
 function formatAgentRuntimeRecord(runtime: AgentRuntimeRecord | null): string {
   if (!runtime) {
     return [
@@ -849,6 +1091,14 @@ function formatAgentRuntimeRecord(runtime: AgentRuntimeRecord | null): string {
 
 function truncateSlackConfigValue(value: string, maxLength: number): string {
   return value.length <= maxLength ? value : `${value.slice(0, maxLength - 3)}...`;
+}
+
+function truncateSlackCodeBlock(value: string, maxLength: number): string {
+  if (value.length <= maxLength) {
+    return value;
+  }
+
+  return `${value.slice(0, maxLength - 42)}\n... truncated for Slack preview ...`;
 }
 
 function formatConnectionStatus(
