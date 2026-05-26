@@ -267,7 +267,7 @@ export async function searchGoogleMailMessages(
 }
 
 export function isGoogleAuthorizationError(error: unknown): boolean {
-  return error instanceof GoogleApiError && (error.status === 401 || error.status === 403);
+  return error instanceof GoogleApiError && error.status === 401;
 }
 
 async function readGoogleMailMessage(
