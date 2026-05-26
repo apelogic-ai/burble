@@ -1,5 +1,6 @@
 import type { ProviderConnection } from "../db";
 import {
+  GoogleApiError,
   isGoogleAuthorizationError,
   type GoogleCalendarEvent,
   type GoogleDriveFile,
@@ -161,6 +162,9 @@ async function withGoogleToken<T>(
     return await callback(current.accessToken);
   } catch (error) {
     if (!isGoogleAuthorizationError(error)) {
+      if (error instanceof GoogleApiError) {
+        return googleApiErrorResult(error);
+      }
       throw error;
     }
 
@@ -175,6 +179,9 @@ async function withGoogleToken<T>(
     } catch (retryError) {
       if (isGoogleAuthorizationError(retryError)) {
         return googleReconnectResult();
+      }
+      if (retryError instanceof GoogleApiError) {
+        return googleApiErrorResult(retryError);
       }
       throw retryError;
     }
@@ -225,6 +232,16 @@ function googleReconnectResult(): GoogleAuthErrorResult {
     content: {
       error: "google_authorization_failed",
       message: "Google authorization expired. Reconnect Google with `/auth google`."
+    }
+  };
+}
+
+function googleApiErrorResult(error: GoogleApiError): GoogleAuthErrorResult {
+  return {
+    classification: "user_private",
+    content: {
+      error: "google_api_failed",
+      message: `${error.message}. If you recently changed Google scopes, run \`/auth google\` again.`
     }
   };
 }
