@@ -18,6 +18,8 @@ const config: Config = {
   githubClientSecret: "client-secret",
   jiraClientId: null,
   jiraClientSecret: null,
+  googleClientId: null,
+  googleClientSecret: null,
   baseUrl: "https://example.ngrok-free.app",
   port: 3000,
   databasePath: ":memory:",
@@ -177,6 +179,80 @@ describe("handleProviderMcpRequest", () => {
     expect(toolNames).not.toContain("jira_search_issues");
     expect(toolNames).not.toContain("slack_search_messages");
 
+    store.close();
+  });
+
+  test("executes Google search tools under the runtime principal", async () => {
+    const issuer = createRuntimeJwtIssuer({ issuer: config.runtimeJwtIssuer });
+    const store = createTokenStore(":memory:");
+    const runtime = store.getOrCreateAgentRuntime({
+      workspaceId: "T123",
+      slackUserId: "U123",
+      engine: "openclaw",
+      endpointUrl: "http://runtime-u123:8080",
+      authTokenHash: "hash-u123",
+      statePath: "/data/runtimes/u123/state",
+      configPath: "/data/runtimes/u123/config/openclaw.json",
+      workspacePath: "/data/runtimes/u123/workspace"
+    });
+    store.upsertProviderConnection({
+      provider: "google",
+      email: "person@example.com",
+      slackUserId: "U123",
+      providerLogin: "person@apegpt.ai",
+      accessToken: "google-token",
+      refreshToken: null,
+      accessTokenExpiresAt: null
+    });
+    const token = issuer.issueRuntimeJwt({
+      audience: "http://agentgateway:3000/mcp",
+      runtimeId: runtime.id,
+      workspaceId: "T123",
+      slackUserId: "U123"
+    });
+
+    const response = await handleProviderMcpRequest(
+      config,
+      store,
+      issuer,
+      mcpRequest(
+        {
+          method: "tools/call",
+          params: {
+            name: "google_search_drive_files",
+            arguments: { query: "roadmap", limit: 3 }
+          }
+        },
+        token
+      ),
+      {
+        searchGoogleDriveFiles: async (accessToken, input) => {
+          expect(accessToken).toBe("google-token");
+          expect(input).toEqual({ query: "roadmap", limit: 3 });
+          return [
+            {
+              id: "file-1",
+              name: "Roadmap",
+              webViewLink: "https://drive.google.com/file-1"
+            }
+          ];
+        }
+      }
+    );
+    const body = readMcpBody(await response.text());
+    const toolResult = JSON.parse(body.result.content[0].text);
+
+    expect(response.status).toBe(200);
+    expect(toolResult).toEqual({
+      classification: "user_private",
+      content: [
+        {
+          id: "file-1",
+          name: "Roadmap",
+          webViewLink: "https://drive.google.com/file-1"
+        }
+      ]
+    });
     store.close();
   });
 

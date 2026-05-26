@@ -567,6 +567,14 @@ function isRunRequest(body: unknown): body is RunRequest {
   }
 
   if (
+    "google" in connections &&
+    connections.google !== undefined &&
+    !isConnectionSummary(connections.google)
+  ) {
+    return false;
+  }
+
+  if (
     "jira" in connections &&
     connections.jira !== undefined &&
     !isConnectionSummary(connections.jira)

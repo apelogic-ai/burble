@@ -133,6 +133,14 @@ function toMcpToolName(toolName: string): string {
       return "github_search_issues";
     case "github.listMyPullRequests":
       return "github_list_my_pull_requests";
+    case "google.getAuthenticatedUser":
+      return "google_get_authenticated_user";
+    case "google.searchDriveFiles":
+      return "google_search_drive_files";
+    case "google.searchCalendarEvents":
+      return "google_search_calendar_events";
+    case "google.searchMailMessages":
+      return "google_search_mail_messages";
     case "jira.getAuthenticatedUser":
       return "jira_get_authenticated_user";
     case "jira.listAccessibleResources":
@@ -180,6 +188,33 @@ function toMcpToolArguments(
       throw new Error("jira.searchIssues requires input.jql");
     }
     return { jql };
+  }
+
+  if (toolName === "google.searchDriveFiles") {
+    return compactToolInput(readRecordKey(body, "input"), [
+      "query",
+      "limit"
+    ]);
+  }
+
+  if (toolName === "google.searchCalendarEvents") {
+    return compactToolInput(readRecordKey(body, "input"), [
+      "query",
+      "timeMin",
+      "timeMax",
+      "limit"
+    ]);
+  }
+
+  if (toolName === "google.searchMailMessages") {
+    const query = readNestedString(body, "input", "query");
+    if (!query) {
+      throw new Error("google.searchMailMessages requires input.query");
+    }
+    return {
+      query,
+      ...compactToolInput(readRecordKey(body, "input"), ["limit"])
+    };
   }
 
   if (toolName === "jira.listVisibleProjects") {

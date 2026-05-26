@@ -1,5 +1,6 @@
 import type { AgentRuntimeRecord, Provider, TokenStore } from "../db";
 import type { GitHubToolDeps } from "../tools/github";
+import type { GoogleToolDeps } from "../tools/google";
 import type { JiraToolDeps } from "../tools/jira";
 import type { SlackToolDeps } from "../tools/slack";
 import type { ToolResult } from "../tools/types";
@@ -8,11 +9,13 @@ import type { UpstreamMcpTool, UpstreamMcpToolResult } from "./upstream-http-cli
 export type ProviderMcpScope =
   | "all"
   | "github"
+  | "google"
   | "jira"
   | "slack"
   | "atlassian";
 
 export type ProviderMcpDeps = Partial<GitHubToolDeps> &
+  Partial<GoogleToolDeps> &
   Partial<JiraToolDeps> &
   Partial<SlackToolDeps> & {
     listAtlassianMcpTools?: (input: {
@@ -44,6 +47,8 @@ export async function withConnection<TContent>(
         message:
           provider === "github"
             ? "Connect GitHub first."
+            : provider === "google"
+              ? "Connect Google first: `/auth google`."
             : provider === "jira"
               ? "Connect Jira first."
               : "Connect Slack search first: `/auth slack`."

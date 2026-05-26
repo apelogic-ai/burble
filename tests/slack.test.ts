@@ -31,6 +31,8 @@ const agentConfig: Config = {
   githubClientSecret: "github-client-secret",
   jiraClientId: "jira-client-id",
   jiraClientSecret: "jira-client-secret",
+  googleClientId: "google-client-id",
+  googleClientSecret: "google-client-secret",
   baseUrl: "https://example.test",
   port: 3000,
   databasePath: ":memory:",
@@ -227,6 +229,7 @@ describe("buildAuthResponse", () => {
   test("builds a connections menu with GitHub and future providers", () => {
     const response = buildAuthResponse({
       githubUrl: "https://example.test/github",
+      googleUrl: "https://example.test/google",
       jiraUrl: "https://example.test/jira",
       slackUrl: "https://example.test/slack",
       connections: {
@@ -238,6 +241,7 @@ describe("buildAuthResponse", () => {
           accessToken: "github-token",
           connectedAt: "2026-05-26T00:00:00.000Z"
         },
+        google: null,
         jira: null,
         slack: {
           provider: "slack",
@@ -252,12 +256,14 @@ describe("buildAuthResponse", () => {
 
     expect(response.text).toContain("connections");
     expect(JSON.stringify(response.blocks)).toContain("GitHub");
+    expect(JSON.stringify(response.blocks)).toContain("Google Workspace");
     expect(JSON.stringify(response.blocks)).toContain("Atlassian");
     expect(JSON.stringify(response.blocks)).toContain("Slack search");
     expect(JSON.stringify(response.blocks)).toContain("Connected as `octocat`");
     expect(JSON.stringify(response.blocks)).toContain("Connected as <@U123>");
     expect(JSON.stringify(response.blocks)).toContain("Not connected");
     expect(JSON.stringify(response.blocks)).toContain("https://example.test/github");
+    expect(JSON.stringify(response.blocks)).toContain("https://example.test/google");
     expect(JSON.stringify(response.blocks)).toContain("https://example.test/jira");
     expect(JSON.stringify(response.blocks)).toContain("https://example.test/slack");
   });
@@ -265,10 +271,12 @@ describe("buildAuthResponse", () => {
   test("marks Jira unavailable when no Jira OAuth URL is configured", () => {
     const response = buildAuthResponse({
       githubUrl: "https://example.test/github",
+      googleUrl: null,
       jiraUrl: null,
       slackUrl: null
     });
 
+    expect(JSON.stringify(response.blocks)).toContain("Google OAuth is not configured");
     expect(JSON.stringify(response.blocks)).toContain("Jira OAuth is not configured");
     expect(JSON.stringify(response.blocks)).toContain("Slack OAuth is not configured");
   });

@@ -7,6 +7,7 @@ import type {
 } from "ai";
 import { z } from "zod";
 import type { createGitHubTools } from "../tools/github";
+import type { createGoogleTools } from "../tools/google";
 import type { createJiraTools } from "../tools/jira";
 import type { createSlackTools } from "../tools/slack";
 import type { ToolClassification } from "../conversation/types";
@@ -47,6 +48,7 @@ export type AgentGenerateText = (
 export type AiSdkAgentRunnerDeps = {
   model: string;
   githubTools: ReturnType<typeof createGitHubTools>;
+  googleTools?: ReturnType<typeof createGoogleTools>;
   jiraTools?: ReturnType<typeof createJiraTools>;
   slackTools?: ReturnType<typeof createSlackTools>;
   resolveModel?: ModelResolver;
@@ -57,7 +59,8 @@ export type AiSdkAgentRunnerDeps = {
 const systemPrompt = [
   "You are Burble, a Slack-native work assistant.",
   "Answer in concise Slack mrkdwn.",
-  "Use provider tools for GitHub, Jira, and Slack facts. Do not invent provider data.",
+  "Use provider tools for GitHub, Jira, Slack, and Google facts. Do not invent provider data.",
+  "Use Google tools for Drive, Calendar, and Gmail facts when Google is connected.",
   "Never ask for, print, or expose access tokens.",
   "When a tool says GitHub is not connected, tell the user to run `@Burble connect github`.",
   "When a tool says Jira is not connected, tell the user Jira needs to be connected.",
@@ -144,6 +147,14 @@ async function runAiSdkAgent(
         content: {
           error: "slack_not_connected",
           message: "Connect Slack search first: `/auth slack`."
+        }
+      });
+    const missingGoogleConnection = () =>
+      record({
+        classification: "user_private",
+        content: {
+          error: "google_not_connected",
+          message: "Connect Google first: `/auth google`."
         }
       });
 
@@ -329,6 +340,108 @@ async function runAiSdkAgent(
             })
           );
         })
+      });
+    }
+
+    if (deps.googleTools) {
+      tools.google_get_authenticated_user = tool({
+        description: "Return the authenticated Google user for the Slack user.",
+        inputSchema: z.object({}),
+        execute: async () =>
+          executeTool("google_get_authenticated_user", async () => {
+            const connection = input.connections.google;
+            if (!connection) {
+              return missingGoogleConnection();
+            }
+
+            return record(
+              await deps.googleTools!.getAuthenticatedUser.execute({
+                connection
+              })
+            );
+          })
+      });
+      tools.google_search_drive_files = tool({
+        description:
+          "Search Google Drive files visible to the authenticated Slack user's connected Google account.",
+        inputSchema: z.object({
+          query: z.string().optional().describe("Optional Drive search terms"),
+          limit: z.number().int().positive().max(20).optional()
+        }),
+        execute: async ({ query, limit }) =>
+          executeTool("google_search_drive_files", async () => {
+            const connection = input.connections.google;
+            if (!connection) {
+              return missingGoogleConnection();
+            }
+
+            return record(
+              await deps.googleTools!.searchDriveFiles.execute({
+                connection,
+                input: {
+                  ...(query ? { query } : {}),
+                  ...(limit ? { limit } : {})
+                }
+              })
+            );
+          })
+      });
+      tools.google_search_calendar_events = tool({
+        description:
+          "Search upcoming Google Calendar events visible to the authenticated Slack user's connected Google account.",
+        inputSchema: z.object({
+          query: z.string().optional().describe("Optional calendar search terms"),
+          timeMin: z
+            .string()
+            .optional()
+            .describe("Optional RFC3339 lower bound; defaults to now"),
+          timeMax: z.string().optional().describe("Optional RFC3339 upper bound"),
+          limit: z.number().int().positive().max(20).optional()
+        }),
+        execute: async ({ query, timeMin, timeMax, limit }) =>
+          executeTool("google_search_calendar_events", async () => {
+            const connection = input.connections.google;
+            if (!connection) {
+              return missingGoogleConnection();
+            }
+
+            return record(
+              await deps.googleTools!.searchCalendarEvents.execute({
+                connection,
+                input: {
+                  ...(query ? { query } : {}),
+                  ...(timeMin ? { timeMin } : {}),
+                  ...(timeMax ? { timeMax } : {}),
+                  ...(limit ? { limit } : {})
+                }
+              })
+            );
+          })
+      });
+      tools.google_search_mail_messages = tool({
+        description:
+          "Search Gmail messages visible to the authenticated Slack user's connected Google account.",
+        inputSchema: z.object({
+          query: z.string().min(1).describe("Gmail search query"),
+          limit: z.number().int().positive().max(10).optional()
+        }),
+        execute: async ({ query, limit }) =>
+          executeTool("google_search_mail_messages", async () => {
+            const connection = input.connections.google;
+            if (!connection) {
+              return missingGoogleConnection();
+            }
+
+            return record(
+              await deps.googleTools!.searchMailMessages.execute({
+                connection,
+                input: {
+                  query,
+                  ...(limit ? { limit } : {})
+                }
+              })
+            );
+          })
       });
     }
 

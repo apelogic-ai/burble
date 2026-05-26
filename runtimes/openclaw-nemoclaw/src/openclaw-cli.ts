@@ -1429,6 +1429,47 @@ async function buildToolCatalog(
     );
   }
 
+  const google = request.input.connections.google;
+  if (google?.connected && google.email) {
+    catalog.push(
+      {
+        name: "google.getAuthenticatedUser",
+        description:
+          "Return the Google Workspace identity connected to the requesting Slack user.",
+        inputSchema: {}
+      },
+      {
+        name: "google.searchDriveFiles",
+        description:
+          "Search Google Drive files visible to the requesting Slack user's connected Google account.",
+        inputSchema: {
+          query: "optional string Drive file-name search terms",
+          limit: "optional integer 1-20"
+        }
+      },
+      {
+        name: "google.searchCalendarEvents",
+        description:
+          "Search Google Calendar events visible to the requesting Slack user's connected Google account.",
+        inputSchema: {
+          query: "optional string event search terms",
+          timeMin: "optional RFC3339 lower bound; defaults to now",
+          timeMax: "optional RFC3339 upper bound",
+          limit: "optional integer 1-20"
+        }
+      },
+      {
+        name: "google.searchMailMessages",
+        description:
+          "Search Gmail messages visible to the requesting Slack user's connected Google account.",
+        inputSchema: {
+          query: "string Gmail search query",
+          limit: "optional integer 1-10"
+        }
+      }
+    );
+  }
+
   const jira = request.input.connections.jira;
   if (jira?.connected && jira.email) {
     catalog.push(
@@ -1711,6 +1752,7 @@ function buildBurbleDirectPrompt(
       "For Jira questions involving a named person, call jira.searchUsers with the exact name or email before asking who they are. If the current request uses him/her/them, use the most recent named person in Recent Slack context.",
       "For Jira tickets assigned to a resolved person, call jira.searchIssues with that person's Jira accountId in JQL. If the user asks who they assigned to that person, state that the result reflects current visible assignee unless Jira changelog data is explicitly available.",
       "For Slack questions about what someone said, call slack.searchMessages. For 'what did I say about X', pass the requesting Slack user ID as fromUserId. For named Slack people, call slack.searchUsers first if you need their Slack user ID.",
+      "For Google Drive, Calendar, or Gmail questions, call google.searchDriveFiles, google.searchCalendarEvents, or google.searchMailMessages.",
       "For final answers, return concise Slack mrkdwn."
     ].join(" "),
     "",
@@ -2020,6 +2062,10 @@ function readToolEmail(toolName: string, request: RunRequest): string | null {
 
   if (toolName.startsWith("slack.")) {
     return request.input.connections.slack?.email ?? null;
+  }
+
+  if (toolName.startsWith("google.")) {
+    return request.input.connections.google?.email ?? null;
   }
 
   return null;

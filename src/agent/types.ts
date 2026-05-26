@@ -34,6 +34,7 @@ export type AgentInput = {
   text: string;
   connections: {
     github: ProviderConnection | null;
+    google?: ProviderConnection | null;
     jira?: ProviderConnection | null;
     slack?: ProviderConnection | null;
   };

@@ -56,6 +56,22 @@ export async function handleConversation(
     };
   }
 
+  if (intent === "connect_google") {
+    if (!deps.createGoogleOAuthUrl) {
+      return {
+        visibility: "ephemeral",
+        classification: "user_private",
+        text: "Google OAuth is not configured."
+      };
+    }
+
+    return {
+      visibility: "ephemeral",
+      classification: "user_private",
+      text: `<${deps.createGoogleOAuthUrl(request.user.slackUserId)}|Connect your Google account>`
+    };
+  }
+
   if (deps.agentMode === "llm" && deps.agentRunner) {
     const result = await collectAgentRun(
       deps.agentRunner,
@@ -69,6 +85,7 @@ export async function handleConversation(
         text: request.text,
         connections: {
           github: deps.getConnection("github", request.user.email),
+          google: deps.getConnection("google", request.user.email),
           jira: deps.getConnection("jira", request.user.email),
           slack: deps.getConnection("slack", request.user.email)
         }
@@ -181,6 +198,7 @@ function buildConversationRootId(request: ConversationRequest): string {
 
 type DeterministicIntent =
   | "connect_github"
+  | "connect_google"
   | "connect_jira"
   | "connect_slack"
   | "github_identity"
@@ -194,6 +212,10 @@ export function classifyDeterministicIntent(text: string): DeterministicIntent {
 
   if (/\bconnect\s+github\b/.test(normalized)) {
     return "connect_github";
+  }
+
+  if (/\bconnect\s+google\b/.test(normalized)) {
+    return "connect_google";
   }
 
   if (/\bconnect\s+(jira|atlassian)\b/.test(normalized)) {

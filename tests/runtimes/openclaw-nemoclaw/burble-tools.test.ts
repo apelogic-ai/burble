@@ -191,6 +191,22 @@ describe("createBurbleToolExecutor", () => {
         user: { email: "person@example.com" },
         input: { query: "launch", fromUserId: "U123", limit: 3 }
       });
+      await executor("google.searchDriveFiles", {
+        user: { email: "person@example.com" },
+        input: { query: "roadmap", limit: 5 }
+      });
+      await executor("google.searchCalendarEvents", {
+        user: { email: "person@example.com" },
+        input: {
+          query: "standup",
+          timeMin: "2026-05-26T00:00:00.000Z",
+          limit: 3
+        }
+      });
+      await executor("google.searchMailMessages", {
+        user: { email: "person@example.com" },
+        input: { query: "from:boris", limit: 2 }
+      });
       await executor("jira.createIssue", {
         user: { email: "person@example.com" },
         input: {
@@ -277,6 +293,31 @@ describe("createBurbleToolExecutor", () => {
           params: {
             name: "slack_search_messages",
             arguments: { query: "launch", fromUserId: "U123", limit: 3 }
+          }
+        },
+        {
+          method: "tools/call",
+          params: {
+            name: "google_search_drive_files",
+            arguments: { query: "roadmap", limit: 5 }
+          }
+        },
+        {
+          method: "tools/call",
+          params: {
+            name: "google_search_calendar_events",
+            arguments: {
+              query: "standup",
+              timeMin: "2026-05-26T00:00:00.000Z",
+              limit: 3
+            }
+          }
+        },
+        {
+          method: "tools/call",
+          params: {
+            name: "google_search_mail_messages",
+            arguments: { query: "from:boris", limit: 2 }
           }
         },
         {

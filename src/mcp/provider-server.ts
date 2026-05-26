@@ -9,6 +9,13 @@ import {
   searchIssues
 } from "../github";
 import {
+  getGoogleUser,
+  refreshGoogleAccessToken,
+  searchGoogleCalendarEvents,
+  searchGoogleDriveFiles,
+  searchGoogleMailMessages
+} from "../google";
+import {
   createJiraIssue,
   editJiraIssue,
   getJiraUser,
@@ -31,6 +38,7 @@ import {
   type ProviderMcpScope
 } from "./provider-context";
 import { registerGitHubMcpTools } from "./provider-github";
+import { registerGoogleMcpTools } from "./provider-google";
 import { registerJiraMcpTools } from "./provider-jira";
 import { registerSlackMcpTools } from "./provider-slack";
 
@@ -41,6 +49,10 @@ const defaultDeps = {
   listAssignedIssues,
   searchIssues,
   listMyPullRequests,
+  getGoogleUser,
+  searchGoogleDriveFiles,
+  searchGoogleCalendarEvents,
+  searchGoogleMailMessages,
   getJiraUser,
   listJiraAccessibleResources,
   listAssignedJiraIssues,
@@ -106,11 +118,18 @@ function createProviderMcpServer(
       refreshJiraAccessToken(config, refreshToken),
     saveJiraConnection: (connection: ProviderConnection) =>
       store.upsertProviderConnection(connection),
+    refreshGoogleAccessToken: (refreshToken: string) =>
+      refreshGoogleAccessToken(config, refreshToken),
+    saveGoogleConnection: (connection: ProviderConnection) =>
+      store.upsertProviderConnection(connection),
     ...deps
   };
 
   if (scope === "all" || scope === "github") {
     registerGitHubMcpTools({ server, store, runtime, deps: allDeps });
+  }
+  if (scope === "all" || scope === "google") {
+    registerGoogleMcpTools({ server, store, runtime, deps: allDeps });
   }
   if (scope === "all" || scope === "jira") {
     registerJiraMcpTools({ server, store, runtime, deps: allDeps });

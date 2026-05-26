@@ -23,6 +23,8 @@ describe("readConfig", () => {
       githubClientSecret: "client-secret",
       jiraClientId: null,
       jiraClientSecret: null,
+      googleClientId: null,
+      googleClientSecret: null,
       baseUrl: "https://example.ngrok-free.app",
       port: 4242,
       databasePath: "test.db",
@@ -81,6 +83,17 @@ describe("readConfig", () => {
 
     expect(config.jiraClientId).toBe("jira-client-id");
     expect(config.jiraClientSecret).toBe("jira-client-secret");
+  });
+
+  test("reads optional Google OAuth settings", () => {
+    const config = readConfig({
+      ...validEnv,
+      GOOGLE_CLIENT_ID: "google-client-id",
+      GOOGLE_CLIENT_SECRET: "google-client-secret"
+    });
+
+    expect(config.googleClientId).toBe("google-client-id");
+    expect(config.googleClientSecret).toBe("google-client-secret");
   });
 
   test("rejects invalid Slack log levels", () => {
