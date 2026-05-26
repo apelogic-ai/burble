@@ -50,20 +50,35 @@ describe("ensureOpenClawSetup", () => {
       await readFile(runtimeConfig.openClawConfigPath, "utf8")
     );
     expect(writtenConfig).toMatchObject({
-      runtime: {
-        engine: "deterministic",
-        port: 8080
+      agents: {
+        defaults: {
+          workspace: runtimeConfig.openClawWorkspaceDir,
+          model: {
+            primary: "openai/gpt-5.4"
+          },
+          skipBootstrap: true
+        },
+        list: [
+          {
+            id: runtimeConfig.openClawAgent,
+            default: true,
+            identity: {
+              name: "Burble",
+              theme: "Slack assistant",
+              emoji: ""
+            }
+          }
+        ]
       },
-      model: "openai:gpt-5.4",
-      providers: {
-        toolGatewayUrl: "http://burble-app:3000/internal/tools",
-        mcpGatewayUrl: null,
-        runtimeJwtConfigured: false
-      },
-      openClaw: {
-        backed: false
+      messages: {
+        visibleReplies: "automatic",
+        groupChat: {
+          visibleReplies: "message_tool",
+          unmentionedInbound: "room_event"
+        }
       }
     });
+    expect(writtenConfig.runtime).toBeUndefined();
     expect(JSON.stringify(writtenConfig)).not.toContain("secret");
   });
 
@@ -88,18 +103,35 @@ describe("ensureOpenClawSetup", () => {
       await readFile(runtimeConfig.openClawConfigPath, "utf8")
     );
     expect(writtenConfig).toMatchObject({
-      runtime: {
-        engine: "burble-direct",
-        port: 8080
+      agents: {
+        defaults: {
+          workspace: runtimeConfig.openClawWorkspaceDir,
+          model: {
+            primary: "openai/gpt-5.4"
+          },
+          skipBootstrap: true
+        },
+        list: [
+          {
+            id: runtimeConfig.openClawAgent,
+            default: true,
+            identity: {
+              name: "Burble",
+              theme: "Slack assistant",
+              emoji: ""
+            }
+          }
+        ]
       },
-      providers: {
-        mcpGatewayUrl: "http://agentgateway:3000/mcp",
-        runtimeJwtConfigured: true
-      },
-      paths: {
-        configPath: runtimeConfig.openClawConfigPath
+      messages: {
+        visibleReplies: "automatic",
+        groupChat: {
+          visibleReplies: "message_tool",
+          unmentionedInbound: "room_event"
+        }
       }
     });
+    expect(writtenConfig.runtime).toBeUndefined();
     expect(JSON.stringify(writtenConfig)).not.toContain("runtime-jwt");
   });
 

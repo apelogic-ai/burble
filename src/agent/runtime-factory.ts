@@ -48,10 +48,13 @@ export function createStaticRuntimeFactory(input: {
   endpointUrl: string;
   authToken: string;
   dataRoot: string;
+  configFileName?: string;
 }): RuntimeFactory {
   return {
     async getOrCreateRuntime(principal) {
       const runtimeId = buildRuntimeDataId(principal, input.engine);
+      const configFileName =
+        input.configFileName ?? nativeAgentConfigFileName(input.engine);
       const runtime = input.store.getOrCreateAgentRuntime({
         workspaceId: principal.workspaceId,
         slackUserId: principal.slackUserId,
@@ -59,7 +62,7 @@ export function createStaticRuntimeFactory(input: {
         endpointUrl: input.endpointUrl,
         authTokenHash: hashRuntimeToken(input.authToken),
         statePath: `${input.dataRoot}/${runtimeId}/state`,
-        configPath: `${input.dataRoot}/${runtimeId}/config/openclaw.json`,
+        configPath: `${input.dataRoot}/${runtimeId}/config/${configFileName}`,
         workspacePath: `${input.dataRoot}/${runtimeId}/workspace`
       });
       input.store.touchAgentRuntime(runtime.id);
@@ -110,6 +113,10 @@ export async function readRuntimeConfigFromLocalFile(
     path: runtime.configPath,
     text: await readFile(runtime.configPath, "utf8")
   };
+}
+
+export function nativeAgentConfigFileName(engine: AgentRuntimeEngine): string {
+  return engine === "hermes" ? "hermes.json" : "openclaw.json";
 }
 
 function toHandleStatus(status: string): RuntimeHandle["status"] {
