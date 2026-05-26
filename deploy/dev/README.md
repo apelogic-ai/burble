@@ -334,6 +334,7 @@ Add Slack slash commands:
 
 - `/auth`
 - `/help`
+- `/agent`
 - `/agent-status`
 - `/agent-config`
 
@@ -364,6 +365,8 @@ In Slack:
 /auth
 /auth github
 /auth slack
+/agent status
+/agent config
 /agent-status
 /agent-config
 /help
