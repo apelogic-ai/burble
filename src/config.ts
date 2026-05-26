@@ -5,6 +5,7 @@ export type Config = {
   slackAppToken: string;
   slackClientId: string | null;
   slackClientSecret: string | null;
+  slackRedirectUri: string;
   githubClientId: string;
   githubClientSecret: string;
   jiraClientId: string | null;
@@ -193,6 +194,9 @@ export function readConfig(env: Env): Config {
     slackAppToken: requiredEnv(env, "SLACK_APP_TOKEN"),
     slackClientId: optionalSecretEnv(env, "SLACK_CLIENT_ID"),
     slackClientSecret: optionalSecretEnv(env, "SLACK_CLIENT_SECRET"),
+    slackRedirectUri:
+      optionalUrlEnv(env, "SLACK_REDIRECT_URI") ??
+      `${baseUrl}/oauth/slack/callback`,
     githubClientId: requiredEnv(env, "GITHUB_CLIENT_ID"),
     githubClientSecret: requiredEnv(env, "GITHUB_CLIENT_SECRET"),
     jiraClientId: optionalSecretEnv(env, "JIRA_CLIENT_ID"),

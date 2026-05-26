@@ -18,6 +18,7 @@ describe("readConfig", () => {
       slackAppToken: "xapp-test",
       slackClientId: null,
       slackClientSecret: null,
+      slackRedirectUri: "https://example.ngrok-free.app/oauth/slack/callback",
       githubClientId: "client-id",
       githubClientSecret: "client-secret",
       jiraClientId: null,
@@ -60,11 +61,15 @@ describe("readConfig", () => {
     const config = readConfig({
       ...validEnv,
       SLACK_CLIENT_ID: "slack-client-id",
-      SLACK_CLIENT_SECRET: "slack-client-secret"
+      SLACK_CLIENT_SECRET: "slack-client-secret",
+      SLACK_REDIRECT_URI: "https://slack-callback.example.com/callback"
     });
 
     expect(config.slackClientId).toBe("slack-client-id");
     expect(config.slackClientSecret).toBe("slack-client-secret");
+    expect(config.slackRedirectUri).toBe(
+      "https://slack-callback.example.com/callback"
+    );
   });
 
   test("reads optional Jira OAuth settings", () => {

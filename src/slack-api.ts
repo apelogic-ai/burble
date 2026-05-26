@@ -82,7 +82,7 @@ export function buildSlackOAuthUrl(config: Config, state: string): string {
 
   const url = new URL("https://slack.com/oauth/v2/authorize");
   url.searchParams.set("client_id", config.slackClientId);
-  url.searchParams.set("redirect_uri", `${config.baseUrl}/oauth/slack/callback`);
+  url.searchParams.set("redirect_uri", config.slackRedirectUri);
   url.searchParams.set("state", state);
   url.searchParams.set("user_scope", "search:read users:read");
   return url.toString();
@@ -100,7 +100,7 @@ export async function exchangeSlackCode(
     client_id: config.slackClientId,
     client_secret: config.slackClientSecret,
     code,
-    redirect_uri: `${config.baseUrl}/oauth/slack/callback`
+    redirect_uri: config.slackRedirectUri
   });
 
   const response = await fetch("https://slack.com/api/oauth.v2.access", {
