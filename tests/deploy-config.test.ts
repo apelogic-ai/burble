@@ -45,6 +45,7 @@ describe("dev deploy config", () => {
       "SLACK_LOG_LEVEL",
       "SLACK_CLIENT_ID",
       "SLACK_CLIENT_SECRET",
+      "SLACK_REDIRECT_URI",
       "AGENT_MODE",
       "AGENT_RUNTIME",
       "AGENT_RUNTIME_FACTORY",

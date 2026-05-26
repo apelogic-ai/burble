@@ -13,6 +13,7 @@ const config: Config = {
   slackAppToken: "xapp-test",
   slackClientId: null,
   slackClientSecret: null,
+  slackRedirectUri: "https://example.ngrok-free.app/oauth/slack/callback",
   githubClientId: "client-id",
   githubClientSecret: "client-secret",
   jiraClientId: null,

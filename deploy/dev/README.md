@@ -78,6 +78,7 @@ SLACK_APP_TOKEN=xapp-...
 SLACK_LOG_LEVEL=info
 SLACK_CLIENT_ID=
 SLACK_CLIENT_SECRET=
+SLACK_REDIRECT_URI=
 AGENT_MODE=deterministic
 AGENT_RUNTIME=ai-sdk
 AI_MODEL=openai:gpt-5.4
@@ -119,6 +120,9 @@ https://<DOMAIN>/oauth/slack/callback
 
 Then grant user token scopes `search:read users:read` and set
 `SLACK_CLIENT_ID` / `SLACK_CLIENT_SECRET` in `deploy/dev/compose/.env`.
+`SLACK_REDIRECT_URI` is optional and defaults to
+`https://<DOMAIN>/oauth/slack/callback`; set it only if the Slack app uses a
+different exact callback URL.
 Users connect this token with `/auth slack`; normal bot delivery still uses
 `SLACK_BOT_TOKEN` and `SLACK_APP_TOKEN`.
 
