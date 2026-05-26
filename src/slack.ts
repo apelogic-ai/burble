@@ -514,6 +514,76 @@ export function createSlackRuntime(
     }
   });
 
+  app.command("/agent", async ({ ack, body, logger, respond }) => {
+    try {
+      logger.info(
+        withUtcTimestamp(`Received /agent ${body.text} from ${body.user_id}`)
+      );
+      const action = parseAgentCommand(body.text);
+
+      if (action.kind === "help") {
+        await ack(buildAgentCommandHelpResponse());
+        return;
+      }
+
+      if (action.kind === "status") {
+        await ack(buildAgentStatusLoadingResponse());
+        try {
+          const runtime = await getOrStartAgentStatusRuntime({
+            config,
+            store,
+            runtimeFactory,
+            workspaceId: body.team_id ?? "",
+            slackUserId: body.user_id
+          });
+
+          await respond({
+            ...buildAgentStatusResponse({ config, runtime }),
+            replace_original: true
+          });
+        } catch (error) {
+          logger.error(formatLogError(error));
+          await respond({
+            response_type: "ephemeral",
+            replace_original: true,
+            text: formatAgentStatusFailureMessage(error)
+          });
+        }
+        return;
+      }
+
+      await ack(buildAgentConfigLoadingResponse());
+      try {
+        const runtime = await getOrStartAgentStatusRuntime({
+          config,
+          store,
+          runtimeFactory,
+          workspaceId: body.team_id ?? "",
+          slackUserId: body.user_id
+        });
+        const configFile = await readAgentConfigFile(runtime, { runtimeFactory });
+
+        await respond({
+          ...buildAgentConfigResponse({ runtime, configFile }),
+          replace_original: true
+        });
+      } catch (error) {
+        logger.error(formatLogError(error));
+        await respond({
+          response_type: "ephemeral",
+          replace_original: true,
+          text: formatAgentConfigFailureMessage(error)
+        });
+      }
+    } catch (error) {
+      logger.error(formatLogError(error));
+      await ack({
+        response_type: "ephemeral",
+        text: "I could not open agent controls."
+      });
+    }
+  });
+
   app.command("/agent-status", async ({ ack, body, logger, respond }) => {
     try {
       logger.info(
@@ -765,6 +835,32 @@ export function parseAuthCommand(text: string): AuthCommand {
   return { kind: "unknown", value: normalized };
 }
 
+export type AgentCommand =
+  | { kind: "help" }
+  | { kind: "status" }
+  | { kind: "config" };
+
+export function parseAgentCommand(text: string): AgentCommand {
+  const normalized = text.trim().toLowerCase().replace(/\s+/g, " ");
+  if (normalized === "" || normalized === "help") {
+    return { kind: "help" };
+  }
+
+  if (normalized === "status" || normalized === "runtime status") {
+    return { kind: "status" };
+  }
+
+  if (
+    normalized === "config" ||
+    normalized === "configuration" ||
+    normalized === "runtime config"
+  ) {
+    return { kind: "config" };
+  }
+
+  return { kind: "help" };
+}
+
 export function buildAuthResponse(input: {
   githubUrl: string;
   jiraUrl: string | null;
@@ -900,9 +996,38 @@ export function buildHelpResponse() {
             "• `/auth github` - connect or reconnect GitHub",
             "• `/auth jira` - connect or reconnect Jira",
             "• `/auth slack` - connect or reconnect Slack search",
-            "• `/agent-status` - show and power up your current agent runtime",
-            "• `/agent-config` - inspect your current runtime config file",
+            "• `/agent status` - show and power up your current agent runtime",
+            "• `/agent config` - inspect your current runtime config file",
+            "• `/agent-status` - legacy alias for agent status",
+            "• `/agent-config` - legacy alias for agent config",
             "• `/help` - show this help"
+          ].join("\n")
+        }
+      }
+    ]
+  };
+}
+
+export function buildAgentCommandHelpResponse() {
+  return {
+    response_type: "ephemeral" as const,
+    text: "Agent controls",
+    blocks: [
+      {
+        type: "header",
+        text: {
+          type: "plain_text",
+          text: "Agent controls"
+        }
+      },
+      {
+        type: "section",
+        text: {
+          type: "mrkdwn",
+          text: [
+            "Use one of:",
+            "• `/agent status` - show and power up your current agent runtime",
+            "• `/agent config` - inspect your current runtime config file"
           ].join("\n")
         }
       }

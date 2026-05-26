@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   buildAgentConfigResponse,
+  buildAgentCommandHelpResponse,
   buildAgentStatusResponse,
   buildAuthResponse,
   buildHelpResponse,
@@ -13,6 +14,7 @@ import {
   formatWorkingMessage,
   formatIssuesMessage,
   formatMentionWorkingMessage,
+  parseAgentCommand,
   parseAuthCommand,
   shouldHandleDirectMessageEvent,
   summarizeSlackPayload
@@ -202,6 +204,25 @@ describe("parseAuthCommand", () => {
   });
 });
 
+describe("parseAgentCommand", () => {
+  test("defaults to help", () => {
+    expect(parseAgentCommand("")).toEqual({ kind: "help" });
+    expect(parseAgentCommand("help")).toEqual({ kind: "help" });
+    expect(parseAgentCommand("unknown")).toEqual({ kind: "help" });
+  });
+
+  test("routes status aliases", () => {
+    expect(parseAgentCommand("status")).toEqual({ kind: "status" });
+    expect(parseAgentCommand("runtime status")).toEqual({ kind: "status" });
+  });
+
+  test("routes config aliases", () => {
+    expect(parseAgentCommand("config")).toEqual({ kind: "config" });
+    expect(parseAgentCommand("configuration")).toEqual({ kind: "config" });
+    expect(parseAgentCommand("runtime config")).toEqual({ kind: "config" });
+  });
+});
+
 describe("buildAuthResponse", () => {
   test("builds a connections menu with GitHub and future providers", () => {
     const response = buildAuthResponse({
@@ -260,9 +281,21 @@ describe("buildHelpResponse", () => {
     expect(response.text).toBe("Burble help");
     expect(JSON.stringify(response.blocks)).toContain("/auth");
     expect(JSON.stringify(response.blocks)).toContain("/help");
+    expect(JSON.stringify(response.blocks)).toContain("/agent config");
+    expect(JSON.stringify(response.blocks)).toContain("/agent status");
     expect(JSON.stringify(response.blocks)).toContain("/agent-config");
     expect(JSON.stringify(response.blocks)).toContain("/agent-status");
     expect(JSON.stringify(response.blocks)).toContain("assign DM-12 to me");
+  });
+});
+
+describe("buildAgentCommandHelpResponse", () => {
+  test("shows the agent fallback slash command", () => {
+    const response = buildAgentCommandHelpResponse();
+
+    expect(response.text).toBe("Agent controls");
+    expect(JSON.stringify(response.blocks)).toContain("/agent status");
+    expect(JSON.stringify(response.blocks)).toContain("/agent config");
   });
 });
 

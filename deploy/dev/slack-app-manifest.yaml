@@ -14,6 +14,11 @@ features:
       description: Show Burble commands and examples.
       url: https://example.com/slack/commands
       should_escape: false
+    - command: /agent
+      description: Show or inspect your Burble agent runtime.
+      usage_hint: "[status|config]"
+      url: https://example.com/slack/commands
+      should_escape: false
     - command: /agent-status
       description: Power up and show your Burble agent runtime status.
       url: https://example.com/slack/commands

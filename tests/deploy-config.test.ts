@@ -84,7 +84,13 @@ describe("dev deploy config", () => {
   });
 
   test("documents the required Slack slash commands in the app manifest", () => {
-    for (const command of ["/auth", "/help", "/agent-status", "/agent-config"]) {
+    for (const command of [
+      "/auth",
+      "/help",
+      "/agent",
+      "/agent-status",
+      "/agent-config"
+    ]) {
       expect(slackAppManifest).toContain(`command: ${command}`);
     }
     expect(slackAppManifest).toContain("socket_mode_enabled: true");
