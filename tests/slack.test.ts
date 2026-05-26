@@ -1,9 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import {
   buildAgentConfigResponse,
+  buildAgentStatusResponse,
   buildAuthResponse,
   buildHelpResponse,
   formatAgentProgressEvent,
+  readAgentConfigFile,
   buildReplyThreadTs,
   formatConnectGitHubMessage,
   formatConversationFailureMessage,
@@ -259,19 +261,20 @@ describe("buildHelpResponse", () => {
     expect(JSON.stringify(response.blocks)).toContain("/auth");
     expect(JSON.stringify(response.blocks)).toContain("/help");
     expect(JSON.stringify(response.blocks)).toContain("/agent-config");
+    expect(JSON.stringify(response.blocks)).toContain("/agent-status");
     expect(JSON.stringify(response.blocks)).toContain("assign DM-12 to me");
   });
 });
 
-describe("buildAgentConfigResponse", () => {
+describe("buildAgentStatusResponse", () => {
   test("shows configured runtime values without a runtime record", () => {
-    const response = buildAgentConfigResponse({
+    const response = buildAgentStatusResponse({
       config: agentConfig,
       runtime: null
     });
 
     const blocks = JSON.stringify(response.blocks);
-    expect(response.text).toBe("Agent configuration");
+    expect(response.text).toBe("Agent status");
     expect(blocks).toContain("openclaw-nemoclaw");
     expect(blocks).toContain("burble-direct");
     expect(blocks).toContain("openai:gpt-5.4");
@@ -279,7 +282,7 @@ describe("buildAgentConfigResponse", () => {
   });
 
   test("shows the current user runtime record when present", () => {
-    const response = buildAgentConfigResponse({
+    const response = buildAgentStatusResponse({
       config: agentConfig,
       runtime: {
         id: "rt_123",
@@ -290,7 +293,7 @@ describe("buildAgentConfigResponse", () => {
         endpointUrl: "http://runtime:8080",
         authTokenHash: "hash",
         statePath: "/data/state",
-        configPath: "/data/config/openclaw.json",
+        configPath: "/data/config/runtime.json",
         workspacePath: "/data/workspace",
         createdAt: "2026-05-26T00:00:00.000Z",
         lastSeenAt: "2026-05-26T00:01:00.000Z",
@@ -305,6 +308,54 @@ describe("buildAgentConfigResponse", () => {
     expect(blocks).toContain("ready");
     expect(blocks).toContain("http://runtime:8080");
     expect(blocks).not.toContain("hash");
+  });
+});
+
+describe("buildAgentConfigResponse", () => {
+  test("shows a redacted runtime JSON config preview", async () => {
+    const runtime = {
+      id: "rt_123",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      engine: "burble-direct" as const,
+      status: "ready" as const,
+      endpointUrl: "http://runtime:8080",
+      authTokenHash: "hash",
+      statePath: "/data/state",
+      configPath: "/data/config/runtime.json",
+      workspacePath: "/data/workspace",
+      createdAt: "2026-05-26T00:00:00.000Z",
+      lastSeenAt: "2026-05-26T00:01:00.000Z",
+      lastUsedAt: "2026-05-26T00:02:00.000Z",
+      stoppedAt: null,
+      failureReason: null
+    };
+    const configFile = await readAgentConfigFile(runtime, async () =>
+      JSON.stringify({
+        agents: { defaults: { model: { primary: "openai/gpt-5.4" } } },
+        auth: { profiles: { openai: { apiKey: "sk-super-secret-token" } } }
+      })
+    );
+    const response = buildAgentConfigResponse({ runtime, configFile });
+
+    const blocks = JSON.stringify(response.blocks);
+    expect(response.text).toBe("Agent configuration");
+    expect(blocks).toContain("/data/config/runtime.json");
+    expect(blocks).toContain("agents");
+    expect(blocks).toContain("[redacted]");
+    expect(blocks).not.toContain("sk-super-secret-token");
+  });
+
+  test("shows config read errors without throwing", async () => {
+    const configFile = await readAgentConfigFile(null);
+    const response = buildAgentConfigResponse({
+      runtime: null,
+      configFile
+    });
+
+    const blocks = JSON.stringify(response.blocks);
+    expect(blocks).toContain("not ready");
+    expect(blocks).toContain("No runtime record exists yet");
   });
 });
 
