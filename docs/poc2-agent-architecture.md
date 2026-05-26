@@ -362,8 +362,8 @@ Fallback/admin:
 /auth
 /auth github
 /auth jira
-/github-me x
-/issues x
+/auth slack
+/help
 ```
 
 `/auth` remains useful for setup, but PoC2 should demo mentions.

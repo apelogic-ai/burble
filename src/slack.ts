@@ -20,7 +20,7 @@ import {
   searchSlackMessages,
   searchSlackUsers
 } from "./slack-api";
-import type { TokenStore } from "./db";
+import type { ProviderConnection, TokenStore } from "./db";
 import { handleConversation } from "./conversation/orchestrator";
 import { normalizeMentionText } from "./conversation/normalize";
 import type { ConversationResponse, ToolClassification } from "./conversation/types";
@@ -120,28 +120,6 @@ export function createSlackRuntime(
     }
     return email;
   }
-
-  app.command("/connect-github", async ({ ack, body, logger }) => {
-    try {
-      logger.info(
-        withUtcTimestamp(`Received /connect-github from ${body.user_id}`)
-      );
-      const userId = body.user_id;
-      const state = store.createOAuthState(userId);
-      const url = buildGitHubOAuthUrl(config, state);
-
-      await ack({
-        response_type: "ephemeral",
-        text: formatConnectGitHubMessage(url)
-      });
-    } catch (error) {
-      logger.error(formatLogError(error));
-      await ack({
-        response_type: "ephemeral",
-        text: "I could not start the GitHub connection flow."
-      });
-    }
-  });
 
   const githubTools = createGitHubTools({
     getGitHubUser,
@@ -438,7 +416,7 @@ export function createSlackRuntime(
       if (action.kind === "unknown") {
         await ack({
           response_type: "ephemeral",
-          text: `Unknown auth target \`${action.value}\`. Try \`/auth connections\`, \`/auth github\`, \`/auth jira\`, or \`/auth slack\`.`
+          text: `Unknown auth target \`${action.value}\`. Try \`/auth\`, \`/auth github\`, \`/auth jira\`, or \`/auth slack\`.`
         });
         return;
       }
@@ -478,11 +456,26 @@ export function createSlackRuntime(
                     response_type: "ephemeral",
                     text: `<${slackUrl}|Connect Slack search>`
                   }
-                : {
-                    response_type: "ephemeral",
-                    text: "Slack OAuth is not configured."
+              : {
+                  response_type: "ephemeral",
+                  text: "Slack OAuth is not configured."
+                }
+              : buildAuthResponse({
+                  githubUrl,
+                  jiraUrl,
+                  slackUrl,
+                  connections: {
+                    github: store.getConnectionForSlackUser(
+                      "github",
+                      body.user_id
+                    ),
+                    jira: store.getConnectionForSlackUser("jira", body.user_id),
+                    slack: store.getConnectionForSlackUser(
+                      "slack",
+                      body.user_id
+                    )
                   }
-              : buildAuthResponse({ githubUrl, jiraUrl, slackUrl })
+                })
       );
     } catch (error) {
       logger.error(formatLogError(error));
@@ -493,80 +486,15 @@ export function createSlackRuntime(
     }
   });
 
-  app.command("/issues", async ({ ack, body, respond, logger }) => {
-    logger.info(withUtcTimestamp(`Received /issues from ${body.user_id}`));
-    await ack({
-      response_type: "ephemeral",
-      text: formatWorkingMessage("/issues")
-    });
-
+  app.command("/help", async ({ ack, body, logger }) => {
     try {
-      const email = await getSlackEmail(body.user_id);
-      const user = store.getConnectedUserByEmail(email);
-
-      if (!user) {
-        await respond({
-          response_type: "ephemeral",
-          text: "Run `/connect-github` first."
-        });
-        return;
-      }
-
-      const issues = await listAssignedIssues(user.githubToken);
-
-      await respond({
-        response_type: "ephemeral",
-        text: formatIssuesMessage(issues)
-      });
+      logger.info(withUtcTimestamp(`Received /help from ${body.user_id}`));
+      await ack(buildHelpResponse());
     } catch (error) {
       logger.error(formatLogError(error));
-      const text =
-        error instanceof Error && error.message === "GITHUB_TOKEN_REJECTED"
-          ? "GitHub token rejected. Run `/connect-github` to reconnect."
-          : "I could not list your GitHub issues.";
-
-      await respond({
+      await ack({
         response_type: "ephemeral",
-        text
-      });
-    }
-  });
-
-  app.command("/github-me", async ({ ack, body, respond, logger }) => {
-    logger.info(withUtcTimestamp(`Received /github-me from ${body.user_id}`));
-    await ack({
-      response_type: "ephemeral",
-      text: formatWorkingMessage("/github-me")
-    });
-
-    try {
-      const email = await getSlackEmail(body.user_id);
-      const user = store.getConnectedUserByEmail(email);
-
-      if (!user) {
-        await respond({
-          response_type: "ephemeral",
-          text: "Run `/connect-github` first."
-        });
-        return;
-      }
-
-      const githubUser = await getGitHubUser(user.githubToken);
-
-      await respond({
-        response_type: "ephemeral",
-        text: formatGitHubIdentityMessage(githubUser.login, email)
-      });
-    } catch (error) {
-      logger.error(formatLogError(error));
-      const text =
-        error instanceof Error && error.message === "GitHub user lookup failed with 401"
-          ? "GitHub token rejected. Run `/connect-github` to reconnect."
-          : "I could not verify your GitHub identity.";
-
-      await respond({
-        response_type: "ephemeral",
-        text
+        text: "I could not open help."
       });
     }
   });
@@ -667,10 +595,19 @@ export function buildAuthResponse(input: {
   githubUrl: string;
   jiraUrl: string | null;
   slackUrl: string | null;
+  connections?: {
+    github: ProviderConnection | null;
+    jira: ProviderConnection | null;
+    slack: ProviderConnection | null;
+  };
 }) {
+  const github = formatConnectionStatus(input.connections?.github, "github");
+  const jira = formatConnectionStatus(input.connections?.jira, "jira");
+  const slack = formatConnectionStatus(input.connections?.slack, "slack");
+
   return {
     response_type: "ephemeral" as const,
-    text: "Connections: GitHub, Jira, and Slack search are available. Salesforce is coming later.",
+    text: "Burble connections: GitHub, Jira, and Slack search.",
     blocks: [
       {
         type: "header",
@@ -683,13 +620,13 @@ export function buildAuthResponse(input: {
         type: "section",
         text: {
           type: "mrkdwn",
-          text: "*GitHub*\nConnect your GitHub identity for issue and repository access."
+          text: `*GitHub*\n${github}`
         },
         accessory: {
           type: "button",
           text: {
             type: "plain_text",
-            text: "Connect"
+            text: input.connections?.github ? "Reconnect" : "Connect"
           },
           url: input.githubUrl,
           action_id: "connect_github"
@@ -700,7 +637,7 @@ export function buildAuthResponse(input: {
         text: {
           type: "mrkdwn",
           text: input.jiraUrl
-            ? "*Atlassian Jira*\nConnect your Jira identity for assigned tickets and issue search."
+            ? `*Atlassian Jira*\n${jira}`
             : "*Atlassian Jira*\nJira OAuth is not configured."
         },
         ...(input.jiraUrl
@@ -708,11 +645,11 @@ export function buildAuthResponse(input: {
               accessory: {
                 type: "button",
                 text: {
-                  type: "plain_text",
-                  text: "Connect"
-                },
-                url: input.jiraUrl,
-                action_id: "connect_jira"
+                type: "plain_text",
+                text: input.connections?.jira ? "Reconnect" : "Connect"
+              },
+              url: input.jiraUrl,
+              action_id: "connect_jira"
               }
             }
           : {})
@@ -722,7 +659,7 @@ export function buildAuthResponse(input: {
         text: {
           type: "mrkdwn",
           text: input.slackUrl
-            ? "*Slack search*\nConnect Slack user search for workspace message lookup."
+            ? `*Slack search*\n${slack}`
             : "*Slack search*\nSlack OAuth is not configured."
         },
         ...(input.slackUrl
@@ -730,33 +667,86 @@ export function buildAuthResponse(input: {
               accessory: {
                 type: "button",
                 text: {
-                  type: "plain_text",
-                  text: "Connect"
-                },
-                url: input.slackUrl,
-                action_id: "connect_slack"
+                type: "plain_text",
+                text: input.connections?.slack ? "Reconnect" : "Connect"
+              },
+              url: input.slackUrl,
+              action_id: "connect_slack"
               }
             }
           : {})
-      },
-      {
-        type: "section",
-        text: {
-          type: "mrkdwn",
-          text: "*Salesforce*\nPlanned for the semantic-layer authorization flow."
-        }
       },
       {
         type: "context",
         elements: [
           {
             type: "mrkdwn",
-            text: "Shortcuts: `/auth github`, `/auth jira`, `/auth slack`, `/github-me x`, `/issues x`"
+            text: "Shortcuts: `/auth`, `/auth github`, `/auth jira`, `/auth slack`, `/help`"
           }
         ]
       }
     ]
   };
+}
+
+export function buildHelpResponse() {
+  return {
+    response_type: "ephemeral" as const,
+    text: "Burble help",
+    blocks: [
+      {
+        type: "header",
+        text: {
+          type: "plain_text",
+          text: "Burble help"
+        }
+      },
+      {
+        type: "section",
+        text: {
+          type: "mrkdwn",
+          text: [
+            "Ask Burble in a DM or mention Burble in a channel.",
+            "",
+            "*Examples*",
+            "• `what are my open Jira tickets?`",
+            "• `assign DM-12 to me`",
+            "• `what is my last open GitHub PR?`",
+            "• `search Slack for what I said about runtime JWTs`"
+          ].join("\n")
+        }
+      },
+      {
+        type: "section",
+        text: {
+          type: "mrkdwn",
+          text: [
+            "*Commands*",
+            "• `/auth` - view and connect accounts",
+            "• `/auth github` - connect or reconnect GitHub",
+            "• `/auth jira` - connect or reconnect Jira",
+            "• `/auth slack` - connect or reconnect Slack search",
+            "• `/help` - show this help"
+          ].join("\n")
+        }
+      }
+    ]
+  };
+}
+
+function formatConnectionStatus(
+  connection: ProviderConnection | null | undefined,
+  provider: "github" | "jira" | "slack"
+): string {
+  if (!connection) {
+    return "Not connected.";
+  }
+
+  if (provider === "slack") {
+    return `Connected as <@${connection.providerLogin}>.`;
+  }
+
+  return `Connected as \`${connection.providerLogin}\`.`;
 }
 
 function toBoltLogLevel(level: SlackLogLevel): LogLevel {

@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   buildAuthResponse,
+  buildHelpResponse,
   formatAgentProgressEvent,
   buildReplyThreadTs,
   formatConnectGitHubMessage,
@@ -58,7 +59,7 @@ describe("formatConnectGitHubMessage", () => {
 
 describe("formatWorkingMessage", () => {
   test("names the command being processed", () => {
-    expect(formatWorkingMessage("/github-me")).toBe("Working on `/github-me`...");
+    expect(formatWorkingMessage("/auth")).toBe("Working on `/auth`...");
   });
 });
 
@@ -165,13 +166,35 @@ describe("buildAuthResponse", () => {
     const response = buildAuthResponse({
       githubUrl: "https://example.test/github",
       jiraUrl: "https://example.test/jira",
-      slackUrl: "https://example.test/slack"
+      slackUrl: "https://example.test/slack",
+      connections: {
+        github: {
+          provider: "github",
+          email: "person@example.com",
+          slackUserId: "U123",
+          providerLogin: "octocat",
+          accessToken: "github-token",
+          connectedAt: "2026-05-26T00:00:00.000Z"
+        },
+        jira: null,
+        slack: {
+          provider: "slack",
+          email: "person@example.com",
+          slackUserId: "U123",
+          providerLogin: "U123",
+          accessToken: "slack-token",
+          connectedAt: "2026-05-26T00:00:00.000Z"
+        }
+      }
     });
 
-    expect(response.text).toContain("Connections");
+    expect(response.text).toContain("connections");
     expect(JSON.stringify(response.blocks)).toContain("GitHub");
     expect(JSON.stringify(response.blocks)).toContain("Atlassian");
     expect(JSON.stringify(response.blocks)).toContain("Slack search");
+    expect(JSON.stringify(response.blocks)).toContain("Connected as `octocat`");
+    expect(JSON.stringify(response.blocks)).toContain("Connected as <@U123>");
+    expect(JSON.stringify(response.blocks)).toContain("Not connected");
     expect(JSON.stringify(response.blocks)).toContain("https://example.test/github");
     expect(JSON.stringify(response.blocks)).toContain("https://example.test/jira");
     expect(JSON.stringify(response.blocks)).toContain("https://example.test/slack");
@@ -189,18 +212,29 @@ describe("buildAuthResponse", () => {
   });
 });
 
+describe("buildHelpResponse", () => {
+  test("builds a concise command and example panel", () => {
+    const response = buildHelpResponse();
+
+    expect(response.text).toBe("Burble help");
+    expect(JSON.stringify(response.blocks)).toContain("/auth");
+    expect(JSON.stringify(response.blocks)).toContain("/help");
+    expect(JSON.stringify(response.blocks)).toContain("assign DM-12 to me");
+  });
+});
+
 describe("summarizeSlackPayload", () => {
   test("uses top-level fields for slash command payloads", () => {
     expect(
       summarizeSlackPayload({
         type: "slash_command",
-        command: "/issues",
+        command: "/help",
         user_id: "U123",
         channel_id: "C123",
         team_id: "T123"
       })
     ).toBe(
-      "type=slash_command command=/issues event=none user=U123 channel=C123 team=T123"
+      "type=slash_command command=/help event=none user=U123 channel=C123 team=T123"
     );
   });
 
