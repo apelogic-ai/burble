@@ -6,6 +6,7 @@ import type { RuntimeConfig } from "./config";
 import { readGatewayDiagnosticTextSince } from "./gateway-diagnostics";
 import { parseLlmModelId, type ParsedLlmModel } from "./llm-config";
 import { info, type RuntimeLogger } from "./logger";
+import { buildOpenClawProcessEnv } from "./process-env";
 import {
   isSupportedGitHubRequest,
   isSupportedJiraRequest,
@@ -1184,10 +1185,7 @@ export async function runCliCommand(
   const proc = Bun.spawn([command, ...args], {
     stdout: "pipe",
     stderr: "pipe",
-    env: {
-      ...Bun.env,
-      ...options.env
-    }
+    env: buildOpenClawProcessEnv(options.env)
   });
   let timedOut = false;
   const timer = setTimeout(() => {
@@ -1220,10 +1218,7 @@ export async function* runCliCommandStream(
   const proc = Bun.spawn([command, ...args], {
     stdout: "pipe",
     stderr: "pipe",
-    env: {
-      ...Bun.env,
-      ...options.env
-    }
+    env: buildOpenClawProcessEnv(options.env)
   });
   let timedOut = false;
   const timer = setTimeout(() => {
