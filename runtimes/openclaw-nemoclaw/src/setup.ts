@@ -16,7 +16,7 @@ export async function ensureOpenClawSetup(
 ): Promise<void> {
   if (!isOpenClawBackedEngine(config) || !config.openClawSetupOnStart) {
     if (!isOpenClawBackedEngine(config)) {
-      await writeEffectiveRuntimeConfig(config);
+      await writeSelectedAgentConfig(config);
     }
     if (isOpenClawBackedEngine(config)) {
       logInfo("OpenClaw onboard skipped setupOnStart=false");
@@ -115,37 +115,55 @@ async function ensureOpenClawConfig(
   logInfo("OpenClaw config validate finish");
 }
 
-async function writeEffectiveRuntimeConfig(config: RuntimeConfig): Promise<void> {
+async function writeSelectedAgentConfig(config: RuntimeConfig): Promise<void> {
   await mkdir(dirname(config.openClawConfigPath), { recursive: true });
+  const agentConfig = buildOpenClawNemoClawAgentConfig(config);
   await writeFile(
     config.openClawConfigPath,
-    `${JSON.stringify(
-      {
-        runtime: {
-          engine: config.engine,
-          port: config.port
-        },
-        model: config.llmModel,
-        providers: {
-          toolGatewayUrl: config.toolGatewayUrl,
-          mcpGatewayUrl: config.mcpGatewayUrl,
-          runtimeJwtConfigured: Boolean(config.runtimeJwt)
-        },
-        paths: {
-          stateDir: config.openClawStateDir,
-          configPath: config.openClawConfigPath,
-          workspaceDir: config.openClawWorkspaceDir
-        },
-        openClaw: {
-          command: config.openClawCommand,
-          agent: config.openClawAgent,
-          backed: false
-        }
-      },
-      null,
-      2
-    )}\n`
+    `${JSON.stringify(agentConfig, null, 2)}\n`
   );
+}
+
+function buildOpenClawNemoClawAgentConfig(
+  config: RuntimeConfig
+): Record<string, unknown> {
+  const agentConfig = JSON.parse(
+    buildOpenClawLlmPatch({
+      modelId: config.llmModel,
+      ollamaBaseUrl: config.ollamaBaseUrl
+    })
+  ) as Record<string, unknown>;
+  const agents = readObject(agentConfig.agents);
+  const defaults = readObject(agents.defaults);
+  defaults.workspace = config.openClawWorkspaceDir;
+  agents.defaults = defaults;
+  agents.list = [
+    {
+      id: config.openClawAgent,
+      default: true,
+      identity: {
+        name: "Burble",
+        theme: "Slack assistant",
+        emoji: ""
+      }
+    }
+  ];
+  agentConfig.agents = agents;
+  agentConfig.messages = {
+    visibleReplies: "automatic",
+    groupChat: {
+      visibleReplies: "message_tool",
+      unmentionedInbound: "room_event"
+    }
+  };
+
+  return agentConfig;
+}
+
+function readObject(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
 }
 
 async function applyOpenClawConfigPatch(

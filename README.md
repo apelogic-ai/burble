@@ -37,7 +37,7 @@ Then set `BASE_URL` in `.env` and configure OAuth callback URLs:
 - `/auth jira` starts the Jira OAuth flow.
 - `/auth slack` starts the Slack user OAuth flow for message search.
 - `/agent status` powers up and shows the current agent runtime status for the Slack user.
-- `/agent config` powers up the runtime and shows a redacted preview of its configured runtime config file.
+- `/agent config` powers up the runtime and shows a redacted preview of its selected agent config file.
 - `/agent-status` is a legacy alias for agent status.
 - `/agent-config` is a legacy alias for agent config.
 

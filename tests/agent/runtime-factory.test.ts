@@ -1,6 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import { createTokenStore } from "../../src/db";
-import { createStaticRuntimeFactory } from "../../src/agent/runtime-factory";
+import {
+  createStaticRuntimeFactory,
+  nativeAgentConfigFileName
+} from "../../src/agent/runtime-factory";
 
 describe("createStaticRuntimeFactory", () => {
   test("returns a principal-scoped runtime handle backed by the registry", async () => {
@@ -74,5 +77,13 @@ describe("createStaticRuntimeFactory", () => {
     });
 
     store.close();
+  });
+});
+
+describe("nativeAgentConfigFileName", () => {
+  test("uses the selected runtime engine config shape", () => {
+    expect(nativeAgentConfigFileName("openclaw")).toBe("openclaw.json");
+    expect(nativeAgentConfigFileName("burble-direct")).toBe("openclaw.json");
+    expect(nativeAgentConfigFileName("hermes")).toBe("hermes.json");
   });
 });

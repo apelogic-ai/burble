@@ -997,7 +997,7 @@ export function buildHelpResponse() {
             "• `/auth jira` - connect or reconnect Jira",
             "• `/auth slack` - connect or reconnect Slack search",
             "• `/agent status` - show and power up your current agent runtime",
-            "• `/agent config` - inspect your current runtime config file",
+            "• `/agent config` - inspect your current agent config file",
             "• `/agent-status` - legacy alias for agent status",
             "• `/agent-config` - legacy alias for agent config",
             "• `/help` - show this help"
@@ -1027,7 +1027,7 @@ export function buildAgentCommandHelpResponse() {
           text: [
             "Use one of:",
             "• `/agent status` - show and power up your current agent runtime",
-            "• `/agent config` - inspect your current runtime config file"
+            "• `/agent config` - inspect your current agent config file"
           ].join("\n")
         }
       }
@@ -1059,7 +1059,7 @@ export function buildAgentConfigResponse(input: {
         text: {
           type: "mrkdwn",
           text: [
-            "*Runtime config file*",
+            "*Agent config file*",
             `• Runtime: \`${input.runtime?.id ?? "not ready"}\``,
             `• Path: \`${input.configFile.path ?? "not available"}\``,
             input.configFile.topLevelKeys.length > 0

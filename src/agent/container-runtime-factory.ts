@@ -4,6 +4,7 @@ import type { RuntimeJwtIssuer } from "../runtime-jwt";
 import {
   buildRuntimeDataId,
   hashRuntimeToken,
+  nativeAgentConfigFileName,
   type RuntimeConfigRead,
   type PrincipalId,
   type RuntimeFactory,
@@ -113,7 +114,9 @@ export function createDockerRuntimeFactory(input: {
         endpointUrl,
         authTokenHash: hashRuntimeToken(token),
         statePath: `${input.dataRoot}/${runtimeDataId}/state`,
-        configPath: `${input.dataRoot}/${runtimeDataId}/config/openclaw.json`,
+        configPath: `${input.dataRoot}/${runtimeDataId}/config/${nativeAgentConfigFileName(
+          input.engine
+        )}`,
         workspacePath: `${input.dataRoot}/${runtimeDataId}/workspace`
       });
       const runtimeJwt =
