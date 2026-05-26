@@ -15,8 +15,15 @@ export type ConversationRequest = {
   messageTs: string;
   isDirectMessage: boolean;
   context?: {
+    currentChannel?: {
+      id: string;
+      isDirectMessage: boolean;
+      historyAvailable: boolean;
+      historyError?: string;
+    };
     recentMessages: Array<{
       author: "user" | "assistant";
+      speaker?: string;
       text: string;
     }>;
   };

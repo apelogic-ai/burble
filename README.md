@@ -48,6 +48,8 @@ Required Slack bot scopes:
 - `app_mentions:read`
 - `chat:write`
 - `commands`
+- `channels:history`
+- `groups:history`
 - `im:history`
 - `im:write`
 - `users:read`

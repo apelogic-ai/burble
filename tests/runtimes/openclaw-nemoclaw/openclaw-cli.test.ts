@@ -705,9 +705,15 @@ describe("runOpenClawCliRequest", () => {
         input: {
           text: "look him up",
           context: {
+            currentChannel: {
+              id: "C123",
+              isDirectMessage: false,
+              historyAvailable: true
+            },
             recentMessages: [
               {
                 author: "user",
+                speaker: "<@U456>",
                 text: "which Jira tickets did I assign to Boris Renski?"
               }
             ]
@@ -762,6 +768,8 @@ describe("runOpenClawCliRequest", () => {
     expect(response.response.text).toBe(
       "Boris Renski resolved to Jira account `acct-boris` (`brenski@apegpt.ai`)."
     );
+    expect(prompts[0]).toContain("Current Slack channel ID: C123");
+    expect(prompts[0]).toContain("Slack user <@U456>");
     expect(prompts[0]).toContain("Recent Slack context (oldest to newest):");
     expect(prompts[0]).toContain("Boris Renski");
     expect(prompts[0]).toContain(
