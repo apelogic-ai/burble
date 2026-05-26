@@ -2,6 +2,8 @@ import { describe, expect, test } from "bun:test";
 import {
   buildAgentConfigResponse,
   buildAgentCommandHelpResponse,
+  buildAgentExecLoadingResponse,
+  buildAgentExecMissingTaskResponse,
   buildAgentStatusResponse,
   buildAuthResponse,
   buildHelpResponse,
@@ -223,6 +225,18 @@ describe("parseAgentCommand", () => {
     expect(parseAgentCommand("configuration")).toEqual({ kind: "config" });
     expect(parseAgentCommand("runtime config")).toEqual({ kind: "config" });
   });
+
+  test("routes exec tasks", () => {
+    expect(parseAgentCommand("exec summarize my calendar")).toEqual({
+      kind: "exec",
+      task: "summarize my calendar"
+    });
+    expect(parseAgentCommand("execute   run a code task")).toEqual({
+      kind: "exec",
+      task: "run a code task"
+    });
+    expect(parseAgentCommand("exec")).toEqual({ kind: "exec", task: "" });
+  });
 });
 
 describe("buildAuthResponse", () => {
@@ -290,6 +304,7 @@ describe("buildHelpResponse", () => {
     expect(JSON.stringify(response.blocks)).toContain("/auth");
     expect(JSON.stringify(response.blocks)).toContain("/help");
     expect(JSON.stringify(response.blocks)).toContain("/agent config");
+    expect(JSON.stringify(response.blocks)).toContain("/agent exec");
     expect(JSON.stringify(response.blocks)).toContain("/agent status");
     expect(JSON.stringify(response.blocks)).toContain("/agent-config");
     expect(JSON.stringify(response.blocks)).toContain("/agent-status");
@@ -304,6 +319,16 @@ describe("buildAgentCommandHelpResponse", () => {
     expect(response.text).toBe("Agent controls");
     expect(JSON.stringify(response.blocks)).toContain("/agent status");
     expect(JSON.stringify(response.blocks)).toContain("/agent config");
+    expect(JSON.stringify(response.blocks)).toContain("/agent exec");
+  });
+
+  test("builds exec response states", () => {
+    expect(buildAgentExecMissingTaskResponse().text).toContain(
+      "/agent exec <task>"
+    );
+    expect(buildAgentExecLoadingResponse("summarize calendar").text).toContain(
+      "summarize calendar"
+    );
   });
 });
 
