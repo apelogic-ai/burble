@@ -357,6 +357,45 @@ describe("buildAgentConfigResponse", () => {
     expect(blocks).toContain("not ready");
     expect(blocks).toContain("No runtime record exists yet");
   });
+
+  test("reads config through the runtime factory when available", async () => {
+    const runtime = {
+      id: "rt_123",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      engine: "burble-direct" as const,
+      status: "ready" as const,
+      endpointUrl: "http://runtime:8080",
+      authTokenHash: "hash",
+      statePath: "/data/state",
+      configPath: "/host/runtime.json",
+      workspacePath: "/data/workspace",
+      createdAt: "2026-05-26T00:00:00.000Z",
+      lastSeenAt: "2026-05-26T00:01:00.000Z",
+      lastUsedAt: "2026-05-26T00:02:00.000Z",
+      stoppedAt: null,
+      failureReason: null
+    };
+    const configFile = await readAgentConfigFile(runtime, {
+      runtimeFactory: {
+        async getOrCreateRuntime() {
+          throw new Error("not used");
+        },
+        async readRuntimeConfig(runtimeId) {
+          expect(runtimeId).toBe("rt_123");
+          return {
+            path: "/host/runtime.json",
+            text: "{\"via\":\"factory\"}"
+          };
+        },
+        async stopRuntime() {},
+        async reapIdleRuntimes() {}
+      }
+    });
+
+    expect(configFile.path).toBe("/host/runtime.json");
+    expect(configFile.redactedText).toContain("factory");
+  });
 });
 
 describe("summarizeSlackPayload", () => {

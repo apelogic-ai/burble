@@ -1,5 +1,11 @@
 import { createHash } from "node:crypto";
-import type { AgentRuntimeEngine, AgentRuntimeEventType, TokenStore } from "../db";
+import { readFile } from "node:fs/promises";
+import type {
+  AgentRuntimeEngine,
+  AgentRuntimeEventType,
+  AgentRuntimeRecord,
+  TokenStore
+} from "../db";
 
 export type PrincipalId = {
   workspaceId: string;
@@ -17,8 +23,14 @@ export type RuntimeHandle = {
   workspacePath: string;
 };
 
+export type RuntimeConfigRead = {
+  path: string;
+  text: string;
+};
+
 export type RuntimeFactory = {
   getOrCreateRuntime(principal: PrincipalId): Promise<RuntimeHandle>;
+  readRuntimeConfig?(runtimeId: string): Promise<RuntimeConfigRead>;
   stopRuntime(runtimeId: string): Promise<void>;
   reapIdleRuntimes(now: Date): Promise<void>;
   recordRuntimeEvent?: (
@@ -64,6 +76,15 @@ export function createStaticRuntimeFactory(input: {
       };
     },
 
+    async readRuntimeConfig(runtimeId) {
+      const runtime = input.store.getAgentRuntime(runtimeId);
+      if (!runtime) {
+        throw new Error(`Runtime ${runtimeId} was not found`);
+      }
+
+      return readRuntimeConfigFromLocalFile(runtime);
+    },
+
     async stopRuntime(runtimeId) {
       input.store.updateAgentRuntimeStatus(runtimeId, { status: "stopped" });
     },
@@ -79,6 +100,15 @@ export function createStaticRuntimeFactory(input: {
         summary: event.summary
       });
     }
+  };
+}
+
+export async function readRuntimeConfigFromLocalFile(
+  runtime: AgentRuntimeRecord
+): Promise<RuntimeConfigRead> {
+  return {
+    path: runtime.configPath,
+    text: await readFile(runtime.configPath, "utf8")
   };
 }
 

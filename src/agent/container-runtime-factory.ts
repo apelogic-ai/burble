@@ -4,6 +4,7 @@ import type { RuntimeJwtIssuer } from "../runtime-jwt";
 import {
   buildRuntimeDataId,
   hashRuntimeToken,
+  type RuntimeConfigRead,
   type PrincipalId,
   type RuntimeFactory,
   type RuntimeHandle
@@ -188,6 +189,38 @@ export function createDockerRuntimeFactory(input: {
       return toRuntimeHandle(runtime, spec, token);
     },
 
+    async readRuntimeConfig(runtimeId) {
+      const runtime = input.store.getAgentRuntime(runtimeId);
+      if (!runtime) {
+        throw new Error(`Runtime ${runtimeId} was not found`);
+      }
+
+      const runtimeDataId = buildRuntimeDataId(
+        {
+          workspaceId: runtime.workspaceId,
+          slackUserId: runtime.slackUserId
+        },
+        runtime.engine
+      );
+      const result = await execute("docker", [
+        "exec",
+        buildContainerName(runtimeDataId),
+        "cat",
+        toRuntimeContainerPath({
+          hostPath: runtime.configPath,
+          runtimeRoot: `${input.dataRoot}/${runtimeDataId}`
+        })
+      ]);
+      if (result.code !== 0) {
+        throw new Error(`docker exec cat failed with code ${result.code}`);
+      }
+
+      return {
+        path: runtime.configPath,
+        text: result.stdout
+      } satisfies RuntimeConfigRead;
+    },
+
     async stopRuntime(runtimeId) {
       await stopRuntime(runtimeId);
     },
@@ -213,6 +246,22 @@ export function createDockerRuntimeFactory(input: {
       });
     }
   };
+}
+
+export function toRuntimeContainerPath(input: {
+  hostPath: string;
+  runtimeRoot: string;
+}): string {
+  const normalizedRoot = input.runtimeRoot.replace(/\/+$/, "");
+  if (input.hostPath === normalizedRoot) {
+    return "/data/openclaw";
+  }
+
+  if (input.hostPath.startsWith(`${normalizedRoot}/`)) {
+    return `/data/openclaw/${input.hostPath.slice(normalizedRoot.length + 1)}`;
+  }
+
+  return input.hostPath;
 }
 
 export function buildContainerRuntimeSpec(input: {

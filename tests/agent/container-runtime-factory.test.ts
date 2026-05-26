@@ -2,7 +2,8 @@ import { describe, expect, test } from "bun:test";
 import {
   buildContainerRuntimeSpec,
   createDockerRuntimeFactory,
-  deriveRuntimeToken
+  deriveRuntimeToken,
+  toRuntimeContainerPath
 } from "../../src/agent/container-runtime-factory";
 import { buildRuntimeDataId } from "../../src/agent/runtime-factory";
 import { createTokenStore } from "../../src/db";
@@ -113,6 +114,24 @@ describe("deriveRuntimeToken", () => {
   });
 });
 
+describe("toRuntimeContainerPath", () => {
+  test("maps runtime-root host paths into the mounted container path", () => {
+    expect(
+      toRuntimeContainerPath({
+        hostPath: "/opt/burble/runtimes/u123/config/runtime.json",
+        runtimeRoot: "/opt/burble/runtimes/u123"
+      })
+    ).toBe("/data/openclaw/config/runtime.json");
+
+    expect(
+      toRuntimeContainerPath({
+        hostPath: "/shared/runtime.json",
+        runtimeRoot: "/opt/burble/runtimes/u123"
+      })
+    ).toBe("/shared/runtime.json");
+  });
+});
+
 describe("createDockerRuntimeFactory", () => {
   test("starts a runtime container and waits for health", async () => {
     const store = createTokenStore(":memory:");
@@ -186,6 +205,53 @@ describe("createDockerRuntimeFactory", () => {
     expect(events.map((event) => event.summaryJson).join("\n")).not.toContain(
       "github-secret"
     );
+
+    store.close();
+  });
+
+  test("reads runtime config through the runtime container mount", async () => {
+    const store = createTokenStore(":memory:");
+    const commands: Array<{ command: string; args: string[] }> = [];
+    const factory = createDockerRuntimeFactory({
+      store,
+      engine: "openclaw",
+      image: "burble-openclaw-nemoclaw:dev",
+      dataRoot: "/opt/burble/runtimes",
+      dockerNetwork: "compose_default",
+      toolGatewayUrl: "http://burble-app:3000/internal/tools",
+      runtimeTokenSecret: "runtime-secret",
+      healthCheckAttempts: 1,
+      execute: async (command, args) => {
+        commands.push({ command, args });
+        if (args[0] === "inspect") {
+          return { code: 1, stdout: "", stderr: "not found" };
+        }
+        if (args[0] === "exec") {
+          return {
+            code: 0,
+            stdout: "{\"runtime\":true}\n",
+            stderr: ""
+          };
+        }
+        return { code: 0, stdout: "container-id\n", stderr: "" };
+      },
+      fetch: async () => new Response("ok")
+    });
+
+    const handle = await factory.getOrCreateRuntime(principal);
+    const config = await factory.readRuntimeConfig?.(handle.id);
+    const execCommand = commands.find((command) => command.args[0] === "exec");
+
+    expect(config).toEqual({
+      path: `/opt/burble/runtimes/${buildRuntimeDataId(principal, "openclaw")}/config/openclaw.json`,
+      text: "{\"runtime\":true}\n"
+    });
+    expect(execCommand?.args).toEqual([
+      "exec",
+      `burble-rt-${buildRuntimeDataId(principal, "openclaw")}`,
+      "cat",
+      "/data/openclaw/config/openclaw.json"
+    ]);
 
     store.close();
   });
