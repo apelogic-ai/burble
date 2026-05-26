@@ -330,14 +330,28 @@ Add Slack scopes:
 - `search:read` as a user token scope for `/auth slack`
 - `users:read` as both a bot token scope and a user token scope for `/auth slack`
 
+Add Slack slash commands:
+
+- `/auth`
+- `/help`
+- `/agent-status`
+- `/agent-config`
+
+The checked-in manifest at `deploy/dev/slack-app-manifest.yaml` contains the
+expected scopes, events, and slash commands. If a command is missing from the
+Slack app config, Slack will not dispatch it to Burble at all; Burble logs will
+not show a `Received Slack payload ... command=/agent-status` line.
+
 Then enable **Event Subscriptions** and subscribe the bot to:
 
 - `app_mention`
 - `message.im`
 
 In **App Home**, enable the messages tab and allow users to send messages to
-the app. With Socket Mode enabled, Slack does not need a Request URL. Reinstall
-the app and invite Burble to a test channel.
+the app. With Socket Mode enabled, Slack delivers commands and events over the
+app-level websocket; any command/interactivity Request URL in the Slack UI or
+manifest is only a placeholder. Reinstall the app after changing scopes,
+events, or commands, then invite Burble to a test channel.
 
 In Slack:
 

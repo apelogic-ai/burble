@@ -27,6 +27,7 @@ const ansibleEnvTemplate = await Bun.file(
   "deploy/dev/ansible/roles/burble-app/templates/env.j2"
 ).text();
 const appDockerfile = await Bun.file("Dockerfile").text();
+const slackAppManifest = await Bun.file("deploy/dev/slack-app-manifest.yaml").text();
 
 describe("dev deploy config", () => {
   test("runs the Burble Bun app behind Caddy", () => {
@@ -80,6 +81,17 @@ describe("dev deploy config", () => {
     ]) {
       expect(compose).toContain(name);
     }
+  });
+
+  test("documents the required Slack slash commands in the app manifest", () => {
+    for (const command of ["/auth", "/help", "/agent-status", "/agent-config"]) {
+      expect(slackAppManifest).toContain(`command: ${command}`);
+    }
+    expect(slackAppManifest).toContain("socket_mode_enabled: true");
+    expect(slackAppManifest).toContain("commands");
+    expect(slackAppManifest).not.toContain("/connect-github");
+    expect(slackAppManifest).not.toContain("/issues");
+    expect(slackAppManifest).not.toContain("/github-me");
   });
 
   test("requires the public domain before starting Caddy", () => {
