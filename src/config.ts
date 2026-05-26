@@ -188,6 +188,16 @@ function optionalUrlEnv(env: Env, name: string): string | null {
 export function readConfig(env: Env): Config {
   const baseUrl = requiredEnv(env, "BASE_URL").replace(/\/+$/, "");
   const internalApiToken = optionalSecretEnv(env, "INTERNAL_API_TOKEN");
+  const agentRuntimeFactory = optionalAgentRuntimeFactoryEnv(
+    env,
+    "AGENT_RUNTIME_FACTORY",
+    "static"
+  );
+  const defaultAgentRuntimeMcpGatewayUrl =
+    agentRuntimeFactory === "docker" ? "http://burble-app:3000/mcp" : null;
+  const agentRuntimeMcpGatewayUrl =
+    optionalUrlEnv(env, "AGENT_RUNTIME_MCP_GATEWAY_URL") ??
+    defaultAgentRuntimeMcpGatewayUrl;
 
   return {
     slackBotToken: requiredEnv(env, "SLACK_BOT_TOKEN"),
@@ -207,11 +217,7 @@ export function readConfig(env: Env): Config {
     slackLogLevel: optionalSlackLogLevelEnv(env, "SLACK_LOG_LEVEL", "info"),
     agentMode: optionalAgentModeEnv(env, "AGENT_MODE", "deterministic"),
     agentRuntime: optionalAgentRuntimeEnv(env, "AGENT_RUNTIME", "ai-sdk"),
-    agentRuntimeFactory: optionalAgentRuntimeFactoryEnv(
-      env,
-      "AGENT_RUNTIME_FACTORY",
-      "static"
-    ),
+    agentRuntimeFactory,
     aiModel: validateAgentModelId(env.AI_MODEL ?? "openai:gpt-5.4"),
     openClawNemoClawUrl: optionalUrlEnv(env, "OPENCLAW_NEMOCLAW_URL"),
     openClawNemoClawEngine: optionalOpenClawNemoClawEngineEnv(
@@ -246,13 +252,10 @@ export function readConfig(env: Env): Config {
     agentRuntimeToolGatewayUrl:
       env.AGENT_RUNTIME_TOOL_GATEWAY_URL ??
       "http://burble-app:3000/internal/tools",
-    agentRuntimeMcpGatewayUrl: optionalUrlEnv(
-      env,
-      "AGENT_RUNTIME_MCP_GATEWAY_URL"
-    ),
+    agentRuntimeMcpGatewayUrl,
     agentRuntimeMcpAudience:
       optionalUrlEnv(env, "AGENT_RUNTIME_MCP_AUDIENCE") ??
-      optionalUrlEnv(env, "AGENT_RUNTIME_MCP_GATEWAY_URL"),
+      agentRuntimeMcpGatewayUrl,
     atlassianMcpUrl:
       optionalUrlEnv(env, "ATLASSIAN_MCP_URL") ??
       "https://mcp.atlassian.com/v1/mcp",

@@ -7,7 +7,7 @@ binds:
                   exact: /mcp
               - path:
                   exact: /.well-known/oauth-protected-resource/mcp
-            policies:
+            policies: &burble_mcp_policies
               cors:
                 allowOrigins: ["*"]
                 allowHeaders:
@@ -38,3 +38,55 @@ binds:
                           passthrough: {}
                       mcp:
                         host: http://burble-app:3000/mcp
+          - matches:
+              - path:
+                  exact: /mcp/github
+            policies: *burble_mcp_policies
+            backends:
+              - mcp:
+                  targets:
+                    - name: burble-github
+                      policies:
+                        backendAuth:
+                          passthrough: {}
+                      mcp:
+                        host: http://burble-app:3000/mcp/github
+          - matches:
+              - path:
+                  exact: /mcp/jira
+            policies: *burble_mcp_policies
+            backends:
+              - mcp:
+                  targets:
+                    - name: burble-jira
+                      policies:
+                        backendAuth:
+                          passthrough: {}
+                      mcp:
+                        host: http://burble-app:3000/mcp/jira
+          - matches:
+              - path:
+                  exact: /mcp/slack
+            policies: *burble_mcp_policies
+            backends:
+              - mcp:
+                  targets:
+                    - name: burble-slack
+                      policies:
+                        backendAuth:
+                          passthrough: {}
+                      mcp:
+                        host: http://burble-app:3000/mcp/slack
+          - matches:
+              - path:
+                  exact: /mcp/atlassian
+            policies: *burble_mcp_policies
+            backends:
+              - mcp:
+                  targets:
+                    - name: burble-atlassian
+                      policies:
+                        backendAuth:
+                          passthrough: {}
+                      mcp:
+                        host: http://burble-app:3000/mcp/atlassian

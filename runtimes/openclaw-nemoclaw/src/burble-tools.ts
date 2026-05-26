@@ -4,41 +4,15 @@ import type { ToolExecutor, ToolResult } from "./types";
 
 export function createBurbleToolExecutor(
   config: RuntimeConfig,
-  runtimeId?: string
+  _runtimeId?: string
 ): ToolExecutor {
-  if (config.mcpGatewayUrl && config.runtimeJwt) {
-    return createBurbleMcpToolExecutor(config);
+  if (!config.mcpGatewayUrl || !config.runtimeJwt) {
+    throw new Error(
+      "Burble MCP gateway URL and runtime JWT are required for provider tools"
+    );
   }
 
-  return async (toolName, body) => {
-    info(`Burble HTTP tool start tool=${toolName}${summarizeLogObject("body", body)}`);
-    const headers = new Headers({
-      "content-type": "application/json",
-      authorization: `Bearer ${config.internalToken}`
-    });
-    if (runtimeId) {
-      headers.set("x-burble-runtime-id", runtimeId);
-    }
-
-    const response = await fetch(
-      `${config.toolGatewayUrl}/${encodeURIComponent(toolName)}/execute`,
-      {
-        method: "POST",
-        headers,
-        body: JSON.stringify(body)
-      }
-    );
-
-    if (!response.ok) {
-      throw new Error(`Burble tool gateway returned HTTP ${response.status}`);
-    }
-
-    const result = (await response.json()) as ToolResult;
-    info(
-      `Burble HTTP tool finish tool=${toolName} classification=${result.classification}${summarizeLogObject("result", result.content)}`
-    );
-    return result;
-  };
+  return createBurbleMcpToolExecutor(config);
 }
 
 function createBurbleMcpToolExecutor(config: RuntimeConfig): ToolExecutor {

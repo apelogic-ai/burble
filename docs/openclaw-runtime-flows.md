@@ -33,6 +33,34 @@ configured provider.
 
 PNG: [burble-direct-flow.png](assets/openclaw-runtime-flows/burble-direct-flow.png)
 
+## Provider Tool Path
+
+Personal OpenClaw/NemoClaw runtimes now call provider tools through MCP only:
+
+```text
+runtime
+  -> agentgateway /mcp                 # optional, validates runtime JWT
+  -> burble-app /mcp                   # all provider tools
+  -> burble provider modules
+       github MCP tools
+       jira MCP tools
+       slack MCP tools
+       atlassian upstream MCP adapter
+```
+
+When the `docker-compose.agentgateway.yml` override is enabled, agentgateway
+also exposes provider-scoped routes for future routing and policy work:
+
+```text
+/mcp/github    -> burble-app /mcp/github
+/mcp/jira      -> burble-app /mcp/jira
+/mcp/slack     -> burble-app /mcp/slack
+/mcp/atlassian -> burble-app /mcp/atlassian
+```
+
+The legacy `/internal/tools/:tool/execute` endpoint remains available for older
+Burble callers, but isolated runtime containers should not use it.
+
 ## Operational Expectations
 
 `openclaw-gateway` logs should include:
