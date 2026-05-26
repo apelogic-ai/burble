@@ -777,6 +777,77 @@ describe("runOpenClawCliRequest", () => {
     });
   });
 
+  test("lets OpenClaw search Slack messages through the connected Slack token", async () => {
+    const prompts: string[] = [];
+    const toolCalls: Array<{ toolName: string; body: unknown }> = [];
+    const response = await runOpenClawCliRequest(
+      {
+        input: {
+          text: "what did I say about launch?",
+          connections: {
+            github: { connected: false },
+            slack: {
+              connected: true,
+              email: "person@example.com",
+              providerLogin: "U123"
+            }
+          }
+        }
+      },
+      config,
+      async (toolName, body) => {
+        toolCalls.push({ toolName, body });
+        if (toolName === "slack.searchMessages") {
+          return {
+            classification: "user_private",
+            content: [
+              {
+                channelName: "eng",
+                userId: "U123",
+                text: "launch plan is ready",
+                permalink: "https://slack.test/archives/C123/p1"
+              }
+            ]
+          };
+        }
+        return {
+          classification: "user_private",
+          content: []
+        };
+      },
+      async (_command, args) => {
+        const prompt = args[args.indexOf("--message") + 1];
+        prompts.push(prompt);
+        return prompts.length === 1
+          ? openClawToolCall("slack.searchMessages", {
+              query: "launch",
+              fromUserId: "U123",
+              limit: 10
+            })
+          : {
+              exitCode: 0,
+              stdout:
+                "I found one matching Slack message: <https://slack.test/archives/C123/p1|launch plan is ready>.",
+              stderr: ""
+            };
+      },
+      () => undefined
+    );
+
+    expect(response.response.text).toBe(
+      "I found one matching Slack message: <https://slack.test/archives/C123/p1|launch plan is ready>."
+    );
+    expect(prompts[0]).toContain("slack.searchMessages");
+    expect(prompts[0]).toContain("requesting Slack user ID is U123");
+    expect(toolCalls).toContainEqual({
+      toolName: "slack.searchMessages",
+      body: {
+        user: { email: "person@example.com" },
+        input: { query: "launch", fromUserId: "U123", limit: 10 }
+      }
+    });
+  });
+
   test("lets OpenClaw plan an allowed Atlassian MCP tool call", async () => {
     const toolCalls: Array<{ toolName: string; body: unknown }> = [];
     const prompts: string[] = [];

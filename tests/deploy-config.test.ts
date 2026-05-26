@@ -43,6 +43,8 @@ describe("dev deploy config", () => {
       "SLACK_BOT_TOKEN:?SLACK_BOT_TOKEN is required",
       "SLACK_APP_TOKEN:?SLACK_APP_TOKEN is required",
       "SLACK_LOG_LEVEL",
+      "SLACK_CLIENT_ID",
+      "SLACK_CLIENT_SECRET",
       "AGENT_MODE",
       "AGENT_RUNTIME",
       "AGENT_RUNTIME_FACTORY",

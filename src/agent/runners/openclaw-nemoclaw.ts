@@ -104,7 +104,8 @@ export function createOpenClawNemoClawAgentRunner(
           `conversationRoot=${input.conversation?.rootId ?? "unknown"}`,
           `textLength=${input.text.length}`,
           `githubConnected=${Boolean(input.connections.github)}`,
-          `jiraConnected=${Boolean(input.connections.jira)}`
+          `jiraConnected=${Boolean(input.connections.jira)}`,
+          `slackConnected=${Boolean(input.connections.slack)}`
         ].join(" ")
       );
       if (runtime) {
@@ -114,7 +115,8 @@ export function createOpenClawNemoClawAgentRunner(
             conversationRoot: input.conversation?.rootId ?? "unknown",
             textLength: input.text.length,
             githubConnected: Boolean(input.connections.github),
-            jiraConnected: Boolean(input.connections.jira)
+            jiraConnected: Boolean(input.connections.jira),
+            slackConnected: Boolean(input.connections.slack)
           }
         });
       }
@@ -624,10 +626,15 @@ function sanitizeAgentInput(input: AgentInput): {
   text: string;
   conversation?: NonNullable<AgentInput["conversation"]>;
   context?: NonNullable<AgentInput["context"]>;
-  connections: { github: ConnectionSummary; jira: ConnectionSummary };
+  connections: {
+    github: ConnectionSummary;
+    jira: ConnectionSummary;
+    slack: ConnectionSummary;
+  };
 } {
   const github = input.connections.github;
   const jira = input.connections.jira;
+  const slack = input.connections.slack;
 
   return {
     text: input.text,
@@ -648,6 +655,15 @@ function sanitizeAgentInput(input: AgentInput): {
             connected: true,
             email: jira.email,
             providerLogin: jira.providerLogin
+          }
+        : {
+            connected: false
+          },
+      slack: slack
+        ? {
+            connected: true,
+            email: slack.email,
+            providerLogin: slack.providerLogin
           }
         : {
             connected: false

@@ -208,7 +208,8 @@ describe("createOpenClawNemoClawAgentRunner", () => {
           conversationRoot: "dm:D123",
           textLength: 24,
           githubConnected: true,
-          jiraConnected: false
+          jiraConnected: false,
+          slackConnected: false
         }
       },
       {

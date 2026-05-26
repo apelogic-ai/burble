@@ -16,6 +16,8 @@ describe("readConfig", () => {
     expect(readConfig(validEnv)).toEqual({
       slackBotToken: "xoxb-test",
       slackAppToken: "xapp-test",
+      slackClientId: null,
+      slackClientSecret: null,
       githubClientId: "client-id",
       githubClientSecret: "client-secret",
       jiraClientId: null,
@@ -51,6 +53,17 @@ describe("readConfig", () => {
     expect(readConfig({ ...validEnv, SLACK_LOG_LEVEL: "debug" }).slackLogLevel).toBe(
       "debug"
     );
+  });
+
+  test("reads optional Slack OAuth settings", () => {
+    const config = readConfig({
+      ...validEnv,
+      SLACK_CLIENT_ID: "slack-client-id",
+      SLACK_CLIENT_SECRET: "slack-client-secret"
+    });
+
+    expect(config.slackClientId).toBe("slack-client-id");
+    expect(config.slackClientSecret).toBe("slack-client-secret");
   });
 
   test("reads optional Jira OAuth settings", () => {

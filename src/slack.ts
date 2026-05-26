@@ -15,6 +15,11 @@ import {
   refreshJiraAccessToken,
   searchJiraIssues
 } from "./jira";
+import {
+  buildSlackOAuthUrl,
+  searchSlackMessages,
+  searchSlackUsers
+} from "./slack-api";
 import type { TokenStore } from "./db";
 import { handleConversation } from "./conversation/orchestrator";
 import { normalizeMentionText } from "./conversation/normalize";
@@ -26,6 +31,7 @@ import { createStaticRuntimeFactory } from "./agent/runtime-factory";
 import type { RuntimeFactory } from "./agent/runtime-factory";
 import { createGitHubTools } from "./tools/github";
 import { createJiraTools } from "./tools/jira";
+import { createSlackTools } from "./tools/slack";
 import {
   formatConnectGitHubMessage,
   formatGitHubIdentityMessage,
@@ -151,6 +157,10 @@ export function createSlackRuntime(
       refreshJiraAccessToken(config, refreshToken),
     saveJiraConnection: (connection) => store.upsertProviderConnection(connection)
   });
+  const slackTools = createSlackTools({
+    searchSlackUsers,
+    searchSlackMessages
+  });
   const runtimeFactory = createOpenClawRuntimeFactory(
     config,
     store,
@@ -162,6 +172,7 @@ export function createSlackRuntime(
           runtime: config.agentRuntime,
           model: config.aiModel,
           githubTools,
+          slackTools,
           jiraTools,
           openClawNemoClawUrl: config.openClawNemoClawUrl,
           ...(runtimeFactory ? { runtimeFactory } : {}),
@@ -241,9 +252,16 @@ export function createSlackRuntime(
                   buildJiraOAuthUrl(config, store.createOAuthState(slackUserId))
               }
             : {}),
+          ...(config.slackClientId && config.slackClientSecret
+            ? {
+                createSlackOAuthUrl: (slackUserId: string) =>
+                  buildSlackOAuthUrl(config, store.createOAuthState(slackUserId))
+              }
+            : {}),
           getConnection: (provider, emailAddress) =>
             store.getConnection(provider, emailAddress),
           githubTools,
+          slackTools,
           agentMode: config.agentMode,
           ...(agentRunner ? { agentRunner } : {}),
           ...(activeProgressMessage
@@ -351,9 +369,16 @@ export function createSlackRuntime(
                   buildJiraOAuthUrl(config, store.createOAuthState(slackUserId))
               }
             : {}),
+          ...(config.slackClientId && config.slackClientSecret
+            ? {
+                createSlackOAuthUrl: (slackUserId: string) =>
+                  buildSlackOAuthUrl(config, store.createOAuthState(slackUserId))
+              }
+            : {}),
           getConnection: (provider, emailAddress) =>
             store.getConnection(provider, emailAddress),
           githubTools,
+          slackTools,
           agentMode: config.agentMode,
           ...(agentRunner ? { agentRunner } : {}),
           ...(activeProgressMessage
@@ -411,7 +436,7 @@ export function createSlackRuntime(
       if (action.kind === "unknown") {
         await ack({
           response_type: "ephemeral",
-          text: `Unknown auth target \`${action.value}\`. Try \`/auth connections\`, \`/auth github\`, or \`/auth jira\`.`
+          text: `Unknown auth target \`${action.value}\`. Try \`/auth connections\`, \`/auth github\`, \`/auth jira\`, or \`/auth slack\`.`
         });
         return;
       }
@@ -421,6 +446,10 @@ export function createSlackRuntime(
         store.createOAuthState(body.user_id)
       );
       const jiraUrl = tryBuildJiraOAuthUrl(
+        config,
+        store.createOAuthState(body.user_id)
+      );
+      const slackUrl = tryBuildSlackOAuthUrl(
         config,
         store.createOAuthState(body.user_id)
       );
@@ -441,7 +470,17 @@ export function createSlackRuntime(
                   response_type: "ephemeral",
                   text: "Jira OAuth is not configured."
                 }
-            : buildAuthResponse({ githubUrl, jiraUrl })
+            : action.kind === "slack"
+              ? slackUrl
+                ? {
+                    response_type: "ephemeral",
+                    text: `<${slackUrl}|Connect Slack search>`
+                  }
+                : {
+                    response_type: "ephemeral",
+                    text: "Slack OAuth is not configured."
+                  }
+              : buildAuthResponse({ githubUrl, jiraUrl, slackUrl })
       );
     } catch (error) {
       logger.error(formatLogError(error));
@@ -587,6 +626,7 @@ export type AuthCommand =
   | { kind: "connections" }
   | { kind: "github" }
   | { kind: "jira" }
+  | { kind: "slack" }
   | { kind: "unknown"; value: string };
 
 export function parseAuthCommand(text: string): AuthCommand {
@@ -613,16 +653,21 @@ export function parseAuthCommand(text: string): AuthCommand {
     return { kind: "jira" };
   }
 
+  if (normalized === "slack" || normalized === "connect slack") {
+    return { kind: "slack" };
+  }
+
   return { kind: "unknown", value: normalized };
 }
 
 export function buildAuthResponse(input: {
   githubUrl: string;
   jiraUrl: string | null;
+  slackUrl: string | null;
 }) {
   return {
     response_type: "ephemeral" as const,
-    text: "Connections: GitHub and Jira are available. Salesforce is coming later.",
+    text: "Connections: GitHub, Jira, and Slack search are available. Salesforce is coming later.",
     blocks: [
       {
         type: "header",
@@ -673,6 +718,28 @@ export function buildAuthResponse(input: {
         type: "section",
         text: {
           type: "mrkdwn",
+          text: input.slackUrl
+            ? "*Slack search*\nConnect Slack user search for workspace message lookup."
+            : "*Slack search*\nSlack OAuth is not configured."
+        },
+        ...(input.slackUrl
+          ? {
+              accessory: {
+                type: "button",
+                text: {
+                  type: "plain_text",
+                  text: "Connect"
+                },
+                url: input.slackUrl,
+                action_id: "connect_slack"
+              }
+            }
+          : {})
+      },
+      {
+        type: "section",
+        text: {
+          type: "mrkdwn",
           text: "*Salesforce*\nPlanned for the semantic-layer authorization flow."
         }
       },
@@ -681,7 +748,7 @@ export function buildAuthResponse(input: {
         elements: [
           {
             type: "mrkdwn",
-            text: "Shortcuts: `/auth github`, `/auth jira`, `/github-me x`, `/issues x`"
+            text: "Shortcuts: `/auth github`, `/auth jira`, `/auth slack`, `/github-me x`, `/issues x`"
           }
         ]
       }
@@ -1140,6 +1207,18 @@ function tryBuildJiraOAuthUrl(config: Config, state: string): string | null {
     return buildJiraOAuthUrl(config, state);
   } catch (error) {
     if (error instanceof Error && error.message === "Jira OAuth is not configured") {
+      return null;
+    }
+
+    throw error;
+  }
+}
+
+function tryBuildSlackOAuthUrl(config: Config, state: string): string | null {
+  try {
+    return buildSlackOAuthUrl(config, state);
+  } catch (error) {
+    if (error instanceof Error && error.message === "Slack OAuth is not configured") {
       return null;
     }
 

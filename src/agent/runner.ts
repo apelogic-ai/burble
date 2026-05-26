@@ -8,6 +8,7 @@ import type {
 import { z } from "zod";
 import type { createGitHubTools } from "../tools/github";
 import type { createJiraTools } from "../tools/jira";
+import type { createSlackTools } from "../tools/slack";
 import type { ToolClassification } from "../conversation/types";
 import { createDirectModelResolver } from "./providers";
 import type { DirectLanguageModel, ModelResolver } from "./providers";
@@ -47,6 +48,7 @@ export type AiSdkAgentRunnerDeps = {
   model: string;
   githubTools: ReturnType<typeof createGitHubTools>;
   jiraTools?: ReturnType<typeof createJiraTools>;
+  slackTools?: ReturnType<typeof createSlackTools>;
   resolveModel?: ModelResolver;
   generateText?: AgentGenerateText;
   logInfo?: (message: string) => void;
@@ -55,12 +57,14 @@ export type AiSdkAgentRunnerDeps = {
 const systemPrompt = [
   "You are Burble, a Slack-native work assistant.",
   "Answer in concise Slack mrkdwn.",
-  "Use provider tools for GitHub and Jira facts. Do not invent provider data.",
+  "Use provider tools for GitHub, Jira, and Slack facts. Do not invent provider data.",
   "Never ask for, print, or expose access tokens.",
   "When a tool says GitHub is not connected, tell the user to run `@Burble connect github`.",
   "When a tool says Jira is not connected, tell the user Jira needs to be connected.",
+  "When a tool says Slack is not connected, tell the user to run `/auth slack`.",
   "Use recent Slack context to resolve pronouns and short follow-ups.",
   "For Jira questions involving a named person, search Jira users first instead of asking who they are.",
+  "For Slack questions like 'what did I say about X', search Slack messages with the requesting Slack user's ID as fromUserId.",
   "Prefer short lists with links when showing issues or pull requests."
 ].join("\n");
 
@@ -131,6 +135,14 @@ async function runAiSdkAgent(
         content: {
           error: "jira_not_connected",
           message: "Connect Jira first."
+        }
+      });
+    const missingSlackConnection = () =>
+      record({
+        classification: "user_private",
+        content: {
+          error: "slack_not_connected",
+          message: "Connect Slack search first: `/auth slack`."
         }
       });
 
@@ -319,6 +331,64 @@ async function runAiSdkAgent(
       });
     }
 
+    if (deps.slackTools) {
+      tools.slack_search_users = tool({
+        description:
+          "Search Slack users by display name, real name, username, or Slack user ID.",
+        inputSchema: z.object({
+          query: z.string().min(1).describe("Slack user name, display name, or ID")
+        }),
+        execute: async ({ query }) => executeTool("slack_search_users", async () => {
+          const connection = input.connections.slack;
+          if (!connection) {
+            return missingSlackConnection();
+          }
+
+          return record(
+            await deps.slackTools!.searchUsers.execute({
+              connection,
+              input: { query }
+            })
+          );
+        })
+      });
+      tools.slack_search_messages = tool({
+        description:
+          `Search Slack messages visible to the connected Slack user. The requesting Slack user ID is ${input.principal.slackUserId}; use it as fromUserId for questions like "what did I say about X".`,
+        inputSchema: z.object({
+          query: z.string().min(1).describe("Slack search terms"),
+          fromUserId: z
+            .string()
+            .optional()
+            .describe("Optional Slack user ID to filter by author"),
+          inChannel: z
+            .string()
+            .optional()
+            .describe("Optional channel name without #, or channel ID"),
+          limit: z.number().int().positive().max(20).optional()
+        }),
+        execute: async ({ query, fromUserId, inChannel, limit }) =>
+          executeTool("slack_search_messages", async () => {
+            const connection = input.connections.slack;
+            if (!connection) {
+              return missingSlackConnection();
+            }
+
+            return record(
+              await deps.slackTools!.searchMessages.execute({
+                connection,
+                input: {
+                  query,
+                  ...(fromUserId ? { fromUserId } : {}),
+                  ...(inChannel ? { inChannel } : {}),
+                  ...(limit ? { limit } : {})
+                }
+              })
+            );
+          })
+      });
+    }
+
     deps.logInfo(
       [
         `LLM call start model=${deps.model}`,
@@ -370,11 +440,16 @@ async function runAiSdkAgent(
 
 function formatAgentPrompt(input: AgentInput): string {
   const recentMessages = input.context?.recentMessages ?? [];
+  const header = [
+    `Requesting Slack user ID: ${input.principal.slackUserId}`,
+    ""
+  ];
   if (recentMessages.length === 0) {
-    return input.text;
+    return [...header, `Current request: ${input.text}`].join("\n");
   }
 
   return [
+    ...header,
     "Recent Slack context (oldest to newest):",
     ...recentMessages.map(
       (message) => `${message.author === "assistant" ? "Burble" : "User"}: ${message.text}`

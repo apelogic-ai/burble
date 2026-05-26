@@ -76,6 +76,8 @@ DOMAIN=<nip_io_domain>
 SLACK_BOT_TOKEN=xoxb-...
 SLACK_APP_TOKEN=xapp-...
 SLACK_LOG_LEVEL=info
+SLACK_CLIENT_ID=
+SLACK_CLIENT_SECRET=
 AGENT_MODE=deterministic
 AGENT_RUNTIME=ai-sdk
 AI_MODEL=openai:gpt-5.4
@@ -108,6 +110,17 @@ Then grant scopes `read:jira-user read:jira-work write:jira-work offline_access`
 `JIRA_CLIENT_ID` / `JIRA_CLIENT_SECRET` in `deploy/dev/compose/.env`.
 `ATLASSIAN_MCP_URL` defaults to `https://mcp.atlassian.com/v1/mcp`; override it
 only when testing a different Atlassian MCP endpoint.
+
+For Slack search hand testing, add a Slack OAuth redirect URL:
+
+```text
+https://<DOMAIN>/oauth/slack/callback
+```
+
+Then grant user token scopes `search:read users:read` and set
+`SLACK_CLIENT_ID` / `SLACK_CLIENT_SECRET` in `deploy/dev/compose/.env`.
+Users connect this token with `/auth slack`; normal bot delivery still uses
+`SLACK_BOT_TOKEN` and `SLACK_APP_TOKEN`.
 
 Bring it up:
 
@@ -328,7 +341,15 @@ In Slack:
 @Burble search GitHub issues for billing
 /connect-github
 /auth github
+/auth slack
 /github-me
+```
+
+After `/auth slack`, ask the app questions such as:
+
+```text
+what did I say about DM-12?
+who mentioned onboarding crash loop?
 ```
 
 In the Burble app DM:

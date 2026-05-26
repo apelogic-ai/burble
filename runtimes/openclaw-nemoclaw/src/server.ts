@@ -574,6 +574,14 @@ function isRunRequest(body: unknown): body is RunRequest {
     return false;
   }
 
+  if (
+    "slack" in connections &&
+    connections.slack !== undefined &&
+    !isConnectionSummary(connections.slack)
+  ) {
+    return false;
+  }
+
   return true;
 }
 

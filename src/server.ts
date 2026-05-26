@@ -5,6 +5,7 @@ import { exchangeJiraCode, getJiraUser } from "./jira";
 import { formatLogError } from "./logging";
 import { handleProviderMcpRequest } from "./mcp/provider-server";
 import type { RuntimeJwtIssuer } from "./runtime-jwt";
+import { exchangeSlackCode } from "./slack-api";
 import type { SlackRuntime } from "./slack";
 import { handleToolGatewayRequest } from "./tool-gateway";
 
@@ -18,6 +19,10 @@ export type JiraOAuthDeps = {
   getJiraUser: typeof getJiraUser;
 };
 
+export type SlackOAuthDeps = {
+  exchangeSlackCode: typeof exchangeSlackCode;
+};
+
 const defaultGitHubOAuthDeps: GitHubOAuthDeps = {
   exchangeGitHubCode,
   getGitHubUser
@@ -26,6 +31,10 @@ const defaultGitHubOAuthDeps: GitHubOAuthDeps = {
 const defaultJiraOAuthDeps: JiraOAuthDeps = {
   exchangeJiraCode,
   getJiraUser
+};
+
+const defaultSlackOAuthDeps: SlackOAuthDeps = {
+  exchangeSlackCode
 };
 
 export function startOAuthServer(
@@ -74,6 +83,10 @@ export function startOAuthServer(
 
       if (url.pathname === "/oauth/jira/callback") {
         return handleJiraCallback(config, store, slack, url);
+      }
+
+      if (url.pathname === "/oauth/slack/callback") {
+        return handleSlackCallback(config, store, slack, url);
       }
 
       return new Response("Not found", { status: 404 });
@@ -183,6 +196,57 @@ export async function handleJiraCallback(
       text: "Jira connection failed. Run `/auth jira` and try again."
     });
     return new Response("Jira connection failed", { status: 400 });
+  }
+}
+
+export async function handleSlackCallback(
+  config: Config,
+  store: TokenStore,
+  slack: SlackRuntime,
+  url: URL,
+  deps: SlackOAuthDeps = defaultSlackOAuthDeps
+): Promise<Response> {
+  const code = url.searchParams.get("code");
+  const state = url.searchParams.get("state");
+
+  if (!code || !state) {
+    return new Response("Missing code or state", { status: 400 });
+  }
+
+  const stateRow = store.consumeOAuthState(state);
+  if (!stateRow) {
+    return new Response("Invalid or expired OAuth state", { status: 400 });
+  }
+
+  try {
+    const token = await deps.exchangeSlackCode(config, code);
+    if (token.slackUserId !== stateRow.slackUserId) {
+      throw new Error("Slack OAuth user did not match the initiating Slack user");
+    }
+
+    const email = await slack.getSlackEmail(stateRow.slackUserId);
+
+    store.upsertProviderConnection({
+      provider: "slack",
+      email,
+      slackUserId: stateRow.slackUserId,
+      providerLogin: token.slackUserId,
+      accessToken: token.accessToken
+    });
+
+    await slack.app.client.chat.postMessage({
+      channel: stateRow.slackUserId,
+      text: `Connected Slack search for <@${token.slackUserId}> (${email}).`
+    });
+
+    return htmlResponse("Connected. You can close this tab.");
+  } catch (error) {
+    console.error(formatLogError(error));
+    await slack.app.client.chat.postMessage({
+      channel: stateRow.slackUserId,
+      text: "Slack connection failed. Run `/auth slack` and try again."
+    });
+    return new Response("Slack connection failed", { status: 400 });
   }
 }
 
