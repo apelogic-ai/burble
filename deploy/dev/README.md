@@ -92,6 +92,8 @@ GITHUB_CLIENT_ID=...
 GITHUB_CLIENT_SECRET=...
 JIRA_CLIENT_ID=
 JIRA_CLIENT_SECRET=
+GOOGLE_CLIENT_ID=
+GOOGLE_CLIENT_SECRET=
 ```
 
 Use `AGENT_MODE=llm` to route mentions and DMs through an agent runner.
@@ -111,6 +113,16 @@ Then grant scopes `read:jira-user read:jira-work write:jira-work offline_access`
 `JIRA_CLIENT_ID` / `JIRA_CLIENT_SECRET` in `deploy/dev/compose/.env`.
 `ATLASSIAN_MCP_URL` defaults to `https://mcp.atlassian.com/v1/mcp`; override it
 only when testing a different Atlassian MCP endpoint.
+
+For Google Workspace hand testing, create a Google Cloud OAuth web app, enable
+the Drive, Calendar, and Gmail APIs, and add:
+
+```text
+https://<DOMAIN>/oauth/google/callback
+```
+
+Then set `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` in
+`deploy/dev/compose/.env`. Users connect Google with `/auth google`.
 
 For Slack search hand testing, add a Slack OAuth redirect URL:
 

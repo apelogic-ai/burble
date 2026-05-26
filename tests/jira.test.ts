@@ -23,6 +23,8 @@ const config: Config = {
   githubClientSecret: "github-client-secret",
   jiraClientId: "jira-client-id",
   jiraClientSecret: "jira-client-secret",
+  googleClientId: null,
+  googleClientSecret: null,
   baseUrl: "https://example.ngrok-free.app",
   port: 3000,
   databasePath: ":memory:",

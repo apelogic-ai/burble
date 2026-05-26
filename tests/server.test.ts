@@ -3,6 +3,7 @@ import type { Config } from "../src/config";
 import type { TokenStore } from "../src/db";
 import {
   handleGitHubCallback,
+  handleGoogleCallback,
   handleJiraCallback,
   handleSlackCallback
 } from "../src/server";
@@ -18,6 +19,8 @@ const config: Config = {
   githubClientSecret: "client-secret",
   jiraClientId: "jira-client-id",
   jiraClientSecret: "jira-client-secret",
+  googleClientId: "google-client-id",
+  googleClientSecret: "google-client-secret",
   baseUrl: "https://example.ngrok-free.app",
   port: 3000,
   databasePath: ":memory:",
@@ -256,6 +259,56 @@ describe("handleJiraCallback", () => {
       {
         channel: "U123",
         text: "Connected to Jira as `Leo` (person@example.com)."
+      }
+    ]);
+  });
+});
+
+describe("handleGoogleCallback", () => {
+  test("stores the Google provider connection and DMs Slack on success", async () => {
+    const { store, providerConnections } = createFakeStore();
+    const { slack, messages } = createFakeSlack();
+
+    const response = await handleGoogleCallback(
+      config,
+      store,
+      slack,
+      new URL(
+        "https://example.test/oauth/google/callback?code=abc&state=valid-state"
+      ),
+      {
+        exchangeGoogleCode: async (_config, code) => {
+          expect(code).toBe("abc");
+          return {
+            accessToken: "google-token",
+            refreshToken: "google-refresh-token",
+            accessTokenExpiresAt: "2026-05-23T06:00:00.000Z"
+          };
+        },
+        getGoogleUser: async (token) => {
+          expect(token).toBe("google-token");
+          return { email: "person@apegpt.ai", name: "Person" };
+        }
+      }
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.text()).toContain("Connected. You can close this tab.");
+    expect(providerConnections).toEqual([
+      {
+        provider: "google",
+        email: "person@example.com",
+        slackUserId: "U123",
+        providerLogin: "person@apegpt.ai",
+        accessToken: "google-token",
+        refreshToken: "google-refresh-token",
+        accessTokenExpiresAt: "2026-05-23T06:00:00.000Z"
+      }
+    ]);
+    expect(messages).toEqual([
+      {
+        channel: "U123",
+        text: "Connected to Google as `person@apegpt.ai` (person@example.com)."
       }
     ]);
   });

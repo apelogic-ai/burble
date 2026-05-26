@@ -67,6 +67,8 @@ services:
       - GITHUB_CLIENT_SECRET=${GITHUB_CLIENT_SECRET:?GITHUB_CLIENT_SECRET is required}
       - JIRA_CLIENT_ID=${JIRA_CLIENT_ID:-}
       - JIRA_CLIENT_SECRET=${JIRA_CLIENT_SECRET:-}
+      - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID:-}
+      - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET:-}
     volumes:
       - burble_data:/data
     healthcheck:

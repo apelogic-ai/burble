@@ -1,5 +1,6 @@
 import type { Provider, ProviderConnection } from "../db";
 import type { createGitHubTools } from "../tools/github";
+import type { createGoogleTools } from "../tools/google";
 import type { createSlackTools } from "../tools/slack";
 import type { AgentMode } from "../config";
 import type { AgentRunEventHandler, AgentRunner, AgentUsage } from "../agent/types";
@@ -46,8 +47,10 @@ export type ConversationDeps = {
   createGitHubOAuthUrl: (slackUserId: string) => string;
   createJiraOAuthUrl?: (slackUserId: string) => string;
   createSlackOAuthUrl?: (slackUserId: string) => string;
+  createGoogleOAuthUrl?: (slackUserId: string) => string;
   getConnection: (provider: Provider, email: string) => ProviderConnection | null;
   githubTools: ReturnType<typeof createGitHubTools>;
+  googleTools?: ReturnType<typeof createGoogleTools>;
   slackTools?: ReturnType<typeof createSlackTools>;
   agentMode?: AgentMode;
   agentRunner?: AgentRunner;

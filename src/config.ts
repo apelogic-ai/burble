@@ -10,6 +10,8 @@ export type Config = {
   githubClientSecret: string;
   jiraClientId: string | null;
   jiraClientSecret: string | null;
+  googleClientId: string | null;
+  googleClientSecret: string | null;
   baseUrl: string;
   port: number;
   databasePath: string;
@@ -211,6 +213,8 @@ export function readConfig(env: Env): Config {
     githubClientSecret: requiredEnv(env, "GITHUB_CLIENT_SECRET"),
     jiraClientId: optionalSecretEnv(env, "JIRA_CLIENT_ID"),
     jiraClientSecret: optionalSecretEnv(env, "JIRA_CLIENT_SECRET"),
+    googleClientId: optionalSecretEnv(env, "GOOGLE_CLIENT_ID"),
+    googleClientSecret: optionalSecretEnv(env, "GOOGLE_CLIENT_SECRET"),
     baseUrl,
     port: optionalIntEnv(env, "PORT", 3000),
     databasePath: env.DATABASE_PATH ?? "burble.db",

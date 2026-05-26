@@ -1,6 +1,7 @@
 import type { Config } from "./config";
 import type { TokenStore } from "./db";
 import { exchangeGitHubCode, getGitHubUser } from "./github";
+import { exchangeGoogleCode, getGoogleUser } from "./google";
 import { exchangeJiraCode, getJiraUser } from "./jira";
 import { formatLogError } from "./logging";
 import { handleProviderMcpRequest } from "./mcp/provider-server";
@@ -19,6 +20,11 @@ export type JiraOAuthDeps = {
   getJiraUser: typeof getJiraUser;
 };
 
+export type GoogleOAuthDeps = {
+  exchangeGoogleCode: typeof exchangeGoogleCode;
+  getGoogleUser: typeof getGoogleUser;
+};
+
 export type SlackOAuthDeps = {
   exchangeSlackCode: typeof exchangeSlackCode;
 };
@@ -31,6 +37,11 @@ const defaultGitHubOAuthDeps: GitHubOAuthDeps = {
 const defaultJiraOAuthDeps: JiraOAuthDeps = {
   exchangeJiraCode,
   getJiraUser
+};
+
+const defaultGoogleOAuthDeps: GoogleOAuthDeps = {
+  exchangeGoogleCode,
+  getGoogleUser
 };
 
 const defaultSlackOAuthDeps: SlackOAuthDeps = {
@@ -57,7 +68,7 @@ export function startOAuthServer(
       }
 
       const providerMcpMatch = url.pathname.match(
-        /^\/mcp(?:\/(github|jira|slack|atlassian))?$/
+        /^\/mcp(?:\/(github|google|jira|slack|atlassian))?$/
       );
       if (providerMcpMatch) {
         return handleProviderMcpRequest(
@@ -69,6 +80,7 @@ export function startOAuthServer(
           (providerMcpMatch[1] ?? "all") as
             | "all"
             | "github"
+            | "google"
             | "jira"
             | "slack"
             | "atlassian"
@@ -93,6 +105,10 @@ export function startOAuthServer(
 
       if (url.pathname === "/oauth/jira/callback") {
         return handleJiraCallback(config, store, slack, url);
+      }
+
+      if (url.pathname === "/oauth/google/callback") {
+        return handleGoogleCallback(config, store, slack, url);
       }
 
       if (url.pathname === "/oauth/slack/callback") {
@@ -206,6 +222,56 @@ export async function handleJiraCallback(
       text: "Jira connection failed. Run `/auth jira` and try again."
     });
     return new Response("Jira connection failed", { status: 400 });
+  }
+}
+
+export async function handleGoogleCallback(
+  config: Config,
+  store: TokenStore,
+  slack: SlackRuntime,
+  url: URL,
+  deps: GoogleOAuthDeps = defaultGoogleOAuthDeps
+): Promise<Response> {
+  const code = url.searchParams.get("code");
+  const state = url.searchParams.get("state");
+
+  if (!code || !state) {
+    return new Response("Missing code or state", { status: 400 });
+  }
+
+  const stateRow = store.consumeOAuthState(state);
+  if (!stateRow) {
+    return new Response("Invalid or expired OAuth state", { status: 400 });
+  }
+
+  try {
+    const token = await deps.exchangeGoogleCode(config, code);
+    const googleUser = await deps.getGoogleUser(token.accessToken);
+    const email = await slack.getSlackEmail(stateRow.slackUserId);
+
+    store.upsertProviderConnection({
+      provider: "google",
+      email,
+      slackUserId: stateRow.slackUserId,
+      providerLogin: googleUser.email,
+      accessToken: token.accessToken,
+      refreshToken: token.refreshToken,
+      accessTokenExpiresAt: token.accessTokenExpiresAt
+    });
+
+    await slack.app.client.chat.postMessage({
+      channel: stateRow.slackUserId,
+      text: `Connected to Google as \`${googleUser.email}\` (${email}).`
+    });
+
+    return htmlResponse("Connected. You can close this tab.");
+  } catch (error) {
+    console.error(formatLogError(error));
+    await slack.app.client.chat.postMessage({
+      channel: stateRow.slackUserId,
+      text: "Google connection failed. Run `/auth google` and try again."
+    });
+    return new Response("Google connection failed", { status: 400 });
   }
 }
 

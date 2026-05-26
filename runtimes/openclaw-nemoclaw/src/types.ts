@@ -38,6 +38,11 @@ export type RunRequest = {
         email?: string;
         providerLogin?: string;
       };
+      google?: {
+        connected: boolean;
+        email?: string;
+        providerLogin?: string;
+      };
       jira?: {
         connected: boolean;
         email?: string;

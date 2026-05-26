@@ -104,6 +104,7 @@ export function createOpenClawNemoClawAgentRunner(
           `conversationRoot=${input.conversation?.rootId ?? "unknown"}`,
           `textLength=${input.text.length}`,
           `githubConnected=${Boolean(input.connections.github)}`,
+          `googleConnected=${Boolean(input.connections.google)}`,
           `jiraConnected=${Boolean(input.connections.jira)}`,
           `slackConnected=${Boolean(input.connections.slack)}`
         ].join(" ")
@@ -115,6 +116,7 @@ export function createOpenClawNemoClawAgentRunner(
             conversationRoot: input.conversation?.rootId ?? "unknown",
             textLength: input.text.length,
             githubConnected: Boolean(input.connections.github),
+            googleConnected: Boolean(input.connections.google),
             jiraConnected: Boolean(input.connections.jira),
             slackConnected: Boolean(input.connections.slack)
           }
@@ -628,11 +630,13 @@ function sanitizeAgentInput(input: AgentInput): {
   context?: NonNullable<AgentInput["context"]>;
   connections: {
     github: ConnectionSummary;
+    google: ConnectionSummary;
     jira: ConnectionSummary;
     slack: ConnectionSummary;
   };
 } {
   const github = input.connections.github;
+  const google = input.connections.google;
   const jira = input.connections.jira;
   const slack = input.connections.slack;
 
@@ -646,6 +650,15 @@ function sanitizeAgentInput(input: AgentInput): {
             connected: true,
             email: github.email,
             providerLogin: github.providerLogin
+          }
+        : {
+            connected: false
+          },
+      google: google
+        ? {
+            connected: true,
+            email: google.email,
+            providerLogin: google.providerLogin
           }
         : {
             connected: false

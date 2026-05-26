@@ -22,6 +22,7 @@ Then set `BASE_URL` in `.env` and configure OAuth callback URLs:
 {BASE_URL}/oauth/github/callback
 {BASE_URL}/oauth/jira/callback
 {BASE_URL}/oauth/slack/callback
+{BASE_URL}/oauth/google/callback
 ```
 
 ## Slack Commands
@@ -34,6 +35,7 @@ Then set `BASE_URL` in `.env` and configure OAuth callback URLs:
 - `/help` shows command help and examples.
 - `/auth` shows connected account status and auth buttons.
 - `/auth github` starts the GitHub OAuth flow.
+- `/auth google` starts the Google OAuth flow for Drive, Calendar, and Gmail search.
 - `/auth jira` starts the Jira OAuth flow.
 - `/auth slack` starts the Slack user OAuth flow for message search.
 - `/agent status` powers up and shows the current agent runtime status for the Slack user.
@@ -45,6 +47,22 @@ Jira OAuth uses Atlassian 3LO with these scopes:
 
 ```text
 read:jira-user read:jira-work write:jira-work
+```
+
+Google OAuth uses a Google Cloud web OAuth client with redirect URI:
+
+```text
+{BASE_URL}/oauth/google/callback
+```
+
+Enable the Drive, Calendar, and Gmail APIs for the Google Cloud project and add
+these scopes:
+
+```text
+openid email profile
+https://www.googleapis.com/auth/drive.metadata.readonly
+https://www.googleapis.com/auth/calendar.readonly
+https://www.googleapis.com/auth/gmail.readonly
 ```
 
 Required Slack bot scopes:

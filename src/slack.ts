@@ -10,6 +10,14 @@ import {
   searchIssues
 } from "./github";
 import {
+  buildGoogleOAuthUrl,
+  getGoogleUser,
+  refreshGoogleAccessToken,
+  searchGoogleCalendarEvents,
+  searchGoogleDriveFiles,
+  searchGoogleMailMessages
+} from "./google";
+import {
   buildJiraOAuthUrl,
   getJiraUser,
   listAssignedJiraIssues,
@@ -35,6 +43,7 @@ import { createDockerRuntimeFactory } from "./agent/container-runtime-factory";
 import { createStaticRuntimeFactory } from "./agent/runtime-factory";
 import type { RuntimeFactory } from "./agent/runtime-factory";
 import { createGitHubTools } from "./tools/github";
+import { createGoogleTools } from "./tools/google";
 import { createJiraTools } from "./tools/jira";
 import { createSlackTools } from "./tools/slack";
 import {
@@ -138,6 +147,15 @@ export function createSlackRuntime(
     searchIssues,
     listMyPullRequests
   });
+  const googleTools = createGoogleTools({
+    getGoogleUser,
+    searchGoogleDriveFiles,
+    searchGoogleCalendarEvents,
+    searchGoogleMailMessages,
+    refreshGoogleAccessToken: (refreshToken) =>
+      refreshGoogleAccessToken(config, refreshToken),
+    saveGoogleConnection: (connection) => store.upsertProviderConnection(connection)
+  });
   const jiraTools = createJiraTools({
     getJiraUser,
     listAssignedJiraIssues,
@@ -161,6 +179,7 @@ export function createSlackRuntime(
           runtime: config.agentRuntime,
           model: config.aiModel,
           githubTools,
+          googleTools,
           slackTools,
           jiraTools,
           openClawNemoClawUrl: config.openClawNemoClawUrl,
@@ -431,7 +450,7 @@ export function createSlackRuntime(
       if (action.kind === "unknown") {
         await ack({
           response_type: "ephemeral",
-          text: `Unknown auth target \`${action.value}\`. Try \`/auth\`, \`/auth github\`, \`/auth jira\`, or \`/auth slack\`.`
+          text: `Unknown auth target \`${action.value}\`. Try \`/auth\`, \`/auth github\`, \`/auth google\`, \`/auth jira\`, or \`/auth slack\`.`
         });
         return;
       }
@@ -441,6 +460,10 @@ export function createSlackRuntime(
         store.createOAuthState(body.user_id)
       );
       const jiraUrl = tryBuildJiraOAuthUrl(
+        config,
+        store.createOAuthState(body.user_id)
+      );
+      const googleUrl = tryBuildGoogleOAuthUrl(
         config,
         store.createOAuthState(body.user_id)
       );
@@ -465,6 +488,16 @@ export function createSlackRuntime(
                   response_type: "ephemeral",
                   text: "Jira OAuth is not configured."
                 }
+            : action.kind === "google"
+              ? googleUrl
+                ? {
+                    response_type: "ephemeral",
+                    text: `<${googleUrl}|Connect your Google account>`
+                  }
+                : {
+                    response_type: "ephemeral",
+                    text: "Google OAuth is not configured."
+                  }
             : action.kind === "slack"
               ? slackUrl
                 ? {
@@ -477,11 +510,16 @@ export function createSlackRuntime(
                 }
               : buildAuthResponse({
                   githubUrl,
+                  googleUrl,
                   jiraUrl,
                   slackUrl,
                   connections: {
                     github: store.getConnectionForSlackUser(
                       "github",
+                      body.user_id
+                    ),
+                    google: store.getConnectionForSlackUser(
+                      "google",
                       body.user_id
                     ),
                     jira: store.getConnectionForSlackUser("jira", body.user_id),
@@ -800,6 +838,7 @@ function createOpenClawRuntimeFactory(
 export type AuthCommand =
   | { kind: "connections" }
   | { kind: "github" }
+  | { kind: "google" }
   | { kind: "jira" }
   | { kind: "slack" }
   | { kind: "unknown"; value: string };
@@ -817,6 +856,10 @@ export function parseAuthCommand(text: string): AuthCommand {
 
   if (normalized === "github" || normalized === "connect github") {
     return { kind: "github" };
+  }
+
+  if (normalized === "google" || normalized === "connect google") {
+    return { kind: "google" };
   }
 
   if (
@@ -863,15 +906,18 @@ export function parseAgentCommand(text: string): AgentCommand {
 
 export function buildAuthResponse(input: {
   githubUrl: string;
+  googleUrl: string | null;
   jiraUrl: string | null;
   slackUrl: string | null;
   connections?: {
     github: ProviderConnection | null;
+    google: ProviderConnection | null;
     jira: ProviderConnection | null;
     slack: ProviderConnection | null;
   };
 }) {
   const github = formatConnectionStatus(input.connections?.github, "github");
+  const google = formatConnectionStatus(input.connections?.google, "google");
   const jira = formatConnectionStatus(input.connections?.jira, "jira");
   const slack = formatConnectionStatus(input.connections?.slack, "slack");
 
@@ -928,6 +974,28 @@ export function buildAuthResponse(input: {
         type: "section",
         text: {
           type: "mrkdwn",
+          text: input.googleUrl
+            ? `*Google Workspace*\n${google}`
+            : "*Google Workspace*\nGoogle OAuth is not configured."
+        },
+        ...(input.googleUrl
+          ? {
+              accessory: {
+                type: "button",
+                text: {
+                  type: "plain_text",
+                  text: input.connections?.google ? "Reconnect" : "Connect"
+                },
+                url: input.googleUrl,
+                action_id: "connect_google"
+              }
+            }
+          : {})
+      },
+      {
+        type: "section",
+        text: {
+          type: "mrkdwn",
           text: input.slackUrl
             ? `*Slack search*\n${slack}`
             : "*Slack search*\nSlack OAuth is not configured."
@@ -951,7 +1019,7 @@ export function buildAuthResponse(input: {
         elements: [
           {
             type: "mrkdwn",
-            text: "Shortcuts: `/auth`, `/auth github`, `/auth jira`, `/auth slack`, `/help`"
+            text: "Shortcuts: `/auth`, `/auth github`, `/auth google`, `/auth jira`, `/auth slack`, `/help`"
           }
         ]
       }
@@ -994,6 +1062,7 @@ export function buildHelpResponse() {
             "*Commands*",
             "• `/auth` - view and connect accounts",
             "• `/auth github` - connect or reconnect GitHub",
+            "• `/auth google` - connect or reconnect Google Workspace",
             "• `/auth jira` - connect or reconnect Jira",
             "• `/auth slack` - connect or reconnect Slack search",
             "• `/agent status` - show and power up your current agent runtime",
@@ -1243,7 +1312,7 @@ function truncateSlackCodeBlock(value: string, maxLength: number): string {
 
 function formatConnectionStatus(
   connection: ProviderConnection | null | undefined,
-  provider: "github" | "jira" | "slack"
+  provider: "github" | "google" | "jira" | "slack"
 ): string {
   if (!connection) {
     return "Not connected.";
@@ -1777,6 +1846,18 @@ function tryBuildJiraOAuthUrl(config: Config, state: string): string | null {
     return buildJiraOAuthUrl(config, state);
   } catch (error) {
     if (error instanceof Error && error.message === "Jira OAuth is not configured") {
+      return null;
+    }
+
+    throw error;
+  }
+}
+
+function tryBuildGoogleOAuthUrl(config: Config, state: string): string | null {
+  try {
+    return buildGoogleOAuthUrl(config, state);
+  } catch (error) {
+    if (error instanceof Error && error.message === "Google OAuth is not configured") {
       return null;
     }
 
