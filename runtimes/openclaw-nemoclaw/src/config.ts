@@ -168,6 +168,9 @@ function readBooleanEnv(value: string, name: string): boolean {
 
 function readOptionalEnv(value: string | undefined): string | null {
   const trimmed = stripOptionalQuotes(value ?? "").trim();
+  if (trimmed === "undefined" || trimmed === "null") {
+    return null;
+  }
   return trimmed ? trimmed : null;
 }
 

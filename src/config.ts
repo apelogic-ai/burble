@@ -24,6 +24,7 @@ export type Config = {
   agentRuntimeImage: string;
   agentRuntimeIdleTtlMs: number;
   agentRuntimeReaperIntervalMs: number;
+  agentRuntimeJwtTtlSeconds: number;
   agentRuntimeTokenSecret: string | null;
   agentRuntimeToolGatewayUrl: string;
   agentRuntimeMcpGatewayUrl: string | null;
@@ -230,6 +231,11 @@ export function readConfig(env: Env): Config {
       env,
       "AGENT_RUNTIME_REAPER_INTERVAL_MS",
       60 * 1000
+    ),
+    agentRuntimeJwtTtlSeconds: optionalIntEnv(
+      env,
+      "AGENT_RUNTIME_JWT_TTL_SECONDS",
+      7 * 24 * 60 * 60
     ),
     agentRuntimeTokenSecret:
       optionalSecretEnv(env, "AGENT_RUNTIME_TOKEN_SECRET") ?? internalApiToken,

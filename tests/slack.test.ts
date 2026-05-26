@@ -4,6 +4,7 @@ import {
   formatAgentProgressEvent,
   buildReplyThreadTs,
   formatConnectGitHubMessage,
+  formatConversationFailureMessage,
   formatGitHubIdentityMessage,
   formatWorkingMessage,
   formatIssuesMessage,
@@ -110,6 +111,25 @@ describe("formatAgentProgressEvent", () => {
         ""
       )
     ).toBe("Agent is responding...");
+  });
+});
+
+describe("formatConversationFailureMessage", () => {
+  test("explains runtime MCP auth failures as runtime JWT issues", () => {
+    expect(
+      formatConversationFailureMessage(
+        new Error(
+          'Runtime run failed: Burble MCP initialize returned HTTP 401: {"error":"unauthorized","error_description":"JWT token required"}'
+        ),
+        "message"
+      )
+    ).toContain("not an expired GitHub/Jira token");
+  });
+
+  test("keeps the generic fallback for unknown failures", () => {
+    expect(formatConversationFailureMessage(new Error("boom"), "mention")).toBe(
+      "I could not handle that mention."
+    );
   });
 });
 

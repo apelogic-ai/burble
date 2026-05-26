@@ -293,11 +293,12 @@ export function createSlackRuntime(
       });
     } catch (error) {
       logger.error(formatLogError(error));
+      const text = formatConversationFailureMessage(error, "mention");
       if (progressMessage) {
         await client.chat.update({
           channel: progressMessage.channel,
           ts: progressMessage.ts,
-          text: "I could not handle that mention."
+          text
         });
         return;
       }
@@ -305,7 +306,7 @@ export function createSlackRuntime(
       await client.chat.postEphemeral({
         channel: mention.channel,
         user: mention.user,
-        text: "I could not handle that mention."
+        text
       });
     }
   });
@@ -410,18 +411,19 @@ export function createSlackRuntime(
       });
     } catch (error) {
       logger.error(formatLogError(error));
+      const text = formatConversationFailureMessage(error, "message");
       if (progressMessage) {
         await client.chat.update({
           channel: progressMessage.channel,
           ts: progressMessage.ts,
-          text: "I could not handle that message."
+          text
         });
         return;
       }
 
       await client.chat.postMessage({
         channel: directMessage.channel,
-        text: "I could not handle that message."
+        text
       });
     }
   });
@@ -602,6 +604,7 @@ function createOpenClawRuntimeFactory(
       mcpGatewayUrl: config.agentRuntimeMcpGatewayUrl,
       mcpAudience: config.agentRuntimeMcpAudience,
       runtimeJwtIssuer,
+      runtimeJwtTtlSeconds: config.agentRuntimeJwtTtlSeconds,
       runtimeTokenSecret: config.agentRuntimeTokenSecret,
       openClawConfigPatchPath: config.openClawConfigPatchHostPath,
       idleTtlMs: config.agentRuntimeIdleTtlMs,
@@ -1022,6 +1025,31 @@ export function formatAgentProgressEvent(
     case "error":
       return undefined;
   }
+}
+
+export function formatConversationFailureMessage(
+  error: unknown,
+  target: "mention" | "message"
+): string {
+  const message = error instanceof Error ? error.message : String(error);
+  if (isRuntimeMcpAuthFailure(message)) {
+    return [
+      "Agent runtime auth failed before I could call tools.",
+      "The runtime JWT expired or was rejected; this is not an expired GitHub/Jira token.",
+      "Restart the runtime container or check `AGENT_RUNTIME_JWT_TTL_SECONDS` / MCP gateway routing."
+    ].join(" ");
+  }
+
+  return `I could not handle that ${target}.`;
+}
+
+function isRuntimeMcpAuthFailure(message: string): boolean {
+  return (
+    /Burble MCP .*HTTP 401/i.test(message) ||
+    /JWT token required/i.test(message) ||
+    /runtime JWT/i.test(message) ||
+    /OpenClaw\/NemoClaw runtime returned HTTP 401/i.test(message)
+  );
 }
 
 function formatAgentProgressMessage(
