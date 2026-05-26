@@ -626,14 +626,41 @@ function isRequestContext(context: unknown): context is RunRequest["input"]["con
     return false;
   }
 
+  if (
+    "currentChannel" in context &&
+    context.currentChannel !== undefined &&
+    !isCurrentChannelContext(context.currentChannel)
+  ) {
+    return false;
+  }
+
   return context.recentMessages.every(
     (message) =>
       typeof message === "object" &&
       message !== null &&
       "author" in message &&
       (message.author === "user" || message.author === "assistant") &&
+      (!("speaker" in message) ||
+        message.speaker === undefined ||
+        typeof message.speaker === "string") &&
       "text" in message &&
       typeof message.text === "string"
+  );
+}
+
+function isCurrentChannelContext(channel: unknown): boolean {
+  return (
+    typeof channel === "object" &&
+    channel !== null &&
+    "id" in channel &&
+    typeof channel.id === "string" &&
+    "isDirectMessage" in channel &&
+    typeof channel.isDirectMessage === "boolean" &&
+    "historyAvailable" in channel &&
+    typeof channel.historyAvailable === "boolean" &&
+    (!("historyError" in channel) ||
+      channel.historyError === undefined ||
+      typeof channel.historyError === "string")
   );
 }
 

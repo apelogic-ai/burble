@@ -120,6 +120,50 @@ describe("createAiSdkAgentRunner", () => {
     );
   });
 
+  test("includes current Slack channel history status in the prompt", async () => {
+    const model = { provider: "test", modelId: "model" } as DirectLanguageModel;
+    const runner = createAiSdkAgentRunner({
+      model: "openai:test-model",
+      resolveModel: () => model,
+      githubTools: createGitHubTools({
+        getGitHubUser: async () => ({ login: "octocat" }),
+        listAssignedIssues: async () => [],
+        searchIssues: async () => [],
+        listMyPullRequests: async () => []
+      }),
+      generateText: async (request) => {
+        expect(request.prompt).toContain("Current Slack channel ID: C123");
+        expect(request.prompt).toContain(
+          "Current Slack channel history: available (1 recent messages)"
+        );
+        expect(request.prompt).toContain("Slack user <@U456>: hello president");
+        return { text: "The channel mentioned president once." };
+      }
+    });
+
+    const response = await collectAgentRun(runner, {
+      principal,
+      text: "summarize current channel",
+      context: {
+        currentChannel: {
+          id: "C123",
+          isDirectMessage: false,
+          historyAvailable: true
+        },
+        recentMessages: [
+          {
+            author: "user",
+            speaker: "<@U456>",
+            text: "hello president"
+          }
+        ]
+      },
+      connections: { github: null }
+    });
+
+    expect(response.text).toBe("The channel mentioned president once.");
+  });
+
   test("returns a connect instruction when a GitHub tool is used without auth", async () => {
     const runner = createAiSdkAgentRunner({
       model: "openai:test-model",

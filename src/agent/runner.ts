@@ -63,6 +63,7 @@ const systemPrompt = [
   "When a tool says Jira is not connected, tell the user Jira needs to be connected.",
   "When a tool says Slack is not connected, tell the user to run `/auth slack`.",
   "Use recent Slack context to resolve pronouns and short follow-ups.",
+  "For requests about the current Slack channel or chat, answer from the recent Slack context when available. If channel history is unavailable, explain that Burble needs Slack bot history scopes and channel membership.",
   "For Jira questions involving a named person, search Jira users first instead of asking who they are.",
   "For Slack questions like 'what did I say about X', search Slack messages with the requesting Slack user's ID as fromUserId.",
   "Prefer short lists with links when showing issues or pull requests."
@@ -440,8 +441,20 @@ async function runAiSdkAgent(
 
 function formatAgentPrompt(input: AgentInput): string {
   const recentMessages = input.context?.recentMessages ?? [];
+  const currentChannel = input.context?.currentChannel;
   const header = [
     `Requesting Slack user ID: ${input.principal.slackUserId}`,
+    ...(currentChannel
+      ? [
+          `Current Slack channel ID: ${currentChannel.id}`,
+          `Current Slack channel type: ${currentChannel.isDirectMessage ? "direct_message" : "channel"}`,
+          `Current Slack channel history: ${
+            currentChannel.historyAvailable
+              ? `available (${recentMessages.length} recent messages)`
+              : `unavailable (${currentChannel.historyError ?? "unknown_error"})`
+          }`
+        ]
+      : []),
     ""
   ];
   if (recentMessages.length === 0) {
@@ -452,11 +465,22 @@ function formatAgentPrompt(input: AgentInput): string {
     ...header,
     "Recent Slack context (oldest to newest):",
     ...recentMessages.map(
-      (message) => `${message.author === "assistant" ? "Burble" : "User"}: ${message.text}`
+      (message) =>
+        `${formatSlackContextAuthor(message)}: ${message.text}`
     ),
     "",
     `Current request: ${input.text}`
   ].join("\n");
+}
+
+function formatSlackContextAuthor(
+  message: NonNullable<AgentInput["context"]>["recentMessages"][number]
+): string {
+  if (message.author === "assistant") {
+    return "Burble";
+  }
+
+  return message.speaker ? `Slack user ${message.speaker}` : "User";
 }
 
 async function defaultGenerateText(

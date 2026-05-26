@@ -324,7 +324,11 @@ curl -fsSL https://<nip_io_domain>/healthz
 Add Slack scopes:
 
 - `app_mentions:read`
+- `channels:history`
+- `groups:history`
 - `im:history`
+- `search:read` as a user token scope for `/auth slack`
+- `users:read` as both a bot token scope and a user token scope for `/auth slack`
 
 Then enable **Event Subscriptions** and subscribe the bot to:
 

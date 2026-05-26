@@ -1657,6 +1657,8 @@ function buildOpenClawPrompt(
     "Preloaded Burble runtime skills:",
     preloadedRuntimeSkills,
     "",
+    "Runtime instruction: for requests about the current Slack channel or chat, answer from Recent Slack context when available. If channel history is unavailable, explain that Burble needs Slack bot history scopes and channel membership.",
+    "",
     "Available Burble tools:",
     formatToolCatalog(toolContext.catalog),
     "",
@@ -1701,6 +1703,7 @@ function buildBurbleDirectPrompt(
       "The requesting Slack user is already authenticated through Burble connections; do not ask who you are, who the user is, what kind of assistant you are, what vibe you should have, or for an emoji/persona setup.",
       "Interpret me, my, and assign to me as the requesting Slack user.",
       "Use Recent Slack context to resolve pronouns and short follow-ups such as 'look him up'.",
+      "For requests about the current Slack channel or chat, answer from Recent Slack context when available. If channel history is unavailable, explain that Burble needs Slack bot history scopes and channel membership.",
       "The Burble tool gateway injects the connected provider identity and credentials; do not include emails, tokens, or credentials in tool arguments.",
       "For provider data or actions, return exactly one JSON object and no prose: {\"tool_call\":{\"name\":\"tool.name\",\"arguments\":{}}}.",
       "Use only tool names listed in Available Burble tools.",
@@ -1754,17 +1757,41 @@ function buildBurbleDirectPrompt(
 
 function formatRecentSlackContext(request: RunRequest): string[] {
   const messages = request.input.context?.recentMessages ?? [];
-  if (messages.length === 0) {
+  const currentChannel = request.input.context?.currentChannel;
+  if (!currentChannel && messages.length === 0) {
     return [];
   }
 
-  return [
-    "Recent Slack context (oldest to newest):",
+  const lines = [
+    ...(currentChannel
+      ? [
+          `Current Slack channel ID: ${currentChannel.id}`,
+          `Current Slack channel type: ${currentChannel.isDirectMessage ? "direct_message" : "channel"}`,
+          `Current Slack channel history: ${
+            currentChannel.historyAvailable
+              ? `available (${messages.length} recent messages)`
+              : `unavailable (${currentChannel.historyError ?? "unknown_error"})`
+          }`
+        ]
+      : []),
+    ...(messages.length > 0 ? ["Recent Slack context (oldest to newest):"] : []),
     ...messages.map(
       (message) =>
-        `${message.author === "assistant" ? "Burble" : "User"}: ${truncate(message.text, 500)}`
+        `${formatSlackContextAuthor(message)}: ${truncate(message.text, 500)}`
     )
   ];
+
+  return lines;
+}
+
+function formatSlackContextAuthor(
+  message: NonNullable<RunRequest["input"]["context"]>["recentMessages"][number]
+): string {
+  if (message.author === "assistant") {
+    return "Burble";
+  }
+
+  return message.speaker ? `Slack user ${message.speaker}` : "User";
 }
 
 function formatToolCatalog(catalog: ToolCatalogItem[]): string {

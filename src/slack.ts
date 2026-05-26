@@ -23,7 +23,11 @@ import {
 import type { ProviderConnection, TokenStore } from "./db";
 import { handleConversation } from "./conversation/orchestrator";
 import { normalizeMentionText } from "./conversation/normalize";
-import type { ConversationResponse, ToolClassification } from "./conversation/types";
+import type {
+  ConversationRequest,
+  ConversationResponse,
+  ToolClassification
+} from "./conversation/types";
 import { createConfiguredAgentRunner } from "./agent/runtime";
 import type { AgentRunEvent, AgentUsage } from "./agent/types";
 import { createDockerRuntimeFactory } from "./agent/container-runtime-factory";
@@ -69,7 +73,13 @@ type SlackDirectMessageEvent = {
 
 type SlackRecentMessage = {
   author: "user" | "assistant";
+  speaker?: string;
   text: string;
+};
+
+type SlackRecentMessageRead = {
+  messages: SlackRecentMessage[];
+  historyError?: string;
 };
 
 type SlackHistoryMessage = {
@@ -183,13 +193,12 @@ export function createSlackRuntime(
       const text = normalizeMentionText(mention.text ?? "");
       const isDirectMessage =
         mention.channel_type === "im" || mention.channel.startsWith("D");
-      const recentMessages = isDirectMessage
-        ? await readRecentSlackMessages(client, {
-            channel: mention.channel,
-            latestTs: mention.ts,
-            user: mention.user
-          })
-        : [];
+      const recentMessages = await readRecentSlackMessages(client, {
+        channel: mention.channel,
+        latestTs: mention.ts,
+        user: mention.user,
+        logWarn: (message) => logger.warn(withUtcTimestamp(message))
+      });
       if (config.agentMode === "llm") {
         progressMessage = await postMentionWorkingState(client, {
           channel: mention.channel,
@@ -212,9 +221,11 @@ export function createSlackRuntime(
           threadTs: mention.thread_ts,
           messageTs: mention.ts,
           isDirectMessage,
-          ...(recentMessages.length > 0
-            ? { context: { recentMessages } }
-            : {}),
+          context: buildSlackRequestContext({
+            channelId: mention.channel,
+            isDirectMessage,
+            read: recentMessages
+          }),
           user: {
             slackUserId: mention.user,
             email
@@ -306,7 +317,8 @@ export function createSlackRuntime(
       const recentMessages = await readRecentSlackMessages(client, {
         channel: directMessage.channel,
         latestTs: directMessage.ts,
-        user: directMessage.user
+        user: directMessage.user,
+        logWarn: (message) => logger.warn(withUtcTimestamp(message))
       });
       if (config.agentMode === "llm") {
         progressMessage = await postMentionWorkingState(client, {
@@ -330,9 +342,11 @@ export function createSlackRuntime(
           threadTs: directMessage.thread_ts,
           messageTs: directMessage.ts,
           isDirectMessage: true,
-          ...(recentMessages.length > 0
-            ? { context: { recentMessages } }
-            : {}),
+          context: buildSlackRequestContext({
+            channelId: directMessage.channel,
+            isDirectMessage: true,
+            read: recentMessages
+          }),
           user: {
             slackUserId: directMessage.user,
             email
@@ -821,38 +835,83 @@ async function readRecentSlackMessages(
     channel: string;
     latestTs: string;
     user: string;
+    logWarn?: (message: string) => void;
   }
-): Promise<SlackRecentMessage[]> {
+): Promise<SlackRecentMessageRead> {
   try {
     const result = await client.conversations.history({
       channel: input.channel,
       latest: input.latestTs,
       inclusive: false,
-      limit: 8
+      limit: 50
     });
     const messages = ((result.messages ?? []) as SlackHistoryMessage[])
       .slice()
       .reverse();
 
-    return messages.flatMap<SlackRecentMessage>((message) => {
-      const text = sanitizeRecentSlackText(message.text);
-      if (!text || isProgressOnlyMessage(text)) {
+    return {
+      messages: messages.flatMap<SlackRecentMessage>((message) => {
+        const text = sanitizeRecentSlackText(message.text);
+        if (!text || isProgressOnlyMessage(text)) {
+          return [];
+        }
+
+        if (message.user === input.user) {
+          return [{ author: "user" as const, speaker: `<@${message.user}>`, text }];
+        }
+
+        if (message.bot_id) {
+          return [{ author: "assistant" as const, text }];
+        }
+
+        if (message.user) {
+          return [{ author: "user" as const, speaker: `<@${message.user}>`, text }];
+        }
+
         return [];
-      }
-
-      if (message.user === input.user) {
-        return [{ author: "user" as const, text }];
-      }
-
-      if (message.bot_id || message.user) {
-        return [{ author: "assistant" as const, text }];
-      }
-
-      return [];
-    });
-  } catch {
-    return [];
+      })
+    };
+  } catch (error) {
+    const historyError = summarizeSlackHistoryError(error);
+    input.logWarn?.(
+      `Slack channel history unavailable channel=${input.channel} reason=${historyError}`
+    );
+    return {
+      messages: [],
+      historyError
+    };
   }
+}
+
+function buildSlackRequestContext(input: {
+  channelId: string;
+  isDirectMessage: boolean;
+  read: SlackRecentMessageRead;
+}): NonNullable<ConversationRequest["context"]> {
+  return {
+    currentChannel: {
+      id: input.channelId,
+      isDirectMessage: input.isDirectMessage,
+      historyAvailable: !input.read.historyError,
+      ...(input.read.historyError ? { historyError: input.read.historyError } : {})
+    },
+    recentMessages: input.read.messages
+  };
+}
+
+function summarizeSlackHistoryError(error: unknown): string {
+  if (error && typeof error === "object" && "data" in error) {
+    const data = (error as { data?: { error?: unknown } }).data;
+    if (typeof data?.error === "string") {
+      return data.error;
+    }
+  }
+
+  if (error instanceof Error && error.message) {
+    return error.message.replace(/\s+/g, "_").slice(0, 80);
+  }
+
+  return "unknown_error";
 }
 
 function sanitizeRecentSlackText(text: string | undefined): string {
