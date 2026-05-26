@@ -31,6 +31,7 @@ const config: Config = {
   agentRuntimeImage: "burble-openclaw-nemoclaw:dev",
   agentRuntimeIdleTtlMs: 1800000,
   agentRuntimeReaperIntervalMs: 60000,
+  agentRuntimeJwtTtlSeconds: 604800,
   agentRuntimeTokenSecret: null,
   agentRuntimeToolGatewayUrl: "http://burble-app:3000/internal/tools",
   agentRuntimeMcpGatewayUrl: null,

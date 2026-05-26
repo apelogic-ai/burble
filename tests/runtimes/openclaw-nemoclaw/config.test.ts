@@ -94,6 +94,20 @@ describe("readRuntimeConfig", () => {
     });
   });
 
+  test("treats placeholder optional values as absent", () => {
+    expect(
+      readRuntimeConfig({
+        BURBLE_TOOL_GATEWAY_URL: "http://burble-app:3000/internal/tools",
+        BURBLE_INTERNAL_TOKEN: "secret",
+        BURBLE_MCP_GATEWAY_URL: "undefined",
+        BURBLE_RUNTIME_JWT: "null"
+      })
+    ).toMatchObject({
+      mcpGatewayUrl: null,
+      runtimeJwt: null
+    });
+  });
+
   test("accepts Ollama model tags in normalized model ids", () => {
     expect(
       readRuntimeConfig({

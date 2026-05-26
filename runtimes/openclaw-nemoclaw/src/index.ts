@@ -6,6 +6,16 @@ import { ensureOpenClawSetup } from "./setup";
 
 const config = readRuntimeConfig(Bun.env);
 
+info(
+  [
+    "OpenClaw/NemoClaw runtime config",
+    `engine=${config.engine}`,
+    `mcpGatewayConfigured=${Boolean(config.mcpGatewayUrl)}`,
+    `runtimeJwtConfigured=${Boolean(config.runtimeJwt)}`,
+    `toolGatewayUrl=${config.toolGatewayUrl}`
+  ].join(" ")
+);
+
 await ensureOpenClawSetup(config);
 const gateway = startOpenClawGatewayIfNeeded(config);
 await gateway?.ready;

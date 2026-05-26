@@ -62,6 +62,7 @@ export function createDockerRuntimeFactory(input: {
   mcpGatewayUrl?: string | null;
   mcpAudience?: string | null;
   runtimeJwtIssuer?: RuntimeJwtIssuer | null;
+  runtimeJwtTtlSeconds?: number;
   runtimeTokenSecret: string;
   openClawConfigPatchPath?: string | null;
   env?: Record<string, string | undefined>;
@@ -120,7 +121,8 @@ export function createDockerRuntimeFactory(input: {
               audience: input.mcpAudience ?? input.mcpGatewayUrl,
               runtimeId: runtime.id,
               workspaceId: principal.workspaceId,
-              slackUserId: principal.slackUserId
+              slackUserId: principal.slackUserId,
+              ttlSeconds: input.runtimeJwtTtlSeconds
             })
           : null;
       const spec = buildContainerRuntimeSpec({
@@ -314,10 +316,22 @@ async function ensureContainerRunning(
   }
 
   if (inspected.code === 0) {
+    if (spec.env.BURBLE_RUNTIME_JWT) {
+      await assertCommandOk(execute("docker", ["rm", spec.name]), "docker rm");
+      await runContainer(spec, execute);
+      return;
+    }
     await assertCommandOk(execute("docker", ["start", spec.name]), "docker start");
     return;
   }
 
+  await runContainer(spec, execute);
+}
+
+async function runContainer(
+  spec: ContainerRuntimeSpec,
+  execute: RuntimeCommandExecutor
+): Promise<void> {
   await assertCommandOk(
     execute("docker", [
       "run",

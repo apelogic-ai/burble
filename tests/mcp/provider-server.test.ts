@@ -31,6 +31,7 @@ const config: Config = {
   agentRuntimeImage: "burble-openclaw-nemoclaw:dev",
   agentRuntimeIdleTtlMs: 1800000,
   agentRuntimeReaperIntervalMs: 60000,
+  agentRuntimeJwtTtlSeconds: 604800,
   agentRuntimeTokenSecret: null,
   agentRuntimeToolGatewayUrl: "http://burble-app:3000/internal/tools",
   agentRuntimeMcpGatewayUrl: "http://agentgateway:3000/mcp",
@@ -56,6 +57,29 @@ describe("handleProviderMcpRequest", () => {
     );
 
     expect(response.status).toBe(401);
+    await expect(response.json()).resolves.toEqual({
+      error: "unauthorized",
+      error_description: "Runtime JWT token required"
+    });
+    store.close();
+  });
+
+  test("rejects invalid runtime JWTs with a specific error", async () => {
+    const issuer = createRuntimeJwtIssuer({ issuer: config.runtimeJwtIssuer });
+    const store = createTokenStore(":memory:");
+
+    const response = await handleProviderMcpRequest(
+      config,
+      store,
+      issuer,
+      mcpRequest({ method: "tools/list" }, "not-a-jwt")
+    );
+
+    expect(response.status).toBe(401);
+    await expect(response.json()).resolves.toEqual({
+      error: "unauthorized",
+      error_description: "Runtime JWT token invalid"
+    });
     store.close();
   });
 

@@ -83,14 +83,24 @@ export async function handleProviderMcpRequest(
   request: Request,
   deps: ProviderMcpDeps = {}
 ): Promise<Response> {
-  const runtime = authorizeProviderMcpRequest(
+  const auth = authorizeProviderMcpRequest(
     config,
     store,
     runtimeJwtIssuer,
     request
   );
+  const runtime = auth.runtime;
   if (!runtime) {
-    return new Response("Unauthorized", { status: 401 });
+    return Response.json(
+      {
+        error: "unauthorized",
+        error_description:
+          auth.reason === "missing_bearer"
+            ? "Runtime JWT token required"
+            : "Runtime JWT token invalid"
+      },
+      { status: 401 }
+    );
   }
 
   const server = createProviderMcpServer(config, store, runtime, deps);
@@ -677,10 +687,10 @@ function authorizeProviderMcpRequest(
   store: TokenStore,
   runtimeJwtIssuer: RuntimeJwtIssuer,
   request: Request
-): AgentRuntimeRecord | null {
+): { runtime: AgentRuntimeRecord | null; reason?: "missing_bearer" | "invalid_jwt" } {
   const bearerToken = readBearerToken(request);
   if (!bearerToken) {
-    return null;
+    return { runtime: null, reason: "missing_bearer" };
   }
 
   const claims = runtimeJwtIssuer.verifyRuntimeJwt({
@@ -691,7 +701,7 @@ function authorizeProviderMcpRequest(
       `${config.runtimeJwtIssuer}/mcp`
   });
   if (!claims) {
-    return null;
+    return { runtime: null, reason: "invalid_jwt" };
   }
 
   const runtime = store.getAgentRuntime(claims.runtime_id);
@@ -700,10 +710,10 @@ function authorizeProviderMcpRequest(
     runtime.workspaceId !== claims.workspace_id ||
     runtime.slackUserId !== claims.slack_user_id
   ) {
-    return null;
+    return { runtime: null, reason: "invalid_jwt" };
   }
 
-  return runtime;
+  return { runtime };
 }
 
 function readBearerToken(request: Request): string | null {

@@ -53,6 +53,7 @@ describe("dev deploy config", () => {
       "AGENT_RUNTIME_DOCKER_NETWORK",
       "AGENT_RUNTIME_IDLE_TTL_MS",
       "AGENT_RUNTIME_REAPER_INTERVAL_MS",
+      "AGENT_RUNTIME_JWT_TTL_SECONDS",
       "AGENT_RUNTIME_TOKEN_SECRET",
       "AGENT_RUNTIME_TOOL_GATEWAY_URL",
       "AGENT_RUNTIME_MCP_GATEWAY_URL",
@@ -211,6 +212,7 @@ describe("dev deploy config", () => {
       "AGENT_RUNTIME_DOCKER_NETWORK",
       "AGENT_RUNTIME_IDLE_TTL_MS",
       "AGENT_RUNTIME_REAPER_INTERVAL_MS",
+      "AGENT_RUNTIME_JWT_TTL_SECONDS",
       "AGENT_RUNTIME_TOKEN_SECRET",
       "AGENT_RUNTIME_TOOL_GATEWAY_URL",
       "AGENT_RUNTIME_MCP_GATEWAY_URL",
@@ -241,6 +243,7 @@ describe("dev deploy config", () => {
     );
     expect(personalRuntimesCompose).toContain("AGENT_RUNTIME_IDLE_TTL_MS");
     expect(personalRuntimesCompose).toContain("AGENT_RUNTIME_REAPER_INTERVAL_MS");
+    expect(personalRuntimesCompose).toContain("AGENT_RUNTIME_JWT_TTL_SECONDS");
     expect(personalRuntimesCompose).toContain("AGENT_RUNTIME_MCP_GATEWAY_URL");
     expect(personalRuntimesCompose).toContain("AGENT_RUNTIME_MCP_AUDIENCE");
     expect(personalRuntimesCompose).toContain("RUNTIME_JWT_ISSUER");

@@ -133,9 +133,11 @@ describe("createDockerRuntimeFactory", () => {
           runtimeId: string;
           workspaceId: string;
           slackUserId: string;
+          ttlSeconds?: number;
         }) =>
-          `jwt:${claims.audience}:${claims.runtimeId}:${claims.workspaceId}:${claims.slackUserId}`
+          `jwt:${claims.audience}:${claims.runtimeId}:${claims.workspaceId}:${claims.slackUserId}:${claims.ttlSeconds}`
       } as never,
+      runtimeJwtTtlSeconds: 86400,
       runtimeTokenSecret: "runtime-secret",
       openClawConfigPatchPath: "/opt/burble/openclaw-patches",
       env: {
@@ -175,7 +177,7 @@ describe("createDockerRuntimeFactory", () => {
     expect(commands[1].args).toContain("OPENAI_API_KEY=openai-key");
     expect(commands[1].args).toContain("AI_MODEL=ollama:qwen3-coder:30b-cloud");
     expect(commands[1].args).toContain("BURBLE_MCP_GATEWAY_URL=http://agentgateway:3000/mcp");
-    expect(commands[1].args.join(" ")).toContain(`BURBLE_RUNTIME_JWT=jwt:http://agentgateway:3000/mcp:${handle.id}:T123:U123`);
+    expect(commands[1].args.join(" ")).toContain(`BURBLE_RUNTIME_JWT=jwt:http://agentgateway:3000/mcp:${handle.id}:T123:U123:86400`);
     expect(commands[1].args.join(" ")).not.toContain("github-secret");
     expect(events.map((event) => event.eventType)).toEqual([
       "runtime_provision_requested",
@@ -184,6 +186,47 @@ describe("createDockerRuntimeFactory", () => {
     expect(events.map((event) => event.summaryJson).join("\n")).not.toContain(
       "github-secret"
     );
+
+    store.close();
+  });
+
+  test("recreates a stopped MCP runtime instead of reusing stale JWT env", async () => {
+    const store = createTokenStore(":memory:");
+    const commands: Array<{ command: string; args: string[] }> = [];
+    const factory = createDockerRuntimeFactory({
+      store,
+      engine: "openclaw",
+      image: "burble-openclaw-nemoclaw:dev",
+      dataRoot: "/data/runtimes",
+      dockerNetwork: "compose_default",
+      toolGatewayUrl: "http://burble-app:3000/internal/tools",
+      mcpGatewayUrl: "http://agentgateway:3000/mcp",
+      runtimeJwtIssuer: {
+        issueRuntimeJwt: (claims: { runtimeId: string }) =>
+          `fresh-jwt:${claims.runtimeId}`
+      } as never,
+      runtimeTokenSecret: "runtime-secret",
+      healthCheckAttempts: 1,
+      healthCheckIntervalMs: 0,
+      execute: async (command, args) => {
+        commands.push({ command, args });
+        if (args[0] === "inspect") {
+          return { code: 0, stdout: "false\n", stderr: "" };
+        }
+        return { code: 0, stdout: "ok\n", stderr: "" };
+      },
+      fetch: async () => new Response("ok")
+    });
+
+    await factory.getOrCreateRuntime(principal);
+
+    expect(commands.map((command) => command.args[0])).toEqual([
+      "inspect",
+      "rm",
+      "run"
+    ]);
+    expect(commands[2].args.join(" ")).toContain("BURBLE_RUNTIME_JWT=fresh-jwt:");
+    expect(commands[2].args.join(" ")).not.toContain("docker start");
 
     store.close();
   });
