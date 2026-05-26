@@ -21,6 +21,7 @@ Then set `BASE_URL` in `.env` and configure OAuth callback URLs:
 ```text
 {BASE_URL}/oauth/github/callback
 {BASE_URL}/oauth/jira/callback
+{BASE_URL}/oauth/slack/callback
 ```
 
 ## Slack Commands
@@ -34,6 +35,7 @@ Then set `BASE_URL` in `.env` and configure OAuth callback URLs:
 - `/auth` shows available auth connections.
 - `/auth github` starts the GitHub OAuth flow.
 - `/auth jira` starts the Jira OAuth flow.
+- `/auth slack` starts the Slack user OAuth flow for message search.
 - `/github-me` verifies the connected GitHub identity for the Slack user.
 - `/issues` lists open GitHub issues assigned to the connected user.
 
@@ -52,6 +54,11 @@ Required Slack bot scopes:
 - `im:write`
 - `users:read`
 - `users:read.email`
+
+Optional Slack user OAuth scopes for `/auth slack` message search:
+
+- `search:read`
+- `users:read`
 
 Required Slack event subscription:
 

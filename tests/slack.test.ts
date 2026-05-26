@@ -128,6 +128,8 @@ describe("parseAuthCommand", () => {
     expect(parseAuthCommand("jira")).toEqual({ kind: "jira" });
     expect(parseAuthCommand("atlassian")).toEqual({ kind: "jira" });
     expect(parseAuthCommand("connect jira")).toEqual({ kind: "jira" });
+    expect(parseAuthCommand("slack")).toEqual({ kind: "slack" });
+    expect(parseAuthCommand("connect slack")).toEqual({ kind: "slack" });
   });
 
   test("reports unknown auth targets", () => {
@@ -142,23 +144,28 @@ describe("buildAuthResponse", () => {
   test("builds a connections menu with GitHub and future providers", () => {
     const response = buildAuthResponse({
       githubUrl: "https://example.test/github",
-      jiraUrl: "https://example.test/jira"
+      jiraUrl: "https://example.test/jira",
+      slackUrl: "https://example.test/slack"
     });
 
     expect(response.text).toContain("Connections");
     expect(JSON.stringify(response.blocks)).toContain("GitHub");
     expect(JSON.stringify(response.blocks)).toContain("Atlassian");
+    expect(JSON.stringify(response.blocks)).toContain("Slack search");
     expect(JSON.stringify(response.blocks)).toContain("https://example.test/github");
     expect(JSON.stringify(response.blocks)).toContain("https://example.test/jira");
+    expect(JSON.stringify(response.blocks)).toContain("https://example.test/slack");
   });
 
   test("marks Jira unavailable when no Jira OAuth URL is configured", () => {
     const response = buildAuthResponse({
       githubUrl: "https://example.test/github",
-      jiraUrl: null
+      jiraUrl: null,
+      slackUrl: null
     });
 
     expect(JSON.stringify(response.blocks)).toContain("Jira OAuth is not configured");
+    expect(JSON.stringify(response.blocks)).toContain("Slack OAuth is not configured");
   });
 });
 

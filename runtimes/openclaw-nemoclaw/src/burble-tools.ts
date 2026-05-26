@@ -175,6 +175,10 @@ function toMcpToolName(toolName: string): string {
       return "jira_list_assigned_issues";
     case "jira.searchIssues":
       return "jira_search_issues";
+    case "slack.searchUsers":
+      return "slack_search_users";
+    case "slack.searchMessages":
+      return "slack_search_messages";
     case "atlassian.listMcpTools":
       return "atlassian_list_mcp_tools";
     case "atlassian.callMcpTool":
@@ -232,6 +236,23 @@ function toMcpToolArguments(
       throw new Error("jira.searchUsers requires input.query");
     }
     return { query };
+  }
+
+  if (toolName === "slack.searchUsers") {
+    const query = readNestedString(body, "input", "query");
+    if (!query) {
+      throw new Error("slack.searchUsers requires input.query");
+    }
+    return { query };
+  }
+
+  if (toolName === "slack.searchMessages") {
+    return compactToolInput(readRecordKey(body, "input"), [
+      "query",
+      "fromUserId",
+      "inChannel",
+      "limit"
+    ]);
   }
 
   if (toolName === "jira.createIssue") {
@@ -330,7 +351,8 @@ function compactToolInput(
     if (
       value === null ||
       (typeof value === "string" && value.trim()) ||
-      typeof value === "boolean"
+      typeof value === "boolean" ||
+      typeof value === "number"
     ) {
       output[key] = value;
     }

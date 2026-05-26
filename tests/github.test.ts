@@ -10,6 +10,8 @@ import type { Config } from "../src/config";
 const config: Config = {
   slackBotToken: "xoxb-test",
   slackAppToken: "xapp-test",
+  slackClientId: null,
+  slackClientSecret: null,
   githubClientId: "client-id",
   githubClientSecret: "client-secret",
   jiraClientId: null,

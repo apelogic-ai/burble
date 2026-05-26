@@ -28,6 +28,7 @@ export type AgentInput = {
   connections: {
     github: ProviderConnection | null;
     jira?: ProviderConnection | null;
+    slack?: ProviderConnection | null;
   };
 };
 

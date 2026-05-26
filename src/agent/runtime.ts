@@ -1,6 +1,7 @@
 import type { AgentRuntime } from "../config";
 import type { createGitHubTools } from "../tools/github";
 import type { createJiraTools } from "../tools/jira";
+import type { createSlackTools } from "../tools/slack";
 import { createAiSdkAgentRunner } from "./runner";
 import type { AgentGenerateText } from "./runner";
 import { createOpenClawNemoClawAgentRunner } from "./runners/openclaw-nemoclaw";
@@ -13,6 +14,7 @@ export type ConfiguredAgentRunnerDeps = {
   model: string;
   githubTools: ReturnType<typeof createGitHubTools>;
   jiraTools?: ReturnType<typeof createJiraTools>;
+  slackTools?: ReturnType<typeof createSlackTools>;
   openClawNemoClawUrl?: string | null;
   runtimeFactory?: RuntimeFactory;
   resolveModel?: ModelResolver;
@@ -29,6 +31,7 @@ export function createConfiguredAgentRunner(
         model: deps.model,
         githubTools: deps.githubTools,
         ...(deps.jiraTools ? { jiraTools: deps.jiraTools } : {}),
+        ...(deps.slackTools ? { slackTools: deps.slackTools } : {}),
         ...(deps.resolveModel ? { resolveModel: deps.resolveModel } : {}),
         ...(deps.generateText ? { generateText: deps.generateText } : {}),
         ...(deps.logInfo ? { logInfo: deps.logInfo } : {})

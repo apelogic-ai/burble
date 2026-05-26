@@ -11,6 +11,8 @@ import { handleToolGatewayRequest } from "../src/tool-gateway";
 const config: Config = {
   slackBotToken: "xoxb-test",
   slackAppToken: "xapp-test",
+  slackClientId: null,
+  slackClientSecret: null,
   githubClientId: "client-id",
   githubClientSecret: "client-secret",
   jiraClientId: null,
@@ -57,6 +59,15 @@ const jiraConnection: ProviderConnection = {
   providerLogin: "person@atlassian.example",
   accessToken: "jira-token",
   connectedAt: "2026-05-22T00:00:00Z"
+};
+
+const slackConnection: ProviderConnection = {
+  provider: "slack",
+  email: "person@example.com",
+  slackUserId: "U123",
+  providerLogin: "U123",
+  accessToken: "xoxp-user-token",
+  connectedAt: "2026-05-25T00:00:00Z"
 };
 
 const runtime: AgentRuntimeRecord = {
@@ -182,6 +193,51 @@ describe("handleToolGatewayRequest", () => {
 
     expect(response.status).toBe(401);
     expect(await response.text()).toBe("Unauthorized");
+  });
+
+  test("executes Slack message search with the stored Slack user token", async () => {
+    const response = await handleToolGatewayRequest(
+      config,
+      createStore(slackConnection),
+      "slack.searchMessages",
+      request("slack.searchMessages", {
+        user: { email: "person@example.com" },
+        input: { query: "launch", fromUserId: "U123", limit: 3 }
+      }),
+      {
+        searchSlackMessages: async (token, input) => {
+          expect(token).toBe("xoxp-user-token");
+          expect(input).toEqual({
+            query: "launch",
+            fromUserId: "U123",
+            limit: 3
+          });
+          return [
+            {
+              channelId: "C123",
+              channelName: "eng",
+              userId: "U123",
+              text: "launch notes",
+              permalink: "https://slack.test/archives/C123/p1"
+            }
+          ];
+        }
+      }
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      classification: "user_private",
+      content: [
+        {
+          channelId: "C123",
+          channelName: "eng",
+          userId: "U123",
+          text: "launch notes",
+          permalink: "https://slack.test/archives/C123/p1"
+        }
+      ]
+    });
   });
 
   test("allows a principal-bound runtime token for its own provider account", async () => {

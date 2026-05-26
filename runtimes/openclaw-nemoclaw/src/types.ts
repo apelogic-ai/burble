@@ -36,6 +36,11 @@ export type RunRequest = {
         email?: string;
         providerLogin?: string;
       };
+      slack?: {
+        connected: boolean;
+        email?: string;
+        providerLogin?: string;
+      };
     };
   };
 };

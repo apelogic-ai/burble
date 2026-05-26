@@ -3,6 +3,8 @@ import { validateAgentModelId } from "./agent/providers";
 export type Config = {
   slackBotToken: string;
   slackAppToken: string;
+  slackClientId: string | null;
+  slackClientSecret: string | null;
   githubClientId: string;
   githubClientSecret: string;
   jiraClientId: string | null;
@@ -188,6 +190,8 @@ export function readConfig(env: Env): Config {
   return {
     slackBotToken: requiredEnv(env, "SLACK_BOT_TOKEN"),
     slackAppToken: requiredEnv(env, "SLACK_APP_TOKEN"),
+    slackClientId: optionalSecretEnv(env, "SLACK_CLIENT_ID"),
+    slackClientSecret: optionalSecretEnv(env, "SLACK_CLIENT_SECRET"),
     githubClientId: requiredEnv(env, "GITHUB_CLIENT_ID"),
     githubClientSecret: requiredEnv(env, "GITHUB_CLIENT_SECRET"),
     jiraClientId: optionalSecretEnv(env, "JIRA_CLIENT_ID"),

@@ -11,6 +11,8 @@ import { createRuntimeJwtIssuer } from "../../src/runtime-jwt";
 const config: Config = {
   slackBotToken: "xoxb-test",
   slackAppToken: "xapp-test",
+  slackClientId: null,
+  slackClientSecret: null,
   githubClientId: "client-id",
   githubClientSecret: "client-secret",
   jiraClientId: null,
@@ -111,6 +113,66 @@ describe("handleProviderMcpRequest", () => {
     expect(toolResult).toEqual({
       classification: "user_private",
       content: { login: "octocat" }
+    });
+    store.close();
+  });
+
+  test("executes Slack search tools under the runtime principal", async () => {
+    const issuer = createRuntimeJwtIssuer({ issuer: config.runtimeJwtIssuer });
+    const store = createTokenStore(":memory:");
+    const runtime = store.getOrCreateAgentRuntime({
+      workspaceId: "T123",
+      slackUserId: "U123",
+      engine: "openclaw",
+      endpointUrl: "http://runtime-u123:8080",
+      authTokenHash: "hash-u123",
+      statePath: "/data/runtimes/u123/state",
+      configPath: "/data/runtimes/u123/config/openclaw.json",
+      workspacePath: "/data/runtimes/u123/workspace"
+    });
+    store.upsertProviderConnection({
+      provider: "slack",
+      email: "person@example.com",
+      slackUserId: "U123",
+      providerLogin: "U123",
+      accessToken: "xoxp-user-token"
+    });
+    const token = issuer.issueRuntimeJwt({
+      audience: "http://agentgateway:3000/mcp",
+      runtimeId: runtime.id,
+      workspaceId: "T123",
+      slackUserId: "U123"
+    });
+
+    const response = await handleProviderMcpRequest(
+      config,
+      store,
+      issuer,
+      mcpRequest(
+        {
+          method: "tools/call",
+          params: {
+            name: "slack_search_messages",
+            arguments: { query: "launch", fromUserId: "U123" }
+          }
+        },
+        token
+      ),
+      {
+        searchSlackMessages: async (accessToken, input) => {
+          expect(accessToken).toBe("xoxp-user-token");
+          expect(input).toEqual({ query: "launch", fromUserId: "U123" });
+          return [{ text: "launch notes", channelName: "eng", userId: "U123" }];
+        }
+      }
+    );
+    const body = readMcpBody(await response.text());
+    const toolResult = JSON.parse(body.result.content[0].text);
+
+    expect(response.status).toBe(200);
+    expect(toolResult).toEqual({
+      classification: "user_private",
+      content: [{ channelName: "eng", userId: "U123", text: "launch notes" }]
     });
     store.close();
   });

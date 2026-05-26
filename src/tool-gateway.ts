@@ -24,6 +24,7 @@ import {
   type UpstreamMcpTool,
   type UpstreamMcpToolResult
 } from "./mcp/upstream-http-client";
+import { searchSlackMessages, searchSlackUsers } from "./slack-api";
 import { createGitHubTools } from "./tools/github";
 import {
   createJiraTools,
@@ -31,6 +32,7 @@ import {
   type JiraToolDeps,
   withFreshJiraToken
 } from "./tools/jira";
+import { createSlackTools, type SlackToolDeps } from "./tools/slack";
 import type { ToolResult } from "./tools/types";
 import {
   logAtlassianMcpCallFailure,
@@ -40,7 +42,8 @@ import {
 import { verifyJiraAuthForOpaqueAtlassianMcpError } from "./mcp/atlassian-auth";
 
 type ToolGatewayDeps = Partial<Parameters<typeof createGitHubTools>[0]> &
-  Partial<JiraToolDeps> & {
+  Partial<JiraToolDeps> &
+  Partial<SlackToolDeps> & {
     listAtlassianMcpTools?: (input: {
       url: string;
       accessToken: string;
@@ -72,7 +75,9 @@ const defaultDeps = {
   searchJiraUsers,
   createJiraIssue,
   editJiraIssue,
-  searchJiraIssues
+  searchJiraIssues,
+  searchSlackMessages,
+  searchSlackUsers
 };
 
 type ToolGatewayAuth =
@@ -114,7 +119,9 @@ export async function handleToolGatewayRequest(
         message:
           provider === "github"
             ? "Connect GitHub first: `@Burble connect github`."
-            : "Connect Jira first."
+            : provider === "jira"
+              ? "Connect Jira first."
+              : "Connect Slack search first: `/auth slack`."
       }
     });
   }
@@ -130,6 +137,7 @@ export async function handleToolGatewayRequest(
     saveJiraConnection: (connection) => store.upsertProviderConnection(connection),
     ...deps
   });
+  const slackTools = createSlackTools({ ...defaultDeps, ...deps });
 
   switch (toolName) {
     case "github.getAuthenticatedUser":
@@ -272,6 +280,38 @@ export async function handleToolGatewayRequest(
         await jiraTools.searchIssues.execute({
           connection,
           input: { jql: body.input.jql }
+        })
+      );
+    }
+
+    case "slack.searchUsers": {
+      if (!isSearchSlackUsersInput(body.input)) {
+        return new Response("Invalid tool input", { status: 400 });
+      }
+
+      return jsonResponseWithAudit(
+        store,
+        auth,
+        toolName,
+        await slackTools.searchUsers.execute({
+          connection,
+          input: { query: body.input.query }
+        })
+      );
+    }
+
+    case "slack.searchMessages": {
+      if (!isSearchSlackMessagesInput(body.input)) {
+        return new Response("Invalid tool input", { status: 400 });
+      }
+
+      return jsonResponseWithAudit(
+        store,
+        auth,
+        toolName,
+        await slackTools.searchMessages.execute({
+          connection,
+          input: body.input
         })
       );
     }
@@ -464,13 +504,17 @@ function isKnownTool(toolName: string): boolean {
     toolName === "jira.editIssue" ||
     toolName === "jira.listAssignedIssues" ||
     toolName === "jira.searchIssues" ||
+    toolName === "slack.searchUsers" ||
+    toolName === "slack.searchMessages" ||
     toolName === "atlassian.listMcpTools" ||
     toolName === "atlassian.callMcpTool"
   );
 }
 
-function readToolProvider(toolName: string): "github" | "jira" {
-  return toolName.startsWith("jira.") || toolName.startsWith("atlassian.")
+function readToolProvider(toolName: string): "github" | "jira" | "slack" {
+  return toolName.startsWith("slack.")
+    ? "slack"
+    : toolName.startsWith("jira.") || toolName.startsWith("atlassian.")
     ? "jira"
     : "github";
 }
@@ -512,6 +556,33 @@ function isSearchJiraUsersInput(input: unknown): input is { query: string } {
     "query" in input &&
     typeof input.query === "string" &&
     input.query.trim().length > 0
+  );
+}
+
+function isSearchSlackUsersInput(input: unknown): input is { query: string } {
+  return isSearchJiraUsersInput(input);
+}
+
+function isSearchSlackMessagesInput(input: unknown): input is {
+  query: string;
+  fromUserId?: string;
+  inChannel?: string;
+  limit?: number;
+} {
+  if (typeof input !== "object" || input === null || Array.isArray(input)) {
+    return false;
+  }
+  const record = input as Record<string, unknown>;
+  return (
+    typeof record.query === "string" &&
+    record.query.trim().length > 0 &&
+    optionalString(record.fromUserId) &&
+    optionalString(record.inChannel) &&
+    (record.limit === undefined ||
+      (typeof record.limit === "number" &&
+        Number.isInteger(record.limit) &&
+        record.limit > 0 &&
+        record.limit <= 20))
   );
 }
 

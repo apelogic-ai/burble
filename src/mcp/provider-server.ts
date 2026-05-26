@@ -27,12 +27,14 @@ import {
   type UpstreamMcpToolResult
 } from "./upstream-http-client";
 import { createGitHubTools, type GitHubToolDeps } from "../tools/github";
+import { searchSlackMessages, searchSlackUsers } from "../slack-api";
 import {
   createJiraTools,
   isJiraAuthErrorResult,
   type JiraToolDeps,
   withFreshJiraToken
 } from "../tools/jira";
+import { createSlackTools, type SlackToolDeps } from "../tools/slack";
 import type { ToolResult } from "../tools/types";
 import type { RuntimeJwtIssuer } from "../runtime-jwt";
 import {
@@ -43,7 +45,8 @@ import {
 import { verifyJiraAuthForOpaqueAtlassianMcpError } from "./atlassian-auth";
 
 type ProviderMcpDeps = Partial<GitHubToolDeps> &
-  Partial<JiraToolDeps> & {
+  Partial<JiraToolDeps> &
+  Partial<SlackToolDeps> & {
     listAtlassianMcpTools?: (input: {
       url: string;
       accessToken: string;
@@ -68,7 +71,9 @@ const defaultDeps = {
   searchJiraUsers,
   createJiraIssue,
   editJiraIssue,
-  searchJiraIssues
+  searchJiraIssues,
+  searchSlackMessages,
+  searchSlackUsers
 };
 
 export async function handleProviderMcpRequest(
@@ -113,6 +118,7 @@ function createProviderMcpServer(
     saveJiraConnection: (connection) => store.upsertProviderConnection(connection),
     ...deps
   });
+  const slackTools = createSlackTools({ ...defaultDeps, ...deps });
 
   server.registerTool(
     "github_get_authenticated_user",
@@ -369,6 +375,62 @@ function createProviderMcpServer(
           jiraTools.searchIssues.execute({
             connection,
             input: { jql }
+          })
+        )
+      )
+  );
+
+  server.registerTool(
+    "slack_search_users",
+    {
+      title: "Slack user search",
+      description:
+        "Search Slack users by display name, real name, username, or Slack user ID.",
+      inputSchema: {
+        query: z.string().min(1).describe("Slack user name, display name, or ID")
+      }
+    },
+    async ({ query }) =>
+      mcpToolResult(
+        await withConnection(store, runtime, "slack", (connection) =>
+          slackTools.searchUsers.execute({
+            connection,
+            input: { query }
+          })
+        )
+      )
+  );
+
+  server.registerTool(
+    "slack_search_messages",
+    {
+      title: "Slack message search",
+      description:
+        "Search Slack messages visible to this Slack user's connected Slack search token.",
+      inputSchema: {
+        query: z.string().min(1).describe("Slack search terms"),
+        fromUserId: z
+          .string()
+          .optional()
+          .describe("Optional Slack user ID to filter by author"),
+        inChannel: z
+          .string()
+          .optional()
+          .describe("Optional channel name without #, or channel ID"),
+        limit: z.number().int().positive().max(20).optional()
+      }
+    },
+    async ({ query, fromUserId, inChannel, limit }) =>
+      mcpToolResult(
+        await withConnection(store, runtime, "slack", (connection) =>
+          slackTools.searchMessages.execute({
+            connection,
+            input: {
+              query,
+              ...(fromUserId ? { fromUserId } : {}),
+              ...(inChannel ? { inChannel } : {}),
+              ...(limit ? { limit } : {})
+            }
           })
         )
       )
@@ -671,7 +733,9 @@ async function withConnection<TContent>(
         message:
           provider === "github"
             ? "Connect GitHub first."
-            : "Connect Jira first."
+            : provider === "jira"
+              ? "Connect Jira first."
+              : "Connect Slack search first: `/auth slack`."
       }
     };
   }

@@ -1,12 +1,18 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
 import type { Config } from "../src/config";
 import type { TokenStore } from "../src/db";
-import { handleGitHubCallback, handleJiraCallback } from "../src/server";
+import {
+  handleGitHubCallback,
+  handleJiraCallback,
+  handleSlackCallback
+} from "../src/server";
 import type { SlackRuntime } from "../src/slack";
 
 const config: Config = {
   slackBotToken: "xoxb-test",
   slackAppToken: "xapp-test",
+  slackClientId: null,
+  slackClientSecret: null,
   githubClientId: "client-id",
   githubClientSecret: "client-secret",
   jiraClientId: "jira-client-id",
@@ -249,5 +255,83 @@ describe("handleJiraCallback", () => {
         text: "Connected to Jira as `Leo` (person@example.com)."
       }
     ]);
+  });
+});
+
+describe("handleSlackCallback", () => {
+  test("stores the Slack provider connection and DMs Slack on success", async () => {
+    const { store, providerConnections } = createFakeStore();
+    const { slack, messages } = createFakeSlack();
+
+    const response = await handleSlackCallback(
+      config,
+      store,
+      slack,
+      new URL(
+        "https://example.test/oauth/slack/callback?code=abc&state=valid-state"
+      ),
+      {
+        exchangeSlackCode: async (_config, code) => {
+          expect(code).toBe("abc");
+          return {
+            accessToken: "xoxp-user-token",
+            slackUserId: "U123",
+            scope: "search:read users:read"
+          };
+        }
+      }
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.text()).toContain("Connected. You can close this tab.");
+    expect(providerConnections).toEqual([
+      {
+        provider: "slack",
+        email: "person@example.com",
+        slackUserId: "U123",
+        providerLogin: "U123",
+        accessToken: "xoxp-user-token"
+      }
+    ]);
+    expect(messages).toEqual([
+      {
+        channel: "U123",
+        text: "Connected Slack search for <@U123> (person@example.com)."
+      }
+    ]);
+  });
+
+  test("rejects a Slack token for a different Slack user", async () => {
+    const { store, providerConnections } = createFakeStore();
+    const { slack, messages } = createFakeSlack();
+    const consoleError = spyOn(console, "error").mockImplementation(() => {});
+
+    try {
+      const response = await handleSlackCallback(
+        config,
+        store,
+        slack,
+        new URL(
+          "https://example.test/oauth/slack/callback?code=abc&state=valid-state"
+        ),
+        {
+          exchangeSlackCode: async () => ({
+            accessToken: "xoxp-user-token",
+            slackUserId: "U999"
+          })
+        }
+      );
+
+      expect(response.status).toBe(400);
+      expect(providerConnections).toEqual([]);
+      expect(messages).toEqual([
+        {
+          channel: "U123",
+          text: "Slack connection failed. Run `/auth slack` and try again."
+        }
+      ]);
+    } finally {
+      consoleError.mockRestore();
+    }
   });
 });

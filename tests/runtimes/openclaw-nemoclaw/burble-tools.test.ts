@@ -211,6 +211,14 @@ describe("createBurbleToolExecutor", () => {
         user: { email: "person@example.com" },
         input: { query: "alex.reviewer@example.com" }
       });
+      await executor("slack.searchUsers", {
+        user: { email: "person@example.com" },
+        input: { query: "Alex Reviewer" }
+      });
+      await executor("slack.searchMessages", {
+        user: { email: "person@example.com" },
+        input: { query: "launch", fromUserId: "U123", limit: 3 }
+      });
       await executor("jira.createIssue", {
         user: { email: "person@example.com" },
         input: {
@@ -283,6 +291,20 @@ describe("createBurbleToolExecutor", () => {
           params: {
             name: "jira_search_users",
             arguments: { query: "alex.reviewer@example.com" }
+          }
+        },
+        {
+          method: "tools/call",
+          params: {
+            name: "slack_search_users",
+            arguments: { query: "Alex Reviewer" }
+          }
+        },
+        {
+          method: "tools/call",
+          params: {
+            name: "slack_search_messages",
+            arguments: { query: "launch", fromUserId: "U123", limit: 3 }
           }
         },
         {

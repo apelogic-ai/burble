@@ -1404,6 +1404,31 @@ async function buildToolCatalog(
     );
   }
 
+  const slack = request.input.connections.slack;
+  if (slack?.connected && slack.email) {
+    catalog.push(
+      {
+        name: "slack.searchUsers",
+        description:
+          "Search Slack users by display name, real name, username, or Slack user ID.",
+        inputSchema: {
+          query: "string Slack user name, display name, or ID"
+        }
+      },
+      {
+        name: "slack.searchMessages",
+        description:
+          `Search Slack messages visible to the requesting Slack user's connected Slack search token. The requesting Slack user ID is ${slack.providerLogin ?? "unknown"}; use it as fromUserId for questions like "what did I say about X".`,
+        inputSchema: {
+          query: "string Slack search terms",
+          fromUserId: `optional string Slack user ID to filter by author; for 'what did I say', use ${slack.providerLogin ?? "the requesting Slack user ID"}`,
+          inChannel: "optional string channel name without #, or channel ID",
+          limit: "optional integer 1-20"
+        }
+      }
+    );
+  }
+
   const jira = request.input.connections.jira;
   if (jira?.connected && jira.email) {
     catalog.push(
@@ -1682,6 +1707,7 @@ function buildBurbleDirectPrompt(
       "For Jira assign-to-me requests, call jira.getAuthenticatedUser when you need the requester's Jira accountId, then call jira.editIssue with assigneeAccountId.",
       "For Jira questions involving a named person, call jira.searchUsers with the exact name or email before asking who they are. If the current request uses him/her/them, use the most recent named person in Recent Slack context.",
       "For Jira tickets assigned to a resolved person, call jira.searchIssues with that person's Jira accountId in JQL. If the user asks who they assigned to that person, state that the result reflects current visible assignee unless Jira changelog data is explicitly available.",
+      "For Slack questions about what someone said, call slack.searchMessages. For 'what did I say about X', pass the requesting Slack user ID as fromUserId. For named Slack people, call slack.searchUsers first if you need their Slack user ID.",
       "For final answers, return concise Slack mrkdwn."
     ].join(" "),
     "",
@@ -1963,6 +1989,10 @@ function readToolEmail(toolName: string, request: RunRequest): string | null {
 
   if (toolName.startsWith("jira.") || toolName.startsWith("atlassian.")) {
     return request.input.connections.jira?.email ?? null;
+  }
+
+  if (toolName.startsWith("slack.")) {
+    return request.input.connections.slack?.email ?? null;
   }
 
   return null;
