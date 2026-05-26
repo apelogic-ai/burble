@@ -70,6 +70,18 @@ Required Slack event subscription:
 - With Socket Mode enabled, no Request URL is required.
 - Reinstall the app after adding the event.
 
+Required Slack slash commands:
+
+- `/auth`
+- `/help`
+- `/agent-status`
+- `/agent-config`
+
+The dev Slack app manifest is checked in at
+`deploy/dev/slack-app-manifest.yaml`. If a slash command is not listed in the
+Slack app configuration, Slack does not dispatch it to Burble, so the Burble app
+logs will not show a `Received Slack payload ... command=/agent-config` line.
+
 The architecture note is copied at `docs/slack-tui-architecture.md`.
 
 ## Agent Runtime
