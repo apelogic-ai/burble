@@ -153,7 +153,7 @@ export async function handleGitHubCallback(
     console.error(formatLogError(error));
     await slack.app.client.chat.postMessage({
       channel: stateRow.slackUserId,
-      text: "GitHub connection failed. Run `/connect-github` and try again."
+      text: "GitHub connection failed. Run `/auth github` and try again."
     });
     return new Response("GitHub connection failed", { status: 400 });
   }

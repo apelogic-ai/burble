@@ -31,13 +31,11 @@ Then set `BASE_URL` in `.env` and configure OAuth callback URLs:
 - `@Burble what issues are assigned to me?` lists assigned GitHub issues privately.
 - `@Burble show my pull requests` lists open pull requests authored by you.
 - `@Burble search GitHub issues for billing` searches GitHub issues privately.
-- `/connect-github` starts a per-user GitHub OAuth flow.
-- `/auth` shows available auth connections.
+- `/help` shows command help and examples.
+- `/auth` shows connected account status and auth buttons.
 - `/auth github` starts the GitHub OAuth flow.
 - `/auth jira` starts the Jira OAuth flow.
 - `/auth slack` starts the Slack user OAuth flow for message search.
-- `/github-me` verifies the connected GitHub identity for the Slack user.
-- `/issues` lists open GitHub issues assigned to the connected user.
 
 Jira OAuth uses Atlassian 3LO with these scopes:
 

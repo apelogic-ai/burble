@@ -343,10 +343,10 @@ In Slack:
 @Burble what issues are assigned to me?
 @Burble show my pull requests
 @Burble search GitHub issues for billing
-/connect-github
+/auth
 /auth github
 /auth slack
-/github-me
+/help
 ```
 
 After `/auth slack`, ask the app questions such as:
@@ -363,5 +363,4 @@ summarize my GitHub work
 prioritize my open GitHub PRs
 ```
 
-`/github-me` proves the stored GitHub token maps to the Slack user identity,
-even when the account has no assigned GitHub issues.
+`/auth` shows connection status for supported provider accounts.
