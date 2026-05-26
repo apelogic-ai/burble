@@ -38,7 +38,11 @@ import type {
   ToolClassification
 } from "./conversation/types";
 import { createConfiguredAgentRunner } from "./agent/runtime";
-import type { AgentRunEvent, AgentUsage } from "./agent/types";
+import {
+  collectAgentRun,
+  type AgentRunEvent,
+  type AgentUsage
+} from "./agent/types";
 import { createDockerRuntimeFactory } from "./agent/container-runtime-factory";
 import { createStaticRuntimeFactory } from "./agent/runtime-factory";
 import type { RuntimeFactory } from "./agent/runtime-factory";
@@ -590,29 +594,93 @@ export function createSlackRuntime(
         return;
       }
 
-      await ack(buildAgentConfigLoadingResponse());
-      try {
-        const runtime = await getOrStartAgentStatusRuntime({
-          config,
-          store,
-          runtimeFactory,
-          workspaceId: body.team_id ?? "",
-          slackUserId: body.user_id
-        });
-        const configFile = await readAgentConfigFile(runtime, { runtimeFactory });
+      if (action.kind === "config") {
+        await ack(buildAgentConfigLoadingResponse());
+        try {
+          const runtime = await getOrStartAgentStatusRuntime({
+            config,
+            store,
+            runtimeFactory,
+            workspaceId: body.team_id ?? "",
+            slackUserId: body.user_id
+          });
+          const configFile = await readAgentConfigFile(runtime, { runtimeFactory });
 
-        await respond({
-          ...buildAgentConfigResponse({ runtime, configFile }),
-          replace_original: true
-        });
-      } catch (error) {
-        logger.error(formatLogError(error));
-        await respond({
-          response_type: "ephemeral",
-          replace_original: true,
-          text: formatAgentConfigFailureMessage(error)
-        });
+          await respond({
+            ...buildAgentConfigResponse({ runtime, configFile }),
+            replace_original: true
+          });
+        } catch (error) {
+          logger.error(formatLogError(error));
+          await respond({
+            response_type: "ephemeral",
+            replace_original: true,
+            text: formatAgentConfigFailureMessage(error)
+          });
+        }
+        return;
       }
+
+      if (action.kind === "exec") {
+        if (!action.task.trim()) {
+          await ack(buildAgentExecMissingTaskResponse());
+          return;
+        }
+
+        await ack(buildAgentExecLoadingResponse(action.task));
+        try {
+          if (config.agentMode !== "llm" || !agentRunner) {
+            await respond({
+              response_type: "ephemeral",
+              replace_original: true,
+              text: "Agent execution requires `AGENT_MODE=llm` and an agent runtime."
+            });
+            return;
+          }
+
+          const startedAtMs = Date.now();
+          const email = await getSlackEmail(body.user_id);
+          const result = await collectAgentRun(agentRunner, {
+            principal: {
+              workspaceId: body.team_id ?? "",
+              slackUserId: body.user_id
+            },
+            conversation: {
+              source: "slack",
+              workspaceId: body.team_id ?? "",
+              channelId: body.channel_id,
+              rootId: `slash-agent-exec:${Date.now()}`,
+              isDirectMessage: body.channel_id.startsWith("D")
+            },
+            text: action.task,
+            connections: {
+              github: store.getConnection("github", email),
+              google: store.getConnection("google", email),
+              jira: store.getConnection("jira", email),
+              slack: store.getConnection("slack", email)
+            }
+          });
+
+          await respond({
+            response_type: "ephemeral",
+            replace_original: true,
+            text: formatAgentExecResult(result.text, {
+              elapsedMs: Date.now() - startedAtMs,
+              usage: result.usage
+            })
+          });
+        } catch (error) {
+          logger.error(formatLogError(error));
+          await respond({
+            response_type: "ephemeral",
+            replace_original: true,
+            text: formatAgentExecFailureMessage(error)
+          });
+        }
+        return;
+      }
+
+      await ack(buildAgentCommandHelpResponse());
     } catch (error) {
       logger.error(formatLogError(error));
       await ack({
@@ -881,10 +949,12 @@ export function parseAuthCommand(text: string): AuthCommand {
 export type AgentCommand =
   | { kind: "help" }
   | { kind: "status" }
-  | { kind: "config" };
+  | { kind: "config" }
+  | { kind: "exec"; task: string };
 
 export function parseAgentCommand(text: string): AgentCommand {
-  const normalized = text.trim().toLowerCase().replace(/\s+/g, " ");
+  const trimmed = text.trim();
+  const normalized = trimmed.toLowerCase().replace(/\s+/g, " ");
   if (normalized === "" || normalized === "help") {
     return { kind: "help" };
   }
@@ -899,6 +969,11 @@ export function parseAgentCommand(text: string): AgentCommand {
     normalized === "runtime config"
   ) {
     return { kind: "config" };
+  }
+
+  const execMatch = /^exec(?:ute)?(?:\s+([\s\S]*))?$/i.exec(trimmed);
+  if (execMatch) {
+    return { kind: "exec", task: execMatch[1]?.trim() ?? "" };
   }
 
   return { kind: "help" };
@@ -1067,6 +1142,7 @@ export function buildHelpResponse() {
             "• `/auth slack` - connect or reconnect Slack search",
             "• `/agent status` - show and power up your current agent runtime",
             "• `/agent config` - inspect your current agent config file",
+            "• `/agent exec <task>` - send an explicit task to your private agent runtime",
             "• `/agent-status` - legacy alias for agent status",
             "• `/agent-config` - legacy alias for agent config",
             "• `/help` - show this help"
@@ -1096,11 +1172,29 @@ export function buildAgentCommandHelpResponse() {
           text: [
             "Use one of:",
             "• `/agent status` - show and power up your current agent runtime",
-            "• `/agent config` - inspect your current agent config file"
+            "• `/agent config` - inspect your current agent config file",
+            "• `/agent exec <task>` - send an explicit task to your private agent runtime"
           ].join("\n")
         }
       }
     ]
+  };
+}
+
+export function buildAgentExecLoadingResponse(task: string) {
+  return {
+    response_type: "ephemeral" as const,
+    text: `Sending task to your private agent runtime: ${truncateSlackConfigValue(
+      task,
+      180
+    )}`
+  };
+}
+
+export function buildAgentExecMissingTaskResponse() {
+  return {
+    response_type: "ephemeral" as const,
+    text: "Usage: `/agent exec <task>`"
   };
 }
 
@@ -1652,6 +1746,26 @@ export function formatConversationFailureMessage(
   }
 
   return `I could not handle that ${target}.`;
+}
+
+function formatAgentExecResult(
+  text: string,
+  input: { elapsedMs: number; usage?: AgentUsage }
+): string {
+  return [
+    formatFinalProgressLine(input.elapsedMs, input.usage),
+    "",
+    text.trim() || "Agent finished without a text response."
+  ].join("\n");
+}
+
+function formatAgentExecFailureMessage(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  if (isRuntimeMcpAuthFailure(message)) {
+    return formatConversationFailureMessage(error, "message");
+  }
+
+  return "I could not run that agent task.";
 }
 
 function isRuntimeMcpAuthFailure(message: string): boolean {

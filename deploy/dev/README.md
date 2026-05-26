@@ -379,6 +379,7 @@ In Slack:
 /auth slack
 /agent status
 /agent config
+/agent exec summarize my connected accounts
 /agent-status
 /agent-config
 /help
