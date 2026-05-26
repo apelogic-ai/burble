@@ -117,8 +117,10 @@ WebSocket/RPC client to the Gateway. Keep the runtime `/runs` contract stable.
 
 - Gateway remains single-user and trusted inside the personal runtime.
 - Runtime tokens still protect Burble's tool gateway.
-- Provider OAuth tokens stay in Burble; OpenClaw gets only scoped tool gateway
-  access.
+- Provider OAuth tokens stay in Burble. The OpenClaw child process must not
+  inherit Burble MCP URLs, runtime JWTs, internal tool tokens, or provider OAuth
+  credentials; those stay in the runtime wrapper and are used only when the
+  wrapper executes MCP/provider tools outside OpenClaw.
 - Gateway bind must remain loopback/container-private for this PoC.
 - Raw-stream JSONL must be treated as sensitive runtime-local data and should
   not be persisted outside the runtime state without redaction.
