@@ -564,7 +564,7 @@ export function createSlackRuntime(
           workspaceId: body.team_id ?? "",
           slackUserId: body.user_id
         });
-        const configFile = await readAgentConfigFile(runtime);
+        const configFile = await readAgentConfigFile(runtime, { runtimeFactory });
 
         await respond({
           ...buildAgentConfigResponse({ runtime, configFile }),
@@ -627,7 +627,12 @@ export type AgentConfigFileRead = {
 
 export async function readAgentConfigFile(
   runtime: AgentRuntimeRecord | null,
-  readText: (path: string) => Promise<string> = (path) => readFile(path, "utf8")
+  source:
+    | ((path: string) => Promise<string>)
+    | {
+        runtimeFactory?: RuntimeFactory;
+        readText?: (path: string) => Promise<string>;
+      } = {}
 ): Promise<AgentConfigFileRead> {
   if (!runtime) {
     return {
@@ -640,11 +645,21 @@ export async function readAgentConfigFile(
   }
 
   try {
-    const rawText = await readText(runtime.configPath);
+    const readText =
+      typeof source === "function"
+        ? source
+        : (source.readText ?? ((path: string) => readFile(path, "utf8")));
+    const configRead =
+      typeof source === "function"
+        ? { path: runtime.configPath, text: await readText(runtime.configPath) }
+        : source.runtimeFactory?.readRuntimeConfig
+          ? await source.runtimeFactory.readRuntimeConfig(runtime.id)
+          : { path: runtime.configPath, text: await readText(runtime.configPath) };
+    const rawText = configRead.text;
     const parsed = JSON.parse(rawText) as unknown;
     const redacted = redactConfigValue(parsed);
     return {
-      path: runtime.configPath,
+      path: configRead.path,
       rawText,
       redactedText: JSON.stringify(redacted, null, 2),
       topLevelKeys:
