@@ -33,9 +33,12 @@ const config: RuntimeConfig = {
 describe("ensureOpenClawSetup", () => {
   test("skips setup for deterministic engine", async () => {
     let called = false;
+    const runtimeConfig = await configWithConfigFile({
+      engine: "deterministic"
+    });
 
     await ensureOpenClawSetup(
-      { ...config, engine: "deterministic" },
+      runtimeConfig,
       async () => {
         called = true;
         return { exitCode: 0, stdout: "", stderr: "" };
@@ -43,13 +46,37 @@ describe("ensureOpenClawSetup", () => {
     );
 
     expect(called).toBe(false);
+    const writtenConfig = JSON.parse(
+      await readFile(runtimeConfig.openClawConfigPath, "utf8")
+    );
+    expect(writtenConfig).toMatchObject({
+      runtime: {
+        engine: "deterministic",
+        port: 8080
+      },
+      model: "openai:gpt-5.4",
+      providers: {
+        toolGatewayUrl: "http://burble-app:3000/internal/tools",
+        mcpGatewayUrl: null,
+        runtimeJwtConfigured: false
+      },
+      openClaw: {
+        backed: false
+      }
+    });
+    expect(JSON.stringify(writtenConfig)).not.toContain("secret");
   });
 
   test("skips setup for burble-direct engine", async () => {
     let called = false;
+    const runtimeConfig = await configWithConfigFile({
+      engine: "burble-direct",
+      mcpGatewayUrl: "http://agentgateway:3000/mcp",
+      runtimeJwt: "runtime-jwt"
+    });
 
     await ensureOpenClawSetup(
-      { ...config, engine: "burble-direct" },
+      runtimeConfig,
       async () => {
         called = true;
         return { exitCode: 0, stdout: "", stderr: "" };
@@ -57,6 +84,23 @@ describe("ensureOpenClawSetup", () => {
     );
 
     expect(called).toBe(false);
+    const writtenConfig = JSON.parse(
+      await readFile(runtimeConfig.openClawConfigPath, "utf8")
+    );
+    expect(writtenConfig).toMatchObject({
+      runtime: {
+        engine: "burble-direct",
+        port: 8080
+      },
+      providers: {
+        mcpGatewayUrl: "http://agentgateway:3000/mcp",
+        runtimeJwtConfigured: true
+      },
+      paths: {
+        configPath: runtimeConfig.openClawConfigPath
+      }
+    });
+    expect(JSON.stringify(writtenConfig)).not.toContain("runtime-jwt");
   });
 
   test("skips setup command when setup is disabled", async () => {
@@ -378,6 +422,17 @@ async function configWithState(
   return {
     ...config,
     openClawStateDir: await mkdtemp(join(tmpdir(), "burble-openclaw-state-")),
+    ...overrides
+  };
+}
+
+async function configWithConfigFile(
+  overrides: Partial<RuntimeConfig> = {}
+): Promise<RuntimeConfig> {
+  const root = await mkdtemp(join(tmpdir(), "burble-openclaw-runtime-"));
+  return {
+    ...(await configWithState()),
+    openClawConfigPath: join(root, "config", "runtime.json"),
     ...overrides
   };
 }

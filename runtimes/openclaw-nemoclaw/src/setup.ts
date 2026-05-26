@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import type { RuntimeConfig } from "./config";
 import { buildOpenClawLlmPatch } from "./llm-config";
 import { info, type RuntimeLogger } from "./logger";
@@ -15,6 +15,9 @@ export async function ensureOpenClawSetup(
   logInfo: RuntimeLogger = info
 ): Promise<void> {
   if (!isOpenClawBackedEngine(config) || !config.openClawSetupOnStart) {
+    if (!isOpenClawBackedEngine(config)) {
+      await writeEffectiveRuntimeConfig(config);
+    }
     if (isOpenClawBackedEngine(config)) {
       logInfo("OpenClaw onboard skipped setupOnStart=false");
     }
@@ -110,6 +113,39 @@ async function ensureOpenClawConfig(
     throw new Error(`OpenClaw config validate exited with code ${result.exitCode}`);
   }
   logInfo("OpenClaw config validate finish");
+}
+
+async function writeEffectiveRuntimeConfig(config: RuntimeConfig): Promise<void> {
+  await mkdir(dirname(config.openClawConfigPath), { recursive: true });
+  await writeFile(
+    config.openClawConfigPath,
+    `${JSON.stringify(
+      {
+        runtime: {
+          engine: config.engine,
+          port: config.port
+        },
+        model: config.llmModel,
+        providers: {
+          toolGatewayUrl: config.toolGatewayUrl,
+          mcpGatewayUrl: config.mcpGatewayUrl,
+          runtimeJwtConfigured: Boolean(config.runtimeJwt)
+        },
+        paths: {
+          stateDir: config.openClawStateDir,
+          configPath: config.openClawConfigPath,
+          workspaceDir: config.openClawWorkspaceDir
+        },
+        openClaw: {
+          command: config.openClawCommand,
+          agent: config.openClawAgent,
+          backed: false
+        }
+      },
+      null,
+      2
+    )}\n`
+  );
 }
 
 async function applyOpenClawConfigPatch(
