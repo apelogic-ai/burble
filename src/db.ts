@@ -557,6 +557,18 @@ export function createTokenStore(path: string) {
       return getAgentRuntimeById.get(id);
     },
 
+    getAgentRuntimeForPrincipal(input: {
+      workspaceId: string;
+      slackUserId: string;
+      engine: AgentRuntimeEngine;
+    }): AgentRuntimeRecord | null {
+      return getAgentRuntimeByPrincipal.get(
+        input.workspaceId,
+        input.slackUserId,
+        input.engine
+      );
+    },
+
     listIdleAgentRuntimes(idleBefore: Date): AgentRuntimeRecord[] {
       return listIdleAgentRuntimes.all(idleBefore.toISOString());
     },

@@ -20,7 +20,7 @@ import {
   searchSlackMessages,
   searchSlackUsers
 } from "./slack-api";
-import type { ProviderConnection, TokenStore } from "./db";
+import type { AgentRuntimeRecord, ProviderConnection, TokenStore } from "./db";
 import { handleConversation } from "./conversation/orchestrator";
 import { normalizeMentionText } from "./conversation/normalize";
 import type {
@@ -513,6 +513,30 @@ export function createSlackRuntime(
     }
   });
 
+  app.command("/agent-config", async ({ ack, body, logger }) => {
+    try {
+      logger.info(
+        withUtcTimestamp(`Received /agent-config from ${body.user_id}`)
+      );
+      const runtime =
+        config.agentRuntime === "openclaw-nemoclaw"
+          ? store.getAgentRuntimeForPrincipal({
+              workspaceId: body.team_id ?? "",
+              slackUserId: body.user_id,
+              engine: config.openClawNemoClawEngine
+            })
+          : null;
+
+      await ack(buildAgentConfigResponse({ config, runtime }));
+    } catch (error) {
+      logger.error(formatLogError(error));
+      await ack({
+        response_type: "ephemeral",
+        text: "I could not open agent configuration."
+      });
+    }
+  });
+
   return {
     app,
     ...(runtimeFactory ? { runtimeFactory } : {}),
@@ -740,12 +764,91 @@ export function buildHelpResponse() {
             "• `/auth github` - connect or reconnect GitHub",
             "• `/auth jira` - connect or reconnect Jira",
             "• `/auth slack` - connect or reconnect Slack search",
+            "• `/agent-config` - show your current agent runtime configuration",
             "• `/help` - show this help"
           ].join("\n")
         }
       }
     ]
   };
+}
+
+export function buildAgentConfigResponse(input: {
+  config: Config;
+  runtime: AgentRuntimeRecord | null;
+}) {
+  return {
+    response_type: "ephemeral" as const,
+    text: "Agent configuration",
+    blocks: [
+      {
+        type: "header",
+        text: {
+          type: "plain_text",
+          text: "Agent configuration"
+        }
+      },
+      {
+        type: "section",
+        text: {
+          type: "mrkdwn",
+          text: [
+            "*Runtime*",
+            `• Agent mode: \`${input.config.agentMode}\``,
+            `• Runtime: \`${input.config.agentRuntime}\``,
+            `• Runtime factory: \`${input.config.agentRuntimeFactory}\``,
+            `• Runtime engine: \`${input.config.openClawNemoClawEngine}\``,
+            `• Model: \`${input.config.aiModel}\``
+          ].join("\n")
+        }
+      },
+      {
+        type: "section",
+        text: {
+          type: "mrkdwn",
+          text: [
+            "*Provider tool path*",
+            `• MCP gateway: \`${input.config.agentRuntimeMcpGatewayUrl ?? "not configured"}\``,
+            `• MCP audience: \`${input.config.agentRuntimeMcpAudience ?? "not configured"}\``,
+            `• Runtime JWT TTL: \`${input.config.agentRuntimeJwtTtlSeconds}s\``
+          ].join("\n")
+        }
+      },
+      {
+        type: "section",
+        text: {
+          type: "mrkdwn",
+          text: formatAgentRuntimeRecord(input.runtime)
+        }
+      }
+    ]
+  };
+}
+
+function formatAgentRuntimeRecord(runtime: AgentRuntimeRecord | null): string {
+  if (!runtime) {
+    return [
+      "*Your runtime*",
+      "No runtime record exists yet for this workspace/user/engine."
+    ].join("\n");
+  }
+
+  return [
+    "*Your runtime*",
+    `• ID: \`${runtime.id}\``,
+    `• Engine: \`${runtime.engine}\``,
+    `• Status: \`${runtime.status}\``,
+    `• Endpoint: \`${runtime.endpointUrl}\``,
+    `• Last used: \`${runtime.lastUsedAt}\``,
+    `• Last seen: \`${runtime.lastSeenAt}\``,
+    ...(runtime.failureReason
+      ? [`• Failure: \`${truncateSlackConfigValue(runtime.failureReason, 160)}\``]
+      : [])
+  ].join("\n");
+}
+
+function truncateSlackConfigValue(value: string, maxLength: number): string {
+  return value.length <= maxLength ? value : `${value.slice(0, maxLength - 3)}...`;
 }
 
 function formatConnectionStatus(
