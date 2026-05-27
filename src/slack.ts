@@ -213,6 +213,9 @@ export function createSlackRuntime(
       : undefined;
   const agentExecTasks = new Map<string, AgentExecTask>();
 
+  const resolveAgentExecutionMode = (): "openclaw-native" | undefined =>
+    config.agentRuntime === "openclaw-nemoclaw" ? "openclaw-native" : undefined;
+
   app.event("app_mention", async ({ body, event, client, logger }) => {
     const mention = event as {
       user?: string;
@@ -244,6 +247,31 @@ export function createSlackRuntime(
         user: mention.user,
         logWarn: (message) => logger.warn(withUtcTimestamp(message))
       });
+      const principal = {
+        workspaceId: body.team_id ?? "",
+        slackUserId: mention.user
+      };
+      const conversationRoute =
+        config.agentMode === "llm" && agentRunner
+          ? await createSlackConversationRoute({
+              store,
+              runtimeFactory,
+              principal,
+              channelId: mention.channel,
+              isDirectMessage,
+              rootId: buildConversationRootIdForSlack({
+                isDirectMessage,
+                channelId: mention.channel,
+                messageTs: mention.ts,
+                threadTs: mention.thread_ts
+              }),
+              threadTs: buildReplyThreadTs({
+                isDirectMessage,
+                messageTs: mention.ts,
+                threadTs: mention.thread_ts
+              })
+            })
+          : null;
       if (config.agentMode === "llm") {
         progressMessage = await postMentionWorkingState(client, {
           channel: mention.channel,
@@ -266,6 +294,9 @@ export function createSlackRuntime(
           threadTs: mention.thread_ts,
           messageTs: mention.ts,
           isDirectMessage,
+          ...(conversationRoute
+            ? { conversationRouteId: conversationRoute.id }
+            : {}),
           context: buildSlackRequestContext({
             channelId: mention.channel,
             isDirectMessage,
@@ -297,6 +328,9 @@ export function createSlackRuntime(
           githubTools,
           slackTools,
           agentMode: config.agentMode,
+          ...(resolveAgentExecutionMode()
+            ? { agentExecutionMode: resolveAgentExecutionMode() }
+            : {}),
           ...(agentRunner ? { agentRunner } : {}),
           ...(activeProgressMessage
             ? {
@@ -365,6 +399,31 @@ export function createSlackRuntime(
         user: directMessage.user,
         logWarn: (message) => logger.warn(withUtcTimestamp(message))
       });
+      const principal = {
+        workspaceId: body.team_id ?? "",
+        slackUserId: directMessage.user
+      };
+      const conversationRoute =
+        config.agentMode === "llm" && agentRunner
+          ? await createSlackConversationRoute({
+              store,
+              runtimeFactory,
+              principal,
+              channelId: directMessage.channel,
+              isDirectMessage: true,
+              rootId: buildConversationRootIdForSlack({
+                isDirectMessage: true,
+                channelId: directMessage.channel,
+                messageTs: directMessage.ts,
+                threadTs: directMessage.thread_ts
+              }),
+              threadTs: buildReplyThreadTs({
+                isDirectMessage: true,
+                messageTs: directMessage.ts,
+                threadTs: directMessage.thread_ts
+              })
+            })
+          : null;
       if (config.agentMode === "llm") {
         progressMessage = await postMentionWorkingState(client, {
           channel: directMessage.channel,
@@ -387,6 +446,9 @@ export function createSlackRuntime(
           threadTs: directMessage.thread_ts,
           messageTs: directMessage.ts,
           isDirectMessage: true,
+          ...(conversationRoute
+            ? { conversationRouteId: conversationRoute.id }
+            : {}),
           context: buildSlackRequestContext({
             channelId: directMessage.channel,
             isDirectMessage: true,
@@ -418,6 +480,9 @@ export function createSlackRuntime(
           githubTools,
           slackTools,
           agentMode: config.agentMode,
+          ...(resolveAgentExecutionMode()
+            ? { agentExecutionMode: resolveAgentExecutionMode() }
+            : {}),
           ...(agentRunner ? { agentRunner } : {}),
           ...(activeProgressMessage
             ? {
@@ -761,7 +826,9 @@ export function createSlackRuntime(
             transport: "slack",
             destination: {
               channelId: body.channel_id,
-              isDirectMessage: body.channel_id.startsWith("D")
+              isDirectMessage: body.channel_id.startsWith("D"),
+              runtimeId: runtime?.id,
+              rootId: `slash-agent-exec:${execTask.id}`
             }
           });
           const result = await collectAgentRun(
@@ -1075,6 +1142,51 @@ function createOpenClawRuntimeFactory(
     authToken: config.internalApiToken ?? "",
     dataRoot: config.agentRuntimeDataRoot
   });
+}
+
+async function createSlackConversationRoute(input: {
+  store: TokenStore;
+  runtimeFactory?: RuntimeFactory;
+  principal: {
+    workspaceId: string;
+    slackUserId: string;
+  };
+  channelId: string;
+  isDirectMessage: boolean;
+  rootId: string;
+  threadTs?: string;
+}) {
+  const runtime = input.runtimeFactory
+    ? await input.runtimeFactory.getOrCreateRuntime(input.principal)
+    : null;
+
+  return input.store.upsertConversationRoute({
+    workspaceId: input.principal.workspaceId,
+    slackUserId: input.principal.slackUserId,
+    transport: "slack",
+    destination: {
+      channelId: input.channelId,
+      isDirectMessage: input.isDirectMessage,
+      rootId: input.rootId,
+      ...(input.threadTs ? { threadTs: input.threadTs } : {}),
+      ...(runtime ? { runtimeId: runtime.id } : {})
+    }
+  });
+}
+
+function buildConversationRootIdForSlack(input: {
+  isDirectMessage: boolean;
+  channelId: string;
+  messageTs: string;
+  threadTs?: string;
+}): string {
+  if (input.isDirectMessage) {
+    return input.threadTs
+      ? `dm:${input.channelId}:thread:${input.threadTs}`
+      : `dm:${input.channelId}`;
+  }
+
+  return `channel:${input.channelId}:thread:${input.threadTs ?? input.messageTs}`;
 }
 
 export type AuthCommand =

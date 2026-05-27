@@ -130,7 +130,8 @@ function buildOpenClawNemoClawAgentConfig(
   const agentConfig = JSON.parse(
     buildOpenClawLlmPatch({
       modelId: config.llmModel,
-      ollamaBaseUrl: config.ollamaBaseUrl
+      ollamaBaseUrl: config.ollamaBaseUrl,
+      burbleChannelBaseUrl: buildLocalBurbleChannelBaseUrl(config)
     })
   ) as Record<string, unknown>;
   const agents = readObject(agentConfig.agents);
@@ -195,10 +196,15 @@ async function writeGeneratedLlmPatch(config: RuntimeConfig): Promise<string> {
     path,
     buildOpenClawLlmPatch({
       modelId: config.llmModel,
-      ollamaBaseUrl: config.ollamaBaseUrl
+      ollamaBaseUrl: config.ollamaBaseUrl,
+      burbleChannelBaseUrl: buildLocalBurbleChannelBaseUrl(config)
     })
   );
   return path;
+}
+
+function buildLocalBurbleChannelBaseUrl(config: RuntimeConfig): string {
+  return `http://127.0.0.1:${config.port}`;
 }
 
 function isOpenClawBackedEngine(config: RuntimeConfig): boolean {
@@ -213,7 +219,8 @@ async function buildSetupCacheKey(config: RuntimeConfig): Promise<string> {
     .update(
       buildOpenClawLlmPatch({
         modelId: config.llmModel,
-        ollamaBaseUrl: config.ollamaBaseUrl
+        ollamaBaseUrl: config.ollamaBaseUrl,
+        burbleChannelBaseUrl: buildLocalBurbleChannelBaseUrl(config)
       })
     )
     .digest("hex");

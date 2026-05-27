@@ -1,5 +1,5 @@
 import type { RuntimeConfig } from "./config";
-import { createBurbleToolExecutor } from "./burble-tools";
+import { createBurbleConversationConnector } from "./burble-conversation-connector";
 import { info } from "./logger";
 import { createRuntimeRunner } from "./runtime";
 import type { RunEvent, RunRequest, RunResponse, ToolExecutor } from "./types";
@@ -34,10 +34,34 @@ export async function handleRuntimeRequest(
     return handleLocalConversationMessageRequest(request, config);
   }
 
+  const burbleChannelMessageMatch =
+    /^\/internal\/burble\/channel\/routes\/([^/]+)\/messages$/.exec(
+      url.pathname
+    );
+  if (burbleChannelMessageMatch) {
+    return handleLocalBurbleChannelMessageRequest(
+      request,
+      config,
+      decodeURIComponent(burbleChannelMessageMatch[1] ?? "")
+    );
+  }
+
+  const burbleChannelEventMatch =
+    /^\/internal\/burble\/channel\/routes\/([^/]+)\/events$/.exec(
+      url.pathname
+    );
+  if (burbleChannelEventMatch) {
+    return handleLocalBurbleChannelEventRequest(
+      request,
+      config,
+      decodeURIComponent(burbleChannelEventMatch[1] ?? "")
+    );
+  }
+
   const conversationWebhookMatch =
     /^\/internal\/conversation\/routes\/([^/]+)\/webhook$/.exec(url.pathname);
   if (conversationWebhookMatch) {
-    return handleLocalConversationWebhookRequest(
+    return handleLocalBurbleChannelEventRequest(
       request,
       config,
       decodeURIComponent(conversationWebhookMatch[1] ?? "")
@@ -152,10 +176,8 @@ async function handleLocalConversationMessageRequest(
     return new Response("Runtime id is not configured", { status: 500 });
   }
 
-  const executor = createBurbleToolExecutor(config, config.runtimeId);
-  const result = await executor("conversation.sendMessage", {
-    input: body
-  });
+  const connector = createBurbleConversationConnector(config, config.runtimeId);
+  const result = await connector.sendMessage(body);
   return Response.json(result, {
     headers: {
       "cache-control": "no-store"
@@ -163,7 +185,7 @@ async function handleLocalConversationMessageRequest(
   });
 }
 
-async function handleLocalConversationWebhookRequest(
+async function handleLocalBurbleChannelMessageRequest(
   request: Request,
   config: RuntimeConfig,
   routeId: string
@@ -178,25 +200,44 @@ async function handleLocalConversationWebhookRequest(
     return new Response("Runtime id is not configured", { status: 500 });
   }
 
-  const body = await readJsonBody(request);
-  const text = extractWebhookConversationText(body);
-  if (!text) {
-    info(
-      `OpenClaw conversation webhook ignored routeId=${routeId} reason=no_deliverable_text keys=${formatObjectKeys(body)}`
-    );
-    return new Response("Webhook payload did not contain deliverable text", {
+  const body = await readLocalBurbleChannelMessageBody(request, routeId);
+  if (!body) {
+    return new Response("Invalid Burble channel message input", { status: 400 });
+  }
+
+  const connector = createBurbleConversationConnector(config, config.runtimeId);
+  const result = await connector.sendMessage(body);
+  return Response.json(result, {
+    headers: {
+      "cache-control": "no-store"
+    }
+  });
+}
+
+async function handleLocalBurbleChannelEventRequest(
+  request: Request,
+  config: RuntimeConfig,
+  routeId: string
+): Promise<Response> {
+  if (request.method !== "POST") {
+    return new Response("Method not allowed", { status: 405 });
+  }
+  if (!routeId.trim()) {
+    return new Response("Invalid conversation route", { status: 400 });
+  }
+  if (!config.runtimeId) {
+    return new Response("Runtime id is not configured", { status: 500 });
+  }
+
+  const payload = await readJsonBody(request);
+  const connector = createBurbleConversationConnector(config, config.runtimeId);
+  const result = await connector.deliverEvent({ routeId, payload });
+  if (!result) {
+    return new Response("Burble channel event did not contain deliverable text", {
       status: 202
     });
   }
 
-  info(
-    `OpenClaw conversation webhook deliver routeId=${routeId} textChars=${text.length}`
-  );
-  const executor = createBurbleToolExecutor(config, config.runtimeId);
-  const result = await executor("conversation.sendMessage", {
-    input: { routeId, text }
-  });
-  info(`OpenClaw conversation webhook delivered routeId=${routeId}`);
   return Response.json(result, {
     headers: {
       "cache-control": "no-store"
@@ -581,54 +622,6 @@ async function readJsonBody(request: Request): Promise<unknown> {
   }
 }
 
-function extractWebhookConversationText(body: unknown): string | null {
-  const candidates = [
-    readNestedString(body, "summary"),
-    readNestedString(body, "text"),
-    readNestedString(body, "message"),
-    readNestedString(body, "output"),
-    readNestedString(body, "reply"),
-    readNestedString(body, "result", "summary"),
-    readNestedString(body, "result", "text"),
-    readNestedString(body, "result", "output"),
-    readNestedString(body, "event", "summary"),
-    readNestedString(body, "event", "text"),
-    readNestedString(body, "payload", "summary"),
-    readNestedString(body, "payload", "text"),
-    readNestedString(body, "response", "text"),
-    readNestedString(body, "response", "summary")
-  ];
-  for (const candidate of candidates) {
-    if (candidate) {
-      return candidate.length > 4000 ? `${candidate.slice(0, 3997)}...` : candidate;
-    }
-  }
-
-  return null;
-}
-
-function readNestedString(body: unknown, ...path: string[]): string | null {
-  let cursor = body;
-  for (const segment of path) {
-    if (typeof cursor !== "object" || cursor === null || Array.isArray(cursor)) {
-      return null;
-    }
-    cursor = (cursor as Record<string, unknown>)[segment];
-  }
-
-  return typeof cursor === "string" && cursor.trim().length > 0
-    ? cursor.trim()
-    : null;
-}
-
-function formatObjectKeys(body: unknown): string {
-  if (typeof body !== "object" || body === null || Array.isArray(body)) {
-    return "none";
-  }
-
-  return Object.keys(body).slice(0, 12).join(",") || "none";
-}
-
 async function readLocalConversationMessageBody(
   request: Request
 ): Promise<{ routeId: string; text: string } | null> {
@@ -655,6 +648,35 @@ async function readLocalConversationMessageBody(
 
   return {
     routeId: record.routeId,
+    text: record.text
+  };
+}
+
+async function readLocalBurbleChannelMessageBody(
+  request: Request,
+  routeId: string
+): Promise<{ routeId: string; text: string } | null> {
+  let body: unknown;
+  try {
+    body = await request.json();
+  } catch {
+    return null;
+  }
+  if (typeof body !== "object" || body === null || Array.isArray(body)) {
+    return null;
+  }
+
+  const record = body as Record<string, unknown>;
+  if (
+    typeof record.text !== "string" ||
+    record.text.trim().length === 0 ||
+    record.text.length > 4000
+  ) {
+    return null;
+  }
+
+  return {
+    routeId,
     text: record.text
   };
 }

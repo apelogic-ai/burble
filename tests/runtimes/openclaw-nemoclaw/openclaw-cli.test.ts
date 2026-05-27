@@ -908,11 +908,19 @@ describe("runOpenClawCliRequest", () => {
 
     expect(response.response.text).toBe("Sent the progress update.");
     expect(prompts[0]).toContain("conversation.sendMessage");
-    expect(prompts[0]).toContain("Active Burble conversation route: convrt_abc123");
     expect(prompts[0]).toContain(
-      "/internal/conversation/routes/convrt_abc123/webhook"
+      "Active Burble conversation channel route: convrt_abc123"
     );
-    expect(prompts[0]).toContain("delivery.mode");
+    expect(prompts[0]).toContain("Native OpenClaw Burble channel delivery");
+    expect(prompts[0]).toContain('delivery.mode to "announce"');
+    expect(prompts[0]).toContain('delivery.channel to "burble"');
+    expect(prompts[0]).toContain('delivery.to to "convrt_abc123"');
+    expect(prompts[0]).toContain(
+      "/internal/burble/channel/routes/convrt_abc123/events"
+    );
+    expect(prompts[0]).toContain(
+      "/internal/burble/channel/routes/convrt_abc123/messages"
+    );
     expect(prompts[0]).toContain("conversation.sendMessage JSON blobs");
     expect(toolCalls).toContainEqual({
       toolName: "conversation.sendMessage",
@@ -2070,6 +2078,84 @@ describe("runOpenClawCliRequest", () => {
     );
     expect(requests[0].body.model).toBe("openclaw/main");
     expect(requests[0].body.input).toContain("what can you do?");
+  });
+
+  test("uses the Burble channel and stable route session for native conversation turns", async () => {
+    const requests: Array<{
+      headers: Headers;
+      body: Record<string, unknown>;
+    }> = [];
+    const nativeRequest = (runId: string, text: string) => ({
+      runId,
+      executionMode: "openclaw-native" as const,
+      runtime: {
+        id: "rt_123"
+      },
+      input: {
+        text,
+        conversation: {
+          routeId: "convrt_abc123",
+          source: "slack" as const,
+          workspaceId: "T123",
+          channelId: "C123",
+          rootId: "channel:C123:thread:1779841118.237",
+          isDirectMessage: false
+        },
+        connections: {
+          github: { connected: false }
+        }
+      }
+    });
+
+    await withMockFetch(
+      (async (_input, init) => {
+        requests.push({
+          headers: new Headers(init?.headers),
+          body: JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>
+        });
+        return new Response(JSON.stringify(openResponsesText("Done.")), {
+          status: 200,
+          headers: { "content-type": "application/json" }
+        });
+      }) as typeof fetch,
+      async () => {
+        await runOpenClawCliRequest(
+          nativeRequest("run-one", "first turn"),
+          { ...config, engine: "openclaw-gateway" },
+          async () => {
+            throw new Error("unexpected tool call");
+          },
+          async () => {
+            throw new Error("unexpected cli call");
+          },
+          () => undefined
+        );
+        await runOpenClawCliRequest(
+          nativeRequest("run-two", "second turn"),
+          { ...config, engine: "openclaw-gateway" },
+          async () => {
+            throw new Error("unexpected tool call");
+          },
+          async () => {
+            throw new Error("unexpected cli call");
+          },
+          () => undefined
+        );
+      }
+    );
+
+    expect(requests).toHaveLength(2);
+    expect(requests[0].headers.get("x-openclaw-message-channel")).toBe("burble");
+    expect(requests[1].headers.get("x-openclaw-message-channel")).toBe("burble");
+    expect(requests[0].headers.get("x-openclaw-session-key")).toBe(
+      requests[1].headers.get("x-openclaw-session-key")
+    );
+    expect(requests[0].headers.get("x-openclaw-session-key")).toStartWith(
+      "agent:main:explicit:burble-step-"
+    );
+    expect(String(requests[0].body.input)).toContain(
+      "Active Burble conversation channel route: convrt_abc123"
+    );
   });
 
   test("instructs native execution to avoid repeated code tool loops", async () => {

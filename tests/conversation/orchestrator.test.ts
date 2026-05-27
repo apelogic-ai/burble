@@ -193,16 +193,23 @@ describe("handleConversation", () => {
   test("delegates to the LLM runner when LLM mode is enabled", async () => {
     const calls: string[] = [];
     const response = await handleConversation(
-      { ...baseRequest, text: "summarize my GitHub work" },
+      {
+        ...baseRequest,
+        text: "summarize my GitHub work",
+        conversationRouteId: "convrt_abc123"
+      },
       createDeps({
         agentMode: "llm",
+        agentExecutionMode: "openclaw-native",
         agentRunner: stubAgentRunner((input) => {
           calls.push(input.text);
+          expect(input.executionMode).toBe("openclaw-native");
           expect(input.principal).toEqual({
             workspaceId: "T123",
             slackUserId: "U123"
           });
           expect(input.conversation).toEqual({
+            routeId: "convrt_abc123",
             source: "slack",
             workspaceId: "T123",
             channelId: "C123",
