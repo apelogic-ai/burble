@@ -40,6 +40,7 @@ Then set `BASE_URL` in `.env` and configure OAuth callback URLs:
 - `/auth slack` starts the Slack user OAuth flow for message search.
 - `/agent status` powers up and shows the current agent runtime status for the Slack user.
 - `/agent config` powers up the runtime and shows a redacted preview of its selected agent config file.
+- `/agent exec <task>` sends an explicit task directly to the user's private agent runtime.
 - `/agent-status` is a legacy alias for agent status.
 - `/agent-config` is a legacy alias for agent config.
 

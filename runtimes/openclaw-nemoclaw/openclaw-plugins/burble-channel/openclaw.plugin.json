@@ -1,0 +1,33 @@
+{
+  "id": "burble",
+  "kind": "channel",
+  "channels": ["burble"],
+  "name": "Burble",
+  "description": "Burble conversation route channel plugin",
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {}
+  },
+  "channelConfigs": {
+    "burble": {
+      "schema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "baseUrl": {
+            "type": "string"
+          }
+        }
+      },
+      "uiHints": {
+        "baseUrl": {
+          "label": "Burble runtime local URL"
+        }
+      }
+    }
+  }
+}

@@ -37,6 +37,7 @@ const config: RuntimeConfig = {
   openClawConfigPatchPath: null,
   openClawValidateOnStart: true,
   openClawStreamDebug: false,
+  openClawCodeMode: false,
   openClawRawStreamDebug: false,
   openClawGatewayPort: 18789,
   openClawGatewayBind: "loopback",
@@ -44,6 +45,19 @@ const config: RuntimeConfig = {
   llmModel: "openai:gpt-5.4",
   ollamaBaseUrl: "https://ollama.com"
 };
+
+async function withMockFetch<T>(
+  mock: typeof fetch,
+  run: () => Promise<T>
+): Promise<T> {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = mock;
+  try {
+    return await run();
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+}
 
 describe("handleRuntimeRequest", () => {
   test("serves health checks", async () => {
@@ -502,6 +516,183 @@ describe("handleRuntimeRequest", () => {
     } finally {
       console.error = originalError;
     }
+  });
+
+  test("delivers local conversation messages through the Burble tool gateway", async () => {
+    const requests: Request[] = [];
+    const response = await withMockFetch(
+      (async (input, init) => {
+        const request = new Request(input, init);
+        requests.push(request);
+        return Response.json({
+          classification: "user_private",
+          content: {
+            ok: true,
+            transport: "slack",
+            conversationId: "C123",
+            messageId: "1779841120.000"
+          }
+        });
+      }) as typeof fetch,
+      () =>
+        handleRuntimeRequest(
+          new Request("http://runtime/internal/conversation/messages", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({
+              routeId: "convrt_abc123",
+              text: "hello"
+            })
+          }),
+          {
+            ...config,
+            runtimeId: "rt_u123"
+          }
+        )
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      classification: "user_private",
+      content: {
+        ok: true,
+        transport: "slack",
+        conversationId: "C123",
+        messageId: "1779841120.000"
+      }
+    });
+    expect(requests).toHaveLength(1);
+    expect(requests[0].url).toBe(
+      "http://burble-app:3000/internal/tools/conversation.sendMessage/execute"
+    );
+    expect(requests[0].headers.get("authorization")).toBe("Bearer secret");
+    expect(requests[0].headers.get("x-burble-runtime-id")).toBe("rt_u123");
+    expect(await requests[0].json()).toEqual({
+      input: {
+        routeId: "convrt_abc123",
+        text: "hello"
+      }
+    });
+  });
+
+  test("delivers Burble channel events through the Burble tool gateway", async () => {
+    const requests: Request[] = [];
+    const response = await withMockFetch(
+      (async (input, init) => {
+        const request = new Request(input, init);
+        requests.push(request);
+        return Response.json({
+          classification: "user_private",
+          content: {
+            ok: true,
+            transport: "slack",
+            conversationId: "C123",
+            messageId: "1779841120.000"
+          }
+        });
+      }) as typeof fetch,
+      () =>
+        handleRuntimeRequest(
+          new Request(
+            "http://runtime/internal/burble/channel/routes/convrt_abc123/events",
+            {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({
+                jobId: "job-123",
+                runId: "run-123",
+                result: {
+                  summary: "Open GitHub PRs: none found."
+                }
+              })
+            }
+          ),
+          {
+            ...config,
+            runtimeId: "rt_u123"
+          }
+        )
+    );
+
+    expect(response.status).toBe(200);
+    expect(requests).toHaveLength(1);
+    expect(requests[0].url).toBe(
+      "http://burble-app:3000/internal/tools/conversation.sendMessage/execute"
+    );
+    expect(await requests[0].json()).toEqual({
+      input: {
+        routeId: "convrt_abc123",
+        text: "Open GitHub PRs: none found."
+      }
+    });
+  });
+
+  test("accepts Burble channel events without deliverable text without posting", async () => {
+    const requests: Request[] = [];
+    const response = await withMockFetch(
+      (async (input, init) => {
+        requests.push(new Request(input, init));
+        return Response.json({});
+      }) as typeof fetch,
+      () =>
+        handleRuntimeRequest(
+          new Request(
+            "http://runtime/internal/burble/channel/routes/convrt_abc123/events",
+            {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({ jobId: "job-123", status: "ok" })
+            }
+          ),
+          {
+            ...config,
+            runtimeId: "rt_u123"
+          }
+        )
+    );
+
+    expect(response.status).toBe(202);
+    expect(await response.text()).toBe(
+      "Burble channel event did not contain deliverable text"
+    );
+    expect(requests).toEqual([]);
+  });
+
+  test("keeps the previous conversation webhook endpoint as a compatibility alias", async () => {
+    const requests: Request[] = [];
+    const response = await withMockFetch(
+      (async (input, init) => {
+        const request = new Request(input, init);
+        requests.push(request);
+        return Response.json({
+          classification: "user_private",
+          content: { ok: true }
+        });
+      }) as typeof fetch,
+      () =>
+        handleRuntimeRequest(
+          new Request(
+            "http://runtime/internal/conversation/routes/convrt_abc123/webhook",
+            {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({ text: "hello through old path" })
+            }
+          ),
+          {
+            ...config,
+            runtimeId: "rt_u123"
+          }
+        )
+    );
+
+    expect(response.status).toBe(200);
+    expect(await requests[0].json()).toEqual({
+      input: {
+        routeId: "convrt_abc123",
+        text: "hello through old path"
+      }
+    });
   });
 
   test("rejects malformed run requests", async () => {

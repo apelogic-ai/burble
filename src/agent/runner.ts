@@ -571,7 +571,11 @@ function formatAgentPrompt(input: AgentInput): string {
     ""
   ];
   if (recentMessages.length === 0) {
-    return [...header, `Current request: ${input.text}`].join("\n");
+    return [
+      ...header,
+      ...formatAgentAttachmentContext(input),
+      `Current request: ${input.text}`
+    ].join("\n");
   }
 
   return [
@@ -582,8 +586,33 @@ function formatAgentPrompt(input: AgentInput): string {
         `${formatSlackContextAuthor(message)}: ${message.text}`
     ),
     "",
+    ...formatAgentAttachmentContext(input),
     `Current request: ${input.text}`
   ].join("\n");
+}
+
+function formatAgentAttachmentContext(input: AgentInput): string[] {
+  const attachments = input.attachments ?? [];
+  if (attachments.length === 0) {
+    return [];
+  }
+
+  return [
+    "Current request attachments:",
+    ...attachments.map((attachment) => {
+      const details = [
+        `id=${attachment.id}`,
+        `kind=${attachment.kind}`,
+        `mime=${attachment.mimeType}`,
+        ...(attachment.name ? [`name=${attachment.name}`] : []),
+        ...(typeof attachment.sizeBytes === "number"
+          ? [`sizeBytes=${attachment.sizeBytes}`]
+          : [])
+      ];
+      return `- ${details.join(" ")}`;
+    }),
+    ""
+  ];
 }
 
 function formatSlackContextAuthor(

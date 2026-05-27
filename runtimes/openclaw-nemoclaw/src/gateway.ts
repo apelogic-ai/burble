@@ -2,6 +2,7 @@ import type { RuntimeConfig } from "./config";
 import { recordGatewayDiagnosticText } from "./gateway-diagnostics";
 import { info, type RuntimeLogger } from "./logger";
 import { openClawEnv } from "./openclaw-cli";
+import { buildOpenClawProcessEnv } from "./process-env";
 
 export type GatewayProcess = {
   pid?: number;
@@ -140,10 +141,7 @@ function spawnOpenClawGateway(
   return Bun.spawn([command, ...args], {
     stdout: "pipe",
     stderr: "pipe",
-    env: {
-      ...Bun.env,
-      ...options.env
-    }
+    env: buildOpenClawProcessEnv(options.env)
   });
 }
 

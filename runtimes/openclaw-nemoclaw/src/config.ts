@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 
 export type RuntimeConfig = {
   port: number;
+  runtimeId?: string | null;
   toolGatewayUrl: string;
   internalToken: string;
   mcpGatewayUrl: string | null;
@@ -23,6 +24,7 @@ export type RuntimeConfig = {
   openClawDebugModelPayload?: string | null;
   openClawDebugSse?: string | null;
   openClawDebugCodeMode?: string | null;
+  openClawCodeMode: boolean;
   openClawRawStreamDebug: boolean;
   openClawGatewayPort: number;
   openClawGatewayBind: string;
@@ -46,8 +48,10 @@ const runtimeEngines = [
 ] as const;
 
 export function readRuntimeConfig(env: Env): RuntimeConfig {
+  const runtimeId = readOptionalEnv(env.BURBLE_RUNTIME_ID);
   return {
     port: readPort(env.PORT ?? "8080"),
+    ...(runtimeId ? { runtimeId } : {}),
     toolGatewayUrl: requiredEnv(env, "BURBLE_TOOL_GATEWAY_URL").replace(
       /\/+$/,
       ""
@@ -88,6 +92,10 @@ export function readRuntimeConfig(env: Env): RuntimeConfig {
     openClawDebugModelPayload: readOptionalEnv(env.OPENCLAW_DEBUG_MODEL_PAYLOAD),
     openClawDebugSse: readOptionalEnv(env.OPENCLAW_DEBUG_SSE),
     openClawDebugCodeMode: readOptionalEnv(env.OPENCLAW_DEBUG_CODE_MODE),
+    openClawCodeMode: readBooleanEnv(
+      env.OPENCLAW_CODE_MODE ?? "false",
+      "OPENCLAW_CODE_MODE"
+    ),
     openClawRawStreamDebug: readBooleanEnv(
       env.OPENCLAW_RAW_STREAM_DEBUG ?? "false",
       "OPENCLAW_RAW_STREAM_DEBUG"

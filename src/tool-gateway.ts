@@ -1,5 +1,6 @@
 import type { Config } from "./config";
 import type { AgentRuntimeRecord, TokenStore } from "./db";
+import type { ConversationAttachment } from "./conversation/types";
 import { createHash, timingSafeEqual } from "node:crypto";
 import {
   getGitHubUser,
@@ -44,6 +45,17 @@ import { verifyJiraAuthForOpaqueAtlassianMcpError } from "./mcp/atlassian-auth";
 type ToolGatewayDeps = Partial<Parameters<typeof createGitHubTools>[0]> &
   Partial<JiraToolDeps> &
   Partial<SlackToolDeps> & {
+    postActiveConversationMessage?: (input: {
+      transport: "slack";
+      channelId: string;
+      text: string;
+      attachments?: ConversationAttachment[];
+      threadTs?: string;
+    }) => Promise<{
+      transport: "slack";
+      channelId: string;
+      messageId?: string;
+    }>;
     listAtlassianMcpTools?: (input: {
       url: string;
       accessToken: string;
@@ -61,6 +73,7 @@ type ToolGatewayBody = {
     email?: unknown;
   };
   input?: unknown;
+  conversation?: unknown;
 };
 
 const defaultDeps = {
@@ -105,6 +118,42 @@ export async function handleToolGatewayRequest(
   }
 
   const body = await readToolGatewayBody(request);
+  if (toolName === "conversation.sendMessage") {
+    if (auth.kind !== "runtime") {
+      return new Response("Runtime auth required", { status: 403 });
+    }
+    if (!isConversationSendInput(body?.input)) {
+      return new Response("Invalid tool input", { status: 400 });
+    }
+    const sendInput = body.input;
+    const destination = sendInput.routeId
+      ? resolveConversationRouteDestination(store, auth.runtime, sendInput.routeId)
+      : resolveActiveConversationDestination(auth.runtime, body?.conversation);
+    if (!destination.ok) {
+      return new Response(destination.message, { status: destination.status });
+    }
+
+    const result = await (deps.postActiveConversationMessage ??
+      ((input) => defaultPostActiveConversationMessage(config, input)))({
+      transport: destination.transport,
+      channelId: destination.channelId,
+      text: sendInput.text,
+      ...(sendInput.attachments ? { attachments: sendInput.attachments } : {}),
+      ...(destination.threadTs ? { threadTs: destination.threadTs } : {})
+    });
+
+    return jsonResponseWithAudit(store, auth, toolName, {
+      classification: "user_private",
+      content: {
+        ok: true,
+        transport: result.transport,
+        conversationId: result.channelId,
+        ...(sendInput.routeId ? { routeId: sendInput.routeId } : {}),
+        ...(result.messageId ? { messageId: result.messageId } : {})
+      }
+    });
+  }
+
   if (!body || typeof body.user?.email !== "string") {
     return new Response("Invalid tool input", { status: 400 });
   }
@@ -506,6 +555,7 @@ function isKnownTool(toolName: string): boolean {
     toolName === "jira.searchIssues" ||
     toolName === "slack.searchUsers" ||
     toolName === "slack.searchMessages" ||
+    toolName === "conversation.sendMessage" ||
     toolName === "atlassian.listMcpTools" ||
     toolName === "atlassian.callMcpTool"
   );
@@ -672,6 +722,238 @@ function optionalString(value: unknown): boolean {
   return value === undefined || typeof value === "string";
 }
 
+function isConversationSendInput(
+  input: unknown
+): input is {
+  text: string;
+  routeId?: string;
+  attachments?: ConversationAttachment[];
+} {
+  return (
+    typeof input === "object" &&
+    input !== null &&
+    !Array.isArray(input) &&
+    "text" in input &&
+    typeof input.text === "string" &&
+    input.text.trim().length > 0 &&
+    input.text.length <= 4000 &&
+    (!("attachments" in input) ||
+      input.attachments === undefined ||
+      isConversationAttachmentArray(input.attachments)) &&
+    (!("routeId" in input) ||
+      input.routeId === undefined ||
+      (typeof input.routeId === "string" && input.routeId.trim().length > 0))
+  );
+}
+
+function isConversationAttachmentArray(
+  value: unknown
+): value is ConversationAttachment[] {
+  return Array.isArray(value) && value.every(isConversationAttachment);
+}
+
+function isConversationAttachment(value: unknown): value is ConversationAttachment {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return false;
+  }
+
+  const record = value as Record<string, unknown>;
+  return (
+    typeof record.id === "string" &&
+    record.id.trim().length > 0 &&
+    (record.kind === "file" ||
+      record.kind === "image" ||
+      record.kind === "audio" ||
+      record.kind === "video") &&
+    typeof record.mimeType === "string" &&
+    record.mimeType.trim().length > 0 &&
+    (record.source === "slack" ||
+      record.source === "burble" ||
+      record.source === "agent") &&
+    optionalString(record.name) &&
+    (record.sizeBytes === undefined ||
+      (typeof record.sizeBytes === "number" &&
+        Number.isFinite(record.sizeBytes) &&
+        record.sizeBytes >= 0)) &&
+    optionalString(record.externalId)
+  );
+}
+
+function isActiveConversation(conversation: unknown): conversation is {
+  source: "slack";
+  workspaceId: string;
+  channelId: string;
+  rootId: string;
+  isDirectMessage: boolean;
+} {
+  if (
+    typeof conversation !== "object" ||
+    conversation === null ||
+    Array.isArray(conversation)
+  ) {
+    return false;
+  }
+
+  const record = conversation as Record<string, unknown>;
+  return (
+    record.source === "slack" &&
+    typeof record.workspaceId === "string" &&
+    record.workspaceId.trim().length > 0 &&
+    typeof record.channelId === "string" &&
+    record.channelId.trim().length > 0 &&
+    typeof record.rootId === "string" &&
+    record.rootId.trim().length > 0 &&
+    typeof record.isDirectMessage === "boolean"
+  );
+}
+
+function readConversationThread(conversation: {
+  rootId: string;
+}): { threadTs?: string } {
+  const match = conversation.rootId.match(/^(?:channel|dm):[^:]+:thread:(.+)$/);
+  const threadTs = match?.[1]?.trim();
+  return threadTs ? { threadTs } : {};
+}
+
+function resolveActiveConversationDestination(
+  runtime: AgentRuntimeRecord,
+  conversation: unknown
+):
+  | {
+      ok: true;
+      transport: "slack";
+      channelId: string;
+      threadTs?: string;
+    }
+  | { ok: false; status: number; message: string } {
+  if (!isActiveConversation(conversation)) {
+    return { ok: false, status: 400, message: "Invalid tool input" };
+  }
+  if (conversation.workspaceId !== runtime.workspaceId) {
+    return {
+      ok: false,
+      status: 403,
+      message: "Runtime principal mismatch"
+    };
+  }
+
+  return {
+    ok: true,
+    transport: conversation.source,
+    channelId: conversation.channelId,
+    ...readConversationThread(conversation)
+  };
+}
+
+function resolveConversationRouteDestination(
+  store: TokenStore,
+  runtime: AgentRuntimeRecord,
+  routeId: string
+):
+  | {
+      ok: true;
+      transport: "slack";
+      channelId: string;
+      threadTs?: string;
+    }
+  | { ok: false; status: number; message: string } {
+  const route = store.getConversationRoute(routeId);
+  if (!route) {
+    return { ok: false, status: 404, message: "Conversation route not found" };
+  }
+  if (route.revokedAt) {
+    return { ok: false, status: 410, message: "Conversation route revoked" };
+  }
+  if (
+    route.workspaceId !== runtime.workspaceId ||
+    route.slackUserId !== runtime.slackUserId
+  ) {
+    return {
+      ok: false,
+      status: 403,
+      message: "Runtime principal mismatch"
+    };
+  }
+  if (route.transport !== "slack") {
+    return {
+      ok: false,
+      status: 400,
+      message: "Unsupported conversation transport"
+    };
+  }
+
+  const destination = readSlackRouteDestination(route.destinationJson);
+  if (!destination) {
+    return {
+      ok: false,
+      status: 400,
+      message: "Invalid conversation route"
+    };
+  }
+  if (destination.runtimeId && destination.runtimeId !== runtime.id) {
+    return {
+      ok: false,
+      status: 403,
+      message: "Runtime route mismatch"
+    };
+  }
+
+  return {
+    ok: true,
+    transport: "slack",
+    ...destination
+  };
+}
+
+function readSlackRouteDestination(
+  destinationJson: string
+): { channelId: string; threadTs?: string; runtimeId?: string } | null {
+  try {
+    const parsed = JSON.parse(destinationJson) as unknown;
+    if (
+      typeof parsed !== "object" ||
+      parsed === null ||
+      Array.isArray(parsed)
+    ) {
+      return null;
+    }
+
+    const record = parsed as Record<string, unknown>;
+    if (
+      typeof record.channelId !== "string" ||
+      record.channelId.trim().length === 0
+    ) {
+      return null;
+    }
+    if (
+      "threadTs" in record &&
+      record.threadTs !== undefined &&
+      typeof record.threadTs !== "string"
+    ) {
+      return null;
+    }
+    if (
+      "runtimeId" in record &&
+      record.runtimeId !== undefined &&
+      typeof record.runtimeId !== "string"
+    ) {
+      return null;
+    }
+
+    return {
+      channelId: record.channelId,
+      ...(typeof record.threadTs === "string" && record.threadTs.trim()
+        ? { threadTs: record.threadTs }
+        : {}),
+      ...(typeof record.runtimeId === "string" && record.runtimeId.trim()
+        ? { runtimeId: record.runtimeId }
+        : {})
+    };
+  } catch {
+    return null;
+  }
+}
+
 function isAtlassianMcpToolCallInput(
   input: unknown
 ): input is { name: string; arguments?: Record<string, unknown> } {
@@ -724,6 +1006,67 @@ function defaultCallAtlassianMcpTool(input: {
       arguments: input.arguments
     }
   );
+}
+
+async function defaultPostActiveConversationMessage(
+  config: Config,
+  input: {
+    transport: "slack";
+    channelId: string;
+    text: string;
+    attachments?: ConversationAttachment[];
+    threadTs?: string;
+  }
+): Promise<{ transport: "slack"; channelId: string; messageId?: string }> {
+  const response = await fetch("https://slack.com/api/chat.postMessage", {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${config.slackBotToken}`,
+      "content-type": "application/json; charset=utf-8"
+    },
+    body: JSON.stringify({
+      channel: input.channelId,
+      text: renderTextWithAttachments(input.text, input.attachments),
+      ...(input.threadTs ? { thread_ts: input.threadTs } : {})
+    })
+  });
+
+  const body = (await response.json()) as {
+    ok?: boolean;
+    error?: string;
+    channel?: string;
+    ts?: string;
+  };
+  if (!response.ok || !body.ok) {
+    throw new Error(
+      `Slack message send failed: ${body.error ?? `HTTP ${response.status}`}`
+    );
+  }
+
+  return {
+    transport: "slack",
+    channelId: body.channel ?? input.channelId,
+    ...(body.ts ? { messageId: body.ts } : {})
+  };
+}
+
+function renderTextWithAttachments(
+  text: string,
+  attachments?: ConversationAttachment[]
+): string {
+  if (!attachments || attachments.length === 0) {
+    return text;
+  }
+
+  return [
+    text,
+    "",
+    "*Attachments:*",
+    ...attachments.map((attachment) => {
+      const label = attachment.name ?? attachment.id;
+      return `- ${label} (${attachment.kind}, ${attachment.mimeType})`;
+    })
+  ].join("\n");
 }
 
 const allowedMutatingAtlassianMcpTools = new Set([

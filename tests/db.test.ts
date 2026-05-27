@@ -301,4 +301,44 @@ describe("createTokenStore", () => {
 
     store.close();
   });
+
+  test("stores durable conversation routes without credentials", () => {
+    const store = createTokenStore(":memory:");
+
+    const route = store.upsertConversationRoute({
+      workspaceId: "T123",
+      slackUserId: "U123",
+      transport: "slack",
+      destination: {
+        channelId: "C123",
+        threadTs: "1779841118.237"
+      },
+      now: new Date("2026-05-26T00:00:00.000Z")
+    });
+
+    expect(route.id).toMatch(/^convrt_[0-9a-f]{24}$/);
+    expect(route).toMatchObject({
+      workspaceId: "T123",
+      slackUserId: "U123",
+      transport: "slack",
+      createdAt: "2026-05-26T00:00:00.000Z",
+      updatedAt: "2026-05-26T00:00:00.000Z",
+      revokedAt: null
+    });
+    expect(JSON.parse(route.destinationJson)).toEqual({
+      channelId: "C123",
+      threadTs: "1779841118.237"
+    });
+    expect(route.destinationJson).not.toContain("xox");
+
+    expect(store.getConversationRoute(route.id)).toMatchObject({
+      id: route.id,
+      workspaceId: "T123",
+      slackUserId: "U123",
+      transport: "slack",
+      destinationJson: route.destinationJson
+    });
+
+    store.close();
+  });
 });

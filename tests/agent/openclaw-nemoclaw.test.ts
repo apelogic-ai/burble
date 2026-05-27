@@ -104,8 +104,20 @@ describe("createOpenClawNemoClawAgentRunner", () => {
 
     const result = await collectAgentRun(runner, {
       principal,
+      executionMode: "openclaw-native",
       conversation,
       text: "summarize my GitHub work",
+      attachments: [
+        {
+          id: "slack:F123",
+          externalId: "F123",
+          source: "slack",
+          kind: "image",
+          mimeType: "image/png",
+          name: "screenshot.png",
+          sizeBytes: 2048
+        }
+      ],
       connections: { github: connection }
     });
 
@@ -124,8 +136,20 @@ describe("createOpenClawNemoClawAgentRunner", () => {
 
     const body = JSON.parse(String(requests[0].init.body));
     expect(body).toMatchObject({
+      executionMode: "openclaw-native",
       input: {
         text: "summarize my GitHub work",
+        attachments: [
+          {
+            id: "slack:F123",
+            externalId: "F123",
+            source: "slack",
+            kind: "image",
+            mimeType: "image/png",
+            name: "screenshot.png",
+            sizeBytes: 2048
+          }
+        ],
         conversation,
         connections: {
           github: {

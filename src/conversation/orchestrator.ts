@@ -1,6 +1,7 @@
 import { formatConnectGitHubMessage } from "../formatting";
 import { formatGitHubIdentityMessage, formatIssuesMessage } from "../formatting";
 import { collectAgentRun } from "../agent/types";
+import { tryHandleLocalToolFastPath } from "./local-tool-fast-paths";
 import { enforceVisibility } from "./visibility";
 import type {
   ConversationDeps,
@@ -72,37 +73,9 @@ export async function handleConversation(
     };
   }
 
-  if (deps.agentMode === "llm" && deps.agentRunner) {
-    const result = await collectAgentRun(
-      deps.agentRunner,
-      {
-        principal: {
-          workspaceId: request.workspaceId,
-          slackUserId: request.user.slackUserId
-        },
-        conversation: buildAgentConversation(request),
-        ...(request.context ? { context: request.context } : {}),
-        text: request.text,
-        connections: {
-          github: deps.getConnection("github", request.user.email),
-          google: deps.getConnection("google", request.user.email),
-          jira: deps.getConnection("jira", request.user.email),
-          slack: deps.getConnection("slack", request.user.email)
-        }
-      },
-      deps.onAgentEvent
-    );
-
-    return enforceVisibility(
-      {
-        visibility: "public",
-        classification: result.classification,
-        text: result.text,
-        ...(result.blocks ? { blocks: result.blocks } : {}),
-        ...(result.usage ? { usage: result.usage } : {})
-      },
-      request
-    );
+  const fastPathResponse = await tryHandleLocalToolFastPath(request, deps);
+  if (fastPathResponse) {
+    return fastPathResponse;
   }
 
   if (
@@ -121,7 +94,7 @@ export async function handleConversation(
     }
 
     if (intent === "github_identity") {
-      const result = await deps.githubTools.getAuthenticatedUser.execute({
+      const result = await deps.tools.github.getAuthenticatedUser.execute({
         connection
       });
       return enforceVisibility(
@@ -139,13 +112,13 @@ export async function handleConversation(
 
     const result =
       intent === "github_pull_requests"
-        ? await deps.githubTools.listMyPullRequests.execute({ connection })
+        ? await deps.tools.github.listMyPullRequests.execute({ connection })
         : intent === "github_issue_search"
-          ? await deps.githubTools.searchIssues.execute({
+          ? await deps.tools.github.searchIssues.execute({
               connection,
               input: { query: buildIssueSearchQuery(request.text) }
             })
-          : await deps.githubTools.listAssignedIssues.execute({
+          : await deps.tools.github.listAssignedIssues.execute({
               connection
             });
 
@@ -159,6 +132,44 @@ export async function handleConversation(
             html_url: issue.url
           }))
         )
+      },
+      request
+    );
+  }
+
+  if (deps.agentMode === "llm" && deps.agentRunner) {
+    const result = await collectAgentRun(
+      deps.agentRunner,
+      {
+        principal: {
+          workspaceId: request.workspaceId,
+          slackUserId: request.user.slackUserId
+        },
+        ...(deps.agentExecutionMode
+          ? { executionMode: deps.agentExecutionMode }
+          : {}),
+        conversation: buildAgentConversation(request),
+        ...(request.context ? { context: request.context } : {}),
+        text: request.text,
+        ...(request.attachments ? { attachments: request.attachments } : {}),
+        connections: {
+          github: deps.getConnection("github", request.user.email),
+          google: deps.getConnection("google", request.user.email),
+          jira: deps.getConnection("jira", request.user.email),
+          slack: deps.getConnection("slack", request.user.email)
+        }
+      },
+      deps.onAgentEvent
+    );
+
+    return enforceVisibility(
+      {
+        visibility: "public",
+        classification: result.classification,
+        text: result.text,
+        ...(result.attachments ? { attachments: result.attachments } : {}),
+        ...(result.blocks ? { blocks: result.blocks } : {}),
+        ...(result.usage ? { usage: result.usage } : {})
       },
       request
     );
@@ -178,6 +189,7 @@ export async function handleConversation(
 
 function buildAgentConversation(request: ConversationRequest) {
   return {
+    ...(request.conversationRouteId ? { routeId: request.conversationRouteId } : {}),
     source: request.source,
     workspaceId: request.workspaceId,
     channelId: request.channelId,

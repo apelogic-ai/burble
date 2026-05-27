@@ -234,12 +234,18 @@ enable targeted diagnostics such as `OPENCLAW_DEBUG_MODEL_TRANSPORT=true`,
 `OPENCLAW_DEBUG_MODEL_PAYLOAD=summary`, and `OPENCLAW_DEBUG_SSE=events`.
 Use `OPENCLAW_DEBUG_CODE_MODE=true` if OpenClaw's code-mode tool surface is
 involved.
+OpenClaw code mode is disabled by default for Burble runtimes because simple
+channel and cron turns should use direct OpenClaw tools instead of the
+`exec`/`wait` orchestration surface. Set `OPENCLAW_CODE_MODE=true` to opt back
+into code mode for broader tool-catalog or coding-style experiments.
 Set `OPENCLAW_RAW_STREAM_DEBUG=true` temporarily to ask OpenClaw for per-run
 raw stream JSONL under `/data/openclaw/state/raw-streams`; Burble parses those
 files for token usage and logs only the summarized counts.
 Use `OPENCLAW_NEMOCLAW_ENGINE=burble-direct` for the low-latency Slack path:
 Burble keeps its own prompt and MCP tool loop, but sends planning turns directly
-to the selected provider from `AI_MODEL`.
+to the selected provider from `AI_MODEL`. `/agent exec <task>` still asks the
+same private runtime container to use OpenClaw-native execution for that one
+request.
 Use `OPENCLAW_NEMOCLAW_ENGINE=openclaw-gateway` only when you want the real
 OpenClaw Gateway agent path. In that mode the runtime starts a private
 `openclaw gateway run` process once at boot using `OPENCLAW_GATEWAY_PORT`,
@@ -379,6 +385,7 @@ In Slack:
 /auth slack
 /agent status
 /agent config
+/agent exec summarize my connected accounts
 /agent-status
 /agent-config
 /help

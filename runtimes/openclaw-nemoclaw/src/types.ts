@@ -1,5 +1,15 @@
 export type ToolClassification = "public" | "user_private" | "restricted";
 
+export type ConversationAttachment = {
+  id: string;
+  kind: "file" | "image" | "audio" | "video";
+  mimeType: string;
+  source: "slack" | "burble" | "agent";
+  name?: string;
+  sizeBytes?: number;
+  externalId?: string;
+};
+
 export type ToolResult<TContent = unknown> = {
   classification: ToolClassification;
   content: TContent;
@@ -7,12 +17,15 @@ export type ToolResult<TContent = unknown> = {
 
 export type RunRequest = {
   runId?: string;
+  executionMode?: "default" | "openclaw-native";
   runtime?: {
     id: string;
   };
   input: {
     text: string;
+    attachments?: ConversationAttachment[];
     conversation?: {
+      routeId?: string;
       source: "slack";
       workspaceId: string;
       channelId: string;
@@ -61,6 +74,7 @@ export type RunResponse = {
   response: {
     classification: ToolClassification;
     text: string;
+    attachments?: ConversationAttachment[];
     usage?: RunUsage;
   };
 };

@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import type { Config } from "../src/config";
 import type {
   AgentRuntimeRecord,
+  ConversationRouteRecord,
   ProviderConnection,
   TokenStore
 } from "../src/db";
@@ -96,7 +97,8 @@ const runtime: AgentRuntimeRecord = {
 function createStore(
   foundConnection: ProviderConnection | null,
   foundRuntime: AgentRuntimeRecord | null = null,
-  runtimeEvents: unknown[] = []
+  runtimeEvents: unknown[] = [],
+  foundRoute: ConversationRouteRecord | null = null
 ): TokenStore {
   return {
     createOAuthState: () => "state",
@@ -123,6 +125,10 @@ function createStore(
       runtimeEvents.push(event);
     },
     listAgentRuntimeEvents: () => [],
+    upsertConversationRoute: () => {
+      throw new Error("unexpected conversation route write");
+    },
+    getConversationRoute: (id) => (id === foundRoute?.id ? foundRoute : null),
     updateAgentRuntimeStatus: () => undefined,
     touchAgentRuntime: () => undefined,
     close: () => undefined
@@ -283,6 +289,260 @@ describe("handleToolGatewayRequest", () => {
         }
       }
     ]);
+  });
+
+  test("lets a runtime send to its active conversation without provider credentials", async () => {
+    const runtimeEvents: unknown[] = [];
+    const response = await handleToolGatewayRequest(
+      config,
+      createStore(null, runtime, runtimeEvents),
+      "conversation.sendMessage",
+      request(
+        "conversation.sendMessage",
+        {
+          input: { text: "Long task finished." },
+          conversation: {
+            source: "slack",
+            workspaceId: "T123",
+            channelId: "C123",
+            rootId: "channel:C123:thread:1779841118.237",
+            isDirectMessage: false
+          }
+        },
+        "runtime-token-u123",
+        "rt_u123"
+      ),
+      {
+        postActiveConversationMessage: async (input) => {
+          expect(input).toEqual({
+            transport: "slack",
+            channelId: "C123",
+            text: "Long task finished.",
+            threadTs: "1779841118.237"
+          });
+          return {
+            transport: "slack",
+            channelId: "C123",
+            messageId: "1779841120.000"
+          };
+        }
+      }
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      classification: "user_private",
+      content: {
+        ok: true,
+        transport: "slack",
+        conversationId: "C123",
+        messageId: "1779841120.000"
+      }
+    });
+    expect(runtimeEvents).toEqual([
+      {
+        runtimeId: "rt_u123",
+        eventType: "runtime_tool_called",
+        summary: {
+          toolName: "conversation.sendMessage",
+          classification: "user_private",
+          itemCount: null
+        }
+      }
+    ]);
+  });
+
+  test("lets a runtime send through a durable conversation route", async () => {
+    const route: ConversationRouteRecord = {
+      id: "convrt_abc123",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      transport: "slack",
+      destinationJson: JSON.stringify({
+        channelId: "C123",
+        threadTs: "1779841118.237"
+      }),
+      createdAt: "2026-05-26T00:00:00.000Z",
+      updatedAt: "2026-05-26T00:00:00.000Z",
+      revokedAt: null
+    };
+    const response = await handleToolGatewayRequest(
+      config,
+      createStore(null, runtime, [], route),
+      "conversation.sendMessage",
+      request(
+        "conversation.sendMessage",
+        {
+          input: { text: "Cron finished.", routeId: "convrt_abc123" }
+        },
+        "runtime-token-u123",
+        "rt_u123"
+      ),
+      {
+        postActiveConversationMessage: async (input) => {
+          expect(input).toEqual({
+            transport: "slack",
+            channelId: "C123",
+            text: "Cron finished.",
+            threadTs: "1779841118.237"
+          });
+          return {
+            transport: "slack",
+            channelId: "C123",
+            messageId: "1779841130.000"
+          };
+        }
+      }
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      classification: "user_private",
+      content: {
+        ok: true,
+        transport: "slack",
+        conversationId: "C123",
+        routeId: "convrt_abc123",
+        messageId: "1779841130.000"
+      }
+    });
+  });
+
+  test("passes outbound conversation attachment metadata through durable routes", async () => {
+    const route: ConversationRouteRecord = {
+      id: "convrt_abc123",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      transport: "slack",
+      destinationJson: JSON.stringify({
+        channelId: "C123",
+        threadTs: "1779841118.237"
+      }),
+      createdAt: "2026-05-26T00:00:00.000Z",
+      updatedAt: "2026-05-26T00:00:00.000Z",
+      revokedAt: null
+    };
+    const response = await handleToolGatewayRequest(
+      config,
+      createStore(null, runtime, [], route),
+      "conversation.sendMessage",
+      request(
+        "conversation.sendMessage",
+        {
+          input: {
+            text: "Cron finished.",
+            routeId: "convrt_abc123",
+            attachments: [
+              {
+                id: "agent:report-1",
+                source: "agent",
+                kind: "file",
+                mimeType: "text/plain",
+                name: "report.txt",
+                sizeBytes: 12
+              }
+            ]
+          }
+        },
+        "runtime-token-u123",
+        "rt_u123"
+      ),
+      {
+        postActiveConversationMessage: async (input) => {
+          expect(input).toEqual({
+            transport: "slack",
+            channelId: "C123",
+            text: "Cron finished.",
+            threadTs: "1779841118.237",
+            attachments: [
+              {
+                id: "agent:report-1",
+                source: "agent",
+                kind: "file",
+                mimeType: "text/plain",
+                name: "report.txt",
+                sizeBytes: 12
+              }
+            ]
+          });
+          return {
+            transport: "slack",
+            channelId: "C123",
+            messageId: "1779841130.000"
+          };
+        }
+      }
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      classification: "user_private",
+      content: {
+        ok: true,
+        transport: "slack",
+        conversationId: "C123",
+        routeId: "convrt_abc123",
+        messageId: "1779841130.000"
+      }
+    });
+  });
+
+  test("rejects durable conversation routes bound to another runtime", async () => {
+    const route: ConversationRouteRecord = {
+      id: "convrt_abc123",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      transport: "slack",
+      destinationJson: JSON.stringify({
+        channelId: "C123",
+        runtimeId: "rt_other"
+      }),
+      createdAt: "2026-05-26T00:00:00.000Z",
+      updatedAt: "2026-05-26T00:00:00.000Z",
+      revokedAt: null
+    };
+    const response = await handleToolGatewayRequest(
+      config,
+      createStore(null, runtime, [], route),
+      "conversation.sendMessage",
+      request(
+        "conversation.sendMessage",
+        {
+          input: { text: "Cron finished.", routeId: "convrt_abc123" }
+        },
+        "runtime-token-u123",
+        "rt_u123"
+      )
+    );
+
+    expect(response.status).toBe(403);
+    expect(await response.text()).toBe("Runtime route mismatch");
+  });
+
+  test("rejects active conversation sends for another workspace", async () => {
+    const response = await handleToolGatewayRequest(
+      config,
+      createStore(null, runtime),
+      "conversation.sendMessage",
+      request(
+        "conversation.sendMessage",
+        {
+          input: { text: "hello" },
+          conversation: {
+            source: "slack",
+            workspaceId: "T999",
+            channelId: "C123",
+            rootId: "channel:C123:thread:1779841118.237",
+            isDirectMessage: false
+          }
+        },
+        "runtime-token-u123",
+        "rt_u123"
+      )
+    );
+
+    expect(response.status).toBe(403);
+    expect(await response.text()).toBe("Runtime principal mismatch");
   });
 
   test("rejects runtime tokens for another user's connected account", async () => {
