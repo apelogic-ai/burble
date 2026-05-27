@@ -1,6 +1,7 @@
 import { formatConnectGitHubMessage } from "../formatting";
 import { formatGitHubIdentityMessage, formatIssuesMessage } from "../formatting";
 import { collectAgentRun } from "../agent/types";
+import { tryHandleLocalToolFastPath } from "./local-tool-fast-paths";
 import { enforceVisibility } from "./visibility";
 import type {
   ConversationDeps,
@@ -72,6 +73,70 @@ export async function handleConversation(
     };
   }
 
+  const fastPathResponse = await tryHandleLocalToolFastPath(request, deps);
+  if (fastPathResponse) {
+    return fastPathResponse;
+  }
+
+  if (
+    intent === "github_identity" ||
+    intent === "github_issues" ||
+    intent === "github_issue_search" ||
+    intent === "github_pull_requests"
+  ) {
+    const connection = deps.getConnection("github", request.user.email);
+    if (!connection) {
+      return {
+        visibility: "ephemeral",
+        classification: "user_private",
+        text: "Connect GitHub first: `@Burble connect github`."
+      };
+    }
+
+    if (intent === "github_identity") {
+      const result = await deps.tools.github.getAuthenticatedUser.execute({
+        connection
+      });
+      return enforceVisibility(
+        {
+          visibility: "public",
+          classification: result.classification,
+          text: formatGitHubIdentityMessage(
+            result.content.login,
+            request.user.email
+          )
+        },
+        request
+      );
+    }
+
+    const result =
+      intent === "github_pull_requests"
+        ? await deps.tools.github.listMyPullRequests.execute({ connection })
+        : intent === "github_issue_search"
+          ? await deps.tools.github.searchIssues.execute({
+              connection,
+              input: { query: buildIssueSearchQuery(request.text) }
+            })
+          : await deps.tools.github.listAssignedIssues.execute({
+              connection
+            });
+
+    return enforceVisibility(
+      {
+        visibility: "public",
+        classification: result.classification,
+        text: formatIssuesMessage(
+          result.content.map((issue) => ({
+            title: issue.title,
+            html_url: issue.url
+          }))
+        )
+      },
+      request
+    );
+  }
+
   if (deps.agentMode === "llm" && deps.agentRunner) {
     const result = await collectAgentRun(
       deps.agentRunner,
@@ -103,65 +168,6 @@ export async function handleConversation(
         text: result.text,
         ...(result.blocks ? { blocks: result.blocks } : {}),
         ...(result.usage ? { usage: result.usage } : {})
-      },
-      request
-    );
-  }
-
-  if (
-    intent === "github_identity" ||
-    intent === "github_issues" ||
-    intent === "github_issue_search" ||
-    intent === "github_pull_requests"
-  ) {
-    const connection = deps.getConnection("github", request.user.email);
-    if (!connection) {
-      return {
-        visibility: "ephemeral",
-        classification: "user_private",
-        text: "Connect GitHub first: `@Burble connect github`."
-      };
-    }
-
-    if (intent === "github_identity") {
-      const result = await deps.githubTools.getAuthenticatedUser.execute({
-        connection
-      });
-      return enforceVisibility(
-        {
-          visibility: "public",
-          classification: result.classification,
-          text: formatGitHubIdentityMessage(
-            result.content.login,
-            request.user.email
-          )
-        },
-        request
-      );
-    }
-
-    const result =
-      intent === "github_pull_requests"
-        ? await deps.githubTools.listMyPullRequests.execute({ connection })
-        : intent === "github_issue_search"
-          ? await deps.githubTools.searchIssues.execute({
-              connection,
-              input: { query: buildIssueSearchQuery(request.text) }
-            })
-          : await deps.githubTools.listAssignedIssues.execute({
-              connection
-            });
-
-    return enforceVisibility(
-      {
-        visibility: "public",
-        classification: result.classification,
-        text: formatIssuesMessage(
-          result.content.map((issue) => ({
-            title: issue.title,
-            html_url: issue.url
-          }))
-        )
       },
       request
     );
