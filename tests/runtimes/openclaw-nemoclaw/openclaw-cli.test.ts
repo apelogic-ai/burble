@@ -2032,6 +2032,72 @@ describe("runOpenClawCliRequest", () => {
     ).toBe(true);
   });
 
+  test("retries OpenClaw gateway bootstrap answers instead of returning them", async () => {
+    const requests: Array<Record<string, unknown>> = [];
+    const logs: string[] = [];
+    const providerTexts = [
+      "Hey. I just came online. Who am I, and who are you?",
+      "Jensen Huang is the co-founder and CEO of NVIDIA."
+    ];
+
+    const response = await withMockFetch(
+      (async (_input, init) => {
+        const body = JSON.parse(String(init?.body ?? "{}")) as Record<
+          string,
+          unknown
+        >;
+        requests.push(body);
+        const text = providerTexts.shift();
+        if (!text) {
+          throw new Error("unexpected gateway call");
+        }
+        return new Response(JSON.stringify(openResponsesText(text)), {
+          status: 200,
+          headers: { "content-type": "application/json" }
+        });
+      }) as typeof fetch,
+      async () =>
+        runOpenClawCliRequest(
+          {
+            runId: "run-gateway-bootstrap",
+            executionMode: "openclaw-native",
+            input: {
+              text: "ask agent who is jensen huang",
+              connections: {
+                github: { connected: false }
+              }
+            }
+          },
+          { ...config, engine: "openclaw-gateway" },
+          async () => {
+            throw new Error("unexpected tool call");
+          },
+          async () => {
+            throw new Error("unexpected cli call");
+          },
+          (message) => logs.push(message)
+        )
+    );
+
+    expect(response.response.text).toBe(
+      "Jensen Huang is the co-founder and CEO of NVIDIA."
+    );
+    expect(requests).toHaveLength(2);
+    expect(String(requests[0].input)).toContain(
+      "Do not run first-time assistant setup"
+    );
+    expect(String(requests[1].input)).toContain(
+      "Previous response was rejected because it asked for assistant/user setup"
+    );
+    expect(
+      logs.some((line) =>
+        line.includes(
+          "OpenClaw bootstrap retry runId=run-gateway-bootstrap step=1 reason=bootstrap_response"
+        )
+      )
+    ).toBe(true);
+  });
+
   test("can invoke OpenClaw through Gateway mode without local CLI execution", async () => {
     const commands: Array<{ args: string[] }> = [];
     const requests: Array<{

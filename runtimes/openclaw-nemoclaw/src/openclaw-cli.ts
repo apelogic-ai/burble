@@ -52,7 +52,7 @@ export type CliCommandStreamer = (
 
 const streamHeartbeatMs = 8_000;
 const maxPlannedToolCalls = 5;
-const maxDirectBootstrapRetries = 1;
+const maxBootstrapRetries = 1;
 
 type ToolCatalogItem = {
   name: string;
@@ -147,13 +147,14 @@ export async function runOpenClawCliRequest(
         extractOpenClawText(result.stdout) ||
         (lastToolResult ? formatToolResult(lastToolResult) : baseline.response.text);
       if (
-        config.engine === "burble-direct" &&
-        rejectedDirectResponses.length < maxDirectBootstrapRetries &&
+        rejectedDirectResponses.length < maxBootstrapRetries &&
         isBootstrapSetupAnswer(text)
       ) {
         rejectedDirectResponses.push(text);
         logInfo(
-          `Burble direct model retry runId=${request.runId ?? "unknown"} step=${step + 1} reason=bootstrap_response`
+          config.engine === "burble-direct"
+            ? `Burble direct model retry runId=${request.runId ?? "unknown"} step=${step + 1} reason=bootstrap_response`
+            : `OpenClaw bootstrap retry runId=${request.runId ?? "unknown"} step=${step + 1} reason=bootstrap_response`
         );
         continue;
       }
@@ -894,13 +895,14 @@ export async function* runOpenClawCliRequestStream(
         extractOpenClawText(result.stdout) ||
         (lastToolResult ? formatToolResult(lastToolResult) : baseline.response.text);
       if (
-        config.engine === "burble-direct" &&
-        rejectedDirectResponses.length < maxDirectBootstrapRetries &&
+        rejectedDirectResponses.length < maxBootstrapRetries &&
         isBootstrapSetupAnswer(text)
       ) {
         rejectedDirectResponses.push(text);
         logInfo(
-          `Burble direct model retry runId=${request.runId ?? "unknown"} step=${step + 1} reason=bootstrap_response`
+          config.engine === "burble-direct"
+            ? `Burble direct model retry runId=${request.runId ?? "unknown"} step=${step + 1} reason=bootstrap_response`
+            : `OpenClaw bootstrap retry runId=${request.runId ?? "unknown"} step=${step + 1} reason=bootstrap_response`
         );
         continue;
       }
@@ -1698,18 +1700,27 @@ function buildPlanningPrompt(
     );
   }
 
-  return buildOpenClawPrompt(config, request, toolContext, executedTools);
+  return buildOpenClawPrompt(
+    config,
+    request,
+    toolContext,
+    executedTools,
+    rejectedDirectResponses
+  );
 }
 
 function buildOpenClawPrompt(
   config: RuntimeConfig,
   request: RunRequest,
   toolContext: BurbleToolContext,
-  executedTools: ExecutedToolCall[] = []
+  executedTools: ExecutedToolCall[] = [],
+  rejectedBootstrapResponses: string[] = []
 ): string {
   const sections = [
     "Preloaded Burble runtime skills:",
     preloadedRuntimeSkills,
+    "",
+    "Do not run first-time assistant setup. Do not ask who you are, who the user is, what kind of assistant you are, what style you should use, or for an emoji/persona setup. The Slack user and assistant identity are already established by Burble.",
     "",
     "Runtime instruction: for requests about the current Slack channel or chat, answer from Recent Slack context when available. If channel history is unavailable, explain that Burble needs Slack bot history scopes and channel membership.",
     "",
@@ -1741,6 +1752,14 @@ function buildOpenClawPrompt(
       "Return either exactly one more tool_call JSON object if another provider action is required, or the final Slack-ready answer."
     );
   } else {
+    if (rejectedBootstrapResponses.length > 0) {
+      sections.push(
+        "",
+        "Previous response was rejected because it asked for assistant/user setup instead of answering the request:",
+        truncate(rejectedBootstrapResponses.at(-1) ?? "", 600),
+        "Do not repeat setup/onboarding. Answer the current user request directly or use an available tool."
+      );
+    }
     sections.push("", formatFinalInstruction(request));
   }
 
