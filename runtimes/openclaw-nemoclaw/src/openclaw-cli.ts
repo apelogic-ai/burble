@@ -1694,10 +1694,11 @@ function buildPlanningPrompt(
     );
   }
 
-  return buildOpenClawPrompt(request, toolContext, executedTools);
+  return buildOpenClawPrompt(config, request, toolContext, executedTools);
 }
 
 function buildOpenClawPrompt(
+  config: RuntimeConfig,
   request: RunRequest,
   toolContext: BurbleToolContext,
   executedTools: ExecutedToolCall[] = []
@@ -1711,7 +1712,7 @@ function buildOpenClawPrompt(
     "Available Burble tools:",
     formatToolCatalog(toolContext.catalog),
     "",
-    ...formatNativeExecutionContext(request),
+    ...formatNativeExecutionContext(config, request),
     "",
     ...formatRecentSlackContext(request),
     "",
@@ -1741,7 +1742,10 @@ function buildOpenClawPrompt(
   return sections.join("\n");
 }
 
-function formatNativeExecutionContext(request: RunRequest): string[] {
+function formatNativeExecutionContext(
+  config: RuntimeConfig,
+  request: RunRequest
+): string[] {
   if (request.executionMode !== "openclaw-native") {
     return [];
   }
@@ -1749,14 +1753,17 @@ function formatNativeExecutionContext(request: RunRequest): string[] {
   return [
     "Native agent execution:",
     "This request explicitly asks for OpenClaw-native execution. Use OpenClaw native capabilities/tools directly when useful for code, shell/process work, cron, or long-running tasks. Use Burble JSON tool_call only for external provider data or actions listed in Available Burble tools.",
-    ...formatActiveConversationRouteInstruction(request),
+    ...formatActiveConversationRouteInstruction(config, request),
     "When native code tools are available, you can run programs in this runtime. Do not say you cannot run arbitrary programs, cannot run code, or can only provide a local script; use native exec instead.",
     "For code execution tasks, prefer one deliberate exec call for the main work. If that exec succeeds and prints the requested result, summarize it and stop. Do not repeatedly rewrite, rerun, or optimize code after the requested result is available.",
     "For duration or long-running tests, run exactly one timed program for the requested duration, then report its stdout/stderr summary and final observed result."
   ];
 }
 
-function formatActiveConversationRouteInstruction(request: RunRequest): string[] {
+function formatActiveConversationRouteInstruction(
+  config: RuntimeConfig,
+  request: RunRequest
+): string[] {
   const routeId = request.input.conversation?.routeId;
   if (!routeId) {
     return [];
@@ -1764,7 +1771,8 @@ function formatActiveConversationRouteInstruction(request: RunRequest): string[]
 
   return [
     `Active Burble conversation route: ${routeId}.`,
-    "For cron or background jobs that should report back later, persist this route ID in the job payload and have the job call conversation.sendMessage with that routeId and the message text. Do not store or infer Slack channel IDs or Slack credentials."
+    `For cron or background jobs that should report back later, persist this route ID in the job payload and have the job send an HTTP POST to http://127.0.0.1:${config.port}/internal/conversation/messages with JSON {"routeId":"${routeId}","text":"message text"}.`,
+    "Do not store or infer Slack channel IDs, Slack credentials, or Burble credentials. The local endpoint injects delivery credentials outside the OpenClaw process."
   ];
 }
 

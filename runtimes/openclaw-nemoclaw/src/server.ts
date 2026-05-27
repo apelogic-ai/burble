@@ -1,4 +1,5 @@
 import type { RuntimeConfig } from "./config";
+import { createBurbleToolExecutor } from "./burble-tools";
 import { createRuntimeRunner } from "./runtime";
 import type { RunEvent, RunRequest, RunResponse, ToolExecutor } from "./types";
 
@@ -26,6 +27,10 @@ export async function handleRuntimeRequest(
 
   if (url.pathname === "/healthz") {
     return new Response("ok");
+  }
+
+  if (url.pathname === "/internal/conversation/messages") {
+    return handleLocalConversationMessageRequest(request, config);
   }
 
   const runEventMatch = /^\/runs\/([^/]+)\/events$/.exec(url.pathname);
@@ -113,6 +118,33 @@ export async function handleRuntimeRequest(
   }
 
   const result = await sharedRun.finalPromise;
+  return Response.json(result, {
+    headers: {
+      "cache-control": "no-store"
+    }
+  });
+}
+
+async function handleLocalConversationMessageRequest(
+  request: Request,
+  config: RuntimeConfig
+): Promise<Response> {
+  if (request.method !== "POST") {
+    return new Response("Method not allowed", { status: 405 });
+  }
+
+  const body = await readLocalConversationMessageBody(request);
+  if (!body) {
+    return new Response("Invalid conversation message input", { status: 400 });
+  }
+  if (!config.runtimeId) {
+    return new Response("Runtime id is not configured", { status: 500 });
+  }
+
+  const executor = createBurbleToolExecutor(config, config.runtimeId);
+  const result = await executor("conversation.sendMessage", {
+    input: body
+  });
   return Response.json(result, {
     headers: {
       "cache-control": "no-store"
@@ -491,6 +523,36 @@ async function readRunRequest(request: Request): Promise<unknown> {
   } catch {
     return null;
   }
+}
+
+async function readLocalConversationMessageBody(
+  request: Request
+): Promise<{ routeId: string; text: string } | null> {
+  let body: unknown;
+  try {
+    body = await request.json();
+  } catch {
+    return null;
+  }
+  if (typeof body !== "object" || body === null || Array.isArray(body)) {
+    return null;
+  }
+
+  const record = body as Record<string, unknown>;
+  if (
+    typeof record.routeId !== "string" ||
+    record.routeId.trim().length === 0 ||
+    typeof record.text !== "string" ||
+    record.text.trim().length === 0 ||
+    record.text.length > 4000
+  ) {
+    return null;
+  }
+
+  return {
+    routeId: record.routeId,
+    text: record.text
+  };
 }
 
 function addRunId(body: unknown, runId: string): unknown {

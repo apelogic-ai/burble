@@ -28,8 +28,9 @@ const config: RuntimeConfig = {
 };
 
 describe("createBurbleToolExecutor", () => {
-  test("requires MCP gateway settings for provider tools", () => {
-    expect(() => createBurbleToolExecutor(config, "rt_u123")).toThrow(
+  test("requires MCP gateway settings for provider tools", async () => {
+    const executor = createBurbleToolExecutor(config, "rt_u123");
+    await expect(executor("github.getAuthenticatedUser", {})).rejects.toThrow(
       "Burble MCP gateway URL and runtime JWT are required for provider tools"
     );
   });

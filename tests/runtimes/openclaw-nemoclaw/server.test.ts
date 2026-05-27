@@ -45,6 +45,19 @@ const config: RuntimeConfig = {
   ollamaBaseUrl: "https://ollama.com"
 };
 
+async function withMockFetch<T>(
+  mock: typeof fetch,
+  run: () => Promise<T>
+): Promise<T> {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = mock;
+  try {
+    return await run();
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+}
+
 describe("handleRuntimeRequest", () => {
   test("serves health checks", async () => {
     const response = await handleRuntimeRequest(
@@ -502,6 +515,63 @@ describe("handleRuntimeRequest", () => {
     } finally {
       console.error = originalError;
     }
+  });
+
+  test("delivers local conversation messages through the Burble tool gateway", async () => {
+    const requests: Request[] = [];
+    const response = await withMockFetch(
+      (async (input, init) => {
+        const request = new Request(input, init);
+        requests.push(request);
+        return Response.json({
+          classification: "user_private",
+          content: {
+            ok: true,
+            transport: "slack",
+            conversationId: "C123",
+            messageId: "1779841120.000"
+          }
+        });
+      }) as typeof fetch,
+      () =>
+        handleRuntimeRequest(
+          new Request("http://runtime/internal/conversation/messages", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({
+              routeId: "convrt_abc123",
+              text: "hello"
+            })
+          }),
+          {
+            ...config,
+            runtimeId: "rt_u123"
+          }
+        )
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      classification: "user_private",
+      content: {
+        ok: true,
+        transport: "slack",
+        conversationId: "C123",
+        messageId: "1779841120.000"
+      }
+    });
+    expect(requests).toHaveLength(1);
+    expect(requests[0].url).toBe(
+      "http://burble-app:3000/internal/tools/conversation.sendMessage/execute"
+    );
+    expect(requests[0].headers.get("authorization")).toBe("Bearer secret");
+    expect(requests[0].headers.get("x-burble-runtime-id")).toBe("rt_u123");
+    expect(await requests[0].json()).toEqual({
+      input: {
+        routeId: "convrt_abc123",
+        text: "hello"
+      }
+    });
   });
 
   test("rejects malformed run requests", async () => {
