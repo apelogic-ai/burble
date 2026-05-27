@@ -261,7 +261,15 @@ describe("parseAgentCommand", () => {
       kind: "exec_inspect",
       taskId: "abc123"
     });
+    expect(parseAgentCommand("exec abc123 inspect")).toEqual({
+      kind: "exec_inspect",
+      taskId: "abc123"
+    });
     expect(parseAgentCommand("exec stop abc123")).toEqual({
+      kind: "exec_stop",
+      taskId: "abc123"
+    });
+    expect(parseAgentCommand("exec abc123 stop")).toEqual({
       kind: "exec_stop",
       taskId: "abc123"
     });
