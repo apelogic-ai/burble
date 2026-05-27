@@ -1735,13 +1735,15 @@ function formatNativeExecutionContext(request: RunRequest): string[] {
 
   return [
     "Native agent execution:",
-    "This request explicitly asks for OpenClaw-native execution. Use OpenClaw native capabilities/tools directly when useful for code, shell/process work, cron, or long-running tasks. Use Burble JSON tool_call only for external provider data or actions listed in Available Burble tools."
+    "This request explicitly asks for OpenClaw-native execution. Use OpenClaw native capabilities/tools directly when useful for code, shell/process work, cron, or long-running tasks. Use Burble JSON tool_call only for external provider data or actions listed in Available Burble tools.",
+    "For code execution tasks, prefer one deliberate exec call for the main work. If that exec succeeds and prints the requested result, summarize it and stop. Do not repeatedly rewrite, rerun, or optimize code after the requested result is available.",
+    "For duration or long-running tests, run exactly one timed program for the requested duration, then report its stdout/stderr summary and final observed result."
   ];
 }
 
 function formatFinalInstruction(request: RunRequest): string {
   if (request.executionMode === "openclaw-native") {
-    return "For provider data/actions, return exactly one Burble tool_call JSON object if required. Otherwise use OpenClaw native capabilities when appropriate and return the final Slack-ready answer.";
+    return "For provider data/actions, return exactly one Burble tool_call JSON object if required. Otherwise use OpenClaw native capabilities when appropriate, avoid unnecessary extra tool loops, and return the final Slack-ready answer as soon as the requested result is available.";
   }
 
   return "Return either exactly one tool_call JSON object or the final Slack-ready answer.";

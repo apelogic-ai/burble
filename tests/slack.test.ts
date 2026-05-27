@@ -128,6 +128,16 @@ describe("formatAgentProgressEvent", () => {
     expect(
       formatAgentProgressEvent(
         {
+          type: "status",
+          text: "Agent has thought for 24s"
+        },
+        "Sending task to your private agent runtime..."
+      )
+    ).toBe("Agent has thought for 24s...");
+
+    expect(
+      formatAgentProgressEvent(
+        {
           type: "tool_call",
           toolName: "github.listAssignedIssues",
           callId: "call-1"
@@ -159,6 +169,17 @@ describe("formatAgentProgressEvent", () => {
         ""
       )
     ).toBe("Agent is responding...");
+  });
+});
+
+describe("buildAgentExecLoadingResponse", () => {
+  test("can render agent exec progress as a visible DM response", () => {
+    expect(
+      buildAgentExecLoadingResponse("run a long task", "in_channel")
+    ).toMatchObject({
+      response_type: "in_channel",
+      text: "Sending task to your private agent runtime: run a long task"
+    });
   });
 });
 
