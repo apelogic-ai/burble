@@ -729,13 +729,21 @@ function isConversationSendInput(
   routeId?: string;
   attachments?: ConversationAttachment[];
 } {
+  const attachments =
+    typeof input === "object" &&
+    input !== null &&
+    !Array.isArray(input) &&
+    isConversationAttachmentArray((input as { attachments?: unknown }).attachments)
+      ? (input as { attachments: ConversationAttachment[] }).attachments
+      : undefined;
+
   return (
     typeof input === "object" &&
     input !== null &&
     !Array.isArray(input) &&
     "text" in input &&
     typeof input.text === "string" &&
-    input.text.trim().length > 0 &&
+    (hasVisibleText(input.text) || Boolean(attachments?.length)) &&
     input.text.length <= 4000 &&
     (!("attachments" in input) ||
       input.attachments === undefined ||
@@ -744,6 +752,10 @@ function isConversationSendInput(
       input.routeId === undefined ||
       (typeof input.routeId === "string" && input.routeId.trim().length > 0))
   );
+}
+
+function hasVisibleText(value: string): boolean {
+  return value.replace(/[\s\p{Default_Ignorable_Code_Point}]/gu, "").length > 0;
 }
 
 function isConversationAttachmentArray(
