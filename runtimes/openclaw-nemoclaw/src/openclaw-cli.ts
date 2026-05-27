@@ -1719,6 +1719,7 @@ function buildOpenClawPrompt(
     ...formatNativeExecutionContext(config, request),
     "",
     ...formatRecentSlackContext(request),
+    ...formatRequestAttachments(request),
     "",
     `User request: ${request.input.text}`,
     "",
@@ -1744,6 +1745,32 @@ function buildOpenClawPrompt(
   }
 
   return sections.join("\n");
+}
+
+function formatRequestAttachments(request: RunRequest): string[] {
+  const attachments = request.input.attachments ?? [];
+  if (attachments.length === 0) {
+    return [];
+  }
+
+  return [
+    "Current request attachments:",
+    ...attachments.map((attachment) => {
+      const details = [
+        `id=${attachment.id}`,
+        `kind=${attachment.kind}`,
+        `mime=${attachment.mimeType}`,
+        `source=${attachment.source}`,
+        ...(attachment.name ? [`name=${attachment.name}`] : []),
+        ...(typeof attachment.sizeBytes === "number"
+          ? [`sizeBytes=${attachment.sizeBytes}`]
+          : []),
+        ...(attachment.externalId ? [`externalId=${attachment.externalId}`] : [])
+      ];
+      return `- ${details.join(" ")}`;
+    }),
+    ""
+  ];
 }
 
 function formatNativeExecutionContext(

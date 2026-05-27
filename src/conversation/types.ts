@@ -8,6 +8,17 @@ import type { AgentRunEventHandler, AgentRunner, AgentUsage } from "../agent/typ
 
 export type ResponseVisibility = "public" | "ephemeral" | "dm";
 export type ToolClassification = "public" | "user_private" | "restricted";
+export type ConversationAttachmentKind = "file" | "image" | "audio" | "video";
+
+export type ConversationAttachment = {
+  id: string;
+  kind: ConversationAttachmentKind;
+  mimeType: string;
+  source: "slack" | "burble" | "agent";
+  name?: string;
+  sizeBytes?: number;
+  externalId?: string;
+};
 
 export type ConversationRequest = {
   source: "slack";
@@ -35,12 +46,14 @@ export type ConversationRequest = {
     email: string;
   };
   text: string;
+  attachments?: ConversationAttachment[];
 };
 
 export type ConversationResponse = {
   visibility: ResponseVisibility;
   classification: ToolClassification;
   text: string;
+  attachments?: ConversationAttachment[];
   blocks?: unknown[];
   usage?: AgentUsage;
 };

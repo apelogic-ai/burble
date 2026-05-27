@@ -22,6 +22,15 @@ type BurbleConversationEnvelope = {
   taskId?: string;
   visibility: "public" | "user_private" | "restricted";
   text: string;
+  attachments?: Array<{
+    id: string;
+    kind: "file" | "image" | "audio" | "video";
+    mimeType: string;
+    source: "slack" | "burble" | "agent";
+    name?: string;
+    sizeBytes?: number;
+    externalId?: string;
+  }>;
   metadata?: Record<string, unknown>;
 };
 ```
@@ -60,6 +69,9 @@ Current implementation status:
   key, so repeated Slack turns in the same Burble route map to the same
   OpenClaw channel session instead of one-off run sessions.
 - Durable route delivery is principal-bound and, when known, runtime-bound.
+- User and runtime messages can carry sanitized attachment metadata. Slack file
+  URLs are not exposed to runtimes; attachments are references only until a
+  route-scoped fetch capability is added.
 - Burble still owns outer admission, deterministic short-circuiting, runtime
   provisioning, and policy before forwarding an admitted turn to OpenClaw.
 
@@ -78,6 +90,8 @@ Follow-up for deeper OpenClaw SDK turn-kernel ingress:
 These hardening items should be handled as a separate PR:
 
 - Add route-scoped delivery capabilities instead of trusting route IDs alone.
+- Add route-scoped attachment fetch capabilities for binary content, with
+  expiry, MIME limits, size limits, and audit.
 - Bind every capability to `runtimeId`, principal, route, audience, expiry, and
   allowed operation.
 - Reject outbound delivery when the capability route does not match the stored

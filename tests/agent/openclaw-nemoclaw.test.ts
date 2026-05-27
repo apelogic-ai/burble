@@ -107,6 +107,17 @@ describe("createOpenClawNemoClawAgentRunner", () => {
       executionMode: "openclaw-native",
       conversation,
       text: "summarize my GitHub work",
+      attachments: [
+        {
+          id: "slack:F123",
+          externalId: "F123",
+          source: "slack",
+          kind: "image",
+          mimeType: "image/png",
+          name: "screenshot.png",
+          sizeBytes: 2048
+        }
+      ],
       connections: { github: connection }
     });
 
@@ -128,6 +139,17 @@ describe("createOpenClawNemoClawAgentRunner", () => {
       executionMode: "openclaw-native",
       input: {
         text: "summarize my GitHub work",
+        attachments: [
+          {
+            id: "slack:F123",
+            externalId: "F123",
+            source: "slack",
+            kind: "image",
+            mimeType: "image/png",
+            name: "screenshot.png",
+            sizeBytes: 2048
+          }
+        ],
         conversation,
         connections: {
           github: {

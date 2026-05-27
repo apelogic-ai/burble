@@ -34,6 +34,7 @@ import type { AgentRuntimeRecord, ProviderConnection, TokenStore } from "./db";
 import { handleConversation } from "./conversation/orchestrator";
 import { normalizeMentionText } from "./conversation/normalize";
 import type {
+  ConversationAttachment,
   ConversationRequest,
   ConversationResponse,
   ToolClassification
@@ -84,6 +85,16 @@ type SlackDirectMessageEvent = {
   thread_ts?: string;
   subtype?: string;
   bot_id?: string;
+  files?: SlackFileReference[];
+};
+
+type SlackFileReference = {
+  id?: string;
+  name?: string;
+  title?: string;
+  mimetype?: string;
+  filetype?: string;
+  size?: number;
 };
 
 type SlackRecentMessage = {
@@ -224,6 +235,7 @@ export function createSlackRuntime(
       ts?: string;
       thread_ts?: string;
       channel_type?: string;
+      files?: SlackFileReference[];
     };
 
     logger.info(
@@ -306,7 +318,8 @@ export function createSlackRuntime(
             slackUserId: mention.user,
             email
           },
-          text
+          text,
+          ...buildConversationAttachments(mention.files)
         },
         {
           createGitHubOAuthUrl: (slackUserId) =>
@@ -462,7 +475,8 @@ export function createSlackRuntime(
             slackUserId: directMessage.user,
             email
           },
-          text: directMessage.text.trim()
+          text: directMessage.text.trim(),
+          ...buildConversationAttachments(directMessage.files)
         },
         {
           createGitHubOAuthUrl: (slackUserId) =>
@@ -2139,6 +2153,60 @@ function buildSlackRequestContext(input: {
   };
 }
 
+function buildConversationAttachments(
+  files: SlackFileReference[] | undefined
+): { attachments?: ConversationAttachment[] } {
+  const attachments = (files ?? []).flatMap<ConversationAttachment>((file) => {
+    if (!file.id) {
+      return [];
+    }
+
+    const mimeType = normalizeSlackFileMimeType(file);
+    return [
+      {
+        id: `slack:${file.id}`,
+        externalId: file.id,
+        source: "slack",
+        kind: classifyAttachmentKind(mimeType),
+        mimeType,
+        ...(file.name || file.title ? { name: file.name ?? file.title } : {}),
+        ...(typeof file.size === "number" && Number.isFinite(file.size)
+          ? { sizeBytes: file.size }
+          : {})
+      }
+    ];
+  });
+
+  return attachments.length > 0 ? { attachments } : {};
+}
+
+function normalizeSlackFileMimeType(file: SlackFileReference): string {
+  if (file.mimetype?.trim()) {
+    return file.mimetype.trim();
+  }
+
+  if (file.filetype?.trim()) {
+    return `application/x-slack-${file.filetype.trim()}`;
+  }
+
+  return "application/octet-stream";
+}
+
+function classifyAttachmentKind(
+  mimeType: string
+): ConversationAttachment["kind"] {
+  if (mimeType.startsWith("image/")) {
+    return "image";
+  }
+  if (mimeType.startsWith("audio/")) {
+    return "audio";
+  }
+  if (mimeType.startsWith("video/")) {
+    return "video";
+  }
+  return "file";
+}
+
 function summarizeSlackHistoryError(error: unknown): string {
   if (error && typeof error === "object" && "data" in error) {
     const data = (error as { data?: { error?: unknown } }).data;
@@ -2196,7 +2264,7 @@ async function postConversationResponse(
       ...(input.threadTs && input.response.visibility !== "dm"
         ? { thread_ts: input.threadTs }
         : {}),
-      text: input.response.text,
+      text: renderConversationResponseText(input.response),
       ...(input.response.blocks ? { blocks: input.response.blocks } : {})
     });
     return;
@@ -2206,7 +2274,7 @@ async function postConversationResponse(
     await client.chat.postEphemeral({
       channel: input.channel,
       user: input.user,
-      text: input.response.text,
+      text: renderConversationResponseText(input.response),
       ...(input.response.blocks ? { blocks: input.response.blocks } : {})
     });
     return;
@@ -2215,7 +2283,7 @@ async function postConversationResponse(
   if (input.response.visibility === "dm") {
     await client.chat.postMessage({
       channel: input.user,
-      text: input.response.text,
+      text: renderConversationResponseText(input.response),
       ...(input.response.blocks ? { blocks: input.response.blocks } : {})
     });
     return;
@@ -2224,9 +2292,25 @@ async function postConversationResponse(
   await client.chat.postMessage({
     channel: input.channel,
     ...(input.threadTs ? { thread_ts: input.threadTs } : {}),
-    text: input.response.text,
+    text: renderConversationResponseText(input.response),
     ...(input.response.blocks ? { blocks: input.response.blocks } : {})
   });
+}
+
+function renderConversationResponseText(response: ConversationResponse): string {
+  if (!response.attachments || response.attachments.length === 0) {
+    return response.text;
+  }
+
+  return [
+    response.text,
+    "",
+    "*Attachments:*",
+    ...response.attachments.map((attachment) => {
+      const label = attachment.name ?? attachment.id;
+      return `- ${label} (${attachment.kind}, ${attachment.mimeType})`;
+    })
+  ].join("\n");
 }
 
 async function postMentionWorkingState(

@@ -408,6 +408,85 @@ describe("handleToolGatewayRequest", () => {
     });
   });
 
+  test("passes outbound conversation attachment metadata through durable routes", async () => {
+    const route: ConversationRouteRecord = {
+      id: "convrt_abc123",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      transport: "slack",
+      destinationJson: JSON.stringify({
+        channelId: "C123",
+        threadTs: "1779841118.237"
+      }),
+      createdAt: "2026-05-26T00:00:00.000Z",
+      updatedAt: "2026-05-26T00:00:00.000Z",
+      revokedAt: null
+    };
+    const response = await handleToolGatewayRequest(
+      config,
+      createStore(null, runtime, [], route),
+      "conversation.sendMessage",
+      request(
+        "conversation.sendMessage",
+        {
+          input: {
+            text: "Cron finished.",
+            routeId: "convrt_abc123",
+            attachments: [
+              {
+                id: "agent:report-1",
+                source: "agent",
+                kind: "file",
+                mimeType: "text/plain",
+                name: "report.txt",
+                sizeBytes: 12
+              }
+            ]
+          }
+        },
+        "runtime-token-u123",
+        "rt_u123"
+      ),
+      {
+        postActiveConversationMessage: async (input) => {
+          expect(input).toEqual({
+            transport: "slack",
+            channelId: "C123",
+            text: "Cron finished.",
+            threadTs: "1779841118.237",
+            attachments: [
+              {
+                id: "agent:report-1",
+                source: "agent",
+                kind: "file",
+                mimeType: "text/plain",
+                name: "report.txt",
+                sizeBytes: 12
+              }
+            ]
+          });
+          return {
+            transport: "slack",
+            channelId: "C123",
+            messageId: "1779841130.000"
+          };
+        }
+      }
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      classification: "user_private",
+      content: {
+        ok: true,
+        transport: "slack",
+        conversationId: "C123",
+        routeId: "convrt_abc123",
+        messageId: "1779841130.000"
+      }
+    });
+  });
+
   test("rejects durable conversation routes bound to another runtime", async () => {
     const route: ConversationRouteRecord = {
       id: "convrt_abc123",
