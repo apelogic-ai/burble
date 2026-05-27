@@ -2,7 +2,6 @@ import { createHash, randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { mkdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
-import { buildBurbleConversationDeliveryTarget } from "./burble-conversation-connector";
 import type { RuntimeConfig } from "./config";
 import { readGatewayDiagnosticTextSince } from "./gateway-diagnostics";
 import { parseLlmModelId, type ParsedLlmModel } from "./llm-config";
@@ -1766,20 +1765,19 @@ function formatNativeExecutionContext(
 }
 
 function formatActiveConversationRouteInstruction(
-  config: RuntimeConfig,
+  _config: RuntimeConfig,
   request: RunRequest
 ): string[] {
   const routeId = request.input.conversation?.routeId;
   if (!routeId) {
     return [];
   }
-  const target = buildBurbleConversationDeliveryTarget(config, routeId);
 
   return [
-    `Active Burble conversation channel route: ${target.routeId}.`,
-    `Native OpenClaw Burble channel delivery is installed. For cron/background jobs, set delivery.mode to "announce", delivery.channel to "burble", and delivery.to to "${target.routeId}". The scheduled prompt should produce the final Slack-ready message text; Burble resolves the route to the actual transport outside OpenClaw.`,
-    `Compatibility delivery for tools that cannot use native channel delivery: POST final event JSON to ${target.localEventUrl}, or POST direct message JSON {"text":"message text"} to ${target.localMessageUrl}.`,
-    "Do not create cron jobs that rely on conversation.sendMessage JSON blobs, announce delivery, Slack channel IDs, Slack credentials, or Burble credentials. Burble's channel connector owns route auth and transport delivery outside the OpenClaw process."
+    `Active Burble conversation channel route: ${routeId}.`,
+    `Native OpenClaw Burble channel delivery is installed. For cron/background jobs, set delivery.mode to "announce", delivery.channel to "burble", and delivery.to to "${routeId}". The scheduled prompt should produce the final Slack-ready message text; Burble resolves the route to the actual transport outside OpenClaw.`,
+    `For an immediate request to send, post, message, or report something here now, do not create a cron job or background job unless the user explicitly asks for a schedule, delay, recurrence, or later delivery. Produce the final Slack-ready message once and stop.`,
+    "Do not fetch, POST to, or mention local/private/internal Burble URLs for delivery. Do not create cron jobs that rely on conversation.sendMessage JSON blobs, announce delivery, Slack channel IDs, Slack credentials, or Burble credentials. Burble's channel connector owns route auth and transport delivery outside the OpenClaw process."
   ];
 }
 

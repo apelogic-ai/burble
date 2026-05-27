@@ -916,11 +916,16 @@ describe("runOpenClawCliRequest", () => {
     expect(prompts[0]).toContain('delivery.channel to "burble"');
     expect(prompts[0]).toContain('delivery.to to "convrt_abc123"');
     expect(prompts[0]).toContain(
-      "/internal/burble/channel/routes/convrt_abc123/events"
+      "do not create a cron job or background job unless the user explicitly asks"
     );
     expect(prompts[0]).toContain(
-      "/internal/burble/channel/routes/convrt_abc123/messages"
+      "Do not fetch, POST to, or mention local/private/internal Burble URLs"
     );
+    expect(prompts[0]).not.toContain("http://127.0.0.1");
+    expect(prompts[0]).toContain(
+      "Burble's channel connector owns route auth and transport delivery"
+    );
+    expect(prompts[0]).not.toContain("/internal/burble/channel/routes");
     expect(prompts[0]).toContain("conversation.sendMessage JSON blobs");
     expect(toolCalls).toContainEqual({
       toolName: "conversation.sendMessage",
