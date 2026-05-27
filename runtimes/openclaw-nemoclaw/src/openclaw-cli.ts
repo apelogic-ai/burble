@@ -1368,6 +1368,17 @@ async function buildToolCatalog(
 }> {
   const catalog: ToolCatalogItem[] = [];
   const upstreamMcpSchemas: Record<string, unknown> = {};
+  if (request.input.conversation) {
+    catalog.push({
+      name: "conversation.sendMessage",
+      description:
+        "Send a message to the active conversation where this agent task was requested. Burble chooses and validates the transport and destination; provide only the message text. Use this to report progress or completion from long-running tasks.",
+      inputSchema: {
+        text: "string message text to send to the active conversation"
+      }
+    });
+  }
+
   const github = request.input.connections.github;
   if (github.connected && github.email) {
     catalog.push(
@@ -1981,6 +1992,17 @@ async function executePlannedToolCall(
   toolContext: BurbleToolContext,
   executeTool: ToolExecutor
 ): Promise<ToolResult> {
+  if (toolCall.name === "conversation.sendMessage") {
+    const validationError = validatePlannedToolCall(toolCall, toolContext);
+    if (validationError) {
+      return validationError;
+    }
+
+    return executeTool(toolCall.name, {
+      input: toolCall.arguments
+    });
+  }
+
   const email = readToolEmail(toolCall.name, request);
   if (!email) {
     return {

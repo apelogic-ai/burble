@@ -285,6 +285,93 @@ describe("handleToolGatewayRequest", () => {
     ]);
   });
 
+  test("lets a runtime send to its active conversation without provider credentials", async () => {
+    const runtimeEvents: unknown[] = [];
+    const response = await handleToolGatewayRequest(
+      config,
+      createStore(null, runtime, runtimeEvents),
+      "conversation.sendMessage",
+      request(
+        "conversation.sendMessage",
+        {
+          input: { text: "Long task finished." },
+          conversation: {
+            source: "slack",
+            workspaceId: "T123",
+            channelId: "C123",
+            rootId: "channel:C123:thread:1779841118.237",
+            isDirectMessage: false
+          }
+        },
+        "runtime-token-u123",
+        "rt_u123"
+      ),
+      {
+        postActiveConversationMessage: async (input) => {
+          expect(input).toEqual({
+            transport: "slack",
+            channelId: "C123",
+            text: "Long task finished.",
+            threadTs: "1779841118.237"
+          });
+          return {
+            transport: "slack",
+            channelId: "C123",
+            messageId: "1779841120.000"
+          };
+        }
+      }
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      classification: "user_private",
+      content: {
+        ok: true,
+        transport: "slack",
+        conversationId: "C123",
+        messageId: "1779841120.000"
+      }
+    });
+    expect(runtimeEvents).toEqual([
+      {
+        runtimeId: "rt_u123",
+        eventType: "runtime_tool_called",
+        summary: {
+          toolName: "conversation.sendMessage",
+          classification: "user_private",
+          itemCount: null
+        }
+      }
+    ]);
+  });
+
+  test("rejects active conversation sends for another workspace", async () => {
+    const response = await handleToolGatewayRequest(
+      config,
+      createStore(null, runtime),
+      "conversation.sendMessage",
+      request(
+        "conversation.sendMessage",
+        {
+          input: { text: "hello" },
+          conversation: {
+            source: "slack",
+            workspaceId: "T999",
+            channelId: "C123",
+            rootId: "channel:C123:thread:1779841118.237",
+            isDirectMessage: false
+          }
+        },
+        "runtime-token-u123",
+        "rt_u123"
+      )
+    );
+
+    expect(response.status).toBe(403);
+    expect(await response.text()).toBe("Runtime principal mismatch");
+  });
+
   test("rejects runtime tokens for another user's connected account", async () => {
     const response = await handleToolGatewayRequest(
       config,

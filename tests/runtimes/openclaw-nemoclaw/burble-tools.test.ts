@@ -127,6 +127,84 @@ describe("createBurbleToolExecutor", () => {
     }
   });
 
+  test("sends active conversation messages through the internal gateway", async () => {
+    const originalFetch = globalThis.fetch;
+    const requests: Request[] = [];
+    globalThis.fetch = (async (input, init) => {
+      const request = new Request(input, init);
+      requests.push(request);
+      return Response.json({
+        classification: "user_private",
+        content: {
+          ok: true,
+          transport: "slack",
+          conversationId: "C123",
+          messageId: "1779841120.000"
+        }
+      });
+    }) as typeof fetch;
+
+    try {
+      const executor = createBurbleToolExecutor(
+        {
+          ...config,
+          mcpGatewayUrl: "http://agentgateway:3000/mcp",
+          runtimeJwt: "runtime-jwt"
+        },
+        "rt_u123",
+        {
+          runtime: { id: "rt_u123" },
+          input: {
+            text: "run a long task",
+            conversation: {
+              source: "slack",
+              workspaceId: "T123",
+              channelId: "C123",
+              rootId: "channel:C123:thread:1779841118.237",
+              isDirectMessage: false
+            },
+            connections: {
+              github: { connected: false }
+            }
+          }
+        }
+      );
+      const result = await executor("conversation.sendMessage", {
+        input: {
+          text: "Long task finished.",
+          channelId: "C999"
+        }
+      });
+
+      expect(result.content).toEqual({
+        ok: true,
+        transport: "slack",
+        conversationId: "C123",
+        messageId: "1779841120.000"
+      });
+      expect(requests).toHaveLength(1);
+      expect(requests[0].url).toBe(
+        "http://burble-app:3000/internal/tools/conversation.sendMessage/execute"
+      );
+      expect(requests[0].headers.get("authorization")).toBe(
+        "Bearer runtime-secret"
+      );
+      expect(requests[0].headers.get("x-burble-runtime-id")).toBe("rt_u123");
+      expect(await requests[0].json()).toEqual({
+        input: { text: "Long task finished." },
+        conversation: {
+          source: "slack",
+          workspaceId: "T123",
+          channelId: "C123",
+          rootId: "channel:C123:thread:1779841118.237",
+          isDirectMessage: false
+        }
+      });
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
   test("maps search tool inputs to MCP arguments", async () => {
     const originalFetch = globalThis.fetch;
     const payloads: unknown[] = [];

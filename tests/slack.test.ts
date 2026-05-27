@@ -178,7 +178,12 @@ describe("buildAgentExecLoadingResponse", () => {
       buildAgentExecLoadingResponse("run a long task", "in_channel")
     ).toMatchObject({
       response_type: "in_channel",
-      text: "Sending task to your private agent runtime: run a long task"
+      text: [
+        "*Agent async task*",
+        "`/agent exec run a long task`",
+        "",
+        "Starting agent runtime..."
+      ].join("\n")
     });
   });
 });
@@ -347,8 +352,11 @@ describe("buildAgentCommandHelpResponse", () => {
     expect(buildAgentExecMissingTaskResponse().text).toContain(
       "/agent exec <task>"
     );
+    expect(buildAgentExecLoadingResponse("summarize calendar").response_type).toBe(
+      "in_channel"
+    );
     expect(buildAgentExecLoadingResponse("summarize calendar").text).toContain(
-      "summarize calendar"
+      "`/agent exec summarize calendar`"
     );
   });
 });

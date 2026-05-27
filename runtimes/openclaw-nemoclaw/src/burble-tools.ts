@@ -1,10 +1,11 @@
 import type { RuntimeConfig } from "./config";
 import { info } from "./logger";
-import type { ToolExecutor, ToolResult } from "./types";
+import type { RunRequest, ToolExecutor, ToolResult } from "./types";
 
 export function createBurbleToolExecutor(
   config: RuntimeConfig,
-  _runtimeId?: string
+  runtimeId?: string,
+  request?: RunRequest
 ): ToolExecutor {
   if (!config.mcpGatewayUrl || !config.runtimeJwt) {
     throw new Error(
@@ -12,12 +13,20 @@ export function createBurbleToolExecutor(
     );
   }
 
-  return createBurbleMcpToolExecutor(config);
+  return createBurbleMcpToolExecutor(config, runtimeId, request);
 }
 
-function createBurbleMcpToolExecutor(config: RuntimeConfig): ToolExecutor {
+function createBurbleMcpToolExecutor(
+  config: RuntimeConfig,
+  runtimeId?: string,
+  request?: RunRequest
+): ToolExecutor {
   let sessionIdPromise: Promise<string> | null = null;
   return async (toolName, body) => {
+    if (toolName === "conversation.sendMessage") {
+      return sendConversationMessage(config, runtimeId, request, body);
+    }
+
     const mcpToolName = toMcpToolName(toolName);
     const args = toMcpToolArguments(toolName, body);
     sessionIdPromise ??= initializeMcpSession(config);
@@ -53,6 +62,62 @@ function createBurbleMcpToolExecutor(config: RuntimeConfig): ToolExecutor {
     );
     return result;
   };
+}
+
+async function sendConversationMessage(
+  config: RuntimeConfig,
+  runtimeId: string | undefined,
+  request: RunRequest | undefined,
+  body: unknown
+): Promise<ToolResult> {
+  if (!runtimeId) {
+    throw new Error("conversation.sendMessage requires a runtime id");
+  }
+  if (!request?.input.conversation) {
+    throw new Error("conversation.sendMessage requires an active conversation");
+  }
+
+  const text = readNestedString(body, "input", "text");
+  if (!text) {
+    throw new Error("conversation.sendMessage requires input.text");
+  }
+
+  const input = { text };
+  info(
+    `Burble conversation tool start tool=conversation.sendMessage${summarizeLogObject("input", input)}`
+  );
+
+  const response = await fetch(
+    `${config.toolGatewayUrl}/${encodeURIComponent("conversation.sendMessage")}/execute`,
+    {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${config.internalToken}`,
+        "x-burble-runtime-id": runtimeId
+      },
+      body: JSON.stringify({
+        input,
+        conversation: request.input.conversation
+      })
+    }
+  );
+
+  if (!response.ok) {
+    throw new Error(
+      `Burble conversation gateway returned HTTP ${response.status}${await readErrorDetail(response)}`
+    );
+  }
+
+  const result = (await response.json()) as unknown;
+  if (!isToolResult(result)) {
+    throw new Error("Burble conversation gateway returned invalid tool result");
+  }
+
+  info(
+    `Burble conversation tool finish tool=conversation.sendMessage classification=${result.classification}${summarizeLogObject("result", result.content)}`
+  );
+  return result;
 }
 
 async function initializeMcpSession(config: RuntimeConfig): Promise<string> {
