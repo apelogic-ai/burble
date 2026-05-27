@@ -283,7 +283,6 @@ export function createSlackRuntime(
         config.agentMode === "llm" && agentRunner
           ? await createSlackConversationRoute({
               store,
-              runtimeFactory,
               principal,
               channelId: mention.channel,
               isDirectMessage,
@@ -447,7 +446,6 @@ export function createSlackRuntime(
         config.agentMode === "llm" && agentRunner
           ? await createSlackConversationRoute({
               store,
-              runtimeFactory,
               principal,
               channelId: directMessage.channel,
               isDirectMessage: true,
@@ -1181,7 +1179,6 @@ function createOpenClawRuntimeFactory(
 
 async function createSlackConversationRoute(input: {
   store: TokenStore;
-  runtimeFactory?: RuntimeFactory;
   principal: {
     workspaceId: string;
     slackUserId: string;
@@ -1191,10 +1188,6 @@ async function createSlackConversationRoute(input: {
   rootId: string;
   threadTs?: string;
 }) {
-  const runtime = input.runtimeFactory
-    ? await input.runtimeFactory.getOrCreateRuntime(input.principal)
-    : null;
-
   return input.store.upsertConversationRoute({
     workspaceId: input.principal.workspaceId,
     slackUserId: input.principal.slackUserId,
@@ -1203,8 +1196,7 @@ async function createSlackConversationRoute(input: {
       channelId: input.channelId,
       isDirectMessage: input.isDirectMessage,
       rootId: input.rootId,
-      ...(input.threadTs ? { threadTs: input.threadTs } : {}),
-      ...(runtime ? { runtimeId: runtime.id } : {})
+      ...(input.threadTs ? { threadTs: input.threadTs } : {})
     }
   });
 }
