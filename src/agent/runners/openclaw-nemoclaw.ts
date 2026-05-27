@@ -125,6 +125,7 @@ export function createOpenClawNemoClawAgentRunner(
 
       const runBody = {
         runId,
+        ...(input.executionMode ? { executionMode: input.executionMode } : {}),
         ...(runtime ? { runtime: sanitizeRuntimeHandle(runtime) } : {}),
         input: sanitizeAgentInput(input)
       };

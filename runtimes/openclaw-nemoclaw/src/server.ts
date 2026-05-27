@@ -19,6 +19,7 @@ export async function handleRuntimeRequest(
   executeTool?: ToolExecutor,
   options: {
     upgradeWebSocket?: (runId: string) => boolean;
+    prepareNativeOpenClaw?: (config: RuntimeConfig) => Promise<void>;
   } = {}
 ): Promise<Response> {
   const url = new URL(request.url);
@@ -77,7 +78,11 @@ export async function handleRuntimeRequest(
     return new Response("Invalid run request", { status: 400 });
   }
 
-  const runner = createRuntimeRunner(config);
+  const runner = createRuntimeRunner(config, {
+    ...(options.prepareNativeOpenClaw
+      ? { prepareNativeOpenClaw: options.prepareNativeOpenClaw }
+      : {})
+  });
   const sharedRun = getOrStartSharedRun(runId, () =>
     runner.stream(body, executeTool)
   );
@@ -513,6 +518,15 @@ function isRunRequest(body: unknown): body is RunRequest {
     "runId" in body &&
     body.runId !== undefined &&
     (typeof body.runId !== "string" || body.runId.trim().length === 0)
+  ) {
+    return false;
+  }
+
+  if (
+    "executionMode" in body &&
+    body.executionMode !== undefined &&
+    body.executionMode !== "default" &&
+    body.executionMode !== "openclaw-native"
   ) {
     return false;
   }

@@ -32,6 +32,7 @@ describe("buildOpenClawLlmPatch", () => {
     );
     expect(patch.skills.allowBundled).toEqual([]);
     expect(patch.gateway.http.endpoints.responses.enabled).toBe(true);
+    expect(patch.tools.codeMode.enabled).toBe(true);
     expect(patch.logging.file).toBe("/data/openclaw/logs/openclaw.log");
     expect(patch.plugins.allow).toEqual(["openai"]);
     expect(patch.auth.profiles["openai:default"]).toEqual({

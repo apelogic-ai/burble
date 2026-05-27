@@ -11,6 +11,7 @@ export type AgentRunnerCapabilities = {
 
 export type AgentInput = {
   principal: PrincipalId;
+  executionMode?: "default" | "openclaw-native";
   conversation?: {
     source: "slack";
     workspaceId: string;
