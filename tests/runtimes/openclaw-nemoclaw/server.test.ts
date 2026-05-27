@@ -37,6 +37,7 @@ const config: RuntimeConfig = {
   openClawConfigPatchPath: null,
   openClawValidateOnStart: true,
   openClawStreamDebug: false,
+  openClawCodeMode: false,
   openClawRawStreamDebug: false,
   openClawGatewayPort: 18789,
   openClawGatewayBind: "loopback",

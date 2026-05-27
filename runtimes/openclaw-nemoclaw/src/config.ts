@@ -24,6 +24,7 @@ export type RuntimeConfig = {
   openClawDebugModelPayload?: string | null;
   openClawDebugSse?: string | null;
   openClawDebugCodeMode?: string | null;
+  openClawCodeMode: boolean;
   openClawRawStreamDebug: boolean;
   openClawGatewayPort: number;
   openClawGatewayBind: string;
@@ -91,6 +92,10 @@ export function readRuntimeConfig(env: Env): RuntimeConfig {
     openClawDebugModelPayload: readOptionalEnv(env.OPENCLAW_DEBUG_MODEL_PAYLOAD),
     openClawDebugSse: readOptionalEnv(env.OPENCLAW_DEBUG_SSE),
     openClawDebugCodeMode: readOptionalEnv(env.OPENCLAW_DEBUG_CODE_MODE),
+    openClawCodeMode: readBooleanEnv(
+      env.OPENCLAW_CODE_MODE ?? "false",
+      "OPENCLAW_CODE_MODE"
+    ),
     openClawRawStreamDebug: readBooleanEnv(
       env.OPENCLAW_RAW_STREAM_DEBUG ?? "false",
       "OPENCLAW_RAW_STREAM_DEBUG"

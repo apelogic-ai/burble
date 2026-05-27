@@ -234,6 +234,10 @@ enable targeted diagnostics such as `OPENCLAW_DEBUG_MODEL_TRANSPORT=true`,
 `OPENCLAW_DEBUG_MODEL_PAYLOAD=summary`, and `OPENCLAW_DEBUG_SSE=events`.
 Use `OPENCLAW_DEBUG_CODE_MODE=true` if OpenClaw's code-mode tool surface is
 involved.
+OpenClaw code mode is disabled by default for Burble runtimes because simple
+channel and cron turns should use direct OpenClaw tools instead of the
+`exec`/`wait` orchestration surface. Set `OPENCLAW_CODE_MODE=true` to opt back
+into code mode for broader tool-catalog or coding-style experiments.
 Set `OPENCLAW_RAW_STREAM_DEBUG=true` temporarily to ask OpenClaw for per-run
 raw stream JSONL under `/data/openclaw/state/raw-streams`; Burble parses those
 files for token usage and logs only the summarized counts.

@@ -33,7 +33,7 @@ describe("buildOpenClawLlmPatch", () => {
     );
     expect(patch.skills.allowBundled).toEqual([]);
     expect(patch.gateway.http.endpoints.responses.enabled).toBe(true);
-    expect(patch.tools.codeMode.enabled).toBe(true);
+    expect(patch.tools.codeMode.enabled).toBe(false);
     expect(patch.logging.file).toBe("/data/openclaw/logs/openclaw.log");
     expect(patch.plugins.allow).toEqual(["openai", "burble"]);
     expect(patch.plugins.load.paths).toEqual([
@@ -48,6 +48,18 @@ describe("buildOpenClawLlmPatch", () => {
       provider: "openai",
       mode: "api_key"
     });
+  });
+
+  test("enables OpenClaw code mode only when requested", () => {
+    const patch = JSON.parse(
+      buildOpenClawLlmPatch({
+        modelId: "openai:gpt-5.4",
+        ollamaBaseUrl: "https://ollama.com",
+        codeModeEnabled: true
+      })
+    );
+
+    expect(patch.tools.codeMode.enabled).toBe(true);
   });
 
   test("builds an Ollama cloud provider patch", () => {

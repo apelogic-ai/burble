@@ -131,6 +131,7 @@ function buildOpenClawNemoClawAgentConfig(
     buildOpenClawLlmPatch({
       modelId: config.llmModel,
       ollamaBaseUrl: config.ollamaBaseUrl,
+      codeModeEnabled: config.openClawCodeMode,
       burbleChannelBaseUrl: buildLocalBurbleChannelBaseUrl(config)
     })
   ) as Record<string, unknown>;
@@ -197,6 +198,7 @@ async function writeGeneratedLlmPatch(config: RuntimeConfig): Promise<string> {
     buildOpenClawLlmPatch({
       modelId: config.llmModel,
       ollamaBaseUrl: config.ollamaBaseUrl,
+      codeModeEnabled: config.openClawCodeMode,
       burbleChannelBaseUrl: buildLocalBurbleChannelBaseUrl(config)
     })
   );
@@ -220,6 +222,7 @@ async function buildSetupCacheKey(config: RuntimeConfig): Promise<string> {
       buildOpenClawLlmPatch({
         modelId: config.llmModel,
         ollamaBaseUrl: config.ollamaBaseUrl,
+        codeModeEnabled: config.openClawCodeMode,
         burbleChannelBaseUrl: buildLocalBurbleChannelBaseUrl(config)
       })
     )
