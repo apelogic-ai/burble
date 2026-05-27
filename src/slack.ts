@@ -249,6 +249,20 @@ export function createSlackRuntime(
 
     let progressMessage: SlackProgressMessage | undefined;
     try {
+      if (config.agentMode === "llm") {
+        progressMessage = await postMentionWorkingState(client, {
+          channel: mention.channel,
+          user: mention.user,
+          isDirectMessage:
+            mention.channel_type === "im" || mention.channel.startsWith("D"),
+          threadTs: buildReplyThreadTs({
+            isDirectMessage:
+              mention.channel_type === "im" || mention.channel.startsWith("D"),
+            messageTs: mention.ts,
+            threadTs: mention.thread_ts
+          })
+        });
+      }
       logger.info(withUtcTimestamp("app_mention stage=profile_lookup"));
       const email = await getSlackEmail(mention.user);
       logger.info(withUtcTimestamp("app_mention stage=profile_ready"));
@@ -267,18 +281,6 @@ export function createSlackRuntime(
         workspaceId: body.team_id ?? "",
         slackUserId: mention.user
       };
-      if (config.agentMode === "llm") {
-        progressMessage = await postMentionWorkingState(client, {
-          channel: mention.channel,
-          user: mention.user,
-          isDirectMessage,
-          threadTs: buildReplyThreadTs({
-            isDirectMessage,
-            messageTs: mention.ts,
-            threadTs: mention.thread_ts
-          })
-        });
-      }
       const conversationRoute =
         config.agentMode === "llm" && agentRunner
           ? await createSlackConversationRoute({
@@ -414,6 +416,18 @@ export function createSlackRuntime(
 
     let progressMessage: SlackProgressMessage | undefined;
     try {
+      if (config.agentMode === "llm") {
+        progressMessage = await postMentionWorkingState(client, {
+          channel: directMessage.channel,
+          user: directMessage.user,
+          isDirectMessage: true,
+          threadTs: buildReplyThreadTs({
+            isDirectMessage: true,
+            messageTs: directMessage.ts,
+            threadTs: directMessage.thread_ts
+          })
+        });
+      }
       logger.info(withUtcTimestamp("message.im stage=profile_lookup"));
       const email = await getSlackEmail(directMessage.user);
       logger.info(withUtcTimestamp("message.im stage=profile_ready"));
@@ -429,18 +443,6 @@ export function createSlackRuntime(
         workspaceId: body.team_id ?? "",
         slackUserId: directMessage.user
       };
-      if (config.agentMode === "llm") {
-        progressMessage = await postMentionWorkingState(client, {
-          channel: directMessage.channel,
-          user: directMessage.user,
-          isDirectMessage: true,
-          threadTs: buildReplyThreadTs({
-            isDirectMessage: true,
-            messageTs: directMessage.ts,
-            threadTs: directMessage.thread_ts
-          })
-        });
-      }
       logger.info(withUtcTimestamp("message.im stage=route_create"));
       const conversationRoute =
         config.agentMode === "llm" && agentRunner
