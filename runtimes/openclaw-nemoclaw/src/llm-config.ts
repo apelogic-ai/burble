@@ -8,6 +8,7 @@ export type ParsedLlmModel = {
 type OpenClawPatchInput = {
   modelId: string;
   ollamaBaseUrl: string;
+  codeModeEnabled?: boolean;
   burbleChannelBaseUrl?: string;
   burbleChannelPluginPath?: string;
 };
@@ -81,7 +82,7 @@ export function buildOpenClawLlmPatch(input: OpenClawPatchInput): string {
     },
     tools: {
       codeMode: {
-        enabled: true
+        enabled: input.codeModeEnabled === true
       }
     },
     logging: {
