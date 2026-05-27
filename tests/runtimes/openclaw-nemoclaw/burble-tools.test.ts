@@ -19,6 +19,7 @@ const config: RuntimeConfig = {
   openClawConfigPatchPath: null,
   openClawValidateOnStart: true,
   openClawStreamDebug: false,
+  openClawCodeMode: false,
   openClawRawStreamDebug: false,
   openClawGatewayPort: 18789,
   openClawGatewayBind: "loopback",
@@ -28,8 +29,9 @@ const config: RuntimeConfig = {
 };
 
 describe("createBurbleToolExecutor", () => {
-  test("requires MCP gateway settings for provider tools", () => {
-    expect(() => createBurbleToolExecutor(config, "rt_u123")).toThrow(
+  test("requires MCP gateway settings for provider tools", async () => {
+    const executor = createBurbleToolExecutor(config, "rt_u123");
+    await expect(executor("github.getAuthenticatedUser", {})).rejects.toThrow(
       "Burble MCP gateway URL and runtime JWT are required for provider tools"
     );
   });
@@ -120,6 +122,86 @@ describe("createBurbleToolExecutor", () => {
         params: {
           name: "github_get_authenticated_user",
           arguments: {}
+        }
+      });
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  test("sends active conversation messages through the internal gateway", async () => {
+    const originalFetch = globalThis.fetch;
+    const requests: Request[] = [];
+    globalThis.fetch = (async (input, init) => {
+      const request = new Request(input, init);
+      requests.push(request);
+      return Response.json({
+        classification: "user_private",
+        content: {
+          ok: true,
+          transport: "slack",
+          conversationId: "C123",
+          messageId: "1779841120.000"
+        }
+      });
+    }) as typeof fetch;
+
+    try {
+      const executor = createBurbleToolExecutor(
+        {
+          ...config,
+          mcpGatewayUrl: "http://agentgateway:3000/mcp",
+          runtimeJwt: "runtime-jwt"
+        },
+        "rt_u123",
+        {
+          runtime: { id: "rt_u123" },
+          input: {
+            text: "run a long task",
+            conversation: {
+              routeId: "convrt_abc123",
+              source: "slack",
+              workspaceId: "T123",
+              channelId: "C123",
+              rootId: "channel:C123:thread:1779841118.237",
+              isDirectMessage: false
+            },
+            connections: {
+              github: { connected: false }
+            }
+          }
+        }
+      );
+      const result = await executor("conversation.sendMessage", {
+        input: {
+          text: "Long task finished.",
+          channelId: "C999"
+        }
+      });
+
+      expect(result.content).toEqual({
+        ok: true,
+        transport: "slack",
+        conversationId: "C123",
+        messageId: "1779841120.000"
+      });
+      expect(requests).toHaveLength(1);
+      expect(requests[0].url).toBe(
+        "http://burble-app:3000/internal/tools/conversation.sendMessage/execute"
+      );
+      expect(requests[0].headers.get("authorization")).toBe(
+        "Bearer runtime-secret"
+      );
+      expect(requests[0].headers.get("x-burble-runtime-id")).toBe("rt_u123");
+      expect(await requests[0].json()).toEqual({
+        input: { text: "Long task finished.", routeId: "convrt_abc123" },
+        conversation: {
+          routeId: "convrt_abc123",
+          source: "slack",
+          workspaceId: "T123",
+          channelId: "C123",
+          rootId: "channel:C123:thread:1779841118.237",
+          isDirectMessage: false
         }
       });
     } finally {

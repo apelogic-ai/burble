@@ -1,5 +1,5 @@
 import { Database } from "bun:sqlite";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 
 export type OAuthState = {
   state: string;
@@ -81,6 +81,19 @@ export type AgentRuntimeEventRecord = {
   createdAt: string;
 };
 
+export type ConversationTransport = "slack";
+
+export type ConversationRouteRecord = {
+  id: string;
+  workspaceId: string;
+  slackUserId: string;
+  transport: ConversationTransport;
+  destinationJson: string;
+  createdAt: string;
+  updatedAt: string;
+  revokedAt: string | null;
+};
+
 export type TokenStore = ReturnType<typeof createTokenStore>;
 
 export function createTokenStore(path: string) {
@@ -156,6 +169,20 @@ export function createTokenStore(path: string) {
 
     CREATE INDEX IF NOT EXISTS idx_agent_runtime_events_runtime_created
       ON agent_runtime_events (runtime_id, created_at);
+
+    CREATE TABLE IF NOT EXISTS conversation_routes (
+      id TEXT PRIMARY KEY,
+      workspace_id TEXT NOT NULL,
+      slack_user_id TEXT NOT NULL,
+      transport TEXT NOT NULL,
+      destination_json TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      revoked_at TEXT
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_conversation_routes_principal
+      ON conversation_routes (workspace_id, slack_user_id, transport, updated_at);
   `);
   ensureProviderConnectionColumn(db, "refresh_token", "TEXT");
   ensureProviderConnectionColumn(db, "access_token_expires_at", "TEXT");
@@ -377,6 +404,36 @@ export function createTokenStore(path: string) {
     FROM agent_runtime_events
     WHERE runtime_id = ?
     ORDER BY created_at ASC
+  `);
+  const upsertConversationRoute = db.query(`
+    INSERT INTO conversation_routes (
+      id,
+      workspace_id,
+      slack_user_id,
+      transport,
+      destination_json,
+      created_at,
+      updated_at,
+      revoked_at
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, NULL)
+    ON CONFLICT(id) DO UPDATE SET
+      destination_json = excluded.destination_json,
+      updated_at = excluded.updated_at,
+      revoked_at = NULL
+  `);
+  const getConversationRouteById = db.query<ConversationRouteRecord, [string]>(`
+    SELECT
+      id,
+      workspace_id AS workspaceId,
+      slack_user_id AS slackUserId,
+      transport,
+      destination_json AS destinationJson,
+      created_at AS createdAt,
+      updated_at AS updatedAt,
+      revoked_at AS revokedAt
+    FROM conversation_routes
+    WHERE id = ?
   `);
 
   return {
@@ -600,6 +657,37 @@ export function createTokenStore(path: string) {
       return listAgentRuntimeEvents.all(runtimeId);
     },
 
+    upsertConversationRoute(input: {
+      workspaceId: string;
+      slackUserId: string;
+      transport: ConversationTransport;
+      destination: Record<string, unknown>;
+      now?: Date;
+    }): ConversationRouteRecord {
+      const destinationJson = stableJson(input.destination);
+      const id = buildConversationRouteId();
+      const now = (input.now ?? new Date()).toISOString();
+      upsertConversationRoute.run(
+        id,
+        input.workspaceId,
+        input.slackUserId,
+        input.transport,
+        destinationJson,
+        now,
+        now
+      );
+
+      const route = getConversationRouteById.get(id);
+      if (!route) {
+        throw new Error("Failed to create conversation route");
+      }
+      return route;
+    },
+
+    getConversationRoute(id: string): ConversationRouteRecord | null {
+      return getConversationRouteById.get(id);
+    },
+
     updateAgentRuntimeStatus(
       id: string,
       input: {
@@ -652,4 +740,27 @@ function buildAgentRuntimeId(
     .update(`${workspaceId}:${slackUserId}:${engine}`)
     .digest("hex")
     .slice(0, 32)}`;
+}
+
+function buildConversationRouteId(): string {
+  return `convrt_${randomUUID().replace(/-/g, "").slice(0, 24)}`;
+}
+
+function stableJson(value: Record<string, unknown>): string {
+  return JSON.stringify(sortJson(value));
+}
+
+function sortJson(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map(sortJson);
+  }
+  if (typeof value !== "object" || value === null) {
+    return value;
+  }
+
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, entry]) => [key, sortJson(entry)])
+  );
 }

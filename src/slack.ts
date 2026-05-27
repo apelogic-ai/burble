@@ -1,4 +1,5 @@
 import { App, LogLevel } from "@slack/bolt";
+import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import type { Config } from "./config";
 import type { SlackLogLevel } from "./config";
@@ -33,12 +34,17 @@ import type { AgentRuntimeRecord, ProviderConnection, TokenStore } from "./db";
 import { handleConversation } from "./conversation/orchestrator";
 import { normalizeMentionText } from "./conversation/normalize";
 import type {
+  ConversationAttachment,
   ConversationRequest,
   ConversationResponse,
   ToolClassification
 } from "./conversation/types";
 import { createConfiguredAgentRunner } from "./agent/runtime";
-import type { AgentRunEvent, AgentUsage } from "./agent/types";
+import {
+  collectAgentRun,
+  type AgentRunEvent,
+  type AgentUsage
+} from "./agent/types";
 import { createDockerRuntimeFactory } from "./agent/container-runtime-factory";
 import { createStaticRuntimeFactory } from "./agent/runtime-factory";
 import type { RuntimeFactory } from "./agent/runtime-factory";
@@ -79,6 +85,16 @@ type SlackDirectMessageEvent = {
   thread_ts?: string;
   subtype?: string;
   bot_id?: string;
+  files?: SlackFileReference[];
+};
+
+type SlackFileReference = {
+  id?: string;
+  name?: string;
+  title?: string;
+  mimetype?: string;
+  filetype?: string;
+  size?: number;
 };
 
 type SlackRecentMessage = {
@@ -108,6 +124,25 @@ type SlackProgressMessage = {
   toolStartedAtMs: Record<string, number>;
   toolLinesByCallId: Record<string, string>;
   toolCallOrder: string[];
+};
+
+type AgentExecTaskStatus = "running" | "stopping" | "stopped" | "finished" | "failed";
+
+type AgentExecTask = {
+  id: string;
+  workspaceId: string;
+  slackUserId: string;
+  channelId: string;
+  task: string;
+  status: AgentExecTaskStatus;
+  createdAtMs: number;
+  updatedAtMs: number;
+  progressText: string;
+  runtimeId?: string;
+  stopRequested?: boolean;
+  message?: SlackProgressMessage;
+  finalText?: string;
+  failureText?: string;
 };
 
 export function createSlackRuntime(
@@ -187,6 +222,10 @@ export function createSlackRuntime(
           logInfo: (message) => app.logger.info(withUtcTimestamp(message))
         })
       : undefined;
+  const agentExecTasks = new Map<string, AgentExecTask>();
+
+  const resolveAgentExecutionMode = (): "openclaw-native" | undefined =>
+    config.agentRuntime === "openclaw-nemoclaw" ? "openclaw-native" : undefined;
 
   app.event("app_mention", async ({ body, event, client, logger }) => {
     const mention = event as {
@@ -196,6 +235,7 @@ export function createSlackRuntime(
       ts?: string;
       thread_ts?: string;
       channel_type?: string;
+      files?: SlackFileReference[];
     };
 
     logger.info(
@@ -219,6 +259,31 @@ export function createSlackRuntime(
         user: mention.user,
         logWarn: (message) => logger.warn(withUtcTimestamp(message))
       });
+      const principal = {
+        workspaceId: body.team_id ?? "",
+        slackUserId: mention.user
+      };
+      const conversationRoute =
+        config.agentMode === "llm" && agentRunner
+          ? await createSlackConversationRoute({
+              store,
+              runtimeFactory,
+              principal,
+              channelId: mention.channel,
+              isDirectMessage,
+              rootId: buildConversationRootIdForSlack({
+                isDirectMessage,
+                channelId: mention.channel,
+                messageTs: mention.ts,
+                threadTs: mention.thread_ts
+              }),
+              threadTs: buildReplyThreadTs({
+                isDirectMessage,
+                messageTs: mention.ts,
+                threadTs: mention.thread_ts
+              })
+            })
+          : null;
       if (config.agentMode === "llm") {
         progressMessage = await postMentionWorkingState(client, {
           channel: mention.channel,
@@ -241,6 +306,9 @@ export function createSlackRuntime(
           threadTs: mention.thread_ts,
           messageTs: mention.ts,
           isDirectMessage,
+          ...(conversationRoute
+            ? { conversationRouteId: conversationRoute.id }
+            : {}),
           context: buildSlackRequestContext({
             channelId: mention.channel,
             isDirectMessage,
@@ -250,7 +318,8 @@ export function createSlackRuntime(
             slackUserId: mention.user,
             email
           },
-          text
+          text,
+          ...buildConversationAttachments(mention.files)
         },
         {
           createGitHubOAuthUrl: (slackUserId) =>
@@ -269,9 +338,16 @@ export function createSlackRuntime(
             : {}),
           getConnection: (provider, emailAddress) =>
             store.getConnection(provider, emailAddress),
-          githubTools,
-          slackTools,
+          tools: {
+            github: githubTools,
+            google: googleTools,
+            jira: jiraTools,
+            slack: slackTools
+          },
           agentMode: config.agentMode,
+          ...(resolveAgentExecutionMode()
+            ? { agentExecutionMode: resolveAgentExecutionMode() }
+            : {}),
           ...(agentRunner ? { agentRunner } : {}),
           ...(activeProgressMessage
             ? {
@@ -340,6 +416,31 @@ export function createSlackRuntime(
         user: directMessage.user,
         logWarn: (message) => logger.warn(withUtcTimestamp(message))
       });
+      const principal = {
+        workspaceId: body.team_id ?? "",
+        slackUserId: directMessage.user
+      };
+      const conversationRoute =
+        config.agentMode === "llm" && agentRunner
+          ? await createSlackConversationRoute({
+              store,
+              runtimeFactory,
+              principal,
+              channelId: directMessage.channel,
+              isDirectMessage: true,
+              rootId: buildConversationRootIdForSlack({
+                isDirectMessage: true,
+                channelId: directMessage.channel,
+                messageTs: directMessage.ts,
+                threadTs: directMessage.thread_ts
+              }),
+              threadTs: buildReplyThreadTs({
+                isDirectMessage: true,
+                messageTs: directMessage.ts,
+                threadTs: directMessage.thread_ts
+              })
+            })
+          : null;
       if (config.agentMode === "llm") {
         progressMessage = await postMentionWorkingState(client, {
           channel: directMessage.channel,
@@ -362,6 +463,9 @@ export function createSlackRuntime(
           threadTs: directMessage.thread_ts,
           messageTs: directMessage.ts,
           isDirectMessage: true,
+          ...(conversationRoute
+            ? { conversationRouteId: conversationRoute.id }
+            : {}),
           context: buildSlackRequestContext({
             channelId: directMessage.channel,
             isDirectMessage: true,
@@ -371,7 +475,8 @@ export function createSlackRuntime(
             slackUserId: directMessage.user,
             email
           },
-          text: directMessage.text.trim()
+          text: directMessage.text.trim(),
+          ...buildConversationAttachments(directMessage.files)
         },
         {
           createGitHubOAuthUrl: (slackUserId) =>
@@ -390,9 +495,16 @@ export function createSlackRuntime(
             : {}),
           getConnection: (provider, emailAddress) =>
             store.getConnection(provider, emailAddress),
-          githubTools,
-          slackTools,
+          tools: {
+            github: githubTools,
+            google: googleTools,
+            jira: jiraTools,
+            slack: slackTools
+          },
           agentMode: config.agentMode,
+          ...(resolveAgentExecutionMode()
+            ? { agentExecutionMode: resolveAgentExecutionMode() }
+            : {}),
           ...(agentRunner ? { agentRunner } : {}),
           ...(activeProgressMessage
             ? {
@@ -552,7 +664,7 @@ export function createSlackRuntime(
     }
   });
 
-  app.command("/agent", async ({ ack, body, logger, respond }) => {
+  app.command("/agent", async ({ ack, body, client, logger, respond }) => {
     try {
       logger.info(
         withUtcTimestamp(`Received /agent ${body.text} from ${body.user_id}`)
@@ -590,29 +702,248 @@ export function createSlackRuntime(
         return;
       }
 
-      await ack(buildAgentConfigLoadingResponse());
-      try {
-        const runtime = await getOrStartAgentStatusRuntime({
-          config,
-          store,
-          runtimeFactory,
-          workspaceId: body.team_id ?? "",
-          slackUserId: body.user_id
-        });
-        const configFile = await readAgentConfigFile(runtime, { runtimeFactory });
+      if (action.kind === "config") {
+        await ack(buildAgentConfigLoadingResponse());
+        try {
+          const runtime = await getOrStartAgentStatusRuntime({
+            config,
+            store,
+            runtimeFactory,
+            workspaceId: body.team_id ?? "",
+            slackUserId: body.user_id
+          });
+          const configFile = await readAgentConfigFile(runtime, { runtimeFactory });
 
+          await respond({
+            ...buildAgentConfigResponse({ runtime, configFile }),
+            replace_original: true
+          });
+        } catch (error) {
+          logger.error(formatLogError(error));
+          await respond({
+            response_type: "ephemeral",
+            replace_original: true,
+            text: formatAgentConfigFailureMessage(error)
+          });
+        }
+        return;
+      }
+
+      if (action.kind === "exec_list") {
+        await ack(
+          buildAgentExecTaskListResponse(
+            listAgentExecTasks(agentExecTasks, body.team_id ?? "", body.user_id)
+          )
+        );
+        return;
+      }
+
+      if (action.kind === "exec_inspect") {
+        await ack(
+          buildAgentExecTaskInspectResponse(
+            findAgentExecTask(
+              agentExecTasks,
+              body.team_id ?? "",
+              body.user_id,
+              action.taskId
+            )
+          )
+        );
+        return;
+      }
+
+      if (action.kind === "exec_stop") {
+        const task = findAgentExecTask(
+          agentExecTasks,
+          body.team_id ?? "",
+          body.user_id,
+          action.taskId
+        );
+        await ack(buildAgentExecStopLoadingResponse(task));
+        if (task) {
+          await stopAgentExecTask({
+            task,
+            runtimeFactory,
+            client,
+            stoppedBy: body.user_id
+          });
+        }
         await respond({
-          ...buildAgentConfigResponse({ runtime, configFile }),
+          ...buildAgentExecStopResponse(task),
           replace_original: true
         });
-      } catch (error) {
-        logger.error(formatLogError(error));
-        await respond({
-          response_type: "ephemeral",
-          replace_original: true,
-          text: formatAgentConfigFailureMessage(error)
-        });
+        return;
       }
+
+      if (action.kind === "exec") {
+        const principal = {
+          workspaceId: body.team_id ?? "",
+          slackUserId: body.user_id
+        };
+        const execTask = createAgentExecTask({
+          workspaceId: principal.workspaceId,
+          slackUserId: principal.slackUserId,
+          channelId: body.channel_id,
+          task: action.task
+        });
+        agentExecTasks.set(execTask.id, execTask);
+        let progressText = "Preparing agent runtime...";
+        await ack();
+        let progressMessage: SlackProgressMessage | undefined;
+        try {
+          progressMessage = await postAgentExecResponseMessage({
+            client,
+            channel: body.channel_id,
+            text: formatAgentExecResponseMessage(execTask, {
+              statusText: progressText
+            })
+          });
+          execTask.message = progressMessage;
+          if (config.agentMode !== "llm" || !agentRunner) {
+            const failureText =
+              "Agent execution requires `AGENT_MODE=llm` and an agent runtime.";
+            await updateAgentExecResponse({
+              client,
+              respond,
+              progressMessage,
+              text: formatAgentExecResponseMessage(execTask, {
+                statusText: "Failed.",
+                responseText: failureText
+              })
+            });
+            finishAgentExecTask(execTask, "failed", failureText);
+            return;
+          }
+
+          const startedAtMs = Date.now();
+          const runtime = runtimeFactory
+            ? await runtimeFactory.getOrCreateRuntime(principal)
+            : null;
+          if (runtime) {
+            execTask.runtimeId = runtime.id;
+          }
+          if (execTask.stopRequested && runtimeFactory && runtime) {
+            await runtimeFactory.stopRuntime(runtime.id);
+            finishAgentExecTask(
+              execTask,
+              "stopped",
+              "Stopped before the runtime task started."
+            );
+            await updateAgentExecResponse({
+              client,
+              respond,
+              progressMessage,
+              text: formatAgentExecResponseMessage(execTask, {
+                statusText: "Stopped.",
+                responseText: "Stopped before the runtime task started."
+              })
+            });
+            return;
+          }
+
+          const email = await getSlackEmail(body.user_id);
+          const conversationRoute = store.upsertConversationRoute({
+            workspaceId: principal.workspaceId,
+            slackUserId: principal.slackUserId,
+            transport: "slack",
+            destination: {
+              channelId: body.channel_id,
+              isDirectMessage: body.channel_id.startsWith("D"),
+              runtimeId: runtime?.id,
+              rootId: `slash-agent-exec:${execTask.id}`
+            }
+          });
+          const result = await collectAgentRun(
+            agentRunner,
+            {
+              principal,
+              executionMode: "openclaw-native",
+              conversation: {
+                routeId: conversationRoute.id,
+                source: "slack",
+                workspaceId: principal.workspaceId,
+                channelId: body.channel_id,
+                rootId: `slash-agent-exec:${execTask.id}`,
+                isDirectMessage: body.channel_id.startsWith("D")
+              },
+              text: action.task,
+              connections: {
+                github: store.getConnection("github", email),
+                google: store.getConnection("google", email),
+                jira: store.getConnection("jira", email),
+                slack: store.getConnection("slack", email)
+              }
+            },
+            async (event) => {
+              const nextText = formatAgentProgressEvent(event, progressText);
+              if (!nextText || nextText === progressText) {
+                return;
+              }
+
+              progressText = nextText;
+              execTask.progressText = progressText;
+              execTask.updatedAtMs = Date.now();
+              await updateAgentExecResponse({
+                client,
+                respond,
+                progressMessage,
+                text: formatAgentExecResponseMessage(execTask, {
+                  statusText: progressText
+                })
+              });
+            }
+          );
+
+          if (execTask.status === "stopped") {
+            return;
+          }
+          const finalStatusText = formatFinalProgressLine(
+            Date.now() - startedAtMs,
+            result.usage
+          );
+          const finalResponseText =
+            result.text.trim() || "Agent finished without a text response.";
+          const finalText = formatAgentExecResult(finalStatusText, finalResponseText);
+          finishAgentExecTask(execTask, "finished", finalText);
+          await updateAgentExecResponse({
+            client,
+            respond,
+            progressMessage,
+            text: formatAgentExecResponseMessage(execTask, {
+              statusText: finalStatusText,
+              responseText: finalResponseText
+            })
+          });
+        } catch (error) {
+          logger.error(formatLogError(error));
+          if (execTask.status === "stopped" || execTask.stopRequested) {
+            finishAgentExecTask(execTask, "stopped", "Stopped.");
+            await updateAgentExecResponse({
+              client,
+              respond,
+              progressMessage,
+              text: formatAgentExecResponseMessage(execTask, {
+                statusText: "Stopped."
+              })
+            });
+            return;
+          }
+          const failureText = formatAgentExecFailureMessage(error);
+          finishAgentExecTask(execTask, "failed", failureText);
+          await updateAgentExecResponse({
+            client,
+            respond,
+            progressMessage,
+            text: formatAgentExecResponseMessage(execTask, {
+              statusText: "Failed.",
+              responseText: failureText
+            })
+          });
+        }
+        return;
+      }
+
+      await ack(buildAgentCommandHelpResponse());
     } catch (error) {
       logger.error(formatLogError(error));
       await ack({
@@ -835,6 +1166,51 @@ function createOpenClawRuntimeFactory(
   });
 }
 
+async function createSlackConversationRoute(input: {
+  store: TokenStore;
+  runtimeFactory?: RuntimeFactory;
+  principal: {
+    workspaceId: string;
+    slackUserId: string;
+  };
+  channelId: string;
+  isDirectMessage: boolean;
+  rootId: string;
+  threadTs?: string;
+}) {
+  const runtime = input.runtimeFactory
+    ? await input.runtimeFactory.getOrCreateRuntime(input.principal)
+    : null;
+
+  return input.store.upsertConversationRoute({
+    workspaceId: input.principal.workspaceId,
+    slackUserId: input.principal.slackUserId,
+    transport: "slack",
+    destination: {
+      channelId: input.channelId,
+      isDirectMessage: input.isDirectMessage,
+      rootId: input.rootId,
+      ...(input.threadTs ? { threadTs: input.threadTs } : {}),
+      ...(runtime ? { runtimeId: runtime.id } : {})
+    }
+  });
+}
+
+function buildConversationRootIdForSlack(input: {
+  isDirectMessage: boolean;
+  channelId: string;
+  messageTs: string;
+  threadTs?: string;
+}): string {
+  if (input.isDirectMessage) {
+    return input.threadTs
+      ? `dm:${input.channelId}:thread:${input.threadTs}`
+      : `dm:${input.channelId}`;
+  }
+
+  return `channel:${input.channelId}:thread:${input.threadTs ?? input.messageTs}`;
+}
+
 export type AuthCommand =
   | { kind: "connections" }
   | { kind: "github" }
@@ -881,10 +1257,15 @@ export function parseAuthCommand(text: string): AuthCommand {
 export type AgentCommand =
   | { kind: "help" }
   | { kind: "status" }
-  | { kind: "config" };
+  | { kind: "config" }
+  | { kind: "exec_list" }
+  | { kind: "exec_inspect"; taskId: string }
+  | { kind: "exec_stop"; taskId: string }
+  | { kind: "exec"; task: string };
 
 export function parseAgentCommand(text: string): AgentCommand {
-  const normalized = text.trim().toLowerCase().replace(/\s+/g, " ");
+  const trimmed = text.trim();
+  const normalized = trimmed.toLowerCase().replace(/\s+/g, " ");
   if (normalized === "" || normalized === "help") {
     return { kind: "help" };
   }
@@ -899,6 +1280,32 @@ export function parseAgentCommand(text: string): AgentCommand {
     normalized === "runtime config"
   ) {
     return { kind: "config" };
+  }
+
+  const execMatch = /^exec(?:ute)?(?:\s+([\s\S]*))?$/i.exec(trimmed);
+  if (execMatch) {
+    const task = execMatch[1]?.trim() ?? "";
+    if (!task) {
+      return { kind: "exec_list" };
+    }
+
+    const inspectMatch =
+      /^(?:(?:inspect|show)\s+([A-Za-z0-9_-]+)|([A-Za-z0-9_-]+)\s+(?:inspect|show))$/i.exec(
+        task
+      );
+    if (inspectMatch) {
+      return { kind: "exec_inspect", taskId: inspectMatch[1] ?? inspectMatch[2] };
+    }
+
+    const stopMatch =
+      /^(?:(?:stop|cancel)\s+([A-Za-z0-9_-]+)|([A-Za-z0-9_-]+)\s+(?:stop|cancel))$/i.exec(
+        task
+      );
+    if (stopMatch) {
+      return { kind: "exec_stop", taskId: stopMatch[1] ?? stopMatch[2] };
+    }
+
+    return { kind: "exec", task };
   }
 
   return { kind: "help" };
@@ -1067,6 +1474,7 @@ export function buildHelpResponse() {
             "• `/auth slack` - connect or reconnect Slack search",
             "• `/agent status` - show and power up your current agent runtime",
             "• `/agent config` - inspect your current agent config file",
+            "• `/agent exec <task>` - send an explicit task to your private agent runtime",
             "• `/agent-status` - legacy alias for agent status",
             "• `/agent-config` - legacy alias for agent config",
             "• `/help` - show this help"
@@ -1096,12 +1504,295 @@ export function buildAgentCommandHelpResponse() {
           text: [
             "Use one of:",
             "• `/agent status` - show and power up your current agent runtime",
-            "• `/agent config` - inspect your current agent config file"
+            "• `/agent config` - inspect your current agent config file",
+            "• `/agent exec` - list active agent tasks",
+            "• `/agent exec <task>` - send an explicit task to your private agent runtime",
+            "• `/agent exec <id> inspect` - inspect an active or recent task",
+            "• `/agent exec <id> stop` - stop an active task"
           ].join("\n")
         }
       }
     ]
   };
+}
+
+async function updateAgentExecResponse(input: {
+  client: App["client"];
+  respond: (message: {
+    response_type: "in_channel";
+    replace_original?: boolean;
+    text: string;
+  }) => Promise<unknown>;
+  progressMessage?: SlackProgressMessage;
+  text: string;
+}): Promise<void> {
+  if (input.progressMessage) {
+    input.progressMessage.text = input.text;
+    await input.client.chat.update({
+      channel: input.progressMessage.channel,
+      ts: input.progressMessage.ts,
+      text: input.text
+    });
+    return;
+  }
+
+  await input.respond({
+    response_type: "in_channel",
+    replace_original: true,
+    text: input.text
+  });
+}
+
+async function postAgentExecResponseMessage(input: {
+  client: App["client"];
+  channel: string;
+  text: string;
+}): Promise<SlackProgressMessage | undefined> {
+  const result = await input.client.chat.postMessage({
+    channel: input.channel,
+    text: input.text
+  });
+
+  return result.ts
+    ? {
+        channel: input.channel,
+        ts: result.ts,
+        text: input.text,
+        startedAtMs: Date.now(),
+        toolStartedAtMs: {},
+        toolLinesByCallId: {},
+        toolCallOrder: []
+      }
+    : undefined;
+}
+
+function createAgentExecTask(input: {
+  workspaceId: string;
+  slackUserId: string;
+  channelId: string;
+  task: string;
+}): AgentExecTask {
+  const now = Date.now();
+  return {
+    id: randomUUID().slice(0, 8),
+    workspaceId: input.workspaceId,
+    slackUserId: input.slackUserId,
+    channelId: input.channelId,
+    task: input.task,
+    status: "running",
+    createdAtMs: now,
+    updatedAtMs: now,
+    progressText: "Starting agent runtime..."
+  };
+}
+
+function finishAgentExecTask(
+  task: AgentExecTask,
+  status: Exclude<AgentExecTaskStatus, "running" | "stopping">,
+  finalText = ""
+): void {
+  task.status = status;
+  task.updatedAtMs = Date.now();
+  if (status === "failed") {
+    task.failureText = finalText;
+  } else {
+    task.finalText = finalText;
+  }
+}
+
+function listAgentExecTasks(
+  tasks: Map<string, AgentExecTask>,
+  workspaceId: string,
+  slackUserId: string
+): AgentExecTask[] {
+  return [...tasks.values()]
+    .filter(
+      (task) =>
+        task.workspaceId === workspaceId &&
+        task.slackUserId === slackUserId &&
+        (task.status === "running" || task.status === "stopping")
+    )
+    .sort((left, right) => left.createdAtMs - right.createdAtMs);
+}
+
+function findAgentExecTask(
+  tasks: Map<string, AgentExecTask>,
+  workspaceId: string,
+  slackUserId: string,
+  taskId: string
+): AgentExecTask | null {
+  const task = tasks.get(taskId);
+  return task?.workspaceId === workspaceId && task.slackUserId === slackUserId
+    ? task
+    : null;
+}
+
+async function stopAgentExecTask(input: {
+  task: AgentExecTask;
+  runtimeFactory?: RuntimeFactory;
+  client: App["client"];
+  stoppedBy: string;
+}): Promise<void> {
+  const { task } = input;
+  if (task.status !== "running" && task.status !== "stopping") {
+    return;
+  }
+
+  task.stopRequested = true;
+  task.status = "stopping";
+  task.updatedAtMs = Date.now();
+  if (task.message) {
+    await input.client.chat.update({
+      channel: task.message.channel,
+      ts: task.message.ts,
+      text: formatAgentExecResponseMessage(
+        task,
+        { statusText: `Stopping task at <@${input.stoppedBy}>'s request...` }
+      )
+    });
+  }
+
+  if (!input.runtimeFactory || !task.runtimeId) {
+    return;
+  }
+
+  await input.runtimeFactory.stopRuntime(task.runtimeId);
+  finishAgentExecTask(task, "stopped", `Stopped by <@${input.stoppedBy}>.`);
+  if (task.message) {
+    await input.client.chat.update({
+      channel: task.message.channel,
+      ts: task.message.ts,
+      text: formatAgentExecResponseMessage(task, {
+        statusText: "Stopped.",
+        responseText: task.finalText
+      })
+    });
+  }
+}
+
+function buildAgentExecLoadingText(_task: string): string {
+  return "Agent task: Preparing agent runtime...";
+}
+
+function formatAgentExecResponseMessage(
+  task: AgentExecTask,
+  input: { statusText: string; responseText?: string }
+): string {
+  const statusLines = input.statusText
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+  const currentStatus = statusLines.at(-1) ?? "Working...";
+  const responseText = input.responseText?.trim();
+  return [
+    `Agent task (\`${task.id}\`): ${currentStatus}`,
+    ...(responseText ? ["", responseText] : [])
+  ].join("\n");
+}
+
+export function buildAgentExecLoadingResponse(
+  task: string,
+  responseType: "ephemeral" | "in_channel" = "in_channel"
+) {
+  return {
+    response_type: responseType,
+    text: buildAgentExecLoadingText(task)
+  };
+}
+
+export function buildAgentExecMissingTaskResponse() {
+  return {
+    response_type: "ephemeral" as const,
+    text: "Usage: `/agent exec <task>`. Use `/agent exec` to list active tasks."
+  };
+}
+
+export function buildAgentExecTaskListResponse(tasks: AgentExecTask[]) {
+  return {
+    response_type: "ephemeral" as const,
+    text:
+      tasks.length === 0
+        ? "No active agent tasks."
+        : [
+            "*Active agent tasks*",
+            ...tasks.map(
+              (task) =>
+                `• \`${task.id}\` ${formatAgentExecAge(task)} ${truncateSlackConfigValue(task.task, 120)}\n  Inspect: \`/agent exec ${task.id} inspect\`  Stop: \`/agent exec ${task.id} stop\``
+            )
+          ].join("\n")
+  };
+}
+
+export function buildAgentExecTaskInspectResponse(task: AgentExecTask | null) {
+  if (!task) {
+    return {
+      response_type: "ephemeral" as const,
+      text: "Agent task not found."
+    };
+  }
+
+  return {
+    response_type: "ephemeral" as const,
+    text: [
+      `*Agent task* \`${task.id}\``,
+      `• Status: \`${task.status}\``,
+      `• Age: ${formatAgentExecAge(task)}`,
+      `• Runtime: \`${task.runtimeId ?? "not assigned yet"}\``,
+      `• Task: \`${truncateSlackConfigValue(task.task, 300)}\``,
+      task.finalText
+        ? `• Result: ${truncateSlackConfigValue(task.finalText.replace(/\s+/g, " "), 300)}`
+        : "",
+      task.failureText
+        ? `• Failure: ${truncateSlackConfigValue(task.failureText, 300)}`
+        : "",
+      task.status === "running" || task.status === "stopping"
+        ? `• Stop: \`/agent exec ${task.id} stop\``
+        : ""
+    ]
+      .filter(Boolean)
+      .join("\n")
+  };
+}
+
+function buildAgentExecStopLoadingResponse(task: AgentExecTask | null) {
+  return {
+    response_type: "ephemeral" as const,
+    text: task ? `Stopping agent task \`${task.id}\`...` : "Agent task not found."
+  };
+}
+
+function buildAgentExecStopResponse(task: AgentExecTask | null) {
+  if (!task) {
+    return {
+      response_type: "ephemeral" as const,
+      text: "Agent task not found."
+    };
+  }
+
+  if (task.status === "stopped") {
+    return {
+      response_type: "ephemeral" as const,
+      text: `Stopped agent task \`${task.id}\`.`
+    };
+  }
+
+  if (task.status !== "running" && task.status !== "stopping") {
+    return {
+      response_type: "ephemeral" as const,
+      text: `Agent task \`${task.id}\` is already \`${task.status}\`; nothing to stop.`
+    };
+  }
+
+  return {
+    response_type: "ephemeral" as const,
+    text: task.runtimeId
+      ? `Stop requested for agent task \`${task.id}\`.`
+      : `Stop requested for agent task \`${task.id}\`; it has not attached to a runtime yet.`
+  };
+}
+
+function formatAgentExecAge(task: AgentExecTask): string {
+  return `${formatElapsedMs(Date.now() - task.createdAtMs)} old`;
 }
 
 export function buildAgentConfigResponse(input: {
@@ -1375,7 +2066,8 @@ export function shouldHandleDirectMessageEvent(
     typeof event.text === "string" &&
     Boolean(event.ts) &&
     !event.subtype &&
-    !event.bot_id
+    !event.bot_id &&
+    !event.text.trim().startsWith("/")
   );
 }
 
@@ -1461,6 +2153,60 @@ function buildSlackRequestContext(input: {
   };
 }
 
+function buildConversationAttachments(
+  files: SlackFileReference[] | undefined
+): { attachments?: ConversationAttachment[] } {
+  const attachments = (files ?? []).flatMap<ConversationAttachment>((file) => {
+    if (!file.id) {
+      return [];
+    }
+
+    const mimeType = normalizeSlackFileMimeType(file);
+    return [
+      {
+        id: `slack:${file.id}`,
+        externalId: file.id,
+        source: "slack",
+        kind: classifyAttachmentKind(mimeType),
+        mimeType,
+        ...(file.name || file.title ? { name: file.name ?? file.title } : {}),
+        ...(typeof file.size === "number" && Number.isFinite(file.size)
+          ? { sizeBytes: file.size }
+          : {})
+      }
+    ];
+  });
+
+  return attachments.length > 0 ? { attachments } : {};
+}
+
+function normalizeSlackFileMimeType(file: SlackFileReference): string {
+  if (file.mimetype?.trim()) {
+    return file.mimetype.trim();
+  }
+
+  if (file.filetype?.trim()) {
+    return `application/x-slack-${file.filetype.trim()}`;
+  }
+
+  return "application/octet-stream";
+}
+
+function classifyAttachmentKind(
+  mimeType: string
+): ConversationAttachment["kind"] {
+  if (mimeType.startsWith("image/")) {
+    return "image";
+  }
+  if (mimeType.startsWith("audio/")) {
+    return "audio";
+  }
+  if (mimeType.startsWith("video/")) {
+    return "video";
+  }
+  return "file";
+}
+
 function summarizeSlackHistoryError(error: unknown): string {
   if (error && typeof error === "object" && "data" in error) {
     const data = (error as { data?: { error?: unknown } }).data;
@@ -1518,7 +2264,7 @@ async function postConversationResponse(
       ...(input.threadTs && input.response.visibility !== "dm"
         ? { thread_ts: input.threadTs }
         : {}),
-      text: input.response.text,
+      text: renderConversationResponseText(input.response),
       ...(input.response.blocks ? { blocks: input.response.blocks } : {})
     });
     return;
@@ -1528,7 +2274,7 @@ async function postConversationResponse(
     await client.chat.postEphemeral({
       channel: input.channel,
       user: input.user,
-      text: input.response.text,
+      text: renderConversationResponseText(input.response),
       ...(input.response.blocks ? { blocks: input.response.blocks } : {})
     });
     return;
@@ -1537,7 +2283,7 @@ async function postConversationResponse(
   if (input.response.visibility === "dm") {
     await client.chat.postMessage({
       channel: input.user,
-      text: input.response.text,
+      text: renderConversationResponseText(input.response),
       ...(input.response.blocks ? { blocks: input.response.blocks } : {})
     });
     return;
@@ -1546,9 +2292,25 @@ async function postConversationResponse(
   await client.chat.postMessage({
     channel: input.channel,
     ...(input.threadTs ? { thread_ts: input.threadTs } : {}),
-    text: input.response.text,
+    text: renderConversationResponseText(input.response),
     ...(input.response.blocks ? { blocks: input.response.blocks } : {})
   });
+}
+
+function renderConversationResponseText(response: ConversationResponse): string {
+  if (!response.attachments || response.attachments.length === 0) {
+    return response.text;
+  }
+
+  return [
+    response.text,
+    "",
+    "*Attachments:*",
+    ...response.attachments.map((attachment) => {
+      const label = attachment.name ?? attachment.id;
+      return `- ${label} (${attachment.kind}, ${attachment.mimeType})`;
+    })
+  ].join("\n");
 }
 
 async function postMentionWorkingState(
@@ -1614,7 +2376,7 @@ export function formatAgentProgressEvent(
 ): string | undefined {
   switch (event.type) {
     case "status":
-      return currentText.trim() ? undefined : normalizeAgentStatus(event.text);
+      return normalizeAgentStatus(event.text);
     case "tool_call":
       return replaceOrAppendProgressLine(
         currentText,
@@ -1652,6 +2414,36 @@ export function formatConversationFailureMessage(
   }
 
   return `I could not handle that ${target}.`;
+}
+
+function formatAgentExecResult(statusText: string, responseText: string): string {
+  return [statusText, "", responseText].join("\n");
+}
+
+function formatAgentExecFailureMessage(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  if (isRuntimeMcpAuthFailure(message)) {
+    return formatConversationFailureMessage(error, "message");
+  }
+
+  const detail = sanitizeAgentExecFailureDetail(message);
+  return detail
+    ? `I could not run that agent task: ${detail}`
+    : "I could not run that agent task.";
+}
+
+function sanitizeAgentExecFailureDetail(message: string): string {
+  const normalized = message
+    .replace(/\s+/g, " ")
+    .replace(/Bearer\s+[A-Za-z0-9._~+/=-]+/gi, "Bearer [redacted]")
+    .replace(/sk-[A-Za-z0-9_-]+/g, "[redacted-openai-key]")
+    .trim();
+
+  if (!normalized) {
+    return "";
+  }
+
+  return truncateSlackConfigValue(normalized, 240);
 }
 
 function isRuntimeMcpAuthFailure(message: string): boolean {

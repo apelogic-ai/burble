@@ -19,6 +19,31 @@ info(
 await ensureOpenClawSetup(config);
 const gateway = startOpenClawGatewayIfNeeded(config);
 await gateway?.ready;
+let nativeGateway = config.engine === "openclaw-gateway" ? gateway : null;
+let nativeOpenClawReady: Promise<void> | null =
+  config.engine === "openclaw-gateway" && gateway
+    ? gateway.ready
+    : null;
+
+async function prepareNativeOpenClaw(nativeConfig: typeof config): Promise<void> {
+  if (nativeOpenClawReady) {
+    await nativeOpenClawReady;
+    return;
+  }
+
+  const ready = (async () => {
+    await ensureOpenClawSetup(nativeConfig);
+    nativeGateway = startOpenClawGatewayIfNeeded(nativeConfig);
+    await nativeGateway?.ready;
+  })();
+  nativeOpenClawReady = ready;
+  ready.catch(() => {
+    if (nativeOpenClawReady === ready) {
+      nativeOpenClawReady = null;
+    }
+  });
+  await nativeOpenClawReady;
+}
 
 type RuntimeWebSocketData = {
   runId: string;
@@ -29,6 +54,7 @@ server = Bun.serve<RuntimeWebSocketData>({
   port: config.port,
   fetch: (request) =>
     handleRuntimeRequest(request, config, undefined, {
+      prepareNativeOpenClaw,
       upgradeWebSocket: (runId) =>
         server.upgrade(request, {
           data: { runId }
@@ -48,12 +74,18 @@ info(
 
 process.on("SIGINT", () => {
   gateway?.stop();
+  if (nativeGateway !== gateway) {
+    nativeGateway?.stop();
+  }
   server.stop();
   process.exit(0);
 });
 
 process.on("SIGTERM", () => {
   gateway?.stop();
+  if (nativeGateway !== gateway) {
+    nativeGateway?.stop();
+  }
   server.stop();
   process.exit(0);
 });

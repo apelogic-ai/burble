@@ -8,7 +8,14 @@ export type ParsedLlmModel = {
 type OpenClawPatchInput = {
   modelId: string;
   ollamaBaseUrl: string;
+  codeModeEnabled?: boolean;
+  burbleChannelBaseUrl?: string;
+  burbleChannelPluginPath?: string;
 };
+
+export const BURBLE_OPENCLAW_CHANNEL_ID = "burble";
+export const BURBLE_OPENCLAW_CHANNEL_PLUGIN_PATH =
+  "/runtime/openclaw-plugins/burble-channel";
 
 export function parseLlmModelId(modelId: string): ParsedLlmModel {
   const separatorIndex = modelId.indexOf(":");
@@ -29,7 +36,12 @@ export function parseLlmModelId(modelId: string): ParsedLlmModel {
 export function buildOpenClawLlmPatch(input: OpenClawPatchInput): string {
   const parsed = parseLlmModelId(input.modelId);
   const modelRef = `${parsed.provider}/${parsed.model}`;
-  const providerConfig = buildProviderConfig(parsed, input.ollamaBaseUrl);
+  const providerConfig = buildProviderConfig(
+    parsed,
+    input.ollamaBaseUrl,
+    input.burbleChannelBaseUrl ?? "http://127.0.0.1:8080",
+    input.burbleChannelPluginPath ?? BURBLE_OPENCLAW_CHANNEL_PLUGIN_PATH
+  );
   const systemPromptOverride = [
     "You are Burble's OpenClaw runtime.",
     "Follow the user prompt exactly.",
@@ -68,6 +80,11 @@ export function buildOpenClawLlmPatch(input: OpenClawPatchInput): string {
         }
       }
     },
+    tools: {
+      codeMode: {
+        enabled: input.codeModeEnabled === true
+      }
+    },
     logging: {
       level: "info",
       consoleLevel: "info",
@@ -83,7 +100,9 @@ export function buildOpenClawLlmPatch(input: OpenClawPatchInput): string {
 
 function buildProviderConfig(
   parsed: ParsedLlmModel,
-  ollamaBaseUrl: string
+  ollamaBaseUrl: string,
+  burbleChannelBaseUrl: string,
+  burbleChannelPluginPath: string
 ): Record<string, unknown> {
   if (parsed.provider === "ollama") {
     return {
@@ -106,12 +125,14 @@ function buildProviderConfig(
           }
         }
       },
-      plugins: pluginConfig("ollama")
+      ...burbleChannelConfig(),
+      plugins: pluginConfig("ollama", burbleChannelPluginPath)
     };
   }
 
   return {
-    plugins: pluginConfig(parsed.provider),
+    ...burbleChannelConfig(),
+    plugins: pluginConfig(parsed.provider, burbleChannelPluginPath),
     auth: {
       profiles: {
         [`${parsed.provider}:default`]: {
@@ -124,15 +145,35 @@ function buildProviderConfig(
       }
     }
   };
+
+  function burbleChannelConfig(): Record<string, unknown> {
+    return {
+      channels: {
+        [BURBLE_OPENCLAW_CHANNEL_ID]: {
+          enabled: true,
+          baseUrl: burbleChannelBaseUrl
+        }
+      }
+    };
+  }
 }
 
-function pluginConfig(provider: LlmProvider): Record<string, unknown> {
+function pluginConfig(
+  provider: LlmProvider,
+  burbleChannelPluginPath: string
+): Record<string, unknown> {
   return {
     enabled: true,
     bundledDiscovery: "allowlist",
-    allow: [provider],
+    allow: [provider, BURBLE_OPENCLAW_CHANNEL_ID],
+    load: {
+      paths: [burbleChannelPluginPath]
+    },
     entries: {
       [provider]: {
+        enabled: true
+      },
+      [BURBLE_OPENCLAW_CHANNEL_ID]: {
         enabled: true
       }
     }

@@ -7,6 +7,8 @@ import {
 import { runBurbleRequest } from "./runner";
 import type { RunEvent, RunRequest, RunResponse, ToolExecutor } from "./types";
 
+const nativeExecutionTimeoutMs = 10 * 60 * 1000;
+
 export type RuntimeAgentAdapter = {
   name: string;
   run: (request: RunRequest, executeTool: ToolExecutor) => Promise<RunResponse>;
@@ -16,27 +18,82 @@ export type RuntimeAgentAdapter = {
   ) => AsyncIterable<RunEvent>;
 };
 
-export function createRuntimeRunner(config: RuntimeConfig): {
+export type RuntimeRunnerOptions = {
+  prepareNativeOpenClaw?: (config: RuntimeConfig) => Promise<void>;
+};
+
+export function createRuntimeRunner(
+  config: RuntimeConfig,
+  options: RuntimeRunnerOptions = {}
+): {
   run: (request: RunRequest, executeTool?: ToolExecutor) => Promise<RunResponse>;
   stream: (
     request: RunRequest,
     executeTool?: ToolExecutor
   ) => AsyncIterable<RunEvent>;
 } {
-  const adapter = createRuntimeAgentAdapter(config);
-
   return {
-    run: (
+    async run(
       request,
-      executeTool = createBurbleToolExecutor(config, request.runtime?.id)
-    ) => adapter.run(request, executeTool),
+      executeTool = createBurbleToolExecutor(config, request.runtime?.id, request)
+    ) {
+      const effectiveConfig = resolveRuntimeConfigForRequest(config, request);
+      await prepareNativeOpenClawIfNeeded(effectiveConfig, request, options);
+      return createRuntimeAgentAdapter(effectiveConfig).run(request, executeTool);
+    },
     async *stream(
       request,
-      executeTool = createBurbleToolExecutor(config, request.runtime?.id)
+      executeTool = createBurbleToolExecutor(config, request.runtime?.id, request)
     ) {
-      yield* adapter.stream(request, executeTool);
+      const effectiveConfig = resolveRuntimeConfigForRequest(config, request);
+      yield* prepareRuntimeConfigForRequest(effectiveConfig, request, options);
+      yield* createRuntimeAgentAdapter(effectiveConfig).stream(request, executeTool);
     }
   };
+}
+
+export function resolveRuntimeConfigForRequest(
+  config: RuntimeConfig,
+  request: Pick<RunRequest, "executionMode">
+): RuntimeConfig {
+  if (request.executionMode !== "openclaw-native") {
+    return config;
+  }
+
+  return {
+    ...config,
+    engine: "openclaw-gateway",
+    openClawSetupOnStart: true,
+    openClawTimeoutMs: Math.max(config.openClawTimeoutMs, nativeExecutionTimeoutMs)
+  };
+}
+
+async function* prepareRuntimeConfigForRequest(
+  config: RuntimeConfig,
+  request: Pick<RunRequest, "executionMode">,
+  options: RuntimeRunnerOptions
+): AsyncIterable<RunEvent> {
+  if (request.executionMode !== "openclaw-native") {
+    return;
+  }
+
+  yield {
+    type: "status",
+    text: "Preparing native agent runtime..."
+  };
+  await options.prepareNativeOpenClaw?.(config);
+}
+
+async function prepareNativeOpenClawIfNeeded(
+  config: RuntimeConfig,
+  request: Pick<RunRequest, "executionMode">,
+  options: RuntimeRunnerOptions
+): Promise<void> {
+  if (request.executionMode !== "openclaw-native") {
+    return;
+  }
+
+  await options.prepareNativeOpenClaw?.(config);
 }
 
 export function createRuntimeAgentAdapter(

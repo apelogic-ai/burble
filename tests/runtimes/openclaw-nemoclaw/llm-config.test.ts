@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
+  BURBLE_OPENCLAW_CHANNEL_PLUGIN_PATH,
   buildOpenClawLlmPatch,
   parseLlmModelId
 } from "../../../runtimes/openclaw-nemoclaw/src/llm-config";
@@ -32,12 +33,33 @@ describe("buildOpenClawLlmPatch", () => {
     );
     expect(patch.skills.allowBundled).toEqual([]);
     expect(patch.gateway.http.endpoints.responses.enabled).toBe(true);
+    expect(patch.tools.codeMode.enabled).toBe(false);
     expect(patch.logging.file).toBe("/data/openclaw/logs/openclaw.log");
-    expect(patch.plugins.allow).toEqual(["openai"]);
+    expect(patch.plugins.allow).toEqual(["openai", "burble"]);
+    expect(patch.plugins.load.paths).toEqual([
+      BURBLE_OPENCLAW_CHANNEL_PLUGIN_PATH
+    ]);
+    expect(patch.plugins.entries.burble.enabled).toBe(true);
+    expect(patch.channels.burble).toEqual({
+      enabled: true,
+      baseUrl: "http://127.0.0.1:8080"
+    });
     expect(patch.auth.profiles["openai:default"]).toEqual({
       provider: "openai",
       mode: "api_key"
     });
+  });
+
+  test("enables OpenClaw code mode only when requested", () => {
+    const patch = JSON.parse(
+      buildOpenClawLlmPatch({
+        modelId: "openai:gpt-5.4",
+        ollamaBaseUrl: "https://ollama.com",
+        codeModeEnabled: true
+      })
+    );
+
+    expect(patch.tools.codeMode.enabled).toBe(true);
   });
 
   test("builds an Ollama cloud provider patch", () => {
@@ -51,7 +73,7 @@ describe("buildOpenClawLlmPatch", () => {
     expect(patch.agents.defaults.model.primary).toBe(
       "ollama/qwen3-coder:30b-cloud"
     );
-    expect(patch.plugins.allow).toEqual(["ollama"]);
+    expect(patch.plugins.allow).toEqual(["ollama", "burble"]);
     expect(patch.models.providers.ollama).toMatchObject({
       baseUrl: "https://ollama.com",
       apiKey: "OLLAMA_API_KEY",

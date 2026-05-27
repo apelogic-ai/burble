@@ -41,6 +41,12 @@ Runtime engines:
   avoids OpenClaw agent bootstrap and native tools in latency-sensitive Slack
   flows.
 
+Slack `/agent exec <task>` can opt a single request into OpenClaw-native
+execution even when the default engine is `burble-direct`. The same user runtime
+container and `/data/openclaw` state are reused; the runtime lazily prepares
+OpenClaw and starts a private Gateway process inside that container for the exec
+request.
+
 OpenClaw modes are intentionally isolated behind the same `/runs` contract. A
 derived image can install OpenClaw/NemoClaw without changing Burble's Slack,
 OAuth, visibility, or deployment boundaries. Runtime events are normalized to

@@ -1,4 +1,6 @@
 import type { RuntimeConfig } from "./config";
+import { createBurbleConversationConnector } from "./burble-conversation-connector";
+import { info } from "./logger";
 import { createRuntimeRunner } from "./runtime";
 import type { RunEvent, RunRequest, RunResponse, ToolExecutor } from "./types";
 
@@ -19,12 +21,51 @@ export async function handleRuntimeRequest(
   executeTool?: ToolExecutor,
   options: {
     upgradeWebSocket?: (runId: string) => boolean;
+    prepareNativeOpenClaw?: (config: RuntimeConfig) => Promise<void>;
   } = {}
 ): Promise<Response> {
   const url = new URL(request.url);
 
   if (url.pathname === "/healthz") {
     return new Response("ok");
+  }
+
+  if (url.pathname === "/internal/conversation/messages") {
+    return handleLocalConversationMessageRequest(request, config);
+  }
+
+  const burbleChannelMessageMatch =
+    /^\/internal\/burble\/channel\/routes\/([^/]+)\/messages$/.exec(
+      url.pathname
+    );
+  if (burbleChannelMessageMatch) {
+    return handleLocalBurbleChannelMessageRequest(
+      request,
+      config,
+      decodeURIComponent(burbleChannelMessageMatch[1] ?? "")
+    );
+  }
+
+  const burbleChannelEventMatch =
+    /^\/internal\/burble\/channel\/routes\/([^/]+)\/events$/.exec(
+      url.pathname
+    );
+  if (burbleChannelEventMatch) {
+    return handleLocalBurbleChannelEventRequest(
+      request,
+      config,
+      decodeURIComponent(burbleChannelEventMatch[1] ?? "")
+    );
+  }
+
+  const conversationWebhookMatch =
+    /^\/internal\/conversation\/routes\/([^/]+)\/webhook$/.exec(url.pathname);
+  if (conversationWebhookMatch) {
+    return handleLocalBurbleChannelEventRequest(
+      request,
+      config,
+      decodeURIComponent(conversationWebhookMatch[1] ?? "")
+    );
   }
 
   const runEventMatch = /^\/runs\/([^/]+)\/events$/.exec(url.pathname);
@@ -77,7 +118,11 @@ export async function handleRuntimeRequest(
     return new Response("Invalid run request", { status: 400 });
   }
 
-  const runner = createRuntimeRunner(config);
+  const runner = createRuntimeRunner(config, {
+    ...(options.prepareNativeOpenClaw
+      ? { prepareNativeOpenClaw: options.prepareNativeOpenClaw }
+      : {})
+  });
   const sharedRun = getOrStartSharedRun(runId, () =>
     runner.stream(body, executeTool)
   );
@@ -108,6 +153,91 @@ export async function handleRuntimeRequest(
   }
 
   const result = await sharedRun.finalPromise;
+  return Response.json(result, {
+    headers: {
+      "cache-control": "no-store"
+    }
+  });
+}
+
+async function handleLocalConversationMessageRequest(
+  request: Request,
+  config: RuntimeConfig
+): Promise<Response> {
+  if (request.method !== "POST") {
+    return new Response("Method not allowed", { status: 405 });
+  }
+
+  const body = await readLocalConversationMessageBody(request);
+  if (!body) {
+    return new Response("Invalid conversation message input", { status: 400 });
+  }
+  if (!config.runtimeId) {
+    return new Response("Runtime id is not configured", { status: 500 });
+  }
+
+  const connector = createBurbleConversationConnector(config, config.runtimeId);
+  const result = await connector.sendMessage(body);
+  return Response.json(result, {
+    headers: {
+      "cache-control": "no-store"
+    }
+  });
+}
+
+async function handleLocalBurbleChannelMessageRequest(
+  request: Request,
+  config: RuntimeConfig,
+  routeId: string
+): Promise<Response> {
+  if (request.method !== "POST") {
+    return new Response("Method not allowed", { status: 405 });
+  }
+  if (!routeId.trim()) {
+    return new Response("Invalid conversation route", { status: 400 });
+  }
+  if (!config.runtimeId) {
+    return new Response("Runtime id is not configured", { status: 500 });
+  }
+
+  const body = await readLocalBurbleChannelMessageBody(request, routeId);
+  if (!body) {
+    return new Response("Invalid Burble channel message input", { status: 400 });
+  }
+
+  const connector = createBurbleConversationConnector(config, config.runtimeId);
+  const result = await connector.sendMessage(body);
+  return Response.json(result, {
+    headers: {
+      "cache-control": "no-store"
+    }
+  });
+}
+
+async function handleLocalBurbleChannelEventRequest(
+  request: Request,
+  config: RuntimeConfig,
+  routeId: string
+): Promise<Response> {
+  if (request.method !== "POST") {
+    return new Response("Method not allowed", { status: 405 });
+  }
+  if (!routeId.trim()) {
+    return new Response("Invalid conversation route", { status: 400 });
+  }
+  if (!config.runtimeId) {
+    return new Response("Runtime id is not configured", { status: 500 });
+  }
+
+  const payload = await readJsonBody(request);
+  const connector = createBurbleConversationConnector(config, config.runtimeId);
+  const result = await connector.deliverEvent({ routeId, payload });
+  if (!result) {
+    return new Response("Burble channel event did not contain deliverable text", {
+      status: 202
+    });
+  }
+
   return Response.json(result, {
     headers: {
       "cache-control": "no-store"
@@ -481,11 +611,74 @@ function isModelQuotaError(message: string): boolean {
 }
 
 async function readRunRequest(request: Request): Promise<unknown> {
+  return readJsonBody(request);
+}
+
+async function readJsonBody(request: Request): Promise<unknown> {
   try {
     return await request.json();
   } catch {
     return null;
   }
+}
+
+async function readLocalConversationMessageBody(
+  request: Request
+): Promise<{ routeId: string; text: string } | null> {
+  let body: unknown;
+  try {
+    body = await request.json();
+  } catch {
+    return null;
+  }
+  if (typeof body !== "object" || body === null || Array.isArray(body)) {
+    return null;
+  }
+
+  const record = body as Record<string, unknown>;
+  if (
+    typeof record.routeId !== "string" ||
+    record.routeId.trim().length === 0 ||
+    typeof record.text !== "string" ||
+    record.text.trim().length === 0 ||
+    record.text.length > 4000
+  ) {
+    return null;
+  }
+
+  return {
+    routeId: record.routeId,
+    text: record.text
+  };
+}
+
+async function readLocalBurbleChannelMessageBody(
+  request: Request,
+  routeId: string
+): Promise<{ routeId: string; text: string } | null> {
+  let body: unknown;
+  try {
+    body = await request.json();
+  } catch {
+    return null;
+  }
+  if (typeof body !== "object" || body === null || Array.isArray(body)) {
+    return null;
+  }
+
+  const record = body as Record<string, unknown>;
+  if (
+    typeof record.text !== "string" ||
+    record.text.trim().length === 0 ||
+    record.text.length > 4000
+  ) {
+    return null;
+  }
+
+  return {
+    routeId,
+    text: record.text
+  };
 }
 
 function addRunId(body: unknown, runId: string): unknown {
@@ -513,6 +706,15 @@ function isRunRequest(body: unknown): body is RunRequest {
     "runId" in body &&
     body.runId !== undefined &&
     (typeof body.runId !== "string" || body.runId.trim().length === 0)
+  ) {
+    return false;
+  }
+
+  if (
+    "executionMode" in body &&
+    body.executionMode !== undefined &&
+    body.executionMode !== "default" &&
+    body.executionMode !== "openclaw-native"
   ) {
     return false;
   }
@@ -548,6 +750,14 @@ function isRunRequest(body: unknown): body is RunRequest {
     "context" in input &&
     input.context !== undefined &&
     !isRequestContext(input.context)
+  ) {
+    return false;
+  }
+
+  if (
+    "attachments" in input &&
+    input.attachments !== undefined &&
+    !isConversationAttachmentArray(input.attachments)
   ) {
     return false;
   }
@@ -610,6 +820,10 @@ function isConversationSummary(
     conversation !== null &&
     "source" in conversation &&
     conversation.source === "slack" &&
+    (!("routeId" in conversation) ||
+      conversation.routeId === undefined ||
+      (typeof conversation.routeId === "string" &&
+        conversation.routeId.trim().length > 0)) &&
     "workspaceId" in conversation &&
     typeof conversation.workspaceId === "string" &&
     conversation.workspaceId.trim().length > 0 &&
@@ -670,6 +884,41 @@ function isCurrentChannelContext(channel: unknown): boolean {
       channel.historyError === undefined ||
       typeof channel.historyError === "string")
   );
+}
+
+function isConversationAttachmentArray(value: unknown): boolean {
+  return Array.isArray(value) && value.every(isConversationAttachment);
+}
+
+function isConversationAttachment(value: unknown): boolean {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return false;
+  }
+
+  const record = value as Record<string, unknown>;
+  return (
+    typeof record.id === "string" &&
+    record.id.trim().length > 0 &&
+    (record.kind === "file" ||
+      record.kind === "image" ||
+      record.kind === "audio" ||
+      record.kind === "video") &&
+    typeof record.mimeType === "string" &&
+    record.mimeType.trim().length > 0 &&
+    (record.source === "slack" ||
+      record.source === "burble" ||
+      record.source === "agent") &&
+    optionalString(record.name) &&
+    (record.sizeBytes === undefined ||
+      (typeof record.sizeBytes === "number" &&
+        Number.isFinite(record.sizeBytes) &&
+        record.sizeBytes >= 0)) &&
+    optionalString(record.externalId)
+  );
+}
+
+function optionalString(value: unknown): boolean {
+  return value === undefined || typeof value === "string";
 }
 
 function isRuntimeSummary(runtime: unknown): runtime is RunRequest["runtime"] {

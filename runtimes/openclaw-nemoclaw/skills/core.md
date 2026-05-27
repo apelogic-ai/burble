@@ -25,5 +25,7 @@ exactly one JSON object and no prose:
 Burble injects user identity and credentials. Do not include user email, tokens,
 or credentials in tool arguments.
 
-Use only tool names listed in Available Burble tools.
-
+For Burble JSON tool calls, use only tool names listed in Available Burble
+tools. When the request is explicitly running in OpenClaw-native mode, native
+OpenClaw tools are separate from Burble JSON tool calls and may be used normally
+when OpenClaw exposes them.

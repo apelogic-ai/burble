@@ -78,6 +78,10 @@ function createFakeStore() {
     listIdleAgentRuntimes: () => [],
     recordAgentRuntimeEvent: () => undefined,
     listAgentRuntimeEvents: () => [],
+    upsertConversationRoute: () => {
+      throw new Error("unexpected conversation route write");
+    },
+    getConversationRoute: () => null,
     updateAgentRuntimeStatus: () => undefined,
     touchAgentRuntime: () => undefined,
     close: () => undefined

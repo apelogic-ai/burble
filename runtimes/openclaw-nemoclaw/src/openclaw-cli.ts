@@ -6,6 +6,7 @@ import type { RuntimeConfig } from "./config";
 import { readGatewayDiagnosticTextSince } from "./gateway-diagnostics";
 import { parseLlmModelId, type ParsedLlmModel } from "./llm-config";
 import { info, type RuntimeLogger } from "./logger";
+import { buildOpenClawProcessEnv } from "./process-env";
 import {
   isSupportedGitHubRequest,
   isSupportedJiraRequest,
@@ -105,8 +106,9 @@ export async function runOpenClawCliRequest(
   }
 
   const sessionId = buildRunSessionId(request);
+  const sessionScope = buildRunSessionScope(request);
   logInfo(
-    `OpenClaw agent start runId=${request.runId ?? "unknown"} agent=${config.openClawAgent} sessionId=${sessionId} sessionScope=run textLength=${request.input.text.length} classification=${baseline.response.classification}`
+    `OpenClaw agent start runId=${request.runId ?? "unknown"} agent=${config.openClawAgent} sessionId=${sessionId} sessionScope=${sessionScope} textLength=${request.input.text.length} classification=${baseline.response.classification}`
   );
   const executedTools: ExecutedToolCall[] = [];
   const rejectedDirectResponses: string[] = [];
@@ -344,6 +346,7 @@ async function runOpenClawGatewayHttpRequest(
     const response = await fetchGatewayHttpResponse(
       endpoint,
       config,
+      request,
       sessionKey,
       prompt
     );
@@ -615,6 +618,7 @@ async function fetchDirectModelResponse(
 async function fetchGatewayHttpResponse(
   endpoint: string,
   config: RuntimeConfig,
+  request: RunRequest,
   sessionKey: string,
   prompt: string
 ): Promise<Response> {
@@ -627,7 +631,7 @@ async function fetchGatewayHttpResponse(
         "authorization": `Bearer ${config.openClawGatewayToken}`,
         "content-type": "application/json",
         "x-openclaw-agent-id": config.openClawAgent,
-        "x-openclaw-message-channel": "webchat",
+        "x-openclaw-message-channel": resolveGatewayHttpMessageChannel(request),
         "x-openclaw-session-key": sessionKey
       },
       body: JSON.stringify({
@@ -845,8 +849,9 @@ export async function* runOpenClawCliRequestStream(
   }
 
   const sessionId = buildRunSessionId(request);
+  const sessionScope = buildRunSessionScope(request);
   logInfo(
-    `OpenClaw agent start runId=${request.runId ?? "unknown"} agent=${config.openClawAgent} sessionId=${sessionId} sessionScope=run textLength=${request.input.text.length} classification=${baseline.response.classification}`
+    `OpenClaw agent start runId=${request.runId ?? "unknown"} agent=${config.openClawAgent} sessionId=${sessionId} sessionScope=${sessionScope} textLength=${request.input.text.length} classification=${baseline.response.classification}`
   );
   yield { type: "status", text: "Agent is thinking..." };
 
@@ -1184,10 +1189,7 @@ export async function runCliCommand(
   const proc = Bun.spawn([command, ...args], {
     stdout: "pipe",
     stderr: "pipe",
-    env: {
-      ...Bun.env,
-      ...options.env
-    }
+    env: buildOpenClawProcessEnv(options.env)
   });
   let timedOut = false;
   const timer = setTimeout(() => {
@@ -1220,10 +1222,7 @@ export async function* runCliCommandStream(
   const proc = Bun.spawn([command, ...args], {
     stdout: "pipe",
     stderr: "pipe",
-    env: {
-      ...Bun.env,
-      ...options.env
-    }
+    env: buildOpenClawProcessEnv(options.env)
   });
   let timedOut = false;
   const timer = setTimeout(() => {
@@ -1373,6 +1372,19 @@ async function buildToolCatalog(
 }> {
   const catalog: ToolCatalogItem[] = [];
   const upstreamMcpSchemas: Record<string, unknown> = {};
+  if (request.input.conversation) {
+    catalog.push({
+      name: "conversation.sendMessage",
+      description:
+        "Send a message through Burble to the active conversation or a durable conversation route. Burble chooses and validates the transport and destination; provide message text and, for scheduled/background jobs, the active routeId.",
+      inputSchema: {
+        text: "string message text to send",
+        routeId:
+          "optional durable Burble route ID for scheduled/background messages"
+      }
+    });
+  }
+
   const github = request.input.connections.github;
   if (github.connected && github.email) {
     catalog.push(
@@ -1686,10 +1698,11 @@ function buildPlanningPrompt(
     );
   }
 
-  return buildOpenClawPrompt(request, toolContext, executedTools);
+  return buildOpenClawPrompt(config, request, toolContext, executedTools);
 }
 
 function buildOpenClawPrompt(
+  config: RuntimeConfig,
   request: RunRequest,
   toolContext: BurbleToolContext,
   executedTools: ExecutedToolCall[] = []
@@ -1703,7 +1716,10 @@ function buildOpenClawPrompt(
     "Available Burble tools:",
     formatToolCatalog(toolContext.catalog),
     "",
+    ...formatNativeExecutionContext(config, request),
+    "",
     ...formatRecentSlackContext(request),
+    ...formatRequestAttachments(request),
     "",
     `User request: ${request.input.text}`,
     "",
@@ -1725,10 +1741,79 @@ function buildOpenClawPrompt(
       "Return either exactly one more tool_call JSON object if another provider action is required, or the final Slack-ready answer."
     );
   } else {
-    sections.push("", "Return either exactly one tool_call JSON object or the final Slack-ready answer.");
+    sections.push("", formatFinalInstruction(request));
   }
 
   return sections.join("\n");
+}
+
+function formatRequestAttachments(request: RunRequest): string[] {
+  const attachments = request.input.attachments ?? [];
+  if (attachments.length === 0) {
+    return [];
+  }
+
+  return [
+    "Current request attachments:",
+    ...attachments.map((attachment) => {
+      const details = [
+        `id=${attachment.id}`,
+        `kind=${attachment.kind}`,
+        `mime=${attachment.mimeType}`,
+        `source=${attachment.source}`,
+        ...(attachment.name ? [`name=${attachment.name}`] : []),
+        ...(typeof attachment.sizeBytes === "number"
+          ? [`sizeBytes=${attachment.sizeBytes}`]
+          : []),
+        ...(attachment.externalId ? [`externalId=${attachment.externalId}`] : [])
+      ];
+      return `- ${details.join(" ")}`;
+    }),
+    ""
+  ];
+}
+
+function formatNativeExecutionContext(
+  config: RuntimeConfig,
+  request: RunRequest
+): string[] {
+  if (request.executionMode !== "openclaw-native") {
+    return [];
+  }
+
+  return [
+    "Native agent execution:",
+    "This request explicitly asks for OpenClaw-native execution. Use OpenClaw native capabilities/tools directly when useful for code, shell/process work, cron, or long-running tasks. Use Burble JSON tool_call only for external provider data or actions listed in Available Burble tools.",
+    ...formatActiveConversationRouteInstruction(config, request),
+    "When native code tools are available, you can run programs in this runtime. Do not say you cannot run arbitrary programs, cannot run code, or can only provide a local script; use native exec instead.",
+    "For code execution tasks, prefer one deliberate exec call for the main work. If that exec succeeds and prints the requested result, summarize it and stop. Do not repeatedly rewrite, rerun, or optimize code after the requested result is available.",
+    "For duration or long-running tests, run exactly one timed program for the requested duration, then report its stdout/stderr summary and final observed result."
+  ];
+}
+
+function formatActiveConversationRouteInstruction(
+  _config: RuntimeConfig,
+  request: RunRequest
+): string[] {
+  const routeId = request.input.conversation?.routeId;
+  if (!routeId) {
+    return [];
+  }
+
+  return [
+    `Active Burble conversation channel route: ${routeId}.`,
+    `Native OpenClaw Burble channel delivery is installed. For cron/background jobs, set delivery.mode to "announce", delivery.channel to "burble", and delivery.to to "${routeId}". The scheduled prompt should produce the final Slack-ready message text; Burble resolves the route to the actual transport outside OpenClaw.`,
+    `For an immediate request to send, post, message, or report something here now, do not create a cron job or background job unless the user explicitly asks for a schedule, delay, recurrence, or later delivery. Produce the final Slack-ready message once and stop.`,
+    "Do not fetch, POST to, or mention local/private/internal Burble URLs for delivery. Do not create cron jobs that rely on conversation.sendMessage JSON blobs, announce delivery, Slack channel IDs, Slack credentials, or Burble credentials. Burble's channel connector owns route auth and transport delivery outside the OpenClaw process."
+  ];
+}
+
+function formatFinalInstruction(request: RunRequest): string {
+  if (request.executionMode === "openclaw-native") {
+    return "For provider data/actions, return exactly one Burble tool_call JSON object if required. Otherwise use OpenClaw native capabilities when appropriate, avoid unnecessary extra tool loops, and return the final Slack-ready answer as soon as the requested result is available.";
+  }
+
+  return "Return either exactly one tool_call JSON object or the final Slack-ready answer.";
 }
 
 function buildBurbleDirectPrompt(
@@ -1962,6 +2047,17 @@ async function executePlannedToolCall(
   toolContext: BurbleToolContext,
   executeTool: ToolExecutor
 ): Promise<ToolResult> {
+  if (toolCall.name === "conversation.sendMessage") {
+    const validationError = validatePlannedToolCall(toolCall, toolContext);
+    if (validationError) {
+      return validationError;
+    }
+
+    return executeTool(toolCall.name, {
+      input: toolCall.arguments
+    });
+  }
+
   const email = readToolEmail(toolCall.name, request);
   if (!email) {
     return {
@@ -2728,9 +2824,18 @@ async function readRawStreamForUsage(
 }
 
 function buildRunSessionId(request: RunRequest): string {
+  const channelSessionKey = buildBurbleChannelSessionKey(request);
+  if (channelSessionKey) {
+    return `burble-channel-${hashSessionKey(channelSessionKey)}`;
+  }
+
   return `burble-run-${hashSessionKey(
     `${buildSessionRoot(request)}:${buildRunSessionKey(request)}`
   )}`;
+}
+
+function buildRunSessionScope(request: RunRequest): "run" | "channel" {
+  return buildBurbleChannelSessionKey(request) ? "channel" : "run";
 }
 
 function buildStepSessionId(runSessionId: string, step: number): string {
@@ -2760,6 +2865,29 @@ function buildSessionRoot(request: RunRequest): string {
 
   const email = request.input.connections.github.email ?? "anonymous";
   return `burble-${email.replace(/[^a-zA-Z0-9_.-]/g, "_")}`;
+}
+
+function buildBurbleChannelSessionKey(request: RunRequest): string | null {
+  if (request.executionMode !== "openclaw-native") {
+    return null;
+  }
+
+  const conversation = request.input.conversation;
+  if (!conversation?.routeId) {
+    return null;
+  }
+
+  return [
+    request.runtime?.id ?? "static-runtime",
+    conversation.workspaceId,
+    conversation.routeId,
+    conversation.rootId,
+    conversation.isDirectMessage ? "dm" : "channel"
+  ].join(":");
+}
+
+function resolveGatewayHttpMessageChannel(request: RunRequest): "webchat" | "burble" {
+  return buildBurbleChannelSessionKey(request) ? "burble" : "webchat";
 }
 
 function hashSessionKey(value: string): string {

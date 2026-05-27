@@ -1,0 +1,21 @@
+{
+  "name": "@burble/openclaw-burble-channel",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "openclaw": {
+    "extensions": ["./index.js"],
+    "setupEntry": "./setup-entry.js",
+    "channel": {
+      "id": "burble",
+      "label": "Burble",
+      "blurb": "Route OpenClaw channel output through Burble conversation routes.",
+      "markdownCapable": true,
+      "exposure": {
+        "configured": true,
+        "setup": false,
+        "docs": false
+      }
+    }
+  }
+}

@@ -2,6 +2,8 @@ import { describe, expect, test } from "bun:test";
 import {
   buildAgentConfigResponse,
   buildAgentCommandHelpResponse,
+  buildAgentExecLoadingResponse,
+  buildAgentExecMissingTaskResponse,
   buildAgentStatusResponse,
   buildAuthResponse,
   buildHelpResponse,
@@ -126,6 +128,16 @@ describe("formatAgentProgressEvent", () => {
     expect(
       formatAgentProgressEvent(
         {
+          type: "status",
+          text: "Agent has thought for 24s"
+        },
+        "Sending task to your private agent runtime..."
+      )
+    ).toBe("Agent has thought for 24s...");
+
+    expect(
+      formatAgentProgressEvent(
+        {
           type: "tool_call",
           toolName: "github.listAssignedIssues",
           callId: "call-1"
@@ -157,6 +169,17 @@ describe("formatAgentProgressEvent", () => {
         ""
       )
     ).toBe("Agent is responding...");
+  });
+});
+
+describe("buildAgentExecLoadingResponse", () => {
+  test("can render agent exec progress as a visible DM response", () => {
+    expect(
+      buildAgentExecLoadingResponse("run a long task", "in_channel")
+    ).toMatchObject({
+      response_type: "in_channel",
+      text: "Agent task: Preparing agent runtime..."
+    });
   });
 });
 
@@ -222,6 +245,34 @@ describe("parseAgentCommand", () => {
     expect(parseAgentCommand("config")).toEqual({ kind: "config" });
     expect(parseAgentCommand("configuration")).toEqual({ kind: "config" });
     expect(parseAgentCommand("runtime config")).toEqual({ kind: "config" });
+  });
+
+  test("routes exec tasks", () => {
+    expect(parseAgentCommand("exec summarize my calendar")).toEqual({
+      kind: "exec",
+      task: "summarize my calendar"
+    });
+    expect(parseAgentCommand("execute   run a code task")).toEqual({
+      kind: "exec",
+      task: "run a code task"
+    });
+    expect(parseAgentCommand("exec")).toEqual({ kind: "exec_list" });
+    expect(parseAgentCommand("exec inspect abc123")).toEqual({
+      kind: "exec_inspect",
+      taskId: "abc123"
+    });
+    expect(parseAgentCommand("exec abc123 inspect")).toEqual({
+      kind: "exec_inspect",
+      taskId: "abc123"
+    });
+    expect(parseAgentCommand("exec stop abc123")).toEqual({
+      kind: "exec_stop",
+      taskId: "abc123"
+    });
+    expect(parseAgentCommand("exec abc123 stop")).toEqual({
+      kind: "exec_stop",
+      taskId: "abc123"
+    });
   });
 });
 
@@ -290,6 +341,7 @@ describe("buildHelpResponse", () => {
     expect(JSON.stringify(response.blocks)).toContain("/auth");
     expect(JSON.stringify(response.blocks)).toContain("/help");
     expect(JSON.stringify(response.blocks)).toContain("/agent config");
+    expect(JSON.stringify(response.blocks)).toContain("/agent exec");
     expect(JSON.stringify(response.blocks)).toContain("/agent status");
     expect(JSON.stringify(response.blocks)).toContain("/agent-config");
     expect(JSON.stringify(response.blocks)).toContain("/agent-status");
@@ -304,6 +356,19 @@ describe("buildAgentCommandHelpResponse", () => {
     expect(response.text).toBe("Agent controls");
     expect(JSON.stringify(response.blocks)).toContain("/agent status");
     expect(JSON.stringify(response.blocks)).toContain("/agent config");
+    expect(JSON.stringify(response.blocks)).toContain("/agent exec");
+  });
+
+  test("builds exec response states", () => {
+    expect(buildAgentExecMissingTaskResponse().text).toContain(
+      "/agent exec <task>"
+    );
+    expect(buildAgentExecLoadingResponse("summarize calendar").response_type).toBe(
+      "in_channel"
+    );
+    expect(buildAgentExecLoadingResponse("summarize calendar").text).toBe(
+      "Agent task: Preparing agent runtime..."
+    );
   });
 });
 
@@ -502,6 +567,18 @@ describe("shouldHandleDirectMessageEvent", () => {
         user: "U123",
         subtype: "message_changed",
         text: "edited",
+        ts: "1710000000.000100"
+      })
+    ).toBe(false);
+  });
+
+  test("ignores slash-command text echoed in app DMs", () => {
+    expect(
+      shouldHandleDirectMessageEvent({
+        channel_type: "im",
+        channel: "D123",
+        user: "U123",
+        text: "/agent exec run a code task",
         ts: "1710000000.000100"
       })
     ).toBe(false);

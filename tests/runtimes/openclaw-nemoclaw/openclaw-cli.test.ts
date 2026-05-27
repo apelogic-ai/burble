@@ -26,6 +26,7 @@ const config: RuntimeConfig = {
   openClawConfigPatchPath: null,
   openClawValidateOnStart: true,
   openClawStreamDebug: false,
+  openClawCodeMode: false,
   openClawRawStreamDebug: false,
   openClawGatewayPort: 18789,
   openClawGatewayBind: "loopback",
@@ -852,6 +853,85 @@ describe("runOpenClawCliRequest", () => {
       body: {
         user: { email: "person@example.com" },
         input: { query: "launch", fromUserId: "U123", limit: 10 }
+      }
+    });
+  });
+
+  test("lets OpenClaw send a generic active conversation message", async () => {
+    const prompts: string[] = [];
+    const toolCalls: Array<{ toolName: string; body: unknown }> = [];
+    const response = await runOpenClawCliRequest(
+      {
+        executionMode: "openclaw-native",
+        input: {
+          text: "send a progress update",
+          conversation: {
+            routeId: "convrt_abc123",
+            source: "slack",
+            workspaceId: "T123",
+            channelId: "C123",
+            rootId: "channel:C123:thread:1779841118.237",
+            isDirectMessage: false
+          },
+          connections: {
+            github: { connected: false }
+          }
+        }
+      },
+      config,
+      async (toolName, body) => {
+        toolCalls.push({ toolName, body });
+        return {
+          classification: "user_private",
+          content: {
+            ok: true,
+            transport: "slack",
+            conversationId: "C123",
+            messageId: "1779841120.000"
+          }
+        };
+      },
+      async (_command, args) => {
+        const prompt = args[args.indexOf("--message") + 1];
+        prompts.push(prompt);
+        return prompts.length === 1
+          ? openClawToolCall("conversation.sendMessage", {
+              text: "Still working on it."
+            })
+          : {
+              exitCode: 0,
+              stdout: "Sent the progress update.",
+              stderr: ""
+            };
+      },
+      () => undefined
+    );
+
+    expect(response.response.text).toBe("Sent the progress update.");
+    expect(prompts[0]).toContain("conversation.sendMessage");
+    expect(prompts[0]).toContain(
+      "Active Burble conversation channel route: convrt_abc123"
+    );
+    expect(prompts[0]).toContain("Native OpenClaw Burble channel delivery");
+    expect(prompts[0]).toContain('delivery.mode to "announce"');
+    expect(prompts[0]).toContain('delivery.channel to "burble"');
+    expect(prompts[0]).toContain('delivery.to to "convrt_abc123"');
+    expect(prompts[0]).toContain(
+      "do not create a cron job or background job unless the user explicitly asks"
+    );
+    expect(prompts[0]).toContain(
+      "Do not fetch, POST to, or mention local/private/internal Burble URLs"
+    );
+    expect(prompts[0]).not.toContain("http://127.0.0.1");
+    expect(prompts[0]).toContain(
+      "Burble's channel connector owns route auth and transport delivery"
+    );
+    expect(prompts[0]).not.toContain("/internal/burble/channel/routes");
+    expect(prompts[0]).toContain("conversation.sendMessage JSON blobs");
+    expect(toolCalls).toContainEqual({
+      toolName: "conversation.sendMessage",
+      body: {
+        input: { text: "Still working on it." }
       }
     });
   });
@@ -2004,6 +2084,132 @@ describe("runOpenClawCliRequest", () => {
     );
     expect(requests[0].body.model).toBe("openclaw/main");
     expect(requests[0].body.input).toContain("what can you do?");
+  });
+
+  test("uses the Burble channel and stable route session for native conversation turns", async () => {
+    const requests: Array<{
+      headers: Headers;
+      body: Record<string, unknown>;
+    }> = [];
+    const nativeRequest = (runId: string, text: string) => ({
+      runId,
+      executionMode: "openclaw-native" as const,
+      runtime: {
+        id: "rt_123"
+      },
+      input: {
+        text,
+        conversation: {
+          routeId: "convrt_abc123",
+          source: "slack" as const,
+          workspaceId: "T123",
+          channelId: "C123",
+          rootId: "channel:C123:thread:1779841118.237",
+          isDirectMessage: false
+        },
+        connections: {
+          github: { connected: false }
+        }
+      }
+    });
+
+    await withMockFetch(
+      (async (_input, init) => {
+        requests.push({
+          headers: new Headers(init?.headers),
+          body: JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>
+        });
+        return new Response(JSON.stringify(openResponsesText("Done.")), {
+          status: 200,
+          headers: { "content-type": "application/json" }
+        });
+      }) as typeof fetch,
+      async () => {
+        await runOpenClawCliRequest(
+          nativeRequest("run-one", "first turn"),
+          { ...config, engine: "openclaw-gateway" },
+          async () => {
+            throw new Error("unexpected tool call");
+          },
+          async () => {
+            throw new Error("unexpected cli call");
+          },
+          () => undefined
+        );
+        await runOpenClawCliRequest(
+          nativeRequest("run-two", "second turn"),
+          { ...config, engine: "openclaw-gateway" },
+          async () => {
+            throw new Error("unexpected tool call");
+          },
+          async () => {
+            throw new Error("unexpected cli call");
+          },
+          () => undefined
+        );
+      }
+    );
+
+    expect(requests).toHaveLength(2);
+    expect(requests[0].headers.get("x-openclaw-message-channel")).toBe("burble");
+    expect(requests[1].headers.get("x-openclaw-message-channel")).toBe("burble");
+    expect(requests[0].headers.get("x-openclaw-session-key")).toBe(
+      requests[1].headers.get("x-openclaw-session-key")
+    );
+    expect(requests[0].headers.get("x-openclaw-session-key")).toStartWith(
+      "agent:main:explicit:burble-step-"
+    );
+    expect(String(requests[0].body.input)).toContain(
+      "Active Burble conversation channel route: convrt_abc123"
+    );
+  });
+
+  test("instructs native execution to avoid repeated code tool loops", async () => {
+    const requests: Array<{ body: Record<string, unknown> }> = [];
+    await withMockFetch(
+      (async (_input, init) => {
+        requests.push({
+          body: JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>
+        });
+        return new Response(JSON.stringify(openResponsesText("Done.")), {
+          status: 200,
+          headers: { "content-type": "application/json" }
+        });
+      }) as typeof fetch,
+      async () =>
+        runOpenClawCliRequest(
+          {
+            executionMode: "openclaw-native",
+            input: {
+              text: "run a 30 second hash loop",
+              connections: {
+                github: { connected: false }
+              }
+            }
+          },
+          { ...config, engine: "openclaw-gateway" },
+          async () => {
+            throw new Error("unexpected tool call");
+          },
+          async () => {
+            throw new Error("unexpected cli call");
+          },
+          () => undefined
+        )
+    );
+
+    expect(String(requests[0].body.input)).toContain(
+      "Do not say you cannot run arbitrary programs"
+    );
+    expect(String(requests[0].body.input)).toContain(
+      "prefer one deliberate exec call for the main work"
+    );
+    expect(String(requests[0].body.input)).toContain(
+      "run exactly one timed program for the requested duration"
+    );
+    expect(String(requests[0].body.input)).toContain(
+      "avoid unnecessary extra tool loops"
+    );
   });
 
   test("logs stream debug details only when enabled", async () => {

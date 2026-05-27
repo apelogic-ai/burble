@@ -56,6 +56,16 @@ type ConnectionSummary = {
   providerLogin?: string;
 };
 
+type RuntimeAttachment = {
+  id: string;
+  kind: "file" | "image" | "audio" | "video";
+  mimeType: string;
+  source: "slack" | "burble" | "agent";
+  name?: string;
+  sizeBytes?: number;
+  externalId?: string;
+};
+
 export function createOpenClawNemoClawAgentRunner(
   deps: OpenClawNemoClawAgentRunnerDeps
 ): AgentRunner {
@@ -125,6 +135,7 @@ export function createOpenClawNemoClawAgentRunner(
 
       const runBody = {
         runId,
+        ...(input.executionMode ? { executionMode: input.executionMode } : {}),
         ...(runtime ? { runtime: sanitizeRuntimeHandle(runtime) } : {}),
         input: sanitizeAgentInput(input)
       };
@@ -564,9 +575,14 @@ function validateRemoteRunResponse(payload: RemoteRunResponse): AgentOutput | nu
     return null;
   }
 
+  if (typeof response.text !== "string" || !classifications.has(response.classification)) {
+    return null;
+  }
+
   if (
-    typeof response.text !== "string" ||
-    !classifications.has(response.classification)
+    "attachments" in response &&
+    response.attachments !== undefined &&
+    !isRuntimeAttachmentArray(response.attachments)
   ) {
     return null;
   }
@@ -626,6 +642,7 @@ function toWebSocketUrl(url: string): string {
 
 function sanitizeAgentInput(input: AgentInput): {
   text: string;
+  attachments?: RuntimeAttachment[];
   conversation?: NonNullable<AgentInput["conversation"]>;
   context?: NonNullable<AgentInput["context"]>;
   connections: {
@@ -642,6 +659,7 @@ function sanitizeAgentInput(input: AgentInput): {
 
   return {
     text: input.text,
+    ...(input.attachments ? { attachments: input.attachments } : {}),
     ...(input.conversation ? { conversation: input.conversation } : {}),
     ...(input.context ? { context: input.context } : {}),
     connections: {
@@ -683,4 +701,39 @@ function sanitizeAgentInput(input: AgentInput): {
           }
     }
   };
+}
+
+function isRuntimeAttachmentArray(value: unknown): value is RuntimeAttachment[] {
+  return Array.isArray(value) && value.every(isRuntimeAttachment);
+}
+
+function isRuntimeAttachment(value: unknown): value is RuntimeAttachment {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return false;
+  }
+
+  const record = value as Record<string, unknown>;
+  return (
+    typeof record.id === "string" &&
+    record.id.trim().length > 0 &&
+    (record.kind === "file" ||
+      record.kind === "image" ||
+      record.kind === "audio" ||
+      record.kind === "video") &&
+    typeof record.mimeType === "string" &&
+    record.mimeType.trim().length > 0 &&
+    (record.source === "slack" ||
+      record.source === "burble" ||
+      record.source === "agent") &&
+    optionalString(record.name) &&
+    (record.sizeBytes === undefined ||
+      (typeof record.sizeBytes === "number" &&
+        Number.isFinite(record.sizeBytes) &&
+        record.sizeBytes >= 0)) &&
+    optionalString(record.externalId)
+  );
+}
+
+function optionalString(value: unknown): boolean {
+  return value === undefined || typeof value === "string";
 }
