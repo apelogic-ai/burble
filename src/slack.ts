@@ -700,7 +700,7 @@ export function createSlackRuntime(
           task: action.task
         });
         agentExecTasks.set(execTask.id, execTask);
-        await ack(buildAgentExecInvocationResponse(execTask));
+        await ack();
         let progressText = "Starting agent runtime...";
         const execProgressMessage = await postAgentExecProgressMessage(
           client,
@@ -1126,14 +1126,20 @@ export function parseAgentCommand(text: string): AgentCommand {
       return { kind: "exec_list" };
     }
 
-    const inspectMatch = /^inspect\s+([A-Za-z0-9_-]+)$/i.exec(task);
+    const inspectMatch =
+      /^(?:(?:inspect|show)\s+([A-Za-z0-9_-]+)|([A-Za-z0-9_-]+)\s+(?:inspect|show))$/i.exec(
+        task
+      );
     if (inspectMatch) {
-      return { kind: "exec_inspect", taskId: inspectMatch[1] };
+      return { kind: "exec_inspect", taskId: inspectMatch[1] ?? inspectMatch[2] };
     }
 
-    const stopMatch = /^(?:stop|cancel)\s+([A-Za-z0-9_-]+)$/i.exec(task);
+    const stopMatch =
+      /^(?:(?:stop|cancel)\s+([A-Za-z0-9_-]+)|([A-Za-z0-9_-]+)\s+(?:stop|cancel))$/i.exec(
+        task
+      );
     if (stopMatch) {
-      return { kind: "exec_stop", taskId: stopMatch[1] };
+      return { kind: "exec_stop", taskId: stopMatch[1] ?? stopMatch[2] };
     }
 
     return { kind: "exec", task };
@@ -1338,8 +1344,8 @@ export function buildAgentCommandHelpResponse() {
             "• `/agent config` - inspect your current agent config file",
             "• `/agent exec` - list active agent tasks",
             "• `/agent exec <task>` - send an explicit task to your private agent runtime",
-            "• `/agent exec inspect <id>` - inspect an active or recent task",
-            "• `/agent exec stop <id>` - stop an active task"
+            "• `/agent exec <id> inspect` - inspect an active or recent task",
+            "• `/agent exec <id> stop` - stop an active task"
           ].join("\n")
         }
       }
@@ -1504,19 +1510,13 @@ function buildAgentExecLoadingText(_task: string): string {
   return "Agent response: Starting agent runtime...";
 }
 
-function buildAgentExecInvocationResponse(task: AgentExecTask) {
-  return {
-    response_type: "in_channel" as const,
-    text: [
-      `Agent task: ${truncateSlackConfigValue(task.task, 600)}`,
-      `Task ID: \`${task.id}\``
-    ].join("\n")
-  };
-}
-
 function formatAgentExecResponseMessage(task: AgentExecTask, body: string): string {
-  const status = task.status === "running" ? "" : ` Status: \`${task.status}\`.`;
-  return `Agent response: ${body.trim()}${status}`;
+  return [
+    `Agent task (\`${task.id}\`): \`${task.status}\``,
+    truncateSlackConfigValue(task.task, 600),
+    "",
+    `Agent response: ${body.trim()}`
+  ].join("\n");
 }
 
 export function buildAgentExecLoadingResponse(
@@ -1546,7 +1546,7 @@ export function buildAgentExecTaskListResponse(tasks: AgentExecTask[]) {
             "*Active agent tasks*",
             ...tasks.map(
               (task) =>
-                `• \`${task.id}\` ${formatAgentExecAge(task)} ${truncateSlackConfigValue(task.task, 120)}\n  Inspect: \`/agent exec inspect ${task.id}\`  Stop: \`/agent exec stop ${task.id}\``
+                `• \`${task.id}\` ${formatAgentExecAge(task)} ${truncateSlackConfigValue(task.task, 120)}\n  Inspect: \`/agent exec ${task.id} inspect\`  Stop: \`/agent exec ${task.id} stop\``
             )
           ].join("\n")
   };
@@ -1575,7 +1575,7 @@ export function buildAgentExecTaskInspectResponse(task: AgentExecTask | null) {
         ? `• Failure: ${truncateSlackConfigValue(task.failureText, 300)}`
         : "",
       task.status === "running" || task.status === "stopping"
-        ? `• Stop: \`/agent exec stop ${task.id}\``
+        ? `• Stop: \`/agent exec ${task.id} stop\``
         : ""
     ]
       .filter(Boolean)
