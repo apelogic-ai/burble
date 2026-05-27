@@ -7,12 +7,6 @@ export function createBurbleToolExecutor(
   runtimeId?: string,
   request?: RunRequest
 ): ToolExecutor {
-  if (!config.mcpGatewayUrl || !config.runtimeJwt) {
-    throw new Error(
-      "Burble MCP gateway URL and runtime JWT are required for provider tools"
-    );
-  }
-
   return createBurbleMcpToolExecutor(config, runtimeId, request);
 }
 
@@ -25,6 +19,11 @@ function createBurbleMcpToolExecutor(
   return async (toolName, body) => {
     if (toolName === "conversation.sendMessage") {
       return sendConversationMessage(config, runtimeId, request, body);
+    }
+    if (!config.mcpGatewayUrl || !config.runtimeJwt) {
+      throw new Error(
+        "Burble MCP gateway URL and runtime JWT are required for provider tools"
+      );
     }
 
     const mcpToolName = toMcpToolName(toolName);

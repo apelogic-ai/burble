@@ -861,9 +861,11 @@ describe("runOpenClawCliRequest", () => {
     const toolCalls: Array<{ toolName: string; body: unknown }> = [];
     const response = await runOpenClawCliRequest(
       {
+        executionMode: "openclaw-native",
         input: {
           text: "send a progress update",
           conversation: {
+            routeId: "convrt_abc123",
             source: "slack",
             workspaceId: "T123",
             channelId: "C123",
@@ -906,7 +908,8 @@ describe("runOpenClawCliRequest", () => {
 
     expect(response.response.text).toBe("Sent the progress update.");
     expect(prompts[0]).toContain("conversation.sendMessage");
-    expect(prompts[0]).toContain("active conversation");
+    expect(prompts[0]).toContain("Active Burble conversation route: convrt_abc123");
+    expect(prompts[0]).toContain("/internal/conversation/messages");
     expect(toolCalls).toContainEqual({
       toolName: "conversation.sendMessage",
       body: {

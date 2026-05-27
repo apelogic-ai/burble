@@ -1,5 +1,5 @@
 import { Database } from "bun:sqlite";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 
 export type OAuthState = {
   state: string;
@@ -665,12 +665,7 @@ export function createTokenStore(path: string) {
       now?: Date;
     }): ConversationRouteRecord {
       const destinationJson = stableJson(input.destination);
-      const id = buildConversationRouteId({
-        workspaceId: input.workspaceId,
-        slackUserId: input.slackUserId,
-        transport: input.transport,
-        destinationJson
-      });
+      const id = buildConversationRouteId();
       const now = (input.now ?? new Date()).toISOString();
       upsertConversationRoute.run(
         id,
@@ -747,18 +742,8 @@ function buildAgentRuntimeId(
     .slice(0, 32)}`;
 }
 
-function buildConversationRouteId(input: {
-  workspaceId: string;
-  slackUserId: string;
-  transport: ConversationTransport;
-  destinationJson: string;
-}): string {
-  return `convrt_${createHash("sha256")
-    .update(
-      `${input.workspaceId}:${input.slackUserId}:${input.transport}:${input.destinationJson}`
-    )
-    .digest("hex")
-    .slice(0, 24)}`;
+function buildConversationRouteId(): string {
+  return `convrt_${randomUUID().replace(/-/g, "").slice(0, 24)}`;
 }
 
 function stableJson(value: Record<string, unknown>): string {

@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 
 export type RuntimeConfig = {
   port: number;
+  runtimeId?: string | null;
   toolGatewayUrl: string;
   internalToken: string;
   mcpGatewayUrl: string | null;
@@ -46,8 +47,10 @@ const runtimeEngines = [
 ] as const;
 
 export function readRuntimeConfig(env: Env): RuntimeConfig {
+  const runtimeId = readOptionalEnv(env.BURBLE_RUNTIME_ID);
   return {
     port: readPort(env.PORT ?? "8080"),
+    ...(runtimeId ? { runtimeId } : {}),
     toolGatewayUrl: requiredEnv(env, "BURBLE_TOOL_GATEWAY_URL").replace(
       /\/+$/,
       ""
