@@ -14,6 +14,7 @@ export type RunRequest = {
   input: {
     text: string;
     conversation?: {
+      routeId?: string;
       source: "slack";
       workspaceId: string;
       channelId: string;

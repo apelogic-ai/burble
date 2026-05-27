@@ -13,6 +13,7 @@ export type AgentInput = {
   principal: PrincipalId;
   executionMode?: "default" | "openclaw-native";
   conversation?: {
+    routeId?: string;
     source: "slack";
     workspaceId: string;
     channelId: string;

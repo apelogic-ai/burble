@@ -157,6 +157,7 @@ describe("createBurbleToolExecutor", () => {
           input: {
             text: "run a long task",
             conversation: {
+              routeId: "convrt_abc123",
               source: "slack",
               workspaceId: "T123",
               channelId: "C123",
@@ -191,8 +192,9 @@ describe("createBurbleToolExecutor", () => {
       );
       expect(requests[0].headers.get("x-burble-runtime-id")).toBe("rt_u123");
       expect(await requests[0].json()).toEqual({
-        input: { text: "Long task finished." },
+        input: { text: "Long task finished.", routeId: "convrt_abc123" },
         conversation: {
+          routeId: "convrt_abc123",
           source: "slack",
           workspaceId: "T123",
           channelId: "C123",

@@ -749,12 +749,22 @@ export function createSlackRuntime(
           }
 
           const email = await getSlackEmail(body.user_id);
+          const conversationRoute = store.upsertConversationRoute({
+            workspaceId: principal.workspaceId,
+            slackUserId: principal.slackUserId,
+            transport: "slack",
+            destination: {
+              channelId: body.channel_id,
+              isDirectMessage: body.channel_id.startsWith("D")
+            }
+          });
           const result = await collectAgentRun(
             agentRunner,
             {
               principal,
               executionMode: "openclaw-native",
               conversation: {
+                routeId: conversationRoute.id,
                 source: "slack",
                 workspaceId: principal.workspaceId,
                 channelId: body.channel_id,
