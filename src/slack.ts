@@ -701,11 +701,11 @@ export function createSlackRuntime(
         });
         agentExecTasks.set(execTask.id, execTask);
         await ack();
-        let progressText = "Starting agent runtime...";
+        let progressText = "Preparing agent runtime...";
         const execProgressMessage = await postAgentExecProgressMessage(
           client,
           body.channel_id,
-          formatAgentExecResponseMessage(execTask, progressText)
+          formatAgentExecResponseMessage(execTask, { statusText: progressText })
         );
         execTask.message = execProgressMessage;
         try {
@@ -716,7 +716,10 @@ export function createSlackRuntime(
               client,
               respond,
               progressMessage: execProgressMessage,
-              text: formatAgentExecResponseMessage(execTask, failureText)
+              text: formatAgentExecResponseMessage(execTask, {
+                statusText: "Failed.",
+                responseText: failureText
+              })
             });
             finishAgentExecTask(execTask, "failed", failureText);
             return;
@@ -740,10 +743,10 @@ export function createSlackRuntime(
               client,
               respond,
               progressMessage: execProgressMessage,
-              text: formatAgentExecResponseMessage(
-                execTask,
-                "Stopped before the runtime task started."
-              )
+              text: formatAgentExecResponseMessage(execTask, {
+                statusText: "Stopped.",
+                responseText: "Stopped before the runtime task started."
+              })
             });
             return;
           }
@@ -782,7 +785,9 @@ export function createSlackRuntime(
                 client,
                 respond,
                 progressMessage: execProgressMessage,
-                text: formatAgentExecResponseMessage(execTask, progressText)
+                text: formatAgentExecResponseMessage(execTask, {
+                  statusText: progressText
+                })
               });
             }
           );
@@ -790,16 +795,22 @@ export function createSlackRuntime(
           if (execTask.status === "stopped") {
             return;
           }
-          const finalText = formatAgentExecResult(result.text, {
-            elapsedMs: Date.now() - startedAtMs,
-            usage: result.usage
-          });
+          const finalStatusText = formatFinalProgressLine(
+            Date.now() - startedAtMs,
+            result.usage
+          );
+          const finalResponseText =
+            result.text.trim() || "Agent finished without a text response.";
+          const finalText = formatAgentExecResult(finalStatusText, finalResponseText);
           finishAgentExecTask(execTask, "finished", finalText);
           await updateAgentExecResponse({
             client,
             respond,
             progressMessage: execProgressMessage,
-            text: formatAgentExecResponseMessage(execTask, finalText)
+            text: formatAgentExecResponseMessage(execTask, {
+              statusText: finalStatusText,
+              responseText: finalResponseText
+            })
           });
         } catch (error) {
           logger.error(formatLogError(error));
@@ -809,7 +820,9 @@ export function createSlackRuntime(
               client,
               respond,
               progressMessage: execProgressMessage,
-              text: formatAgentExecResponseMessage(execTask, "Stopped.")
+              text: formatAgentExecResponseMessage(execTask, {
+                statusText: "Stopped."
+              })
             });
             return;
           }
@@ -819,7 +832,10 @@ export function createSlackRuntime(
             client,
             respond,
             progressMessage: execProgressMessage,
-            text: formatAgentExecResponseMessage(execTask, failureText)
+            text: formatAgentExecResponseMessage(execTask, {
+              statusText: "Failed.",
+              responseText: failureText
+            })
           });
         }
         return;
@@ -1486,7 +1502,7 @@ async function stopAgentExecTask(input: {
       ts: task.message.ts,
       text: formatAgentExecResponseMessage(
         task,
-        `Stopping task at <@${input.stoppedBy}>'s request...`
+        { statusText: `Stopping task at <@${input.stoppedBy}>'s request...` }
       )
     });
   }
@@ -1501,21 +1517,31 @@ async function stopAgentExecTask(input: {
     await input.client.chat.update({
       channel: task.message.channel,
       ts: task.message.ts,
-      text: formatAgentExecResponseMessage(task, task.finalText ?? "Stopped.")
+      text: formatAgentExecResponseMessage(task, {
+        statusText: "Stopped.",
+        responseText: task.finalText
+      })
     });
   }
 }
 
 function buildAgentExecLoadingText(_task: string): string {
-  return "Agent response: Starting agent runtime...";
+  return "Agent task: Preparing agent runtime...";
 }
 
-function formatAgentExecResponseMessage(task: AgentExecTask, body: string): string {
+function formatAgentExecResponseMessage(
+  task: AgentExecTask,
+  input: { statusText: string; responseText?: string }
+): string {
+  const statusLines = input.statusText
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+  const currentStatus = statusLines.at(-1) ?? "Working...";
+  const responseText = input.responseText?.trim();
   return [
-    `Agent task (\`${task.id}\`): \`${task.status}\``,
-    truncateSlackConfigValue(task.task, 600),
-    "",
-    `Agent response: ${body.trim()}`
+    `Agent task (\`${task.id}\`): ${currentStatus}`,
+    ...(responseText ? ["", responseText] : [])
   ].join("\n");
 }
 
@@ -2175,15 +2201,8 @@ export function formatConversationFailureMessage(
   return `I could not handle that ${target}.`;
 }
 
-function formatAgentExecResult(
-  text: string,
-  input: { elapsedMs: number; usage?: AgentUsage }
-): string {
-  return [
-    formatFinalProgressLine(input.elapsedMs, input.usage),
-    "",
-    text.trim() || "Agent finished without a text response."
-  ].join("\n");
+function formatAgentExecResult(statusText: string, responseText: string): string {
+  return [statusText, "", responseText].join("\n");
 }
 
 function formatAgentExecFailureMessage(error: unknown): string {

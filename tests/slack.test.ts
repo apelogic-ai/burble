@@ -178,7 +178,7 @@ describe("buildAgentExecLoadingResponse", () => {
       buildAgentExecLoadingResponse("run a long task", "in_channel")
     ).toMatchObject({
       response_type: "in_channel",
-      text: "Agent response: Starting agent runtime..."
+      text: "Agent task: Preparing agent runtime..."
     });
   });
 });
@@ -367,7 +367,7 @@ describe("buildAgentCommandHelpResponse", () => {
       "in_channel"
     );
     expect(buildAgentExecLoadingResponse("summarize calendar").text).toBe(
-      "Agent response: Starting agent runtime..."
+      "Agent task: Preparing agent runtime..."
     );
   });
 });
