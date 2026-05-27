@@ -556,7 +556,7 @@ export function createSlackRuntime(
     }
   });
 
-  app.command("/agent", async ({ ack, body, logger, respond }) => {
+  app.command("/agent", async ({ ack, body, client, logger, respond }) => {
     try {
       logger.info(
         withUtcTimestamp(`Received /agent ${body.text} from ${body.user_id}`)
@@ -627,14 +627,27 @@ export function createSlackRuntime(
           return;
         }
 
+        const isDirectExecCommand = body.channel_id.startsWith("D");
         const execResponseType = responseTypeForCommandChannel(body.channel_id);
         let progressText = buildAgentExecLoadingText(action.task);
-        await ack(buildAgentExecLoadingResponse(action.task, execResponseType));
+        let execProgressMessage: SlackProgressMessage | undefined;
+        if (isDirectExecCommand) {
+          await ack();
+          execProgressMessage = await postAgentExecProgressMessage(
+            client,
+            body.channel_id,
+            progressText
+          );
+        } else {
+          await ack(buildAgentExecLoadingResponse(action.task, execResponseType));
+        }
         try {
           if (config.agentMode !== "llm" || !agentRunner) {
-            await respond({
-              response_type: execResponseType,
-              replace_original: true,
+            await updateAgentExecResponse({
+              client,
+              respond,
+              responseType: execResponseType,
+              progressMessage: execProgressMessage,
               text: "Agent execution requires `AGENT_MODE=llm` and an agent runtime."
             });
             return;
@@ -672,17 +685,21 @@ export function createSlackRuntime(
               }
 
               progressText = nextText;
-              await respond({
-                response_type: execResponseType,
-                replace_original: true,
+              await updateAgentExecResponse({
+                client,
+                respond,
+                responseType: execResponseType,
+                progressMessage: execProgressMessage,
                 text: progressText
               });
             }
           );
 
-          await respond({
-            response_type: execResponseType,
-            replace_original: true,
+          await updateAgentExecResponse({
+            client,
+            respond,
+            responseType: execResponseType,
+            progressMessage: execProgressMessage,
             text: formatAgentExecResult(result.text, {
               elapsedMs: Date.now() - startedAtMs,
               usage: result.usage
@@ -690,9 +707,11 @@ export function createSlackRuntime(
           });
         } catch (error) {
           logger.error(formatLogError(error));
-          await respond({
-            response_type: execResponseType,
-            replace_original: true,
+          await updateAgentExecResponse({
+            client,
+            respond,
+            responseType: execResponseType,
+            progressMessage: execProgressMessage,
             text: formatAgentExecFailureMessage(error)
           });
         }
@@ -1206,6 +1225,57 @@ function responseTypeForCommandChannel(
   return channelId?.startsWith("D") ? "in_channel" : "ephemeral";
 }
 
+async function postAgentExecProgressMessage(
+  client: App["client"],
+  channel: string,
+  text: string
+): Promise<SlackProgressMessage | undefined> {
+  const result = await client.chat.postMessage({
+    channel,
+    text
+  });
+
+  return result.ts
+    ? {
+        channel,
+        ts: result.ts,
+        text,
+        startedAtMs: Date.now(),
+        toolStartedAtMs: {},
+        toolLinesByCallId: {},
+        toolCallOrder: []
+      }
+    : undefined;
+}
+
+async function updateAgentExecResponse(input: {
+  client: App["client"];
+  respond: (message: {
+    response_type: "ephemeral" | "in_channel";
+    replace_original: true;
+    text: string;
+  }) => Promise<unknown>;
+  responseType: "ephemeral" | "in_channel";
+  progressMessage?: SlackProgressMessage;
+  text: string;
+}): Promise<void> {
+  if (input.progressMessage) {
+    input.progressMessage.text = input.text;
+    await input.client.chat.update({
+      channel: input.progressMessage.channel,
+      ts: input.progressMessage.ts,
+      text: input.text
+    });
+    return;
+  }
+
+  await input.respond({
+    response_type: input.responseType,
+    replace_original: true,
+    text: input.text
+  });
+}
+
 function buildAgentExecLoadingText(task: string): string {
   return `Sending task to your private agent runtime: ${truncateSlackConfigValue(
     task,
@@ -1501,7 +1571,8 @@ export function shouldHandleDirectMessageEvent(
     typeof event.text === "string" &&
     Boolean(event.ts) &&
     !event.subtype &&
-    !event.bot_id
+    !event.bot_id &&
+    !event.text.trim().startsWith("/")
   );
 }
 

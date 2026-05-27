@@ -553,6 +553,18 @@ describe("shouldHandleDirectMessageEvent", () => {
     ).toBe(false);
   });
 
+  test("ignores slash-command text echoed in app DMs", () => {
+    expect(
+      shouldHandleDirectMessageEvent({
+        channel_type: "im",
+        channel: "D123",
+        user: "U123",
+        text: "/agent exec run a code task",
+        ts: "1710000000.000100"
+      })
+    ).toBe(false);
+  });
+
   test("ignores malformed or non-IM messages", () => {
     expect(
       shouldHandleDirectMessageEvent({
