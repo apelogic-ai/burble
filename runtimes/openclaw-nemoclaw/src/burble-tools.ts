@@ -1,6 +1,11 @@
 import type { RuntimeConfig } from "./config";
 import { info } from "./logger";
-import type { RunRequest, ToolExecutor, ToolResult } from "./types";
+import type {
+  ConversationAttachment,
+  RunRequest,
+  ToolExecutor,
+  ToolResult
+} from "./types";
 
 export function createBurbleToolExecutor(
   config: RuntimeConfig,
@@ -83,7 +88,12 @@ async function sendConversationMessage(
     throw new Error("conversation.sendMessage requires a route id or active conversation");
   }
 
-  const input = { text, ...(routeId ? { routeId } : {}) };
+  const attachments = readNestedAttachments(body, "input", "attachments");
+  const input = {
+    text,
+    ...(routeId ? { routeId } : {}),
+    ...(attachments ? { attachments } : {})
+  };
   info(
     `Burble conversation tool start tool=conversation.sendMessage${summarizeLogObject("input", input)}`
   );
@@ -381,6 +391,59 @@ function readNestedString(
   }
   const inner = (outer as Record<string, unknown>)[innerKey];
   return typeof inner === "string" && inner.trim() ? inner : null;
+}
+
+function readNestedAttachments(
+  value: unknown,
+  outerKey: string,
+  innerKey: string
+): ConversationAttachment[] | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+  const outer = (value as Record<string, unknown>)[outerKey];
+  if (!outer || typeof outer !== "object") {
+    return null;
+  }
+  const inner = (outer as Record<string, unknown>)[innerKey];
+  return isConversationAttachmentArray(inner) ? inner : null;
+}
+
+function isConversationAttachmentArray(
+  value: unknown
+): value is ConversationAttachment[] {
+  return Array.isArray(value) && value.every(isConversationAttachment);
+}
+
+function isConversationAttachment(value: unknown): value is ConversationAttachment {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return false;
+  }
+
+  const record = value as Record<string, unknown>;
+  return (
+    typeof record.id === "string" &&
+    record.id.trim().length > 0 &&
+    (record.kind === "file" ||
+      record.kind === "image" ||
+      record.kind === "audio" ||
+      record.kind === "video") &&
+    typeof record.mimeType === "string" &&
+    record.mimeType.trim().length > 0 &&
+    (record.source === "slack" ||
+      record.source === "burble" ||
+      record.source === "agent") &&
+    optionalString(record.name) &&
+    (record.sizeBytes === undefined ||
+      (typeof record.sizeBytes === "number" &&
+        Number.isFinite(record.sizeBytes) &&
+        record.sizeBytes >= 0)) &&
+    optionalString(record.externalId)
+  );
+}
+
+function optionalString(value: unknown): boolean {
+  return value === undefined || typeof value === "string";
 }
 
 function readNestedRecord(

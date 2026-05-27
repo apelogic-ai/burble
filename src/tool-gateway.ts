@@ -1,5 +1,6 @@
 import type { Config } from "./config";
 import type { AgentRuntimeRecord, TokenStore } from "./db";
+import type { ConversationAttachment } from "./conversation/types";
 import { createHash, timingSafeEqual } from "node:crypto";
 import {
   getGitHubUser,
@@ -48,6 +49,7 @@ type ToolGatewayDeps = Partial<Parameters<typeof createGitHubTools>[0]> &
       transport: "slack";
       channelId: string;
       text: string;
+      attachments?: ConversationAttachment[];
       threadTs?: string;
     }) => Promise<{
       transport: "slack";
@@ -136,6 +138,7 @@ export async function handleToolGatewayRequest(
       transport: destination.transport,
       channelId: destination.channelId,
       text: sendInput.text,
+      ...(sendInput.attachments ? { attachments: sendInput.attachments } : {}),
       ...(destination.threadTs ? { threadTs: destination.threadTs } : {})
     });
 
@@ -721,7 +724,11 @@ function optionalString(value: unknown): boolean {
 
 function isConversationSendInput(
   input: unknown
-): input is { text: string; routeId?: string } {
+): input is {
+  text: string;
+  routeId?: string;
+  attachments?: ConversationAttachment[];
+} {
   return (
     typeof input === "object" &&
     input !== null &&
@@ -730,9 +737,45 @@ function isConversationSendInput(
     typeof input.text === "string" &&
     input.text.trim().length > 0 &&
     input.text.length <= 4000 &&
+    (!("attachments" in input) ||
+      input.attachments === undefined ||
+      isConversationAttachmentArray(input.attachments)) &&
     (!("routeId" in input) ||
       input.routeId === undefined ||
       (typeof input.routeId === "string" && input.routeId.trim().length > 0))
+  );
+}
+
+function isConversationAttachmentArray(
+  value: unknown
+): value is ConversationAttachment[] {
+  return Array.isArray(value) && value.every(isConversationAttachment);
+}
+
+function isConversationAttachment(value: unknown): value is ConversationAttachment {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return false;
+  }
+
+  const record = value as Record<string, unknown>;
+  return (
+    typeof record.id === "string" &&
+    record.id.trim().length > 0 &&
+    (record.kind === "file" ||
+      record.kind === "image" ||
+      record.kind === "audio" ||
+      record.kind === "video") &&
+    typeof record.mimeType === "string" &&
+    record.mimeType.trim().length > 0 &&
+    (record.source === "slack" ||
+      record.source === "burble" ||
+      record.source === "agent") &&
+    optionalString(record.name) &&
+    (record.sizeBytes === undefined ||
+      (typeof record.sizeBytes === "number" &&
+        Number.isFinite(record.sizeBytes) &&
+        record.sizeBytes >= 0)) &&
+    optionalString(record.externalId)
   );
 }
 
@@ -971,6 +1014,7 @@ async function defaultPostActiveConversationMessage(
     transport: "slack";
     channelId: string;
     text: string;
+    attachments?: ConversationAttachment[];
     threadTs?: string;
   }
 ): Promise<{ transport: "slack"; channelId: string; messageId?: string }> {
@@ -982,7 +1026,7 @@ async function defaultPostActiveConversationMessage(
     },
     body: JSON.stringify({
       channel: input.channelId,
-      text: input.text,
+      text: renderTextWithAttachments(input.text, input.attachments),
       ...(input.threadTs ? { thread_ts: input.threadTs } : {})
     })
   });
@@ -1004,6 +1048,25 @@ async function defaultPostActiveConversationMessage(
     channelId: body.channel ?? input.channelId,
     ...(body.ts ? { messageId: body.ts } : {})
   };
+}
+
+function renderTextWithAttachments(
+  text: string,
+  attachments?: ConversationAttachment[]
+): string {
+  if (!attachments || attachments.length === 0) {
+    return text;
+  }
+
+  return [
+    text,
+    "",
+    "*Attachments:*",
+    ...attachments.map((attachment) => {
+      const label = attachment.name ?? attachment.id;
+      return `- ${label} (${attachment.kind}, ${attachment.mimeType})`;
+    })
+  ].join("\n");
 }
 
 const allowedMutatingAtlassianMcpTools = new Set([

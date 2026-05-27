@@ -151,6 +151,7 @@ export async function handleConversation(
         conversation: buildAgentConversation(request),
         ...(request.context ? { context: request.context } : {}),
         text: request.text,
+        ...(request.attachments ? { attachments: request.attachments } : {}),
         connections: {
           github: deps.getConnection("github", request.user.email),
           google: deps.getConnection("google", request.user.email),
@@ -166,6 +167,7 @@ export async function handleConversation(
         visibility: "public",
         classification: result.classification,
         text: result.text,
+        ...(result.attachments ? { attachments: result.attachments } : {}),
         ...(result.blocks ? { blocks: result.blocks } : {}),
         ...(result.usage ? { usage: result.usage } : {})
       },

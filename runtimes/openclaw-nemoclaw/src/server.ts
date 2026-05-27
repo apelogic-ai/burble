@@ -754,6 +754,14 @@ function isRunRequest(body: unknown): body is RunRequest {
     return false;
   }
 
+  if (
+    "attachments" in input &&
+    input.attachments !== undefined &&
+    !isConversationAttachmentArray(input.attachments)
+  ) {
+    return false;
+  }
+
   const connections = input.connections;
   if (
     typeof connections !== "object" ||
@@ -876,6 +884,41 @@ function isCurrentChannelContext(channel: unknown): boolean {
       channel.historyError === undefined ||
       typeof channel.historyError === "string")
   );
+}
+
+function isConversationAttachmentArray(value: unknown): boolean {
+  return Array.isArray(value) && value.every(isConversationAttachment);
+}
+
+function isConversationAttachment(value: unknown): boolean {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return false;
+  }
+
+  const record = value as Record<string, unknown>;
+  return (
+    typeof record.id === "string" &&
+    record.id.trim().length > 0 &&
+    (record.kind === "file" ||
+      record.kind === "image" ||
+      record.kind === "audio" ||
+      record.kind === "video") &&
+    typeof record.mimeType === "string" &&
+    record.mimeType.trim().length > 0 &&
+    (record.source === "slack" ||
+      record.source === "burble" ||
+      record.source === "agent") &&
+    optionalString(record.name) &&
+    (record.sizeBytes === undefined ||
+      (typeof record.sizeBytes === "number" &&
+        Number.isFinite(record.sizeBytes) &&
+        record.sizeBytes >= 0)) &&
+    optionalString(record.externalId)
+  );
+}
+
+function optionalString(value: unknown): boolean {
+  return value === undefined || typeof value === "string";
 }
 
 function isRuntimeSummary(runtime: unknown): runtime is RunRequest["runtime"] {

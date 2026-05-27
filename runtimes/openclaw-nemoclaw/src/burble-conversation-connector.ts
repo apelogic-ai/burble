@@ -1,7 +1,7 @@
 import type { RuntimeConfig } from "./config";
 import { createBurbleToolExecutor } from "./burble-tools";
 import { info } from "./logger";
-import type { RunRequest, ToolResult } from "./types";
+import type { ConversationAttachment, RunRequest, ToolResult } from "./types";
 
 export type BurbleConversationRoute = {
   routeId: string;
@@ -9,6 +9,7 @@ export type BurbleConversationRoute = {
 
 export type BurbleConversationMessage = BurbleConversationRoute & {
   text: string;
+  attachments?: ConversationAttachment[];
 };
 
 export type BurbleConversationEvent = BurbleConversationRoute & {
@@ -43,7 +44,8 @@ export function createBurbleConversationConnector(
     const result = await executor("conversation.sendMessage", {
       input: {
         routeId: message.routeId,
-        text: message.text
+        text: message.text,
+        ...(message.attachments ? { attachments: message.attachments } : {})
       }
     });
     info(`Burble conversation connector sent routeId=${message.routeId}`);
@@ -66,7 +68,8 @@ export function createBurbleConversationConnector(
 
       return sendMessage({
         routeId: event.routeId,
-        text
+        text,
+        ...extractBurbleConversationAttachments(event.payload)
       });
     }
   };
@@ -111,6 +114,28 @@ export function extractBurbleConversationText(body: unknown): string | null {
   return null;
 }
 
+function extractBurbleConversationAttachments(
+  body: unknown
+): { attachments?: ConversationAttachment[] } {
+  const candidates = [
+    readNestedValue(body, "attachments"),
+    readNestedValue(body, "files"),
+    readNestedValue(body, "result", "attachments"),
+    readNestedValue(body, "result", "files"),
+    readNestedValue(body, "payload", "attachments"),
+    readNestedValue(body, "payload", "files"),
+    readNestedValue(body, "response", "attachments")
+  ];
+
+  for (const candidate of candidates) {
+    if (isConversationAttachmentArray(candidate)) {
+      return { attachments: candidate };
+    }
+  }
+
+  return {};
+}
+
 export function formatObjectKeys(body: unknown): string {
   if (typeof body !== "object" || body === null || Array.isArray(body)) {
     return "none";
@@ -120,6 +145,13 @@ export function formatObjectKeys(body: unknown): string {
 }
 
 function readNestedString(body: unknown, ...path: string[]): string | null {
+  const cursor = readNestedValue(body, ...path);
+  return typeof cursor === "string" && cursor.trim().length > 0
+    ? cursor.trim()
+    : null;
+}
+
+function readNestedValue(body: unknown, ...path: string[]): unknown {
   let cursor = body;
   for (const segment of path) {
     if (typeof cursor !== "object" || cursor === null || Array.isArray(cursor)) {
@@ -128,7 +160,42 @@ function readNestedString(body: unknown, ...path: string[]): string | null {
     cursor = (cursor as Record<string, unknown>)[segment];
   }
 
-  return typeof cursor === "string" && cursor.trim().length > 0
-    ? cursor.trim()
-    : null;
+  return cursor;
+}
+
+function isConversationAttachmentArray(
+  value: unknown
+): value is ConversationAttachment[] {
+  return Array.isArray(value) && value.every(isConversationAttachment);
+}
+
+function isConversationAttachment(value: unknown): value is ConversationAttachment {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return false;
+  }
+
+  const record = value as Record<string, unknown>;
+  return (
+    typeof record.id === "string" &&
+    record.id.trim().length > 0 &&
+    (record.kind === "file" ||
+      record.kind === "image" ||
+      record.kind === "audio" ||
+      record.kind === "video") &&
+    typeof record.mimeType === "string" &&
+    record.mimeType.trim().length > 0 &&
+    (record.source === "slack" ||
+      record.source === "burble" ||
+      record.source === "agent") &&
+    optionalString(record.name) &&
+    (record.sizeBytes === undefined ||
+      (typeof record.sizeBytes === "number" &&
+        Number.isFinite(record.sizeBytes) &&
+        record.sizeBytes >= 0)) &&
+    optionalString(record.externalId)
+  );
+}
+
+function optionalString(value: unknown): boolean {
+  return value === undefined || typeof value === "string";
 }

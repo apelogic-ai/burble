@@ -1,5 +1,8 @@
 import type { ProviderConnection } from "../db";
-import type { ToolClassification } from "../conversation/types";
+import type {
+  ConversationAttachment,
+  ToolClassification
+} from "../conversation/types";
 import type { PrincipalId } from "./runtime-factory";
 
 export type AgentRunnerCapabilities = {
@@ -34,6 +37,7 @@ export type AgentInput = {
     }>;
   };
   text: string;
+  attachments?: ConversationAttachment[];
   connections: {
     github: ProviderConnection | null;
     google?: ProviderConnection | null;
@@ -45,6 +49,7 @@ export type AgentInput = {
 export type AgentOutput = {
   classification: ToolClassification;
   text: string;
+  attachments?: ConversationAttachment[];
   blocks?: unknown[];
   usage?: AgentUsage;
 };
