@@ -575,6 +575,224 @@ describe("handleRuntimeRequest", () => {
     });
   });
 
+  test("delivers attachment-only local conversation messages", async () => {
+    const requests: Request[] = [];
+    const response = await withMockFetch(
+      (async (input, init) => {
+        const request = new Request(input, init);
+        requests.push(request);
+        return Response.json({
+          classification: "user_private",
+          content: { ok: true }
+        });
+      }) as typeof fetch,
+      () =>
+        handleRuntimeRequest(
+          new Request("http://runtime/internal/burble/channel/routes/convrt_abc123/messages", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({
+              text: "",
+              attachments: [
+                {
+                  id: "agent:image-1",
+                  source: "agent",
+                  kind: "image",
+                  mimeType: "image/png",
+                  name: "preview.png"
+                }
+              ]
+            })
+          }),
+          {
+            ...config,
+            runtimeId: "rt_u123"
+          }
+        )
+    );
+
+    expect(response.status).toBe(200);
+    expect(await requests[0].json()).toEqual({
+      input: {
+        routeId: "convrt_abc123",
+        text: "",
+        attachments: [
+          {
+            id: "agent:image-1",
+            source: "agent",
+            kind: "image",
+            mimeType: "image/png",
+            name: "preview.png"
+          }
+        ]
+      }
+    });
+  });
+
+  test("proxies Burble MCP calls with the runtime JWT", async () => {
+    const requests: Request[] = [];
+    const response = await withMockFetch(
+      (async (input, init) => {
+        const request = new Request(input, init);
+        requests.push(request);
+        return new Response(
+          `event: message\ndata: ${JSON.stringify({
+            jsonrpc: "2.0",
+            id: 1,
+            result: { content: [] }
+          })}\n\n`,
+          {
+            headers: {
+              "content-type": "text/event-stream",
+              "mcp-session-id": "session-123"
+            }
+          }
+        );
+      }) as typeof fetch,
+      () =>
+        handleRuntimeRequest(
+          new Request("http://runtime/internal/burble/mcp", {
+            method: "POST",
+            headers: {
+              "content-type": "application/json",
+              accept: "application/json, text/event-stream",
+              "mcp-protocol-version": "2025-06-18",
+              "mcp-session-id": "session-123"
+            },
+            body: JSON.stringify({
+              jsonrpc: "2.0",
+              id: 1,
+              method: "tools/call",
+              params: {
+                name: "github_search_issues",
+                arguments: {
+                  routeId: "convrt_abc123",
+                  query: "repo:apelogic/burble is:pr"
+                }
+              }
+            })
+          }),
+          {
+            ...config,
+            mcpGatewayUrl: "http://burble-app:3000/mcp",
+            runtimeJwt: "runtime-jwt"
+          }
+        )
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("mcp-session-id")).toBe("session-123");
+    expect(await response.text()).toContain('"result":{"content":[]}');
+    expect(requests).toHaveLength(1);
+    expect(requests[0].url).toBe("http://burble-app:3000/mcp");
+    expect(requests[0].headers.get("authorization")).toBe("Bearer runtime-jwt");
+    expect(requests[0].headers.get("mcp-protocol-version")).toBe("2025-06-18");
+    expect(requests[0].headers.get("mcp-session-id")).toBe("session-123");
+    expect(await requests[0].json()).toEqual({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "tools/call",
+      params: {
+        name: "github_search_issues",
+        arguments: {
+          routeId: "convrt_abc123",
+          query: "repo:apelogic/burble is:pr"
+        }
+      }
+    });
+  });
+
+  test("requires route ids for local Burble MCP tool calls", async () => {
+    const requests: Request[] = [];
+    const response = await withMockFetch(
+      (async (input, init) => {
+        requests.push(new Request(input, init));
+        return Response.json({});
+      }) as typeof fetch,
+      () =>
+        handleRuntimeRequest(
+          new Request("http://runtime/internal/burble/mcp", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({
+              jsonrpc: "2.0",
+              id: 1,
+              method: "tools/call",
+              params: {
+                name: "github_search_issues",
+                arguments: { query: "is:pr" }
+              }
+            })
+          }),
+          {
+            ...config,
+            mcpGatewayUrl: "http://burble-app:3000/mcp",
+            runtimeJwt: "runtime-jwt"
+          }
+        )
+    );
+
+    expect(response.status).toBe(200);
+    const body = readMcpData(await response.text());
+    expect(body.error.message).toBe(
+      "Burble provider tools require a routeId argument."
+    );
+    expect(requests).toEqual([]);
+  });
+
+  test("adds required route ids to local Burble MCP tool schemas", async () => {
+    const upstreamPayload = {
+      jsonrpc: "2.0",
+      id: 1,
+      result: {
+        tools: [
+          {
+            name: "github_search_issues",
+            inputSchema: {
+              type: "object",
+              properties: {
+                query: { type: "string" }
+              },
+              required: ["query"]
+            }
+          }
+        ]
+      }
+    };
+
+    const response = await withMockFetch(
+      (async (_input, _init) =>
+        new Response(`event: message\ndata: ${JSON.stringify(upstreamPayload)}\n\n`, {
+          headers: { "content-type": "text/event-stream" }
+        })) as typeof fetch,
+      () =>
+        handleRuntimeRequest(
+          new Request("http://runtime/internal/burble/mcp", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({
+              jsonrpc: "2.0",
+              id: 1,
+              method: "tools/list"
+            })
+          }),
+          {
+            ...config,
+            mcpGatewayUrl: "http://burble-app:3000/mcp",
+            runtimeJwt: "runtime-jwt"
+          }
+        )
+    );
+
+    const body = readMcpData(await response.text());
+    const schema = body.result.tools[0].inputSchema;
+    expect(schema.properties.routeId).toMatchObject({
+      type: "string",
+      minLength: 1
+    });
+    expect(schema.required).toEqual(["query", "routeId"]);
+  });
+
   test("delivers Burble channel events through the Burble tool gateway", async () => {
     const requests: Request[] = [];
     const response = await withMockFetch(
@@ -627,6 +845,35 @@ describe("handleRuntimeRequest", () => {
     });
   });
 
+  test("rejects invisible-only Burble channel messages without posting", async () => {
+    const requests: Request[] = [];
+    const response = await withMockFetch(
+      (async (input, init) => {
+        requests.push(new Request(input, init));
+        return Response.json({});
+      }) as typeof fetch,
+      () =>
+        handleRuntimeRequest(
+          new Request(
+            "http://runtime/internal/burble/channel/routes/convrt_abc123/messages",
+            {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({ text: "\u200B" })
+            }
+          ),
+          {
+            ...config,
+            runtimeId: "rt_u123"
+          }
+        )
+    );
+
+    expect(response.status).toBe(400);
+    expect(await response.text()).toBe("Invalid Burble channel message input");
+    expect(requests).toEqual([]);
+  });
+
   test("accepts Burble channel events without deliverable text without posting", async () => {
     const requests: Request[] = [];
     const response = await withMockFetch(
@@ -642,6 +889,99 @@ describe("handleRuntimeRequest", () => {
               method: "POST",
               headers: { "content-type": "application/json" },
               body: JSON.stringify({ jobId: "job-123", status: "ok" })
+            }
+          ),
+          {
+            ...config,
+            runtimeId: "rt_u123"
+          }
+        )
+    );
+
+    expect(response.status).toBe(202);
+    expect(await response.text()).toBe(
+      "Burble channel event did not contain deliverable text"
+    );
+    expect(requests).toEqual([]);
+  });
+
+  test("delivers Burble channel events with attachments but no text", async () => {
+    const requests: Request[] = [];
+    const response = await withMockFetch(
+      (async (input, init) => {
+        const request = new Request(input, init);
+        requests.push(request);
+        return Response.json({
+          classification: "user_private",
+          content: { ok: true }
+        });
+      }) as typeof fetch,
+      () =>
+        handleRuntimeRequest(
+          new Request(
+            "http://runtime/internal/burble/channel/routes/convrt_abc123/events",
+            {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({
+                result: {
+                  attachments: [
+                    {
+                      id: "agent:report-1",
+                      source: "agent",
+                      kind: "file",
+                      mimeType: "text/plain",
+                      name: "report.txt"
+                    }
+                  ]
+                }
+              })
+            }
+          ),
+          {
+            ...config,
+            runtimeId: "rt_u123"
+          }
+        )
+    );
+
+    expect(response.status).toBe(200);
+    expect(await requests[0].json()).toEqual({
+      input: {
+        routeId: "convrt_abc123",
+        text: "",
+        attachments: [
+          {
+            id: "agent:report-1",
+            source: "agent",
+            kind: "file",
+            mimeType: "text/plain",
+            name: "report.txt"
+          }
+        ]
+      }
+    });
+  });
+
+  test("ignores invisible-only Burble channel events without posting", async () => {
+    const requests: Request[] = [];
+    const response = await withMockFetch(
+      (async (input, init) => {
+        requests.push(new Request(input, init));
+        return Response.json({});
+      }) as typeof fetch,
+      () =>
+        handleRuntimeRequest(
+          new Request(
+            "http://runtime/internal/burble/channel/routes/convrt_abc123/events",
+            {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({
+                result: {
+                  summary: "\u200B"
+                }
+              })
             }
           ),
           {
@@ -729,3 +1069,13 @@ describe("handleRuntimeRequest", () => {
     expect(await response.text()).toBe("Invalid run request");
   });
 });
+
+function readMcpData(text: string): any {
+  const dataLine = text
+    .split("\n")
+    .find((line) => line.startsWith("data: "));
+  if (!dataLine) {
+    throw new Error(`Missing MCP data line in response: ${text}`);
+  }
+  return JSON.parse(dataLine.slice("data: ".length));
+}

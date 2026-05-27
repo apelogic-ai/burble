@@ -2303,8 +2303,7 @@ function renderConversationResponseText(response: ConversationResponse): string 
   }
 
   return [
-    response.text,
-    "",
+    ...(response.text.trim() ? [response.text, ""] : []),
     "*Attachments:*",
     ...response.attachments.map((attachment) => {
       const label = attachment.name ?? attachment.id;

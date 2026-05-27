@@ -132,7 +132,8 @@ function buildOpenClawNemoClawAgentConfig(
       modelId: config.llmModel,
       ollamaBaseUrl: config.ollamaBaseUrl,
       codeModeEnabled: config.openClawCodeMode,
-      burbleChannelBaseUrl: buildLocalBurbleChannelBaseUrl(config)
+      burbleChannelBaseUrl: buildLocalBurbleChannelBaseUrl(config),
+      burbleMcpBaseUrl: buildLocalBurbleMcpBaseUrl(config)
     })
   ) as Record<string, unknown>;
   const agents = readObject(agentConfig.agents);
@@ -199,7 +200,8 @@ async function writeGeneratedLlmPatch(config: RuntimeConfig): Promise<string> {
       modelId: config.llmModel,
       ollamaBaseUrl: config.ollamaBaseUrl,
       codeModeEnabled: config.openClawCodeMode,
-      burbleChannelBaseUrl: buildLocalBurbleChannelBaseUrl(config)
+      burbleChannelBaseUrl: buildLocalBurbleChannelBaseUrl(config),
+      burbleMcpBaseUrl: buildLocalBurbleMcpBaseUrl(config)
     })
   );
   return path;
@@ -207,6 +209,13 @@ async function writeGeneratedLlmPatch(config: RuntimeConfig): Promise<string> {
 
 function buildLocalBurbleChannelBaseUrl(config: RuntimeConfig): string {
   return `http://127.0.0.1:${config.port}`;
+}
+
+function buildLocalBurbleMcpBaseUrl(config: RuntimeConfig): string | null {
+  if (!config.mcpGatewayUrl || !config.runtimeJwt) {
+    return null;
+  }
+  return `${buildLocalBurbleChannelBaseUrl(config)}/internal/burble/mcp`;
 }
 
 function isOpenClawBackedEngine(config: RuntimeConfig): boolean {
@@ -223,7 +232,8 @@ async function buildSetupCacheKey(config: RuntimeConfig): Promise<string> {
         modelId: config.llmModel,
         ollamaBaseUrl: config.ollamaBaseUrl,
         codeModeEnabled: config.openClawCodeMode,
-        burbleChannelBaseUrl: buildLocalBurbleChannelBaseUrl(config)
+        burbleChannelBaseUrl: buildLocalBurbleChannelBaseUrl(config),
+        burbleMcpBaseUrl: buildLocalBurbleMcpBaseUrl(config)
       })
     )
     .digest("hex");

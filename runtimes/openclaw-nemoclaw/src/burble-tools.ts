@@ -77,9 +77,10 @@ async function sendConversationMessage(
   if (!runtimeId) {
     throw new Error("conversation.sendMessage requires a runtime id");
   }
-  const text = readNestedString(body, "input", "text");
-  if (!text) {
-    throw new Error("conversation.sendMessage requires input.text");
+  const text = readNestedText(body, "input", "text");
+  const attachments = readNestedAttachments(body, "input", "attachments");
+  if (!text && !attachments?.length) {
+    throw new Error("conversation.sendMessage requires input.text or input.attachments");
   }
   const routeId =
     readNestedString(body, "input", "routeId") ??
@@ -88,9 +89,8 @@ async function sendConversationMessage(
     throw new Error("conversation.sendMessage requires a route id or active conversation");
   }
 
-  const attachments = readNestedAttachments(body, "input", "attachments");
   const input = {
-    text,
+    text: text ?? "",
     ...(routeId ? { routeId } : {}),
     ...(attachments ? { attachments } : {})
   };
@@ -382,6 +382,27 @@ function readNestedString(
   outerKey: string,
   innerKey: string
 ): string | null {
+  const inner = readNestedValue(value, outerKey, innerKey);
+  return typeof inner === "string" && inner.trim() ? inner : null;
+}
+
+function readNestedText(
+  value: unknown,
+  outerKey: string,
+  innerKey: string
+): string | null {
+  const inner = readNestedValue(value, outerKey, innerKey);
+  return typeof inner === "string" &&
+    inner.replace(/[\s\p{Default_Ignorable_Code_Point}]/gu, "").length > 0
+    ? inner
+    : null;
+}
+
+function readNestedValue(
+  value: unknown,
+  outerKey: string,
+  innerKey: string
+): unknown {
   if (!value || typeof value !== "object") {
     return null;
   }
@@ -389,8 +410,7 @@ function readNestedString(
   if (!outer || typeof outer !== "object") {
     return null;
   }
-  const inner = (outer as Record<string, unknown>)[innerKey];
-  return typeof inner === "string" && inner.trim() ? inner : null;
+  return (outer as Record<string, unknown>)[innerKey];
 }
 
 function readNestedAttachments(

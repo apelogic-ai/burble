@@ -2,7 +2,13 @@ import type { RuntimeConfig } from "./config";
 import { createBurbleConversationConnector } from "./burble-conversation-connector";
 import { info } from "./logger";
 import { createRuntimeRunner } from "./runtime";
-import type { RunEvent, RunRequest, RunResponse, ToolExecutor } from "./types";
+import type {
+  ConversationAttachment,
+  RunEvent,
+  RunRequest,
+  RunResponse,
+  ToolExecutor
+} from "./types";
 
 type SharedRun = {
   runId: string;
@@ -32,6 +38,10 @@ export async function handleRuntimeRequest(
 
   if (url.pathname === "/internal/conversation/messages") {
     return handleLocalConversationMessageRequest(request, config);
+  }
+
+  if (url.pathname === "/internal/burble/mcp") {
+    return handleLocalBurbleMcpRequest(request, config);
   }
 
   const burbleChannelMessageMatch =
@@ -182,6 +192,43 @@ async function handleLocalConversationMessageRequest(
     headers: {
       "cache-control": "no-store"
     }
+  });
+}
+
+async function handleLocalBurbleMcpRequest(
+  request: Request,
+  config: RuntimeConfig
+): Promise<Response> {
+  if (request.method !== "POST") {
+    return new Response("Method not allowed", { status: 405 });
+  }
+  if (!config.mcpGatewayUrl || !config.runtimeJwt) {
+    return new Response("Burble MCP gateway is not configured", { status: 503 });
+  }
+
+  const bodyText = await request.text();
+  const payload = readMcpJsonRpcPayload(bodyText);
+  if (isMcpToolCall(payload) && !hasMcpToolCallRouteId(payload)) {
+    return mcpJsonRpcErrorResponse(
+      readMcpJsonRpcId(payload),
+      -32602,
+      "Burble provider tools require a routeId argument."
+    );
+  }
+
+  const upstreamResponse = await fetch(config.mcpGatewayUrl, {
+    method: "POST",
+    headers: buildBurbleMcpProxyHeaders(request, config.runtimeJwt),
+    body: bodyText
+  });
+  const upstreamBody = await upstreamResponse.text();
+  const body = isMcpToolsList(payload)
+    ? addRouteIdToMcpToolsListResponse(upstreamBody)
+    : upstreamBody;
+
+  return new Response(body, {
+    status: upstreamResponse.status,
+    headers: buildBurbleMcpProxyResponseHeaders(upstreamResponse)
   });
 }
 
@@ -624,7 +671,11 @@ async function readJsonBody(request: Request): Promise<unknown> {
 
 async function readLocalConversationMessageBody(
   request: Request
-): Promise<{ routeId: string; text: string } | null> {
+): Promise<{
+  routeId: string;
+  text: string;
+  attachments?: ConversationAttachment[];
+} | null> {
   let body: unknown;
   try {
     body = await request.json();
@@ -636,11 +687,17 @@ async function readLocalConversationMessageBody(
   }
 
   const record = body as Record<string, unknown>;
+  const attachments = isConversationAttachmentArray(record.attachments)
+    ? record.attachments
+    : undefined;
   if (
     typeof record.routeId !== "string" ||
     record.routeId.trim().length === 0 ||
     typeof record.text !== "string" ||
-    record.text.trim().length === 0 ||
+    ("attachments" in record &&
+      record.attachments !== undefined &&
+      !attachments) ||
+    (!hasVisibleText(record.text) && !attachments?.length) ||
     record.text.length > 4000
   ) {
     return null;
@@ -648,14 +705,205 @@ async function readLocalConversationMessageBody(
 
   return {
     routeId: record.routeId,
-    text: record.text
+    text: record.text,
+    ...(attachments?.length ? { attachments } : {})
   };
+}
+
+function buildBurbleMcpProxyHeaders(
+  request: Request,
+  runtimeJwt: string
+): Headers {
+  const headers = new Headers();
+  const contentType = request.headers.get("content-type");
+  headers.set("content-type", contentType ?? "application/json");
+  headers.set(
+    "accept",
+    request.headers.get("accept") ?? "application/json, text/event-stream"
+  );
+  headers.set("authorization", `Bearer ${runtimeJwt}`);
+
+  for (const name of ["mcp-protocol-version", "mcp-session-id"]) {
+    const value = request.headers.get(name);
+    if (value) {
+      headers.set(name, value);
+    }
+  }
+
+  return headers;
+}
+
+function buildBurbleMcpProxyResponseHeaders(response: Response): Headers {
+  const headers = new Headers({
+    "cache-control": "no-store"
+  });
+  for (const name of ["content-type", "mcp-session-id"]) {
+    const value = response.headers.get(name);
+    if (value) {
+      headers.set(name, value);
+    }
+  }
+  return headers;
+}
+
+function readMcpJsonRpcPayload(bodyText: string): unknown {
+  try {
+    return JSON.parse(bodyText);
+  } catch {
+    return null;
+  }
+}
+
+function isMcpToolsList(payload: unknown): payload is { method: "tools/list" } {
+  return (
+    typeof payload === "object" &&
+    payload !== null &&
+    !Array.isArray(payload) &&
+    (payload as { method?: unknown }).method === "tools/list"
+  );
+}
+
+function isMcpToolCall(
+  payload: unknown
+): payload is { id?: unknown; method: "tools/call"; params?: unknown } {
+  return (
+    typeof payload === "object" &&
+    payload !== null &&
+    !Array.isArray(payload) &&
+    (payload as { method?: unknown }).method === "tools/call"
+  );
+}
+
+function hasMcpToolCallRouteId(payload: {
+  method: "tools/call";
+  params?: unknown;
+}): boolean {
+  const params = payload.params;
+  if (!params || typeof params !== "object" || Array.isArray(params)) {
+    return false;
+  }
+  const args = (params as Record<string, unknown>).arguments;
+  if (!args || typeof args !== "object" || Array.isArray(args)) {
+    return false;
+  }
+  const routeId = (args as Record<string, unknown>).routeId;
+  return typeof routeId === "string" && routeId.trim().length > 0;
+}
+
+function readMcpJsonRpcId(payload: unknown): unknown {
+  if (typeof payload !== "object" || payload === null || Array.isArray(payload)) {
+    return null;
+  }
+  return (payload as { id?: unknown }).id ?? null;
+}
+
+function addRouteIdToMcpToolsListResponse(responseText: string): string {
+  return responseText
+    .split("\n")
+    .map((line) => {
+      if (!line.startsWith("data: ")) {
+        return line;
+      }
+      try {
+        const payload = JSON.parse(line.slice("data: ".length));
+        return `data: ${JSON.stringify(addRouteIdToMcpToolsListPayload(payload))}`;
+      } catch {
+        return line;
+      }
+    })
+    .join("\n");
+}
+
+function addRouteIdToMcpToolsListPayload(payload: unknown): unknown {
+  if (typeof payload !== "object" || payload === null || Array.isArray(payload)) {
+    return payload;
+  }
+  const result = (payload as { result?: unknown }).result;
+  if (typeof result !== "object" || result === null || Array.isArray(result)) {
+    return payload;
+  }
+  const tools = (result as { tools?: unknown }).tools;
+  if (!Array.isArray(tools)) {
+    return payload;
+  }
+
+  return {
+    ...payload,
+    result: {
+      ...result,
+      tools: tools.map(addRouteIdToMcpToolSchema)
+    }
+  };
+}
+
+function addRouteIdToMcpToolSchema(tool: unknown): unknown {
+  if (typeof tool !== "object" || tool === null || Array.isArray(tool)) {
+    return tool;
+  }
+  const inputSchema =
+    typeof (tool as { inputSchema?: unknown }).inputSchema === "object" &&
+    (tool as { inputSchema?: unknown }).inputSchema !== null &&
+    !Array.isArray((tool as { inputSchema?: unknown }).inputSchema)
+      ? ((tool as { inputSchema: Record<string, unknown> }).inputSchema)
+      : {};
+  const properties =
+    typeof inputSchema.properties === "object" &&
+    inputSchema.properties !== null &&
+    !Array.isArray(inputSchema.properties)
+      ? (inputSchema.properties as Record<string, unknown>)
+      : {};
+  const required = Array.isArray(inputSchema.required)
+    ? inputSchema.required.filter((value): value is string => typeof value === "string")
+    : [];
+
+  return {
+    ...tool,
+    inputSchema: {
+      ...inputSchema,
+      type: "object",
+      properties: {
+        ...properties,
+        routeId: {
+          type: "string",
+          minLength: 1,
+          description: "Burble conversation route id for this Slack conversation."
+        }
+      },
+      required: Array.from(new Set([...required, "routeId"]))
+    }
+  };
+}
+
+function mcpJsonRpcErrorResponse(
+  id: unknown,
+  code: number,
+  message: string
+): Response {
+  const payload = {
+    jsonrpc: "2.0",
+    id,
+    error: {
+      code,
+      message
+    }
+  };
+  return new Response(`event: message\ndata: ${JSON.stringify(payload)}\n\n`, {
+    status: 200,
+    headers: {
+      "content-type": "text/event-stream",
+      "cache-control": "no-store"
+    }
+  });
 }
 
 async function readLocalBurbleChannelMessageBody(
   request: Request,
   routeId: string
-): Promise<{ routeId: string; text: string } | null> {
+): Promise<{
+  routeId: string;
+  text: string;
+  attachments?: ConversationAttachment[];
+} | null> {
   let body: unknown;
   try {
     body = await request.json();
@@ -667,9 +915,15 @@ async function readLocalBurbleChannelMessageBody(
   }
 
   const record = body as Record<string, unknown>;
+  const attachments = isConversationAttachmentArray(record.attachments)
+    ? record.attachments
+    : undefined;
   if (
     typeof record.text !== "string" ||
-    record.text.trim().length === 0 ||
+    ("attachments" in record &&
+      record.attachments !== undefined &&
+      !attachments) ||
+    (!hasVisibleText(record.text) && !attachments?.length) ||
     record.text.length > 4000
   ) {
     return null;
@@ -677,7 +931,8 @@ async function readLocalBurbleChannelMessageBody(
 
   return {
     routeId,
-    text: record.text
+    text: record.text,
+    ...(attachments?.length ? { attachments } : {})
   };
 }
 
@@ -732,7 +987,7 @@ function isRunRequest(body: unknown): body is RunRequest {
     input === null ||
     !("text" in input) ||
     typeof input.text !== "string" ||
-    input.text.trim().length === 0 ||
+    !hasVisibleText(input.text) ||
     !("connections" in input)
   ) {
     return false;
@@ -801,6 +1056,10 @@ function isRunRequest(body: unknown): body is RunRequest {
   }
 
   return true;
+}
+
+function hasVisibleText(value: string): boolean {
+  return value.replace(/[\s\p{Default_Ignorable_Code_Point}]/gu, "").length > 0;
 }
 
 function isConnectionSummary(value: unknown): boolean {
@@ -886,11 +1145,13 @@ function isCurrentChannelContext(channel: unknown): boolean {
   );
 }
 
-function isConversationAttachmentArray(value: unknown): boolean {
+function isConversationAttachmentArray(
+  value: unknown
+): value is ConversationAttachment[] {
   return Array.isArray(value) && value.every(isConversationAttachment);
 }
 
-function isConversationAttachment(value: unknown): boolean {
+function isConversationAttachment(value: unknown): value is ConversationAttachment {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     return false;
   }

@@ -132,6 +132,10 @@ describe("ensureOpenClawSetup", () => {
         }
       }
     });
+    expect(writtenConfig.mcp.servers.burble).toEqual({
+      url: `http://127.0.0.1:${runtimeConfig.port}/internal/burble/mcp`,
+      transport: "streamable-http"
+    });
     expect(writtenConfig.runtime).toBeUndefined();
     expect(JSON.stringify(writtenConfig)).not.toContain("runtime-jwt");
   });
