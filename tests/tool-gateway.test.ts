@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import type { Config } from "../src/config";
 import type {
   AgentRuntimeRecord,
+  ConversationRouteRecord,
   ProviderConnection,
   TokenStore
 } from "../src/db";
@@ -96,7 +97,8 @@ const runtime: AgentRuntimeRecord = {
 function createStore(
   foundConnection: ProviderConnection | null,
   foundRuntime: AgentRuntimeRecord | null = null,
-  runtimeEvents: unknown[] = []
+  runtimeEvents: unknown[] = [],
+  foundRoute: ConversationRouteRecord | null = null
 ): TokenStore {
   return {
     createOAuthState: () => "state",
@@ -123,6 +125,10 @@ function createStore(
       runtimeEvents.push(event);
     },
     listAgentRuntimeEvents: () => [],
+    upsertConversationRoute: () => {
+      throw new Error("unexpected conversation route write");
+    },
+    getConversationRoute: (id) => (id === foundRoute?.id ? foundRoute : null),
     updateAgentRuntimeStatus: () => undefined,
     touchAgentRuntime: () => undefined,
     close: () => undefined
@@ -344,6 +350,62 @@ describe("handleToolGatewayRequest", () => {
         }
       }
     ]);
+  });
+
+  test("lets a runtime send through a durable conversation route", async () => {
+    const route: ConversationRouteRecord = {
+      id: "convrt_abc123",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      transport: "slack",
+      destinationJson: JSON.stringify({
+        channelId: "C123",
+        threadTs: "1779841118.237"
+      }),
+      createdAt: "2026-05-26T00:00:00.000Z",
+      updatedAt: "2026-05-26T00:00:00.000Z",
+      revokedAt: null
+    };
+    const response = await handleToolGatewayRequest(
+      config,
+      createStore(null, runtime, [], route),
+      "conversation.sendMessage",
+      request(
+        "conversation.sendMessage",
+        {
+          input: { text: "Cron finished.", routeId: "convrt_abc123" }
+        },
+        "runtime-token-u123",
+        "rt_u123"
+      ),
+      {
+        postActiveConversationMessage: async (input) => {
+          expect(input).toEqual({
+            transport: "slack",
+            channelId: "C123",
+            text: "Cron finished.",
+            threadTs: "1779841118.237"
+          });
+          return {
+            transport: "slack",
+            channelId: "C123",
+            messageId: "1779841130.000"
+          };
+        }
+      }
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      classification: "user_private",
+      content: {
+        ok: true,
+        transport: "slack",
+        conversationId: "C123",
+        routeId: "convrt_abc123",
+        messageId: "1779841130.000"
+      }
+    });
   });
 
   test("rejects active conversation sends for another workspace", async () => {

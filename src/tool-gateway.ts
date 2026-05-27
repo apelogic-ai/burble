@@ -120,22 +120,23 @@ export async function handleToolGatewayRequest(
     if (auth.kind !== "runtime") {
       return new Response("Runtime auth required", { status: 403 });
     }
-    if (
-      !isConversationSendInput(body?.input) ||
-      !isActiveConversation(body?.conversation)
-    ) {
+    if (!isConversationSendInput(body?.input)) {
       return new Response("Invalid tool input", { status: 400 });
     }
-    if (body.conversation.workspaceId !== auth.runtime.workspaceId) {
-      return new Response("Runtime principal mismatch", { status: 403 });
+    const sendInput = body.input;
+    const destination = sendInput.routeId
+      ? resolveConversationRouteDestination(store, auth.runtime, sendInput.routeId)
+      : resolveActiveConversationDestination(auth.runtime, body?.conversation);
+    if (!destination.ok) {
+      return new Response(destination.message, { status: destination.status });
     }
 
     const result = await (deps.postActiveConversationMessage ??
       ((input) => defaultPostActiveConversationMessage(config, input)))({
-      transport: body.conversation.source,
-      channelId: body.conversation.channelId,
-      text: body.input.text,
-      ...readConversationThread(body.conversation)
+      transport: destination.transport,
+      channelId: destination.channelId,
+      text: sendInput.text,
+      ...(destination.threadTs ? { threadTs: destination.threadTs } : {})
     });
 
     return jsonResponseWithAudit(store, auth, toolName, {
@@ -144,6 +145,7 @@ export async function handleToolGatewayRequest(
         ok: true,
         transport: result.transport,
         conversationId: result.channelId,
+        ...(sendInput.routeId ? { routeId: sendInput.routeId } : {}),
         ...(result.messageId ? { messageId: result.messageId } : {})
       }
     });
@@ -717,7 +719,9 @@ function optionalString(value: unknown): boolean {
   return value === undefined || typeof value === "string";
 }
 
-function isConversationSendInput(input: unknown): input is { text: string } {
+function isConversationSendInput(
+  input: unknown
+): input is { text: string; routeId?: string } {
   return (
     typeof input === "object" &&
     input !== null &&
@@ -725,7 +729,10 @@ function isConversationSendInput(input: unknown): input is { text: string } {
     "text" in input &&
     typeof input.text === "string" &&
     input.text.trim().length > 0 &&
-    input.text.length <= 4000
+    input.text.length <= 4000 &&
+    (!("routeId" in input) ||
+      input.routeId === undefined ||
+      (typeof input.routeId === "string" && input.routeId.trim().length > 0))
   );
 }
 
@@ -763,6 +770,128 @@ function readConversationThread(conversation: {
   const match = conversation.rootId.match(/^(?:channel|dm):[^:]+:thread:(.+)$/);
   const threadTs = match?.[1]?.trim();
   return threadTs ? { threadTs } : {};
+}
+
+function resolveActiveConversationDestination(
+  runtime: AgentRuntimeRecord,
+  conversation: unknown
+):
+  | {
+      ok: true;
+      transport: "slack";
+      channelId: string;
+      threadTs?: string;
+    }
+  | { ok: false; status: number; message: string } {
+  if (!isActiveConversation(conversation)) {
+    return { ok: false, status: 400, message: "Invalid tool input" };
+  }
+  if (conversation.workspaceId !== runtime.workspaceId) {
+    return {
+      ok: false,
+      status: 403,
+      message: "Runtime principal mismatch"
+    };
+  }
+
+  return {
+    ok: true,
+    transport: conversation.source,
+    channelId: conversation.channelId,
+    ...readConversationThread(conversation)
+  };
+}
+
+function resolveConversationRouteDestination(
+  store: TokenStore,
+  runtime: AgentRuntimeRecord,
+  routeId: string
+):
+  | {
+      ok: true;
+      transport: "slack";
+      channelId: string;
+      threadTs?: string;
+    }
+  | { ok: false; status: number; message: string } {
+  const route = store.getConversationRoute(routeId);
+  if (!route) {
+    return { ok: false, status: 404, message: "Conversation route not found" };
+  }
+  if (route.revokedAt) {
+    return { ok: false, status: 410, message: "Conversation route revoked" };
+  }
+  if (
+    route.workspaceId !== runtime.workspaceId ||
+    route.slackUserId !== runtime.slackUserId
+  ) {
+    return {
+      ok: false,
+      status: 403,
+      message: "Runtime principal mismatch"
+    };
+  }
+  if (route.transport !== "slack") {
+    return {
+      ok: false,
+      status: 400,
+      message: "Unsupported conversation transport"
+    };
+  }
+
+  const destination = readSlackRouteDestination(route.destinationJson);
+  if (!destination) {
+    return {
+      ok: false,
+      status: 400,
+      message: "Invalid conversation route"
+    };
+  }
+
+  return {
+    ok: true,
+    transport: "slack",
+    ...destination
+  };
+}
+
+function readSlackRouteDestination(
+  destinationJson: string
+): { channelId: string; threadTs?: string } | null {
+  try {
+    const parsed = JSON.parse(destinationJson) as unknown;
+    if (
+      typeof parsed !== "object" ||
+      parsed === null ||
+      Array.isArray(parsed)
+    ) {
+      return null;
+    }
+
+    const record = parsed as Record<string, unknown>;
+    if (
+      typeof record.channelId !== "string" ||
+      record.channelId.trim().length === 0
+    ) {
+      return null;
+    }
+    if (
+      "threadTs" in record &&
+      record.threadTs !== undefined &&
+      typeof record.threadTs !== "string"
+    ) {
+      return null;
+    }
+
+    return {
+      channelId: record.channelId,
+      ...(typeof record.threadTs === "string" && record.threadTs.trim()
+        ? { threadTs: record.threadTs }
+        : {})
+    };
+  } catch {
+    return null;
+  }
 }
 
 function isAtlassianMcpToolCallInput(

@@ -1372,9 +1372,11 @@ async function buildToolCatalog(
     catalog.push({
       name: "conversation.sendMessage",
       description:
-        "Send a message to the active conversation where this agent task was requested. Burble chooses and validates the transport and destination; provide only the message text. Use this to report progress or completion from long-running tasks.",
+        "Send a message through Burble to the active conversation or a durable conversation route. Burble chooses and validates the transport and destination; provide message text and, for scheduled/background jobs, the active routeId.",
       inputSchema: {
-        text: "string message text to send to the active conversation"
+        text: "string message text to send",
+        routeId:
+          "optional durable Burble route ID for scheduled/background messages"
       }
     });
   }
@@ -1747,9 +1749,22 @@ function formatNativeExecutionContext(request: RunRequest): string[] {
   return [
     "Native agent execution:",
     "This request explicitly asks for OpenClaw-native execution. Use OpenClaw native capabilities/tools directly when useful for code, shell/process work, cron, or long-running tasks. Use Burble JSON tool_call only for external provider data or actions listed in Available Burble tools.",
+    ...formatActiveConversationRouteInstruction(request),
     "When native code tools are available, you can run programs in this runtime. Do not say you cannot run arbitrary programs, cannot run code, or can only provide a local script; use native exec instead.",
     "For code execution tasks, prefer one deliberate exec call for the main work. If that exec succeeds and prints the requested result, summarize it and stop. Do not repeatedly rewrite, rerun, or optimize code after the requested result is available.",
     "For duration or long-running tests, run exactly one timed program for the requested duration, then report its stdout/stderr summary and final observed result."
+  ];
+}
+
+function formatActiveConversationRouteInstruction(request: RunRequest): string[] {
+  const routeId = request.input.conversation?.routeId;
+  if (!routeId) {
+    return [];
+  }
+
+  return [
+    `Active Burble conversation route: ${routeId}.`,
+    "For cron or background jobs that should report back later, persist this route ID in the job payload and have the job call conversation.sendMessage with that routeId and the message text. Do not store or infer Slack channel IDs or Slack credentials."
   ];
 }
 

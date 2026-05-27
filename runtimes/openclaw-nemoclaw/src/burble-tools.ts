@@ -73,16 +73,18 @@ async function sendConversationMessage(
   if (!runtimeId) {
     throw new Error("conversation.sendMessage requires a runtime id");
   }
-  if (!request?.input.conversation) {
-    throw new Error("conversation.sendMessage requires an active conversation");
-  }
-
   const text = readNestedString(body, "input", "text");
   if (!text) {
     throw new Error("conversation.sendMessage requires input.text");
   }
+  const routeId =
+    readNestedString(body, "input", "routeId") ??
+    request?.input.conversation?.routeId;
+  if (!routeId && !request?.input.conversation) {
+    throw new Error("conversation.sendMessage requires a route id or active conversation");
+  }
 
-  const input = { text };
+  const input = { text, ...(routeId ? { routeId } : {}) };
   info(
     `Burble conversation tool start tool=conversation.sendMessage${summarizeLogObject("input", input)}`
   );
@@ -98,7 +100,9 @@ async function sendConversationMessage(
       },
       body: JSON.stringify({
         input,
-        conversation: request.input.conversation
+        ...(request?.input.conversation
+          ? { conversation: request.input.conversation }
+          : {})
       })
     }
   );

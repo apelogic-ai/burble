@@ -624,6 +624,10 @@ function isConversationSummary(
     conversation !== null &&
     "source" in conversation &&
     conversation.source === "slack" &&
+    (!("routeId" in conversation) ||
+      conversation.routeId === undefined ||
+      (typeof conversation.routeId === "string" &&
+        conversation.routeId.trim().length > 0)) &&
     "workspaceId" in conversation &&
     typeof conversation.workspaceId === "string" &&
     conversation.workspaceId.trim().length > 0 &&
