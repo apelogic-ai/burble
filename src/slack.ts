@@ -700,14 +700,13 @@ export function createSlackRuntime(
           task: action.task
         });
         agentExecTasks.set(execTask.id, execTask);
-        await ack();
         let progressText = "Preparing agent runtime...";
-        const execProgressMessage = await postAgentExecProgressMessage(
-          client,
-          body.channel_id,
-          formatAgentExecResponseMessage(execTask, { statusText: progressText })
-        );
-        execTask.message = execProgressMessage;
+        await ack({
+          response_type: "in_channel",
+          text: formatAgentExecResponseMessage(execTask, {
+            statusText: progressText
+          })
+        });
         try {
           if (config.agentMode !== "llm" || !agentRunner) {
             const failureText =
@@ -715,7 +714,6 @@ export function createSlackRuntime(
             await updateAgentExecResponse({
               client,
               respond,
-              progressMessage: execProgressMessage,
               text: formatAgentExecResponseMessage(execTask, {
                 statusText: "Failed.",
                 responseText: failureText
@@ -742,7 +740,6 @@ export function createSlackRuntime(
             await updateAgentExecResponse({
               client,
               respond,
-              progressMessage: execProgressMessage,
               text: formatAgentExecResponseMessage(execTask, {
                 statusText: "Stopped.",
                 responseText: "Stopped before the runtime task started."
@@ -784,7 +781,6 @@ export function createSlackRuntime(
               await updateAgentExecResponse({
                 client,
                 respond,
-                progressMessage: execProgressMessage,
                 text: formatAgentExecResponseMessage(execTask, {
                   statusText: progressText
                 })
@@ -806,7 +802,6 @@ export function createSlackRuntime(
           await updateAgentExecResponse({
             client,
             respond,
-            progressMessage: execProgressMessage,
             text: formatAgentExecResponseMessage(execTask, {
               statusText: finalStatusText,
               responseText: finalResponseText
@@ -819,7 +814,6 @@ export function createSlackRuntime(
             await updateAgentExecResponse({
               client,
               respond,
-              progressMessage: execProgressMessage,
               text: formatAgentExecResponseMessage(execTask, {
                 statusText: "Stopped."
               })
@@ -831,7 +825,6 @@ export function createSlackRuntime(
           await updateAgentExecResponse({
             client,
             respond,
-            progressMessage: execProgressMessage,
             text: formatAgentExecResponseMessage(execTask, {
               statusText: "Failed.",
               responseText: failureText
@@ -1369,31 +1362,6 @@ export function buildAgentCommandHelpResponse() {
   };
 }
 
-async function postAgentExecProgressMessage(
-  client: App["client"],
-  channel: string,
-  text: string
-): Promise<SlackProgressMessage> {
-  const result = await client.chat.postMessage({
-    channel,
-    text
-  });
-
-  if (!result.ts) {
-    throw new Error("Slack did not return a message timestamp for agent exec");
-  }
-
-  return {
-    channel,
-    ts: result.ts,
-    text,
-    startedAtMs: Date.now(),
-    toolStartedAtMs: {},
-    toolLinesByCallId: {},
-    toolCallOrder: []
-  };
-}
-
 async function updateAgentExecResponse(input: {
   client: App["client"];
   respond: (message: {
@@ -1416,7 +1384,7 @@ async function updateAgentExecResponse(input: {
 
   await input.respond({
     response_type: "in_channel",
-    replace_original: false,
+    replace_original: true,
     text: input.text
   });
 }
