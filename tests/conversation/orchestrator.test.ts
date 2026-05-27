@@ -8,6 +8,8 @@ import type {
   AgentRunner
 } from "../../src/agent/types";
 import { createGitHubTools } from "../../src/tools/github";
+import { createGoogleTools } from "../../src/tools/google";
+import { createJiraTools } from "../../src/tools/jira";
 
 const baseRequest: ConversationRequest = {
   source: "slack",
@@ -52,12 +54,71 @@ function createDeps(overrides: Partial<ConversationDeps> = {}): ConversationDeps
       }
     ]
   });
+  const googleConnection = {
+    provider: "google" as const,
+    email: "person@example.com",
+    slackUserId: "U123",
+    providerLogin: "person@example.com",
+    accessToken: "google-token",
+    connectedAt: "2026-05-19T00:00:00Z"
+  };
+  const jiraConnection = {
+    provider: "jira" as const,
+    email: "person@example.com",
+    slackUserId: "U123",
+    providerLogin: "person@example.com",
+    accessToken: "jira-token",
+    connectedAt: "2026-05-19T00:00:00Z"
+  };
+  const googleTools = createGoogleTools({
+    getGoogleUser: async () => ({ email: "person@example.com" }),
+    searchGoogleDriveFiles: async () => [],
+    searchGoogleCalendarEvents: async () => [],
+    searchGoogleMailMessages: async () => [
+      {
+        id: "mail-1",
+        subject: "Your OpenAI API account has been funded",
+        snippet: "We charged $100.00 to your credit card..."
+      }
+    ]
+  });
+  const jiraTools = createJiraTools({
+    getJiraUser: async () => ({
+      accountId: "jira-account",
+      displayName: "Person"
+    }),
+    listAssignedJiraIssues: async () => [
+      {
+        key: "DM-12",
+        summary: "test task ticket #9 from slack",
+        url: "https://jira.example/browse/DM-12"
+      }
+    ],
+    searchJiraIssues: async () => [
+      {
+        key: "DM-13",
+        summary: "hello from slack",
+        url: "https://jira.example/browse/DM-13"
+      }
+    ]
+  });
 
   return {
     createGitHubOAuthUrl: () => "https://example.test/oauth/github",
     createJiraOAuthUrl: () => "https://example.test/oauth/jira",
-    getConnection: (provider) => (provider === "github" ? connection : null),
-    githubTools,
+    getConnection: (provider) =>
+      provider === "github"
+        ? connection
+        : provider === "google"
+          ? googleConnection
+          : provider === "jira"
+            ? jiraConnection
+            : null,
+    tools: {
+      github: githubTools,
+      google: googleTools,
+      jira: jiraTools
+    },
     ...overrides
   };
 }
@@ -217,7 +278,7 @@ describe("handleConversation", () => {
             isDirectMessage: false
           });
           expect(input.connections.github?.providerLogin).toBe("octocat");
-          expect(input.connections.jira).toBeNull();
+          expect(input.connections.jira?.providerLogin).toBe("person@example.com");
           return {
             classification: "user_private",
             text: "You have one issue and one pull request."
@@ -229,6 +290,74 @@ describe("handleConversation", () => {
     expect(calls).toEqual(["summarize my GitHub work"]);
     expect(response.visibility).toBe("ephemeral");
     expect(response.text).toBe("You have one issue and one pull request.");
+  });
+
+  test("fast-paths latest Gmail requests before the LLM runner", async () => {
+    let called = false;
+    const response = await handleConversation(
+      { ...baseRequest, text: "list latest email received via google mail" },
+      createDeps({
+        agentMode: "llm",
+        agentRunner: stubAgentRunner(() => {
+          called = true;
+          return {
+            classification: "public",
+            text: "unexpected"
+          };
+        })
+      })
+    );
+
+    expect(called).toBe(false);
+    expect(response.visibility).toBe("ephemeral");
+    expect(response.text).toContain("*Latest Gmail message:*");
+    expect(response.text).toContain("Your OpenAI API account has been funded");
+  });
+
+  test("fast-paths last-created Jira ticket requests before the LLM runner", async () => {
+    let called = false;
+    const response = await handleConversation(
+      { ...baseRequest, text: "what is my last created jira ticket?" },
+      createDeps({
+        agentMode: "llm",
+        agentRunner: stubAgentRunner(() => {
+          called = true;
+          return {
+            classification: "public",
+            text: "unexpected"
+          };
+        })
+      })
+    );
+
+    expect(called).toBe(false);
+    expect(response.visibility).toBe("ephemeral");
+    expect(response.text).toBe(
+      "Your last created Jira ticket: <https://jira.example/browse/DM-13|DM-13 - hello from slack>"
+    );
+  });
+
+  test("fast-paths latest assigned Jira ticket requests before the LLM runner", async () => {
+    let called = false;
+    const response = await handleConversation(
+      { ...baseRequest, text: "what is latest jira ticket assigned to me?" },
+      createDeps({
+        agentMode: "llm",
+        agentRunner: stubAgentRunner(() => {
+          called = true;
+          return {
+            classification: "public",
+            text: "unexpected"
+          };
+        })
+      })
+    );
+
+    expect(called).toBe(false);
+    expect(response.visibility).toBe("ephemeral");
+    expect(response.text).toBe(
+      "Your latest assigned Jira ticket: <https://jira.example/browse/DM-12|DM-12 - test task ticket #9 from slack>"
+    );
   });
 
   test("forwards LLM runner events before returning the final response", async () => {
@@ -305,5 +434,26 @@ describe("handleConversation", () => {
     expect(response.text).toBe(
       "<https://example.test/oauth/github|Connect your GitHub account>"
     );
+  });
+
+  test("does not call the LLM runner for deterministic GitHub requests", async () => {
+    let called = false;
+    const response = await handleConversation(
+      { ...baseRequest, text: "show my pull requests" },
+      createDeps({
+        agentMode: "llm",
+        agentRunner: stubAgentRunner(() => {
+          called = true;
+          return {
+            classification: "public",
+            text: "unexpected"
+          };
+        })
+      })
+    );
+
+    expect(called).toBe(false);
+    expect(response.visibility).toBe("ephemeral");
+    expect(response.text).toContain("Add workspace auth");
   });
 });

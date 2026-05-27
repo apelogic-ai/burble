@@ -325,8 +325,12 @@ export function createSlackRuntime(
             : {}),
           getConnection: (provider, emailAddress) =>
             store.getConnection(provider, emailAddress),
-          githubTools,
-          slackTools,
+          tools: {
+            github: githubTools,
+            google: googleTools,
+            jira: jiraTools,
+            slack: slackTools
+          },
           agentMode: config.agentMode,
           ...(resolveAgentExecutionMode()
             ? { agentExecutionMode: resolveAgentExecutionMode() }
@@ -477,8 +481,12 @@ export function createSlackRuntime(
             : {}),
           getConnection: (provider, emailAddress) =>
             store.getConnection(provider, emailAddress),
-          githubTools,
-          slackTools,
+          tools: {
+            github: githubTools,
+            google: googleTools,
+            jira: jiraTools,
+            slack: slackTools
+          },
           agentMode: config.agentMode,
           ...(resolveAgentExecutionMode()
             ? { agentExecutionMode: resolveAgentExecutionMode() }
