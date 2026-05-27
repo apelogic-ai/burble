@@ -1771,8 +1771,9 @@ function formatActiveConversationRouteInstruction(
 
   return [
     `Active Burble conversation route: ${routeId}.`,
-    `For cron or background jobs that should report back later, persist this route ID in the job payload and have the job send an HTTP POST to http://127.0.0.1:${config.port}/internal/conversation/messages with JSON {"routeId":"${routeId}","text":"message text"}.`,
-    "Do not store or infer Slack channel IDs, Slack credentials, or Burble credentials. The local endpoint injects delivery credentials outside the OpenClaw process."
+    `For OpenClaw cron/background jobs that should report back later, use OpenClaw cron webhook delivery: set delivery.mode to "webhook" and delivery.to to http://127.0.0.1:${config.port}/internal/conversation/routes/${encodeURIComponent(routeId)}/webhook. The cron job prompt should produce the final message text; the cron runner will POST the finished payload to Burble.`,
+    `For direct background scripts that are not OpenClaw cron jobs, POST JSON {"routeId":"${routeId}","text":"message text"} to http://127.0.0.1:${config.port}/internal/conversation/messages.`,
+    "Do not create cron jobs that rely on conversation.sendMessage JSON blobs, announce delivery, Slack channel IDs, Slack credentials, or Burble credentials. Burble's local endpoint injects delivery credentials outside the OpenClaw process."
   ];
 }
 

@@ -909,7 +909,11 @@ describe("runOpenClawCliRequest", () => {
     expect(response.response.text).toBe("Sent the progress update.");
     expect(prompts[0]).toContain("conversation.sendMessage");
     expect(prompts[0]).toContain("Active Burble conversation route: convrt_abc123");
-    expect(prompts[0]).toContain("/internal/conversation/messages");
+    expect(prompts[0]).toContain(
+      "/internal/conversation/routes/convrt_abc123/webhook"
+    );
+    expect(prompts[0]).toContain("delivery.mode");
+    expect(prompts[0]).toContain("conversation.sendMessage JSON blobs");
     expect(toolCalls).toContainEqual({
       toolName: "conversation.sendMessage",
       body: {

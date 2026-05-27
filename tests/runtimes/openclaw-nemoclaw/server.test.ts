@@ -574,6 +574,89 @@ describe("handleRuntimeRequest", () => {
     });
   });
 
+  test("delivers OpenClaw cron webhook summaries through the Burble tool gateway", async () => {
+    const requests: Request[] = [];
+    const response = await withMockFetch(
+      (async (input, init) => {
+        const request = new Request(input, init);
+        requests.push(request);
+        return Response.json({
+          classification: "user_private",
+          content: {
+            ok: true,
+            transport: "slack",
+            conversationId: "C123",
+            messageId: "1779841120.000"
+          }
+        });
+      }) as typeof fetch,
+      () =>
+        handleRuntimeRequest(
+          new Request(
+            "http://runtime/internal/conversation/routes/convrt_abc123/webhook",
+            {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({
+                jobId: "job-123",
+                runId: "run-123",
+                result: {
+                  summary: "Open GitHub PRs: none found."
+                }
+              })
+            }
+          ),
+          {
+            ...config,
+            runtimeId: "rt_u123"
+          }
+        )
+    );
+
+    expect(response.status).toBe(200);
+    expect(requests).toHaveLength(1);
+    expect(requests[0].url).toBe(
+      "http://burble-app:3000/internal/tools/conversation.sendMessage/execute"
+    );
+    expect(await requests[0].json()).toEqual({
+      input: {
+        routeId: "convrt_abc123",
+        text: "Open GitHub PRs: none found."
+      }
+    });
+  });
+
+  test("accepts cron webhooks without deliverable text without posting", async () => {
+    const requests: Request[] = [];
+    const response = await withMockFetch(
+      (async (input, init) => {
+        requests.push(new Request(input, init));
+        return Response.json({});
+      }) as typeof fetch,
+      () =>
+        handleRuntimeRequest(
+          new Request(
+            "http://runtime/internal/conversation/routes/convrt_abc123/webhook",
+            {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({ jobId: "job-123", status: "ok" })
+            }
+          ),
+          {
+            ...config,
+            runtimeId: "rt_u123"
+          }
+        )
+    );
+
+    expect(response.status).toBe(202);
+    expect(await response.text()).toBe(
+      "Webhook payload did not contain deliverable text"
+    );
+    expect(requests).toEqual([]);
+  });
+
   test("rejects malformed run requests", async () => {
     const response = await handleRuntimeRequest(
       new Request("http://runtime/runs", {
