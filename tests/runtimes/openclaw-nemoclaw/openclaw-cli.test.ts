@@ -2041,6 +2041,9 @@ describe("runOpenClawCliRequest", () => {
     );
 
     expect(String(requests[0].body.input)).toContain(
+      "Do not say you cannot run arbitrary programs"
+    );
+    expect(String(requests[0].body.input)).toContain(
       "prefer one deliberate exec call for the main work"
     );
     expect(String(requests[0].body.input)).toContain(
