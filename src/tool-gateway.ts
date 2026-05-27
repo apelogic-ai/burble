@@ -44,6 +44,16 @@ import { verifyJiraAuthForOpaqueAtlassianMcpError } from "./mcp/atlassian-auth";
 type ToolGatewayDeps = Partial<Parameters<typeof createGitHubTools>[0]> &
   Partial<JiraToolDeps> &
   Partial<SlackToolDeps> & {
+    postActiveConversationMessage?: (input: {
+      transport: "slack";
+      channelId: string;
+      text: string;
+      threadTs?: string;
+    }) => Promise<{
+      transport: "slack";
+      channelId: string;
+      messageId?: string;
+    }>;
     listAtlassianMcpTools?: (input: {
       url: string;
       accessToken: string;
@@ -61,6 +71,7 @@ type ToolGatewayBody = {
     email?: unknown;
   };
   input?: unknown;
+  conversation?: unknown;
 };
 
 const defaultDeps = {
@@ -105,6 +116,39 @@ export async function handleToolGatewayRequest(
   }
 
   const body = await readToolGatewayBody(request);
+  if (toolName === "conversation.sendMessage") {
+    if (auth.kind !== "runtime") {
+      return new Response("Runtime auth required", { status: 403 });
+    }
+    if (
+      !isConversationSendInput(body?.input) ||
+      !isActiveConversation(body?.conversation)
+    ) {
+      return new Response("Invalid tool input", { status: 400 });
+    }
+    if (body.conversation.workspaceId !== auth.runtime.workspaceId) {
+      return new Response("Runtime principal mismatch", { status: 403 });
+    }
+
+    const result = await (deps.postActiveConversationMessage ??
+      ((input) => defaultPostActiveConversationMessage(config, input)))({
+      transport: body.conversation.source,
+      channelId: body.conversation.channelId,
+      text: body.input.text,
+      ...readConversationThread(body.conversation)
+    });
+
+    return jsonResponseWithAudit(store, auth, toolName, {
+      classification: "user_private",
+      content: {
+        ok: true,
+        transport: result.transport,
+        conversationId: result.channelId,
+        ...(result.messageId ? { messageId: result.messageId } : {})
+      }
+    });
+  }
+
   if (!body || typeof body.user?.email !== "string") {
     return new Response("Invalid tool input", { status: 400 });
   }
@@ -506,6 +550,7 @@ function isKnownTool(toolName: string): boolean {
     toolName === "jira.searchIssues" ||
     toolName === "slack.searchUsers" ||
     toolName === "slack.searchMessages" ||
+    toolName === "conversation.sendMessage" ||
     toolName === "atlassian.listMcpTools" ||
     toolName === "atlassian.callMcpTool"
   );
@@ -672,6 +717,54 @@ function optionalString(value: unknown): boolean {
   return value === undefined || typeof value === "string";
 }
 
+function isConversationSendInput(input: unknown): input is { text: string } {
+  return (
+    typeof input === "object" &&
+    input !== null &&
+    !Array.isArray(input) &&
+    "text" in input &&
+    typeof input.text === "string" &&
+    input.text.trim().length > 0 &&
+    input.text.length <= 4000
+  );
+}
+
+function isActiveConversation(conversation: unknown): conversation is {
+  source: "slack";
+  workspaceId: string;
+  channelId: string;
+  rootId: string;
+  isDirectMessage: boolean;
+} {
+  if (
+    typeof conversation !== "object" ||
+    conversation === null ||
+    Array.isArray(conversation)
+  ) {
+    return false;
+  }
+
+  const record = conversation as Record<string, unknown>;
+  return (
+    record.source === "slack" &&
+    typeof record.workspaceId === "string" &&
+    record.workspaceId.trim().length > 0 &&
+    typeof record.channelId === "string" &&
+    record.channelId.trim().length > 0 &&
+    typeof record.rootId === "string" &&
+    record.rootId.trim().length > 0 &&
+    typeof record.isDirectMessage === "boolean"
+  );
+}
+
+function readConversationThread(conversation: {
+  rootId: string;
+}): { threadTs?: string } {
+  const match = conversation.rootId.match(/^(?:channel|dm):[^:]+:thread:(.+)$/);
+  const threadTs = match?.[1]?.trim();
+  return threadTs ? { threadTs } : {};
+}
+
 function isAtlassianMcpToolCallInput(
   input: unknown
 ): input is { name: string; arguments?: Record<string, unknown> } {
@@ -724,6 +817,47 @@ function defaultCallAtlassianMcpTool(input: {
       arguments: input.arguments
     }
   );
+}
+
+async function defaultPostActiveConversationMessage(
+  config: Config,
+  input: {
+    transport: "slack";
+    channelId: string;
+    text: string;
+    threadTs?: string;
+  }
+): Promise<{ transport: "slack"; channelId: string; messageId?: string }> {
+  const response = await fetch("https://slack.com/api/chat.postMessage", {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${config.slackBotToken}`,
+      "content-type": "application/json; charset=utf-8"
+    },
+    body: JSON.stringify({
+      channel: input.channelId,
+      text: input.text,
+      ...(input.threadTs ? { thread_ts: input.threadTs } : {})
+    })
+  });
+
+  const body = (await response.json()) as {
+    ok?: boolean;
+    error?: string;
+    channel?: string;
+    ts?: string;
+  };
+  if (!response.ok || !body.ok) {
+    throw new Error(
+      `Slack message send failed: ${body.error ?? `HTTP ${response.status}`}`
+    );
+  }
+
+  return {
+    transport: "slack",
+    channelId: body.channel ?? input.channelId,
+    ...(body.ts ? { messageId: body.ts } : {})
+  };
 }
 
 const allowedMutatingAtlassianMcpTools = new Set([

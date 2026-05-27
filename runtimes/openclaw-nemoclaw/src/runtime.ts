@@ -7,6 +7,8 @@ import {
 import { runBurbleRequest } from "./runner";
 import type { RunEvent, RunRequest, RunResponse, ToolExecutor } from "./types";
 
+const nativeExecutionTimeoutMs = 10 * 60 * 1000;
+
 export type RuntimeAgentAdapter = {
   name: string;
   run: (request: RunRequest, executeTool: ToolExecutor) => Promise<RunResponse>;
@@ -33,7 +35,7 @@ export function createRuntimeRunner(
   return {
     async run(
       request,
-      executeTool = createBurbleToolExecutor(config, request.runtime?.id)
+      executeTool = createBurbleToolExecutor(config, request.runtime?.id, request)
     ) {
       const effectiveConfig = resolveRuntimeConfigForRequest(config, request);
       await prepareNativeOpenClawIfNeeded(effectiveConfig, request, options);
@@ -41,7 +43,7 @@ export function createRuntimeRunner(
     },
     async *stream(
       request,
-      executeTool = createBurbleToolExecutor(config, request.runtime?.id)
+      executeTool = createBurbleToolExecutor(config, request.runtime?.id, request)
     ) {
       const effectiveConfig = resolveRuntimeConfigForRequest(config, request);
       yield* prepareRuntimeConfigForRequest(effectiveConfig, request, options);
@@ -61,7 +63,8 @@ export function resolveRuntimeConfigForRequest(
   return {
     ...config,
     engine: "openclaw-gateway",
-    openClawSetupOnStart: true
+    openClawSetupOnStart: true,
+    openClawTimeoutMs: Math.max(config.openClawTimeoutMs, nativeExecutionTimeoutMs)
   };
 }
 

@@ -856,6 +856,65 @@ describe("runOpenClawCliRequest", () => {
     });
   });
 
+  test("lets OpenClaw send a generic active conversation message", async () => {
+    const prompts: string[] = [];
+    const toolCalls: Array<{ toolName: string; body: unknown }> = [];
+    const response = await runOpenClawCliRequest(
+      {
+        input: {
+          text: "send a progress update",
+          conversation: {
+            source: "slack",
+            workspaceId: "T123",
+            channelId: "C123",
+            rootId: "channel:C123:thread:1779841118.237",
+            isDirectMessage: false
+          },
+          connections: {
+            github: { connected: false }
+          }
+        }
+      },
+      config,
+      async (toolName, body) => {
+        toolCalls.push({ toolName, body });
+        return {
+          classification: "user_private",
+          content: {
+            ok: true,
+            transport: "slack",
+            conversationId: "C123",
+            messageId: "1779841120.000"
+          }
+        };
+      },
+      async (_command, args) => {
+        const prompt = args[args.indexOf("--message") + 1];
+        prompts.push(prompt);
+        return prompts.length === 1
+          ? openClawToolCall("conversation.sendMessage", {
+              text: "Still working on it."
+            })
+          : {
+              exitCode: 0,
+              stdout: "Sent the progress update.",
+              stderr: ""
+            };
+      },
+      () => undefined
+    );
+
+    expect(response.response.text).toBe("Sent the progress update.");
+    expect(prompts[0]).toContain("conversation.sendMessage");
+    expect(prompts[0]).toContain("active conversation");
+    expect(toolCalls).toContainEqual({
+      toolName: "conversation.sendMessage",
+      body: {
+        input: { text: "Still working on it." }
+      }
+    });
+  });
+
   test("lets OpenClaw plan an allowed Atlassian MCP tool call", async () => {
     const toolCalls: Array<{ toolName: string; body: unknown }> = [];
     const prompts: string[] = [];

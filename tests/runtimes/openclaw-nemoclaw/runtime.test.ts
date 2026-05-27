@@ -40,6 +40,7 @@ describe("resolveRuntimeConfigForRequest", () => {
     expect(resolved).toMatchObject({
       engine: "openclaw-gateway",
       openClawSetupOnStart: true,
+      openClawTimeoutMs: 600000,
       openClawConfigPath: "/data/openclaw/config/openclaw.json",
       openClawWorkspaceDir: "/data/openclaw/workspace"
     });
