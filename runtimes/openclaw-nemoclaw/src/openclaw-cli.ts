@@ -1698,6 +1698,8 @@ function buildOpenClawPrompt(
     "Available Burble tools:",
     formatToolCatalog(toolContext.catalog),
     "",
+    ...formatNativeExecutionContext(request),
+    "",
     ...formatRecentSlackContext(request),
     "",
     `User request: ${request.input.text}`,
@@ -1720,10 +1722,29 @@ function buildOpenClawPrompt(
       "Return either exactly one more tool_call JSON object if another provider action is required, or the final Slack-ready answer."
     );
   } else {
-    sections.push("", "Return either exactly one tool_call JSON object or the final Slack-ready answer.");
+    sections.push("", formatFinalInstruction(request));
   }
 
   return sections.join("\n");
+}
+
+function formatNativeExecutionContext(request: RunRequest): string[] {
+  if (request.executionMode !== "openclaw-native") {
+    return [];
+  }
+
+  return [
+    "Native agent execution:",
+    "This request explicitly asks for OpenClaw-native execution. Use OpenClaw native capabilities/tools directly when useful for code, shell/process work, cron, or long-running tasks. Use Burble JSON tool_call only for external provider data or actions listed in Available Burble tools."
+  ];
+}
+
+function formatFinalInstruction(request: RunRequest): string {
+  if (request.executionMode === "openclaw-native") {
+    return "For provider data/actions, return exactly one Burble tool_call JSON object if required. Otherwise use OpenClaw native capabilities when appropriate and return the final Slack-ready answer.";
+  }
+
+  return "Return either exactly one tool_call JSON object or the final Slack-ready answer.";
 }
 
 function buildBurbleDirectPrompt(

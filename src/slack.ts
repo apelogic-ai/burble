@@ -645,6 +645,7 @@ export function createSlackRuntime(
               workspaceId: body.team_id ?? "",
               slackUserId: body.user_id
             },
+            executionMode: "openclaw-native",
             conversation: {
               source: "slack",
               workspaceId: body.team_id ?? "",

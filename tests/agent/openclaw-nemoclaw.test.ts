@@ -104,6 +104,7 @@ describe("createOpenClawNemoClawAgentRunner", () => {
 
     const result = await collectAgentRun(runner, {
       principal,
+      executionMode: "openclaw-native",
       conversation,
       text: "summarize my GitHub work",
       connections: { github: connection }
@@ -124,6 +125,7 @@ describe("createOpenClawNemoClawAgentRunner", () => {
 
     const body = JSON.parse(String(requests[0].init.body));
     expect(body).toMatchObject({
+      executionMode: "openclaw-native",
       input: {
         text: "summarize my GitHub work",
         conversation,

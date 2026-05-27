@@ -68,6 +68,11 @@ export function buildOpenClawLlmPatch(input: OpenClawPatchInput): string {
         }
       }
     },
+    tools: {
+      codeMode: {
+        enabled: true
+      }
+    },
     logging: {
       level: "info",
       consoleLevel: "info",

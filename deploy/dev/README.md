@@ -239,7 +239,9 @@ raw stream JSONL under `/data/openclaw/state/raw-streams`; Burble parses those
 files for token usage and logs only the summarized counts.
 Use `OPENCLAW_NEMOCLAW_ENGINE=burble-direct` for the low-latency Slack path:
 Burble keeps its own prompt and MCP tool loop, but sends planning turns directly
-to the selected provider from `AI_MODEL`.
+to the selected provider from `AI_MODEL`. `/agent exec <task>` still asks the
+same private runtime container to use OpenClaw-native execution for that one
+request.
 Use `OPENCLAW_NEMOCLAW_ENGINE=openclaw-gateway` only when you want the real
 OpenClaw Gateway agent path. In that mode the runtime starts a private
 `openclaw gateway run` process once at boot using `OPENCLAW_GATEWAY_PORT`,
