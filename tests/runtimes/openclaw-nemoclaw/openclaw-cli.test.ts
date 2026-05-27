@@ -2006,6 +2006,51 @@ describe("runOpenClawCliRequest", () => {
     expect(requests[0].body.input).toContain("what can you do?");
   });
 
+  test("instructs native execution to avoid repeated code tool loops", async () => {
+    const requests: Array<{ body: Record<string, unknown> }> = [];
+    await withMockFetch(
+      (async (_input, init) => {
+        requests.push({
+          body: JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>
+        });
+        return new Response(JSON.stringify(openResponsesText("Done.")), {
+          status: 200,
+          headers: { "content-type": "application/json" }
+        });
+      }) as typeof fetch,
+      async () =>
+        runOpenClawCliRequest(
+          {
+            executionMode: "openclaw-native",
+            input: {
+              text: "run a 30 second hash loop",
+              connections: {
+                github: { connected: false }
+              }
+            }
+          },
+          { ...config, engine: "openclaw-gateway" },
+          async () => {
+            throw new Error("unexpected tool call");
+          },
+          async () => {
+            throw new Error("unexpected cli call");
+          },
+          () => undefined
+        )
+    );
+
+    expect(String(requests[0].body.input)).toContain(
+      "prefer one deliberate exec call for the main work"
+    );
+    expect(String(requests[0].body.input)).toContain(
+      "run exactly one timed program for the requested duration"
+    );
+    expect(String(requests[0].body.input)).toContain(
+      "avoid unnecessary extra tool loops"
+    );
+  });
+
   test("logs stream debug details only when enabled", async () => {
     const logs: string[] = [];
 

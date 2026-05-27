@@ -627,11 +627,13 @@ export function createSlackRuntime(
           return;
         }
 
-        await ack(buildAgentExecLoadingResponse(action.task));
+        const execResponseType = responseTypeForCommandChannel(body.channel_id);
+        let progressText = buildAgentExecLoadingText(action.task);
+        await ack(buildAgentExecLoadingResponse(action.task, execResponseType));
         try {
           if (config.agentMode !== "llm" || !agentRunner) {
             await respond({
-              response_type: "ephemeral",
+              response_type: execResponseType,
               replace_original: true,
               text: "Agent execution requires `AGENT_MODE=llm` and an agent runtime."
             });
@@ -640,30 +642,46 @@ export function createSlackRuntime(
 
           const startedAtMs = Date.now();
           const email = await getSlackEmail(body.user_id);
-          const result = await collectAgentRun(agentRunner, {
-            principal: {
-              workspaceId: body.team_id ?? "",
-              slackUserId: body.user_id
+          const result = await collectAgentRun(
+            agentRunner,
+            {
+              principal: {
+                workspaceId: body.team_id ?? "",
+                slackUserId: body.user_id
+              },
+              executionMode: "openclaw-native",
+              conversation: {
+                source: "slack",
+                workspaceId: body.team_id ?? "",
+                channelId: body.channel_id,
+                rootId: `slash-agent-exec:${Date.now()}`,
+                isDirectMessage: body.channel_id.startsWith("D")
+              },
+              text: action.task,
+              connections: {
+                github: store.getConnection("github", email),
+                google: store.getConnection("google", email),
+                jira: store.getConnection("jira", email),
+                slack: store.getConnection("slack", email)
+              }
             },
-            executionMode: "openclaw-native",
-            conversation: {
-              source: "slack",
-              workspaceId: body.team_id ?? "",
-              channelId: body.channel_id,
-              rootId: `slash-agent-exec:${Date.now()}`,
-              isDirectMessage: body.channel_id.startsWith("D")
-            },
-            text: action.task,
-            connections: {
-              github: store.getConnection("github", email),
-              google: store.getConnection("google", email),
-              jira: store.getConnection("jira", email),
-              slack: store.getConnection("slack", email)
+            async (event) => {
+              const nextText = formatAgentProgressEvent(event, progressText);
+              if (!nextText || nextText === progressText) {
+                return;
+              }
+
+              progressText = nextText;
+              await respond({
+                response_type: execResponseType,
+                replace_original: true,
+                text: progressText
+              });
             }
-          });
+          );
 
           await respond({
-            response_type: "ephemeral",
+            response_type: execResponseType,
             replace_original: true,
             text: formatAgentExecResult(result.text, {
               elapsedMs: Date.now() - startedAtMs,
@@ -673,7 +691,7 @@ export function createSlackRuntime(
         } catch (error) {
           logger.error(formatLogError(error));
           await respond({
-            response_type: "ephemeral",
+            response_type: execResponseType,
             replace_original: true,
             text: formatAgentExecFailureMessage(error)
           });
@@ -1182,13 +1200,26 @@ export function buildAgentCommandHelpResponse() {
   };
 }
 
-export function buildAgentExecLoadingResponse(task: string) {
+function responseTypeForCommandChannel(
+  channelId: string | undefined
+): "ephemeral" | "in_channel" {
+  return channelId?.startsWith("D") ? "in_channel" : "ephemeral";
+}
+
+function buildAgentExecLoadingText(task: string): string {
+  return `Sending task to your private agent runtime: ${truncateSlackConfigValue(
+    task,
+    180
+  )}`;
+}
+
+export function buildAgentExecLoadingResponse(
+  task: string,
+  responseType: "ephemeral" | "in_channel" = "ephemeral"
+) {
   return {
-    response_type: "ephemeral" as const,
-    text: `Sending task to your private agent runtime: ${truncateSlackConfigValue(
-      task,
-      180
-    )}`
+    response_type: responseType,
+    text: buildAgentExecLoadingText(task)
   };
 }
 
@@ -1709,7 +1740,7 @@ export function formatAgentProgressEvent(
 ): string | undefined {
   switch (event.type) {
     case "status":
-      return currentText.trim() ? undefined : normalizeAgentStatus(event.text);
+      return normalizeAgentStatus(event.text);
     case "tool_call":
       return replaceOrAppendProgressLine(
         currentText,
@@ -1766,7 +1797,24 @@ function formatAgentExecFailureMessage(error: unknown): string {
     return formatConversationFailureMessage(error, "message");
   }
 
-  return "I could not run that agent task.";
+  const detail = sanitizeAgentExecFailureDetail(message);
+  return detail
+    ? `I could not run that agent task: ${detail}`
+    : "I could not run that agent task.";
+}
+
+function sanitizeAgentExecFailureDetail(message: string): string {
+  const normalized = message
+    .replace(/\s+/g, " ")
+    .replace(/Bearer\s+[A-Za-z0-9._~+/=-]+/gi, "Bearer [redacted]")
+    .replace(/sk-[A-Za-z0-9_-]+/g, "[redacted-openai-key]")
+    .trim();
+
+  if (!normalized) {
+    return "";
+  }
+
+  return truncateSlackConfigValue(normalized, 240);
 }
 
 function isRuntimeMcpAuthFailure(message: string): boolean {
