@@ -574,7 +574,7 @@ describe("handleRuntimeRequest", () => {
     });
   });
 
-  test("delivers OpenClaw cron webhook summaries through the Burble tool gateway", async () => {
+  test("delivers Burble channel events through the Burble tool gateway", async () => {
     const requests: Request[] = [];
     const response = await withMockFetch(
       (async (input, init) => {
@@ -593,7 +593,7 @@ describe("handleRuntimeRequest", () => {
       () =>
         handleRuntimeRequest(
           new Request(
-            "http://runtime/internal/conversation/routes/convrt_abc123/webhook",
+            "http://runtime/internal/burble/channel/routes/convrt_abc123/events",
             {
               method: "POST",
               headers: { "content-type": "application/json" },
@@ -626,7 +626,7 @@ describe("handleRuntimeRequest", () => {
     });
   });
 
-  test("accepts cron webhooks without deliverable text without posting", async () => {
+  test("accepts Burble channel events without deliverable text without posting", async () => {
     const requests: Request[] = [];
     const response = await withMockFetch(
       (async (input, init) => {
@@ -636,7 +636,7 @@ describe("handleRuntimeRequest", () => {
       () =>
         handleRuntimeRequest(
           new Request(
-            "http://runtime/internal/conversation/routes/convrt_abc123/webhook",
+            "http://runtime/internal/burble/channel/routes/convrt_abc123/events",
             {
               method: "POST",
               headers: { "content-type": "application/json" },
@@ -652,9 +652,46 @@ describe("handleRuntimeRequest", () => {
 
     expect(response.status).toBe(202);
     expect(await response.text()).toBe(
-      "Webhook payload did not contain deliverable text"
+      "Burble channel event did not contain deliverable text"
     );
     expect(requests).toEqual([]);
+  });
+
+  test("keeps the previous conversation webhook endpoint as a compatibility alias", async () => {
+    const requests: Request[] = [];
+    const response = await withMockFetch(
+      (async (input, init) => {
+        const request = new Request(input, init);
+        requests.push(request);
+        return Response.json({
+          classification: "user_private",
+          content: { ok: true }
+        });
+      }) as typeof fetch,
+      () =>
+        handleRuntimeRequest(
+          new Request(
+            "http://runtime/internal/conversation/routes/convrt_abc123/webhook",
+            {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({ text: "hello through old path" })
+            }
+          ),
+          {
+            ...config,
+            runtimeId: "rt_u123"
+          }
+        )
+    );
+
+    expect(response.status).toBe(200);
+    expect(await requests[0].json()).toEqual({
+      input: {
+        routeId: "convrt_abc123",
+        text: "hello through old path"
+      }
+    });
   });
 
   test("rejects malformed run requests", async () => {

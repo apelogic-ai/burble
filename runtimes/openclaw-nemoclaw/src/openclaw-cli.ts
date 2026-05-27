@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { mkdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
+import { buildBurbleConversationDeliveryTarget } from "./burble-conversation-connector";
 import type { RuntimeConfig } from "./config";
 import { readGatewayDiagnosticTextSince } from "./gateway-diagnostics";
 import { parseLlmModelId, type ParsedLlmModel } from "./llm-config";
@@ -106,8 +107,9 @@ export async function runOpenClawCliRequest(
   }
 
   const sessionId = buildRunSessionId(request);
+  const sessionScope = buildRunSessionScope(request);
   logInfo(
-    `OpenClaw agent start runId=${request.runId ?? "unknown"} agent=${config.openClawAgent} sessionId=${sessionId} sessionScope=run textLength=${request.input.text.length} classification=${baseline.response.classification}`
+    `OpenClaw agent start runId=${request.runId ?? "unknown"} agent=${config.openClawAgent} sessionId=${sessionId} sessionScope=${sessionScope} textLength=${request.input.text.length} classification=${baseline.response.classification}`
   );
   const executedTools: ExecutedToolCall[] = [];
   const rejectedDirectResponses: string[] = [];
@@ -345,6 +347,7 @@ async function runOpenClawGatewayHttpRequest(
     const response = await fetchGatewayHttpResponse(
       endpoint,
       config,
+      request,
       sessionKey,
       prompt
     );
@@ -616,6 +619,7 @@ async function fetchDirectModelResponse(
 async function fetchGatewayHttpResponse(
   endpoint: string,
   config: RuntimeConfig,
+  request: RunRequest,
   sessionKey: string,
   prompt: string
 ): Promise<Response> {
@@ -628,7 +632,7 @@ async function fetchGatewayHttpResponse(
         "authorization": `Bearer ${config.openClawGatewayToken}`,
         "content-type": "application/json",
         "x-openclaw-agent-id": config.openClawAgent,
-        "x-openclaw-message-channel": "webchat",
+        "x-openclaw-message-channel": resolveGatewayHttpMessageChannel(request),
         "x-openclaw-session-key": sessionKey
       },
       body: JSON.stringify({
@@ -846,8 +850,9 @@ export async function* runOpenClawCliRequestStream(
   }
 
   const sessionId = buildRunSessionId(request);
+  const sessionScope = buildRunSessionScope(request);
   logInfo(
-    `OpenClaw agent start runId=${request.runId ?? "unknown"} agent=${config.openClawAgent} sessionId=${sessionId} sessionScope=run textLength=${request.input.text.length} classification=${baseline.response.classification}`
+    `OpenClaw agent start runId=${request.runId ?? "unknown"} agent=${config.openClawAgent} sessionId=${sessionId} sessionScope=${sessionScope} textLength=${request.input.text.length} classification=${baseline.response.classification}`
   );
   yield { type: "status", text: "Agent is thinking..." };
 
@@ -1768,12 +1773,13 @@ function formatActiveConversationRouteInstruction(
   if (!routeId) {
     return [];
   }
+  const target = buildBurbleConversationDeliveryTarget(config, routeId);
 
   return [
-    `Active Burble conversation route: ${routeId}.`,
-    `For OpenClaw cron/background jobs that should report back later, use OpenClaw cron webhook delivery: set delivery.mode to "webhook" and delivery.to to http://127.0.0.1:${config.port}/internal/conversation/routes/${encodeURIComponent(routeId)}/webhook. The cron job prompt should produce the final message text; the cron runner will POST the finished payload to Burble.`,
-    `For direct background scripts that are not OpenClaw cron jobs, POST JSON {"routeId":"${routeId}","text":"message text"} to http://127.0.0.1:${config.port}/internal/conversation/messages.`,
-    "Do not create cron jobs that rely on conversation.sendMessage JSON blobs, announce delivery, Slack channel IDs, Slack credentials, or Burble credentials. Burble's local endpoint injects delivery credentials outside the OpenClaw process."
+    `Active Burble conversation channel route: ${target.routeId}.`,
+    `Native OpenClaw Burble channel delivery is installed. For cron/background jobs, set delivery.mode to "announce", delivery.channel to "burble", and delivery.to to "${target.routeId}". The scheduled prompt should produce the final Slack-ready message text; Burble resolves the route to the actual transport outside OpenClaw.`,
+    `Compatibility delivery for tools that cannot use native channel delivery: POST final event JSON to ${target.localEventUrl}, or POST direct message JSON {"text":"message text"} to ${target.localMessageUrl}.`,
+    "Do not create cron jobs that rely on conversation.sendMessage JSON blobs, announce delivery, Slack channel IDs, Slack credentials, or Burble credentials. Burble's channel connector owns route auth and transport delivery outside the OpenClaw process."
   ];
 }
 
@@ -2793,9 +2799,18 @@ async function readRawStreamForUsage(
 }
 
 function buildRunSessionId(request: RunRequest): string {
+  const channelSessionKey = buildBurbleChannelSessionKey(request);
+  if (channelSessionKey) {
+    return `burble-channel-${hashSessionKey(channelSessionKey)}`;
+  }
+
   return `burble-run-${hashSessionKey(
     `${buildSessionRoot(request)}:${buildRunSessionKey(request)}`
   )}`;
+}
+
+function buildRunSessionScope(request: RunRequest): "run" | "channel" {
+  return buildBurbleChannelSessionKey(request) ? "channel" : "run";
 }
 
 function buildStepSessionId(runSessionId: string, step: number): string {
@@ -2825,6 +2840,29 @@ function buildSessionRoot(request: RunRequest): string {
 
   const email = request.input.connections.github.email ?? "anonymous";
   return `burble-${email.replace(/[^a-zA-Z0-9_.-]/g, "_")}`;
+}
+
+function buildBurbleChannelSessionKey(request: RunRequest): string | null {
+  if (request.executionMode !== "openclaw-native") {
+    return null;
+  }
+
+  const conversation = request.input.conversation;
+  if (!conversation?.routeId) {
+    return null;
+  }
+
+  return [
+    request.runtime?.id ?? "static-runtime",
+    conversation.workspaceId,
+    conversation.routeId,
+    conversation.rootId,
+    conversation.isDirectMessage ? "dm" : "channel"
+  ].join(":");
+}
+
+function resolveGatewayHttpMessageChannel(request: RunRequest): "webchat" | "burble" {
+  return buildBurbleChannelSessionKey(request) ? "burble" : "webchat";
 }
 
 function hashSessionKey(value: string): string {

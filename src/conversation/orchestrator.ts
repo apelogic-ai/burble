@@ -80,6 +80,9 @@ export async function handleConversation(
           workspaceId: request.workspaceId,
           slackUserId: request.user.slackUserId
         },
+        ...(deps.agentExecutionMode
+          ? { executionMode: deps.agentExecutionMode }
+          : {}),
         conversation: buildAgentConversation(request),
         ...(request.context ? { context: request.context } : {}),
         text: request.text,
@@ -178,6 +181,7 @@ export async function handleConversation(
 
 function buildAgentConversation(request: ConversationRequest) {
   return {
+    ...(request.conversationRouteId ? { routeId: request.conversationRouteId } : {}),
     source: request.source,
     workspaceId: request.workspaceId,
     channelId: request.channelId,

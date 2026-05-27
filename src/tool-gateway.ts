@@ -847,6 +847,13 @@ function resolveConversationRouteDestination(
       message: "Invalid conversation route"
     };
   }
+  if (destination.runtimeId && destination.runtimeId !== runtime.id) {
+    return {
+      ok: false,
+      status: 403,
+      message: "Runtime route mismatch"
+    };
+  }
 
   return {
     ok: true,
@@ -857,7 +864,7 @@ function resolveConversationRouteDestination(
 
 function readSlackRouteDestination(
   destinationJson: string
-): { channelId: string; threadTs?: string } | null {
+): { channelId: string; threadTs?: string; runtimeId?: string } | null {
   try {
     const parsed = JSON.parse(destinationJson) as unknown;
     if (
@@ -882,11 +889,21 @@ function readSlackRouteDestination(
     ) {
       return null;
     }
+    if (
+      "runtimeId" in record &&
+      record.runtimeId !== undefined &&
+      typeof record.runtimeId !== "string"
+    ) {
+      return null;
+    }
 
     return {
       channelId: record.channelId,
       ...(typeof record.threadTs === "string" && record.threadTs.trim()
         ? { threadTs: record.threadTs }
+        : {}),
+      ...(typeof record.runtimeId === "string" && record.runtimeId.trim()
+        ? { runtimeId: record.runtimeId }
         : {})
     };
   } catch {

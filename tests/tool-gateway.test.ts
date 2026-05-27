@@ -408,6 +408,38 @@ describe("handleToolGatewayRequest", () => {
     });
   });
 
+  test("rejects durable conversation routes bound to another runtime", async () => {
+    const route: ConversationRouteRecord = {
+      id: "convrt_abc123",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      transport: "slack",
+      destinationJson: JSON.stringify({
+        channelId: "C123",
+        runtimeId: "rt_other"
+      }),
+      createdAt: "2026-05-26T00:00:00.000Z",
+      updatedAt: "2026-05-26T00:00:00.000Z",
+      revokedAt: null
+    };
+    const response = await handleToolGatewayRequest(
+      config,
+      createStore(null, runtime, [], route),
+      "conversation.sendMessage",
+      request(
+        "conversation.sendMessage",
+        {
+          input: { text: "Cron finished.", routeId: "convrt_abc123" }
+        },
+        "runtime-token-u123",
+        "rt_u123"
+      )
+    );
+
+    expect(response.status).toBe(403);
+    expect(await response.text()).toBe("Runtime route mismatch");
+  });
+
   test("rejects active conversation sends for another workspace", async () => {
     const response = await handleToolGatewayRequest(
       config,

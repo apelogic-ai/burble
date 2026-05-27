@@ -15,6 +15,7 @@ export type ConversationRequest = {
   threadTs?: string;
   messageTs: string;
   isDirectMessage: boolean;
+  conversationRouteId?: string;
   context?: {
     currentChannel?: {
       id: string;
@@ -54,5 +55,6 @@ export type ConversationDeps = {
   slackTools?: ReturnType<typeof createSlackTools>;
   agentMode?: AgentMode;
   agentRunner?: AgentRunner;
+  agentExecutionMode?: "default" | "openclaw-native";
   onAgentEvent?: AgentRunEventHandler;
 };
