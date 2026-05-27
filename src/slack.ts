@@ -1,4 +1,5 @@
 import { App, LogLevel } from "@slack/bolt";
+import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import type { Config } from "./config";
 import type { SlackLogLevel } from "./config";
@@ -114,6 +115,25 @@ type SlackProgressMessage = {
   toolCallOrder: string[];
 };
 
+type AgentExecTaskStatus = "running" | "stopping" | "stopped" | "finished" | "failed";
+
+type AgentExecTask = {
+  id: string;
+  workspaceId: string;
+  slackUserId: string;
+  channelId: string;
+  task: string;
+  status: AgentExecTaskStatus;
+  createdAtMs: number;
+  updatedAtMs: number;
+  progressText: string;
+  runtimeId?: string;
+  stopRequested?: boolean;
+  message?: SlackProgressMessage;
+  finalText?: string;
+  failureText?: string;
+};
+
 export function createSlackRuntime(
   config: Config,
   store: TokenStore,
@@ -191,6 +211,7 @@ export function createSlackRuntime(
           logInfo: (message) => app.logger.info(withUtcTimestamp(message))
         })
       : undefined;
+  const agentExecTasks = new Map<string, AgentExecTask>();
 
   app.event("app_mention", async ({ body, event, client, logger }) => {
     const mention = event as {
@@ -621,48 +642,123 @@ export function createSlackRuntime(
         return;
       }
 
-      if (action.kind === "exec") {
-        if (!action.task.trim()) {
-          await ack(buildAgentExecMissingTaskResponse());
-          return;
-        }
+      if (action.kind === "exec_list") {
+        await ack(
+          buildAgentExecTaskListResponse(
+            listAgentExecTasks(agentExecTasks, body.team_id ?? "", body.user_id)
+          )
+        );
+        return;
+      }
 
-        await ack();
+      if (action.kind === "exec_inspect") {
+        await ack(
+          buildAgentExecTaskInspectResponse(
+            findAgentExecTask(
+              agentExecTasks,
+              body.team_id ?? "",
+              body.user_id,
+              action.taskId
+            )
+          )
+        );
+        return;
+      }
+
+      if (action.kind === "exec_stop") {
+        const task = findAgentExecTask(
+          agentExecTasks,
+          body.team_id ?? "",
+          body.user_id,
+          action.taskId
+        );
+        await ack(buildAgentExecStopLoadingResponse(task));
+        if (task) {
+          await stopAgentExecTask({
+            task,
+            runtimeFactory,
+            client,
+            stoppedBy: body.user_id
+          });
+        }
+        await respond({
+          ...buildAgentExecStopResponse(task),
+          replace_original: true
+        });
+        return;
+      }
+
+      if (action.kind === "exec") {
+        const principal = {
+          workspaceId: body.team_id ?? "",
+          slackUserId: body.user_id
+        };
+        const execTask = createAgentExecTask({
+          workspaceId: principal.workspaceId,
+          slackUserId: principal.slackUserId,
+          channelId: body.channel_id,
+          task: action.task
+        });
+        agentExecTasks.set(execTask.id, execTask);
+        await ack(buildAgentExecInvocationResponse(execTask));
         let progressText = "Starting agent runtime...";
         const execProgressMessage = await postAgentExecProgressMessage(
           client,
           body.channel_id,
-          formatAgentExecTaskMessage(action.task, progressText)
+          formatAgentExecResponseMessage(execTask, progressText)
         );
+        execTask.message = execProgressMessage;
         try {
           if (config.agentMode !== "llm" || !agentRunner) {
+            const failureText =
+              "Agent execution requires `AGENT_MODE=llm` and an agent runtime.";
             await updateAgentExecResponse({
               client,
               respond,
               progressMessage: execProgressMessage,
-              text: formatAgentExecTaskMessage(
-                action.task,
-                "Agent execution requires `AGENT_MODE=llm` and an agent runtime."
+              text: formatAgentExecResponseMessage(execTask, failureText)
+            });
+            finishAgentExecTask(execTask, "failed", failureText);
+            return;
+          }
+
+          const startedAtMs = Date.now();
+          const runtime = runtimeFactory
+            ? await runtimeFactory.getOrCreateRuntime(principal)
+            : null;
+          if (runtime) {
+            execTask.runtimeId = runtime.id;
+          }
+          if (execTask.stopRequested && runtimeFactory && runtime) {
+            await runtimeFactory.stopRuntime(runtime.id);
+            finishAgentExecTask(
+              execTask,
+              "stopped",
+              "Stopped before the runtime task started."
+            );
+            await updateAgentExecResponse({
+              client,
+              respond,
+              progressMessage: execProgressMessage,
+              text: formatAgentExecResponseMessage(
+                execTask,
+                "Stopped before the runtime task started."
               )
             });
             return;
           }
 
-          const startedAtMs = Date.now();
           const email = await getSlackEmail(body.user_id);
           const result = await collectAgentRun(
             agentRunner,
             {
-              principal: {
-                workspaceId: body.team_id ?? "",
-                slackUserId: body.user_id
-              },
+              principal,
               executionMode: "openclaw-native",
               conversation: {
                 source: "slack",
-                workspaceId: body.team_id ?? "",
+                workspaceId: principal.workspaceId,
                 channelId: body.channel_id,
-                rootId: `slash-agent-exec:${Date.now()}`,
+                rootId: `slash-agent-exec:${execTask.id}`,
                 isDirectMessage: body.channel_id.startsWith("D")
               },
               text: action.task,
@@ -680,37 +776,50 @@ export function createSlackRuntime(
               }
 
               progressText = nextText;
+              execTask.progressText = progressText;
+              execTask.updatedAtMs = Date.now();
               await updateAgentExecResponse({
                 client,
                 respond,
                 progressMessage: execProgressMessage,
-                text: formatAgentExecTaskMessage(action.task, progressText)
+                text: formatAgentExecResponseMessage(execTask, progressText)
               });
             }
           );
 
+          if (execTask.status === "stopped") {
+            return;
+          }
+          const finalText = formatAgentExecResult(result.text, {
+            elapsedMs: Date.now() - startedAtMs,
+            usage: result.usage
+          });
+          finishAgentExecTask(execTask, "finished", finalText);
           await updateAgentExecResponse({
             client,
             respond,
             progressMessage: execProgressMessage,
-            text: formatAgentExecTaskMessage(
-              action.task,
-              formatAgentExecResult(result.text, {
-                elapsedMs: Date.now() - startedAtMs,
-                usage: result.usage
-              })
-            )
+            text: formatAgentExecResponseMessage(execTask, finalText)
           });
         } catch (error) {
           logger.error(formatLogError(error));
+          if (execTask.status === "stopped" || execTask.stopRequested) {
+            finishAgentExecTask(execTask, "stopped", "Stopped.");
+            await updateAgentExecResponse({
+              client,
+              respond,
+              progressMessage: execProgressMessage,
+              text: formatAgentExecResponseMessage(execTask, "Stopped.")
+            });
+            return;
+          }
+          const failureText = formatAgentExecFailureMessage(error);
+          finishAgentExecTask(execTask, "failed", failureText);
           await updateAgentExecResponse({
             client,
             respond,
             progressMessage: execProgressMessage,
-            text: formatAgentExecTaskMessage(
-              action.task,
-              formatAgentExecFailureMessage(error)
-            )
+            text: formatAgentExecResponseMessage(execTask, failureText)
           });
         }
         return;
@@ -986,6 +1095,9 @@ export type AgentCommand =
   | { kind: "help" }
   | { kind: "status" }
   | { kind: "config" }
+  | { kind: "exec_list" }
+  | { kind: "exec_inspect"; taskId: string }
+  | { kind: "exec_stop"; taskId: string }
   | { kind: "exec"; task: string };
 
 export function parseAgentCommand(text: string): AgentCommand {
@@ -1009,7 +1121,22 @@ export function parseAgentCommand(text: string): AgentCommand {
 
   const execMatch = /^exec(?:ute)?(?:\s+([\s\S]*))?$/i.exec(trimmed);
   if (execMatch) {
-    return { kind: "exec", task: execMatch[1]?.trim() ?? "" };
+    const task = execMatch[1]?.trim() ?? "";
+    if (!task) {
+      return { kind: "exec_list" };
+    }
+
+    const inspectMatch = /^inspect\s+([A-Za-z0-9_-]+)$/i.exec(task);
+    if (inspectMatch) {
+      return { kind: "exec_inspect", taskId: inspectMatch[1] };
+    }
+
+    const stopMatch = /^(?:stop|cancel)\s+([A-Za-z0-9_-]+)$/i.exec(task);
+    if (stopMatch) {
+      return { kind: "exec_stop", taskId: stopMatch[1] };
+    }
+
+    return { kind: "exec", task };
   }
 
   return { kind: "help" };
@@ -1209,7 +1336,10 @@ export function buildAgentCommandHelpResponse() {
             "Use one of:",
             "• `/agent status` - show and power up your current agent runtime",
             "• `/agent config` - inspect your current agent config file",
-            "• `/agent exec <task>` - send an explicit task to your private agent runtime"
+            "• `/agent exec` - list active agent tasks",
+            "• `/agent exec <task>` - send an explicit task to your private agent runtime",
+            "• `/agent exec inspect <id>` - inspect an active or recent task",
+            "• `/agent exec stop <id>` - stop an active task"
           ].join("\n")
         }
       }
@@ -1269,17 +1399,124 @@ async function updateAgentExecResponse(input: {
   });
 }
 
-function buildAgentExecLoadingText(task: string): string {
-  return formatAgentExecTaskMessage(task, "Starting agent runtime...");
+function createAgentExecTask(input: {
+  workspaceId: string;
+  slackUserId: string;
+  channelId: string;
+  task: string;
+}): AgentExecTask {
+  const now = Date.now();
+  return {
+    id: randomUUID().slice(0, 8),
+    workspaceId: input.workspaceId,
+    slackUserId: input.slackUserId,
+    channelId: input.channelId,
+    task: input.task,
+    status: "running",
+    createdAtMs: now,
+    updatedAtMs: now,
+    progressText: "Starting agent runtime..."
+  };
 }
 
-function formatAgentExecTaskMessage(task: string, body: string): string {
-  return [
-    "*Agent async task*",
-    `\`/agent exec ${truncateSlackConfigValue(task, 320)}\``,
-    "",
-    body.trim()
-  ].join("\n");
+function finishAgentExecTask(
+  task: AgentExecTask,
+  status: Exclude<AgentExecTaskStatus, "running" | "stopping">,
+  finalText = ""
+): void {
+  task.status = status;
+  task.updatedAtMs = Date.now();
+  if (status === "failed") {
+    task.failureText = finalText;
+  } else {
+    task.finalText = finalText;
+  }
+}
+
+function listAgentExecTasks(
+  tasks: Map<string, AgentExecTask>,
+  workspaceId: string,
+  slackUserId: string
+): AgentExecTask[] {
+  return [...tasks.values()]
+    .filter(
+      (task) =>
+        task.workspaceId === workspaceId &&
+        task.slackUserId === slackUserId &&
+        (task.status === "running" || task.status === "stopping")
+    )
+    .sort((left, right) => left.createdAtMs - right.createdAtMs);
+}
+
+function findAgentExecTask(
+  tasks: Map<string, AgentExecTask>,
+  workspaceId: string,
+  slackUserId: string,
+  taskId: string
+): AgentExecTask | null {
+  const task = tasks.get(taskId);
+  return task?.workspaceId === workspaceId && task.slackUserId === slackUserId
+    ? task
+    : null;
+}
+
+async function stopAgentExecTask(input: {
+  task: AgentExecTask;
+  runtimeFactory?: RuntimeFactory;
+  client: App["client"];
+  stoppedBy: string;
+}): Promise<void> {
+  const { task } = input;
+  if (task.status !== "running" && task.status !== "stopping") {
+    return;
+  }
+
+  task.stopRequested = true;
+  task.status = "stopping";
+  task.updatedAtMs = Date.now();
+  if (task.message) {
+    await input.client.chat.update({
+      channel: task.message.channel,
+      ts: task.message.ts,
+      text: formatAgentExecResponseMessage(
+        task,
+        `Stopping task at <@${input.stoppedBy}>'s request...`
+      )
+    });
+  }
+
+  if (!input.runtimeFactory || !task.runtimeId) {
+    return;
+  }
+
+  await input.runtimeFactory.stopRuntime(task.runtimeId);
+  finishAgentExecTask(task, "stopped", `Stopped by <@${input.stoppedBy}>.`);
+  if (task.message) {
+    await input.client.chat.update({
+      channel: task.message.channel,
+      ts: task.message.ts,
+      text: formatAgentExecResponseMessage(task, task.finalText ?? "Stopped.")
+    });
+  }
+}
+
+function buildAgentExecLoadingText(_task: string): string {
+  return "Agent response: Starting agent runtime...";
+}
+
+function buildAgentExecInvocationResponse(task: AgentExecTask) {
+  return {
+    response_type: "in_channel" as const,
+    text: [
+      `Agent task: ${truncateSlackConfigValue(task.task, 600)}`,
+      `Task ID: \`${task.id}\``
+    ].join("\n")
+  };
+}
+
+function formatAgentExecResponseMessage(task: AgentExecTask, body: string): string {
+  const status = task.status === "running" ? "" : ` Status: \`${task.status}\`.`;
+  return `Agent response: ${body.trim()}${status}`;
 }
 
 export function buildAgentExecLoadingResponse(
@@ -1295,8 +1532,96 @@ export function buildAgentExecLoadingResponse(
 export function buildAgentExecMissingTaskResponse() {
   return {
     response_type: "ephemeral" as const,
-    text: "Usage: `/agent exec <task>`"
+    text: "Usage: `/agent exec <task>`. Use `/agent exec` to list active tasks."
   };
+}
+
+export function buildAgentExecTaskListResponse(tasks: AgentExecTask[]) {
+  return {
+    response_type: "ephemeral" as const,
+    text:
+      tasks.length === 0
+        ? "No active agent tasks."
+        : [
+            "*Active agent tasks*",
+            ...tasks.map(
+              (task) =>
+                `• \`${task.id}\` ${formatAgentExecAge(task)} ${truncateSlackConfigValue(task.task, 120)}\n  Inspect: \`/agent exec inspect ${task.id}\`  Stop: \`/agent exec stop ${task.id}\``
+            )
+          ].join("\n")
+  };
+}
+
+export function buildAgentExecTaskInspectResponse(task: AgentExecTask | null) {
+  if (!task) {
+    return {
+      response_type: "ephemeral" as const,
+      text: "Agent task not found."
+    };
+  }
+
+  return {
+    response_type: "ephemeral" as const,
+    text: [
+      `*Agent task* \`${task.id}\``,
+      `• Status: \`${task.status}\``,
+      `• Age: ${formatAgentExecAge(task)}`,
+      `• Runtime: \`${task.runtimeId ?? "not assigned yet"}\``,
+      `• Task: \`${truncateSlackConfigValue(task.task, 300)}\``,
+      task.finalText
+        ? `• Result: ${truncateSlackConfigValue(task.finalText.replace(/\s+/g, " "), 300)}`
+        : "",
+      task.failureText
+        ? `• Failure: ${truncateSlackConfigValue(task.failureText, 300)}`
+        : "",
+      task.status === "running" || task.status === "stopping"
+        ? `• Stop: \`/agent exec stop ${task.id}\``
+        : ""
+    ]
+      .filter(Boolean)
+      .join("\n")
+  };
+}
+
+function buildAgentExecStopLoadingResponse(task: AgentExecTask | null) {
+  return {
+    response_type: "ephemeral" as const,
+    text: task ? `Stopping agent task \`${task.id}\`...` : "Agent task not found."
+  };
+}
+
+function buildAgentExecStopResponse(task: AgentExecTask | null) {
+  if (!task) {
+    return {
+      response_type: "ephemeral" as const,
+      text: "Agent task not found."
+    };
+  }
+
+  if (task.status === "stopped") {
+    return {
+      response_type: "ephemeral" as const,
+      text: `Stopped agent task \`${task.id}\`.`
+    };
+  }
+
+  if (task.status !== "running" && task.status !== "stopping") {
+    return {
+      response_type: "ephemeral" as const,
+      text: `Agent task \`${task.id}\` is already \`${task.status}\`; nothing to stop.`
+    };
+  }
+
+  return {
+    response_type: "ephemeral" as const,
+    text: task.runtimeId
+      ? `Stop requested for agent task \`${task.id}\`.`
+      : `Stop requested for agent task \`${task.id}\`; it has not attached to a runtime yet.`
+  };
+}
+
+function formatAgentExecAge(task: AgentExecTask): string {
+  return `${formatElapsedMs(Date.now() - task.createdAtMs)} old`;
 }
 
 export function buildAgentConfigResponse(input: {

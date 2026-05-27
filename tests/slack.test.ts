@@ -178,12 +178,7 @@ describe("buildAgentExecLoadingResponse", () => {
       buildAgentExecLoadingResponse("run a long task", "in_channel")
     ).toMatchObject({
       response_type: "in_channel",
-      text: [
-        "*Agent async task*",
-        "`/agent exec run a long task`",
-        "",
-        "Starting agent runtime..."
-      ].join("\n")
+      text: "Agent response: Starting agent runtime..."
     });
   });
 });
@@ -261,7 +256,15 @@ describe("parseAgentCommand", () => {
       kind: "exec",
       task: "run a code task"
     });
-    expect(parseAgentCommand("exec")).toEqual({ kind: "exec", task: "" });
+    expect(parseAgentCommand("exec")).toEqual({ kind: "exec_list" });
+    expect(parseAgentCommand("exec inspect abc123")).toEqual({
+      kind: "exec_inspect",
+      taskId: "abc123"
+    });
+    expect(parseAgentCommand("exec stop abc123")).toEqual({
+      kind: "exec_stop",
+      taskId: "abc123"
+    });
   });
 });
 
@@ -355,8 +358,8 @@ describe("buildAgentCommandHelpResponse", () => {
     expect(buildAgentExecLoadingResponse("summarize calendar").response_type).toBe(
       "in_channel"
     );
-    expect(buildAgentExecLoadingResponse("summarize calendar").text).toContain(
-      "`/agent exec summarize calendar`"
+    expect(buildAgentExecLoadingResponse("summarize calendar").text).toBe(
+      "Agent response: Starting agent runtime..."
     );
   });
 });
