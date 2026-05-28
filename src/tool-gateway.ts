@@ -45,6 +45,10 @@ import { verifyJiraAuthForOpaqueAtlassianMcpError } from "./mcp/atlassian-auth";
 type ToolGatewayDeps = Partial<Parameters<typeof createGitHubTools>[0]> &
   Partial<JiraToolDeps> &
   Partial<SlackToolDeps> & {
+    fetchConversationAttachment?: (input: {
+      attachment: ConversationAttachment;
+      maxBytes: number;
+    }) => Promise<ConversationAttachmentContent>;
     postActiveConversationMessage?: (input: {
       transport: "slack";
       channelId: string;
@@ -74,7 +78,17 @@ type ToolGatewayBody = {
   };
   input?: unknown;
   conversation?: unknown;
+  attachments?: unknown;
 };
+
+type ConversationAttachmentContent = {
+  attachment: ConversationAttachment;
+  contentBase64: string;
+  text?: string;
+};
+
+const maxConversationAttachmentBytes = 5 * 1024 * 1024;
+const maxConversationAttachmentTextChars = 64 * 1024;
 
 const defaultDeps = {
   getGitHubUser,
@@ -151,6 +165,36 @@ export async function handleToolGatewayRequest(
         ...(sendInput.routeId ? { routeId: sendInput.routeId } : {}),
         ...(result.messageId ? { messageId: result.messageId } : {})
       }
+    });
+  }
+
+  if (toolName === "conversation.getAttachment") {
+    if (auth.kind !== "runtime") {
+      return new Response("Runtime auth required", { status: 403 });
+    }
+    if (!isConversationGetAttachmentInput(body?.input)) {
+      return new Response("Invalid tool input", { status: 400 });
+    }
+    const getInput = body.input;
+    const attachments = isConversationAttachmentArray(body?.attachments)
+      ? body.attachments
+      : [];
+    const attachment = attachments.find(
+      (candidate) => candidate.id === getInput.attachmentId
+    );
+    if (!attachment) {
+      return new Response("Attachment not available for this run", { status: 404 });
+    }
+
+    const content = await (deps.fetchConversationAttachment ??
+      ((input) => defaultFetchConversationAttachment(config, input)))({
+      attachment,
+      maxBytes: maxConversationAttachmentBytes
+    });
+
+    return jsonResponseWithAudit(store, auth, toolName, {
+      classification: "user_private",
+      content
     });
   }
 
@@ -556,6 +600,7 @@ function isKnownTool(toolName: string): boolean {
     toolName === "slack.searchUsers" ||
     toolName === "slack.searchMessages" ||
     toolName === "conversation.sendMessage" ||
+    toolName === "conversation.getAttachment" ||
     toolName === "atlassian.listMcpTools" ||
     toolName === "atlassian.callMcpTool"
   );
@@ -751,6 +796,19 @@ function isConversationSendInput(
     (!("routeId" in input) ||
       input.routeId === undefined ||
       (typeof input.routeId === "string" && input.routeId.trim().length > 0))
+  );
+}
+
+function isConversationGetAttachmentInput(
+  input: unknown
+): input is { attachmentId: string } {
+  return (
+    typeof input === "object" &&
+    input !== null &&
+    !Array.isArray(input) &&
+    "attachmentId" in input &&
+    typeof input.attachmentId === "string" &&
+    input.attachmentId.trim().length > 0
   );
 }
 
@@ -1060,6 +1118,98 @@ async function defaultPostActiveConversationMessage(
     channelId: body.channel ?? input.channelId,
     ...(body.ts ? { messageId: body.ts } : {})
   };
+}
+
+async function defaultFetchConversationAttachment(
+  config: Config,
+  input: {
+    attachment: ConversationAttachment;
+    maxBytes: number;
+  }
+): Promise<ConversationAttachmentContent> {
+  if (input.attachment.source !== "slack" || !input.attachment.externalId) {
+    throw new Error("Only Slack attachments can be fetched");
+  }
+
+  const infoUrl = new URL("https://slack.com/api/files.info");
+  infoUrl.searchParams.set("file", input.attachment.externalId);
+  const infoResponse = await fetch(infoUrl, {
+    headers: {
+      authorization: `Bearer ${config.slackBotToken}`
+    }
+  });
+  const infoBody = (await infoResponse.json()) as {
+    ok?: boolean;
+    error?: string;
+    file?: {
+      name?: string;
+      title?: string;
+      mimetype?: string;
+      size?: number;
+      url_private?: string;
+      url_private_download?: string;
+    };
+  };
+  if (!infoResponse.ok || !infoBody.ok || !infoBody.file) {
+    throw new Error(
+      `Slack file lookup failed: ${infoBody.error ?? `HTTP ${infoResponse.status}`}`
+    );
+  }
+
+  const fileSize = infoBody.file.size ?? input.attachment.sizeBytes;
+  if (typeof fileSize === "number" && fileSize > input.maxBytes) {
+    throw new Error("Slack file is too large to fetch");
+  }
+
+  const fileUrl = infoBody.file.url_private_download ?? infoBody.file.url_private;
+  if (!fileUrl) {
+    throw new Error("Slack file has no private download URL");
+  }
+
+  const fileResponse = await fetch(fileUrl, {
+    headers: {
+      authorization: `Bearer ${config.slackBotToken}`
+    }
+  });
+  if (!fileResponse.ok) {
+    throw new Error(`Slack file download failed: HTTP ${fileResponse.status}`);
+  }
+
+  const buffer = Buffer.from(await fileResponse.arrayBuffer());
+  if (buffer.byteLength > input.maxBytes) {
+    throw new Error("Slack file is too large to fetch");
+  }
+
+  const mimeType =
+    infoBody.file.mimetype?.trim() || input.attachment.mimeType || "application/octet-stream";
+  const attachment: ConversationAttachment = {
+    ...input.attachment,
+    mimeType,
+    ...(infoBody.file.name || infoBody.file.title
+      ? { name: infoBody.file.name ?? infoBody.file.title }
+      : {}),
+    sizeBytes: buffer.byteLength
+  };
+  const text = renderAttachmentTextPreview(mimeType, buffer);
+  return {
+    attachment,
+    contentBase64: buffer.toString("base64"),
+    ...(text ? { text } : {})
+  };
+}
+
+function renderAttachmentTextPreview(
+  mimeType: string,
+  buffer: Buffer
+): string | undefined {
+  if (
+    !/^text\//i.test(mimeType) &&
+    !/(json|xml|yaml|markdown|javascript|typescript)$/i.test(mimeType)
+  ) {
+    return undefined;
+  }
+
+  return buffer.toString("utf8").slice(0, maxConversationAttachmentTextChars);
 }
 
 function renderTextWithAttachments(
