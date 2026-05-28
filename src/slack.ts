@@ -249,16 +249,34 @@ export function createSlackRuntime(
 
     let progressMessage: SlackProgressMessage | undefined;
     try {
+      if (config.agentMode === "llm") {
+        progressMessage = await postMentionWorkingState(client, {
+          channel: mention.channel,
+          user: mention.user,
+          isDirectMessage:
+            mention.channel_type === "im" || mention.channel.startsWith("D"),
+          threadTs: buildReplyThreadTs({
+            isDirectMessage:
+              mention.channel_type === "im" || mention.channel.startsWith("D"),
+            messageTs: mention.ts,
+            threadTs: mention.thread_ts
+          })
+        });
+      }
+      logger.info(withUtcTimestamp("app_mention stage=profile_lookup"));
       const email = await getSlackEmail(mention.user);
+      logger.info(withUtcTimestamp("app_mention stage=profile_ready"));
       const text = normalizeMentionText(mention.text ?? "");
       const isDirectMessage =
         mention.channel_type === "im" || mention.channel.startsWith("D");
+      logger.info(withUtcTimestamp("app_mention stage=history_read"));
       const recentMessages = await readRecentSlackMessages(client, {
         channel: mention.channel,
         latestTs: mention.ts,
         user: mention.user,
         logWarn: (message) => logger.warn(withUtcTimestamp(message))
       });
+      logger.info(withUtcTimestamp("app_mention stage=history_ready"));
       const principal = {
         workspaceId: body.team_id ?? "",
         slackUserId: mention.user
@@ -267,7 +285,6 @@ export function createSlackRuntime(
         config.agentMode === "llm" && agentRunner
           ? await createSlackConversationRoute({
               store,
-              runtimeFactory,
               principal,
               channelId: mention.channel,
               isDirectMessage,
@@ -284,20 +301,10 @@ export function createSlackRuntime(
               })
             })
           : null;
-      if (config.agentMode === "llm") {
-        progressMessage = await postMentionWorkingState(client, {
-          channel: mention.channel,
-          user: mention.user,
-          isDirectMessage,
-          threadTs: buildReplyThreadTs({
-            isDirectMessage,
-            messageTs: mention.ts,
-            threadTs: mention.thread_ts
-          })
-        });
-      }
+      logger.info(withUtcTimestamp("app_mention stage=route_ready"));
 
       const activeProgressMessage = progressMessage;
+      logger.info(withUtcTimestamp("app_mention stage=conversation_start"));
       const response = await handleConversation(
         {
           source: "slack",
@@ -409,22 +416,38 @@ export function createSlackRuntime(
 
     let progressMessage: SlackProgressMessage | undefined;
     try {
+      if (config.agentMode === "llm") {
+        progressMessage = await postMentionWorkingState(client, {
+          channel: directMessage.channel,
+          user: directMessage.user,
+          isDirectMessage: true,
+          threadTs: buildReplyThreadTs({
+            isDirectMessage: true,
+            messageTs: directMessage.ts,
+            threadTs: directMessage.thread_ts
+          })
+        });
+      }
+      logger.info(withUtcTimestamp("message.im stage=profile_lookup"));
       const email = await getSlackEmail(directMessage.user);
+      logger.info(withUtcTimestamp("message.im stage=profile_ready"));
+      logger.info(withUtcTimestamp("message.im stage=history_read"));
       const recentMessages = await readRecentSlackMessages(client, {
         channel: directMessage.channel,
         latestTs: directMessage.ts,
         user: directMessage.user,
         logWarn: (message) => logger.warn(withUtcTimestamp(message))
       });
+      logger.info(withUtcTimestamp("message.im stage=history_ready"));
       const principal = {
         workspaceId: body.team_id ?? "",
         slackUserId: directMessage.user
       };
+      logger.info(withUtcTimestamp("message.im stage=route_create"));
       const conversationRoute =
         config.agentMode === "llm" && agentRunner
           ? await createSlackConversationRoute({
               store,
-              runtimeFactory,
               principal,
               channelId: directMessage.channel,
               isDirectMessage: true,
@@ -441,20 +464,10 @@ export function createSlackRuntime(
               })
             })
           : null;
-      if (config.agentMode === "llm") {
-        progressMessage = await postMentionWorkingState(client, {
-          channel: directMessage.channel,
-          user: directMessage.user,
-          isDirectMessage: true,
-          threadTs: buildReplyThreadTs({
-            isDirectMessage: true,
-            messageTs: directMessage.ts,
-            threadTs: directMessage.thread_ts
-          })
-        });
-      }
+      logger.info(withUtcTimestamp("message.im stage=route_ready"));
 
       const activeProgressMessage = progressMessage;
+      logger.info(withUtcTimestamp("message.im stage=conversation_start"));
       const response = await handleConversation(
         {
           source: "slack",
@@ -475,7 +488,7 @@ export function createSlackRuntime(
             slackUserId: directMessage.user,
             email
           },
-          text: directMessage.text.trim(),
+          text: directMessage.text?.trim() ?? "",
           ...buildConversationAttachments(directMessage.files)
         },
         {
@@ -1168,7 +1181,6 @@ function createOpenClawRuntimeFactory(
 
 async function createSlackConversationRoute(input: {
   store: TokenStore;
-  runtimeFactory?: RuntimeFactory;
   principal: {
     workspaceId: string;
     slackUserId: string;
@@ -1178,10 +1190,6 @@ async function createSlackConversationRoute(input: {
   rootId: string;
   threadTs?: string;
 }) {
-  const runtime = input.runtimeFactory
-    ? await input.runtimeFactory.getOrCreateRuntime(input.principal)
-    : null;
-
   return input.store.upsertConversationRoute({
     workspaceId: input.principal.workspaceId,
     slackUserId: input.principal.slackUserId,
@@ -1190,8 +1198,7 @@ async function createSlackConversationRoute(input: {
       channelId: input.channelId,
       isDirectMessage: input.isDirectMessage,
       rootId: input.rootId,
-      ...(input.threadTs ? { threadTs: input.threadTs } : {}),
-      ...(runtime ? { runtimeId: runtime.id } : {})
+      ...(input.threadTs ? { threadTs: input.threadTs } : {})
     }
   });
 }
@@ -2056,18 +2063,22 @@ export function summarizeSlackPayload(body: unknown): string {
 export function shouldHandleDirectMessageEvent(
   event: SlackDirectMessageEvent
 ): event is Required<
-  Pick<SlackDirectMessageEvent, "channel" | "user" | "text" | "ts">
+  Pick<SlackDirectMessageEvent, "channel" | "user" | "ts">
 > &
   SlackDirectMessageEvent {
+  const hasText =
+    typeof event.text === "string" && event.text.trim().length > 0;
+  const hasFiles = Array.isArray(event.files) && event.files.length > 0;
+
   return (
     event.channel_type === "im" &&
     Boolean(event.channel) &&
     Boolean(event.user) &&
-    typeof event.text === "string" &&
+    (hasText || hasFiles) &&
     Boolean(event.ts) &&
-    !event.subtype &&
+    (!event.subtype || event.subtype === "file_share") &&
     !event.bot_id &&
-    !event.text.trim().startsWith("/")
+    !(typeof event.text === "string" && event.text.trim().startsWith("/"))
   );
 }
 
@@ -2303,8 +2314,7 @@ function renderConversationResponseText(response: ConversationResponse): string 
   }
 
   return [
-    response.text,
-    "",
+    ...(response.text.trim() ? [response.text, ""] : []),
     "*Attachments:*",
     ...response.attachments.map((attachment) => {
       const label = attachment.name ?? attachment.id;

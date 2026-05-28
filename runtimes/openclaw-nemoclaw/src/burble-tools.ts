@@ -25,6 +25,9 @@ function createBurbleMcpToolExecutor(
     if (toolName === "conversation.sendMessage") {
       return sendConversationMessage(config, runtimeId, request, body);
     }
+    if (toolName === "conversation.getAttachment") {
+      return getConversationAttachment(config, runtimeId, request, body);
+    }
     if (!config.mcpGatewayUrl || !config.runtimeJwt) {
       throw new Error(
         "Burble MCP gateway URL and runtime JWT are required for provider tools"
@@ -77,9 +80,10 @@ async function sendConversationMessage(
   if (!runtimeId) {
     throw new Error("conversation.sendMessage requires a runtime id");
   }
-  const text = readNestedString(body, "input", "text");
-  if (!text) {
-    throw new Error("conversation.sendMessage requires input.text");
+  const text = readNestedText(body, "input", "text");
+  const attachments = readNestedAttachments(body, "input", "attachments");
+  if (!text && !attachments?.length) {
+    throw new Error("conversation.sendMessage requires input.text or input.attachments");
   }
   const routeId =
     readNestedString(body, "input", "routeId") ??
@@ -88,9 +92,8 @@ async function sendConversationMessage(
     throw new Error("conversation.sendMessage requires a route id or active conversation");
   }
 
-  const attachments = readNestedAttachments(body, "input", "attachments");
   const input = {
-    text,
+    text: text ?? "",
     ...(routeId ? { routeId } : {}),
     ...(attachments ? { attachments } : {})
   };
@@ -129,6 +132,63 @@ async function sendConversationMessage(
 
   info(
     `Burble conversation tool finish tool=conversation.sendMessage classification=${result.classification}${summarizeLogObject("result", result.content)}`
+  );
+  return result;
+}
+
+async function getConversationAttachment(
+  config: RuntimeConfig,
+  runtimeId: string | undefined,
+  request: RunRequest | undefined,
+  body: unknown
+): Promise<ToolResult> {
+  if (!runtimeId) {
+    throw new Error("conversation.getAttachment requires a runtime id");
+  }
+  const attachmentId = readNestedString(body, "input", "attachmentId");
+  if (!attachmentId) {
+    throw new Error("conversation.getAttachment requires input.attachmentId");
+  }
+
+  const input = { attachmentId };
+  info(
+    `Burble conversation tool start tool=conversation.getAttachment${summarizeLogObject("input", input)}`
+  );
+
+  const response = await fetch(
+    `${config.toolGatewayUrl}/${encodeURIComponent("conversation.getAttachment")}/execute`,
+    {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${config.internalToken}`,
+        "x-burble-runtime-id": runtimeId
+      },
+      body: JSON.stringify({
+        input,
+        ...(request?.input.attachments
+          ? { attachments: request.input.attachments }
+          : {}),
+        ...(request?.input.conversation
+          ? { conversation: request.input.conversation }
+          : {})
+      })
+    }
+  );
+
+  if (!response.ok) {
+    throw new Error(
+      `Burble conversation gateway returned HTTP ${response.status}${await readErrorDetail(response)}`
+    );
+  }
+
+  const result = (await response.json()) as unknown;
+  if (!isToolResult(result)) {
+    throw new Error("Burble conversation gateway returned invalid tool result");
+  }
+
+  info(
+    `Burble conversation tool finish tool=conversation.getAttachment classification=${result.classification}${summarizeLogObject("result", result.content)}`
   );
   return result;
 }
@@ -382,6 +442,27 @@ function readNestedString(
   outerKey: string,
   innerKey: string
 ): string | null {
+  const inner = readNestedValue(value, outerKey, innerKey);
+  return typeof inner === "string" && inner.trim() ? inner : null;
+}
+
+function readNestedText(
+  value: unknown,
+  outerKey: string,
+  innerKey: string
+): string | null {
+  const inner = readNestedValue(value, outerKey, innerKey);
+  return typeof inner === "string" &&
+    inner.replace(/[\s\p{Default_Ignorable_Code_Point}]/gu, "").length > 0
+    ? inner
+    : null;
+}
+
+function readNestedValue(
+  value: unknown,
+  outerKey: string,
+  innerKey: string
+): unknown {
   if (!value || typeof value !== "object") {
     return null;
   }
@@ -389,8 +470,7 @@ function readNestedString(
   if (!outer || typeof outer !== "object") {
     return null;
   }
-  const inner = (outer as Record<string, unknown>)[innerKey];
-  return typeof inner === "string" && inner.trim() ? inner : null;
+  return (outer as Record<string, unknown>)[innerKey];
 }
 
 function readNestedAttachments(

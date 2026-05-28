@@ -572,6 +572,26 @@ describe("shouldHandleDirectMessageEvent", () => {
     ).toBe(false);
   });
 
+  test("handles Slack file-share IM messages", () => {
+    expect(
+      shouldHandleDirectMessageEvent({
+        channel_type: "im",
+        channel: "D123",
+        user: "U123",
+        subtype: "file_share",
+        text: "summarize the doc",
+        ts: "1710000000.000100",
+        files: [
+          {
+            id: "F123",
+            name: "SECURITY_AUDIT_2026-05-21.md",
+            mimetype: "text/markdown"
+          }
+        ]
+      })
+    ).toBe(true);
+  });
+
   test("ignores slash-command text echoed in app DMs", () => {
     expect(
       shouldHandleDirectMessageEvent({

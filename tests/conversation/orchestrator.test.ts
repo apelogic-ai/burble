@@ -51,6 +51,18 @@ function createDeps(overrides: Partial<ConversationDeps> = {}): ConversationDeps
       {
         html_url: "https://github.com/acme/app/pull/3",
         title: "Add workspace auth"
+      },
+      {
+        html_url: "https://github.com/acme/app/pull/4",
+        title: "Improve cron delivery"
+      },
+      {
+        html_url: "https://github.com/acme/app/pull/5",
+        title: "Wire provider bridge"
+      },
+      {
+        html_url: "https://github.com/acme/app/pull/6",
+        title: "Update old runtime"
       }
     ]
   });
@@ -211,6 +223,19 @@ describe("handleConversation", () => {
 
     expect(response.visibility).toBe("ephemeral");
     expect(response.text).toContain("Add workspace auth");
+  });
+
+  test("limits deterministic pull request responses when the user asks for a count", async () => {
+    const response = await handleConversation(
+      { ...baseRequest, text: "pull my latest 3 github PRs" },
+      createDeps()
+    );
+
+    expect(response.visibility).toBe("ephemeral");
+    expect(response.text).toContain("Add workspace auth");
+    expect(response.text).toContain("Improve cron delivery");
+    expect(response.text).toContain("Wire provider bridge");
+    expect(response.text).not.toContain("Update old runtime");
   });
 
   test("answers simple issue search requests privately in channels", async () => {
@@ -455,5 +480,81 @@ describe("handleConversation", () => {
     expect(called).toBe(false);
     expect(response.visibility).toBe("ephemeral");
     expect(response.text).toContain("Add workspace auth");
+  });
+
+  test("delegates scheduled provider requests to the agent before GitHub fast-paths", async () => {
+    const calls: string[] = [];
+    const response = await handleConversation(
+      {
+        ...baseRequest,
+        text: "create a one-shot cron job to list my open GitHub PRs and post the result here in 2 minutes"
+      },
+      createDeps({
+        agentMode: "llm",
+        agentRunner: stubAgentRunner((input) => {
+          calls.push(input.text);
+          return {
+            classification: "public",
+            text: "Created scheduled job."
+          };
+        })
+      })
+    );
+
+    expect(calls).toEqual([
+      "create a one-shot cron job to list my open GitHub PRs and post the result here in 2 minutes"
+    ]);
+    expect(response.text).toBe("Created scheduled job.");
+  });
+
+  test("delegates cron and job requests to the agent before GitHub fast-paths", async () => {
+    for (const text of [
+      "set recurring cron job to pull my latest 3 github PRs",
+      "set a job to pull my latest 3 github PRs"
+    ]) {
+      let calledWith = "";
+      const response = await handleConversation(
+        { ...baseRequest, text },
+        createDeps({
+          agentMode: "llm",
+          agentRunner: stubAgentRunner((input) => {
+            calledWith = input.text;
+            return {
+              classification: "public",
+              text: "Agent scheduled it."
+            };
+          })
+        })
+      );
+
+      expect(calledWith).toBe(text);
+      expect(response.text).toBe("Agent scheduled it.");
+    }
+  });
+
+  test("delegates explicit agent, task, and subagent requests before GitHub fast-paths", async () => {
+    for (const text of [
+      "ask agent to list my open GitHub PRs",
+      "add task to list my open GitHub PRs",
+      "ask subagent to list my open GitHub PRs"
+    ]) {
+      let calledWith = "";
+      const response = await handleConversation(
+        { ...baseRequest, text },
+        createDeps({
+          agentMode: "llm",
+          agentRunner: stubAgentRunner((input) => {
+            calledWith = input.text;
+            return {
+              classification: "public",
+              text: "Agent handled it."
+            };
+          })
+        })
+      );
+
+      expect(calledWith).toBe(text);
+      expect(response.text).toBe("Agent handled it.");
+    }
   });
 });

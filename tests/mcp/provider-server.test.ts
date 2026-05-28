@@ -105,6 +105,15 @@ describe("handleProviderMcpRequest", () => {
       githubLogin: "octocat",
       githubToken: "gh-token"
     });
+    const route = store.upsertConversationRoute({
+      workspaceId: "T123",
+      slackUserId: "U123",
+      transport: "slack",
+      destination: {
+        runtimeId: runtime.id,
+        conversationId: "D123"
+      }
+    });
     const token = issuer.issueRuntimeJwt({
       audience: "http://agentgateway:3000/mcp",
       runtimeId: runtime.id,
@@ -121,7 +130,7 @@ describe("handleProviderMcpRequest", () => {
           method: "tools/call",
           params: {
             name: "github_get_authenticated_user",
-            arguments: {}
+            arguments: { routeId: route.id }
           }
         },
         token
@@ -141,6 +150,73 @@ describe("handleProviderMcpRequest", () => {
       classification: "user_private",
       content: { login: "octocat" }
     });
+    store.close();
+  });
+
+  test("rejects route-scoped provider tool calls for another principal", async () => {
+    const issuer = createRuntimeJwtIssuer({ issuer: config.runtimeJwtIssuer });
+    const store = createTokenStore(":memory:");
+    const runtime = store.getOrCreateAgentRuntime({
+      workspaceId: "T123",
+      slackUserId: "U123",
+      engine: "openclaw",
+      endpointUrl: "http://runtime-u123:8080",
+      authTokenHash: "hash-u123",
+      statePath: "/data/runtimes/u123/state",
+      configPath: "/data/runtimes/u123/config/openclaw.json",
+      workspacePath: "/data/runtimes/u123/workspace"
+    });
+    store.upsertConnectedUser({
+      email: "person@example.com",
+      slackUserId: "U123",
+      githubLogin: "octocat",
+      githubToken: "gh-token"
+    });
+    const route = store.upsertConversationRoute({
+      workspaceId: "T123",
+      slackUserId: "U999",
+      transport: "slack",
+      destination: {
+        runtimeId: runtime.id,
+        conversationId: "D999"
+      }
+    });
+    const token = issuer.issueRuntimeJwt({
+      audience: "http://agentgateway:3000/mcp",
+      runtimeId: runtime.id,
+      workspaceId: "T123",
+      slackUserId: "U123"
+    });
+    let called = false;
+
+    const response = await handleProviderMcpRequest(
+      config,
+      store,
+      issuer,
+      mcpRequest(
+        {
+          method: "tools/call",
+          params: {
+            name: "github_get_authenticated_user",
+            arguments: { routeId: route.id }
+          }
+        },
+        token
+      ),
+      {
+        getGitHubUser: async () => {
+          called = true;
+          return { login: "octocat" };
+        }
+      }
+    );
+    const body = readMcpBody(await response.text());
+
+    expect(response.status).toBe(200);
+    expect(body.error.message).toBe(
+      "Conversation route does not belong to this runtime principal."
+    );
+    expect(called).toBe(false);
     store.close();
   });
 
@@ -697,6 +773,7 @@ function mcpRequest(
 
 function readMcpBody(text: string): {
   result: { content: Array<{ text: string }>; tools: Array<{ name: string }> };
+  error: { message: string };
 } {
   const dataLine = text
     .split("\n")

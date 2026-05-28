@@ -65,8 +65,10 @@ describe("ensureOpenClawSetup", () => {
             default: true,
             identity: {
               name: "Burble",
+              nature: "AI copilot",
               theme: "Slack assistant",
-              emoji: ""
+              vibe: "concise and helpful",
+              emoji: ":robot_face:"
             }
           }
         ]
@@ -118,8 +120,10 @@ describe("ensureOpenClawSetup", () => {
             default: true,
             identity: {
               name: "Burble",
+              nature: "AI copilot",
               theme: "Slack assistant",
-              emoji: ""
+              vibe: "concise and helpful",
+              emoji: ":robot_face:"
             }
           }
         ]
@@ -131,6 +135,10 @@ describe("ensureOpenClawSetup", () => {
           unmentionedInbound: "room_event"
         }
       }
+    });
+    expect(writtenConfig.mcp.servers.burble).toEqual({
+      url: `http://127.0.0.1:${runtimeConfig.port}/internal/burble/mcp`,
+      transport: "streamable-http"
     });
     expect(writtenConfig.runtime).toBeUndefined();
     expect(JSON.stringify(writtenConfig)).not.toContain("runtime-jwt");

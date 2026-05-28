@@ -408,6 +408,42 @@ describe("handleToolGatewayRequest", () => {
     });
   });
 
+  test("rejects invisible-only conversation messages", async () => {
+    const route: ConversationRouteRecord = {
+      id: "convrt_abc123",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      transport: "slack",
+      destinationJson: JSON.stringify({
+        channelId: "C123"
+      }),
+      createdAt: "2026-05-26T00:00:00.000Z",
+      updatedAt: "2026-05-26T00:00:00.000Z",
+      revokedAt: null
+    };
+    const response = await handleToolGatewayRequest(
+      config,
+      createStore(null, runtime, [], route),
+      "conversation.sendMessage",
+      request(
+        "conversation.sendMessage",
+        {
+          input: { text: "\u200B", routeId: "convrt_abc123" }
+        },
+        "runtime-token-u123",
+        "rt_u123"
+      ),
+      {
+        postActiveConversationMessage: async () => {
+          throw new Error("invisible-only text should not be posted");
+        }
+      }
+    );
+
+    expect(response.status).toBe(400);
+    expect(await response.text()).toBe("Invalid tool input");
+  });
+
   test("passes outbound conversation attachment metadata through durable routes", async () => {
     const route: ConversationRouteRecord = {
       id: "convrt_abc123",
@@ -485,6 +521,166 @@ describe("handleToolGatewayRequest", () => {
         messageId: "1779841130.000"
       }
     });
+  });
+
+  test("allows attachment-only outbound conversation messages", async () => {
+    const route: ConversationRouteRecord = {
+      id: "convrt_abc123",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      transport: "slack",
+      destinationJson: JSON.stringify({
+        channelId: "C123"
+      }),
+      createdAt: "2026-05-26T00:00:00.000Z",
+      updatedAt: "2026-05-26T00:00:00.000Z",
+      revokedAt: null
+    };
+    const response = await handleToolGatewayRequest(
+      config,
+      createStore(null, runtime, [], route),
+      "conversation.sendMessage",
+      request(
+        "conversation.sendMessage",
+        {
+          input: {
+            text: "",
+            routeId: "convrt_abc123",
+            attachments: [
+              {
+                id: "agent:image-1",
+                source: "agent",
+                kind: "image",
+                mimeType: "image/png",
+                name: "preview.png"
+              }
+            ]
+          }
+        },
+        "runtime-token-u123",
+        "rt_u123"
+      ),
+      {
+        postActiveConversationMessage: async (input) => {
+          expect(input.text).toBe("");
+          expect(input.attachments).toEqual([
+            {
+              id: "agent:image-1",
+              source: "agent",
+              kind: "image",
+              mimeType: "image/png",
+              name: "preview.png"
+            }
+          ]);
+          return {
+            transport: "slack",
+            channelId: "C123",
+            messageId: "1779841130.000"
+          };
+        }
+      }
+    );
+
+    expect(response.status).toBe(200);
+  });
+
+  test("lets a runtime fetch a current-turn Slack attachment", async () => {
+    const response = await handleToolGatewayRequest(
+      config,
+      createStore(null, runtime),
+      "conversation.getAttachment",
+      request(
+        "conversation.getAttachment",
+        {
+          input: { attachmentId: "slack:F123" },
+          attachments: [
+            {
+              id: "slack:F123",
+              externalId: "F123",
+              source: "slack",
+              kind: "file",
+              mimeType: "text/plain",
+              name: "notes.txt",
+              sizeBytes: 12
+            }
+          ]
+        },
+        "runtime-token-u123",
+        "rt_u123"
+      ),
+      {
+        fetchConversationAttachment: async (input) => {
+          expect(input).toEqual({
+            maxBytes: 5 * 1024 * 1024,
+            attachment: {
+              id: "slack:F123",
+              externalId: "F123",
+              source: "slack",
+              kind: "file",
+              mimeType: "text/plain",
+              name: "notes.txt",
+              sizeBytes: 12
+            }
+          });
+          return {
+            attachment: input.attachment,
+            contentBase64: Buffer.from("hello world").toString("base64"),
+            text: "hello world"
+          };
+        }
+      }
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      classification: "user_private",
+      content: {
+        attachment: {
+          id: "slack:F123",
+          externalId: "F123",
+          source: "slack",
+          kind: "file",
+          mimeType: "text/plain",
+          name: "notes.txt",
+          sizeBytes: 12
+        },
+        contentBase64: "aGVsbG8gd29ybGQ=",
+        text: "hello world"
+      }
+    });
+  });
+
+  test("rejects attachment fetches outside the current turn", async () => {
+    const response = await handleToolGatewayRequest(
+      config,
+      createStore(null, runtime),
+      "conversation.getAttachment",
+      request(
+        "conversation.getAttachment",
+        {
+          input: { attachmentId: "slack:F999" },
+          attachments: [
+            {
+              id: "slack:F123",
+              externalId: "F123",
+              source: "slack",
+              kind: "file",
+              mimeType: "text/plain"
+            }
+          ]
+        },
+        "runtime-token-u123",
+        "rt_u123"
+      ),
+      {
+        fetchConversationAttachment: async () => {
+          throw new Error("unexpected attachment fetch");
+        }
+      }
+    );
+
+    expect(response.status).toBe(404);
+    expect(await response.text()).toBe("Attachment not available for this run");
   });
 
   test("rejects durable conversation routes bound to another runtime", async () => {

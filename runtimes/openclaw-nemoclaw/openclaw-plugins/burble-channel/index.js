@@ -46,6 +46,98 @@ function inspectAccount(cfg, accountId = null) {
   };
 }
 
+function isObject(value) {
+  return value && typeof value === "object" && !Array.isArray(value);
+}
+
+function classifyAttachmentKind(value, mimeType) {
+  if (value === "file" || value === "image" || value === "audio" || value === "video") {
+    return value;
+  }
+  if (mimeType.startsWith("image/")) {
+    return "image";
+  }
+  if (mimeType.startsWith("audio/")) {
+    return "audio";
+  }
+  if (mimeType.startsWith("video/")) {
+    return "video";
+  }
+  return "file";
+}
+
+function normalizeAttachment(value, index) {
+  if (!isObject(value)) {
+    return null;
+  }
+
+  const mimeType =
+    typeof value.mimeType === "string" && value.mimeType.trim()
+      ? value.mimeType.trim()
+      : typeof value.mimetype === "string" && value.mimetype.trim()
+        ? value.mimetype.trim()
+        : typeof value.type === "string" && value.type.includes("/")
+          ? value.type.trim()
+          : "application/octet-stream";
+  const id =
+    typeof value.id === "string" && value.id.trim()
+      ? value.id.trim()
+      : typeof value.externalId === "string" && value.externalId.trim()
+        ? `agent:${value.externalId.trim()}`
+        : `agent:attachment:${index}`;
+  const attachment = {
+    id,
+    source:
+      value.source === "slack" || value.source === "burble" || value.source === "agent"
+        ? value.source
+        : "agent",
+    kind: classifyAttachmentKind(value.kind, mimeType),
+    mimeType
+  };
+
+  if (typeof value.name === "string" && value.name.trim()) {
+    attachment.name = value.name.trim();
+  } else if (typeof value.filename === "string" && value.filename.trim()) {
+    attachment.name = value.filename.trim();
+  } else if (typeof value.title === "string" && value.title.trim()) {
+    attachment.name = value.title.trim();
+  }
+  if (typeof value.sizeBytes === "number" && Number.isFinite(value.sizeBytes)) {
+    attachment.sizeBytes = value.sizeBytes;
+  } else if (typeof value.size === "number" && Number.isFinite(value.size)) {
+    attachment.sizeBytes = value.size;
+  }
+  if (typeof value.externalId === "string" && value.externalId.trim()) {
+    attachment.externalId = value.externalId.trim();
+  }
+
+  return attachment;
+}
+
+function extractBurbleAttachments(ctx) {
+  const candidates = [
+    ctx.attachments,
+    ctx.files,
+    ctx.media,
+    isObject(ctx.message) ? ctx.message.attachments : undefined,
+    isObject(ctx.payload) ? ctx.payload.attachments : undefined
+  ];
+
+  for (const candidate of candidates) {
+    if (!Array.isArray(candidate)) {
+      continue;
+    }
+    const attachments = candidate
+      .map((value, index) => normalizeAttachment(value, index))
+      .filter(Boolean);
+    if (attachments.length > 0) {
+      return attachments;
+    }
+  }
+
+  return [];
+}
+
 async function sendBurbleMessage(ctx) {
   const account = resolveAccount(ctx.cfg, ctx.accountId ?? null);
   if (!account.enabled) {
@@ -59,12 +151,19 @@ async function sendBurbleMessage(ctx) {
   const url = `${account.baseUrl}/internal/burble/channel/routes/${encodeURIComponent(
     routeId
   )}/messages`;
+  const attachments = extractBurbleAttachments(ctx);
+  const text = typeof ctx.text === "string" ? ctx.text : "";
+  if (!text.trim() && attachments.length === 0) {
+    throw new Error("Burble channel delivery requires text or attachments");
+  }
+
   const body = {
-    text: ctx.text,
+    text,
     source: "openclaw-channel",
     accountId: account.accountId,
     threadId: ctx.threadId == null ? undefined : String(ctx.threadId),
-    replyToId: ctx.replyToId ?? undefined
+    replyToId: ctx.replyToId ?? undefined,
+    ...(attachments.length > 0 ? { attachments } : {})
   };
 
   const response = await fetch(url, {

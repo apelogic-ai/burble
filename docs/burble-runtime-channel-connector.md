@@ -70,8 +70,8 @@ Current implementation status:
   OpenClaw channel session instead of one-off run sessions.
 - Durable route delivery is principal-bound and, when known, runtime-bound.
 - User and runtime messages can carry sanitized attachment metadata. Slack file
-  URLs are not exposed to runtimes; attachments are references only until a
-  route-scoped fetch capability is added.
+  URLs are not exposed to runtimes; agents can fetch current-turn attachment
+  bytes through the route/runtime-scoped `conversation.getAttachment` tool.
 - Burble still owns outer admission, deterministic short-circuiting, runtime
   provisioning, and policy before forwarding an admitted turn to OpenClaw.
 
@@ -90,8 +90,8 @@ Follow-up for deeper OpenClaw SDK turn-kernel ingress:
 These hardening items should be handled as a separate PR:
 
 - Add route-scoped delivery capabilities instead of trusting route IDs alone.
-- Add route-scoped attachment fetch capabilities for binary content, with
-  expiry, MIME limits, size limits, and audit.
+- Extend route-scoped attachment fetch beyond current-turn attachments, with
+  expiry, MIME allowlists, stricter size policies, and dedicated audit events.
 - Bind every capability to `runtimeId`, principal, route, audience, expiry, and
   allowed operation.
 - Reject outbound delivery when the capability route does not match the stored
