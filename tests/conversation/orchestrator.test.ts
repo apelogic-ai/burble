@@ -573,6 +573,31 @@ describe("handleConversation", () => {
     expect(response.text).toBe("Requested review.");
   });
 
+  test("delegates PR description edits to the agent before PR fast-paths", async () => {
+    const calls: string[] = [];
+    const text =
+      "delete last line at the end of Discover provider tools through MCP PR description that reads Line added by Burble";
+    const response = await handleConversation(
+      {
+        ...baseRequest,
+        text
+      },
+      createDeps({
+        agentMode: "llm",
+        agentRunner: stubAgentRunner((input) => {
+          calls.push(input.text);
+          return {
+            classification: "user_private",
+            text: "Updated PR description."
+          };
+        })
+      })
+    );
+
+    expect(calls).toEqual([text]);
+    expect(response.text).toBe("Updated PR description.");
+  });
+
   test("delegates cron and job requests to the agent before GitHub fast-paths", async () => {
     for (const text of [
       "set recurring cron job to pull my latest 3 github PRs",

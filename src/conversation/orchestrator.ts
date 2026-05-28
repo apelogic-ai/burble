@@ -286,14 +286,18 @@ export function shouldForceAgentDelegation(text: string): boolean {
 }
 
 function isProviderMutationRequest(normalizedText: string): boolean {
+  const mutationVerb =
+    "add|request|remove|delete|assign|unassign|comment|reply|create|update|edit|close|merge|label|unlabel";
+  const providerObject =
+    "github|pull request|pr|issue|review|reviewer|label|comment|description|body";
   return (
     /\bopen\s+(?:a|an|new)\b.*\b(github|pull request|pr)\b/.test(
       normalizedText
     ) ||
-    /\b(add|request|remove|assign|unassign|comment|reply|create|update|edit|close|merge|label|unlabel)\b.*\b(github|pull request|pr|issue|review|reviewer|label|comment)\b/.test(
+    new RegExp(`\\b(${mutationVerb})\\b.*\\b(${providerObject})\\b`).test(
       normalizedText
     ) ||
-    /\b(github|pull request|pr|issue)\b.*\b(add|request|remove|assign|unassign|comment|reply|create|update|edit|close|merge|label|unlabel)\b/.test(
+    new RegExp(`\\b(${providerObject})\\b.*\\b(${mutationVerb})\\b`).test(
       normalizedText
     )
   );
