@@ -12,7 +12,7 @@ import {
   type GoogleMailMessage,
   type GoogleTokenSet,
   type GoogleUser
-} from "../google";
+} from "../providers/google/client";
 import type { ToolResult } from "./types";
 
 export type GoogleToolDeps = {

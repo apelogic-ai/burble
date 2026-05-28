@@ -7,7 +7,7 @@ import {
   refreshGoogleAccessToken,
   createGoogleDriveTextFile,
   searchGoogleDriveFiles
-} from "../src/google";
+} from "../src/providers/google/client";
 
 const config: Config = {
   slackBotToken: "xoxb-test",

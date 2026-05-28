@@ -16,7 +16,7 @@ import {
   requestGitHubPullRequestReview,
   searchIssues,
   updateGitHubPullRequest
-} from "./github";
+} from "./providers/github/client";
 import {
   buildGoogleOAuthUrl,
   createGoogleDriveTextFile,
@@ -25,19 +25,19 @@ import {
   searchGoogleCalendarEvents,
   searchGoogleDriveFiles,
   searchGoogleMailMessages
-} from "./google";
+} from "./providers/google/client";
 import {
   buildJiraOAuthUrl,
   getJiraUser,
   listAssignedJiraIssues,
   refreshJiraAccessToken,
   searchJiraIssues
-} from "./jira";
+} from "./providers/jira/client";
 import {
   buildSlackOAuthUrl,
   searchSlackMessages,
   searchSlackUsers
-} from "./slack-api";
+} from "./providers/slack/client";
 import type { AgentRuntimeRecord, ProviderConnection, TokenStore } from "./db";
 import { handleConversation } from "./conversation/orchestrator";
 import { normalizeMentionText } from "./conversation/normalize";

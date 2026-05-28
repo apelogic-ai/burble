@@ -1,7 +1,7 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { Config } from "../config";
 import type { AgentRuntimeRecord, ProviderConnection, TokenStore } from "../db";
-import { refreshJiraAccessToken } from "../jira";
+import { refreshJiraAccessToken } from "../providers/jira/client";
 import {
   allowedMutatingAtlassianMcpTools,
   atlassianProviderToolSpecs

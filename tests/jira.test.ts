@@ -11,7 +11,7 @@ import {
   refreshJiraAccessToken,
   searchJiraUsers,
   searchJiraIssues
-} from "../src/jira";
+} from "../src/providers/jira/client";
 
 const config: Config = {
   slackBotToken: "xoxb-test",

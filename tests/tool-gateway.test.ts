@@ -6,7 +6,7 @@ import type {
   ProviderConnection,
   TokenStore
 } from "../src/db";
-import { JiraApiError } from "../src/jira";
+import { JiraApiError } from "../src/providers/jira/client";
 import { handleToolGatewayRequest } from "../src/tool-gateway";
 
 const config: Config = {

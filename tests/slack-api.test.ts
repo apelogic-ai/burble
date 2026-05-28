@@ -5,7 +5,7 @@ import {
   exchangeSlackCode,
   searchSlackMessages,
   searchSlackUsers
-} from "../src/slack-api";
+} from "../src/providers/slack/client";
 
 const config: Config = {
   slackBotToken: "xoxb-test",

@@ -1,4 +1,4 @@
-import type { GitHubIssue } from "./github";
+import type { GitHubIssue } from "./providers/github/client";
 
 export function formatIssuesMessage(issues: GitHubIssue[]): string {
   if (issues.length === 0) {

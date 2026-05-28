@@ -1,12 +1,12 @@
 import type { Config } from "./config";
 import type { TokenStore } from "./db";
-import { exchangeGitHubCode, getGitHubUser } from "./github";
-import { exchangeGoogleCode, getGoogleUser } from "./google";
-import { exchangeJiraCode, getJiraUser } from "./jira";
+import { exchangeGitHubCode, getGitHubUser } from "./providers/github/client";
+import { exchangeGoogleCode, getGoogleUser } from "./providers/google/client";
+import { exchangeJiraCode, getJiraUser } from "./providers/jira/client";
 import { formatLogError } from "./logging";
 import { handleProviderMcpRequest } from "./mcp/provider-server";
 import type { RuntimeJwtIssuer } from "./runtime-jwt";
-import { exchangeSlackCode } from "./slack-api";
+import { exchangeSlackCode } from "./providers/slack/client";
 import type { SlackRuntime } from "./slack";
 import { handleToolGatewayRequest } from "./tool-gateway";
 

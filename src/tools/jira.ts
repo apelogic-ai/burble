@@ -4,7 +4,7 @@ import {
   type JiraAccessibleResource,
   type JiraVisibleProject,
   type JiraTokenSet
-} from "../jira";
+} from "../providers/jira/client";
 import type { ToolResult } from "./types";
 
 export type JiraUser = {
