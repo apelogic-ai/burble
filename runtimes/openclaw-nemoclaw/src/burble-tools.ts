@@ -34,9 +34,14 @@ function createBurbleMcpToolExecutor(
       );
     }
 
+    sessionIdPromise ??= initializeMcpSession(config);
+    if (toolName === "burble.mcp.listTools") {
+      const sessionId = await sessionIdPromise;
+      return listBurbleMcpTools(config, sessionId);
+    }
+
     const mcpToolName = toMcpToolName(toolName);
     const args = toMcpToolArguments(toolName, body);
-    sessionIdPromise ??= initializeMcpSession(config);
     const sessionId = await sessionIdPromise;
     info(`Burble MCP tool start tool=${mcpToolName}${summarizeLogObject("args", args)}`);
 
@@ -193,6 +198,38 @@ async function getConversationAttachment(
   return result;
 }
 
+async function listBurbleMcpTools(
+  config: RuntimeConfig,
+  sessionId: string
+): Promise<ToolResult> {
+  info("Burble MCP tools/list start");
+  const response = await fetch(config.mcpGatewayUrl!, {
+    method: "POST",
+    headers: {
+      ...mcpHeaders(config),
+      "mcp-session-id": sessionId
+    },
+    body: JSON.stringify({
+      jsonrpc: "2.0",
+      id: crypto.randomUUID(),
+      method: "tools/list"
+    })
+  });
+
+  if (!response.ok) {
+    throw new Error(
+      `Burble MCP tools/list returned HTTP ${response.status}${await readErrorDetail(response)}`
+    );
+  }
+
+  const tools = await readMcpToolsListResult(response);
+  info(`Burble MCP tools/list finish count=${tools.length}`);
+  return {
+    classification: "user_private",
+    content: tools
+  };
+}
+
 async function initializeMcpSession(config: RuntimeConfig): Promise<string> {
   info("Burble MCP session initialize start");
   const response = await fetch(config.mcpGatewayUrl!, {
@@ -263,6 +300,27 @@ function mcpHeaders(config: RuntimeConfig): Record<string, string> {
 
 function toMcpToolName(toolName: string): string {
   switch (toolName) {
+    case "github_get_authenticated_user":
+    case "github_list_assigned_issues":
+    case "github_search_issues":
+    case "github_list_my_pull_requests":
+    case "google_get_authenticated_user":
+    case "google_search_drive_files":
+    case "google_search_calendar_events":
+    case "google_search_mail_messages":
+    case "jira_get_authenticated_user":
+    case "jira_list_accessible_resources":
+    case "jira_list_visible_projects":
+    case "jira_search_users":
+    case "jira_create_issue":
+    case "jira_edit_issue":
+    case "jira_list_assigned_issues":
+    case "jira_search_issues":
+    case "slack_search_users":
+    case "slack_search_messages":
+    case "atlassian_list_mcp_tools":
+    case "atlassian_call_mcp_tool":
+      return toolName;
     case "github.getAuthenticatedUser":
       return "github_get_authenticated_user";
     case "github.listAssignedIssues":
@@ -626,8 +684,41 @@ async function readMcpToolResult(response: Response): Promise<ToolResult> {
   return parsed;
 }
 
+async function readMcpToolsListResult(response: Response): Promise<unknown[]> {
+  const body = await response.text();
+  const payload = parseMcpResponsePayload(body);
+  const error = payload.error;
+  if (error && typeof error === "object" && "message" in error) {
+    throw new Error(`Burble MCP tools/list failed: ${String(error.message)}`);
+  }
+
+  const tools = payload.result?.tools;
+  if (!Array.isArray(tools)) {
+    throw new Error("Burble MCP tools/list returned malformed result");
+  }
+
+  return tools
+    .filter((tool) => tool && typeof tool === "object" && !Array.isArray(tool))
+    .map((tool) => sanitizeMcpToolMetadata(tool as Record<string, unknown>));
+}
+
+function sanitizeMcpToolMetadata(
+  tool: Record<string, unknown>
+): Record<string, unknown> {
+  return {
+    ...(typeof tool.name === "string" ? { name: tool.name } : {}),
+    ...(typeof tool.title === "string" ? { title: tool.title } : {}),
+    ...(typeof tool.description === "string"
+      ? { description: tool.description }
+      : {}),
+    ...(tool.inputSchema && typeof tool.inputSchema === "object"
+      ? { inputSchema: tool.inputSchema }
+      : {})
+  };
+}
+
 function parseMcpResponsePayload(body: string): {
-  result?: { content?: unknown };
+  result?: { content?: unknown; tools?: unknown };
   error?: unknown;
 } {
   const eventData = body

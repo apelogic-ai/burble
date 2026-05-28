@@ -1354,7 +1354,7 @@ async function buildBurbleToolContext(
   logInfo(`OpenClaw context start runId=${request.runId ?? "unknown"}`);
   const [baseline, catalogBuild] = await Promise.all([
     runBurbleRequest(request, config, executeTool),
-    buildToolCatalog(request, executeTool)
+    buildToolCatalog(request, config, executeTool)
   ]);
   logInfo(
     `OpenClaw context finish runId=${request.runId ?? "unknown"} elapsedMs=${Date.now() - startedAt} catalogTools=${catalogBuild.catalog.length} upstreamSchemas=${Object.keys(catalogBuild.upstreamMcpSchemas).length} baselineClassification=${baseline.response.classification}`
@@ -1369,6 +1369,7 @@ async function buildBurbleToolContext(
 
 async function buildToolCatalog(
   request: RunRequest,
+  config: RuntimeConfig,
   executeTool: ToolExecutor
 ): Promise<{
   catalog: ToolCatalogItem[];
@@ -1398,6 +1399,21 @@ async function buildToolCatalog(
           "string attachment id from Current request attachments, for example slack:F123"
       }
     });
+  }
+
+  if (config.mcpGatewayUrl && config.runtimeJwt) {
+    const discoveredProviderCatalog = await readDiscoveredProviderToolCatalog(
+      request,
+      executeTool
+    );
+    if (discoveredProviderCatalog) {
+      catalog.push(...discoveredProviderCatalog.catalog);
+      Object.assign(
+        upstreamMcpSchemas,
+        discoveredProviderCatalog.upstreamMcpSchemas
+      );
+      return { catalog, upstreamMcpSchemas };
+    }
   }
 
   const github = request.input.connections.github;
@@ -1599,6 +1615,198 @@ async function buildToolCatalog(
   }
 
   return { catalog, upstreamMcpSchemas };
+}
+
+async function readDiscoveredProviderToolCatalog(
+  request: RunRequest,
+  executeTool: ToolExecutor
+): Promise<{
+  catalog: ToolCatalogItem[];
+  upstreamMcpSchemas: Record<string, unknown>;
+} | null> {
+  let result: ToolResult;
+  try {
+    result = await executeTool("burble.mcp.listTools", {});
+  } catch {
+    return null;
+  }
+
+  if (!Array.isArray(result.content)) {
+    return null;
+  }
+
+  const shouldIncludeAtlassian = shouldLoadAtlassianMcpTools(request.input.text);
+  const catalog = result.content.flatMap((item): ToolCatalogItem[] => {
+    const tool = readDiscoveredMcpTool(item);
+    if (!tool) {
+      return [];
+    }
+
+    const name = mcpToolNameToBurbleToolName(tool.name);
+    if (!name || !isDiscoveredProviderToolAvailable(name, request)) {
+      return [];
+    }
+
+    if (name.startsWith("atlassian.") && !shouldIncludeAtlassian) {
+      return [];
+    }
+
+    return [
+      {
+        name,
+        description:
+          tool.description ??
+          tool.title ??
+          `Burble provider MCP tool ${tool.name}`,
+        inputSchema: tool.inputSchema ?? {}
+      }
+    ];
+  });
+
+  const upstreamMcpSchemas: Record<string, unknown> = {};
+  if (
+    shouldIncludeAtlassian &&
+    catalog.some((tool) => tool.name === "atlassian.callMcpTool") &&
+    request.input.connections.jira?.email
+  ) {
+    const upstreamTools = await readAtlassianMcpToolSummaries(
+      request.input.connections.jira.email,
+      executeTool
+    );
+    Object.assign(upstreamMcpSchemas, upstreamTools.inputSchemas);
+    const callTool = catalog.find((tool) => tool.name === "atlassian.callMcpTool");
+    if (callTool && upstreamTools.summaries.length > 0) {
+      callTool.description = [
+        callTool.description,
+        `Known allowed upstream Atlassian MCP tools include: ${upstreamTools.summaries.slice(0, 30).join("; ")}.`
+      ].join(" ");
+    }
+  }
+
+  if (catalog.length === 0 && hasConnectedProvider(request)) {
+    return null;
+  }
+
+  return { catalog, upstreamMcpSchemas };
+}
+
+function readDiscoveredMcpTool(value: unknown): {
+  name: string;
+  title?: string;
+  description?: string;
+  inputSchema?: Record<string, unknown>;
+} | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+
+  const record = value as Record<string, unknown>;
+  if (typeof record.name !== "string" || !record.name.trim()) {
+    return null;
+  }
+
+  return {
+    name: record.name,
+    ...(typeof record.title === "string" ? { title: record.title } : {}),
+    ...(typeof record.description === "string"
+      ? { description: record.description }
+      : {}),
+    ...(record.inputSchema &&
+    typeof record.inputSchema === "object" &&
+    !Array.isArray(record.inputSchema)
+      ? { inputSchema: record.inputSchema as Record<string, unknown> }
+      : {})
+  };
+}
+
+function mcpToolNameToBurbleToolName(name: string): string | null {
+  switch (name) {
+    case "github_get_authenticated_user":
+      return "github.getAuthenticatedUser";
+    case "github_list_assigned_issues":
+      return "github.listAssignedIssues";
+    case "github_search_issues":
+      return "github.searchIssues";
+    case "github_list_my_pull_requests":
+      return "github.listMyPullRequests";
+    case "google_get_authenticated_user":
+      return "google.getAuthenticatedUser";
+    case "google_search_drive_files":
+      return "google.searchDriveFiles";
+    case "google_search_calendar_events":
+      return "google.searchCalendarEvents";
+    case "google_search_mail_messages":
+      return "google.searchMailMessages";
+    case "jira_get_authenticated_user":
+      return "jira.getAuthenticatedUser";
+    case "jira_list_accessible_resources":
+      return "jira.listAccessibleResources";
+    case "jira_list_visible_projects":
+      return "jira.listVisibleProjects";
+    case "jira_search_users":
+      return "jira.searchUsers";
+    case "jira_create_issue":
+      return "jira.createIssue";
+    case "jira_edit_issue":
+      return "jira.editIssue";
+    case "jira_list_assigned_issues":
+      return "jira.listAssignedIssues";
+    case "jira_search_issues":
+      return "jira.searchIssues";
+    case "slack_search_users":
+      return "slack.searchUsers";
+    case "slack_search_messages":
+      return "slack.searchMessages";
+    case "atlassian_list_mcp_tools":
+      return "atlassian.listMcpTools";
+    case "atlassian_call_mcp_tool":
+      return "atlassian.callMcpTool";
+    default:
+      return null;
+  }
+}
+
+function isDiscoveredProviderToolAvailable(
+  toolName: string,
+  request: RunRequest
+): boolean {
+  if (toolName.startsWith("github.")) {
+    return request.input.connections.github.connected &&
+      Boolean(request.input.connections.github.email);
+  }
+  if (toolName.startsWith("google.")) {
+    return Boolean(
+      request.input.connections.google?.connected &&
+        request.input.connections.google.email
+    );
+  }
+  if (toolName.startsWith("jira.") || toolName.startsWith("atlassian.")) {
+    return Boolean(
+      request.input.connections.jira?.connected &&
+        request.input.connections.jira.email
+    );
+  }
+  if (toolName.startsWith("slack.")) {
+    return Boolean(
+      request.input.connections.slack?.connected &&
+        request.input.connections.slack.email
+    );
+  }
+
+  return false;
+}
+
+function hasConnectedProvider(request: RunRequest): boolean {
+  return Boolean(
+    (request.input.connections.github.connected &&
+      request.input.connections.github.email) ||
+      (request.input.connections.google?.connected &&
+        request.input.connections.google.email) ||
+      (request.input.connections.jira?.connected &&
+        request.input.connections.jira.email) ||
+      (request.input.connections.slack?.connected &&
+        request.input.connections.slack.email)
+  );
 }
 
 function shouldLoadAtlassianMcpTools(text: string): boolean {
