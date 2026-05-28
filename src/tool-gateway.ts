@@ -215,6 +215,20 @@ export async function handleToolGatewayRequest(
   }
 
   const body = await readToolGatewayBody(request);
+  if (toolName === "runtime.heartbeat") {
+    if (auth.kind !== "runtime") {
+      return new Response("Runtime auth required", { status: 403 });
+    }
+
+    return jsonResponse({
+      classification: "user_private",
+      content: {
+        ok: true,
+        runtimeId: auth.runtime.id
+      }
+    });
+  }
+
   if (toolName === "conversation.sendMessage") {
     if (auth.kind !== "runtime") {
       return new Response("Runtime auth required", { status: 403 });
@@ -1303,6 +1317,7 @@ function isKnownTool(toolName: string): boolean {
     toolName === "slack.searchMessages" ||
     toolName === "conversation.sendMessage" ||
     toolName === "conversation.getAttachment" ||
+    toolName === "runtime.heartbeat" ||
     toolName === "atlassian.listMcpTools" ||
     toolName === "atlassian.callMcpTool"
   );

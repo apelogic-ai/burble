@@ -1,5 +1,6 @@
 import { readRuntimeConfig } from "./config";
 import { startOpenClawGatewayIfNeeded } from "./gateway";
+import { startRuntimeHeartbeat } from "./heartbeat";
 import { info } from "./logger";
 import { attachRuntimeEventWebSocket, handleRuntimeRequest } from "./server";
 import { ensureOpenClawSetup } from "./setup";
@@ -18,6 +19,7 @@ info(
 
 await ensureOpenClawSetup(config);
 const gateway = startOpenClawGatewayIfNeeded(config);
+const heartbeat = startRuntimeHeartbeat(config);
 await gateway?.ready;
 let nativeGateway = config.engine === "openclaw-gateway" ? gateway : null;
 let nativeOpenClawReady: Promise<void> | null =
@@ -73,6 +75,7 @@ info(
 );
 
 process.on("SIGINT", () => {
+  heartbeat?.stop();
   gateway?.stop();
   if (nativeGateway !== gateway) {
     nativeGateway?.stop();
@@ -82,6 +85,7 @@ process.on("SIGINT", () => {
 });
 
 process.on("SIGTERM", () => {
+  heartbeat?.stop();
   gateway?.stop();
   if (nativeGateway !== gateway) {
     nativeGateway?.stop();
