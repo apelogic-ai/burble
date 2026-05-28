@@ -306,6 +306,7 @@ function toMcpToolName(toolName: string): string {
     case "github_list_my_pull_requests":
     case "google_get_authenticated_user":
     case "google_search_drive_files":
+    case "google_create_drive_text_file":
     case "google_search_calendar_events":
     case "google_search_mail_messages":
     case "jira_get_authenticated_user":
@@ -333,6 +334,8 @@ function toMcpToolName(toolName: string): string {
       return "google_get_authenticated_user";
     case "google.searchDriveFiles":
       return "google_search_drive_files";
+    case "google.createDriveTextFile":
+      return "google_create_drive_text_file";
     case "google.searchCalendarEvents":
       return "google_search_calendar_events";
     case "google.searchMailMessages":
@@ -400,6 +403,22 @@ function toMcpToolArguments(
       "query",
       "limit"
     ]);
+  }
+
+  if (toolName === "google.createDriveTextFile") {
+    const name = readNestedString(body, "input", "name");
+    const text = readNestedString(body, "input", "text");
+    if (!name) {
+      throw new Error("google.createDriveTextFile requires input.name");
+    }
+    if (text === null) {
+      throw new Error("google.createDriveTextFile requires input.text");
+    }
+    return {
+      name,
+      text,
+      ...compactToolInput(readRecordKey(body, "input"), ["mimeType"])
+    };
   }
 
   if (toolName === "google.searchCalendarEvents") {

@@ -1496,6 +1496,16 @@ async function buildToolCatalog(
         }
       },
       {
+        name: "google.createDriveTextFile",
+        description:
+          "Create a new app-owned text file in Google Drive using the requesting Slack user's connected Google account.",
+        inputSchema: {
+          name: "string Drive file name",
+          text: "string text body to write into the file",
+          mimeType: "optional string MIME type; defaults to text/plain"
+        }
+      },
+      {
         name: "google.searchCalendarEvents",
         description:
           "Search Google Calendar events visible to the requesting Slack user's connected Google account.",
@@ -1738,6 +1748,8 @@ function mcpToolNameToBurbleToolName(name: string): string | null {
       return "google.getAuthenticatedUser";
     case "google_search_drive_files":
       return "google.searchDriveFiles";
+    case "google_create_drive_text_file":
+      return "google.createDriveTextFile";
     case "google_search_calendar_events":
       return "google.searchCalendarEvents";
     case "google_search_mail_messages":
@@ -1827,7 +1839,11 @@ function shouldLoadAtlassianMcpTools(text: string): boolean {
 }
 
 function isTerminalToolCall(toolName: string): boolean {
-  return toolName === "jira.createIssue" || toolName === "jira.editIssue";
+  return (
+    toolName === "jira.createIssue" ||
+    toolName === "jira.editIssue" ||
+    toolName === "google.createDriveTextFile"
+  );
 }
 
 async function readAtlassianMcpToolSummaries(
@@ -2083,7 +2099,7 @@ function buildBurbleDirectPrompt(
       "For Jira questions involving a named person, call jira.searchUsers with the exact name or email before asking who they are. If the current request uses him/her/them, use the most recent named person in Recent Slack context.",
       "For Jira tickets assigned to a resolved person, call jira.searchIssues with that person's Jira accountId in JQL. If the user asks who they assigned to that person, state that the result reflects current visible assignee unless Jira changelog data is explicitly available.",
       "For Slack questions about what someone said, call slack.searchMessages. For 'what did I say about X', pass the requesting Slack user ID as fromUserId. For named Slack people, call slack.searchUsers first if you need their Slack user ID.",
-      "For Google Drive, Calendar, or Gmail questions, call google.searchDriveFiles, google.searchCalendarEvents, or google.searchMailMessages.",
+      "For Google Drive, Calendar, or Gmail questions, call google.searchDriveFiles, google.createDriveTextFile, google.searchCalendarEvents, or google.searchMailMessages.",
       "For final answers, return concise Slack mrkdwn."
     ].join(" "),
     "",
@@ -2452,7 +2468,32 @@ function formatTerminalToolResult(toolName: string, result: ToolResult): string 
     return `${verb} Jira issue ${issue.key}: ${issue.title}\n${issue.url}`;
   }
 
+  const driveFile = readDriveFileResult(result.content);
+  if (driveFile && toolName === "google.createDriveTextFile") {
+    return driveFile.webViewLink
+      ? `Created Google Drive file ${driveFile.name}: ${driveFile.webViewLink}`
+      : `Created Google Drive file ${driveFile.name}.`;
+  }
+
   return formatToolResult(result);
+}
+
+function readDriveFileResult(
+  value: unknown
+): { name: string; webViewLink?: string } | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+  const record = value as Record<string, unknown>;
+  if (typeof record.name !== "string") {
+    return null;
+  }
+  return {
+    name: record.name,
+    ...(typeof record.webViewLink === "string"
+      ? { webViewLink: record.webViewLink }
+      : {})
+  };
 }
 
 function readIssueResult(

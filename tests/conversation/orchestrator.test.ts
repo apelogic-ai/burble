@@ -85,6 +85,10 @@ function createDeps(overrides: Partial<ConversationDeps> = {}): ConversationDeps
   const googleTools = createGoogleTools({
     getGoogleUser: async () => ({ email: "person@example.com" }),
     searchGoogleDriveFiles: async () => [],
+    createGoogleDriveTextFile: async () => ({
+      id: "file-1",
+      name: "Test"
+    }),
     searchGoogleCalendarEvents: async () => [],
     searchGoogleMailMessages: async () => [
       {

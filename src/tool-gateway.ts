@@ -9,6 +9,14 @@ import {
   searchIssues
 } from "./github";
 import {
+  createGoogleDriveTextFile,
+  getGoogleUser,
+  refreshGoogleAccessToken,
+  searchGoogleCalendarEvents,
+  searchGoogleDriveFiles,
+  searchGoogleMailMessages
+} from "./google";
+import {
   createJiraIssue,
   editJiraIssue,
   getJiraUser,
@@ -30,6 +38,7 @@ import {
   createGitHubTools,
   type GitHubPullRequestListInput
 } from "./tools/github";
+import { createGoogleTools, type GoogleToolDeps } from "./tools/google";
 import {
   createJiraTools,
   isJiraAuthErrorResult,
@@ -46,6 +55,7 @@ import {
 import { verifyJiraAuthForOpaqueAtlassianMcpError } from "./mcp/atlassian-auth";
 
 type ToolGatewayDeps = Partial<Parameters<typeof createGitHubTools>[0]> &
+  Partial<GoogleToolDeps> &
   Partial<JiraToolDeps> &
   Partial<SlackToolDeps> & {
     fetchConversationAttachment?: (input: {
@@ -98,6 +108,11 @@ const defaultDeps = {
   listAssignedIssues,
   searchIssues,
   listMyPullRequests,
+  getGoogleUser,
+  searchGoogleDriveFiles,
+  createGoogleDriveTextFile,
+  searchGoogleCalendarEvents,
+  searchGoogleMailMessages,
   getJiraUser,
   listJiraAccessibleResources,
   listAssignedJiraIssues,
@@ -226,6 +241,13 @@ export async function handleToolGatewayRequest(
   }
 
   const tools = createGitHubTools({ ...defaultDeps, ...deps });
+  const googleTools = createGoogleTools({
+    ...defaultDeps,
+    refreshGoogleAccessToken: (refreshToken) =>
+      refreshGoogleAccessToken(config, refreshToken),
+    saveGoogleConnection: (connection) => store.upsertProviderConnection(connection),
+    ...deps
+  });
   const jiraTools = createJiraTools({
     ...defaultDeps,
     refreshJiraAccessToken: (refreshToken) =>
@@ -420,6 +442,78 @@ export async function handleToolGatewayRequest(
       );
     }
 
+    case "google.getAuthenticatedUser":
+      return jsonResponseWithAudit(
+        store,
+        auth,
+        toolName,
+        await googleTools.getAuthenticatedUser.execute({ connection })
+      );
+
+    case "google.searchDriveFiles": {
+      if (!isSearchGoogleDriveFilesInput(body.input)) {
+        return new Response("Invalid tool input", { status: 400 });
+      }
+
+      return jsonResponseWithAudit(
+        store,
+        auth,
+        toolName,
+        await googleTools.searchDriveFiles.execute({
+          connection,
+          input: body.input
+        })
+      );
+    }
+
+    case "google.createDriveTextFile": {
+      if (!isCreateGoogleDriveTextFileInput(body.input)) {
+        return new Response("Invalid tool input", { status: 400 });
+      }
+
+      return jsonResponseWithAudit(
+        store,
+        auth,
+        toolName,
+        await googleTools.createDriveTextFile.execute({
+          connection,
+          input: body.input
+        })
+      );
+    }
+
+    case "google.searchCalendarEvents": {
+      if (!isSearchGoogleCalendarEventsInput(body.input)) {
+        return new Response("Invalid tool input", { status: 400 });
+      }
+
+      return jsonResponseWithAudit(
+        store,
+        auth,
+        toolName,
+        await googleTools.searchCalendarEvents.execute({
+          connection,
+          input: body.input
+        })
+      );
+    }
+
+    case "google.searchMailMessages": {
+      if (!isSearchGoogleMailMessagesInput(body.input)) {
+        return new Response("Invalid tool input", { status: 400 });
+      }
+
+      return jsonResponseWithAudit(
+        store,
+        auth,
+        toolName,
+        await googleTools.searchMailMessages.execute({
+          connection,
+          input: body.input
+        })
+      );
+    }
+
     case "atlassian.listMcpTools": {
       const result = await withFreshJiraToken(
         {
@@ -600,6 +694,11 @@ function isKnownTool(toolName: string): boolean {
     toolName === "github.listAssignedIssues" ||
     toolName === "github.searchIssues" ||
     toolName === "github.listMyPullRequests" ||
+    toolName === "google.getAuthenticatedUser" ||
+    toolName === "google.searchDriveFiles" ||
+    toolName === "google.createDriveTextFile" ||
+    toolName === "google.searchCalendarEvents" ||
+    toolName === "google.searchMailMessages" ||
     toolName === "jira.getAuthenticatedUser" ||
     toolName === "jira.listAccessibleResources" ||
     toolName === "jira.listVisibleProjects" ||
@@ -617,9 +716,11 @@ function isKnownTool(toolName: string): boolean {
   );
 }
 
-function readToolProvider(toolName: string): "github" | "jira" | "slack" {
+function readToolProvider(toolName: string): "github" | "google" | "jira" | "slack" {
   return toolName.startsWith("slack.")
     ? "slack"
+    : toolName.startsWith("google.")
+    ? "google"
     : toolName.startsWith("jira.") || toolName.startsWith("atlassian.")
     ? "jira"
     : "github";
@@ -674,6 +775,58 @@ function isListMyPullRequestsInput(
   );
 }
 
+function isSearchGoogleDriveFilesInput(input: unknown): input is {
+  query?: string;
+  limit?: number;
+} {
+  return isOptionalObject(input) && optionalString(input.query) && optionalLimit(input.limit, 20);
+}
+
+function isCreateGoogleDriveTextFileInput(input: unknown): input is {
+  name: string;
+  text: string;
+  mimeType?: string;
+} {
+  if (!isOptionalObject(input)) {
+    return false;
+  }
+  return (
+    typeof input.name === "string" &&
+    input.name.trim().length > 0 &&
+    input.name.length <= 200 &&
+    typeof input.text === "string" &&
+    input.text.length <= 200_000 &&
+    optionalString(input.mimeType)
+  );
+}
+
+function isSearchGoogleCalendarEventsInput(input: unknown): input is {
+  query?: string;
+  timeMin?: string;
+  timeMax?: string;
+  limit?: number;
+} {
+  return (
+    isOptionalObject(input) &&
+    optionalString(input.query) &&
+    optionalString(input.timeMin) &&
+    optionalString(input.timeMax) &&
+    optionalLimit(input.limit, 20)
+  );
+}
+
+function isSearchGoogleMailMessagesInput(input: unknown): input is {
+  query: string;
+  limit?: number;
+} {
+  return (
+    isOptionalObject(input) &&
+    typeof input.query === "string" &&
+    input.query.trim().length > 0 &&
+    optionalLimit(input.limit, 10)
+  );
+}
+
 function isSearchJiraIssuesInput(input: unknown): input is { jql: string } {
   return (
     typeof input === "object" &&
@@ -681,6 +834,20 @@ function isSearchJiraIssuesInput(input: unknown): input is { jql: string } {
     "jql" in input &&
     typeof input.jql === "string" &&
     input.jql.trim().length > 0
+  );
+}
+
+function isOptionalObject(input: unknown): input is Record<string, unknown> {
+  return typeof input === "object" && input !== null && !Array.isArray(input);
+}
+
+function optionalLimit(value: unknown, max: number): boolean {
+  return (
+    value === undefined ||
+    (typeof value === "number" &&
+      Number.isInteger(value) &&
+      value > 0 &&
+      value <= max)
   );
 }
 

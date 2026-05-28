@@ -9,6 +9,7 @@ import {
   searchIssues
 } from "../github";
 import {
+  createGoogleDriveTextFile,
   getGoogleUser,
   refreshGoogleAccessToken,
   searchGoogleCalendarEvents,
@@ -51,6 +52,7 @@ const defaultDeps = {
   listMyPullRequests,
   getGoogleUser,
   searchGoogleDriveFiles,
+  createGoogleDriveTextFile,
   searchGoogleCalendarEvents,
   searchGoogleMailMessages,
   getJiraUser,

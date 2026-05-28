@@ -1,6 +1,7 @@
 import type { ProviderConnection } from "../db";
 import {
   GoogleApiError,
+  type GoogleDriveCreatedFile,
   isGoogleAuthorizationError,
   type GoogleCalendarEvent,
   type GoogleDriveFile,
@@ -24,6 +25,10 @@ export type GoogleToolDeps = {
     token: string,
     input: { query: string; limit?: number }
   ) => Promise<GoogleMailMessage[]>;
+  createGoogleDriveTextFile: (
+    token: string,
+    input: { name: string; text: string; mimeType?: string }
+  ) => Promise<GoogleDriveCreatedFile>;
   refreshGoogleAccessToken?: (refreshToken: string) => Promise<GoogleTokenSet>;
   saveGoogleConnection?: (connection: ProviderConnection) => void;
   now?: () => Date;
@@ -83,6 +88,34 @@ export function createGoogleTools(deps: GoogleToolDeps) {
             ...(file.webViewLink ? { webViewLink: file.webViewLink } : {}),
             ...(file.modifiedTime ? { modifiedTime: file.modifiedTime } : {})
           }))
+        };
+      }
+    },
+
+    createDriveTextFile: {
+      async execute(
+        context: GoogleToolContext & {
+          input: { name: string; text: string; mimeType?: string };
+        }
+      ): Promise<ToolResult<GoogleDriveCreatedFile | GoogleAuthErrorContent>> {
+        const file = await withGoogleToken(
+          deps,
+          context.connection,
+          (accessToken) =>
+            deps.createGoogleDriveTextFile(accessToken, context.input)
+        );
+        if (isGoogleAuthErrorResult(file)) {
+          return file;
+        }
+
+        return {
+          classification: "user_private",
+          content: {
+            id: file.id,
+            name: file.name,
+            ...(file.mimeType ? { mimeType: file.mimeType } : {}),
+            ...(file.webViewLink ? { webViewLink: file.webViewLink } : {})
+          }
         };
       }
     },

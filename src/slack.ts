@@ -12,6 +12,7 @@ import {
 } from "./github";
 import {
   buildGoogleOAuthUrl,
+  createGoogleDriveTextFile,
   getGoogleUser,
   refreshGoogleAccessToken,
   searchGoogleCalendarEvents,
@@ -185,6 +186,7 @@ export function createSlackRuntime(
   const googleTools = createGoogleTools({
     getGoogleUser,
     searchGoogleDriveFiles,
+    createGoogleDriveTextFile,
     searchGoogleCalendarEvents,
     searchGoogleMailMessages,
     refreshGoogleAccessToken: (refreshToken) =>
