@@ -904,7 +904,22 @@ function isListMyPullRequestsInput(
       candidate.sort === "comments") &&
     (candidate.order === undefined ||
       candidate.order === "desc" ||
-      candidate.order === "asc")
+      candidate.order === "asc") &&
+    (candidate.owner === undefined ||
+      isGitHubOwner(candidate.owner)) &&
+    (candidate.repo === undefined ||
+      isGitHubRepo(candidate.repo))
+  );
+}
+
+function isGitHubOwner(value: unknown): value is string {
+  return typeof value === "string" && /^[A-Za-z0-9_.-]+$/.test(value.trim());
+}
+
+function isGitHubRepo(value: unknown): value is string {
+  return (
+    typeof value === "string" &&
+    /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(value.trim())
   );
 }
 

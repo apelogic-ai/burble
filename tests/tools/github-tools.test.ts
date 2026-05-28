@@ -184,7 +184,8 @@ describe("createGitHubTools", () => {
           limit: 2,
           state: "closed",
           sort: "created",
-          order: "asc"
+          order: "asc",
+          owner: "apelogic-ai"
         });
         return [
           {
@@ -210,7 +211,8 @@ describe("createGitHubTools", () => {
         limit: 2,
         state: "closed",
         sort: "created",
-        order: "asc"
+        order: "asc",
+        owner: "apelogic-ai"
       }
     });
 

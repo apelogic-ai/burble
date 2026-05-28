@@ -407,7 +407,9 @@ function toMcpToolArguments(
       "limit",
       "state",
       "sort",
-      "order"
+      "order",
+      "owner",
+      "repo"
     ]);
   }
 
