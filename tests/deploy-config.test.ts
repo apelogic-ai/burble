@@ -95,6 +95,7 @@ describe("dev deploy config", () => {
     }
     expect(slackAppManifest).toContain("socket_mode_enabled: true");
     expect(slackAppManifest).toContain("commands");
+    expect(slackAppManifest).toContain("files:read");
     expect(slackAppManifest).not.toContain("/connect-github");
     expect(slackAppManifest).not.toContain("/issues");
     expect(slackAppManifest).not.toContain("/github-me");

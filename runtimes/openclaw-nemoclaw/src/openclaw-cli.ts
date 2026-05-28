@@ -1388,6 +1388,17 @@ async function buildToolCatalog(
       }
     });
   }
+  if ((request.input.attachments ?? []).length > 0) {
+    catalog.push({
+      name: "conversation.getAttachment",
+      description:
+        "Fetch bytes for a Slack attachment from the current request. Use only attachment IDs listed under Current request attachments. Burble validates access and returns metadata plus contentBase64, and text for small text-like files.",
+      inputSchema: {
+        attachmentId:
+          "string attachment id from Current request attachments, for example slack:F123"
+      }
+    });
+  }
 
   const github = request.input.connections.github;
   if (github.connected && github.email) {
@@ -2090,7 +2101,10 @@ async function executePlannedToolCall(
   toolContext: BurbleToolContext,
   executeTool: ToolExecutor
 ): Promise<ToolResult> {
-  if (toolCall.name === "conversation.sendMessage") {
+  if (
+    toolCall.name === "conversation.sendMessage" ||
+    toolCall.name === "conversation.getAttachment"
+  ) {
     const validationError = validatePlannedToolCall(toolCall, toolContext);
     if (validationError) {
       return validationError;

@@ -25,6 +25,9 @@ function createBurbleMcpToolExecutor(
     if (toolName === "conversation.sendMessage") {
       return sendConversationMessage(config, runtimeId, request, body);
     }
+    if (toolName === "conversation.getAttachment") {
+      return getConversationAttachment(config, runtimeId, request, body);
+    }
     if (!config.mcpGatewayUrl || !config.runtimeJwt) {
       throw new Error(
         "Burble MCP gateway URL and runtime JWT are required for provider tools"
@@ -129,6 +132,63 @@ async function sendConversationMessage(
 
   info(
     `Burble conversation tool finish tool=conversation.sendMessage classification=${result.classification}${summarizeLogObject("result", result.content)}`
+  );
+  return result;
+}
+
+async function getConversationAttachment(
+  config: RuntimeConfig,
+  runtimeId: string | undefined,
+  request: RunRequest | undefined,
+  body: unknown
+): Promise<ToolResult> {
+  if (!runtimeId) {
+    throw new Error("conversation.getAttachment requires a runtime id");
+  }
+  const attachmentId = readNestedString(body, "input", "attachmentId");
+  if (!attachmentId) {
+    throw new Error("conversation.getAttachment requires input.attachmentId");
+  }
+
+  const input = { attachmentId };
+  info(
+    `Burble conversation tool start tool=conversation.getAttachment${summarizeLogObject("input", input)}`
+  );
+
+  const response = await fetch(
+    `${config.toolGatewayUrl}/${encodeURIComponent("conversation.getAttachment")}/execute`,
+    {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${config.internalToken}`,
+        "x-burble-runtime-id": runtimeId
+      },
+      body: JSON.stringify({
+        input,
+        ...(request?.input.attachments
+          ? { attachments: request.input.attachments }
+          : {}),
+        ...(request?.input.conversation
+          ? { conversation: request.input.conversation }
+          : {})
+      })
+    }
+  );
+
+  if (!response.ok) {
+    throw new Error(
+      `Burble conversation gateway returned HTTP ${response.status}${await readErrorDetail(response)}`
+    );
+  }
+
+  const result = (await response.json()) as unknown;
+  if (!isToolResult(result)) {
+    throw new Error("Burble conversation gateway returned invalid tool result");
+  }
+
+  info(
+    `Burble conversation tool finish tool=conversation.getAttachment classification=${result.classification}${summarizeLogObject("result", result.content)}`
   );
   return result;
 }

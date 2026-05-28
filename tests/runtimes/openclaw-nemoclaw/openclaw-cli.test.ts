@@ -942,6 +942,73 @@ describe("runOpenClawCliRequest", () => {
     });
   });
 
+  test("lets OpenClaw fetch current request attachments", async () => {
+    const prompts: string[] = [];
+    const toolCalls: Array<{ toolName: string; body: unknown }> = [];
+    const response = await runOpenClawCliRequest(
+      {
+        executionMode: "openclaw-native",
+        input: {
+          text: "describe this screenshot",
+          attachments: [
+            {
+              id: "slack:F123",
+              externalId: "F123",
+              source: "slack",
+              kind: "image",
+              mimeType: "image/png",
+              name: "screenshot.png"
+            }
+          ],
+          connections: {
+            github: { connected: false }
+          }
+        }
+      },
+      config,
+      async (toolName, body) => {
+        toolCalls.push({ toolName, body });
+        return {
+          classification: "user_private",
+          content: {
+            attachment: {
+              id: "slack:F123",
+              source: "slack",
+              kind: "image",
+              mimeType: "image/png"
+            },
+            contentBase64: "aW1hZ2U="
+          }
+        };
+      },
+      async (_command, args) => {
+        const prompt = args[args.indexOf("--message") + 1];
+        prompts.push(prompt);
+        return prompts.length === 1
+          ? openClawToolCall("conversation.getAttachment", {
+              attachmentId: "slack:F123"
+            })
+          : {
+              exitCode: 0,
+              stdout: "Fetched the screenshot.",
+              stderr: ""
+            };
+      },
+      () => undefined
+    );
+
+    expect(response.response.text).toBe("Fetched the screenshot.");
+    expect(prompts[0]).toContain("conversation.getAttachment");
+    expect(prompts[0]).toContain("Current request attachments:");
+    expect(prompts[0]).toContain("id=slack:F123");
+    expect(toolCalls).toContainEqual({
+      toolName: "conversation.getAttachment",
+      body: {
+        input: { attachmentId: "slack:F123" }
+      }
+    });
+  });
+
   test("lets OpenClaw plan an allowed Atlassian MCP tool call", async () => {
     const toolCalls: Array<{ toolName: string; body: unknown }> = [];
     const prompts: string[] = [];
