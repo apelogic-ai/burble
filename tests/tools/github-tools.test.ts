@@ -11,6 +11,41 @@ const connection: ProviderConnection = {
   connectedAt: "2026-05-19T00:00:00Z"
 };
 
+const githubWriteStubs = {
+  createIssue: async () => ({
+    html_url: "https://github.com/acme/app/issues/1",
+    title: "Issue",
+    number: 1
+  }),
+  commentOnIssueOrPullRequest: async () => ({
+    html_url: "https://github.com/acme/app/issues/1#issuecomment-1",
+    id: 1
+  }),
+  createPullRequest: async () => ({
+    html_url: "https://github.com/acme/app/pull/1",
+    title: "PR",
+    number: 1
+  }),
+  updatePullRequest: async () => ({
+    html_url: "https://github.com/acme/app/pull/1",
+    title: "PR",
+    number: 1
+  }),
+  addLabels: async () => ({
+    html_url: "https://github.com/acme/app/issues/1",
+    number: 1
+  }),
+  removeLabels: async () => ({
+    html_url: "https://github.com/acme/app/issues/1",
+    number: 1
+  }),
+  requestReview: async () => ({
+    html_url: "https://github.com/acme/app/pull/1",
+    title: "PR",
+    number: 1
+  })
+};
+
 describe("createGitHubTools", () => {
   test("gets the authenticated GitHub user with caller token", async () => {
     const tools = createGitHubTools({
@@ -20,7 +55,8 @@ describe("createGitHubTools", () => {
       },
       listAssignedIssues: async () => [],
       searchIssues: async () => [],
-      listMyPullRequests: async () => []
+      listMyPullRequests: async () => [],
+      ...githubWriteStubs
     });
 
     const result = await tools.getAuthenticatedUser.execute({ connection });
@@ -47,7 +83,8 @@ describe("createGitHubTools", () => {
         ];
       },
       searchIssues: async () => [],
-      listMyPullRequests: async () => []
+      listMyPullRequests: async () => [],
+      ...githubWriteStubs
     });
 
     const result = await tools.listAssignedIssues.execute({ connection });
@@ -78,7 +115,8 @@ describe("createGitHubTools", () => {
           }
         ];
       },
-      listMyPullRequests: async () => []
+      listMyPullRequests: async () => [],
+      ...githubWriteStubs
     });
 
     const result = await tools.searchIssues.execute({
@@ -117,7 +155,8 @@ describe("createGitHubTools", () => {
             title: "Add workspace auth"
           }
         ];
-      }
+      },
+      ...githubWriteStubs
     });
 
     const result = await tools.listMyPullRequests.execute({ connection });
@@ -161,7 +200,8 @@ describe("createGitHubTools", () => {
             title: "Extra item"
           }
         ];
-      }
+      },
+      ...githubWriteStubs
     });
 
     const result = await tools.listMyPullRequests.execute({
@@ -184,5 +224,255 @@ describe("createGitHubTools", () => {
         title: "Refine workspace auth"
       }
     ]);
+  });
+
+  test("creates a GitHub issue with sanitized output", async () => {
+    const tools = createGitHubTools({
+      getGitHubUser: async () => ({ login: "octocat" }),
+      listAssignedIssues: async () => [],
+      searchIssues: async () => [],
+      listMyPullRequests: async () => [],
+      ...githubWriteStubs,
+      createIssue: async (token, input) => {
+        expect(token).toBe("secret-token");
+        expect(input).toEqual({
+          repo: "acme/app",
+          title: "New issue",
+          body: "Body",
+          labels: ["bug"],
+          assignees: ["octocat"]
+        });
+        return {
+          html_url: "https://github.com/acme/app/issues/9",
+          title: "New issue",
+          number: 9
+        };
+      }
+    });
+
+    const result = await tools.createIssue.execute({
+      connection,
+      input: {
+        repo: "acme/app",
+        title: "New issue",
+        body: "Body",
+        labels: ["bug"],
+        assignees: ["octocat"]
+      }
+    });
+
+    expect(result).toEqual({
+      classification: "user_private",
+      content: {
+        title: "New issue",
+        url: "https://github.com/acme/app/issues/9",
+        number: 9
+      }
+    });
+    expect(JSON.stringify(result)).not.toContain("secret-token");
+  });
+
+  test("comments on a GitHub issue or pull request", async () => {
+    const tools = createGitHubTools({
+      getGitHubUser: async () => ({ login: "octocat" }),
+      listAssignedIssues: async () => [],
+      searchIssues: async () => [],
+      listMyPullRequests: async () => [],
+      ...githubWriteStubs,
+      commentOnIssueOrPullRequest: async (token, input) => {
+        expect(token).toBe("secret-token");
+        expect(input).toEqual({
+          repo: "acme/app",
+          number: 9,
+          body: "Looks good"
+        });
+        return {
+          html_url: "https://github.com/acme/app/pull/9#issuecomment-1",
+          id: 123
+        };
+      }
+    });
+
+    const result = await tools.commentOnIssueOrPullRequest.execute({
+      connection,
+      input: { repo: "acme/app", number: 9, body: "Looks good" }
+    });
+
+    expect(result).toEqual({
+      classification: "user_private",
+      content: {
+        url: "https://github.com/acme/app/pull/9#issuecomment-1",
+        id: 123
+      }
+    });
+  });
+
+  test("creates and updates GitHub pull request metadata", async () => {
+    const tools = createGitHubTools({
+      getGitHubUser: async () => ({ login: "octocat" }),
+      listAssignedIssues: async () => [],
+      searchIssues: async () => [],
+      listMyPullRequests: async () => [],
+      ...githubWriteStubs,
+      createPullRequest: async (token, input) => {
+        expect(token).toBe("secret-token");
+        expect(input).toEqual({
+          repo: "acme/app",
+          title: "New PR",
+          head: "feature",
+          base: "main",
+          draft: true
+        });
+        return {
+          html_url: "https://github.com/acme/app/pull/10",
+          title: "New PR",
+          number: 10,
+          draft: true
+        };
+      },
+      updatePullRequest: async (token, input) => {
+        expect(token).toBe("secret-token");
+        expect(input).toEqual({
+          repo: "acme/app",
+          number: 10,
+          title: "Updated PR",
+          draft: false
+        });
+        return {
+          html_url: "https://github.com/acme/app/pull/10",
+          title: "Updated PR",
+          number: 10,
+          draft: false
+        };
+      }
+    });
+
+    await expect(
+      tools.createPullRequest.execute({
+        connection,
+        input: {
+          repo: "acme/app",
+          title: "New PR",
+          head: "feature",
+          base: "main",
+          draft: true
+        }
+      })
+    ).resolves.toEqual({
+      classification: "user_private",
+      content: {
+        title: "New PR",
+        url: "https://github.com/acme/app/pull/10",
+        number: 10,
+        draft: true
+      }
+    });
+
+    await expect(
+      tools.updatePullRequest.execute({
+        connection,
+        input: {
+          repo: "acme/app",
+          number: 10,
+          title: "Updated PR",
+          draft: false
+        }
+      })
+    ).resolves.toEqual({
+      classification: "user_private",
+      content: {
+        title: "Updated PR",
+        url: "https://github.com/acme/app/pull/10",
+        number: 10,
+        draft: false
+      }
+    });
+  });
+
+  test("adds/removes labels and requests review", async () => {
+    const tools = createGitHubTools({
+      getGitHubUser: async () => ({ login: "octocat" }),
+      listAssignedIssues: async () => [],
+      searchIssues: async () => [],
+      listMyPullRequests: async () => [],
+      ...githubWriteStubs,
+      addLabels: async (token, input) => {
+        expect(token).toBe("secret-token");
+        expect(input).toEqual({
+          repo: "acme/app",
+          number: 10,
+          labels: ["ready"]
+        });
+        return {
+          html_url: "https://github.com/acme/app/issues/10",
+          number: 10
+        };
+      },
+      removeLabels: async (token, input) => {
+        expect(token).toBe("secret-token");
+        expect(input).toEqual({
+          repo: "acme/app",
+          number: 10,
+          labels: ["wip"]
+        });
+        return {
+          html_url: "https://github.com/acme/app/issues/10",
+          number: 10
+        };
+      },
+      requestReview: async (token, input) => {
+        expect(token).toBe("secret-token");
+        expect(input).toEqual({
+          repo: "acme/app",
+          number: 10,
+          reviewers: ["octocat"]
+        });
+        return {
+          html_url: "https://github.com/acme/app/pull/10",
+          title: "New PR",
+          number: 10
+        };
+      }
+    });
+
+    expect(
+      await tools.addLabels.execute({
+        connection,
+        input: { repo: "acme/app", number: 10, labels: ["ready"] }
+      })
+    ).toEqual({
+      classification: "user_private",
+      content: {
+        url: "https://github.com/acme/app/issues/10",
+        number: 10
+      }
+    });
+
+    expect(
+      await tools.removeLabels.execute({
+        connection,
+        input: { repo: "acme/app", number: 10, labels: ["wip"] }
+      })
+    ).toEqual({
+      classification: "user_private",
+      content: {
+        url: "https://github.com/acme/app/issues/10",
+        number: 10
+      }
+    });
+
+    expect(
+      await tools.requestReview.execute({
+        connection,
+        input: { repo: "acme/app", number: 10, reviewers: ["octocat"] }
+      })
+    ).toEqual({
+      classification: "user_private",
+      content: {
+        title: "New PR",
+        url: "https://github.com/acme/app/pull/10",
+        number: 10
+      }
+    });
   });
 });

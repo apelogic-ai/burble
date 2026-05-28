@@ -304,6 +304,13 @@ function toMcpToolName(toolName: string): string {
     case "github_list_assigned_issues":
     case "github_search_issues":
     case "github_list_my_pull_requests":
+    case "github_create_issue":
+    case "github_comment_on_issue_or_pr":
+    case "github_create_pr":
+    case "github_update_pr":
+    case "github_add_labels":
+    case "github_remove_labels":
+    case "github_request_review":
     case "google_get_authenticated_user":
     case "google_search_drive_files":
     case "google_create_drive_text_file":
@@ -330,6 +337,20 @@ function toMcpToolName(toolName: string): string {
       return "github_search_issues";
     case "github.listMyPullRequests":
       return "github_list_my_pull_requests";
+    case "github.createIssue":
+      return "github_create_issue";
+    case "github.commentOnIssueOrPullRequest":
+      return "github_comment_on_issue_or_pr";
+    case "github.createPullRequest":
+      return "github_create_pr";
+    case "github.updatePullRequest":
+      return "github_update_pr";
+    case "github.addLabels":
+      return "github_add_labels";
+    case "github.removeLabels":
+      return "github_remove_labels";
+    case "github.requestReview":
+      return "github_request_review";
     case "google.getAuthenticatedUser":
       return "google_get_authenticated_user";
     case "google.searchDriveFiles":
@@ -388,6 +409,122 @@ function toMcpToolArguments(
       "sort",
       "order"
     ]);
+  }
+
+  if (toolName === "github.createIssue") {
+    const input = readRecordKey(body, "input");
+    const repo = readNestedString(body, "input", "repo");
+    const title = readNestedString(body, "input", "title");
+    if (!repo) {
+      throw new Error("github.createIssue requires input.repo");
+    }
+    if (!title) {
+      throw new Error("github.createIssue requires input.title");
+    }
+    return {
+      repo,
+      title,
+      ...compactToolInput(input, ["body", "labels", "assignees"])
+    };
+  }
+
+  if (toolName === "github.commentOnIssueOrPullRequest") {
+    const input = readRecordKey(body, "input");
+    const repo = readNestedString(body, "input", "repo");
+    const issueNumber = readRecordNumber(input, "number");
+    const commentBody = readNestedString(body, "input", "body");
+    if (!repo) {
+      throw new Error("github.commentOnIssueOrPullRequest requires input.repo");
+    }
+    if (!issueNumber) {
+      throw new Error("github.commentOnIssueOrPullRequest requires input.number");
+    }
+    if (!commentBody) {
+      throw new Error("github.commentOnIssueOrPullRequest requires input.body");
+    }
+    return {
+      repo,
+      number: issueNumber,
+      body: commentBody
+    };
+  }
+
+  if (toolName === "github.createPullRequest") {
+    const input = readRecordKey(body, "input");
+    const repo = readNestedString(body, "input", "repo");
+    const title = readNestedString(body, "input", "title");
+    const head = readNestedString(body, "input", "head");
+    const base = readNestedString(body, "input", "base");
+    if (!repo) {
+      throw new Error("github.createPullRequest requires input.repo");
+    }
+    if (!title) {
+      throw new Error("github.createPullRequest requires input.title");
+    }
+    if (!head) {
+      throw new Error("github.createPullRequest requires input.head");
+    }
+    if (!base) {
+      throw new Error("github.createPullRequest requires input.base");
+    }
+    return {
+      repo,
+      title,
+      head,
+      base,
+      ...compactToolInput(input, ["body", "draft"])
+    };
+  }
+
+  if (toolName === "github.updatePullRequest") {
+    const input = readRecordKey(body, "input");
+    const repo = readNestedString(body, "input", "repo");
+    const prNumber = readRecordNumber(input, "number");
+    if (!repo) {
+      throw new Error("github.updatePullRequest requires input.repo");
+    }
+    if (!prNumber) {
+      throw new Error("github.updatePullRequest requires input.number");
+    }
+    return {
+      repo,
+      number: prNumber,
+      ...compactToolInput(input, ["title", "body", "base", "draft"])
+    };
+  }
+
+  if (toolName === "github.addLabels" || toolName === "github.removeLabels") {
+    const input = readRecordKey(body, "input");
+    const repo = readNestedString(body, "input", "repo");
+    const issueNumber = readRecordNumber(input, "number");
+    if (!repo) {
+      throw new Error(`${toolName} requires input.repo`);
+    }
+    if (!issueNumber) {
+      throw new Error(`${toolName} requires input.number`);
+    }
+    return {
+      repo,
+      number: issueNumber,
+      ...compactToolInput(input, ["labels"])
+    };
+  }
+
+  if (toolName === "github.requestReview") {
+    const input = readRecordKey(body, "input");
+    const repo = readNestedString(body, "input", "repo");
+    const prNumber = readRecordNumber(input, "number");
+    if (!repo) {
+      throw new Error("github.requestReview requires input.repo");
+    }
+    if (!prNumber) {
+      throw new Error("github.requestReview requires input.number");
+    }
+    return {
+      repo,
+      number: prNumber,
+      ...compactToolInput(input, ["reviewers", "teamReviewers"])
+    };
   }
 
   if (toolName === "jira.searchIssues") {
@@ -643,6 +780,16 @@ function readRecordKey(
     : null;
 }
 
+function readRecordNumber(
+  value: Record<string, unknown> | null,
+  key: string
+): number | null {
+  const number = value?.[key];
+  return typeof number === "number" && Number.isInteger(number) && number > 0
+    ? number
+    : null;
+}
+
 function compactToolInput(
   input: Record<string, unknown> | null,
   keys: string[]
@@ -658,7 +805,8 @@ function compactToolInput(
       value === null ||
       (typeof value === "string" && value.trim()) ||
       typeof value === "boolean" ||
-      typeof value === "number"
+      typeof value === "number" ||
+      Array.isArray(value)
     ) {
       output[key] = value;
     }

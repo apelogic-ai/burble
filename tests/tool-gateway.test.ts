@@ -252,6 +252,51 @@ describe("handleToolGatewayRequest", () => {
     expect(await response.text()).toBe("Invalid tool input");
   });
 
+  test("executes GitHub write tools with the stored caller token", async () => {
+    const response = await handleToolGatewayRequest(
+      config,
+      createStore(connection),
+      "github.createIssue",
+      request("github.createIssue", {
+        user: { email: "person@example.com" },
+        input: {
+          repo: "acme/app",
+          title: "New issue",
+          body: "Body",
+          labels: ["bug"],
+          assignees: ["octocat"]
+        }
+      }),
+      {
+        createIssue: async (token, input) => {
+          expect(token).toBe("secret-token");
+          expect(input).toEqual({
+            repo: "acme/app",
+            title: "New issue",
+            body: "Body",
+            labels: ["bug"],
+            assignees: ["octocat"]
+          });
+          return {
+            title: "New issue",
+            html_url: "https://github.com/acme/app/issues/12",
+            number: 12
+          };
+        }
+      }
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      classification: "user_private",
+      content: {
+        title: "New issue",
+        url: "https://github.com/acme/app/issues/12",
+        number: 12
+      }
+    });
+  });
+
   test("requires the configured internal bearer token", async () => {
     const response = await handleToolGatewayRequest(
       config,
