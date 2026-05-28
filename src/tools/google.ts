@@ -1,7 +1,11 @@
 import type { ProviderConnection } from "../db";
 import {
   GoogleApiError,
+  type GoogleCalendarEventInput,
+  type GoogleCalendarEventUpdateInput,
+  type GoogleCreatedDraft,
   type GoogleDriveCreatedFile,
+  type GoogleDriveFileContent,
   isGoogleAuthorizationError,
   type GoogleCalendarEvent,
   type GoogleDriveFile,
@@ -29,6 +33,44 @@ export type GoogleToolDeps = {
     token: string,
     input: { name: string; text: string; mimeType?: string }
   ) => Promise<GoogleDriveCreatedFile>;
+  getGoogleDriveFile?: (
+    token: string,
+    input: { fileId: string; includeContent?: boolean }
+  ) => Promise<GoogleDriveFileContent>;
+  updateGoogleDriveTextFile?: (
+    token: string,
+    input: { fileId: string; text: string; mimeType?: string }
+  ) => Promise<GoogleDriveCreatedFile>;
+  appendGoogleDriveTextFile?: (
+    token: string,
+    input: { fileId: string; text: string; separator?: string; mimeType?: string }
+  ) => Promise<GoogleDriveCreatedFile>;
+  createGoogleDriveFolder?: (
+    token: string,
+    input: { name: string; parentId?: string }
+  ) => Promise<GoogleDriveCreatedFile>;
+  moveGoogleDriveFile?: (
+    token: string,
+    input: { fileId: string; parentId: string; removeParentIds?: string[] }
+  ) => Promise<GoogleDriveCreatedFile>;
+  createGoogleCalendarEvent?: (
+    token: string,
+    input: GoogleCalendarEventInput
+  ) => Promise<GoogleCalendarEvent>;
+  updateGoogleCalendarEvent?: (
+    token: string,
+    input: GoogleCalendarEventUpdateInput
+  ) => Promise<GoogleCalendarEvent>;
+  createGmailDraft?: (
+    token: string,
+    input: {
+      to: string[];
+      subject: string;
+      body: string;
+      cc?: string[];
+      bcc?: string[];
+    }
+  ) => Promise<GoogleCreatedDraft>;
   refreshGoogleAccessToken?: (refreshToken: string) => Promise<GoogleTokenSet>;
   saveGoogleConnection?: (connection: ProviderConnection) => void;
   now?: () => Date;
@@ -120,6 +162,136 @@ export function createGoogleTools(deps: GoogleToolDeps) {
       }
     },
 
+    getDriveFile: {
+      async execute(
+        context: GoogleToolContext & {
+          input: { fileId: string; includeContent?: boolean };
+        }
+      ): Promise<ToolResult<GoogleDriveFileContent | GoogleAuthErrorContent>> {
+        const file = await withGoogleToken(
+          deps,
+          context.connection,
+          (accessToken) => {
+            if (!deps.getGoogleDriveFile) {
+              throw new Error("Google Drive file lookup is not configured");
+            }
+            return deps.getGoogleDriveFile(accessToken, context.input);
+          }
+        );
+        if (isGoogleAuthErrorResult(file)) {
+          return file;
+        }
+        return {
+          classification: "user_private",
+          content: file
+        };
+      }
+    },
+
+    updateDriveTextFile: {
+      async execute(
+        context: GoogleToolContext & {
+          input: { fileId: string; text: string; mimeType?: string };
+        }
+      ): Promise<ToolResult<GoogleDriveCreatedFile | GoogleAuthErrorContent>> {
+        const file = await withGoogleToken(
+          deps,
+          context.connection,
+          (accessToken) => {
+            if (!deps.updateGoogleDriveTextFile) {
+              throw new Error("Google Drive file update is not configured");
+            }
+            return deps.updateGoogleDriveTextFile(accessToken, context.input);
+          }
+        );
+        if (isGoogleAuthErrorResult(file)) {
+          return file;
+        }
+        return {
+          classification: "user_private",
+          content: sanitizeCreatedDriveFile(file)
+        };
+      }
+    },
+
+    appendDriveTextFile: {
+      async execute(
+        context: GoogleToolContext & {
+          input: { fileId: string; text: string; separator?: string; mimeType?: string };
+        }
+      ): Promise<ToolResult<GoogleDriveCreatedFile | GoogleAuthErrorContent>> {
+        const file = await withGoogleToken(
+          deps,
+          context.connection,
+          (accessToken) => {
+            if (!deps.appendGoogleDriveTextFile) {
+              throw new Error("Google Drive file append is not configured");
+            }
+            return deps.appendGoogleDriveTextFile(accessToken, context.input);
+          }
+        );
+        if (isGoogleAuthErrorResult(file)) {
+          return file;
+        }
+        return {
+          classification: "user_private",
+          content: sanitizeCreatedDriveFile(file)
+        };
+      }
+    },
+
+    createDriveFolder: {
+      async execute(
+        context: GoogleToolContext & {
+          input: { name: string; parentId?: string };
+        }
+      ): Promise<ToolResult<GoogleDriveCreatedFile | GoogleAuthErrorContent>> {
+        const folder = await withGoogleToken(
+          deps,
+          context.connection,
+          (accessToken) => {
+            if (!deps.createGoogleDriveFolder) {
+              throw new Error("Google Drive folder creation is not configured");
+            }
+            return deps.createGoogleDriveFolder(accessToken, context.input);
+          }
+        );
+        if (isGoogleAuthErrorResult(folder)) {
+          return folder;
+        }
+        return {
+          classification: "user_private",
+          content: sanitizeCreatedDriveFile(folder)
+        };
+      }
+    },
+
+    moveDriveFile: {
+      async execute(
+        context: GoogleToolContext & {
+          input: { fileId: string; parentId: string; removeParentIds?: string[] };
+        }
+      ): Promise<ToolResult<GoogleDriveCreatedFile | GoogleAuthErrorContent>> {
+        const file = await withGoogleToken(
+          deps,
+          context.connection,
+          (accessToken) => {
+            if (!deps.moveGoogleDriveFile) {
+              throw new Error("Google Drive file move is not configured");
+            }
+            return deps.moveGoogleDriveFile(accessToken, context.input);
+          }
+        );
+        if (isGoogleAuthErrorResult(file)) {
+          return file;
+        }
+        return {
+          classification: "user_private",
+          content: sanitizeCreatedDriveFile(file)
+        };
+      }
+    },
+
     searchCalendarEvents: {
       async execute(
         context: GoogleToolContext & {
@@ -156,6 +328,54 @@ export function createGoogleTools(deps: GoogleToolDeps) {
       }
     },
 
+    createCalendarEvent: {
+      async execute(
+        context: GoogleToolContext & { input: GoogleCalendarEventInput }
+      ): Promise<ToolResult<GoogleCalendarEvent | GoogleAuthErrorContent>> {
+        const event = await withGoogleToken(
+          deps,
+          context.connection,
+          (accessToken) => {
+            if (!deps.createGoogleCalendarEvent) {
+              throw new Error("Google Calendar event creation is not configured");
+            }
+            return deps.createGoogleCalendarEvent(accessToken, context.input);
+          }
+        );
+        if (isGoogleAuthErrorResult(event)) {
+          return event;
+        }
+        return {
+          classification: "user_private",
+          content: event
+        };
+      }
+    },
+
+    updateCalendarEvent: {
+      async execute(
+        context: GoogleToolContext & { input: GoogleCalendarEventUpdateInput }
+      ): Promise<ToolResult<GoogleCalendarEvent | GoogleAuthErrorContent>> {
+        const event = await withGoogleToken(
+          deps,
+          context.connection,
+          (accessToken) => {
+            if (!deps.updateGoogleCalendarEvent) {
+              throw new Error("Google Calendar event update is not configured");
+            }
+            return deps.updateGoogleCalendarEvent(accessToken, context.input);
+          }
+        );
+        if (isGoogleAuthErrorResult(event)) {
+          return event;
+        }
+        return {
+          classification: "user_private",
+          content: event
+        };
+      }
+    },
+
     searchMailMessages: {
       async execute(
         context: GoogleToolContext & { input: { query: string; limit?: number } }
@@ -178,6 +398,38 @@ export function createGoogleTools(deps: GoogleToolDeps) {
             ...(message.subject ? { subject: message.subject } : {}),
             ...(message.snippet ? { snippet: message.snippet } : {})
           }))
+        };
+      }
+    },
+
+    createMailDraft: {
+      async execute(
+        context: GoogleToolContext & {
+          input: {
+            to: string[];
+            subject: string;
+            body: string;
+            cc?: string[];
+            bcc?: string[];
+          };
+        }
+      ): Promise<ToolResult<GoogleCreatedDraft | GoogleAuthErrorContent>> {
+        const draft = await withGoogleToken(
+          deps,
+          context.connection,
+          (accessToken) => {
+            if (!deps.createGmailDraft) {
+              throw new Error("Gmail draft creation is not configured");
+            }
+            return deps.createGmailDraft(accessToken, context.input);
+          }
+        );
+        if (isGoogleAuthErrorResult(draft)) {
+          return draft;
+        }
+        return {
+          classification: "user_private",
+          content: draft
         };
       }
     }
@@ -286,4 +538,13 @@ function isGoogleAuthErrorResult(value: unknown): value is GoogleAuthErrorResult
     "classification" in value &&
     "content" in value
   );
+}
+
+function sanitizeCreatedDriveFile(file: GoogleDriveCreatedFile): GoogleDriveCreatedFile {
+  return {
+    id: file.id,
+    name: file.name,
+    ...(file.mimeType ? { mimeType: file.mimeType } : {}),
+    ...(file.webViewLink ? { webViewLink: file.webViewLink } : {})
+  };
 }

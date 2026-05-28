@@ -26,6 +26,7 @@ export type Config = {
   agentRuntimeDockerNetwork: string;
   agentRuntimeImage: string;
   agentRuntimeIdleTtlMs: number;
+  agentRuntimeReaperEnabled: boolean;
   agentRuntimeReaperIntervalMs: number;
   agentRuntimeJwtTtlSeconds: number;
   agentRuntimeTokenSecret: string | null;
@@ -79,6 +80,25 @@ function optionalIntEnv(env: Env, name: string, fallback: number): number {
     throw new Error(`Environment variable ${name} must be a positive integer`);
   }
   return parsed;
+}
+
+function optionalBoolEnv(env: Env, name: string, fallback: boolean): boolean {
+  const value = env[name]?.trim().toLowerCase();
+  if (!value) {
+    return fallback;
+  }
+
+  if (["1", "true", "yes", "on"].includes(value)) {
+    return true;
+  }
+
+  if (["0", "false", "no", "off"].includes(value)) {
+    return false;
+  }
+
+  throw new Error(
+    `Environment variable ${name} must be a boolean (true/false)`
+  );
 }
 
 function optionalSlackLogLevelEnv(
@@ -239,7 +259,12 @@ export function readConfig(env: Env): Config {
     agentRuntimeIdleTtlMs: optionalIntEnv(
       env,
       "AGENT_RUNTIME_IDLE_TTL_MS",
-      30 * 60 * 1000
+      24 * 60 * 60 * 1000
+    ),
+    agentRuntimeReaperEnabled: optionalBoolEnv(
+      env,
+      "AGENT_RUNTIME_REAPER_ENABLED",
+      true
     ),
     agentRuntimeReaperIntervalMs: optionalIntEnv(
       env,

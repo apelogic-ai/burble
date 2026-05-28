@@ -54,6 +54,7 @@ describe("dev deploy config", () => {
       "AGENT_RUNTIME_IMAGE",
       "AGENT_RUNTIME_DOCKER_NETWORK",
       "AGENT_RUNTIME_IDLE_TTL_MS",
+      "AGENT_RUNTIME_REAPER_ENABLED",
       "AGENT_RUNTIME_REAPER_INTERVAL_MS",
       "AGENT_RUNTIME_JWT_TTL_SECONDS",
       "AGENT_RUNTIME_TOKEN_SECRET",
@@ -231,6 +232,7 @@ describe("dev deploy config", () => {
       "AGENT_RUNTIME_IMAGE",
       "AGENT_RUNTIME_DOCKER_NETWORK",
       "AGENT_RUNTIME_IDLE_TTL_MS",
+      "AGENT_RUNTIME_REAPER_ENABLED",
       "AGENT_RUNTIME_REAPER_INTERVAL_MS",
       "AGENT_RUNTIME_JWT_TTL_SECONDS",
       "AGENT_RUNTIME_TOKEN_SECRET",
@@ -262,6 +264,7 @@ describe("dev deploy config", () => {
       "AGENT_RUNTIME_DATA_ROOT:-/opt/burble/runtimes"
     );
     expect(personalRuntimesCompose).toContain("AGENT_RUNTIME_IDLE_TTL_MS");
+    expect(personalRuntimesCompose).toContain("AGENT_RUNTIME_REAPER_ENABLED");
     expect(personalRuntimesCompose).toContain("AGENT_RUNTIME_REAPER_INTERVAL_MS");
     expect(personalRuntimesCompose).toContain("AGENT_RUNTIME_JWT_TTL_SECONDS");
     expect(personalRuntimesCompose).toContain(

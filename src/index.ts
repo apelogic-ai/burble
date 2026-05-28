@@ -18,7 +18,8 @@ const logDebug =
   config.slackLogLevel === "debug"
     ? (message: string) => console.debug(formatLogLine("debug", message))
     : () => undefined;
-const runtimeReaper = slack.runtimeFactory
+const runtimeReaper =
+  config.agentRuntimeReaperEnabled && slack.runtimeFactory
   ? startRuntimeReaper({
       factory: slack.runtimeFactory,
       intervalMs: config.agentRuntimeReaperIntervalMs,

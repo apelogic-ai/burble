@@ -4,35 +4,59 @@ import type { Config } from "../config";
 import type { AgentRuntimeRecord, ProviderConnection, TokenStore } from "../db";
 import {
   addGitHubIssueLabels,
+  closeGitHubIssue,
   commentOnGitHubIssueOrPullRequest,
+  createGitHubBranch,
   createGitHubIssue,
   createGitHubPullRequest,
+  createOrUpdateGitHubFile,
+  getGitHubFile,
+  getGitHubIssue,
+  getGitHubPullRequest,
   getGitHubUser,
   listAssignedIssues,
   listMyPullRequests,
   removeGitHubIssueLabels,
+  reopenGitHubIssue,
   requestGitHubPullRequestReview,
   searchIssues,
+  updateGitHubIssue,
   updateGitHubPullRequest
 } from "../github";
 import {
+  appendGoogleDriveTextFile,
+  createGmailDraft,
+  createGoogleCalendarEvent,
+  createGoogleDriveFolder,
   createGoogleDriveTextFile,
+  getGoogleDriveFile,
   getGoogleUser,
+  moveGoogleDriveFile,
   refreshGoogleAccessToken,
   searchGoogleCalendarEvents,
   searchGoogleDriveFiles,
-  searchGoogleMailMessages
+  searchGoogleMailMessages,
+  updateGoogleCalendarEvent,
+  updateGoogleDriveTextFile
 } from "../google";
 import {
+  addJiraIssueComment,
+  addJiraIssueLabels,
+  createJiraSubtask,
   createJiraIssue,
   editJiraIssue,
+  getJiraIssue,
   getJiraUser,
+  linkJiraIssues,
   listJiraAccessibleResources,
   listAssignedJiraIssues,
   listVisibleJiraProjects,
   refreshJiraAccessToken,
+  removeJiraIssueLabels,
   searchJiraUsers,
-  searchJiraIssues
+  searchJiraIssues,
+  transitionJiraIssue,
+  updateJiraIssue
 } from "../jira";
 import { searchSlackMessages, searchSlackUsers } from "../slack-api";
 import type { RuntimeJwtIssuer } from "../runtime-jwt";
@@ -57,18 +81,34 @@ const defaultDeps = {
   listAssignedIssues,
   searchIssues,
   listMyPullRequests,
+  getIssue: getGitHubIssue,
+  getPullRequest: getGitHubPullRequest,
   createIssue: createGitHubIssue,
+  updateIssue: updateGitHubIssue,
+  closeIssue: closeGitHubIssue,
+  reopenIssue: reopenGitHubIssue,
   commentOnIssueOrPullRequest: commentOnGitHubIssueOrPullRequest,
   createPullRequest: createGitHubPullRequest,
   updatePullRequest: updateGitHubPullRequest,
   addLabels: addGitHubIssueLabels,
   removeLabels: removeGitHubIssueLabels,
   requestReview: requestGitHubPullRequestReview,
+  getFile: getGitHubFile,
+  createOrUpdateFile: createOrUpdateGitHubFile,
+  createBranch: createGitHubBranch,
   getGoogleUser,
   searchGoogleDriveFiles,
   createGoogleDriveTextFile,
+  getGoogleDriveFile,
+  updateGoogleDriveTextFile,
+  appendGoogleDriveTextFile,
+  createGoogleDriveFolder,
+  moveGoogleDriveFile,
   searchGoogleCalendarEvents,
+  createGoogleCalendarEvent,
+  updateGoogleCalendarEvent,
   searchGoogleMailMessages,
+  createGmailDraft,
   getJiraUser,
   listJiraAccessibleResources,
   listAssignedJiraIssues,
@@ -76,6 +116,14 @@ const defaultDeps = {
   searchJiraUsers,
   createJiraIssue,
   editJiraIssue,
+  getJiraIssue,
+  updateJiraIssue,
+  addJiraIssueComment,
+  transitionJiraIssue,
+  addJiraIssueLabels,
+  removeJiraIssueLabels,
+  linkJiraIssues,
+  createJiraSubtask,
   searchJiraIssues,
   searchSlackMessages,
   searchSlackUsers
@@ -108,6 +156,7 @@ export async function handleProviderMcpRequest(
       { status: 401 }
     );
   }
+  store.touchAgentRuntime(runtime.id);
 
   const routeValidation = await validateProviderMcpRoute(request, store, runtime);
   if (routeValidation.response) {

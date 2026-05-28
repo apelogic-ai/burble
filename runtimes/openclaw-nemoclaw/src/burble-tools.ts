@@ -304,24 +304,48 @@ function toMcpToolName(toolName: string): string {
     case "github_list_assigned_issues":
     case "github_search_issues":
     case "github_list_my_pull_requests":
+    case "github_get_issue":
+    case "github_get_pr":
     case "github_create_issue":
+    case "github_update_issue":
+    case "github_close_issue":
+    case "github_reopen_issue":
     case "github_comment_on_issue_or_pr":
     case "github_create_pr":
     case "github_update_pr":
     case "github_add_labels":
     case "github_remove_labels":
     case "github_request_review":
+    case "github_get_file":
+    case "github_create_or_update_file":
+    case "github_create_branch":
     case "google_get_authenticated_user":
     case "google_search_drive_files":
     case "google_create_drive_text_file":
+    case "google_get_drive_file":
+    case "google_update_drive_text_file":
+    case "google_append_to_drive_text_file":
+    case "google_create_drive_folder":
+    case "google_move_drive_file":
     case "google_search_calendar_events":
+    case "google_create_calendar_event":
+    case "google_update_calendar_event":
     case "google_search_mail_messages":
+    case "gmail_create_draft":
     case "jira_get_authenticated_user":
     case "jira_list_accessible_resources":
     case "jira_list_visible_projects":
     case "jira_search_users":
     case "jira_create_issue":
     case "jira_edit_issue":
+    case "jira_get_issue":
+    case "jira_update_issue":
+    case "jira_add_comment":
+    case "jira_transition_issue":
+    case "jira_add_labels":
+    case "jira_remove_labels":
+    case "jira_link_issues":
+    case "jira_create_subtask":
     case "jira_list_assigned_issues":
     case "jira_search_issues":
     case "slack_search_users":
@@ -337,8 +361,18 @@ function toMcpToolName(toolName: string): string {
       return "github_search_issues";
     case "github.listMyPullRequests":
       return "github_list_my_pull_requests";
+    case "github.getIssue":
+      return "github_get_issue";
+    case "github.getPullRequest":
+      return "github_get_pr";
     case "github.createIssue":
       return "github_create_issue";
+    case "github.updateIssue":
+      return "github_update_issue";
+    case "github.closeIssue":
+      return "github_close_issue";
+    case "github.reopenIssue":
+      return "github_reopen_issue";
     case "github.commentOnIssueOrPullRequest":
       return "github_comment_on_issue_or_pr";
     case "github.createPullRequest":
@@ -351,16 +385,38 @@ function toMcpToolName(toolName: string): string {
       return "github_remove_labels";
     case "github.requestReview":
       return "github_request_review";
+    case "github.getFile":
+      return "github_get_file";
+    case "github.createOrUpdateFile":
+      return "github_create_or_update_file";
+    case "github.createBranch":
+      return "github_create_branch";
     case "google.getAuthenticatedUser":
       return "google_get_authenticated_user";
     case "google.searchDriveFiles":
       return "google_search_drive_files";
     case "google.createDriveTextFile":
       return "google_create_drive_text_file";
+    case "google.getDriveFile":
+      return "google_get_drive_file";
+    case "google.updateDriveTextFile":
+      return "google_update_drive_text_file";
+    case "google.appendToDriveTextFile":
+      return "google_append_to_drive_text_file";
+    case "google.createDriveFolder":
+      return "google_create_drive_folder";
+    case "google.moveDriveFile":
+      return "google_move_drive_file";
     case "google.searchCalendarEvents":
       return "google_search_calendar_events";
+    case "google.createCalendarEvent":
+      return "google_create_calendar_event";
+    case "google.updateCalendarEvent":
+      return "google_update_calendar_event";
     case "google.searchMailMessages":
       return "google_search_mail_messages";
+    case "gmail.createDraft":
+      return "gmail_create_draft";
     case "jira.getAuthenticatedUser":
       return "jira_get_authenticated_user";
     case "jira.listAccessibleResources":
@@ -373,6 +429,22 @@ function toMcpToolName(toolName: string): string {
       return "jira_create_issue";
     case "jira.editIssue":
       return "jira_edit_issue";
+    case "jira.getIssue":
+      return "jira_get_issue";
+    case "jira.updateIssue":
+      return "jira_update_issue";
+    case "jira.addComment":
+      return "jira_add_comment";
+    case "jira.transitionIssue":
+      return "jira_transition_issue";
+    case "jira.addLabels":
+      return "jira_add_labels";
+    case "jira.removeLabels":
+      return "jira_remove_labels";
+    case "jira.linkIssues":
+      return "jira_link_issues";
+    case "jira.createSubtask":
+      return "jira_create_subtask";
     case "jira.listAssignedIssues":
       return "jira_list_assigned_issues";
     case "jira.searchIssues":
@@ -427,6 +499,41 @@ function toMcpToolArguments(
       repo,
       title,
       ...compactToolInput(input, ["body", "labels", "assignees"])
+    };
+  }
+
+  if (
+    toolName === "github.getIssue" ||
+    toolName === "github.getPullRequest" ||
+    toolName === "github.closeIssue" ||
+    toolName === "github.reopenIssue"
+  ) {
+    const input = readRecordKey(body, "input");
+    const repo = readNestedString(body, "input", "repo");
+    const number = readRecordNumber(input, "number");
+    if (!repo) {
+      throw new Error(`${toolName} requires input.repo`);
+    }
+    if (!number) {
+      throw new Error(`${toolName} requires input.number`);
+    }
+    return { repo, number };
+  }
+
+  if (toolName === "github.updateIssue") {
+    const input = readRecordKey(body, "input");
+    const repo = readNestedString(body, "input", "repo");
+    const number = readRecordNumber(input, "number");
+    if (!repo) {
+      throw new Error("github.updateIssue requires input.repo");
+    }
+    if (!number) {
+      throw new Error("github.updateIssue requires input.number");
+    }
+    return {
+      repo,
+      number,
+      ...compactToolInput(input, ["title", "body", "state", "labels", "assignees"])
     };
   }
 
@@ -529,6 +636,67 @@ function toMcpToolArguments(
     };
   }
 
+  if (toolName === "github.getFile") {
+    const input = readRecordKey(body, "input");
+    const repo = readNestedString(body, "input", "repo");
+    const path = readNestedString(body, "input", "path");
+    if (!repo) {
+      throw new Error("github.getFile requires input.repo");
+    }
+    if (!path) {
+      throw new Error("github.getFile requires input.path");
+    }
+    return {
+      repo,
+      path,
+      ...compactToolInput(input, ["ref"])
+    };
+  }
+
+  if (toolName === "github.createOrUpdateFile") {
+    const input = readRecordKey(body, "input");
+    const repo = readNestedString(body, "input", "repo");
+    const path = readNestedString(body, "input", "path");
+    const content = readNestedValue(body, "input", "content");
+    const message = readNestedString(body, "input", "message");
+    if (!repo) {
+      throw new Error("github.createOrUpdateFile requires input.repo");
+    }
+    if (!path) {
+      throw new Error("github.createOrUpdateFile requires input.path");
+    }
+    if (typeof content !== "string") {
+      throw new Error("github.createOrUpdateFile requires input.content");
+    }
+    if (!message) {
+      throw new Error("github.createOrUpdateFile requires input.message");
+    }
+    return {
+      repo,
+      path,
+      content,
+      message,
+      ...compactToolInput(input, ["branch", "sha"])
+    };
+  }
+
+  if (toolName === "github.createBranch") {
+    const input = readRecordKey(body, "input");
+    const repo = readNestedString(body, "input", "repo");
+    const branch = readNestedString(body, "input", "branch");
+    if (!repo) {
+      throw new Error("github.createBranch requires input.repo");
+    }
+    if (!branch) {
+      throw new Error("github.createBranch requires input.branch");
+    }
+    return {
+      repo,
+      branch,
+      ...compactToolInput(input, ["fromRef"])
+    };
+  }
+
   if (toolName === "jira.searchIssues") {
     const jql = readNestedString(body, "input", "jql");
     if (!jql) {
@@ -560,12 +728,59 @@ function toMcpToolArguments(
     };
   }
 
+  if (toolName === "google.getDriveFile") {
+    return compactToolInput(readRecordKey(body, "input"), [
+      "fileId",
+      "includeContent"
+    ]);
+  }
+
+  if (
+    toolName === "google.updateDriveTextFile" ||
+    toolName === "google.appendToDriveTextFile"
+  ) {
+    return compactToolInput(readRecordKey(body, "input"), [
+      "fileId",
+      "text",
+      "separator",
+      "mimeType"
+    ]);
+  }
+
+  if (toolName === "google.createDriveFolder") {
+    return compactToolInput(readRecordKey(body, "input"), ["name", "parentId"]);
+  }
+
+  if (toolName === "google.moveDriveFile") {
+    return compactToolInput(readRecordKey(body, "input"), [
+      "fileId",
+      "parentId",
+      "removeParentIds"
+    ]);
+  }
+
   if (toolName === "google.searchCalendarEvents") {
     return compactToolInput(readRecordKey(body, "input"), [
       "query",
       "timeMin",
       "timeMax",
       "limit"
+    ]);
+  }
+
+  if (
+    toolName === "google.createCalendarEvent" ||
+    toolName === "google.updateCalendarEvent"
+  ) {
+    return compactToolInput(readRecordKey(body, "input"), [
+      "calendarId",
+      "eventId",
+      "summary",
+      "start",
+      "end",
+      "description",
+      "location",
+      "timeZone"
     ]);
   }
 
@@ -578,6 +793,16 @@ function toMcpToolArguments(
       query,
       ...compactToolInput(readRecordKey(body, "input"), ["limit"])
     };
+  }
+
+  if (toolName === "gmail.createDraft") {
+    return compactToolInput(readRecordKey(body, "input"), [
+      "to",
+      "subject",
+      "body",
+      "cc",
+      "bcc"
+    ]);
   }
 
   if (toolName === "jira.listVisibleProjects") {
@@ -642,6 +867,57 @@ function toMcpToolArguments(
     return compactToolInput(readRecordKey(body, "input"), [
       "issueKey",
       "summary",
+      "description",
+      "assigneeAccountId"
+    ]);
+  }
+
+  if (toolName === "jira.getIssue") {
+    return compactToolInput(readRecordKey(body, "input"), ["issueKey"]);
+  }
+
+  if (toolName === "jira.updateIssue") {
+    return compactToolInput(readRecordKey(body, "input"), [
+      "issueKey",
+      "summary",
+      "description",
+      "assigneeAccountId",
+      "labels"
+    ]);
+  }
+
+  if (toolName === "jira.addComment") {
+    return compactToolInput(readRecordKey(body, "input"), ["issueKey", "body"]);
+  }
+
+  if (toolName === "jira.transitionIssue") {
+    return compactToolInput(readRecordKey(body, "input"), [
+      "issueKey",
+      "transitionId",
+      "transitionName"
+    ]);
+  }
+
+  if (toolName === "jira.addLabels" || toolName === "jira.removeLabels") {
+    return compactToolInput(readRecordKey(body, "input"), ["issueKey", "labels"]);
+  }
+
+  if (toolName === "jira.linkIssues") {
+    return compactToolInput(readRecordKey(body, "input"), [
+      "inwardIssueKey",
+      "outwardIssueKey",
+      "typeName",
+      "comment"
+    ]);
+  }
+
+  if (toolName === "jira.createSubtask") {
+    return compactToolInput(readRecordKey(body, "input"), [
+      "parentIssueKey",
+      "summary",
+      "projectKey",
+      "issueTypeName",
+      "issueTypeId",
       "description",
       "assigneeAccountId"
     ]);
