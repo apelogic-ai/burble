@@ -143,14 +143,15 @@ export async function runOpenClawCliRequest(
 
     if (!plannedToolCall) {
       const lastToolResult = executedTools.at(-1)?.toolResult;
-      const text =
+      const rawText =
         extractOpenClawText(result.stdout) ||
         (lastToolResult ? formatToolResult(lastToolResult) : baseline.response.text);
+      const text = sanitizeBootstrapFragments(rawText);
       if (
         rejectedDirectResponses.length < maxBootstrapRetries &&
-        isBootstrapSetupAnswer(text)
+        isBootstrapSetupAnswer(rawText)
       ) {
-        rejectedDirectResponses.push(text);
+        rejectedDirectResponses.push(rawText);
         logInfo(
           config.engine === "burble-direct"
             ? `Burble direct model retry runId=${request.runId ?? "unknown"} step=${step + 1} reason=bootstrap_response`
@@ -891,14 +892,15 @@ export async function* runOpenClawCliRequestStream(
 
     if (!plannedToolCall) {
       const lastToolResult = executedTools.at(-1)?.toolResult;
-      const text =
+      const rawText =
         extractOpenClawText(result.stdout) ||
         (lastToolResult ? formatToolResult(lastToolResult) : baseline.response.text);
+      const text = sanitizeBootstrapFragments(rawText);
       if (
         rejectedDirectResponses.length < maxBootstrapRetries &&
-        isBootstrapSetupAnswer(text)
+        isBootstrapSetupAnswer(rawText)
       ) {
-        rejectedDirectResponses.push(text);
+        rejectedDirectResponses.push(rawText);
         logInfo(
           config.engine === "burble-direct"
             ? `Burble direct model retry runId=${request.runId ?? "unknown"} step=${step + 1} reason=bootstrap_response`
@@ -1720,7 +1722,7 @@ function buildOpenClawPrompt(
     "Preloaded Burble runtime skills:",
     preloadedRuntimeSkills,
     "",
-    "Do not run first-time assistant setup. Do not ask who you are, who the user is, what kind of assistant you are, what style you should use, or for an emoji/persona setup. The Slack user and assistant identity are already established by Burble.",
+    "Do not run first-time assistant setup. Do not ask who you are, who the user is, what kind of assistant you are, what style you should use, or for an emoji/persona setup. Do not mention bootstrap-pending, bootstrap blockers, setup state, defaults, name/nature/vibe/emoji, or workspace bootstrap. The Slack user and assistant identity are already established by Burble.",
     "",
     "Runtime instruction: for requests about the current Slack channel or chat, answer from Recent Slack context when available. If channel history is unavailable, explain that Burble needs Slack bot history scopes and channel membership.",
     "",
@@ -1957,6 +1959,10 @@ function formatToolCatalog(catalog: ToolCatalogItem[]): string {
 function isBootstrapSetupAnswer(text: string): boolean {
   const normalized = text.toLowerCase();
   return (
+    /\bbootstrap blocker\b/.test(normalized) ||
+    /\bbootstrap-pending\b/.test(normalized) ||
+    /\bworkspace bootstrap\b/.test(normalized) ||
+    /\bsetup\/onboarding\b/.test(normalized) ||
     /\bwho am i\b/.test(normalized) ||
     /\bwho are you\b/.test(normalized) ||
     /\bidentity setup\b/.test(normalized) ||
@@ -1966,6 +1972,23 @@ function isBootstrapSetupAnswer(text: string): boolean {
     /\bwhat kind of assistant\b/.test(normalized) ||
     /\bi just came online\b/.test(normalized)
   );
+}
+
+function sanitizeBootstrapFragments(text: string): string {
+  if (!isBootstrapSetupAnswer(text)) {
+    return text;
+  }
+
+  const paragraphs = text
+    .split(/\n{2,}/)
+    .map((paragraph) => paragraph.trim())
+    .filter(Boolean);
+  const kept = paragraphs.filter((paragraph) => !isBootstrapSetupAnswer(paragraph));
+  if (kept.length === 0) {
+    return text;
+  }
+
+  return kept.join("\n\n");
 }
 
 function readPlannedToolCall(
