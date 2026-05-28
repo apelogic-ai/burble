@@ -19,6 +19,17 @@ export type GoogleDriveFile = {
   modifiedTime?: string;
 };
 
+export type GoogleDriveCreatedFile = {
+  id: string;
+  name: string;
+  mimeType?: string;
+  webViewLink?: string;
+};
+
+export type GoogleDriveFileContent = GoogleDriveFile & {
+  content?: string;
+};
+
 export type GoogleCalendarEvent = {
   id: string;
   summary?: string;
@@ -36,6 +47,32 @@ export type GoogleMailMessage = {
   snippet?: string;
 };
 
+export type GoogleCreatedDraft = {
+  id: string;
+  messageId?: string;
+};
+
+export type GoogleCalendarEventInput = {
+  calendarId?: string;
+  summary: string;
+  start: string;
+  end: string;
+  description?: string;
+  location?: string;
+  timeZone?: string;
+};
+
+export type GoogleCalendarEventUpdateInput = {
+  calendarId?: string;
+  eventId: string;
+  summary?: string;
+  start?: string;
+  end?: string;
+  description?: string;
+  location?: string;
+  timeZone?: string;
+};
+
 export class GoogleApiError extends Error {
   constructor(
     message: string,
@@ -51,8 +88,11 @@ const googleScopes = [
   "email",
   "profile",
   "https://www.googleapis.com/auth/drive.metadata.readonly",
+  "https://www.googleapis.com/auth/drive.file",
   "https://www.googleapis.com/auth/calendar.readonly",
-  "https://www.googleapis.com/auth/gmail.readonly"
+  "https://www.googleapis.com/auth/calendar.events",
+  "https://www.googleapis.com/auth/gmail.readonly",
+  "https://www.googleapis.com/auth/gmail.compose"
 ];
 
 export function buildGoogleOAuthUrl(config: Config, state: string): string {
@@ -182,6 +222,199 @@ export async function searchGoogleDriveFiles(
   return body.files ?? [];
 }
 
+export async function createGoogleDriveTextFile(
+  token: string,
+  input: { name: string; text: string; mimeType?: string }
+): Promise<GoogleDriveCreatedFile> {
+  const url = new URL("https://www.googleapis.com/upload/drive/v3/files");
+  url.searchParams.set("uploadType", "multipart");
+  url.searchParams.set("fields", "id,name,mimeType,webViewLink");
+
+  const boundary = `burble_${crypto.randomUUID().replace(/-/g, "")}`;
+  const mimeType = input.mimeType ?? "text/plain";
+  const response = await fetch(url, {
+    method: "POST",
+    headers: {
+      ...googleHeaders(token),
+      "Content-Type": `multipart/related; boundary=${boundary}`
+    },
+    body: [
+      `--${boundary}`,
+      "Content-Type: application/json; charset=UTF-8",
+      "",
+      JSON.stringify({
+        name: input.name,
+        mimeType
+      }),
+      `--${boundary}`,
+      `Content-Type: ${mimeType}; charset=UTF-8`,
+      "",
+      input.text,
+      `--${boundary}--`,
+      ""
+    ].join("\r\n")
+  });
+
+  const body = (await response.json()) as {
+    id?: string;
+    name?: string;
+    mimeType?: string;
+    webViewLink?: string;
+    error?: { message?: string };
+  };
+  if (!response.ok || !body.id || !body.name) {
+    throw googleError(response, "Google Drive file creation failed", body.error?.message);
+  }
+
+  return {
+    id: body.id,
+    name: body.name,
+    ...(body.mimeType ? { mimeType: body.mimeType } : {}),
+    ...(body.webViewLink ? { webViewLink: body.webViewLink } : {})
+  };
+}
+
+export async function getGoogleDriveFile(
+  token: string,
+  input: { fileId: string; includeContent?: boolean }
+): Promise<GoogleDriveFileContent> {
+  const metadataUrl = new URL(
+    `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(input.fileId)}`
+  );
+  metadataUrl.searchParams.set(
+    "fields",
+    "id,name,mimeType,webViewLink,modifiedTime"
+  );
+  const metadataResponse = await fetch(metadataUrl, { headers: googleHeaders(token) });
+  const metadata = (await metadataResponse.json()) as GoogleDriveFile & {
+    error?: { message?: string };
+  };
+  if (!metadataResponse.ok) {
+    throw googleError(
+      metadataResponse,
+      "Google Drive file lookup failed",
+      metadata.error?.message
+    );
+  }
+
+  if (input.includeContent === false) {
+    return sanitizeDriveFile(metadata);
+  }
+
+  const content = await readGoogleDriveFileContent(token, metadata);
+  return {
+    ...sanitizeDriveFile(metadata),
+    ...(content !== null ? { content } : {})
+  };
+}
+
+export async function updateGoogleDriveTextFile(
+  token: string,
+  input: { fileId: string; text: string; mimeType?: string }
+): Promise<GoogleDriveCreatedFile> {
+  const url = new URL(
+    `https://www.googleapis.com/upload/drive/v3/files/${encodeURIComponent(input.fileId)}`
+  );
+  url.searchParams.set("uploadType", "media");
+  url.searchParams.set("fields", "id,name,mimeType,webViewLink");
+  const response = await fetch(url, {
+    method: "PATCH",
+    headers: {
+      ...googleHeaders(token),
+      "Content-Type": `${input.mimeType ?? "text/plain"}; charset=UTF-8`
+    },
+    body: input.text
+  });
+  const body = (await response.json()) as GoogleDriveCreatedFile & {
+    error?: { message?: string };
+  };
+  if (!response.ok || !body.id || !body.name) {
+    throw googleError(
+      response,
+      "Google Drive file update failed",
+      body.error?.message
+    );
+  }
+  return sanitizeCreatedDriveFile(body);
+}
+
+export async function appendGoogleDriveTextFile(
+  token: string,
+  input: { fileId: string; text: string; separator?: string; mimeType?: string }
+): Promise<GoogleDriveCreatedFile> {
+  const current = await getGoogleDriveFile(token, {
+    fileId: input.fileId,
+    includeContent: true
+  });
+  const next = `${current.content ?? ""}${input.separator ?? "\n"}${input.text}`;
+  return updateGoogleDriveTextFile(token, {
+    fileId: input.fileId,
+    text: next,
+    ...(input.mimeType ? { mimeType: input.mimeType } : {})
+  });
+}
+
+export async function createGoogleDriveFolder(
+  token: string,
+  input: { name: string; parentId?: string }
+): Promise<GoogleDriveCreatedFile> {
+  const url = new URL("https://www.googleapis.com/drive/v3/files");
+  url.searchParams.set("fields", "id,name,mimeType,webViewLink");
+  const response = await fetch(url, {
+    method: "POST",
+    headers: {
+      ...googleHeaders(token),
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      name: input.name,
+      mimeType: "application/vnd.google-apps.folder",
+      ...(input.parentId ? { parents: [input.parentId] } : {})
+    })
+  });
+  const body = (await response.json()) as GoogleDriveCreatedFile & {
+    error?: { message?: string };
+  };
+  if (!response.ok || !body.id || !body.name) {
+    throw googleError(
+      response,
+      "Google Drive folder creation failed",
+      body.error?.message
+    );
+  }
+  return sanitizeCreatedDriveFile(body);
+}
+
+export async function moveGoogleDriveFile(
+  token: string,
+  input: { fileId: string; parentId: string; removeParentIds?: string[] }
+): Promise<GoogleDriveCreatedFile> {
+  const removeParentIds =
+    input.removeParentIds ??
+    (await readGoogleDriveParents(token, input.fileId)).filter(
+      (parentId) => parentId !== input.parentId
+    );
+  const url = new URL(
+    `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(input.fileId)}`
+  );
+  url.searchParams.set("addParents", input.parentId);
+  if (removeParentIds.length) {
+    url.searchParams.set("removeParents", removeParentIds.join(","));
+  }
+  url.searchParams.set("fields", "id,name,mimeType,webViewLink");
+  const response = await fetch(url, {
+    method: "PATCH",
+    headers: googleHeaders(token)
+  });
+  const body = (await response.json()) as GoogleDriveCreatedFile & {
+    error?: { message?: string };
+  };
+  if (!response.ok || !body.id || !body.name) {
+    throw googleError(response, "Google Drive file move failed", body.error?.message);
+  }
+  return sanitizeCreatedDriveFile(body);
+}
+
 export async function searchGoogleCalendarEvents(
   token: string,
   input: { query?: string; timeMin?: string; timeMax?: string; limit?: number }
@@ -238,6 +471,64 @@ export async function searchGoogleCalendarEvents(
   );
 }
 
+export async function createGoogleCalendarEvent(
+  token: string,
+  input: GoogleCalendarEventInput
+): Promise<GoogleCalendarEvent> {
+  const calendarId = input.calendarId ?? "primary";
+  const response = await fetch(
+    `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId)}/events`,
+    {
+      method: "POST",
+      headers: {
+        ...googleHeaders(token),
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify(googleCalendarEventPayload(input))
+    }
+  );
+  const body = (await response.json()) as GoogleCalendarEventApiResponse & {
+    error?: { message?: string };
+  };
+  if (!response.ok || !body.id) {
+    throw googleError(
+      response,
+      "Google Calendar event creation failed",
+      body.error?.message
+    );
+  }
+  return sanitizeCalendarEvent(body);
+}
+
+export async function updateGoogleCalendarEvent(
+  token: string,
+  input: GoogleCalendarEventUpdateInput
+): Promise<GoogleCalendarEvent> {
+  const calendarId = input.calendarId ?? "primary";
+  const response = await fetch(
+    `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(input.eventId)}`,
+    {
+      method: "PATCH",
+      headers: {
+        ...googleHeaders(token),
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify(googleCalendarEventPayload(input))
+    }
+  );
+  const body = (await response.json()) as GoogleCalendarEventApiResponse & {
+    error?: { message?: string };
+  };
+  if (!response.ok || !body.id) {
+    throw googleError(
+      response,
+      "Google Calendar event update failed",
+      body.error?.message
+    );
+  }
+  return sanitizeCalendarEvent(body);
+}
+
 export async function searchGoogleMailMessages(
   token: string,
   input: { query: string; limit?: number }
@@ -264,6 +555,42 @@ export async function searchGoogleMailMessages(
     messages.slice(0, limit).map((message) => readGoogleMailMessage(token, message))
   );
   return details;
+}
+
+export async function createGmailDraft(
+  token: string,
+  input: {
+    to: string[];
+    subject: string;
+    body: string;
+    cc?: string[];
+    bcc?: string[];
+  }
+): Promise<GoogleCreatedDraft> {
+  const response = await fetch("https://gmail.googleapis.com/gmail/v1/users/me/drafts", {
+    method: "POST",
+    headers: {
+      ...googleHeaders(token),
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      message: {
+        raw: encodeGmailRawMessage(input)
+      }
+    })
+  });
+  const body = (await response.json()) as {
+    id?: string;
+    message?: { id?: string };
+    error?: { message?: string };
+  };
+  if (!response.ok || !body.id) {
+    throw googleError(response, "Gmail draft creation failed", body.error?.message);
+  }
+  return {
+    id: body.id,
+    ...(body.message?.id ? { messageId: body.message.id } : {})
+  };
 }
 
 export function isGoogleAuthorizationError(error: unknown): boolean {
@@ -355,10 +682,165 @@ function readHeader(
   return header?.value ?? null;
 }
 
+async function readGoogleDriveFileContent(
+  token: string,
+  file: GoogleDriveFile
+): Promise<string | null> {
+  if (!file.mimeType) {
+    return null;
+  }
+  const url = file.mimeType.startsWith("application/vnd.google-apps.")
+    ? new URL(
+        `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(file.id)}/export`
+      )
+    : new URL(
+        `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(file.id)}`
+      );
+  if (file.mimeType.startsWith("application/vnd.google-apps.")) {
+    url.searchParams.set("mimeType", googleExportMimeType(file.mimeType));
+  } else {
+    url.searchParams.set("alt", "media");
+  }
+  const response = await fetch(url, { headers: googleHeaders(token) });
+  if (!response.ok) {
+    const detail = await readGoogleErrorText(response);
+    throw googleError(response, "Google Drive file content lookup failed", detail);
+  }
+  return response.text();
+}
+
+async function readGoogleDriveParents(
+  token: string,
+  fileId: string
+): Promise<string[]> {
+  const url = new URL(
+    `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}`
+  );
+  url.searchParams.set("fields", "parents");
+  const response = await fetch(url, { headers: googleHeaders(token) });
+  const body = (await response.json()) as {
+    parents?: string[];
+    error?: { message?: string };
+  };
+  if (!response.ok) {
+    throw googleError(
+      response,
+      "Google Drive parent lookup failed",
+      body.error?.message
+    );
+  }
+  return body.parents ?? [];
+}
+
+function sanitizeDriveFile(file: GoogleDriveFile): GoogleDriveFile {
+  return {
+    id: file.id,
+    name: file.name,
+    ...(file.mimeType ? { mimeType: file.mimeType } : {}),
+    ...(file.webViewLink ? { webViewLink: file.webViewLink } : {}),
+    ...(file.modifiedTime ? { modifiedTime: file.modifiedTime } : {})
+  };
+}
+
+function sanitizeCreatedDriveFile(
+  file: GoogleDriveCreatedFile
+): GoogleDriveCreatedFile {
+  return {
+    id: file.id,
+    name: file.name,
+    ...(file.mimeType ? { mimeType: file.mimeType } : {}),
+    ...(file.webViewLink ? { webViewLink: file.webViewLink } : {})
+  };
+}
+
+function googleExportMimeType(mimeType: string): string {
+  return mimeType === "application/vnd.google-apps.spreadsheet"
+    ? "text/csv"
+    : "text/plain";
+}
+
+async function readGoogleErrorText(response: Response): Promise<string | undefined> {
+  try {
+    const body = (await response.json()) as { error?: { message?: string } };
+    return body.error?.message;
+  } catch {
+    return undefined;
+  }
+}
+
+function googleCalendarEventPayload(
+  input: GoogleCalendarEventInput | GoogleCalendarEventUpdateInput
+): Record<string, unknown> {
+  return {
+    ...("summary" in input && input.summary !== undefined
+      ? { summary: input.summary }
+      : {}),
+    ...("description" in input && input.description !== undefined
+      ? { description: input.description }
+      : {}),
+    ...("location" in input && input.location !== undefined
+      ? { location: input.location }
+      : {}),
+    ...("start" in input && input.start !== undefined
+      ? { start: { dateTime: input.start, ...(input.timeZone ? { timeZone: input.timeZone } : {}) } }
+      : {}),
+    ...("end" in input && input.end !== undefined
+      ? { end: { dateTime: input.end, ...(input.timeZone ? { timeZone: input.timeZone } : {}) } }
+      : {})
+  };
+}
+
+function sanitizeCalendarEvent(event: GoogleCalendarEventApiResponse): GoogleCalendarEvent {
+  return {
+    id: event.id!,
+    ...(event.summary ? { summary: event.summary } : {}),
+    ...(event.description ? { description: event.description } : {}),
+    ...(event.htmlLink ? { htmlLink: event.htmlLink } : {}),
+    ...(event.start?.dateTime ?? event.start?.date
+      ? { start: event.start?.dateTime ?? event.start?.date }
+      : {}),
+    ...(event.end?.dateTime ?? event.end?.date
+      ? { end: event.end?.dateTime ?? event.end?.date }
+      : {}),
+    ...(event.location ? { location: event.location } : {})
+  };
+}
+
+function encodeGmailRawMessage(input: {
+  to: string[];
+  subject: string;
+  body: string;
+  cc?: string[];
+  bcc?: string[];
+}): string {
+  const headers = [
+    `To: ${input.to.join(", ")}`,
+    ...(input.cc?.length ? [`Cc: ${input.cc.join(", ")}`] : []),
+    ...(input.bcc?.length ? [`Bcc: ${input.bcc.join(", ")}`] : []),
+    `Subject: ${input.subject}`,
+    "Content-Type: text/plain; charset=UTF-8"
+  ];
+  return Buffer.from([...headers, "", input.body].join("\r\n"), "utf8")
+    .toString("base64")
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/, "");
+}
+
 type GoogleTokenResponse = {
   access_token?: string;
   refresh_token?: string;
   expires_in?: number;
   error?: string;
   error_description?: string;
+};
+
+type GoogleCalendarEventApiResponse = {
+  id?: string;
+  summary?: string;
+  description?: string;
+  htmlLink?: string;
+  start?: { dateTime?: string; date?: string };
+  end?: { dateTime?: string; date?: string };
+  location?: string;
 };

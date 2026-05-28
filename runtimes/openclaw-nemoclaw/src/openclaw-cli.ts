@@ -1354,7 +1354,7 @@ async function buildBurbleToolContext(
   logInfo(`OpenClaw context start runId=${request.runId ?? "unknown"}`);
   const [baseline, catalogBuild] = await Promise.all([
     runBurbleRequest(request, config, executeTool),
-    buildToolCatalog(request, executeTool)
+    buildToolCatalog(request, config, executeTool)
   ]);
   logInfo(
     `OpenClaw context finish runId=${request.runId ?? "unknown"} elapsedMs=${Date.now() - startedAt} catalogTools=${catalogBuild.catalog.length} upstreamSchemas=${Object.keys(catalogBuild.upstreamMcpSchemas).length} baselineClassification=${baseline.response.classification}`
@@ -1369,6 +1369,7 @@ async function buildBurbleToolContext(
 
 async function buildToolCatalog(
   request: RunRequest,
+  config: RuntimeConfig,
   executeTool: ToolExecutor
 ): Promise<{
   catalog: ToolCatalogItem[];
@@ -1400,6 +1401,21 @@ async function buildToolCatalog(
     });
   }
 
+  if (config.mcpGatewayUrl && config.runtimeJwt) {
+    const discoveredProviderCatalog = await readDiscoveredProviderToolCatalog(
+      request,
+      executeTool
+    );
+    if (discoveredProviderCatalog) {
+      catalog.push(...discoveredProviderCatalog.catalog);
+      Object.assign(
+        upstreamMcpSchemas,
+        discoveredProviderCatalog.upstreamMcpSchemas
+      );
+      return { catalog, upstreamMcpSchemas };
+    }
+  }
+
   const github = request.input.connections.github;
   if (github.connected && github.email) {
     catalog.push(
@@ -1425,8 +1441,93 @@ async function buildToolCatalog(
       {
         name: "github.listMyPullRequests",
         description:
-          "List open GitHub pull requests authored by the requesting Slack user's connected GitHub account.",
-        inputSchema: {}
+          "List GitHub pull requests authored by the requesting Slack user's connected GitHub account. Defaults to open PRs sorted by most recently updated.",
+        inputSchema: {
+          limit: "number optional, 1-20, maximum pull requests to return",
+          state: "string optional, one of: open, closed, all",
+          sort: "string optional, one of: updated, created, comments",
+          order: "string optional, one of: desc, asc",
+          owner:
+            "string optional GitHub owner or organization login to filter by, for example apelogic-ai",
+          repo:
+            "string optional repository in owner/name format; takes precedence over owner"
+        }
+      },
+      {
+        name: "github.createIssue",
+        description:
+          "Create a GitHub issue. Use only when the user clearly asks to create an issue.",
+        inputSchema: {
+          repo: "string repository in owner/name format",
+          title: "string issue title",
+          body: "optional string issue body",
+          labels: "optional string[] labels",
+          assignees: "optional string[] GitHub usernames"
+        }
+      },
+      {
+        name: "github.commentOnIssueOrPullRequest",
+        description:
+          "Add a comment to a GitHub issue or pull request. Use only when the user clearly asks to comment.",
+        inputSchema: {
+          repo: "string repository in owner/name format",
+          number: "number issue or pull request number",
+          body: "string comment body"
+        }
+      },
+      {
+        name: "github.createPullRequest",
+        description:
+          "Open a GitHub pull request from an existing branch. Use only when explicitly requested.",
+        inputSchema: {
+          repo: "string repository in owner/name format",
+          title: "string pull request title",
+          head: "string head branch or owner:branch",
+          base: "string base branch",
+          body: "optional string pull request body",
+          draft: "optional boolean"
+        }
+      },
+      {
+        name: "github.updatePullRequest",
+        description:
+          "Update GitHub pull request metadata: title, body, base branch, or draft state. Does not edit code.",
+        inputSchema: {
+          repo: "string repository in owner/name format",
+          number: "number pull request number",
+          title: "optional string new title",
+          body: "optional string new body",
+          base: "optional string new base branch",
+          draft: "optional boolean draft state"
+        }
+      },
+      {
+        name: "github.addLabels",
+        description: "Add labels to a GitHub issue or pull request.",
+        inputSchema: {
+          repo: "string repository in owner/name format",
+          number: "number issue or pull request number",
+          labels: "string[] labels to add"
+        }
+      },
+      {
+        name: "github.removeLabels",
+        description: "Remove labels from a GitHub issue or pull request.",
+        inputSchema: {
+          repo: "string repository in owner/name format",
+          number: "number issue or pull request number",
+          labels: "string[] labels to remove"
+        }
+      },
+      {
+        name: "github.requestReview",
+        description: "Request user or team reviewers for a GitHub pull request.",
+        inputSchema: {
+          repo: "string repository in owner/name format",
+          number: "number pull request number",
+          reviewers: "optional string[] GitHub usernames",
+          teamReviewers: "optional string[] GitHub team slugs"
+        }
       }
     );
   }
@@ -1472,6 +1573,16 @@ async function buildToolCatalog(
         inputSchema: {
           query: "optional string Drive file-name search terms",
           limit: "optional integer 1-20"
+        }
+      },
+      {
+        name: "google.createDriveTextFile",
+        description:
+          "Create a new app-owned text file in Google Drive using the requesting Slack user's connected Google account.",
+        inputSchema: {
+          name: "string Drive file name",
+          text: "string text body to write into the file",
+          mimeType: "optional string MIME type; defaults to text/plain"
         }
       },
       {
@@ -1601,6 +1712,262 @@ async function buildToolCatalog(
   return { catalog, upstreamMcpSchemas };
 }
 
+async function readDiscoveredProviderToolCatalog(
+  request: RunRequest,
+  executeTool: ToolExecutor
+): Promise<{
+  catalog: ToolCatalogItem[];
+  upstreamMcpSchemas: Record<string, unknown>;
+} | null> {
+  let result: ToolResult;
+  try {
+    result = await executeTool("burble.mcp.listTools", {});
+  } catch {
+    return null;
+  }
+
+  if (!Array.isArray(result.content)) {
+    return null;
+  }
+
+  const shouldIncludeAtlassian = shouldLoadAtlassianMcpTools(request.input.text);
+  const catalog = result.content.flatMap((item): ToolCatalogItem[] => {
+    const tool = readDiscoveredMcpTool(item);
+    if (!tool) {
+      return [];
+    }
+
+    const name = mcpToolNameToBurbleToolName(tool.name);
+    if (!name || !isDiscoveredProviderToolAvailable(name, request)) {
+      return [];
+    }
+
+    if (name.startsWith("atlassian.") && !shouldIncludeAtlassian) {
+      return [];
+    }
+
+    return [
+      {
+        name,
+        description:
+          tool.description ??
+          tool.title ??
+          `Burble provider MCP tool ${tool.name}`,
+        inputSchema: tool.inputSchema ?? {}
+      }
+    ];
+  });
+
+  const upstreamMcpSchemas: Record<string, unknown> = {};
+  if (
+    shouldIncludeAtlassian &&
+    catalog.some((tool) => tool.name === "atlassian.callMcpTool") &&
+    request.input.connections.jira?.email
+  ) {
+    const upstreamTools = await readAtlassianMcpToolSummaries(
+      request.input.connections.jira.email,
+      executeTool
+    );
+    Object.assign(upstreamMcpSchemas, upstreamTools.inputSchemas);
+    const callTool = catalog.find((tool) => tool.name === "atlassian.callMcpTool");
+    if (callTool && upstreamTools.summaries.length > 0) {
+      callTool.description = [
+        callTool.description,
+        `Known allowed upstream Atlassian MCP tools include: ${upstreamTools.summaries.slice(0, 30).join("; ")}.`
+      ].join(" ");
+    }
+  }
+
+  if (catalog.length === 0 && hasConnectedProvider(request)) {
+    return null;
+  }
+
+  return { catalog, upstreamMcpSchemas };
+}
+
+function readDiscoveredMcpTool(value: unknown): {
+  name: string;
+  title?: string;
+  description?: string;
+  inputSchema?: Record<string, unknown>;
+} | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+
+  const record = value as Record<string, unknown>;
+  if (typeof record.name !== "string" || !record.name.trim()) {
+    return null;
+  }
+
+  return {
+    name: record.name,
+    ...(typeof record.title === "string" ? { title: record.title } : {}),
+    ...(typeof record.description === "string"
+      ? { description: record.description }
+      : {}),
+    ...(record.inputSchema &&
+    typeof record.inputSchema === "object" &&
+    !Array.isArray(record.inputSchema)
+      ? { inputSchema: record.inputSchema as Record<string, unknown> }
+      : {})
+  };
+}
+
+function mcpToolNameToBurbleToolName(name: string): string | null {
+  switch (name) {
+    case "github_get_authenticated_user":
+      return "github.getAuthenticatedUser";
+    case "github_list_assigned_issues":
+      return "github.listAssignedIssues";
+    case "github_search_issues":
+      return "github.searchIssues";
+    case "github_list_my_pull_requests":
+      return "github.listMyPullRequests";
+    case "github_get_issue":
+      return "github.getIssue";
+    case "github_get_pr":
+      return "github.getPullRequest";
+    case "github_create_issue":
+      return "github.createIssue";
+    case "github_update_issue":
+      return "github.updateIssue";
+    case "github_close_issue":
+      return "github.closeIssue";
+    case "github_reopen_issue":
+      return "github.reopenIssue";
+    case "github_comment_on_issue_or_pr":
+      return "github.commentOnIssueOrPullRequest";
+    case "github_create_pr":
+      return "github.createPullRequest";
+    case "github_update_pr":
+      return "github.updatePullRequest";
+    case "github_add_labels":
+      return "github.addLabels";
+    case "github_remove_labels":
+      return "github.removeLabels";
+    case "github_request_review":
+      return "github.requestReview";
+    case "github_get_file":
+      return "github.getFile";
+    case "github_create_or_update_file":
+      return "github.createOrUpdateFile";
+    case "github_create_branch":
+      return "github.createBranch";
+    case "google_get_authenticated_user":
+      return "google.getAuthenticatedUser";
+    case "google_search_drive_files":
+      return "google.searchDriveFiles";
+    case "google_create_drive_text_file":
+      return "google.createDriveTextFile";
+    case "google_get_drive_file":
+      return "google.getDriveFile";
+    case "google_update_drive_text_file":
+      return "google.updateDriveTextFile";
+    case "google_append_to_drive_text_file":
+      return "google.appendToDriveTextFile";
+    case "google_create_drive_folder":
+      return "google.createDriveFolder";
+    case "google_move_drive_file":
+      return "google.moveDriveFile";
+    case "google_search_calendar_events":
+      return "google.searchCalendarEvents";
+    case "google_create_calendar_event":
+      return "google.createCalendarEvent";
+    case "google_update_calendar_event":
+      return "google.updateCalendarEvent";
+    case "google_search_mail_messages":
+      return "google.searchMailMessages";
+    case "gmail_create_draft":
+      return "gmail.createDraft";
+    case "jira_get_authenticated_user":
+      return "jira.getAuthenticatedUser";
+    case "jira_list_accessible_resources":
+      return "jira.listAccessibleResources";
+    case "jira_list_visible_projects":
+      return "jira.listVisibleProjects";
+    case "jira_search_users":
+      return "jira.searchUsers";
+    case "jira_create_issue":
+      return "jira.createIssue";
+    case "jira_edit_issue":
+      return "jira.editIssue";
+    case "jira_get_issue":
+      return "jira.getIssue";
+    case "jira_update_issue":
+      return "jira.updateIssue";
+    case "jira_add_comment":
+      return "jira.addComment";
+    case "jira_transition_issue":
+      return "jira.transitionIssue";
+    case "jira_add_labels":
+      return "jira.addLabels";
+    case "jira_remove_labels":
+      return "jira.removeLabels";
+    case "jira_link_issues":
+      return "jira.linkIssues";
+    case "jira_create_subtask":
+      return "jira.createSubtask";
+    case "jira_list_assigned_issues":
+      return "jira.listAssignedIssues";
+    case "jira_search_issues":
+      return "jira.searchIssues";
+    case "slack_search_users":
+      return "slack.searchUsers";
+    case "slack_search_messages":
+      return "slack.searchMessages";
+    case "atlassian_list_mcp_tools":
+      return "atlassian.listMcpTools";
+    case "atlassian_call_mcp_tool":
+      return "atlassian.callMcpTool";
+    default:
+      return null;
+  }
+}
+
+function isDiscoveredProviderToolAvailable(
+  toolName: string,
+  request: RunRequest
+): boolean {
+  if (toolName.startsWith("github.")) {
+    return request.input.connections.github.connected &&
+      Boolean(request.input.connections.github.email);
+  }
+  if (toolName.startsWith("google.")) {
+    return Boolean(
+      request.input.connections.google?.connected &&
+        request.input.connections.google.email
+    );
+  }
+  if (toolName.startsWith("jira.") || toolName.startsWith("atlassian.")) {
+    return Boolean(
+      request.input.connections.jira?.connected &&
+        request.input.connections.jira.email
+    );
+  }
+  if (toolName.startsWith("slack.")) {
+    return Boolean(
+      request.input.connections.slack?.connected &&
+        request.input.connections.slack.email
+    );
+  }
+
+  return false;
+}
+
+function hasConnectedProvider(request: RunRequest): boolean {
+  return Boolean(
+    (request.input.connections.github.connected &&
+      request.input.connections.github.email) ||
+      (request.input.connections.google?.connected &&
+        request.input.connections.google.email) ||
+      (request.input.connections.jira?.connected &&
+        request.input.connections.jira.email) ||
+      (request.input.connections.slack?.connected &&
+        request.input.connections.slack.email)
+  );
+}
+
 function shouldLoadAtlassianMcpTools(text: string): boolean {
   const normalized = text.toLowerCase();
   return (
@@ -1614,7 +1981,37 @@ function shouldLoadAtlassianMcpTools(text: string): boolean {
 }
 
 function isTerminalToolCall(toolName: string): boolean {
-  return toolName === "jira.createIssue" || toolName === "jira.editIssue";
+  return (
+    toolName === "github.createIssue" ||
+    toolName === "github.updateIssue" ||
+    toolName === "github.closeIssue" ||
+    toolName === "github.reopenIssue" ||
+    toolName === "github.commentOnIssueOrPullRequest" ||
+    toolName === "github.createPullRequest" ||
+    toolName === "github.updatePullRequest" ||
+    toolName === "github.addLabels" ||
+    toolName === "github.removeLabels" ||
+    toolName === "github.requestReview" ||
+    toolName === "github.createOrUpdateFile" ||
+    toolName === "github.createBranch" ||
+    toolName === "jira.createIssue" ||
+    toolName === "jira.editIssue" ||
+    toolName === "jira.updateIssue" ||
+    toolName === "jira.addComment" ||
+    toolName === "jira.transitionIssue" ||
+    toolName === "jira.addLabels" ||
+    toolName === "jira.removeLabels" ||
+    toolName === "jira.linkIssues" ||
+    toolName === "jira.createSubtask" ||
+    toolName === "google.createDriveTextFile" ||
+    toolName === "google.updateDriveTextFile" ||
+    toolName === "google.appendToDriveTextFile" ||
+    toolName === "google.createDriveFolder" ||
+    toolName === "google.moveDriveFile" ||
+    toolName === "google.createCalendarEvent" ||
+    toolName === "google.updateCalendarEvent" ||
+    toolName === "gmail.createDraft"
+  );
 }
 
 async function readAtlassianMcpToolSummaries(
@@ -1870,7 +2267,7 @@ function buildBurbleDirectPrompt(
       "For Jira questions involving a named person, call jira.searchUsers with the exact name or email before asking who they are. If the current request uses him/her/them, use the most recent named person in Recent Slack context.",
       "For Jira tickets assigned to a resolved person, call jira.searchIssues with that person's Jira accountId in JQL. If the user asks who they assigned to that person, state that the result reflects current visible assignee unless Jira changelog data is explicitly available.",
       "For Slack questions about what someone said, call slack.searchMessages. For 'what did I say about X', pass the requesting Slack user ID as fromUserId. For named Slack people, call slack.searchUsers first if you need their Slack user ID.",
-      "For Google Drive, Calendar, or Gmail questions, call google.searchDriveFiles, google.searchCalendarEvents, or google.searchMailMessages.",
+      "For Google Drive, Calendar, or Gmail questions, call google.searchDriveFiles, google.createDriveTextFile, google.searchCalendarEvents, or google.searchMailMessages.",
       "For final answers, return concise Slack mrkdwn."
     ].join(" "),
     "",
@@ -2235,11 +2632,101 @@ function formatToolResult(result: ToolResult): string {
 function formatTerminalToolResult(toolName: string, result: ToolResult): string {
   const issue = readIssueResult(result.content);
   if (issue) {
-    const verb = toolName === "jira.editIssue" ? "Updated" : "Created";
+    const verb =
+      toolName === "jira.editIssue" ||
+      toolName === "jira.updateIssue" ||
+      toolName === "jira.transitionIssue" ||
+      toolName === "jira.addLabels" ||
+      toolName === "jira.removeLabels"
+        ? "Updated"
+        : "Created";
     return `${verb} Jira issue ${issue.key}: ${issue.title}\n${issue.url}`;
   }
 
+  const driveFile = readDriveFileResult(result.content);
+  if (driveFile) {
+    const verb =
+      toolName === "google.updateDriveTextFile" ||
+      toolName === "google.appendToDriveTextFile" ||
+      toolName === "google.moveDriveFile"
+        ? "Updated"
+        : "Created";
+    return driveFile.webViewLink
+      ? `${verb} Google Drive file ${driveFile.name}: ${driveFile.webViewLink}`
+      : `${verb} Google Drive file ${driveFile.name}.`;
+  }
+
+  const githubWrite = readGitHubWriteResult(result.content);
+  if (githubWrite) {
+    switch (toolName) {
+      case "github.createIssue":
+        return `Created GitHub issue #${githubWrite.number}: ${githubWrite.title}\n${githubWrite.url}`;
+      case "github.updateIssue":
+        return `Updated GitHub issue #${githubWrite.number}: ${githubWrite.title}\n${githubWrite.url}`;
+      case "github.closeIssue":
+        return `Closed GitHub issue #${githubWrite.number}: ${githubWrite.title}\n${githubWrite.url}`;
+      case "github.reopenIssue":
+        return `Reopened GitHub issue #${githubWrite.number}: ${githubWrite.title}\n${githubWrite.url}`;
+      case "github.commentOnIssueOrPullRequest":
+        return `Added GitHub comment: ${githubWrite.url}`;
+      case "github.createPullRequest":
+        return `Created GitHub PR #${githubWrite.number}: ${githubWrite.title}\n${githubWrite.url}`;
+      case "github.updatePullRequest":
+        return `Updated GitHub PR #${githubWrite.number}: ${githubWrite.title}\n${githubWrite.url}`;
+      case "github.addLabels":
+        return `Added GitHub labels on #${githubWrite.number}: ${githubWrite.url}`;
+      case "github.removeLabels":
+        return `Removed GitHub labels from #${githubWrite.number}: ${githubWrite.url}`;
+      case "github.requestReview":
+        return `Requested GitHub review on PR #${githubWrite.number}: ${githubWrite.title}\n${githubWrite.url}`;
+      case "github.createOrUpdateFile":
+        return `Created or updated GitHub file.`;
+      case "github.createBranch":
+        return `Created GitHub branch.`;
+    }
+  }
+
+  if (toolName === "gmail.createDraft") {
+    return "Created Gmail draft.";
+  }
+
   return formatToolResult(result);
+}
+
+function readGitHubWriteResult(
+  value: unknown
+): { title?: string; url: string; number?: number; id?: number } | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+  const record = value as Record<string, unknown>;
+  if (typeof record.url !== "string") {
+    return null;
+  }
+  return {
+    url: record.url,
+    ...(typeof record.title === "string" ? { title: record.title } : {}),
+    ...(typeof record.number === "number" ? { number: record.number } : {}),
+    ...(typeof record.id === "number" ? { id: record.id } : {})
+  };
+}
+
+function readDriveFileResult(
+  value: unknown
+): { name: string; webViewLink?: string } | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+  const record = value as Record<string, unknown>;
+  if (typeof record.name !== "string") {
+    return null;
+  }
+  return {
+    name: record.name,
+    ...(typeof record.webViewLink === "string"
+      ? { webViewLink: record.webViewLink }
+      : {})
+  };
 }
 
 function readIssueResult(

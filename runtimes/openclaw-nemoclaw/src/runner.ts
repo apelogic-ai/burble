@@ -7,6 +7,15 @@ type LinkedItem = {
   url: string;
 };
 
+type PullRequestListInput = {
+  limit: number;
+  state: "open" | "closed" | "all";
+  sort: "updated" | "created" | "comments";
+  order: "desc" | "asc";
+  owner?: string;
+  repo?: string;
+};
+
 export async function runBurbleRequest(
   request: RunRequest,
   config: RuntimeConfig,
@@ -61,8 +70,12 @@ async function runGitHubRequest(
   }
 
   if (/\b(pull request|pull requests|prs?|reviews?)\b/.test(normalized)) {
-    const result = await executeTool("github.listMyPullRequests", { user });
-    return response(result.classification, formatItems("Your open PRs", result));
+    const input = buildPullRequestListInput(text);
+    const result = await executeTool("github.listMyPullRequests", {
+      user,
+      input
+    });
+    return response(result.classification, formatItems(formatPrTitle(input), result));
   }
 
   if (
@@ -75,7 +88,10 @@ async function runGitHubRequest(
 
   const [issues, prs] = await Promise.all([
     executeTool("github.listAssignedIssues", { user }),
-    executeTool("github.listMyPullRequests", { user })
+    executeTool("github.listMyPullRequests", {
+      user,
+      input: { limit: 10, state: "open", sort: "updated", order: "desc" }
+    })
   ]);
 
   return response(
@@ -270,6 +286,73 @@ function readLinkedItems(result: ToolResult): LinkedItem[] {
       typeof item.url === "string"
     );
   });
+}
+
+function buildPullRequestListInput(text: string): PullRequestListInput {
+  const normalized = text.toLowerCase().replace(/\s+/g, " ").trim();
+  return {
+    limit: parseRequestedItemLimit(normalized) ?? parseImplicitLatestLimit(normalized) ?? 10,
+    state: /\ball\b/.test(normalized)
+      ? "all"
+      : /\b(closed|merged)\b/.test(normalized)
+      ? "closed"
+      : "open",
+    sort: /\b(created|newest|oldest)\b/.test(normalized) ? "created" : "updated",
+    order: /\b(oldest|ascending|asc)\b/.test(normalized) ? "asc" : "desc",
+    ...parseGitHubScope(text)
+  };
+}
+
+function parseRequestedItemLimit(text: string): number | null {
+  const match =
+    /\b(?:top|latest|last|recent|most recent)\s+(\d{1,2})\b/.exec(text) ??
+    /\b(\d{1,2})\s+(?:latest|last|recent|most recent|open)?\s*(?:github\s+)?(?:pull requests?|prs?)\b/.exec(
+      text
+    );
+  if (!match?.[1]) {
+    return null;
+  }
+  const value = Number.parseInt(match[1], 10);
+  return Number.isInteger(value) && value > 0 ? Math.min(value, 20) : null;
+}
+
+function parseImplicitLatestLimit(text: string): number | null {
+  if (
+    /\b(latest|last|newest|most recent)\b/.test(text) &&
+    /\b(pull request|pr)\b/.test(text) &&
+    !/\b(pull requests|prs)\b/.test(text)
+  ) {
+    return 1;
+  }
+  return null;
+}
+
+function parseGitHubScope(text: string): Pick<PullRequestListInput, "owner" | "repo"> {
+  const explicitRepo =
+    /\brepo:([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)\b/i.exec(text)?.[1] ??
+    /\b([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)\b/i.exec(text)?.[1];
+  if (explicitRepo) {
+    return { repo: normalizeGitHubIdentifier(explicitRepo) };
+  }
+
+  const owner =
+    /\b(?:org|organization|owner):([A-Za-z0-9_.-]+)\b/i.exec(text)?.[1] ??
+    /\b(?:in|from|under|within)\s+([A-Za-z0-9_.-]+)\s+(?:org|organization|owner)\b/i.exec(
+      text
+    )?.[1] ??
+    /\b([A-Za-z0-9_.-]+)\s+(?:org|organization)\b/i.exec(text)?.[1];
+  return owner ? { owner: normalizeGitHubIdentifier(owner) } : {};
+}
+
+function normalizeGitHubIdentifier(value: string): string {
+  return value.trim().replace(/[.,;:!?]+$/g, "");
+}
+
+function formatPrTitle(input: PullRequestListInput): string {
+  const stateLabel = input.state === "all" ? "" : `${input.state} `;
+  return input.limit === 10
+    ? `Your ${stateLabel}PRs`
+    : `Your ${input.limit} ${stateLabel}PRs`;
 }
 
 function formatAtlassianMcpTools(result: ToolResult): string {

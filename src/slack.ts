@@ -4,14 +4,22 @@ import { readFile } from "node:fs/promises";
 import type { Config } from "./config";
 import type { SlackLogLevel } from "./config";
 import {
+  addGitHubIssueLabels,
   buildGitHubOAuthUrl,
+  commentOnGitHubIssueOrPullRequest,
+  createGitHubIssue,
+  createGitHubPullRequest,
   getGitHubUser,
   listAssignedIssues,
   listMyPullRequests,
-  searchIssues
+  removeGitHubIssueLabels,
+  requestGitHubPullRequestReview,
+  searchIssues,
+  updateGitHubPullRequest
 } from "./github";
 import {
   buildGoogleOAuthUrl,
+  createGoogleDriveTextFile,
   getGoogleUser,
   refreshGoogleAccessToken,
   searchGoogleCalendarEvents,
@@ -180,11 +188,19 @@ export function createSlackRuntime(
     getGitHubUser,
     listAssignedIssues,
     searchIssues,
-    listMyPullRequests
+    listMyPullRequests,
+    createIssue: createGitHubIssue,
+    commentOnIssueOrPullRequest: commentOnGitHubIssueOrPullRequest,
+    createPullRequest: createGitHubPullRequest,
+    updatePullRequest: updateGitHubPullRequest,
+    addLabels: addGitHubIssueLabels,
+    removeLabels: removeGitHubIssueLabels,
+    requestReview: requestGitHubPullRequestReview
   });
   const googleTools = createGoogleTools({
     getGoogleUser,
     searchGoogleDriveFiles,
+    createGoogleDriveTextFile,
     searchGoogleCalendarEvents,
     searchGoogleMailMessages,
     refreshGoogleAccessToken: (refreshToken) =>

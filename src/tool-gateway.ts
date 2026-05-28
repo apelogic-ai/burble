@@ -3,21 +3,60 @@ import type { AgentRuntimeRecord, TokenStore } from "./db";
 import type { ConversationAttachment } from "./conversation/types";
 import { createHash, timingSafeEqual } from "node:crypto";
 import {
+  addGitHubIssueLabels,
+  commentOnGitHubIssueOrPullRequest,
+  closeGitHubIssue,
+  createGitHubBranch,
+  createGitHubIssue,
+  createGitHubPullRequest,
+  createOrUpdateGitHubFile,
+  getGitHubFile,
+  getGitHubIssue,
+  getGitHubPullRequest,
   getGitHubUser,
   listAssignedIssues,
   listMyPullRequests,
-  searchIssues
+  removeGitHubIssueLabels,
+  requestGitHubPullRequestReview,
+  searchIssues,
+  reopenGitHubIssue,
+  updateGitHubIssue,
+  updateGitHubPullRequest
 } from "./github";
 import {
+  appendGoogleDriveTextFile,
+  createGmailDraft,
+  createGoogleCalendarEvent,
+  createGoogleDriveFolder,
+  createGoogleDriveTextFile,
+  getGoogleDriveFile,
+  getGoogleUser,
+  moveGoogleDriveFile,
+  refreshGoogleAccessToken,
+  searchGoogleCalendarEvents,
+  searchGoogleDriveFiles,
+  searchGoogleMailMessages,
+  updateGoogleCalendarEvent,
+  updateGoogleDriveTextFile
+} from "./google";
+import {
+  addJiraIssueComment,
+  addJiraIssueLabels,
   createJiraIssue,
+  createJiraSubtask,
   editJiraIssue,
+  getJiraIssue,
   getJiraUser,
+  linkJiraIssues,
   listJiraAccessibleResources,
   listAssignedJiraIssues,
   listVisibleJiraProjects,
   refreshJiraAccessToken,
+  removeJiraIssueLabels,
   searchJiraUsers,
-  searchJiraIssues
+  searchJiraIssues,
+  transitionJiraIssue,
+  updateJiraIssue
 } from "./jira";
 import {
   callUpstreamMcpTool,
@@ -26,7 +65,11 @@ import {
   type UpstreamMcpToolResult
 } from "./mcp/upstream-http-client";
 import { searchSlackMessages, searchSlackUsers } from "./slack-api";
-import { createGitHubTools } from "./tools/github";
+import {
+  createGitHubTools,
+  type GitHubPullRequestListInput
+} from "./tools/github";
+import { createGoogleTools, type GoogleToolDeps } from "./tools/google";
 import {
   createJiraTools,
   isJiraAuthErrorResult,
@@ -43,6 +86,7 @@ import {
 import { verifyJiraAuthForOpaqueAtlassianMcpError } from "./mcp/atlassian-auth";
 
 type ToolGatewayDeps = Partial<Parameters<typeof createGitHubTools>[0]> &
+  Partial<GoogleToolDeps> &
   Partial<JiraToolDeps> &
   Partial<SlackToolDeps> & {
     fetchConversationAttachment?: (input: {
@@ -95,6 +139,34 @@ const defaultDeps = {
   listAssignedIssues,
   searchIssues,
   listMyPullRequests,
+  getIssue: getGitHubIssue,
+  getPullRequest: getGitHubPullRequest,
+  createIssue: createGitHubIssue,
+  updateIssue: updateGitHubIssue,
+  closeIssue: closeGitHubIssue,
+  reopenIssue: reopenGitHubIssue,
+  commentOnIssueOrPullRequest: commentOnGitHubIssueOrPullRequest,
+  createPullRequest: createGitHubPullRequest,
+  updatePullRequest: updateGitHubPullRequest,
+  addLabels: addGitHubIssueLabels,
+  removeLabels: removeGitHubIssueLabels,
+  requestReview: requestGitHubPullRequestReview,
+  getFile: getGitHubFile,
+  createOrUpdateFile: createOrUpdateGitHubFile,
+  createBranch: createGitHubBranch,
+  getGoogleUser,
+  searchGoogleDriveFiles,
+  createGoogleDriveTextFile,
+  getGoogleDriveFile,
+  updateGoogleDriveTextFile,
+  appendGoogleDriveTextFile,
+  createGoogleDriveFolder,
+  moveGoogleDriveFile,
+  searchGoogleCalendarEvents,
+  createGoogleCalendarEvent,
+  updateGoogleCalendarEvent,
+  searchGoogleMailMessages,
+  createGmailDraft,
   getJiraUser,
   listJiraAccessibleResources,
   listAssignedJiraIssues,
@@ -102,6 +174,14 @@ const defaultDeps = {
   searchJiraUsers,
   createJiraIssue,
   editJiraIssue,
+  getJiraIssue,
+  updateJiraIssue,
+  addJiraIssueComment,
+  transitionJiraIssue,
+  addJiraIssueLabels,
+  removeJiraIssueLabels,
+  linkJiraIssues,
+  createJiraSubtask,
   searchJiraIssues,
   searchSlackMessages,
   searchSlackUsers
@@ -126,12 +206,29 @@ export async function handleToolGatewayRequest(
   if (!auth) {
     return new Response("Unauthorized", { status: 401 });
   }
+  if (auth.kind === "runtime") {
+    store.touchAgentRuntime(auth.runtime.id);
+  }
 
   if (!isKnownTool(toolName)) {
     return new Response("Unknown tool", { status: 404 });
   }
 
   const body = await readToolGatewayBody(request);
+  if (toolName === "runtime.heartbeat") {
+    if (auth.kind !== "runtime") {
+      return new Response("Runtime auth required", { status: 403 });
+    }
+
+    return jsonResponse({
+      classification: "user_private",
+      content: {
+        ok: true,
+        runtimeId: auth.runtime.id
+      }
+    });
+  }
+
   if (toolName === "conversation.sendMessage") {
     if (auth.kind !== "runtime") {
       return new Response("Runtime auth required", { status: 403 });
@@ -223,6 +320,13 @@ export async function handleToolGatewayRequest(
   }
 
   const tools = createGitHubTools({ ...defaultDeps, ...deps });
+  const googleTools = createGoogleTools({
+    ...defaultDeps,
+    refreshGoogleAccessToken: (refreshToken) =>
+      refreshGoogleAccessToken(config, refreshToken),
+    saveGoogleConnection: (connection) => store.upsertProviderConnection(connection),
+    ...deps
+  });
   const jiraTools = createJiraTools({
     ...defaultDeps,
     refreshJiraAccessToken: (refreshToken) =>
@@ -265,13 +369,261 @@ export async function handleToolGatewayRequest(
       );
     }
 
-    case "github.listMyPullRequests":
+    case "github.listMyPullRequests": {
+      if (!isListMyPullRequestsInput(body.input)) {
+        return new Response("Invalid tool input", { status: 400 });
+      }
+
       return jsonResponseWithAudit(
         store,
         auth,
         toolName,
-        await tools.listMyPullRequests.execute({ connection })
+        await tools.listMyPullRequests.execute({
+          connection,
+          input: body.input ?? undefined
+        })
       );
+    }
+
+    case "github.getIssue": {
+      if (!isGitHubIssueNumberInput(body.input)) {
+        return new Response("Invalid tool input", { status: 400 });
+      }
+
+      return jsonResponseWithAudit(
+        store,
+        auth,
+        toolName,
+        await tools.getIssue.execute({
+          connection,
+          input: body.input
+        })
+      );
+    }
+
+    case "github.getPullRequest": {
+      if (!isGitHubIssueNumberInput(body.input)) {
+        return new Response("Invalid tool input", { status: 400 });
+      }
+
+      return jsonResponseWithAudit(
+        store,
+        auth,
+        toolName,
+        await tools.getPullRequest.execute({
+          connection,
+          input: body.input
+        })
+      );
+    }
+
+    case "github.createIssue": {
+      if (!isCreateGitHubIssueInput(body.input)) {
+        return new Response("Invalid tool input", { status: 400 });
+      }
+
+      return jsonResponseWithAudit(
+        store,
+        auth,
+        toolName,
+        await tools.createIssue.execute({
+          connection,
+          input: body.input
+        })
+      );
+    }
+
+    case "github.updateIssue": {
+      if (!isUpdateGitHubIssueInput(body.input)) {
+        return new Response("Invalid tool input", { status: 400 });
+      }
+
+      return jsonResponseWithAudit(
+        store,
+        auth,
+        toolName,
+        await tools.updateIssue.execute({
+          connection,
+          input: body.input
+        })
+      );
+    }
+
+    case "github.closeIssue": {
+      if (!isGitHubIssueNumberInput(body.input)) {
+        return new Response("Invalid tool input", { status: 400 });
+      }
+
+      return jsonResponseWithAudit(
+        store,
+        auth,
+        toolName,
+        await tools.closeIssue.execute({
+          connection,
+          input: body.input
+        })
+      );
+    }
+
+    case "github.reopenIssue": {
+      if (!isGitHubIssueNumberInput(body.input)) {
+        return new Response("Invalid tool input", { status: 400 });
+      }
+
+      return jsonResponseWithAudit(
+        store,
+        auth,
+        toolName,
+        await tools.reopenIssue.execute({
+          connection,
+          input: body.input
+        })
+      );
+    }
+
+    case "github.commentOnIssueOrPullRequest": {
+      if (!isGitHubCommentInput(body.input)) {
+        return new Response("Invalid tool input", { status: 400 });
+      }
+
+      return jsonResponseWithAudit(
+        store,
+        auth,
+        toolName,
+        await tools.commentOnIssueOrPullRequest.execute({
+          connection,
+          input: body.input
+        })
+      );
+    }
+
+    case "github.createPullRequest": {
+      if (!isCreateGitHubPullRequestInput(body.input)) {
+        return new Response("Invalid tool input", { status: 400 });
+      }
+
+      return jsonResponseWithAudit(
+        store,
+        auth,
+        toolName,
+        await tools.createPullRequest.execute({
+          connection,
+          input: body.input
+        })
+      );
+    }
+
+    case "github.updatePullRequest": {
+      if (!isUpdateGitHubPullRequestInput(body.input)) {
+        return new Response("Invalid tool input", { status: 400 });
+      }
+
+      return jsonResponseWithAudit(
+        store,
+        auth,
+        toolName,
+        await tools.updatePullRequest.execute({
+          connection,
+          input: body.input
+        })
+      );
+    }
+
+    case "github.addLabels": {
+      if (!isGitHubLabelsInput(body.input)) {
+        return new Response("Invalid tool input", { status: 400 });
+      }
+
+      return jsonResponseWithAudit(
+        store,
+        auth,
+        toolName,
+        await tools.addLabels.execute({
+          connection,
+          input: body.input
+        })
+      );
+    }
+
+    case "github.removeLabels": {
+      if (!isGitHubLabelsInput(body.input)) {
+        return new Response("Invalid tool input", { status: 400 });
+      }
+
+      return jsonResponseWithAudit(
+        store,
+        auth,
+        toolName,
+        await tools.removeLabels.execute({
+          connection,
+          input: body.input
+        })
+      );
+    }
+
+    case "github.requestReview": {
+      if (!isGitHubRequestReviewInput(body.input)) {
+        return new Response("Invalid tool input", { status: 400 });
+      }
+
+      return jsonResponseWithAudit(
+        store,
+        auth,
+        toolName,
+        await tools.requestReview.execute({
+          connection,
+          input: body.input
+        })
+      );
+    }
+
+    case "github.getFile": {
+      if (!isGitHubGetFileInput(body.input)) {
+        return new Response("Invalid tool input", { status: 400 });
+      }
+
+      return jsonResponseWithAudit(
+        store,
+        auth,
+        toolName,
+        await tools.getFile.execute({
+          connection,
+          input: body.input
+        })
+      );
+    }
+
+    case "github.createOrUpdateFile": {
+      if (!isGitHubCreateOrUpdateFileInput(body.input)) {
+        return new Response("Invalid tool input", { status: 400 });
+      }
+
+      return jsonResponseWithAudit(
+        store,
+        auth,
+        toolName,
+        await tools.createOrUpdateFile.execute({
+          connection,
+          input: body.input
+        })
+      );
+    }
+
+    case "github.createBranch": {
+      if (!isGitHubCreateBranchInput(body.input)) {
+        return new Response("Invalid tool input", { status: 400 });
+      }
+
+      return jsonResponseWithAudit(
+        store,
+        auth,
+        toolName,
+        await tools.createBranch.execute({
+          connection,
+          input: body.input
+        })
+      );
+    }
 
     case "jira.getAuthenticatedUser":
       return jsonResponseWithAudit(
@@ -377,6 +729,134 @@ export async function handleToolGatewayRequest(
       );
     }
 
+    case "jira.getIssue": {
+      if (!isJiraIssueKeyInput(body.input)) {
+        return new Response("Invalid tool input", { status: 400 });
+      }
+
+      return jsonResponseWithAudit(
+        store,
+        auth,
+        toolName,
+        await jiraTools.getIssue.execute({
+          connection,
+          input: body.input
+        })
+      );
+    }
+
+    case "jira.updateIssue": {
+      if (!isUpdateJiraIssueInput(body.input)) {
+        return new Response("Invalid tool input", { status: 400 });
+      }
+
+      return jsonResponseWithAudit(
+        store,
+        auth,
+        toolName,
+        await jiraTools.updateIssue.execute({
+          connection,
+          input: body.input
+        })
+      );
+    }
+
+    case "jira.addComment": {
+      if (!isJiraCommentInput(body.input)) {
+        return new Response("Invalid tool input", { status: 400 });
+      }
+
+      return jsonResponseWithAudit(
+        store,
+        auth,
+        toolName,
+        await jiraTools.addComment.execute({
+          connection,
+          input: body.input
+        })
+      );
+    }
+
+    case "jira.transitionIssue": {
+      if (!isJiraTransitionInput(body.input)) {
+        return new Response("Invalid tool input", { status: 400 });
+      }
+
+      return jsonResponseWithAudit(
+        store,
+        auth,
+        toolName,
+        await jiraTools.transitionIssue.execute({
+          connection,
+          input: body.input
+        })
+      );
+    }
+
+    case "jira.addLabels": {
+      if (!isJiraLabelsInput(body.input)) {
+        return new Response("Invalid tool input", { status: 400 });
+      }
+
+      return jsonResponseWithAudit(
+        store,
+        auth,
+        toolName,
+        await jiraTools.addLabels.execute({
+          connection,
+          input: body.input
+        })
+      );
+    }
+
+    case "jira.removeLabels": {
+      if (!isJiraLabelsInput(body.input)) {
+        return new Response("Invalid tool input", { status: 400 });
+      }
+
+      return jsonResponseWithAudit(
+        store,
+        auth,
+        toolName,
+        await jiraTools.removeLabels.execute({
+          connection,
+          input: body.input
+        })
+      );
+    }
+
+    case "jira.linkIssues": {
+      if (!isJiraLinkIssuesInput(body.input)) {
+        return new Response("Invalid tool input", { status: 400 });
+      }
+
+      return jsonResponseWithAudit(
+        store,
+        auth,
+        toolName,
+        await jiraTools.linkIssues.execute({
+          connection,
+          input: body.input
+        })
+      );
+    }
+
+    case "jira.createSubtask": {
+      if (!isCreateJiraSubtaskInput(body.input)) {
+        return new Response("Invalid tool input", { status: 400 });
+      }
+
+      return jsonResponseWithAudit(
+        store,
+        auth,
+        toolName,
+        await jiraTools.createSubtask.execute({
+          connection,
+          input: body.input
+        })
+      );
+    }
+
     case "slack.searchUsers": {
       if (!isSearchSlackUsersInput(body.input)) {
         return new Response("Invalid tool input", { status: 400 });
@@ -403,6 +883,206 @@ export async function handleToolGatewayRequest(
         auth,
         toolName,
         await slackTools.searchMessages.execute({
+          connection,
+          input: body.input
+        })
+      );
+    }
+
+    case "google.getAuthenticatedUser":
+      return jsonResponseWithAudit(
+        store,
+        auth,
+        toolName,
+        await googleTools.getAuthenticatedUser.execute({ connection })
+      );
+
+    case "google.searchDriveFiles": {
+      if (!isSearchGoogleDriveFilesInput(body.input)) {
+        return new Response("Invalid tool input", { status: 400 });
+      }
+
+      return jsonResponseWithAudit(
+        store,
+        auth,
+        toolName,
+        await googleTools.searchDriveFiles.execute({
+          connection,
+          input: body.input
+        })
+      );
+    }
+
+    case "google.getDriveFile": {
+      if (!isGetGoogleDriveFileInput(body.input)) {
+        return new Response("Invalid tool input", { status: 400 });
+      }
+
+      return jsonResponseWithAudit(
+        store,
+        auth,
+        toolName,
+        await googleTools.getDriveFile.execute({
+          connection,
+          input: body.input
+        })
+      );
+    }
+
+    case "google.createDriveTextFile": {
+      if (!isCreateGoogleDriveTextFileInput(body.input)) {
+        return new Response("Invalid tool input", { status: 400 });
+      }
+
+      return jsonResponseWithAudit(
+        store,
+        auth,
+        toolName,
+        await googleTools.createDriveTextFile.execute({
+          connection,
+          input: body.input
+        })
+      );
+    }
+
+    case "google.updateDriveTextFile": {
+      if (!isUpdateGoogleDriveTextFileInput(body.input)) {
+        return new Response("Invalid tool input", { status: 400 });
+      }
+
+      return jsonResponseWithAudit(
+        store,
+        auth,
+        toolName,
+        await googleTools.updateDriveTextFile.execute({
+          connection,
+          input: body.input
+        })
+      );
+    }
+
+    case "google.appendToDriveTextFile": {
+      if (!isAppendGoogleDriveTextFileInput(body.input)) {
+        return new Response("Invalid tool input", { status: 400 });
+      }
+
+      return jsonResponseWithAudit(
+        store,
+        auth,
+        toolName,
+        await googleTools.appendDriveTextFile.execute({
+          connection,
+          input: body.input
+        })
+      );
+    }
+
+    case "google.createDriveFolder": {
+      if (!isCreateGoogleDriveFolderInput(body.input)) {
+        return new Response("Invalid tool input", { status: 400 });
+      }
+
+      return jsonResponseWithAudit(
+        store,
+        auth,
+        toolName,
+        await googleTools.createDriveFolder.execute({
+          connection,
+          input: body.input
+        })
+      );
+    }
+
+    case "google.moveDriveFile": {
+      if (!isMoveGoogleDriveFileInput(body.input)) {
+        return new Response("Invalid tool input", { status: 400 });
+      }
+
+      return jsonResponseWithAudit(
+        store,
+        auth,
+        toolName,
+        await googleTools.moveDriveFile.execute({
+          connection,
+          input: body.input
+        })
+      );
+    }
+
+    case "google.searchCalendarEvents": {
+      if (!isSearchGoogleCalendarEventsInput(body.input)) {
+        return new Response("Invalid tool input", { status: 400 });
+      }
+
+      return jsonResponseWithAudit(
+        store,
+        auth,
+        toolName,
+        await googleTools.searchCalendarEvents.execute({
+          connection,
+          input: body.input
+        })
+      );
+    }
+
+    case "google.createCalendarEvent": {
+      if (!isCreateGoogleCalendarEventInput(body.input)) {
+        return new Response("Invalid tool input", { status: 400 });
+      }
+
+      return jsonResponseWithAudit(
+        store,
+        auth,
+        toolName,
+        await googleTools.createCalendarEvent.execute({
+          connection,
+          input: body.input
+        })
+      );
+    }
+
+    case "google.updateCalendarEvent": {
+      if (!isUpdateGoogleCalendarEventInput(body.input)) {
+        return new Response("Invalid tool input", { status: 400 });
+      }
+
+      return jsonResponseWithAudit(
+        store,
+        auth,
+        toolName,
+        await googleTools.updateCalendarEvent.execute({
+          connection,
+          input: body.input
+        })
+      );
+    }
+
+    case "google.searchMailMessages": {
+      if (!isSearchGoogleMailMessagesInput(body.input)) {
+        return new Response("Invalid tool input", { status: 400 });
+      }
+
+      return jsonResponseWithAudit(
+        store,
+        auth,
+        toolName,
+        await googleTools.searchMailMessages.execute({
+          connection,
+          input: body.input
+        })
+      );
+    }
+
+    case "gmail.createDraft": {
+      if (!isCreateGmailDraftInput(body.input)) {
+        return new Response("Invalid tool input", { status: 400 });
+      }
+
+      return jsonResponseWithAudit(
+        store,
+        auth,
+        toolName,
+        await googleTools.createMailDraft.execute({
           connection,
           input: body.input
         })
@@ -589,26 +1269,65 @@ function isKnownTool(toolName: string): boolean {
     toolName === "github.listAssignedIssues" ||
     toolName === "github.searchIssues" ||
     toolName === "github.listMyPullRequests" ||
+    toolName === "github.getIssue" ||
+    toolName === "github.getPullRequest" ||
+    toolName === "github.createIssue" ||
+    toolName === "github.updateIssue" ||
+    toolName === "github.closeIssue" ||
+    toolName === "github.reopenIssue" ||
+    toolName === "github.commentOnIssueOrPullRequest" ||
+    toolName === "github.createPullRequest" ||
+    toolName === "github.updatePullRequest" ||
+    toolName === "github.addLabels" ||
+    toolName === "github.removeLabels" ||
+    toolName === "github.requestReview" ||
+    toolName === "github.getFile" ||
+    toolName === "github.createOrUpdateFile" ||
+    toolName === "github.createBranch" ||
+    toolName === "google.getAuthenticatedUser" ||
+    toolName === "google.searchDriveFiles" ||
+    toolName === "google.getDriveFile" ||
+    toolName === "google.createDriveTextFile" ||
+    toolName === "google.updateDriveTextFile" ||
+    toolName === "google.appendToDriveTextFile" ||
+    toolName === "google.createDriveFolder" ||
+    toolName === "google.moveDriveFile" ||
+    toolName === "google.searchCalendarEvents" ||
+    toolName === "google.createCalendarEvent" ||
+    toolName === "google.updateCalendarEvent" ||
+    toolName === "google.searchMailMessages" ||
+    toolName === "gmail.createDraft" ||
     toolName === "jira.getAuthenticatedUser" ||
     toolName === "jira.listAccessibleResources" ||
     toolName === "jira.listVisibleProjects" ||
     toolName === "jira.searchUsers" ||
     toolName === "jira.createIssue" ||
     toolName === "jira.editIssue" ||
+    toolName === "jira.getIssue" ||
+    toolName === "jira.updateIssue" ||
+    toolName === "jira.addComment" ||
+    toolName === "jira.transitionIssue" ||
+    toolName === "jira.addLabels" ||
+    toolName === "jira.removeLabels" ||
+    toolName === "jira.linkIssues" ||
+    toolName === "jira.createSubtask" ||
     toolName === "jira.listAssignedIssues" ||
     toolName === "jira.searchIssues" ||
     toolName === "slack.searchUsers" ||
     toolName === "slack.searchMessages" ||
     toolName === "conversation.sendMessage" ||
     toolName === "conversation.getAttachment" ||
+    toolName === "runtime.heartbeat" ||
     toolName === "atlassian.listMcpTools" ||
     toolName === "atlassian.callMcpTool"
   );
 }
 
-function readToolProvider(toolName: string): "github" | "jira" | "slack" {
+function readToolProvider(toolName: string): "github" | "google" | "jira" | "slack" {
   return toolName.startsWith("slack.")
     ? "slack"
+    : toolName.startsWith("google.") || toolName.startsWith("gmail.")
+    ? "google"
     : toolName.startsWith("jira.") || toolName.startsWith("atlassian.")
     ? "jira"
     : "github";
@@ -634,6 +1353,428 @@ function isSearchIssuesInput(input: unknown): input is { query: string } {
   );
 }
 
+function isListMyPullRequestsInput(
+  input: unknown
+): input is GitHubPullRequestListInput {
+  if (input === undefined || input === null) {
+    return true;
+  }
+  if (typeof input !== "object") {
+    return false;
+  }
+  const candidate = input as GitHubPullRequestListInput;
+  return (
+    (candidate.limit === undefined ||
+      (Number.isInteger(candidate.limit) &&
+        candidate.limit >= 1 &&
+        candidate.limit <= 20)) &&
+    (candidate.state === undefined ||
+      candidate.state === "open" ||
+      candidate.state === "closed" ||
+      candidate.state === "all") &&
+    (candidate.sort === undefined ||
+      candidate.sort === "updated" ||
+      candidate.sort === "created" ||
+      candidate.sort === "comments") &&
+    (candidate.order === undefined ||
+      candidate.order === "desc" ||
+      candidate.order === "asc") &&
+    (candidate.owner === undefined ||
+      isGitHubOwner(candidate.owner)) &&
+    (candidate.repo === undefined ||
+      isGitHubRepo(candidate.repo))
+  );
+}
+
+function isGitHubOwner(value: unknown): value is string {
+  return typeof value === "string" && /^[A-Za-z0-9_.-]+$/.test(value.trim());
+}
+
+function isGitHubRepo(value: unknown): value is string {
+  return (
+    typeof value === "string" &&
+    /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(value.trim())
+  );
+}
+
+function isCreateGitHubIssueInput(input: unknown): input is {
+  repo: string;
+  title: string;
+  body?: string;
+  labels?: string[];
+  assignees?: string[];
+} {
+  return (
+    isOptionalObject(input) &&
+    isNonEmptyString(input.repo) &&
+    isNonEmptyString(input.title) &&
+    optionalString(input.body) &&
+    optionalStringArray(input.labels, 20) &&
+    optionalStringArray(input.assignees, 20)
+  );
+}
+
+function isGitHubIssueNumberInput(input: unknown): input is {
+  repo: string;
+  number: number;
+} {
+  return (
+    isOptionalObject(input) &&
+    isGitHubRepo(input.repo) &&
+    isPositiveInteger(input.number)
+  );
+}
+
+function isUpdateGitHubIssueInput(input: unknown): input is {
+  repo: string;
+  number: number;
+  title?: string;
+  body?: string;
+  state?: "open" | "closed";
+  labels?: string[];
+  assignees?: string[];
+} {
+  return (
+    isOptionalObject(input) &&
+    isGitHubRepo(input.repo) &&
+    isPositiveInteger(input.number) &&
+    optionalString(input.title) &&
+    optionalString(input.body) &&
+    (input.state === undefined ||
+      input.state === "open" ||
+      input.state === "closed") &&
+    optionalStringArray(input.labels, 20) &&
+    optionalStringArray(input.assignees, 20) &&
+    (isNonEmptyString(input.title) ||
+      typeof input.body === "string" ||
+      input.state === "open" ||
+      input.state === "closed" ||
+      stringArray(input.labels, 20) ||
+      stringArray(input.assignees, 20))
+  );
+}
+
+function isGitHubCommentInput(input: unknown): input is {
+  repo: string;
+  number: number;
+  body: string;
+} {
+  return (
+    isOptionalObject(input) &&
+    isNonEmptyString(input.repo) &&
+    isPositiveInteger(input.number) &&
+    isNonEmptyString(input.body)
+  );
+}
+
+function isCreateGitHubPullRequestInput(input: unknown): input is {
+  repo: string;
+  title: string;
+  head: string;
+  base: string;
+  body?: string;
+  draft?: boolean;
+} {
+  return (
+    isOptionalObject(input) &&
+    isNonEmptyString(input.repo) &&
+    isNonEmptyString(input.title) &&
+    isNonEmptyString(input.head) &&
+    isNonEmptyString(input.base) &&
+    optionalString(input.body) &&
+    optionalBoolean(input.draft)
+  );
+}
+
+function isUpdateGitHubPullRequestInput(input: unknown): input is {
+  repo: string;
+  number: number;
+  title?: string;
+  body?: string;
+  base?: string;
+  draft?: boolean;
+} {
+  return (
+    isOptionalObject(input) &&
+    isNonEmptyString(input.repo) &&
+    isPositiveInteger(input.number) &&
+    optionalString(input.title) &&
+    optionalString(input.body) &&
+    optionalString(input.base) &&
+    optionalBoolean(input.draft) &&
+    (isNonEmptyString(input.title) ||
+      typeof input.body === "string" ||
+      isNonEmptyString(input.base) ||
+      typeof input.draft === "boolean")
+  );
+}
+
+function isGitHubLabelsInput(input: unknown): input is {
+  repo: string;
+  number: number;
+  labels: string[];
+} {
+  return (
+    isOptionalObject(input) &&
+    isNonEmptyString(input.repo) &&
+    isPositiveInteger(input.number) &&
+    stringArray(input.labels, 20)
+  );
+}
+
+function isGitHubRequestReviewInput(input: unknown): input is {
+  repo: string;
+  number: number;
+  reviewers?: string[];
+  teamReviewers?: string[];
+} {
+  return (
+    isOptionalObject(input) &&
+    isNonEmptyString(input.repo) &&
+    isPositiveInteger(input.number) &&
+    optionalStringArray(input.reviewers, 20) &&
+    optionalStringArray(input.teamReviewers, 20) &&
+    (stringArray(input.reviewers, 20) || stringArray(input.teamReviewers, 20))
+  );
+}
+
+function isGitHubGetFileInput(input: unknown): input is {
+  repo: string;
+  path: string;
+  ref?: string;
+} {
+  return (
+    isOptionalObject(input) &&
+    isGitHubRepo(input.repo) &&
+    isNonEmptyString(input.path) &&
+    optionalString(input.ref)
+  );
+}
+
+function isGitHubCreateOrUpdateFileInput(input: unknown): input is {
+  repo: string;
+  path: string;
+  content: string;
+  message: string;
+  branch?: string;
+  sha?: string;
+} {
+  return (
+    isOptionalObject(input) &&
+    isGitHubRepo(input.repo) &&
+    isNonEmptyString(input.path) &&
+    typeof input.content === "string" &&
+    input.content.length <= 1_000_000 &&
+    isNonEmptyString(input.message) &&
+    optionalString(input.branch) &&
+    optionalString(input.sha)
+  );
+}
+
+function isGitHubCreateBranchInput(input: unknown): input is {
+  repo: string;
+  branch: string;
+  fromRef?: string;
+} {
+  return (
+    isOptionalObject(input) &&
+    isGitHubRepo(input.repo) &&
+    isNonEmptyString(input.branch) &&
+    optionalString(input.fromRef)
+  );
+}
+
+function isSearchGoogleDriveFilesInput(input: unknown): input is {
+  query?: string;
+  limit?: number;
+} {
+  return isOptionalObject(input) && optionalString(input.query) && optionalLimit(input.limit, 20);
+}
+
+function isGetGoogleDriveFileInput(input: unknown): input is {
+  fileId: string;
+  includeContent?: boolean;
+} {
+  return (
+    isOptionalObject(input) &&
+    isNonEmptyString(input.fileId) &&
+    optionalBoolean(input.includeContent)
+  );
+}
+
+function isCreateGoogleDriveTextFileInput(input: unknown): input is {
+  name: string;
+  text: string;
+  mimeType?: string;
+} {
+  if (!isOptionalObject(input)) {
+    return false;
+  }
+  return (
+    typeof input.name === "string" &&
+    input.name.trim().length > 0 &&
+    input.name.length <= 200 &&
+    typeof input.text === "string" &&
+    input.text.length <= 200_000 &&
+    optionalString(input.mimeType)
+  );
+}
+
+function isUpdateGoogleDriveTextFileInput(input: unknown): input is {
+  fileId: string;
+  text: string;
+  mimeType?: string;
+} {
+  return (
+    isOptionalObject(input) &&
+    isNonEmptyString(input.fileId) &&
+    typeof input.text === "string" &&
+    input.text.length <= 200_000 &&
+    optionalString(input.mimeType)
+  );
+}
+
+function isAppendGoogleDriveTextFileInput(input: unknown): input is {
+  fileId: string;
+  text: string;
+  separator?: string;
+  mimeType?: string;
+} {
+  return (
+    isOptionalObject(input) &&
+    isNonEmptyString(input.fileId) &&
+    typeof input.text === "string" &&
+    input.text.length <= 200_000 &&
+    optionalString(input.separator) &&
+    optionalString(input.mimeType)
+  );
+}
+
+function isCreateGoogleDriveFolderInput(input: unknown): input is {
+  name: string;
+  parentId?: string;
+} {
+  return (
+    isOptionalObject(input) &&
+    isNonEmptyString(input.name) &&
+    input.name.length <= 200 &&
+    optionalString(input.parentId)
+  );
+}
+
+function isMoveGoogleDriveFileInput(input: unknown): input is {
+  fileId: string;
+  parentId: string;
+  removeParentIds?: string[];
+} {
+  return (
+    isOptionalObject(input) &&
+    isNonEmptyString(input.fileId) &&
+    isNonEmptyString(input.parentId) &&
+    optionalStringArray(input.removeParentIds, 20)
+  );
+}
+
+function isSearchGoogleCalendarEventsInput(input: unknown): input is {
+  query?: string;
+  timeMin?: string;
+  timeMax?: string;
+  limit?: number;
+} {
+  return (
+    isOptionalObject(input) &&
+    optionalString(input.query) &&
+    optionalString(input.timeMin) &&
+    optionalString(input.timeMax) &&
+    optionalLimit(input.limit, 20)
+  );
+}
+
+function isCreateGoogleCalendarEventInput(input: unknown): input is {
+  calendarId?: string;
+  summary: string;
+  description?: string;
+  location?: string;
+  start: string;
+  end: string;
+  timeZone?: string;
+  attendees?: string[];
+} {
+  return (
+    isOptionalObject(input) &&
+    optionalString(input.calendarId) &&
+    isNonEmptyString(input.summary) &&
+    optionalString(input.description) &&
+    optionalString(input.location) &&
+    isNonEmptyString(input.start) &&
+    isNonEmptyString(input.end) &&
+    optionalString(input.timeZone) &&
+    optionalStringArray(input.attendees, 50)
+  );
+}
+
+function isUpdateGoogleCalendarEventInput(input: unknown): input is {
+  calendarId?: string;
+  eventId: string;
+  summary?: string;
+  description?: string;
+  location?: string;
+  start?: string;
+  end?: string;
+  timeZone?: string;
+  attendees?: string[];
+} {
+  return (
+    isOptionalObject(input) &&
+    optionalString(input.calendarId) &&
+    isNonEmptyString(input.eventId) &&
+    optionalString(input.summary) &&
+    optionalString(input.description) &&
+    optionalString(input.location) &&
+    optionalString(input.start) &&
+    optionalString(input.end) &&
+    optionalString(input.timeZone) &&
+    optionalStringArray(input.attendees, 50) &&
+    (isNonEmptyString(input.summary) ||
+      typeof input.description === "string" ||
+      typeof input.location === "string" ||
+      isNonEmptyString(input.start) ||
+      isNonEmptyString(input.end) ||
+      typeof input.timeZone === "string" ||
+      stringArray(input.attendees, 50))
+  );
+}
+
+function isSearchGoogleMailMessagesInput(input: unknown): input is {
+  query: string;
+  limit?: number;
+} {
+  return (
+    isOptionalObject(input) &&
+    typeof input.query === "string" &&
+    input.query.trim().length > 0 &&
+    optionalLimit(input.limit, 10)
+  );
+}
+
+function isCreateGmailDraftInput(input: unknown): input is {
+  to: string[];
+  subject: string;
+  body: string;
+  cc?: string[];
+  bcc?: string[];
+} {
+  return (
+    isOptionalObject(input) &&
+    stringArray(input.to, 50) &&
+    isNonEmptyString(input.subject) &&
+    typeof input.body === "string" &&
+    input.body.length <= 200_000 &&
+    optionalStringArray(input.cc, 50) &&
+    optionalStringArray(input.bcc, 50)
+  );
+}
+
 function isSearchJiraIssuesInput(input: unknown): input is { jql: string } {
   return (
     typeof input === "object" &&
@@ -641,6 +1782,20 @@ function isSearchJiraIssuesInput(input: unknown): input is { jql: string } {
     "jql" in input &&
     typeof input.jql === "string" &&
     input.jql.trim().length > 0
+  );
+}
+
+function isOptionalObject(input: unknown): input is Record<string, unknown> {
+  return typeof input === "object" && input !== null && !Array.isArray(input);
+}
+
+function optionalLimit(value: unknown, max: number): boolean {
+  return (
+    value === undefined ||
+    (typeof value === "number" &&
+      Number.isInteger(value) &&
+      value > 0 &&
+      value <= max)
   );
 }
 
@@ -732,6 +1887,107 @@ function isEditJiraIssueInput(input: unknown): input is {
   );
 }
 
+function isJiraIssueKeyInput(input: unknown): input is { issueKey: string } {
+  return isOptionalObject(input) && isNonEmptyString(input.issueKey);
+}
+
+function isUpdateJiraIssueInput(input: unknown): input is {
+  issueKey: string;
+  summary?: string;
+  description?: string;
+  assigneeAccountId?: string | null;
+  labels?: string[];
+} {
+  return (
+    isOptionalObject(input) &&
+    isNonEmptyString(input.issueKey) &&
+    optionalString(input.summary) &&
+    optionalString(input.description) &&
+    (input.assigneeAccountId === undefined ||
+      input.assigneeAccountId === null ||
+      typeof input.assigneeAccountId === "string") &&
+    optionalStringArray(input.labels, 50) &&
+    (isNonEmptyString(input.summary) ||
+      typeof input.description === "string" ||
+      typeof input.assigneeAccountId === "string" ||
+      input.assigneeAccountId === null ||
+      stringArray(input.labels, 50))
+  );
+}
+
+function isJiraCommentInput(input: unknown): input is {
+  issueKey: string;
+  body: string;
+} {
+  return (
+    isOptionalObject(input) &&
+    isNonEmptyString(input.issueKey) &&
+    isNonEmptyString(input.body)
+  );
+}
+
+function isJiraTransitionInput(input: unknown): input is {
+  issueKey: string;
+  transitionId?: string;
+  transitionName?: string;
+} {
+  return (
+    isOptionalObject(input) &&
+    isNonEmptyString(input.issueKey) &&
+    optionalString(input.transitionId) &&
+    optionalString(input.transitionName) &&
+    (isNonEmptyString(input.transitionId) ||
+      isNonEmptyString(input.transitionName))
+  );
+}
+
+function isJiraLabelsInput(input: unknown): input is {
+  issueKey: string;
+  labels: string[];
+} {
+  return (
+    isOptionalObject(input) &&
+    isNonEmptyString(input.issueKey) &&
+    stringArray(input.labels, 50)
+  );
+}
+
+function isJiraLinkIssuesInput(input: unknown): input is {
+  inwardIssueKey: string;
+  outwardIssueKey: string;
+  typeName?: string;
+  comment?: string;
+} {
+  return (
+    isOptionalObject(input) &&
+    isNonEmptyString(input.inwardIssueKey) &&
+    isNonEmptyString(input.outwardIssueKey) &&
+    optionalString(input.typeName) &&
+    optionalString(input.comment)
+  );
+}
+
+function isCreateJiraSubtaskInput(input: unknown): input is {
+  parentIssueKey: string;
+  summary: string;
+  projectKey?: string;
+  issueTypeName?: string;
+  issueTypeId?: string;
+  description?: string;
+  assigneeAccountId?: string;
+} {
+  return (
+    isOptionalObject(input) &&
+    isNonEmptyString(input.parentIssueKey) &&
+    isNonEmptyString(input.summary) &&
+    optionalString(input.projectKey) &&
+    optionalString(input.issueTypeName) &&
+    optionalString(input.issueTypeId) &&
+    optionalString(input.description) &&
+    optionalString(input.assigneeAccountId)
+  );
+}
+
 function isListVisibleJiraProjectsInput(
   input: unknown
 ): input is {
@@ -765,6 +2021,31 @@ function isListVisibleJiraProjectsInput(
 
 function optionalString(value: unknown): boolean {
   return value === undefined || typeof value === "string";
+}
+
+function optionalBoolean(value: unknown): boolean {
+  return value === undefined || typeof value === "boolean";
+}
+
+function isNonEmptyString(value: unknown): value is string {
+  return typeof value === "string" && value.trim().length > 0;
+}
+
+function isPositiveInteger(value: unknown): value is number {
+  return typeof value === "number" && Number.isInteger(value) && value > 0;
+}
+
+function optionalStringArray(value: unknown, max: number): boolean {
+  return value === undefined || stringArray(value, max);
+}
+
+function stringArray(value: unknown, max: number): value is string[] {
+  return (
+    Array.isArray(value) &&
+    value.length > 0 &&
+    value.length <= max &&
+    value.every(isNonEmptyString)
+  );
 }
 
 function isConversationSendInput(

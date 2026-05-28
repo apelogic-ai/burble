@@ -102,6 +102,76 @@ function openResponsesText(text: string, usage = {
 }
 
 describe("runOpenClawCliRequest", () => {
+  test("builds provider catalog from MCP tools/list metadata", async () => {
+    const prompts: string[] = [];
+
+    const response = await runOpenClawCliRequest(
+      {
+        input: {
+          text: "hello",
+          connections: {
+            github: {
+              connected: true,
+              email: "person@example.com",
+              providerLogin: "octocat"
+            }
+          }
+        }
+      },
+      {
+        ...config,
+        mcpGatewayUrl: "http://agentgateway:3000/mcp",
+        runtimeJwt: "runtime-jwt"
+      },
+      async (toolName) => {
+        if (toolName === "burble.mcp.listTools") {
+          return {
+            classification: "user_private",
+            content: [
+              {
+                name: "github_list_my_pull_requests",
+                description: "MCP-discovered PR listing tool",
+                inputSchema: {}
+              },
+              {
+                name: "jira_search_issues",
+                description: "Should be hidden without a Jira connection",
+                inputSchema: {
+                  type: "object"
+                }
+              }
+            ]
+          };
+        }
+
+        return {
+          classification: "user_private",
+          content: []
+        };
+      },
+      async (_command, args) => {
+        prompts.push(args[args.indexOf("--message") + 1] ?? "");
+        return {
+          exitCode: 0,
+          stdout: JSON.stringify({
+            response: {
+              text: "Hi."
+            }
+          }),
+          stderr: ""
+        };
+      },
+      () => undefined
+    );
+
+    expect(response.response.text).toBe("Hi.");
+    const catalogText =
+      prompts[0].split("Available Burble tools:\n")[1]?.split("\n\n")[0] ?? "";
+    expect(catalogText).toContain("github.listMyPullRequests");
+    expect(catalogText).toContain("MCP-discovered PR listing tool");
+    expect(catalogText).not.toContain('"name":"jira.searchIssues"');
+  });
+
   test("runs OpenClaw CLI with gateway-derived context", async () => {
     const commands: Array<{
       command: string;

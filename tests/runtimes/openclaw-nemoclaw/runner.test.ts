@@ -209,6 +209,48 @@ describe("runBurbleRequest", () => {
     ]);
   });
 
+  test("passes GitHub pull request filters through deterministic provider requests", async () => {
+    const calls: Array<{ toolName: string; body: unknown }> = [];
+    await runBurbleRequest(
+      {
+        input: {
+          text: "what is my latest open PR in apelogic-ai org?",
+          connections: {
+            github: {
+              connected: true,
+              email: "person@example.com",
+              providerLogin: "octocat"
+            }
+          }
+        }
+      },
+      config,
+      async (toolName, body) => {
+        calls.push({ toolName, body });
+        return {
+          classification: "user_private",
+          content: []
+        };
+      }
+    );
+
+    expect(calls).toEqual([
+      {
+        toolName: "github.listMyPullRequests",
+        body: {
+          user: { email: "person@example.com" },
+          input: {
+            limit: 1,
+            state: "open",
+            sort: "updated",
+            order: "desc",
+            owner: "apelogic-ai"
+          }
+        }
+      }
+    ]);
+  });
+
   test("asks the user to connect Jira when Jira context is requested without auth", async () => {
     const response = await runBurbleRequest(
       {

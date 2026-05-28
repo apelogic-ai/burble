@@ -186,6 +186,226 @@ export function registerJiraMcpTools(input: {
   );
 
   input.server.registerTool(
+    "jira_get_issue",
+    {
+      title: "Jira get issue",
+      description: "Get a Jira issue by key, including summary, status, labels, and text description.",
+      inputSchema: {
+        issueKey: z.string().min(1).describe("Jira issue key")
+      }
+    },
+    async ({ issueKey }) =>
+      mcpToolResult(
+        await withConnection(input.store, input.runtime, "jira", (connection) =>
+          jiraTools.getIssue.execute({
+            connection,
+            input: { issueKey }
+          })
+        )
+      )
+  );
+
+  input.server.registerTool(
+    "jira_update_issue",
+    {
+      title: "Jira update issue",
+      description:
+        "Update Jira issue fields: summary, description, assignee, or full labels set.",
+      inputSchema: {
+        issueKey: z.string().min(1).describe("Jira issue key"),
+        summary: z.string().min(1).optional(),
+        description: z.string().optional(),
+        assigneeAccountId: z
+          .string()
+          .nullable()
+          .optional()
+          .describe("Jira account ID for assignee, or null to unassign"),
+        labels: z.array(z.string().min(1)).max(50).optional()
+      }
+    },
+    async ({ issueKey, summary, description, assigneeAccountId, labels }) =>
+      mcpToolResult(
+        await withConnection(input.store, input.runtime, "jira", (connection) =>
+          jiraTools.updateIssue.execute({
+            connection,
+            input: {
+              issueKey,
+              ...(summary !== undefined ? { summary } : {}),
+              ...(description !== undefined ? { description } : {}),
+              ...(assigneeAccountId !== undefined ? { assigneeAccountId } : {}),
+              ...(labels !== undefined ? { labels } : {})
+            }
+          })
+        )
+      )
+  );
+
+  input.server.registerTool(
+    "jira_add_comment",
+    {
+      title: "Jira add comment",
+      description: "Add a plain-text comment to a Jira issue.",
+      inputSchema: {
+        issueKey: z.string().min(1).describe("Jira issue key"),
+        body: z.string().min(1).max(65_536).describe("Comment body")
+      }
+    },
+    async ({ issueKey, body }) =>
+      mcpToolResult(
+        await withConnection(input.store, input.runtime, "jira", (connection) =>
+          jiraTools.addComment.execute({
+            connection,
+            input: { issueKey, body }
+          })
+        )
+      )
+  );
+
+  input.server.registerTool(
+    "jira_transition_issue",
+    {
+      title: "Jira transition issue",
+      description:
+        "Transition a Jira issue by transition id or by matching available transition name.",
+      inputSchema: {
+        issueKey: z.string().min(1).describe("Jira issue key"),
+        transitionId: z.string().min(1).optional(),
+        transitionName: z.string().min(1).optional()
+      }
+    },
+    async ({ issueKey, transitionId, transitionName }) =>
+      mcpToolResult(
+        await withConnection(input.store, input.runtime, "jira", (connection) =>
+          jiraTools.transitionIssue.execute({
+            connection,
+            input: {
+              issueKey,
+              ...(transitionId ? { transitionId } : {}),
+              ...(transitionName ? { transitionName } : {})
+            }
+          })
+        )
+      )
+  );
+
+  input.server.registerTool(
+    "jira_add_labels",
+    {
+      title: "Jira add labels",
+      description: "Add labels to a Jira issue.",
+      inputSchema: {
+        issueKey: z.string().min(1).describe("Jira issue key"),
+        labels: z.array(z.string().min(1)).min(1).max(50)
+      }
+    },
+    async ({ issueKey, labels }) =>
+      mcpToolResult(
+        await withConnection(input.store, input.runtime, "jira", (connection) =>
+          jiraTools.addLabels.execute({
+            connection,
+            input: { issueKey, labels }
+          })
+        )
+      )
+  );
+
+  input.server.registerTool(
+    "jira_remove_labels",
+    {
+      title: "Jira remove labels",
+      description: "Remove labels from a Jira issue.",
+      inputSchema: {
+        issueKey: z.string().min(1).describe("Jira issue key"),
+        labels: z.array(z.string().min(1)).min(1).max(50)
+      }
+    },
+    async ({ issueKey, labels }) =>
+      mcpToolResult(
+        await withConnection(input.store, input.runtime, "jira", (connection) =>
+          jiraTools.removeLabels.execute({
+            connection,
+            input: { issueKey, labels }
+          })
+        )
+      )
+  );
+
+  input.server.registerTool(
+    "jira_link_issues",
+    {
+      title: "Jira link issues",
+      description: "Create a Jira issue link between two issues.",
+      inputSchema: {
+        inwardIssueKey: z.string().min(1).describe("Inward Jira issue key"),
+        outwardIssueKey: z.string().min(1).describe("Outward Jira issue key"),
+        typeName: z
+          .string()
+          .min(1)
+          .optional()
+          .describe("Jira issue link type name. Defaults to Relates."),
+        comment: z.string().max(65_536).optional()
+      }
+    },
+    async ({ inwardIssueKey, outwardIssueKey, typeName, comment }) =>
+      mcpToolResult(
+        await withConnection(input.store, input.runtime, "jira", (connection) =>
+          jiraTools.linkIssues.execute({
+            connection,
+            input: {
+              inwardIssueKey,
+              outwardIssueKey,
+              ...(typeName ? { typeName } : {}),
+              ...(comment !== undefined ? { comment } : {})
+            }
+          })
+        )
+      )
+  );
+
+  input.server.registerTool(
+    "jira_create_subtask",
+    {
+      title: "Jira create subtask",
+      description:
+        "Create a Jira subtask under an existing parent issue. Confirm the subtask issue type first when possible.",
+      inputSchema: {
+        parentIssueKey: z.string().min(1).describe("Parent Jira issue key"),
+        summary: z.string().min(1).describe("Subtask summary"),
+        projectKey: z.string().min(1).optional().describe("Optional Jira project key"),
+        issueTypeName: z.string().min(1).optional().describe("Subtask issue type name"),
+        issueTypeId: z.string().min(1).optional().describe("Subtask issue type ID"),
+        description: z.string().optional().describe("Plain text subtask description"),
+        assigneeAccountId: z.string().optional().describe("Optional Jira assignee account ID")
+      }
+    },
+    async ({
+      parentIssueKey,
+      summary,
+      projectKey,
+      issueTypeName,
+      issueTypeId,
+      description,
+      assigneeAccountId
+    }) =>
+      mcpToolResult(
+        await withConnection(input.store, input.runtime, "jira", (connection) =>
+          jiraTools.createSubtask.execute({
+            connection,
+            input: {
+              parentIssueKey,
+              summary,
+              ...(projectKey ? { projectKey } : {}),
+              ...(issueTypeName ? { issueTypeName } : {}),
+              ...(issueTypeId ? { issueTypeId } : {}),
+              ...(description !== undefined ? { description } : {}),
+              ...(assigneeAccountId ? { assigneeAccountId } : {})
+            }
+          })
+        )
+      )
+  );
+
+  input.server.registerTool(
     "jira_search_issues",
     {
       title: "Jira issue search",

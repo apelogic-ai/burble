@@ -246,9 +246,25 @@ async function runAiSdkAgent(
         })
       }),
       github_list_my_pull_requests: tool({
-        description: "List open GitHub pull requests authored by the Slack user.",
-        inputSchema: z.object({}),
-        execute: async () => executeTool("github_list_my_pull_requests", async () => {
+        description:
+          "List GitHub pull requests authored by the Slack user. Defaults to open PRs sorted by most recently updated.",
+        inputSchema: z.object({
+          limit: z.number().int().min(1).max(20).optional(),
+          state: z.enum(["open", "closed", "all"]).optional(),
+          sort: z.enum(["updated", "created", "comments"]).optional(),
+          order: z.enum(["desc", "asc"]).optional(),
+          owner: z
+            .string()
+            .min(1)
+            .optional()
+            .describe("GitHub owner or organization login to filter by."),
+          repo: z
+            .string()
+            .min(1)
+            .optional()
+            .describe("Repository in owner/name format. Takes precedence over owner.")
+        }),
+        execute: async (toolInput) => executeTool("github_list_my_pull_requests", async () => {
           const connection = input.connections.github;
           if (!connection) {
             return missingGitHubConnection();
@@ -256,7 +272,346 @@ async function runAiSdkAgent(
 
           return record(
             await deps.githubTools.listMyPullRequests.execute({
-              connection
+              connection,
+              input: toolInput
+            })
+          );
+        })
+      }),
+      github_get_issue: tool({
+        description:
+          "Get one GitHub issue by repository and issue number, including body and metadata.",
+        inputSchema: z.object({
+          repo: z.string().min(1).describe("Repository in owner/name format"),
+          number: z.number().int().positive()
+        }),
+        execute: async (toolInput) => executeTool("github_get_issue", async () => {
+          const connection = input.connections.github;
+          if (!connection) {
+            return missingGitHubConnection();
+          }
+
+          return record(
+            await deps.githubTools.getIssue.execute({
+              connection,
+              input: toolInput
+            })
+          );
+        })
+      }),
+      github_get_pr: tool({
+        description:
+          "Get one GitHub pull request by repository and PR number, including body, branches, and metadata.",
+        inputSchema: z.object({
+          repo: z.string().min(1).describe("Repository in owner/name format"),
+          number: z.number().int().positive()
+        }),
+        execute: async (toolInput) => executeTool("github_get_pr", async () => {
+          const connection = input.connections.github;
+          if (!connection) {
+            return missingGitHubConnection();
+          }
+
+          return record(
+            await deps.githubTools.getPullRequest.execute({
+              connection,
+              input: toolInput
+            })
+          );
+        })
+      }),
+      github_create_issue: tool({
+        description:
+          "Create a GitHub issue. Use only when the user clearly asks to create an issue.",
+        inputSchema: z.object({
+          repo: z.string().min(1),
+          title: z.string().min(1),
+          body: z.string().optional(),
+          labels: z.array(z.string().min(1)).optional(),
+          assignees: z.array(z.string().min(1)).optional()
+        }),
+        execute: async (toolInput) => executeTool("github_create_issue", async () => {
+          const connection = input.connections.github;
+          if (!connection) {
+            return missingGitHubConnection();
+          }
+
+          return record(
+            await deps.githubTools.createIssue.execute({
+              connection,
+              input: toolInput
+            })
+          );
+        })
+      }),
+      github_update_issue: tool({
+        description:
+          "Update GitHub issue metadata: title, body, state, labels, or assignees. Use only when clearly requested.",
+        inputSchema: z.object({
+          repo: z.string().min(1).describe("Repository in owner/name format"),
+          number: z.number().int().positive(),
+          title: z.string().min(1).optional(),
+          body: z.string().optional(),
+          state: z.enum(["open", "closed"]).optional(),
+          labels: z.array(z.string().min(1)).optional(),
+          assignees: z.array(z.string().min(1)).optional()
+        }),
+        execute: async (toolInput) => executeTool("github_update_issue", async () => {
+          const connection = input.connections.github;
+          if (!connection) {
+            return missingGitHubConnection();
+          }
+
+          return record(
+            await deps.githubTools.updateIssue.execute({
+              connection,
+              input: toolInput
+            })
+          );
+        })
+      }),
+      github_close_issue: tool({
+        description: "Close a GitHub issue. Use only when clearly requested.",
+        inputSchema: z.object({
+          repo: z.string().min(1).describe("Repository in owner/name format"),
+          number: z.number().int().positive()
+        }),
+        execute: async (toolInput) => executeTool("github_close_issue", async () => {
+          const connection = input.connections.github;
+          if (!connection) {
+            return missingGitHubConnection();
+          }
+
+          return record(
+            await deps.githubTools.closeIssue.execute({
+              connection,
+              input: toolInput
+            })
+          );
+        })
+      }),
+      github_reopen_issue: tool({
+        description: "Reopen a GitHub issue. Use only when clearly requested.",
+        inputSchema: z.object({
+          repo: z.string().min(1).describe("Repository in owner/name format"),
+          number: z.number().int().positive()
+        }),
+        execute: async (toolInput) => executeTool("github_reopen_issue", async () => {
+          const connection = input.connections.github;
+          if (!connection) {
+            return missingGitHubConnection();
+          }
+
+          return record(
+            await deps.githubTools.reopenIssue.execute({
+              connection,
+              input: toolInput
+            })
+          );
+        })
+      }),
+      github_comment_on_issue_or_pr: tool({
+        description:
+          "Comment on a GitHub issue or pull request. Use only when the user clearly asks to comment.",
+        inputSchema: z.object({
+          repo: z.string().min(1),
+          number: z.number().int().positive(),
+          body: z.string().min(1)
+        }),
+        execute: async (toolInput) => executeTool("github_comment_on_issue_or_pr", async () => {
+          const connection = input.connections.github;
+          if (!connection) {
+            return missingGitHubConnection();
+          }
+
+          return record(
+            await deps.githubTools.commentOnIssueOrPullRequest.execute({
+              connection,
+              input: toolInput
+            })
+          );
+        })
+      }),
+      github_get_file: tool({
+        description:
+          "Read a text file from a GitHub repository by path and optional branch/ref.",
+        inputSchema: z.object({
+          repo: z.string().min(1).describe("Repository in owner/name format"),
+          path: z.string().min(1),
+          ref: z.string().min(1).optional()
+        }),
+        execute: async (toolInput) => executeTool("github_get_file", async () => {
+          const connection = input.connections.github;
+          if (!connection) {
+            return missingGitHubConnection();
+          }
+
+          return record(
+            await deps.githubTools.getFile.execute({
+              connection,
+              input: toolInput
+            })
+          );
+        })
+      }),
+      github_create_or_update_file: tool({
+        description:
+          "Create or update a single text file in a GitHub repository. Use only when explicitly requested.",
+        inputSchema: z.object({
+          repo: z.string().min(1).describe("Repository in owner/name format"),
+          path: z.string().min(1),
+          content: z.string(),
+          message: z.string().min(1),
+          branch: z.string().min(1).optional(),
+          sha: z.string().min(1).optional()
+        }),
+        execute: async (toolInput) =>
+          executeTool("github_create_or_update_file", async () => {
+            const connection = input.connections.github;
+            if (!connection) {
+              return missingGitHubConnection();
+            }
+
+            return record(
+              await deps.githubTools.createOrUpdateFile.execute({
+                connection,
+                input: toolInput
+              })
+            );
+          })
+      }),
+      github_create_branch: tool({
+        description:
+          "Create a GitHub branch from the default branch or from a provided ref/SHA. Use only when explicitly requested.",
+        inputSchema: z.object({
+          repo: z.string().min(1).describe("Repository in owner/name format"),
+          branch: z.string().min(1),
+          fromRef: z.string().min(1).optional()
+        }),
+        execute: async (toolInput) => executeTool("github_create_branch", async () => {
+          const connection = input.connections.github;
+          if (!connection) {
+            return missingGitHubConnection();
+          }
+
+          return record(
+            await deps.githubTools.createBranch.execute({
+              connection,
+              input: toolInput
+            })
+          );
+        })
+      }),
+      github_create_pr: tool({
+        description:
+          "Open a GitHub pull request from an existing branch. Use only when explicitly requested.",
+        inputSchema: z.object({
+          repo: z.string().min(1),
+          title: z.string().min(1),
+          head: z.string().min(1),
+          base: z.string().min(1),
+          body: z.string().optional(),
+          draft: z.boolean().optional()
+        }),
+        execute: async (toolInput) => executeTool("github_create_pr", async () => {
+          const connection = input.connections.github;
+          if (!connection) {
+            return missingGitHubConnection();
+          }
+
+          return record(
+            await deps.githubTools.createPullRequest.execute({
+              connection,
+              input: toolInput
+            })
+          );
+        })
+      }),
+      github_update_pr: tool({
+        description:
+          "Update GitHub pull request metadata: title, body, base branch, or draft state. Does not edit code.",
+        inputSchema: z.object({
+          repo: z.string().min(1),
+          number: z.number().int().positive(),
+          title: z.string().min(1).optional(),
+          body: z.string().optional(),
+          base: z.string().min(1).optional(),
+          draft: z.boolean().optional()
+        }),
+        execute: async (toolInput) => executeTool("github_update_pr", async () => {
+          const connection = input.connections.github;
+          if (!connection) {
+            return missingGitHubConnection();
+          }
+
+          return record(
+            await deps.githubTools.updatePullRequest.execute({
+              connection,
+              input: toolInput
+            })
+          );
+        })
+      }),
+      github_add_labels: tool({
+        description: "Add labels to a GitHub issue or pull request.",
+        inputSchema: z.object({
+          repo: z.string().min(1),
+          number: z.number().int().positive(),
+          labels: z.array(z.string().min(1)).min(1)
+        }),
+        execute: async (toolInput) => executeTool("github_add_labels", async () => {
+          const connection = input.connections.github;
+          if (!connection) {
+            return missingGitHubConnection();
+          }
+
+          return record(
+            await deps.githubTools.addLabels.execute({
+              connection,
+              input: toolInput
+            })
+          );
+        })
+      }),
+      github_remove_labels: tool({
+        description: "Remove labels from a GitHub issue or pull request.",
+        inputSchema: z.object({
+          repo: z.string().min(1),
+          number: z.number().int().positive(),
+          labels: z.array(z.string().min(1)).min(1)
+        }),
+        execute: async (toolInput) => executeTool("github_remove_labels", async () => {
+          const connection = input.connections.github;
+          if (!connection) {
+            return missingGitHubConnection();
+          }
+
+          return record(
+            await deps.githubTools.removeLabels.execute({
+              connection,
+              input: toolInput
+            })
+          );
+        })
+      }),
+      github_request_review: tool({
+        description: "Request user or team reviewers for a GitHub pull request.",
+        inputSchema: z.object({
+          repo: z.string().min(1),
+          number: z.number().int().positive(),
+          reviewers: z.array(z.string().min(1)).optional(),
+          teamReviewers: z.array(z.string().min(1)).optional()
+        }),
+        execute: async (toolInput) => executeTool("github_request_review", async () => {
+          const connection = input.connections.github;
+          if (!connection) {
+            return missingGitHubConnection();
+          }
+
+          return record(
+            await deps.githubTools.requestReview.execute({
+              connection,
+              input: toolInput
             })
           );
         })
@@ -341,6 +696,181 @@ async function runAiSdkAgent(
           );
         })
       });
+      tools.jira_get_issue = tool({
+        description:
+          "Get a Jira issue by key, including summary, description, status, type, parent, and labels when available.",
+        inputSchema: z.object({
+          issueKey: z.string().min(1)
+        }),
+        execute: async (toolInput) => executeTool("jira_get_issue", async () => {
+          const connection = input.connections.jira;
+          if (!connection) {
+            return missingJiraConnection();
+          }
+
+          return record(
+            await deps.jiraTools!.getIssue.execute({
+              connection,
+              input: toolInput
+            })
+          );
+        })
+      });
+      tools.jira_update_issue = tool({
+        description:
+          "Update Jira issue summary, description, assignee, or labels. Use only when clearly requested.",
+        inputSchema: z.object({
+          issueKey: z.string().min(1),
+          summary: z.string().min(1).optional(),
+          description: z.string().optional(),
+          assigneeAccountId: z.string().nullable().optional(),
+          labels: z.array(z.string().min(1)).optional()
+        }),
+        execute: async (toolInput) => executeTool("jira_update_issue", async () => {
+          const connection = input.connections.jira;
+          if (!connection) {
+            return missingJiraConnection();
+          }
+
+          return record(
+            await deps.jiraTools!.updateIssue.execute({
+              connection,
+              input: toolInput
+            })
+          );
+        })
+      });
+      tools.jira_add_comment = tool({
+        description: "Add a comment to a Jira issue. Use only when clearly requested.",
+        inputSchema: z.object({
+          issueKey: z.string().min(1),
+          body: z.string().min(1)
+        }),
+        execute: async (toolInput) => executeTool("jira_add_comment", async () => {
+          const connection = input.connections.jira;
+          if (!connection) {
+            return missingJiraConnection();
+          }
+
+          return record(
+            await deps.jiraTools!.addComment.execute({
+              connection,
+              input: toolInput
+            })
+          );
+        })
+      });
+      tools.jira_transition_issue = tool({
+        description:
+          "Transition a Jira issue by transition ID or transition name. Use only when clearly requested.",
+        inputSchema: z.object({
+          issueKey: z.string().min(1),
+          transitionId: z.string().min(1).optional(),
+          transitionName: z.string().min(1).optional()
+        }),
+        execute: async (toolInput) =>
+          executeTool("jira_transition_issue", async () => {
+            const connection = input.connections.jira;
+            if (!connection) {
+              return missingJiraConnection();
+            }
+
+            return record(
+              await deps.jiraTools!.transitionIssue.execute({
+                connection,
+                input: toolInput
+              })
+            );
+          })
+      });
+      tools.jira_add_labels = tool({
+        description: "Add labels to a Jira issue.",
+        inputSchema: z.object({
+          issueKey: z.string().min(1),
+          labels: z.array(z.string().min(1)).min(1)
+        }),
+        execute: async (toolInput) => executeTool("jira_add_labels", async () => {
+          const connection = input.connections.jira;
+          if (!connection) {
+            return missingJiraConnection();
+          }
+
+          return record(
+            await deps.jiraTools!.addLabels.execute({
+              connection,
+              input: toolInput
+            })
+          );
+        })
+      });
+      tools.jira_remove_labels = tool({
+        description: "Remove labels from a Jira issue.",
+        inputSchema: z.object({
+          issueKey: z.string().min(1),
+          labels: z.array(z.string().min(1)).min(1)
+        }),
+        execute: async (toolInput) => executeTool("jira_remove_labels", async () => {
+          const connection = input.connections.jira;
+          if (!connection) {
+            return missingJiraConnection();
+          }
+
+          return record(
+            await deps.jiraTools!.removeLabels.execute({
+              connection,
+              input: toolInput
+            })
+          );
+        })
+      });
+      tools.jira_link_issues = tool({
+        description: "Link two Jira issues. Use only when clearly requested.",
+        inputSchema: z.object({
+          inwardIssueKey: z.string().min(1),
+          outwardIssueKey: z.string().min(1),
+          typeName: z.string().min(1).optional(),
+          comment: z.string().optional()
+        }),
+        execute: async (toolInput) => executeTool("jira_link_issues", async () => {
+          const connection = input.connections.jira;
+          if (!connection) {
+            return missingJiraConnection();
+          }
+
+          return record(
+            await deps.jiraTools!.linkIssues.execute({
+              connection,
+              input: toolInput
+            })
+          );
+        })
+      });
+      tools.jira_create_subtask = tool({
+        description:
+          "Create a Jira subtask under an existing parent issue. Use only when clearly requested.",
+        inputSchema: z.object({
+          parentIssueKey: z.string().min(1),
+          summary: z.string().min(1),
+          projectKey: z.string().min(1).optional(),
+          issueTypeName: z.string().min(1).optional(),
+          issueTypeId: z.string().min(1).optional(),
+          description: z.string().optional(),
+          assigneeAccountId: z.string().min(1).optional()
+        }),
+        execute: async (toolInput) => executeTool("jira_create_subtask", async () => {
+          const connection = input.connections.jira;
+          if (!connection) {
+            return missingJiraConnection();
+          }
+
+          return record(
+            await deps.jiraTools!.createSubtask.execute({
+              connection,
+              input: toolInput
+            })
+          );
+        })
+      });
     }
 
     if (deps.googleTools) {
@@ -386,6 +916,147 @@ async function runAiSdkAgent(
             );
           })
       });
+      tools.google_create_drive_text_file = tool({
+        description:
+          "Create a new app-owned text file in Google Drive using the authenticated Slack user's connected Google account.",
+        inputSchema: z.object({
+          name: z.string().min(1).max(200).describe("Drive file name"),
+          text: z.string().max(200_000).describe("Text body to write into the file"),
+          mimeType: z.string().optional().describe("Optional MIME type")
+        }),
+        execute: async ({ name, text, mimeType }) =>
+          executeTool("google_create_drive_text_file", async () => {
+            const connection = input.connections.google;
+            if (!connection) {
+              return missingGoogleConnection();
+            }
+
+            return record(
+              await deps.googleTools!.createDriveTextFile.execute({
+                connection,
+                input: {
+                  name,
+                  text,
+                  ...(mimeType ? { mimeType } : {})
+                }
+              })
+            );
+          })
+      });
+      tools.google_get_drive_file = tool({
+        description:
+          "Get Google Drive file metadata and optionally text content for a file visible to this app.",
+        inputSchema: z.object({
+          fileId: z.string().min(1),
+          includeContent: z.boolean().optional()
+        }),
+        execute: async (toolInput) =>
+          executeTool("google_get_drive_file", async () => {
+            const connection = input.connections.google;
+            if (!connection) {
+              return missingGoogleConnection();
+            }
+
+            return record(
+              await deps.googleTools!.getDriveFile.execute({
+                connection,
+                input: toolInput
+              })
+            );
+          })
+      });
+      tools.google_update_drive_text_file = tool({
+        description:
+          "Replace the text contents of an app-accessible Google Drive text file. Use only when clearly requested.",
+        inputSchema: z.object({
+          fileId: z.string().min(1),
+          text: z.string().max(200_000),
+          mimeType: z.string().optional()
+        }),
+        execute: async (toolInput) =>
+          executeTool("google_update_drive_text_file", async () => {
+            const connection = input.connections.google;
+            if (!connection) {
+              return missingGoogleConnection();
+            }
+
+            return record(
+              await deps.googleTools!.updateDriveTextFile.execute({
+                connection,
+                input: toolInput
+              })
+            );
+          })
+      });
+      tools.google_append_to_drive_text_file = tool({
+        description:
+          "Append text to an app-accessible Google Drive text file. Use only when clearly requested.",
+        inputSchema: z.object({
+          fileId: z.string().min(1),
+          text: z.string().max(200_000),
+          separator: z.string().optional(),
+          mimeType: z.string().optional()
+        }),
+        execute: async (toolInput) =>
+          executeTool("google_append_to_drive_text_file", async () => {
+            const connection = input.connections.google;
+            if (!connection) {
+              return missingGoogleConnection();
+            }
+
+            return record(
+              await deps.googleTools!.appendDriveTextFile.execute({
+                connection,
+                input: toolInput
+              })
+            );
+          })
+      });
+      tools.google_create_drive_folder = tool({
+        description:
+          "Create an app-owned folder in Google Drive. Use only when clearly requested.",
+        inputSchema: z.object({
+          name: z.string().min(1).max(200),
+          parentId: z.string().min(1).optional()
+        }),
+        execute: async (toolInput) =>
+          executeTool("google_create_drive_folder", async () => {
+            const connection = input.connections.google;
+            if (!connection) {
+              return missingGoogleConnection();
+            }
+
+            return record(
+              await deps.googleTools!.createDriveFolder.execute({
+                connection,
+                input: toolInput
+              })
+            );
+          })
+      });
+      tools.google_move_drive_file = tool({
+        description:
+          "Move an app-accessible Google Drive file into a folder. Use only when clearly requested.",
+        inputSchema: z.object({
+          fileId: z.string().min(1),
+          parentId: z.string().min(1),
+          removeParentIds: z.array(z.string().min(1)).optional()
+        }),
+        execute: async (toolInput) =>
+          executeTool("google_move_drive_file", async () => {
+            const connection = input.connections.google;
+            if (!connection) {
+              return missingGoogleConnection();
+            }
+
+            return record(
+              await deps.googleTools!.moveDriveFile.execute({
+                connection,
+                input: toolInput
+              })
+            );
+          })
+      });
       tools.google_search_calendar_events = tool({
         description:
           "Search upcoming Google Calendar events visible to the authenticated Slack user's connected Google account.",
@@ -418,6 +1089,63 @@ async function runAiSdkAgent(
             );
           })
       });
+      tools.google_create_calendar_event = tool({
+        description:
+          "Create a Google Calendar event. Use only when the user clearly asks to create or schedule a calendar event.",
+        inputSchema: z.object({
+          calendarId: z.string().min(1).optional(),
+          summary: z.string().min(1),
+          description: z.string().optional(),
+          location: z.string().optional(),
+          start: z.string().min(1).describe("RFC3339 date-time"),
+          end: z.string().min(1).describe("RFC3339 date-time"),
+          timeZone: z.string().min(1).optional(),
+          attendees: z.array(z.string().min(1)).optional()
+        }),
+        execute: async (toolInput) =>
+          executeTool("google_create_calendar_event", async () => {
+            const connection = input.connections.google;
+            if (!connection) {
+              return missingGoogleConnection();
+            }
+
+            return record(
+              await deps.googleTools!.createCalendarEvent.execute({
+                connection,
+                input: toolInput
+              })
+            );
+          })
+      });
+      tools.google_update_calendar_event = tool({
+        description:
+          "Update a Google Calendar event. Use only when the user clearly asks to edit an event.",
+        inputSchema: z.object({
+          calendarId: z.string().min(1).optional(),
+          eventId: z.string().min(1),
+          summary: z.string().min(1).optional(),
+          description: z.string().optional(),
+          location: z.string().optional(),
+          start: z.string().min(1).optional(),
+          end: z.string().min(1).optional(),
+          timeZone: z.string().min(1).optional(),
+          attendees: z.array(z.string().min(1)).optional()
+        }),
+        execute: async (toolInput) =>
+          executeTool("google_update_calendar_event", async () => {
+            const connection = input.connections.google;
+            if (!connection) {
+              return missingGoogleConnection();
+            }
+
+            return record(
+              await deps.googleTools!.updateCalendarEvent.execute({
+                connection,
+                input: toolInput
+              })
+            );
+          })
+      });
       tools.google_search_mail_messages = tool({
         description:
           "Search Gmail messages visible to the authenticated Slack user's connected Google account.",
@@ -442,6 +1170,30 @@ async function runAiSdkAgent(
               })
             );
           })
+      });
+      tools.gmail_create_draft = tool({
+        description:
+          "Create a Gmail draft only. Do not send email. Use only when the user clearly asks to draft an email.",
+        inputSchema: z.object({
+          to: z.array(z.string().min(1)).min(1),
+          subject: z.string().min(1),
+          body: z.string(),
+          cc: z.array(z.string().min(1)).optional(),
+          bcc: z.array(z.string().min(1)).optional()
+        }),
+        execute: async (toolInput) => executeTool("gmail_create_draft", async () => {
+          const connection = input.connections.google;
+          if (!connection) {
+            return missingGoogleConnection();
+          }
+
+          return record(
+            await deps.googleTools!.createMailDraft.execute({
+              connection,
+              input: toolInput
+            })
+          );
+        })
       });
     }
 

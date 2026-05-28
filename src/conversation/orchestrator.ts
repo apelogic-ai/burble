@@ -1,6 +1,7 @@
 import { formatConnectGitHubMessage } from "../formatting";
 import { formatGitHubIdentityMessage, formatIssuesMessage } from "../formatting";
 import { collectAgentRun } from "../agent/types";
+import { parseGitHubPullRequestListInput } from "../github-query";
 import { tryHandleLocalToolFastPath } from "./local-tool-fast-paths";
 import { enforceVisibility } from "./visibility";
 import type {
@@ -115,7 +116,10 @@ export async function handleConversation(
 
     const result =
       intent === "github_pull_requests"
-        ? await deps.tools.github.listMyPullRequests.execute({ connection })
+        ? await deps.tools.github.listMyPullRequests.execute({
+            connection,
+            input: parseGitHubPullRequestListInput(request.text)
+          })
         : intent === "github_issue_search"
           ? await deps.tools.github.searchIssues.execute({
               connection,
@@ -125,17 +129,12 @@ export async function handleConversation(
               connection
             });
 
-    const content =
-      intent === "github_pull_requests"
-        ? result.content.slice(0, parseRequestedItemLimit(request.text) ?? 10)
-        : result.content;
-
     return enforceVisibility(
       {
         visibility: "public",
         classification: result.classification,
         text: formatIssuesMessage(
-          content.map((issue) => ({
+          result.content.map((issue) => ({
             title: issue.title,
             html_url: issue.url
           }))
@@ -272,6 +271,7 @@ export function shouldForceAgentDelegation(text: string): boolean {
   const normalized = text.toLowerCase().replace(/\s+/g, " ").trim();
   return (
     /\b(cron|cronjob|cronjobs|job|jobs)\b/.test(normalized) ||
+    isProviderMutationRequest(normalized) ||
     /\bask\s+(the\s+)?(agent|subagent)\b/.test(normalized) ||
     /\b(agent|subagent)\s+(please\s+)?(create|make|schedule|run|list|show|tell|answer|post|send)\b/.test(
       normalized
@@ -285,18 +285,22 @@ export function shouldForceAgentDelegation(text: string): boolean {
   );
 }
 
-function parseRequestedItemLimit(text: string): number | null {
-  const normalized = text.toLowerCase().replace(/\s+/g, " ").trim();
-  const match =
-    /\b(?:top|latest|last|recent|most recent)\s+(\d{1,2})\b/.exec(normalized) ??
-    /\b(\d{1,2})\s+(?:latest|last|recent|most recent|open)?\s*(?:github\s+)?(?:pull requests?|prs?)\b/.exec(
-      normalized
-    );
-  if (!match?.[1]) {
-    return null;
-  }
-  const value = Number.parseInt(match[1], 10);
-  return Number.isInteger(value) && value > 0 ? Math.min(value, 20) : null;
+function isProviderMutationRequest(normalizedText: string): boolean {
+  const mutationVerb =
+    "add|request|remove|delete|assign|unassign|comment|reply|create|update|edit|close|merge|label|unlabel";
+  const providerObject =
+    "github|pull request|pr|issue|review|reviewer|label|comment|description|body";
+  return (
+    /\bopen\s+(?:a|an|new)\b.*\b(github|pull request|pr)\b/.test(
+      normalizedText
+    ) ||
+    new RegExp(`\\b(${mutationVerb})\\b.*\\b(${providerObject})\\b`).test(
+      normalizedText
+    ) ||
+    new RegExp(`\\b(${providerObject})\\b.*\\b(${mutationVerb})\\b`).test(
+      normalizedText
+    )
+  );
 }
 
 function buildIssueSearchQuery(text: string): string {

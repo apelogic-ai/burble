@@ -32,7 +32,8 @@ const config: Config = {
   agentRuntimeDataRoot: "/data/runtimes",
   agentRuntimeDockerNetwork: "compose_default",
   agentRuntimeImage: "burble-openclaw-nemoclaw:dev",
-  agentRuntimeIdleTtlMs: 1800000,
+  agentRuntimeIdleTtlMs: 86400000,
+  agentRuntimeReaperEnabled: true,
   agentRuntimeReaperIntervalMs: 60000,
   agentRuntimeJwtTtlSeconds: 604800,
   agentRuntimeTokenSecret: null,
@@ -120,6 +121,8 @@ describe("handleProviderMcpRequest", () => {
       workspaceId: "T123",
       slackUserId: "U123"
     });
+    const lastUsedBefore = store.getAgentRuntime(runtime.id)?.lastUsedAt;
+    await Bun.sleep(2);
 
     const response = await handleProviderMcpRequest(
       config,
@@ -149,6 +152,94 @@ describe("handleProviderMcpRequest", () => {
     expect(toolResult).toEqual({
       classification: "user_private",
       content: { login: "octocat" }
+    });
+    expect(store.getAgentRuntime(runtime.id)?.lastUsedAt).not.toBe(
+      lastUsedBefore
+    );
+    store.close();
+  });
+
+  test("executes GitHub write tools under the runtime principal", async () => {
+    const issuer = createRuntimeJwtIssuer({ issuer: config.runtimeJwtIssuer });
+    const store = createTokenStore(":memory:");
+    const runtime = store.getOrCreateAgentRuntime({
+      workspaceId: "T123",
+      slackUserId: "U123",
+      engine: "openclaw",
+      endpointUrl: "http://runtime-u123:8080",
+      authTokenHash: "hash-u123",
+      statePath: "/data/runtimes/u123/state",
+      configPath: "/data/runtimes/u123/config/openclaw.json",
+      workspacePath: "/data/runtimes/u123/workspace"
+    });
+    store.upsertConnectedUser({
+      email: "person@example.com",
+      slackUserId: "U123",
+      githubLogin: "octocat",
+      githubToken: "gh-token"
+    });
+    const route = store.upsertConversationRoute({
+      workspaceId: "T123",
+      slackUserId: "U123",
+      transport: "slack",
+      destination: {
+        runtimeId: runtime.id,
+        conversationId: "D123"
+      }
+    });
+    const token = issuer.issueRuntimeJwt({
+      audience: "http://agentgateway:3000/mcp",
+      runtimeId: runtime.id,
+      workspaceId: "T123",
+      slackUserId: "U123"
+    });
+
+    const response = await handleProviderMcpRequest(
+      config,
+      store,
+      issuer,
+      mcpRequest(
+        {
+          method: "tools/call",
+          params: {
+            name: "github_create_issue",
+            arguments: {
+              routeId: route.id,
+              repo: "acme/app",
+              title: "New issue",
+              labels: ["bug"]
+            }
+          }
+        },
+        token
+      ),
+      {
+        createIssue: async (accessToken, input) => {
+          expect(accessToken).toBe("gh-token");
+          expect(input).toEqual({
+            repo: "acme/app",
+            title: "New issue",
+            labels: ["bug"]
+          });
+          return {
+            title: "New issue",
+            html_url: "https://github.com/acme/app/issues/12",
+            number: 12
+          };
+        }
+      }
+    );
+    const body = readMcpBody(await response.text());
+    const toolResult = JSON.parse(body.result.content[0].text);
+
+    expect(response.status).toBe(200);
+    expect(toolResult).toEqual({
+      classification: "user_private",
+      content: {
+        title: "New issue",
+        url: "https://github.com/acme/app/issues/12",
+        number: 12
+      }
     });
     store.close();
   });
@@ -328,6 +419,78 @@ describe("handleProviderMcpRequest", () => {
           webViewLink: "https://drive.google.com/file-1"
         }
       ]
+    });
+    store.close();
+  });
+
+  test("executes Google Drive create text file under the runtime principal", async () => {
+    const issuer = createRuntimeJwtIssuer({ issuer: config.runtimeJwtIssuer });
+    const store = createTokenStore(":memory:");
+    const runtime = store.getOrCreateAgentRuntime({
+      workspaceId: "T123",
+      slackUserId: "U123",
+      engine: "openclaw",
+      endpointUrl: "http://runtime-u123:8080",
+      authTokenHash: "hash-u123",
+      statePath: "/data/runtimes/u123/state",
+      configPath: "/data/runtimes/u123/config/openclaw.json",
+      workspacePath: "/data/runtimes/u123/workspace"
+    });
+    store.upsertProviderConnection({
+      provider: "google",
+      email: "person@example.com",
+      slackUserId: "U123",
+      providerLogin: "person@apegpt.ai",
+      accessToken: "google-token",
+      refreshToken: null,
+      accessTokenExpiresAt: null
+    });
+    const token = issuer.issueRuntimeJwt({
+      audience: "http://agentgateway:3000/mcp",
+      runtimeId: runtime.id,
+      workspaceId: "T123",
+      slackUserId: "U123"
+    });
+
+    const response = await handleProviderMcpRequest(
+      config,
+      store,
+      issuer,
+      mcpRequest(
+        {
+          method: "tools/call",
+          params: {
+            name: "google_create_drive_text_file",
+            arguments: { name: "Test", text: "Test One" }
+          }
+        },
+        token
+      ),
+      {
+        createGoogleDriveTextFile: async (accessToken, input) => {
+          expect(accessToken).toBe("google-token");
+          expect(input).toEqual({ name: "Test", text: "Test One" });
+          return {
+            id: "file-1",
+            name: "Test",
+            mimeType: "text/plain",
+            webViewLink: "https://drive.google.com/file-1"
+          };
+        }
+      }
+    );
+    const body = readMcpBody(await response.text());
+    const toolResult = JSON.parse(body.result.content[0].text);
+
+    expect(response.status).toBe(200);
+    expect(toolResult).toEqual({
+      classification: "user_private",
+      content: {
+        id: "file-1",
+        name: "Test",
+        mimeType: "text/plain",
+        webViewLink: "https://drive.google.com/file-1"
+      }
     });
     store.close();
   });

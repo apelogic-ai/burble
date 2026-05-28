@@ -11,6 +11,10 @@ export type JiraIssue = {
   summary: string;
   url: string;
   status?: string;
+  description?: string;
+  issueType?: string;
+  parentKey?: string;
+  labels?: string[];
 };
 
 export type JiraTokenSet = {
@@ -79,6 +83,18 @@ type JiraProjectSearchResponse = {
 
 type JiraCreateIssueResponse = {
   key?: string;
+};
+
+type JiraIssueApiResponse = {
+  key?: string;
+  fields?: {
+    summary?: string;
+    description?: unknown;
+    status?: { name?: string };
+    issuetype?: { name?: string };
+    parent?: { key?: string };
+    labels?: string[];
+  };
 };
 
 type JiraErrorResponse = {
@@ -399,6 +415,31 @@ export async function createJiraIssue(
   };
 }
 
+export async function getJiraIssue(
+  token: string,
+  input: { issueKey: string }
+): Promise<JiraIssue> {
+  const resource = await resolveJiraResource(token);
+  const url = new URL(
+    `https://api.atlassian.com/ex/jira/${resource.id}/rest/api/3/issue/${encodeURIComponent(input.issueKey)}`
+  );
+  url.searchParams.set(
+    "fields",
+    "summary,status,description,issuetype,parent,labels"
+  );
+  const response = await fetch(url, { headers: jiraHeaders(token) });
+  const body = (await response.json()) as JiraIssueApiResponse | JiraErrorResponse;
+
+  if (!response.ok || !("key" in body) || !body.key) {
+    throw new JiraApiError(
+      formatJiraError(body, `Jira issue lookup failed with ${response.status}`),
+      response.status
+    );
+  }
+
+  return jiraIssueFromApi(resource, body);
+}
+
 export async function editJiraIssue(
   token: string,
   input: {
@@ -449,6 +490,218 @@ export async function editJiraIssue(
   };
 }
 
+export async function updateJiraIssue(
+  token: string,
+  input: {
+    issueKey: string;
+    summary?: string;
+    description?: string;
+    assigneeAccountId?: string | null;
+    labels?: string[];
+  }
+): Promise<JiraIssue> {
+  const resource = await resolveJiraResource(token);
+  const fields: Record<string, unknown> = {};
+  if (input.summary?.trim()) {
+    fields.summary = input.summary.trim();
+  }
+  if (input.description !== undefined) {
+    fields.description = plainTextToAdf(input.description);
+  }
+  if (input.assigneeAccountId !== undefined) {
+    fields.assignee = input.assigneeAccountId
+      ? { id: input.assigneeAccountId }
+      : null;
+  }
+  if (input.labels !== undefined) {
+    fields.labels = input.labels;
+  }
+  if (Object.keys(fields).length === 0) {
+    throw new Error("No editable Jira issue fields were provided");
+  }
+
+  const response = await fetch(
+    `https://api.atlassian.com/ex/jira/${resource.id}/rest/api/3/issue/${encodeURIComponent(input.issueKey)}`,
+    {
+      method: "PUT",
+      headers: jiraJsonHeaders(token),
+      body: JSON.stringify({ fields })
+    }
+  );
+  const body = await readOptionalJiraJson(response);
+  if (!response.ok) {
+    throw new JiraApiError(
+      formatJiraError(body, `Jira issue update failed with ${response.status}`),
+      response.status
+    );
+  }
+  return getJiraIssue(token, { issueKey: input.issueKey });
+}
+
+export async function addJiraIssueComment(
+  token: string,
+  input: { issueKey: string; body: string }
+): Promise<{ id: string; url: string }> {
+  const resource = await resolveJiraResource(token);
+  const response = await fetch(
+    `https://api.atlassian.com/ex/jira/${resource.id}/rest/api/3/issue/${encodeURIComponent(input.issueKey)}/comment`,
+    {
+      method: "POST",
+      headers: jiraJsonHeaders(token),
+      body: JSON.stringify({ body: plainTextToAdf(input.body) })
+    }
+  );
+  const body = (await response.json()) as { id?: string } | JiraErrorResponse;
+  if (!response.ok || !("id" in body) || !body.id) {
+    throw new JiraApiError(
+      formatJiraError(body, `Jira comment create failed with ${response.status}`),
+      response.status
+    );
+  }
+  return {
+    id: body.id,
+    url: `${resource.url.replace(/\/+$/, "")}/browse/${input.issueKey}?focusedCommentId=${body.id}`
+  };
+}
+
+export async function transitionJiraIssue(
+  token: string,
+  input: { issueKey: string; transitionId?: string; transitionName?: string }
+): Promise<JiraIssue> {
+  const resource = await resolveJiraResource(token);
+  const transitionId =
+    input.transitionId ??
+    (input.transitionName
+      ? await resolveJiraTransitionId(token, resource, input.issueKey, input.transitionName)
+      : null);
+  if (!transitionId) {
+    throw new Error("Jira transition requires transitionId or transitionName");
+  }
+  const response = await fetch(
+    `https://api.atlassian.com/ex/jira/${resource.id}/rest/api/3/issue/${encodeURIComponent(input.issueKey)}/transitions`,
+    {
+      method: "POST",
+      headers: jiraJsonHeaders(token),
+      body: JSON.stringify({ transition: { id: transitionId } })
+    }
+  );
+  const body = await readOptionalJiraJson(response);
+  if (!response.ok) {
+    throw new JiraApiError(
+      formatJiraError(body, `Jira transition failed with ${response.status}`),
+      response.status
+    );
+  }
+  return getJiraIssue(token, { issueKey: input.issueKey });
+}
+
+export async function addJiraIssueLabels(
+  token: string,
+  input: { issueKey: string; labels: string[] }
+): Promise<JiraIssue> {
+  return mutateJiraIssueLabels(token, input.issueKey, input.labels, "add");
+}
+
+export async function removeJiraIssueLabels(
+  token: string,
+  input: { issueKey: string; labels: string[] }
+): Promise<JiraIssue> {
+  return mutateJiraIssueLabels(token, input.issueKey, input.labels, "remove");
+}
+
+export async function linkJiraIssues(
+  token: string,
+  input: {
+    inwardIssueKey: string;
+    outwardIssueKey: string;
+    typeName?: string;
+    comment?: string;
+  }
+): Promise<{ inwardIssueKey: string; outwardIssueKey: string; typeName: string }> {
+  const resource = await resolveJiraResource(token);
+  const typeName = input.typeName ?? "Relates";
+  const response = await fetch(
+    `https://api.atlassian.com/ex/jira/${resource.id}/rest/api/3/issueLink`,
+    {
+      method: "POST",
+      headers: jiraJsonHeaders(token),
+      body: JSON.stringify({
+        type: { name: typeName },
+        inwardIssue: { key: input.inwardIssueKey },
+        outwardIssue: { key: input.outwardIssueKey },
+        ...(input.comment ? { comment: { body: plainTextToAdf(input.comment) } } : {})
+      })
+    }
+  );
+  const body = await readOptionalJiraJson(response);
+  if (!response.ok) {
+    throw new JiraApiError(
+      formatJiraError(body, `Jira issue link failed with ${response.status}`),
+      response.status
+    );
+  }
+  return {
+    inwardIssueKey: input.inwardIssueKey,
+    outwardIssueKey: input.outwardIssueKey,
+    typeName
+  };
+}
+
+export async function createJiraSubtask(
+  token: string,
+  input: {
+    parentIssueKey: string;
+    summary: string;
+    projectKey?: string;
+    issueTypeName?: string;
+    issueTypeId?: string;
+    description?: string;
+    assigneeAccountId?: string;
+  }
+): Promise<JiraIssue> {
+  if (!input.issueTypeName?.trim() && !input.issueTypeId?.trim()) {
+    throw new Error("Jira subtask creation requires an issue type name or ID");
+  }
+  const projectKey = input.projectKey ?? input.parentIssueKey.split("-")[0];
+  const resource = await resolveJiraResource(token);
+  const response = await fetch(
+    `https://api.atlassian.com/ex/jira/${resource.id}/rest/api/3/issue`,
+    {
+      method: "POST",
+      headers: jiraJsonHeaders(token),
+      body: JSON.stringify({
+        fields: {
+          project: { key: projectKey },
+          parent: { key: input.parentIssueKey },
+          summary: input.summary,
+          issuetype: input.issueTypeId
+            ? { id: input.issueTypeId }
+            : { name: input.issueTypeName },
+          ...(input.description
+            ? { description: plainTextToAdf(input.description) }
+            : {}),
+          ...(input.assigneeAccountId
+            ? { assignee: { id: input.assigneeAccountId } }
+            : {})
+        }
+      })
+    }
+  );
+  const body = (await response.json()) as JiraCreateIssueResponse | JiraErrorResponse;
+  if (!response.ok || !("key" in body) || !body.key) {
+    throw new JiraApiError(
+      formatJiraError(body, `Jira subtask create failed with ${response.status}`),
+      response.status
+    );
+  }
+  return {
+    key: body.key,
+    summary: input.summary,
+    url: `${resource.url.replace(/\/+$/, "")}/browse/${body.key}`,
+    parentKey: input.parentIssueKey
+  };
+}
+
 async function resolveJiraResource(token: string): Promise<JiraAccessibleResource> {
   const resources = await listJiraAccessibleResources(token);
   const resource = resources.find((candidate) =>
@@ -480,6 +733,109 @@ function plainTextToAdf(text: string) {
       }
     ]
   };
+}
+
+function adfToPlainText(value: unknown): string | undefined {
+  const parts: string[] = [];
+  walkAdf(value, parts);
+  const text = parts.join("").replace(/\n{3,}/g, "\n\n").trim();
+  return text ? text : undefined;
+}
+
+function walkAdf(value: unknown, parts: string[]): void {
+  if (!value || typeof value !== "object") {
+    return;
+  }
+  const record = value as { type?: string; text?: string; content?: unknown[] };
+  if (record.type === "text" && record.text) {
+    parts.push(record.text);
+  }
+  if (record.type === "hardBreak") {
+    parts.push("\n");
+  }
+  for (const child of record.content ?? []) {
+    walkAdf(child, parts);
+  }
+  if (record.type === "paragraph") {
+    parts.push("\n");
+  }
+}
+
+function jiraIssueFromApi(
+  resource: JiraAccessibleResource,
+  issue: JiraIssueApiResponse
+): JiraIssue {
+  const key = issue.key!;
+  return {
+    key,
+    summary: issue.fields?.summary ?? key,
+    url: `${resource.url.replace(/\/+$/, "")}/browse/${key}`,
+    ...(issue.fields?.status?.name ? { status: issue.fields.status.name } : {}),
+    ...(issue.fields?.description
+      ? { description: adfToPlainText(issue.fields.description) }
+      : {}),
+    ...(issue.fields?.issuetype?.name ? { issueType: issue.fields.issuetype.name } : {}),
+    ...(issue.fields?.parent?.key ? { parentKey: issue.fields.parent.key } : {}),
+    ...(issue.fields?.labels ? { labels: issue.fields.labels } : {})
+  };
+}
+
+async function resolveJiraTransitionId(
+  token: string,
+  resource: JiraAccessibleResource,
+  issueKey: string,
+  transitionName: string
+): Promise<string> {
+  const response = await fetch(
+    `https://api.atlassian.com/ex/jira/${resource.id}/rest/api/3/issue/${encodeURIComponent(issueKey)}/transitions`,
+    { headers: jiraHeaders(token) }
+  );
+  const body = (await response.json()) as {
+    transitions?: Array<{ id?: string; name?: string }>;
+  } & JiraErrorResponse;
+  if (!response.ok) {
+    throw new JiraApiError(
+      formatJiraError(body, `Jira transition lookup failed with ${response.status}`),
+      response.status
+    );
+  }
+  const transition = body.transitions?.find(
+    (candidate) =>
+      candidate.name?.toLowerCase() === transitionName.trim().toLowerCase()
+  );
+  if (!transition?.id) {
+    throw new Error(`No Jira transition named "${transitionName}" is available`);
+  }
+  return transition.id;
+}
+
+async function mutateJiraIssueLabels(
+  token: string,
+  issueKey: string,
+  labels: string[],
+  operation: "add" | "remove"
+): Promise<JiraIssue> {
+  const resource = await resolveJiraResource(token);
+  const response = await fetch(
+    `https://api.atlassian.com/ex/jira/${resource.id}/rest/api/3/issue/${encodeURIComponent(issueKey)}`,
+    {
+      method: "PUT",
+      headers: jiraJsonHeaders(token),
+      body: JSON.stringify({
+        update: {
+          labels: labels.map((label) => ({ [operation]: label }))
+        }
+      })
+    }
+  );
+  const body = await readOptionalJiraJson(response);
+  if (!response.ok) {
+    throw new JiraApiError(
+      formatJiraError(body, `Jira label ${operation} failed with ${response.status}`),
+      response.status
+    );
+  }
+  return getJiraIssue(token, { issueKey });
 }
 
 async function readOptionalJiraJson(response: Response): Promise<unknown> {

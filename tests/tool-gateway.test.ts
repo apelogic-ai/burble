@@ -33,7 +33,8 @@ const config: Config = {
   agentRuntimeDataRoot: "/data/runtimes",
   agentRuntimeDockerNetwork: "compose_default",
   agentRuntimeImage: "burble-openclaw-nemoclaw:dev",
-  agentRuntimeIdleTtlMs: 1800000,
+  agentRuntimeIdleTtlMs: 86400000,
+  agentRuntimeReaperEnabled: true,
   agentRuntimeReaperIntervalMs: 60000,
   agentRuntimeJwtTtlSeconds: 604800,
   agentRuntimeTokenSecret: null,
@@ -75,6 +76,15 @@ const slackConnection: ProviderConnection = {
   connectedAt: "2026-05-25T00:00:00Z"
 };
 
+const googleConnection: ProviderConnection = {
+  provider: "google",
+  email: "person@example.com",
+  slackUserId: "U123",
+  providerLogin: "person@example.com",
+  accessToken: "google-token",
+  connectedAt: "2026-05-25T00:00:00Z"
+};
+
 const runtime: AgentRuntimeRecord = {
   id: "rt_u123",
   workspaceId: "T123",
@@ -98,7 +108,8 @@ function createStore(
   foundConnection: ProviderConnection | null,
   foundRuntime: AgentRuntimeRecord | null = null,
   runtimeEvents: unknown[] = [],
-  foundRoute: ConversationRouteRecord | null = null
+  foundRoute: ConversationRouteRecord | null = null,
+  touchedRuntimeIds: string[] = []
 ): TokenStore {
   return {
     createOAuthState: () => "state",
@@ -130,7 +141,9 @@ function createStore(
     },
     getConversationRoute: (id) => (id === foundRoute?.id ? foundRoute : null),
     updateAgentRuntimeStatus: () => undefined,
-    touchAgentRuntime: () => undefined,
+    touchAgentRuntime: (id) => {
+      touchedRuntimeIds.push(id);
+    },
     close: () => undefined
   } as TokenStore;
 }
@@ -190,6 +203,174 @@ describe("handleToolGatewayRequest", () => {
       ]
     });
     expect(JSON.stringify(body)).not.toContain("secret-token");
+  });
+
+  test("passes GitHub pull request list options to the provider tool", async () => {
+    const response = await handleToolGatewayRequest(
+      config,
+      createStore(connection),
+      "github.listMyPullRequests",
+      request("github.listMyPullRequests", {
+        user: { email: "person@example.com" },
+        input: {
+          limit: 3,
+          state: "closed",
+          sort: "created",
+          order: "asc",
+          owner: "apelogic-ai"
+        }
+      }),
+      {
+        listMyPullRequests: async (token, options) => {
+          expect(token).toBe("secret-token");
+          expect(options).toEqual({
+            limit: 3,
+            state: "closed",
+            sort: "created",
+            order: "asc",
+            owner: "apelogic-ai"
+          });
+          return [
+            {
+              title: "Fix release notes",
+              html_url: "https://github.com/acme/app/pull/9"
+            }
+          ];
+        }
+      }
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      classification: "user_private",
+      content: [
+        {
+          title: "Fix release notes",
+          url: "https://github.com/acme/app/pull/9"
+        }
+      ]
+    });
+  });
+
+  test("rejects invalid GitHub pull request list options", async () => {
+    const response = await handleToolGatewayRequest(
+      config,
+      createStore(connection),
+      "github.listMyPullRequests",
+      request("github.listMyPullRequests", {
+        user: { email: "person@example.com" },
+        input: { limit: 1000 }
+      })
+    );
+
+    expect(response.status).toBe(400);
+    expect(await response.text()).toBe("Invalid tool input");
+  });
+
+  test("executes GitHub write tools with the stored caller token", async () => {
+    const response = await handleToolGatewayRequest(
+      config,
+      createStore(connection),
+      "github.createIssue",
+      request("github.createIssue", {
+        user: { email: "person@example.com" },
+        input: {
+          repo: "acme/app",
+          title: "New issue",
+          body: "Body",
+          labels: ["bug"],
+          assignees: ["octocat"]
+        }
+      }),
+      {
+        createIssue: async (token, input) => {
+          expect(token).toBe("secret-token");
+          expect(input).toEqual({
+            repo: "acme/app",
+            title: "New issue",
+            body: "Body",
+            labels: ["bug"],
+            assignees: ["octocat"]
+          });
+          return {
+            title: "New issue",
+            html_url: "https://github.com/acme/app/issues/12",
+            number: 12
+          };
+        }
+      }
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      classification: "user_private",
+      content: {
+        title: "New issue",
+        url: "https://github.com/acme/app/issues/12",
+        number: 12
+      }
+    });
+  });
+
+  test("executes newer GitHub file tools through the HTTP fallback gateway", async () => {
+    const response = await handleToolGatewayRequest(
+      config,
+      createStore(connection),
+      "github.createOrUpdateFile",
+      request("github.createOrUpdateFile", {
+        user: { email: "person@example.com" },
+        input: {
+          repo: "acme/app",
+          path: "notes.md",
+          content: "hello",
+          message: "Update notes",
+          branch: "main",
+          sha: "abc123"
+        }
+      }),
+      {
+        createOrUpdateFile: async (token, input) => {
+          expect(token).toBe("secret-token");
+          expect(input).toEqual({
+            repo: "acme/app",
+            path: "notes.md",
+            content: "hello",
+            message: "Update notes",
+            branch: "main",
+            sha: "abc123"
+          });
+          return {
+            content: {
+              name: "notes.md",
+              path: "notes.md",
+              sha: "def456",
+              html_url: "https://github.com/acme/app/blob/main/notes.md"
+            },
+            commit: {
+              sha: "commit456",
+              html_url: "https://github.com/acme/app/commit/commit456"
+            }
+          };
+        }
+      }
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      classification: "user_private",
+      content: {
+        content: {
+          name: "notes.md",
+          path: "notes.md",
+          sha: "def456",
+          html_url: "https://github.com/acme/app/blob/main/notes.md"
+        },
+        commit: {
+          sha: "commit456",
+          html_url: "https://github.com/acme/app/commit/commit456"
+        }
+      }
+    });
   });
 
   test("requires the configured internal bearer token", async () => {
@@ -253,9 +434,10 @@ describe("handleToolGatewayRequest", () => {
 
   test("allows a principal-bound runtime token for its own provider account", async () => {
     const runtimeEvents: unknown[] = [];
+    const touchedRuntimeIds: string[] = [];
     const response = await handleToolGatewayRequest(
       config,
-      createStore(connection, runtime, runtimeEvents),
+      createStore(connection, runtime, runtimeEvents, null, touchedRuntimeIds),
       "github.getAuthenticatedUser",
       request(
         "github.getAuthenticatedUser",
@@ -274,6 +456,7 @@ describe("handleToolGatewayRequest", () => {
     );
 
     expect(response.status).toBe(200);
+    expect(touchedRuntimeIds).toEqual(["rt_u123"]);
     expect(await response.json()).toEqual({
       classification: "user_private",
       content: { login: "octocat" }
@@ -350,6 +533,28 @@ describe("handleToolGatewayRequest", () => {
         }
       }
     ]);
+  });
+
+  test("lets a runtime refresh heartbeat without provider credentials or audit noise", async () => {
+    const runtimeEvents: unknown[] = [];
+    const touchedRuntimeIds: string[] = [];
+    const response = await handleToolGatewayRequest(
+      config,
+      createStore(null, runtime, runtimeEvents, null, touchedRuntimeIds),
+      "runtime.heartbeat",
+      request("runtime.heartbeat", {}, "runtime-token-u123", "rt_u123")
+    );
+
+    expect(response.status).toBe(200);
+    expect(touchedRuntimeIds).toEqual(["rt_u123"]);
+    expect(await response.json()).toEqual({
+      classification: "user_private",
+      content: {
+        ok: true,
+        runtimeId: "rt_u123"
+      }
+    });
+    expect(runtimeEvents).toEqual([]);
   });
 
   test("lets a runtime send through a durable conversation route", async () => {
@@ -997,6 +1202,123 @@ describe("handleToolGatewayRequest", () => {
         key: "DM-100",
         title: "updated title",
         url: "https://apegpt.atlassian.net/browse/DM-100"
+      }
+    });
+  });
+
+  test("executes newer Jira comment helper through the HTTP fallback gateway", async () => {
+    const response = await handleToolGatewayRequest(
+      config,
+      createStore(jiraConnection),
+      "jira.addComment",
+      request("jira.addComment", {
+        user: { email: "person@example.com" },
+        input: {
+          issueKey: "DM-100",
+          body: "Looks good from Burble."
+        }
+      }),
+      {
+        addJiraIssueComment: async (token, input) => {
+          expect(token).toBe("jira-token");
+          expect(input).toEqual({
+            issueKey: "DM-100",
+            body: "Looks good from Burble."
+          });
+          return {
+            id: "comment-1",
+            url: "https://apegpt.atlassian.net/browse/DM-100?focusedCommentId=comment-1"
+          };
+        }
+      }
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      classification: "user_private",
+      content: {
+        id: "comment-1",
+        url: "https://apegpt.atlassian.net/browse/DM-100?focusedCommentId=comment-1"
+      }
+    });
+  });
+
+  test("executes Google Drive update and Gmail draft tools through the HTTP fallback gateway", async () => {
+    const driveResponse = await handleToolGatewayRequest(
+      config,
+      createStore(googleConnection),
+      "google.updateDriveTextFile",
+      request("google.updateDriveTextFile", {
+        user: { email: "person@example.com" },
+        input: {
+          fileId: "file-123",
+          text: "updated body",
+          mimeType: "text/plain"
+        }
+      }),
+      {
+        updateGoogleDriveTextFile: async (token, input) => {
+          expect(token).toBe("google-token");
+          expect(input).toEqual({
+            fileId: "file-123",
+            text: "updated body",
+            mimeType: "text/plain"
+          });
+          return {
+            id: "file-123",
+            name: "Notes",
+            mimeType: "text/plain",
+            webViewLink: "https://drive.google.com/file/d/file-123/view"
+          };
+        }
+      }
+    );
+
+    expect(driveResponse.status).toBe(200);
+    expect(await driveResponse.json()).toEqual({
+      classification: "user_private",
+      content: {
+        id: "file-123",
+        name: "Notes",
+        mimeType: "text/plain",
+        webViewLink: "https://drive.google.com/file/d/file-123/view"
+      }
+    });
+
+    const draftResponse = await handleToolGatewayRequest(
+      config,
+      createStore(googleConnection),
+      "gmail.createDraft",
+      request("gmail.createDraft", {
+        user: { email: "person@example.com" },
+        input: {
+          to: ["teammate@example.com"],
+          subject: "Draft",
+          body: "Hello"
+        }
+      }),
+      {
+        createGmailDraft: async (token, input) => {
+          expect(token).toBe("google-token");
+          expect(input).toEqual({
+            to: ["teammate@example.com"],
+            subject: "Draft",
+            body: "Hello"
+          });
+          return {
+            id: "draft-123",
+            messageId: "message-123"
+          };
+        }
+      }
+    );
+
+    expect(draftResponse.status).toBe(200);
+    expect(await draftResponse.json()).toEqual({
+      classification: "user_private",
+      content: {
+        id: "draft-123",
+        messageId: "message-123"
       }
     });
   });

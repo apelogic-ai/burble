@@ -38,7 +38,8 @@ describe("readConfig", () => {
       agentRuntimeDataRoot: "/data/runtimes",
       agentRuntimeDockerNetwork: "compose_default",
       agentRuntimeImage: "burble-openclaw-nemoclaw:dev",
-      agentRuntimeIdleTtlMs: 1800000,
+      agentRuntimeIdleTtlMs: 86400000,
+      agentRuntimeReaperEnabled: true,
       agentRuntimeReaperIntervalMs: 60000,
       agentRuntimeJwtTtlSeconds: 604800,
       agentRuntimeTokenSecret: null,
@@ -131,6 +132,7 @@ describe("readConfig", () => {
       AGENT_RUNTIME_IMAGE: "burble-openclaw-nemoclaw-openclaw-cli:dev",
       AGENT_RUNTIME_DOCKER_NETWORK: "burble_default",
       AGENT_RUNTIME_IDLE_TTL_MS: "120000",
+      AGENT_RUNTIME_REAPER_ENABLED: "false",
       AGENT_RUNTIME_REAPER_INTERVAL_MS: "5000",
       AGENT_RUNTIME_JWT_TTL_SECONDS: "86400",
       AGENT_RUNTIME_TOKEN_SECRET: "runtime-secret",
@@ -149,6 +151,7 @@ describe("readConfig", () => {
     );
     expect(config.agentRuntimeDockerNetwork).toBe("burble_default");
     expect(config.agentRuntimeIdleTtlMs).toBe(120000);
+    expect(config.agentRuntimeReaperEnabled).toBe(false);
     expect(config.agentRuntimeReaperIntervalMs).toBe(5000);
     expect(config.agentRuntimeJwtTtlSeconds).toBe(86400);
     expect(config.agentRuntimeTokenSecret).toBe("runtime-secret");
@@ -231,6 +234,14 @@ describe("readConfig", () => {
     expect(() =>
       readConfig({ ...validEnv, AGENT_RUNTIME_FACTORY: "kubernetes" })
     ).toThrow("Environment variable AGENT_RUNTIME_FACTORY must be one of static, docker");
+  });
+
+  test("rejects invalid runtime reaper enabled values", () => {
+    expect(() =>
+      readConfig({ ...validEnv, AGENT_RUNTIME_REAPER_ENABLED: "sometimes" })
+    ).toThrow(
+      "Environment variable AGENT_RUNTIME_REAPER_ENABLED must be a boolean"
+    );
   });
 
   test("normalizes OpenClaw/NemoClaw runtime URL", () => {
