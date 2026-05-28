@@ -341,4 +341,50 @@ describe("createTokenStore", () => {
 
     store.close();
   });
+
+  test("reuses the same conversation route for the same destination", () => {
+    const store = createTokenStore(":memory:");
+    const destination = {
+      channelId: "D123",
+      isDirectMessage: true,
+      rootId: "dm:D123"
+    };
+
+    const first = store.upsertConversationRoute({
+      workspaceId: "T123",
+      slackUserId: "U123",
+      transport: "slack",
+      destination,
+      now: new Date("2026-05-26T00:00:00.000Z")
+    });
+    const second = store.upsertConversationRoute({
+      workspaceId: "T123",
+      slackUserId: "U123",
+      transport: "slack",
+      destination: {
+        rootId: "dm:D123",
+        isDirectMessage: true,
+        channelId: "D123"
+      },
+      now: new Date("2026-05-26T01:00:00.000Z")
+    });
+    const threaded = store.upsertConversationRoute({
+      workspaceId: "T123",
+      slackUserId: "U123",
+      transport: "slack",
+      destination: {
+        ...destination,
+        threadTs: "1779841118.237"
+      },
+      now: new Date("2026-05-26T02:00:00.000Z")
+    });
+
+    expect(second.id).toBe(first.id);
+    expect(second.createdAt).toBe("2026-05-26T00:00:00.000Z");
+    expect(second.updatedAt).toBe("2026-05-26T01:00:00.000Z");
+    expect(JSON.parse(second.destinationJson)).toEqual(destination);
+    expect(threaded.id).not.toBe(first.id);
+
+    store.close();
+  });
 });
