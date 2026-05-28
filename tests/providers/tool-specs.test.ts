@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { githubProviderToolSpecs } from "../../src/providers/github/tool-specs";
 import { googleProviderToolSpecs } from "../../src/providers/google/tool-specs";
 import { jiraProviderToolSpecs } from "../../src/providers/jira/tool-specs";
+import { slackProviderToolSpecs } from "../../src/providers/slack/tool-specs";
 import { providerToolInputSchema } from "../../src/providers/tool-specs";
 
 describe("provider tool specs", () => {
@@ -91,5 +92,20 @@ describe("provider tool specs", () => {
 
     expect(schema.assigneeAccountId.safeParse("acct-123").success).toBe(true);
     expect(schema.assigneeAccountId.safeParse(null).success).toBe(true);
+  });
+
+  test("loads Slack MCP tool metadata from YAML", () => {
+    const names = slackProviderToolSpecs.map((tool) => tool.name);
+
+    expect(names).toContain("slack_search_users");
+    expect(names).toContain("slack_search_messages");
+    expect(
+      slackProviderToolSpecs.every(
+        (tool) =>
+          tool.provider === "slack" &&
+          tool.alias.startsWith("slack.") &&
+          tool.implementation.length > 0
+      )
+    ).toBe(true);
   });
 });

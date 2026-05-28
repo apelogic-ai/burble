@@ -1,0 +1,37 @@
+provider: slack
+tools:
+  - name: slack_search_users
+    alias: slack.searchUsers
+    implementation: searchUsers
+    title: Slack user search
+    description: Search Slack users by display name, real name, username, or Slack user ID.
+    input:
+      query:
+        type: string
+        min: 1
+        description: Slack user name, display name, or ID
+
+  - name: slack_search_messages
+    alias: slack.searchMessages
+    implementation: searchMessages
+    title: Slack message search
+    description: Search Slack messages visible to this Slack user's connected Slack search token.
+    input:
+      query:
+        type: string
+        min: 1
+        description: Slack search terms
+      fromUserId:
+        type: string
+        optional: true
+        description: Optional Slack user ID to filter by author
+      inChannel:
+        type: string
+        optional: true
+        description: "Optional channel name without #, or channel ID"
+      limit:
+        type: number
+        int: true
+        positive: true
+        max: 20
+        optional: true
