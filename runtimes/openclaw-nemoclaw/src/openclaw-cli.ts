@@ -1824,6 +1824,7 @@ function formatActiveConversationRouteInstruction(
   return [
     `Active Burble conversation channel route: ${routeId}.`,
     `Native OpenClaw Burble channel delivery is installed. For cron/background jobs, set delivery.mode to "announce", delivery.channel to "burble", and delivery.to to "${routeId}". The scheduled prompt should produce the final Slack-ready message text; Burble resolves the route to the actual transport outside OpenClaw.`,
+    `If a cron/background job will use Burble provider tools such as GitHub, Jira, Google, or Slack search, include this exact instruction in the scheduled prompt: use Burble provider tools with routeId "${routeId}". Burble route ids start with "convrt_"; never use a cron job id, run id, session id, or UUID as a provider tool routeId.`,
     `For an immediate request to send, post, message, or report something here now, do not create a cron job or background job unless the user explicitly asks for a schedule, delay, recurrence, or later delivery. Produce the final Slack-ready message once and stop.`,
     "Do not fetch, POST to, or mention local/private/internal Burble URLs for delivery. Do not create cron jobs that rely on conversation.sendMessage JSON blobs, announce delivery, Slack channel IDs, Slack credentials, or Burble credentials. Burble's channel connector owns route auth and transport delivery outside the OpenClaw process."
   ];

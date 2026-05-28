@@ -740,6 +740,47 @@ describe("handleRuntimeRequest", () => {
     expect(requests).toEqual([]);
   });
 
+  test("rejects non-conversation route ids for local Burble MCP tool calls", async () => {
+    const requests: Request[] = [];
+    const response = await withMockFetch(
+      (async (input, init) => {
+        requests.push(new Request(input, init));
+        return Response.json({});
+      }) as typeof fetch,
+      () =>
+        handleRuntimeRequest(
+          new Request("http://runtime/internal/burble/mcp", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({
+              jsonrpc: "2.0",
+              id: 1,
+              method: "tools/call",
+              params: {
+                name: "github_search_issues",
+                arguments: {
+                  query: "is:pr",
+                  routeId: "d35c4522-3eab-4b58-ba23-4bd96f75d293"
+                }
+              }
+            })
+          }),
+          {
+            ...config,
+            mcpGatewayUrl: "http://burble-app:3000/mcp",
+            runtimeJwt: "runtime-jwt"
+          }
+        )
+    );
+
+    expect(response.status).toBe(200);
+    const body = readMcpData(await response.text());
+    expect(body.error.message).toBe(
+      "Burble provider tool routeId must be the active convrt_* conversation route, not a cron job id, run id, session id, or UUID."
+    );
+    expect(requests).toEqual([]);
+  });
+
   test("adds required route ids to local Burble MCP tool schemas", async () => {
     const upstreamPayload = {
       jsonrpc: "2.0",
@@ -788,8 +829,12 @@ describe("handleRuntimeRequest", () => {
     const schema = body.result.tools[0].inputSchema;
     expect(schema.properties.routeId).toMatchObject({
       type: "string",
-      minLength: 1
+      minLength: 1,
+      pattern: "^convrt_[A-Za-z0-9_-]+$"
     });
+    expect(schema.properties.routeId.description).toContain(
+      "Never use a cron job id"
+    );
     expect(schema.required).toEqual(["query", "routeId"]);
   });
 

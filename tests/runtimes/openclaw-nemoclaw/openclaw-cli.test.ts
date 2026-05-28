@@ -917,6 +917,12 @@ describe("runOpenClawCliRequest", () => {
     expect(prompts[0]).toContain('delivery.channel to "burble"');
     expect(prompts[0]).toContain('delivery.to to "convrt_abc123"');
     expect(prompts[0]).toContain(
+      'use Burble provider tools with routeId "convrt_abc123"'
+    );
+    expect(prompts[0]).toContain(
+      "never use a cron job id, run id, session id, or UUID as a provider tool routeId"
+    );
+    expect(prompts[0]).toContain(
       "do not create a cron job or background job unless the user explicitly asks"
     );
     expect(prompts[0]).toContain(
