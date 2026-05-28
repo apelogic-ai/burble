@@ -89,10 +89,20 @@ export function registerGitHubMcpTools(input: {
         order: z
           .enum(["desc", "asc"])
           .optional()
-          .describe("Sort order. Defaults to desc.")
+          .describe("Sort order. Defaults to desc."),
+        owner: z
+          .string()
+          .min(1)
+          .optional()
+          .describe("Optional GitHub owner or organization login, for example apelogic-ai."),
+        repo: z
+          .string()
+          .min(1)
+          .optional()
+          .describe("Optional repository in owner/name format. Takes precedence over owner.")
       }
     },
-    async ({ limit, state, sort, order }) =>
+    async ({ limit, state, sort, order, owner, repo }) =>
       mcpToolResult(
         await withConnection(input.store, input.runtime, "github", (connection) =>
           githubTools.listMyPullRequests.execute({
@@ -101,7 +111,9 @@ export function registerGitHubMcpTools(input: {
               ...(limit !== undefined ? { limit } : {}),
               ...(state ? { state } : {}),
               ...(sort ? { sort } : {}),
-              ...(order ? { order } : {})
+              ...(order ? { order } : {}),
+              ...(owner ? { owner } : {}),
+              ...(repo ? { repo } : {})
             }
           })
         )

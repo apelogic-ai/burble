@@ -252,7 +252,17 @@ async function runAiSdkAgent(
           limit: z.number().int().min(1).max(20).optional(),
           state: z.enum(["open", "closed", "all"]).optional(),
           sort: z.enum(["updated", "created", "comments"]).optional(),
-          order: z.enum(["desc", "asc"]).optional()
+          order: z.enum(["desc", "asc"]).optional(),
+          owner: z
+            .string()
+            .min(1)
+            .optional()
+            .describe("GitHub owner or organization login to filter by."),
+          repo: z
+            .string()
+            .min(1)
+            .optional()
+            .describe("Repository in owner/name format. Takes precedence over owner.")
         }),
         execute: async (toolInput) => executeTool("github_list_my_pull_requests", async () => {
           const connection = input.connections.github;

@@ -47,24 +47,25 @@ function createDeps(overrides: Partial<ConversationDeps> = {}): ConversationDeps
         title: "Search result issue"
       }
     ],
-    listMyPullRequests: async () => [
-      {
-        html_url: "https://github.com/acme/app/pull/3",
-        title: "Add workspace auth"
-      },
-      {
-        html_url: "https://github.com/acme/app/pull/4",
-        title: "Improve cron delivery"
-      },
-      {
-        html_url: "https://github.com/acme/app/pull/5",
-        title: "Wire provider bridge"
-      },
-      {
-        html_url: "https://github.com/acme/app/pull/6",
-        title: "Update old runtime"
-      }
-    ]
+    listMyPullRequests: async (_token, options) =>
+      [
+        {
+          html_url: "https://github.com/acme/app/pull/3",
+          title: "Add workspace auth"
+        },
+        {
+          html_url: "https://github.com/acme/app/pull/4",
+          title: "Improve cron delivery"
+        },
+        {
+          html_url: "https://github.com/acme/app/pull/5",
+          title: "Wire provider bridge"
+        },
+        {
+          html_url: "https://github.com/acme/app/pull/6",
+          title: "Update old runtime"
+        }
+      ].slice(0, options?.limit ?? 10)
   });
   const googleConnection = {
     provider: "google" as const,
@@ -240,6 +241,42 @@ describe("handleConversation", () => {
     expect(response.text).toContain("Improve cron delivery");
     expect(response.text).toContain("Wire provider bridge");
     expect(response.text).not.toContain("Update old runtime");
+  });
+
+  test("scopes deterministic pull request requests by organization and singular latest", async () => {
+    const calls: unknown[] = [];
+    const deps = createDeps();
+    deps.tools.github = createGitHubTools({
+      getGitHubUser: async () => ({ login: "octocat" }),
+      listAssignedIssues: async () => [],
+      searchIssues: async () => [],
+      listMyPullRequests: async (_token, options) => {
+        calls.push(options);
+        return [
+          {
+            html_url: "https://github.com/apelogic-ai/burble/pull/3",
+            title: "Discover provider tools through MCP"
+          }
+        ];
+      }
+    });
+
+    const response = await handleConversation(
+      { ...baseRequest, text: "what is my latest open PR in apelogic-ai org?" },
+      deps
+    );
+
+    expect(calls).toEqual([
+      {
+        limit: 1,
+        state: "open",
+        sort: "updated",
+        order: "desc",
+        owner: "apelogic-ai"
+      }
+    ]);
+    expect(response.visibility).toBe("ephemeral");
+    expect(response.text).toContain("Discover provider tools through MCP");
   });
 
   test("answers simple issue search requests privately in channels", async () => {
@@ -509,6 +546,31 @@ describe("handleConversation", () => {
       "create a one-shot cron job to list my open GitHub PRs and post the result here in 2 minutes"
     ]);
     expect(response.text).toBe("Created scheduled job.");
+  });
+
+  test("delegates GitHub reviewer mutations to the agent before PR fast-paths", async () => {
+    const calls: string[] = [];
+    const response = await handleConversation(
+      {
+        ...baseRequest,
+        text: "add zer0tweets as reviewer for that Discover provider tools through MCP PR"
+      },
+      createDeps({
+        agentMode: "llm",
+        agentRunner: stubAgentRunner((input) => {
+          calls.push(input.text);
+          return {
+            classification: "user_private",
+            text: "Requested review."
+          };
+        })
+      })
+    );
+
+    expect(calls).toEqual([
+      "add zer0tweets as reviewer for that Discover provider tools through MCP PR"
+    ]);
+    expect(response.text).toBe("Requested review.");
   });
 
   test("delegates cron and job requests to the agent before GitHub fast-paths", async () => {

@@ -1446,7 +1446,11 @@ async function buildToolCatalog(
           limit: "number optional, 1-20, maximum pull requests to return",
           state: "string optional, one of: open, closed, all",
           sort: "string optional, one of: updated, created, comments",
-          order: "string optional, one of: desc, asc"
+          order: "string optional, one of: desc, asc",
+          owner:
+            "string optional GitHub owner or organization login to filter by, for example apelogic-ai",
+          repo:
+            "string optional repository in owner/name format; takes precedence over owner"
         }
       },
       {

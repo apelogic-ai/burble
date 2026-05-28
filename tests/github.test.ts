@@ -153,6 +153,36 @@ describe("GitHub search helpers", () => {
     expect(url.searchParams.get("sort")).toBe("created");
     expect(url.searchParams.get("order")).toBe("asc");
   });
+
+  test("listMyPullRequests scopes searches to owner or repo", async () => {
+    const urls: string[] = [];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      urls.push(String(input));
+      return Response.json({ items: [] });
+    }) as typeof fetch;
+
+    try {
+      await listMyPullRequests("token", {
+        owner: "apelogic-ai",
+        limit: 1
+      });
+      await listMyPullRequests("token", {
+        owner: "ignored-owner",
+        repo: "acme/app",
+        limit: 1
+      });
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+
+    expect(new URL(urls[0]).searchParams.get("q")).toBe(
+      "is:pr author:@me org:apelogic-ai is:open"
+    );
+    expect(new URL(urls[1]).searchParams.get("q")).toBe(
+      "is:pr author:@me repo:acme/app is:open"
+    );
+  });
 });
 
 describe("GitHub write helpers", () => {

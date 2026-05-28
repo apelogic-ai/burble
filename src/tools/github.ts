@@ -63,6 +63,8 @@ export type GitHubPullRequestListInput = {
   state?: GitHubPullRequestState;
   sort?: GitHubSearchSort;
   order?: GitHubSearchOrder;
+  owner?: string;
+  repo?: string;
 };
 
 export type GitHubCreateIssueInput = {
@@ -349,12 +351,13 @@ function sanitizeIssueMutation(item: { html_url: string; number: number }) {
 
 function normalizePullRequestListInput(
   input: GitHubPullRequestListInput | undefined
-): Required<GitHubPullRequestListInput> {
+): GitHubPullRequestListInput & Required<Pick<GitHubPullRequestListInput, "limit" | "state" | "sort" | "order">> {
   return {
     limit: normalizeLimit(input?.limit),
     state: input?.state ?? "open",
     sort: input?.sort ?? "updated",
-    order: input?.order ?? "desc"
+    order: input?.order ?? "desc",
+    ...normalizeGitHubScopeInput(input)
   };
 }
 
@@ -363,6 +366,32 @@ function normalizeLimit(value: number | undefined): number {
     return 10;
   }
   return Math.min(value, 20);
+}
+
+function normalizeGitHubScopeInput(
+  input: GitHubPullRequestListInput | undefined
+): Pick<GitHubPullRequestListInput, "owner" | "repo"> {
+  const repo = normalizeGitHubQualifier(input?.repo, true);
+  if (repo) {
+    return { repo };
+  }
+
+  const owner = normalizeGitHubQualifier(input?.owner, false);
+  return owner ? { owner } : {};
+}
+
+function normalizeGitHubQualifier(
+  value: string | undefined,
+  allowRepo: boolean
+): string | null {
+  const normalized = value?.trim();
+  if (!normalized) {
+    return null;
+  }
+  const pattern = allowRepo
+    ? /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/
+    : /^[A-Za-z0-9_.-]+$/;
+  return pattern.test(normalized) ? normalized : null;
 }
 
 function normalizeCreateIssueInput(

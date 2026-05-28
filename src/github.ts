@@ -65,6 +65,8 @@ export type ListMyPullRequestsOptions = {
   state?: GitHubPullRequestState;
   sort?: GitHubSearchSort;
   order?: GitHubSearchOrder;
+  owner?: string;
+  repo?: string;
 };
 
 type GitHubSearchResponse = {
@@ -182,6 +184,13 @@ export async function listMyPullRequests(
 ): Promise<GitHubPullRequest[]> {
   const state = options.state ?? "open";
   const queryParts = ["is:pr", "author:@me"];
+  const repo = sanitizeGitHubSearchQualifierValue(options.repo);
+  const owner = sanitizeGitHubSearchQualifierValue(options.owner);
+  if (repo) {
+    queryParts.push(`repo:${repo}`);
+  } else if (owner) {
+    queryParts.push(`org:${owner}`);
+  }
   if (state !== "all") {
     queryParts.push(`is:${state}`);
   }
@@ -195,6 +204,13 @@ export async function listMyPullRequests(
     html_url: item.html_url,
     title: item.title
   }));
+}
+
+function sanitizeGitHubSearchQualifierValue(value: string | undefined): string | null {
+  const normalized = value?.trim();
+  return normalized && /^[A-Za-z0-9_.-]+(?:\/[A-Za-z0-9_.-]+)?$/.test(normalized)
+    ? normalized
+    : null;
 }
 
 export async function createGitHubIssue(

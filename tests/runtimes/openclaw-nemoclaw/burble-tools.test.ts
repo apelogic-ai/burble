@@ -186,7 +186,9 @@ describe("createBurbleToolExecutor", () => {
           limit: 3,
           state: "closed",
           sort: "created",
-          order: "asc"
+          order: "asc",
+          owner: "apelogic-ai",
+          repo: "acme/app"
         }
       });
 
@@ -198,7 +200,9 @@ describe("createBurbleToolExecutor", () => {
             limit: 3,
             state: "closed",
             sort: "created",
-            order: "asc"
+            order: "asc",
+            owner: "apelogic-ai",
+            repo: "acme/app"
           }
         }
       });

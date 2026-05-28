@@ -203,7 +203,8 @@ describe("handleToolGatewayRequest", () => {
           limit: 3,
           state: "closed",
           sort: "created",
-          order: "asc"
+          order: "asc",
+          owner: "apelogic-ai"
         }
       }),
       {
@@ -213,7 +214,8 @@ describe("handleToolGatewayRequest", () => {
             limit: 3,
             state: "closed",
             sort: "created",
-            order: "asc"
+            order: "asc",
+            owner: "apelogic-ai"
           });
           return [
             {
