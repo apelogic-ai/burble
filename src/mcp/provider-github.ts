@@ -107,4 +107,196 @@ export function registerGitHubMcpTools(input: {
         )
       )
   );
+
+  input.server.registerTool(
+    "github_create_issue",
+    {
+      title: "GitHub create issue",
+      description:
+        "Create a GitHub issue visible to this Slack user's connected GitHub account.",
+      inputSchema: {
+        repo: z.string().min(1).describe("Repository in owner/name format"),
+        title: z.string().min(1).max(256).describe("Issue title"),
+        body: z.string().max(65_536).optional().describe("Issue body"),
+        labels: z.array(z.string().min(1)).max(20).optional(),
+        assignees: z.array(z.string().min(1)).max(20).optional()
+      }
+    },
+    async ({ repo, title, body, labels, assignees }) =>
+      mcpToolResult(
+        await withConnection(input.store, input.runtime, "github", (connection) =>
+          githubTools.createIssue.execute({
+            connection,
+            input: {
+              repo,
+              title,
+              ...(body !== undefined ? { body } : {}),
+              ...(labels ? { labels } : {}),
+              ...(assignees ? { assignees } : {})
+            }
+          })
+        )
+      )
+  );
+
+  input.server.registerTool(
+    "github_comment_on_issue_or_pr",
+    {
+      title: "GitHub comment on issue or pull request",
+      description:
+        "Add a comment to a GitHub issue or pull request using this Slack user's connected GitHub account.",
+      inputSchema: {
+        repo: z.string().min(1).describe("Repository in owner/name format"),
+        number: z.number().int().positive().describe("Issue or pull request number"),
+        body: z.string().min(1).max(65_536).describe("Comment body")
+      }
+    },
+    async ({ repo, number, body }) =>
+      mcpToolResult(
+        await withConnection(input.store, input.runtime, "github", (connection) =>
+          githubTools.commentOnIssueOrPullRequest.execute({
+            connection,
+            input: { repo, number, body }
+          })
+        )
+      )
+  );
+
+  input.server.registerTool(
+    "github_create_pr",
+    {
+      title: "GitHub create pull request",
+      description:
+        "Open a pull request from an existing branch using this Slack user's connected GitHub account.",
+      inputSchema: {
+        repo: z.string().min(1).describe("Repository in owner/name format"),
+        title: z.string().min(1).max(256).describe("Pull request title"),
+        head: z.string().min(1).describe("Head branch or owner:branch"),
+        base: z.string().min(1).describe("Base branch"),
+        body: z.string().max(65_536).optional().describe("Pull request body"),
+        draft: z.boolean().optional().describe("Whether to create a draft PR")
+      }
+    },
+    async ({ repo, title, head, base, body, draft }) =>
+      mcpToolResult(
+        await withConnection(input.store, input.runtime, "github", (connection) =>
+          githubTools.createPullRequest.execute({
+            connection,
+            input: {
+              repo,
+              title,
+              head,
+              base,
+              ...(body !== undefined ? { body } : {}),
+              ...(draft !== undefined ? { draft } : {})
+            }
+          })
+        )
+      )
+  );
+
+  input.server.registerTool(
+    "github_update_pr",
+    {
+      title: "GitHub update pull request",
+      description:
+        "Update pull request metadata only: title, body, base branch, or draft state.",
+      inputSchema: {
+        repo: z.string().min(1).describe("Repository in owner/name format"),
+        number: z.number().int().positive().describe("Pull request number"),
+        title: z.string().min(1).max(256).optional(),
+        body: z.string().max(65_536).optional(),
+        base: z.string().min(1).optional(),
+        draft: z.boolean().optional()
+      }
+    },
+    async ({ repo, number, title, body, base, draft }) =>
+      mcpToolResult(
+        await withConnection(input.store, input.runtime, "github", (connection) =>
+          githubTools.updatePullRequest.execute({
+            connection,
+            input: {
+              repo,
+              number,
+              ...(title !== undefined ? { title } : {}),
+              ...(body !== undefined ? { body } : {}),
+              ...(base !== undefined ? { base } : {}),
+              ...(draft !== undefined ? { draft } : {})
+            }
+          })
+        )
+      )
+  );
+
+  input.server.registerTool(
+    "github_add_labels",
+    {
+      title: "GitHub add labels",
+      description: "Add labels to a GitHub issue or pull request.",
+      inputSchema: {
+        repo: z.string().min(1).describe("Repository in owner/name format"),
+        number: z.number().int().positive().describe("Issue or pull request number"),
+        labels: z.array(z.string().min(1)).min(1).max(20)
+      }
+    },
+    async ({ repo, number, labels }) =>
+      mcpToolResult(
+        await withConnection(input.store, input.runtime, "github", (connection) =>
+          githubTools.addLabels.execute({
+            connection,
+            input: { repo, number, labels }
+          })
+        )
+      )
+  );
+
+  input.server.registerTool(
+    "github_remove_labels",
+    {
+      title: "GitHub remove labels",
+      description: "Remove labels from a GitHub issue or pull request.",
+      inputSchema: {
+        repo: z.string().min(1).describe("Repository in owner/name format"),
+        number: z.number().int().positive().describe("Issue or pull request number"),
+        labels: z.array(z.string().min(1)).min(1).max(20)
+      }
+    },
+    async ({ repo, number, labels }) =>
+      mcpToolResult(
+        await withConnection(input.store, input.runtime, "github", (connection) =>
+          githubTools.removeLabels.execute({
+            connection,
+            input: { repo, number, labels }
+          })
+        )
+      )
+  );
+
+  input.server.registerTool(
+    "github_request_review",
+    {
+      title: "GitHub request pull request review",
+      description: "Request users or teams to review a GitHub pull request.",
+      inputSchema: {
+        repo: z.string().min(1).describe("Repository in owner/name format"),
+        number: z.number().int().positive().describe("Pull request number"),
+        reviewers: z.array(z.string().min(1)).max(20).optional(),
+        teamReviewers: z.array(z.string().min(1)).max(20).optional()
+      }
+    },
+    async ({ repo, number, reviewers, teamReviewers }) =>
+      mcpToolResult(
+        await withConnection(input.store, input.runtime, "github", (connection) =>
+          githubTools.requestReview.execute({
+            connection,
+            input: {
+              repo,
+              number,
+              ...(reviewers ? { reviewers } : {}),
+              ...(teamReviewers ? { teamReviewers } : {})
+            }
+          })
+        )
+      )
+  );
 }

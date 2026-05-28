@@ -267,6 +267,166 @@ async function runAiSdkAgent(
             })
           );
         })
+      }),
+      github_create_issue: tool({
+        description:
+          "Create a GitHub issue. Use only when the user clearly asks to create an issue.",
+        inputSchema: z.object({
+          repo: z.string().min(1),
+          title: z.string().min(1),
+          body: z.string().optional(),
+          labels: z.array(z.string().min(1)).optional(),
+          assignees: z.array(z.string().min(1)).optional()
+        }),
+        execute: async (toolInput) => executeTool("github_create_issue", async () => {
+          const connection = input.connections.github;
+          if (!connection) {
+            return missingGitHubConnection();
+          }
+
+          return record(
+            await deps.githubTools.createIssue.execute({
+              connection,
+              input: toolInput
+            })
+          );
+        })
+      }),
+      github_comment_on_issue_or_pr: tool({
+        description:
+          "Comment on a GitHub issue or pull request. Use only when the user clearly asks to comment.",
+        inputSchema: z.object({
+          repo: z.string().min(1),
+          number: z.number().int().positive(),
+          body: z.string().min(1)
+        }),
+        execute: async (toolInput) => executeTool("github_comment_on_issue_or_pr", async () => {
+          const connection = input.connections.github;
+          if (!connection) {
+            return missingGitHubConnection();
+          }
+
+          return record(
+            await deps.githubTools.commentOnIssueOrPullRequest.execute({
+              connection,
+              input: toolInput
+            })
+          );
+        })
+      }),
+      github_create_pr: tool({
+        description:
+          "Open a GitHub pull request from an existing branch. Use only when explicitly requested.",
+        inputSchema: z.object({
+          repo: z.string().min(1),
+          title: z.string().min(1),
+          head: z.string().min(1),
+          base: z.string().min(1),
+          body: z.string().optional(),
+          draft: z.boolean().optional()
+        }),
+        execute: async (toolInput) => executeTool("github_create_pr", async () => {
+          const connection = input.connections.github;
+          if (!connection) {
+            return missingGitHubConnection();
+          }
+
+          return record(
+            await deps.githubTools.createPullRequest.execute({
+              connection,
+              input: toolInput
+            })
+          );
+        })
+      }),
+      github_update_pr: tool({
+        description:
+          "Update GitHub pull request metadata: title, body, base branch, or draft state. Does not edit code.",
+        inputSchema: z.object({
+          repo: z.string().min(1),
+          number: z.number().int().positive(),
+          title: z.string().min(1).optional(),
+          body: z.string().optional(),
+          base: z.string().min(1).optional(),
+          draft: z.boolean().optional()
+        }),
+        execute: async (toolInput) => executeTool("github_update_pr", async () => {
+          const connection = input.connections.github;
+          if (!connection) {
+            return missingGitHubConnection();
+          }
+
+          return record(
+            await deps.githubTools.updatePullRequest.execute({
+              connection,
+              input: toolInput
+            })
+          );
+        })
+      }),
+      github_add_labels: tool({
+        description: "Add labels to a GitHub issue or pull request.",
+        inputSchema: z.object({
+          repo: z.string().min(1),
+          number: z.number().int().positive(),
+          labels: z.array(z.string().min(1)).min(1)
+        }),
+        execute: async (toolInput) => executeTool("github_add_labels", async () => {
+          const connection = input.connections.github;
+          if (!connection) {
+            return missingGitHubConnection();
+          }
+
+          return record(
+            await deps.githubTools.addLabels.execute({
+              connection,
+              input: toolInput
+            })
+          );
+        })
+      }),
+      github_remove_labels: tool({
+        description: "Remove labels from a GitHub issue or pull request.",
+        inputSchema: z.object({
+          repo: z.string().min(1),
+          number: z.number().int().positive(),
+          labels: z.array(z.string().min(1)).min(1)
+        }),
+        execute: async (toolInput) => executeTool("github_remove_labels", async () => {
+          const connection = input.connections.github;
+          if (!connection) {
+            return missingGitHubConnection();
+          }
+
+          return record(
+            await deps.githubTools.removeLabels.execute({
+              connection,
+              input: toolInput
+            })
+          );
+        })
+      }),
+      github_request_review: tool({
+        description: "Request user or team reviewers for a GitHub pull request.",
+        inputSchema: z.object({
+          repo: z.string().min(1),
+          number: z.number().int().positive(),
+          reviewers: z.array(z.string().min(1)).optional(),
+          teamReviewers: z.array(z.string().min(1)).optional()
+        }),
+        execute: async (toolInput) => executeTool("github_request_review", async () => {
+          const connection = input.connections.github;
+          if (!connection) {
+            return missingGitHubConnection();
+          }
+
+          return record(
+            await deps.githubTools.requestReview.execute({
+              connection,
+              input: toolInput
+            })
+          );
+        })
       })
     };
 

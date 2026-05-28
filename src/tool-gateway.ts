@@ -3,10 +3,17 @@ import type { AgentRuntimeRecord, TokenStore } from "./db";
 import type { ConversationAttachment } from "./conversation/types";
 import { createHash, timingSafeEqual } from "node:crypto";
 import {
+  addGitHubIssueLabels,
+  commentOnGitHubIssueOrPullRequest,
+  createGitHubIssue,
+  createGitHubPullRequest,
   getGitHubUser,
   listAssignedIssues,
   listMyPullRequests,
-  searchIssues
+  removeGitHubIssueLabels,
+  requestGitHubPullRequestReview,
+  searchIssues,
+  updateGitHubPullRequest
 } from "./github";
 import {
   createGoogleDriveTextFile,
@@ -108,6 +115,13 @@ const defaultDeps = {
   listAssignedIssues,
   searchIssues,
   listMyPullRequests,
+  createIssue: createGitHubIssue,
+  commentOnIssueOrPullRequest: commentOnGitHubIssueOrPullRequest,
+  createPullRequest: createGitHubPullRequest,
+  updatePullRequest: updateGitHubPullRequest,
+  addLabels: addGitHubIssueLabels,
+  removeLabels: removeGitHubIssueLabels,
+  requestReview: requestGitHubPullRequestReview,
   getGoogleUser,
   searchGoogleDriveFiles,
   createGoogleDriveTextFile,
@@ -302,6 +316,118 @@ export async function handleToolGatewayRequest(
         await tools.listMyPullRequests.execute({
           connection,
           input: body.input ?? undefined
+        })
+      );
+    }
+
+    case "github.createIssue": {
+      if (!isCreateGitHubIssueInput(body.input)) {
+        return new Response("Invalid tool input", { status: 400 });
+      }
+
+      return jsonResponseWithAudit(
+        store,
+        auth,
+        toolName,
+        await tools.createIssue.execute({
+          connection,
+          input: body.input
+        })
+      );
+    }
+
+    case "github.commentOnIssueOrPullRequest": {
+      if (!isGitHubCommentInput(body.input)) {
+        return new Response("Invalid tool input", { status: 400 });
+      }
+
+      return jsonResponseWithAudit(
+        store,
+        auth,
+        toolName,
+        await tools.commentOnIssueOrPullRequest.execute({
+          connection,
+          input: body.input
+        })
+      );
+    }
+
+    case "github.createPullRequest": {
+      if (!isCreateGitHubPullRequestInput(body.input)) {
+        return new Response("Invalid tool input", { status: 400 });
+      }
+
+      return jsonResponseWithAudit(
+        store,
+        auth,
+        toolName,
+        await tools.createPullRequest.execute({
+          connection,
+          input: body.input
+        })
+      );
+    }
+
+    case "github.updatePullRequest": {
+      if (!isUpdateGitHubPullRequestInput(body.input)) {
+        return new Response("Invalid tool input", { status: 400 });
+      }
+
+      return jsonResponseWithAudit(
+        store,
+        auth,
+        toolName,
+        await tools.updatePullRequest.execute({
+          connection,
+          input: body.input
+        })
+      );
+    }
+
+    case "github.addLabels": {
+      if (!isGitHubLabelsInput(body.input)) {
+        return new Response("Invalid tool input", { status: 400 });
+      }
+
+      return jsonResponseWithAudit(
+        store,
+        auth,
+        toolName,
+        await tools.addLabels.execute({
+          connection,
+          input: body.input
+        })
+      );
+    }
+
+    case "github.removeLabels": {
+      if (!isGitHubLabelsInput(body.input)) {
+        return new Response("Invalid tool input", { status: 400 });
+      }
+
+      return jsonResponseWithAudit(
+        store,
+        auth,
+        toolName,
+        await tools.removeLabels.execute({
+          connection,
+          input: body.input
+        })
+      );
+    }
+
+    case "github.requestReview": {
+      if (!isGitHubRequestReviewInput(body.input)) {
+        return new Response("Invalid tool input", { status: 400 });
+      }
+
+      return jsonResponseWithAudit(
+        store,
+        auth,
+        toolName,
+        await tools.requestReview.execute({
+          connection,
+          input: body.input
         })
       );
     }
@@ -694,6 +820,13 @@ function isKnownTool(toolName: string): boolean {
     toolName === "github.listAssignedIssues" ||
     toolName === "github.searchIssues" ||
     toolName === "github.listMyPullRequests" ||
+    toolName === "github.createIssue" ||
+    toolName === "github.commentOnIssueOrPullRequest" ||
+    toolName === "github.createPullRequest" ||
+    toolName === "github.updatePullRequest" ||
+    toolName === "github.addLabels" ||
+    toolName === "github.removeLabels" ||
+    toolName === "github.requestReview" ||
     toolName === "google.getAuthenticatedUser" ||
     toolName === "google.searchDriveFiles" ||
     toolName === "google.createDriveTextFile" ||
@@ -772,6 +905,107 @@ function isListMyPullRequestsInput(
     (candidate.order === undefined ||
       candidate.order === "desc" ||
       candidate.order === "asc")
+  );
+}
+
+function isCreateGitHubIssueInput(input: unknown): input is {
+  repo: string;
+  title: string;
+  body?: string;
+  labels?: string[];
+  assignees?: string[];
+} {
+  return (
+    isOptionalObject(input) &&
+    isNonEmptyString(input.repo) &&
+    isNonEmptyString(input.title) &&
+    optionalString(input.body) &&
+    optionalStringArray(input.labels, 20) &&
+    optionalStringArray(input.assignees, 20)
+  );
+}
+
+function isGitHubCommentInput(input: unknown): input is {
+  repo: string;
+  number: number;
+  body: string;
+} {
+  return (
+    isOptionalObject(input) &&
+    isNonEmptyString(input.repo) &&
+    isPositiveInteger(input.number) &&
+    isNonEmptyString(input.body)
+  );
+}
+
+function isCreateGitHubPullRequestInput(input: unknown): input is {
+  repo: string;
+  title: string;
+  head: string;
+  base: string;
+  body?: string;
+  draft?: boolean;
+} {
+  return (
+    isOptionalObject(input) &&
+    isNonEmptyString(input.repo) &&
+    isNonEmptyString(input.title) &&
+    isNonEmptyString(input.head) &&
+    isNonEmptyString(input.base) &&
+    optionalString(input.body) &&
+    optionalBoolean(input.draft)
+  );
+}
+
+function isUpdateGitHubPullRequestInput(input: unknown): input is {
+  repo: string;
+  number: number;
+  title?: string;
+  body?: string;
+  base?: string;
+  draft?: boolean;
+} {
+  return (
+    isOptionalObject(input) &&
+    isNonEmptyString(input.repo) &&
+    isPositiveInteger(input.number) &&
+    optionalString(input.title) &&
+    optionalString(input.body) &&
+    optionalString(input.base) &&
+    optionalBoolean(input.draft) &&
+    (isNonEmptyString(input.title) ||
+      typeof input.body === "string" ||
+      isNonEmptyString(input.base) ||
+      typeof input.draft === "boolean")
+  );
+}
+
+function isGitHubLabelsInput(input: unknown): input is {
+  repo: string;
+  number: number;
+  labels: string[];
+} {
+  return (
+    isOptionalObject(input) &&
+    isNonEmptyString(input.repo) &&
+    isPositiveInteger(input.number) &&
+    stringArray(input.labels, 20)
+  );
+}
+
+function isGitHubRequestReviewInput(input: unknown): input is {
+  repo: string;
+  number: number;
+  reviewers?: string[];
+  teamReviewers?: string[];
+} {
+  return (
+    isOptionalObject(input) &&
+    isNonEmptyString(input.repo) &&
+    isPositiveInteger(input.number) &&
+    optionalStringArray(input.reviewers, 20) &&
+    optionalStringArray(input.teamReviewers, 20) &&
+    (stringArray(input.reviewers, 20) || stringArray(input.teamReviewers, 20))
   );
 }
 
@@ -972,6 +1206,31 @@ function isListVisibleJiraProjectsInput(
 
 function optionalString(value: unknown): boolean {
   return value === undefined || typeof value === "string";
+}
+
+function optionalBoolean(value: unknown): boolean {
+  return value === undefined || typeof value === "boolean";
+}
+
+function isNonEmptyString(value: unknown): value is string {
+  return typeof value === "string" && value.trim().length > 0;
+}
+
+function isPositiveInteger(value: unknown): value is number {
+  return typeof value === "number" && Number.isInteger(value) && value > 0;
+}
+
+function optionalStringArray(value: unknown, max: number): boolean {
+  return value === undefined || stringArray(value, max);
+}
+
+function stringArray(value: unknown, max: number): value is string[] {
+  return (
+    Array.isArray(value) &&
+    value.length > 0 &&
+    value.length <= max &&
+    value.every(isNonEmptyString)
+  );
 }
 
 function isConversationSendInput(

@@ -3,10 +3,17 @@ import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/
 import type { Config } from "../config";
 import type { AgentRuntimeRecord, ProviderConnection, TokenStore } from "../db";
 import {
+  addGitHubIssueLabels,
+  commentOnGitHubIssueOrPullRequest,
+  createGitHubIssue,
+  createGitHubPullRequest,
   getGitHubUser,
   listAssignedIssues,
   listMyPullRequests,
-  searchIssues
+  removeGitHubIssueLabels,
+  requestGitHubPullRequestReview,
+  searchIssues,
+  updateGitHubPullRequest
 } from "../github";
 import {
   createGoogleDriveTextFile,
@@ -50,6 +57,13 @@ const defaultDeps = {
   listAssignedIssues,
   searchIssues,
   listMyPullRequests,
+  createIssue: createGitHubIssue,
+  commentOnIssueOrPullRequest: commentOnGitHubIssueOrPullRequest,
+  createPullRequest: createGitHubPullRequest,
+  updatePullRequest: updateGitHubPullRequest,
+  addLabels: addGitHubIssueLabels,
+  removeLabels: removeGitHubIssueLabels,
+  requestReview: requestGitHubPullRequestReview,
   getGoogleUser,
   searchGoogleDriveFiles,
   createGoogleDriveTextFile,

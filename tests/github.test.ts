@@ -1,9 +1,16 @@
 import { describe, expect, test } from "bun:test";
 import {
   buildGitHubOAuthUrl,
+  addGitHubIssueLabels,
+  commentOnGitHubIssueOrPullRequest,
+  createGitHubIssue,
+  createGitHubPullRequest,
   listAssignedIssues,
   listMyPullRequests,
-  searchIssues
+  removeGitHubIssueLabels,
+  requestGitHubPullRequestReview,
+  searchIssues,
+  updateGitHubPullRequest
 } from "../src/github";
 import type { Config } from "../src/config";
 
@@ -145,5 +152,193 @@ describe("GitHub search helpers", () => {
     expect(url.searchParams.get("per_page")).toBe("3");
     expect(url.searchParams.get("sort")).toBe("created");
     expect(url.searchParams.get("order")).toBe("asc");
+  });
+});
+
+describe("GitHub write helpers", () => {
+  test("createGitHubIssue posts a sanitized issue payload", async () => {
+    const requests: Request[] = [];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input, init) => {
+      const request = new Request(input, init);
+      requests.push(request);
+      return Response.json({
+        html_url: "https://github.com/acme/app/issues/7",
+        title: "New issue",
+        number: 7
+      });
+    }) as typeof fetch;
+
+    try {
+      const issue = await createGitHubIssue("token", {
+        repo: "acme/app",
+        title: "New issue",
+        body: "Body",
+        labels: ["bug"],
+        assignees: ["octocat"]
+      });
+
+      expect(issue).toEqual({
+        html_url: "https://github.com/acme/app/issues/7",
+        title: "New issue",
+        number: 7
+      });
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+
+    expect(requests[0].method).toBe("POST");
+    expect(requests[0].url).toBe("https://api.github.com/repos/acme/app/issues");
+    await expect(requests[0].json()).resolves.toEqual({
+      title: "New issue",
+      body: "Body",
+      labels: ["bug"],
+      assignees: ["octocat"]
+    });
+  });
+
+  test("comments on an issue or pull request", async () => {
+    const requests: Request[] = [];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input, init) => {
+      const request = new Request(input, init);
+      requests.push(request);
+      return Response.json({
+        html_url: "https://github.com/acme/app/pull/7#issuecomment-1",
+        id: 123
+      });
+    }) as typeof fetch;
+
+    try {
+      await commentOnGitHubIssueOrPullRequest("token", {
+        repo: "acme/app",
+        number: 7,
+        body: "Looks good"
+      });
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+
+    expect(requests[0].method).toBe("POST");
+    expect(requests[0].url).toBe(
+      "https://api.github.com/repos/acme/app/issues/7/comments"
+    );
+    await expect(requests[0].json()).resolves.toEqual({
+      body: "Looks good"
+    });
+  });
+
+  test("creates and updates pull request metadata", async () => {
+    const requests: Request[] = [];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input, init) => {
+      const request = new Request(input, init);
+      requests.push(request);
+      if (request.url.endsWith("/pulls")) {
+        return Response.json({
+          html_url: "https://github.com/acme/app/pull/8",
+          title: "New PR",
+          number: 8,
+          draft: true
+        });
+      }
+      return Response.json({
+        html_url: "https://github.com/acme/app/pull/8",
+        title: "Updated PR",
+        number: 8,
+        draft: false
+      });
+    }) as typeof fetch;
+
+    try {
+      await createGitHubPullRequest("token", {
+        repo: "acme/app",
+        title: "New PR",
+        head: "feature",
+        base: "main",
+        draft: true
+      });
+      await updateGitHubPullRequest("token", {
+        repo: "acme/app",
+        number: 8,
+        title: "Updated PR",
+        body: "Updated body"
+      });
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+
+    expect(requests[0].method).toBe("POST");
+    expect(requests[0].url).toBe("https://api.github.com/repos/acme/app/pulls");
+    await expect(requests[0].json()).resolves.toEqual({
+      title: "New PR",
+      head: "feature",
+      base: "main",
+      draft: true
+    });
+    expect(requests[1].method).toBe("PATCH");
+    expect(requests[1].url).toBe(
+      "https://api.github.com/repos/acme/app/pulls/8"
+    );
+    await expect(requests[1].json()).resolves.toEqual({
+      title: "Updated PR",
+      body: "Updated body"
+    });
+  });
+
+  test("adds/removes labels and requests reviewers", async () => {
+    const requests: Request[] = [];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input, init) => {
+      const request = new Request(input, init);
+      requests.push(request);
+      if (request.method === "DELETE") {
+        return new Response(null, { status: 204 });
+      }
+      return Response.json({
+        html_url: "https://github.com/acme/app/pull/8",
+        title: "New PR",
+        number: 8
+      });
+    }) as typeof fetch;
+
+    try {
+      await addGitHubIssueLabels("token", {
+        repo: "acme/app",
+        number: 8,
+        labels: ["ready"]
+      });
+      await removeGitHubIssueLabels("token", {
+        repo: "acme/app",
+        number: 8,
+        labels: ["wip"]
+      });
+      await requestGitHubPullRequestReview("token", {
+        repo: "acme/app",
+        number: 8,
+        reviewers: ["octocat"],
+        teamReviewers: ["platform"]
+      });
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+
+    expect(requests[0].method).toBe("POST");
+    expect(requests[0].url).toBe(
+      "https://api.github.com/repos/acme/app/issues/8/labels"
+    );
+    await expect(requests[0].json()).resolves.toEqual({ labels: ["ready"] });
+    expect(requests[1].method).toBe("DELETE");
+    expect(requests[1].url).toBe(
+      "https://api.github.com/repos/acme/app/issues/8/labels/wip"
+    );
+    expect(requests[2].method).toBe("POST");
+    expect(requests[2].url).toBe(
+      "https://api.github.com/repos/acme/app/pulls/8/requested_reviewers"
+    );
+    await expect(requests[2].json()).resolves.toEqual({
+      reviewers: ["octocat"],
+      team_reviewers: ["platform"]
+    });
   });
 });

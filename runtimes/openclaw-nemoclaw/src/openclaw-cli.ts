@@ -1448,6 +1448,82 @@ async function buildToolCatalog(
           sort: "string optional, one of: updated, created, comments",
           order: "string optional, one of: desc, asc"
         }
+      },
+      {
+        name: "github.createIssue",
+        description:
+          "Create a GitHub issue. Use only when the user clearly asks to create an issue.",
+        inputSchema: {
+          repo: "string repository in owner/name format",
+          title: "string issue title",
+          body: "optional string issue body",
+          labels: "optional string[] labels",
+          assignees: "optional string[] GitHub usernames"
+        }
+      },
+      {
+        name: "github.commentOnIssueOrPullRequest",
+        description:
+          "Add a comment to a GitHub issue or pull request. Use only when the user clearly asks to comment.",
+        inputSchema: {
+          repo: "string repository in owner/name format",
+          number: "number issue or pull request number",
+          body: "string comment body"
+        }
+      },
+      {
+        name: "github.createPullRequest",
+        description:
+          "Open a GitHub pull request from an existing branch. Use only when explicitly requested.",
+        inputSchema: {
+          repo: "string repository in owner/name format",
+          title: "string pull request title",
+          head: "string head branch or owner:branch",
+          base: "string base branch",
+          body: "optional string pull request body",
+          draft: "optional boolean"
+        }
+      },
+      {
+        name: "github.updatePullRequest",
+        description:
+          "Update GitHub pull request metadata: title, body, base branch, or draft state. Does not edit code.",
+        inputSchema: {
+          repo: "string repository in owner/name format",
+          number: "number pull request number",
+          title: "optional string new title",
+          body: "optional string new body",
+          base: "optional string new base branch",
+          draft: "optional boolean draft state"
+        }
+      },
+      {
+        name: "github.addLabels",
+        description: "Add labels to a GitHub issue or pull request.",
+        inputSchema: {
+          repo: "string repository in owner/name format",
+          number: "number issue or pull request number",
+          labels: "string[] labels to add"
+        }
+      },
+      {
+        name: "github.removeLabels",
+        description: "Remove labels from a GitHub issue or pull request.",
+        inputSchema: {
+          repo: "string repository in owner/name format",
+          number: "number issue or pull request number",
+          labels: "string[] labels to remove"
+        }
+      },
+      {
+        name: "github.requestReview",
+        description: "Request user or team reviewers for a GitHub pull request.",
+        inputSchema: {
+          repo: "string repository in owner/name format",
+          number: "number pull request number",
+          reviewers: "optional string[] GitHub usernames",
+          teamReviewers: "optional string[] GitHub team slugs"
+        }
       }
     );
   }
@@ -1744,6 +1820,20 @@ function mcpToolNameToBurbleToolName(name: string): string | null {
       return "github.searchIssues";
     case "github_list_my_pull_requests":
       return "github.listMyPullRequests";
+    case "github_create_issue":
+      return "github.createIssue";
+    case "github_comment_on_issue_or_pr":
+      return "github.commentOnIssueOrPullRequest";
+    case "github_create_pr":
+      return "github.createPullRequest";
+    case "github_update_pr":
+      return "github.updatePullRequest";
+    case "github_add_labels":
+      return "github.addLabels";
+    case "github_remove_labels":
+      return "github.removeLabels";
+    case "github_request_review":
+      return "github.requestReview";
     case "google_get_authenticated_user":
       return "google.getAuthenticatedUser";
     case "google_search_drive_files":
@@ -1840,6 +1930,13 @@ function shouldLoadAtlassianMcpTools(text: string): boolean {
 
 function isTerminalToolCall(toolName: string): boolean {
   return (
+    toolName === "github.createIssue" ||
+    toolName === "github.commentOnIssueOrPullRequest" ||
+    toolName === "github.createPullRequest" ||
+    toolName === "github.updatePullRequest" ||
+    toolName === "github.addLabels" ||
+    toolName === "github.removeLabels" ||
+    toolName === "github.requestReview" ||
     toolName === "jira.createIssue" ||
     toolName === "jira.editIssue" ||
     toolName === "google.createDriveTextFile"
@@ -2475,7 +2572,45 @@ function formatTerminalToolResult(toolName: string, result: ToolResult): string 
       : `Created Google Drive file ${driveFile.name}.`;
   }
 
+  const githubWrite = readGitHubWriteResult(result.content);
+  if (githubWrite) {
+    switch (toolName) {
+      case "github.createIssue":
+        return `Created GitHub issue #${githubWrite.number}: ${githubWrite.title}\n${githubWrite.url}`;
+      case "github.commentOnIssueOrPullRequest":
+        return `Added GitHub comment: ${githubWrite.url}`;
+      case "github.createPullRequest":
+        return `Created GitHub PR #${githubWrite.number}: ${githubWrite.title}\n${githubWrite.url}`;
+      case "github.updatePullRequest":
+        return `Updated GitHub PR #${githubWrite.number}: ${githubWrite.title}\n${githubWrite.url}`;
+      case "github.addLabels":
+        return `Added GitHub labels on #${githubWrite.number}: ${githubWrite.url}`;
+      case "github.removeLabels":
+        return `Removed GitHub labels from #${githubWrite.number}: ${githubWrite.url}`;
+      case "github.requestReview":
+        return `Requested GitHub review on PR #${githubWrite.number}: ${githubWrite.title}\n${githubWrite.url}`;
+    }
+  }
+
   return formatToolResult(result);
+}
+
+function readGitHubWriteResult(
+  value: unknown
+): { title?: string; url: string; number?: number; id?: number } | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+  const record = value as Record<string, unknown>;
+  if (typeof record.url !== "string") {
+    return null;
+  }
+  return {
+    url: record.url,
+    ...(typeof record.title === "string" ? { title: record.title } : {}),
+    ...(typeof record.number === "number" ? { number: record.number } : {}),
+    ...(typeof record.id === "number" ? { id: record.id } : {})
+  };
 }
 
 function readDriveFileResult(
