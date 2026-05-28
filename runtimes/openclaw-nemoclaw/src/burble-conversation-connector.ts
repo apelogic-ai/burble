@@ -39,7 +39,7 @@ export function createBurbleConversationConnector(
     message: BurbleConversationMessage
   ): Promise<ToolResult> => {
     info(
-      `Burble conversation connector send routeId=${message.routeId} textChars=${message.text.length}`
+      `Burble conversation connector send routeId=${message.routeId} textChars=${message.text.length} attachments=${message.attachments?.length ?? 0}`
     );
     const result = await executor("conversation.sendMessage", {
       input: {
@@ -59,7 +59,8 @@ export function createBurbleConversationConnector(
     sendMessage,
     async deliverEvent(event) {
       const text = extractBurbleConversationText(event.payload);
-      if (!text) {
+      const attachments = extractBurbleConversationAttachments(event.payload);
+      if (!text && !attachments.attachments?.length) {
         info(
           `Burble conversation connector ignored routeId=${event.routeId} reason=no_deliverable_text keys=${formatObjectKeys(event.payload)}`
         );
@@ -68,8 +69,8 @@ export function createBurbleConversationConnector(
 
       return sendMessage({
         routeId: event.routeId,
-        text,
-        ...extractBurbleConversationAttachments(event.payload)
+        text: text ?? "",
+        ...attachments
       });
     }
   };
@@ -146,9 +147,13 @@ export function formatObjectKeys(body: unknown): string {
 
 function readNestedString(body: unknown, ...path: string[]): string | null {
   const cursor = readNestedValue(body, ...path);
-  return typeof cursor === "string" && cursor.trim().length > 0
+  return typeof cursor === "string" && hasVisibleText(cursor)
     ? cursor.trim()
     : null;
+}
+
+function hasVisibleText(value: string): boolean {
+  return value.replace(/[\s\p{Default_Ignorable_Code_Point}]/gu, "").length > 0;
 }
 
 function readNestedValue(body: unknown, ...path: string[]): unknown {

@@ -62,6 +62,22 @@ describe("buildOpenClawLlmPatch", () => {
     expect(patch.tools.codeMode.enabled).toBe(true);
   });
 
+  test("configures Burble MCP through the local runtime proxy", () => {
+    const patch = JSON.parse(
+      buildOpenClawLlmPatch({
+        modelId: "openai:gpt-5.4",
+        ollamaBaseUrl: "https://ollama.com",
+        burbleMcpBaseUrl: "http://127.0.0.1:8080/internal/burble/mcp"
+      })
+    );
+
+    expect(patch.mcp.servers.burble).toEqual({
+      url: "http://127.0.0.1:8080/internal/burble/mcp",
+      transport: "streamable-http"
+    });
+    expect(JSON.stringify(patch)).not.toContain("runtime-jwt");
+  });
+
   test("builds an Ollama cloud provider patch", () => {
     const patch = JSON.parse(
       buildOpenClawLlmPatch({

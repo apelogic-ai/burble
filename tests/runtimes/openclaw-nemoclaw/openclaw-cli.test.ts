@@ -917,6 +917,12 @@ describe("runOpenClawCliRequest", () => {
     expect(prompts[0]).toContain('delivery.channel to "burble"');
     expect(prompts[0]).toContain('delivery.to to "convrt_abc123"');
     expect(prompts[0]).toContain(
+      'use Burble provider tools with routeId "convrt_abc123"'
+    );
+    expect(prompts[0]).toContain(
+      "never use a cron job id, run id, session id, or UUID as a provider tool routeId"
+    );
+    expect(prompts[0]).toContain(
       "do not create a cron job or background job unless the user explicitly asks"
     );
     expect(prompts[0]).toContain(
@@ -932,6 +938,73 @@ describe("runOpenClawCliRequest", () => {
       toolName: "conversation.sendMessage",
       body: {
         input: { text: "Still working on it." }
+      }
+    });
+  });
+
+  test("lets OpenClaw fetch current request attachments", async () => {
+    const prompts: string[] = [];
+    const toolCalls: Array<{ toolName: string; body: unknown }> = [];
+    const response = await runOpenClawCliRequest(
+      {
+        executionMode: "openclaw-native",
+        input: {
+          text: "describe this screenshot",
+          attachments: [
+            {
+              id: "slack:F123",
+              externalId: "F123",
+              source: "slack",
+              kind: "image",
+              mimeType: "image/png",
+              name: "screenshot.png"
+            }
+          ],
+          connections: {
+            github: { connected: false }
+          }
+        }
+      },
+      config,
+      async (toolName, body) => {
+        toolCalls.push({ toolName, body });
+        return {
+          classification: "user_private",
+          content: {
+            attachment: {
+              id: "slack:F123",
+              source: "slack",
+              kind: "image",
+              mimeType: "image/png"
+            },
+            contentBase64: "aW1hZ2U="
+          }
+        };
+      },
+      async (_command, args) => {
+        const prompt = args[args.indexOf("--message") + 1];
+        prompts.push(prompt);
+        return prompts.length === 1
+          ? openClawToolCall("conversation.getAttachment", {
+              attachmentId: "slack:F123"
+            })
+          : {
+              exitCode: 0,
+              stdout: "Fetched the screenshot.",
+              stderr: ""
+            };
+      },
+      () => undefined
+    );
+
+    expect(response.response.text).toBe("Fetched the screenshot.");
+    expect(prompts[0]).toContain("conversation.getAttachment");
+    expect(prompts[0]).toContain("Current request attachments:");
+    expect(prompts[0]).toContain("id=slack:F123");
+    expect(toolCalls).toContainEqual({
+      toolName: "conversation.getAttachment",
+      body: {
+        input: { attachmentId: "slack:F123" }
       }
     });
   });
@@ -2027,6 +2100,76 @@ describe("runOpenClawCliRequest", () => {
       logs.some((line) =>
         line.includes(
           "Burble direct model retry runId=run-direct-bootstrap step=1 reason=bootstrap_response"
+        )
+      )
+    ).toBe(true);
+  });
+
+  test("retries OpenClaw gateway bootstrap answers instead of returning them", async () => {
+    const requests: Array<Record<string, unknown>> = [];
+    const logs: string[] = [];
+    const providerTexts = [
+      "Hey. I just came online. Who am I, and who are you?",
+      [
+        "Bootstrap blocker: this workspace is still bootstrap-pending. Send defaults for name / nature / vibe / emoji.",
+        "",
+        "Jensen Huang is the co-founder and CEO of NVIDIA."
+      ].join("\n")
+    ];
+
+    const response = await withMockFetch(
+      (async (_input, init) => {
+        const body = JSON.parse(String(init?.body ?? "{}")) as Record<
+          string,
+          unknown
+        >;
+        requests.push(body);
+        const text = providerTexts.shift();
+        if (!text) {
+          throw new Error("unexpected gateway call");
+        }
+        return new Response(JSON.stringify(openResponsesText(text)), {
+          status: 200,
+          headers: { "content-type": "application/json" }
+        });
+      }) as typeof fetch,
+      async () =>
+        runOpenClawCliRequest(
+          {
+            runId: "run-gateway-bootstrap",
+            executionMode: "openclaw-native",
+            input: {
+              text: "ask agent who is jensen huang",
+              connections: {
+                github: { connected: false }
+              }
+            }
+          },
+          { ...config, engine: "openclaw-gateway" },
+          async () => {
+            throw new Error("unexpected tool call");
+          },
+          async () => {
+            throw new Error("unexpected cli call");
+          },
+          (message) => logs.push(message)
+        )
+    );
+
+    expect(response.response.text).toBe(
+      "Jensen Huang is the co-founder and CEO of NVIDIA."
+    );
+    expect(requests).toHaveLength(2);
+    expect(String(requests[0].input)).toContain(
+      "Do not run first-time assistant setup"
+    );
+    expect(String(requests[1].input)).toContain(
+      "Previous response was rejected because it asked for assistant/user setup"
+    );
+    expect(
+      logs.some((line) =>
+        line.includes(
+          "OpenClaw bootstrap retry runId=run-gateway-bootstrap step=1 reason=bootstrap_response"
         )
       )
     ).toBe(true);

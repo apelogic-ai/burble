@@ -209,6 +209,85 @@ describe("createBurbleToolExecutor", () => {
     }
   });
 
+  test("fetches current request attachments through the internal gateway", async () => {
+    const originalFetch = globalThis.fetch;
+    const requests: Request[] = [];
+    globalThis.fetch = (async (input, init) => {
+      const request = new Request(input, init);
+      requests.push(request);
+      return Response.json({
+        classification: "user_private",
+        content: {
+          attachment: {
+            id: "slack:F123",
+            externalId: "F123",
+            source: "slack",
+            kind: "image",
+            mimeType: "image/png",
+            name: "screenshot.png"
+          },
+          contentBase64: "aW1hZ2U="
+        }
+      });
+    }) as typeof fetch;
+
+    try {
+      const executor = createBurbleToolExecutor(config, "rt_u123", {
+        runtime: { id: "rt_u123" },
+        input: {
+          text: "what is in this image?",
+          attachments: [
+            {
+              id: "slack:F123",
+              externalId: "F123",
+              source: "slack",
+              kind: "image",
+              mimeType: "image/png",
+              name: "screenshot.png"
+            }
+          ],
+          connections: {
+            github: { connected: false }
+          }
+        }
+      });
+      const result = await executor("conversation.getAttachment", {
+        input: { attachmentId: "slack:F123" }
+      });
+
+      expect(result.content).toMatchObject({
+        attachment: {
+          id: "slack:F123",
+          externalId: "F123"
+        },
+        contentBase64: "aW1hZ2U="
+      });
+      expect(requests).toHaveLength(1);
+      expect(requests[0].url).toBe(
+        "http://burble-app:3000/internal/tools/conversation.getAttachment/execute"
+      );
+      expect(requests[0].headers.get("authorization")).toBe(
+        "Bearer runtime-secret"
+      );
+      expect(requests[0].headers.get("x-burble-runtime-id")).toBe("rt_u123");
+      expect(await requests[0].json()).toEqual({
+        input: { attachmentId: "slack:F123" },
+        attachments: [
+          {
+            id: "slack:F123",
+            externalId: "F123",
+            source: "slack",
+            kind: "image",
+            mimeType: "image/png",
+            name: "screenshot.png"
+          }
+        ]
+      });
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
   test("maps search tool inputs to MCP arguments", async () => {
     const originalFetch = globalThis.fetch;
     const payloads: unknown[] = [];

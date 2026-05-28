@@ -52,7 +52,7 @@ export type CliCommandStreamer = (
 
 const streamHeartbeatMs = 8_000;
 const maxPlannedToolCalls = 5;
-const maxDirectBootstrapRetries = 1;
+const maxBootstrapRetries = 1;
 
 type ToolCatalogItem = {
   name: string;
@@ -143,17 +143,19 @@ export async function runOpenClawCliRequest(
 
     if (!plannedToolCall) {
       const lastToolResult = executedTools.at(-1)?.toolResult;
-      const text =
+      const rawText =
         extractOpenClawText(result.stdout) ||
         (lastToolResult ? formatToolResult(lastToolResult) : baseline.response.text);
+      const text = sanitizeBootstrapFragments(rawText);
       if (
-        config.engine === "burble-direct" &&
-        rejectedDirectResponses.length < maxDirectBootstrapRetries &&
-        isBootstrapSetupAnswer(text)
+        rejectedDirectResponses.length < maxBootstrapRetries &&
+        isBootstrapSetupAnswer(rawText)
       ) {
-        rejectedDirectResponses.push(text);
+        rejectedDirectResponses.push(rawText);
         logInfo(
-          `Burble direct model retry runId=${request.runId ?? "unknown"} step=${step + 1} reason=bootstrap_response`
+          config.engine === "burble-direct"
+            ? `Burble direct model retry runId=${request.runId ?? "unknown"} step=${step + 1} reason=bootstrap_response`
+            : `OpenClaw bootstrap retry runId=${request.runId ?? "unknown"} step=${step + 1} reason=bootstrap_response`
         );
         continue;
       }
@@ -890,17 +892,19 @@ export async function* runOpenClawCliRequestStream(
 
     if (!plannedToolCall) {
       const lastToolResult = executedTools.at(-1)?.toolResult;
-      const text =
+      const rawText =
         extractOpenClawText(result.stdout) ||
         (lastToolResult ? formatToolResult(lastToolResult) : baseline.response.text);
+      const text = sanitizeBootstrapFragments(rawText);
       if (
-        config.engine === "burble-direct" &&
-        rejectedDirectResponses.length < maxDirectBootstrapRetries &&
-        isBootstrapSetupAnswer(text)
+        rejectedDirectResponses.length < maxBootstrapRetries &&
+        isBootstrapSetupAnswer(rawText)
       ) {
-        rejectedDirectResponses.push(text);
+        rejectedDirectResponses.push(rawText);
         logInfo(
-          `Burble direct model retry runId=${request.runId ?? "unknown"} step=${step + 1} reason=bootstrap_response`
+          config.engine === "burble-direct"
+            ? `Burble direct model retry runId=${request.runId ?? "unknown"} step=${step + 1} reason=bootstrap_response`
+            : `OpenClaw bootstrap retry runId=${request.runId ?? "unknown"} step=${step + 1} reason=bootstrap_response`
         );
         continue;
       }
@@ -1384,6 +1388,17 @@ async function buildToolCatalog(
       }
     });
   }
+  if ((request.input.attachments ?? []).length > 0) {
+    catalog.push({
+      name: "conversation.getAttachment",
+      description:
+        "Fetch bytes for a Slack attachment from the current request. Use only attachment IDs listed under Current request attachments. Burble validates access and returns metadata plus contentBase64, and text for small text-like files.",
+      inputSchema: {
+        attachmentId:
+          "string attachment id from Current request attachments, for example slack:F123"
+      }
+    });
+  }
 
   const github = request.input.connections.github;
   if (github.connected && github.email) {
@@ -1698,18 +1713,27 @@ function buildPlanningPrompt(
     );
   }
 
-  return buildOpenClawPrompt(config, request, toolContext, executedTools);
+  return buildOpenClawPrompt(
+    config,
+    request,
+    toolContext,
+    executedTools,
+    rejectedDirectResponses
+  );
 }
 
 function buildOpenClawPrompt(
   config: RuntimeConfig,
   request: RunRequest,
   toolContext: BurbleToolContext,
-  executedTools: ExecutedToolCall[] = []
+  executedTools: ExecutedToolCall[] = [],
+  rejectedBootstrapResponses: string[] = []
 ): string {
   const sections = [
     "Preloaded Burble runtime skills:",
     preloadedRuntimeSkills,
+    "",
+    "Do not run first-time assistant setup. Do not ask who you are, who the user is, what kind of assistant you are, what style you should use, or for an emoji/persona setup. Do not mention bootstrap-pending, bootstrap blockers, setup state, defaults, name/nature/vibe/emoji, or workspace bootstrap. The Slack user and assistant identity are already established by Burble.",
     "",
     "Runtime instruction: for requests about the current Slack channel or chat, answer from Recent Slack context when available. If channel history is unavailable, explain that Burble needs Slack bot history scopes and channel membership.",
     "",
@@ -1741,6 +1765,14 @@ function buildOpenClawPrompt(
       "Return either exactly one more tool_call JSON object if another provider action is required, or the final Slack-ready answer."
     );
   } else {
+    if (rejectedBootstrapResponses.length > 0) {
+      sections.push(
+        "",
+        "Previous response was rejected because it asked for assistant/user setup instead of answering the request:",
+        truncate(rejectedBootstrapResponses.at(-1) ?? "", 600),
+        "Do not repeat setup/onboarding. Answer the current user request directly or use an available tool."
+      );
+    }
     sections.push("", formatFinalInstruction(request));
   }
 
@@ -1803,6 +1835,7 @@ function formatActiveConversationRouteInstruction(
   return [
     `Active Burble conversation channel route: ${routeId}.`,
     `Native OpenClaw Burble channel delivery is installed. For cron/background jobs, set delivery.mode to "announce", delivery.channel to "burble", and delivery.to to "${routeId}". The scheduled prompt should produce the final Slack-ready message text; Burble resolves the route to the actual transport outside OpenClaw.`,
+    `If a cron/background job will use Burble provider tools such as GitHub, Jira, Google, or Slack search, include this exact instruction in the scheduled prompt: use Burble provider tools with routeId "${routeId}". Burble route ids start with "convrt_"; never use a cron job id, run id, session id, or UUID as a provider tool routeId.`,
     `For an immediate request to send, post, message, or report something here now, do not create a cron job or background job unless the user explicitly asks for a schedule, delay, recurrence, or later delivery. Produce the final Slack-ready message once and stop.`,
     "Do not fetch, POST to, or mention local/private/internal Burble URLs for delivery. Do not create cron jobs that rely on conversation.sendMessage JSON blobs, announce delivery, Slack channel IDs, Slack credentials, or Burble credentials. Burble's channel connector owns route auth and transport delivery outside the OpenClaw process."
   ];
@@ -1938,6 +1971,10 @@ function formatToolCatalog(catalog: ToolCatalogItem[]): string {
 function isBootstrapSetupAnswer(text: string): boolean {
   const normalized = text.toLowerCase();
   return (
+    /\bbootstrap blocker\b/.test(normalized) ||
+    /\bbootstrap-pending\b/.test(normalized) ||
+    /\bworkspace bootstrap\b/.test(normalized) ||
+    /\bsetup\/onboarding\b/.test(normalized) ||
     /\bwho am i\b/.test(normalized) ||
     /\bwho are you\b/.test(normalized) ||
     /\bidentity setup\b/.test(normalized) ||
@@ -1947,6 +1984,23 @@ function isBootstrapSetupAnswer(text: string): boolean {
     /\bwhat kind of assistant\b/.test(normalized) ||
     /\bi just came online\b/.test(normalized)
   );
+}
+
+function sanitizeBootstrapFragments(text: string): string {
+  if (!isBootstrapSetupAnswer(text)) {
+    return text;
+  }
+
+  const paragraphs = text
+    .split(/\n{2,}/)
+    .map((paragraph) => paragraph.trim())
+    .filter(Boolean);
+  const kept = paragraphs.filter((paragraph) => !isBootstrapSetupAnswer(paragraph));
+  if (kept.length === 0) {
+    return text;
+  }
+
+  return kept.join("\n\n");
 }
 
 function readPlannedToolCall(
@@ -2047,7 +2101,10 @@ async function executePlannedToolCall(
   toolContext: BurbleToolContext,
   executeTool: ToolExecutor
 ): Promise<ToolResult> {
-  if (toolCall.name === "conversation.sendMessage") {
+  if (
+    toolCall.name === "conversation.sendMessage" ||
+    toolCall.name === "conversation.getAttachment"
+  ) {
     const validationError = validatePlannedToolCall(toolCall, toolContext);
     if (validationError) {
       return validationError;

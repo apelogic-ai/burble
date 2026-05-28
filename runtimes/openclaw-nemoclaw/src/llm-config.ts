@@ -10,6 +10,7 @@ type OpenClawPatchInput = {
   ollamaBaseUrl: string;
   codeModeEnabled?: boolean;
   burbleChannelBaseUrl?: string;
+  burbleMcpBaseUrl?: string | null;
   burbleChannelPluginPath?: string;
 };
 
@@ -92,7 +93,19 @@ export function buildOpenClawLlmPatch(input: OpenClawPatchInput): string {
       file: "/data/openclaw/logs/openclaw.log",
       redactSensitive: "tools"
     },
-    ...providerConfig
+    ...providerConfig,
+    ...(input.burbleMcpBaseUrl
+      ? {
+          mcp: {
+            servers: {
+              burble: {
+                url: input.burbleMcpBaseUrl,
+                transport: "streamable-http"
+              }
+            }
+          }
+        }
+      : {})
   };
 
   return `${JSON.stringify(patch, null, 2)}\n`;
