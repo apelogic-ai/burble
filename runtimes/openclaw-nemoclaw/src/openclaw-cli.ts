@@ -1441,8 +1441,13 @@ async function buildToolCatalog(
       {
         name: "github.listMyPullRequests",
         description:
-          "List open GitHub pull requests authored by the requesting Slack user's connected GitHub account.",
-        inputSchema: {}
+          "List GitHub pull requests authored by the requesting Slack user's connected GitHub account. Defaults to open PRs sorted by most recently updated.",
+        inputSchema: {
+          limit: "number optional, 1-20, maximum pull requests to return",
+          state: "string optional, one of: open, closed, all",
+          sort: "string optional, one of: updated, created, comments",
+          order: "string optional, one of: desc, asc"
+        }
       }
     );
   }

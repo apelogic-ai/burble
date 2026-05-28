@@ -114,8 +114,36 @@ describe("GitHub search helpers", () => {
       globalThis.fetch = originalFetch;
     }
 
-    expect(new URL(urls[0]).searchParams.get("q")).toBe(
-      "is:open is:pr author:@me sort:updated-desc"
-    );
+    const url = new URL(urls[0]);
+    expect(url.searchParams.get("q")).toBe("is:pr author:@me is:open");
+    expect(url.searchParams.get("per_page")).toBe("10");
+    expect(url.searchParams.get("sort")).toBe("updated");
+    expect(url.searchParams.get("order")).toBe("desc");
+  });
+
+  test("listMyPullRequests accepts limit, state, sort, and order", async () => {
+    const urls: string[] = [];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      urls.push(String(input));
+      return Response.json({ items: [] });
+    }) as typeof fetch;
+
+    try {
+      await listMyPullRequests("token", {
+        limit: 3,
+        state: "closed",
+        sort: "created",
+        order: "asc"
+      });
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+
+    const url = new URL(urls[0]);
+    expect(url.searchParams.get("q")).toBe("is:pr author:@me is:closed");
+    expect(url.searchParams.get("per_page")).toBe("3");
+    expect(url.searchParams.get("sort")).toBe("created");
+    expect(url.searchParams.get("order")).toBe("asc");
   });
 });

@@ -129,6 +129,84 @@ describe("createBurbleToolExecutor", () => {
     }
   });
 
+  test("passes GitHub pull request list arguments to MCP", async () => {
+    const originalFetch = globalThis.fetch;
+    const requests: Request[] = [];
+    globalThis.fetch = (async (input, init) => {
+      const request = new Request(input, init);
+      requests.push(request);
+      const payload = await request.clone().json();
+      if (payload.method === "initialize") {
+        return Response.json(
+          {
+            result: {
+              protocolVersion: "2025-06-18",
+              capabilities: {},
+              serverInfo: { name: "agentgateway", version: "test" }
+            }
+          },
+          { headers: { "mcp-session-id": "session-123" } }
+        );
+      }
+      if (payload.method === "notifications/initialized") {
+        return new Response(null, { status: 202 });
+      }
+      return new Response(
+        [
+          "event: message",
+          `data: ${JSON.stringify({
+            result: {
+              content: [
+                {
+                  type: "text",
+                  text: JSON.stringify({
+                    classification: "user_private",
+                    content: []
+                  })
+                }
+              ]
+            },
+            jsonrpc: "2.0",
+            id: "request-id"
+          })}`,
+          ""
+        ].join("\n"),
+        { headers: { "content-type": "text/event-stream" } }
+      );
+    }) as typeof fetch;
+
+    try {
+      const executor = createBurbleToolExecutor({
+        ...config,
+        mcpGatewayUrl: "http://agentgateway:3000/mcp",
+        runtimeJwt: "runtime-jwt"
+      });
+      await executor("github.listMyPullRequests", {
+        input: {
+          limit: 3,
+          state: "closed",
+          sort: "created",
+          order: "asc"
+        }
+      });
+
+      expect(await requests[2].json()).toMatchObject({
+        method: "tools/call",
+        params: {
+          name: "github_list_my_pull_requests",
+          arguments: {
+            limit: 3,
+            state: "closed",
+            sort: "created",
+            order: "asc"
+          }
+        }
+      });
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
   test("lists MCP provider tools from the gateway", async () => {
     const originalFetch = globalThis.fetch;
     const requests: Request[] = [];

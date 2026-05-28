@@ -378,6 +378,15 @@ function toMcpToolArguments(
     return { query };
   }
 
+  if (toolName === "github.listMyPullRequests") {
+    return compactToolInput(readRecordKey(body, "input"), [
+      "limit",
+      "state",
+      "sort",
+      "order"
+    ]);
+  }
+
   if (toolName === "jira.searchIssues") {
     const jql = readNestedString(body, "input", "jql");
     if (!jql) {

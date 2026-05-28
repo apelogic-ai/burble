@@ -67,15 +67,43 @@ export function registerGitHubMcpTools(input: {
   input.server.registerTool(
     "github_list_my_pull_requests",
     {
-      title: "GitHub open pull requests",
+      title: "GitHub pull requests authored by me",
       description:
-        "List open GitHub pull requests authored by this Slack user's connected GitHub account.",
-      inputSchema: {}
+        "List GitHub pull requests authored by this Slack user's connected GitHub account. Defaults to open PRs sorted by most recently updated.",
+      inputSchema: {
+        limit: z
+          .number()
+          .int()
+          .min(1)
+          .max(20)
+          .optional()
+          .describe("Maximum number of pull requests to return. Defaults to 10."),
+        state: z
+          .enum(["open", "closed", "all"])
+          .optional()
+          .describe("Pull request state to include. Defaults to open."),
+        sort: z
+          .enum(["updated", "created", "comments"])
+          .optional()
+          .describe("Sort field. Defaults to updated."),
+        order: z
+          .enum(["desc", "asc"])
+          .optional()
+          .describe("Sort order. Defaults to desc.")
+      }
     },
-    async () =>
+    async ({ limit, state, sort, order }) =>
       mcpToolResult(
         await withConnection(input.store, input.runtime, "github", (connection) =>
-          githubTools.listMyPullRequests.execute({ connection })
+          githubTools.listMyPullRequests.execute({
+            connection,
+            input: {
+              ...(limit !== undefined ? { limit } : {}),
+              ...(state ? { state } : {}),
+              ...(sort ? { sort } : {}),
+              ...(order ? { order } : {})
+            }
+          })
         )
       )
   );

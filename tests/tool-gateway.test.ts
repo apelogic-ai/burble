@@ -192,6 +192,66 @@ describe("handleToolGatewayRequest", () => {
     expect(JSON.stringify(body)).not.toContain("secret-token");
   });
 
+  test("passes GitHub pull request list options to the provider tool", async () => {
+    const response = await handleToolGatewayRequest(
+      config,
+      createStore(connection),
+      "github.listMyPullRequests",
+      request("github.listMyPullRequests", {
+        user: { email: "person@example.com" },
+        input: {
+          limit: 3,
+          state: "closed",
+          sort: "created",
+          order: "asc"
+        }
+      }),
+      {
+        listMyPullRequests: async (token, options) => {
+          expect(token).toBe("secret-token");
+          expect(options).toEqual({
+            limit: 3,
+            state: "closed",
+            sort: "created",
+            order: "asc"
+          });
+          return [
+            {
+              title: "Fix release notes",
+              html_url: "https://github.com/acme/app/pull/9"
+            }
+          ];
+        }
+      }
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      classification: "user_private",
+      content: [
+        {
+          title: "Fix release notes",
+          url: "https://github.com/acme/app/pull/9"
+        }
+      ]
+    });
+  });
+
+  test("rejects invalid GitHub pull request list options", async () => {
+    const response = await handleToolGatewayRequest(
+      config,
+      createStore(connection),
+      "github.listMyPullRequests",
+      request("github.listMyPullRequests", {
+        user: { email: "person@example.com" },
+        input: { limit: 1000 }
+      })
+    );
+
+    expect(response.status).toBe(400);
+    expect(await response.text()).toBe("Invalid tool input");
+  });
+
   test("requires the configured internal bearer token", async () => {
     const response = await handleToolGatewayRequest(
       config,

@@ -26,7 +26,10 @@ import {
   type UpstreamMcpToolResult
 } from "./mcp/upstream-http-client";
 import { searchSlackMessages, searchSlackUsers } from "./slack-api";
-import { createGitHubTools } from "./tools/github";
+import {
+  createGitHubTools,
+  type GitHubPullRequestListInput
+} from "./tools/github";
 import {
   createJiraTools,
   isJiraAuthErrorResult,
@@ -265,13 +268,21 @@ export async function handleToolGatewayRequest(
       );
     }
 
-    case "github.listMyPullRequests":
+    case "github.listMyPullRequests": {
+      if (!isListMyPullRequestsInput(body.input)) {
+        return new Response("Invalid tool input", { status: 400 });
+      }
+
       return jsonResponseWithAudit(
         store,
         auth,
         toolName,
-        await tools.listMyPullRequests.execute({ connection })
+        await tools.listMyPullRequests.execute({
+          connection,
+          input: body.input ?? undefined
+        })
       );
+    }
 
     case "jira.getAuthenticatedUser":
       return jsonResponseWithAudit(
@@ -631,6 +642,35 @@ function isSearchIssuesInput(input: unknown): input is { query: string } {
     "query" in input &&
     typeof input.query === "string" &&
     input.query.trim().length > 0
+  );
+}
+
+function isListMyPullRequestsInput(
+  input: unknown
+): input is GitHubPullRequestListInput {
+  if (input === undefined || input === null) {
+    return true;
+  }
+  if (typeof input !== "object") {
+    return false;
+  }
+  const candidate = input as GitHubPullRequestListInput;
+  return (
+    (candidate.limit === undefined ||
+      (Number.isInteger(candidate.limit) &&
+        candidate.limit >= 1 &&
+        candidate.limit <= 20)) &&
+    (candidate.state === undefined ||
+      candidate.state === "open" ||
+      candidate.state === "closed" ||
+      candidate.state === "all") &&
+    (candidate.sort === undefined ||
+      candidate.sort === "updated" ||
+      candidate.sort === "created" ||
+      candidate.sort === "comments") &&
+    (candidate.order === undefined ||
+      candidate.order === "desc" ||
+      candidate.order === "asc")
   );
 }
 

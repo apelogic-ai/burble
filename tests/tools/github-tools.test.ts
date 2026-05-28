@@ -103,8 +103,14 @@ describe("createGitHubTools", () => {
       getGitHubUser: async () => ({ login: "octocat" }),
       listAssignedIssues: async () => [],
       searchIssues: async () => [],
-      listMyPullRequests: async (token) => {
+      listMyPullRequests: async (token, options) => {
         expect(token).toBe("secret-token");
+        expect(options).toEqual({
+          limit: 10,
+          state: "open",
+          sort: "updated",
+          order: "desc"
+        });
         return [
           {
             html_url: "https://github.com/acme/app/pull/3",
@@ -126,5 +132,57 @@ describe("createGitHubTools", () => {
       ]
     });
     expect(JSON.stringify(result)).not.toContain("secret-token");
+  });
+
+  test("passes pull request list options and caps sanitized results", async () => {
+    const tools = createGitHubTools({
+      getGitHubUser: async () => ({ login: "octocat" }),
+      listAssignedIssues: async () => [],
+      searchIssues: async () => [],
+      listMyPullRequests: async (token, options) => {
+        expect(token).toBe("secret-token");
+        expect(options).toEqual({
+          limit: 2,
+          state: "closed",
+          sort: "created",
+          order: "asc"
+        });
+        return [
+          {
+            html_url: "https://github.com/acme/app/pull/3",
+            title: "Add workspace auth"
+          },
+          {
+            html_url: "https://github.com/acme/app/pull/4",
+            title: "Refine workspace auth"
+          },
+          {
+            html_url: "https://github.com/acme/app/pull/5",
+            title: "Extra item"
+          }
+        ];
+      }
+    });
+
+    const result = await tools.listMyPullRequests.execute({
+      connection,
+      input: {
+        limit: 2,
+        state: "closed",
+        sort: "created",
+        order: "asc"
+      }
+    });
+
+    expect(result.content).toEqual([
+      {
+        url: "https://github.com/acme/app/pull/3",
+        title: "Add workspace auth"
+      },
+      {
+        url: "https://github.com/acme/app/pull/4",
+        title: "Refine workspace auth"
+      }
+    ]);
   });
 });
