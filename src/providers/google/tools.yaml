@@ -1,0 +1,297 @@
+provider: google
+tools:
+  - name: google_get_authenticated_user
+    alias: google.getAuthenticatedUser
+    implementation: getAuthenticatedUser
+    title: Google authenticated user
+    description: Return the Google identity connected to this Slack user.
+    input: {}
+
+  - name: google_search_drive_files
+    alias: google.searchDriveFiles
+    implementation: searchDriveFiles
+    title: Google Drive file search
+    description: Search Google Drive files visible to this Slack user's connected Google account.
+    input:
+      query:
+        type: string
+        optional: true
+        description: Optional Drive search terms
+      limit:
+        type: number
+        int: true
+        positive: true
+        max: 20
+        optional: true
+
+  - name: google_create_drive_text_file
+    alias: google.createDriveTextFile
+    implementation: createDriveTextFile
+    title: Google Drive create text file
+    description: Create a new app-owned text file in Google Drive using this Slack user's connected Google account.
+    input:
+      name:
+        type: string
+        min: 1
+        max: 200
+        description: Drive file name
+      text:
+        type: string
+        max: 200000
+        description: Text body to write into the file
+      mimeType:
+        type: string
+        optional: true
+        description: Optional MIME type. Defaults to text/plain.
+
+  - name: google_get_drive_file
+    alias: google.getDriveFile
+    implementation: getDriveFile
+    title: Google Drive get file
+    description: Read Google Drive file metadata and, by default, text content for app-accessible files.
+    input:
+      fileId:
+        type: string
+        min: 1
+        description: Google Drive file ID
+      includeContent:
+        type: boolean
+        optional: true
+        description: Whether to include exported/downloaded text content. Defaults to true.
+
+  - name: google_update_drive_text_file
+    alias: google.updateDriveTextFile
+    implementation: updateDriveTextFile
+    title: Google Drive update text file
+    description: Replace the content of an app-accessible Google Drive text file. Use google_get_drive_file first when preserving existing content matters.
+    input:
+      fileId:
+        type: string
+        min: 1
+        description: Google Drive file ID
+      text:
+        type: string
+        max: 1000000
+        description: New full file text
+      mimeType:
+        type: string
+        optional: true
+        description: Optional MIME type. Defaults to text/plain.
+
+  - name: google_append_to_drive_text_file
+    alias: google.appendDriveTextFile
+    implementation: appendDriveTextFile
+    title: Google Drive append text file
+    description: Append text to an app-accessible Google Drive text file by reading existing content then replacing it.
+    input:
+      fileId:
+        type: string
+        min: 1
+        description: Google Drive file ID
+      text:
+        type: string
+        max: 200000
+        description: Text to append
+      separator:
+        type: string
+        max: 20
+        optional: true
+        description: Separator before appended text
+      mimeType:
+        type: string
+        optional: true
+        description: Optional MIME type. Defaults to text/plain.
+
+  - name: google_create_drive_folder
+    alias: google.createDriveFolder
+    implementation: createDriveFolder
+    title: Google Drive create folder
+    description: Create a Google Drive folder using this Slack user's Google account.
+    input:
+      name:
+        type: string
+        min: 1
+        max: 200
+        description: Folder name
+      parentId:
+        type: string
+        min: 1
+        optional: true
+        description: Optional parent folder ID
+
+  - name: google_move_drive_file
+    alias: google.moveDriveFile
+    implementation: moveDriveFile
+    title: Google Drive move file
+    description: Move an app-accessible Google Drive file into a folder. Does not delete the file.
+    input:
+      fileId:
+        type: string
+        min: 1
+        description: Google Drive file ID
+      parentId:
+        type: string
+        min: 1
+        description: Destination folder ID
+      removeParentIds:
+        type: array
+        items: string
+        itemMin: 1
+        max: 20
+        optional: true
+        description: Optional parent IDs to remove. Defaults to current parents.
+
+  - name: google_search_calendar_events
+    alias: google.searchCalendarEvents
+    implementation: searchCalendarEvents
+    title: Google Calendar event search
+    description: Search upcoming Google Calendar events visible to this Slack user's connected Google account.
+    input:
+      query:
+        type: string
+        optional: true
+        description: Optional calendar search terms
+      timeMin:
+        type: string
+        optional: true
+        description: Optional RFC3339 lower bound; defaults to now
+      timeMax:
+        type: string
+        optional: true
+        description: Optional RFC3339 upper bound
+      limit:
+        type: number
+        int: true
+        positive: true
+        max: 20
+        optional: true
+
+  - name: google_create_calendar_event
+    alias: google.createCalendarEvent
+    implementation: createCalendarEvent
+    title: Google Calendar create event
+    description: Create a Google Calendar event. Use only when clearly requested.
+    input:
+      calendarId:
+        type: string
+        optional: true
+        description: Calendar ID. Defaults to primary.
+      summary:
+        type: string
+        min: 1
+        max: 512
+        description: Event title
+      start:
+        type: string
+        min: 1
+        description: RFC3339 start date-time
+      end:
+        type: string
+        min: 1
+        description: RFC3339 end date-time
+      description:
+        type: string
+        max: 65536
+        optional: true
+      location:
+        type: string
+        max: 512
+        optional: true
+      timeZone:
+        type: string
+        optional: true
+        description: Optional IANA time zone
+
+  - name: google_update_calendar_event
+    alias: google.updateCalendarEvent
+    implementation: updateCalendarEvent
+    title: Google Calendar update event
+    description: Update Google Calendar event metadata or start/end time. Does not delete events.
+    input:
+      calendarId:
+        type: string
+        optional: true
+        description: Calendar ID. Defaults to primary.
+      eventId:
+        type: string
+        min: 1
+        description: Calendar event ID
+      summary:
+        type: string
+        min: 1
+        max: 512
+        optional: true
+      start:
+        type: string
+        min: 1
+        optional: true
+        description: RFC3339 start date-time
+      end:
+        type: string
+        min: 1
+        optional: true
+        description: RFC3339 end date-time
+      description:
+        type: string
+        max: 65536
+        optional: true
+      location:
+        type: string
+        max: 512
+        optional: true
+      timeZone:
+        type: string
+        optional: true
+        description: Optional IANA time zone
+
+  - name: google_search_mail_messages
+    alias: google.searchMailMessages
+    implementation: searchMailMessages
+    title: Google Mail message search
+    description: Search Gmail messages visible to this Slack user's connected Google account.
+    input:
+      query:
+        type: string
+        min: 1
+        description: Gmail search query
+      limit:
+        type: number
+        int: true
+        positive: true
+        max: 10
+        optional: true
+
+  - name: gmail_create_draft
+    alias: gmail.createDraft
+    implementation: createMailDraft
+    title: Gmail create draft
+    description: Create a Gmail draft only. This does not send email and should be used before any user-reviewed send workflow.
+    input:
+      to:
+        type: array
+        items: string
+        itemFormat: email
+        min: 1
+        max: 20
+        description: Recipient emails
+      subject:
+        type: string
+        min: 1
+        max: 512
+        description: Draft subject
+      body:
+        type: string
+        max: 200000
+        description: Plain text draft body
+      cc:
+        type: array
+        items: string
+        itemFormat: email
+        max: 20
+        optional: true
+      bcc:
+        type: array
+        items: string
+        itemFormat: email
+        max: 20
+        optional: true

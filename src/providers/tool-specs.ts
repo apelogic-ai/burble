@@ -26,6 +26,7 @@ type BaseInputSpec = {
 
 type ProviderStringInputSpec = BaseInputSpec & {
   type: "string";
+  format?: "email";
   min?: number;
   max?: number;
 };
@@ -50,6 +51,7 @@ type ProviderEnumInputSpec = BaseInputSpec & {
 type ProviderArrayInputSpec = BaseInputSpec & {
   type: "array";
   items: "string";
+  itemFormat?: "email";
   min?: number;
   max?: number;
   itemMin?: number;
@@ -86,6 +88,7 @@ function zodForInputSpec(spec: ProviderToolInputSpec): z.ZodType {
   switch (spec.type) {
     case "string": {
       let stringSchema = z.string();
+      if (spec.format === "email") stringSchema = stringSchema.email();
       if (spec.min !== undefined) stringSchema = stringSchema.min(spec.min);
       if (spec.max !== undefined) stringSchema = stringSchema.max(spec.max);
       schema = stringSchema;
@@ -111,6 +114,7 @@ function zodForInputSpec(spec: ProviderToolInputSpec): z.ZodType {
       break;
     case "array": {
       let itemSchema = z.string();
+      if (spec.itemFormat === "email") itemSchema = itemSchema.email();
       if (spec.itemMin !== undefined) itemSchema = itemSchema.min(spec.itemMin);
       if (spec.itemMax !== undefined) itemSchema = itemSchema.max(spec.itemMax);
 
@@ -194,6 +198,7 @@ function parseInputSpec(parsed: unknown, source: string): ProviderToolInputSpec 
       return {
         ...base,
         type,
+        format: readOptionalStringEnum(parsed, "format", source, ["email"]),
         min: readOptionalNumber(parsed, "min", source),
         max: readOptionalNumber(parsed, "max", source)
       };
@@ -224,6 +229,7 @@ function parseInputSpec(parsed: unknown, source: string): ProviderToolInputSpec 
         ...base,
         type,
         items,
+        itemFormat: readOptionalStringEnum(parsed, "itemFormat", source, ["email"]),
         min: readOptionalNumber(parsed, "min", source),
         max: readOptionalNumber(parsed, "max", source),
         itemMin: readOptionalNumber(parsed, "itemMin", source),
@@ -256,6 +262,20 @@ function readOptionalString(
   if (value === undefined) return undefined;
   if (typeof value !== "string") {
     throw new Error(`${source}.${key} must be a string`);
+  }
+  return value;
+}
+
+function readOptionalStringEnum<const T extends readonly string[]>(
+  record: Record<string, unknown>,
+  key: string,
+  source: string,
+  allowed: T
+): T[number] | undefined {
+  const value = readOptionalString(record, key, source);
+  if (value === undefined) return undefined;
+  if (!allowed.includes(value)) {
+    throw new Error(`${source}.${key} must be one of: ${allowed.join(", ")}`);
   }
   return value;
 }
