@@ -176,14 +176,14 @@ describe("Jira OAuth and REST helpers", () => {
 
       return Response.json({
         accountId: "account-123",
-        displayName: "Leo"
+        displayName: "Example User"
       });
     }) as typeof fetch;
 
     try {
       await expect(getJiraUser("jira-token")).resolves.toEqual({
         accountId: "account-123",
-        displayName: "Leo"
+        displayName: "Example User"
       });
     } finally {
       globalThis.fetch = originalFetch;
@@ -358,7 +358,7 @@ describe("Jira OAuth and REST helpers", () => {
 
       return Response.json([
         {
-          accountId: "acct-boris",
+          accountId: "acct-example",
           displayName: "Alex Reviewer",
           emailAddress: "alex.reviewer@example.com"
         }
@@ -368,7 +368,7 @@ describe("Jira OAuth and REST helpers", () => {
     try {
       await expect(searchJiraUsers("jira-token", "alex.reviewer@example.com")).resolves.toEqual([
         {
-          accountId: "acct-boris",
+          accountId: "acct-example",
           displayName: "Alex Reviewer",
           emailAddress: "alex.reviewer@example.com"
         }
@@ -412,7 +412,7 @@ describe("Jira OAuth and REST helpers", () => {
           issueTypeName: "Task",
           summary: "test ticket from slack",
           description: "created from Slack",
-          assigneeAccountId: "acct-boris"
+          assigneeAccountId: "acct-example"
         })
       ).resolves.toEqual({
         key: "DM-100",
@@ -431,7 +431,7 @@ describe("Jira OAuth and REST helpers", () => {
           project: { key: "DM" },
           summary: "test ticket from slack",
           issuetype: { name: "Task" },
-          assignee: { id: "acct-boris" }
+          assignee: { id: "acct-example" }
         }
       }
     });

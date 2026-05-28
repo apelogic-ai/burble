@@ -254,7 +254,7 @@ describe("handleConversation", () => {
         calls.push(options);
         return [
           {
-            html_url: "https://github.com/apelogic-ai/burble/pull/3",
+            html_url: "https://github.com/example-org/burble/pull/3",
             title: "Discover provider tools through MCP"
           }
         ];
@@ -262,7 +262,7 @@ describe("handleConversation", () => {
     });
 
     const response = await handleConversation(
-      { ...baseRequest, text: "what is my latest open PR in apelogic-ai org?" },
+      { ...baseRequest, text: "what is my latest open PR in example-org org?" },
       deps
     );
 
@@ -272,7 +272,7 @@ describe("handleConversation", () => {
         state: "open",
         sort: "updated",
         order: "desc",
-        owner: "apelogic-ai"
+        owner: "example-org"
       }
     ]);
     expect(response.visibility).toBe("ephemeral");

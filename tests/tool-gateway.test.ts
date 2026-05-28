@@ -217,7 +217,7 @@ describe("handleToolGatewayRequest", () => {
           state: "closed",
           sort: "created",
           order: "asc",
-          owner: "apelogic-ai"
+          owner: "example-org"
         }
       }),
       {
@@ -228,7 +228,7 @@ describe("handleToolGatewayRequest", () => {
             state: "closed",
             sort: "created",
             order: "asc",
-            owner: "apelogic-ai"
+            owner: "example-org"
           });
           return [
             {
@@ -1057,8 +1057,8 @@ describe("handleToolGatewayRequest", () => {
           return [
             {
               id: "cloud-123",
-              name: "APE GPT",
-              url: "https://apegpt.atlassian.net",
+              name: "Example Jira Site",
+              url: "https://example.atlassian.net",
               scopes: ["read:jira-work", "write:jira-work"]
             }
           ];
@@ -1072,8 +1072,8 @@ describe("handleToolGatewayRequest", () => {
       content: [
         {
           id: "cloud-123",
-          name: "APE GPT",
-          url: "https://apegpt.atlassian.net"
+          name: "Example Jira Site",
+          url: "https://example.atlassian.net"
         }
       ]
     });
@@ -1101,7 +1101,7 @@ describe("handleToolGatewayRequest", () => {
               id: "10000",
               key: "DM",
               name: "DM Workspace",
-              url: "https://apegpt.atlassian.net/jira/projects/DM",
+              url: "https://example.atlassian.net/jira/projects/DM",
               issueTypes: [{ id: "10001", name: "Task", subtask: false }]
             }
           ];
@@ -1117,7 +1117,7 @@ describe("handleToolGatewayRequest", () => {
           id: "10000",
           key: "DM",
           name: "DM Workspace",
-          url: "https://apegpt.atlassian.net/jira/projects/DM",
+          url: "https://example.atlassian.net/jira/projects/DM",
           issueTypes: [{ id: "10001", name: "Task", subtask: false }]
         }
       ]
@@ -1135,7 +1135,7 @@ describe("handleToolGatewayRequest", () => {
           projectKey: "DM",
           issueTypeName: "Task",
           summary: "test ticket from slack",
-          assigneeAccountId: "acct-boris"
+          assigneeAccountId: "acct-example"
         }
       }),
       {
@@ -1145,12 +1145,12 @@ describe("handleToolGatewayRequest", () => {
             projectKey: "DM",
             issueTypeName: "Task",
             summary: "test ticket from slack",
-            assigneeAccountId: "acct-boris"
+            assigneeAccountId: "acct-example"
           });
           return {
             key: "DM-100",
             summary: input.summary,
-            url: "https://apegpt.atlassian.net/browse/DM-100"
+            url: "https://example.atlassian.net/browse/DM-100"
           };
         }
       }
@@ -1162,7 +1162,7 @@ describe("handleToolGatewayRequest", () => {
       content: {
         key: "DM-100",
         title: "test ticket from slack",
-        url: "https://apegpt.atlassian.net/browse/DM-100"
+        url: "https://example.atlassian.net/browse/DM-100"
       }
     });
 
@@ -1189,7 +1189,7 @@ describe("handleToolGatewayRequest", () => {
           return {
             key: "DM-100",
             summary: "updated title",
-            url: "https://apegpt.atlassian.net/browse/DM-100"
+            url: "https://example.atlassian.net/browse/DM-100"
           };
         }
       }
@@ -1201,7 +1201,7 @@ describe("handleToolGatewayRequest", () => {
       content: {
         key: "DM-100",
         title: "updated title",
-        url: "https://apegpt.atlassian.net/browse/DM-100"
+        url: "https://example.atlassian.net/browse/DM-100"
       }
     });
   });
@@ -1227,7 +1227,7 @@ describe("handleToolGatewayRequest", () => {
           });
           return {
             id: "comment-1",
-            url: "https://apegpt.atlassian.net/browse/DM-100?focusedCommentId=comment-1"
+            url: "https://example.atlassian.net/browse/DM-100?focusedCommentId=comment-1"
           };
         }
       }
@@ -1238,7 +1238,7 @@ describe("handleToolGatewayRequest", () => {
       classification: "user_private",
       content: {
         id: "comment-1",
-        url: "https://apegpt.atlassian.net/browse/DM-100?focusedCommentId=comment-1"
+        url: "https://example.atlassian.net/browse/DM-100?focusedCommentId=comment-1"
       }
     });
   });
@@ -1490,7 +1490,7 @@ describe("handleToolGatewayRequest", () => {
         input: {
           name: "createJiraIssue",
           arguments: {
-            cloudId: "https://apegpt.atlassian.net",
+            cloudId: "https://example.atlassian.net",
             projectKey: "DM",
             issueTypeName: "Task",
             summary: "test ticket from slack"

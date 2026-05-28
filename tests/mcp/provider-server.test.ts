@@ -366,7 +366,7 @@ describe("handleProviderMcpRequest", () => {
       provider: "google",
       email: "person@example.com",
       slackUserId: "U123",
-      providerLogin: "person@apegpt.ai",
+      providerLogin: "google-user@example.com",
       accessToken: "google-token",
       refreshToken: null,
       accessTokenExpiresAt: null
@@ -440,7 +440,7 @@ describe("handleProviderMcpRequest", () => {
       provider: "google",
       email: "person@example.com",
       slackUserId: "U123",
-      providerLogin: "person@apegpt.ai",
+      providerLogin: "google-user@example.com",
       accessToken: "google-token",
       refreshToken: null,
       accessTokenExpiresAt: null
@@ -704,7 +704,7 @@ describe("handleProviderMcpRequest", () => {
               id: "10000",
               key: "DM",
               name: "DM Workspace",
-              url: "https://apegpt.atlassian.net/jira/projects/DM",
+              url: "https://example.atlassian.net/jira/projects/DM",
               issueTypes: [{ id: "10001", name: "Task", subtask: false }]
             }
           ];
@@ -722,7 +722,7 @@ describe("handleProviderMcpRequest", () => {
           id: "10000",
           key: "DM",
           name: "DM Workspace",
-          url: "https://apegpt.atlassian.net/jira/projects/DM",
+          url: "https://example.atlassian.net/jira/projects/DM",
           issueTypes: [{ id: "10001", name: "Task", subtask: false }]
         }
       ]
@@ -855,7 +855,7 @@ describe("handleProviderMcpRequest", () => {
             arguments: {
               name: "createJiraIssue",
               arguments: {
-                cloudId: "https://apegpt.atlassian.net",
+                cloudId: "https://example.atlassian.net",
                 projectKey: "DM",
                 issueTypeName: "Task",
                 summary: "test ticket from slack"

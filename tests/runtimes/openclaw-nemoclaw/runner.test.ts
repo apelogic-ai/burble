@@ -214,7 +214,7 @@ describe("runBurbleRequest", () => {
     await runBurbleRequest(
       {
         input: {
-          text: "what is my latest open PR in apelogic-ai org?",
+          text: "what is my latest open PR in example-org org?",
           connections: {
             github: {
               connected: true,
@@ -244,7 +244,7 @@ describe("runBurbleRequest", () => {
             state: "open",
             sort: "updated",
             order: "desc",
-            owner: "apelogic-ai"
+            owner: "example-org"
           }
         }
       }

@@ -102,16 +102,16 @@ describe("Slack API helpers", () => {
       Response.json({
         ok: true,
         members: [
-          { id: "U123", name: "leo", real_name: "Leo Beliaev" },
-          { id: "U456", name: "boris", real_name: "Alex Reviewer" }
+          { id: "U123", name: "leo", real_name: "Example User" },
+          { id: "U456", name: "alex", real_name: "Alex Reviewer" }
         ]
       })) as unknown as typeof fetch;
 
     try {
-      await expect(searchSlackUsers("xoxp", "boris")).resolves.toEqual([
+      await expect(searchSlackUsers("xoxp", "alex")).resolves.toEqual([
         {
           id: "U456",
-          name: "boris",
+          name: "alex",
           realName: "Alex Reviewer"
         }
       ]);

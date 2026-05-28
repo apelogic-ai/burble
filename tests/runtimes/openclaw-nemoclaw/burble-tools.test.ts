@@ -187,7 +187,7 @@ describe("createBurbleToolExecutor", () => {
           state: "closed",
           sort: "created",
           order: "asc",
-          owner: "apelogic-ai",
+          owner: "example-org",
           repo: "acme/app"
         }
       });
@@ -201,7 +201,7 @@ describe("createBurbleToolExecutor", () => {
             state: "closed",
             sort: "created",
             order: "asc",
-            owner: "apelogic-ai",
+            owner: "example-org",
             repo: "acme/app"
           }
         }
@@ -609,7 +609,7 @@ describe("createBurbleToolExecutor", () => {
       });
       await executor("google.searchMailMessages", {
         user: { email: "person@example.com" },
-        input: { query: "from:boris", limit: 2 }
+        input: { query: "from:alex", limit: 2 }
       });
       await executor("jira.createIssue", {
         user: { email: "person@example.com" },
@@ -617,7 +617,7 @@ describe("createBurbleToolExecutor", () => {
           projectKey: "DM",
           issueTypeName: "Task",
           summary: "test ticket from slack",
-          assigneeAccountId: "acct-boris"
+          assigneeAccountId: "acct-example"
         }
       });
       await executor("jira.editIssue", {
@@ -728,7 +728,7 @@ describe("createBurbleToolExecutor", () => {
           method: "tools/call",
           params: {
             name: "google_search_mail_messages",
-            arguments: { query: "from:boris", limit: 2 }
+            arguments: { query: "from:alex", limit: 2 }
           }
         },
         {
@@ -739,7 +739,7 @@ describe("createBurbleToolExecutor", () => {
               projectKey: "DM",
               issueTypeName: "Task",
               summary: "test ticket from slack",
-              assigneeAccountId: "acct-boris"
+              assigneeAccountId: "acct-example"
             }
           }
         },

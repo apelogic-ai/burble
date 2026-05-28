@@ -1448,7 +1448,7 @@ async function buildToolCatalog(
           sort: "string optional, one of: updated, created, comments",
           order: "string optional, one of: desc, asc",
           owner:
-            "string optional GitHub owner or organization login to filter by, for example apelogic-ai",
+            "string optional GitHub owner or organization login to filter by, for example example-org",
           repo:
             "string optional repository in owner/name format; takes precedence over owner"
         }

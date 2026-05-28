@@ -94,7 +94,7 @@ export function registerGitHubMcpTools(input: {
           .string()
           .min(1)
           .optional()
-          .describe("Optional GitHub owner or organization login, for example apelogic-ai."),
+          .describe("Optional GitHub owner or organization login, for example example-org."),
         repo: z
           .string()
           .min(1)

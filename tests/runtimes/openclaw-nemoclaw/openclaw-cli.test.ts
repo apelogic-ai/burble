@@ -807,7 +807,7 @@ describe("runOpenClawCliRequest", () => {
             classification: "user_private",
             content: [
               {
-                accountId: "acct-boris",
+                accountId: "acct-example",
                 displayName: "Alex Reviewer",
                 emailAddress: "alex.reviewer@example.com"
               }
@@ -829,7 +829,7 @@ describe("runOpenClawCliRequest", () => {
           : {
               exitCode: 0,
               stdout:
-                "Alex Reviewer resolved to Jira account `acct-boris` (`alex.reviewer@example.com`).",
+                "Alex Reviewer resolved to Jira account `acct-example` (`alex.reviewer@example.com`).",
               stderr: ""
             };
       },
@@ -837,7 +837,7 @@ describe("runOpenClawCliRequest", () => {
     );
 
     expect(response.response.text).toBe(
-      "Alex Reviewer resolved to Jira account `acct-boris` (`alex.reviewer@example.com`)."
+      "Alex Reviewer resolved to Jira account `acct-example` (`alex.reviewer@example.com`)."
     );
     expect(prompts[0]).toContain("Current Slack channel ID: C123");
     expect(prompts[0]).toContain("Slack user <@U456>");
@@ -1325,7 +1325,7 @@ describe("runOpenClawCliRequest", () => {
           : openClawToolCall("atlassian.callMcpTool", {
               name: "getVisibleJiraProjects",
               arguments: {
-                cloudId: "apegpt.atlassian.net",
+                cloudId: "example.atlassian.net",
                 searchString: "DM",
                 action: "create",
                 expandIssueTypes: true
@@ -1344,7 +1344,7 @@ describe("runOpenClawCliRequest", () => {
         input: {
           name: "getVisibleJiraProjects",
           arguments: {
-            cloudId: "https://apegpt.atlassian.net",
+            cloudId: "https://example.atlassian.net",
             searchString: "DM",
             action: "create",
             expandIssueTypes: true
@@ -1412,7 +1412,7 @@ describe("runOpenClawCliRequest", () => {
           return mcpText("getAccessibleAtlassianResources", '[{"id":"cloud-123"}]');
         }
         if (input?.name === "lookupJiraAccountId") {
-          return mcpText("lookupJiraAccountId", '[{"accountId":"acct-boris"}]');
+          return mcpText("lookupJiraAccountId", '[{"accountId":"acct-example"}]');
         }
         if (input?.name === "createJiraIssue") {
           return mcpText("createJiraIssue", "Created DM-100");
@@ -1448,7 +1448,7 @@ describe("runOpenClawCliRequest", () => {
               cloudId: "cloud-123",
               projectKey: "DM",
               summary: "test ticket from slack",
-              assignee_account_id: "acct-boris"
+              assignee_account_id: "acct-example"
             }
           });
         }
@@ -1487,7 +1487,7 @@ describe("runOpenClawCliRequest", () => {
             cloudId: "cloud-123",
             projectKey: "DM",
             summary: "test ticket from slack",
-            assignee_account_id: "acct-boris"
+            assignee_account_id: "acct-example"
           }
         }
       }
@@ -2118,7 +2118,7 @@ describe("runOpenClawCliRequest", () => {
                 if (toolName === "jira.getAuthenticatedUser") {
                   return {
                     classification: "user_private",
-                    content: { accountId: "acct-me", displayName: "Leo" }
+                    content: { accountId: "acct-me", displayName: "Example User" }
                   };
                 }
                 if (toolName === "jira.editIssue") {
@@ -2127,7 +2127,7 @@ describe("runOpenClawCliRequest", () => {
                     content: {
                       key: "DM-12",
                       title: "test task ticket #9 from slack",
-                      url: "https://apegpt.atlassian.net/browse/DM-12",
+                      url: "https://example.atlassian.net/browse/DM-12",
                       status: "Backlog"
                     }
                   };
@@ -2143,7 +2143,7 @@ describe("runOpenClawCliRequest", () => {
     );
 
     expect(response.response.text).toBe(
-      "Updated Jira issue DM-12: test task ticket #9 from slack\nhttps://apegpt.atlassian.net/browse/DM-12"
+      "Updated Jira issue DM-12: test task ticket #9 from slack\nhttps://example.atlassian.net/browse/DM-12"
     );
     expect(toolCalls).toEqual([
       {

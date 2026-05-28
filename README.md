@@ -1,6 +1,7 @@
 # Burble
 
-Slack-as-TUI PoC for identity-scoped GitHub and Jira access.
+Slack-as-TUI assistant for identity-scoped GitHub, Jira, Google Workspace, and
+Slack search access.
 
 ## Run
 
@@ -35,7 +36,7 @@ Then set `BASE_URL` in `.env` and configure OAuth callback URLs:
 - `/help` shows command help and examples.
 - `/auth` shows connected account status and auth buttons.
 - `/auth github` starts the GitHub OAuth flow.
-- `/auth google` starts the Google OAuth flow for Drive, Calendar, and Gmail search.
+- `/auth google` starts the Google OAuth flow for Drive files, Calendar, and Gmail.
 - `/auth jira` starts the Jira OAuth flow.
 - `/auth slack` starts the Slack user OAuth flow for message search.
 - `/agent status` powers up and shows the current agent runtime status for the Slack user.
@@ -57,11 +58,13 @@ Google OAuth uses a Google Cloud web OAuth client with redirect URI:
 ```
 
 Enable the Drive, Calendar, and Gmail APIs for the Google Cloud project and add
-these scopes:
+these scopes. `drive.file` allows Burble to create and edit files the app owns
+or that the user explicitly opens with the app.
 
 ```text
 openid email profile
 https://www.googleapis.com/auth/drive.metadata.readonly
+https://www.googleapis.com/auth/drive.file
 https://www.googleapis.com/auth/calendar.readonly
 https://www.googleapis.com/auth/gmail.readonly
 ```
