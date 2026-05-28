@@ -2037,7 +2037,11 @@ describe("runOpenClawCliRequest", () => {
     const logs: string[] = [];
     const providerTexts = [
       "Hey. I just came online. Who am I, and who are you?",
-      "Jensen Huang is the co-founder and CEO of NVIDIA."
+      [
+        "Bootstrap blocker: this workspace is still bootstrap-pending. Send defaults for name / nature / vibe / emoji.",
+        "",
+        "Jensen Huang is the co-founder and CEO of NVIDIA."
+      ].join("\n")
     ];
 
     const response = await withMockFetch(
