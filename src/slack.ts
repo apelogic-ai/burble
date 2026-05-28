@@ -243,6 +243,49 @@ export function createSlackRuntime(
   const resolveAgentExecutionMode = (): "openclaw-native" | undefined =>
     config.agentRuntime === "openclaw-nemoclaw" ? "openclaw-native" : undefined;
 
+  app.event("app_home_opened", async ({ event, client, logger }) => {
+    const homeEvent = event as { user?: string };
+    if (!homeEvent.user) {
+      logger.warn(withUtcTimestamp("Ignoring malformed app_home_opened event"));
+      return;
+    }
+
+    try {
+      logger.info(
+        withUtcTimestamp(`Publishing App Home for ${homeEvent.user}`)
+      );
+      await client.views.publish({
+        user_id: homeEvent.user,
+        view: buildAppHomeView({
+          githubUrl: buildGitHubOAuthUrl(
+            config,
+            store.createOAuthState(homeEvent.user)
+          ),
+          googleUrl: tryBuildGoogleOAuthUrl(
+            config,
+            store.createOAuthState(homeEvent.user)
+          ),
+          jiraUrl: tryBuildJiraOAuthUrl(
+            config,
+            store.createOAuthState(homeEvent.user)
+          ),
+          slackUrl: tryBuildSlackOAuthUrl(
+            config,
+            store.createOAuthState(homeEvent.user)
+          ),
+          connections: {
+            github: store.getConnectionForSlackUser("github", homeEvent.user),
+            google: store.getConnectionForSlackUser("google", homeEvent.user),
+            jira: store.getConnectionForSlackUser("jira", homeEvent.user),
+            slack: store.getConnectionForSlackUser("slack", homeEvent.user)
+          }
+        })
+      });
+    } catch (error) {
+      logger.error(formatLogError(error));
+    }
+  });
+
   app.event("app_mention", async ({ body, event, client, logger }) => {
     const mention = event as {
       user?: string;
@@ -347,6 +390,12 @@ export function createSlackRuntime(
         {
           createGitHubOAuthUrl: (slackUserId) =>
             buildGitHubOAuthUrl(config, store.createOAuthState(slackUserId)),
+          ...(config.googleClientId && config.googleClientSecret
+            ? {
+                createGoogleOAuthUrl: (slackUserId: string) =>
+                  buildGoogleOAuthUrl(config, store.createOAuthState(slackUserId))
+              }
+            : {}),
           ...(config.jiraClientId && config.jiraClientSecret
             ? {
                 createJiraOAuthUrl: (slackUserId: string) =>
@@ -510,6 +559,12 @@ export function createSlackRuntime(
         {
           createGitHubOAuthUrl: (slackUserId) =>
             buildGitHubOAuthUrl(config, store.createOAuthState(slackUserId)),
+          ...(config.googleClientId && config.googleClientSecret
+            ? {
+                createGoogleOAuthUrl: (slackUserId: string) =>
+                  buildGoogleOAuthUrl(config, store.createOAuthState(slackUserId))
+              }
+            : {}),
           ...(config.jiraClientId && config.jiraClientSecret
             ? {
                 createJiraOAuthUrl: (slackUserId: string) =>
@@ -1334,7 +1389,7 @@ export function parseAgentCommand(text: string): AgentCommand {
   return { kind: "help" };
 }
 
-export function buildAuthResponse(input: {
+type ProviderConnectionViewInput = {
   githubUrl: string;
   googleUrl: string | null;
   jiraUrl: string | null;
@@ -1345,15 +1400,47 @@ export function buildAuthResponse(input: {
     jira: ProviderConnection | null;
     slack: ProviderConnection | null;
   };
-}) {
-  const github = formatConnectionStatus(input.connections?.github, "github");
-  const google = formatConnectionStatus(input.connections?.google, "google");
-  const jira = formatConnectionStatus(input.connections?.jira, "jira");
-  const slack = formatConnectionStatus(input.connections?.slack, "slack");
+};
 
+export function buildAppHomeView(input: ProviderConnectionViewInput) {
+  return {
+    type: "home" as const,
+    blocks: [
+      {
+        type: "header",
+        text: {
+          type: "plain_text",
+          text: "Burble"
+        }
+      },
+      {
+        type: "section",
+        text: {
+          type: "mrkdwn",
+          text: "Connect provider accounts so Burble and your agent runtime can use them on your behalf."
+        }
+      },
+      {
+        type: "divider"
+      },
+      ...buildProviderConnectionBlocks(input),
+      {
+        type: "context",
+        elements: [
+          {
+            type: "mrkdwn",
+            text: "You can also manage connections with `/auth`."
+          }
+        ]
+      }
+    ]
+  };
+}
+
+export function buildAuthResponse(input: ProviderConnectionViewInput) {
   return {
     response_type: "ephemeral" as const,
-    text: "Burble connections: GitHub, Jira, and Slack search.",
+    text: "Burble connections: GitHub, Google Workspace, Jira, and Slack search.",
     blocks: [
       {
         type: "header",
@@ -1362,88 +1449,7 @@ export function buildAuthResponse(input: {
           text: "Connections"
         }
       },
-      {
-        type: "section",
-        text: {
-          type: "mrkdwn",
-          text: `*GitHub*\n${github}`
-        },
-        accessory: {
-          type: "button",
-          text: {
-            type: "plain_text",
-            text: input.connections?.github ? "Reconnect" : "Connect"
-          },
-          url: input.githubUrl,
-          action_id: "connect_github"
-        }
-      },
-      {
-        type: "section",
-        text: {
-          type: "mrkdwn",
-          text: input.jiraUrl
-            ? `*Atlassian Jira*\n${jira}`
-            : "*Atlassian Jira*\nJira OAuth is not configured."
-        },
-        ...(input.jiraUrl
-          ? {
-              accessory: {
-                type: "button",
-                text: {
-                type: "plain_text",
-                text: input.connections?.jira ? "Reconnect" : "Connect"
-              },
-              url: input.jiraUrl,
-              action_id: "connect_jira"
-              }
-            }
-          : {})
-      },
-      {
-        type: "section",
-        text: {
-          type: "mrkdwn",
-          text: input.googleUrl
-            ? `*Google Workspace*\n${google}`
-            : "*Google Workspace*\nGoogle OAuth is not configured."
-        },
-        ...(input.googleUrl
-          ? {
-              accessory: {
-                type: "button",
-                text: {
-                  type: "plain_text",
-                  text: input.connections?.google ? "Reconnect" : "Connect"
-                },
-                url: input.googleUrl,
-                action_id: "connect_google"
-              }
-            }
-          : {})
-      },
-      {
-        type: "section",
-        text: {
-          type: "mrkdwn",
-          text: input.slackUrl
-            ? `*Slack search*\n${slack}`
-            : "*Slack search*\nSlack OAuth is not configured."
-        },
-        ...(input.slackUrl
-          ? {
-              accessory: {
-                type: "button",
-                text: {
-                type: "plain_text",
-                text: input.connections?.slack ? "Reconnect" : "Connect"
-              },
-              url: input.slackUrl,
-              action_id: "connect_slack"
-              }
-            }
-          : {})
-      },
+      ...buildProviderConnectionBlocks(input),
       {
         type: "context",
         elements: [
@@ -1454,6 +1460,90 @@ export function buildAuthResponse(input: {
         ]
       }
     ]
+  };
+}
+
+function buildProviderConnectionBlocks(input: ProviderConnectionViewInput) {
+  return [
+    buildProviderConnectionBlock({
+      title: "GitHub",
+      status: formatConnectionStatus(input.connections?.github, "github"),
+      configured: true,
+      url: input.githubUrl,
+      connected: Boolean(input.connections?.github),
+      actionId: "connect_github",
+      usage: "Issues, pull requests, repository metadata and approved write actions"
+    }),
+    buildProviderConnectionBlock({
+      title: "Google Workspace",
+      status: input.googleUrl
+        ? formatConnectionStatus(input.connections?.google, "google")
+        : "Google OAuth is not configured.",
+      configured: Boolean(input.googleUrl),
+      url: input.googleUrl,
+      connected: Boolean(input.connections?.google),
+      actionId: "connect_google",
+      usage: "Drive files, Calendar events, Gmail search and drafts"
+    }),
+    buildProviderConnectionBlock({
+      title: "Atlassian Jira",
+      status: input.jiraUrl
+        ? formatConnectionStatus(input.connections?.jira, "jira")
+        : "Jira OAuth is not configured.",
+      configured: Boolean(input.jiraUrl),
+      url: input.jiraUrl,
+      connected: Boolean(input.connections?.jira),
+      actionId: "connect_jira",
+      usage: "Jira issues, projects, users, comments and approved workflow actions"
+    }),
+    buildProviderConnectionBlock({
+      title: "Slack search",
+      status: input.slackUrl
+        ? formatConnectionStatus(input.connections?.slack, "slack")
+        : "Slack OAuth is not configured.",
+      configured: Boolean(input.slackUrl),
+      url: input.slackUrl,
+      connected: Boolean(input.connections?.slack),
+      actionId: "connect_slack",
+      usage: "User search and message search through your Slack identity"
+    })
+  ];
+}
+
+function buildProviderConnectionBlock(input: {
+  title: string;
+  status: string;
+  configured: boolean;
+  url: string | null;
+  connected: boolean;
+  actionId: string;
+  usage: string;
+}) {
+  return {
+    type: "section",
+    fields: [
+      {
+        type: "mrkdwn",
+        text: `*${input.title}*\n${input.status}`
+      },
+      {
+        type: "mrkdwn",
+        text: `*Used for*\n${input.usage}`
+      }
+    ],
+    ...(input.configured && input.url
+      ? {
+          accessory: {
+            type: "button",
+            text: {
+              type: "plain_text",
+              text: input.connected ? "Reconnect" : "Connect"
+            },
+            url: input.url,
+            action_id: input.actionId
+          }
+        }
+      : {})
   };
 }
 
