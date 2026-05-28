@@ -488,7 +488,7 @@ export function createSlackRuntime(
             slackUserId: directMessage.user,
             email
           },
-          text: directMessage.text.trim(),
+          text: directMessage.text?.trim() ?? "",
           ...buildConversationAttachments(directMessage.files)
         },
         {
@@ -2063,18 +2063,22 @@ export function summarizeSlackPayload(body: unknown): string {
 export function shouldHandleDirectMessageEvent(
   event: SlackDirectMessageEvent
 ): event is Required<
-  Pick<SlackDirectMessageEvent, "channel" | "user" | "text" | "ts">
+  Pick<SlackDirectMessageEvent, "channel" | "user" | "ts">
 > &
   SlackDirectMessageEvent {
+  const hasText =
+    typeof event.text === "string" && event.text.trim().length > 0;
+  const hasFiles = Array.isArray(event.files) && event.files.length > 0;
+
   return (
     event.channel_type === "im" &&
     Boolean(event.channel) &&
     Boolean(event.user) &&
-    typeof event.text === "string" &&
+    (hasText || hasFiles) &&
     Boolean(event.ts) &&
-    !event.subtype &&
+    (!event.subtype || event.subtype === "file_share") &&
     !event.bot_id &&
-    !event.text.trim().startsWith("/")
+    !(typeof event.text === "string" && event.text.trim().startsWith("/"))
   );
 }
 
