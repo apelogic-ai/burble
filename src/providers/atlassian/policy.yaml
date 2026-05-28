@@ -1,0 +1,6 @@
+allowedMutatingTools:
+  - addcommenttojiraissue
+  - addworklogtojiraissue
+  - createjiraissue
+  - editjiraissue
+  - transitionjiraissue

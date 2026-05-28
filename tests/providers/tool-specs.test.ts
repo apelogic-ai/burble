@@ -1,4 +1,8 @@
 import { describe, expect, test } from "bun:test";
+import {
+  allowedMutatingAtlassianMcpTools,
+  atlassianProviderToolSpecs
+} from "../../src/providers/atlassian/tool-specs";
 import { githubProviderToolSpecs } from "../../src/providers/github/tool-specs";
 import { googleProviderToolSpecs } from "../../src/providers/google/tool-specs";
 import { jiraProviderToolSpecs } from "../../src/providers/jira/tool-specs";
@@ -107,5 +111,29 @@ describe("provider tool specs", () => {
           tool.implementation.length > 0
       )
     ).toBe(true);
+  });
+
+  test("loads Atlassian facade metadata and policy from YAML", () => {
+    const names = atlassianProviderToolSpecs.map((tool) => tool.name);
+
+    expect(names).toEqual([
+      "atlassian_list_mcp_tools",
+      "atlassian_call_mcp_tool"
+    ]);
+    expect(allowedMutatingAtlassianMcpTools.has("createjiraissue")).toBe(true);
+  });
+
+  test("validates object inputs from YAML", () => {
+    const callTool = atlassianProviderToolSpecs.find(
+      (tool) => tool.name === "atlassian_call_mcp_tool"
+    );
+    expect(callTool).toBeDefined();
+
+    const schema = providerToolInputSchema(callTool!);
+
+    expect(schema.arguments.safeParse({ jql: "assignee = currentUser()" }).success).toBe(
+      true
+    );
+    expect(schema.arguments.safeParse("not-json-object").success).toBe(false);
   });
 });

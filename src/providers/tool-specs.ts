@@ -17,7 +17,8 @@ export type ProviderToolInputSpec =
   | ProviderNumberInputSpec
   | ProviderBooleanInputSpec
   | ProviderEnumInputSpec
-  | ProviderArrayInputSpec;
+  | ProviderArrayInputSpec
+  | ProviderObjectInputSpec;
 
 type BaseInputSpec = {
   optional?: boolean;
@@ -57,6 +58,10 @@ type ProviderArrayInputSpec = BaseInputSpec & {
   max?: number;
   itemMin?: number;
   itemMax?: number;
+};
+
+type ProviderObjectInputSpec = BaseInputSpec & {
+  type: "object";
 };
 
 type ProviderToolSpecDocument = {
@@ -125,6 +130,9 @@ function zodForInputSpec(spec: ProviderToolInputSpec): z.ZodType {
       schema = arraySchema;
       break;
     }
+    case "object":
+      schema = z.record(z.string(), z.unknown());
+      break;
   }
 
   if (spec.description) {
@@ -242,6 +250,8 @@ function parseInputSpec(parsed: unknown, source: string): ProviderToolInputSpec 
         itemMax: readOptionalNumber(parsed, "itemMax", source)
       };
     }
+    case "object":
+      return { ...base, type };
     default:
       throw new Error(`Unsupported provider input spec type ${type} at ${source}`);
   }

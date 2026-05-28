@@ -1,19 +1,24 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import * as z from "zod/v4";
 import type { Config } from "../config";
-import type { AgentRuntimeRecord, TokenStore } from "../db";
+import type { AgentRuntimeRecord, ProviderConnection, TokenStore } from "../db";
 import { refreshJiraAccessToken } from "../jira";
+import {
+  allowedMutatingAtlassianMcpTools,
+  atlassianProviderToolSpecs
+} from "../providers/atlassian/tool-specs";
+import { providerToolInputSchema } from "../providers/tool-specs";
 import {
   isJiraAuthErrorResult,
   type JiraToolDeps,
   withFreshJiraToken
 } from "../tools/jira";
+import type { ToolResult } from "../tools/types";
+import { verifyJiraAuthForOpaqueAtlassianMcpError } from "./atlassian-auth";
 import {
   logAtlassianMcpCallFailure,
   logAtlassianMcpCallFinish,
   logAtlassianMcpCallStart
 } from "./atlassian-logging";
-import { verifyJiraAuthForOpaqueAtlassianMcpError } from "./atlassian-auth";
 import {
   mcpToolResult,
   type ProviderMcpDeps,
@@ -26,6 +31,12 @@ import {
   type UpstreamMcpToolResult
 } from "./upstream-http-client";
 
+type AtlassianToolArgs = Record<string, unknown>;
+type AtlassianMcpHandler = (
+  connection: ProviderConnection,
+  args: AtlassianToolArgs
+) => Promise<ToolResult<unknown>>;
+
 export function registerAtlassianMcpTools(input: {
   server: McpServer;
   config: Config;
@@ -33,138 +44,143 @@ export function registerAtlassianMcpTools(input: {
   runtime: AgentRuntimeRecord;
   deps: JiraToolDeps & ProviderMcpDeps;
 }): void {
-  input.server.registerTool(
-    "atlassian_list_mcp_tools",
-    {
-      title: "Atlassian MCP tools",
-      description:
-        "List allowed tool metadata advertised by the upstream Atlassian MCP server for this Slack user's connected Jira account.",
-      inputSchema: {}
-    },
-    async () =>
-      mcpToolResult(
-        await withConnection<
-          | Array<{ name: string; title?: string; description?: string }>
-          | { error: string; message: string }
-        >(input.store, input.runtime, "jira", async (connection) => {
-          const tools = await withFreshJiraToken(
-            {
-              ...input.deps,
-              refreshJiraAccessToken: (refreshToken) =>
-                refreshJiraAccessToken(input.config, refreshToken),
-              saveJiraConnection: (updatedConnection) =>
-                input.store.upsertProviderConnection(updatedConnection)
-            },
-            connection,
-            (accessToken) =>
-              (input.deps.listAtlassianMcpTools ?? defaultListAtlassianMcpTools)({
-                url: input.config.atlassianMcpUrl,
-                accessToken
-              })
-          );
-          if (isJiraAuthErrorResult(tools)) {
-            return tools;
-          }
+  const handlers = createAtlassianMcpHandlers(input);
 
-          return {
-            classification: "user_private",
-            content: tools
-              .filter((tool) => isAllowedAtlassianMcpToolName(tool.name))
-              .slice(0, 50)
-              .map((tool) => ({
-                name: tool.name,
-                ...(tool.title ? { title: tool.title } : {}),
-                ...(tool.description ? { description: tool.description } : {}),
-                ...("inputSchema" in tool
-                  ? { inputSchema: sanitizeMcpInputSchema(tool.inputSchema) }
-                  : {})
-              }))
-          };
-        })
-      )
-  );
+  for (const spec of atlassianProviderToolSpecs) {
+    const handler = handlers[spec.implementation];
+    if (!handler) {
+      throw new Error(`Missing Atlassian MCP handler for ${spec.implementation}`);
+    }
 
-  input.server.registerTool(
-    "atlassian_call_mcp_tool",
-    {
-      title: "Atlassian MCP allowed tool call",
-      description:
-        "Call an allowlisted upstream Atlassian MCP tool with this Slack user's connected Jira identity.",
-      inputSchema: {
-        name: z.string().min(1).describe("Upstream Atlassian MCP tool name"),
-        arguments: z
-          .record(z.string(), z.unknown())
-          .optional()
-          .describe("JSON arguments for the upstream MCP tool")
+    input.server.registerTool(
+      spec.name,
+      {
+        title: spec.title,
+        description: spec.description,
+        inputSchema: providerToolInputSchema(spec)
+      },
+      async (args) =>
+        mcpToolResult(
+          await withConnection(input.store, input.runtime, "jira", (connection) =>
+            handler(connection, args as AtlassianToolArgs)
+          )
+        )
+    );
+  }
+}
+
+function createAtlassianMcpHandlers(input: {
+  config: Config;
+  store: TokenStore;
+  runtime: AgentRuntimeRecord;
+  deps: JiraToolDeps & ProviderMcpDeps;
+}): Record<string, AtlassianMcpHandler> {
+  return {
+    listMcpTools: async (connection) => {
+      const tools = await withFreshJiraToken(
+        {
+          ...input.deps,
+          refreshJiraAccessToken: (refreshToken) =>
+            refreshJiraAccessToken(input.config, refreshToken),
+          saveJiraConnection: (updatedConnection) =>
+            input.store.upsertProviderConnection(updatedConnection)
+        },
+        connection,
+        (accessToken) =>
+          (input.deps.listAtlassianMcpTools ?? defaultListAtlassianMcpTools)({
+            url: input.config.atlassianMcpUrl,
+            accessToken
+          })
+      );
+      if (isJiraAuthErrorResult(tools)) {
+        return tools;
       }
+
+      return {
+        classification: "user_private",
+        content: tools
+          .filter((tool) => isAllowedAtlassianMcpToolName(tool.name))
+          .slice(0, 50)
+          .map((tool) => ({
+            name: tool.name,
+            ...(tool.title ? { title: tool.title } : {}),
+            ...(tool.description ? { description: tool.description } : {}),
+            ...("inputSchema" in tool
+              ? { inputSchema: sanitizeMcpInputSchema(tool.inputSchema) }
+              : {})
+          }))
+      };
     },
-    async ({ name, arguments: args }) =>
-      mcpToolResult(
-        await withConnection<
-          | { toolName: string; result: UpstreamMcpToolResult }
-          | { error: string; message: string }
-        >(input.store, input.runtime, "jira", async (connection) => {
-          if (!isAllowedAtlassianMcpToolName(name)) {
-            return {
-              classification: "user_private",
-              content: {
-                error: "atlassian_mcp_tool_not_allowed",
-                message: `Atlassian MCP tool \`${name}\` is not enabled for use.`
-              }
-            };
-          }
 
-          const result = await withFreshJiraToken(
-            {
-              ...input.deps,
-              refreshJiraAccessToken: (refreshToken) =>
-                refreshJiraAccessToken(input.config, refreshToken),
-              saveJiraConnection: (updatedConnection) =>
-                input.store.upsertProviderConnection(updatedConnection)
-            },
-            connection,
-            async (accessToken) => {
-              logAtlassianMcpCallStart("mcp", input.runtime.id, name, args);
-              try {
-                const upstreamResult = await (input.deps.callAtlassianMcpTool ??
-                  defaultCallAtlassianMcpTool)({
-                  url: input.config.atlassianMcpUrl,
-                  accessToken,
-                  name,
-                  arguments: args
-                });
-                logAtlassianMcpCallFinish(
-                  "mcp",
-                  input.runtime.id,
-                  name,
-                  upstreamResult
-                );
-                await verifyJiraAuthForOpaqueAtlassianMcpError(
-                  upstreamResult,
-                  accessToken,
-                  { getJiraUser: input.deps.getJiraUser }
-                );
-                return upstreamResult;
-              } catch (error) {
-                logAtlassianMcpCallFailure("mcp", input.runtime.id, name, error);
-                throw error;
-              }
-            }
+    callMcpTool: async (connection, args) => {
+      const name = stringArg(args, "name");
+      const toolArguments = optionalObjectArg(args, "arguments");
+
+      if (!isAllowedAtlassianMcpToolName(name)) {
+        return {
+          classification: "user_private",
+          content: {
+            error: "atlassian_mcp_tool_not_allowed",
+            message: `Atlassian MCP tool \`${name}\` is not enabled for use.`
+          }
+        };
+      }
+
+      const result = await withFreshJiraToken(
+        {
+          ...input.deps,
+          refreshJiraAccessToken: (refreshToken) =>
+            refreshJiraAccessToken(input.config, refreshToken),
+          saveJiraConnection: (updatedConnection) =>
+            input.store.upsertProviderConnection(updatedConnection)
+        },
+        connection,
+        async (accessToken) => {
+          logAtlassianMcpCallStart(
+            "mcp",
+            input.runtime.id,
+            name,
+            toolArguments
           );
-          if (isJiraAuthErrorResult(result)) {
-            return result;
+          try {
+            const upstreamResult = await (input.deps.callAtlassianMcpTool ??
+              defaultCallAtlassianMcpTool)({
+              url: input.config.atlassianMcpUrl,
+              accessToken,
+              name,
+              arguments: toolArguments
+            });
+            logAtlassianMcpCallFinish(
+              "mcp",
+              input.runtime.id,
+              name,
+              upstreamResult
+            );
+            await verifyJiraAuthForOpaqueAtlassianMcpError(
+              upstreamResult,
+              accessToken,
+              { getJiraUser: input.deps.getJiraUser }
+            );
+            return upstreamResult;
+          } catch (error) {
+            logAtlassianMcpCallFailure("mcp", input.runtime.id, name, error);
+            throw error;
           }
+        }
+      );
+      if (isJiraAuthErrorResult(result)) {
+        return result;
+      }
 
-          return {
-            classification: "user_private",
-            content: {
-              toolName: name,
-              result: sanitizeUpstreamMcpToolResult(result)
-            }
-          };
-        })
-      )
-  );
+      return {
+        classification: "user_private",
+        content: {
+          toolName: name,
+          result: sanitizeUpstreamMcpToolResult(result)
+        }
+      };
+    }
+  };
 }
 
 function defaultListAtlassianMcpTools(input: {
@@ -198,14 +214,6 @@ function defaultCallAtlassianMcpTool(input: {
     }
   );
 }
-
-const allowedMutatingAtlassianMcpTools = new Set([
-  "addcommenttojiraissue",
-  "addworklogtojiraissue",
-  "createjiraissue",
-  "editjiraissue",
-  "transitionjiraissue"
-]);
 
 export function isAllowedAtlassianMcpToolName(name: string): boolean {
   const normalized = name.trim().toLowerCase();
@@ -268,4 +276,15 @@ function sanitizeMcpContentItem(item: unknown): unknown {
   }
 
   return record;
+}
+
+function stringArg(args: AtlassianToolArgs, key: string): string {
+  return args[key] as string;
+}
+
+function optionalObjectArg(
+  args: AtlassianToolArgs,
+  key: string
+): Record<string, unknown> | undefined {
+  return args[key] !== undefined ? (args[key] as Record<string, unknown>) : undefined;
 }
