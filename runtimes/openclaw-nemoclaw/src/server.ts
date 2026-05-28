@@ -208,12 +208,22 @@ async function handleLocalBurbleMcpRequest(
 
   const bodyText = await request.text();
   const payload = readMcpJsonRpcPayload(bodyText);
-  if (isMcpToolCall(payload) && !hasMcpToolCallRouteId(payload)) {
-    return mcpJsonRpcErrorResponse(
-      readMcpJsonRpcId(payload),
-      -32602,
-      "Burble provider tools require a routeId argument."
-    );
+  if (isMcpToolCall(payload)) {
+    const routeId = readMcpToolCallRouteId(payload);
+    if (!routeId) {
+      return mcpJsonRpcErrorResponse(
+        readMcpJsonRpcId(payload),
+        -32602,
+        "Burble provider tools require a routeId argument."
+      );
+    }
+    if (!isBurbleConversationRouteId(routeId)) {
+      return mcpJsonRpcErrorResponse(
+        readMcpJsonRpcId(payload),
+        -32602,
+        "Burble provider tool routeId must be the active convrt_* conversation route, not a cron job id, run id, session id, or UUID."
+      );
+    }
   }
 
   const upstreamResponse = await fetch(config.mcpGatewayUrl, {
@@ -774,20 +784,26 @@ function isMcpToolCall(
   );
 }
 
-function hasMcpToolCallRouteId(payload: {
+function readMcpToolCallRouteId(payload: {
   method: "tools/call";
   params?: unknown;
-}): boolean {
+}): string | null {
   const params = payload.params;
   if (!params || typeof params !== "object" || Array.isArray(params)) {
-    return false;
+    return null;
   }
   const args = (params as Record<string, unknown>).arguments;
   if (!args || typeof args !== "object" || Array.isArray(args)) {
-    return false;
+    return null;
   }
   const routeId = (args as Record<string, unknown>).routeId;
-  return typeof routeId === "string" && routeId.trim().length > 0;
+  return typeof routeId === "string" && routeId.trim().length > 0
+    ? routeId.trim()
+    : null;
+}
+
+function isBurbleConversationRouteId(routeId: string): boolean {
+  return /^convrt_[A-Za-z0-9_-]+$/.test(routeId);
 }
 
 function readMcpJsonRpcId(payload: unknown): unknown {
@@ -866,7 +882,9 @@ function addRouteIdToMcpToolSchema(tool: unknown): unknown {
         routeId: {
           type: "string",
           minLength: 1,
-          description: "Burble conversation route id for this Slack conversation."
+          pattern: "^convrt_[A-Za-z0-9_-]+$",
+          description:
+            "Exact Burble convrt_* conversation route id for this Slack conversation. Never use a cron job id, run id, session id, or UUID."
         }
       },
       required: Array.from(new Set([...required, "routeId"]))
