@@ -21,6 +21,7 @@ export type ProviderToolInputSpec =
 
 type BaseInputSpec = {
   optional?: boolean;
+  nullable?: boolean;
   description?: string;
 };
 
@@ -130,6 +131,10 @@ function zodForInputSpec(spec: ProviderToolInputSpec): z.ZodType {
     schema = schema.describe(spec.description);
   }
 
+  if (spec.nullable) {
+    schema = schema.nullable();
+  }
+
   return spec.optional ? schema.optional() : schema;
 }
 
@@ -190,6 +195,7 @@ function parseInputSpec(parsed: unknown, source: string): ProviderToolInputSpec 
   const type = readRequiredString(parsed, "type", source);
   const base = {
     optional: readOptionalBoolean(parsed, "optional", source),
+    nullable: readOptionalBoolean(parsed, "nullable", source),
     description: readOptionalString(parsed, "description", source)
   };
 

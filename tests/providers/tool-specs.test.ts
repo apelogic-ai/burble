@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { githubProviderToolSpecs } from "../../src/providers/github/tool-specs";
 import { googleProviderToolSpecs } from "../../src/providers/google/tool-specs";
+import { jiraProviderToolSpecs } from "../../src/providers/jira/tool-specs";
 import { providerToolInputSchema } from "../../src/providers/tool-specs";
 
 describe("provider tool specs", () => {
@@ -62,5 +63,33 @@ describe("provider tool specs", () => {
 
     expect(schema.to.safeParse(["person@example.com"]).success).toBe(true);
     expect(schema.to.safeParse(["not-an-email"]).success).toBe(false);
+  });
+
+  test("loads Jira MCP tool metadata from YAML", () => {
+    const names = jiraProviderToolSpecs.map((tool) => tool.name);
+
+    expect(names).toContain("jira_search_issues");
+    expect(names).toContain("jira_create_issue");
+    expect(names).toContain("jira_add_comment");
+    expect(
+      jiraProviderToolSpecs.every(
+        (tool) =>
+          tool.provider === "jira" &&
+          tool.alias.startsWith("jira.") &&
+          tool.implementation.length > 0
+      )
+    ).toBe(true);
+  });
+
+  test("validates nullable Jira fields from YAML", () => {
+    const editIssue = jiraProviderToolSpecs.find(
+      (tool) => tool.name === "jira_edit_issue"
+    );
+    expect(editIssue).toBeDefined();
+
+    const schema = providerToolInputSchema(editIssue!);
+
+    expect(schema.assigneeAccountId.safeParse("acct-123").success).toBe(true);
+    expect(schema.assigneeAccountId.safeParse(null).success).toBe(true);
   });
 });

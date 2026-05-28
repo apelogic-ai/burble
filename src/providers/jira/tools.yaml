@@ -1,0 +1,290 @@
+provider: jira
+tools:
+  - name: jira_get_authenticated_user
+    alias: jira.getAuthenticatedUser
+    implementation: getAuthenticatedUser
+    title: Jira authenticated user
+    description: Return the Jira identity connected to this Slack user.
+    input: {}
+
+  - name: jira_list_assigned_issues
+    alias: jira.listAssignedIssues
+    implementation: listAssignedIssues
+    title: Jira assigned issues
+    description: List Jira issues assigned to this Slack user.
+    input: {}
+
+  - name: jira_list_accessible_resources
+    alias: jira.listAccessibleResources
+    implementation: listAccessibleResources
+    title: Jira accessible resources
+    description: List Atlassian resources visible to this Slack user's connected Jira account. Use the resource url as Jira MCP cloudId for the Atlassian Rovo MCP server.
+    input: {}
+
+  - name: jira_list_visible_projects
+    alias: jira.listVisibleProjects
+    implementation: listVisibleProjects
+    title: Jira visible projects
+    description: List Jira projects visible to this Slack user's connected Jira account. Use query='DM', action='create', and expandIssueTypes=true to confirm create access and issue types before creating a Jira issue.
+    input:
+      query:
+        type: string
+        optional: true
+        description: Optional project key or name search
+      action:
+        type: enum
+        values: [view, browse, edit, create]
+        optional: true
+        description: Optional Jira project action permission filter
+      expandIssueTypes:
+        type: boolean
+        optional: true
+        description: Whether to include project issue types
+
+  - name: jira_search_users
+    alias: jira.searchUsers
+    implementation: searchUsers
+    title: Jira user search
+    description: Search Jira users visible to this Slack user's connected Jira account. Use this to resolve assignee account IDs from emails or names.
+    input:
+      query:
+        type: string
+        min: 1
+        description: Jira user email, display name, or query
+
+  - name: jira_create_issue
+    alias: jira.createIssue
+    implementation: createIssue
+    title: Jira create issue
+    description: Create a Jira issue via Jira REST with this Slack user's connected Jira account. Use after confirming project and issue type.
+    input:
+      projectKey:
+        type: string
+        min: 1
+        description: Jira project key
+      issueTypeName:
+        type: string
+        optional: true
+        description: Jira issue type name
+      issueTypeId:
+        type: string
+        optional: true
+        description: Jira issue type ID
+      summary:
+        type: string
+        min: 1
+        description: Issue summary
+      description:
+        type: string
+        optional: true
+        description: Plain text issue description
+      assigneeAccountId:
+        type: string
+        optional: true
+        description: Optional Jira account ID for the assignee
+
+  - name: jira_edit_issue
+    alias: jira.editIssue
+    implementation: editIssue
+    title: Jira edit issue
+    description: Edit Jira issue fields via Jira REST with this Slack user's connected Jira account.
+    input:
+      issueKey:
+        type: string
+        min: 1
+        description: Jira issue key
+      summary:
+        type: string
+        optional: true
+        description: New issue summary
+      description:
+        type: string
+        optional: true
+        description: New plain text description
+      assigneeAccountId:
+        type: string
+        nullable: true
+        optional: true
+        description: Jira account ID for assignee, or null to unassign
+
+  - name: jira_get_issue
+    alias: jira.getIssue
+    implementation: getIssue
+    title: Jira get issue
+    description: Get a Jira issue by key, including summary, status, labels, and text description.
+    input:
+      issueKey:
+        type: string
+        min: 1
+        description: Jira issue key
+
+  - name: jira_update_issue
+    alias: jira.updateIssue
+    implementation: updateIssue
+    title: Jira update issue
+    description: "Update Jira issue fields: summary, description, assignee, or full labels set."
+    input:
+      issueKey:
+        type: string
+        min: 1
+        description: Jira issue key
+      summary:
+        type: string
+        min: 1
+        optional: true
+      description:
+        type: string
+        optional: true
+      assigneeAccountId:
+        type: string
+        nullable: true
+        optional: true
+        description: Jira account ID for assignee, or null to unassign
+      labels:
+        type: array
+        items: string
+        itemMin: 1
+        max: 50
+        optional: true
+
+  - name: jira_add_comment
+    alias: jira.addComment
+    implementation: addComment
+    title: Jira add comment
+    description: Add a plain-text comment to a Jira issue.
+    input:
+      issueKey:
+        type: string
+        min: 1
+        description: Jira issue key
+      body:
+        type: string
+        min: 1
+        max: 65536
+        description: Comment body
+
+  - name: jira_transition_issue
+    alias: jira.transitionIssue
+    implementation: transitionIssue
+    title: Jira transition issue
+    description: Transition a Jira issue by transition id or by matching available transition name.
+    input:
+      issueKey:
+        type: string
+        min: 1
+        description: Jira issue key
+      transitionId:
+        type: string
+        min: 1
+        optional: true
+      transitionName:
+        type: string
+        min: 1
+        optional: true
+
+  - name: jira_add_labels
+    alias: jira.addLabels
+    implementation: addLabels
+    title: Jira add labels
+    description: Add labels to a Jira issue.
+    input:
+      issueKey:
+        type: string
+        min: 1
+        description: Jira issue key
+      labels:
+        type: array
+        items: string
+        itemMin: 1
+        min: 1
+        max: 50
+
+  - name: jira_remove_labels
+    alias: jira.removeLabels
+    implementation: removeLabels
+    title: Jira remove labels
+    description: Remove labels from a Jira issue.
+    input:
+      issueKey:
+        type: string
+        min: 1
+        description: Jira issue key
+      labels:
+        type: array
+        items: string
+        itemMin: 1
+        min: 1
+        max: 50
+
+  - name: jira_link_issues
+    alias: jira.linkIssues
+    implementation: linkIssues
+    title: Jira link issues
+    description: Create a Jira issue link between two issues.
+    input:
+      inwardIssueKey:
+        type: string
+        min: 1
+        description: Inward Jira issue key
+      outwardIssueKey:
+        type: string
+        min: 1
+        description: Outward Jira issue key
+      typeName:
+        type: string
+        min: 1
+        optional: true
+        description: Jira issue link type name. Defaults to Relates.
+      comment:
+        type: string
+        max: 65536
+        optional: true
+
+  - name: jira_create_subtask
+    alias: jira.createSubtask
+    implementation: createSubtask
+    title: Jira create subtask
+    description: Create a Jira subtask under an existing parent issue. Confirm the subtask issue type first when possible.
+    input:
+      parentIssueKey:
+        type: string
+        min: 1
+        description: Parent Jira issue key
+      summary:
+        type: string
+        min: 1
+        description: Subtask summary
+      projectKey:
+        type: string
+        min: 1
+        optional: true
+        description: Optional Jira project key
+      issueTypeName:
+        type: string
+        min: 1
+        optional: true
+        description: Subtask issue type name
+      issueTypeId:
+        type: string
+        min: 1
+        optional: true
+        description: Subtask issue type ID
+      description:
+        type: string
+        optional: true
+        description: Plain text subtask description
+      assigneeAccountId:
+        type: string
+        optional: true
+        description: Optional Jira assignee account ID
+
+  - name: jira_search_issues
+    alias: jira.searchIssues
+    implementation: searchIssues
+    title: Jira issue search
+    description: Search Jira issues visible to this Slack user's connected Jira account.
+    input:
+      jql:
+        type: string
+        min: 1
+        description: Jira JQL query
