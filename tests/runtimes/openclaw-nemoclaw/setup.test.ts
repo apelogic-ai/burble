@@ -65,8 +65,10 @@ describe("ensureOpenClawSetup", () => {
             default: true,
             identity: {
               name: "Burble",
+              nature: "AI copilot",
               theme: "Slack assistant",
-              emoji: ""
+              vibe: "concise and helpful",
+              emoji: ":robot_face:"
             }
           }
         ]
@@ -118,8 +120,10 @@ describe("ensureOpenClawSetup", () => {
             default: true,
             identity: {
               name: "Burble",
+              nature: "AI copilot",
               theme: "Slack assistant",
-              emoji: ""
+              vibe: "concise and helpful",
+              emoji: ":robot_face:"
             }
           }
         ]
