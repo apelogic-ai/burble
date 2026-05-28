@@ -332,6 +332,78 @@ describe("handleProviderMcpRequest", () => {
     store.close();
   });
 
+  test("executes Google Drive create text file under the runtime principal", async () => {
+    const issuer = createRuntimeJwtIssuer({ issuer: config.runtimeJwtIssuer });
+    const store = createTokenStore(":memory:");
+    const runtime = store.getOrCreateAgentRuntime({
+      workspaceId: "T123",
+      slackUserId: "U123",
+      engine: "openclaw",
+      endpointUrl: "http://runtime-u123:8080",
+      authTokenHash: "hash-u123",
+      statePath: "/data/runtimes/u123/state",
+      configPath: "/data/runtimes/u123/config/openclaw.json",
+      workspacePath: "/data/runtimes/u123/workspace"
+    });
+    store.upsertProviderConnection({
+      provider: "google",
+      email: "person@example.com",
+      slackUserId: "U123",
+      providerLogin: "person@apegpt.ai",
+      accessToken: "google-token",
+      refreshToken: null,
+      accessTokenExpiresAt: null
+    });
+    const token = issuer.issueRuntimeJwt({
+      audience: "http://agentgateway:3000/mcp",
+      runtimeId: runtime.id,
+      workspaceId: "T123",
+      slackUserId: "U123"
+    });
+
+    const response = await handleProviderMcpRequest(
+      config,
+      store,
+      issuer,
+      mcpRequest(
+        {
+          method: "tools/call",
+          params: {
+            name: "google_create_drive_text_file",
+            arguments: { name: "Test", text: "Test One" }
+          }
+        },
+        token
+      ),
+      {
+        createGoogleDriveTextFile: async (accessToken, input) => {
+          expect(accessToken).toBe("google-token");
+          expect(input).toEqual({ name: "Test", text: "Test One" });
+          return {
+            id: "file-1",
+            name: "Test",
+            mimeType: "text/plain",
+            webViewLink: "https://drive.google.com/file-1"
+          };
+        }
+      }
+    );
+    const body = readMcpBody(await response.text());
+    const toolResult = JSON.parse(body.result.content[0].text);
+
+    expect(response.status).toBe(200);
+    expect(toolResult).toEqual({
+      classification: "user_private",
+      content: {
+        id: "file-1",
+        name: "Test",
+        mimeType: "text/plain",
+        webViewLink: "https://drive.google.com/file-1"
+      }
+    });
+    store.close();
+  });
+
   test("executes Slack search tools under the runtime principal", async () => {
     const issuer = createRuntimeJwtIssuer({ issuer: config.runtimeJwtIssuer });
     const store = createTokenStore(":memory:");

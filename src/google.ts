@@ -19,6 +19,13 @@ export type GoogleDriveFile = {
   modifiedTime?: string;
 };
 
+export type GoogleDriveCreatedFile = {
+  id: string;
+  name: string;
+  mimeType?: string;
+  webViewLink?: string;
+};
+
 export type GoogleCalendarEvent = {
   id: string;
   summary?: string;
@@ -51,6 +58,7 @@ const googleScopes = [
   "email",
   "profile",
   "https://www.googleapis.com/auth/drive.metadata.readonly",
+  "https://www.googleapis.com/auth/drive.file",
   "https://www.googleapis.com/auth/calendar.readonly",
   "https://www.googleapis.com/auth/gmail.readonly"
 ];
@@ -180,6 +188,58 @@ export async function searchGoogleDriveFiles(
   }
 
   return body.files ?? [];
+}
+
+export async function createGoogleDriveTextFile(
+  token: string,
+  input: { name: string; text: string; mimeType?: string }
+): Promise<GoogleDriveCreatedFile> {
+  const url = new URL("https://www.googleapis.com/upload/drive/v3/files");
+  url.searchParams.set("uploadType", "multipart");
+  url.searchParams.set("fields", "id,name,mimeType,webViewLink");
+
+  const boundary = `burble_${crypto.randomUUID().replace(/-/g, "")}`;
+  const mimeType = input.mimeType ?? "text/plain";
+  const response = await fetch(url, {
+    method: "POST",
+    headers: {
+      ...googleHeaders(token),
+      "Content-Type": `multipart/related; boundary=${boundary}`
+    },
+    body: [
+      `--${boundary}`,
+      "Content-Type: application/json; charset=UTF-8",
+      "",
+      JSON.stringify({
+        name: input.name,
+        mimeType
+      }),
+      `--${boundary}`,
+      `Content-Type: ${mimeType}; charset=UTF-8`,
+      "",
+      input.text,
+      `--${boundary}--`,
+      ""
+    ].join("\r\n")
+  });
+
+  const body = (await response.json()) as {
+    id?: string;
+    name?: string;
+    mimeType?: string;
+    webViewLink?: string;
+    error?: { message?: string };
+  };
+  if (!response.ok || !body.id || !body.name) {
+    throw googleError(response, "Google Drive file creation failed", body.error?.message);
+  }
+
+  return {
+    id: body.id,
+    name: body.name,
+    ...(body.mimeType ? { mimeType: body.mimeType } : {}),
+    ...(body.webViewLink ? { webViewLink: body.webViewLink } : {})
+  };
 }
 
 export async function searchGoogleCalendarEvents(

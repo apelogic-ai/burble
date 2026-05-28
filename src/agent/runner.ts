@@ -393,6 +393,33 @@ async function runAiSdkAgent(
             );
           })
       });
+      tools.google_create_drive_text_file = tool({
+        description:
+          "Create a new app-owned text file in Google Drive using the authenticated Slack user's connected Google account.",
+        inputSchema: z.object({
+          name: z.string().min(1).max(200).describe("Drive file name"),
+          text: z.string().max(200_000).describe("Text body to write into the file"),
+          mimeType: z.string().optional().describe("Optional MIME type")
+        }),
+        execute: async ({ name, text, mimeType }) =>
+          executeTool("google_create_drive_text_file", async () => {
+            const connection = input.connections.google;
+            if (!connection) {
+              return missingGoogleConnection();
+            }
+
+            return record(
+              await deps.googleTools!.createDriveTextFile.execute({
+                connection,
+                input: {
+                  name,
+                  text,
+                  ...(mimeType ? { mimeType } : {})
+                }
+              })
+            );
+          })
+      });
       tools.google_search_calendar_events = tool({
         description:
           "Search upcoming Google Calendar events visible to the authenticated Slack user's connected Google account.",

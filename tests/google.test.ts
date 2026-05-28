@@ -5,6 +5,7 @@ import {
   exchangeGoogleCode,
   getGoogleUser,
   refreshGoogleAccessToken,
+  createGoogleDriveTextFile,
   searchGoogleDriveFiles
 } from "../src/google";
 
@@ -64,11 +65,56 @@ describe("buildGoogleOAuthUrl", () => {
       "https://www.googleapis.com/auth/drive.metadata.readonly"
     );
     expect(url.searchParams.get("scope")).toContain(
+      "https://www.googleapis.com/auth/drive.file"
+    );
+    expect(url.searchParams.get("scope")).toContain(
       "https://www.googleapis.com/auth/calendar.readonly"
     );
     expect(url.searchParams.get("scope")).toContain(
       "https://www.googleapis.com/auth/gmail.readonly"
     );
+  });
+
+  test("creates a Drive text file with multipart upload", async () => {
+    const originalFetch = globalThis.fetch;
+    let requestedUrl = "";
+    let requestedBody = "";
+    globalThis.fetch = (async (input, init) => {
+      requestedUrl = String(input);
+      requestedBody = String(init?.body);
+      const headers = new Headers(init?.headers);
+      expect(init?.method).toBe("POST");
+      expect(headers.get("authorization")).toBe("Bearer google-token");
+      expect(headers.get("content-type")).toContain("multipart/related");
+      return Response.json({
+        id: "file-1",
+        name: "Test",
+        mimeType: "text/plain",
+        webViewLink: "https://drive.google.com/file-1"
+      });
+    }) as typeof fetch;
+
+    try {
+      const file = await createGoogleDriveTextFile("google-token", {
+        name: "Test",
+        text: "Test One"
+      });
+      expect(file).toEqual({
+        id: "file-1",
+        name: "Test",
+        mimeType: "text/plain",
+        webViewLink: "https://drive.google.com/file-1"
+      });
+      const url = new URL(requestedUrl);
+      expect(url.origin + url.pathname).toBe(
+        "https://www.googleapis.com/upload/drive/v3/files"
+      );
+      expect(url.searchParams.get("uploadType")).toBe("multipart");
+      expect(requestedBody).toContain('"name":"Test"');
+      expect(requestedBody).toContain("Test One");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
   });
 });
 

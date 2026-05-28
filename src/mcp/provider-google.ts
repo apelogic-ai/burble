@@ -54,6 +54,36 @@ export function registerGoogleMcpTools(input: {
   );
 
   input.server.registerTool(
+    "google_create_drive_text_file",
+    {
+      title: "Google Drive create text file",
+      description:
+        "Create a new app-owned text file in Google Drive using this Slack user's connected Google account.",
+      inputSchema: {
+        name: z.string().min(1).max(200).describe("Drive file name"),
+        text: z.string().max(200_000).describe("Text body to write into the file"),
+        mimeType: z
+          .string()
+          .optional()
+          .describe("Optional MIME type. Defaults to text/plain.")
+      }
+    },
+    async ({ name, text, mimeType }) =>
+      mcpToolResult(
+        await withConnection(input.store, input.runtime, "google", (connection) =>
+          googleTools.createDriveTextFile.execute({
+            connection,
+            input: {
+              name,
+              text,
+              ...(mimeType ? { mimeType } : {})
+            }
+          })
+        )
+      )
+  );
+
+  input.server.registerTool(
     "google_search_calendar_events",
     {
       title: "Google Calendar event search",

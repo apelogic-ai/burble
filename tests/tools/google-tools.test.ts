@@ -19,6 +19,10 @@ describe("createGoogleTools", () => {
         email: "person@google.example"
       }),
       searchGoogleDriveFiles: async () => [],
+      createGoogleDriveTextFile: async () => ({
+        id: "file-1",
+        name: "Test"
+      }),
       searchGoogleCalendarEvents: async () => {
         throw new GoogleApiError("expired", 401);
       },
@@ -42,6 +46,10 @@ describe("createGoogleTools", () => {
         email: "person@google.example"
       }),
       searchGoogleDriveFiles: async () => [],
+      createGoogleDriveTextFile: async () => ({
+        id: "file-1",
+        name: "Test"
+      }),
       searchGoogleCalendarEvents: async () => {
         throw new GoogleApiError(
           "Google Calendar search failed: Request had insufficient authentication scopes",
@@ -70,6 +78,10 @@ describe("createGoogleTools", () => {
         email: "person@google.example"
       }),
       searchGoogleDriveFiles: async () => [],
+      createGoogleDriveTextFile: async () => ({
+        id: "file-1",
+        name: "Test"
+      }),
       searchGoogleCalendarEvents: async (token) => {
         expect(token).toBe("new-google-token");
         return [{ id: "event-1", summary: "Planning" }];
@@ -101,6 +113,48 @@ describe("createGoogleTools", () => {
       accessToken: "new-google-token",
       refreshToken: "old-refresh-token",
       accessTokenExpiresAt: "2026-05-26T08:00:00.000Z"
+    });
+  });
+
+  test("creates a Drive text file with caller token and sanitized result", async () => {
+    const tools = createGoogleTools({
+      getGoogleUser: async () => ({
+        email: "person@google.example"
+      }),
+      searchGoogleDriveFiles: async () => [],
+      createGoogleDriveTextFile: async (token, input) => {
+        expect(token).toBe("google-token");
+        expect(input).toEqual({
+          name: "Test",
+          text: "Test One"
+        });
+        return {
+          id: "file-1",
+          name: "Test",
+          mimeType: "text/plain",
+          webViewLink: "https://drive.google.com/file-1"
+        };
+      },
+      searchGoogleCalendarEvents: async () => [],
+      searchGoogleMailMessages: async () => []
+    });
+
+    const result = await tools.createDriveTextFile.execute({
+      connection,
+      input: {
+        name: "Test",
+        text: "Test One"
+      }
+    });
+
+    expect(result).toEqual({
+      classification: "user_private",
+      content: {
+        id: "file-1",
+        name: "Test",
+        mimeType: "text/plain",
+        webViewLink: "https://drive.google.com/file-1"
+      }
     });
   });
 });
