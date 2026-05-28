@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 export type RuntimeConfig = {
   port: number;
   runtimeId?: string | null;
+  runtimeHeartbeatIntervalMs?: number;
   toolGatewayUrl: string;
   internalToken: string;
   mcpGatewayUrl: string | null;
@@ -52,6 +53,10 @@ export function readRuntimeConfig(env: Env): RuntimeConfig {
   return {
     port: readPort(env.PORT ?? "8080"),
     ...(runtimeId ? { runtimeId } : {}),
+    runtimeHeartbeatIntervalMs: readPositiveInt(
+      env.BURBLE_RUNTIME_HEARTBEAT_INTERVAL_MS ?? "300000",
+      "BURBLE_RUNTIME_HEARTBEAT_INTERVAL_MS"
+    ),
     toolGatewayUrl: requiredEnv(env, "BURBLE_TOOL_GATEWAY_URL").replace(
       /\/+$/,
       ""

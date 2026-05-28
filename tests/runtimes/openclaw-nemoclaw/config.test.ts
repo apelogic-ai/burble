@@ -32,6 +32,7 @@ describe("readRuntimeConfig", () => {
         OPENCLAW_GATEWAY_PORT: "18790",
         OPENCLAW_GATEWAY_BIND: "loopback",
         OPENCLAW_GATEWAY_TOKEN: "configured-gateway-token",
+        BURBLE_RUNTIME_HEARTBEAT_INTERVAL_MS: "120000",
         AI_MODEL: "ollama:qwen3-coder:30b-cloud",
         OLLAMA_BASE_URL: "https://ollama.com/"
       })
@@ -63,6 +64,7 @@ describe("readRuntimeConfig", () => {
       openClawGatewayPort: 18790,
       openClawGatewayBind: "loopback",
       openClawGatewayToken: "configured-gateway-token",
+      runtimeHeartbeatIntervalMs: 120000,
       llmModel: "ollama:qwen3-coder:30b-cloud",
       ollamaBaseUrl: "https://ollama.com"
     });
@@ -78,6 +80,7 @@ describe("readRuntimeConfig", () => {
       engine: "deterministic",
       mcpGatewayUrl: null,
       runtimeJwt: null,
+      runtimeHeartbeatIntervalMs: 300000,
       openClawCommand: "openclaw",
       openClawAgent: "main",
       openClawTimeoutMs: 60000,

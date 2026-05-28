@@ -535,6 +535,28 @@ describe("handleToolGatewayRequest", () => {
     ]);
   });
 
+  test("lets a runtime refresh heartbeat without provider credentials or audit noise", async () => {
+    const runtimeEvents: unknown[] = [];
+    const touchedRuntimeIds: string[] = [];
+    const response = await handleToolGatewayRequest(
+      config,
+      createStore(null, runtime, runtimeEvents, null, touchedRuntimeIds),
+      "runtime.heartbeat",
+      request("runtime.heartbeat", {}, "runtime-token-u123", "rt_u123")
+    );
+
+    expect(response.status).toBe(200);
+    expect(touchedRuntimeIds).toEqual(["rt_u123"]);
+    expect(await response.json()).toEqual({
+      classification: "user_private",
+      content: {
+        ok: true,
+        runtimeId: "rt_u123"
+      }
+    });
+    expect(runtimeEvents).toEqual([]);
+  });
+
   test("lets a runtime send through a durable conversation route", async () => {
     const route: ConversationRouteRecord = {
       id: "convrt_abc123",
