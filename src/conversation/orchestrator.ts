@@ -115,7 +115,15 @@ export async function handleConversation(
 
     const result =
       intent === "github_pull_requests"
-        ? await deps.tools.github.listMyPullRequests.execute({ connection })
+        ? await deps.tools.github.listMyPullRequests.execute({
+            connection,
+            input: {
+              limit: parseRequestedItemLimit(request.text) ?? 10,
+              state: "open",
+              sort: "updated",
+              order: "desc"
+            }
+          })
         : intent === "github_issue_search"
           ? await deps.tools.github.searchIssues.execute({
               connection,
@@ -125,17 +133,12 @@ export async function handleConversation(
               connection
             });
 
-    const content =
-      intent === "github_pull_requests"
-        ? result.content.slice(0, parseRequestedItemLimit(request.text) ?? 10)
-        : result.content;
-
     return enforceVisibility(
       {
         visibility: "public",
         classification: result.classification,
         text: formatIssuesMessage(
-          content.map((issue) => ({
+          result.content.map((issue) => ({
             title: issue.title,
             html_url: issue.url
           }))

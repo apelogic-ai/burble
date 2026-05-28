@@ -246,9 +246,15 @@ async function runAiSdkAgent(
         })
       }),
       github_list_my_pull_requests: tool({
-        description: "List open GitHub pull requests authored by the Slack user.",
-        inputSchema: z.object({}),
-        execute: async () => executeTool("github_list_my_pull_requests", async () => {
+        description:
+          "List GitHub pull requests authored by the Slack user. Defaults to open PRs sorted by most recently updated.",
+        inputSchema: z.object({
+          limit: z.number().int().min(1).max(20).optional(),
+          state: z.enum(["open", "closed", "all"]).optional(),
+          sort: z.enum(["updated", "created", "comments"]).optional(),
+          order: z.enum(["desc", "asc"]).optional()
+        }),
+        execute: async (toolInput) => executeTool("github_list_my_pull_requests", async () => {
           const connection = input.connections.github;
           if (!connection) {
             return missingGitHubConnection();
@@ -256,7 +262,8 @@ async function runAiSdkAgent(
 
           return record(
             await deps.githubTools.listMyPullRequests.execute({
-              connection
+              connection,
+              input: toolInput
             })
           );
         })

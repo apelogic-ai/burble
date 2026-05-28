@@ -14,6 +14,23 @@ export type GitHubPullRequest = {
   title: string;
 };
 
+export type GitHubSearchSort = "created" | "updated" | "comments";
+export type GitHubSearchOrder = "asc" | "desc";
+export type GitHubPullRequestState = "open" | "closed" | "all";
+
+export type GitHubSearchOptions = {
+  perPage?: number;
+  sort?: GitHubSearchSort;
+  order?: GitHubSearchOrder;
+};
+
+export type ListMyPullRequestsOptions = {
+  limit?: number;
+  state?: GitHubPullRequestState;
+  sort?: GitHubSearchSort;
+  order?: GitHubSearchOrder;
+};
+
 type GitHubSearchResponse = {
   items?: GitHubIssue[];
   message?: string;
@@ -90,11 +107,18 @@ export async function listAssignedIssues(token: string): Promise<GitHubIssue[]> 
 
 export async function searchIssues(
   token: string,
-  query: string
+  query: string,
+  options: GitHubSearchOptions = {}
 ): Promise<GitHubIssue[]> {
   const url = new URL("https://api.github.com/search/issues");
   url.searchParams.set("q", query);
-  url.searchParams.set("per_page", "10");
+  url.searchParams.set("per_page", String(clampPositiveInteger(options.perPage, 10, 100)));
+  if (options.sort) {
+    url.searchParams.set("sort", options.sort);
+  }
+  if (options.order) {
+    url.searchParams.set("order", options.order);
+  }
 
   const response = await fetch(url, {
     headers: githubHeaders(token)
@@ -113,14 +137,33 @@ export async function searchIssues(
 }
 
 export async function listMyPullRequests(
-  token: string
+  token: string,
+  options: ListMyPullRequestsOptions = {}
 ): Promise<GitHubPullRequest[]> {
-  const items = await searchIssues(
-    token,
-    "is:open is:pr author:@me sort:updated-desc"
-  );
+  const state = options.state ?? "open";
+  const queryParts = ["is:pr", "author:@me"];
+  if (state !== "all") {
+    queryParts.push(`is:${state}`);
+  }
+
+  const items = await searchIssues(token, queryParts.join(" "), {
+    perPage: clampPositiveInteger(options.limit, 10, 20),
+    sort: options.sort ?? "updated",
+    order: options.order ?? "desc"
+  });
   return items.map((item) => ({
     html_url: item.html_url,
     title: item.title
   }));
+}
+
+function clampPositiveInteger(
+  value: number | undefined,
+  fallback: number,
+  max: number
+): number {
+  if (!Number.isInteger(value) || value === undefined || value <= 0) {
+    return fallback;
+  }
+  return Math.min(value, max);
 }

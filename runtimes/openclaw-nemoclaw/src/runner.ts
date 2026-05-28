@@ -61,8 +61,12 @@ async function runGitHubRequest(
   }
 
   if (/\b(pull request|pull requests|prs?|reviews?)\b/.test(normalized)) {
-    const result = await executeTool("github.listMyPullRequests", { user });
-    return response(result.classification, formatItems("Your open PRs", result));
+    const input = buildPullRequestListInput(text);
+    const result = await executeTool("github.listMyPullRequests", {
+      user,
+      input
+    });
+    return response(result.classification, formatItems(formatPrTitle(input), result));
   }
 
   if (
@@ -75,7 +79,10 @@ async function runGitHubRequest(
 
   const [issues, prs] = await Promise.all([
     executeTool("github.listAssignedIssues", { user }),
-    executeTool("github.listMyPullRequests", { user })
+    executeTool("github.listMyPullRequests", {
+      user,
+      input: { limit: 10, state: "open", sort: "updated", order: "desc" }
+    })
   ]);
 
   return response(
@@ -270,6 +277,45 @@ function readLinkedItems(result: ToolResult): LinkedItem[] {
       typeof item.url === "string"
     );
   });
+}
+
+function buildPullRequestListInput(text: string): {
+  limit: number;
+  state: "open" | "closed" | "all";
+  sort: "updated" | "created" | "comments";
+  order: "desc" | "asc";
+} {
+  const normalized = text.toLowerCase().replace(/\s+/g, " ").trim();
+  return {
+    limit: parseRequestedItemLimit(normalized) ?? 10,
+    state: /\ball\b/.test(normalized)
+      ? "all"
+      : /\b(closed|merged)\b/.test(normalized)
+      ? "closed"
+      : "open",
+    sort: /\b(created|newest|oldest)\b/.test(normalized) ? "created" : "updated",
+    order: /\b(oldest|ascending|asc)\b/.test(normalized) ? "asc" : "desc"
+  };
+}
+
+function parseRequestedItemLimit(text: string): number | null {
+  const match =
+    /\b(?:top|latest|last|recent|most recent)\s+(\d{1,2})\b/.exec(text) ??
+    /\b(\d{1,2})\s+(?:latest|last|recent|most recent|open)?\s*(?:github\s+)?(?:pull requests?|prs?)\b/.exec(
+      text
+    );
+  if (!match?.[1]) {
+    return null;
+  }
+  const value = Number.parseInt(match[1], 10);
+  return Number.isInteger(value) && value > 0 ? Math.min(value, 20) : null;
+}
+
+function formatPrTitle(input: { limit: number; state: "open" | "closed" | "all" }): string {
+  const stateLabel = input.state === "all" ? "" : `${input.state} `;
+  return input.limit === 10
+    ? `Your ${stateLabel}PRs`
+    : `Your ${input.limit} ${stateLabel}PRs`;
 }
 
 function formatAtlassianMcpTools(result: ToolResult): string {
