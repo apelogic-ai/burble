@@ -125,12 +125,17 @@ export async function handleConversation(
               connection
             });
 
+    const content =
+      intent === "github_pull_requests"
+        ? result.content.slice(0, parseRequestedItemLimit(request.text) ?? 10)
+        : result.content;
+
     return enforceVisibility(
       {
         visibility: "public",
         classification: result.classification,
         text: formatIssuesMessage(
-          result.content.map((issue) => ({
+          content.map((issue) => ({
             title: issue.title,
             html_url: issue.url
           }))
@@ -266,17 +271,32 @@ export function classifyDeterministicIntent(text: string): DeterministicIntent {
 export function shouldForceAgentDelegation(text: string): boolean {
   const normalized = text.toLowerCase().replace(/\s+/g, " ").trim();
   return (
+    /\b(cron|cronjob|cronjobs|job|jobs)\b/.test(normalized) ||
     /\bask\s+(the\s+)?(agent|subagent)\b/.test(normalized) ||
     /\b(agent|subagent)\s+(please\s+)?(create|make|schedule|run|list|show|tell|answer|post|send)\b/.test(
       normalized
     ) ||
-    /\b(create|make|schedule|modify|update|delete|remove|list|run|start|add)\b.*\b(cron|job|task|subagent|scheduled job|schedule|reminder|background task)\b/.test(
+    /\b(create|make|set|schedule|modify|update|delete|remove|list|run|start|add)\b.*\b(cron|job|task|subagent|scheduled job|schedule|reminder|background task)\b/.test(
       normalized
     ) ||
     /\b(one[-\s]?shot|every\s+\d+|in\s+\d+\s+(second|seconds|minute|minutes|hour|hours))\b.*\b(cron|job|task|scheduled|schedule|post|send|report)\b/.test(
       normalized
     )
   );
+}
+
+function parseRequestedItemLimit(text: string): number | null {
+  const normalized = text.toLowerCase().replace(/\s+/g, " ").trim();
+  const match =
+    /\b(?:top|latest|last|recent|most recent)\s+(\d{1,2})\b/.exec(normalized) ??
+    /\b(\d{1,2})\s+(?:latest|last|recent|most recent|open)?\s*(?:github\s+)?(?:pull requests?|prs?)\b/.exec(
+      normalized
+    );
+  if (!match?.[1]) {
+    return null;
+  }
+  const value = Number.parseInt(match[1], 10);
+  return Number.isInteger(value) && value > 0 ? Math.min(value, 20) : null;
 }
 
 function buildIssueSearchQuery(text: string): string {
