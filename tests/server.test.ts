@@ -212,7 +212,7 @@ describe("handleJiraCallback", () => {
           refreshToken: null,
           accessTokenExpiresAt: null
         }),
-        getJiraUser: async () => ({ accountId: "account-123", displayName: "Leo" })
+        getJiraUser: async () => ({ accountId: "account-123", displayName: "Example User" })
       }
     );
 
@@ -242,7 +242,7 @@ describe("handleJiraCallback", () => {
         },
         getJiraUser: async (token) => {
           expect(token).toBe("jira-token");
-          return { accountId: "account-123", displayName: "Leo" };
+          return { accountId: "account-123", displayName: "Example User" };
         }
       }
     );
@@ -254,7 +254,7 @@ describe("handleJiraCallback", () => {
         provider: "jira",
         email: "person@example.com",
         slackUserId: "U123",
-        providerLogin: "Leo",
+        providerLogin: "Example User",
         accessToken: "jira-token",
         refreshToken: "jira-refresh-token",
         accessTokenExpiresAt: "2026-05-23T06:00:00.000Z"
@@ -263,7 +263,7 @@ describe("handleJiraCallback", () => {
     expect(messages).toEqual([
       {
         channel: "U123",
-        text: "Connected to Jira as `Leo` (person@example.com)."
+        text: "Connected to Jira as `Example User` (person@example.com)."
       }
     ]);
   });
@@ -292,7 +292,7 @@ describe("handleGoogleCallback", () => {
         },
         getGoogleUser: async (token) => {
           expect(token).toBe("google-token");
-          return { email: "person@apegpt.ai", name: "Person" };
+          return { email: "google-user@example.com", name: "Person" };
         }
       }
     );
@@ -304,7 +304,7 @@ describe("handleGoogleCallback", () => {
         provider: "google",
         email: "person@example.com",
         slackUserId: "U123",
-        providerLogin: "person@apegpt.ai",
+        providerLogin: "google-user@example.com",
         accessToken: "google-token",
         refreshToken: "google-refresh-token",
         accessTokenExpiresAt: "2026-05-23T06:00:00.000Z"
@@ -313,7 +313,7 @@ describe("handleGoogleCallback", () => {
     expect(messages).toEqual([
       {
         channel: "U123",
-        text: "Connected to Google as `person@apegpt.ai` (person@example.com)."
+        text: "Connected to Google as `google-user@example.com` (person@example.com)."
       }
     ]);
   });

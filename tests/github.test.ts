@@ -165,7 +165,7 @@ describe("GitHub search helpers", () => {
 
     try {
       await listMyPullRequests("token", {
-        owner: "apelogic-ai",
+        owner: "example-org",
         limit: 1
       });
       await listMyPullRequests("token", {
@@ -178,7 +178,7 @@ describe("GitHub search helpers", () => {
     }
 
     expect(new URL(urls[0]).searchParams.get("q")).toBe(
-      "is:pr author:@me org:apelogic-ai is:open"
+      "is:pr author:@me org:example-org is:open"
     );
     expect(new URL(urls[1]).searchParams.get("q")).toBe(
       "is:pr author:@me repo:acme/app is:open"

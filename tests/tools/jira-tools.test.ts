@@ -124,8 +124,8 @@ describe("createJiraTools", () => {
         return [
           {
             id: "cloud-123",
-            name: "APE GPT",
-            url: "https://apegpt.atlassian.net",
+            name: "Example Jira Site",
+            url: "https://example.atlassian.net",
             scopes: ["read:jira-work", "write:jira-work"]
           },
           {
@@ -147,8 +147,8 @@ describe("createJiraTools", () => {
       content: [
         {
           id: "cloud-123",
-          name: "APE GPT",
-          url: "https://apegpt.atlassian.net"
+          name: "Example Jira Site",
+          url: "https://example.atlassian.net"
         }
       ]
     });
@@ -227,7 +227,7 @@ describe("createJiraTools", () => {
         expect(query).toBe("alex.reviewer@example.com");
         return [
           {
-            accountId: "acct-boris",
+            accountId: "acct-example",
             displayName: "Alex Reviewer",
             emailAddress: "alex.reviewer@example.com"
           }
@@ -246,7 +246,7 @@ describe("createJiraTools", () => {
       classification: "user_private",
       content: [
         {
-          accountId: "acct-boris",
+          accountId: "acct-example",
           displayName: "Alex Reviewer",
           emailAddress: "alex.reviewer@example.com"
         }
@@ -267,7 +267,7 @@ describe("createJiraTools", () => {
           projectKey: "DM",
           issueTypeName: "Task",
           summary: "test ticket from slack",
-          assigneeAccountId: "acct-boris"
+          assigneeAccountId: "acct-example"
         });
         return {
           key: "DM-100",
@@ -285,7 +285,7 @@ describe("createJiraTools", () => {
         projectKey: "DM",
         issueTypeName: "Task",
         summary: "test ticket from slack",
-        assigneeAccountId: "acct-boris"
+        assigneeAccountId: "acct-example"
       }
     });
 

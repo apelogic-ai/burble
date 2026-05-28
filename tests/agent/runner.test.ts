@@ -213,7 +213,7 @@ describe("createAiSdkAgentRunner", () => {
       jiraTools: createJiraTools({
         getJiraUser: async () => ({
           accountId: "5f123",
-          displayName: "Leo"
+          displayName: "Example User"
         }),
         listAssignedJiraIssues: async () => [
           {
