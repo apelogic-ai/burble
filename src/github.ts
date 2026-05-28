@@ -36,7 +36,57 @@ export type GitHubUpdatedPullRequest = {
   html_url: string;
   title: string;
   number: number;
+  body?: string | null;
   draft?: boolean;
+};
+
+export type GitHubDetailedIssue = {
+  html_url: string;
+  title: string;
+  number: number;
+  body?: string | null;
+  state?: string;
+  labels?: string[];
+  assignees?: string[];
+};
+
+export type GitHubDetailedPullRequest = {
+  html_url: string;
+  title: string;
+  number: number;
+  body?: string | null;
+  state?: string;
+  draft?: boolean;
+  base?: string;
+  head?: string;
+};
+
+export type GitHubFileContent = {
+  name: string;
+  path: string;
+  sha: string;
+  html_url?: string;
+  content?: string;
+  encoding?: string;
+  type?: string;
+};
+
+export type GitHubFileMutationResult = {
+  content?: {
+    name: string;
+    path: string;
+    sha: string;
+    html_url?: string;
+  };
+  commit?: {
+    sha: string;
+    html_url?: string;
+  };
+};
+
+export type GitHubBranchResult = {
+  ref: string;
+  sha: string;
 };
 
 export type GitHubLabelMutationResult = {
@@ -76,6 +126,11 @@ type GitHubSearchResponse = {
 
 type GitHubApiErrorBody = {
   message?: string;
+};
+
+type GitHubIssueApiResponse = Omit<GitHubDetailedIssue, "labels" | "assignees"> & {
+  labels?: Array<{ name?: string } | string>;
+  assignees?: Array<{ login?: string }>;
 };
 
 function githubHeaders(token?: string): HeadersInit {
@@ -245,6 +300,56 @@ export async function createGitHubIssue(
   };
 }
 
+export async function getGitHubIssue(
+  token: string,
+  input: { repo: string; number: number }
+): Promise<GitHubDetailedIssue> {
+  const repo = parseGitHubRepo(input.repo);
+  const issue = await githubJson<GitHubIssueApiResponse>(
+    token,
+    `https://api.github.com/repos/${repo}/issues/${input.number}`,
+    { method: "GET" },
+    "GitHub issue lookup failed"
+  );
+  return getGitHubIssueFromApiResponse(issue);
+}
+
+export async function updateGitHubIssue(
+  token: string,
+  input: {
+    repo: string;
+    number: number;
+    title?: string;
+    body?: string;
+    state?: "open" | "closed";
+    labels?: string[];
+    assignees?: string[];
+  }
+): Promise<GitHubDetailedIssue> {
+  const repo = parseGitHubRepo(input.repo);
+  const payload = {
+    ...(input.title ? { title: input.title } : {}),
+    ...(input.body !== undefined ? { body: input.body } : {}),
+    ...(input.state ? { state: input.state } : {}),
+    ...(input.labels ? { labels: input.labels } : {}),
+    ...(input.assignees ? { assignees: input.assignees } : {})
+  };
+  if (Object.keys(payload).length === 0) {
+    throw new Error("No editable GitHub issue fields were provided");
+  }
+  return getGitHubIssueFromApiResponse(
+    await githubJson<GitHubIssueApiResponse>(
+      token,
+      `https://api.github.com/repos/${repo}/issues/${input.number}`,
+      {
+        method: "PATCH",
+        body: payload
+      },
+      "GitHub issue update failed"
+    )
+  );
+}
+
 export async function commentOnGitHubIssueOrPullRequest(
   token: string,
   input: { repo: string; number: number; body: string }
@@ -263,6 +368,25 @@ export async function commentOnGitHubIssueOrPullRequest(
     html_url: body.html_url,
     id: body.id
   };
+}
+
+export async function getGitHubPullRequest(
+  token: string,
+  input: { repo: string; number: number }
+): Promise<GitHubDetailedPullRequest> {
+  const repo = parseGitHubRepo(input.repo);
+  const pullRequest = await githubJson<
+    GitHubDetailedPullRequest & {
+      base?: { ref?: string };
+      head?: { ref?: string; label?: string };
+    }
+  >(
+    token,
+    `https://api.github.com/repos/${repo}/pulls/${input.number}`,
+    { method: "GET" },
+    "GitHub pull request lookup failed"
+  );
+  return sanitizeDetailedPullRequest(pullRequest);
 }
 
 export async function createGitHubPullRequest(
@@ -345,7 +469,114 @@ export async function updateGitHubPullRequest(
     html_url: pullRequest.html_url,
     title: pullRequest.title,
     number: pullRequest.number,
+    ...(pullRequest.body !== undefined ? { body: pullRequest.body } : {}),
     ...(pullRequest.draft !== undefined ? { draft: pullRequest.draft } : {})
+  };
+}
+
+export async function closeGitHubIssue(
+  token: string,
+  input: { repo: string; number: number }
+): Promise<GitHubDetailedIssue> {
+  return updateGitHubIssue(token, { ...input, state: "closed" });
+}
+
+export async function reopenGitHubIssue(
+  token: string,
+  input: { repo: string; number: number }
+): Promise<GitHubDetailedIssue> {
+  return updateGitHubIssue(token, { ...input, state: "open" });
+}
+
+export async function getGitHubFile(
+  token: string,
+  input: { repo: string; path: string; ref?: string }
+): Promise<GitHubFileContent> {
+  const repo = parseGitHubRepo(input.repo);
+  const url = new URL(
+    `https://api.github.com/repos/${repo}/contents/${encodeGitHubPath(input.path)}`
+  );
+  if (input.ref) {
+    url.searchParams.set("ref", input.ref);
+  }
+  const file = await githubJson<
+    GitHubFileContent & {
+      content?: string;
+      download_url?: string | null;
+    }
+  >(token, url.toString(), { method: "GET" }, "GitHub file lookup failed");
+
+  return {
+    name: file.name,
+    path: file.path,
+    sha: file.sha,
+    ...(file.html_url ? { html_url: file.html_url } : {}),
+    ...(file.content ? { content: decodeGitHubContent(file.content) } : {}),
+    ...(file.encoding ? { encoding: file.encoding } : {}),
+    ...(file.type ? { type: file.type } : {})
+  };
+}
+
+export async function createOrUpdateGitHubFile(
+  token: string,
+  input: {
+    repo: string;
+    path: string;
+    content: string;
+    message: string;
+    branch?: string;
+    sha?: string;
+  }
+): Promise<GitHubFileMutationResult> {
+  const repo = parseGitHubRepo(input.repo);
+  const result = await githubJson<GitHubFileMutationResult>(
+    token,
+    `https://api.github.com/repos/${repo}/contents/${encodeGitHubPath(input.path)}`,
+    {
+      method: "PUT",
+      body: {
+        message: input.message,
+        content: encodeGitHubContent(input.content),
+        ...(input.branch ? { branch: input.branch } : {}),
+        ...(input.sha ? { sha: input.sha } : {})
+      }
+    },
+    "GitHub file create/update failed"
+  );
+  return sanitizeGitHubFileMutationResult(result);
+}
+
+export async function createGitHubBranch(
+  token: string,
+  input: { repo: string; branch: string; fromRef?: string }
+): Promise<GitHubBranchResult> {
+  const repo = parseGitHubRepo(input.repo);
+  const fromRef = input.fromRef ?? (await getGitHubDefaultBranch(token, repo));
+  const source = await githubJson<{ object?: { sha?: string } }>(
+    token,
+    `https://api.github.com/repos/${repo}/git/ref/heads/${encodeGitHubPath(fromRef)}`,
+    { method: "GET" },
+    "GitHub source branch lookup failed"
+  );
+  const sha = source.object?.sha;
+  if (!sha) {
+    throw new Error("GitHub source branch lookup did not return a commit SHA");
+  }
+  const created = await githubJson<{ ref: string; object?: { sha?: string } }>(
+    token,
+    `https://api.github.com/repos/${repo}/git/refs`,
+    {
+      method: "POST",
+      body: {
+        ref: `refs/heads/${input.branch}`,
+        sha
+      }
+    },
+    "GitHub branch creation failed"
+  );
+  return {
+    ref: created.ref,
+    sha: created.object?.sha ?? sha
   };
 }
 
@@ -433,6 +664,15 @@ function parseGitHubRepo(repo: string): string {
     throw new Error("GitHub repo must be in owner/name format");
   }
   return `${encodeURIComponent(parts[0])}/${encodeURIComponent(parts[1])}`;
+}
+
+function encodeGitHubPath(path: string): string {
+  return path
+    .trim()
+    .split("/")
+    .filter(Boolean)
+    .map((part) => encodeURIComponent(part))
+    .join("/");
 }
 
 async function githubJson<T>(
@@ -553,4 +793,94 @@ function issueUrlResult(repo: string, number: number): GitHubLabelMutationResult
     html_url: `https://github.com/${trimmed}/issues/${number}`,
     number
   };
+}
+
+function getGitHubIssueFromApiResponse(issue: GitHubIssueApiResponse): GitHubDetailedIssue {
+  return {
+    html_url: issue.html_url,
+    title: issue.title,
+    number: issue.number,
+    ...(issue.body !== undefined ? { body: issue.body } : {}),
+    ...(issue.state ? { state: issue.state } : {}),
+    ...(issue.labels
+      ? {
+          labels: issue.labels.flatMap((label) =>
+            typeof label === "string"
+              ? [label]
+              : label.name
+                ? [label.name]
+                : []
+          )
+        }
+      : {}),
+    ...(issue.assignees
+      ? { assignees: issue.assignees.flatMap((user) => user.login ? [user.login] : []) }
+      : {})
+  };
+}
+
+function sanitizeDetailedPullRequest(
+  pullRequest: GitHubDetailedPullRequest & {
+    base?: { ref?: string };
+    head?: { ref?: string; label?: string };
+  }
+): GitHubDetailedPullRequest {
+  return {
+    html_url: pullRequest.html_url,
+    title: pullRequest.title,
+    number: pullRequest.number,
+    ...(pullRequest.body !== undefined ? { body: pullRequest.body } : {}),
+    ...(pullRequest.state ? { state: pullRequest.state } : {}),
+    ...(pullRequest.draft !== undefined ? { draft: pullRequest.draft } : {}),
+    ...(pullRequest.base?.ref ? { base: pullRequest.base.ref } : {}),
+    ...(pullRequest.head?.label ?? pullRequest.head?.ref
+      ? { head: pullRequest.head?.label ?? pullRequest.head?.ref }
+      : {})
+  };
+}
+
+function decodeGitHubContent(content: string): string {
+  return Buffer.from(content.replace(/\s/g, ""), "base64").toString("utf8");
+}
+
+function encodeGitHubContent(content: string): string {
+  return Buffer.from(content, "utf8").toString("base64");
+}
+
+function sanitizeGitHubFileMutationResult(
+  result: GitHubFileMutationResult
+): GitHubFileMutationResult {
+  return {
+    ...(result.content
+      ? {
+          content: {
+            name: result.content.name,
+            path: result.content.path,
+            sha: result.content.sha,
+            ...(result.content.html_url ? { html_url: result.content.html_url } : {})
+          }
+        }
+      : {}),
+    ...(result.commit
+      ? {
+          commit: {
+            sha: result.commit.sha,
+            ...(result.commit.html_url ? { html_url: result.commit.html_url } : {})
+          }
+        }
+      : {})
+  };
+}
+
+async function getGitHubDefaultBranch(token: string, repo: string): Promise<string> {
+  const repository = await githubJson<{ default_branch?: string }>(
+    token,
+    `https://api.github.com/repos/${repo}`,
+    { method: "GET" },
+    "GitHub repository lookup failed"
+  );
+  if (!repository.default_branch) {
+    throw new Error("GitHub repository lookup did not return a default branch");
+  }
+  return repository.default_branch;
 }

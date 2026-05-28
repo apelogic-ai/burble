@@ -18,6 +18,10 @@ export type JiraIssue = {
   summary: string;
   url: string;
   status?: string;
+  description?: string;
+  issueType?: string;
+  parentKey?: string;
+  labels?: string[];
 };
 
 export type JiraToolDeps = {
@@ -50,6 +54,57 @@ export type JiraToolDeps = {
       summary?: string;
       description?: string;
       assigneeAccountId?: string | null;
+    }
+  ) => Promise<JiraIssue>;
+  getJiraIssue?: (
+    token: string,
+    input: { issueKey: string }
+  ) => Promise<JiraIssue>;
+  updateJiraIssue?: (
+    token: string,
+    input: {
+      issueKey: string;
+      summary?: string;
+      description?: string;
+      assigneeAccountId?: string | null;
+      labels?: string[];
+    }
+  ) => Promise<JiraIssue>;
+  addJiraIssueComment?: (
+    token: string,
+    input: { issueKey: string; body: string }
+  ) => Promise<{ id: string; url: string }>;
+  transitionJiraIssue?: (
+    token: string,
+    input: { issueKey: string; transitionId?: string; transitionName?: string }
+  ) => Promise<JiraIssue>;
+  addJiraIssueLabels?: (
+    token: string,
+    input: { issueKey: string; labels: string[] }
+  ) => Promise<JiraIssue>;
+  removeJiraIssueLabels?: (
+    token: string,
+    input: { issueKey: string; labels: string[] }
+  ) => Promise<JiraIssue>;
+  linkJiraIssues?: (
+    token: string,
+    input: {
+      inwardIssueKey: string;
+      outwardIssueKey: string;
+      typeName?: string;
+      comment?: string;
+    }
+  ) => Promise<{ inwardIssueKey: string; outwardIssueKey: string; typeName: string }>;
+  createJiraSubtask?: (
+    token: string,
+    input: {
+      parentIssueKey: string;
+      summary: string;
+      projectKey?: string;
+      issueTypeName?: string;
+      issueTypeId?: string;
+      description?: string;
+      assigneeAccountId?: string;
     }
   ) => Promise<JiraIssue>;
   listAssignedJiraIssues: (token: string) => Promise<JiraIssue[]>;
@@ -305,6 +360,229 @@ export function createJiraTools(deps: JiraToolDeps) {
       }
     },
 
+    getIssue: {
+      async execute(
+        context: JiraToolContext & { input: { issueKey: string } }
+      ): Promise<ToolResult<JiraIssueContent[number] | JiraAuthErrorContent>> {
+        const issue = await withJiraToken(
+          deps,
+          context.connection,
+          (accessToken) => {
+            if (!deps.getJiraIssue) {
+              throw new Error("Jira issue lookup is not configured");
+            }
+            return deps.getJiraIssue(accessToken, context.input);
+          }
+        );
+        if (isJiraAuthErrorResult(issue)) {
+          return issue;
+        }
+        return {
+          classification: "user_private",
+          content: sanitizeIssue(issue)
+        };
+      }
+    },
+
+    updateIssue: {
+      async execute(
+        context: JiraToolContext & {
+          input: {
+            issueKey: string;
+            summary?: string;
+            description?: string;
+            assigneeAccountId?: string | null;
+            labels?: string[];
+          };
+        }
+      ): Promise<ToolResult<JiraIssueContent[number] | JiraAuthErrorContent>> {
+        const issue = await withJiraToken(
+          deps,
+          context.connection,
+          (accessToken) => {
+            if (!deps.updateJiraIssue) {
+              throw new Error("Jira issue update is not configured");
+            }
+            return deps.updateJiraIssue(accessToken, context.input);
+          }
+        );
+        if (isJiraAuthErrorResult(issue)) {
+          return issue;
+        }
+        return {
+          classification: "user_private",
+          content: sanitizeIssue(issue)
+        };
+      }
+    },
+
+    addComment: {
+      async execute(
+        context: JiraToolContext & { input: { issueKey: string; body: string } }
+      ): Promise<ToolResult<{ id: string; url: string } | JiraAuthErrorContent>> {
+        const comment = await withJiraToken(
+          deps,
+          context.connection,
+          (accessToken) => {
+            if (!deps.addJiraIssueComment) {
+              throw new Error("Jira comment create is not configured");
+            }
+            return deps.addJiraIssueComment(accessToken, context.input);
+          }
+        );
+        if (isJiraAuthErrorResult(comment)) {
+          return comment;
+        }
+        return {
+          classification: "user_private",
+          content: comment
+        };
+      }
+    },
+
+    transitionIssue: {
+      async execute(
+        context: JiraToolContext & {
+          input: { issueKey: string; transitionId?: string; transitionName?: string };
+        }
+      ): Promise<ToolResult<JiraIssueContent[number] | JiraAuthErrorContent>> {
+        const issue = await withJiraToken(
+          deps,
+          context.connection,
+          (accessToken) => {
+            if (!deps.transitionJiraIssue) {
+              throw new Error("Jira issue transition is not configured");
+            }
+            return deps.transitionJiraIssue(accessToken, context.input);
+          }
+        );
+        if (isJiraAuthErrorResult(issue)) {
+          return issue;
+        }
+        return {
+          classification: "user_private",
+          content: sanitizeIssue(issue)
+        };
+      }
+    },
+
+    addLabels: {
+      async execute(
+        context: JiraToolContext & { input: { issueKey: string; labels: string[] } }
+      ): Promise<ToolResult<JiraIssueContent[number] | JiraAuthErrorContent>> {
+        const issue = await withJiraToken(
+          deps,
+          context.connection,
+          (accessToken) => {
+            if (!deps.addJiraIssueLabels) {
+              throw new Error("Jira label add is not configured");
+            }
+            return deps.addJiraIssueLabels(accessToken, context.input);
+          }
+        );
+        if (isJiraAuthErrorResult(issue)) {
+          return issue;
+        }
+        return {
+          classification: "user_private",
+          content: sanitizeIssue(issue)
+        };
+      }
+    },
+
+    removeLabels: {
+      async execute(
+        context: JiraToolContext & { input: { issueKey: string; labels: string[] } }
+      ): Promise<ToolResult<JiraIssueContent[number] | JiraAuthErrorContent>> {
+        const issue = await withJiraToken(
+          deps,
+          context.connection,
+          (accessToken) => {
+            if (!deps.removeJiraIssueLabels) {
+              throw new Error("Jira label remove is not configured");
+            }
+            return deps.removeJiraIssueLabels(accessToken, context.input);
+          }
+        );
+        if (isJiraAuthErrorResult(issue)) {
+          return issue;
+        }
+        return {
+          classification: "user_private",
+          content: sanitizeIssue(issue)
+        };
+      }
+    },
+
+    linkIssues: {
+      async execute(
+        context: JiraToolContext & {
+          input: {
+            inwardIssueKey: string;
+            outwardIssueKey: string;
+            typeName?: string;
+            comment?: string;
+          };
+        }
+      ): Promise<
+        ToolResult<
+          { inwardIssueKey: string; outwardIssueKey: string; typeName: string } | JiraAuthErrorContent
+        >
+      > {
+        const link = await withJiraToken(
+          deps,
+          context.connection,
+          (accessToken) => {
+            if (!deps.linkJiraIssues) {
+              throw new Error("Jira issue link is not configured");
+            }
+            return deps.linkJiraIssues(accessToken, context.input);
+          }
+        );
+        if (isJiraAuthErrorResult(link)) {
+          return link;
+        }
+        return {
+          classification: "user_private",
+          content: link
+        };
+      }
+    },
+
+    createSubtask: {
+      async execute(
+        context: JiraToolContext & {
+          input: {
+            parentIssueKey: string;
+            summary: string;
+            projectKey?: string;
+            issueTypeName?: string;
+            issueTypeId?: string;
+            description?: string;
+            assigneeAccountId?: string;
+          };
+        }
+      ): Promise<ToolResult<JiraIssueContent[number] | JiraAuthErrorContent>> {
+        const issue = await withJiraToken(
+          deps,
+          context.connection,
+          (accessToken) => {
+            if (!deps.createJiraSubtask) {
+              throw new Error("Jira subtask create is not configured");
+            }
+            return deps.createJiraSubtask(accessToken, context.input);
+          }
+        );
+        if (isJiraAuthErrorResult(issue)) {
+          return issue;
+        }
+        return {
+          classification: "user_private",
+          content: sanitizeIssue(issue)
+        };
+      }
+    },
+
     listAssignedIssues: {
       async execute(
         context: JiraToolContext
@@ -452,6 +730,10 @@ function sanitizeIssue(issue: JiraIssue) {
     key: issue.key,
     title: issue.summary,
     url: issue.url,
-    ...(issue.status ? { status: issue.status } : {})
+    ...(issue.status ? { status: issue.status } : {}),
+    ...(issue.description ? { description: issue.description } : {}),
+    ...(issue.issueType ? { issueType: issue.issueType } : {}),
+    ...(issue.parentKey ? { parentKey: issue.parentKey } : {}),
+    ...(issue.labels ? { labels: issue.labels } : {})
   };
 }

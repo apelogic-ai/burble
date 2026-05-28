@@ -3,6 +3,11 @@ import type {
   GitHubCreatedComment,
   GitHubCreatedIssue,
   GitHubCreatedPullRequest,
+  GitHubBranchResult,
+  GitHubDetailedIssue,
+  GitHubDetailedPullRequest,
+  GitHubFileContent,
+  GitHubFileMutationResult,
   GitHubIssue,
   GitHubLabelMutationResult,
   GitHubPullRequest,
@@ -24,10 +29,30 @@ export type GitHubToolDeps = {
     token: string,
     options?: ListMyPullRequestsOptions
   ) => Promise<GitHubPullRequest[]>;
+  getIssue?: (
+    token: string,
+    input: GitHubIssueNumberInput
+  ) => Promise<GitHubDetailedIssue>;
+  getPullRequest?: (
+    token: string,
+    input: GitHubIssueNumberInput
+  ) => Promise<GitHubDetailedPullRequest>;
   createIssue?: (
     token: string,
     input: GitHubCreateIssueInput
   ) => Promise<GitHubCreatedIssue>;
+  updateIssue?: (
+    token: string,
+    input: GitHubUpdateIssueInput
+  ) => Promise<GitHubDetailedIssue>;
+  closeIssue?: (
+    token: string,
+    input: GitHubIssueNumberInput
+  ) => Promise<GitHubDetailedIssue>;
+  reopenIssue?: (
+    token: string,
+    input: GitHubIssueNumberInput
+  ) => Promise<GitHubDetailedIssue>;
   commentOnIssueOrPullRequest?: (
     token: string,
     input: GitHubCommentInput
@@ -52,6 +77,18 @@ export type GitHubToolDeps = {
     token: string,
     input: GitHubRequestReviewInput
   ) => Promise<GitHubReviewRequestResult>;
+  getFile?: (
+    token: string,
+    input: GitHubGetFileInput
+  ) => Promise<GitHubFileContent>;
+  createOrUpdateFile?: (
+    token: string,
+    input: GitHubCreateOrUpdateFileInput
+  ) => Promise<GitHubFileMutationResult>;
+  createBranch?: (
+    token: string,
+    input: GitHubCreateBranchInput
+  ) => Promise<GitHubBranchResult>;
 };
 
 export type GitHubToolContext = {
@@ -71,6 +108,19 @@ export type GitHubCreateIssueInput = {
   repo: string;
   title: string;
   body?: string;
+  labels?: string[];
+  assignees?: string[];
+};
+
+export type GitHubIssueNumberInput = {
+  repo: string;
+  number: number;
+};
+
+export type GitHubUpdateIssueInput = GitHubIssueNumberInput & {
+  title?: string;
+  body?: string;
+  state?: "open" | "closed";
   labels?: string[];
   assignees?: string[];
 };
@@ -110,6 +160,27 @@ export type GitHubRequestReviewInput = {
   number: number;
   reviewers?: string[];
   teamReviewers?: string[];
+};
+
+export type GitHubGetFileInput = {
+  repo: string;
+  path: string;
+  ref?: string;
+};
+
+export type GitHubCreateOrUpdateFileInput = {
+  repo: string;
+  path: string;
+  content: string;
+  message: string;
+  branch?: string;
+  sha?: string;
+};
+
+export type GitHubCreateBranchInput = {
+  repo: string;
+  branch: string;
+  fromRef?: string;
 };
 
 export function createGitHubTools(deps: GitHubToolDeps) {
@@ -173,6 +244,42 @@ export function createGitHubTools(deps: GitHubToolDeps) {
       }
     },
 
+    getIssue: {
+      async execute(
+        context: GitHubToolContext & { input: GitHubIssueNumberInput }
+      ): Promise<ToolResult<ReturnType<typeof sanitizeDetailedIssue>>> {
+        const issue = await requireGitHubWriteTool(
+          deps.getIssue,
+          "github.getIssue"
+        )(
+          context.connection.accessToken,
+          context.input
+        );
+        return {
+          classification: "user_private",
+          content: sanitizeDetailedIssue(issue)
+        };
+      }
+    },
+
+    getPullRequest: {
+      async execute(
+        context: GitHubToolContext & { input: GitHubIssueNumberInput }
+      ): Promise<ToolResult<ReturnType<typeof sanitizeDetailedPullRequest>>> {
+        const pullRequest = await requireGitHubWriteTool(
+          deps.getPullRequest,
+          "github.getPullRequest"
+        )(
+          context.connection.accessToken,
+          context.input
+        );
+        return {
+          classification: "user_private",
+          content: sanitizeDetailedPullRequest(pullRequest)
+        };
+      }
+    },
+
     createIssue: {
       async execute(
         context: GitHubToolContext & { input: GitHubCreateIssueInput }
@@ -187,6 +294,60 @@ export function createGitHubTools(deps: GitHubToolDeps) {
         return {
           classification: "user_private",
           content: sanitizeNumberedItem(issue)
+        };
+      }
+    },
+
+    updateIssue: {
+      async execute(
+        context: GitHubToolContext & { input: GitHubUpdateIssueInput }
+      ): Promise<ToolResult<ReturnType<typeof sanitizeDetailedIssue>>> {
+        const issue = await requireGitHubWriteTool(
+          deps.updateIssue,
+          "github.updateIssue"
+        )(
+          context.connection.accessToken,
+          context.input
+        );
+        return {
+          classification: "user_private",
+          content: sanitizeDetailedIssue(issue)
+        };
+      }
+    },
+
+    closeIssue: {
+      async execute(
+        context: GitHubToolContext & { input: GitHubIssueNumberInput }
+      ): Promise<ToolResult<ReturnType<typeof sanitizeDetailedIssue>>> {
+        const issue = await requireGitHubWriteTool(
+          deps.closeIssue,
+          "github.closeIssue"
+        )(
+          context.connection.accessToken,
+          context.input
+        );
+        return {
+          classification: "user_private",
+          content: sanitizeDetailedIssue(issue)
+        };
+      }
+    },
+
+    reopenIssue: {
+      async execute(
+        context: GitHubToolContext & { input: GitHubIssueNumberInput }
+      ): Promise<ToolResult<ReturnType<typeof sanitizeDetailedIssue>>> {
+        const issue = await requireGitHubWriteTool(
+          deps.reopenIssue,
+          "github.reopenIssue"
+        )(
+          context.connection.accessToken,
+          context.input
+        );
+        return {
+          classification: "user_private",
+          content: sanitizeDetailedIssue(issue)
         };
       }
     },
@@ -304,6 +465,60 @@ export function createGitHubTools(deps: GitHubToolDeps) {
           content: sanitizeNumberedItem(pullRequest)
         };
       }
+    },
+
+    getFile: {
+      async execute(
+        context: GitHubToolContext & { input: GitHubGetFileInput }
+      ): Promise<ToolResult<GitHubFileContent>> {
+        const file = await requireGitHubWriteTool(
+          deps.getFile,
+          "github.getFile"
+        )(
+          context.connection.accessToken,
+          context.input
+        );
+        return {
+          classification: "user_private",
+          content: file
+        };
+      }
+    },
+
+    createOrUpdateFile: {
+      async execute(
+        context: GitHubToolContext & { input: GitHubCreateOrUpdateFileInput }
+      ): Promise<ToolResult<GitHubFileMutationResult>> {
+        const result = await requireGitHubWriteTool(
+          deps.createOrUpdateFile,
+          "github.createOrUpdateFile"
+        )(
+          context.connection.accessToken,
+          context.input
+        );
+        return {
+          classification: "user_private",
+          content: result
+        };
+      }
+    },
+
+    createBranch: {
+      async execute(
+        context: GitHubToolContext & { input: GitHubCreateBranchInput }
+      ): Promise<ToolResult<GitHubBranchResult>> {
+        const branch = await requireGitHubWriteTool(
+          deps.createBranch,
+          "github.createBranch"
+        )(
+          context.connection.accessToken,
+          context.input
+        );
+        return {
+          classification: "user_private",
+          content: branch
+        };
+      }
     }
   };
 }
@@ -346,6 +561,31 @@ function sanitizeIssueMutation(item: { html_url: string; number: number }) {
   return {
     url: item.html_url,
     number: item.number
+  };
+}
+
+function sanitizeDetailedIssue(issue: GitHubDetailedIssue) {
+  return {
+    title: issue.title,
+    url: issue.html_url,
+    number: issue.number,
+    ...(issue.body !== undefined ? { body: issue.body } : {}),
+    ...(issue.state ? { state: issue.state } : {}),
+    ...(issue.labels ? { labels: issue.labels } : {}),
+    ...(issue.assignees ? { assignees: issue.assignees } : {})
+  };
+}
+
+function sanitizeDetailedPullRequest(pullRequest: GitHubDetailedPullRequest) {
+  return {
+    title: pullRequest.title,
+    url: pullRequest.html_url,
+    number: pullRequest.number,
+    ...(pullRequest.body !== undefined ? { body: pullRequest.body } : {}),
+    ...(pullRequest.state ? { state: pullRequest.state } : {}),
+    ...(pullRequest.draft !== undefined ? { draft: pullRequest.draft } : {}),
+    ...(pullRequest.base ? { base: pullRequest.base } : {}),
+    ...(pullRequest.head ? { head: pullRequest.head } : {})
   };
 }
 

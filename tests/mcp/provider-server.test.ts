@@ -32,7 +32,8 @@ const config: Config = {
   agentRuntimeDataRoot: "/data/runtimes",
   agentRuntimeDockerNetwork: "compose_default",
   agentRuntimeImage: "burble-openclaw-nemoclaw:dev",
-  agentRuntimeIdleTtlMs: 1800000,
+  agentRuntimeIdleTtlMs: 86400000,
+  agentRuntimeReaperEnabled: true,
   agentRuntimeReaperIntervalMs: 60000,
   agentRuntimeJwtTtlSeconds: 604800,
   agentRuntimeTokenSecret: null,
@@ -120,6 +121,8 @@ describe("handleProviderMcpRequest", () => {
       workspaceId: "T123",
       slackUserId: "U123"
     });
+    const lastUsedBefore = store.getAgentRuntime(runtime.id)?.lastUsedAt;
+    await Bun.sleep(2);
 
     const response = await handleProviderMcpRequest(
       config,
@@ -150,6 +153,9 @@ describe("handleProviderMcpRequest", () => {
       classification: "user_private",
       content: { login: "octocat" }
     });
+    expect(store.getAgentRuntime(runtime.id)?.lastUsedAt).not.toBe(
+      lastUsedBefore
+    );
     store.close();
   });
 

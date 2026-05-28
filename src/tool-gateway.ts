@@ -5,34 +5,58 @@ import { createHash, timingSafeEqual } from "node:crypto";
 import {
   addGitHubIssueLabels,
   commentOnGitHubIssueOrPullRequest,
+  closeGitHubIssue,
+  createGitHubBranch,
   createGitHubIssue,
   createGitHubPullRequest,
+  createOrUpdateGitHubFile,
+  getGitHubFile,
+  getGitHubIssue,
+  getGitHubPullRequest,
   getGitHubUser,
   listAssignedIssues,
   listMyPullRequests,
   removeGitHubIssueLabels,
   requestGitHubPullRequestReview,
   searchIssues,
+  reopenGitHubIssue,
+  updateGitHubIssue,
   updateGitHubPullRequest
 } from "./github";
 import {
+  appendGoogleDriveTextFile,
+  createGmailDraft,
+  createGoogleCalendarEvent,
+  createGoogleDriveFolder,
   createGoogleDriveTextFile,
+  getGoogleDriveFile,
   getGoogleUser,
+  moveGoogleDriveFile,
   refreshGoogleAccessToken,
   searchGoogleCalendarEvents,
   searchGoogleDriveFiles,
-  searchGoogleMailMessages
+  searchGoogleMailMessages,
+  updateGoogleCalendarEvent,
+  updateGoogleDriveTextFile
 } from "./google";
 import {
+  addJiraIssueComment,
+  addJiraIssueLabels,
   createJiraIssue,
+  createJiraSubtask,
   editJiraIssue,
+  getJiraIssue,
   getJiraUser,
+  linkJiraIssues,
   listJiraAccessibleResources,
   listAssignedJiraIssues,
   listVisibleJiraProjects,
   refreshJiraAccessToken,
+  removeJiraIssueLabels,
   searchJiraUsers,
-  searchJiraIssues
+  searchJiraIssues,
+  transitionJiraIssue,
+  updateJiraIssue
 } from "./jira";
 import {
   callUpstreamMcpTool,
@@ -115,18 +139,34 @@ const defaultDeps = {
   listAssignedIssues,
   searchIssues,
   listMyPullRequests,
+  getIssue: getGitHubIssue,
+  getPullRequest: getGitHubPullRequest,
   createIssue: createGitHubIssue,
+  updateIssue: updateGitHubIssue,
+  closeIssue: closeGitHubIssue,
+  reopenIssue: reopenGitHubIssue,
   commentOnIssueOrPullRequest: commentOnGitHubIssueOrPullRequest,
   createPullRequest: createGitHubPullRequest,
   updatePullRequest: updateGitHubPullRequest,
   addLabels: addGitHubIssueLabels,
   removeLabels: removeGitHubIssueLabels,
   requestReview: requestGitHubPullRequestReview,
+  getFile: getGitHubFile,
+  createOrUpdateFile: createOrUpdateGitHubFile,
+  createBranch: createGitHubBranch,
   getGoogleUser,
   searchGoogleDriveFiles,
   createGoogleDriveTextFile,
+  getGoogleDriveFile,
+  updateGoogleDriveTextFile,
+  appendGoogleDriveTextFile,
+  createGoogleDriveFolder,
+  moveGoogleDriveFile,
   searchGoogleCalendarEvents,
+  createGoogleCalendarEvent,
+  updateGoogleCalendarEvent,
   searchGoogleMailMessages,
+  createGmailDraft,
   getJiraUser,
   listJiraAccessibleResources,
   listAssignedJiraIssues,
@@ -134,6 +174,14 @@ const defaultDeps = {
   searchJiraUsers,
   createJiraIssue,
   editJiraIssue,
+  getJiraIssue,
+  updateJiraIssue,
+  addJiraIssueComment,
+  transitionJiraIssue,
+  addJiraIssueLabels,
+  removeJiraIssueLabels,
+  linkJiraIssues,
+  createJiraSubtask,
   searchJiraIssues,
   searchSlackMessages,
   searchSlackUsers
@@ -157,6 +205,9 @@ export async function handleToolGatewayRequest(
   const auth = authorizeToolGateway(config, store, request);
   if (!auth) {
     return new Response("Unauthorized", { status: 401 });
+  }
+  if (auth.kind === "runtime") {
+    store.touchAgentRuntime(auth.runtime.id);
   }
 
   if (!isKnownTool(toolName)) {
@@ -320,6 +371,38 @@ export async function handleToolGatewayRequest(
       );
     }
 
+    case "github.getIssue": {
+      if (!isGitHubIssueNumberInput(body.input)) {
+        return new Response("Invalid tool input", { status: 400 });
+      }
+
+      return jsonResponseWithAudit(
+        store,
+        auth,
+        toolName,
+        await tools.getIssue.execute({
+          connection,
+          input: body.input
+        })
+      );
+    }
+
+    case "github.getPullRequest": {
+      if (!isGitHubIssueNumberInput(body.input)) {
+        return new Response("Invalid tool input", { status: 400 });
+      }
+
+      return jsonResponseWithAudit(
+        store,
+        auth,
+        toolName,
+        await tools.getPullRequest.execute({
+          connection,
+          input: body.input
+        })
+      );
+    }
+
     case "github.createIssue": {
       if (!isCreateGitHubIssueInput(body.input)) {
         return new Response("Invalid tool input", { status: 400 });
@@ -330,6 +413,54 @@ export async function handleToolGatewayRequest(
         auth,
         toolName,
         await tools.createIssue.execute({
+          connection,
+          input: body.input
+        })
+      );
+    }
+
+    case "github.updateIssue": {
+      if (!isUpdateGitHubIssueInput(body.input)) {
+        return new Response("Invalid tool input", { status: 400 });
+      }
+
+      return jsonResponseWithAudit(
+        store,
+        auth,
+        toolName,
+        await tools.updateIssue.execute({
+          connection,
+          input: body.input
+        })
+      );
+    }
+
+    case "github.closeIssue": {
+      if (!isGitHubIssueNumberInput(body.input)) {
+        return new Response("Invalid tool input", { status: 400 });
+      }
+
+      return jsonResponseWithAudit(
+        store,
+        auth,
+        toolName,
+        await tools.closeIssue.execute({
+          connection,
+          input: body.input
+        })
+      );
+    }
+
+    case "github.reopenIssue": {
+      if (!isGitHubIssueNumberInput(body.input)) {
+        return new Response("Invalid tool input", { status: 400 });
+      }
+
+      return jsonResponseWithAudit(
+        store,
+        auth,
+        toolName,
+        await tools.reopenIssue.execute({
           connection,
           input: body.input
         })
@@ -426,6 +557,54 @@ export async function handleToolGatewayRequest(
         auth,
         toolName,
         await tools.requestReview.execute({
+          connection,
+          input: body.input
+        })
+      );
+    }
+
+    case "github.getFile": {
+      if (!isGitHubGetFileInput(body.input)) {
+        return new Response("Invalid tool input", { status: 400 });
+      }
+
+      return jsonResponseWithAudit(
+        store,
+        auth,
+        toolName,
+        await tools.getFile.execute({
+          connection,
+          input: body.input
+        })
+      );
+    }
+
+    case "github.createOrUpdateFile": {
+      if (!isGitHubCreateOrUpdateFileInput(body.input)) {
+        return new Response("Invalid tool input", { status: 400 });
+      }
+
+      return jsonResponseWithAudit(
+        store,
+        auth,
+        toolName,
+        await tools.createOrUpdateFile.execute({
+          connection,
+          input: body.input
+        })
+      );
+    }
+
+    case "github.createBranch": {
+      if (!isGitHubCreateBranchInput(body.input)) {
+        return new Response("Invalid tool input", { status: 400 });
+      }
+
+      return jsonResponseWithAudit(
+        store,
+        auth,
+        toolName,
+        await tools.createBranch.execute({
           connection,
           input: body.input
         })
@@ -536,6 +715,134 @@ export async function handleToolGatewayRequest(
       );
     }
 
+    case "jira.getIssue": {
+      if (!isJiraIssueKeyInput(body.input)) {
+        return new Response("Invalid tool input", { status: 400 });
+      }
+
+      return jsonResponseWithAudit(
+        store,
+        auth,
+        toolName,
+        await jiraTools.getIssue.execute({
+          connection,
+          input: body.input
+        })
+      );
+    }
+
+    case "jira.updateIssue": {
+      if (!isUpdateJiraIssueInput(body.input)) {
+        return new Response("Invalid tool input", { status: 400 });
+      }
+
+      return jsonResponseWithAudit(
+        store,
+        auth,
+        toolName,
+        await jiraTools.updateIssue.execute({
+          connection,
+          input: body.input
+        })
+      );
+    }
+
+    case "jira.addComment": {
+      if (!isJiraCommentInput(body.input)) {
+        return new Response("Invalid tool input", { status: 400 });
+      }
+
+      return jsonResponseWithAudit(
+        store,
+        auth,
+        toolName,
+        await jiraTools.addComment.execute({
+          connection,
+          input: body.input
+        })
+      );
+    }
+
+    case "jira.transitionIssue": {
+      if (!isJiraTransitionInput(body.input)) {
+        return new Response("Invalid tool input", { status: 400 });
+      }
+
+      return jsonResponseWithAudit(
+        store,
+        auth,
+        toolName,
+        await jiraTools.transitionIssue.execute({
+          connection,
+          input: body.input
+        })
+      );
+    }
+
+    case "jira.addLabels": {
+      if (!isJiraLabelsInput(body.input)) {
+        return new Response("Invalid tool input", { status: 400 });
+      }
+
+      return jsonResponseWithAudit(
+        store,
+        auth,
+        toolName,
+        await jiraTools.addLabels.execute({
+          connection,
+          input: body.input
+        })
+      );
+    }
+
+    case "jira.removeLabels": {
+      if (!isJiraLabelsInput(body.input)) {
+        return new Response("Invalid tool input", { status: 400 });
+      }
+
+      return jsonResponseWithAudit(
+        store,
+        auth,
+        toolName,
+        await jiraTools.removeLabels.execute({
+          connection,
+          input: body.input
+        })
+      );
+    }
+
+    case "jira.linkIssues": {
+      if (!isJiraLinkIssuesInput(body.input)) {
+        return new Response("Invalid tool input", { status: 400 });
+      }
+
+      return jsonResponseWithAudit(
+        store,
+        auth,
+        toolName,
+        await jiraTools.linkIssues.execute({
+          connection,
+          input: body.input
+        })
+      );
+    }
+
+    case "jira.createSubtask": {
+      if (!isCreateJiraSubtaskInput(body.input)) {
+        return new Response("Invalid tool input", { status: 400 });
+      }
+
+      return jsonResponseWithAudit(
+        store,
+        auth,
+        toolName,
+        await jiraTools.createSubtask.execute({
+          connection,
+          input: body.input
+        })
+      );
+    }
+
     case "slack.searchUsers": {
       if (!isSearchSlackUsersInput(body.input)) {
         return new Response("Invalid tool input", { status: 400 });
@@ -592,6 +899,22 @@ export async function handleToolGatewayRequest(
       );
     }
 
+    case "google.getDriveFile": {
+      if (!isGetGoogleDriveFileInput(body.input)) {
+        return new Response("Invalid tool input", { status: 400 });
+      }
+
+      return jsonResponseWithAudit(
+        store,
+        auth,
+        toolName,
+        await googleTools.getDriveFile.execute({
+          connection,
+          input: body.input
+        })
+      );
+    }
+
     case "google.createDriveTextFile": {
       if (!isCreateGoogleDriveTextFileInput(body.input)) {
         return new Response("Invalid tool input", { status: 400 });
@@ -602,6 +925,70 @@ export async function handleToolGatewayRequest(
         auth,
         toolName,
         await googleTools.createDriveTextFile.execute({
+          connection,
+          input: body.input
+        })
+      );
+    }
+
+    case "google.updateDriveTextFile": {
+      if (!isUpdateGoogleDriveTextFileInput(body.input)) {
+        return new Response("Invalid tool input", { status: 400 });
+      }
+
+      return jsonResponseWithAudit(
+        store,
+        auth,
+        toolName,
+        await googleTools.updateDriveTextFile.execute({
+          connection,
+          input: body.input
+        })
+      );
+    }
+
+    case "google.appendToDriveTextFile": {
+      if (!isAppendGoogleDriveTextFileInput(body.input)) {
+        return new Response("Invalid tool input", { status: 400 });
+      }
+
+      return jsonResponseWithAudit(
+        store,
+        auth,
+        toolName,
+        await googleTools.appendDriveTextFile.execute({
+          connection,
+          input: body.input
+        })
+      );
+    }
+
+    case "google.createDriveFolder": {
+      if (!isCreateGoogleDriveFolderInput(body.input)) {
+        return new Response("Invalid tool input", { status: 400 });
+      }
+
+      return jsonResponseWithAudit(
+        store,
+        auth,
+        toolName,
+        await googleTools.createDriveFolder.execute({
+          connection,
+          input: body.input
+        })
+      );
+    }
+
+    case "google.moveDriveFile": {
+      if (!isMoveGoogleDriveFileInput(body.input)) {
+        return new Response("Invalid tool input", { status: 400 });
+      }
+
+      return jsonResponseWithAudit(
+        store,
+        auth,
+        toolName,
+        await googleTools.moveDriveFile.execute({
           connection,
           input: body.input
         })
@@ -624,6 +1011,38 @@ export async function handleToolGatewayRequest(
       );
     }
 
+    case "google.createCalendarEvent": {
+      if (!isCreateGoogleCalendarEventInput(body.input)) {
+        return new Response("Invalid tool input", { status: 400 });
+      }
+
+      return jsonResponseWithAudit(
+        store,
+        auth,
+        toolName,
+        await googleTools.createCalendarEvent.execute({
+          connection,
+          input: body.input
+        })
+      );
+    }
+
+    case "google.updateCalendarEvent": {
+      if (!isUpdateGoogleCalendarEventInput(body.input)) {
+        return new Response("Invalid tool input", { status: 400 });
+      }
+
+      return jsonResponseWithAudit(
+        store,
+        auth,
+        toolName,
+        await googleTools.updateCalendarEvent.execute({
+          connection,
+          input: body.input
+        })
+      );
+    }
+
     case "google.searchMailMessages": {
       if (!isSearchGoogleMailMessagesInput(body.input)) {
         return new Response("Invalid tool input", { status: 400 });
@@ -634,6 +1053,22 @@ export async function handleToolGatewayRequest(
         auth,
         toolName,
         await googleTools.searchMailMessages.execute({
+          connection,
+          input: body.input
+        })
+      );
+    }
+
+    case "gmail.createDraft": {
+      if (!isCreateGmailDraftInput(body.input)) {
+        return new Response("Invalid tool input", { status: 400 });
+      }
+
+      return jsonResponseWithAudit(
+        store,
+        auth,
+        toolName,
+        await googleTools.createMailDraft.execute({
           connection,
           input: body.input
         })
@@ -820,24 +1255,48 @@ function isKnownTool(toolName: string): boolean {
     toolName === "github.listAssignedIssues" ||
     toolName === "github.searchIssues" ||
     toolName === "github.listMyPullRequests" ||
+    toolName === "github.getIssue" ||
+    toolName === "github.getPullRequest" ||
     toolName === "github.createIssue" ||
+    toolName === "github.updateIssue" ||
+    toolName === "github.closeIssue" ||
+    toolName === "github.reopenIssue" ||
     toolName === "github.commentOnIssueOrPullRequest" ||
     toolName === "github.createPullRequest" ||
     toolName === "github.updatePullRequest" ||
     toolName === "github.addLabels" ||
     toolName === "github.removeLabels" ||
     toolName === "github.requestReview" ||
+    toolName === "github.getFile" ||
+    toolName === "github.createOrUpdateFile" ||
+    toolName === "github.createBranch" ||
     toolName === "google.getAuthenticatedUser" ||
     toolName === "google.searchDriveFiles" ||
+    toolName === "google.getDriveFile" ||
     toolName === "google.createDriveTextFile" ||
+    toolName === "google.updateDriveTextFile" ||
+    toolName === "google.appendToDriveTextFile" ||
+    toolName === "google.createDriveFolder" ||
+    toolName === "google.moveDriveFile" ||
     toolName === "google.searchCalendarEvents" ||
+    toolName === "google.createCalendarEvent" ||
+    toolName === "google.updateCalendarEvent" ||
     toolName === "google.searchMailMessages" ||
+    toolName === "gmail.createDraft" ||
     toolName === "jira.getAuthenticatedUser" ||
     toolName === "jira.listAccessibleResources" ||
     toolName === "jira.listVisibleProjects" ||
     toolName === "jira.searchUsers" ||
     toolName === "jira.createIssue" ||
     toolName === "jira.editIssue" ||
+    toolName === "jira.getIssue" ||
+    toolName === "jira.updateIssue" ||
+    toolName === "jira.addComment" ||
+    toolName === "jira.transitionIssue" ||
+    toolName === "jira.addLabels" ||
+    toolName === "jira.removeLabels" ||
+    toolName === "jira.linkIssues" ||
+    toolName === "jira.createSubtask" ||
     toolName === "jira.listAssignedIssues" ||
     toolName === "jira.searchIssues" ||
     toolName === "slack.searchUsers" ||
@@ -852,7 +1311,7 @@ function isKnownTool(toolName: string): boolean {
 function readToolProvider(toolName: string): "github" | "google" | "jira" | "slack" {
   return toolName.startsWith("slack.")
     ? "slack"
-    : toolName.startsWith("google.")
+    : toolName.startsWith("google.") || toolName.startsWith("gmail.")
     ? "google"
     : toolName.startsWith("jira.") || toolName.startsWith("atlassian.")
     ? "jira"
@@ -940,6 +1399,46 @@ function isCreateGitHubIssueInput(input: unknown): input is {
   );
 }
 
+function isGitHubIssueNumberInput(input: unknown): input is {
+  repo: string;
+  number: number;
+} {
+  return (
+    isOptionalObject(input) &&
+    isGitHubRepo(input.repo) &&
+    isPositiveInteger(input.number)
+  );
+}
+
+function isUpdateGitHubIssueInput(input: unknown): input is {
+  repo: string;
+  number: number;
+  title?: string;
+  body?: string;
+  state?: "open" | "closed";
+  labels?: string[];
+  assignees?: string[];
+} {
+  return (
+    isOptionalObject(input) &&
+    isGitHubRepo(input.repo) &&
+    isPositiveInteger(input.number) &&
+    optionalString(input.title) &&
+    optionalString(input.body) &&
+    (input.state === undefined ||
+      input.state === "open" ||
+      input.state === "closed") &&
+    optionalStringArray(input.labels, 20) &&
+    optionalStringArray(input.assignees, 20) &&
+    (isNonEmptyString(input.title) ||
+      typeof input.body === "string" ||
+      input.state === "open" ||
+      input.state === "closed" ||
+      stringArray(input.labels, 20) ||
+      stringArray(input.assignees, 20))
+  );
+}
+
 function isGitHubCommentInput(input: unknown): input is {
   repo: string;
   number: number;
@@ -1024,11 +1523,68 @@ function isGitHubRequestReviewInput(input: unknown): input is {
   );
 }
 
+function isGitHubGetFileInput(input: unknown): input is {
+  repo: string;
+  path: string;
+  ref?: string;
+} {
+  return (
+    isOptionalObject(input) &&
+    isGitHubRepo(input.repo) &&
+    isNonEmptyString(input.path) &&
+    optionalString(input.ref)
+  );
+}
+
+function isGitHubCreateOrUpdateFileInput(input: unknown): input is {
+  repo: string;
+  path: string;
+  content: string;
+  message: string;
+  branch?: string;
+  sha?: string;
+} {
+  return (
+    isOptionalObject(input) &&
+    isGitHubRepo(input.repo) &&
+    isNonEmptyString(input.path) &&
+    typeof input.content === "string" &&
+    input.content.length <= 1_000_000 &&
+    isNonEmptyString(input.message) &&
+    optionalString(input.branch) &&
+    optionalString(input.sha)
+  );
+}
+
+function isGitHubCreateBranchInput(input: unknown): input is {
+  repo: string;
+  branch: string;
+  fromRef?: string;
+} {
+  return (
+    isOptionalObject(input) &&
+    isGitHubRepo(input.repo) &&
+    isNonEmptyString(input.branch) &&
+    optionalString(input.fromRef)
+  );
+}
+
 function isSearchGoogleDriveFilesInput(input: unknown): input is {
   query?: string;
   limit?: number;
 } {
   return isOptionalObject(input) && optionalString(input.query) && optionalLimit(input.limit, 20);
+}
+
+function isGetGoogleDriveFileInput(input: unknown): input is {
+  fileId: string;
+  includeContent?: boolean;
+} {
+  return (
+    isOptionalObject(input) &&
+    isNonEmptyString(input.fileId) &&
+    optionalBoolean(input.includeContent)
+  );
 }
 
 function isCreateGoogleDriveTextFileInput(input: unknown): input is {
@@ -1049,6 +1605,61 @@ function isCreateGoogleDriveTextFileInput(input: unknown): input is {
   );
 }
 
+function isUpdateGoogleDriveTextFileInput(input: unknown): input is {
+  fileId: string;
+  text: string;
+  mimeType?: string;
+} {
+  return (
+    isOptionalObject(input) &&
+    isNonEmptyString(input.fileId) &&
+    typeof input.text === "string" &&
+    input.text.length <= 200_000 &&
+    optionalString(input.mimeType)
+  );
+}
+
+function isAppendGoogleDriveTextFileInput(input: unknown): input is {
+  fileId: string;
+  text: string;
+  separator?: string;
+  mimeType?: string;
+} {
+  return (
+    isOptionalObject(input) &&
+    isNonEmptyString(input.fileId) &&
+    typeof input.text === "string" &&
+    input.text.length <= 200_000 &&
+    optionalString(input.separator) &&
+    optionalString(input.mimeType)
+  );
+}
+
+function isCreateGoogleDriveFolderInput(input: unknown): input is {
+  name: string;
+  parentId?: string;
+} {
+  return (
+    isOptionalObject(input) &&
+    isNonEmptyString(input.name) &&
+    input.name.length <= 200 &&
+    optionalString(input.parentId)
+  );
+}
+
+function isMoveGoogleDriveFileInput(input: unknown): input is {
+  fileId: string;
+  parentId: string;
+  removeParentIds?: string[];
+} {
+  return (
+    isOptionalObject(input) &&
+    isNonEmptyString(input.fileId) &&
+    isNonEmptyString(input.parentId) &&
+    optionalStringArray(input.removeParentIds, 20)
+  );
+}
+
 function isSearchGoogleCalendarEventsInput(input: unknown): input is {
   query?: string;
   timeMin?: string;
@@ -1064,6 +1675,61 @@ function isSearchGoogleCalendarEventsInput(input: unknown): input is {
   );
 }
 
+function isCreateGoogleCalendarEventInput(input: unknown): input is {
+  calendarId?: string;
+  summary: string;
+  description?: string;
+  location?: string;
+  start: string;
+  end: string;
+  timeZone?: string;
+  attendees?: string[];
+} {
+  return (
+    isOptionalObject(input) &&
+    optionalString(input.calendarId) &&
+    isNonEmptyString(input.summary) &&
+    optionalString(input.description) &&
+    optionalString(input.location) &&
+    isNonEmptyString(input.start) &&
+    isNonEmptyString(input.end) &&
+    optionalString(input.timeZone) &&
+    optionalStringArray(input.attendees, 50)
+  );
+}
+
+function isUpdateGoogleCalendarEventInput(input: unknown): input is {
+  calendarId?: string;
+  eventId: string;
+  summary?: string;
+  description?: string;
+  location?: string;
+  start?: string;
+  end?: string;
+  timeZone?: string;
+  attendees?: string[];
+} {
+  return (
+    isOptionalObject(input) &&
+    optionalString(input.calendarId) &&
+    isNonEmptyString(input.eventId) &&
+    optionalString(input.summary) &&
+    optionalString(input.description) &&
+    optionalString(input.location) &&
+    optionalString(input.start) &&
+    optionalString(input.end) &&
+    optionalString(input.timeZone) &&
+    optionalStringArray(input.attendees, 50) &&
+    (isNonEmptyString(input.summary) ||
+      typeof input.description === "string" ||
+      typeof input.location === "string" ||
+      isNonEmptyString(input.start) ||
+      isNonEmptyString(input.end) ||
+      typeof input.timeZone === "string" ||
+      stringArray(input.attendees, 50))
+  );
+}
+
 function isSearchGoogleMailMessagesInput(input: unknown): input is {
   query: string;
   limit?: number;
@@ -1073,6 +1739,24 @@ function isSearchGoogleMailMessagesInput(input: unknown): input is {
     typeof input.query === "string" &&
     input.query.trim().length > 0 &&
     optionalLimit(input.limit, 10)
+  );
+}
+
+function isCreateGmailDraftInput(input: unknown): input is {
+  to: string[];
+  subject: string;
+  body: string;
+  cc?: string[];
+  bcc?: string[];
+} {
+  return (
+    isOptionalObject(input) &&
+    stringArray(input.to, 50) &&
+    isNonEmptyString(input.subject) &&
+    typeof input.body === "string" &&
+    input.body.length <= 200_000 &&
+    optionalStringArray(input.cc, 50) &&
+    optionalStringArray(input.bcc, 50)
   );
 }
 
@@ -1185,6 +1869,107 @@ function isEditJiraIssueInput(input: unknown): input is {
       typeof record.description === "string" ||
       typeof record.assigneeAccountId === "string" ||
       record.assigneeAccountId === null)
+  );
+}
+
+function isJiraIssueKeyInput(input: unknown): input is { issueKey: string } {
+  return isOptionalObject(input) && isNonEmptyString(input.issueKey);
+}
+
+function isUpdateJiraIssueInput(input: unknown): input is {
+  issueKey: string;
+  summary?: string;
+  description?: string;
+  assigneeAccountId?: string | null;
+  labels?: string[];
+} {
+  return (
+    isOptionalObject(input) &&
+    isNonEmptyString(input.issueKey) &&
+    optionalString(input.summary) &&
+    optionalString(input.description) &&
+    (input.assigneeAccountId === undefined ||
+      input.assigneeAccountId === null ||
+      typeof input.assigneeAccountId === "string") &&
+    optionalStringArray(input.labels, 50) &&
+    (isNonEmptyString(input.summary) ||
+      typeof input.description === "string" ||
+      typeof input.assigneeAccountId === "string" ||
+      input.assigneeAccountId === null ||
+      stringArray(input.labels, 50))
+  );
+}
+
+function isJiraCommentInput(input: unknown): input is {
+  issueKey: string;
+  body: string;
+} {
+  return (
+    isOptionalObject(input) &&
+    isNonEmptyString(input.issueKey) &&
+    isNonEmptyString(input.body)
+  );
+}
+
+function isJiraTransitionInput(input: unknown): input is {
+  issueKey: string;
+  transitionId?: string;
+  transitionName?: string;
+} {
+  return (
+    isOptionalObject(input) &&
+    isNonEmptyString(input.issueKey) &&
+    optionalString(input.transitionId) &&
+    optionalString(input.transitionName) &&
+    (isNonEmptyString(input.transitionId) ||
+      isNonEmptyString(input.transitionName))
+  );
+}
+
+function isJiraLabelsInput(input: unknown): input is {
+  issueKey: string;
+  labels: string[];
+} {
+  return (
+    isOptionalObject(input) &&
+    isNonEmptyString(input.issueKey) &&
+    stringArray(input.labels, 50)
+  );
+}
+
+function isJiraLinkIssuesInput(input: unknown): input is {
+  inwardIssueKey: string;
+  outwardIssueKey: string;
+  typeName?: string;
+  comment?: string;
+} {
+  return (
+    isOptionalObject(input) &&
+    isNonEmptyString(input.inwardIssueKey) &&
+    isNonEmptyString(input.outwardIssueKey) &&
+    optionalString(input.typeName) &&
+    optionalString(input.comment)
+  );
+}
+
+function isCreateJiraSubtaskInput(input: unknown): input is {
+  parentIssueKey: string;
+  summary: string;
+  projectKey?: string;
+  issueTypeName?: string;
+  issueTypeId?: string;
+  description?: string;
+  assigneeAccountId?: string;
+} {
+  return (
+    isOptionalObject(input) &&
+    isNonEmptyString(input.parentIssueKey) &&
+    isNonEmptyString(input.summary) &&
+    optionalString(input.projectKey) &&
+    optionalString(input.issueTypeName) &&
+    optionalString(input.issueTypeId) &&
+    optionalString(input.description) &&
+    optionalString(input.assigneeAccountId)
   );
 }
 

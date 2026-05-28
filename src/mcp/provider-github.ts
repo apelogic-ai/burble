@@ -152,6 +152,50 @@ export function registerGitHubMcpTools(input: {
   );
 
   input.server.registerTool(
+    "github_get_issue",
+    {
+      title: "GitHub get issue",
+      description:
+        "Get a GitHub issue by repository and issue number. Use before editing issue metadata.",
+      inputSchema: {
+        repo: z.string().min(1).describe("Repository in owner/name format"),
+        number: z.number().int().positive().describe("Issue number")
+      }
+    },
+    async ({ repo, number }) =>
+      mcpToolResult(
+        await withConnection(input.store, input.runtime, "github", (connection) =>
+          githubTools.getIssue.execute({
+            connection,
+            input: { repo, number }
+          })
+        )
+      )
+  );
+
+  input.server.registerTool(
+    "github_get_pr",
+    {
+      title: "GitHub get pull request",
+      description:
+        "Get a GitHub pull request by repository and PR number. Use before editing PR metadata.",
+      inputSchema: {
+        repo: z.string().min(1).describe("Repository in owner/name format"),
+        number: z.number().int().positive().describe("Pull request number")
+      }
+    },
+    async ({ repo, number }) =>
+      mcpToolResult(
+        await withConnection(input.store, input.runtime, "github", (connection) =>
+          githubTools.getPullRequest.execute({
+            connection,
+            input: { repo, number }
+          })
+        )
+      )
+  );
+
+  input.server.registerTool(
     "github_comment_on_issue_or_pr",
     {
       title: "GitHub comment on issue or pull request",
@@ -169,6 +213,83 @@ export function registerGitHubMcpTools(input: {
           githubTools.commentOnIssueOrPullRequest.execute({
             connection,
             input: { repo, number, body }
+          })
+        )
+      )
+  );
+
+  input.server.registerTool(
+    "github_update_issue",
+    {
+      title: "GitHub update issue",
+      description:
+        "Update GitHub issue metadata only: title, body, state, labels, or assignees.",
+      inputSchema: {
+        repo: z.string().min(1).describe("Repository in owner/name format"),
+        number: z.number().int().positive().describe("Issue number"),
+        title: z.string().min(1).max(256).optional(),
+        body: z.string().max(65_536).optional(),
+        state: z.enum(["open", "closed"]).optional(),
+        labels: z.array(z.string().min(1)).max(20).optional(),
+        assignees: z.array(z.string().min(1)).max(20).optional()
+      }
+    },
+    async ({ repo, number, title, body, state, labels, assignees }) =>
+      mcpToolResult(
+        await withConnection(input.store, input.runtime, "github", (connection) =>
+          githubTools.updateIssue.execute({
+            connection,
+            input: {
+              repo,
+              number,
+              ...(title !== undefined ? { title } : {}),
+              ...(body !== undefined ? { body } : {}),
+              ...(state !== undefined ? { state } : {}),
+              ...(labels !== undefined ? { labels } : {}),
+              ...(assignees !== undefined ? { assignees } : {})
+            }
+          })
+        )
+      )
+  );
+
+  input.server.registerTool(
+    "github_close_issue",
+    {
+      title: "GitHub close issue",
+      description: "Close a GitHub issue. Use only when explicitly requested.",
+      inputSchema: {
+        repo: z.string().min(1).describe("Repository in owner/name format"),
+        number: z.number().int().positive().describe("Issue number")
+      }
+    },
+    async ({ repo, number }) =>
+      mcpToolResult(
+        await withConnection(input.store, input.runtime, "github", (connection) =>
+          githubTools.closeIssue.execute({
+            connection,
+            input: { repo, number }
+          })
+        )
+      )
+  );
+
+  input.server.registerTool(
+    "github_reopen_issue",
+    {
+      title: "GitHub reopen issue",
+      description: "Reopen a GitHub issue. Use only when explicitly requested.",
+      inputSchema: {
+        repo: z.string().min(1).describe("Repository in owner/name format"),
+        number: z.number().int().positive().describe("Issue number")
+      }
+    },
+    async ({ repo, number }) =>
+      mcpToolResult(
+        await withConnection(input.store, input.runtime, "github", (connection) =>
+          githubTools.reopenIssue.execute({
+            connection,
+            input: { repo, number }
           })
         )
       )
@@ -306,6 +427,97 @@ export function registerGitHubMcpTools(input: {
               number,
               ...(reviewers ? { reviewers } : {}),
               ...(teamReviewers ? { teamReviewers } : {})
+            }
+          })
+        )
+      )
+  );
+
+  input.server.registerTool(
+    "github_get_file",
+    {
+      title: "GitHub get file",
+      description:
+        "Read a text file from a GitHub repository. Use before updating an existing file.",
+      inputSchema: {
+        repo: z.string().min(1).describe("Repository in owner/name format"),
+        path: z.string().min(1).describe("Repository file path"),
+        ref: z.string().min(1).optional().describe("Optional branch, tag, or commit SHA")
+      }
+    },
+    async ({ repo, path, ref }) =>
+      mcpToolResult(
+        await withConnection(input.store, input.runtime, "github", (connection) =>
+          githubTools.getFile.execute({
+            connection,
+            input: {
+              repo,
+              path,
+              ...(ref ? { ref } : {})
+            }
+          })
+        )
+      )
+  );
+
+  input.server.registerTool(
+    "github_create_or_update_file",
+    {
+      title: "GitHub create or update file",
+      description:
+        "Create or update a single GitHub repository file. For updates, pass the file SHA from github_get_file.",
+      inputSchema: {
+        repo: z.string().min(1).describe("Repository in owner/name format"),
+        path: z.string().min(1).describe("Repository file path"),
+        content: z.string().max(1_000_000).describe("New full file content"),
+        message: z.string().min(1).max(256).describe("Commit message"),
+        branch: z.string().min(1).optional().describe("Optional target branch"),
+        sha: z.string().min(1).optional().describe("Current file SHA when updating")
+      }
+    },
+    async ({ repo, path, content, message, branch, sha }) =>
+      mcpToolResult(
+        await withConnection(input.store, input.runtime, "github", (connection) =>
+          githubTools.createOrUpdateFile.execute({
+            connection,
+            input: {
+              repo,
+              path,
+              content,
+              message,
+              ...(branch ? { branch } : {}),
+              ...(sha ? { sha } : {})
+            }
+          })
+        )
+      )
+  );
+
+  input.server.registerTool(
+    "github_create_branch",
+    {
+      title: "GitHub create branch",
+      description:
+        "Create a GitHub branch from another branch or the repository default branch.",
+      inputSchema: {
+        repo: z.string().min(1).describe("Repository in owner/name format"),
+        branch: z.string().min(1).describe("New branch name"),
+        fromRef: z
+          .string()
+          .min(1)
+          .optional()
+          .describe("Optional source branch. Defaults to repository default branch.")
+      }
+    },
+    async ({ repo, branch, fromRef }) =>
+      mcpToolResult(
+        await withConnection(input.store, input.runtime, "github", (connection) =>
+          githubTools.createBranch.execute({
+            connection,
+            input: {
+              repo,
+              branch,
+              ...(fromRef ? { fromRef } : {})
             }
           })
         )
