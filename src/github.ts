@@ -115,7 +115,10 @@ export async function searchIssues(
 export async function listMyPullRequests(
   token: string
 ): Promise<GitHubPullRequest[]> {
-  const items = await searchIssues(token, "is:open is:pr author:@me");
+  const items = await searchIssues(
+    token,
+    "is:open is:pr author:@me sort:updated-desc"
+  );
   return items.map((item) => ({
     html_url: item.html_url,
     title: item.title

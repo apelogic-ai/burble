@@ -115,7 +115,7 @@ describe("GitHub search helpers", () => {
     }
 
     expect(new URL(urls[0]).searchParams.get("q")).toBe(
-      "is:open is:pr author:@me"
+      "is:open is:pr author:@me sort:updated-desc"
     );
   });
 });
