@@ -14,6 +14,7 @@ export async function handleConversation(
   deps: ConversationDeps
 ): Promise<ConversationResponse> {
   const intent = classifyDeterministicIntent(request.text);
+  const forceAgent = shouldForceAgentDelegation(request.text);
 
   if (intent === "connect_github") {
     return {
@@ -73,17 +74,19 @@ export async function handleConversation(
     };
   }
 
-  const fastPathResponse = await tryHandleLocalToolFastPath(request, deps);
-  if (fastPathResponse) {
-    return fastPathResponse;
+  if (!forceAgent) {
+    const fastPathResponse = await tryHandleLocalToolFastPath(request, deps);
+    if (fastPathResponse) {
+      return fastPathResponse;
+    }
   }
 
-  if (
+  if (!forceAgent && (
     intent === "github_identity" ||
     intent === "github_issues" ||
     intent === "github_issue_search" ||
     intent === "github_pull_requests"
-  ) {
+  )) {
     const connection = deps.getConnection("github", request.user.email);
     if (!connection) {
       return {
@@ -258,6 +261,22 @@ export function classifyDeterministicIntent(text: string): DeterministicIntent {
   }
 
   return "help";
+}
+
+export function shouldForceAgentDelegation(text: string): boolean {
+  const normalized = text.toLowerCase().replace(/\s+/g, " ").trim();
+  return (
+    /\bask\s+(the\s+)?(agent|subagent)\b/.test(normalized) ||
+    /\b(agent|subagent)\s+(please\s+)?(create|make|schedule|run|list|show|tell|answer|post|send)\b/.test(
+      normalized
+    ) ||
+    /\b(create|make|schedule|modify|update|delete|remove|list|run|start|add)\b.*\b(cron|job|task|subagent|scheduled job|schedule|reminder|background task)\b/.test(
+      normalized
+    ) ||
+    /\b(one[-\s]?shot|every\s+\d+|in\s+\d+\s+(second|seconds|minute|minutes|hour|hours))\b.*\b(cron|job|task|scheduled|schedule|post|send|report)\b/.test(
+      normalized
+    )
+  );
 }
 
 function buildIssueSearchQuery(text: string): string {
