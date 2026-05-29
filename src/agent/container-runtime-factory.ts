@@ -52,7 +52,9 @@ const approvedForwardedEnv = new Set([
   "OPENCLAW_RAW_STREAM_DEBUG",
   "OPENCLAW_GATEWAY_PORT",
   "OPENCLAW_GATEWAY_BIND",
-  "OPENCLAW_GATEWAY_TOKEN"
+  "OPENCLAW_GATEWAY_TOKEN",
+  "HERMES_GATEWAY_COMMAND",
+  "HERMES_RUN_TIMEOUT_SECONDS"
 ]);
 
 export function createDockerRuntimeFactory(input: {

@@ -174,13 +174,26 @@ For new pluggable runtime images, prefer `AGENT_RUNTIME_IMAGE` and
 `AGENT_RUNTIME_ENGINE`; `OPENCLAW_NEMOCLAW_ENGINE` is kept as a legacy alias
 for the bundled OpenClaw/NemoClaw image.
 
-For example, a Hermes-compatible image should expose the same Burble runtime
-HTTP contract and can be selected with:
+For example, the experimental Hermes-compatible image exposes the same Burble
+runtime HTTP contract and can be selected with:
 
 ```env
-AGENT_RUNTIME_IMAGE=ghcr.io/apelogic-ai/nemo-hermes-runtime:dev
+AGENT_RUNTIME_IMAGE=burble-nemo-hermes:dev
 AGENT_RUNTIME_ENGINE=hermes
 ```
+
+Build that image locally with:
+
+```bash
+docker build -f ../../runtimes/nemo-hermes/Dockerfile \
+  -t burble-nemo-hermes:dev \
+  ../../runtimes/nemo-hermes
+```
+
+This is not a `hermes chat -q` wrapper. The image starts Hermes gateway with a
+Burble platform adapter so inbound turns, normal replies, and cron/background
+delivery flow through Burble route IDs. Burble still owns provider OAuth, MCP
+policy, and final Slack transport delivery.
 
 The runtime supports these internal engines:
 
