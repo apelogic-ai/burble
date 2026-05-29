@@ -21,6 +21,7 @@ import {
   formatMentionWorkingMessage,
   parseAgentCommand,
   parseAuthCommand,
+  restartAgentRuntimeIfConfigChanged,
   shouldHandleDirectMessageEvent,
   summarizeSlackPayload
 } from "../src/slack";
@@ -655,6 +656,78 @@ describe("agent user config commands", () => {
     });
 
     expect(response.text).toContain("Unknown user config key");
+  });
+
+  test("stops the current runtime when user config changes the manifest hash", async () => {
+    const store = createTokenStore(":memory:");
+    const runtime = store.getOrCreateAgentRuntime({
+      workspaceId: "T123",
+      slackUserId: "U123",
+      engine: "burble-direct",
+      endpointUrl: "http://runtime:8080",
+      authTokenHash: "hash",
+      statePath: "/data/state",
+      configPath: "/data/config/runtime.json",
+      workspacePath: "/data/workspace",
+      policyHash: "policy-old"
+    });
+    const stopped: string[] = [];
+
+    const stoppedRuntimeId = await restartAgentRuntimeIfConfigChanged({
+      config: agentConfig,
+      store,
+      runtimeFactory: {
+        async getOrCreateRuntime() {
+          throw new Error("not used");
+        },
+        async stopRuntime(runtimeId) {
+          stopped.push(runtimeId);
+        },
+        async reapIdleRuntimes() {}
+      },
+      principal: { workspaceId: "T123", slackUserId: "U123" },
+      previousPolicyHash: "policy-old",
+      nextPolicyHash: "policy-new"
+    });
+
+    expect(stoppedRuntimeId).toBe(runtime.id);
+    expect(stopped).toEqual([runtime.id]);
+  });
+
+  test("does not stop runtime when user config keeps the same manifest hash", async () => {
+    const store = createTokenStore(":memory:");
+    store.getOrCreateAgentRuntime({
+      workspaceId: "T123",
+      slackUserId: "U123",
+      engine: "burble-direct",
+      endpointUrl: "http://runtime:8080",
+      authTokenHash: "hash",
+      statePath: "/data/state",
+      configPath: "/data/config/runtime.json",
+      workspacePath: "/data/workspace",
+      policyHash: "policy-old"
+    });
+    const stopped: string[] = [];
+
+    const stoppedRuntimeId = await restartAgentRuntimeIfConfigChanged({
+      config: agentConfig,
+      store,
+      runtimeFactory: {
+        async getOrCreateRuntime() {
+          throw new Error("not used");
+        },
+        async stopRuntime(runtimeId) {
+          stopped.push(runtimeId);
+        },
+        async reapIdleRuntimes() {}
+      },
+      principal: { workspaceId: "T123", slackUserId: "U123" },
+      previousPolicyHash: "policy-old",
+      nextPolicyHash: "policy-old"
+    });
+
+    expect(stoppedRuntimeId).toBeNull();
+    expect(stopped).toEqual([]);
   });
 });
 

@@ -1013,8 +1013,10 @@ Implementation has started with the control-plane foundation:
 - OpenClaw/NemoClaw run requests receive manifest metadata, skills, memory
   settings, and memory context.
 - Runtime policy drift is recorded as a runtime audit event.
-- Deferred: explicit runtime reload/restart on manifest hash changes. Current
-  behavior is to send the latest manifest with each run.
+- `/agent config set` stops the current user runtime when the effective
+  manifest hash changes, so the next run starts with fresh config.
+- Deferred: a general backend reload protocol for non-user-triggered manifest
+  changes. Current fallback is still to send the latest manifest with each run.
 
 ### Slice 4: Skill Catalog
 
@@ -1056,6 +1058,8 @@ Implementation has started with the control-plane foundation:
   tools, and enabled skills.
 - Added `disable-tool` / `enable-tool` shortcuts for user-scoped tool
   preferences.
+- User config changes that alter the effective manifest stop the current
+  runtime so the next request reprovisions cleanly.
 - Keep `/burble` for admin/workspace policy controls in a later PR.
 
 ### Slice 8: Slack/Admin UX

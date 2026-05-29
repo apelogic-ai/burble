@@ -829,16 +829,48 @@ export function createSlackRuntime(
       }
 
       if (action.kind === "config_set") {
+        const principal = {
+          workspaceId: body.team_id ?? "",
+          slackUserId: body.user_id
+        };
+        const previousPolicyHash = buildRuntimeManifestForPrincipal({
+          config,
+          store,
+          principal,
+          engine: config.openClawNemoClawEngine
+        }).policyHash;
+        const response = applyAgentUserConfigSet({
+          config,
+          store,
+          workspaceId: principal.workspaceId,
+          slackUserId: principal.slackUserId,
+          key: action.key,
+          value: action.value
+        });
+        const nextPolicyHash = buildRuntimeManifestForPrincipal({
+          config,
+          store,
+          principal,
+          engine: config.openClawNemoClawEngine
+        }).policyHash;
         await ack(
-          applyAgentUserConfigSet({
+          addAgentConfigRuntimeRestartNotice(
+            response,
+            previousPolicyHash !== nextPolicyHash
+          )
+        );
+        try {
+          await restartAgentRuntimeIfConfigChanged({
             config,
             store,
-            workspaceId: body.team_id ?? "",
-            slackUserId: body.user_id,
-            key: action.key,
-            value: action.value
-          })
-        );
+            runtimeFactory,
+            principal,
+            previousPolicyHash,
+            nextPolicyHash
+          });
+        } catch (error) {
+          logger.error(formatLogError(error));
+        }
         return;
       }
 
@@ -2158,6 +2190,56 @@ export function applyAgentUserConfigSet(input: {
         }),
         key
       })
+    ].join("\n")
+  };
+}
+
+export async function restartAgentRuntimeIfConfigChanged(input: {
+  config: Config;
+  store: TokenStore;
+  runtimeFactory?: RuntimeFactory;
+  principal: { workspaceId: string; slackUserId: string };
+  previousPolicyHash: string;
+  nextPolicyHash: string;
+}): Promise<string | null> {
+  if (input.previousPolicyHash === input.nextPolicyHash) {
+    return null;
+  }
+  if (input.config.agentRuntime !== "openclaw-nemoclaw" || !input.runtimeFactory) {
+    return null;
+  }
+
+  const runtime = input.store.getAgentRuntimeForPrincipal({
+    workspaceId: input.principal.workspaceId,
+    slackUserId: input.principal.slackUserId,
+    engine: input.config.openClawNemoClawEngine
+  });
+  if (
+    !runtime ||
+    runtime.status === "stopping" ||
+    runtime.status === "stopped" ||
+    runtime.status === "failed"
+  ) {
+    return null;
+  }
+
+  await input.runtimeFactory.stopRuntime(runtime.id);
+  return runtime.id;
+}
+
+function addAgentConfigRuntimeRestartNotice(
+  response: AgentUserConfigSetResult,
+  policyChanged: boolean
+): AgentUserConfigSetResult {
+  if (!policyChanged) {
+    return response;
+  }
+  return {
+    ...response,
+    text: [
+      response.text,
+      "",
+      "_Your current agent runtime will restart so the new config applies cleanly on the next run._"
     ].join("\n")
   };
 }
