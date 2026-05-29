@@ -25,6 +25,13 @@ export function buildRuntimeManifestForPrincipal(input: {
   principal: PrincipalId;
   engine: RuntimeManifest["runtime"]["engine"];
 }): RuntimeManifest {
+  const workspaceSkills = input.store.listWorkspaceSkills(
+    input.principal.workspaceId
+  );
+  const userSkills = input.store.listUserSkills(
+    input.principal.workspaceId,
+    input.principal.slackUserId
+  );
   return buildRuntimeManifest({
     principal: input.principal,
     runtime: {
@@ -36,11 +43,18 @@ export function buildRuntimeManifestForPrincipal(input: {
     defaultModel: input.config.aiModel,
     workspacePolicy: [
       ...defaultWorkspacePolicyRecords(input.principal.workspaceId),
-      ...input.store.listWorkspacePolicy(input.principal.workspaceId)
+      ...input.store.listWorkspacePolicy(input.principal.workspaceId),
+      ...workspaceSkillPolicyRecords(input.principal.workspaceId, workspaceSkills)
     ],
     userPreferences: input.store.listUserPreferences(
       input.principal.workspaceId,
       input.principal.slackUserId
+    ).concat(
+      userSkillPreferenceRecords(
+        input.principal.workspaceId,
+        input.principal.slackUserId,
+        userSkills
+      )
     ),
     memoryRecords: [
       ...input.store.listAgentMemory({
@@ -55,6 +69,51 @@ export function buildRuntimeManifestForPrincipal(input: {
     ],
     toolCatalog: providerToolCatalog
   });
+}
+
+function workspaceSkillPolicyRecords(
+  workspaceId: string,
+  skills: ReturnType<TokenStore["listWorkspaceSkills"]>
+): WorkspacePolicyRecord[] {
+  if (skills.length === 0) {
+    return [];
+  }
+  return [
+    {
+      workspaceId,
+      key: "skills.allowed",
+      value: skills
+        .filter((skill) => skill.enabled)
+        .map((skill) => ({ id: skill.skillId, version: skill.version })),
+      updatedBySlackUserId: null,
+      updatedAt: maxUpdatedAt(skills.map((skill) => skill.updatedAt))
+    }
+  ];
+}
+
+function userSkillPreferenceRecords(
+  workspaceId: string,
+  slackUserId: string,
+  skills: ReturnType<TokenStore["listUserSkills"]>
+) {
+  if (skills.length === 0) {
+    return [];
+  }
+  return [
+    {
+      workspaceId,
+      slackUserId,
+      key: "skills.enabled",
+      value: skills
+        .filter((skill) => skill.enabled)
+        .map((skill) => ({ id: skill.skillId, version: skill.version })),
+      updatedAt: maxUpdatedAt(skills.map((skill) => skill.updatedAt))
+    }
+  ];
+}
+
+function maxUpdatedAt(values: string[]): string {
+  return values.sort().at(-1) ?? "1970-01-01T00:00:00.000Z";
 }
 
 function defaultWorkspacePolicyRecords(

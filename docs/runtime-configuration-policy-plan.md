@@ -895,7 +895,8 @@ time or expose `/agent set` / `/agent get` in Slack. Those are the next slices.
 - Status: partially implemented.
 - Added durable skill metadata catalog storage.
 - Added workspace/user skill enablement storage.
-- Load only approved/enabled skills into runtime context.
+- Runtime manifest generation loads typed workspace/user skill enablement when
+  present.
 - Ensure skills cannot grant tools.
 
 ### Slice 5: Memory Scopes
