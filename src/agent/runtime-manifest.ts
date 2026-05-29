@@ -160,9 +160,9 @@ function manifestTool(input: {
     provider: input.tool.provider,
     enabled:
       providerAllowed && !denied && !input.disabledTools.has(input.tool.name),
-    risk: lastPolicy?.risk ?? "read",
+    risk: lastPolicy?.risk ?? input.tool.risk ?? "read",
     routeRequired: lastPolicy?.routeRequired ?? true,
-    confirmation: lastPolicy?.confirmation ?? "none"
+    confirmation: lastPolicy?.confirmation ?? input.tool.confirmation ?? "none"
   };
 }
 

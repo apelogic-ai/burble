@@ -19,6 +19,8 @@ const toolCatalog: ProviderToolSpec[] = [
     implementation: "createPullRequest",
     title: "GitHub create PR",
     description: "Create pull request",
+    risk: "moderate_write",
+    confirmation: "none",
     input: {}
   },
   {
@@ -204,6 +206,32 @@ describe("buildRuntimeManifest", () => {
       userMemoryEnabled: false,
       workspaceMemoryEnabled: false,
       jobMemoryEnabled: true
+    });
+  });
+
+  test("uses provider tool risk metadata when workspace policy does not override it", () => {
+    const manifest = buildRuntimeManifest({
+      principal: {
+        workspaceId: "T123",
+        slackUserId: "U123"
+      },
+      runtime: {
+        engine: "openclaw",
+        factory: "static",
+        ttlMs: 60_000,
+        reaperEnabled: true
+      },
+      defaultModel: "openai:gpt-5.4",
+      toolCatalog,
+      workspacePolicy: [],
+      userPreferences: []
+    });
+
+    expect(
+      manifest.tools.find((tool) => tool.name === "github_create_pr")
+    ).toMatchObject({
+      risk: "moderate_write",
+      confirmation: "none"
     });
   });
 });
