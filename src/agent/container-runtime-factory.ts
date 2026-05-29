@@ -199,6 +199,80 @@ export function createDockerRuntimeFactory(input: {
       return toRuntimeHandle(runtime, spec, token, manifest);
     },
 
+    async syncRuntimeStatus(runtimeId) {
+      const runtime = input.store.getAgentRuntime(runtimeId);
+      if (!runtime) {
+        return null;
+      }
+
+      const runtimeDataId = buildRuntimeDataId(
+        {
+          workspaceId: runtime.workspaceId,
+          slackUserId: runtime.slackUserId
+        },
+        runtime.engine
+      );
+      const state = await inspectContainerState(
+        buildContainerName(runtimeDataId),
+        execute
+      );
+      if (!state.ok) {
+        input.store.updateAgentRuntimeStatus(runtime.id, {
+          status: "stopped",
+          failureReason: state.failureReason
+        });
+        return input.store.getAgentRuntime(runtime.id);
+      }
+
+      if (state.restarting) {
+        input.store.updateAgentRuntimeStatus(runtime.id, {
+          status: "failed",
+          failureReason: "Runtime container is restarting"
+        });
+        return input.store.getAgentRuntime(runtime.id);
+      }
+
+      if (!state.running) {
+        input.store.updateAgentRuntimeStatus(runtime.id, {
+          status: state.exitCode && state.exitCode !== 0 ? "failed" : "stopped",
+          failureReason:
+            state.exitCode && state.exitCode !== 0
+              ? `Runtime container exited with code ${state.exitCode}`
+              : null
+        });
+        return input.store.getAgentRuntime(runtime.id);
+      }
+
+      try {
+        const response = await requestFetch(`${runtime.endpointUrl}/healthz`);
+        if (!response.ok) {
+          input.store.updateAgentRuntimeStatus(runtime.id, {
+            status: "failed",
+            failureReason: `Runtime health check failed: HTTP ${response.status}`
+          });
+          return input.store.getAgentRuntime(runtime.id);
+        }
+      } catch (error) {
+        input.store.updateAgentRuntimeStatus(runtime.id, {
+          status: "failed",
+          failureReason:
+            error instanceof Error
+              ? `Runtime health check failed: ${error.message}`
+              : "Runtime health check failed"
+        });
+        return input.store.getAgentRuntime(runtime.id);
+      }
+
+      if (
+        runtime.status === "failed" ||
+        runtime.status === "stopped" ||
+        runtime.status === "provisioning"
+      ) {
+        input.store.updateAgentRuntimeStatus(runtime.id, { status: "ready" });
+      }
+      return input.store.getAgentRuntime(runtime.id);
+    },
+
     async readRuntimeConfig(runtimeId) {
       const runtime = input.store.getAgentRuntime(runtimeId);
       if (!runtime) {
@@ -256,6 +330,55 @@ export function createDockerRuntimeFactory(input: {
       });
     }
   };
+}
+
+type DockerContainerState =
+  | {
+      ok: true;
+      running: boolean;
+      restarting: boolean;
+      exitCode: number | null;
+    }
+  | {
+      ok: false;
+      failureReason: string;
+    };
+
+async function inspectContainerState(
+  containerName: string,
+  execute: RuntimeCommandExecutor
+): Promise<DockerContainerState> {
+  const result = await execute("docker", [
+    "inspect",
+    "--format",
+    "{{json .State}}",
+    containerName
+  ]);
+  if (result.code !== 0) {
+    return {
+      ok: false,
+      failureReason: "Runtime container is not present"
+    };
+  }
+
+  try {
+    const state = JSON.parse(result.stdout.trim()) as {
+      Running?: unknown;
+      Restarting?: unknown;
+      ExitCode?: unknown;
+    };
+    return {
+      ok: true,
+      running: state.Running === true,
+      restarting: state.Restarting === true,
+      exitCode: typeof state.ExitCode === "number" ? state.ExitCode : null
+    };
+  } catch {
+    return {
+      ok: false,
+      failureReason: "Could not inspect runtime container state"
+    };
+  }
 }
 
 export function toRuntimeContainerPath(input: {

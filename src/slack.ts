@@ -251,11 +251,18 @@ export function createSlackRuntime(
   const resolveAgentExecutionMode = (): "openclaw-native" | undefined =>
     config.agentRuntime === "burble-runtime" ? "openclaw-native" : undefined;
 
-  const buildHomeViewForUser = (input: {
+  const buildHomeViewForUser = async (input: {
     workspaceId: string;
     slackUserId: string;
-  }) =>
-    buildAppHomeView({
+  }) => {
+    const agentSettings = await buildSyncedAgentHomeSettings({
+      config,
+      store,
+      runtimeFactory,
+      workspaceId: input.workspaceId,
+      slackUserId: input.slackUserId
+    });
+    return buildAppHomeView({
       githubUrl: buildGitHubOAuthUrl(
         config,
         store.createOAuthState(input.slackUserId)
@@ -278,13 +285,9 @@ export function createSlackRuntime(
         jira: store.getConnectionForSlackUser("jira", input.slackUserId),
         slack: store.getConnectionForSlackUser("slack", input.slackUserId)
       },
-      agentSettings: buildAgentHomeSettings({
-        config,
-        store,
-        workspaceId: input.workspaceId,
-        slackUserId: input.slackUserId
-      })
+      agentSettings
     });
+  };
 
   const publishHomeViewForUser = async (input: {
     client: SlackViewsPublishClient;
@@ -293,7 +296,7 @@ export function createSlackRuntime(
   }) => {
     await input.client.views.publish({
       user_id: input.slackUserId,
-      view: buildHomeViewForUser(input)
+      view: await buildHomeViewForUser(input)
     });
   };
 
@@ -1726,6 +1729,7 @@ type AgentHomeSettingsView = {
   runtime: {
     id: string | null;
     status: string;
+    factory: string;
     engine: string;
     endpointUrl: string | null;
     createdAt: string | null;
@@ -1878,6 +1882,7 @@ export function buildAgentHomeSettings(input: {
       ? {
           id: runtime.id,
           status: runtime.status,
+          factory: input.config.agentRuntimeFactory,
           engine: runtime.engine,
           endpointUrl: runtime.endpointUrl,
           createdAt: runtime.createdAt,
@@ -1886,12 +1891,32 @@ export function buildAgentHomeSettings(input: {
       : {
           id: null,
           status: "not provisioned",
+          factory: input.config.agentRuntimeFactory,
           engine: input.config.agentRuntimeEngine,
           endpointUrl: null,
           createdAt: null,
           lastUsedAt: null
-        }
+      }
   };
+}
+
+async function buildSyncedAgentHomeSettings(input: {
+  config: Config;
+  store: TokenStore;
+  runtimeFactory?: RuntimeFactory;
+  workspaceId: string;
+  slackUserId: string;
+}): Promise<AgentHomeSettingsView> {
+  const runtime = input.store.getAgentRuntimeForPrincipal({
+    workspaceId: input.workspaceId,
+    slackUserId: input.slackUserId,
+    engine: input.config.agentRuntimeEngine
+  });
+  if (runtime && input.runtimeFactory?.syncRuntimeStatus) {
+    await input.runtimeFactory.syncRuntimeStatus(runtime.id);
+  }
+
+  return buildAgentHomeSettings(input);
 }
 
 function buildAgentRuntimeHomeBlocks(settings?: AgentHomeSettingsView) {
@@ -1916,7 +1941,10 @@ function buildAgentRuntimeHomeBlocks(settings?: AgentHomeSettingsView) {
 
 function buildAgentRuntimeActionElements(settings: AgentHomeSettingsView) {
   const elements = [];
-  if (isRuntimeStartable(settings.runtime.status)) {
+  if (settings.runtime.factory !== "docker") {
+    // Static runtimes are shared externally managed services, so Burble cannot
+    // safely expose per-user container lifecycle actions for them.
+  } else if (isRuntimeStartable(settings.runtime.status)) {
     elements.push({
       type: "button",
       text: {
@@ -2005,6 +2033,8 @@ function formatRuntimeHomeSummary(settings: AgentHomeSettingsView): string {
   const lastUsed = settings.runtime.lastUsedAt ?? "never";
   return [
     `Status: \`${settings.runtime.status}\``,
+    `Factory: \`${settings.runtime.factory}\``,
+    `Engine: \`${settings.runtime.engine}\``,
     `Runtime: ${runtimeId}`,
     `Last used: ${lastUsed}`
   ].join("\n");
@@ -2075,6 +2105,7 @@ export function buildAgentRuntimeManageModalView(input: {
     `*Runtime ID:* ${
       settings.runtime.id ? `\`${settings.runtime.id}\`` : "`not provisioned yet`"
     }`,
+    `*Factory:* \`${settings.runtime.factory}\``,
     `*Engine:* \`${settings.runtime.engine}\``,
     `*Endpoint:* ${
       settings.runtime.endpointUrl ? `\`${settings.runtime.endpointUrl}\`` : "`none`"

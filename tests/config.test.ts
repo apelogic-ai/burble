@@ -175,6 +175,17 @@ describe("readConfig", () => {
     expect(config.openClawConfigPatchHostPath).toBe("/srv/burble/runtime-patches");
   });
 
+  test("defaults to the Hermes runtime image for Hermes engine", () => {
+    const config = readConfig({
+      ...validEnv,
+      AGENT_RUNTIME: "burble-runtime",
+      AGENT_RUNTIME_FACTORY: "docker",
+      AGENT_RUNTIME_ENGINE: "hermes"
+    });
+
+    expect(config.agentRuntimeImage).toBe("burble-nemo-hermes:dev");
+  });
+
   test("falls back to the legacy OpenClaw config patch host path", () => {
     const config = readConfig({
       ...validEnv,

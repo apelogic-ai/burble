@@ -386,6 +386,79 @@ describe("createDockerRuntimeFactory", () => {
     store.close();
   });
 
+  test("syncs stale ready state when the container is gone", async () => {
+    const store = createTokenStore(":memory:");
+    const runtime = store.getOrCreateAgentRuntime({
+      workspaceId: "T123",
+      slackUserId: "U123",
+      engine: "hermes",
+      endpointUrl: "http://burble-rt-hermes:8080",
+      authTokenHash: "hash",
+      statePath: "/data/state",
+      configPath: "/data/config/hermes.json",
+      workspacePath: "/data/workspace",
+      policyHash: "policy"
+    });
+    const factory = createDockerRuntimeFactory({
+      store,
+      engine: "hermes",
+      image: "burble-nemo-hermes:dev",
+      dataRoot: "/data/runtimes",
+      dockerNetwork: "compose_default",
+      toolGatewayUrl: "http://burble-app:3000/internal/tools",
+      runtimeTokenSecret: "runtime-secret",
+      execute: async () => ({ code: 1, stdout: "", stderr: "not found" }),
+      fetch: async () => new Response("not used")
+    });
+
+    const synced = await factory.syncRuntimeStatus?.(runtime.id);
+
+    expect(synced?.status).toBe("stopped");
+    expect(synced?.failureReason).toBe("Runtime container is not present");
+    expect(store.getAgentRuntime(runtime.id)?.status).toBe("stopped");
+
+    store.close();
+  });
+
+  test("syncs runtime as failed when health check fails", async () => {
+    const store = createTokenStore(":memory:");
+    const runtime = store.getOrCreateAgentRuntime({
+      workspaceId: "T123",
+      slackUserId: "U123",
+      engine: "hermes",
+      endpointUrl: "http://burble-rt-hermes:8080",
+      authTokenHash: "hash",
+      statePath: "/data/state",
+      configPath: "/data/config/hermes.json",
+      workspacePath: "/data/workspace",
+      policyHash: "policy"
+    });
+    const factory = createDockerRuntimeFactory({
+      store,
+      engine: "hermes",
+      image: "burble-nemo-hermes:dev",
+      dataRoot: "/data/runtimes",
+      dockerNetwork: "compose_default",
+      toolGatewayUrl: "http://burble-app:3000/internal/tools",
+      runtimeTokenSecret: "runtime-secret",
+      execute: async () => ({
+        code: 0,
+        stdout: "{\"Running\":true,\"Restarting\":false,\"ExitCode\":0}\n",
+        stderr: ""
+      }),
+      fetch: async () => new Response("not ready", { status: 503 })
+    });
+
+    const synced = await factory.syncRuntimeStatus?.(runtime.id);
+
+    expect(synced?.status).toBe("failed");
+    expect(synced?.failureReason).toBe(
+      "Runtime health check failed: HTTP 503"
+    );
+
+    store.close();
+  });
+
   test("retries health checks when the runtime port is not ready yet", async () => {
     const store = createTokenStore(":memory:");
     let healthChecks = 0;

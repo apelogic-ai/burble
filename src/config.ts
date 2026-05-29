@@ -228,6 +228,8 @@ export function readConfig(env: Env): Config {
   const agentRuntimeMcpGatewayUrl =
     optionalUrlEnv(env, "AGENT_RUNTIME_MCP_GATEWAY_URL") ??
     defaultAgentRuntimeMcpGatewayUrl;
+  const configuredAgentRuntimeImage =
+    env.AGENT_RUNTIME_IMAGE ?? env.OPENCLAW_NEMOCLAW_IMAGE;
 
   return {
     slackBotToken: requiredEnv(env, "SLACK_BOT_TOKEN"),
@@ -258,9 +260,8 @@ export function readConfig(env: Env): Config {
     agentRuntimeDockerNetwork:
       env.AGENT_RUNTIME_DOCKER_NETWORK ?? "compose_default",
     agentRuntimeImage:
-      env.AGENT_RUNTIME_IMAGE ??
-      env.OPENCLAW_NEMOCLAW_IMAGE ??
-      "burble-openclaw-nemoclaw:dev",
+      configuredAgentRuntimeImage ??
+      defaultAgentRuntimeImage(agentRuntimeEngine),
     agentRuntimeIdleTtlMs: optionalIntEnv(
       env,
       "AGENT_RUNTIME_IDLE_TTL_MS",
@@ -304,6 +305,12 @@ export function readConfig(env: Env): Config {
       optionalSecretEnv(env, "OPENCLAW_CONFIG_PATCH_HOST_PATH"),
     internalApiToken
   };
+}
+
+function defaultAgentRuntimeImage(engine: AgentRuntimeEngine): string {
+  return engine === "hermes"
+    ? "burble-nemo-hermes:dev"
+    : "burble-openclaw-nemoclaw:dev";
 }
 
 function optionalSecretEnv(env: Env, name: string): string | null {
