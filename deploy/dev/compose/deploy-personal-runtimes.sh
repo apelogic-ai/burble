@@ -16,9 +16,13 @@ usage() {
   cat <<'USAGE'
 Usage: ./deploy-personal-runtimes.sh [--no-pull] [--keep-runtimes] [--agentgateway]
 
-Pulls the latest repo state, rebuilds Burble plus the personal OpenClaw runtime
+Pulls the latest repo state, rebuilds Burble plus the selected personal runtime
 image, restarts Docker Compose, and removes existing burble-rt-* containers so
 new DMs create runtimes with the latest image/env.
+
+Select a runtime with AGENT_RUNTIME_ENGINE. Supported image build defaults:
+  AGENT_RUNTIME_ENGINE=openclaw  -> burble-openclaw-nemoclaw-openclaw-cli:dev
+  AGENT_RUNTIME_ENGINE=hermes    -> burble-nemo-hermes:dev
 
 Options:
   --no-pull         Skip git pull --ff-only
@@ -67,7 +71,26 @@ if [[ "${use_agentgateway}" == "true" ]]; then
   )
 fi
 
-docker compose "${compose_files[@]}" --profile runtime-image build openclaw-nemoclaw-image
+runtime_engine="${AGENT_RUNTIME_ENGINE:-openclaw}"
+case "${runtime_engine}" in
+  hermes|nemo-hermes)
+    export AGENT_RUNTIME_ENGINE=hermes
+    export AGENT_RUNTIME_IMAGE="${AGENT_RUNTIME_IMAGE:-burble-nemo-hermes:dev}"
+    runtime_image_service="nemo-hermes-image"
+    ;;
+  ""|openclaw|openclaw-gateway|deterministic|burble-direct|direct-provider)
+    export AGENT_RUNTIME_IMAGE="${AGENT_RUNTIME_IMAGE:-burble-openclaw-nemoclaw-openclaw-cli:dev}"
+    runtime_image_service="openclaw-nemoclaw-image"
+    ;;
+  *)
+    echo "Unsupported AGENT_RUNTIME_ENGINE: ${runtime_engine}" >&2
+    echo "Expected openclaw, hermes, deterministic, or burble-direct." >&2
+    exit 2
+    ;;
+esac
+
+echo "Building personal runtime image: ${AGENT_RUNTIME_IMAGE} (${AGENT_RUNTIME_ENGINE:-openclaw}; ${runtime_image_service})"
+docker compose "${compose_files[@]}" --profile runtime-image build "${runtime_image_service}"
 docker compose "${compose_files[@]}" up -d --build
 
 if [[ "${use_agentgateway}" == "true" ]]; then

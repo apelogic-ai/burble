@@ -19,7 +19,7 @@ services:
       - AGENT_MODE=llm
       - AGENT_RUNTIME=burble-runtime
       - AGENT_RUNTIME_FACTORY=docker
-      - AGENT_RUNTIME_IMAGE=${AGENT_RUNTIME_IMAGE:-burble-openclaw-nemoclaw-openclaw-cli:dev}
+      - AGENT_RUNTIME_IMAGE=${AGENT_RUNTIME_IMAGE:-}
       - AGENT_RUNTIME_ENGINE=${AGENT_RUNTIME_ENGINE:-}
       - AGENT_RUNTIME_DOCKER_NETWORK=${AGENT_RUNTIME_DOCKER_NETWORK:-compose_default}
       - AGENT_RUNTIME_DATA_ROOT=${AGENT_RUNTIME_DATA_ROOT:-/opt/burble/runtimes}
@@ -63,4 +63,13 @@ services:
       dockerfile: Dockerfile.openclaw-cli
       args:
         OPENCLAW_VERSION: ${OPENCLAW_VERSION:-2026.5.19}
+    command: ["bun", "--version"]
+
+  nemo-hermes-image:
+    profiles:
+      - runtime-image
+    image: ${AGENT_RUNTIME_IMAGE:-burble-nemo-hermes:dev}
+    build:
+      context: ../../../runtimes/nemo-hermes
+      dockerfile: Dockerfile
     command: ["bun", "--version"]

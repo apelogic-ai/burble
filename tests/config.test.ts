@@ -186,6 +186,18 @@ describe("readConfig", () => {
     expect(config.agentRuntimeImage).toBe("burble-nemo-hermes:dev");
   });
 
+  test("ignores a blank runtime image override", () => {
+    const config = readConfig({
+      ...validEnv,
+      AGENT_RUNTIME: "burble-runtime",
+      AGENT_RUNTIME_FACTORY: "docker",
+      AGENT_RUNTIME_ENGINE: "hermes",
+      AGENT_RUNTIME_IMAGE: ""
+    });
+
+    expect(config.agentRuntimeImage).toBe("burble-nemo-hermes:dev");
+  });
+
   test("falls back to the legacy OpenClaw config patch host path", () => {
     const config = readConfig({
       ...validEnv,

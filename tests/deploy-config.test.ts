@@ -267,11 +267,17 @@ describe("dev deploy config", () => {
       "burble-openclaw-nemoclaw-openclaw-cli:dev"
     );
     expect(personalRuntimesCompose).toContain(
+      "AGENT_RUNTIME_IMAGE=${AGENT_RUNTIME_IMAGE:-}"
+    );
+    expect(personalRuntimesCompose).toContain(
       "AGENT_RUNTIME_ENGINE=${AGENT_RUNTIME_ENGINE:-}"
     );
     expect(personalRuntimesCompose).toContain("openclaw-nemoclaw-image:");
+    expect(personalRuntimesCompose).toContain("nemo-hermes-image:");
     expect(personalRuntimesCompose).toContain("profiles:");
     expect(personalRuntimesCompose).toContain("dockerfile: Dockerfile.openclaw-cli");
+    expect(personalRuntimesCompose).toContain("context: ../../../runtimes/nemo-hermes");
+    expect(personalRuntimesCompose).toContain("burble-nemo-hermes:dev");
     expect(personalRuntimesCompose).toContain(
       "AGENT_RUNTIME_DATA_ROOT:-/opt/burble/runtimes"
     );
@@ -346,7 +352,11 @@ describe("dev deploy config", () => {
 
   test("provides a personal runtime deployment helper", () => {
     expect(personalRuntimeDeployScript).toContain("git pull --ff-only");
-    expect(personalRuntimeDeployScript).toContain("--profile runtime-image build openclaw-nemoclaw-image");
+    expect(personalRuntimeDeployScript).toContain("runtime_image_service=\"openclaw-nemoclaw-image\"");
+    expect(personalRuntimeDeployScript).toContain("runtime_image_service=\"nemo-hermes-image\"");
+    expect(personalRuntimeDeployScript).toContain("--profile runtime-image build \"${runtime_image_service}\"");
+    expect(personalRuntimeDeployScript).toContain("AGENT_RUNTIME_ENGINE=hermes");
+    expect(personalRuntimeDeployScript).toContain("burble-nemo-hermes:dev");
     expect(personalRuntimeDeployScript).toContain("docker-compose.personal-runtimes.yml");
     expect(personalRuntimeDeployScript).toContain("--agentgateway");
     expect(personalRuntimeDeployScript).toContain("docker-compose.agentgateway.yml");

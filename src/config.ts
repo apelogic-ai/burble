@@ -229,7 +229,8 @@ export function readConfig(env: Env): Config {
     optionalUrlEnv(env, "AGENT_RUNTIME_MCP_GATEWAY_URL") ??
     defaultAgentRuntimeMcpGatewayUrl;
   const configuredAgentRuntimeImage =
-    env.AGENT_RUNTIME_IMAGE ?? env.OPENCLAW_NEMOCLAW_IMAGE;
+    optionalSecretEnv(env, "AGENT_RUNTIME_IMAGE") ??
+    optionalSecretEnv(env, "OPENCLAW_NEMOCLAW_IMAGE");
 
   return {
     slackBotToken: requiredEnv(env, "SLACK_BOT_TOKEN"),
