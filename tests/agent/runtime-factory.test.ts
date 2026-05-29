@@ -69,7 +69,8 @@ describe("createStaticRuntimeFactory", () => {
       workspaceId: "T123",
       slackUserId: "U123",
       engine: "openclaw",
-      endpointUrl: "http://openclaw-nemoclaw:8080"
+      endpointUrl: "http://openclaw-nemoclaw:8080",
+      policyHash: "policy-hash"
     });
     expect(stored?.authTokenHash).not.toBe("runtime-token");
 

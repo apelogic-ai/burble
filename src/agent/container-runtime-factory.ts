@@ -120,7 +120,8 @@ export function createDockerRuntimeFactory(input: {
         configPath: `${input.dataRoot}/${runtimeDataId}/config/${nativeAgentConfigFileName(
           input.engine
         )}`,
-        workspacePath: `${input.dataRoot}/${runtimeDataId}/workspace`
+        workspacePath: `${input.dataRoot}/${runtimeDataId}/workspace`,
+        policyHash: manifest?.policyHash ?? null
       });
       const runtimeJwt =
         input.runtimeJwtIssuer && input.mcpGatewayUrl

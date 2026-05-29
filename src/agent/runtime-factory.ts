@@ -62,6 +62,7 @@ export function createStaticRuntimeFactory(input: {
       const runtimeId = buildRuntimeDataId(principal, input.engine);
       const configFileName =
         input.configFileName ?? nativeAgentConfigFileName(input.engine);
+      const manifest = await input.buildManifest?.(principal);
       const runtime = input.store.getOrCreateAgentRuntime({
         workspaceId: principal.workspaceId,
         slackUserId: principal.slackUserId,
@@ -70,11 +71,10 @@ export function createStaticRuntimeFactory(input: {
         authTokenHash: hashRuntimeToken(input.authToken),
         statePath: `${input.dataRoot}/${runtimeId}/state`,
         configPath: `${input.dataRoot}/${runtimeId}/config/${configFileName}`,
-        workspacePath: `${input.dataRoot}/${runtimeId}/workspace`
+        workspacePath: `${input.dataRoot}/${runtimeId}/workspace`,
+        policyHash: manifest?.policyHash ?? null
       });
       input.store.touchAgentRuntime(runtime.id);
-
-      const manifest = await input.buildManifest?.(principal);
 
       return {
         id: runtime.id,

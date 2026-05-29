@@ -168,8 +168,53 @@ describe("createTokenStore", () => {
       engine: "openclaw",
       status: "ready",
       endpointUrl: "http://runtime-u123:8080",
-      authTokenHash: "hash-u123"
+      authTokenHash: "hash-u123",
+      policyHash: null
     });
+
+    store.close();
+  });
+
+  test("updates runtime policy hashes and records policy drift", () => {
+    const store = createTokenStore(":memory:");
+
+    const first = store.getOrCreateAgentRuntime({
+      workspaceId: "T123",
+      slackUserId: "U123",
+      engine: "openclaw",
+      endpointUrl: "http://runtime-u123:8080",
+      authTokenHash: "hash-u123",
+      statePath: "/data/runtimes/u123/state",
+      configPath: "/data/runtimes/u123/config/openclaw.json",
+      workspacePath: "/data/runtimes/u123/workspace",
+      policyHash: "policy-a",
+      now: new Date("2026-05-21T00:00:00.000Z")
+    });
+    const second = store.getOrCreateAgentRuntime({
+      workspaceId: "T123",
+      slackUserId: "U123",
+      engine: "openclaw",
+      endpointUrl: "http://runtime-u123:8080",
+      authTokenHash: "hash-u123",
+      statePath: "/data/runtimes/u123/state",
+      configPath: "/data/runtimes/u123/config/openclaw.json",
+      workspacePath: "/data/runtimes/u123/workspace",
+      policyHash: "policy-b",
+      now: new Date("2026-05-21T00:01:00.000Z")
+    });
+
+    expect(second.id).toBe(first.id);
+    expect(second.policyHash).toBe("policy-b");
+    expect(second.lastSeenAt).toBe("2026-05-21T00:01:00.000Z");
+    expect(store.listAgentRuntimeEvents(first.id)).toMatchObject([
+      {
+        eventType: "runtime_policy_changed",
+        summaryJson: JSON.stringify({
+          previousPolicyHash: "policy-a",
+          policyHash: "policy-b"
+        })
+      }
+    ]);
 
     store.close();
   });

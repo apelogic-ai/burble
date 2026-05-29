@@ -55,6 +55,7 @@ export type AgentRuntimeRecord = {
   statePath: string;
   configPath: string;
   workspacePath: string;
+  policyHash: string | null;
   createdAt: string;
   lastSeenAt: string;
   lastUsedAt: string;
@@ -66,6 +67,7 @@ export type AgentRuntimeEventType =
   | "runtime_provision_requested"
   | "runtime_provision_finished"
   | "runtime_provision_failed"
+  | "runtime_policy_changed"
   | "runtime_stopped"
   | "runtime_run_started"
   | "runtime_run_finished"
@@ -167,6 +169,7 @@ export function createTokenStore(path: string) {
       state_path TEXT NOT NULL,
       config_path TEXT NOT NULL,
       workspace_path TEXT NOT NULL,
+      policy_hash TEXT,
       created_at TEXT NOT NULL,
       last_seen_at TEXT NOT NULL,
       last_used_at TEXT NOT NULL,
@@ -234,6 +237,7 @@ export function createTokenStore(path: string) {
   `);
   ensureProviderConnectionColumn(db, "refresh_token", "TEXT");
   ensureProviderConnectionColumn(db, "access_token_expires_at", "TEXT");
+  ensureAgentRuntimeColumn(db, "policy_hash", "TEXT");
 
   const insertState = db.query(
     "INSERT INTO oauth_state (state, slack_user_id, expires_at) VALUES (?, ?, ?)"
@@ -344,6 +348,7 @@ export function createTokenStore(path: string) {
       state_path AS statePath,
       config_path AS configPath,
       workspace_path AS workspacePath,
+      policy_hash AS policyHash,
       created_at AS createdAt,
       last_seen_at AS lastSeenAt,
       last_used_at AS lastUsedAt,
@@ -367,6 +372,7 @@ export function createTokenStore(path: string) {
       state_path AS statePath,
       config_path AS configPath,
       workspace_path AS workspacePath,
+      policy_hash AS policyHash,
       created_at AS createdAt,
       last_seen_at AS lastSeenAt,
       last_used_at AS lastUsedAt,
@@ -387,6 +393,7 @@ export function createTokenStore(path: string) {
       state_path AS statePath,
       config_path AS configPath,
       workspace_path AS workspacePath,
+      policy_hash AS policyHash,
       created_at AS createdAt,
       last_seen_at AS lastSeenAt,
       last_used_at AS lastUsedAt,
@@ -408,11 +415,17 @@ export function createTokenStore(path: string) {
       state_path,
       config_path,
       workspace_path,
+      policy_hash,
       created_at,
       last_seen_at,
       last_used_at
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+  const updateAgentRuntimePolicyHash = db.query(`
+    UPDATE agent_runtimes
+    SET policy_hash = ?, last_seen_at = ?
+    WHERE id = ?
   `);
   const updateAgentRuntimeStatus = db.query(`
     UPDATE agent_runtimes
@@ -687,6 +700,7 @@ export function createTokenStore(path: string) {
       statePath: string;
       configPath: string;
       workspacePath: string;
+      policyHash?: string | null;
       now?: Date;
     }): AgentRuntimeRecord {
       const existing = getAgentRuntimeByPrincipal.get(
@@ -695,6 +709,27 @@ export function createTokenStore(path: string) {
         input.engine
       );
       if (existing) {
+        if (input.policyHash && existing.policyHash !== input.policyHash) {
+          const now = (input.now ?? new Date()).toISOString();
+          updateAgentRuntimePolicyHash.run(input.policyHash, now, existing.id);
+          const updated = getAgentRuntimeById.get(existing.id);
+          if (!updated) {
+            throw new Error("Failed to update agent runtime policy hash");
+          }
+          insertAgentRuntimeEvent.run(
+            crypto.randomUUID(),
+            updated.id,
+            updated.workspaceId,
+            updated.slackUserId,
+            "runtime_policy_changed",
+            JSON.stringify({
+              previousPolicyHash: existing.policyHash,
+              policyHash: input.policyHash
+            }),
+            now
+          );
+          return updated;
+        }
         return existing;
       }
 
@@ -715,6 +750,7 @@ export function createTokenStore(path: string) {
         input.statePath,
         input.configPath,
         input.workspacePath,
+        input.policyHash ?? null,
         now,
         now,
         now
@@ -932,6 +968,20 @@ function ensureProviderConnectionColumn(
     .map((column) => column.name);
   if (!columns.includes(name)) {
     db.exec(`ALTER TABLE provider_connections ADD COLUMN ${name} ${definition}`);
+  }
+}
+
+function ensureAgentRuntimeColumn(
+  db: Database,
+  name: string,
+  definition: string
+): void {
+  const columns = db
+    .query<{ name: string }, []>("PRAGMA table_info(agent_runtimes)")
+    .all()
+    .map((column) => column.name);
+  if (!columns.includes(name)) {
+    db.exec(`ALTER TABLE agent_runtimes ADD COLUMN ${name} ${definition}`);
   }
 }
 

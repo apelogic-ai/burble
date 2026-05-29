@@ -209,6 +209,7 @@ describe("createDockerRuntimeFactory", () => {
     expect(handle.manifest?.policyHash).toBe("policy-hash");
     expect(handle.statePath).toBe(`/data/runtimes/${runtimeDataId}/state`);
     expect(stored?.status).toBe("ready");
+    expect(stored?.policyHash).toBe("policy-hash");
     expect(stored?.authTokenHash).not.toContain("runtime-secret");
     expect(healthChecks).toBe(2);
     expect(commands.map((command) => command.args[0])).toEqual([
