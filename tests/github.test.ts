@@ -11,7 +11,7 @@ import {
   requestGitHubPullRequestReview,
   searchIssues,
   updateGitHubPullRequest
-} from "../src/github";
+} from "../src/providers/github/client";
 import type { Config } from "../src/config";
 
 const config: Config = {

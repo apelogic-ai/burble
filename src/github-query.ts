@@ -1,4 +1,4 @@
-import type { ListMyPullRequestsOptions } from "./github";
+import type { ListMyPullRequestsOptions } from "./providers/github/client";
 
 const githubSlugPattern = "[A-Za-z0-9_.-]+";
 const githubRepoPattern = `${githubSlugPattern}\\/${githubSlugPattern}`;

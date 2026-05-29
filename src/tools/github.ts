@@ -18,7 +18,7 @@ import type {
   GitHubUpdatedPullRequest,
   GitHubUser,
   ListMyPullRequestsOptions
-} from "../github";
+} from "../providers/github/client";
 import type { ToolResult } from "./types";
 
 export type GitHubToolDeps = {

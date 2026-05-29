@@ -5,6 +5,7 @@ import {
   buildAgentExecLoadingResponse,
   buildAgentExecMissingTaskResponse,
   buildAgentStatusResponse,
+  buildAppHomeView,
   buildAuthResponse,
   buildHelpResponse,
   formatAgentProgressEvent,
@@ -331,6 +332,48 @@ describe("buildAuthResponse", () => {
     expect(JSON.stringify(response.blocks)).toContain("Google OAuth is not configured");
     expect(JSON.stringify(response.blocks)).toContain("Jira OAuth is not configured");
     expect(JSON.stringify(response.blocks)).toContain("Slack OAuth is not configured");
+  });
+});
+
+describe("buildAppHomeView", () => {
+  test("builds a Block Kit Home tab with provider statuses and connect buttons", () => {
+    const view = buildAppHomeView({
+      githubUrl: "https://example.test/github",
+      googleUrl: "https://example.test/google",
+      jiraUrl: "https://example.test/jira",
+      slackUrl: "https://example.test/slack",
+      connections: {
+        github: {
+          provider: "github",
+          email: "person@example.com",
+          slackUserId: "U123",
+          providerLogin: "octocat",
+          accessToken: "github-token",
+          connectedAt: "2026-05-26T00:00:00.000Z"
+        },
+        google: null,
+        jira: {
+          provider: "jira",
+          email: "person@example.com",
+          slackUserId: "U123",
+          providerLogin: "person@example.com",
+          accessToken: "jira-token",
+          connectedAt: "2026-05-26T00:00:00.000Z"
+        },
+        slack: null
+      }
+    });
+    const serialized = JSON.stringify(view);
+
+    expect(view.type).toBe("home");
+    expect(serialized).toContain("GitHub");
+    expect(serialized).toContain("Google Workspace");
+    expect(serialized).toContain("Atlassian Jira");
+    expect(serialized).toContain("Slack search");
+    expect(serialized).toContain("Connected as `octocat`");
+    expect(serialized).toContain("Connected as `person@example.com`");
+    expect(serialized).toContain("Not connected");
+    expect(serialized).toContain("https://example.test/google");
   });
 });
 

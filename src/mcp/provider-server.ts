@@ -22,7 +22,7 @@ import {
   searchIssues,
   updateGitHubIssue,
   updateGitHubPullRequest
-} from "../github";
+} from "../providers/github/client";
 import {
   appendGoogleDriveTextFile,
   createGmailDraft,
@@ -38,7 +38,7 @@ import {
   searchGoogleMailMessages,
   updateGoogleCalendarEvent,
   updateGoogleDriveTextFile
-} from "../google";
+} from "../providers/google/client";
 import {
   addJiraIssueComment,
   addJiraIssueLabels,
@@ -57,8 +57,8 @@ import {
   searchJiraIssues,
   transitionJiraIssue,
   updateJiraIssue
-} from "../jira";
-import { searchSlackMessages, searchSlackUsers } from "../slack-api";
+} from "../providers/jira/client";
+import { searchSlackMessages, searchSlackUsers } from "../providers/slack/client";
 import type { RuntimeJwtIssuer } from "../runtime-jwt";
 import {
   isAllowedAtlassianMcpToolName,

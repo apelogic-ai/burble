@@ -1,0 +1,435 @@
+provider: github
+tools:
+  - name: github_get_authenticated_user
+    alias: github.getAuthenticatedUser
+    implementation: getAuthenticatedUser
+    title: GitHub authenticated user
+    description: Return the GitHub identity connected to this Slack user.
+    input: {}
+
+  - name: github_list_assigned_issues
+    alias: github.listAssignedIssues
+    implementation: listAssignedIssues
+    title: GitHub assigned issues
+    description: List GitHub issues assigned to this Slack user.
+    input: {}
+
+  - name: github_search_issues
+    alias: github.searchIssues
+    implementation: searchIssues
+    title: GitHub issue search
+    description: Search GitHub issues and pull requests visible to this Slack user's connected GitHub account.
+    input:
+      query:
+        type: string
+        min: 1
+        description: GitHub search query
+
+  - name: github_list_my_pull_requests
+    alias: github.listMyPullRequests
+    implementation: listMyPullRequests
+    title: GitHub pull requests authored by me
+    description: List GitHub pull requests authored by this Slack user's connected GitHub account. Defaults to open PRs sorted by most recently updated.
+    input:
+      limit:
+        type: number
+        int: true
+        min: 1
+        max: 20
+        optional: true
+        description: Maximum number of pull requests to return. Defaults to 10.
+      state:
+        type: enum
+        values: [open, closed, all]
+        optional: true
+        description: Pull request state to include. Defaults to open.
+      sort:
+        type: enum
+        values: [updated, created, comments]
+        optional: true
+        description: Sort field. Defaults to updated.
+      order:
+        type: enum
+        values: [desc, asc]
+        optional: true
+        description: Sort order. Defaults to desc.
+      owner:
+        type: string
+        min: 1
+        optional: true
+        description: Optional GitHub owner or organization login, for example example-org.
+      repo:
+        type: string
+        min: 1
+        optional: true
+        description: Optional repository in owner/name format. Takes precedence over owner.
+
+  - name: github_create_issue
+    alias: github.createIssue
+    implementation: createIssue
+    title: GitHub create issue
+    description: Create a GitHub issue visible to this Slack user's connected GitHub account.
+    input:
+      repo:
+        type: string
+        min: 1
+        description: Repository in owner/name format
+      title:
+        type: string
+        min: 1
+        max: 256
+        description: Issue title
+      body:
+        type: string
+        max: 65536
+        optional: true
+        description: Issue body
+      labels:
+        type: array
+        items: string
+        itemMin: 1
+        max: 20
+        optional: true
+      assignees:
+        type: array
+        items: string
+        itemMin: 1
+        max: 20
+        optional: true
+
+  - name: github_get_issue
+    alias: github.getIssue
+    implementation: getIssue
+    title: GitHub get issue
+    description: Get a GitHub issue by repository and issue number. Use before editing issue metadata.
+    input:
+      repo:
+        type: string
+        min: 1
+        description: Repository in owner/name format
+      number:
+        type: number
+        int: true
+        positive: true
+        description: Issue number
+
+  - name: github_get_pr
+    alias: github.getPullRequest
+    implementation: getPullRequest
+    title: GitHub get pull request
+    description: Get a GitHub pull request by repository and PR number. Use before editing PR metadata.
+    input:
+      repo:
+        type: string
+        min: 1
+        description: Repository in owner/name format
+      number:
+        type: number
+        int: true
+        positive: true
+        description: Pull request number
+
+  - name: github_comment_on_issue_or_pr
+    alias: github.commentOnIssueOrPullRequest
+    implementation: commentOnIssueOrPullRequest
+    title: GitHub comment on issue or pull request
+    description: Add a comment to a GitHub issue or pull request using this Slack user's connected GitHub account.
+    input:
+      repo:
+        type: string
+        min: 1
+        description: Repository in owner/name format
+      number:
+        type: number
+        int: true
+        positive: true
+        description: Issue or pull request number
+      body:
+        type: string
+        min: 1
+        max: 65536
+        description: Comment body
+
+  - name: github_update_issue
+    alias: github.updateIssue
+    implementation: updateIssue
+    title: GitHub update issue
+    description: "Update GitHub issue metadata only: title, body, state, labels, or assignees."
+    input:
+      repo:
+        type: string
+        min: 1
+        description: Repository in owner/name format
+      number:
+        type: number
+        int: true
+        positive: true
+        description: Issue number
+      title:
+        type: string
+        min: 1
+        max: 256
+        optional: true
+      body:
+        type: string
+        max: 65536
+        optional: true
+      state:
+        type: enum
+        values: [open, closed]
+        optional: true
+      labels:
+        type: array
+        items: string
+        itemMin: 1
+        max: 20
+        optional: true
+      assignees:
+        type: array
+        items: string
+        itemMin: 1
+        max: 20
+        optional: true
+
+  - name: github_close_issue
+    alias: github.closeIssue
+    implementation: closeIssue
+    title: GitHub close issue
+    description: Close a GitHub issue. Use only when explicitly requested.
+    input:
+      repo:
+        type: string
+        min: 1
+        description: Repository in owner/name format
+      number:
+        type: number
+        int: true
+        positive: true
+        description: Issue number
+
+  - name: github_reopen_issue
+    alias: github.reopenIssue
+    implementation: reopenIssue
+    title: GitHub reopen issue
+    description: Reopen a GitHub issue. Use only when explicitly requested.
+    input:
+      repo:
+        type: string
+        min: 1
+        description: Repository in owner/name format
+      number:
+        type: number
+        int: true
+        positive: true
+        description: Issue number
+
+  - name: github_create_pr
+    alias: github.createPullRequest
+    implementation: createPullRequest
+    title: GitHub create pull request
+    description: Open a pull request from an existing branch using this Slack user's connected GitHub account.
+    input:
+      repo:
+        type: string
+        min: 1
+        description: Repository in owner/name format
+      title:
+        type: string
+        min: 1
+        max: 256
+        description: Pull request title
+      head:
+        type: string
+        min: 1
+        description: Head branch or owner:branch
+      base:
+        type: string
+        min: 1
+        description: Base branch
+      body:
+        type: string
+        max: 65536
+        optional: true
+        description: Pull request body
+      draft:
+        type: boolean
+        optional: true
+        description: Whether to create a draft PR
+
+  - name: github_update_pr
+    alias: github.updatePullRequest
+    implementation: updatePullRequest
+    title: GitHub update pull request
+    description: "Update pull request metadata only: title, body, base branch, or draft state."
+    input:
+      repo:
+        type: string
+        min: 1
+        description: Repository in owner/name format
+      number:
+        type: number
+        int: true
+        positive: true
+        description: Pull request number
+      title:
+        type: string
+        min: 1
+        max: 256
+        optional: true
+      body:
+        type: string
+        max: 65536
+        optional: true
+      base:
+        type: string
+        min: 1
+        optional: true
+      draft:
+        type: boolean
+        optional: true
+
+  - name: github_add_labels
+    alias: github.addLabels
+    implementation: addLabels
+    title: GitHub add labels
+    description: Add labels to a GitHub issue or pull request.
+    input:
+      repo:
+        type: string
+        min: 1
+        description: Repository in owner/name format
+      number:
+        type: number
+        int: true
+        positive: true
+        description: Issue or pull request number
+      labels:
+        type: array
+        items: string
+        itemMin: 1
+        min: 1
+        max: 20
+
+  - name: github_remove_labels
+    alias: github.removeLabels
+    implementation: removeLabels
+    title: GitHub remove labels
+    description: Remove labels from a GitHub issue or pull request.
+    input:
+      repo:
+        type: string
+        min: 1
+        description: Repository in owner/name format
+      number:
+        type: number
+        int: true
+        positive: true
+        description: Issue or pull request number
+      labels:
+        type: array
+        items: string
+        itemMin: 1
+        min: 1
+        max: 20
+
+  - name: github_request_review
+    alias: github.requestReview
+    implementation: requestReview
+    title: GitHub request pull request review
+    description: Request users or teams to review a GitHub pull request.
+    input:
+      repo:
+        type: string
+        min: 1
+        description: Repository in owner/name format
+      number:
+        type: number
+        int: true
+        positive: true
+        description: Pull request number
+      reviewers:
+        type: array
+        items: string
+        itemMin: 1
+        max: 20
+        optional: true
+      teamReviewers:
+        type: array
+        items: string
+        itemMin: 1
+        max: 20
+        optional: true
+
+  - name: github_get_file
+    alias: github.getFile
+    implementation: getFile
+    title: GitHub get file
+    description: Read a text file from a GitHub repository. Use before updating an existing file.
+    input:
+      repo:
+        type: string
+        min: 1
+        description: Repository in owner/name format
+      path:
+        type: string
+        min: 1
+        description: Repository file path
+      ref:
+        type: string
+        min: 1
+        optional: true
+        description: Optional branch, tag, or commit SHA
+
+  - name: github_create_or_update_file
+    alias: github.createOrUpdateFile
+    implementation: createOrUpdateFile
+    title: GitHub create or update file
+    description: Create or update a single GitHub repository file. For updates, pass the file SHA from github_get_file.
+    input:
+      repo:
+        type: string
+        min: 1
+        description: Repository in owner/name format
+      path:
+        type: string
+        min: 1
+        description: Repository file path
+      content:
+        type: string
+        max: 1000000
+        description: New full file content
+      message:
+        type: string
+        min: 1
+        max: 256
+        description: Commit message
+      branch:
+        type: string
+        min: 1
+        optional: true
+        description: Optional target branch
+      sha:
+        type: string
+        min: 1
+        optional: true
+        description: Current file SHA when updating
+
+  - name: github_create_branch
+    alias: github.createBranch
+    implementation: createBranch
+    title: GitHub create branch
+    description: Create a GitHub branch from another branch or the repository default branch.
+    input:
+      repo:
+        type: string
+        min: 1
+        description: Repository in owner/name format
+      branch:
+        type: string
+        min: 1
+        description: New branch name
+      fromRef:
+        type: string
+        min: 1
+        optional: true
+        description: Optional source branch. Defaults to repository default branch.

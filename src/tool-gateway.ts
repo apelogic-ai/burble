@@ -22,7 +22,7 @@ import {
   reopenGitHubIssue,
   updateGitHubIssue,
   updateGitHubPullRequest
-} from "./github";
+} from "./providers/github/client";
 import {
   appendGoogleDriveTextFile,
   createGmailDraft,
@@ -38,7 +38,7 @@ import {
   searchGoogleMailMessages,
   updateGoogleCalendarEvent,
   updateGoogleDriveTextFile
-} from "./google";
+} from "./providers/google/client";
 import {
   addJiraIssueComment,
   addJiraIssueLabels,
@@ -57,14 +57,14 @@ import {
   searchJiraIssues,
   transitionJiraIssue,
   updateJiraIssue
-} from "./jira";
+} from "./providers/jira/client";
 import {
   callUpstreamMcpTool,
   listUpstreamMcpTools,
   type UpstreamMcpTool,
   type UpstreamMcpToolResult
 } from "./mcp/upstream-http-client";
-import { searchSlackMessages, searchSlackUsers } from "./slack-api";
+import { searchSlackMessages, searchSlackUsers } from "./providers/slack/client";
 import {
   createGitHubTools,
   type GitHubPullRequestListInput

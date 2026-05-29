@@ -1,5 +1,5 @@
 import type { ProviderConnection } from "../db";
-import type { SlackMessageSearchResult, SlackUser } from "../slack-api";
+import type { SlackMessageSearchResult, SlackUser } from "../providers/slack/client";
 import type { ToolResult } from "./types";
 
 export type SlackToolDeps = {

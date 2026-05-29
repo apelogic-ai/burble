@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { Config } from "../../src/config";
 import { createTokenStore } from "../../src/db";
-import { JiraApiError } from "../../src/jira";
+import { JiraApiError } from "../../src/providers/jira/client";
 import {
   handleProviderMcpRequest,
   isAllowedAtlassianMcpToolName

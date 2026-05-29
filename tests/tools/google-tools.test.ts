@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { ProviderConnection } from "../../src/db";
-import { GoogleApiError } from "../../src/google";
+import { GoogleApiError } from "../../src/providers/google/client";
 import { createGoogleTools } from "../../src/tools/google";
 
 const connection: ProviderConnection = {

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { ProviderConnection } from "../../src/db";
-import { JiraApiError } from "../../src/jira";
+import { JiraApiError } from "../../src/providers/jira/client";
 import { createJiraTools } from "../../src/tools/jira";
 
 const connection: ProviderConnection = {

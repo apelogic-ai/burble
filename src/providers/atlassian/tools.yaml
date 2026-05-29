@@ -1,0 +1,23 @@
+provider: atlassian
+tools:
+  - name: atlassian_list_mcp_tools
+    alias: atlassian.listMcpTools
+    implementation: listMcpTools
+    title: Atlassian MCP tools
+    description: List allowed tool metadata advertised by the upstream Atlassian MCP server for this Slack user's connected Jira account.
+    input: {}
+
+  - name: atlassian_call_mcp_tool
+    alias: atlassian.callMcpTool
+    implementation: callMcpTool
+    title: Atlassian MCP allowed tool call
+    description: Call an allowlisted upstream Atlassian MCP tool with this Slack user's connected Jira identity.
+    input:
+      name:
+        type: string
+        min: 1
+        description: Upstream Atlassian MCP tool name
+      arguments:
+        type: object
+        optional: true
+        description: JSON arguments for the upstream MCP tool
