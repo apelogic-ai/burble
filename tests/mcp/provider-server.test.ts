@@ -7,6 +7,7 @@ import {
   isAllowedAtlassianMcpToolName
 } from "../../src/mcp/provider-server";
 import { createRuntimeJwtIssuer } from "../../src/runtime-jwt";
+import { buildRuntimeManifestForRecord } from "../../src/agent/runtime-policy";
 
 const config: Config = {
   slackBotToken: "xoxb-test",
@@ -346,6 +347,268 @@ describe("handleProviderMcpRequest", () => {
     expect(toolNames).not.toContain("jira_search_issues");
     expect(toolNames).not.toContain("slack_search_messages");
 
+    store.close();
+  });
+
+  test("filters provider MCP tools through workspace provider policy", async () => {
+    const issuer = createRuntimeJwtIssuer({ issuer: config.runtimeJwtIssuer });
+    const store = createTokenStore(":memory:");
+    const runtime = store.getOrCreateAgentRuntime({
+      workspaceId: "T123",
+      slackUserId: "U123",
+      engine: "openclaw",
+      endpointUrl: "http://runtime-u123:8080",
+      authTokenHash: "hash-u123",
+      statePath: "/data/runtimes/u123/state",
+      configPath: "/data/runtimes/u123/config/openclaw.json",
+      workspacePath: "/data/runtimes/u123/workspace"
+    });
+    store.upsertWorkspacePolicy({
+      workspaceId: "T123",
+      key: "providers.allowed",
+      value: ["github"],
+      updatedBySlackUserId: "UADMIN"
+    });
+    const token = issuer.issueRuntimeJwt({
+      audience: "http://agentgateway:3000/mcp",
+      runtimeId: runtime.id,
+      workspaceId: "T123",
+      slackUserId: "U123"
+    });
+
+    const response = await handleProviderMcpRequest(
+      config,
+      store,
+      issuer,
+      mcpRequest({ method: "tools/list" }, token)
+    );
+    const body = readMcpBody(await response.text());
+    const toolNames = body.result.tools.map((tool) => tool.name);
+
+    expect(response.status).toBe(200);
+    expect(toolNames).toContain("github_search_issues");
+    expect(toolNames).not.toContain("google_search_drive_files");
+    expect(toolNames).not.toContain("jira_search_issues");
+    expect(toolNames).not.toContain("slack_search_messages");
+
+    store.close();
+  });
+
+  test("hides and blocks user-disabled provider MCP tools", async () => {
+    const issuer = createRuntimeJwtIssuer({ issuer: config.runtimeJwtIssuer });
+    const store = createTokenStore(":memory:");
+    const runtime = store.getOrCreateAgentRuntime({
+      workspaceId: "T123",
+      slackUserId: "U123",
+      engine: "openclaw",
+      endpointUrl: "http://runtime-u123:8080",
+      authTokenHash: "hash-u123",
+      statePath: "/data/runtimes/u123/state",
+      configPath: "/data/runtimes/u123/config/openclaw.json",
+      workspacePath: "/data/runtimes/u123/workspace"
+    });
+    store.upsertUserPreference({
+      workspaceId: "T123",
+      slackUserId: "U123",
+      key: "tools.disabled",
+      value: ["github_search_issues"]
+    });
+    const route = store.upsertConversationRoute({
+      workspaceId: "T123",
+      slackUserId: "U123",
+      transport: "slack",
+      destination: {
+        runtimeId: runtime.id,
+        conversationId: "D123"
+      }
+    });
+    const token = issuer.issueRuntimeJwt({
+      audience: "http://agentgateway:3000/mcp",
+      runtimeId: runtime.id,
+      workspaceId: "T123",
+      slackUserId: "U123"
+    });
+
+    const listResponse = await handleProviderMcpRequest(
+      config,
+      store,
+      issuer,
+      mcpRequest({ method: "tools/list" }, token)
+    );
+    const listBody = readMcpBody(await listResponse.text());
+    const toolNames = listBody.result.tools.map((tool) => tool.name);
+
+    expect(toolNames).not.toContain("github_search_issues");
+    expect(toolNames).toContain("github_list_my_pull_requests");
+
+    const callResponse = await handleProviderMcpRequest(
+      config,
+      store,
+      issuer,
+      mcpRequest(
+        {
+          method: "tools/call",
+          params: {
+            name: "github_search_issues",
+            arguments: { query: "repo:octo/repo is:open", routeId: route.id }
+          }
+        },
+        token
+      ),
+      {
+        searchIssues: async () => {
+          throw new Error("disabled tool should not execute");
+        }
+      }
+    );
+    const callBody = readMcpBody(await callResponse.text());
+
+    expect(callResponse.status).toBe(200);
+    expect(callBody.result.content[0].text).toContain("github_search_issues");
+    expect(callBody.result.content[0].text).toContain("not found");
+
+    store.close();
+  });
+
+  test("requires policy confirmation for confirmed provider MCP write tools", async () => {
+    const issuer = createRuntimeJwtIssuer({ issuer: config.runtimeJwtIssuer });
+    const store = createTokenStore(":memory:");
+    const runtime = store.getOrCreateAgentRuntime({
+      workspaceId: "T123",
+      slackUserId: "U123",
+      engine: "openclaw",
+      endpointUrl: "http://runtime-u123:8080",
+      authTokenHash: "hash-u123",
+      statePath: "/data/runtimes/u123/state",
+      configPath: "/data/runtimes/u123/config/openclaw.json",
+      workspacePath: "/data/runtimes/u123/workspace"
+    });
+    store.upsertWorkspacePolicy({
+      workspaceId: "T123",
+      key: "tools.policy",
+      value: [
+        {
+          provider: "github",
+          tool: "github_create_pr",
+          effect: "allow",
+          risk: "moderate_write",
+          confirmation: "explicit"
+        }
+      ],
+      updatedBySlackUserId: "UADMIN"
+    });
+    store.upsertConnectedUser({
+      email: "person@example.com",
+      slackUserId: "U123",
+      githubLogin: "octocat",
+      githubToken: "gh-token"
+    });
+    const route = store.upsertConversationRoute({
+      workspaceId: "T123",
+      slackUserId: "U123",
+      transport: "slack",
+      destination: {
+        runtimeId: runtime.id,
+        conversationId: "D123"
+      }
+    });
+    const token = issuer.issueRuntimeJwt({
+      audience: "http://agentgateway:3000/mcp",
+      runtimeId: runtime.id,
+      workspaceId: "T123",
+      slackUserId: "U123"
+    });
+
+    const unconfirmedResponse = await handleProviderMcpRequest(
+      config,
+      store,
+      issuer,
+      mcpRequest(
+        {
+          method: "tools/call",
+          params: {
+            name: "github_create_pr",
+            arguments: {
+              routeId: route.id,
+              repo: "acme/app",
+              title: "Ship it",
+              head: "feature",
+              base: "main"
+            }
+          }
+        },
+        token
+      ),
+      {
+        createPullRequest: async () => {
+          throw new Error("unconfirmed write tool should not execute");
+        }
+      }
+    );
+    const unconfirmedBody = readMcpBody(await unconfirmedResponse.text());
+
+    expect(unconfirmedResponse.status).toBe(200);
+    expect(unconfirmedBody.error.message).toBe(
+      "Tool github_create_pr requires explicit confirmation."
+    );
+
+    const manifest = buildRuntimeManifestForRecord({ config, store, runtime });
+    const confirmedResponse = await handleProviderMcpRequest(
+      config,
+      store,
+      issuer,
+      mcpRequest(
+        {
+          method: "tools/call",
+          params: {
+            name: "github_create_pr",
+            arguments: {
+              routeId: route.id,
+              repo: "acme/app",
+              title: "Ship it",
+              head: "feature",
+              base: "main",
+              confirmation: {
+                tool: "github_create_pr",
+                policyHash: manifest.policyHash,
+                level: "explicit"
+              }
+            }
+          }
+        },
+        token
+      ),
+      {
+        createPullRequest: async (accessToken, input) => {
+          expect(accessToken).toBe("gh-token");
+          expect(input).toEqual({
+            repo: "acme/app",
+            title: "Ship it",
+            head: "feature",
+            base: "main"
+          });
+          return {
+            title: "Ship it",
+            html_url: "https://github.com/acme/app/pull/7",
+            number: 7,
+            draft: false
+          };
+        }
+      }
+    );
+    const confirmedBody = readMcpBody(await confirmedResponse.text());
+    const toolResult = JSON.parse(confirmedBody.result.content[0].text);
+
+    expect(confirmedResponse.status).toBe(200);
+    expect(toolResult).toEqual({
+      classification: "user_private",
+      content: {
+        title: "Ship it",
+        url: "https://github.com/acme/app/pull/7",
+        number: 7,
+        draft: false
+      }
+    });
     store.close();
   });
 

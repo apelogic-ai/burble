@@ -6,6 +6,7 @@ import type {
   AgentRuntimeRecord,
   TokenStore
 } from "../db";
+import type { RuntimeManifest } from "./runtime-manifest";
 
 export type PrincipalId = {
   workspaceId: string;
@@ -21,6 +22,7 @@ export type RuntimeHandle = {
   statePath: string;
   configPath: string;
   workspacePath: string;
+  manifest?: RuntimeManifest;
 };
 
 export type RuntimeConfigRead = {
@@ -42,6 +44,10 @@ export type RuntimeFactory = {
   ) => void;
 };
 
+export type RuntimeManifestBuilder = (
+  principal: PrincipalId
+) => RuntimeManifest | Promise<RuntimeManifest>;
+
 export function createStaticRuntimeFactory(input: {
   store: TokenStore;
   engine: AgentRuntimeEngine;
@@ -49,6 +55,7 @@ export function createStaticRuntimeFactory(input: {
   authToken: string;
   dataRoot: string;
   configFileName?: string;
+  buildManifest?: RuntimeManifestBuilder;
 }): RuntimeFactory {
   return {
     async getOrCreateRuntime(principal) {
@@ -67,6 +74,8 @@ export function createStaticRuntimeFactory(input: {
       });
       input.store.touchAgentRuntime(runtime.id);
 
+      const manifest = await input.buildManifest?.(principal);
+
       return {
         id: runtime.id,
         engine: runtime.engine,
@@ -75,7 +84,8 @@ export function createStaticRuntimeFactory(input: {
         status: toHandleStatus(runtime.status),
         statePath: runtime.statePath,
         configPath: runtime.configPath,
-        workspacePath: runtime.workspacePath
+        workspacePath: runtime.workspacePath,
+        ...(manifest ? { manifest } : {})
       };
     },
 

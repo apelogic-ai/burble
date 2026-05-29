@@ -94,6 +94,30 @@ export type ConversationRouteRecord = {
   revokedAt: string | null;
 };
 
+export type WorkspacePolicyRecord = {
+  workspaceId: string;
+  key: string;
+  value: unknown;
+  updatedBySlackUserId: string | null;
+  updatedAt: string;
+};
+
+export type UserPreferenceRecord = {
+  workspaceId: string;
+  slackUserId: string;
+  key: string;
+  value: unknown;
+  updatedAt: string;
+};
+
+type WorkspacePolicyRow = Omit<WorkspacePolicyRecord, "value"> & {
+  valueJson: string;
+};
+
+type UserPreferenceRow = Omit<UserPreferenceRecord, "value"> & {
+  valueJson: string;
+};
+
 export type TokenStore = ReturnType<typeof createTokenStore>;
 
 export function createTokenStore(path: string) {
@@ -183,6 +207,30 @@ export function createTokenStore(path: string) {
 
     CREATE INDEX IF NOT EXISTS idx_conversation_routes_principal
       ON conversation_routes (workspace_id, slack_user_id, transport, updated_at);
+
+    CREATE TABLE IF NOT EXISTS workspace_policy (
+      workspace_id TEXT NOT NULL,
+      key TEXT NOT NULL,
+      value_json TEXT NOT NULL,
+      updated_by_slack_user_id TEXT,
+      updated_at TEXT NOT NULL,
+      PRIMARY KEY(workspace_id, key)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_workspace_policy_workspace
+      ON workspace_policy (workspace_id, key);
+
+    CREATE TABLE IF NOT EXISTS user_preferences (
+      workspace_id TEXT NOT NULL,
+      slack_user_id TEXT NOT NULL,
+      key TEXT NOT NULL,
+      value_json TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      PRIMARY KEY(workspace_id, slack_user_id, key)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_user_preferences_principal
+      ON user_preferences (workspace_id, slack_user_id, key);
   `);
   ensureProviderConnectionColumn(db, "refresh_token", "TEXT");
   ensureProviderConnectionColumn(db, "access_token_expires_at", "TEXT");
@@ -434,6 +482,75 @@ export function createTokenStore(path: string) {
       revoked_at AS revokedAt
     FROM conversation_routes
     WHERE id = ?
+  `);
+  const upsertWorkspacePolicy = db.query(`
+    INSERT INTO workspace_policy (
+      workspace_id,
+      key,
+      value_json,
+      updated_by_slack_user_id,
+      updated_at
+    )
+    VALUES (?, ?, ?, ?, ?)
+    ON CONFLICT(workspace_id, key) DO UPDATE SET
+      value_json = excluded.value_json,
+      updated_by_slack_user_id = excluded.updated_by_slack_user_id,
+      updated_at = excluded.updated_at
+  `);
+  const getWorkspacePolicy = db.query<WorkspacePolicyRow, [string, string]>(`
+    SELECT
+      workspace_id AS workspaceId,
+      key,
+      value_json AS valueJson,
+      updated_by_slack_user_id AS updatedBySlackUserId,
+      updated_at AS updatedAt
+    FROM workspace_policy
+    WHERE workspace_id = ? AND key = ?
+  `);
+  const listWorkspacePolicy = db.query<WorkspacePolicyRow, [string]>(`
+    SELECT
+      workspace_id AS workspaceId,
+      key,
+      value_json AS valueJson,
+      updated_by_slack_user_id AS updatedBySlackUserId,
+      updated_at AS updatedAt
+    FROM workspace_policy
+    WHERE workspace_id = ?
+    ORDER BY key ASC
+  `);
+  const upsertUserPreference = db.query(`
+    INSERT INTO user_preferences (
+      workspace_id,
+      slack_user_id,
+      key,
+      value_json,
+      updated_at
+    )
+    VALUES (?, ?, ?, ?, ?)
+    ON CONFLICT(workspace_id, slack_user_id, key) DO UPDATE SET
+      value_json = excluded.value_json,
+      updated_at = excluded.updated_at
+  `);
+  const getUserPreference = db.query<UserPreferenceRow, [string, string, string]>(`
+    SELECT
+      workspace_id AS workspaceId,
+      slack_user_id AS slackUserId,
+      key,
+      value_json AS valueJson,
+      updated_at AS updatedAt
+    FROM user_preferences
+    WHERE workspace_id = ? AND slack_user_id = ? AND key = ?
+  `);
+  const listUserPreferences = db.query<UserPreferenceRow, [string, string]>(`
+    SELECT
+      workspace_id AS workspaceId,
+      slack_user_id AS slackUserId,
+      key,
+      value_json AS valueJson,
+      updated_at AS updatedAt
+    FROM user_preferences
+    WHERE workspace_id = ? AND slack_user_id = ?
+    ORDER BY key ASC
   `);
 
   return {
@@ -693,6 +810,88 @@ export function createTokenStore(path: string) {
       return getConversationRouteById.get(id);
     },
 
+    upsertWorkspacePolicy(input: {
+      workspaceId: string;
+      key: string;
+      value: unknown;
+      updatedBySlackUserId?: string | null;
+      now?: Date;
+    }): WorkspacePolicyRecord {
+      const now = (input.now ?? new Date()).toISOString();
+      upsertWorkspacePolicy.run(
+        input.workspaceId,
+        input.key,
+        stableJson(input.value),
+        input.updatedBySlackUserId ?? null,
+        now
+      );
+
+      const record = getWorkspacePolicy.get(input.workspaceId, input.key);
+      if (!record) {
+        throw new Error("Failed to store workspace policy");
+      }
+      return toWorkspacePolicyRecord(record);
+    },
+
+    getWorkspacePolicy(
+      workspaceId: string,
+      key: string
+    ): WorkspacePolicyRecord | null {
+      const record = getWorkspacePolicy.get(workspaceId, key);
+      return record ? toWorkspacePolicyRecord(record) : null;
+    },
+
+    listWorkspacePolicy(workspaceId: string): WorkspacePolicyRecord[] {
+      return listWorkspacePolicy
+        .all(workspaceId)
+        .map(toWorkspacePolicyRecord);
+    },
+
+    upsertUserPreference(input: {
+      workspaceId: string;
+      slackUserId: string;
+      key: string;
+      value: unknown;
+      now?: Date;
+    }): UserPreferenceRecord {
+      const now = (input.now ?? new Date()).toISOString();
+      upsertUserPreference.run(
+        input.workspaceId,
+        input.slackUserId,
+        input.key,
+        stableJson(input.value),
+        now
+      );
+
+      const record = getUserPreference.get(
+        input.workspaceId,
+        input.slackUserId,
+        input.key
+      );
+      if (!record) {
+        throw new Error("Failed to store user preference");
+      }
+      return toUserPreferenceRecord(record);
+    },
+
+    getUserPreference(
+      workspaceId: string,
+      slackUserId: string,
+      key: string
+    ): UserPreferenceRecord | null {
+      const record = getUserPreference.get(workspaceId, slackUserId, key);
+      return record ? toUserPreferenceRecord(record) : null;
+    },
+
+    listUserPreferences(
+      workspaceId: string,
+      slackUserId: string
+    ): UserPreferenceRecord[] {
+      return listUserPreferences
+        .all(workspaceId, slackUserId)
+        .map(toUserPreferenceRecord);
+    },
+
     updateAgentRuntimeStatus(
       id: string,
       input: {
@@ -759,7 +958,31 @@ function buildConversationRouteId(
     .slice(0, 24)}`;
 }
 
-function stableJson(value: Record<string, unknown>): string {
+function toWorkspacePolicyRecord(row: WorkspacePolicyRow): WorkspacePolicyRecord {
+  return {
+    workspaceId: row.workspaceId,
+    key: row.key,
+    value: parseStoredJson(row.valueJson),
+    updatedBySlackUserId: row.updatedBySlackUserId,
+    updatedAt: row.updatedAt
+  };
+}
+
+function toUserPreferenceRecord(row: UserPreferenceRow): UserPreferenceRecord {
+  return {
+    workspaceId: row.workspaceId,
+    slackUserId: row.slackUserId,
+    key: row.key,
+    value: parseStoredJson(row.valueJson),
+    updatedAt: row.updatedAt
+  };
+}
+
+function parseStoredJson(valueJson: string): unknown {
+  return JSON.parse(valueJson) as unknown;
+}
+
+function stableJson(value: unknown): string {
   return JSON.stringify(sortJson(value));
 }
 

@@ -140,6 +140,16 @@ function createStore(
       throw new Error("unexpected conversation route write");
     },
     getConversationRoute: (id) => (id === foundRoute?.id ? foundRoute : null),
+    upsertWorkspacePolicy: () => {
+      throw new Error("unexpected workspace policy write");
+    },
+    getWorkspacePolicy: () => null,
+    listWorkspacePolicy: () => [],
+    upsertUserPreference: () => {
+      throw new Error("unexpected user preference write");
+    },
+    getUserPreference: () => null,
+    listUserPreferences: () => [],
     updateAgentRuntimeStatus: () => undefined,
     touchAgentRuntime: (id) => {
       touchedRuntimeIds.push(id);

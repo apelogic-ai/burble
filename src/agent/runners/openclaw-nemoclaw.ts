@@ -128,7 +128,10 @@ export function createOpenClawNemoClawAgentRunner(
             githubConnected: Boolean(input.connections.github),
             googleConnected: Boolean(input.connections.google),
             jiraConnected: Boolean(input.connections.jira),
-            slackConnected: Boolean(input.connections.slack)
+            slackConnected: Boolean(input.connections.slack),
+            ...(runtime.manifest
+              ? { policyHash: runtime.manifest.policyHash }
+              : {})
           }
         });
       }
@@ -555,11 +558,33 @@ function sanitizeRuntimeHandle(runtime: RuntimeHandle): {
   id: string;
   engine: RuntimeHandle["engine"];
   status: RuntimeHandle["status"];
+  policyHash?: string;
+  manifest?: {
+    version: string;
+    policyHash: string;
+    skills: Array<{ id: string; version: string; enabled: boolean }>;
+    memory: {
+      userMemoryEnabled: boolean;
+      workspaceMemoryEnabled: boolean;
+      jobMemoryEnabled: boolean;
+    };
+  };
 } {
   return {
     id: runtime.id,
     engine: runtime.engine,
-    status: runtime.status
+    status: runtime.status,
+    ...(runtime.manifest
+      ? {
+          policyHash: runtime.manifest.policyHash,
+          manifest: {
+            version: runtime.manifest.version,
+            policyHash: runtime.manifest.policyHash,
+            skills: runtime.manifest.skills,
+            memory: runtime.manifest.memory
+          }
+        }
+      : {})
   };
 }
 

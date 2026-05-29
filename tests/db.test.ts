@@ -387,4 +387,60 @@ describe("createTokenStore", () => {
 
     store.close();
   });
+
+  test("stores workspace policy and user preferences as stable JSON records", () => {
+    const store = createTokenStore(":memory:");
+
+    const policy = store.upsertWorkspacePolicy({
+      workspaceId: "T123",
+      key: "providers.allowed",
+      value: ["github", "google"],
+      updatedBySlackUserId: "UADMIN",
+      now: new Date("2026-05-28T00:00:00.000Z")
+    });
+    const preference = store.upsertUserPreference({
+      workspaceId: "T123",
+      slackUserId: "U123",
+      key: "github.defaults",
+      value: {
+        repoAliases: {
+          burble: "apelogic-ai/burble"
+        },
+        org: "apelogic-ai"
+      },
+      now: new Date("2026-05-28T00:01:00.000Z")
+    });
+
+    expect(policy).toEqual({
+      workspaceId: "T123",
+      key: "providers.allowed",
+      value: ["github", "google"],
+      updatedBySlackUserId: "UADMIN",
+      updatedAt: "2026-05-28T00:00:00.000Z"
+    });
+    expect(preference).toEqual({
+      workspaceId: "T123",
+      slackUserId: "U123",
+      key: "github.defaults",
+      value: {
+        org: "apelogic-ai",
+        repoAliases: {
+          burble: "apelogic-ai/burble"
+        }
+      },
+      updatedAt: "2026-05-28T00:01:00.000Z"
+    });
+    expect(store.getWorkspacePolicy("T123", "providers.allowed")).toEqual(policy);
+    expect(store.getUserPreference("T123", "U123", "github.defaults")).toEqual(
+      preference
+    );
+    expect(store.listWorkspacePolicy("T123").map((record) => record.key)).toEqual([
+      "providers.allowed"
+    ]);
+    expect(
+      store.listUserPreferences("T123", "U123").map((record) => record.key)
+    ).toEqual(["github.defaults"]);
+
+    store.close();
+  });
 });

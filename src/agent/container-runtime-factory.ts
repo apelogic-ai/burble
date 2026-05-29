@@ -8,7 +8,8 @@ import {
   type RuntimeConfigRead,
   type PrincipalId,
   type RuntimeFactory,
-  type RuntimeHandle
+  type RuntimeHandle,
+  type RuntimeManifestBuilder
 } from "./runtime-factory";
 
 export type RuntimeCommandResult = {
@@ -73,6 +74,7 @@ export function createDockerRuntimeFactory(input: {
   healthCheckAttempts?: number;
   healthCheckIntervalMs?: number;
   idleTtlMs?: number;
+  buildManifest?: RuntimeManifestBuilder;
 }): RuntimeFactory {
   const execute = input.execute ?? executeCommand;
   const requestFetch = input.fetch ?? fetch;
@@ -101,6 +103,7 @@ export function createDockerRuntimeFactory(input: {
   return {
     async getOrCreateRuntime(principal) {
       const runtimeDataId = buildRuntimeDataId(principal, input.engine);
+      const manifest = await input.buildManifest?.(principal);
       const token = deriveRuntimeToken({
         secret: input.runtimeTokenSecret,
         principal,
@@ -149,7 +152,8 @@ export function createDockerRuntimeFactory(input: {
         eventType: "runtime_provision_requested",
         summary: {
           engine: input.engine,
-          image: input.image
+          image: input.image,
+          ...(manifest ? { policyHash: manifest.policyHash } : {})
         }
       });
 
@@ -189,7 +193,7 @@ export function createDockerRuntimeFactory(input: {
         throw error;
       }
 
-      return toRuntimeHandle(runtime, spec, token);
+      return toRuntimeHandle(runtime, spec, token, manifest);
     },
 
     async readRuntimeConfig(runtimeId) {
@@ -455,7 +459,8 @@ function toRuntimeHandle(
     workspacePath: string;
   },
   spec: ContainerRuntimeSpec,
-  token: string
+  token: string,
+  manifest?: RuntimeHandle["manifest"]
 ): RuntimeHandle {
   return {
     id: runtime.id,
@@ -465,7 +470,8 @@ function toRuntimeHandle(
     status: "ready",
     statePath: runtime.statePath,
     configPath: runtime.configPath,
-    workspacePath: runtime.workspacePath
+    workspacePath: runtime.workspacePath,
+    ...(manifest ? { manifest } : {})
   };
 }
 

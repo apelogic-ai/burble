@@ -8,6 +8,10 @@ import {
 } from "../tools/github";
 import type { ToolResult } from "../tools/types";
 import { mcpToolResult, type ProviderMcpDeps, withConnection } from "./provider-context";
+import {
+  isProviderMcpToolEnabled,
+  type ProviderMcpToolPolicy
+} from "./provider-policy";
 
 type GitHubTools = ReturnType<typeof createGitHubTools>;
 type GitHubToolArgs = Record<string, unknown>;
@@ -21,11 +25,15 @@ export function registerGitHubMcpTools(input: {
   store: TokenStore;
   runtime: AgentRuntimeRecord;
   deps: Parameters<typeof createGitHubTools>[0] & ProviderMcpDeps;
+  policy?: ProviderMcpToolPolicy;
 }): void {
   const githubTools = createGitHubTools(input.deps);
   const handlers = createGitHubMcpHandlers(githubTools);
 
   for (const spec of githubProviderToolSpecs) {
+    if (!isProviderMcpToolEnabled(input.policy, spec.name)) {
+      continue;
+    }
     const handler = handlers[spec.implementation];
     if (!handler) {
       throw new Error(`Missing GitHub MCP handler for ${spec.implementation}`);

@@ -54,6 +54,7 @@ import {
   type AgentUsage
 } from "./agent/types";
 import { createDockerRuntimeFactory } from "./agent/container-runtime-factory";
+import { buildRuntimeManifestForPrincipal } from "./agent/runtime-policy";
 import { createStaticRuntimeFactory } from "./agent/runtime-factory";
 import type { RuntimeFactory } from "./agent/runtime-factory";
 import { createGitHubTools } from "./tools/github";
@@ -1233,7 +1234,14 @@ function createOpenClawRuntimeFactory(
       runtimeTokenSecret: config.agentRuntimeTokenSecret,
       openClawConfigPatchPath: config.openClawConfigPatchHostPath,
       idleTtlMs: config.agentRuntimeIdleTtlMs,
-      env: Bun.env
+      env: Bun.env,
+      buildManifest: (principal) =>
+        buildRuntimeManifestForPrincipal({
+          config,
+          store,
+          principal,
+          engine: config.openClawNemoClawEngine
+        })
     });
   }
 
@@ -1246,7 +1254,14 @@ function createOpenClawRuntimeFactory(
     engine: config.openClawNemoClawEngine,
     endpointUrl: config.openClawNemoClawUrl,
     authToken: config.internalApiToken ?? "",
-    dataRoot: config.agentRuntimeDataRoot
+    dataRoot: config.agentRuntimeDataRoot,
+    buildManifest: (principal) =>
+      buildRuntimeManifestForPrincipal({
+        config,
+        store,
+        principal,
+        engine: config.openClawNemoClawEngine
+      })
   });
 }
 

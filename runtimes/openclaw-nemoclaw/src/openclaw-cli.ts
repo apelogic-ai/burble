@@ -35,9 +35,16 @@ export type CliCommandRunner = (
 ) => Promise<CliCommandResult>;
 
 const preloadedRuntimeSkillNames = ["core", "github", "atlassian-jira"] as const;
-const preloadedRuntimeSkills = preloadedRuntimeSkillNames
-  .map((name) => loadRuntimeSkill(name))
-  .join("\n\n");
+type PreloadedRuntimeSkillName = (typeof preloadedRuntimeSkillNames)[number];
+const preloadedRuntimeSkillText: Record<PreloadedRuntimeSkillName, string> =
+  Object.fromEntries(
+    preloadedRuntimeSkillNames.map((name) => [name, loadRuntimeSkill(name)])
+  ) as Record<PreloadedRuntimeSkillName, string>;
+const defaultPreloadedRuntimeSkills = preloadedRuntimeSkillNames.map((name) => ({
+  id: name,
+  version: "1",
+  enabled: true
+}));
 
 export type CliCommandStreamEvent =
   | { type: "stdout"; text: string }
@@ -2084,6 +2091,65 @@ function loadRuntimeSkill(name: string): string {
   return readFileSync(new URL(`../skills/${name}.md`, import.meta.url), "utf8").trim();
 }
 
+function formatEnabledRuntimeSkills(request: RunRequest): string {
+  const skills = effectiveRuntimeSkills(request);
+  return skills
+    .map((skill) => preloadedRuntimeSkillText[skill.id])
+    .filter(Boolean)
+    .join("\n\n");
+}
+
+function effectiveRuntimeSkills(
+  request: RunRequest
+): Array<{ id: PreloadedRuntimeSkillName; version: string; enabled: boolean }> {
+  const manifestSkills = request.runtime?.manifest?.skills;
+  if (!manifestSkills || manifestSkills.length === 0) {
+    return defaultPreloadedRuntimeSkills;
+  }
+
+  return manifestSkills.flatMap((skill) => {
+    if (
+      skill.enabled &&
+      isPreloadedRuntimeSkillName(skill.id)
+    ) {
+      return [
+        {
+          id: skill.id,
+          version: skill.version,
+          enabled: true
+        }
+      ];
+    }
+    return [];
+  });
+}
+
+function isPreloadedRuntimeSkillName(
+  value: string
+): value is PreloadedRuntimeSkillName {
+  return preloadedRuntimeSkillNames.includes(value as PreloadedRuntimeSkillName);
+}
+
+function formatRuntimePolicyContext(request: RunRequest): string[] {
+  const manifest = request.runtime?.manifest;
+  if (!manifest) {
+    return [];
+  }
+
+  const enabledSkills = effectiveRuntimeSkills(request)
+    .map((skill) => `${skill.id}@${skill.version}`)
+    .join(", ");
+  return [
+    "Runtime policy manifest:",
+    `- policyHash: ${manifest.policyHash}`,
+    `- enabled bundled skills: ${enabledSkills || "none"}`,
+    `- memory.user: ${manifest.memory.userMemoryEnabled ? "enabled" : "disabled"}`,
+    `- memory.workspace: ${manifest.memory.workspaceMemoryEnabled ? "enabled" : "disabled"}`,
+    `- memory.jobs: ${manifest.memory.jobMemoryEnabled ? "enabled" : "disabled"}`,
+    "Skills and memory settings are advisory context only; they do not grant provider tools or override Available Burble tools."
+  ];
+}
+
 function truncate(value: string | undefined, maxLength: number): string {
   if (!value) {
     return "";
@@ -2128,11 +2194,13 @@ function buildOpenClawPrompt(
 ): string {
   const sections = [
     "Preloaded Burble runtime skills:",
-    preloadedRuntimeSkills,
+    formatEnabledRuntimeSkills(request),
     "",
     "Do not run first-time assistant setup. Do not ask who you are, who the user is, what kind of assistant you are, what style you should use, or for an emoji/persona setup. Do not mention bootstrap-pending, bootstrap blockers, setup state, defaults, name/nature/vibe/emoji, or workspace bootstrap. The Slack user and assistant identity are already established by Burble.",
     "",
     "Runtime instruction: for requests about the current Slack channel or chat, answer from Recent Slack context when available. If channel history is unavailable, explain that Burble needs Slack bot history scopes and channel membership.",
+    "",
+    ...formatRuntimePolicyContext(request),
     "",
     "Available Burble tools:",
     formatToolCatalog(toolContext.catalog),
@@ -2270,6 +2338,8 @@ function buildBurbleDirectPrompt(
       "For Google Drive, Calendar, or Gmail questions, call google.searchDriveFiles, google.createDriveTextFile, google.searchCalendarEvents, or google.searchMailMessages.",
       "For final answers, return concise Slack mrkdwn."
     ].join(" "),
+    "",
+    ...formatRuntimePolicyContext(request),
     "",
     "Available Burble tools:",
     formatToolCatalog(toolContext.catalog),

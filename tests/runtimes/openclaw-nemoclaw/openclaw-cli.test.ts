@@ -172,6 +172,65 @@ describe("runOpenClawCliRequest", () => {
     expect(catalogText).not.toContain('"name":"jira.searchIssues"');
   });
 
+  test("honors runtime manifest skills and memory context in the prompt", async () => {
+    const prompts: string[] = [];
+
+    const response = await runOpenClawCliRequest(
+      {
+        input: {
+          text: "hello",
+          connections: {
+            github: { connected: false }
+          }
+        },
+        runtime: {
+          id: "rt_123",
+          manifest: {
+            version: "1",
+            policyHash: "policy-hash-123",
+            skills: [
+              { id: "core", version: "1", enabled: true },
+              { id: "github", version: "1", enabled: false }
+            ],
+            memory: {
+              userMemoryEnabled: false,
+              workspaceMemoryEnabled: true,
+              jobMemoryEnabled: true
+            }
+          }
+        }
+      },
+      config,
+      async () => {
+        throw new Error("unexpected tool call");
+      },
+      async (_command, args) => {
+        prompts.push(args[args.indexOf("--message") + 1] ?? "");
+        return {
+          exitCode: 0,
+          stdout: JSON.stringify({
+            response: {
+              text: "Hi."
+            }
+          }),
+          stderr: ""
+        };
+      },
+      () => undefined
+    );
+
+    expect(response.response.text).toBe("Hi.");
+    expect(prompts).toHaveLength(1);
+    expect(prompts[0]).toContain("# Burble Runtime Skill");
+    expect(prompts[0]).not.toContain("# GitHub Skill");
+    expect(prompts[0]).toContain("Runtime policy manifest:");
+    expect(prompts[0]).toContain("- policyHash: policy-hash-123");
+    expect(prompts[0]).toContain("- enabled bundled skills: core@1");
+    expect(prompts[0]).toContain("- memory.user: disabled");
+    expect(prompts[0]).toContain("- memory.workspace: enabled");
+    expect(prompts[0]).toContain("- memory.jobs: enabled");
+  });
+
   test("runs OpenClaw CLI with gateway-derived context", async () => {
     const commands: Array<{
       command: string;

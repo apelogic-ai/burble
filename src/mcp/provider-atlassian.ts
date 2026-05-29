@@ -25,6 +25,10 @@ import {
   withConnection
 } from "./provider-context";
 import {
+  isProviderMcpToolEnabled,
+  type ProviderMcpToolPolicy
+} from "./provider-policy";
+import {
   callUpstreamMcpTool,
   listUpstreamMcpTools,
   type UpstreamMcpTool,
@@ -43,10 +47,14 @@ export function registerAtlassianMcpTools(input: {
   store: TokenStore;
   runtime: AgentRuntimeRecord;
   deps: JiraToolDeps & ProviderMcpDeps;
+  policy?: ProviderMcpToolPolicy;
 }): void {
   const handlers = createAtlassianMcpHandlers(input);
 
   for (const spec of atlassianProviderToolSpecs) {
+    if (!isProviderMcpToolEnabled(input.policy, spec.name)) {
+      continue;
+    }
     const handler = handlers[spec.implementation];
     if (!handler) {
       throw new Error(`Missing Atlassian MCP handler for ${spec.implementation}`);

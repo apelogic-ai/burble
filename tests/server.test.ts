@@ -83,6 +83,16 @@ function createFakeStore() {
       throw new Error("unexpected conversation route write");
     },
     getConversationRoute: () => null,
+    upsertWorkspacePolicy: () => {
+      throw new Error("unexpected workspace policy write");
+    },
+    getWorkspacePolicy: () => null,
+    listWorkspacePolicy: () => [],
+    upsertUserPreference: () => {
+      throw new Error("unexpected user preference write");
+    },
+    getUserPreference: () => null,
+    listUserPreferences: () => [],
     updateAgentRuntimeStatus: () => undefined,
     touchAgentRuntime: () => undefined,
     close: () => undefined

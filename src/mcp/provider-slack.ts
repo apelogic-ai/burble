@@ -5,6 +5,10 @@ import { providerToolInputSchema } from "../providers/tool-specs";
 import { createSlackTools } from "../tools/slack";
 import type { ToolResult } from "../tools/types";
 import { mcpToolResult, type ProviderMcpDeps, withConnection } from "./provider-context";
+import {
+  isProviderMcpToolEnabled,
+  type ProviderMcpToolPolicy
+} from "./provider-policy";
 
 type SlackTools = ReturnType<typeof createSlackTools>;
 type SlackToolArgs = Record<string, unknown>;
@@ -18,11 +22,15 @@ export function registerSlackMcpTools(input: {
   store: TokenStore;
   runtime: AgentRuntimeRecord;
   deps: Parameters<typeof createSlackTools>[0] & ProviderMcpDeps;
+  policy?: ProviderMcpToolPolicy;
 }): void {
   const slackTools = createSlackTools(input.deps);
   const handlers = createSlackMcpHandlers(slackTools);
 
   for (const spec of slackProviderToolSpecs) {
+    if (!isProviderMcpToolEnabled(input.policy, spec.name)) {
+      continue;
+    }
     const handler = handlers[spec.implementation];
     if (!handler) {
       throw new Error(`Missing Slack MCP handler for ${spec.implementation}`);

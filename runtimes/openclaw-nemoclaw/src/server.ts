@@ -1206,6 +1206,56 @@ function isRuntimeSummary(runtime: unknown): runtime is RunRequest["runtime"] {
     runtime !== null &&
     "id" in runtime &&
     typeof runtime.id === "string" &&
-    runtime.id.trim().length > 0
+    runtime.id.trim().length > 0 &&
+    (!("policyHash" in runtime) ||
+      runtime.policyHash === undefined ||
+      (typeof runtime.policyHash === "string" &&
+        runtime.policyHash.trim().length > 0)) &&
+    (!("manifest" in runtime) ||
+      runtime.manifest === undefined ||
+      isRuntimeManifestSummary(runtime.manifest))
+  );
+}
+
+function isRuntimeManifestSummary(
+  manifest: unknown
+): manifest is NonNullable<RunRequest["runtime"]>["manifest"] {
+  if (
+    typeof manifest !== "object" ||
+    manifest === null ||
+    !("version" in manifest) ||
+    typeof manifest.version !== "string" ||
+    !("policyHash" in manifest) ||
+    typeof manifest.policyHash !== "string" ||
+    !("skills" in manifest) ||
+    !Array.isArray(manifest.skills) ||
+    !("memory" in manifest) ||
+    typeof manifest.memory !== "object" ||
+    manifest.memory === null
+  ) {
+    return false;
+  }
+
+  const memory = manifest.memory as Record<string, unknown>;
+  return (
+    manifest.skills.every(isRuntimeManifestSkillSummary) &&
+    typeof memory.userMemoryEnabled === "boolean" &&
+    typeof memory.workspaceMemoryEnabled === "boolean" &&
+    typeof memory.jobMemoryEnabled === "boolean"
+  );
+}
+
+function isRuntimeManifestSkillSummary(skill: unknown): boolean {
+  return (
+    typeof skill === "object" &&
+    skill !== null &&
+    "id" in skill &&
+    typeof skill.id === "string" &&
+    skill.id.trim().length > 0 &&
+    "version" in skill &&
+    typeof skill.version === "string" &&
+    skill.version.trim().length > 0 &&
+    "enabled" in skill &&
+    typeof skill.enabled === "boolean"
   );
 }

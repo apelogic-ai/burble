@@ -13,7 +13,28 @@ describe("createStaticRuntimeFactory", () => {
       engine: "openclaw",
       endpointUrl: "http://openclaw-nemoclaw:8080",
       authToken: "runtime-token",
-      dataRoot: "/data/runtimes"
+      dataRoot: "/data/runtimes",
+      buildManifest: (principal) =>
+        ({
+          version: "1",
+          principal,
+          runtime: {
+            engine: "openclaw",
+            factory: "static",
+            ttlMs: 86400000,
+            reaperEnabled: true
+          },
+          model: { provider: "openai", model: "gpt-5.4" },
+          tools: [],
+          skills: [],
+          memory: {
+            userMemoryEnabled: false,
+            workspaceMemoryEnabled: false,
+            jobMemoryEnabled: true
+          },
+          disabledTools: [],
+          policyHash: "policy-hash"
+        }) as never
     });
 
     const first = await factory.getOrCreateRuntime({
@@ -37,6 +58,7 @@ describe("createStaticRuntimeFactory", () => {
       authToken: "runtime-token",
       status: "ready"
     });
+    expect(first.manifest?.policyHash).toBe("policy-hash");
     expect(first.statePath).toStartWith("/data/runtimes/");
     expect(first.configPath).toEndWith("/config/openclaw.json");
     expect(first.workspacePath).toEndWith("/workspace");
