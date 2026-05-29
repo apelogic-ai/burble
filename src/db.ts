@@ -131,6 +131,17 @@ export type AgentJobStateRecord = {
   updatedAt: string;
 };
 
+export type AgentJobCapabilityRecord = {
+  jobId: string;
+  workspaceId: string;
+  slackUserId: string;
+  requiredTools: string[];
+  routeId: string | null;
+  policyHash: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
 export type SkillCatalogRecord = {
   id: string;
   version: string;
@@ -173,6 +184,13 @@ type AgentMemoryRow = Omit<AgentMemoryRecord, "value"> & {
 
 type AgentJobStateRow = Omit<AgentJobStateRecord, "state"> & {
   stateJson: string;
+};
+
+type AgentJobCapabilityRow = Omit<
+  AgentJobCapabilityRecord,
+  "requiredTools"
+> & {
+  requiredToolsJson: string;
 };
 
 type SkillCatalogRow = Omit<SkillCatalogRecord, "metadata"> & {
@@ -317,6 +335,20 @@ export function createTokenStore(path: string) {
 
     CREATE INDEX IF NOT EXISTS idx_agent_job_state_principal
       ON agent_job_state (workspace_id, slack_user_id, updated_at);
+
+    CREATE TABLE IF NOT EXISTS agent_job_capabilities (
+      job_id TEXT PRIMARY KEY,
+      workspace_id TEXT NOT NULL,
+      slack_user_id TEXT NOT NULL,
+      required_tools_json TEXT NOT NULL,
+      route_id TEXT,
+      policy_hash TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_agent_job_capabilities_principal
+      ON agent_job_capabilities (workspace_id, slack_user_id, updated_at);
 
     CREATE TABLE IF NOT EXISTS skill_catalog (
       id TEXT NOT NULL,
@@ -773,6 +805,60 @@ export function createTokenStore(path: string) {
   `);
   const deleteAgentJobState = db.query(`
     DELETE FROM agent_job_state
+    WHERE job_id = ?
+  `);
+  const upsertAgentJobCapability = db.query(`
+    INSERT INTO agent_job_capabilities (
+      job_id,
+      workspace_id,
+      slack_user_id,
+      required_tools_json,
+      route_id,
+      policy_hash,
+      created_at,
+      updated_at
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(job_id) DO UPDATE SET
+      workspace_id = excluded.workspace_id,
+      slack_user_id = excluded.slack_user_id,
+      required_tools_json = excluded.required_tools_json,
+      route_id = excluded.route_id,
+      policy_hash = excluded.policy_hash,
+      updated_at = excluded.updated_at
+  `);
+  const getAgentJobCapability = db.query<AgentJobCapabilityRow, [string]>(`
+    SELECT
+      job_id AS jobId,
+      workspace_id AS workspaceId,
+      slack_user_id AS slackUserId,
+      required_tools_json AS requiredToolsJson,
+      route_id AS routeId,
+      policy_hash AS policyHash,
+      created_at AS createdAt,
+      updated_at AS updatedAt
+    FROM agent_job_capabilities
+    WHERE job_id = ?
+  `);
+  const listAgentJobCapabilitiesForPrincipal = db.query<
+    AgentJobCapabilityRow,
+    [string, string]
+  >(`
+    SELECT
+      job_id AS jobId,
+      workspace_id AS workspaceId,
+      slack_user_id AS slackUserId,
+      required_tools_json AS requiredToolsJson,
+      route_id AS routeId,
+      policy_hash AS policyHash,
+      created_at AS createdAt,
+      updated_at AS updatedAt
+    FROM agent_job_capabilities
+    WHERE workspace_id = ? AND slack_user_id = ?
+    ORDER BY updated_at DESC, job_id ASC
+  `);
+  const deleteAgentJobCapability = db.query(`
+    DELETE FROM agent_job_capabilities
     WHERE job_id = ?
   `);
   const upsertSkillCatalog = db.query(`
@@ -1332,6 +1418,53 @@ export function createTokenStore(path: string) {
       deleteAgentJobState.run(jobId);
     },
 
+    upsertAgentJobCapability(input: {
+      jobId: string;
+      workspaceId: string;
+      slackUserId: string;
+      requiredTools: string[];
+      routeId?: string | null;
+      policyHash?: string | null;
+      now?: Date;
+    }): AgentJobCapabilityRecord {
+      const now = (input.now ?? new Date()).toISOString();
+      const existing = getAgentJobCapability.get(input.jobId);
+      upsertAgentJobCapability.run(
+        input.jobId,
+        input.workspaceId,
+        input.slackUserId,
+        stableJson(normalizeRequiredTools(input.requiredTools)),
+        input.routeId ?? null,
+        input.policyHash ?? null,
+        existing?.createdAt ?? now,
+        now
+      );
+
+      const record = getAgentJobCapability.get(input.jobId);
+      if (!record) {
+        throw new Error("Failed to store agent job capability");
+      }
+      return toAgentJobCapabilityRecord(record);
+    },
+
+    getAgentJobCapability(jobId: string): AgentJobCapabilityRecord | null {
+      const record = getAgentJobCapability.get(jobId);
+      return record ? toAgentJobCapabilityRecord(record) : null;
+    },
+
+    listAgentJobCapabilitiesForPrincipal(
+      workspaceId: string,
+      slackUserId: string
+    ): AgentJobCapabilityRecord[] {
+      return listAgentJobCapabilitiesForPrincipal
+        .all(workspaceId, slackUserId)
+        .map(toAgentJobCapabilityRecord);
+    },
+
+    deleteAgentJobCapability(jobId: string): void {
+      deleteAgentJobCapability.run(jobId);
+    },
+
     upsertSkillCatalog(input: {
       id: string;
       version: string;
@@ -1554,6 +1687,21 @@ function toAgentJobStateRecord(row: AgentJobStateRow): AgentJobStateRecord {
   };
 }
 
+function toAgentJobCapabilityRecord(
+  row: AgentJobCapabilityRow
+): AgentJobCapabilityRecord {
+  return {
+    jobId: row.jobId,
+    workspaceId: row.workspaceId,
+    slackUserId: row.slackUserId,
+    requiredTools: requiredToolsFromJson(row.requiredToolsJson),
+    routeId: row.routeId,
+    policyHash: row.policyHash,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt
+  };
+}
+
 function toSkillCatalogRecord(row: SkillCatalogRow): SkillCatalogRecord {
   return {
     id: row.id,
@@ -1599,6 +1747,18 @@ function normalizeAgentMemoryOwnerId(
     throw new Error(`${scope} memory requires an owner id`);
   }
   return ownerId.trim();
+}
+
+function normalizeRequiredTools(requiredTools: string[]): string[] {
+  return [...new Set(requiredTools.map((tool) => tool.trim()).filter(Boolean))]
+    .sort();
+}
+
+function requiredToolsFromJson(valueJson: string): string[] {
+  const value = parseStoredJson(valueJson);
+  return Array.isArray(value)
+    ? value.filter((tool): tool is string => typeof tool === "string")
+    : [];
 }
 
 function parseStoredJson(valueJson: string): unknown {

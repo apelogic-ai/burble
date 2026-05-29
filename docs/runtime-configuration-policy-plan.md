@@ -910,13 +910,14 @@ time or expose `/agent set` / `/agent get` in Slack. Those are the next slices.
 ### Slice 6: Job-Scoped Capabilities
 
 - Status: partially implemented.
+- Added durable scheduled job capability metadata keyed by job ID, including
+  required tools, target route, and policy hash.
 - Runtime JWTs can carry optional `job_id` and `allowed_tools` claims.
 - Burble MCP intersects job-scoped `allowed_tools` with the active runtime
   manifest and hides/blocks unexpected tools.
 - Unexpected job tool calls are denied before provider execution and recorded
   as runtime audit events.
-- Remaining: store required tools on scheduled job records and mint
-  short-lived job-scoped JWTs at scheduled runtime.
+- Remaining: mint short-lived job-scoped JWTs at scheduled runtime.
 
 ### Slice 7: Slack/Admin UX
 

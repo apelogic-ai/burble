@@ -628,6 +628,63 @@ describe("createTokenStore", () => {
     store.close();
   });
 
+  test("stores scheduled job capability metadata", () => {
+    const store = createTokenStore(":memory:");
+
+    const first = store.upsertAgentJobCapability({
+      jobId: "job-123",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      requiredTools: [
+        "github_list_my_pull_requests",
+        "github_search_issues",
+        "github_search_issues"
+      ],
+      routeId: "convrt_123",
+      policyHash: "policy-a",
+      now: new Date("2026-05-28T00:00:00.000Z")
+    });
+    const updated = store.upsertAgentJobCapability({
+      jobId: "job-123",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      requiredTools: ["github_list_my_pull_requests"],
+      routeId: "convrt_123",
+      policyHash: "policy-b",
+      now: new Date("2026-05-28T00:01:00.000Z")
+    });
+
+    expect(first).toEqual({
+      jobId: "job-123",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      requiredTools: ["github_list_my_pull_requests", "github_search_issues"],
+      routeId: "convrt_123",
+      policyHash: "policy-a",
+      createdAt: "2026-05-28T00:00:00.000Z",
+      updatedAt: "2026-05-28T00:00:00.000Z"
+    });
+    expect(updated).toEqual({
+      jobId: "job-123",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      requiredTools: ["github_list_my_pull_requests"],
+      routeId: "convrt_123",
+      policyHash: "policy-b",
+      createdAt: "2026-05-28T00:00:00.000Z",
+      updatedAt: "2026-05-28T00:01:00.000Z"
+    });
+    expect(store.getAgentJobCapability("job-123")).toEqual(updated);
+    expect(
+      store.listAgentJobCapabilitiesForPrincipal("T123", "U123")
+    ).toEqual([updated]);
+
+    store.deleteAgentJobCapability("job-123");
+    expect(store.getAgentJobCapability("job-123")).toBeNull();
+
+    store.close();
+  });
+
   test("stores skill catalog and workspace/user skill enablement", () => {
     const store = createTokenStore(":memory:");
 
