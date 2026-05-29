@@ -853,14 +853,18 @@ export function createSlackRuntime(
           principal,
           engine: config.openClawNemoClawEngine
         }).policyHash;
+        const policyChanged = previousPolicyHash !== nextPolicyHash;
         await ack(
           addAgentConfigRuntimeRestartNotice(
             response,
-            previousPolicyHash !== nextPolicyHash
+            policyChanged
           )
         );
+        if (!policyChanged) {
+          return;
+        }
         try {
-          await restartAgentRuntimeIfConfigChanged({
+          const restartedRuntimeId = await restartAgentRuntimeIfConfigChanged({
             config,
             store,
             runtimeFactory,
@@ -868,8 +872,12 @@ export function createSlackRuntime(
             previousPolicyHash,
             nextPolicyHash
           });
+          await respond(
+            buildAgentConfigRuntimeRestartResponse(restartedRuntimeId)
+          );
         } catch (error) {
           logger.error(formatLogError(error));
+          await respond(buildAgentConfigRuntimeRestartFailureResponse(error));
         }
         return;
       }
@@ -2242,6 +2250,36 @@ function addAgentConfigRuntimeRestartNotice(
       "_Your current agent runtime will restart so the new config applies cleanly on the next run._"
     ].join("\n")
   };
+}
+
+export function buildAgentConfigRuntimeRestartResponse(
+  runtimeId: string | null
+): AgentUserConfigSetResult {
+  return {
+    response_type: "ephemeral",
+    text: runtimeId
+      ? "Agent runtime restarted. The next agent request will start with the updated config."
+      : "Config saved. No live agent runtime needed a restart; the next agent request will use the updated config."
+  };
+}
+
+export function buildAgentConfigRuntimeRestartFailureResponse(
+  error: unknown
+): AgentUserConfigSetResult {
+  return {
+    response_type: "ephemeral",
+    text: [
+      "Config saved, but I could not restart the current agent runtime automatically.",
+      "",
+      `Error: \`${formatAgentConfigRestartErrorMessage(error)}\``,
+      "",
+      "The new config will still be sent with future runs; if the old runtime keeps behaving incorrectly, restart it manually."
+    ].join("\n")
+  };
+}
+
+function formatAgentConfigRestartErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 function applyAgentUserConfigSpecialSet(input: {

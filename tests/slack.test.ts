@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import {
   applyAgentUserConfigSet,
+  buildAgentConfigRuntimeRestartFailureResponse,
+  buildAgentConfigRuntimeRestartResponse,
   buildAgentConfigResponse,
   buildAgentCommandHelpResponse,
   buildAgentUserConfigGetResponse,
@@ -728,6 +730,21 @@ describe("agent user config commands", () => {
 
     expect(stoppedRuntimeId).toBeNull();
     expect(stopped).toEqual([]);
+  });
+
+  test("formats runtime restart status after config changes", () => {
+    expect(buildAgentConfigRuntimeRestartResponse("rt_123").text).toContain(
+      "Agent runtime restarted"
+    );
+    expect(buildAgentConfigRuntimeRestartResponse(null).text).toContain(
+      "No live agent runtime"
+    );
+
+    const failure = buildAgentConfigRuntimeRestartFailureResponse(
+      new Error("docker unavailable")
+    );
+    expect(failure.text).toContain("Config saved");
+    expect(failure.text).toContain("docker unavailable");
   });
 });
 
