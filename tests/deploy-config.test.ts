@@ -61,6 +61,7 @@ describe("dev deploy config", () => {
       "AGENT_RUNTIME_TOOL_GATEWAY_URL",
       "AGENT_RUNTIME_MCP_GATEWAY_URL",
       "AGENT_RUNTIME_MCP_AUDIENCE",
+      "AGENT_RUNTIME_CONFIG_PATCH_HOST_PATH",
       "ATLASSIAN_MCP_URL",
       "RUNTIME_JWT_ISSUER",
       "RUNTIME_JWT_PRIVATE_KEY_PATH",
@@ -246,6 +247,7 @@ describe("dev deploy config", () => {
       "AGENT_RUNTIME_TOOL_GATEWAY_URL",
       "AGENT_RUNTIME_MCP_GATEWAY_URL",
       "AGENT_RUNTIME_MCP_AUDIENCE",
+      "AGENT_RUNTIME_CONFIG_PATCH_HOST_PATH",
       "ATLASSIAN_MCP_URL",
       "RUNTIME_JWT_ISSUER",
       "RUNTIME_JWT_PRIVATE_KEY_PATH",
@@ -282,6 +284,9 @@ describe("dev deploy config", () => {
     );
     expect(personalRuntimesCompose).toContain("AGENT_RUNTIME_MCP_GATEWAY_URL");
     expect(personalRuntimesCompose).toContain("AGENT_RUNTIME_MCP_AUDIENCE");
+    expect(personalRuntimesCompose).toContain(
+      "AGENT_RUNTIME_CONFIG_PATCH_HOST_PATH=${AGENT_RUNTIME_CONFIG_PATCH_HOST_PATH:-${OPENCLAW_CONFIG_PATCH_HOST_PATH:-}}"
+    );
     expect(personalRuntimesCompose).toContain("RUNTIME_JWT_ISSUER");
     expect(personalRuntimesCompose).toContain("RUNTIME_JWT_PRIVATE_KEY_PATH");
     expect(personalRuntimesCompose).toContain(

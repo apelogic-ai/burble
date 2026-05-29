@@ -300,12 +300,23 @@ export function buildContainerRuntimeSpec(input: {
     AGENT_RUNTIME_ENGINE: input.engine,
     AGENT_RUNTIME_STATE_DIR: "/data/openclaw/state",
     AGENT_RUNTIME_CONFIG_PATH: runtimeConfigPath,
-    AGENT_RUNTIME_WORKSPACE_DIR: "/data/openclaw/workspace",
-    OPENCLAW_NEMOCLAW_ENGINE: input.engine,
-    OPENCLAW_STATE_DIR: "/data/openclaw/state",
-    OPENCLAW_CONFIG_PATH: runtimeConfigPath,
-    OPENCLAW_WORKSPACE_DIR: "/data/openclaw/workspace"
+    AGENT_RUNTIME_WORKSPACE_DIR: "/data/openclaw/workspace"
   };
+
+  if (input.engine !== "hermes") {
+    Object.assign(env, {
+      OPENCLAW_NEMOCLAW_ENGINE: input.engine,
+      OPENCLAW_STATE_DIR: "/data/openclaw/state",
+      OPENCLAW_CONFIG_PATH: runtimeConfigPath,
+      OPENCLAW_WORKSPACE_DIR: "/data/openclaw/workspace"
+    });
+  }
+
+  if (input.engine === "hermes") {
+    Object.assign(env, {
+      HERMES_HOME: "/data/openclaw/hermes"
+    });
+  }
 
   if (input.runtimeId) {
     env.BURBLE_RUNTIME_ID = input.runtimeId;
@@ -323,7 +334,10 @@ export function buildContainerRuntimeSpec(input: {
     }
   }
 
-  if (input.openClawConfigPatchPath) {
+  const openClawConfigPatchHostPath =
+    input.engine !== "hermes" ? input.openClawConfigPatchPath : null;
+
+  if (openClawConfigPatchHostPath) {
     env.OPENCLAW_CONFIG_PATCH_PATH = "/etc/openclaw/patches/openai.json5";
   }
 
@@ -335,10 +349,10 @@ export function buildContainerRuntimeSpec(input: {
     env,
     volumes: [
       { source: runtimeRoot, target: "/data/openclaw" },
-      ...(input.openClawConfigPatchPath
+      ...(openClawConfigPatchHostPath
         ? [
             {
-              source: input.openClawConfigPatchPath,
+              source: openClawConfigPatchHostPath,
               target: "/etc/openclaw/patches",
               readonly: true
             }

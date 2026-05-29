@@ -297,10 +297,9 @@ export function readConfig(env: Env): Config {
       env,
       "RUNTIME_JWT_PRIVATE_KEY_PATH"
     ),
-    openClawConfigPatchHostPath: optionalSecretEnv(
-      env,
-      "OPENCLAW_CONFIG_PATCH_HOST_PATH"
-    ),
+    openClawConfigPatchHostPath:
+      optionalSecretEnv(env, "AGENT_RUNTIME_CONFIG_PATCH_HOST_PATH") ??
+      optionalSecretEnv(env, "OPENCLAW_CONFIG_PATCH_HOST_PATH"),
     internalApiToken
   };
 }

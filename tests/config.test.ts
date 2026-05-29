@@ -140,6 +140,7 @@ describe("readConfig", () => {
       AGENT_RUNTIME_TOOL_GATEWAY_URL: "http://burble-app:3000/internal/tools",
       AGENT_RUNTIME_MCP_GATEWAY_URL: "http://agentgateway:3000/mcp/",
       AGENT_RUNTIME_MCP_AUDIENCE: "http://agentgateway:3000/mcp/",
+      AGENT_RUNTIME_CONFIG_PATCH_HOST_PATH: "/srv/burble/runtime-patches",
       RUNTIME_JWT_ISSUER: "http://burble-app:3000/",
       RUNTIME_JWT_PRIVATE_KEY_PATH: "/data/runtime-jwt-private.pem",
       OPENCLAW_CONFIG_PATCH_HOST_PATH: "/srv/burble/openclaw-patches"
@@ -161,6 +162,15 @@ describe("readConfig", () => {
     expect(config.agentRuntimeMcpAudience).toBe("http://agentgateway:3000/mcp");
     expect(config.runtimeJwtIssuer).toBe("http://burble-app:3000");
     expect(config.runtimeJwtPrivateKeyPath).toBe("/data/runtime-jwt-private.pem");
+    expect(config.openClawConfigPatchHostPath).toBe("/srv/burble/runtime-patches");
+  });
+
+  test("falls back to the legacy OpenClaw config patch host path", () => {
+    const config = readConfig({
+      ...validEnv,
+      OPENCLAW_CONFIG_PATCH_HOST_PATH: "/srv/burble/openclaw-patches"
+    });
+
     expect(config.openClawConfigPatchHostPath).toBe(
       "/srv/burble/openclaw-patches"
     );

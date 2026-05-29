@@ -110,9 +110,10 @@ describe("buildContainerRuntimeSpec", () => {
     expect(spec.env).toMatchObject({
       AGENT_RUNTIME_ENGINE: "hermes",
       AGENT_RUNTIME_CONFIG_PATH: "/data/openclaw/config/hermes.json",
-      OPENCLAW_NEMOCLAW_ENGINE: "hermes",
-      OPENCLAW_CONFIG_PATH: "/data/openclaw/config/hermes.json"
+      HERMES_HOME: "/data/openclaw/hermes"
     });
+    expect(spec.env.OPENCLAW_NEMOCLAW_ENGINE).toBeUndefined();
+    expect(spec.env.OPENCLAW_CONFIG_PATH).toBeUndefined();
   });
 });
 
