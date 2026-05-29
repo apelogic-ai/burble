@@ -155,6 +155,7 @@ describe("buildRuntimeManifest", () => {
     expect(manifest.skills).toEqual([
       { id: "github-pr-triage", version: "1", enabled: true }
     ]);
+    expect(manifest.memoryContext).toEqual([]);
     expect(manifest.memory.jobMemoryEnabled).toBe(true);
     expect(manifest.policyHash).toMatch(/^[0-9a-f]{64}$/);
   });
@@ -233,5 +234,75 @@ describe("buildRuntimeManifest", () => {
       risk: "moderate_write",
       confirmation: "none"
     });
+  });
+
+  test("injects enabled scoped memory as redacted prompt context", () => {
+    const manifest = buildRuntimeManifest({
+      principal: {
+        workspaceId: "T123",
+        slackUserId: "U123"
+      },
+      runtime: {
+        engine: "openclaw",
+        factory: "static",
+        ttlMs: 60_000,
+        reaperEnabled: true
+      },
+      defaultModel: "openai:gpt-5.4",
+      toolCatalog: [],
+      workspacePolicy: [
+        {
+          workspaceId: "T123",
+          key: "memory.workspace",
+          value: { enabled: true },
+          updatedBySlackUserId: "UADMIN",
+          updatedAt: "2026-05-28T00:00:00.000Z"
+        }
+      ],
+      userPreferences: [
+        {
+          workspaceId: "T123",
+          slackUserId: "U123",
+          key: "memory.user",
+          value: { enabled: true },
+          updatedAt: "2026-05-28T00:01:00.000Z"
+        }
+      ],
+      memoryRecords: [
+        {
+          workspaceId: "T123",
+          scope: "workspace",
+          ownerId: "",
+          key: "github.defaultOrg",
+          value: "apelogic-ai",
+          updatedAt: "2026-05-28T00:02:00.000Z"
+        },
+        {
+          workspaceId: "T123",
+          scope: "user",
+          ownerId: "U123",
+          key: "github.apiToken",
+          value: "ghp_secret",
+          updatedAt: "2026-05-28T00:03:00.000Z"
+        }
+      ]
+    });
+
+    expect(manifest.memoryContext).toEqual([
+      {
+        scope: "user",
+        ownerId: "U123",
+        key: "github.apiToken",
+        valuePreview: "[redacted]",
+        updatedAt: "2026-05-28T00:03:00.000Z"
+      },
+      {
+        scope: "workspace",
+        ownerId: "",
+        key: "github.defaultOrg",
+        valuePreview: "\"apelogic-ai\"",
+        updatedAt: "2026-05-28T00:02:00.000Z"
+      }
+    ]);
   });
 });

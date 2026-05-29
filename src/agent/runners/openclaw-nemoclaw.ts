@@ -568,6 +568,13 @@ function sanitizeRuntimeHandle(runtime: RuntimeHandle): {
       workspaceMemoryEnabled: boolean;
       jobMemoryEnabled: boolean;
     };
+    memoryContext: Array<{
+      scope: "user" | "workspace" | "job";
+      ownerId: string;
+      key: string;
+      valuePreview: string;
+      updatedAt: string;
+    }>;
   };
 } {
   return {
@@ -581,7 +588,8 @@ function sanitizeRuntimeHandle(runtime: RuntimeHandle): {
             version: runtime.manifest.version,
             policyHash: runtime.manifest.policyHash,
             skills: runtime.manifest.skills,
-            memory: runtime.manifest.memory
+            memory: runtime.manifest.memory,
+            memoryContext: runtime.manifest.memoryContext
           }
         }
       : {})

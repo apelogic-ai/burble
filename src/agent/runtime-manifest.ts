@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import type {
+  AgentMemoryRecord,
   AgentRuntimeEngine,
   UserPreferenceRecord,
   WorkspacePolicyRecord
@@ -31,6 +32,14 @@ export type RuntimeManifestSkill = {
   enabled: boolean;
 };
 
+export type RuntimeMemoryContextEntry = {
+  scope: "user" | "workspace" | "job";
+  ownerId: string;
+  key: string;
+  valuePreview: string;
+  updatedAt: string;
+};
+
 export type RuntimeManifest = {
   version: string;
   principal: PrincipalId;
@@ -51,6 +60,7 @@ export type RuntimeManifest = {
     workspaceMemoryEnabled: boolean;
     jobMemoryEnabled: boolean;
   };
+  memoryContext: RuntimeMemoryContextEntry[];
   disabledTools: string[];
   policyHash: string;
 };
@@ -88,6 +98,7 @@ export function buildRuntimeManifest(input: {
   defaultModel: string;
   workspacePolicy: WorkspacePolicyRecord[];
   userPreferences: UserPreferenceRecord[];
+  memoryRecords?: AgentMemoryRecord[];
   toolCatalog: ProviderToolSpec[];
 }): RuntimeManifest {
   const workspacePolicy = keyedValues(input.workspacePolicy);
@@ -109,7 +120,12 @@ export function buildRuntimeManifest(input: {
     ? skillVersionRecords(userPreferences.get("skills.enabled"))
     : defaultRuntimeSkills;
 
-  const manifest: Omit<RuntimeManifest, "policyHash"> = {
+  const memory = {
+    userMemoryEnabled: memoryEnabled(userPreferences.get("memory.user")),
+    workspaceMemoryEnabled: memoryEnabled(workspacePolicy.get("memory.workspace")),
+    jobMemoryEnabled: memoryEnabled(workspacePolicy.get("memory.jobs"), true)
+  };
+  const manifest: Omit<RuntimeManifest, "policyHash" | "memoryContext"> = {
     version: input.version ?? "1",
     principal: input.principal,
     runtime: input.runtime,
@@ -125,16 +141,13 @@ export function buildRuntimeManifest(input: {
       )
       .sort((left, right) => left.name.localeCompare(right.name)),
     skills: effectiveSkills(allowedSkills, enabledSkills),
-    memory: {
-      userMemoryEnabled: memoryEnabled(userPreferences.get("memory.user")),
-      workspaceMemoryEnabled: memoryEnabled(workspacePolicy.get("memory.workspace")),
-      jobMemoryEnabled: memoryEnabled(workspacePolicy.get("memory.jobs"), true)
-    },
+    memory,
     disabledTools: [...disabledTools].sort()
   };
 
   return {
     ...manifest,
+    memoryContext: runtimeMemoryContext(input.memoryRecords ?? [], memory),
     policyHash: hashStableJson(manifest)
   };
 }
@@ -327,6 +340,49 @@ function memoryEnabled(value: unknown, fallback = false): boolean {
     return value.enabled;
   }
   return fallback;
+}
+
+function runtimeMemoryContext(
+  records: AgentMemoryRecord[],
+  memory: RuntimeManifest["memory"]
+): RuntimeMemoryContextEntry[] {
+  return records
+    .filter((record) => {
+      switch (record.scope) {
+        case "user":
+          return memory.userMemoryEnabled;
+        case "workspace":
+          return memory.workspaceMemoryEnabled;
+        case "job":
+          return memory.jobMemoryEnabled;
+      }
+    })
+    .sort((left, right) =>
+      `${left.scope}:${left.ownerId}:${left.key}`.localeCompare(
+        `${right.scope}:${right.ownerId}:${right.key}`
+      )
+    )
+    .slice(0, 20)
+    .map((record) => ({
+      scope: record.scope,
+      ownerId: record.ownerId,
+      key: record.key,
+      valuePreview: memoryValuePreview(record.key, record.value),
+      updatedAt: record.updatedAt
+    }));
+}
+
+function memoryValuePreview(key: string, value: unknown): string {
+  if (/token|secret|password|credential|apikey|api_key/i.test(key)) {
+    return "[redacted]";
+  }
+  return truncate(JSON.stringify(sortJson(value)), 500);
+}
+
+function truncate(value: string, maxLength: number): string {
+  return value.length <= maxLength
+    ? value
+    : `${value.slice(0, maxLength - 3)}...`;
 }
 
 function runtimeToolRisk(value: unknown): RuntimeToolRisk | undefined {

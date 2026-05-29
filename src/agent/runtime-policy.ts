@@ -42,6 +42,17 @@ export function buildRuntimeManifestForPrincipal(input: {
       input.principal.workspaceId,
       input.principal.slackUserId
     ),
+    memoryRecords: [
+      ...input.store.listAgentMemory({
+        workspaceId: input.principal.workspaceId,
+        scope: "workspace"
+      }),
+      ...input.store.listAgentMemory({
+        workspaceId: input.principal.workspaceId,
+        scope: "user",
+        ownerId: input.principal.slackUserId
+      })
+    ],
     toolCatalog: providerToolCatalog
   });
 }

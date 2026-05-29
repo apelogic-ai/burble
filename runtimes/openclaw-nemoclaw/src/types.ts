@@ -34,6 +34,13 @@ export type RunRequest = {
         workspaceMemoryEnabled: boolean;
         jobMemoryEnabled: boolean;
       };
+      memoryContext?: Array<{
+        scope: "user" | "workspace" | "job";
+        ownerId: string;
+        key: string;
+        valuePreview: string;
+        updatedAt: string;
+      }>;
     };
   };
   input: {

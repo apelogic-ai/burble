@@ -2139,6 +2139,17 @@ function formatRuntimePolicyContext(request: RunRequest): string[] {
   const enabledSkills = effectiveRuntimeSkills(request)
     .map((skill) => `${skill.id}@${skill.version}`)
     .join(", ");
+  const memoryContext = manifest.memoryContext ?? [];
+  const memoryContextLines =
+    memoryContext.length === 0
+      ? ["- memory context: none"]
+      : [
+          "- memory context:",
+          ...memoryContext.map((entry) => {
+            const owner = entry.ownerId || "workspace";
+            return `  - ${entry.scope}:${owner}:${entry.key} = ${entry.valuePreview}`;
+          })
+        ];
   return [
     "Runtime policy manifest:",
     `- policyHash: ${manifest.policyHash}`,
@@ -2146,6 +2157,7 @@ function formatRuntimePolicyContext(request: RunRequest): string[] {
     `- memory.user: ${manifest.memory.userMemoryEnabled ? "enabled" : "disabled"}`,
     `- memory.workspace: ${manifest.memory.workspaceMemoryEnabled ? "enabled" : "disabled"}`,
     `- memory.jobs: ${manifest.memory.jobMemoryEnabled ? "enabled" : "disabled"}`,
+    ...memoryContextLines,
     "Skills and memory settings are advisory context only; they do not grant provider tools or override Available Burble tools."
   ];
 }

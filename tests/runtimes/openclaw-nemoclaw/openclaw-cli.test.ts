@@ -196,7 +196,16 @@ describe("runOpenClawCliRequest", () => {
               userMemoryEnabled: false,
               workspaceMemoryEnabled: true,
               jobMemoryEnabled: true
-            }
+            },
+            memoryContext: [
+              {
+                scope: "workspace",
+                ownerId: "",
+                key: "github.defaultOrg",
+                valuePreview: "\"apelogic-ai\"",
+                updatedAt: "2026-05-28T00:00:00.000Z"
+              }
+            ]
           }
         }
       },
@@ -229,6 +238,10 @@ describe("runOpenClawCliRequest", () => {
     expect(prompts[0]).toContain("- memory.user: disabled");
     expect(prompts[0]).toContain("- memory.workspace: enabled");
     expect(prompts[0]).toContain("- memory.jobs: enabled");
+    expect(prompts[0]).toContain("- memory context:");
+    expect(prompts[0]).toContain(
+      "  - workspace:workspace:github.defaultOrg = \"apelogic-ai\""
+    );
   });
 
   test("runs OpenClaw CLI with gateway-derived context", async () => {

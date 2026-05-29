@@ -1241,7 +1241,11 @@ function isRuntimeManifestSummary(
     manifest.skills.every(isRuntimeManifestSkillSummary) &&
     typeof memory.userMemoryEnabled === "boolean" &&
     typeof memory.workspaceMemoryEnabled === "boolean" &&
-    typeof memory.jobMemoryEnabled === "boolean"
+    typeof memory.jobMemoryEnabled === "boolean" &&
+    (!("memoryContext" in manifest) ||
+      manifest.memoryContext === undefined ||
+      (Array.isArray(manifest.memoryContext) &&
+        manifest.memoryContext.every(isRuntimeMemoryContextEntry)))
   );
 }
 
@@ -1257,5 +1261,24 @@ function isRuntimeManifestSkillSummary(skill: unknown): boolean {
     skill.version.trim().length > 0 &&
     "enabled" in skill &&
     typeof skill.enabled === "boolean"
+  );
+}
+
+function isRuntimeMemoryContextEntry(value: unknown): boolean {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    "scope" in value &&
+    (value.scope === "user" ||
+      value.scope === "workspace" ||
+      value.scope === "job") &&
+    "ownerId" in value &&
+    typeof value.ownerId === "string" &&
+    "key" in value &&
+    typeof value.key === "string" &&
+    "valuePreview" in value &&
+    typeof value.valuePreview === "string" &&
+    "updatedAt" in value &&
+    typeof value.updatedAt === "string"
   );
 }
