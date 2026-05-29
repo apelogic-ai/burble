@@ -80,7 +80,7 @@ export function createOpenClawNemoClawAgentRunner(
   const logInfo = deps.logInfo ?? (() => undefined);
 
   return {
-    name: "openclaw-nemoclaw",
+    name: "burble-runtime",
     capabilities: {
       streaming: true,
       remote: true,

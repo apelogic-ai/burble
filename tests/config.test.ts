@@ -108,13 +108,23 @@ describe("readConfig", () => {
     const config = readConfig({
       ...validEnv,
       AGENT_MODE: "llm",
-      AGENT_RUNTIME: "openclaw-nemoclaw",
+      AGENT_RUNTIME: "burble-runtime",
       AI_MODEL: "anthropic:claude-opus-4.6"
     });
 
     expect(config.agentMode).toBe("llm");
-    expect(config.agentRuntime).toBe("openclaw-nemoclaw");
+    expect(config.agentRuntime).toBe("burble-runtime");
     expect(config.aiModel).toBe("anthropic:claude-opus-4.6");
+  });
+
+  test("accepts the legacy OpenClaw runtime adapter name", () => {
+    const config = readConfig({
+      ...validEnv,
+      AGENT_MODE: "llm",
+      AGENT_RUNTIME: "openclaw-nemoclaw"
+    });
+
+    expect(config.agentRuntime).toBe("burble-runtime");
   });
 
   test("allows Ollama model tags in normalized model ids", () => {
@@ -279,7 +289,7 @@ describe("readConfig", () => {
 
   test("rejects invalid agent runtimes", () => {
     expect(() => readConfig({ ...validEnv, AGENT_RUNTIME: "robot" })).toThrow(
-      "Environment variable AGENT_RUNTIME must be one of ai-sdk, openclaw-nemoclaw"
+      "Environment variable AGENT_RUNTIME must be one of ai-sdk, burble-runtime"
     );
   });
 
@@ -300,7 +310,7 @@ describe("readConfig", () => {
   test("normalizes OpenClaw/NemoClaw runtime URL", () => {
     const config = readConfig({
       ...validEnv,
-      AGENT_RUNTIME: "openclaw-nemoclaw",
+      AGENT_RUNTIME: "burble-runtime",
       OPENCLAW_NEMOCLAW_URL: "http://openclaw-runtime:8080/"
     });
 

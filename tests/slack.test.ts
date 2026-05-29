@@ -52,7 +52,7 @@ const agentConfig: Config = {
   databasePath: ":memory:",
   slackLogLevel: "info",
   agentMode: "llm",
-  agentRuntime: "openclaw-nemoclaw",
+  agentRuntime: "burble-runtime",
   agentRuntimeFactory: "docker",
   aiModel: "openai:gpt-5.4",
   openClawNemoClawUrl: null,
@@ -623,7 +623,7 @@ describe("buildAgentStatusResponse", () => {
 
     const blocks = JSON.stringify(response.blocks);
     expect(response.text).toBe("Agent status");
-    expect(blocks).toContain("openclaw-nemoclaw");
+    expect(blocks).toContain("burble-runtime");
     expect(blocks).toContain("burble-direct");
     expect(blocks).toContain("openai:gpt-5.4");
     expect(blocks).toContain("No runtime record exists yet");

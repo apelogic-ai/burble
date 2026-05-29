@@ -305,11 +305,11 @@ Burble runs the LLM tool loop in the app process using the configured provider
 key. This keeps deployment simple but shares app CPU, memory, network, and
 failure domain with agent execution.
 
-### Shared OpenClaw/NemoClaw Runtime Service
+### Shared Burble Runtime Service
 
 ```text
 AGENT_MODE=llm
-AGENT_RUNTIME=openclaw-nemoclaw
+AGENT_RUNTIME=burble-runtime
 AGENT_RUNTIME_FACTORY=static
 OPENCLAW_NEMOCLAW_URL=http://openclaw-nemoclaw:8080
 INTERNAL_API_TOKEN=<long-random-secret>
@@ -330,7 +330,7 @@ Supported runtime engines:
 
 ```text
 AGENT_MODE=llm
-AGENT_RUNTIME=openclaw-nemoclaw
+AGENT_RUNTIME=burble-runtime
 AGENT_RUNTIME_FACTORY=docker
 AGENT_RUNTIME_TOKEN_SECRET=<long-random-secret>
 AGENT_RUNTIME_DATA_ROOT=/opt/burble/runtimes

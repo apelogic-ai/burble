@@ -17,7 +17,7 @@ services:
   burble-app:
     environment:
       - AGENT_MODE=llm
-      - AGENT_RUNTIME=openclaw-nemoclaw
+      - AGENT_RUNTIME=burble-runtime
       - AGENT_RUNTIME_FACTORY=docker
       - AGENT_RUNTIME_IMAGE=${AGENT_RUNTIME_IMAGE:-burble-openclaw-nemoclaw-openclaw-cli:dev}
       - AGENT_RUNTIME_ENGINE=${AGENT_RUNTIME_ENGINE:-}

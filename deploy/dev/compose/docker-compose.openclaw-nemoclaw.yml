@@ -10,7 +10,7 @@ services:
   burble-app:
     environment:
       - AGENT_MODE=llm
-      - AGENT_RUNTIME=openclaw-nemoclaw
+      - AGENT_RUNTIME=burble-runtime
       - AGENT_RUNTIME_FACTORY=static
       - OPENCLAW_NEMOCLAW_URL=http://openclaw-nemoclaw:8080
       - AGENT_RUNTIME_ENGINE=${AGENT_RUNTIME_ENGINE:-}

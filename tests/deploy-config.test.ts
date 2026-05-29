@@ -127,7 +127,7 @@ describe("dev deploy config", () => {
 
   test("provides an optional OpenClaw/NemoClaw compose override", () => {
     expect(openClawCompose).toContain("openclaw-nemoclaw:");
-    expect(openClawCompose).toContain("AGENT_RUNTIME=openclaw-nemoclaw");
+    expect(openClawCompose).toContain("AGENT_RUNTIME=burble-runtime");
     expect(openClawCompose).toContain("AGENT_RUNTIME_FACTORY=static");
     expect(openClawCompose).toContain(
       "OPENCLAW_NEMOCLAW_URL=http://openclaw-nemoclaw:8080"

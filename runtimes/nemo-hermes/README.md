@@ -30,12 +30,11 @@ docker build -f runtimes/nemo-hermes/Dockerfile \
 Dev runtime selection:
 
 ```env
-AGENT_RUNTIME=openclaw-nemoclaw
+AGENT_RUNTIME=burble-runtime
 AGENT_RUNTIME_FACTORY=docker
 AGENT_RUNTIME_IMAGE=burble-nemo-hermes:dev
 AGENT_RUNTIME_ENGINE=hermes
 ```
 
-The `AGENT_RUNTIME=openclaw-nemoclaw` value is still the Burble-side adapter
-contract name for `/healthz` and `/runs`. The image and engine select the
-runtime implementation.
+`AGENT_RUNTIME=burble-runtime` selects the Burble-side `/healthz` and `/runs`
+adapter contract. The image and engine select the runtime implementation.

@@ -151,7 +151,7 @@ override file. Compose builds the runtime image from
 
 ```env
 AGENT_MODE=llm
-AGENT_RUNTIME=openclaw-nemoclaw
+AGENT_RUNTIME=burble-runtime
 INTERNAL_API_TOKEN=<long-random-secret>
 AGENT_RUNTIME_ENGINE=deterministic
 ```

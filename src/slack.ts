@@ -249,7 +249,7 @@ export function createSlackRuntime(
   const agentExecTasks = new Map<string, AgentExecTask>();
 
   const resolveAgentExecutionMode = (): "openclaw-native" | undefined =>
-    config.agentRuntime === "openclaw-nemoclaw" ? "openclaw-native" : undefined;
+    config.agentRuntime === "burble-runtime" ? "openclaw-native" : undefined;
 
   const buildHomeViewForUser = (input: {
     workspaceId: string;
@@ -1397,7 +1397,7 @@ export async function getOrStartAgentStatusRuntime(input: {
   workspaceId: string;
   slackUserId: string;
 }): Promise<AgentRuntimeRecord | null> {
-  if (input.config.agentRuntime !== "openclaw-nemoclaw") {
+  if (input.config.agentRuntime !== "burble-runtime") {
     return null;
   }
 
@@ -1481,7 +1481,7 @@ function createOpenClawRuntimeFactory(
   store: TokenStore,
   runtimeJwtIssuer?: RuntimeJwtIssuer
 ): RuntimeFactory | undefined {
-  if (config.agentRuntime !== "openclaw-nemoclaw") {
+  if (config.agentRuntime !== "burble-runtime") {
     return undefined;
   }
 
@@ -2153,7 +2153,7 @@ export async function applyAgentRuntimeControl(input: {
   runtimeId: string | null;
   status: AgentRuntimeStatus | "not provisioned";
 }> {
-  if (input.config.agentRuntime !== "openclaw-nemoclaw" || !input.runtimeFactory) {
+  if (input.config.agentRuntime !== "burble-runtime" || !input.runtimeFactory) {
     return {
       action: input.action,
       runtimeId: null,
@@ -3199,7 +3199,7 @@ export async function restartAgentRuntimeIfConfigChanged(input: {
   if (input.previousPolicyHash === input.nextPolicyHash) {
     return null;
   }
-  if (input.config.agentRuntime !== "openclaw-nemoclaw" || !input.runtimeFactory) {
+  if (input.config.agentRuntime !== "burble-runtime" || !input.runtimeFactory) {
     return null;
   }
 

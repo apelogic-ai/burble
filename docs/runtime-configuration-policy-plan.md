@@ -30,10 +30,10 @@ runtime. The policy model should not depend on runtime internals.
 
 Burble separates the runtime lifecycle from the runtime implementation:
 
-- `AGENT_RUNTIME` selects the Burble-side adapter contract. Today
-  `openclaw-nemoclaw` means "call a runtime HTTP service that exposes Burble's
-  `/healthz` and `/runs` contract"; the name is legacy and should not imply the
-  only possible implementation.
+- `AGENT_RUNTIME` selects the Burble-side adapter contract. Use
+  `burble-runtime` for a runtime HTTP service that exposes Burble's `/healthz`
+  and `/runs` contract. The previous `openclaw-nemoclaw` value is accepted as a
+  legacy alias only.
 - `AGENT_RUNTIME_FACTORY` selects how Burble obtains that service, such as a
   static URL or Docker-backed personal runtime containers.
 - `AGENT_RUNTIME_IMAGE` selects the container image when the factory is Docker.
@@ -49,7 +49,7 @@ existing OpenClaw/NemoClaw deployments. New deployments should prefer
 Example Hermes-capable deployment shape:
 
 ```env
-AGENT_RUNTIME=openclaw-nemoclaw
+AGENT_RUNTIME=burble-runtime
 AGENT_RUNTIME_FACTORY=docker
 AGENT_RUNTIME_IMAGE=ghcr.io/apelogic-ai/nemo-hermes-runtime:dev
 AGENT_RUNTIME_ENGINE=hermes

@@ -45,12 +45,12 @@ export type Config = {
 type Env = Record<string, string | undefined>;
 export type SlackLogLevel = "debug" | "info" | "warn" | "error";
 export type AgentMode = "deterministic" | "llm";
-export type AgentRuntime = "ai-sdk" | "openclaw-nemoclaw";
+export type AgentRuntime = "ai-sdk" | "burble-runtime";
 export type AgentRuntimeFactory = "static" | "docker";
 export type OpenClawNemoClawEngine = AgentRuntimeEngine;
 const slackLogLevels = ["debug", "info", "warn", "error"] as const;
 const agentModes = ["deterministic", "llm"] as const;
-const agentRuntimes = ["ai-sdk", "openclaw-nemoclaw"] as const;
+const agentRuntimes = ["ai-sdk", "burble-runtime"] as const;
 const agentRuntimeFactories = ["static", "docker"] as const;
 const agentRuntimeEngines = [
   "deterministic",
@@ -143,18 +143,20 @@ function optionalAgentRuntimeEnv(
   name: string,
   fallback: AgentRuntime
 ): AgentRuntime {
-  const value = env[name]?.toLowerCase();
+  const value = env[name]?.trim().toLowerCase();
   if (!value) {
     return fallback;
   }
 
-  if (!agentRuntimes.includes(value as AgentRuntime)) {
+  const normalized = value === "openclaw-nemoclaw" ? "burble-runtime" : value;
+
+  if (!agentRuntimes.includes(normalized as AgentRuntime)) {
     throw new Error(
       `Environment variable ${name} must be one of ${agentRuntimes.join(", ")}`
     );
   }
 
-  return value as AgentRuntime;
+  return normalized as AgentRuntime;
 }
 
 function optionalAgentRuntimeFactoryEnv(

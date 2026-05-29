@@ -624,7 +624,7 @@ Deployment:
 
 - base compose runs `AGENT_RUNTIME=ai-sdk`.
 - optional compose override builds `runtimes/openclaw-nemoclaw`, adds an
-  `openclaw-nemoclaw` service, and sets `AGENT_RUNTIME=openclaw-nemoclaw`.
+  `openclaw-nemoclaw` service, and sets `AGENT_RUNTIME=burble-runtime`.
 
 Tests:
 
