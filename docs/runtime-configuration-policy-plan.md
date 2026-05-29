@@ -908,25 +908,37 @@ Implementation has started with the control-plane foundation:
 
 ### Slice 2: Tool Policy Records
 
-- Add global/workspace/user tool policy storage.
-- Add policy evaluation.
-- Add tests for provider-level, tool-level, and user-level denial.
+- Status: foundation implemented.
+- Added workspace-level tool policy through `workspace_policy` key
+  `tools.policy`.
+- Added user-level tool denial through `user_preferences` key
+  `tools.disabled`.
+- Added provider/tool policy evaluation in runtime manifests and Burble MCP.
+- Added tests for provider-level policy, user-disabled tools, write-tool
+  confirmation policy, and job-scoped tool narrowing.
+- Deferred: a normalized `tool_policy` table for richer global/workspace/user
+  inheritance.
 
 ### Slice 3: Runtime Manifest Delivery
 
-- Include manifest metadata in runtime run requests.
-- Teach OpenClaw/NemoClaw wrapper to log manifest version and expose it in
-  status.
-- Restart/reload runtime when manifest hash changes.
+- Status: foundation implemented.
+- Runtime factories compute and persist manifest policy hashes.
+- Runtime handles carry the current manifest.
+- OpenClaw/NemoClaw run requests receive manifest metadata, skills, memory
+  settings, and memory context.
+- Runtime policy drift is recorded as a runtime audit event.
+- Deferred: explicit runtime reload/restart on manifest hash changes. Current
+  behavior is to send the latest manifest with each run.
 
 ### Slice 4: Skill Catalog
 
-- Status: partially implemented.
+- Status: foundation implemented.
 - Added durable skill metadata catalog storage.
 - Added workspace/user skill enablement storage.
 - Runtime manifest generation loads typed workspace/user skill enablement when
   present.
 - Ensure skills cannot grant tools.
+- Deferred: admin/user skill marketplace management UX.
 
 ### Slice 5: Memory Scopes
 
