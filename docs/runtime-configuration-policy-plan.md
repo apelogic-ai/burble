@@ -787,6 +787,31 @@ jobId = current job
 This prevents a scheduled job from inheriting every tool the user happens to
 have enabled.
 
+The durable scheduled-job runner should be a separate implementation PR, not a
+tail-end patch to runtime policy. That runner needs its own state machine,
+claiming/lease behavior, retry/backoff, timeout handling, runtime selection,
+route resolution, job-scoped JWT minting, and audit/event stream.
+
+Proposed follow-up PR:
+
+```text
+scheduled -> due -> claimed -> running -> succeeded
+                         -> failed_retryable -> scheduled
+                         -> failed_terminal
+                         -> cancelled
+```
+
+Responsibilities for that PR:
+
+- Store and migrate durable schedules.
+- Claim due work safely when multiple Burble app instances are running.
+- Mint short-lived job-scoped JWTs with `job_id` and `allowed_tools`.
+- Call the selected agent runtime with the saved task and route.
+- Persist job state/cursors after each run.
+- Record denied tools, retries, failures, and delivery results.
+- Decide how legacy OpenClaw-owned cron jobs are imported, mirrored, or left as
+  agent-local schedules.
+
 ## Data Model Sketch
 
 Possible tables:
@@ -901,15 +926,16 @@ time or expose `/agent set` / `/agent get` in Slack. Those are the next slices.
 
 ### Slice 5: Memory Scopes
 
-- Status: partially implemented.
+- Status: foundation implemented.
 - Added user, workspace, and job-scoped memory storage with inspect/delete.
 - Added dedicated durable job state storage keyed by job ID.
 - Added prompt/context injection rules with size caps and redaction.
-- Remaining: wire job state into scheduled job execution.
+- Scheduled job execution will consume job state in the dedicated durable
+  scheduled-job runner PR.
 
 ### Slice 6: Job-Scoped Capabilities
 
-- Status: partially implemented.
+- Status: foundation implemented.
 - Added durable scheduled job capability metadata keyed by job ID, including
   required tools, target route, and policy hash.
 - Runtime JWTs can carry optional `job_id` and `allowed_tools` claims.
@@ -917,9 +943,17 @@ time or expose `/agent set` / `/agent get` in Slack. Those are the next slices.
   manifest and hides/blocks unexpected tools.
 - Unexpected job tool calls are denied before provider execution and recorded
   as runtime audit events.
-- Remaining: mint short-lived job-scoped JWTs at scheduled runtime.
+- Scheduled runtime JWT minting will happen in the dedicated durable
+  scheduled-job runner PR.
 
-### Slice 7: Slack/Admin UX
+### Slice 7: User Config UX
+
+- Add `/agent config get [key]` for user-scoped runtime preferences.
+- Add `/agent config set <key> <value>` for allowed user-scoped runtime
+  preferences.
+- Keep `/burble` for admin/workspace policy controls in a later PR.
+
+### Slice 8: Slack/Admin UX
 
 - App Home should show provider connection state.
 - Add runtime policy/status view.
