@@ -769,10 +769,17 @@ A job record should include:
 
 - owner principal.
 - target route.
+- target route grant, including whether the target was the invoking
+  conversation or an explicitly approved different Slack channel.
 - prompt/task.
 - schedule.
 - enabled flag.
 - required tools.
+- maximum output visibility: `public`, `channel`, `user_private`, or
+  `restricted`.
+- source/tool sensitivity requirements.
+- declassification policy, if private-derived summaries are ever allowed to be
+  posted to a shared channel.
 - manifest or policy hash at creation.
 - current cursor/state.
 - last run status.
@@ -783,6 +790,7 @@ At run time, Burble should mint a job-scoped capability:
 principal = user
 route = saved route
 tools = required tools only
+maxOutputVisibility = saved delivery grant
 expires = short TTL
 jobId = current job
 ```
@@ -790,10 +798,86 @@ jobId = current job
 This prevents a scheduled job from inheriting every tool the user happens to
 have enabled.
 
+### Scheduled Delivery Grants
+
+Scheduled delivery must be explicit when the output target is not the current
+Burble conversation.
+
+Examples:
+
+- User asks in `#reports`: create a recurring public-web summary and post it
+  back to `#reports`.
+- User asks in a DM: create a recurring public-web summary and post it to
+  `#reports`.
+- User asks in a DM: query my Jira tickets and post them to `#reports`.
+
+The first case can reuse the active conversation route if Burble has channel
+access. The second case requires a target-channel grant before the job is
+created. The third case should be denied or require an explicit private-data
+release policy, because user OAuth data would otherwise be posted into a shared
+channel.
+
+The grant should capture:
+
+```text
+delivery_route_id
+delivery_transport = slack
+delivery_channel_id
+delivery_channel_kind = dm | public_channel | private_channel
+approved_by_slack_user_id
+approved_at
+max_output_visibility
+allowed_tools
+allowed_source_sensitivity
+declassification_required
+```
+
+Burble must verify it can post to the target Slack channel before accepting the
+job. For private channels, Burble must be a member. For public channels, Burble
+must either already be present or the workspace must explicitly grant a broader
+Slack posting scope.
+
+### Output Visibility Gate
+
+Scheduled jobs need a final release gate before `conversation.sendMessage` or
+any Slack `chat.postMessage` call.
+
+The effective output visibility should be computed as the most restrictive
+input involved in the run:
+
+- public internet only: `public`
+- public GitHub repository data, when repo visibility is known: `public`
+- private GitHub, Jira, Google Drive/Gmail/Calendar, Slack search, or any user
+  OAuth-backed provider: `user_private` by default
+- restricted workspace/admin tools: `restricted`
+- mixed public and private sources: private wins
+
+The agent/runtime may propose a classification, but Burble is the authority.
+If effective output visibility exceeds the saved delivery grant, Burble should
+not post to the channel. It should instead fail the run, post a private
+explanation to the creator, or require a preview/approval flow depending on
+job policy.
+
+`conversation.sendMessage` should eventually require delivery metadata such as:
+
+```json
+{
+  "routeId": "convrt_...",
+  "text": "...",
+  "proposedVisibility": "public",
+  "sourceClassifications": ["public"]
+}
+```
+
+Burble should combine that with tool-call audit data from the run. A runtime
+must not be able to declassify private data by simply setting
+`proposedVisibility` to `public`.
+
 The durable scheduled-job runner should be a separate implementation PR, not a
 tail-end patch to runtime policy. That runner needs its own state machine,
 claiming/lease behavior, retry/backoff, timeout handling, runtime selection,
-route resolution, job-scoped JWT minting, and audit/event stream.
+route resolution, delivery grants, output visibility enforcement, job-scoped
+JWT minting, and audit/event stream.
 
 Proposed follow-up PR:
 
@@ -809,7 +893,9 @@ Responsibilities for that PR:
 - Store and migrate durable schedules.
 - Claim due work safely when multiple Burble app instances are running.
 - Mint short-lived job-scoped JWTs with `job_id` and `allowed_tools`.
+- Resolve and validate the saved delivery route grant before each run.
 - Call the selected agent runtime with the saved task and route.
+- Enforce the final output visibility gate before posting to Slack.
 - Persist job state/cursors after each run.
 - Record denied tools, retries, failures, and delivery results.
 - Decide how legacy OpenClaw-owned cron jobs are imported, mirrored, or left as
