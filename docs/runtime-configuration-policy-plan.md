@@ -899,10 +899,11 @@ time or expose `/agent set` / `/agent get` in Slack. Those are the next slices.
 
 ### Slice 5: Memory Scopes
 
-- Add user memory storage with inspect/delete.
-- Add workspace memory storage.
-- Add job state storage.
-- Add prompt/context injection rules with size caps and redaction.
+- Status: partially implemented.
+- Added user, workspace, and job-scoped memory storage with inspect/delete.
+- Added dedicated durable job state storage keyed by job ID.
+- Added prompt/context injection rules with size caps and redaction.
+- Remaining: wire job state into scheduled job execution.
 
 ### Slice 6: Job-Scoped Capabilities
 

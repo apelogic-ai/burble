@@ -98,6 +98,12 @@ function createFakeStore() {
     },
     listAgentMemory: () => [],
     deleteAgentMemory: () => undefined,
+    upsertAgentJobState: () => {
+      throw new Error("unexpected agent job state write");
+    },
+    getAgentJobState: () => null,
+    listAgentJobStatesForPrincipal: () => [],
+    deleteAgentJobState: () => undefined,
     updateAgentRuntimeStatus: () => undefined,
     touchAgentRuntime: () => undefined,
     close: () => undefined

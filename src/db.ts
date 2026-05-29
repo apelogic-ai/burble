@@ -123,6 +123,14 @@ export type AgentMemoryRecord = {
   updatedAt: string;
 };
 
+export type AgentJobStateRecord = {
+  jobId: string;
+  workspaceId: string;
+  slackUserId: string;
+  state: unknown;
+  updatedAt: string;
+};
+
 type WorkspacePolicyRow = Omit<WorkspacePolicyRecord, "value"> & {
   valueJson: string;
 };
@@ -133,6 +141,10 @@ type UserPreferenceRow = Omit<UserPreferenceRecord, "value"> & {
 
 type AgentMemoryRow = Omit<AgentMemoryRecord, "value"> & {
   valueJson: string;
+};
+
+type AgentJobStateRow = Omit<AgentJobStateRecord, "state"> & {
+  stateJson: string;
 };
 
 export type TokenStore = ReturnType<typeof createTokenStore>;
@@ -262,6 +274,17 @@ export function createTokenStore(path: string) {
 
     CREATE INDEX IF NOT EXISTS idx_agent_memory_owner
       ON agent_memory (workspace_id, scope, owner_id, key);
+
+    CREATE TABLE IF NOT EXISTS agent_job_state (
+      job_id TEXT PRIMARY KEY,
+      workspace_id TEXT NOT NULL,
+      slack_user_id TEXT NOT NULL,
+      state_json TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_agent_job_state_principal
+      ON agent_job_state (workspace_id, slack_user_id, updated_at);
   `);
   ensureProviderConnectionColumn(db, "refresh_token", "TEXT");
   ensureProviderConnectionColumn(db, "access_token_expires_at", "TEXT");
@@ -639,6 +662,49 @@ export function createTokenStore(path: string) {
   const deleteAgentMemory = db.query(`
     DELETE FROM agent_memory
     WHERE workspace_id = ? AND scope = ? AND owner_id = ? AND key = ?
+  `);
+  const upsertAgentJobState = db.query(`
+    INSERT INTO agent_job_state (
+      job_id,
+      workspace_id,
+      slack_user_id,
+      state_json,
+      updated_at
+    )
+    VALUES (?, ?, ?, ?, ?)
+    ON CONFLICT(job_id) DO UPDATE SET
+      workspace_id = excluded.workspace_id,
+      slack_user_id = excluded.slack_user_id,
+      state_json = excluded.state_json,
+      updated_at = excluded.updated_at
+  `);
+  const getAgentJobState = db.query<AgentJobStateRow, [string]>(`
+    SELECT
+      job_id AS jobId,
+      workspace_id AS workspaceId,
+      slack_user_id AS slackUserId,
+      state_json AS stateJson,
+      updated_at AS updatedAt
+    FROM agent_job_state
+    WHERE job_id = ?
+  `);
+  const listAgentJobStatesForPrincipal = db.query<
+    AgentJobStateRow,
+    [string, string]
+  >(`
+    SELECT
+      job_id AS jobId,
+      workspace_id AS workspaceId,
+      slack_user_id AS slackUserId,
+      state_json AS stateJson,
+      updated_at AS updatedAt
+    FROM agent_job_state
+    WHERE workspace_id = ? AND slack_user_id = ?
+    ORDER BY updated_at DESC, job_id ASC
+  `);
+  const deleteAgentJobState = db.query(`
+    DELETE FROM agent_job_state
+    WHERE job_id = ?
   `);
 
   return {
@@ -1062,6 +1128,47 @@ export function createTokenStore(path: string) {
       );
     },
 
+    upsertAgentJobState(input: {
+      jobId: string;
+      workspaceId: string;
+      slackUserId: string;
+      state: unknown;
+      now?: Date;
+    }): AgentJobStateRecord {
+      const now = (input.now ?? new Date()).toISOString();
+      upsertAgentJobState.run(
+        input.jobId,
+        input.workspaceId,
+        input.slackUserId,
+        stableJson(input.state),
+        now
+      );
+
+      const record = getAgentJobState.get(input.jobId);
+      if (!record) {
+        throw new Error("Failed to store agent job state");
+      }
+      return toAgentJobStateRecord(record);
+    },
+
+    getAgentJobState(jobId: string): AgentJobStateRecord | null {
+      const record = getAgentJobState.get(jobId);
+      return record ? toAgentJobStateRecord(record) : null;
+    },
+
+    listAgentJobStatesForPrincipal(
+      workspaceId: string,
+      slackUserId: string
+    ): AgentJobStateRecord[] {
+      return listAgentJobStatesForPrincipal
+        .all(workspaceId, slackUserId)
+        .map(toAgentJobStateRecord);
+    },
+
+    deleteAgentJobState(jobId: string): void {
+      deleteAgentJobState.run(jobId);
+    },
+
     updateAgentRuntimeStatus(
       id: string,
       input: {
@@ -1169,6 +1276,16 @@ function toAgentMemoryRecord(row: AgentMemoryRow): AgentMemoryRecord {
     ownerId: row.ownerId,
     key: row.key,
     value: parseStoredJson(row.valueJson),
+    updatedAt: row.updatedAt
+  };
+}
+
+function toAgentJobStateRecord(row: AgentJobStateRow): AgentJobStateRecord {
+  return {
+    jobId: row.jobId,
+    workspaceId: row.workspaceId,
+    slackUserId: row.slackUserId,
+    state: parseStoredJson(row.stateJson),
     updatedAt: row.updatedAt
   };
 }

@@ -569,4 +569,62 @@ describe("createTokenStore", () => {
 
     store.close();
   });
+
+  test("stores durable job state by job id", () => {
+    const store = createTokenStore(":memory:");
+
+    const first = store.upsertAgentJobState({
+      jobId: "job-123",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      state: {
+        lastNotifiedPullRequest: "https://github.com/acme/app/pull/1",
+        seen: [1, 2]
+      },
+      now: new Date("2026-05-28T00:00:00.000Z")
+    });
+    store.upsertAgentJobState({
+      jobId: "job-456",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      state: { cursor: "abc" },
+      now: new Date("2026-05-28T00:01:00.000Z")
+    });
+    const updated = store.upsertAgentJobState({
+      jobId: "job-123",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      state: {
+        lastNotifiedPullRequest: "https://github.com/acme/app/pull/2",
+        seen: [1, 2, 3]
+      },
+      now: new Date("2026-05-28T00:02:00.000Z")
+    });
+
+    expect(first).toEqual({
+      jobId: "job-123",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      state: {
+        lastNotifiedPullRequest: "https://github.com/acme/app/pull/1",
+        seen: [1, 2]
+      },
+      updatedAt: "2026-05-28T00:00:00.000Z"
+    });
+    expect(updated.state).toEqual({
+      lastNotifiedPullRequest: "https://github.com/acme/app/pull/2",
+      seen: [1, 2, 3]
+    });
+    expect(
+      store
+        .listAgentJobStatesForPrincipal("T123", "U123")
+        .map((record) => record.jobId)
+    ).toEqual(["job-123", "job-456"]);
+
+    store.deleteAgentJobState("job-123");
+    expect(store.getAgentJobState("job-123")).toBeNull();
+    expect(store.getAgentJobState("job-456")?.state).toEqual({ cursor: "abc" });
+
+    store.close();
+  });
 });

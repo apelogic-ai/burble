@@ -156,6 +156,12 @@ function createStore(
     },
     listAgentMemory: () => [],
     deleteAgentMemory: () => undefined,
+    upsertAgentJobState: () => {
+      throw new Error("unexpected agent job state write");
+    },
+    getAgentJobState: () => null,
+    listAgentJobStatesForPrincipal: () => [],
+    deleteAgentJobState: () => undefined,
     updateAgentRuntimeStatus: () => undefined,
     touchAgentRuntime: (id) => {
       touchedRuntimeIds.push(id);
