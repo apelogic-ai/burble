@@ -12,6 +12,7 @@ import {
   buildAgentStatusResponse,
   buildAppHomeView,
   buildAgentHomeSettings,
+  buildAgentRuntimeManageModalView,
   buildAuthResponse,
   buildHelpResponse,
   formatAgentProgressEvent,
@@ -366,6 +367,17 @@ describe("buildAuthResponse", () => {
 describe("buildAppHomeView", () => {
   test("builds a Block Kit Home tab with provider statuses and connect buttons", () => {
     const store = createTokenStore(":memory:");
+    store.getOrCreateAgentRuntime({
+      workspaceId: "T123",
+      slackUserId: "U123",
+      engine: "burble-direct",
+      endpointUrl: "http://runtime:8080",
+      authTokenHash: "hash",
+      statePath: "/data/state",
+      configPath: "/data/config/runtime.json",
+      workspacePath: "/data/workspace",
+      policyHash: "policy-home"
+    });
     const agentSettings = buildAgentHomeSettings({
       config: agentConfig,
       store,
@@ -410,6 +422,9 @@ describe("buildAppHomeView", () => {
     expect(serialized).toContain("Connected as `person@example.com`");
     expect(serialized).toContain("Not connected");
     expect(serialized).toContain("https://example.test/google");
+    expect(serialized).toContain("Agent runtime");
+    expect(serialized).toContain("Manage runtime");
+    expect(serialized).toContain("agent_runtime_manage");
     expect(serialized).toContain("Agent settings");
     expect(serialized).toContain("Edit settings");
     expect(serialized).toContain("agent_config_edit");
@@ -438,6 +453,35 @@ describe("buildAppHomeView", () => {
     expect(serialized).toContain("openai:gpt-5.4");
     expect(serialized).toContain("agent_config_memory");
     expect(serialized).toContain("\"value\":\"on\"");
+  });
+
+  test("builds an agent runtime management modal", () => {
+    const store = createTokenStore(":memory:");
+    const runtime = store.getOrCreateAgentRuntime({
+      workspaceId: "T123",
+      slackUserId: "U123",
+      engine: "burble-direct",
+      endpointUrl: "http://runtime:8080",
+      authTokenHash: "hash",
+      statePath: "/data/state",
+      configPath: "/data/config/runtime.json",
+      workspacePath: "/data/workspace",
+      policyHash: "policy-modal"
+    });
+    const view = buildAgentRuntimeManageModalView({
+      config: agentConfig,
+      store,
+      workspaceId: "T123",
+      slackUserId: "U123"
+    });
+    const serialized = JSON.stringify(view);
+
+    expect(view.type).toBe("modal");
+    expect(serialized).toContain("Agent runtime");
+    expect(serialized).toContain(runtime.id);
+    expect(serialized).toContain("http://runtime:8080");
+    expect(serialized).toContain("openai:gpt-5.4");
+    expect(serialized).toContain("Policy hash");
   });
 });
 

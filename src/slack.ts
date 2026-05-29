@@ -337,6 +337,29 @@ export function createSlackRuntime(
     }
   });
 
+  app.action("agent_runtime_manage", async ({ ack, body, client, logger }) => {
+    await ack();
+    const context = slackInteractionContext(body);
+    if (!context?.triggerId) {
+      logger.warn(withUtcTimestamp("Ignoring runtime manage action without trigger"));
+      return;
+    }
+
+    try {
+      await client.views.open({
+        trigger_id: context.triggerId,
+        view: buildAgentRuntimeManageModalView({
+          config,
+          store,
+          workspaceId: context.workspaceId,
+          slackUserId: context.slackUserId
+        })
+      });
+    } catch (error) {
+      logger.error(formatLogError(error));
+    }
+  });
+
   app.view("agent_config_submit", async ({ ack, body, client, logger }) => {
     const context = slackViewSubmissionContext(body);
     if (!context) {
@@ -1649,7 +1672,14 @@ type AgentHomeSettingsView = {
   disabledTools: string[];
   enabledSkills: string[];
   policyHash: string;
-  runtimeStatus: string;
+  runtime: {
+    id: string | null;
+    status: string;
+    engine: string;
+    endpointUrl: string | null;
+    createdAt: string | null;
+    lastUsedAt: string | null;
+  };
 };
 
 export function buildAppHomeView(input: ProviderConnectionViewInput): View {
@@ -1670,6 +1700,7 @@ export function buildAppHomeView(input: ProviderConnectionViewInput): View {
           text: "Connect provider accounts so Burble and your agent runtime can use them on your behalf."
         }
       },
+      ...buildAgentRuntimeHomeBlocks(input.agentSettings),
       {
         type: "divider"
       },
@@ -1792,10 +1823,61 @@ export function buildAgentHomeSettings(input: {
     disabledTools: manifest.disabledTools,
     enabledSkills: manifest.skills.map((skill) => `${skill.id}@${skill.version}`),
     policyHash: manifest.policyHash,
-    runtimeStatus: runtime
-      ? `${runtime.status}, last used ${runtime.lastUsedAt}`
-      : "not provisioned yet"
+    runtime: runtime
+      ? {
+          id: runtime.id,
+          status: runtime.status,
+          engine: runtime.engine,
+          endpointUrl: runtime.endpointUrl,
+          createdAt: runtime.createdAt,
+          lastUsedAt: runtime.lastUsedAt
+        }
+      : {
+          id: null,
+          status: "not provisioned",
+          engine: input.config.openClawNemoClawEngine,
+          endpointUrl: null,
+          createdAt: null,
+          lastUsedAt: null
+        }
   };
+}
+
+function buildAgentRuntimeHomeBlocks(settings?: AgentHomeSettingsView) {
+  if (!settings) {
+    return [];
+  }
+
+  return [
+    {
+      type: "section",
+      text: {
+        type: "mrkdwn",
+        text: ["*Agent runtime*", formatRuntimeHomeSummary(settings)].join("\n")
+      },
+      accessory: {
+        type: "button",
+        text: {
+          type: "plain_text",
+          text: "Manage runtime"
+        },
+        style: "primary",
+        action_id: "agent_runtime_manage"
+      }
+    }
+  ];
+}
+
+function formatRuntimeHomeSummary(settings: AgentHomeSettingsView): string {
+  const runtimeId = settings.runtime.id
+    ? `\`${settings.runtime.id}\``
+    : "`not provisioned yet`";
+  const lastUsed = settings.runtime.lastUsedAt ?? "never";
+  return [
+    `Status: \`${settings.runtime.status}\``,
+    `Runtime: ${runtimeId}`,
+    `Last used: ${lastUsed}`
+  ].join("\n");
 }
 
 function buildAgentSettingsHomeBlocks(settings?: AgentHomeSettingsView) {
@@ -1824,7 +1906,7 @@ function buildAgentSettingsHomeBlocks(settings?: AgentHomeSettingsView) {
         },
         {
           type: "mrkdwn",
-          text: `*Runtime*\n${settings.runtimeStatus}`
+          text: `*Runtime*\n\`${settings.runtime.status}\``
         },
         {
           type: "mrkdwn",
@@ -1849,6 +1931,82 @@ function buildAgentSettingsHomeBlocks(settings?: AgentHomeSettingsView) {
       }
     }
   ];
+}
+
+export function buildAgentRuntimeManageModalView(input: {
+  config: Config;
+  store: TokenStore;
+  workspaceId: string;
+  slackUserId: string;
+}): View {
+  const settings = buildAgentHomeSettings(input);
+  const runtimeLines = [
+    `*Status:* \`${settings.runtime.status}\``,
+    `*Runtime ID:* ${
+      settings.runtime.id ? `\`${settings.runtime.id}\`` : "`not provisioned yet`"
+    }`,
+    `*Engine:* \`${settings.runtime.engine}\``,
+    `*Endpoint:* ${
+      settings.runtime.endpointUrl ? `\`${settings.runtime.endpointUrl}\`` : "`none`"
+    }`,
+    `*Created:* ${settings.runtime.createdAt ?? "never"}`,
+    `*Last used:* ${settings.runtime.lastUsedAt ?? "never"}`,
+    `*Policy hash:* \`${settings.policyHash}\``
+  ];
+
+  return {
+    type: "modal",
+    title: {
+      type: "plain_text",
+      text: "Agent runtime"
+    },
+    close: {
+      type: "plain_text",
+      text: "Close"
+    },
+    blocks: [
+      {
+        type: "section",
+        text: {
+          type: "mrkdwn",
+          text: runtimeLines.join("\n")
+        }
+      },
+      {
+        type: "divider"
+      },
+      {
+        type: "section",
+        fields: [
+          {
+            type: "mrkdwn",
+            text: `*Model*\n\`${settings.model}\``
+          },
+          {
+            type: "mrkdwn",
+            text: `*User memory*\n\`${settings.userMemory}\``
+          },
+          {
+            type: "mrkdwn",
+            text: `*Disabled tools*\n\`${formatStringList(settings.disabledTools)}\``
+          },
+          {
+            type: "mrkdwn",
+            text: `*Enabled skills*\n\`${formatStringList(settings.enabledSkills)}\``
+          }
+        ]
+      },
+      {
+        type: "context",
+        elements: [
+          {
+            type: "mrkdwn",
+            text: "Changing agent settings restarts a live runtime and brings it back with the updated manifest."
+          }
+        ]
+      }
+    ]
+  };
 }
 
 function buildProviderConnectionBlock(input: {
