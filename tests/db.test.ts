@@ -488,4 +488,85 @@ describe("createTokenStore", () => {
 
     store.close();
   });
+
+  test("stores inspectable and deletable scoped agent memory", () => {
+    const store = createTokenStore(":memory:");
+
+    const userMemory = store.upsertAgentMemory({
+      workspaceId: "T123",
+      scope: "user",
+      ownerId: "U123",
+      key: "github.defaultOrg",
+      value: "apelogic-ai",
+      now: new Date("2026-05-28T00:00:00.000Z")
+    });
+    store.upsertAgentMemory({
+      workspaceId: "T123",
+      scope: "workspace",
+      key: "deployment.region",
+      value: { primary: "us-west" },
+      now: new Date("2026-05-28T00:01:00.000Z")
+    });
+    store.upsertAgentMemory({
+      workspaceId: "T123",
+      scope: "job",
+      ownerId: "job-123",
+      key: "seenPullRequests",
+      value: ["https://github.com/acme/app/pull/1"],
+      now: new Date("2026-05-28T00:02:00.000Z")
+    });
+
+    expect(userMemory).toEqual({
+      workspaceId: "T123",
+      scope: "user",
+      ownerId: "U123",
+      key: "github.defaultOrg",
+      value: "apelogic-ai",
+      updatedAt: "2026-05-28T00:00:00.000Z"
+    });
+    expect(
+      store.listAgentMemory({
+        workspaceId: "T123",
+        scope: "workspace"
+      })
+    ).toEqual([
+      {
+        workspaceId: "T123",
+        scope: "workspace",
+        ownerId: "",
+        key: "deployment.region",
+        value: { primary: "us-west" },
+        updatedAt: "2026-05-28T00:01:00.000Z"
+      }
+    ]);
+    expect(
+      store.listAgentMemory({
+        workspaceId: "T123",
+        scope: "job",
+        ownerId: "job-123"
+      })
+    ).toHaveLength(1);
+
+    store.deleteAgentMemory({
+      workspaceId: "T123",
+      scope: "user",
+      ownerId: "U123",
+      key: "github.defaultOrg"
+    });
+    expect(
+      store.listAgentMemory({
+        workspaceId: "T123",
+        scope: "user",
+        ownerId: "U123"
+      })
+    ).toEqual([]);
+    expect(() =>
+      store.listAgentMemory({
+        workspaceId: "T123",
+        scope: "job"
+      })
+    ).toThrow("job memory requires an owner id");
+
+    store.close();
+  });
 });

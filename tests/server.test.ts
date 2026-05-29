@@ -93,6 +93,11 @@ function createFakeStore() {
     },
     getUserPreference: () => null,
     listUserPreferences: () => [],
+    upsertAgentMemory: () => {
+      throw new Error("unexpected agent memory write");
+    },
+    listAgentMemory: () => [],
+    deleteAgentMemory: () => undefined,
     updateAgentRuntimeStatus: () => undefined,
     touchAgentRuntime: () => undefined,
     close: () => undefined

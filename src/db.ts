@@ -112,11 +112,26 @@ export type UserPreferenceRecord = {
   updatedAt: string;
 };
 
+export type AgentMemoryScope = "user" | "workspace" | "job";
+
+export type AgentMemoryRecord = {
+  workspaceId: string;
+  scope: AgentMemoryScope;
+  ownerId: string;
+  key: string;
+  value: unknown;
+  updatedAt: string;
+};
+
 type WorkspacePolicyRow = Omit<WorkspacePolicyRecord, "value"> & {
   valueJson: string;
 };
 
 type UserPreferenceRow = Omit<UserPreferenceRecord, "value"> & {
+  valueJson: string;
+};
+
+type AgentMemoryRow = Omit<AgentMemoryRecord, "value"> & {
   valueJson: string;
 };
 
@@ -234,6 +249,19 @@ export function createTokenStore(path: string) {
 
     CREATE INDEX IF NOT EXISTS idx_user_preferences_principal
       ON user_preferences (workspace_id, slack_user_id, key);
+
+    CREATE TABLE IF NOT EXISTS agent_memory (
+      workspace_id TEXT NOT NULL,
+      scope TEXT NOT NULL,
+      owner_id TEXT NOT NULL,
+      key TEXT NOT NULL,
+      value_json TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      PRIMARY KEY(workspace_id, scope, owner_id, key)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_agent_memory_owner
+      ON agent_memory (workspace_id, scope, owner_id, key);
   `);
   ensureProviderConnectionColumn(db, "refresh_token", "TEXT");
   ensureProviderConnectionColumn(db, "access_token_expires_at", "TEXT");
@@ -564,6 +592,53 @@ export function createTokenStore(path: string) {
     FROM user_preferences
     WHERE workspace_id = ? AND slack_user_id = ?
     ORDER BY key ASC
+  `);
+  const upsertAgentMemory = db.query(`
+    INSERT INTO agent_memory (
+      workspace_id,
+      scope,
+      owner_id,
+      key,
+      value_json,
+      updated_at
+    )
+    VALUES (?, ?, ?, ?, ?, ?)
+    ON CONFLICT(workspace_id, scope, owner_id, key) DO UPDATE SET
+      value_json = excluded.value_json,
+      updated_at = excluded.updated_at
+  `);
+  const getAgentMemory = db.query<
+    AgentMemoryRow,
+    [string, AgentMemoryScope, string, string]
+  >(`
+    SELECT
+      workspace_id AS workspaceId,
+      scope,
+      owner_id AS ownerId,
+      key,
+      value_json AS valueJson,
+      updated_at AS updatedAt
+    FROM agent_memory
+    WHERE workspace_id = ? AND scope = ? AND owner_id = ? AND key = ?
+  `);
+  const listAgentMemory = db.query<
+    AgentMemoryRow,
+    [string, AgentMemoryScope, string]
+  >(`
+    SELECT
+      workspace_id AS workspaceId,
+      scope,
+      owner_id AS ownerId,
+      key,
+      value_json AS valueJson,
+      updated_at AS updatedAt
+    FROM agent_memory
+    WHERE workspace_id = ? AND scope = ? AND owner_id = ?
+    ORDER BY key ASC
+  `);
+  const deleteAgentMemory = db.query(`
+    DELETE FROM agent_memory
+    WHERE workspace_id = ? AND scope = ? AND owner_id = ? AND key = ?
   `);
 
   return {
@@ -928,6 +1003,65 @@ export function createTokenStore(path: string) {
         .map(toUserPreferenceRecord);
     },
 
+    upsertAgentMemory(input: {
+      workspaceId: string;
+      scope: AgentMemoryScope;
+      ownerId?: string | null;
+      key: string;
+      value: unknown;
+      now?: Date;
+    }): AgentMemoryRecord {
+      const ownerId = normalizeAgentMemoryOwnerId(input.scope, input.ownerId);
+      const now = (input.now ?? new Date()).toISOString();
+      upsertAgentMemory.run(
+        input.workspaceId,
+        input.scope,
+        ownerId,
+        input.key,
+        stableJson(input.value),
+        now
+      );
+
+      const record = getAgentMemory.get(
+        input.workspaceId,
+        input.scope,
+        ownerId,
+        input.key
+      );
+      if (!record) {
+        throw new Error("Failed to store agent memory");
+      }
+      return toAgentMemoryRecord(record);
+    },
+
+    listAgentMemory(input: {
+      workspaceId: string;
+      scope: AgentMemoryScope;
+      ownerId?: string | null;
+    }): AgentMemoryRecord[] {
+      return listAgentMemory
+        .all(
+          input.workspaceId,
+          input.scope,
+          normalizeAgentMemoryOwnerId(input.scope, input.ownerId)
+        )
+        .map(toAgentMemoryRecord);
+    },
+
+    deleteAgentMemory(input: {
+      workspaceId: string;
+      scope: AgentMemoryScope;
+      ownerId?: string | null;
+      key: string;
+    }): void {
+      deleteAgentMemory.run(
+        input.workspaceId,
+        input.scope,
+        normalizeAgentMemoryOwnerId(input.scope, input.ownerId),
+        input.key
+      );
+    },
+
     updateAgentRuntimeStatus(
       id: string,
       input: {
@@ -1026,6 +1160,30 @@ function toUserPreferenceRecord(row: UserPreferenceRow): UserPreferenceRecord {
     value: parseStoredJson(row.valueJson),
     updatedAt: row.updatedAt
   };
+}
+
+function toAgentMemoryRecord(row: AgentMemoryRow): AgentMemoryRecord {
+  return {
+    workspaceId: row.workspaceId,
+    scope: row.scope,
+    ownerId: row.ownerId,
+    key: row.key,
+    value: parseStoredJson(row.valueJson),
+    updatedAt: row.updatedAt
+  };
+}
+
+function normalizeAgentMemoryOwnerId(
+  scope: AgentMemoryScope,
+  ownerId: string | null | undefined
+): string {
+  if (scope === "workspace") {
+    return "";
+  }
+  if (!ownerId?.trim()) {
+    throw new Error(`${scope} memory requires an owner id`);
+  }
+  return ownerId.trim();
 }
 
 function parseStoredJson(valueJson: string): unknown {
