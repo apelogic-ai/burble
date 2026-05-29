@@ -46,7 +46,7 @@ The legacy `OPENCLAW_NEMOCLAW_ENGINE` remains as a compatibility alias for
 existing OpenClaw/NemoClaw deployments. New deployments should prefer
 `AGENT_RUNTIME_ENGINE`.
 
-Example Hermes-style deployment shape:
+Example Hermes-capable deployment shape:
 
 ```env
 AGENT_RUNTIME=openclaw-nemoclaw
@@ -55,9 +55,27 @@ AGENT_RUNTIME_IMAGE=ghcr.io/apelogic-ai/nemo-hermes-runtime:dev
 AGENT_RUNTIME_ENGINE=hermes
 ```
 
-Any replacement runtime image must implement the same Burble runtime HTTP
-contract, consume scoped Burble MCP credentials, and treat the effective
-manifest as policy input rather than local authority.
+This is only a control-plane selection shape. A Hermes image is not considered
+supported just because it can run a one-shot CLI command. To be a real Burble
+runtime, Hermes must provide the same first-class channel behavior that the
+OpenClaw integration provides:
+
+- Burble can inject inbound user turns into a durable Hermes conversation
+  session keyed by Burble route/runtime identity.
+- Hermes can deliver normal replies, task status, and cron/background output
+  back through a Burble route, not through Slack IDs, webhooks, or local
+  transport credentials.
+- Hermes scheduled jobs can target `delivery.channel = "burble"` /
+  `delivery.to = "<convrt_*>"`-style route bindings, or their Hermes-native
+  equivalent, without exposing transport identifiers to the model.
+- Hermes consumes scoped Burble MCP credentials and effective manifests as
+  policy input rather than treating local Hermes config as authority.
+
+The preferred implementation is a Hermes gateway platform plugin/adapter named
+`burble`, plus a thin runtime HTTP shim when Burble needs to provision and
+health-check the runtime. A `hermes chat -q ...` wrapper is useful only as a
+smoke test; it is not sufficient for Burble production semantics because it
+does not provide durable two-way channel integration.
 
 Autonomous workgroup and company agents use the authority model in
 [Autonomous Agent Authority Model](autonomous-agent-authority-model.md). This
