@@ -461,8 +461,19 @@ describe("handleProviderMcpRequest", () => {
     const callBody = readMcpBody(await callResponse.text());
 
     expect(callResponse.status).toBe(200);
-    expect(callBody.result.content[0].text).toContain("github_search_issues");
-    expect(callBody.result.content[0].text).toContain("not found");
+    expect(callBody.error.message).toBe(
+      "Tool github_search_issues is not available to this job."
+    );
+    const event = store
+      .listAgentRuntimeEvents(runtime.id)
+      .find((record) => record.eventType === "runtime_tool_called");
+    expect(event).toBeDefined();
+    expect(JSON.parse(event?.summaryJson ?? "{}")).toEqual({
+      allowed: false,
+      jobId: "job-123",
+      reason: "job_scope_denied",
+      tool: "github_search_issues"
+    });
 
     store.close();
   });

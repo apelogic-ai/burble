@@ -913,9 +913,10 @@ time or expose `/agent set` / `/agent get` in Slack. Those are the next slices.
 - Runtime JWTs can carry optional `job_id` and `allowed_tools` claims.
 - Burble MCP intersects job-scoped `allowed_tools` with the active runtime
   manifest and hides/blocks unexpected tools.
+- Unexpected job tool calls are denied before provider execution and recorded
+  as runtime audit events.
 - Remaining: store required tools on scheduled job records and mint
   short-lived job-scoped JWTs at scheduled runtime.
-- Add audit events for denied job tool calls.
 
 ### Slice 7: Slack/Admin UX
 

@@ -175,8 +175,20 @@ export async function handleProviderMcpRequest(
     return routeValidation.response;
   }
 
+  const enabledTools = enabledToolsForClaims(manifest, auth.claims);
+  const jobScopeValidation = await validateJobScopedProviderMcpToolAccess(
+    routeValidation.request,
+    store,
+    runtime,
+    auth.claims,
+    enabledTools
+  );
+  if (jobScopeValidation.response) {
+    return jobScopeValidation.response;
+  }
+
   const server = createProviderMcpServer(config, store, runtime, deps, scope, {
-    enabledTools: enabledToolsForClaims(manifest, auth.claims)
+    enabledTools
   });
   const transport = new WebStandardStreamableHTTPServerTransport();
 
@@ -287,6 +299,49 @@ function enabledToolsForClaims(
   return new Set(
     claims.allowed_tools.filter((toolName) => enabledTools.has(toolName))
   );
+}
+
+async function validateJobScopedProviderMcpToolAccess(
+  request: Request,
+  store: TokenStore,
+  runtime: AgentRuntimeRecord,
+  claims: RuntimeJwtClaims | null,
+  enabledTools: ReadonlySet<string>
+): Promise<{ response: Response | null }> {
+  if (!claims?.allowed_tools || request.method !== "POST") {
+    return { response: null };
+  }
+
+  let payload: unknown;
+  try {
+    payload = await request.clone().json();
+  } catch {
+    return { response: null };
+  }
+
+  const call = readJsonRpcToolCall(payload);
+  if (!call || enabledTools.has(call.name)) {
+    return { response: null };
+  }
+
+  store.recordAgentRuntimeEvent({
+    runtimeId: runtime.id,
+    eventType: "runtime_tool_called",
+    summary: {
+      tool: call.name,
+      allowed: false,
+      reason: "job_scope_denied",
+      jobId: claims.job_id ?? null
+    }
+  });
+
+  return {
+    response: mcpJsonRpcErrorResponse(
+      readJsonRpcId(payload),
+      -32020,
+      `Tool ${call.name} is not available to this job.`
+    )
+  };
 }
 
 function readBearerToken(request: Request): string | null {
