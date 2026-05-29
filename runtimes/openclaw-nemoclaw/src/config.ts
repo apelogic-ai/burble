@@ -64,18 +64,32 @@ export function readRuntimeConfig(env: Env): RuntimeConfig {
     internalToken: requiredEnv(env, "BURBLE_INTERNAL_TOKEN"),
     mcpGatewayUrl: readOptionalUrlEnv(env.BURBLE_MCP_GATEWAY_URL),
     runtimeJwt: readOptionalEnv(env.BURBLE_RUNTIME_JWT),
-    engine: readRuntimeEngine(env.OPENCLAW_NEMOCLAW_ENGINE ?? "deterministic"),
+    engine: readRuntimeEngine(
+      readOptionalEnv(env.AGENT_RUNTIME_ENGINE) ??
+        readOptionalEnv(env.OPENCLAW_NEMOCLAW_ENGINE) ??
+        "deterministic",
+      readOptionalEnv(env.AGENT_RUNTIME_ENGINE)
+        ? "AGENT_RUNTIME_ENGINE"
+        : "OPENCLAW_NEMOCLAW_ENGINE"
+    ),
     openClawCommand: env.OPENCLAW_COMMAND?.trim() || "openclaw",
     openClawAgent: env.OPENCLAW_AGENT?.trim() || "main",
     openClawTimeoutMs: readPositiveInt(
       env.OPENCLAW_TIMEOUT_MS ?? "60000",
       "OPENCLAW_TIMEOUT_MS"
     ),
-    openClawStateDir: env.OPENCLAW_STATE_DIR?.trim() || "/data/openclaw/state",
+    openClawStateDir:
+      env.AGENT_RUNTIME_STATE_DIR?.trim() ||
+      env.OPENCLAW_STATE_DIR?.trim() ||
+      "/data/openclaw/state",
     openClawConfigPath:
-      env.OPENCLAW_CONFIG_PATH?.trim() || "/data/openclaw/config/openclaw.json",
+      env.AGENT_RUNTIME_CONFIG_PATH?.trim() ||
+      env.OPENCLAW_CONFIG_PATH?.trim() ||
+      "/data/openclaw/config/openclaw.json",
     openClawWorkspaceDir:
-      env.OPENCLAW_WORKSPACE_DIR?.trim() || "/data/openclaw/workspace",
+      env.AGENT_RUNTIME_WORKSPACE_DIR?.trim() ||
+      env.OPENCLAW_WORKSPACE_DIR?.trim() ||
+      "/data/openclaw/workspace",
     openClawSetupOnStart: readBooleanEnv(
       env.OPENCLAW_SETUP_ON_START ?? "true",
       "OPENCLAW_SETUP_ON_START"
@@ -144,7 +158,7 @@ function readPositiveInt(value: string, name: string): number {
   return parsed;
 }
 
-function readRuntimeEngine(value: string): RuntimeEngine {
+function readRuntimeEngine(value: string, name: string): RuntimeEngine {
   const normalized = value.trim().toLowerCase();
   if (normalized === "openclaw-cli") {
     return "openclaw";
@@ -155,7 +169,7 @@ function readRuntimeEngine(value: string): RuntimeEngine {
 
   if (!runtimeEngines.includes(normalized as RuntimeEngine)) {
     throw new Error(
-      `Environment variable OPENCLAW_NEMOCLAW_ENGINE must be one of ${runtimeEngines.join(", ")}`
+      `Environment variable ${name} must be one of ${runtimeEngines.join(", ")}`
     );
   }
 

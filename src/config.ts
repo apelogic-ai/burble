@@ -1,4 +1,5 @@
 import { validateAgentModelId } from "./agent/providers";
+import type { AgentRuntimeEngine } from "./db";
 
 export type Config = {
   slackBotToken: string;
@@ -21,6 +22,7 @@ export type Config = {
   agentRuntimeFactory: AgentRuntimeFactory;
   aiModel: string;
   openClawNemoClawUrl: string | null;
+  agentRuntimeEngine: AgentRuntimeEngine;
   openClawNemoClawEngine: OpenClawNemoClawEngine;
   agentRuntimeDataRoot: string;
   agentRuntimeDockerNetwork: string;
@@ -45,20 +47,17 @@ export type SlackLogLevel = "debug" | "info" | "warn" | "error";
 export type AgentMode = "deterministic" | "llm";
 export type AgentRuntime = "ai-sdk" | "openclaw-nemoclaw";
 export type AgentRuntimeFactory = "static" | "docker";
-export type OpenClawNemoClawEngine =
-  | "deterministic"
-  | "openclaw"
-  | "openclaw-gateway"
-  | "burble-direct";
+export type OpenClawNemoClawEngine = AgentRuntimeEngine;
 const slackLogLevels = ["debug", "info", "warn", "error"] as const;
 const agentModes = ["deterministic", "llm"] as const;
 const agentRuntimes = ["ai-sdk", "openclaw-nemoclaw"] as const;
 const agentRuntimeFactories = ["static", "docker"] as const;
-const openClawNemoClawEngines = [
+const agentRuntimeEngines = [
   "deterministic",
   "openclaw",
   "openclaw-gateway",
-  "burble-direct"
+  "burble-direct",
+  "hermes"
 ] as const;
 
 function requiredEnv(env: Env, name: string): string {
@@ -177,11 +176,11 @@ function optionalAgentRuntimeFactoryEnv(
   return value as AgentRuntimeFactory;
 }
 
-function optionalOpenClawNemoClawEngineEnv(
+function optionalAgentRuntimeEngineEnv(
   env: Env,
   name: string,
-  fallback: OpenClawNemoClawEngine
-): OpenClawNemoClawEngine {
+  fallback: AgentRuntimeEngine
+): AgentRuntimeEngine {
   const value = env[name]?.trim().toLowerCase();
   if (!value) {
     return fallback;
@@ -192,14 +191,16 @@ function optionalOpenClawNemoClawEngineEnv(
       ? "openclaw"
       : value === "direct-provider"
         ? "burble-direct"
+        : value === "nemo-hermes"
+          ? "hermes"
         : value;
-  if (!openClawNemoClawEngines.includes(normalized as OpenClawNemoClawEngine)) {
+  if (!agentRuntimeEngines.includes(normalized as AgentRuntimeEngine)) {
     throw new Error(
-      `Environment variable ${name} must be one of ${openClawNemoClawEngines.join(", ")}`
+      `Environment variable ${name} must be one of ${agentRuntimeEngines.join(", ")}`
     );
   }
 
-  return normalized as OpenClawNemoClawEngine;
+  return normalized as AgentRuntimeEngine;
 }
 
 function optionalUrlEnv(env: Env, name: string): string | null {
@@ -210,6 +211,11 @@ function optionalUrlEnv(env: Env, name: string): string | null {
 export function readConfig(env: Env): Config {
   const baseUrl = requiredEnv(env, "BASE_URL").replace(/\/+$/, "");
   const internalApiToken = optionalSecretEnv(env, "INTERNAL_API_TOKEN");
+  const agentRuntimeEngine = optionalAgentRuntimeEngineEnv(
+    env,
+    env.AGENT_RUNTIME_ENGINE ? "AGENT_RUNTIME_ENGINE" : "OPENCLAW_NEMOCLAW_ENGINE",
+    "openclaw"
+  );
   const agentRuntimeFactory = optionalAgentRuntimeFactoryEnv(
     env,
     "AGENT_RUNTIME_FACTORY",
@@ -244,11 +250,8 @@ export function readConfig(env: Env): Config {
     agentRuntimeFactory,
     aiModel: validateAgentModelId(env.AI_MODEL ?? "openai:gpt-5.4"),
     openClawNemoClawUrl: optionalUrlEnv(env, "OPENCLAW_NEMOCLAW_URL"),
-    openClawNemoClawEngine: optionalOpenClawNemoClawEngineEnv(
-      env,
-      "OPENCLAW_NEMOCLAW_ENGINE",
-      "openclaw"
-    ),
+    agentRuntimeEngine,
+    openClawNemoClawEngine: agentRuntimeEngine,
     agentRuntimeDataRoot: env.AGENT_RUNTIME_DATA_ROOT ?? "/data/runtimes",
     agentRuntimeDockerNetwork:
       env.AGENT_RUNTIME_DOCKER_NETWORK ?? "compose_default",

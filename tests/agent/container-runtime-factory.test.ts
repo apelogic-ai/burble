@@ -61,7 +61,12 @@ describe("buildContainerRuntimeSpec", () => {
       BURBLE_RUNTIME_ID: "rt_u123",
       BURBLE_MCP_GATEWAY_URL: "http://agentgateway:3000/mcp",
       BURBLE_RUNTIME_JWT: "runtime-jwt",
+      AGENT_RUNTIME_ENGINE: "openclaw",
+      AGENT_RUNTIME_STATE_DIR: "/data/openclaw/state",
+      AGENT_RUNTIME_CONFIG_PATH: "/data/openclaw/config/openclaw.json",
+      AGENT_RUNTIME_WORKSPACE_DIR: "/data/openclaw/workspace",
       OPENCLAW_NEMOCLAW_ENGINE: "openclaw",
+      OPENCLAW_CONFIG_PATH: "/data/openclaw/config/openclaw.json",
       AI_MODEL: "ollama:qwen3-coder:30b-cloud",
       OPENAI_API_KEY: "openai-key",
       ANTHROPIC_API_KEY: "anthropic-key",
@@ -86,6 +91,27 @@ describe("buildContainerRuntimeSpec", () => {
     expect(spec.volumes).toContainEqual({
       source: `/data/runtimes/${runtimeDataId}`,
       target: "/data/openclaw"
+    });
+  });
+
+  test("uses engine-specific runtime config filenames", () => {
+    const runtimeDataId = buildRuntimeDataId(principal, "hermes");
+    const spec = buildContainerRuntimeSpec({
+      principal,
+      engine: "hermes",
+      image: "nemo-hermes:dev",
+      dataRoot: "/data/runtimes",
+      dockerNetwork: "compose_default",
+      toolGatewayUrl: "http://burble-app:3000/internal/tools",
+      runtimeToken: "runtime-token",
+      runtimeDataId
+    });
+
+    expect(spec.env).toMatchObject({
+      AGENT_RUNTIME_ENGINE: "hermes",
+      AGENT_RUNTIME_CONFIG_PATH: "/data/openclaw/config/hermes.json",
+      OPENCLAW_NEMOCLAW_ENGINE: "hermes",
+      OPENCLAW_CONFIG_PATH: "/data/openclaw/config/hermes.json"
     });
   });
 });

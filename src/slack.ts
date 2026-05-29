@@ -440,7 +440,7 @@ export function createSlackRuntime(
       config,
       store,
       principal,
-      engine: config.openClawNemoClawEngine
+      engine: config.agentRuntimeEngine
     }).policyHash;
     applyAgentConfigModalValues({
       store,
@@ -451,7 +451,7 @@ export function createSlackRuntime(
       config,
       store,
       principal,
-      engine: config.openClawNemoClawEngine
+      engine: config.agentRuntimeEngine
     }).policyHash;
 
     await ack({
@@ -1030,7 +1030,7 @@ export function createSlackRuntime(
           config,
           store,
           principal,
-          engine: config.openClawNemoClawEngine
+          engine: config.agentRuntimeEngine
         }).policyHash;
         const response = applyAgentUserConfigSet({
           config,
@@ -1044,7 +1044,7 @@ export function createSlackRuntime(
           config,
           store,
           principal,
-          engine: config.openClawNemoClawEngine
+          engine: config.agentRuntimeEngine
         }).policyHash;
         const policyChanged = previousPolicyHash !== nextPolicyHash;
         await ack(
@@ -1409,7 +1409,7 @@ export async function getOrStartAgentStatusRuntime(input: {
 
   return input.store.getAgentRuntimeForPrincipal({
     ...principal,
-    engine: input.config.openClawNemoClawEngine
+    engine: input.config.agentRuntimeEngine
   });
 }
 
@@ -1494,7 +1494,7 @@ function createOpenClawRuntimeFactory(
 
     return createDockerRuntimeFactory({
       store,
-      engine: config.openClawNemoClawEngine,
+      engine: config.agentRuntimeEngine,
       image: config.agentRuntimeImage,
       dataRoot: config.agentRuntimeDataRoot,
       dockerNetwork: config.agentRuntimeDockerNetwork,
@@ -1512,7 +1512,7 @@ function createOpenClawRuntimeFactory(
           config,
           store,
           principal,
-          engine: config.openClawNemoClawEngine
+          engine: config.agentRuntimeEngine
         })
     });
   }
@@ -1523,7 +1523,7 @@ function createOpenClawRuntimeFactory(
 
   return createStaticRuntimeFactory({
     store,
-    engine: config.openClawNemoClawEngine,
+    engine: config.agentRuntimeEngine,
     endpointUrl: config.openClawNemoClawUrl,
     authToken: config.internalApiToken ?? "",
     dataRoot: config.agentRuntimeDataRoot,
@@ -1532,7 +1532,7 @@ function createOpenClawRuntimeFactory(
         config,
         store,
         principal,
-        engine: config.openClawNemoClawEngine
+        engine: config.agentRuntimeEngine
       })
   });
 }
@@ -1860,12 +1860,12 @@ export function buildAgentHomeSettings(input: {
     config: input.config,
     store: input.store,
     principal,
-    engine: input.config.openClawNemoClawEngine
+    engine: input.config.agentRuntimeEngine
   });
   const runtime = input.store.getAgentRuntimeForPrincipal({
     workspaceId: input.workspaceId,
     slackUserId: input.slackUserId,
-    engine: input.config.openClawNemoClawEngine
+    engine: input.config.agentRuntimeEngine
   });
 
   return {
@@ -1886,7 +1886,7 @@ export function buildAgentHomeSettings(input: {
       : {
           id: null,
           status: "not provisioned",
-          engine: input.config.openClawNemoClawEngine,
+          engine: input.config.agentRuntimeEngine,
           endpointUrl: null,
           createdAt: null,
           lastUsedAt: null
@@ -2168,7 +2168,7 @@ export async function applyAgentRuntimeControl(input: {
   const existing = input.store.getAgentRuntimeForPrincipal({
     workspaceId: input.workspaceId,
     slackUserId: input.slackUserId,
-    engine: input.config.openClawNemoClawEngine
+    engine: input.config.agentRuntimeEngine
   });
 
   if (input.action === "pause") {
@@ -3094,7 +3094,7 @@ export function buildAgentUserConfigGetResponse(input: {
     config: input.config,
     store: input.store,
     principal,
-    engine: input.config.openClawNemoClawEngine
+    engine: input.config.agentRuntimeEngine
   });
   const key = input.key ? normalizeAgentUserConfigKey(input.key) : null;
 
@@ -3180,7 +3180,7 @@ export function applyAgentUserConfigSet(input: {
           config: input.config,
           store: input.store,
           principal,
-          engine: input.config.openClawNemoClawEngine
+          engine: input.config.agentRuntimeEngine
         }),
         key
       })
@@ -3206,7 +3206,7 @@ export async function restartAgentRuntimeIfConfigChanged(input: {
   const runtime = input.store.getAgentRuntimeForPrincipal({
     workspaceId: input.principal.workspaceId,
     slackUserId: input.principal.slackUserId,
-    engine: input.config.openClawNemoClawEngine
+    engine: input.config.agentRuntimeEngine
   });
   if (
     !runtime ||
@@ -3314,7 +3314,7 @@ function applyAgentUserConfigSpecialSet(input: {
     config: input.config,
     store: input.store,
     principal: input.principal,
-    engine: input.config.openClawNemoClawEngine
+    engine: input.config.agentRuntimeEngine
   });
   return {
     response_type: "ephemeral",
@@ -3543,7 +3543,7 @@ export function buildAgentStatusResponse(input: {
             `• Agent mode: \`${input.config.agentMode}\``,
             `• Runtime: \`${input.config.agentRuntime}\``,
             `• Runtime factory: \`${input.config.agentRuntimeFactory}\``,
-            `• Runtime engine: \`${input.config.openClawNemoClawEngine}\``,
+            `• Runtime engine: \`${input.config.agentRuntimeEngine}\``,
             `• Model: \`${input.config.aiModel}\``
           ].join("\n")
         }

@@ -26,6 +26,39 @@ personal runtime
 The runtime can be OpenClaw, NemoClaw, Hermes, Burble-direct, or a later
 runtime. The policy model should not depend on runtime internals.
 
+## Runtime Implementation Pluggability
+
+Burble separates the runtime lifecycle from the runtime implementation:
+
+- `AGENT_RUNTIME` selects the Burble-side adapter contract. Today
+  `openclaw-nemoclaw` means "call a runtime HTTP service that exposes Burble's
+  `/healthz` and `/runs` contract"; the name is legacy and should not imply the
+  only possible implementation.
+- `AGENT_RUNTIME_FACTORY` selects how Burble obtains that service, such as a
+  static URL or Docker-backed personal runtime containers.
+- `AGENT_RUNTIME_IMAGE` selects the container image when the factory is Docker.
+- `AGENT_RUNTIME_ENGINE` labels the runtime implementation and drives
+  per-engine runtime state/config isolation. Supported control-plane engine
+  values are currently `deterministic`, `openclaw`, `openclaw-gateway`,
+  `burble-direct`, and `hermes`.
+
+The legacy `OPENCLAW_NEMOCLAW_ENGINE` remains as a compatibility alias for
+existing OpenClaw/NemoClaw deployments. New deployments should prefer
+`AGENT_RUNTIME_ENGINE`.
+
+Example Hermes-style deployment shape:
+
+```env
+AGENT_RUNTIME=openclaw-nemoclaw
+AGENT_RUNTIME_FACTORY=docker
+AGENT_RUNTIME_IMAGE=ghcr.io/apelogic-ai/nemo-hermes-runtime:dev
+AGENT_RUNTIME_ENGINE=hermes
+```
+
+Any replacement runtime image must implement the same Burble runtime HTTP
+contract, consume scoped Burble MCP credentials, and treat the effective
+manifest as policy input rather than local authority.
+
 Autonomous workgroup and company agents use the authority model in
 [Autonomous Agent Authority Model](autonomous-agent-authority-model.md). This
 runtime configuration plan consumes their effective principal and grants, but

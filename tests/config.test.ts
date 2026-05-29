@@ -34,6 +34,7 @@ describe("readConfig", () => {
       agentRuntimeFactory: "static",
       aiModel: "openai:gpt-5.4",
       openClawNemoClawUrl: null,
+      agentRuntimeEngine: "openclaw",
       openClawNemoClawEngine: "openclaw",
       agentRuntimeDataRoot: "/data/runtimes",
       agentRuntimeDockerNetwork: "compose_default",
@@ -145,6 +146,7 @@ describe("readConfig", () => {
     });
 
     expect(config.agentRuntimeFactory).toBe("docker");
+    expect(config.agentRuntimeEngine).toBe("openclaw");
     expect(config.openClawNemoClawEngine).toBe("openclaw");
     expect(config.agentRuntimeImage).toBe(
       "burble-openclaw-nemoclaw-openclaw-cli:dev"
@@ -189,6 +191,39 @@ describe("readConfig", () => {
       OPENCLAW_NEMOCLAW_ENGINE: "openclaw-gateway"
     });
 
+    expect(config.agentRuntimeEngine).toBe("openclaw-gateway");
+    expect(config.openClawNemoClawEngine).toBe("openclaw-gateway");
+  });
+
+  test("allows generic agent runtime engine override", () => {
+    const config = readConfig({
+      ...validEnv,
+      AGENT_RUNTIME_ENGINE: "nemo-hermes"
+    });
+
+    expect(config.agentRuntimeEngine).toBe("hermes");
+    expect(config.openClawNemoClawEngine).toBe("hermes");
+  });
+
+  test("prefers generic agent runtime engine over legacy OpenClaw engine", () => {
+    const config = readConfig({
+      ...validEnv,
+      AGENT_RUNTIME_ENGINE: "hermes",
+      OPENCLAW_NEMOCLAW_ENGINE: "openclaw"
+    });
+
+    expect(config.agentRuntimeEngine).toBe("hermes");
+    expect(config.openClawNemoClawEngine).toBe("hermes");
+  });
+
+  test("falls back to the legacy OpenClaw engine when generic engine is blank", () => {
+    const config = readConfig({
+      ...validEnv,
+      AGENT_RUNTIME_ENGINE: "",
+      OPENCLAW_NEMOCLAW_ENGINE: "openclaw-gateway"
+    });
+
+    expect(config.agentRuntimeEngine).toBe("openclaw-gateway");
     expect(config.openClawNemoClawEngine).toBe("openclaw-gateway");
   });
 
@@ -205,7 +240,15 @@ describe("readConfig", () => {
     expect(() =>
       readConfig({ ...validEnv, OPENCLAW_NEMOCLAW_ENGINE: "magic" })
     ).toThrow(
-      "Environment variable OPENCLAW_NEMOCLAW_ENGINE must be one of deterministic, openclaw, openclaw-gateway, burble-direct"
+      "Environment variable OPENCLAW_NEMOCLAW_ENGINE must be one of deterministic, openclaw, openclaw-gateway, burble-direct, hermes"
+    );
+  });
+
+  test("rejects invalid generic agent runtime engines", () => {
+    expect(() =>
+      readConfig({ ...validEnv, AGENT_RUNTIME_ENGINE: "magic" })
+    ).toThrow(
+      "Environment variable AGENT_RUNTIME_ENGINE must be one of deterministic, openclaw, openclaw-gateway, burble-direct, hermes"
     );
   });
 

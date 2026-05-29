@@ -289,12 +289,19 @@ export function buildContainerRuntimeSpec(input: {
 }): ContainerRuntimeSpec {
   const name = buildContainerName(input.runtimeDataId);
   const runtimeRoot = `${input.dataRoot}/${input.runtimeDataId}`;
+  const runtimeConfigPath = `/data/openclaw/config/${nativeAgentConfigFileName(
+    input.engine
+  )}`;
   const env: Record<string, string> = {
     BURBLE_TOOL_GATEWAY_URL: input.toolGatewayUrl,
     BURBLE_INTERNAL_TOKEN: input.runtimeToken,
+    AGENT_RUNTIME_ENGINE: input.engine,
+    AGENT_RUNTIME_STATE_DIR: "/data/openclaw/state",
+    AGENT_RUNTIME_CONFIG_PATH: runtimeConfigPath,
+    AGENT_RUNTIME_WORKSPACE_DIR: "/data/openclaw/workspace",
     OPENCLAW_NEMOCLAW_ENGINE: input.engine,
     OPENCLAW_STATE_DIR: "/data/openclaw/state",
-    OPENCLAW_CONFIG_PATH: "/data/openclaw/config/openclaw.json",
+    OPENCLAW_CONFIG_PATH: runtimeConfigPath,
     OPENCLAW_WORKSPACE_DIR: "/data/openclaw/workspace"
   };
 

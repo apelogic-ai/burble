@@ -131,6 +131,9 @@ describe("dev deploy config", () => {
     expect(openClawCompose).toContain(
       "OPENCLAW_NEMOCLAW_URL=http://openclaw-nemoclaw:8080"
     );
+    expect(openClawCompose).toContain(
+      "AGENT_RUNTIME_ENGINE=${AGENT_RUNTIME_ENGINE:-}"
+    );
     expect(openClawCompose).toContain("context: ../../../runtimes/openclaw-nemoclaw");
     expect(openClawCompose).toContain("dockerfile: Dockerfile");
     expect(openClawCompose).toContain(
@@ -233,6 +236,7 @@ describe("dev deploy config", () => {
       "AGENT_RUNTIME_FACTORY",
       "AGENT_RUNTIME_DATA_ROOT",
       "AGENT_RUNTIME_IMAGE",
+      "AGENT_RUNTIME_ENGINE",
       "AGENT_RUNTIME_DOCKER_NETWORK",
       "AGENT_RUNTIME_IDLE_TTL_MS",
       "AGENT_RUNTIME_REAPER_ENABLED",
@@ -259,6 +263,9 @@ describe("dev deploy config", () => {
     );
     expect(personalRuntimesCompose).toContain(
       "burble-openclaw-nemoclaw-openclaw-cli:dev"
+    );
+    expect(personalRuntimesCompose).toContain(
+      "AGENT_RUNTIME_ENGINE=${AGENT_RUNTIME_ENGINE:-}"
     );
     expect(personalRuntimesCompose).toContain("openclaw-nemoclaw-image:");
     expect(personalRuntimesCompose).toContain("profiles:");

@@ -153,6 +153,7 @@ override file. Compose builds the runtime image from
 AGENT_MODE=llm
 AGENT_RUNTIME=openclaw-nemoclaw
 INTERNAL_API_TOKEN=<long-random-secret>
+AGENT_RUNTIME_ENGINE=deterministic
 OPENCLAW_NEMOCLAW_ENGINE=deterministic
 ```
 
@@ -169,6 +170,17 @@ policy; the remote runtime receives only sanitized connection summaries.
 
 Set `OPENCLAW_NEMOCLAW_IMAGE=some-registry/image:tag` only if you want Compose
 to tag/push/use a different image name. It is not required for dev deployment.
+For new pluggable runtime images, prefer `AGENT_RUNTIME_IMAGE` and
+`AGENT_RUNTIME_ENGINE`; `OPENCLAW_NEMOCLAW_ENGINE` is kept as a legacy alias
+for the bundled OpenClaw/NemoClaw image.
+
+For example, a Hermes-compatible image should expose the same Burble runtime
+HTTP contract and can be selected with:
+
+```env
+AGENT_RUNTIME_IMAGE=ghcr.io/apelogic-ai/nemo-hermes-runtime:dev
+AGENT_RUNTIME_ENGINE=hermes
+```
 
 The runtime supports these internal engines:
 

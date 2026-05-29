@@ -10,7 +10,7 @@ describe("readRuntimeConfig", () => {
         BURBLE_INTERNAL_TOKEN: "secret",
         BURBLE_MCP_GATEWAY_URL: "http://agentgateway:3000/mcp/",
         BURBLE_RUNTIME_JWT: "runtime-jwt",
-        OPENCLAW_NEMOCLAW_ENGINE: "openclaw",
+        AGENT_RUNTIME_ENGINE: "openclaw",
         OPENCLAW_COMMAND: "/usr/local/bin/openclaw",
         OPENCLAW_AGENT: "burble",
         OPENCLAW_TIMEOUT_MS: "120000",
@@ -134,6 +134,44 @@ describe("readRuntimeConfig", () => {
     ).toThrow(
       "Environment variable OPENCLAW_NEMOCLAW_ENGINE must be one of deterministic, openclaw, openclaw-gateway, burble-direct"
     );
+  });
+
+  test("prefers generic runtime engine over legacy OpenClaw engine", () => {
+    expect(
+      readRuntimeConfig({
+        BURBLE_TOOL_GATEWAY_URL: "http://burble-app:3000/internal/tools",
+        BURBLE_INTERNAL_TOKEN: "secret",
+        AGENT_RUNTIME_ENGINE: "openclaw-gateway",
+        OPENCLAW_NEMOCLAW_ENGINE: "openclaw"
+      }).engine
+    ).toBe("openclaw-gateway");
+  });
+
+  test("falls back to legacy runtime engine when generic engine is blank", () => {
+    expect(
+      readRuntimeConfig({
+        BURBLE_TOOL_GATEWAY_URL: "http://burble-app:3000/internal/tools",
+        BURBLE_INTERNAL_TOKEN: "secret",
+        AGENT_RUNTIME_ENGINE: "",
+        OPENCLAW_NEMOCLAW_ENGINE: "burble-direct"
+      }).engine
+    ).toBe("burble-direct");
+  });
+
+  test("reads generic runtime path environment variables", () => {
+    expect(
+      readRuntimeConfig({
+        BURBLE_TOOL_GATEWAY_URL: "http://burble-app:3000/internal/tools",
+        BURBLE_INTERNAL_TOKEN: "secret",
+        AGENT_RUNTIME_STATE_DIR: "/runtime/state",
+        AGENT_RUNTIME_CONFIG_PATH: "/runtime/config/openclaw.json",
+        AGENT_RUNTIME_WORKSPACE_DIR: "/runtime/workspace"
+      })
+    ).toMatchObject({
+      openClawStateDir: "/runtime/state",
+      openClawConfigPath: "/runtime/config/openclaw.json",
+      openClawWorkspaceDir: "/runtime/workspace"
+    });
   });
 
   test("accepts the old openclaw-cli engine value as an alias", () => {
