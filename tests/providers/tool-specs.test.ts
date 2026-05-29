@@ -31,6 +31,8 @@ describe("provider tool specs", () => {
       (tool) => tool.name === "github_create_issue"
     );
     expect(createIssue).toBeDefined();
+    expect(createIssue?.risk).toBe("low_write");
+    expect(createIssue?.confirmation).toBe("none");
 
     const schema = providerToolInputSchema(createIssue!);
 
@@ -63,6 +65,7 @@ describe("provider tool specs", () => {
       (tool) => tool.name === "gmail_create_draft"
     );
     expect(createDraft).toBeDefined();
+    expect(createDraft?.risk).toBe("low_write");
 
     const schema = providerToolInputSchema(createDraft!);
 
@@ -91,6 +94,7 @@ describe("provider tool specs", () => {
       (tool) => tool.name === "jira_edit_issue"
     );
     expect(editIssue).toBeDefined();
+    expect(editIssue?.risk).toBe("moderate_write");
 
     const schema = providerToolInputSchema(editIssue!);
 

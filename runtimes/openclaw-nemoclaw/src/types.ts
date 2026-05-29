@@ -20,6 +20,28 @@ export type RunRequest = {
   executionMode?: "default" | "openclaw-native";
   runtime?: {
     id: string;
+    policyHash?: string;
+    manifest?: {
+      version: string;
+      policyHash: string;
+      skills: Array<{
+        id: string;
+        version: string;
+        enabled: boolean;
+      }>;
+      memory: {
+        userMemoryEnabled: boolean;
+        workspaceMemoryEnabled: boolean;
+        jobMemoryEnabled: boolean;
+      };
+      memoryContext?: Array<{
+        scope: "user" | "workspace" | "job";
+        ownerId: string;
+        key: string;
+        valuePreview: string;
+        updatedAt: string;
+      }>;
+    };
   };
   input: {
     text: string;

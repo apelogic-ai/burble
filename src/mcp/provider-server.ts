@@ -60,6 +60,12 @@ import {
 } from "../providers/jira/client";
 import { searchSlackMessages, searchSlackUsers } from "../providers/slack/client";
 import type { RuntimeJwtIssuer } from "../runtime-jwt";
+import type { RuntimeJwtClaims } from "../runtime-jwt";
+import {
+  buildRuntimeManifestForRecord,
+  enabledManifestToolNames
+} from "../agent/runtime-policy";
+import type { RuntimeManifest } from "../agent/runtime-manifest";
 import {
   isAllowedAtlassianMcpToolName,
   isReadOnlyAtlassianMcpToolName,
@@ -158,12 +164,32 @@ export async function handleProviderMcpRequest(
   }
   store.touchAgentRuntime(runtime.id);
 
-  const routeValidation = await validateProviderMcpRoute(request, store, runtime);
+  const manifest = buildRuntimeManifestForRecord({ config, store, runtime });
+  const routeValidation = await validateProviderMcpRoute(
+    request,
+    store,
+    runtime,
+    manifest
+  );
   if (routeValidation.response) {
     return routeValidation.response;
   }
 
-  const server = createProviderMcpServer(config, store, runtime, deps, scope);
+  const enabledTools = enabledToolsForClaims(manifest, auth.claims);
+  const jobScopeValidation = await validateJobScopedProviderMcpToolAccess(
+    routeValidation.request,
+    store,
+    runtime,
+    auth.claims,
+    enabledTools
+  );
+  if (jobScopeValidation.response) {
+    return jobScopeValidation.response;
+  }
+
+  const server = createProviderMcpServer(config, store, runtime, deps, scope, {
+    enabledTools
+  });
   const transport = new WebStandardStreamableHTTPServerTransport();
 
   await server.connect(transport);
@@ -175,7 +201,10 @@ function createProviderMcpServer(
   store: TokenStore,
   runtime: AgentRuntimeRecord,
   deps: ProviderMcpDeps,
-  scope: ProviderMcpScope
+  scope: ProviderMcpScope,
+  policy: {
+    enabledTools: ReadonlySet<string>;
+  }
 ): McpServer {
   const server = new McpServer({
     name: `burble-provider-tools-${scope}`,
@@ -196,19 +225,26 @@ function createProviderMcpServer(
   };
 
   if (scope === "all" || scope === "github") {
-    registerGitHubMcpTools({ server, store, runtime, deps: allDeps });
+    registerGitHubMcpTools({ server, store, runtime, deps: allDeps, policy });
   }
   if (scope === "all" || scope === "google") {
-    registerGoogleMcpTools({ server, store, runtime, deps: allDeps });
+    registerGoogleMcpTools({ server, store, runtime, deps: allDeps, policy });
   }
   if (scope === "all" || scope === "jira") {
-    registerJiraMcpTools({ server, store, runtime, deps: allDeps });
+    registerJiraMcpTools({ server, store, runtime, deps: allDeps, policy });
   }
   if (scope === "all" || scope === "slack") {
-    registerSlackMcpTools({ server, store, runtime, deps: allDeps });
+    registerSlackMcpTools({ server, store, runtime, deps: allDeps, policy });
   }
   if (scope === "all" || scope === "atlassian") {
-    registerAtlassianMcpTools({ server, config, store, runtime, deps: allDeps });
+    registerAtlassianMcpTools({
+      server,
+      config,
+      store,
+      runtime,
+      deps: allDeps,
+      policy
+    });
   }
 
   return server;
@@ -219,10 +255,14 @@ function authorizeProviderMcpRequest(
   store: TokenStore,
   runtimeJwtIssuer: RuntimeJwtIssuer,
   request: Request
-): { runtime: AgentRuntimeRecord | null; reason?: "missing_bearer" | "invalid_jwt" } {
+): {
+  runtime: AgentRuntimeRecord | null;
+  claims: RuntimeJwtClaims | null;
+  reason?: "missing_bearer" | "invalid_jwt";
+} {
   const bearerToken = readBearerToken(request);
   if (!bearerToken) {
-    return { runtime: null, reason: "missing_bearer" };
+    return { runtime: null, claims: null, reason: "missing_bearer" };
   }
 
   const claims = runtimeJwtIssuer.verifyRuntimeJwt({
@@ -233,7 +273,7 @@ function authorizeProviderMcpRequest(
       `${config.runtimeJwtIssuer}/mcp`
   });
   if (!claims) {
-    return { runtime: null, reason: "invalid_jwt" };
+    return { runtime: null, claims: null, reason: "invalid_jwt" };
   }
 
   const runtime = store.getAgentRuntime(claims.runtime_id);
@@ -242,10 +282,66 @@ function authorizeProviderMcpRequest(
     runtime.workspaceId !== claims.workspace_id ||
     runtime.slackUserId !== claims.slack_user_id
   ) {
-    return { runtime: null, reason: "invalid_jwt" };
+    return { runtime: null, claims: null, reason: "invalid_jwt" };
   }
 
-  return { runtime };
+  return { runtime, claims };
+}
+
+function enabledToolsForClaims(
+  manifest: RuntimeManifest,
+  claims: RuntimeJwtClaims | null
+): ReadonlySet<string> {
+  const enabledTools = enabledManifestToolNames(manifest);
+  if (!claims?.allowed_tools) {
+    return enabledTools;
+  }
+  return new Set(
+    claims.allowed_tools.filter((toolName) => enabledTools.has(toolName))
+  );
+}
+
+async function validateJobScopedProviderMcpToolAccess(
+  request: Request,
+  store: TokenStore,
+  runtime: AgentRuntimeRecord,
+  claims: RuntimeJwtClaims | null,
+  enabledTools: ReadonlySet<string>
+): Promise<{ response: Response | null }> {
+  if (!claims?.allowed_tools || request.method !== "POST") {
+    return { response: null };
+  }
+
+  let payload: unknown;
+  try {
+    payload = await request.clone().json();
+  } catch {
+    return { response: null };
+  }
+
+  const call = readJsonRpcToolCall(payload);
+  if (!call || enabledTools.has(call.name)) {
+    return { response: null };
+  }
+
+  store.recordAgentRuntimeEvent({
+    runtimeId: runtime.id,
+    eventType: "runtime_tool_called",
+    summary: {
+      tool: call.name,
+      allowed: false,
+      reason: "job_scope_denied",
+      jobId: claims.job_id ?? null
+    }
+  });
+
+  return {
+    response: mcpJsonRpcErrorResponse(
+      readJsonRpcId(payload),
+      -32020,
+      `Tool ${call.name} is not available to this job.`
+    )
+  };
 }
 
 function readBearerToken(request: Request): string | null {
@@ -261,7 +357,8 @@ function readBearerToken(request: Request): string | null {
 async function validateProviderMcpRoute(
   request: Request,
   store: TokenStore,
-  runtime: AgentRuntimeRecord
+  runtime: AgentRuntimeRecord,
+  manifest: RuntimeManifest
 ): Promise<{ request: Request; response: Response | null }> {
   if (request.method !== "POST") {
     return { request, response: null };
@@ -274,9 +371,25 @@ async function validateProviderMcpRoute(
     return { request, response: null };
   }
 
+  const confirmationValidation = validateProviderMcpConfirmation(
+    payload,
+    manifest
+  );
+  if (confirmationValidation.response) {
+    return {
+      request,
+      response: confirmationValidation.response
+    };
+  }
+
   const routeId = readProviderMcpRouteId(payload);
   if (!routeId) {
-    return { request, response: null };
+    return {
+      request: confirmationValidation.request
+        ? replaceRequestJsonBody(request, confirmationValidation.request)
+        : request,
+      response: null
+    };
   }
 
   const route = store.getConversationRoute(routeId);
@@ -321,7 +434,62 @@ async function validateProviderMcpRoute(
   }
 
   return {
-    request: replaceRequestJsonBody(request, stripProviderMcpRouteId(payload)),
+    request: replaceRequestJsonBody(
+      request,
+      stripProviderMcpRouteId(confirmationValidation.request ?? payload)
+    ),
+    response: null
+  };
+}
+
+function validateProviderMcpConfirmation(
+  payload: unknown,
+  manifest: RuntimeManifest
+): { request: unknown | null; response: Response | null } {
+  const call = readJsonRpcToolCall(payload);
+  if (!call) {
+    return { request: null, response: null };
+  }
+
+  const tool = manifest.tools.find((entry) => entry.name === call.name);
+  if (!tool || !tool.enabled || tool.confirmation === "none") {
+    return {
+      request: stripProviderMcpConfirmation(payload),
+      response: null
+    };
+  }
+
+  const confirmation = readProviderMcpConfirmation(payload);
+  if (!confirmation) {
+    return {
+      request: null,
+      response: mcpJsonRpcErrorResponse(
+        readJsonRpcId(payload),
+        -32010,
+        `Tool ${call.name} requires ${tool.confirmation} confirmation.`
+      )
+    };
+  }
+
+  if (
+    confirmation.policyHash !== manifest.policyHash ||
+    confirmation.tool !== call.name ||
+    (tool.confirmation === "strong"
+      ? confirmation.level !== "strong"
+      : confirmation.level !== "explicit" && confirmation.level !== "strong")
+  ) {
+    return {
+      request: null,
+      response: mcpJsonRpcErrorResponse(
+        readJsonRpcId(payload),
+        -32011,
+        `Tool ${call.name} confirmation does not match the active runtime policy.`
+      )
+    };
+  }
+
+  return {
+    request: stripProviderMcpConfirmation(payload),
     response: null
   };
 }
@@ -356,12 +524,76 @@ function stripProviderMcpRouteId(payload: unknown): unknown {
   };
 }
 
+function readProviderMcpConfirmation(payload: unknown): {
+  tool: string;
+  policyHash: string;
+  level: "explicit" | "strong";
+} | null {
+  if (!isJsonRpcToolCall(payload)) {
+    return null;
+  }
+  const args = payload.params.arguments;
+  if (!args || typeof args !== "object" || Array.isArray(args)) {
+    return null;
+  }
+  const confirmation = (args as Record<string, unknown>).confirmation;
+  if (
+    !confirmation ||
+    typeof confirmation !== "object" ||
+    Array.isArray(confirmation)
+  ) {
+    return null;
+  }
+  const record = confirmation as Record<string, unknown>;
+  if (
+    typeof record.tool === "string" &&
+    typeof record.policyHash === "string" &&
+    (record.level === "explicit" || record.level === "strong")
+  ) {
+    return {
+      tool: record.tool,
+      policyHash: record.policyHash,
+      level: record.level
+    };
+  }
+  return null;
+}
+
+function stripProviderMcpConfirmation(payload: unknown): unknown {
+  if (!isJsonRpcToolCall(payload)) {
+    return payload;
+  }
+  const args = payload.params.arguments;
+  if (!args || typeof args !== "object" || Array.isArray(args)) {
+    return payload;
+  }
+  const {
+    confirmation: _confirmation,
+    ...rest
+  } = args as Record<string, unknown>;
+  return {
+    ...payload,
+    params: {
+      ...payload.params,
+      arguments: rest
+    }
+  };
+}
+
+function readJsonRpcToolCall(payload: unknown): { name: string } | null {
+  if (!isJsonRpcToolCall(payload)) {
+    return null;
+  }
+  const name = payload.params.name;
+  return typeof name === "string" && name.trim() ? { name } : null;
+}
+
 function isJsonRpcToolCall(
   payload: unknown
 ): payload is {
   id?: unknown;
   method: "tools/call";
-  params: { arguments?: unknown };
+  params: { name?: unknown; arguments?: unknown };
 } {
   return (
     typeof payload === "object" &&

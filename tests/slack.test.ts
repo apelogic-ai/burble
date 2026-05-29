@@ -1,11 +1,19 @@
 import { describe, expect, test } from "bun:test";
 import {
+  applyAgentRuntimeControl,
+  applyAgentUserConfigSet,
+  buildAgentConfigRuntimeRestartFailureResponse,
+  buildAgentConfigRuntimeRestartResponse,
+  buildAgentConfigModalView,
   buildAgentConfigResponse,
   buildAgentCommandHelpResponse,
+  buildAgentUserConfigGetResponse,
   buildAgentExecLoadingResponse,
   buildAgentExecMissingTaskResponse,
   buildAgentStatusResponse,
   buildAppHomeView,
+  buildAgentHomeSettings,
+  buildAgentRuntimeManageModalView,
   buildAuthResponse,
   buildHelpResponse,
   formatAgentProgressEvent,
@@ -17,12 +25,15 @@ import {
   formatWorkingMessage,
   formatIssuesMessage,
   formatMentionWorkingMessage,
+  isDirectMessageSlashCommand,
   parseAgentCommand,
   parseAuthCommand,
+  restartAgentRuntimeIfConfigChanged,
   shouldHandleDirectMessageEvent,
   summarizeSlackPayload
 } from "../src/slack";
 import type { Config } from "../src/config";
+import { createTokenStore } from "../src/db";
 
 const agentConfig: Config = {
   slackBotToken: "xoxb-test",
@@ -247,6 +258,25 @@ describe("parseAgentCommand", () => {
     expect(parseAgentCommand("config")).toEqual({ kind: "config" });
     expect(parseAgentCommand("configuration")).toEqual({ kind: "config" });
     expect(parseAgentCommand("runtime config")).toEqual({ kind: "config" });
+    expect(parseAgentCommand("config get model")).toEqual({
+      kind: "config_get",
+      key: "model"
+    });
+    expect(parseAgentCommand("config get")).toEqual({ kind: "config_get" });
+    expect(parseAgentCommand("get memory")).toEqual({
+      kind: "config_get",
+      key: "memory"
+    });
+    expect(parseAgentCommand("config set model gpt-5.4-mini")).toEqual({
+      kind: "config_set",
+      key: "model",
+      value: "gpt-5.4-mini"
+    });
+    expect(parseAgentCommand("set memory off")).toEqual({
+      kind: "config_set",
+      key: "memory",
+      value: "off"
+    });
   });
 
   test("routes exec tasks", () => {
@@ -337,6 +367,24 @@ describe("buildAuthResponse", () => {
 
 describe("buildAppHomeView", () => {
   test("builds a Block Kit Home tab with provider statuses and connect buttons", () => {
+    const store = createTokenStore(":memory:");
+    store.getOrCreateAgentRuntime({
+      workspaceId: "T123",
+      slackUserId: "U123",
+      engine: "burble-direct",
+      endpointUrl: "http://runtime:8080",
+      authTokenHash: "hash",
+      statePath: "/data/state",
+      configPath: "/data/config/runtime.json",
+      workspacePath: "/data/workspace",
+      policyHash: "policy-home"
+    });
+    const agentSettings = buildAgentHomeSettings({
+      config: agentConfig,
+      store,
+      workspaceId: "T123",
+      slackUserId: "U123"
+    });
     const view = buildAppHomeView({
       githubUrl: "https://example.test/github",
       googleUrl: "https://example.test/google",
@@ -361,7 +409,8 @@ describe("buildAppHomeView", () => {
           connectedAt: "2026-05-26T00:00:00.000Z"
         },
         slack: null
-      }
+      },
+      agentSettings
     });
     const serialized = JSON.stringify(view);
 
@@ -374,6 +423,154 @@ describe("buildAppHomeView", () => {
     expect(serialized).toContain("Connected as `person@example.com`");
     expect(serialized).toContain("Not connected");
     expect(serialized).toContain("https://example.test/google");
+    expect(serialized).toContain("Agent runtime");
+    expect(serialized).toContain("Details");
+    expect(serialized).toContain("agent_runtime_manage");
+    expect(serialized).toContain("agent_runtime_pause");
+    expect(serialized).toContain("agent_runtime_restart");
+    expect(serialized).toContain("Agent settings");
+    expect(serialized).toContain("Edit settings");
+    expect(serialized).toContain("agent_config_edit");
+    expect(serialized).toContain("openai:gpt-5.4");
+  });
+
+  test("builds an agent settings modal from effective config", () => {
+    const store = createTokenStore(":memory:");
+    store.upsertUserPreference({
+      workspaceId: "T123",
+      slackUserId: "U123",
+      key: "memory.user",
+      value: { enabled: true }
+    });
+    const view = buildAgentConfigModalView({
+      config: agentConfig,
+      store,
+      workspaceId: "T123",
+      slackUserId: "U123"
+    });
+    const serialized = JSON.stringify(view);
+
+    expect(view.type).toBe("modal");
+    expect(serialized).toContain("agent_config_submit");
+    expect(serialized).toContain("agent_config_model");
+    expect(serialized).toContain("openai:gpt-5.4");
+    expect(serialized).toContain("agent_config_memory");
+    expect(serialized).toContain("\"value\":\"on\"");
+  });
+
+  test("builds an agent runtime management modal", () => {
+    const store = createTokenStore(":memory:");
+    const runtime = store.getOrCreateAgentRuntime({
+      workspaceId: "T123",
+      slackUserId: "U123",
+      engine: "burble-direct",
+      endpointUrl: "http://runtime:8080",
+      authTokenHash: "hash",
+      statePath: "/data/state",
+      configPath: "/data/config/runtime.json",
+      workspacePath: "/data/workspace",
+      policyHash: "policy-modal"
+    });
+    const view = buildAgentRuntimeManageModalView({
+      config: agentConfig,
+      store,
+      workspaceId: "T123",
+      slackUserId: "U123"
+    });
+    const serialized = JSON.stringify(view);
+
+    expect(view.type).toBe("modal");
+    expect(serialized).toContain("Agent runtime");
+    expect(serialized).toContain(runtime.id);
+    expect(serialized).toContain("http://runtime:8080");
+    expect(serialized).toContain("openai:gpt-5.4");
+    expect(serialized).toContain("Policy hash");
+  });
+
+  test("starts, pauses, and restarts the current agent runtime", async () => {
+    const store = createTokenStore(":memory:");
+    const stopped: string[] = [];
+    const started: string[] = [];
+    let nextRuntimeId = 1;
+    const runtimeFactory = {
+      async getOrCreateRuntime(principal: {
+        workspaceId: string;
+        slackUserId: string;
+      }) {
+        started.push(`${principal.workspaceId}:${principal.slackUserId}`);
+        return {
+          id: `rt_${nextRuntimeId++}`,
+          engine: "burble-direct" as const,
+          endpointUrl: "http://runtime:8080",
+          authToken: "token",
+          status: "ready" as const,
+          statePath: "/data/state",
+          configPath: "/data/config/runtime.json",
+          workspacePath: "/data/workspace"
+        };
+      },
+      async stopRuntime(runtimeId: string) {
+        stopped.push(runtimeId);
+        store.updateAgentRuntimeStatus(runtimeId, { status: "stopped" });
+      },
+      async reapIdleRuntimes() {}
+    };
+
+    const startedResult = await applyAgentRuntimeControl({
+      config: agentConfig,
+      store,
+      runtimeFactory,
+      workspaceId: "T123",
+      slackUserId: "U123",
+      action: "start"
+    });
+    expect(startedResult).toMatchObject({
+      action: "start",
+      runtimeId: "rt_1",
+      status: "ready"
+    });
+
+    const runtime = store.getOrCreateAgentRuntime({
+      workspaceId: "T123",
+      slackUserId: "U123",
+      engine: "burble-direct",
+      endpointUrl: "http://runtime:8080",
+      authTokenHash: "hash",
+      statePath: "/data/state",
+      configPath: "/data/config/runtime.json",
+      workspacePath: "/data/workspace",
+      policyHash: "policy"
+    });
+
+    const pausedResult = await applyAgentRuntimeControl({
+      config: agentConfig,
+      store,
+      runtimeFactory,
+      workspaceId: "T123",
+      slackUserId: "U123",
+      action: "pause"
+    });
+    expect(pausedResult).toMatchObject({
+      action: "pause",
+      runtimeId: runtime.id,
+      status: "stopped"
+    });
+
+    const restartedResult = await applyAgentRuntimeControl({
+      config: agentConfig,
+      store,
+      runtimeFactory,
+      workspaceId: "T123",
+      slackUserId: "U123",
+      action: "restart"
+    });
+    expect(restartedResult).toMatchObject({
+      action: "restart",
+      runtimeId: "rt_2",
+      status: "ready"
+    });
+    expect(started).toEqual(["T123:U123", "T123:U123"]);
+    expect(stopped).toEqual([runtime.id]);
   });
 });
 
@@ -445,6 +642,7 @@ describe("buildAgentStatusResponse", () => {
         statePath: "/data/state",
         configPath: "/data/config/runtime.json",
         workspacePath: "/data/workspace",
+        policyHash: "policy-hash",
         createdAt: "2026-05-26T00:00:00.000Z",
         lastSeenAt: "2026-05-26T00:01:00.000Z",
         lastUsedAt: "2026-05-26T00:02:00.000Z",
@@ -474,6 +672,7 @@ describe("buildAgentConfigResponse", () => {
       statePath: "/data/state",
       configPath: "/data/config/runtime.json",
       workspacePath: "/data/workspace",
+      policyHash: "policy-hash",
       createdAt: "2026-05-26T00:00:00.000Z",
       lastSeenAt: "2026-05-26T00:01:00.000Z",
       lastUsedAt: "2026-05-26T00:02:00.000Z",
@@ -520,6 +719,7 @@ describe("buildAgentConfigResponse", () => {
       statePath: "/data/state",
       configPath: "/host/runtime.json",
       workspacePath: "/data/workspace",
+      policyHash: "policy-hash",
       createdAt: "2026-05-26T00:00:00.000Z",
       lastSeenAt: "2026-05-26T00:01:00.000Z",
       lastUsedAt: "2026-05-26T00:02:00.000Z",
@@ -545,6 +745,213 @@ describe("buildAgentConfigResponse", () => {
 
     expect(configFile.path).toBe("/host/runtime.json");
     expect(configFile.redactedText).toContain("factory");
+  });
+});
+
+describe("agent user config commands", () => {
+  test("sets and reads user model and memory preferences", () => {
+    const store = createTokenStore(":memory:");
+
+    const modelResponse = applyAgentUserConfigSet({
+      config: agentConfig,
+      store,
+      workspaceId: "T123",
+      slackUserId: "U123",
+      key: "model",
+      value: "gpt-5.4-mini"
+    });
+    expect(modelResponse.text).toContain("Updated `model`");
+    expect(
+      store.getUserPreference("T123", "U123", "runtime.model")?.value
+    ).toBe("openai:gpt-5.4-mini");
+
+    const memoryResponse = applyAgentUserConfigSet({
+      config: agentConfig,
+      store,
+      workspaceId: "T123",
+      slackUserId: "U123",
+      key: "memory",
+      value: "on"
+    });
+    expect(memoryResponse.text).toContain("Updated `memory`");
+    expect(
+      store.getUserPreference("T123", "U123", "memory.user")?.value
+    ).toEqual({ enabled: true });
+
+    const getResponse = buildAgentUserConfigGetResponse({
+      config: agentConfig,
+      store,
+      workspaceId: "T123",
+      slackUserId: "U123"
+    });
+    expect(getResponse.text).toContain("openai:gpt-5.4-mini");
+    expect(getResponse.text).toContain("User memory: `on`");
+  });
+
+  test("supports disabling and enabling a user-scoped tool", () => {
+    const store = createTokenStore(":memory:");
+
+    const disableResponse = applyAgentUserConfigSet({
+      config: agentConfig,
+      store,
+      workspaceId: "T123",
+      slackUserId: "U123",
+      key: "disable-tool",
+      value: "github_create_pr"
+    });
+    expect(disableResponse.text).toContain("Disabled tool `github_create_pr`");
+    expect(
+      store.getUserPreference("T123", "U123", "tools.disabled")?.value
+    ).toEqual(["github_create_pr"]);
+
+    const enableResponse = applyAgentUserConfigSet({
+      config: agentConfig,
+      store,
+      workspaceId: "T123",
+      slackUserId: "U123",
+      key: "enable-tool",
+      value: "github_create_pr"
+    });
+    expect(enableResponse.text).toContain("Enabled tool `github_create_pr`");
+    expect(
+      store.getUserPreference("T123", "U123", "tools.disabled")?.value
+    ).toEqual([]);
+  });
+
+  test("rejects unsupported user config keys", () => {
+    const store = createTokenStore(":memory:");
+    const response = applyAgentUserConfigSet({
+      config: agentConfig,
+      store,
+      workspaceId: "T123",
+      slackUserId: "U123",
+      key: "workspace.policy",
+      value: "anything"
+    });
+
+    expect(response.text).toContain("Unknown user config key");
+  });
+
+  test("restarts the current runtime when user config changes the manifest hash", async () => {
+    const store = createTokenStore(":memory:");
+    const runtime = store.getOrCreateAgentRuntime({
+      workspaceId: "T123",
+      slackUserId: "U123",
+      engine: "burble-direct",
+      endpointUrl: "http://runtime:8080",
+      authTokenHash: "hash",
+      statePath: "/data/state",
+      configPath: "/data/config/runtime.json",
+      workspacePath: "/data/workspace",
+      policyHash: "policy-old"
+    });
+    const stopped: string[] = [];
+    const started: string[] = [];
+
+    const restart = await restartAgentRuntimeIfConfigChanged({
+      config: agentConfig,
+      store,
+      runtimeFactory: {
+        async getOrCreateRuntime(principal) {
+          started.push(`${principal.workspaceId}:${principal.slackUserId}`);
+          return {
+            id: "rt_fresh",
+            engine: "burble-direct",
+            endpointUrl: "http://runtime:8080",
+            authToken: "token",
+            status: "ready",
+            statePath: "/data/state",
+            configPath: "/data/config/runtime.json",
+            workspacePath: "/data/workspace"
+          };
+        },
+        async stopRuntime(runtimeId) {
+          stopped.push(runtimeId);
+        },
+        async reapIdleRuntimes() {}
+      },
+      principal: { workspaceId: "T123", slackUserId: "U123" },
+      previousPolicyHash: "policy-old",
+      nextPolicyHash: "policy-new"
+    });
+
+    expect(restart).toEqual({
+      stoppedRuntimeId: runtime.id,
+      startedRuntimeId: "rt_fresh"
+    });
+    expect(stopped).toEqual([runtime.id]);
+    expect(started).toEqual(["T123:U123"]);
+  });
+
+  test("does not stop runtime when user config keeps the same manifest hash", async () => {
+    const store = createTokenStore(":memory:");
+    store.getOrCreateAgentRuntime({
+      workspaceId: "T123",
+      slackUserId: "U123",
+      engine: "burble-direct",
+      endpointUrl: "http://runtime:8080",
+      authTokenHash: "hash",
+      statePath: "/data/state",
+      configPath: "/data/config/runtime.json",
+      workspacePath: "/data/workspace",
+      policyHash: "policy-old"
+    });
+    const stopped: string[] = [];
+
+    const restart = await restartAgentRuntimeIfConfigChanged({
+      config: agentConfig,
+      store,
+      runtimeFactory: {
+        async getOrCreateRuntime() {
+          throw new Error("not used");
+        },
+        async stopRuntime(runtimeId) {
+          stopped.push(runtimeId);
+        },
+        async reapIdleRuntimes() {}
+      },
+      principal: { workspaceId: "T123", slackUserId: "U123" },
+      previousPolicyHash: "policy-old",
+      nextPolicyHash: "policy-old"
+    });
+
+    expect(restart).toBeNull();
+    expect(stopped).toEqual([]);
+  });
+
+  test("formats runtime restart status after config changes", () => {
+    expect(
+      buildAgentConfigRuntimeRestartResponse({
+        stoppedRuntimeId: "rt_old",
+        startedRuntimeId: "rt_123"
+      }).text
+    ).toContain(
+      "Agent runtime restarted"
+    );
+    expect(buildAgentConfigRuntimeRestartResponse(null).text).toContain(
+      "No live agent runtime"
+    );
+
+    const failure = buildAgentConfigRuntimeRestartFailureResponse(
+      new Error("docker unavailable")
+    );
+    expect(failure.text).toContain("Config saved");
+    expect(failure.text).toContain("docker unavailable");
+  });
+
+  test("detects direct-message slash commands for visible config replies", () => {
+    expect(
+      isDirectMessageSlashCommand({
+        channel_id: "D123",
+        channel_name: "directmessage"
+      })
+    ).toBe(true);
+    expect(
+      isDirectMessageSlashCommand({
+        channel_id: "C123",
+        channel_name: "general"
+      })
+    ).toBe(false);
   });
 });
 

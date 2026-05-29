@@ -21,6 +21,8 @@ export type RuntimeJwtClaims = {
   runtime_id: string;
   workspace_id: string;
   slack_user_id: string;
+  job_id?: string;
+  allowed_tools?: string[];
 };
 
 export function createRuntimeJwtIssuer(input: {
@@ -54,6 +56,8 @@ export function createRuntimeJwtIssuer(input: {
       runtimeId: string;
       workspaceId: string;
       slackUserId: string;
+      jobId?: string;
+      allowedTools?: string[];
       ttlSeconds?: number;
     }): string {
       const issuedAt = Math.floor(now().getTime() / 1000);
@@ -65,7 +69,11 @@ export function createRuntimeJwtIssuer(input: {
         exp: issuedAt + (claims.ttlSeconds ?? 60 * 60),
         runtime_id: claims.runtimeId,
         workspace_id: claims.workspaceId,
-        slack_user_id: claims.slackUserId
+        slack_user_id: claims.slackUserId,
+        ...(claims.jobId ? { job_id: claims.jobId } : {}),
+        ...(claims.allowedTools
+          ? { allowed_tools: [...new Set(claims.allowedTools)].sort() }
+          : {})
       };
 
       const signingInput = `${base64UrlJson({
@@ -191,6 +199,10 @@ function isRuntimeJwtClaims(value: unknown): value is RuntimeJwtClaims {
     typeof record.exp === "number" &&
     typeof record.runtime_id === "string" &&
     typeof record.workspace_id === "string" &&
-    typeof record.slack_user_id === "string"
+    typeof record.slack_user_id === "string" &&
+    (!("job_id" in record) || typeof record.job_id === "string") &&
+    (!("allowed_tools" in record) ||
+      (Array.isArray(record.allowed_tools) &&
+        record.allowed_tools.every((tool) => typeof tool === "string")))
   );
 }

@@ -12,6 +12,8 @@ tools:
     implementation: callMcpTool
     title: Atlassian MCP allowed tool call
     description: Call an allowlisted upstream Atlassian MCP tool with this Slack user's connected Jira identity.
+    risk: moderate_write
+    confirmation: none
     input:
       name:
         type: string

@@ -1,4 +1,5 @@
 import { App, LogLevel } from "@slack/bolt";
+import type { View } from "@slack/types";
 import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import type { Config } from "./config";
@@ -38,7 +39,12 @@ import {
   searchSlackMessages,
   searchSlackUsers
 } from "./providers/slack/client";
-import type { AgentRuntimeRecord, ProviderConnection, TokenStore } from "./db";
+import type {
+  AgentRuntimeRecord,
+  AgentRuntimeStatus,
+  ProviderConnection,
+  TokenStore
+} from "./db";
 import { handleConversation } from "./conversation/orchestrator";
 import { normalizeMentionText } from "./conversation/normalize";
 import type {
@@ -53,7 +59,9 @@ import {
   type AgentRunEvent,
   type AgentUsage
 } from "./agent/types";
+import { validateAgentModelId } from "./agent/providers";
 import { createDockerRuntimeFactory } from "./agent/container-runtime-factory";
+import { buildRuntimeManifestForPrincipal } from "./agent/runtime-policy";
 import { createStaticRuntimeFactory } from "./agent/runtime-factory";
 import type { RuntimeFactory } from "./agent/runtime-factory";
 import { createGitHubTools } from "./tools/github";
@@ -243,7 +251,53 @@ export function createSlackRuntime(
   const resolveAgentExecutionMode = (): "openclaw-native" | undefined =>
     config.agentRuntime === "openclaw-nemoclaw" ? "openclaw-native" : undefined;
 
-  app.event("app_home_opened", async ({ event, client, logger }) => {
+  const buildHomeViewForUser = (input: {
+    workspaceId: string;
+    slackUserId: string;
+  }) =>
+    buildAppHomeView({
+      githubUrl: buildGitHubOAuthUrl(
+        config,
+        store.createOAuthState(input.slackUserId)
+      ),
+      googleUrl: tryBuildGoogleOAuthUrl(
+        config,
+        store.createOAuthState(input.slackUserId)
+      ),
+      jiraUrl: tryBuildJiraOAuthUrl(
+        config,
+        store.createOAuthState(input.slackUserId)
+      ),
+      slackUrl: tryBuildSlackOAuthUrl(
+        config,
+        store.createOAuthState(input.slackUserId)
+      ),
+      connections: {
+        github: store.getConnectionForSlackUser("github", input.slackUserId),
+        google: store.getConnectionForSlackUser("google", input.slackUserId),
+        jira: store.getConnectionForSlackUser("jira", input.slackUserId),
+        slack: store.getConnectionForSlackUser("slack", input.slackUserId)
+      },
+      agentSettings: buildAgentHomeSettings({
+        config,
+        store,
+        workspaceId: input.workspaceId,
+        slackUserId: input.slackUserId
+      })
+    });
+
+  const publishHomeViewForUser = async (input: {
+    client: SlackViewsPublishClient;
+    workspaceId: string;
+    slackUserId: string;
+  }) => {
+    await input.client.views.publish({
+      user_id: input.slackUserId,
+      view: buildHomeViewForUser(input)
+    });
+  };
+
+  app.event("app_home_opened", async ({ body, event, client, logger }) => {
     const homeEvent = event as { user?: string };
     if (!homeEvent.user) {
       logger.warn(withUtcTimestamp("Ignoring malformed app_home_opened event"));
@@ -254,32 +308,170 @@ export function createSlackRuntime(
       logger.info(
         withUtcTimestamp(`Publishing App Home for ${homeEvent.user}`)
       );
-      await client.views.publish({
-        user_id: homeEvent.user,
-        view: buildAppHomeView({
-          githubUrl: buildGitHubOAuthUrl(
-            config,
-            store.createOAuthState(homeEvent.user)
-          ),
-          googleUrl: tryBuildGoogleOAuthUrl(
-            config,
-            store.createOAuthState(homeEvent.user)
-          ),
-          jiraUrl: tryBuildJiraOAuthUrl(
-            config,
-            store.createOAuthState(homeEvent.user)
-          ),
-          slackUrl: tryBuildSlackOAuthUrl(
-            config,
-            store.createOAuthState(homeEvent.user)
-          ),
-          connections: {
-            github: store.getConnectionForSlackUser("github", homeEvent.user),
-            google: store.getConnectionForSlackUser("google", homeEvent.user),
-            jira: store.getConnectionForSlackUser("jira", homeEvent.user),
-            slack: store.getConnectionForSlackUser("slack", homeEvent.user)
-          }
+      await publishHomeViewForUser({
+        client,
+        workspaceId:
+          slackWorkspaceIdFromBody(body) || slackWorkspaceIdFromBody(event),
+        slackUserId: homeEvent.user
+      });
+    } catch (error) {
+      logger.error(formatLogError(error));
+    }
+  });
+
+  app.action("agent_config_edit", async ({ ack, body, client, logger }) => {
+    await ack();
+    const context = slackInteractionContext(body);
+    if (!context?.triggerId) {
+      logger.warn(withUtcTimestamp("Ignoring config edit action without trigger"));
+      return;
+    }
+
+    try {
+      await client.views.open({
+        trigger_id: context.triggerId,
+        view: buildAgentConfigModalView({
+          config,
+          store,
+          workspaceId: context.workspaceId,
+          slackUserId: context.slackUserId
         })
+      });
+    } catch (error) {
+      logger.error(formatLogError(error));
+    }
+  });
+
+  app.action("agent_runtime_manage", async ({ ack, body, client, logger }) => {
+    await ack();
+    const context = slackInteractionContext(body);
+    if (!context?.triggerId) {
+      logger.warn(withUtcTimestamp("Ignoring runtime manage action without trigger"));
+      return;
+    }
+
+    try {
+      await client.views.open({
+        trigger_id: context.triggerId,
+        view: buildAgentRuntimeManageModalView({
+          config,
+          store,
+          workspaceId: context.workspaceId,
+          slackUserId: context.slackUserId
+        })
+      });
+    } catch (error) {
+      logger.error(formatLogError(error));
+    }
+  });
+
+  const handleRuntimeControlAction = async (
+    action: AgentRuntimeControlAction,
+    body: unknown,
+    client: SlackViewsPublishClient,
+    logger: { warn(message: string): void; error(message: string): void }
+  ) => {
+    const context = slackInteractionContext(body);
+    if (!context) {
+      logger.warn(withUtcTimestamp(`Ignoring runtime ${action} action without context`));
+      return;
+    }
+
+    try {
+      await applyAgentRuntimeControl({
+        config,
+        store,
+        runtimeFactory,
+        workspaceId: context.workspaceId,
+        slackUserId: context.slackUserId,
+        action
+      });
+      await publishHomeViewForUser({
+        client,
+        workspaceId: context.workspaceId,
+        slackUserId: context.slackUserId
+      });
+    } catch (error) {
+      logger.error(formatLogError(error));
+    }
+  };
+
+  app.action("agent_runtime_start", async ({ ack, body, client, logger }) => {
+    await ack();
+    await handleRuntimeControlAction("start", body, client, logger);
+  });
+
+  app.action("agent_runtime_pause", async ({ ack, body, client, logger }) => {
+    await ack();
+    await handleRuntimeControlAction("pause", body, client, logger);
+  });
+
+  app.action("agent_runtime_restart", async ({ ack, body, client, logger }) => {
+    await ack();
+    await handleRuntimeControlAction("restart", body, client, logger);
+  });
+
+  app.view("agent_config_submit", async ({ ack, body, client, logger }) => {
+    const context = slackViewSubmissionContext(body);
+    if (!context) {
+      await ack({
+        response_action: "errors",
+        errors: {
+          agent_config_model: "Missing Slack user context."
+        }
+      });
+      return;
+    }
+
+    const parsed = parseAgentConfigModalSubmission(body);
+    if (!parsed.ok) {
+      await ack({
+        response_action: "errors",
+        errors: parsed.errors
+      });
+      return;
+    }
+
+    const principal = {
+      workspaceId: context.workspaceId,
+      slackUserId: context.slackUserId
+    };
+    const previousPolicyHash = buildRuntimeManifestForPrincipal({
+      config,
+      store,
+      principal,
+      engine: config.openClawNemoClawEngine
+    }).policyHash;
+    applyAgentConfigModalValues({
+      store,
+      principal,
+      values: parsed.values
+    });
+    const nextPolicyHash = buildRuntimeManifestForPrincipal({
+      config,
+      store,
+      principal,
+      engine: config.openClawNemoClawEngine
+    }).policyHash;
+
+    await ack({
+      response_action: "update",
+      view: buildAgentConfigSavedModalView(previousPolicyHash !== nextPolicyHash)
+    });
+
+    try {
+      await publishHomeViewForUser({
+        client,
+        workspaceId: context.workspaceId,
+        slackUserId: context.slackUserId
+      });
+      await restartAgentRuntimeIfConfigChanged({
+        config,
+        store,
+        runtimeFactory,
+        principal,
+        previousPolicyHash,
+        nextPolicyHash
       });
     } catch (error) {
       logger.error(formatLogError(error));
@@ -813,6 +1005,87 @@ export function createSlackRuntime(
         return;
       }
 
+      if (action.kind === "config_get") {
+        await ack(
+          withDirectMessageSlashCommandVisibility(
+            buildAgentUserConfigGetResponse({
+              config,
+              store,
+              workspaceId: body.team_id ?? "",
+              slackUserId: body.user_id,
+              key: action.key
+            }),
+            body
+          )
+        );
+        return;
+      }
+
+      if (action.kind === "config_set") {
+        const principal = {
+          workspaceId: body.team_id ?? "",
+          slackUserId: body.user_id
+        };
+        const previousPolicyHash = buildRuntimeManifestForPrincipal({
+          config,
+          store,
+          principal,
+          engine: config.openClawNemoClawEngine
+        }).policyHash;
+        const response = applyAgentUserConfigSet({
+          config,
+          store,
+          workspaceId: principal.workspaceId,
+          slackUserId: principal.slackUserId,
+          key: action.key,
+          value: action.value
+        });
+        const nextPolicyHash = buildRuntimeManifestForPrincipal({
+          config,
+          store,
+          principal,
+          engine: config.openClawNemoClawEngine
+        }).policyHash;
+        const policyChanged = previousPolicyHash !== nextPolicyHash;
+        await ack(
+          withDirectMessageSlashCommandVisibility(
+            addAgentConfigRuntimeRestartNotice(
+              response,
+              policyChanged
+            ),
+            body
+          )
+        );
+        if (!policyChanged) {
+          return;
+        }
+        try {
+          const restartedRuntimeId = await restartAgentRuntimeIfConfigChanged({
+            config,
+            store,
+            runtimeFactory,
+            principal,
+            previousPolicyHash,
+            nextPolicyHash
+          });
+          await respond(
+            withDirectMessageSlashCommandVisibility(
+              buildAgentConfigRuntimeRestartResponse(restartedRuntimeId),
+              body
+            )
+          );
+        } catch (error) {
+          logger.error(formatLogError(error));
+          await respond(
+            withDirectMessageSlashCommandVisibility(
+              buildAgentConfigRuntimeRestartFailureResponse(error),
+              body
+            )
+          );
+        }
+        return;
+      }
+
       if (action.kind === "exec_list") {
         await ack(
           buildAgentExecTaskListResponse(
@@ -1233,7 +1506,14 @@ function createOpenClawRuntimeFactory(
       runtimeTokenSecret: config.agentRuntimeTokenSecret,
       openClawConfigPatchPath: config.openClawConfigPatchHostPath,
       idleTtlMs: config.agentRuntimeIdleTtlMs,
-      env: Bun.env
+      env: Bun.env,
+      buildManifest: (principal) =>
+        buildRuntimeManifestForPrincipal({
+          config,
+          store,
+          principal,
+          engine: config.openClawNemoClawEngine
+        })
     });
   }
 
@@ -1246,7 +1526,14 @@ function createOpenClawRuntimeFactory(
     engine: config.openClawNemoClawEngine,
     endpointUrl: config.openClawNemoClawUrl,
     authToken: config.internalApiToken ?? "",
-    dataRoot: config.agentRuntimeDataRoot
+    dataRoot: config.agentRuntimeDataRoot,
+    buildManifest: (principal) =>
+      buildRuntimeManifestForPrincipal({
+        config,
+        store,
+        principal,
+        engine: config.openClawNemoClawEngine
+      })
   });
 }
 
@@ -1336,6 +1623,8 @@ export type AgentCommand =
   | { kind: "help" }
   | { kind: "status" }
   | { kind: "config" }
+  | { kind: "config_get"; key?: string }
+  | { kind: "config_set"; key: string; value: string }
   | { kind: "exec_list" }
   | { kind: "exec_inspect"; taskId: string }
   | { kind: "exec_stop"; taskId: string }
@@ -1358,6 +1647,25 @@ export function parseAgentCommand(text: string): AgentCommand {
     normalized === "runtime config"
   ) {
     return { kind: "config" };
+  }
+
+  const configGetMatch = /^(?:config\s+get|get)(?:\s+([\s\S]*))?$/i.exec(
+    trimmed
+  );
+  if (configGetMatch) {
+    const key = configGetMatch[1]?.trim();
+    return key ? { kind: "config_get", key } : { kind: "config_get" };
+  }
+
+  const configSetMatch = /^(?:config\s+set|set)\s+(\S+)(?:\s+([\s\S]*))?$/i.exec(
+    trimmed
+  );
+  if (configSetMatch) {
+    return {
+      kind: "config_set",
+      key: configSetMatch[1],
+      value: configSetMatch[2]?.trim() ?? ""
+    };
   }
 
   const execMatch = /^exec(?:ute)?(?:\s+([\s\S]*))?$/i.exec(trimmed);
@@ -1400,9 +1708,32 @@ type ProviderConnectionViewInput = {
     jira: ProviderConnection | null;
     slack: ProviderConnection | null;
   };
+  agentSettings?: AgentHomeSettingsView;
 };
 
-export function buildAppHomeView(input: ProviderConnectionViewInput) {
+type SlackViewsPublishClient = {
+  views: {
+    publish(input: { user_id: string; view: View }): Promise<unknown>;
+  };
+};
+
+type AgentHomeSettingsView = {
+  model: string;
+  userMemory: "on" | "off";
+  disabledTools: string[];
+  enabledSkills: string[];
+  policyHash: string;
+  runtime: {
+    id: string | null;
+    status: string;
+    engine: string;
+    endpointUrl: string | null;
+    createdAt: string | null;
+    lastUsedAt: string | null;
+  };
+};
+
+export function buildAppHomeView(input: ProviderConnectionViewInput): View {
   return {
     type: "home" as const,
     blocks: [
@@ -1420,16 +1751,21 @@ export function buildAppHomeView(input: ProviderConnectionViewInput) {
           text: "Connect provider accounts so Burble and your agent runtime can use them on your behalf."
         }
       },
+      ...buildAgentRuntimeHomeBlocks(input.agentSettings),
       {
         type: "divider"
       },
       ...buildProviderConnectionBlocks(input),
       {
+        type: "divider"
+      },
+      ...buildAgentSettingsHomeBlocks(input.agentSettings),
+      {
         type: "context",
         elements: [
           {
             type: "mrkdwn",
-            text: "You can also manage connections with `/auth`."
+            text: "You can also manage connections with `/auth` and agent settings with `/agent config`."
           }
         ]
       }
@@ -1460,7 +1796,7 @@ export function buildAuthResponse(input: ProviderConnectionViewInput) {
         ]
       }
     ]
-  };
+  } as const;
 }
 
 function buildProviderConnectionBlocks(input: ProviderConnectionViewInput) {
@@ -1508,6 +1844,359 @@ function buildProviderConnectionBlocks(input: ProviderConnectionViewInput) {
       usage: "User search and message search through your Slack identity"
     })
   ];
+}
+
+export function buildAgentHomeSettings(input: {
+  config: Config;
+  store: TokenStore;
+  workspaceId: string;
+  slackUserId: string;
+}): AgentHomeSettingsView {
+  const principal = {
+    workspaceId: input.workspaceId,
+    slackUserId: input.slackUserId
+  };
+  const manifest = buildRuntimeManifestForPrincipal({
+    config: input.config,
+    store: input.store,
+    principal,
+    engine: input.config.openClawNemoClawEngine
+  });
+  const runtime = input.store.getAgentRuntimeForPrincipal({
+    workspaceId: input.workspaceId,
+    slackUserId: input.slackUserId,
+    engine: input.config.openClawNemoClawEngine
+  });
+
+  return {
+    model: `${manifest.model.provider}:${manifest.model.model}`,
+    userMemory: manifest.memory.userMemoryEnabled ? "on" : "off",
+    disabledTools: manifest.disabledTools,
+    enabledSkills: manifest.skills.map((skill) => `${skill.id}@${skill.version}`),
+    policyHash: manifest.policyHash,
+    runtime: runtime
+      ? {
+          id: runtime.id,
+          status: runtime.status,
+          engine: runtime.engine,
+          endpointUrl: runtime.endpointUrl,
+          createdAt: runtime.createdAt,
+          lastUsedAt: runtime.lastUsedAt
+        }
+      : {
+          id: null,
+          status: "not provisioned",
+          engine: input.config.openClawNemoClawEngine,
+          endpointUrl: null,
+          createdAt: null,
+          lastUsedAt: null
+        }
+  };
+}
+
+function buildAgentRuntimeHomeBlocks(settings?: AgentHomeSettingsView) {
+  if (!settings) {
+    return [];
+  }
+
+  return [
+    {
+      type: "section",
+      text: {
+        type: "mrkdwn",
+        text: ["*Agent runtime*", formatRuntimeHomeSummary(settings)].join("\n")
+      },
+    },
+    {
+      type: "actions",
+      elements: buildAgentRuntimeActionElements(settings)
+    }
+  ];
+}
+
+function buildAgentRuntimeActionElements(settings: AgentHomeSettingsView) {
+  const elements = [];
+  if (isRuntimeStartable(settings.runtime.status)) {
+    elements.push({
+      type: "button",
+      text: {
+        type: "plain_text",
+        text: "Start"
+      },
+      style: "primary",
+      action_id: "agent_runtime_start"
+    });
+  } else {
+    elements.push(
+      {
+        type: "button",
+        text: {
+          type: "plain_text",
+          text: "Pause"
+        },
+        style: "danger",
+        action_id: "agent_runtime_pause",
+        confirm: {
+          title: {
+            type: "plain_text",
+            text: "Pause runtime?"
+          },
+          text: {
+            type: "mrkdwn",
+            text: "This stops the current runtime container and may interrupt active autonomous work."
+          },
+          confirm: {
+            type: "plain_text",
+            text: "Pause"
+          },
+          deny: {
+            type: "plain_text",
+            text: "Cancel"
+          }
+        }
+      },
+      {
+        type: "button",
+        text: {
+          type: "plain_text",
+          text: "Restart"
+        },
+        action_id: "agent_runtime_restart",
+        confirm: {
+          title: {
+            type: "plain_text",
+            text: "Restart runtime?"
+          },
+          text: {
+            type: "mrkdwn",
+            text: "This stops the current runtime and starts it again with the latest configuration."
+          },
+          confirm: {
+            type: "plain_text",
+            text: "Restart"
+          },
+          deny: {
+            type: "plain_text",
+            text: "Cancel"
+          }
+        }
+      }
+    );
+  }
+  elements.push({
+    type: "button",
+    text: {
+      type: "plain_text",
+      text: "Details"
+    },
+    action_id: "agent_runtime_manage"
+  });
+  return elements;
+}
+
+function isRuntimeStartable(status: string): boolean {
+  return status === "not provisioned" || status === "stopped" || status === "failed";
+}
+
+function formatRuntimeHomeSummary(settings: AgentHomeSettingsView): string {
+  const runtimeId = settings.runtime.id
+    ? `\`${settings.runtime.id}\``
+    : "`not provisioned yet`";
+  const lastUsed = settings.runtime.lastUsedAt ?? "never";
+  return [
+    `Status: \`${settings.runtime.status}\``,
+    `Runtime: ${runtimeId}`,
+    `Last used: ${lastUsed}`
+  ].join("\n");
+}
+
+function buildAgentSettingsHomeBlocks(settings?: AgentHomeSettingsView) {
+  if (!settings) {
+    return [];
+  }
+
+  return [
+    {
+      type: "header",
+      text: {
+        type: "plain_text",
+        text: "Agent settings"
+      }
+    },
+    {
+      type: "section",
+      fields: [
+        {
+          type: "mrkdwn",
+          text: `*Model*\n\`${settings.model}\``
+        },
+        {
+          type: "mrkdwn",
+          text: `*User memory*\n\`${settings.userMemory}\``
+        },
+        {
+          type: "mrkdwn",
+          text: `*Runtime*\n\`${settings.runtime.status}\``
+        },
+        {
+          type: "mrkdwn",
+          text: `*Policy hash*\n\`${settings.policyHash.slice(0, 12)}\``
+        },
+        {
+          type: "mrkdwn",
+          text: `*Disabled tools*\n\`${formatStringList(settings.disabledTools)}\``
+        },
+        {
+          type: "mrkdwn",
+          text: `*Enabled skills*\n\`${formatStringList(settings.enabledSkills)}\``
+        }
+      ],
+      accessory: {
+        type: "button",
+        text: {
+          type: "plain_text",
+          text: "Edit settings"
+        },
+        action_id: "agent_config_edit"
+      }
+    }
+  ];
+}
+
+export function buildAgentRuntimeManageModalView(input: {
+  config: Config;
+  store: TokenStore;
+  workspaceId: string;
+  slackUserId: string;
+}): View {
+  const settings = buildAgentHomeSettings(input);
+  const runtimeLines = [
+    `*Status:* \`${settings.runtime.status}\``,
+    `*Runtime ID:* ${
+      settings.runtime.id ? `\`${settings.runtime.id}\`` : "`not provisioned yet`"
+    }`,
+    `*Engine:* \`${settings.runtime.engine}\``,
+    `*Endpoint:* ${
+      settings.runtime.endpointUrl ? `\`${settings.runtime.endpointUrl}\`` : "`none`"
+    }`,
+    `*Created:* ${settings.runtime.createdAt ?? "never"}`,
+    `*Last used:* ${settings.runtime.lastUsedAt ?? "never"}`,
+    `*Policy hash:* \`${settings.policyHash}\``
+  ];
+
+  return {
+    type: "modal",
+    title: {
+      type: "plain_text",
+      text: "Agent runtime"
+    },
+    close: {
+      type: "plain_text",
+      text: "Close"
+    },
+    blocks: [
+      {
+        type: "section",
+        text: {
+          type: "mrkdwn",
+          text: runtimeLines.join("\n")
+        }
+      },
+      {
+        type: "divider"
+      },
+      {
+        type: "section",
+        fields: [
+          {
+            type: "mrkdwn",
+            text: `*Model*\n\`${settings.model}\``
+          },
+          {
+            type: "mrkdwn",
+            text: `*User memory*\n\`${settings.userMemory}\``
+          },
+          {
+            type: "mrkdwn",
+            text: `*Disabled tools*\n\`${formatStringList(settings.disabledTools)}\``
+          },
+          {
+            type: "mrkdwn",
+            text: `*Enabled skills*\n\`${formatStringList(settings.enabledSkills)}\``
+          }
+        ]
+      },
+      {
+        type: "context",
+        elements: [
+          {
+            type: "mrkdwn",
+            text: "Changing agent settings restarts a live runtime and brings it back with the updated manifest."
+          }
+        ]
+      }
+    ]
+  };
+}
+
+type AgentRuntimeControlAction = "start" | "pause" | "restart";
+
+export async function applyAgentRuntimeControl(input: {
+  config: Config;
+  store: TokenStore;
+  runtimeFactory?: RuntimeFactory;
+  workspaceId: string;
+  slackUserId: string;
+  action: AgentRuntimeControlAction;
+}): Promise<{
+  action: AgentRuntimeControlAction;
+  runtimeId: string | null;
+  status: AgentRuntimeStatus | "not provisioned";
+}> {
+  if (input.config.agentRuntime !== "openclaw-nemoclaw" || !input.runtimeFactory) {
+    return {
+      action: input.action,
+      runtimeId: null,
+      status: "not provisioned"
+    };
+  }
+
+  const principal = {
+    workspaceId: input.workspaceId,
+    slackUserId: input.slackUserId
+  };
+  const existing = input.store.getAgentRuntimeForPrincipal({
+    workspaceId: input.workspaceId,
+    slackUserId: input.slackUserId,
+    engine: input.config.openClawNemoClawEngine
+  });
+
+  if (input.action === "pause") {
+    if (!existing || isRuntimeStartable(existing.status)) {
+      return {
+        action: input.action,
+        runtimeId: existing?.id ?? null,
+        status: existing?.status ?? "not provisioned"
+      };
+    }
+    await input.runtimeFactory.stopRuntime(existing.id);
+    return {
+      action: input.action,
+      runtimeId: existing.id,
+      status: "stopped"
+    };
+  }
+
+  if (input.action === "restart" && existing && !isRuntimeStartable(existing.status)) {
+    await input.runtimeFactory.stopRuntime(existing.id);
+  }
+
+  const runtime = await input.runtimeFactory.getOrCreateRuntime(principal);
+  return {
+    action: input.action,
+    runtimeId: runtime.id,
+    status: runtime.status
+  };
 }
 
 function buildProviderConnectionBlock(input: {
@@ -1618,6 +2307,8 @@ export function buildAgentCommandHelpResponse() {
             "Use one of:",
             "• `/agent status` - show and power up your current agent runtime",
             "• `/agent config` - inspect your current agent config file",
+            "• `/agent config get [key]` - inspect your user runtime preferences",
+            "• `/agent config set <key> <value>` - update an allowed user preference",
             "• `/agent exec` - list active agent tasks",
             "• `/agent exec <task>` - send an explicit task to your private agent runtime",
             "• `/agent exec <id> inspect` - inspect an active or recent task",
@@ -1974,6 +2665,853 @@ export function buildAgentConfigLoadingResponse() {
     response_type: "ephemeral" as const,
     text: "Powering up agent runtime and reading configuration..."
   };
+}
+
+type AgentUserConfigKey =
+  | "runtime.model"
+  | "memory.user"
+  | "tools.disabled"
+  | "skills.enabled";
+
+type AgentUserConfigSetResult = {
+  response_type: "ephemeral" | "in_channel";
+  text: string;
+};
+
+type SlackSlashCommandVisibilityBody = {
+  channel_id?: string;
+  channel_name?: string;
+};
+
+function withDirectMessageSlashCommandVisibility<
+  T extends { response_type?: "ephemeral" | "in_channel" }
+>(response: T, body: SlackSlashCommandVisibilityBody): T {
+  if (!isDirectMessageSlashCommand(body)) {
+    return response;
+  }
+  return {
+    ...response,
+    response_type: "in_channel"
+  };
+}
+
+export function isDirectMessageSlashCommand(
+  body: SlackSlashCommandVisibilityBody
+): boolean {
+  return (
+    body.channel_name === "directmessage" ||
+    body.channel_id?.startsWith("D") === true
+  );
+}
+
+type AgentConfigModalValues = {
+  model: string;
+  memory: "on" | "off";
+  disabledTools: string[];
+  enabledSkills: string[];
+};
+
+export function buildAgentConfigModalView(input: {
+  config: Config;
+  store: TokenStore;
+  workspaceId: string;
+  slackUserId: string;
+}): View {
+  const settings = buildAgentHomeSettings(input);
+  const metadata = JSON.stringify({
+    workspaceId: input.workspaceId,
+    slackUserId: input.slackUserId
+  });
+  return {
+    type: "modal" as const,
+    callback_id: "agent_config_submit",
+    title: {
+      type: "plain_text",
+      text: "Agent settings"
+    },
+    submit: {
+      type: "plain_text",
+      text: "Save"
+    },
+    close: {
+      type: "plain_text",
+      text: "Cancel"
+    },
+    private_metadata: metadata,
+    blocks: [
+      {
+        type: "input",
+        block_id: "agent_config_model",
+        label: {
+          type: "plain_text",
+          text: "Model"
+        },
+        element: {
+          type: "plain_text_input",
+          action_id: "value",
+          initial_value: settings.model
+        }
+      },
+      {
+        type: "input",
+        block_id: "agent_config_memory",
+        label: {
+          type: "plain_text",
+          text: "User memory"
+        },
+        element: {
+          type: "static_select",
+          action_id: "value",
+          initial_option: agentConfigMemoryOption(settings.userMemory),
+          options: [
+            agentConfigMemoryOption("on"),
+            agentConfigMemoryOption("off")
+          ]
+        }
+      },
+      {
+        type: "input",
+        block_id: "agent_config_disabled_tools",
+        optional: true,
+        label: {
+          type: "plain_text",
+          text: "Disabled tools"
+        },
+        element: {
+          type: "plain_text_input",
+          action_id: "value",
+          initial_value: settings.disabledTools.join(", "),
+          placeholder: {
+            type: "plain_text",
+            text: "github_create_pr, jira_create_issue"
+          }
+        }
+      },
+      {
+        type: "input",
+        block_id: "agent_config_enabled_skills",
+        optional: true,
+        label: {
+          type: "plain_text",
+          text: "Enabled skills"
+        },
+        element: {
+          type: "plain_text_input",
+          action_id: "value",
+          initial_value: settings.enabledSkills
+            .map((skill) => skill.split("@")[0])
+            .join(", "),
+          placeholder: {
+            type: "plain_text",
+            text: "core, github, atlassian-jira"
+          }
+        }
+      }
+    ]
+  };
+}
+
+function agentConfigMemoryOption(value: "on" | "off") {
+  return {
+    text: {
+      type: "plain_text",
+      text: value === "on" ? "On" : "Off"
+    },
+    value
+  } as const;
+}
+
+export function buildAgentConfigSavedModalView(policyChanged: boolean): View {
+  return {
+    type: "modal" as const,
+    title: {
+      type: "plain_text",
+      text: "Agent settings"
+    },
+    close: {
+      type: "plain_text",
+      text: "Close"
+    },
+    blocks: [
+      {
+        type: "section",
+        text: {
+          type: "mrkdwn",
+          text: policyChanged
+            ? "*Saved.* Your current agent runtime will restart so the new settings apply cleanly on the next run."
+            : "*Saved.* No runtime restart was needed."
+        }
+      }
+    ]
+  };
+}
+
+function parseAgentConfigModalSubmission(
+  body: unknown
+):
+  | { ok: true; values: AgentConfigModalValues }
+  | { ok: false; errors: Record<string, string> } {
+  const model = readSlackModalPlainTextValue(
+    body,
+    "agent_config_model",
+    "value"
+  );
+  const memory = readSlackModalSelectedValue(
+    body,
+    "agent_config_memory",
+    "value"
+  );
+  const disabledTools = readSlackModalPlainTextValue(
+    body,
+    "agent_config_disabled_tools",
+    "value"
+  );
+  const enabledSkills = readSlackModalPlainTextValue(
+    body,
+    "agent_config_enabled_skills",
+    "value"
+  );
+  const errors: Record<string, string> = {};
+
+  const modelValue = model.trim();
+  const modelId = modelValue.includes(":") ? modelValue : `openai:${modelValue}`;
+  try {
+    validateAgentModelId(modelId);
+  } catch (error) {
+    errors.agent_config_model =
+      error instanceof Error ? error.message : "Invalid model value.";
+  }
+
+  if (memory !== "on" && memory !== "off") {
+    errors.agent_config_memory = "Choose whether user memory is on or off.";
+  }
+
+  if (Object.keys(errors).length > 0) {
+    return { ok: false, errors };
+  }
+  const memoryValue = memory === "on" ? "on" : "off";
+
+  return {
+    ok: true,
+    values: {
+      model: modelId,
+      memory: memoryValue,
+      disabledTools: parseStringListConfigValue(disabledTools),
+      enabledSkills: parseStringListConfigValue(enabledSkills)
+    }
+  };
+}
+
+function applyAgentConfigModalValues(input: {
+  store: TokenStore;
+  principal: { workspaceId: string; slackUserId: string };
+  values: AgentConfigModalValues;
+}): void {
+  input.store.upsertUserPreference({
+    workspaceId: input.principal.workspaceId,
+    slackUserId: input.principal.slackUserId,
+    key: "runtime.model",
+    value: input.values.model
+  });
+  input.store.upsertUserPreference({
+    workspaceId: input.principal.workspaceId,
+    slackUserId: input.principal.slackUserId,
+    key: "memory.user",
+    value: { enabled: input.values.memory === "on" }
+  });
+  input.store.upsertUserPreference({
+    workspaceId: input.principal.workspaceId,
+    slackUserId: input.principal.slackUserId,
+    key: "tools.disabled",
+    value: input.values.disabledTools
+  });
+  input.store.upsertUserPreference({
+    workspaceId: input.principal.workspaceId,
+    slackUserId: input.principal.slackUserId,
+    key: "skills.enabled",
+    value: input.values.enabledSkills.map((skill) => ({
+      id: skill.includes("@") ? skill.split("@")[0] : skill,
+      version: skill.includes("@") ? skill.split("@").slice(1).join("@") : "1"
+    }))
+  });
+}
+
+function readSlackModalPlainTextValue(
+  body: unknown,
+  blockId: string,
+  actionId: string
+): string {
+  const values = slackModalStateValues(body);
+  const field = values?.[blockId]?.[actionId];
+  return typeof field?.value === "string" ? field.value : "";
+}
+
+function readSlackModalSelectedValue(
+  body: unknown,
+  blockId: string,
+  actionId: string
+): string {
+  const values = slackModalStateValues(body);
+  const field = values?.[blockId]?.[actionId];
+  return typeof field?.selected_option?.value === "string"
+    ? field.selected_option.value
+    : "";
+}
+
+function slackModalStateValues(body: unknown):
+  | Record<string, Record<string, { value?: string; selected_option?: { value?: string } }>>
+  | undefined {
+  if (!body || typeof body !== "object") {
+    return undefined;
+  }
+  const view = (body as { view?: unknown }).view;
+  if (!view || typeof view !== "object") {
+    return undefined;
+  }
+  const state = (view as { state?: unknown }).state;
+  if (!state || typeof state !== "object") {
+    return undefined;
+  }
+  const values = (state as { values?: unknown }).values;
+  return values && typeof values === "object"
+    ? (values as Record<
+        string,
+        Record<string, { value?: string; selected_option?: { value?: string } }>
+      >)
+    : undefined;
+}
+
+function slackInteractionContext(
+  body: unknown
+): { workspaceId: string; slackUserId: string; triggerId?: string } | null {
+  if (!body || typeof body !== "object") {
+    return null;
+  }
+  const slackUserId = slackUserIdFromBody(body);
+  if (!slackUserId) {
+    return null;
+  }
+  return {
+    workspaceId: slackWorkspaceIdFromBody(body),
+    slackUserId,
+    triggerId: (body as { trigger_id?: string }).trigger_id
+  };
+}
+
+function slackViewSubmissionContext(
+  body: unknown
+): { workspaceId: string; slackUserId: string } | null {
+  if (!body || typeof body !== "object") {
+    return null;
+  }
+  const metadata = slackViewPrivateMetadata(body);
+  if (metadata?.workspaceId && metadata.slackUserId) {
+    return metadata;
+  }
+  const slackUserId = slackUserIdFromBody(body);
+  if (!slackUserId) {
+    return null;
+  }
+  return {
+    workspaceId: slackWorkspaceIdFromBody(body),
+    slackUserId
+  };
+}
+
+function slackViewPrivateMetadata(
+  body: unknown
+): { workspaceId: string; slackUserId: string } | null {
+  if (!body || typeof body !== "object") {
+    return null;
+  }
+  const view = (body as { view?: unknown }).view;
+  const privateMetadata =
+    view && typeof view === "object"
+      ? (view as { private_metadata?: string }).private_metadata
+      : undefined;
+  if (!privateMetadata) {
+    return null;
+  }
+  try {
+    const parsed = JSON.parse(privateMetadata) as {
+      workspaceId?: unknown;
+      slackUserId?: unknown;
+    };
+    return typeof parsed.workspaceId === "string" &&
+      typeof parsed.slackUserId === "string"
+      ? {
+          workspaceId: parsed.workspaceId,
+          slackUserId: parsed.slackUserId
+        }
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function slackWorkspaceIdFromBody(body: unknown): string {
+  if (!body || typeof body !== "object") {
+    return "";
+  }
+  const direct = (body as { team_id?: unknown }).team_id;
+  if (typeof direct === "string") {
+    return direct;
+  }
+  const team = (body as { team?: unknown }).team;
+  return team && typeof team === "object" &&
+    typeof (team as { id?: unknown }).id === "string"
+    ? ((team as { id: string }).id)
+    : "";
+}
+
+function slackUserIdFromBody(body: unknown): string | null {
+  if (!body || typeof body !== "object") {
+    return null;
+  }
+  const direct = (body as { user_id?: unknown }).user_id;
+  if (typeof direct === "string") {
+    return direct;
+  }
+  const user = (body as { user?: unknown }).user;
+  return user && typeof user === "object" &&
+    typeof (user as { id?: unknown }).id === "string"
+    ? ((user as { id: string }).id)
+    : null;
+}
+
+export function buildAgentUserConfigGetResponse(input: {
+  config: Config;
+  store: TokenStore;
+  workspaceId: string;
+  slackUserId: string;
+  key?: string;
+}): AgentUserConfigSetResult {
+  const principal = {
+    workspaceId: input.workspaceId,
+    slackUserId: input.slackUserId
+  };
+  const manifest = buildRuntimeManifestForPrincipal({
+    config: input.config,
+    store: input.store,
+    principal,
+    engine: input.config.openClawNemoClawEngine
+  });
+  const key = input.key ? normalizeAgentUserConfigKey(input.key) : null;
+
+  if (input.key && !key) {
+    return {
+      response_type: "ephemeral",
+      text: formatUnknownAgentUserConfigKey(input.key)
+    };
+  }
+
+  const lines = key
+    ? formatAgentUserConfigKeyLines({ store: input.store, principal, manifest, key })
+    : [
+        "*Agent user config*",
+        `• Model: \`${manifest.model.provider}:${manifest.model.model}\``,
+        `• User memory: \`${manifest.memory.userMemoryEnabled ? "on" : "off"}\``,
+        `• Disabled tools: \`${formatStringList(manifest.disabledTools)}\``,
+        `• Enabled skills: \`${formatStringList(manifest.skills.map((skill) => `${skill.id}@${skill.version}`))}\``,
+        `• Policy hash: \`${manifest.policyHash}\``,
+        "",
+        "*Settable keys*",
+        "• `model`",
+        "• `memory`",
+        "• `tools.disabled`",
+        "• `skills.enabled`"
+      ];
+
+  return {
+    response_type: "ephemeral",
+    text: lines.join("\n")
+  };
+}
+
+export function applyAgentUserConfigSet(input: {
+  config: Config;
+  store: TokenStore;
+  workspaceId: string;
+  slackUserId: string;
+  key: string;
+  value: string;
+}): AgentUserConfigSetResult {
+  const principal = {
+    workspaceId: input.workspaceId,
+    slackUserId: input.slackUserId
+  };
+  const specialResult = applyAgentUserConfigSpecialSet({ ...input, principal });
+  if (specialResult) {
+    return specialResult;
+  }
+
+  const key = normalizeAgentUserConfigKey(input.key);
+  if (!key) {
+    return {
+      response_type: "ephemeral",
+      text: formatUnknownAgentUserConfigKey(input.key)
+    };
+  }
+
+  const parsed = parseAgentUserConfigValue(key, input.value);
+  if (!parsed.ok) {
+    return {
+      response_type: "ephemeral",
+      text: parsed.error
+    };
+  }
+
+  input.store.upsertUserPreference({
+    workspaceId: input.workspaceId,
+    slackUserId: input.slackUserId,
+    key,
+    value: parsed.value
+  });
+
+  return {
+    response_type: "ephemeral",
+    text: [
+      `Updated \`${displayAgentUserConfigKey(key)}\`.`,
+      "",
+      ...formatAgentUserConfigKeyLines({
+        store: input.store,
+        principal,
+        manifest: buildRuntimeManifestForPrincipal({
+          config: input.config,
+          store: input.store,
+          principal,
+          engine: input.config.openClawNemoClawEngine
+        }),
+        key
+      })
+    ].join("\n")
+  };
+}
+
+export async function restartAgentRuntimeIfConfigChanged(input: {
+  config: Config;
+  store: TokenStore;
+  runtimeFactory?: RuntimeFactory;
+  principal: { workspaceId: string; slackUserId: string };
+  previousPolicyHash: string;
+  nextPolicyHash: string;
+}): Promise<{ stoppedRuntimeId: string; startedRuntimeId: string } | null> {
+  if (input.previousPolicyHash === input.nextPolicyHash) {
+    return null;
+  }
+  if (input.config.agentRuntime !== "openclaw-nemoclaw" || !input.runtimeFactory) {
+    return null;
+  }
+
+  const runtime = input.store.getAgentRuntimeForPrincipal({
+    workspaceId: input.principal.workspaceId,
+    slackUserId: input.principal.slackUserId,
+    engine: input.config.openClawNemoClawEngine
+  });
+  if (
+    !runtime ||
+    runtime.status === "stopping" ||
+    runtime.status === "stopped" ||
+    runtime.status === "failed"
+  ) {
+    return null;
+  }
+
+  await input.runtimeFactory.stopRuntime(runtime.id);
+  const freshRuntime = await input.runtimeFactory.getOrCreateRuntime(input.principal);
+  return {
+    stoppedRuntimeId: runtime.id,
+    startedRuntimeId: freshRuntime.id
+  };
+}
+
+function addAgentConfigRuntimeRestartNotice(
+  response: AgentUserConfigSetResult,
+  policyChanged: boolean
+): AgentUserConfigSetResult {
+  if (!policyChanged) {
+    return response;
+  }
+  return {
+    ...response,
+    text: [
+      response.text,
+      "",
+      "_Your current agent runtime will restart so the new config applies cleanly on the next run._"
+    ].join("\n")
+  };
+}
+
+export function buildAgentConfigRuntimeRestartResponse(
+  restart: { stoppedRuntimeId: string; startedRuntimeId: string } | null
+): AgentUserConfigSetResult {
+  return {
+    response_type: "ephemeral",
+    text: restart
+      ? `Agent runtime restarted with updated config. Runtime: \`${restart.startedRuntimeId}\`.`
+      : "Config saved. No live agent runtime needed a restart; the next agent request will start with the updated config."
+  };
+}
+
+export function buildAgentConfigRuntimeRestartFailureResponse(
+  error: unknown
+): AgentUserConfigSetResult {
+  return {
+    response_type: "ephemeral",
+    text: [
+      "Config saved, but I could not restart the current agent runtime automatically.",
+      "",
+      `Error: \`${formatAgentConfigRestartErrorMessage(error)}\``,
+      "",
+      "The new config will still be sent with future runs; if the old runtime keeps behaving incorrectly, restart it manually."
+    ].join("\n")
+  };
+}
+
+function formatAgentConfigRestartErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function applyAgentUserConfigSpecialSet(input: {
+  config: Config;
+  store: TokenStore;
+  workspaceId: string;
+  slackUserId: string;
+  key: string;
+  value: string;
+  principal: { workspaceId: string; slackUserId: string };
+}): AgentUserConfigSetResult | null {
+  const key = input.key.toLowerCase();
+  if (key !== "disable-tool" && key !== "enable-tool") {
+    return null;
+  }
+
+  const tool = input.value.trim();
+  if (!tool) {
+    return {
+      response_type: "ephemeral",
+      text: `Usage: \`/agent config set ${key} <tool_name>\`.`
+    };
+  }
+
+  const existing = readUserPreferenceStringList(
+    input.store,
+    input.principal,
+    "tools.disabled"
+  );
+  const next =
+    key === "disable-tool"
+      ? [...new Set([...existing, tool])].sort()
+      : existing.filter((entry) => entry !== tool);
+  input.store.upsertUserPreference({
+    workspaceId: input.workspaceId,
+    slackUserId: input.slackUserId,
+    key: "tools.disabled",
+    value: next
+  });
+
+  const manifest = buildRuntimeManifestForPrincipal({
+    config: input.config,
+    store: input.store,
+    principal: input.principal,
+    engine: input.config.openClawNemoClawEngine
+  });
+  return {
+    response_type: "ephemeral",
+    text: [
+      key === "disable-tool"
+        ? `Disabled tool \`${tool}\` for your agent runtime.`
+        : `Enabled tool \`${tool}\` for your agent runtime.`,
+      "",
+      ...formatAgentUserConfigKeyLines({
+        store: input.store,
+        principal: input.principal,
+        manifest,
+        key: "tools.disabled"
+      })
+    ].join("\n")
+  };
+}
+
+function parseAgentUserConfigValue(
+  key: AgentUserConfigKey,
+  value: string
+): { ok: true; value: unknown } | { ok: false; error: string } {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return {
+      ok: false,
+      error: `Usage: \`/agent config set ${displayAgentUserConfigKey(key)} <value>\`.`
+    };
+  }
+
+  if (key === "runtime.model") {
+    const modelId = trimmed.includes(":") ? trimmed : `openai:${trimmed}`;
+    try {
+      validateAgentModelId(modelId);
+    } catch (error) {
+      return {
+        ok: false,
+        error: error instanceof Error ? error.message : "Invalid model value."
+      };
+    }
+    return { ok: true, value: modelId };
+  }
+
+  if (key === "memory.user") {
+    const enabled = parseBooleanConfigValue(trimmed);
+    if (enabled === null) {
+      return {
+        ok: false,
+        error: "Memory must be `on`, `off`, `true`, or `false`."
+      };
+    }
+    return { ok: true, value: { enabled } };
+  }
+
+  const values = parseStringListConfigValue(trimmed);
+  if (key === "skills.enabled") {
+    return {
+      ok: true,
+      value: values.map((id) => ({ id, version: "1" }))
+    };
+  }
+  return { ok: true, value: values };
+}
+
+function normalizeAgentUserConfigKey(key: string): AgentUserConfigKey | null {
+  const normalized = key.trim().toLowerCase().replace(/[_\s-]+/g, ".");
+  switch (normalized) {
+    case "model":
+    case "runtime.model":
+      return "runtime.model";
+    case "memory":
+    case "user.memory":
+    case "memory.user":
+      return "memory.user";
+    case "tools":
+    case "disabled.tools":
+    case "tools.disabled":
+      return "tools.disabled";
+    case "skills":
+    case "enabled.skills":
+    case "skills.enabled":
+      return "skills.enabled";
+    default:
+      return null;
+  }
+}
+
+function displayAgentUserConfigKey(key: AgentUserConfigKey): string {
+  switch (key) {
+    case "runtime.model":
+      return "model";
+    case "memory.user":
+      return "memory";
+    default:
+      return key;
+  }
+}
+
+function formatUnknownAgentUserConfigKey(key: string): string {
+  return [
+    `Unknown user config key: \`${truncateSlackConfigValue(key, 80)}\`.`,
+    "Allowed keys: `model`, `memory`, `tools.disabled`, `skills.enabled`.",
+    "Shortcuts: `disable-tool <tool_name>`, `enable-tool <tool_name>`."
+  ].join("\n");
+}
+
+function formatAgentUserConfigKeyLines(input: {
+  store: TokenStore;
+  principal: { workspaceId: string; slackUserId: string };
+  manifest: ReturnType<typeof buildRuntimeManifestForPrincipal>;
+  key: AgentUserConfigKey;
+}): string[] {
+  switch (input.key) {
+    case "runtime.model":
+      return [
+        "*Model*",
+        `• Effective: \`${input.manifest.model.provider}:${input.manifest.model.model}\``,
+        `• Stored preference: \`${formatPreferenceValue(
+          input.store.getUserPreference(
+            input.principal.workspaceId,
+            input.principal.slackUserId,
+            "runtime.model"
+          )?.value
+        )}\``
+      ];
+    case "memory.user":
+      return [
+        "*User memory*",
+        `• Effective: \`${input.manifest.memory.userMemoryEnabled ? "on" : "off"}\``,
+        `• Stored preference: \`${formatPreferenceValue(
+          input.store.getUserPreference(
+            input.principal.workspaceId,
+            input.principal.slackUserId,
+            "memory.user"
+          )?.value
+        )}\``
+      ];
+    case "tools.disabled":
+      return [
+        "*Disabled tools*",
+        `• Effective: \`${formatStringList(input.manifest.disabledTools)}\``
+      ];
+    case "skills.enabled":
+      return [
+        "*Enabled skills*",
+        `• Effective: \`${formatStringList(
+          input.manifest.skills.map((skill) => `${skill.id}@${skill.version}`)
+        )}\``
+      ];
+  }
+}
+
+function readUserPreferenceStringList(
+  store: TokenStore,
+  principal: { workspaceId: string; slackUserId: string },
+  key: string
+): string[] {
+  const value = store.getUserPreference(
+    principal.workspaceId,
+    principal.slackUserId,
+    key
+  )?.value;
+  return Array.isArray(value)
+    ? value.filter((entry): entry is string => typeof entry === "string")
+    : [];
+}
+
+function parseBooleanConfigValue(value: string): boolean | null {
+  const normalized = value.toLowerCase();
+  if (["on", "true", "yes", "enabled", "enable"].includes(normalized)) {
+    return true;
+  }
+  if (["off", "false", "no", "disabled", "disable"].includes(normalized)) {
+    return false;
+  }
+  return null;
+}
+
+function parseStringListConfigValue(value: string): string[] {
+  return value
+    .split(/[,\s]+/)
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+}
+
+function formatStringList(values: string[]): string {
+  return values.length > 0 ? values.join(", ") : "none";
+}
+
+function formatPreferenceValue(value: unknown): string {
+  if (value === undefined) {
+    return "not set";
+  }
+  if (typeof value === "string") {
+    return value;
+  }
+  return truncateSlackConfigValue(JSON.stringify(value), 160);
 }
 
 function formatAgentConfigFailureMessage(error: unknown): string {

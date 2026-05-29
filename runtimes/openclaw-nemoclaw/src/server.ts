@@ -1206,6 +1206,79 @@ function isRuntimeSummary(runtime: unknown): runtime is RunRequest["runtime"] {
     runtime !== null &&
     "id" in runtime &&
     typeof runtime.id === "string" &&
-    runtime.id.trim().length > 0
+    runtime.id.trim().length > 0 &&
+    (!("policyHash" in runtime) ||
+      runtime.policyHash === undefined ||
+      (typeof runtime.policyHash === "string" &&
+        runtime.policyHash.trim().length > 0)) &&
+    (!("manifest" in runtime) ||
+      runtime.manifest === undefined ||
+      isRuntimeManifestSummary(runtime.manifest))
+  );
+}
+
+function isRuntimeManifestSummary(
+  manifest: unknown
+): manifest is NonNullable<RunRequest["runtime"]>["manifest"] {
+  if (
+    typeof manifest !== "object" ||
+    manifest === null ||
+    !("version" in manifest) ||
+    typeof manifest.version !== "string" ||
+    !("policyHash" in manifest) ||
+    typeof manifest.policyHash !== "string" ||
+    !("skills" in manifest) ||
+    !Array.isArray(manifest.skills) ||
+    !("memory" in manifest) ||
+    typeof manifest.memory !== "object" ||
+    manifest.memory === null
+  ) {
+    return false;
+  }
+
+  const memory = manifest.memory as Record<string, unknown>;
+  return (
+    manifest.skills.every(isRuntimeManifestSkillSummary) &&
+    typeof memory.userMemoryEnabled === "boolean" &&
+    typeof memory.workspaceMemoryEnabled === "boolean" &&
+    typeof memory.jobMemoryEnabled === "boolean" &&
+    (!("memoryContext" in manifest) ||
+      manifest.memoryContext === undefined ||
+      (Array.isArray(manifest.memoryContext) &&
+        manifest.memoryContext.every(isRuntimeMemoryContextEntry)))
+  );
+}
+
+function isRuntimeManifestSkillSummary(skill: unknown): boolean {
+  return (
+    typeof skill === "object" &&
+    skill !== null &&
+    "id" in skill &&
+    typeof skill.id === "string" &&
+    skill.id.trim().length > 0 &&
+    "version" in skill &&
+    typeof skill.version === "string" &&
+    skill.version.trim().length > 0 &&
+    "enabled" in skill &&
+    typeof skill.enabled === "boolean"
+  );
+}
+
+function isRuntimeMemoryContextEntry(value: unknown): boolean {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    "scope" in value &&
+    (value.scope === "user" ||
+      value.scope === "workspace" ||
+      value.scope === "job") &&
+    "ownerId" in value &&
+    typeof value.ownerId === "string" &&
+    "key" in value &&
+    typeof value.key === "string" &&
+    "valuePreview" in value &&
+    typeof value.valuePreview === "string" &&
+    "updatedAt" in value &&
+    typeof value.updatedAt === "string"
   );
 }

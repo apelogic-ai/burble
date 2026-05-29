@@ -176,7 +176,28 @@ describe("createDockerRuntimeFactory", () => {
       fetch: async () => {
         healthChecks += 1;
         return new Response("ok", { status: healthChecks === 1 ? 503 : 200 });
-      }
+      },
+      buildManifest: (principal) =>
+        ({
+          version: "1",
+          principal,
+          runtime: {
+            engine: "openclaw",
+            factory: "docker",
+            ttlMs: 86400000,
+            reaperEnabled: true
+          },
+          model: { provider: "openai", model: "gpt-5.4" },
+          tools: [],
+          skills: [],
+          memory: {
+            userMemoryEnabled: false,
+            workspaceMemoryEnabled: false,
+            jobMemoryEnabled: true
+          },
+          disabledTools: [],
+          policyHash: "policy-hash"
+        }) as never
     });
 
     const handle = await factory.getOrCreateRuntime(principal);
@@ -185,8 +206,10 @@ describe("createDockerRuntimeFactory", () => {
     const events = store.listAgentRuntimeEvents(handle.id);
 
     expect(handle.endpointUrl).toBe(`http://burble-rt-${runtimeDataId}:8080`);
+    expect(handle.manifest?.policyHash).toBe("policy-hash");
     expect(handle.statePath).toBe(`/data/runtimes/${runtimeDataId}/state`);
     expect(stored?.status).toBe("ready");
+    expect(stored?.policyHash).toBe("policy-hash");
     expect(stored?.authTokenHash).not.toContain("runtime-secret");
     expect(healthChecks).toBe(2);
     expect(commands.map((command) => command.args[0])).toEqual([
@@ -205,6 +228,7 @@ describe("createDockerRuntimeFactory", () => {
     expect(events.map((event) => event.summaryJson).join("\n")).not.toContain(
       "github-secret"
     );
+    expect(events[0].summaryJson).toContain("policy-hash");
 
     store.close();
   });

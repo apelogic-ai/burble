@@ -29,6 +29,8 @@ tools:
     implementation: createDriveTextFile
     title: Google Drive create text file
     description: Create a new app-owned text file in Google Drive using this Slack user's connected Google account.
+    risk: low_write
+    confirmation: none
     input:
       name:
         type: string
@@ -64,6 +66,8 @@ tools:
     implementation: updateDriveTextFile
     title: Google Drive update text file
     description: Replace the content of an app-accessible Google Drive text file. Use google_get_drive_file first when preserving existing content matters.
+    risk: moderate_write
+    confirmation: none
     input:
       fileId:
         type: string
@@ -83,6 +87,8 @@ tools:
     implementation: appendDriveTextFile
     title: Google Drive append text file
     description: Append text to an app-accessible Google Drive text file by reading existing content then replacing it.
+    risk: moderate_write
+    confirmation: none
     input:
       fileId:
         type: string
@@ -107,6 +113,8 @@ tools:
     implementation: createDriveFolder
     title: Google Drive create folder
     description: Create a Google Drive folder using this Slack user's Google account.
+    risk: low_write
+    confirmation: none
     input:
       name:
         type: string
@@ -124,6 +132,8 @@ tools:
     implementation: moveDriveFile
     title: Google Drive move file
     description: Move an app-accessible Google Drive file into a folder. Does not delete the file.
+    risk: moderate_write
+    confirmation: none
     input:
       fileId:
         type: string
@@ -171,6 +181,8 @@ tools:
     implementation: createCalendarEvent
     title: Google Calendar create event
     description: Create a Google Calendar event. Use only when clearly requested.
+    risk: moderate_write
+    confirmation: none
     input:
       calendarId:
         type: string
@@ -207,6 +219,8 @@ tools:
     implementation: updateCalendarEvent
     title: Google Calendar update event
     description: Update Google Calendar event metadata or start/end time. Does not delete events.
+    risk: moderate_write
+    confirmation: none
     input:
       calendarId:
         type: string
@@ -266,6 +280,8 @@ tools:
     implementation: createMailDraft
     title: Gmail create draft
     description: Create a Gmail draft only. This does not send email and should be used before any user-reviewed send workflow.
+    risk: low_write
+    confirmation: none
     input:
       to:
         type: array

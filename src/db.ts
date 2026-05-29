@@ -55,6 +55,7 @@ export type AgentRuntimeRecord = {
   statePath: string;
   configPath: string;
   workspacePath: string;
+  policyHash: string | null;
   createdAt: string;
   lastSeenAt: string;
   lastUsedAt: string;
@@ -66,6 +67,7 @@ export type AgentRuntimeEventType =
   | "runtime_provision_requested"
   | "runtime_provision_finished"
   | "runtime_provision_failed"
+  | "runtime_policy_changed"
   | "runtime_stopped"
   | "runtime_run_started"
   | "runtime_run_finished"
@@ -92,6 +94,107 @@ export type ConversationRouteRecord = {
   createdAt: string;
   updatedAt: string;
   revokedAt: string | null;
+};
+
+export type WorkspacePolicyRecord = {
+  workspaceId: string;
+  key: string;
+  value: unknown;
+  updatedBySlackUserId: string | null;
+  updatedAt: string;
+};
+
+export type UserPreferenceRecord = {
+  workspaceId: string;
+  slackUserId: string;
+  key: string;
+  value: unknown;
+  updatedAt: string;
+};
+
+export type AgentMemoryScope = "user" | "workspace" | "job";
+
+export type AgentMemoryRecord = {
+  workspaceId: string;
+  scope: AgentMemoryScope;
+  ownerId: string;
+  key: string;
+  value: unknown;
+  updatedAt: string;
+};
+
+export type AgentJobStateRecord = {
+  jobId: string;
+  workspaceId: string;
+  slackUserId: string;
+  state: unknown;
+  updatedAt: string;
+};
+
+export type AgentJobCapabilityRecord = {
+  jobId: string;
+  workspaceId: string;
+  slackUserId: string;
+  requiredTools: string[];
+  routeId: string | null;
+  policyHash: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type SkillCatalogRecord = {
+  id: string;
+  version: string;
+  title: string;
+  description: string;
+  metadata: unknown;
+  contentRef: string;
+  createdAt: string;
+};
+
+export type WorkspaceSkillRecord = {
+  workspaceId: string;
+  skillId: string;
+  version: string;
+  enabled: boolean;
+  updatedBySlackUserId: string | null;
+  updatedAt: string;
+};
+
+export type UserSkillRecord = {
+  workspaceId: string;
+  slackUserId: string;
+  skillId: string;
+  version: string;
+  enabled: boolean;
+  updatedAt: string;
+};
+
+type WorkspacePolicyRow = Omit<WorkspacePolicyRecord, "value"> & {
+  valueJson: string;
+};
+
+type UserPreferenceRow = Omit<UserPreferenceRecord, "value"> & {
+  valueJson: string;
+};
+
+type AgentMemoryRow = Omit<AgentMemoryRecord, "value"> & {
+  valueJson: string;
+};
+
+type AgentJobStateRow = Omit<AgentJobStateRecord, "state"> & {
+  stateJson: string;
+};
+
+type AgentJobCapabilityRow = Omit<
+  AgentJobCapabilityRecord,
+  "requiredTools"
+> & {
+  requiredToolsJson: string;
+};
+
+type SkillCatalogRow = Omit<SkillCatalogRecord, "metadata"> & {
+  metadataJson: string;
 };
 
 export type TokenStore = ReturnType<typeof createTokenStore>;
@@ -143,6 +246,7 @@ export function createTokenStore(path: string) {
       state_path TEXT NOT NULL,
       config_path TEXT NOT NULL,
       workspace_path TEXT NOT NULL,
+      policy_hash TEXT,
       created_at TEXT NOT NULL,
       last_seen_at TEXT NOT NULL,
       last_used_at TEXT NOT NULL,
@@ -183,9 +287,109 @@ export function createTokenStore(path: string) {
 
     CREATE INDEX IF NOT EXISTS idx_conversation_routes_principal
       ON conversation_routes (workspace_id, slack_user_id, transport, updated_at);
+
+    CREATE TABLE IF NOT EXISTS workspace_policy (
+      workspace_id TEXT NOT NULL,
+      key TEXT NOT NULL,
+      value_json TEXT NOT NULL,
+      updated_by_slack_user_id TEXT,
+      updated_at TEXT NOT NULL,
+      PRIMARY KEY(workspace_id, key)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_workspace_policy_workspace
+      ON workspace_policy (workspace_id, key);
+
+    CREATE TABLE IF NOT EXISTS user_preferences (
+      workspace_id TEXT NOT NULL,
+      slack_user_id TEXT NOT NULL,
+      key TEXT NOT NULL,
+      value_json TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      PRIMARY KEY(workspace_id, slack_user_id, key)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_user_preferences_principal
+      ON user_preferences (workspace_id, slack_user_id, key);
+
+    CREATE TABLE IF NOT EXISTS agent_memory (
+      workspace_id TEXT NOT NULL,
+      scope TEXT NOT NULL,
+      owner_id TEXT NOT NULL,
+      key TEXT NOT NULL,
+      value_json TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      PRIMARY KEY(workspace_id, scope, owner_id, key)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_agent_memory_owner
+      ON agent_memory (workspace_id, scope, owner_id, key);
+
+    CREATE TABLE IF NOT EXISTS agent_job_state (
+      job_id TEXT PRIMARY KEY,
+      workspace_id TEXT NOT NULL,
+      slack_user_id TEXT NOT NULL,
+      state_json TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_agent_job_state_principal
+      ON agent_job_state (workspace_id, slack_user_id, updated_at);
+
+    CREATE TABLE IF NOT EXISTS agent_job_capabilities (
+      job_id TEXT PRIMARY KEY,
+      workspace_id TEXT NOT NULL,
+      slack_user_id TEXT NOT NULL,
+      required_tools_json TEXT NOT NULL,
+      route_id TEXT,
+      policy_hash TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_agent_job_capabilities_principal
+      ON agent_job_capabilities (workspace_id, slack_user_id, updated_at);
+
+    CREATE TABLE IF NOT EXISTS skill_catalog (
+      id TEXT NOT NULL,
+      version TEXT NOT NULL,
+      title TEXT NOT NULL,
+      description TEXT NOT NULL,
+      metadata_json TEXT NOT NULL,
+      content_ref TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      PRIMARY KEY(id, version)
+    );
+
+    CREATE TABLE IF NOT EXISTS workspace_skills (
+      workspace_id TEXT NOT NULL,
+      skill_id TEXT NOT NULL,
+      version TEXT NOT NULL,
+      enabled INTEGER NOT NULL,
+      updated_by_slack_user_id TEXT,
+      updated_at TEXT NOT NULL,
+      PRIMARY KEY(workspace_id, skill_id, version)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_workspace_skills_workspace
+      ON workspace_skills (workspace_id, enabled, skill_id);
+
+    CREATE TABLE IF NOT EXISTS user_skills (
+      workspace_id TEXT NOT NULL,
+      slack_user_id TEXT NOT NULL,
+      skill_id TEXT NOT NULL,
+      version TEXT NOT NULL,
+      enabled INTEGER NOT NULL,
+      updated_at TEXT NOT NULL,
+      PRIMARY KEY(workspace_id, slack_user_id, skill_id, version)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_user_skills_principal
+      ON user_skills (workspace_id, slack_user_id, enabled, skill_id);
   `);
   ensureProviderConnectionColumn(db, "refresh_token", "TEXT");
   ensureProviderConnectionColumn(db, "access_token_expires_at", "TEXT");
+  ensureAgentRuntimeColumn(db, "policy_hash", "TEXT");
 
   const insertState = db.query(
     "INSERT INTO oauth_state (state, slack_user_id, expires_at) VALUES (?, ?, ?)"
@@ -296,6 +500,7 @@ export function createTokenStore(path: string) {
       state_path AS statePath,
       config_path AS configPath,
       workspace_path AS workspacePath,
+      policy_hash AS policyHash,
       created_at AS createdAt,
       last_seen_at AS lastSeenAt,
       last_used_at AS lastUsedAt,
@@ -319,6 +524,7 @@ export function createTokenStore(path: string) {
       state_path AS statePath,
       config_path AS configPath,
       workspace_path AS workspacePath,
+      policy_hash AS policyHash,
       created_at AS createdAt,
       last_seen_at AS lastSeenAt,
       last_used_at AS lastUsedAt,
@@ -339,6 +545,7 @@ export function createTokenStore(path: string) {
       state_path AS statePath,
       config_path AS configPath,
       workspace_path AS workspacePath,
+      policy_hash AS policyHash,
       created_at AS createdAt,
       last_seen_at AS lastSeenAt,
       last_used_at AS lastUsedAt,
@@ -360,11 +567,17 @@ export function createTokenStore(path: string) {
       state_path,
       config_path,
       workspace_path,
+      policy_hash,
       created_at,
       last_seen_at,
       last_used_at
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+  const updateAgentRuntimePolicyHash = db.query(`
+    UPDATE agent_runtimes
+    SET policy_hash = ?, last_seen_at = ?
+    WHERE id = ?
   `);
   const updateAgentRuntimeStatus = db.query(`
     UPDATE agent_runtimes
@@ -434,6 +647,313 @@ export function createTokenStore(path: string) {
       revoked_at AS revokedAt
     FROM conversation_routes
     WHERE id = ?
+  `);
+  const upsertWorkspacePolicy = db.query(`
+    INSERT INTO workspace_policy (
+      workspace_id,
+      key,
+      value_json,
+      updated_by_slack_user_id,
+      updated_at
+    )
+    VALUES (?, ?, ?, ?, ?)
+    ON CONFLICT(workspace_id, key) DO UPDATE SET
+      value_json = excluded.value_json,
+      updated_by_slack_user_id = excluded.updated_by_slack_user_id,
+      updated_at = excluded.updated_at
+  `);
+  const getWorkspacePolicy = db.query<WorkspacePolicyRow, [string, string]>(`
+    SELECT
+      workspace_id AS workspaceId,
+      key,
+      value_json AS valueJson,
+      updated_by_slack_user_id AS updatedBySlackUserId,
+      updated_at AS updatedAt
+    FROM workspace_policy
+    WHERE workspace_id = ? AND key = ?
+  `);
+  const listWorkspacePolicy = db.query<WorkspacePolicyRow, [string]>(`
+    SELECT
+      workspace_id AS workspaceId,
+      key,
+      value_json AS valueJson,
+      updated_by_slack_user_id AS updatedBySlackUserId,
+      updated_at AS updatedAt
+    FROM workspace_policy
+    WHERE workspace_id = ?
+    ORDER BY key ASC
+  `);
+  const upsertUserPreference = db.query(`
+    INSERT INTO user_preferences (
+      workspace_id,
+      slack_user_id,
+      key,
+      value_json,
+      updated_at
+    )
+    VALUES (?, ?, ?, ?, ?)
+    ON CONFLICT(workspace_id, slack_user_id, key) DO UPDATE SET
+      value_json = excluded.value_json,
+      updated_at = excluded.updated_at
+  `);
+  const getUserPreference = db.query<UserPreferenceRow, [string, string, string]>(`
+    SELECT
+      workspace_id AS workspaceId,
+      slack_user_id AS slackUserId,
+      key,
+      value_json AS valueJson,
+      updated_at AS updatedAt
+    FROM user_preferences
+    WHERE workspace_id = ? AND slack_user_id = ? AND key = ?
+  `);
+  const listUserPreferences = db.query<UserPreferenceRow, [string, string]>(`
+    SELECT
+      workspace_id AS workspaceId,
+      slack_user_id AS slackUserId,
+      key,
+      value_json AS valueJson,
+      updated_at AS updatedAt
+    FROM user_preferences
+    WHERE workspace_id = ? AND slack_user_id = ?
+    ORDER BY key ASC
+  `);
+  const upsertAgentMemory = db.query(`
+    INSERT INTO agent_memory (
+      workspace_id,
+      scope,
+      owner_id,
+      key,
+      value_json,
+      updated_at
+    )
+    VALUES (?, ?, ?, ?, ?, ?)
+    ON CONFLICT(workspace_id, scope, owner_id, key) DO UPDATE SET
+      value_json = excluded.value_json,
+      updated_at = excluded.updated_at
+  `);
+  const getAgentMemory = db.query<
+    AgentMemoryRow,
+    [string, AgentMemoryScope, string, string]
+  >(`
+    SELECT
+      workspace_id AS workspaceId,
+      scope,
+      owner_id AS ownerId,
+      key,
+      value_json AS valueJson,
+      updated_at AS updatedAt
+    FROM agent_memory
+    WHERE workspace_id = ? AND scope = ? AND owner_id = ? AND key = ?
+  `);
+  const listAgentMemory = db.query<
+    AgentMemoryRow,
+    [string, AgentMemoryScope, string]
+  >(`
+    SELECT
+      workspace_id AS workspaceId,
+      scope,
+      owner_id AS ownerId,
+      key,
+      value_json AS valueJson,
+      updated_at AS updatedAt
+    FROM agent_memory
+    WHERE workspace_id = ? AND scope = ? AND owner_id = ?
+    ORDER BY key ASC
+  `);
+  const deleteAgentMemory = db.query(`
+    DELETE FROM agent_memory
+    WHERE workspace_id = ? AND scope = ? AND owner_id = ? AND key = ?
+  `);
+  const upsertAgentJobState = db.query(`
+    INSERT INTO agent_job_state (
+      job_id,
+      workspace_id,
+      slack_user_id,
+      state_json,
+      updated_at
+    )
+    VALUES (?, ?, ?, ?, ?)
+    ON CONFLICT(job_id) DO UPDATE SET
+      workspace_id = excluded.workspace_id,
+      slack_user_id = excluded.slack_user_id,
+      state_json = excluded.state_json,
+      updated_at = excluded.updated_at
+  `);
+  const getAgentJobState = db.query<AgentJobStateRow, [string]>(`
+    SELECT
+      job_id AS jobId,
+      workspace_id AS workspaceId,
+      slack_user_id AS slackUserId,
+      state_json AS stateJson,
+      updated_at AS updatedAt
+    FROM agent_job_state
+    WHERE job_id = ?
+  `);
+  const listAgentJobStatesForPrincipal = db.query<
+    AgentJobStateRow,
+    [string, string]
+  >(`
+    SELECT
+      job_id AS jobId,
+      workspace_id AS workspaceId,
+      slack_user_id AS slackUserId,
+      state_json AS stateJson,
+      updated_at AS updatedAt
+    FROM agent_job_state
+    WHERE workspace_id = ? AND slack_user_id = ?
+    ORDER BY updated_at DESC, job_id ASC
+  `);
+  const deleteAgentJobState = db.query(`
+    DELETE FROM agent_job_state
+    WHERE job_id = ?
+  `);
+  const upsertAgentJobCapability = db.query(`
+    INSERT INTO agent_job_capabilities (
+      job_id,
+      workspace_id,
+      slack_user_id,
+      required_tools_json,
+      route_id,
+      policy_hash,
+      created_at,
+      updated_at
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(job_id) DO UPDATE SET
+      workspace_id = excluded.workspace_id,
+      slack_user_id = excluded.slack_user_id,
+      required_tools_json = excluded.required_tools_json,
+      route_id = excluded.route_id,
+      policy_hash = excluded.policy_hash,
+      updated_at = excluded.updated_at
+  `);
+  const getAgentJobCapability = db.query<AgentJobCapabilityRow, [string]>(`
+    SELECT
+      job_id AS jobId,
+      workspace_id AS workspaceId,
+      slack_user_id AS slackUserId,
+      required_tools_json AS requiredToolsJson,
+      route_id AS routeId,
+      policy_hash AS policyHash,
+      created_at AS createdAt,
+      updated_at AS updatedAt
+    FROM agent_job_capabilities
+    WHERE job_id = ?
+  `);
+  const listAgentJobCapabilitiesForPrincipal = db.query<
+    AgentJobCapabilityRow,
+    [string, string]
+  >(`
+    SELECT
+      job_id AS jobId,
+      workspace_id AS workspaceId,
+      slack_user_id AS slackUserId,
+      required_tools_json AS requiredToolsJson,
+      route_id AS routeId,
+      policy_hash AS policyHash,
+      created_at AS createdAt,
+      updated_at AS updatedAt
+    FROM agent_job_capabilities
+    WHERE workspace_id = ? AND slack_user_id = ?
+    ORDER BY updated_at DESC, job_id ASC
+  `);
+  const deleteAgentJobCapability = db.query(`
+    DELETE FROM agent_job_capabilities
+    WHERE job_id = ?
+  `);
+  const upsertSkillCatalog = db.query(`
+    INSERT INTO skill_catalog (
+      id,
+      version,
+      title,
+      description,
+      metadata_json,
+      content_ref,
+      created_at
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(id, version) DO UPDATE SET
+      title = excluded.title,
+      description = excluded.description,
+      metadata_json = excluded.metadata_json,
+      content_ref = excluded.content_ref
+  `);
+  const getSkillCatalog = db.query<SkillCatalogRow, [string, string]>(`
+    SELECT
+      id,
+      version,
+      title,
+      description,
+      metadata_json AS metadataJson,
+      content_ref AS contentRef,
+      created_at AS createdAt
+    FROM skill_catalog
+    WHERE id = ? AND version = ?
+  `);
+  const listSkillCatalog = db.query<SkillCatalogRow, []>(`
+    SELECT
+      id,
+      version,
+      title,
+      description,
+      metadata_json AS metadataJson,
+      content_ref AS contentRef,
+      created_at AS createdAt
+    FROM skill_catalog
+    ORDER BY id ASC, version ASC
+  `);
+  const upsertWorkspaceSkill = db.query(`
+    INSERT INTO workspace_skills (
+      workspace_id,
+      skill_id,
+      version,
+      enabled,
+      updated_by_slack_user_id,
+      updated_at
+    )
+    VALUES (?, ?, ?, ?, ?, ?)
+    ON CONFLICT(workspace_id, skill_id, version) DO UPDATE SET
+      enabled = excluded.enabled,
+      updated_by_slack_user_id = excluded.updated_by_slack_user_id,
+      updated_at = excluded.updated_at
+  `);
+  const listWorkspaceSkills = db.query<WorkspaceSkillRecord, [string]>(`
+    SELECT
+      workspace_id AS workspaceId,
+      skill_id AS skillId,
+      version,
+      enabled,
+      updated_by_slack_user_id AS updatedBySlackUserId,
+      updated_at AS updatedAt
+    FROM workspace_skills
+    WHERE workspace_id = ?
+    ORDER BY skill_id ASC, version ASC
+  `);
+  const upsertUserSkill = db.query(`
+    INSERT INTO user_skills (
+      workspace_id,
+      slack_user_id,
+      skill_id,
+      version,
+      enabled,
+      updated_at
+    )
+    VALUES (?, ?, ?, ?, ?, ?)
+    ON CONFLICT(workspace_id, slack_user_id, skill_id, version) DO UPDATE SET
+      enabled = excluded.enabled,
+      updated_at = excluded.updated_at
+  `);
+  const listUserSkills = db.query<UserSkillRecord, [string, string]>(`
+    SELECT
+      workspace_id AS workspaceId,
+      slack_user_id AS slackUserId,
+      skill_id AS skillId,
+      version,
+      enabled,
+      updated_at AS updatedAt
+    FROM user_skills
+    WHERE workspace_id = ? AND slack_user_id = ?
+    ORDER BY skill_id ASC, version ASC
   `);
 
   return {
@@ -570,6 +1090,7 @@ export function createTokenStore(path: string) {
       statePath: string;
       configPath: string;
       workspacePath: string;
+      policyHash?: string | null;
       now?: Date;
     }): AgentRuntimeRecord {
       const existing = getAgentRuntimeByPrincipal.get(
@@ -578,6 +1099,27 @@ export function createTokenStore(path: string) {
         input.engine
       );
       if (existing) {
+        if (input.policyHash && existing.policyHash !== input.policyHash) {
+          const now = (input.now ?? new Date()).toISOString();
+          updateAgentRuntimePolicyHash.run(input.policyHash, now, existing.id);
+          const updated = getAgentRuntimeById.get(existing.id);
+          if (!updated) {
+            throw new Error("Failed to update agent runtime policy hash");
+          }
+          insertAgentRuntimeEvent.run(
+            crypto.randomUUID(),
+            updated.id,
+            updated.workspaceId,
+            updated.slackUserId,
+            "runtime_policy_changed",
+            JSON.stringify({
+              previousPolicyHash: existing.policyHash,
+              policyHash: input.policyHash
+            }),
+            now
+          );
+          return updated;
+        }
         return existing;
       }
 
@@ -598,6 +1140,7 @@ export function createTokenStore(path: string) {
         input.statePath,
         input.configPath,
         input.workspacePath,
+        input.policyHash ?? null,
         now,
         now,
         now
@@ -693,6 +1236,336 @@ export function createTokenStore(path: string) {
       return getConversationRouteById.get(id);
     },
 
+    upsertWorkspacePolicy(input: {
+      workspaceId: string;
+      key: string;
+      value: unknown;
+      updatedBySlackUserId?: string | null;
+      now?: Date;
+    }): WorkspacePolicyRecord {
+      const now = (input.now ?? new Date()).toISOString();
+      upsertWorkspacePolicy.run(
+        input.workspaceId,
+        input.key,
+        stableJson(input.value),
+        input.updatedBySlackUserId ?? null,
+        now
+      );
+
+      const record = getWorkspacePolicy.get(input.workspaceId, input.key);
+      if (!record) {
+        throw new Error("Failed to store workspace policy");
+      }
+      return toWorkspacePolicyRecord(record);
+    },
+
+    getWorkspacePolicy(
+      workspaceId: string,
+      key: string
+    ): WorkspacePolicyRecord | null {
+      const record = getWorkspacePolicy.get(workspaceId, key);
+      return record ? toWorkspacePolicyRecord(record) : null;
+    },
+
+    listWorkspacePolicy(workspaceId: string): WorkspacePolicyRecord[] {
+      return listWorkspacePolicy
+        .all(workspaceId)
+        .map(toWorkspacePolicyRecord);
+    },
+
+    upsertUserPreference(input: {
+      workspaceId: string;
+      slackUserId: string;
+      key: string;
+      value: unknown;
+      now?: Date;
+    }): UserPreferenceRecord {
+      const now = (input.now ?? new Date()).toISOString();
+      upsertUserPreference.run(
+        input.workspaceId,
+        input.slackUserId,
+        input.key,
+        stableJson(input.value),
+        now
+      );
+
+      const record = getUserPreference.get(
+        input.workspaceId,
+        input.slackUserId,
+        input.key
+      );
+      if (!record) {
+        throw new Error("Failed to store user preference");
+      }
+      return toUserPreferenceRecord(record);
+    },
+
+    getUserPreference(
+      workspaceId: string,
+      slackUserId: string,
+      key: string
+    ): UserPreferenceRecord | null {
+      const record = getUserPreference.get(workspaceId, slackUserId, key);
+      return record ? toUserPreferenceRecord(record) : null;
+    },
+
+    listUserPreferences(
+      workspaceId: string,
+      slackUserId: string
+    ): UserPreferenceRecord[] {
+      return listUserPreferences
+        .all(workspaceId, slackUserId)
+        .map(toUserPreferenceRecord);
+    },
+
+    upsertAgentMemory(input: {
+      workspaceId: string;
+      scope: AgentMemoryScope;
+      ownerId?: string | null;
+      key: string;
+      value: unknown;
+      now?: Date;
+    }): AgentMemoryRecord {
+      const ownerId = normalizeAgentMemoryOwnerId(input.scope, input.ownerId);
+      const now = (input.now ?? new Date()).toISOString();
+      upsertAgentMemory.run(
+        input.workspaceId,
+        input.scope,
+        ownerId,
+        input.key,
+        stableJson(input.value),
+        now
+      );
+
+      const record = getAgentMemory.get(
+        input.workspaceId,
+        input.scope,
+        ownerId,
+        input.key
+      );
+      if (!record) {
+        throw new Error("Failed to store agent memory");
+      }
+      return toAgentMemoryRecord(record);
+    },
+
+    listAgentMemory(input: {
+      workspaceId: string;
+      scope: AgentMemoryScope;
+      ownerId?: string | null;
+    }): AgentMemoryRecord[] {
+      return listAgentMemory
+        .all(
+          input.workspaceId,
+          input.scope,
+          normalizeAgentMemoryOwnerId(input.scope, input.ownerId)
+        )
+        .map(toAgentMemoryRecord);
+    },
+
+    deleteAgentMemory(input: {
+      workspaceId: string;
+      scope: AgentMemoryScope;
+      ownerId?: string | null;
+      key: string;
+    }): void {
+      deleteAgentMemory.run(
+        input.workspaceId,
+        input.scope,
+        normalizeAgentMemoryOwnerId(input.scope, input.ownerId),
+        input.key
+      );
+    },
+
+    upsertAgentJobState(input: {
+      jobId: string;
+      workspaceId: string;
+      slackUserId: string;
+      state: unknown;
+      now?: Date;
+    }): AgentJobStateRecord {
+      const now = (input.now ?? new Date()).toISOString();
+      upsertAgentJobState.run(
+        input.jobId,
+        input.workspaceId,
+        input.slackUserId,
+        stableJson(input.state),
+        now
+      );
+
+      const record = getAgentJobState.get(input.jobId);
+      if (!record) {
+        throw new Error("Failed to store agent job state");
+      }
+      return toAgentJobStateRecord(record);
+    },
+
+    getAgentJobState(jobId: string): AgentJobStateRecord | null {
+      const record = getAgentJobState.get(jobId);
+      return record ? toAgentJobStateRecord(record) : null;
+    },
+
+    listAgentJobStatesForPrincipal(
+      workspaceId: string,
+      slackUserId: string
+    ): AgentJobStateRecord[] {
+      return listAgentJobStatesForPrincipal
+        .all(workspaceId, slackUserId)
+        .map(toAgentJobStateRecord);
+    },
+
+    deleteAgentJobState(jobId: string): void {
+      deleteAgentJobState.run(jobId);
+    },
+
+    upsertAgentJobCapability(input: {
+      jobId: string;
+      workspaceId: string;
+      slackUserId: string;
+      requiredTools: string[];
+      routeId?: string | null;
+      policyHash?: string | null;
+      now?: Date;
+    }): AgentJobCapabilityRecord {
+      const now = (input.now ?? new Date()).toISOString();
+      const existing = getAgentJobCapability.get(input.jobId);
+      upsertAgentJobCapability.run(
+        input.jobId,
+        input.workspaceId,
+        input.slackUserId,
+        stableJson(normalizeRequiredTools(input.requiredTools)),
+        input.routeId ?? null,
+        input.policyHash ?? null,
+        existing?.createdAt ?? now,
+        now
+      );
+
+      const record = getAgentJobCapability.get(input.jobId);
+      if (!record) {
+        throw new Error("Failed to store agent job capability");
+      }
+      return toAgentJobCapabilityRecord(record);
+    },
+
+    getAgentJobCapability(jobId: string): AgentJobCapabilityRecord | null {
+      const record = getAgentJobCapability.get(jobId);
+      return record ? toAgentJobCapabilityRecord(record) : null;
+    },
+
+    listAgentJobCapabilitiesForPrincipal(
+      workspaceId: string,
+      slackUserId: string
+    ): AgentJobCapabilityRecord[] {
+      return listAgentJobCapabilitiesForPrincipal
+        .all(workspaceId, slackUserId)
+        .map(toAgentJobCapabilityRecord);
+    },
+
+    deleteAgentJobCapability(jobId: string): void {
+      deleteAgentJobCapability.run(jobId);
+    },
+
+    upsertSkillCatalog(input: {
+      id: string;
+      version: string;
+      title: string;
+      description: string;
+      metadata: unknown;
+      contentRef: string;
+      now?: Date;
+    }): SkillCatalogRecord {
+      const now = (input.now ?? new Date()).toISOString();
+      upsertSkillCatalog.run(
+        input.id,
+        input.version,
+        input.title,
+        input.description,
+        stableJson(input.metadata),
+        input.contentRef,
+        now
+      );
+
+      const record = getSkillCatalog.get(input.id, input.version);
+      if (!record) {
+        throw new Error("Failed to store skill catalog record");
+      }
+      return toSkillCatalogRecord(record);
+    },
+
+    getSkillCatalog(id: string, version: string): SkillCatalogRecord | null {
+      const record = getSkillCatalog.get(id, version);
+      return record ? toSkillCatalogRecord(record) : null;
+    },
+
+    listSkillCatalog(): SkillCatalogRecord[] {
+      return listSkillCatalog.all().map(toSkillCatalogRecord);
+    },
+
+    upsertWorkspaceSkill(input: {
+      workspaceId: string;
+      skillId: string;
+      version: string;
+      enabled: boolean;
+      updatedBySlackUserId?: string | null;
+      now?: Date;
+    }): WorkspaceSkillRecord {
+      const now = (input.now ?? new Date()).toISOString();
+      upsertWorkspaceSkill.run(
+        input.workspaceId,
+        input.skillId,
+        input.version,
+        input.enabled ? 1 : 0,
+        input.updatedBySlackUserId ?? null,
+        now
+      );
+      return {
+        workspaceId: input.workspaceId,
+        skillId: input.skillId,
+        version: input.version,
+        enabled: input.enabled,
+        updatedBySlackUserId: input.updatedBySlackUserId ?? null,
+        updatedAt: now
+      };
+    },
+
+    listWorkspaceSkills(workspaceId: string): WorkspaceSkillRecord[] {
+      return listWorkspaceSkills.all(workspaceId).map(toWorkspaceSkillRecord);
+    },
+
+    upsertUserSkill(input: {
+      workspaceId: string;
+      slackUserId: string;
+      skillId: string;
+      version: string;
+      enabled: boolean;
+      now?: Date;
+    }): UserSkillRecord {
+      const now = (input.now ?? new Date()).toISOString();
+      upsertUserSkill.run(
+        input.workspaceId,
+        input.slackUserId,
+        input.skillId,
+        input.version,
+        input.enabled ? 1 : 0,
+        now
+      );
+      return {
+        workspaceId: input.workspaceId,
+        slackUserId: input.slackUserId,
+        skillId: input.skillId,
+        version: input.version,
+        enabled: input.enabled,
+        updatedAt: now
+      };
+    },
+
+    listUserSkills(
+      workspaceId: string,
+      slackUserId: string
+    ): UserSkillRecord[] {
+      return listUserSkills.all(workspaceId, slackUserId).map(toUserSkillRecord);
+    },
+
     updateAgentRuntimeStatus(
       id: string,
       input: {
@@ -736,6 +1609,20 @@ function ensureProviderConnectionColumn(
   }
 }
 
+function ensureAgentRuntimeColumn(
+  db: Database,
+  name: string,
+  definition: string
+): void {
+  const columns = db
+    .query<{ name: string }, []>("PRAGMA table_info(agent_runtimes)")
+    .all()
+    .map((column) => column.name);
+  if (!columns.includes(name)) {
+    db.exec(`ALTER TABLE agent_runtimes ADD COLUMN ${name} ${definition}`);
+  }
+}
+
 function buildAgentRuntimeId(
   workspaceId: string,
   slackUserId: string,
@@ -759,7 +1646,126 @@ function buildConversationRouteId(
     .slice(0, 24)}`;
 }
 
-function stableJson(value: Record<string, unknown>): string {
+function toWorkspacePolicyRecord(row: WorkspacePolicyRow): WorkspacePolicyRecord {
+  return {
+    workspaceId: row.workspaceId,
+    key: row.key,
+    value: parseStoredJson(row.valueJson),
+    updatedBySlackUserId: row.updatedBySlackUserId,
+    updatedAt: row.updatedAt
+  };
+}
+
+function toUserPreferenceRecord(row: UserPreferenceRow): UserPreferenceRecord {
+  return {
+    workspaceId: row.workspaceId,
+    slackUserId: row.slackUserId,
+    key: row.key,
+    value: parseStoredJson(row.valueJson),
+    updatedAt: row.updatedAt
+  };
+}
+
+function toAgentMemoryRecord(row: AgentMemoryRow): AgentMemoryRecord {
+  return {
+    workspaceId: row.workspaceId,
+    scope: row.scope,
+    ownerId: row.ownerId,
+    key: row.key,
+    value: parseStoredJson(row.valueJson),
+    updatedAt: row.updatedAt
+  };
+}
+
+function toAgentJobStateRecord(row: AgentJobStateRow): AgentJobStateRecord {
+  return {
+    jobId: row.jobId,
+    workspaceId: row.workspaceId,
+    slackUserId: row.slackUserId,
+    state: parseStoredJson(row.stateJson),
+    updatedAt: row.updatedAt
+  };
+}
+
+function toAgentJobCapabilityRecord(
+  row: AgentJobCapabilityRow
+): AgentJobCapabilityRecord {
+  return {
+    jobId: row.jobId,
+    workspaceId: row.workspaceId,
+    slackUserId: row.slackUserId,
+    requiredTools: requiredToolsFromJson(row.requiredToolsJson),
+    routeId: row.routeId,
+    policyHash: row.policyHash,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt
+  };
+}
+
+function toSkillCatalogRecord(row: SkillCatalogRow): SkillCatalogRecord {
+  return {
+    id: row.id,
+    version: row.version,
+    title: row.title,
+    description: row.description,
+    metadata: parseStoredJson(row.metadataJson),
+    contentRef: row.contentRef,
+    createdAt: row.createdAt
+  };
+}
+
+function toWorkspaceSkillRecord(row: WorkspaceSkillRecord): WorkspaceSkillRecord {
+  return {
+    workspaceId: row.workspaceId,
+    skillId: row.skillId,
+    version: row.version,
+    enabled: Boolean(row.enabled),
+    updatedBySlackUserId: row.updatedBySlackUserId,
+    updatedAt: row.updatedAt
+  };
+}
+
+function toUserSkillRecord(row: UserSkillRecord): UserSkillRecord {
+  return {
+    workspaceId: row.workspaceId,
+    slackUserId: row.slackUserId,
+    skillId: row.skillId,
+    version: row.version,
+    enabled: Boolean(row.enabled),
+    updatedAt: row.updatedAt
+  };
+}
+
+function normalizeAgentMemoryOwnerId(
+  scope: AgentMemoryScope,
+  ownerId: string | null | undefined
+): string {
+  if (scope === "workspace") {
+    return "";
+  }
+  if (!ownerId?.trim()) {
+    throw new Error(`${scope} memory requires an owner id`);
+  }
+  return ownerId.trim();
+}
+
+function normalizeRequiredTools(requiredTools: string[]): string[] {
+  return [...new Set(requiredTools.map((tool) => tool.trim()).filter(Boolean))]
+    .sort();
+}
+
+function requiredToolsFromJson(valueJson: string): string[] {
+  const value = parseStoredJson(valueJson);
+  return Array.isArray(value)
+    ? value.filter((tool): tool is string => typeof tool === "string")
+    : [];
+}
+
+function parseStoredJson(valueJson: string): unknown {
+  return JSON.parse(valueJson) as unknown;
+}
+
+function stableJson(value: unknown): string {
   return JSON.stringify(sortJson(value));
 }
 

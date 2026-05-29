@@ -5,6 +5,10 @@ import { providerToolInputSchema } from "../providers/tool-specs";
 import { createGoogleTools } from "../tools/google";
 import type { ToolResult } from "../tools/types";
 import { mcpToolResult, type ProviderMcpDeps, withConnection } from "./provider-context";
+import {
+  isProviderMcpToolEnabled,
+  type ProviderMcpToolPolicy
+} from "./provider-policy";
 
 type GoogleTools = ReturnType<typeof createGoogleTools>;
 type GoogleToolArgs = Record<string, unknown>;
@@ -18,11 +22,15 @@ export function registerGoogleMcpTools(input: {
   store: TokenStore;
   runtime: AgentRuntimeRecord;
   deps: Parameters<typeof createGoogleTools>[0] & ProviderMcpDeps;
+  policy?: ProviderMcpToolPolicy;
 }): void {
   const googleTools = createGoogleTools(input.deps);
   const handlers = createGoogleMcpHandlers(googleTools);
 
   for (const spec of googleProviderToolSpecs) {
+    if (!isProviderMcpToolEnabled(input.policy, spec.name)) {
+      continue;
+    }
     const handler = handlers[spec.implementation];
     if (!handler) {
       throw new Error(`Missing Google MCP handler for ${spec.implementation}`);

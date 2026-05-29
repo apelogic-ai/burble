@@ -97,6 +97,7 @@ const runtime: AgentRuntimeRecord = {
   statePath: "/data/runtimes/u123/state",
   configPath: "/data/runtimes/u123/config/openclaw.json",
   workspacePath: "/data/runtimes/u123/workspace",
+  policyHash: "policy-hash",
   createdAt: "2026-05-21T00:00:00.000Z",
   lastSeenAt: "2026-05-21T00:00:00.000Z",
   lastUsedAt: "2026-05-21T00:00:00.000Z",
@@ -140,6 +141,46 @@ function createStore(
       throw new Error("unexpected conversation route write");
     },
     getConversationRoute: (id) => (id === foundRoute?.id ? foundRoute : null),
+    upsertWorkspacePolicy: () => {
+      throw new Error("unexpected workspace policy write");
+    },
+    getWorkspacePolicy: () => null,
+    listWorkspacePolicy: () => [],
+    upsertUserPreference: () => {
+      throw new Error("unexpected user preference write");
+    },
+    getUserPreference: () => null,
+    listUserPreferences: () => [],
+    upsertAgentMemory: () => {
+      throw new Error("unexpected agent memory write");
+    },
+    listAgentMemory: () => [],
+    deleteAgentMemory: () => undefined,
+    upsertAgentJobState: () => {
+      throw new Error("unexpected agent job state write");
+    },
+    getAgentJobState: () => null,
+    listAgentJobStatesForPrincipal: () => [],
+    deleteAgentJobState: () => undefined,
+    upsertAgentJobCapability: () => {
+      throw new Error("unexpected agent job capability write");
+    },
+    getAgentJobCapability: () => null,
+    listAgentJobCapabilitiesForPrincipal: () => [],
+    deleteAgentJobCapability: () => undefined,
+    upsertSkillCatalog: () => {
+      throw new Error("unexpected skill catalog write");
+    },
+    getSkillCatalog: () => null,
+    listSkillCatalog: () => [],
+    upsertWorkspaceSkill: () => {
+      throw new Error("unexpected workspace skill write");
+    },
+    listWorkspaceSkills: () => [],
+    upsertUserSkill: () => {
+      throw new Error("unexpected user skill write");
+    },
+    listUserSkills: () => [],
     updateAgentRuntimeStatus: () => undefined,
     touchAgentRuntime: (id) => {
       touchedRuntimeIds.push(id);

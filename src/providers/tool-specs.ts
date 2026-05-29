@@ -9,8 +9,18 @@ export type ProviderToolSpec = {
   implementation: string;
   title: string;
   description: string;
+  risk?: ProviderToolRisk;
+  confirmation?: ProviderToolConfirmation;
   input: Record<string, ProviderToolInputSpec>;
 };
+
+export type ProviderToolRisk =
+  | "read"
+  | "low_write"
+  | "moderate_write"
+  | "high_write";
+
+export type ProviderToolConfirmation = "none" | "explicit" | "strong";
 
 export type ProviderToolInputSpec =
   | ProviderStringInputSpec
@@ -186,6 +196,17 @@ function parseProviderToolSpec(
     implementation: readRequiredString(parsed, "implementation", source),
     title: readRequiredString(parsed, "title", source),
     description: readRequiredString(parsed, "description", source),
+    risk: readOptionalStringEnum(parsed, "risk", source, [
+      "read",
+      "low_write",
+      "moderate_write",
+      "high_write"
+    ]),
+    confirmation: readOptionalStringEnum(parsed, "confirmation", source, [
+      "none",
+      "explicit",
+      "strong"
+    ]),
     input: Object.fromEntries(
       Object.entries(input).map(([name, spec]) => [
         name,

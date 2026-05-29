@@ -168,8 +168,53 @@ describe("createTokenStore", () => {
       engine: "openclaw",
       status: "ready",
       endpointUrl: "http://runtime-u123:8080",
-      authTokenHash: "hash-u123"
+      authTokenHash: "hash-u123",
+      policyHash: null
     });
+
+    store.close();
+  });
+
+  test("updates runtime policy hashes and records policy drift", () => {
+    const store = createTokenStore(":memory:");
+
+    const first = store.getOrCreateAgentRuntime({
+      workspaceId: "T123",
+      slackUserId: "U123",
+      engine: "openclaw",
+      endpointUrl: "http://runtime-u123:8080",
+      authTokenHash: "hash-u123",
+      statePath: "/data/runtimes/u123/state",
+      configPath: "/data/runtimes/u123/config/openclaw.json",
+      workspacePath: "/data/runtimes/u123/workspace",
+      policyHash: "policy-a",
+      now: new Date("2026-05-21T00:00:00.000Z")
+    });
+    const second = store.getOrCreateAgentRuntime({
+      workspaceId: "T123",
+      slackUserId: "U123",
+      engine: "openclaw",
+      endpointUrl: "http://runtime-u123:8080",
+      authTokenHash: "hash-u123",
+      statePath: "/data/runtimes/u123/state",
+      configPath: "/data/runtimes/u123/config/openclaw.json",
+      workspacePath: "/data/runtimes/u123/workspace",
+      policyHash: "policy-b",
+      now: new Date("2026-05-21T00:01:00.000Z")
+    });
+
+    expect(second.id).toBe(first.id);
+    expect(second.policyHash).toBe("policy-b");
+    expect(second.lastSeenAt).toBe("2026-05-21T00:01:00.000Z");
+    expect(store.listAgentRuntimeEvents(first.id)).toMatchObject([
+      {
+        eventType: "runtime_policy_changed",
+        summaryJson: JSON.stringify({
+          previousPolicyHash: "policy-a",
+          policyHash: "policy-b"
+        })
+      }
+    ]);
 
     store.close();
   });
@@ -384,6 +429,328 @@ describe("createTokenStore", () => {
     expect(second.updatedAt).toBe("2026-05-26T01:00:00.000Z");
     expect(JSON.parse(second.destinationJson)).toEqual(destination);
     expect(threaded.id).not.toBe(first.id);
+
+    store.close();
+  });
+
+  test("stores workspace policy and user preferences as stable JSON records", () => {
+    const store = createTokenStore(":memory:");
+
+    const policy = store.upsertWorkspacePolicy({
+      workspaceId: "T123",
+      key: "providers.allowed",
+      value: ["github", "google"],
+      updatedBySlackUserId: "UADMIN",
+      now: new Date("2026-05-28T00:00:00.000Z")
+    });
+    const preference = store.upsertUserPreference({
+      workspaceId: "T123",
+      slackUserId: "U123",
+      key: "github.defaults",
+      value: {
+        repoAliases: {
+          burble: "apelogic-ai/burble"
+        },
+        org: "apelogic-ai"
+      },
+      now: new Date("2026-05-28T00:01:00.000Z")
+    });
+
+    expect(policy).toEqual({
+      workspaceId: "T123",
+      key: "providers.allowed",
+      value: ["github", "google"],
+      updatedBySlackUserId: "UADMIN",
+      updatedAt: "2026-05-28T00:00:00.000Z"
+    });
+    expect(preference).toEqual({
+      workspaceId: "T123",
+      slackUserId: "U123",
+      key: "github.defaults",
+      value: {
+        org: "apelogic-ai",
+        repoAliases: {
+          burble: "apelogic-ai/burble"
+        }
+      },
+      updatedAt: "2026-05-28T00:01:00.000Z"
+    });
+    expect(store.getWorkspacePolicy("T123", "providers.allowed")).toEqual(policy);
+    expect(store.getUserPreference("T123", "U123", "github.defaults")).toEqual(
+      preference
+    );
+    expect(store.listWorkspacePolicy("T123").map((record) => record.key)).toEqual([
+      "providers.allowed"
+    ]);
+    expect(
+      store.listUserPreferences("T123", "U123").map((record) => record.key)
+    ).toEqual(["github.defaults"]);
+
+    store.close();
+  });
+
+  test("stores inspectable and deletable scoped agent memory", () => {
+    const store = createTokenStore(":memory:");
+
+    const userMemory = store.upsertAgentMemory({
+      workspaceId: "T123",
+      scope: "user",
+      ownerId: "U123",
+      key: "github.defaultOrg",
+      value: "apelogic-ai",
+      now: new Date("2026-05-28T00:00:00.000Z")
+    });
+    store.upsertAgentMemory({
+      workspaceId: "T123",
+      scope: "workspace",
+      key: "deployment.region",
+      value: { primary: "us-west" },
+      now: new Date("2026-05-28T00:01:00.000Z")
+    });
+    store.upsertAgentMemory({
+      workspaceId: "T123",
+      scope: "job",
+      ownerId: "job-123",
+      key: "seenPullRequests",
+      value: ["https://github.com/acme/app/pull/1"],
+      now: new Date("2026-05-28T00:02:00.000Z")
+    });
+
+    expect(userMemory).toEqual({
+      workspaceId: "T123",
+      scope: "user",
+      ownerId: "U123",
+      key: "github.defaultOrg",
+      value: "apelogic-ai",
+      updatedAt: "2026-05-28T00:00:00.000Z"
+    });
+    expect(
+      store.listAgentMemory({
+        workspaceId: "T123",
+        scope: "workspace"
+      })
+    ).toEqual([
+      {
+        workspaceId: "T123",
+        scope: "workspace",
+        ownerId: "",
+        key: "deployment.region",
+        value: { primary: "us-west" },
+        updatedAt: "2026-05-28T00:01:00.000Z"
+      }
+    ]);
+    expect(
+      store.listAgentMemory({
+        workspaceId: "T123",
+        scope: "job",
+        ownerId: "job-123"
+      })
+    ).toHaveLength(1);
+
+    store.deleteAgentMemory({
+      workspaceId: "T123",
+      scope: "user",
+      ownerId: "U123",
+      key: "github.defaultOrg"
+    });
+    expect(
+      store.listAgentMemory({
+        workspaceId: "T123",
+        scope: "user",
+        ownerId: "U123"
+      })
+    ).toEqual([]);
+    expect(() =>
+      store.listAgentMemory({
+        workspaceId: "T123",
+        scope: "job"
+      })
+    ).toThrow("job memory requires an owner id");
+
+    store.close();
+  });
+
+  test("stores durable job state by job id", () => {
+    const store = createTokenStore(":memory:");
+
+    const first = store.upsertAgentJobState({
+      jobId: "job-123",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      state: {
+        lastNotifiedPullRequest: "https://github.com/acme/app/pull/1",
+        seen: [1, 2]
+      },
+      now: new Date("2026-05-28T00:00:00.000Z")
+    });
+    store.upsertAgentJobState({
+      jobId: "job-456",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      state: { cursor: "abc" },
+      now: new Date("2026-05-28T00:01:00.000Z")
+    });
+    const updated = store.upsertAgentJobState({
+      jobId: "job-123",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      state: {
+        lastNotifiedPullRequest: "https://github.com/acme/app/pull/2",
+        seen: [1, 2, 3]
+      },
+      now: new Date("2026-05-28T00:02:00.000Z")
+    });
+
+    expect(first).toEqual({
+      jobId: "job-123",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      state: {
+        lastNotifiedPullRequest: "https://github.com/acme/app/pull/1",
+        seen: [1, 2]
+      },
+      updatedAt: "2026-05-28T00:00:00.000Z"
+    });
+    expect(updated.state).toEqual({
+      lastNotifiedPullRequest: "https://github.com/acme/app/pull/2",
+      seen: [1, 2, 3]
+    });
+    expect(
+      store
+        .listAgentJobStatesForPrincipal("T123", "U123")
+        .map((record) => record.jobId)
+    ).toEqual(["job-123", "job-456"]);
+
+    store.deleteAgentJobState("job-123");
+    expect(store.getAgentJobState("job-123")).toBeNull();
+    expect(store.getAgentJobState("job-456")?.state).toEqual({ cursor: "abc" });
+
+    store.close();
+  });
+
+  test("stores scheduled job capability metadata", () => {
+    const store = createTokenStore(":memory:");
+
+    const first = store.upsertAgentJobCapability({
+      jobId: "job-123",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      requiredTools: [
+        "github_list_my_pull_requests",
+        "github_search_issues",
+        "github_search_issues"
+      ],
+      routeId: "convrt_123",
+      policyHash: "policy-a",
+      now: new Date("2026-05-28T00:00:00.000Z")
+    });
+    const updated = store.upsertAgentJobCapability({
+      jobId: "job-123",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      requiredTools: ["github_list_my_pull_requests"],
+      routeId: "convrt_123",
+      policyHash: "policy-b",
+      now: new Date("2026-05-28T00:01:00.000Z")
+    });
+
+    expect(first).toEqual({
+      jobId: "job-123",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      requiredTools: ["github_list_my_pull_requests", "github_search_issues"],
+      routeId: "convrt_123",
+      policyHash: "policy-a",
+      createdAt: "2026-05-28T00:00:00.000Z",
+      updatedAt: "2026-05-28T00:00:00.000Z"
+    });
+    expect(updated).toEqual({
+      jobId: "job-123",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      requiredTools: ["github_list_my_pull_requests"],
+      routeId: "convrt_123",
+      policyHash: "policy-b",
+      createdAt: "2026-05-28T00:00:00.000Z",
+      updatedAt: "2026-05-28T00:01:00.000Z"
+    });
+    expect(store.getAgentJobCapability("job-123")).toEqual(updated);
+    expect(
+      store.listAgentJobCapabilitiesForPrincipal("T123", "U123")
+    ).toEqual([updated]);
+
+    store.deleteAgentJobCapability("job-123");
+    expect(store.getAgentJobCapability("job-123")).toBeNull();
+
+    store.close();
+  });
+
+  test("stores skill catalog and workspace/user skill enablement", () => {
+    const store = createTokenStore(":memory:");
+
+    const skill = store.upsertSkillCatalog({
+      id: "github-pr-triage",
+      version: "1",
+      title: "GitHub PR triage",
+      description: "Helps summarize and triage pull requests.",
+      metadata: {
+        requiresTools: ["github_list_my_pull_requests"],
+        risk: "read-mostly"
+      },
+      contentRef: "bundled:github-pr-triage@1",
+      now: new Date("2026-05-28T00:00:00.000Z")
+    });
+    store.upsertWorkspaceSkill({
+      workspaceId: "T123",
+      skillId: "github-pr-triage",
+      version: "1",
+      enabled: true,
+      updatedBySlackUserId: "UADMIN",
+      now: new Date("2026-05-28T00:01:00.000Z")
+    });
+    store.upsertUserSkill({
+      workspaceId: "T123",
+      slackUserId: "U123",
+      skillId: "github-pr-triage",
+      version: "1",
+      enabled: true,
+      now: new Date("2026-05-28T00:02:00.000Z")
+    });
+
+    expect(skill).toEqual({
+      id: "github-pr-triage",
+      version: "1",
+      title: "GitHub PR triage",
+      description: "Helps summarize and triage pull requests.",
+      metadata: {
+        requiresTools: ["github_list_my_pull_requests"],
+        risk: "read-mostly"
+      },
+      contentRef: "bundled:github-pr-triage@1",
+      createdAt: "2026-05-28T00:00:00.000Z"
+    });
+    expect(store.getSkillCatalog("github-pr-triage", "1")).toEqual(skill);
+    expect(store.listSkillCatalog()).toEqual([skill]);
+    expect(store.listWorkspaceSkills("T123")).toEqual([
+      {
+        workspaceId: "T123",
+        skillId: "github-pr-triage",
+        version: "1",
+        enabled: true,
+        updatedBySlackUserId: "UADMIN",
+        updatedAt: "2026-05-28T00:01:00.000Z"
+      }
+    ]);
+    expect(store.listUserSkills("T123", "U123")).toEqual([
+      {
+        workspaceId: "T123",
+        slackUserId: "U123",
+        skillId: "github-pr-triage",
+        version: "1",
+        enabled: true,
+        updatedAt: "2026-05-28T00:02:00.000Z"
+      }
+    ]);
 
     store.close();
   });

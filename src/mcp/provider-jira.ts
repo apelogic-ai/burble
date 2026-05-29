@@ -5,6 +5,10 @@ import { providerToolInputSchema } from "../providers/tool-specs";
 import { createJiraTools } from "../tools/jira";
 import type { ToolResult } from "../tools/types";
 import { mcpToolResult, type ProviderMcpDeps, withConnection } from "./provider-context";
+import {
+  isProviderMcpToolEnabled,
+  type ProviderMcpToolPolicy
+} from "./provider-policy";
 
 type JiraTools = ReturnType<typeof createJiraTools>;
 type JiraToolArgs = Record<string, unknown>;
@@ -18,11 +22,15 @@ export function registerJiraMcpTools(input: {
   store: TokenStore;
   runtime: AgentRuntimeRecord;
   deps: Parameters<typeof createJiraTools>[0] & ProviderMcpDeps;
+  policy?: ProviderMcpToolPolicy;
 }): void {
   const jiraTools = createJiraTools(input.deps);
   const handlers = createJiraMcpHandlers(jiraTools);
 
   for (const spec of jiraProviderToolSpecs) {
+    if (!isProviderMcpToolEnabled(input.policy, spec.name)) {
+      continue;
+    }
     const handler = handlers[spec.implementation];
     if (!handler) {
       throw new Error(`Missing Jira MCP handler for ${spec.implementation}`);
