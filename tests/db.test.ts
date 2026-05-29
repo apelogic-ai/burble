@@ -627,4 +627,74 @@ describe("createTokenStore", () => {
 
     store.close();
   });
+
+  test("stores skill catalog and workspace/user skill enablement", () => {
+    const store = createTokenStore(":memory:");
+
+    const skill = store.upsertSkillCatalog({
+      id: "github-pr-triage",
+      version: "1",
+      title: "GitHub PR triage",
+      description: "Helps summarize and triage pull requests.",
+      metadata: {
+        requiresTools: ["github_list_my_pull_requests"],
+        risk: "read-mostly"
+      },
+      contentRef: "bundled:github-pr-triage@1",
+      now: new Date("2026-05-28T00:00:00.000Z")
+    });
+    store.upsertWorkspaceSkill({
+      workspaceId: "T123",
+      skillId: "github-pr-triage",
+      version: "1",
+      enabled: true,
+      updatedBySlackUserId: "UADMIN",
+      now: new Date("2026-05-28T00:01:00.000Z")
+    });
+    store.upsertUserSkill({
+      workspaceId: "T123",
+      slackUserId: "U123",
+      skillId: "github-pr-triage",
+      version: "1",
+      enabled: true,
+      now: new Date("2026-05-28T00:02:00.000Z")
+    });
+
+    expect(skill).toEqual({
+      id: "github-pr-triage",
+      version: "1",
+      title: "GitHub PR triage",
+      description: "Helps summarize and triage pull requests.",
+      metadata: {
+        requiresTools: ["github_list_my_pull_requests"],
+        risk: "read-mostly"
+      },
+      contentRef: "bundled:github-pr-triage@1",
+      createdAt: "2026-05-28T00:00:00.000Z"
+    });
+    expect(store.getSkillCatalog("github-pr-triage", "1")).toEqual(skill);
+    expect(store.listSkillCatalog()).toEqual([skill]);
+    expect(store.listWorkspaceSkills("T123")).toEqual([
+      {
+        workspaceId: "T123",
+        skillId: "github-pr-triage",
+        version: "1",
+        enabled: true,
+        updatedBySlackUserId: "UADMIN",
+        updatedAt: "2026-05-28T00:01:00.000Z"
+      }
+    ]);
+    expect(store.listUserSkills("T123", "U123")).toEqual([
+      {
+        workspaceId: "T123",
+        slackUserId: "U123",
+        skillId: "github-pr-triage",
+        version: "1",
+        enabled: true,
+        updatedAt: "2026-05-28T00:02:00.000Z"
+      }
+    ]);
+
+    store.close();
+  });
 });

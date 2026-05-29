@@ -131,6 +131,34 @@ export type AgentJobStateRecord = {
   updatedAt: string;
 };
 
+export type SkillCatalogRecord = {
+  id: string;
+  version: string;
+  title: string;
+  description: string;
+  metadata: unknown;
+  contentRef: string;
+  createdAt: string;
+};
+
+export type WorkspaceSkillRecord = {
+  workspaceId: string;
+  skillId: string;
+  version: string;
+  enabled: boolean;
+  updatedBySlackUserId: string | null;
+  updatedAt: string;
+};
+
+export type UserSkillRecord = {
+  workspaceId: string;
+  slackUserId: string;
+  skillId: string;
+  version: string;
+  enabled: boolean;
+  updatedAt: string;
+};
+
 type WorkspacePolicyRow = Omit<WorkspacePolicyRecord, "value"> & {
   valueJson: string;
 };
@@ -145,6 +173,10 @@ type AgentMemoryRow = Omit<AgentMemoryRecord, "value"> & {
 
 type AgentJobStateRow = Omit<AgentJobStateRecord, "state"> & {
   stateJson: string;
+};
+
+type SkillCatalogRow = Omit<SkillCatalogRecord, "metadata"> & {
+  metadataJson: string;
 };
 
 export type TokenStore = ReturnType<typeof createTokenStore>;
@@ -285,6 +317,43 @@ export function createTokenStore(path: string) {
 
     CREATE INDEX IF NOT EXISTS idx_agent_job_state_principal
       ON agent_job_state (workspace_id, slack_user_id, updated_at);
+
+    CREATE TABLE IF NOT EXISTS skill_catalog (
+      id TEXT NOT NULL,
+      version TEXT NOT NULL,
+      title TEXT NOT NULL,
+      description TEXT NOT NULL,
+      metadata_json TEXT NOT NULL,
+      content_ref TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      PRIMARY KEY(id, version)
+    );
+
+    CREATE TABLE IF NOT EXISTS workspace_skills (
+      workspace_id TEXT NOT NULL,
+      skill_id TEXT NOT NULL,
+      version TEXT NOT NULL,
+      enabled INTEGER NOT NULL,
+      updated_by_slack_user_id TEXT,
+      updated_at TEXT NOT NULL,
+      PRIMARY KEY(workspace_id, skill_id, version)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_workspace_skills_workspace
+      ON workspace_skills (workspace_id, enabled, skill_id);
+
+    CREATE TABLE IF NOT EXISTS user_skills (
+      workspace_id TEXT NOT NULL,
+      slack_user_id TEXT NOT NULL,
+      skill_id TEXT NOT NULL,
+      version TEXT NOT NULL,
+      enabled INTEGER NOT NULL,
+      updated_at TEXT NOT NULL,
+      PRIMARY KEY(workspace_id, slack_user_id, skill_id, version)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_user_skills_principal
+      ON user_skills (workspace_id, slack_user_id, enabled, skill_id);
   `);
   ensureProviderConnectionColumn(db, "refresh_token", "TEXT");
   ensureProviderConnectionColumn(db, "access_token_expires_at", "TEXT");
@@ -705,6 +774,100 @@ export function createTokenStore(path: string) {
   const deleteAgentJobState = db.query(`
     DELETE FROM agent_job_state
     WHERE job_id = ?
+  `);
+  const upsertSkillCatalog = db.query(`
+    INSERT INTO skill_catalog (
+      id,
+      version,
+      title,
+      description,
+      metadata_json,
+      content_ref,
+      created_at
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(id, version) DO UPDATE SET
+      title = excluded.title,
+      description = excluded.description,
+      metadata_json = excluded.metadata_json,
+      content_ref = excluded.content_ref
+  `);
+  const getSkillCatalog = db.query<SkillCatalogRow, [string, string]>(`
+    SELECT
+      id,
+      version,
+      title,
+      description,
+      metadata_json AS metadataJson,
+      content_ref AS contentRef,
+      created_at AS createdAt
+    FROM skill_catalog
+    WHERE id = ? AND version = ?
+  `);
+  const listSkillCatalog = db.query<SkillCatalogRow, []>(`
+    SELECT
+      id,
+      version,
+      title,
+      description,
+      metadata_json AS metadataJson,
+      content_ref AS contentRef,
+      created_at AS createdAt
+    FROM skill_catalog
+    ORDER BY id ASC, version ASC
+  `);
+  const upsertWorkspaceSkill = db.query(`
+    INSERT INTO workspace_skills (
+      workspace_id,
+      skill_id,
+      version,
+      enabled,
+      updated_by_slack_user_id,
+      updated_at
+    )
+    VALUES (?, ?, ?, ?, ?, ?)
+    ON CONFLICT(workspace_id, skill_id, version) DO UPDATE SET
+      enabled = excluded.enabled,
+      updated_by_slack_user_id = excluded.updated_by_slack_user_id,
+      updated_at = excluded.updated_at
+  `);
+  const listWorkspaceSkills = db.query<WorkspaceSkillRecord, [string]>(`
+    SELECT
+      workspace_id AS workspaceId,
+      skill_id AS skillId,
+      version,
+      enabled,
+      updated_by_slack_user_id AS updatedBySlackUserId,
+      updated_at AS updatedAt
+    FROM workspace_skills
+    WHERE workspace_id = ?
+    ORDER BY skill_id ASC, version ASC
+  `);
+  const upsertUserSkill = db.query(`
+    INSERT INTO user_skills (
+      workspace_id,
+      slack_user_id,
+      skill_id,
+      version,
+      enabled,
+      updated_at
+    )
+    VALUES (?, ?, ?, ?, ?, ?)
+    ON CONFLICT(workspace_id, slack_user_id, skill_id, version) DO UPDATE SET
+      enabled = excluded.enabled,
+      updated_at = excluded.updated_at
+  `);
+  const listUserSkills = db.query<UserSkillRecord, [string, string]>(`
+    SELECT
+      workspace_id AS workspaceId,
+      slack_user_id AS slackUserId,
+      skill_id AS skillId,
+      version,
+      enabled,
+      updated_at AS updatedAt
+    FROM user_skills
+    WHERE workspace_id = ? AND slack_user_id = ?
+    ORDER BY skill_id ASC, version ASC
   `);
 
   return {
@@ -1169,6 +1332,107 @@ export function createTokenStore(path: string) {
       deleteAgentJobState.run(jobId);
     },
 
+    upsertSkillCatalog(input: {
+      id: string;
+      version: string;
+      title: string;
+      description: string;
+      metadata: unknown;
+      contentRef: string;
+      now?: Date;
+    }): SkillCatalogRecord {
+      const now = (input.now ?? new Date()).toISOString();
+      upsertSkillCatalog.run(
+        input.id,
+        input.version,
+        input.title,
+        input.description,
+        stableJson(input.metadata),
+        input.contentRef,
+        now
+      );
+
+      const record = getSkillCatalog.get(input.id, input.version);
+      if (!record) {
+        throw new Error("Failed to store skill catalog record");
+      }
+      return toSkillCatalogRecord(record);
+    },
+
+    getSkillCatalog(id: string, version: string): SkillCatalogRecord | null {
+      const record = getSkillCatalog.get(id, version);
+      return record ? toSkillCatalogRecord(record) : null;
+    },
+
+    listSkillCatalog(): SkillCatalogRecord[] {
+      return listSkillCatalog.all().map(toSkillCatalogRecord);
+    },
+
+    upsertWorkspaceSkill(input: {
+      workspaceId: string;
+      skillId: string;
+      version: string;
+      enabled: boolean;
+      updatedBySlackUserId?: string | null;
+      now?: Date;
+    }): WorkspaceSkillRecord {
+      const now = (input.now ?? new Date()).toISOString();
+      upsertWorkspaceSkill.run(
+        input.workspaceId,
+        input.skillId,
+        input.version,
+        input.enabled ? 1 : 0,
+        input.updatedBySlackUserId ?? null,
+        now
+      );
+      return {
+        workspaceId: input.workspaceId,
+        skillId: input.skillId,
+        version: input.version,
+        enabled: input.enabled,
+        updatedBySlackUserId: input.updatedBySlackUserId ?? null,
+        updatedAt: now
+      };
+    },
+
+    listWorkspaceSkills(workspaceId: string): WorkspaceSkillRecord[] {
+      return listWorkspaceSkills.all(workspaceId).map(toWorkspaceSkillRecord);
+    },
+
+    upsertUserSkill(input: {
+      workspaceId: string;
+      slackUserId: string;
+      skillId: string;
+      version: string;
+      enabled: boolean;
+      now?: Date;
+    }): UserSkillRecord {
+      const now = (input.now ?? new Date()).toISOString();
+      upsertUserSkill.run(
+        input.workspaceId,
+        input.slackUserId,
+        input.skillId,
+        input.version,
+        input.enabled ? 1 : 0,
+        now
+      );
+      return {
+        workspaceId: input.workspaceId,
+        slackUserId: input.slackUserId,
+        skillId: input.skillId,
+        version: input.version,
+        enabled: input.enabled,
+        updatedAt: now
+      };
+    },
+
+    listUserSkills(
+      workspaceId: string,
+      slackUserId: string
+    ): UserSkillRecord[] {
+      return listUserSkills.all(workspaceId, slackUserId).map(toUserSkillRecord);
+    },
+
     updateAgentRuntimeStatus(
       id: string,
       input: {
@@ -1286,6 +1550,40 @@ function toAgentJobStateRecord(row: AgentJobStateRow): AgentJobStateRecord {
     workspaceId: row.workspaceId,
     slackUserId: row.slackUserId,
     state: parseStoredJson(row.stateJson),
+    updatedAt: row.updatedAt
+  };
+}
+
+function toSkillCatalogRecord(row: SkillCatalogRow): SkillCatalogRecord {
+  return {
+    id: row.id,
+    version: row.version,
+    title: row.title,
+    description: row.description,
+    metadata: parseStoredJson(row.metadataJson),
+    contentRef: row.contentRef,
+    createdAt: row.createdAt
+  };
+}
+
+function toWorkspaceSkillRecord(row: WorkspaceSkillRecord): WorkspaceSkillRecord {
+  return {
+    workspaceId: row.workspaceId,
+    skillId: row.skillId,
+    version: row.version,
+    enabled: Boolean(row.enabled),
+    updatedBySlackUserId: row.updatedBySlackUserId,
+    updatedAt: row.updatedAt
+  };
+}
+
+function toUserSkillRecord(row: UserSkillRecord): UserSkillRecord {
+  return {
+    workspaceId: row.workspaceId,
+    slackUserId: row.slackUserId,
+    skillId: row.skillId,
+    version: row.version,
+    enabled: Boolean(row.enabled),
     updatedAt: row.updatedAt
   };
 }

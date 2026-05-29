@@ -892,8 +892,9 @@ time or expose `/agent set` / `/agent get` in Slack. Those are the next slices.
 
 ### Slice 4: Skill Catalog
 
-- Add skill metadata model.
-- Add workspace/user enablement.
+- Status: partially implemented.
+- Added durable skill metadata catalog storage.
+- Added workspace/user skill enablement storage.
 - Load only approved/enabled skills into runtime context.
 - Ensure skills cannot grant tools.
 

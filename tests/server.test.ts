@@ -104,6 +104,19 @@ function createFakeStore() {
     getAgentJobState: () => null,
     listAgentJobStatesForPrincipal: () => [],
     deleteAgentJobState: () => undefined,
+    upsertSkillCatalog: () => {
+      throw new Error("unexpected skill catalog write");
+    },
+    getSkillCatalog: () => null,
+    listSkillCatalog: () => [],
+    upsertWorkspaceSkill: () => {
+      throw new Error("unexpected workspace skill write");
+    },
+    listWorkspaceSkills: () => [],
+    upsertUserSkill: () => {
+      throw new Error("unexpected user skill write");
+    },
+    listUserSkills: () => [],
     updateAgentRuntimeStatus: () => undefined,
     touchAgentRuntime: () => undefined,
     close: () => undefined
