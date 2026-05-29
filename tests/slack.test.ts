@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
+  applyAgentRuntimeControl,
   applyAgentUserConfigSet,
   buildAgentConfigRuntimeRestartFailureResponse,
   buildAgentConfigRuntimeRestartResponse,
@@ -423,8 +424,10 @@ describe("buildAppHomeView", () => {
     expect(serialized).toContain("Not connected");
     expect(serialized).toContain("https://example.test/google");
     expect(serialized).toContain("Agent runtime");
-    expect(serialized).toContain("Manage runtime");
+    expect(serialized).toContain("Details");
     expect(serialized).toContain("agent_runtime_manage");
+    expect(serialized).toContain("agent_runtime_pause");
+    expect(serialized).toContain("agent_runtime_restart");
     expect(serialized).toContain("Agent settings");
     expect(serialized).toContain("Edit settings");
     expect(serialized).toContain("agent_config_edit");
@@ -482,6 +485,92 @@ describe("buildAppHomeView", () => {
     expect(serialized).toContain("http://runtime:8080");
     expect(serialized).toContain("openai:gpt-5.4");
     expect(serialized).toContain("Policy hash");
+  });
+
+  test("starts, pauses, and restarts the current agent runtime", async () => {
+    const store = createTokenStore(":memory:");
+    const stopped: string[] = [];
+    const started: string[] = [];
+    let nextRuntimeId = 1;
+    const runtimeFactory = {
+      async getOrCreateRuntime(principal: {
+        workspaceId: string;
+        slackUserId: string;
+      }) {
+        started.push(`${principal.workspaceId}:${principal.slackUserId}`);
+        return {
+          id: `rt_${nextRuntimeId++}`,
+          engine: "burble-direct" as const,
+          endpointUrl: "http://runtime:8080",
+          authToken: "token",
+          status: "ready" as const,
+          statePath: "/data/state",
+          configPath: "/data/config/runtime.json",
+          workspacePath: "/data/workspace"
+        };
+      },
+      async stopRuntime(runtimeId: string) {
+        stopped.push(runtimeId);
+        store.updateAgentRuntimeStatus(runtimeId, { status: "stopped" });
+      },
+      async reapIdleRuntimes() {}
+    };
+
+    const startedResult = await applyAgentRuntimeControl({
+      config: agentConfig,
+      store,
+      runtimeFactory,
+      workspaceId: "T123",
+      slackUserId: "U123",
+      action: "start"
+    });
+    expect(startedResult).toMatchObject({
+      action: "start",
+      runtimeId: "rt_1",
+      status: "ready"
+    });
+
+    const runtime = store.getOrCreateAgentRuntime({
+      workspaceId: "T123",
+      slackUserId: "U123",
+      engine: "burble-direct",
+      endpointUrl: "http://runtime:8080",
+      authTokenHash: "hash",
+      statePath: "/data/state",
+      configPath: "/data/config/runtime.json",
+      workspacePath: "/data/workspace",
+      policyHash: "policy"
+    });
+
+    const pausedResult = await applyAgentRuntimeControl({
+      config: agentConfig,
+      store,
+      runtimeFactory,
+      workspaceId: "T123",
+      slackUserId: "U123",
+      action: "pause"
+    });
+    expect(pausedResult).toMatchObject({
+      action: "pause",
+      runtimeId: runtime.id,
+      status: "stopped"
+    });
+
+    const restartedResult = await applyAgentRuntimeControl({
+      config: agentConfig,
+      store,
+      runtimeFactory,
+      workspaceId: "T123",
+      slackUserId: "U123",
+      action: "restart"
+    });
+    expect(restartedResult).toMatchObject({
+      action: "restart",
+      runtimeId: "rt_2",
+      status: "ready"
+    });
+    expect(started).toEqual(["T123:U123", "T123:U123"]);
+    expect(stopped).toEqual([runtime.id]);
   });
 });
 

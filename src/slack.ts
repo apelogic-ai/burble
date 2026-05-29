@@ -39,7 +39,12 @@ import {
   searchSlackMessages,
   searchSlackUsers
 } from "./providers/slack/client";
-import type { AgentRuntimeRecord, ProviderConnection, TokenStore } from "./db";
+import type {
+  AgentRuntimeRecord,
+  AgentRuntimeStatus,
+  ProviderConnection,
+  TokenStore
+} from "./db";
 import { handleConversation } from "./conversation/orchestrator";
 import { normalizeMentionText } from "./conversation/normalize";
 import type {
@@ -358,6 +363,52 @@ export function createSlackRuntime(
     } catch (error) {
       logger.error(formatLogError(error));
     }
+  });
+
+  const handleRuntimeControlAction = async (
+    action: AgentRuntimeControlAction,
+    body: unknown,
+    client: SlackViewsPublishClient,
+    logger: { warn(message: string): void; error(message: string): void }
+  ) => {
+    const context = slackInteractionContext(body);
+    if (!context) {
+      logger.warn(withUtcTimestamp(`Ignoring runtime ${action} action without context`));
+      return;
+    }
+
+    try {
+      await applyAgentRuntimeControl({
+        config,
+        store,
+        runtimeFactory,
+        workspaceId: context.workspaceId,
+        slackUserId: context.slackUserId,
+        action
+      });
+      await publishHomeViewForUser({
+        client,
+        workspaceId: context.workspaceId,
+        slackUserId: context.slackUserId
+      });
+    } catch (error) {
+      logger.error(formatLogError(error));
+    }
+  };
+
+  app.action("agent_runtime_start", async ({ ack, body, client, logger }) => {
+    await ack();
+    await handleRuntimeControlAction("start", body, client, logger);
+  });
+
+  app.action("agent_runtime_pause", async ({ ack, body, client, logger }) => {
+    await ack();
+    await handleRuntimeControlAction("pause", body, client, logger);
+  });
+
+  app.action("agent_runtime_restart", async ({ ack, body, client, logger }) => {
+    await ack();
+    await handleRuntimeControlAction("restart", body, client, logger);
   });
 
   app.view("agent_config_submit", async ({ ack, body, client, logger }) => {
@@ -1855,17 +1906,96 @@ function buildAgentRuntimeHomeBlocks(settings?: AgentHomeSettingsView) {
         type: "mrkdwn",
         text: ["*Agent runtime*", formatRuntimeHomeSummary(settings)].join("\n")
       },
-      accessory: {
+    },
+    {
+      type: "actions",
+      elements: buildAgentRuntimeActionElements(settings)
+    }
+  ];
+}
+
+function buildAgentRuntimeActionElements(settings: AgentHomeSettingsView) {
+  const elements = [];
+  if (isRuntimeStartable(settings.runtime.status)) {
+    elements.push({
+      type: "button",
+      text: {
+        type: "plain_text",
+        text: "Start"
+      },
+      style: "primary",
+      action_id: "agent_runtime_start"
+    });
+  } else {
+    elements.push(
+      {
         type: "button",
         text: {
           type: "plain_text",
-          text: "Manage runtime"
+          text: "Pause"
         },
-        style: "primary",
-        action_id: "agent_runtime_manage"
+        style: "danger",
+        action_id: "agent_runtime_pause",
+        confirm: {
+          title: {
+            type: "plain_text",
+            text: "Pause runtime?"
+          },
+          text: {
+            type: "mrkdwn",
+            text: "This stops the current runtime container and may interrupt active autonomous work."
+          },
+          confirm: {
+            type: "plain_text",
+            text: "Pause"
+          },
+          deny: {
+            type: "plain_text",
+            text: "Cancel"
+          }
+        }
+      },
+      {
+        type: "button",
+        text: {
+          type: "plain_text",
+          text: "Restart"
+        },
+        action_id: "agent_runtime_restart",
+        confirm: {
+          title: {
+            type: "plain_text",
+            text: "Restart runtime?"
+          },
+          text: {
+            type: "mrkdwn",
+            text: "This stops the current runtime and starts it again with the latest configuration."
+          },
+          confirm: {
+            type: "plain_text",
+            text: "Restart"
+          },
+          deny: {
+            type: "plain_text",
+            text: "Cancel"
+          }
+        }
       }
-    }
-  ];
+    );
+  }
+  elements.push({
+    type: "button",
+    text: {
+      type: "plain_text",
+      text: "Details"
+    },
+    action_id: "agent_runtime_manage"
+  });
+  return elements;
+}
+
+function isRuntimeStartable(status: string): boolean {
+  return status === "not provisioned" || status === "stopped" || status === "failed";
 }
 
 function formatRuntimeHomeSummary(settings: AgentHomeSettingsView): string {
@@ -2006,6 +2136,66 @@ export function buildAgentRuntimeManageModalView(input: {
         ]
       }
     ]
+  };
+}
+
+type AgentRuntimeControlAction = "start" | "pause" | "restart";
+
+export async function applyAgentRuntimeControl(input: {
+  config: Config;
+  store: TokenStore;
+  runtimeFactory?: RuntimeFactory;
+  workspaceId: string;
+  slackUserId: string;
+  action: AgentRuntimeControlAction;
+}): Promise<{
+  action: AgentRuntimeControlAction;
+  runtimeId: string | null;
+  status: AgentRuntimeStatus | "not provisioned";
+}> {
+  if (input.config.agentRuntime !== "openclaw-nemoclaw" || !input.runtimeFactory) {
+    return {
+      action: input.action,
+      runtimeId: null,
+      status: "not provisioned"
+    };
+  }
+
+  const principal = {
+    workspaceId: input.workspaceId,
+    slackUserId: input.slackUserId
+  };
+  const existing = input.store.getAgentRuntimeForPrincipal({
+    workspaceId: input.workspaceId,
+    slackUserId: input.slackUserId,
+    engine: input.config.openClawNemoClawEngine
+  });
+
+  if (input.action === "pause") {
+    if (!existing || isRuntimeStartable(existing.status)) {
+      return {
+        action: input.action,
+        runtimeId: existing?.id ?? null,
+        status: existing?.status ?? "not provisioned"
+      };
+    }
+    await input.runtimeFactory.stopRuntime(existing.id);
+    return {
+      action: input.action,
+      runtimeId: existing.id,
+      status: "stopped"
+    };
+  }
+
+  if (input.action === "restart" && existing && !isRuntimeStartable(existing.status)) {
+    await input.runtimeFactory.stopRuntime(existing.id);
+  }
+
+  const runtime = await input.runtimeFactory.getOrCreateRuntime(principal);
+  return {
+    action: input.action,
+    runtimeId: runtime.id,
+    status: runtime.status
   };
 }
 
