@@ -2847,7 +2847,7 @@ export async function restartAgentRuntimeIfConfigChanged(input: {
   principal: { workspaceId: string; slackUserId: string };
   previousPolicyHash: string;
   nextPolicyHash: string;
-}): Promise<string | null> {
+}): Promise<{ stoppedRuntimeId: string; startedRuntimeId: string } | null> {
   if (input.previousPolicyHash === input.nextPolicyHash) {
     return null;
   }
@@ -2870,7 +2870,11 @@ export async function restartAgentRuntimeIfConfigChanged(input: {
   }
 
   await input.runtimeFactory.stopRuntime(runtime.id);
-  return runtime.id;
+  const freshRuntime = await input.runtimeFactory.getOrCreateRuntime(input.principal);
+  return {
+    stoppedRuntimeId: runtime.id,
+    startedRuntimeId: freshRuntime.id
+  };
 }
 
 function addAgentConfigRuntimeRestartNotice(
@@ -2891,13 +2895,13 @@ function addAgentConfigRuntimeRestartNotice(
 }
 
 export function buildAgentConfigRuntimeRestartResponse(
-  runtimeId: string | null
+  restart: { stoppedRuntimeId: string; startedRuntimeId: string } | null
 ): AgentUserConfigSetResult {
   return {
     response_type: "ephemeral",
-    text: runtimeId
-      ? "Agent runtime restarted. The next agent request will start with the updated config."
-      : "Config saved. No live agent runtime needed a restart; the next agent request will use the updated config."
+    text: restart
+      ? `Agent runtime restarted with updated config. Runtime: \`${restart.startedRuntimeId}\`.`
+      : "Config saved. No live agent runtime needed a restart; the next agent request will start with the updated config."
   };
 }
 

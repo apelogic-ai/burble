@@ -699,7 +699,7 @@ describe("agent user config commands", () => {
     expect(response.text).toContain("Unknown user config key");
   });
 
-  test("stops the current runtime when user config changes the manifest hash", async () => {
+  test("restarts the current runtime when user config changes the manifest hash", async () => {
     const store = createTokenStore(":memory:");
     const runtime = store.getOrCreateAgentRuntime({
       workspaceId: "T123",
@@ -713,13 +713,24 @@ describe("agent user config commands", () => {
       policyHash: "policy-old"
     });
     const stopped: string[] = [];
+    const started: string[] = [];
 
-    const stoppedRuntimeId = await restartAgentRuntimeIfConfigChanged({
+    const restart = await restartAgentRuntimeIfConfigChanged({
       config: agentConfig,
       store,
       runtimeFactory: {
-        async getOrCreateRuntime() {
-          throw new Error("not used");
+        async getOrCreateRuntime(principal) {
+          started.push(`${principal.workspaceId}:${principal.slackUserId}`);
+          return {
+            id: "rt_fresh",
+            engine: "burble-direct",
+            endpointUrl: "http://runtime:8080",
+            authToken: "token",
+            status: "ready",
+            statePath: "/data/state",
+            configPath: "/data/config/runtime.json",
+            workspacePath: "/data/workspace"
+          };
         },
         async stopRuntime(runtimeId) {
           stopped.push(runtimeId);
@@ -731,8 +742,12 @@ describe("agent user config commands", () => {
       nextPolicyHash: "policy-new"
     });
 
-    expect(stoppedRuntimeId).toBe(runtime.id);
+    expect(restart).toEqual({
+      stoppedRuntimeId: runtime.id,
+      startedRuntimeId: "rt_fresh"
+    });
     expect(stopped).toEqual([runtime.id]);
+    expect(started).toEqual(["T123:U123"]);
   });
 
   test("does not stop runtime when user config keeps the same manifest hash", async () => {
@@ -750,7 +765,7 @@ describe("agent user config commands", () => {
     });
     const stopped: string[] = [];
 
-    const stoppedRuntimeId = await restartAgentRuntimeIfConfigChanged({
+    const restart = await restartAgentRuntimeIfConfigChanged({
       config: agentConfig,
       store,
       runtimeFactory: {
@@ -767,12 +782,17 @@ describe("agent user config commands", () => {
       nextPolicyHash: "policy-old"
     });
 
-    expect(stoppedRuntimeId).toBeNull();
+    expect(restart).toBeNull();
     expect(stopped).toEqual([]);
   });
 
   test("formats runtime restart status after config changes", () => {
-    expect(buildAgentConfigRuntimeRestartResponse("rt_123").text).toContain(
+    expect(
+      buildAgentConfigRuntimeRestartResponse({
+        stoppedRuntimeId: "rt_old",
+        startedRuntimeId: "rt_123"
+      }).text
+    ).toContain(
       "Agent runtime restarted"
     );
     expect(buildAgentConfigRuntimeRestartResponse(null).text).toContain(
