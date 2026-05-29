@@ -3,6 +3,7 @@ import {
   applyAgentUserConfigSet,
   buildAgentConfigRuntimeRestartFailureResponse,
   buildAgentConfigRuntimeRestartResponse,
+  buildAgentConfigModalView,
   buildAgentConfigResponse,
   buildAgentCommandHelpResponse,
   buildAgentUserConfigGetResponse,
@@ -10,6 +11,7 @@ import {
   buildAgentExecMissingTaskResponse,
   buildAgentStatusResponse,
   buildAppHomeView,
+  buildAgentHomeSettings,
   buildAuthResponse,
   buildHelpResponse,
   formatAgentProgressEvent,
@@ -363,6 +365,13 @@ describe("buildAuthResponse", () => {
 
 describe("buildAppHomeView", () => {
   test("builds a Block Kit Home tab with provider statuses and connect buttons", () => {
+    const store = createTokenStore(":memory:");
+    const agentSettings = buildAgentHomeSettings({
+      config: agentConfig,
+      store,
+      workspaceId: "T123",
+      slackUserId: "U123"
+    });
     const view = buildAppHomeView({
       githubUrl: "https://example.test/github",
       googleUrl: "https://example.test/google",
@@ -387,7 +396,8 @@ describe("buildAppHomeView", () => {
           connectedAt: "2026-05-26T00:00:00.000Z"
         },
         slack: null
-      }
+      },
+      agentSettings
     });
     const serialized = JSON.stringify(view);
 
@@ -400,6 +410,34 @@ describe("buildAppHomeView", () => {
     expect(serialized).toContain("Connected as `person@example.com`");
     expect(serialized).toContain("Not connected");
     expect(serialized).toContain("https://example.test/google");
+    expect(serialized).toContain("Agent settings");
+    expect(serialized).toContain("Edit settings");
+    expect(serialized).toContain("agent_config_edit");
+    expect(serialized).toContain("openai:gpt-5.4");
+  });
+
+  test("builds an agent settings modal from effective config", () => {
+    const store = createTokenStore(":memory:");
+    store.upsertUserPreference({
+      workspaceId: "T123",
+      slackUserId: "U123",
+      key: "memory.user",
+      value: { enabled: true }
+    });
+    const view = buildAgentConfigModalView({
+      config: agentConfig,
+      store,
+      workspaceId: "T123",
+      slackUserId: "U123"
+    });
+    const serialized = JSON.stringify(view);
+
+    expect(view.type).toBe("modal");
+    expect(serialized).toContain("agent_config_submit");
+    expect(serialized).toContain("agent_config_model");
+    expect(serialized).toContain("openai:gpt-5.4");
+    expect(serialized).toContain("agent_config_memory");
+    expect(serialized).toContain("\"value\":\"on\"");
   });
 });
 

@@ -1,4 +1,5 @@
 import { App, LogLevel } from "@slack/bolt";
+import type { View } from "@slack/types";
 import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import type { Config } from "./config";
@@ -245,7 +246,53 @@ export function createSlackRuntime(
   const resolveAgentExecutionMode = (): "openclaw-native" | undefined =>
     config.agentRuntime === "openclaw-nemoclaw" ? "openclaw-native" : undefined;
 
-  app.event("app_home_opened", async ({ event, client, logger }) => {
+  const buildHomeViewForUser = (input: {
+    workspaceId: string;
+    slackUserId: string;
+  }) =>
+    buildAppHomeView({
+      githubUrl: buildGitHubOAuthUrl(
+        config,
+        store.createOAuthState(input.slackUserId)
+      ),
+      googleUrl: tryBuildGoogleOAuthUrl(
+        config,
+        store.createOAuthState(input.slackUserId)
+      ),
+      jiraUrl: tryBuildJiraOAuthUrl(
+        config,
+        store.createOAuthState(input.slackUserId)
+      ),
+      slackUrl: tryBuildSlackOAuthUrl(
+        config,
+        store.createOAuthState(input.slackUserId)
+      ),
+      connections: {
+        github: store.getConnectionForSlackUser("github", input.slackUserId),
+        google: store.getConnectionForSlackUser("google", input.slackUserId),
+        jira: store.getConnectionForSlackUser("jira", input.slackUserId),
+        slack: store.getConnectionForSlackUser("slack", input.slackUserId)
+      },
+      agentSettings: buildAgentHomeSettings({
+        config,
+        store,
+        workspaceId: input.workspaceId,
+        slackUserId: input.slackUserId
+      })
+    });
+
+  const publishHomeViewForUser = async (input: {
+    client: SlackViewsPublishClient;
+    workspaceId: string;
+    slackUserId: string;
+  }) => {
+    await input.client.views.publish({
+      user_id: input.slackUserId,
+      view: buildHomeViewForUser(input)
+    });
+  };
+
+  app.event("app_home_opened", async ({ body, event, client, logger }) => {
     const homeEvent = event as { user?: string };
     if (!homeEvent.user) {
       logger.warn(withUtcTimestamp("Ignoring malformed app_home_opened event"));
@@ -256,32 +303,101 @@ export function createSlackRuntime(
       logger.info(
         withUtcTimestamp(`Publishing App Home for ${homeEvent.user}`)
       );
-      await client.views.publish({
-        user_id: homeEvent.user,
-        view: buildAppHomeView({
-          githubUrl: buildGitHubOAuthUrl(
-            config,
-            store.createOAuthState(homeEvent.user)
-          ),
-          googleUrl: tryBuildGoogleOAuthUrl(
-            config,
-            store.createOAuthState(homeEvent.user)
-          ),
-          jiraUrl: tryBuildJiraOAuthUrl(
-            config,
-            store.createOAuthState(homeEvent.user)
-          ),
-          slackUrl: tryBuildSlackOAuthUrl(
-            config,
-            store.createOAuthState(homeEvent.user)
-          ),
-          connections: {
-            github: store.getConnectionForSlackUser("github", homeEvent.user),
-            google: store.getConnectionForSlackUser("google", homeEvent.user),
-            jira: store.getConnectionForSlackUser("jira", homeEvent.user),
-            slack: store.getConnectionForSlackUser("slack", homeEvent.user)
-          }
+      await publishHomeViewForUser({
+        client,
+        workspaceId:
+          slackWorkspaceIdFromBody(body) || slackWorkspaceIdFromBody(event),
+        slackUserId: homeEvent.user
+      });
+    } catch (error) {
+      logger.error(formatLogError(error));
+    }
+  });
+
+  app.action("agent_config_edit", async ({ ack, body, client, logger }) => {
+    await ack();
+    const context = slackInteractionContext(body);
+    if (!context?.triggerId) {
+      logger.warn(withUtcTimestamp("Ignoring config edit action without trigger"));
+      return;
+    }
+
+    try {
+      await client.views.open({
+        trigger_id: context.triggerId,
+        view: buildAgentConfigModalView({
+          config,
+          store,
+          workspaceId: context.workspaceId,
+          slackUserId: context.slackUserId
         })
+      });
+    } catch (error) {
+      logger.error(formatLogError(error));
+    }
+  });
+
+  app.view("agent_config_submit", async ({ ack, body, client, logger }) => {
+    const context = slackViewSubmissionContext(body);
+    if (!context) {
+      await ack({
+        response_action: "errors",
+        errors: {
+          agent_config_model: "Missing Slack user context."
+        }
+      });
+      return;
+    }
+
+    const parsed = parseAgentConfigModalSubmission(body);
+    if (!parsed.ok) {
+      await ack({
+        response_action: "errors",
+        errors: parsed.errors
+      });
+      return;
+    }
+
+    const principal = {
+      workspaceId: context.workspaceId,
+      slackUserId: context.slackUserId
+    };
+    const previousPolicyHash = buildRuntimeManifestForPrincipal({
+      config,
+      store,
+      principal,
+      engine: config.openClawNemoClawEngine
+    }).policyHash;
+    applyAgentConfigModalValues({
+      store,
+      principal,
+      values: parsed.values
+    });
+    const nextPolicyHash = buildRuntimeManifestForPrincipal({
+      config,
+      store,
+      principal,
+      engine: config.openClawNemoClawEngine
+    }).policyHash;
+
+    await ack({
+      response_action: "update",
+      view: buildAgentConfigSavedModalView(previousPolicyHash !== nextPolicyHash)
+    });
+
+    try {
+      await publishHomeViewForUser({
+        client,
+        workspaceId: context.workspaceId,
+        slackUserId: context.slackUserId
+      });
+      await restartAgentRuntimeIfConfigChanged({
+        config,
+        store,
+        runtimeFactory,
+        principal,
+        previousPolicyHash,
+        nextPolicyHash
       });
     } catch (error) {
       logger.error(formatLogError(error));
@@ -1518,9 +1634,25 @@ type ProviderConnectionViewInput = {
     jira: ProviderConnection | null;
     slack: ProviderConnection | null;
   };
+  agentSettings?: AgentHomeSettingsView;
 };
 
-export function buildAppHomeView(input: ProviderConnectionViewInput) {
+type SlackViewsPublishClient = {
+  views: {
+    publish(input: { user_id: string; view: View }): Promise<unknown>;
+  };
+};
+
+type AgentHomeSettingsView = {
+  model: string;
+  userMemory: "on" | "off";
+  disabledTools: string[];
+  enabledSkills: string[];
+  policyHash: string;
+  runtimeStatus: string;
+};
+
+export function buildAppHomeView(input: ProviderConnectionViewInput): View {
   return {
     type: "home" as const,
     blocks: [
@@ -1543,11 +1675,15 @@ export function buildAppHomeView(input: ProviderConnectionViewInput) {
       },
       ...buildProviderConnectionBlocks(input),
       {
+        type: "divider"
+      },
+      ...buildAgentSettingsHomeBlocks(input.agentSettings),
+      {
         type: "context",
         elements: [
           {
             type: "mrkdwn",
-            text: "You can also manage connections with `/auth`."
+            text: "You can also manage connections with `/auth` and agent settings with `/agent config`."
           }
         ]
       }
@@ -1578,7 +1714,7 @@ export function buildAuthResponse(input: ProviderConnectionViewInput) {
         ]
       }
     ]
-  };
+  } as const;
 }
 
 function buildProviderConnectionBlocks(input: ProviderConnectionViewInput) {
@@ -1625,6 +1761,93 @@ function buildProviderConnectionBlocks(input: ProviderConnectionViewInput) {
       actionId: "connect_slack",
       usage: "User search and message search through your Slack identity"
     })
+  ];
+}
+
+export function buildAgentHomeSettings(input: {
+  config: Config;
+  store: TokenStore;
+  workspaceId: string;
+  slackUserId: string;
+}): AgentHomeSettingsView {
+  const principal = {
+    workspaceId: input.workspaceId,
+    slackUserId: input.slackUserId
+  };
+  const manifest = buildRuntimeManifestForPrincipal({
+    config: input.config,
+    store: input.store,
+    principal,
+    engine: input.config.openClawNemoClawEngine
+  });
+  const runtime = input.store.getAgentRuntimeForPrincipal({
+    workspaceId: input.workspaceId,
+    slackUserId: input.slackUserId,
+    engine: input.config.openClawNemoClawEngine
+  });
+
+  return {
+    model: `${manifest.model.provider}:${manifest.model.model}`,
+    userMemory: manifest.memory.userMemoryEnabled ? "on" : "off",
+    disabledTools: manifest.disabledTools,
+    enabledSkills: manifest.skills.map((skill) => `${skill.id}@${skill.version}`),
+    policyHash: manifest.policyHash,
+    runtimeStatus: runtime
+      ? `${runtime.status}, last used ${runtime.lastUsedAt}`
+      : "not provisioned yet"
+  };
+}
+
+function buildAgentSettingsHomeBlocks(settings?: AgentHomeSettingsView) {
+  if (!settings) {
+    return [];
+  }
+
+  return [
+    {
+      type: "header",
+      text: {
+        type: "plain_text",
+        text: "Agent settings"
+      }
+    },
+    {
+      type: "section",
+      fields: [
+        {
+          type: "mrkdwn",
+          text: `*Model*\n\`${settings.model}\``
+        },
+        {
+          type: "mrkdwn",
+          text: `*User memory*\n\`${settings.userMemory}\``
+        },
+        {
+          type: "mrkdwn",
+          text: `*Runtime*\n${settings.runtimeStatus}`
+        },
+        {
+          type: "mrkdwn",
+          text: `*Policy hash*\n\`${settings.policyHash.slice(0, 12)}\``
+        },
+        {
+          type: "mrkdwn",
+          text: `*Disabled tools*\n\`${formatStringList(settings.disabledTools)}\``
+        },
+        {
+          type: "mrkdwn",
+          text: `*Enabled skills*\n\`${formatStringList(settings.enabledSkills)}\``
+        }
+      ],
+      accessory: {
+        type: "button",
+        text: {
+          type: "plain_text",
+          text: "Edit settings"
+        },
+        action_id: "agent_config_edit"
+      }
+    }
   ];
 }
 
@@ -2131,6 +2354,381 @@ export function isDirectMessageSlashCommand(
     body.channel_name === "directmessage" ||
     body.channel_id?.startsWith("D") === true
   );
+}
+
+type AgentConfigModalValues = {
+  model: string;
+  memory: "on" | "off";
+  disabledTools: string[];
+  enabledSkills: string[];
+};
+
+export function buildAgentConfigModalView(input: {
+  config: Config;
+  store: TokenStore;
+  workspaceId: string;
+  slackUserId: string;
+}): View {
+  const settings = buildAgentHomeSettings(input);
+  const metadata = JSON.stringify({
+    workspaceId: input.workspaceId,
+    slackUserId: input.slackUserId
+  });
+  return {
+    type: "modal" as const,
+    callback_id: "agent_config_submit",
+    title: {
+      type: "plain_text",
+      text: "Agent settings"
+    },
+    submit: {
+      type: "plain_text",
+      text: "Save"
+    },
+    close: {
+      type: "plain_text",
+      text: "Cancel"
+    },
+    private_metadata: metadata,
+    blocks: [
+      {
+        type: "input",
+        block_id: "agent_config_model",
+        label: {
+          type: "plain_text",
+          text: "Model"
+        },
+        element: {
+          type: "plain_text_input",
+          action_id: "value",
+          initial_value: settings.model
+        }
+      },
+      {
+        type: "input",
+        block_id: "agent_config_memory",
+        label: {
+          type: "plain_text",
+          text: "User memory"
+        },
+        element: {
+          type: "static_select",
+          action_id: "value",
+          initial_option: agentConfigMemoryOption(settings.userMemory),
+          options: [
+            agentConfigMemoryOption("on"),
+            agentConfigMemoryOption("off")
+          ]
+        }
+      },
+      {
+        type: "input",
+        block_id: "agent_config_disabled_tools",
+        optional: true,
+        label: {
+          type: "plain_text",
+          text: "Disabled tools"
+        },
+        element: {
+          type: "plain_text_input",
+          action_id: "value",
+          initial_value: settings.disabledTools.join(", "),
+          placeholder: {
+            type: "plain_text",
+            text: "github_create_pr, jira_create_issue"
+          }
+        }
+      },
+      {
+        type: "input",
+        block_id: "agent_config_enabled_skills",
+        optional: true,
+        label: {
+          type: "plain_text",
+          text: "Enabled skills"
+        },
+        element: {
+          type: "plain_text_input",
+          action_id: "value",
+          initial_value: settings.enabledSkills
+            .map((skill) => skill.split("@")[0])
+            .join(", "),
+          placeholder: {
+            type: "plain_text",
+            text: "core, github, atlassian-jira"
+          }
+        }
+      }
+    ]
+  };
+}
+
+function agentConfigMemoryOption(value: "on" | "off") {
+  return {
+    text: {
+      type: "plain_text",
+      text: value === "on" ? "On" : "Off"
+    },
+    value
+  } as const;
+}
+
+export function buildAgentConfigSavedModalView(policyChanged: boolean): View {
+  return {
+    type: "modal" as const,
+    title: {
+      type: "plain_text",
+      text: "Agent settings"
+    },
+    close: {
+      type: "plain_text",
+      text: "Close"
+    },
+    blocks: [
+      {
+        type: "section",
+        text: {
+          type: "mrkdwn",
+          text: policyChanged
+            ? "*Saved.* Your current agent runtime will restart so the new settings apply cleanly on the next run."
+            : "*Saved.* No runtime restart was needed."
+        }
+      }
+    ]
+  };
+}
+
+function parseAgentConfigModalSubmission(
+  body: unknown
+):
+  | { ok: true; values: AgentConfigModalValues }
+  | { ok: false; errors: Record<string, string> } {
+  const model = readSlackModalPlainTextValue(
+    body,
+    "agent_config_model",
+    "value"
+  );
+  const memory = readSlackModalSelectedValue(
+    body,
+    "agent_config_memory",
+    "value"
+  );
+  const disabledTools = readSlackModalPlainTextValue(
+    body,
+    "agent_config_disabled_tools",
+    "value"
+  );
+  const enabledSkills = readSlackModalPlainTextValue(
+    body,
+    "agent_config_enabled_skills",
+    "value"
+  );
+  const errors: Record<string, string> = {};
+
+  const modelValue = model.trim();
+  const modelId = modelValue.includes(":") ? modelValue : `openai:${modelValue}`;
+  try {
+    validateAgentModelId(modelId);
+  } catch (error) {
+    errors.agent_config_model =
+      error instanceof Error ? error.message : "Invalid model value.";
+  }
+
+  if (memory !== "on" && memory !== "off") {
+    errors.agent_config_memory = "Choose whether user memory is on or off.";
+  }
+
+  if (Object.keys(errors).length > 0) {
+    return { ok: false, errors };
+  }
+  const memoryValue = memory === "on" ? "on" : "off";
+
+  return {
+    ok: true,
+    values: {
+      model: modelId,
+      memory: memoryValue,
+      disabledTools: parseStringListConfigValue(disabledTools),
+      enabledSkills: parseStringListConfigValue(enabledSkills)
+    }
+  };
+}
+
+function applyAgentConfigModalValues(input: {
+  store: TokenStore;
+  principal: { workspaceId: string; slackUserId: string };
+  values: AgentConfigModalValues;
+}): void {
+  input.store.upsertUserPreference({
+    workspaceId: input.principal.workspaceId,
+    slackUserId: input.principal.slackUserId,
+    key: "runtime.model",
+    value: input.values.model
+  });
+  input.store.upsertUserPreference({
+    workspaceId: input.principal.workspaceId,
+    slackUserId: input.principal.slackUserId,
+    key: "memory.user",
+    value: { enabled: input.values.memory === "on" }
+  });
+  input.store.upsertUserPreference({
+    workspaceId: input.principal.workspaceId,
+    slackUserId: input.principal.slackUserId,
+    key: "tools.disabled",
+    value: input.values.disabledTools
+  });
+  input.store.upsertUserPreference({
+    workspaceId: input.principal.workspaceId,
+    slackUserId: input.principal.slackUserId,
+    key: "skills.enabled",
+    value: input.values.enabledSkills.map((skill) => ({
+      id: skill.includes("@") ? skill.split("@")[0] : skill,
+      version: skill.includes("@") ? skill.split("@").slice(1).join("@") : "1"
+    }))
+  });
+}
+
+function readSlackModalPlainTextValue(
+  body: unknown,
+  blockId: string,
+  actionId: string
+): string {
+  const values = slackModalStateValues(body);
+  const field = values?.[blockId]?.[actionId];
+  return typeof field?.value === "string" ? field.value : "";
+}
+
+function readSlackModalSelectedValue(
+  body: unknown,
+  blockId: string,
+  actionId: string
+): string {
+  const values = slackModalStateValues(body);
+  const field = values?.[blockId]?.[actionId];
+  return typeof field?.selected_option?.value === "string"
+    ? field.selected_option.value
+    : "";
+}
+
+function slackModalStateValues(body: unknown):
+  | Record<string, Record<string, { value?: string; selected_option?: { value?: string } }>>
+  | undefined {
+  if (!body || typeof body !== "object") {
+    return undefined;
+  }
+  const view = (body as { view?: unknown }).view;
+  if (!view || typeof view !== "object") {
+    return undefined;
+  }
+  const state = (view as { state?: unknown }).state;
+  if (!state || typeof state !== "object") {
+    return undefined;
+  }
+  const values = (state as { values?: unknown }).values;
+  return values && typeof values === "object"
+    ? (values as Record<
+        string,
+        Record<string, { value?: string; selected_option?: { value?: string } }>
+      >)
+    : undefined;
+}
+
+function slackInteractionContext(
+  body: unknown
+): { workspaceId: string; slackUserId: string; triggerId?: string } | null {
+  if (!body || typeof body !== "object") {
+    return null;
+  }
+  const slackUserId = slackUserIdFromBody(body);
+  if (!slackUserId) {
+    return null;
+  }
+  return {
+    workspaceId: slackWorkspaceIdFromBody(body),
+    slackUserId,
+    triggerId: (body as { trigger_id?: string }).trigger_id
+  };
+}
+
+function slackViewSubmissionContext(
+  body: unknown
+): { workspaceId: string; slackUserId: string } | null {
+  if (!body || typeof body !== "object") {
+    return null;
+  }
+  const metadata = slackViewPrivateMetadata(body);
+  if (metadata?.workspaceId && metadata.slackUserId) {
+    return metadata;
+  }
+  const slackUserId = slackUserIdFromBody(body);
+  if (!slackUserId) {
+    return null;
+  }
+  return {
+    workspaceId: slackWorkspaceIdFromBody(body),
+    slackUserId
+  };
+}
+
+function slackViewPrivateMetadata(
+  body: unknown
+): { workspaceId: string; slackUserId: string } | null {
+  if (!body || typeof body !== "object") {
+    return null;
+  }
+  const view = (body as { view?: unknown }).view;
+  const privateMetadata =
+    view && typeof view === "object"
+      ? (view as { private_metadata?: string }).private_metadata
+      : undefined;
+  if (!privateMetadata) {
+    return null;
+  }
+  try {
+    const parsed = JSON.parse(privateMetadata) as {
+      workspaceId?: unknown;
+      slackUserId?: unknown;
+    };
+    return typeof parsed.workspaceId === "string" &&
+      typeof parsed.slackUserId === "string"
+      ? {
+          workspaceId: parsed.workspaceId,
+          slackUserId: parsed.slackUserId
+        }
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function slackWorkspaceIdFromBody(body: unknown): string {
+  if (!body || typeof body !== "object") {
+    return "";
+  }
+  const direct = (body as { team_id?: unknown }).team_id;
+  if (typeof direct === "string") {
+    return direct;
+  }
+  const team = (body as { team?: unknown }).team;
+  return team && typeof team === "object" &&
+    typeof (team as { id?: unknown }).id === "string"
+    ? ((team as { id: string }).id)
+    : "";
+}
+
+function slackUserIdFromBody(body: unknown): string | null {
+  if (!body || typeof body !== "object") {
+    return null;
+  }
+  const direct = (body as { user_id?: unknown }).user_id;
+  if (typeof direct === "string") {
+    return direct;
+  }
+  const user = (body as { user?: unknown }).user;
+  return user && typeof user === "object" &&
+    typeof (user as { id?: unknown }).id === "string"
+    ? ((user as { id: string }).id)
+    : null;
 }
 
 export function buildAgentUserConfigGetResponse(input: {
