@@ -60,6 +60,7 @@ import {
 } from "../providers/jira/client";
 import { searchSlackMessages, searchSlackUsers } from "../providers/slack/client";
 import type { RuntimeJwtIssuer } from "../runtime-jwt";
+import type { RuntimeJwtClaims } from "../runtime-jwt";
 import {
   buildRuntimeManifestForRecord,
   enabledManifestToolNames
@@ -175,7 +176,7 @@ export async function handleProviderMcpRequest(
   }
 
   const server = createProviderMcpServer(config, store, runtime, deps, scope, {
-    enabledTools: enabledManifestToolNames(manifest)
+    enabledTools: enabledToolsForClaims(manifest, auth.claims)
   });
   const transport = new WebStandardStreamableHTTPServerTransport();
 
@@ -242,10 +243,14 @@ function authorizeProviderMcpRequest(
   store: TokenStore,
   runtimeJwtIssuer: RuntimeJwtIssuer,
   request: Request
-): { runtime: AgentRuntimeRecord | null; reason?: "missing_bearer" | "invalid_jwt" } {
+): {
+  runtime: AgentRuntimeRecord | null;
+  claims: RuntimeJwtClaims | null;
+  reason?: "missing_bearer" | "invalid_jwt";
+} {
   const bearerToken = readBearerToken(request);
   if (!bearerToken) {
-    return { runtime: null, reason: "missing_bearer" };
+    return { runtime: null, claims: null, reason: "missing_bearer" };
   }
 
   const claims = runtimeJwtIssuer.verifyRuntimeJwt({
@@ -256,7 +261,7 @@ function authorizeProviderMcpRequest(
       `${config.runtimeJwtIssuer}/mcp`
   });
   if (!claims) {
-    return { runtime: null, reason: "invalid_jwt" };
+    return { runtime: null, claims: null, reason: "invalid_jwt" };
   }
 
   const runtime = store.getAgentRuntime(claims.runtime_id);
@@ -265,10 +270,23 @@ function authorizeProviderMcpRequest(
     runtime.workspaceId !== claims.workspace_id ||
     runtime.slackUserId !== claims.slack_user_id
   ) {
-    return { runtime: null, reason: "invalid_jwt" };
+    return { runtime: null, claims: null, reason: "invalid_jwt" };
   }
 
-  return { runtime };
+  return { runtime, claims };
+}
+
+function enabledToolsForClaims(
+  manifest: RuntimeManifest,
+  claims: RuntimeJwtClaims | null
+): ReadonlySet<string> {
+  const enabledTools = enabledManifestToolNames(manifest);
+  if (!claims?.allowed_tools) {
+    return enabledTools;
+  }
+  return new Set(
+    claims.allowed_tools.filter((toolName) => enabledTools.has(toolName))
+  );
 }
 
 function readBearerToken(request: Request): string | null {

@@ -394,6 +394,79 @@ describe("handleProviderMcpRequest", () => {
     store.close();
   });
 
+  test("narrows provider MCP tools through job-scoped JWT claims", async () => {
+    const issuer = createRuntimeJwtIssuer({ issuer: config.runtimeJwtIssuer });
+    const store = createTokenStore(":memory:");
+    const runtime = store.getOrCreateAgentRuntime({
+      workspaceId: "T123",
+      slackUserId: "U123",
+      engine: "openclaw",
+      endpointUrl: "http://runtime-u123:8080",
+      authTokenHash: "hash-u123",
+      statePath: "/data/runtimes/u123/state",
+      configPath: "/data/runtimes/u123/config/openclaw.json",
+      workspacePath: "/data/runtimes/u123/workspace"
+    });
+    const route = store.upsertConversationRoute({
+      workspaceId: "T123",
+      slackUserId: "U123",
+      transport: "slack",
+      destination: {
+        runtimeId: runtime.id,
+        conversationId: "D123"
+      }
+    });
+    const token = issuer.issueRuntimeJwt({
+      audience: "http://agentgateway:3000/mcp",
+      runtimeId: runtime.id,
+      workspaceId: "T123",
+      slackUserId: "U123",
+      jobId: "job-123",
+      allowedTools: ["github_list_my_pull_requests"]
+    });
+
+    const listResponse = await handleProviderMcpRequest(
+      config,
+      store,
+      issuer,
+      mcpRequest({ method: "tools/list" }, token),
+      {},
+      "github"
+    );
+    const listBody = readMcpBody(await listResponse.text());
+    const toolNames = listBody.result.tools.map((tool) => tool.name);
+
+    expect(toolNames).toEqual(["github_list_my_pull_requests"]);
+
+    const callResponse = await handleProviderMcpRequest(
+      config,
+      store,
+      issuer,
+      mcpRequest(
+        {
+          method: "tools/call",
+          params: {
+            name: "github_search_issues",
+            arguments: { query: "repo:octo/repo is:open", routeId: route.id }
+          }
+        },
+        token
+      ),
+      {
+        searchIssues: async () => {
+          throw new Error("job-scoped token should not allow this tool");
+        }
+      }
+    );
+    const callBody = readMcpBody(await callResponse.text());
+
+    expect(callResponse.status).toBe(200);
+    expect(callBody.result.content[0].text).toContain("github_search_issues");
+    expect(callBody.result.content[0].text).toContain("not found");
+
+    store.close();
+  });
+
   test("hides and blocks user-disabled provider MCP tools", async () => {
     const issuer = createRuntimeJwtIssuer({ issuer: config.runtimeJwtIssuer });
     const store = createTokenStore(":memory:");

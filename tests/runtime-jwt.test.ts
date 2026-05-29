@@ -70,6 +70,33 @@ describe("createRuntimeJwtIssuer", () => {
     ).toBeNull();
   });
 
+  test("can carry optional job-scoped tool claims", () => {
+    const issuer = createRuntimeJwtIssuer({
+      issuer: "http://burble-app:3000",
+      now: () => new Date("2026-05-22T12:00:00.000Z")
+    });
+
+    const token = issuer.issueRuntimeJwt({
+      audience: "http://agentgateway:3000/mcp",
+      runtimeId: "rt_u123",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      jobId: "job-123",
+      allowedTools: ["github_search_issues", "github_list_my_pull_requests"]
+    });
+
+    expect(
+      issuer.verifyRuntimeJwt({
+        token,
+        audience: "http://agentgateway:3000/mcp",
+        now: new Date("2026-05-22T12:00:30.000Z")
+      })
+    ).toMatchObject({
+      job_id: "job-123",
+      allowed_tools: ["github_list_my_pull_requests", "github_search_issues"]
+    });
+  });
+
   test("reuses a persistent private key across issuer restarts", () => {
     const privateKeyPath = join(
       mkdtempSync(join(tmpdir(), "burble-runtime-jwt-")),
