@@ -21,6 +21,7 @@ import {
   formatWorkingMessage,
   formatIssuesMessage,
   formatMentionWorkingMessage,
+  isDirectMessageSlashCommand,
   parseAgentCommand,
   parseAuthCommand,
   restartAgentRuntimeIfConfigChanged,
@@ -745,6 +746,21 @@ describe("agent user config commands", () => {
     );
     expect(failure.text).toContain("Config saved");
     expect(failure.text).toContain("docker unavailable");
+  });
+
+  test("detects direct-message slash commands for visible config replies", () => {
+    expect(
+      isDirectMessageSlashCommand({
+        channel_id: "D123",
+        channel_name: "directmessage"
+      })
+    ).toBe(true);
+    expect(
+      isDirectMessageSlashCommand({
+        channel_id: "C123",
+        channel_name: "general"
+      })
+    ).toBe(false);
   });
 });
 

@@ -817,13 +817,16 @@ export function createSlackRuntime(
 
       if (action.kind === "config_get") {
         await ack(
-          buildAgentUserConfigGetResponse({
-            config,
-            store,
-            workspaceId: body.team_id ?? "",
-            slackUserId: body.user_id,
-            key: action.key
-          })
+          withDirectMessageSlashCommandVisibility(
+            buildAgentUserConfigGetResponse({
+              config,
+              store,
+              workspaceId: body.team_id ?? "",
+              slackUserId: body.user_id,
+              key: action.key
+            }),
+            body
+          )
         );
         return;
       }
@@ -855,9 +858,12 @@ export function createSlackRuntime(
         }).policyHash;
         const policyChanged = previousPolicyHash !== nextPolicyHash;
         await ack(
-          addAgentConfigRuntimeRestartNotice(
-            response,
-            policyChanged
+          withDirectMessageSlashCommandVisibility(
+            addAgentConfigRuntimeRestartNotice(
+              response,
+              policyChanged
+            ),
+            body
           )
         );
         if (!policyChanged) {
@@ -873,11 +879,19 @@ export function createSlackRuntime(
             nextPolicyHash
           });
           await respond(
-            buildAgentConfigRuntimeRestartResponse(restartedRuntimeId)
+            withDirectMessageSlashCommandVisibility(
+              buildAgentConfigRuntimeRestartResponse(restartedRuntimeId),
+              body
+            )
           );
         } catch (error) {
           logger.error(formatLogError(error));
-          await respond(buildAgentConfigRuntimeRestartFailureResponse(error));
+          await respond(
+            withDirectMessageSlashCommandVisibility(
+              buildAgentConfigRuntimeRestartFailureResponse(error),
+              body
+            )
+          );
         }
         return;
       }
@@ -2089,9 +2103,35 @@ type AgentUserConfigKey =
   | "skills.enabled";
 
 type AgentUserConfigSetResult = {
-  response_type: "ephemeral";
+  response_type: "ephemeral" | "in_channel";
   text: string;
 };
+
+type SlackSlashCommandVisibilityBody = {
+  channel_id?: string;
+  channel_name?: string;
+};
+
+function withDirectMessageSlashCommandVisibility<
+  T extends { response_type?: "ephemeral" | "in_channel" }
+>(response: T, body: SlackSlashCommandVisibilityBody): T {
+  if (!isDirectMessageSlashCommand(body)) {
+    return response;
+  }
+  return {
+    ...response,
+    response_type: "in_channel"
+  };
+}
+
+export function isDirectMessageSlashCommand(
+  body: SlackSlashCommandVisibilityBody
+): boolean {
+  return (
+    body.channel_name === "directmessage" ||
+    body.channel_id?.startsWith("D") === true
+  );
+}
 
 export function buildAgentUserConfigGetResponse(input: {
   config: Config;
