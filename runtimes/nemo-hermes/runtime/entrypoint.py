@@ -35,7 +35,28 @@ def int_env(name: str, default: int) -> int:
 
 class RunWaiter:
     def __init__(self) -> None:
-        self.future: asyncio.Future[dict[str, Any]] = asyncio.get_running_loop().create_future()
+        loop = asyncio.get_running_loop()
+        self.future: asyncio.Future[dict[str, Any]] = loop.create_future()
+        self.final_response: dict[str, Any] | None = None
+        self.completed = False
+        self.queues: list[asyncio.Queue[dict[str, Any] | None]] = []
+
+    async def emit(self, event: dict[str, Any]) -> None:
+        for queue in list(self.queues):
+            await queue.put(event)
+
+    async def finish(self, response: dict[str, Any]) -> None:
+        self.final_response = response
+        self.completed = True
+        await self.emit({"type": "final", "response": response})
+        for queue in list(self.queues):
+            await queue.put(None)
+
+    async def fail(self, message: str) -> None:
+        self.completed = True
+        await self.emit({"type": "error", "message": message})
+        for queue in list(self.queues):
+            await queue.put(None)
 
 
 class BurbleHermesRuntime:
@@ -54,6 +75,8 @@ class BurbleHermesRuntime:
         app = web.Application()
         app.router.add_get("/healthz", self.handle_healthz)
         app.router.add_post("/runs", self.handle_run)
+        app.router.add_get("/runs/{run_id}", self.handle_run_snapshot)
+        app.router.add_get("/runs/{run_id}/events", self.handle_run_events)
         app.router.add_post(
             "/internal/hermes/runs/{run_id}/messages",
             self.handle_run_message,
@@ -92,8 +115,14 @@ class BurbleHermesRuntime:
 
         waiter = RunWaiter()
         self.runs[run_id] = waiter
-        try:
-            await self._inject_message(
+        print(
+            f"[INFO] {timestamp()} Nemo Hermes run start runId={run_id} routeId={route_id} textChars={len(text)}",
+            flush=True,
+        )
+        task = asyncio.create_task(
+            self._execute_run(
+                run_id,
+                waiter,
                 {
                     "runId": run_id,
                     "routeId": route_id,
@@ -101,12 +130,18 @@ class BurbleHermesRuntime:
                     "threadId": conversation.get("rootId"),
                     "slackUserId": (body.get("principal") or {}).get("slackUserId"),
                     "isDirectMessage": conversation.get("isDirectMessage"),
-                }
+                },
             )
-            result = await asyncio.wait_for(
-                waiter.future,
-                timeout=int_env("HERMES_RUN_TIMEOUT_SECONDS", 180),
+        )
+        if self._prefers_async(request):
+            task.add_done_callback(lambda _task: asyncio.create_task(self._expire_run_later(run_id)))
+            return web.json_response(
+                {"runId": run_id, "eventsUrl": f"/runs/{run_id}/events"},
+                headers={"cache-control": "no-store"},
             )
+
+        try:
+            result = await task
             return web.json_response(
                 {
                     "response": {
@@ -119,15 +154,127 @@ class BurbleHermesRuntime:
         finally:
             self.runs.pop(run_id, None)
 
+    async def handle_run_snapshot(self, request: web.Request) -> web.Response:
+        run_id = request.match_info["run_id"]
+        waiter = self.runs.get(run_id)
+        if not waiter:
+            return web.Response(text="Run not found", status=404)
+        if not waiter.completed:
+            try:
+                await asyncio.wait_for(
+                    asyncio.shield(waiter.future),
+                    timeout=int_env("HERMES_RUN_TIMEOUT_SECONDS", 180),
+                )
+            except asyncio.TimeoutError:
+                await waiter.fail("Hermes did not produce a response before the run timeout.")
+                return web.Response(text="Run timed out", status=504)
+        if not waiter.final_response:
+            return web.Response(text="Run did not produce a final response", status=500)
+        return web.json_response(
+            {"response": waiter.final_response},
+            headers={"cache-control": "no-store"},
+        )
+
+    async def handle_run_events(self, request: web.Request) -> web.StreamResponse:
+        run_id = request.match_info["run_id"]
+        waiter = self.runs.get(run_id)
+        if not waiter:
+            return web.Response(text="Run not found", status=404)
+
+        ws = web.WebSocketResponse()
+        await ws.prepare(request)
+        queue: asyncio.Queue[dict[str, Any] | None] = asyncio.Queue()
+        waiter.queues.append(queue)
+        print(
+            f"[INFO] {timestamp()} Nemo Hermes run events attached runId={run_id}",
+            flush=True,
+        )
+        try:
+            if waiter.final_response:
+                await ws.send_json({"type": "final", "response": waiter.final_response})
+                return ws
+            while True:
+                event = await queue.get()
+                if event is None:
+                    break
+                await ws.send_json(event)
+        finally:
+            if queue in waiter.queues:
+                waiter.queues.remove(queue)
+            await ws.close()
+            print(
+                f"[INFO] {timestamp()} Nemo Hermes run events closed runId={run_id}",
+                flush=True,
+            )
+        return ws
+
     async def handle_run_message(self, request: web.Request) -> web.Response:
         run_id = request.match_info["run_id"]
         waiter = self.runs.get(run_id)
         if not waiter:
             return web.json_response({"error": "run not found"}, status=404)
         body = await request.json()
+        text = str(body.get("text") or "")
+        print(
+            f"[INFO] {timestamp()} Nemo Hermes run callback runId={run_id} textChars={len(text)}",
+            flush=True,
+        )
         if not waiter.future.done():
             waiter.future.set_result(body)
         return web.json_response({"ok": True})
+
+    async def _execute_run(
+        self,
+        run_id: str,
+        waiter: RunWaiter,
+        message: dict[str, Any],
+    ) -> dict[str, Any]:
+        try:
+            await waiter.emit({"type": "status", "text": "Hermes accepted the Burble turn."})
+            print(
+                f"[INFO] {timestamp()} Nemo Hermes run inject start runId={run_id}",
+                flush=True,
+            )
+            await self._inject_message(message)
+            print(
+                f"[INFO] {timestamp()} Nemo Hermes run inject finish runId={run_id}",
+                flush=True,
+            )
+            result = await asyncio.wait_for(
+                waiter.future,
+                timeout=int_env("HERMES_RUN_TIMEOUT_SECONDS", 180),
+            )
+            response = {
+                "classification": result.get("classification") or "user_private",
+                "text": result.get("text") or "",
+            }
+            await waiter.finish(response)
+            print(
+                f"[INFO] {timestamp()} Nemo Hermes run finish runId={run_id} textChars={len(response['text'])}",
+                flush=True,
+            )
+            return response
+        except asyncio.TimeoutError:
+            message_text = "Hermes did not produce a response before the run timeout."
+            print(
+                f"[ERROR] {timestamp()} Nemo Hermes run timeout runId={run_id}",
+                file=sys.stderr,
+                flush=True,
+            )
+            await waiter.fail(message_text)
+            raise
+        except Exception as error:
+            print(
+                f"[ERROR] {timestamp()} Nemo Hermes run failed runId={run_id} error={error}",
+                file=sys.stderr,
+                flush=True,
+            )
+            await waiter.fail(str(error))
+            raise
+
+    async def _expire_run_later(self, run_id: str) -> None:
+        await asyncio.sleep(int_env("HERMES_COMPLETED_RUN_TTL_SECONDS", 300))
+        self.runs.pop(run_id, None)
 
     async def _inject_message(self, body: dict[str, Any]) -> None:
         url = f"http://127.0.0.1:{self.platform_port}/internal/burble/messages"
@@ -143,6 +290,12 @@ class BurbleHermesRuntime:
                 last_error = str(error)
             await asyncio.sleep(0.5)
         raise RuntimeError(f"Hermes Burble platform did not accept message: {last_error}")
+
+    def _prefers_async(self, request: web.Request) -> bool:
+        return any(
+            value.strip().lower() == "respond-async"
+            for value in request.headers.get("prefer", "").split(",")
+        )
 
     def _install_plugin(self) -> None:
         plugins_dir = self.home / "plugins" / "burble-platform"

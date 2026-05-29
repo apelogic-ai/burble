@@ -98,6 +98,7 @@ class BurbleAdapter(BasePlatformAdapter):
         await web.TCPSite(self._runner, self.host, self.port).start()
         self._mark_connected()
         logger.info("Burble: platform adapter listening on %s:%s", self.host, self.port)
+        print(f"[INFO] Burble Hermes platform adapter listening on {self.host}:{self.port}", flush=True)
         return True
 
     async def disconnect(self) -> None:
@@ -162,6 +163,10 @@ class BurbleAdapter(BasePlatformAdapter):
         route_id = str(body.get("routeId") or "").strip()
         text = str(body.get("text") or "")
         run_id = str(body.get("runId") or "").strip()
+        print(
+            f"[INFO] Burble Hermes platform inbound runId={run_id or 'none'} routeId={route_id or 'missing'} textChars={len(text)}",
+            flush=True,
+        )
         if not route_id:
             return web.json_response({"error": "routeId is required"}, status=400)
         if not text.strip():
@@ -189,6 +194,10 @@ class BurbleAdapter(BasePlatformAdapter):
             media_types=[],
         )
         await self.handle_message(event)
+        print(
+            f"[INFO] Burble Hermes platform handed message to gateway runId={run_id or 'none'}",
+            flush=True,
+        )
         return web.json_response({"ok": True})
 
     async def _send_to_burble_route(self, route_id: str, text: str) -> SendResult:
