@@ -53,6 +53,7 @@ import {
   type AgentRunEvent,
   type AgentUsage
 } from "./agent/types";
+import { validateAgentModelId } from "./agent/providers";
 import { createDockerRuntimeFactory } from "./agent/container-runtime-factory";
 import { buildRuntimeManifestForPrincipal } from "./agent/runtime-policy";
 import { createStaticRuntimeFactory } from "./agent/runtime-factory";
@@ -814,6 +815,33 @@ export function createSlackRuntime(
         return;
       }
 
+      if (action.kind === "config_get") {
+        await ack(
+          buildAgentUserConfigGetResponse({
+            config,
+            store,
+            workspaceId: body.team_id ?? "",
+            slackUserId: body.user_id,
+            key: action.key
+          })
+        );
+        return;
+      }
+
+      if (action.kind === "config_set") {
+        await ack(
+          applyAgentUserConfigSet({
+            config,
+            store,
+            workspaceId: body.team_id ?? "",
+            slackUserId: body.user_id,
+            key: action.key,
+            value: action.value
+          })
+        );
+        return;
+      }
+
       if (action.kind === "exec_list") {
         await ack(
           buildAgentExecTaskListResponse(
@@ -1351,6 +1379,8 @@ export type AgentCommand =
   | { kind: "help" }
   | { kind: "status" }
   | { kind: "config" }
+  | { kind: "config_get"; key?: string }
+  | { kind: "config_set"; key: string; value: string }
   | { kind: "exec_list" }
   | { kind: "exec_inspect"; taskId: string }
   | { kind: "exec_stop"; taskId: string }
@@ -1373,6 +1403,25 @@ export function parseAgentCommand(text: string): AgentCommand {
     normalized === "runtime config"
   ) {
     return { kind: "config" };
+  }
+
+  const configGetMatch = /^(?:config\s+get|get)(?:\s+([\s\S]*))?$/i.exec(
+    trimmed
+  );
+  if (configGetMatch) {
+    const key = configGetMatch[1]?.trim();
+    return key ? { kind: "config_get", key } : { kind: "config_get" };
+  }
+
+  const configSetMatch = /^(?:config\s+set|set)\s+(\S+)(?:\s+([\s\S]*))?$/i.exec(
+    trimmed
+  );
+  if (configSetMatch) {
+    return {
+      kind: "config_set",
+      key: configSetMatch[1],
+      value: configSetMatch[2]?.trim() ?? ""
+    };
   }
 
   const execMatch = /^exec(?:ute)?(?:\s+([\s\S]*))?$/i.exec(trimmed);
@@ -1633,6 +1682,8 @@ export function buildAgentCommandHelpResponse() {
             "Use one of:",
             "• `/agent status` - show and power up your current agent runtime",
             "• `/agent config` - inspect your current agent config file",
+            "• `/agent config get [key]` - inspect your user runtime preferences",
+            "• `/agent config set <key> <value>` - update an allowed user preference",
             "• `/agent exec` - list active agent tasks",
             "• `/agent exec <task>` - send an explicit task to your private agent runtime",
             "• `/agent exec <id> inspect` - inspect an active or recent task",
@@ -1989,6 +2040,368 @@ export function buildAgentConfigLoadingResponse() {
     response_type: "ephemeral" as const,
     text: "Powering up agent runtime and reading configuration..."
   };
+}
+
+type AgentUserConfigKey =
+  | "runtime.model"
+  | "memory.user"
+  | "tools.disabled"
+  | "skills.enabled";
+
+type AgentUserConfigSetResult = {
+  response_type: "ephemeral";
+  text: string;
+};
+
+export function buildAgentUserConfigGetResponse(input: {
+  config: Config;
+  store: TokenStore;
+  workspaceId: string;
+  slackUserId: string;
+  key?: string;
+}): AgentUserConfigSetResult {
+  const principal = {
+    workspaceId: input.workspaceId,
+    slackUserId: input.slackUserId
+  };
+  const manifest = buildRuntimeManifestForPrincipal({
+    config: input.config,
+    store: input.store,
+    principal,
+    engine: input.config.openClawNemoClawEngine
+  });
+  const key = input.key ? normalizeAgentUserConfigKey(input.key) : null;
+
+  if (input.key && !key) {
+    return {
+      response_type: "ephemeral",
+      text: formatUnknownAgentUserConfigKey(input.key)
+    };
+  }
+
+  const lines = key
+    ? formatAgentUserConfigKeyLines({ store: input.store, principal, manifest, key })
+    : [
+        "*Agent user config*",
+        `• Model: \`${manifest.model.provider}:${manifest.model.model}\``,
+        `• User memory: \`${manifest.memory.userMemoryEnabled ? "on" : "off"}\``,
+        `• Disabled tools: \`${formatStringList(manifest.disabledTools)}\``,
+        `• Enabled skills: \`${formatStringList(manifest.skills.map((skill) => `${skill.id}@${skill.version}`))}\``,
+        `• Policy hash: \`${manifest.policyHash}\``,
+        "",
+        "*Settable keys*",
+        "• `model`",
+        "• `memory`",
+        "• `tools.disabled`",
+        "• `skills.enabled`"
+      ];
+
+  return {
+    response_type: "ephemeral",
+    text: lines.join("\n")
+  };
+}
+
+export function applyAgentUserConfigSet(input: {
+  config: Config;
+  store: TokenStore;
+  workspaceId: string;
+  slackUserId: string;
+  key: string;
+  value: string;
+}): AgentUserConfigSetResult {
+  const principal = {
+    workspaceId: input.workspaceId,
+    slackUserId: input.slackUserId
+  };
+  const specialResult = applyAgentUserConfigSpecialSet({ ...input, principal });
+  if (specialResult) {
+    return specialResult;
+  }
+
+  const key = normalizeAgentUserConfigKey(input.key);
+  if (!key) {
+    return {
+      response_type: "ephemeral",
+      text: formatUnknownAgentUserConfigKey(input.key)
+    };
+  }
+
+  const parsed = parseAgentUserConfigValue(key, input.value);
+  if (!parsed.ok) {
+    return {
+      response_type: "ephemeral",
+      text: parsed.error
+    };
+  }
+
+  input.store.upsertUserPreference({
+    workspaceId: input.workspaceId,
+    slackUserId: input.slackUserId,
+    key,
+    value: parsed.value
+  });
+
+  return {
+    response_type: "ephemeral",
+    text: [
+      `Updated \`${displayAgentUserConfigKey(key)}\`.`,
+      "",
+      ...formatAgentUserConfigKeyLines({
+        store: input.store,
+        principal,
+        manifest: buildRuntimeManifestForPrincipal({
+          config: input.config,
+          store: input.store,
+          principal,
+          engine: input.config.openClawNemoClawEngine
+        }),
+        key
+      })
+    ].join("\n")
+  };
+}
+
+function applyAgentUserConfigSpecialSet(input: {
+  config: Config;
+  store: TokenStore;
+  workspaceId: string;
+  slackUserId: string;
+  key: string;
+  value: string;
+  principal: { workspaceId: string; slackUserId: string };
+}): AgentUserConfigSetResult | null {
+  const key = input.key.toLowerCase();
+  if (key !== "disable-tool" && key !== "enable-tool") {
+    return null;
+  }
+
+  const tool = input.value.trim();
+  if (!tool) {
+    return {
+      response_type: "ephemeral",
+      text: `Usage: \`/agent config set ${key} <tool_name>\`.`
+    };
+  }
+
+  const existing = readUserPreferenceStringList(
+    input.store,
+    input.principal,
+    "tools.disabled"
+  );
+  const next =
+    key === "disable-tool"
+      ? [...new Set([...existing, tool])].sort()
+      : existing.filter((entry) => entry !== tool);
+  input.store.upsertUserPreference({
+    workspaceId: input.workspaceId,
+    slackUserId: input.slackUserId,
+    key: "tools.disabled",
+    value: next
+  });
+
+  const manifest = buildRuntimeManifestForPrincipal({
+    config: input.config,
+    store: input.store,
+    principal: input.principal,
+    engine: input.config.openClawNemoClawEngine
+  });
+  return {
+    response_type: "ephemeral",
+    text: [
+      key === "disable-tool"
+        ? `Disabled tool \`${tool}\` for your agent runtime.`
+        : `Enabled tool \`${tool}\` for your agent runtime.`,
+      "",
+      ...formatAgentUserConfigKeyLines({
+        store: input.store,
+        principal: input.principal,
+        manifest,
+        key: "tools.disabled"
+      })
+    ].join("\n")
+  };
+}
+
+function parseAgentUserConfigValue(
+  key: AgentUserConfigKey,
+  value: string
+): { ok: true; value: unknown } | { ok: false; error: string } {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return {
+      ok: false,
+      error: `Usage: \`/agent config set ${displayAgentUserConfigKey(key)} <value>\`.`
+    };
+  }
+
+  if (key === "runtime.model") {
+    const modelId = trimmed.includes(":") ? trimmed : `openai:${trimmed}`;
+    try {
+      validateAgentModelId(modelId);
+    } catch (error) {
+      return {
+        ok: false,
+        error: error instanceof Error ? error.message : "Invalid model value."
+      };
+    }
+    return { ok: true, value: modelId };
+  }
+
+  if (key === "memory.user") {
+    const enabled = parseBooleanConfigValue(trimmed);
+    if (enabled === null) {
+      return {
+        ok: false,
+        error: "Memory must be `on`, `off`, `true`, or `false`."
+      };
+    }
+    return { ok: true, value: { enabled } };
+  }
+
+  const values = parseStringListConfigValue(trimmed);
+  if (key === "skills.enabled") {
+    return {
+      ok: true,
+      value: values.map((id) => ({ id, version: "1" }))
+    };
+  }
+  return { ok: true, value: values };
+}
+
+function normalizeAgentUserConfigKey(key: string): AgentUserConfigKey | null {
+  const normalized = key.trim().toLowerCase().replace(/[_\s-]+/g, ".");
+  switch (normalized) {
+    case "model":
+    case "runtime.model":
+      return "runtime.model";
+    case "memory":
+    case "user.memory":
+    case "memory.user":
+      return "memory.user";
+    case "tools":
+    case "disabled.tools":
+    case "tools.disabled":
+      return "tools.disabled";
+    case "skills":
+    case "enabled.skills":
+    case "skills.enabled":
+      return "skills.enabled";
+    default:
+      return null;
+  }
+}
+
+function displayAgentUserConfigKey(key: AgentUserConfigKey): string {
+  switch (key) {
+    case "runtime.model":
+      return "model";
+    case "memory.user":
+      return "memory";
+    default:
+      return key;
+  }
+}
+
+function formatUnknownAgentUserConfigKey(key: string): string {
+  return [
+    `Unknown user config key: \`${truncateSlackConfigValue(key, 80)}\`.`,
+    "Allowed keys: `model`, `memory`, `tools.disabled`, `skills.enabled`.",
+    "Shortcuts: `disable-tool <tool_name>`, `enable-tool <tool_name>`."
+  ].join("\n");
+}
+
+function formatAgentUserConfigKeyLines(input: {
+  store: TokenStore;
+  principal: { workspaceId: string; slackUserId: string };
+  manifest: ReturnType<typeof buildRuntimeManifestForPrincipal>;
+  key: AgentUserConfigKey;
+}): string[] {
+  switch (input.key) {
+    case "runtime.model":
+      return [
+        "*Model*",
+        `• Effective: \`${input.manifest.model.provider}:${input.manifest.model.model}\``,
+        `• Stored preference: \`${formatPreferenceValue(
+          input.store.getUserPreference(
+            input.principal.workspaceId,
+            input.principal.slackUserId,
+            "runtime.model"
+          )?.value
+        )}\``
+      ];
+    case "memory.user":
+      return [
+        "*User memory*",
+        `• Effective: \`${input.manifest.memory.userMemoryEnabled ? "on" : "off"}\``,
+        `• Stored preference: \`${formatPreferenceValue(
+          input.store.getUserPreference(
+            input.principal.workspaceId,
+            input.principal.slackUserId,
+            "memory.user"
+          )?.value
+        )}\``
+      ];
+    case "tools.disabled":
+      return [
+        "*Disabled tools*",
+        `• Effective: \`${formatStringList(input.manifest.disabledTools)}\``
+      ];
+    case "skills.enabled":
+      return [
+        "*Enabled skills*",
+        `• Effective: \`${formatStringList(
+          input.manifest.skills.map((skill) => `${skill.id}@${skill.version}`)
+        )}\``
+      ];
+  }
+}
+
+function readUserPreferenceStringList(
+  store: TokenStore,
+  principal: { workspaceId: string; slackUserId: string },
+  key: string
+): string[] {
+  const value = store.getUserPreference(
+    principal.workspaceId,
+    principal.slackUserId,
+    key
+  )?.value;
+  return Array.isArray(value)
+    ? value.filter((entry): entry is string => typeof entry === "string")
+    : [];
+}
+
+function parseBooleanConfigValue(value: string): boolean | null {
+  const normalized = value.toLowerCase();
+  if (["on", "true", "yes", "enabled", "enable"].includes(normalized)) {
+    return true;
+  }
+  if (["off", "false", "no", "disabled", "disable"].includes(normalized)) {
+    return false;
+  }
+  return null;
+}
+
+function parseStringListConfigValue(value: string): string[] {
+  return value
+    .split(/[,\s]+/)
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+}
+
+function formatStringList(values: string[]): string {
+  return values.length > 0 ? values.join(", ") : "none";
+}
+
+function formatPreferenceValue(value: unknown): string {
+  if (value === undefined) {
+    return "not set";
+  }
+  if (typeof value === "string") {
+    return value;
+  }
+  return truncateSlackConfigValue(JSON.stringify(value), 160);
 }
 
 function formatAgentConfigFailureMessage(error: unknown): string {

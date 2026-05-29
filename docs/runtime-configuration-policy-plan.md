@@ -329,24 +329,27 @@ User change surfaces:
 
 - Slack App Home controls for common settings: provider connect, enabled
   skills, memory opt-in, selected model, disabled tools.
-- Slash commands for user-scoped settings. The preferred command shape is:
+- Slash commands for user-scoped settings. The implemented command shape is:
 
 ```text
-/agent get <setting>
-/agent set <setting> <value>
+/agent config get [setting]
+/agent config set <setting> <value>
 ```
+
+The shorter `/agent get` and `/agent set` forms are accepted as aliases, but
+`/agent config ...` is the documented shape so it stays visibly separate from
+`/agent exec`.
 
 - Examples:
 
 ```text
-/agent get model
-/agent set model gpt-5.4-mini
-/agent get github default-org
-/agent set github default-org apelogic-ai
-/agent set github repo-alias warp-bridge apelogic-ai/warp-bridge
-/agent set tool github_create_pr disabled
-/agent set skill github-pr-triage enabled
-/agent set memory off
+/agent config get
+/agent config get model
+/agent config set model gpt-5.4-mini
+/agent config set memory off
+/agent config set tools.disabled github_create_pr google_move_drive_file
+/agent config set disable-tool github_create_pr
+/agent config set enable-tool github_create_pr
 ```
 
 These commands only mutate user preferences within workspace policy limits.
@@ -890,9 +893,10 @@ Implementation has started with the control-plane foundation:
 - A deterministic runtime manifest builder that combines workspace policy,
   user preferences, runtime settings, tool catalog, skills, and memory flags.
 - Tests for policy/preference persistence and manifest computation.
-
-The initial implementation does not yet enforce the manifest at MCP tool-call
-time or expose `/agent set` / `/agent get` in Slack. Those are the next slices.
+- MCP tool-call enforcement against the runtime manifest and job-scoped
+  capability claims.
+- `/agent config get` and `/agent config set` for user-scoped runtime
+  preferences.
 
 ### Slice 1: Manifest Types and Builder
 
@@ -948,8 +952,11 @@ time or expose `/agent set` / `/agent get` in Slack. Those are the next slices.
 
 ### Slice 7: User Config UX
 
-- Add `/agent config get [key]` for user-scoped runtime preferences.
-- Add `/agent config set <key> <value>` for allowed user-scoped runtime
+- Status: implemented for the initial allowed user preference set.
+- Added `/agent config get [key]` for user-scoped runtime preferences.
+- Added `/agent config set <key> <value>` for model, user memory, disabled
+  tools, and enabled skills.
+- Added `disable-tool` / `enable-tool` shortcuts for user-scoped tool
   preferences.
 - Keep `/burble` for admin/workspace policy controls in a later PR.
 

@@ -1,7 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import {
+  applyAgentUserConfigSet,
   buildAgentConfigResponse,
   buildAgentCommandHelpResponse,
+  buildAgentUserConfigGetResponse,
   buildAgentExecLoadingResponse,
   buildAgentExecMissingTaskResponse,
   buildAgentStatusResponse,
@@ -23,6 +25,7 @@ import {
   summarizeSlackPayload
 } from "../src/slack";
 import type { Config } from "../src/config";
+import { createTokenStore } from "../src/db";
 
 const agentConfig: Config = {
   slackBotToken: "xoxb-test",
@@ -247,6 +250,25 @@ describe("parseAgentCommand", () => {
     expect(parseAgentCommand("config")).toEqual({ kind: "config" });
     expect(parseAgentCommand("configuration")).toEqual({ kind: "config" });
     expect(parseAgentCommand("runtime config")).toEqual({ kind: "config" });
+    expect(parseAgentCommand("config get model")).toEqual({
+      kind: "config_get",
+      key: "model"
+    });
+    expect(parseAgentCommand("config get")).toEqual({ kind: "config_get" });
+    expect(parseAgentCommand("get memory")).toEqual({
+      kind: "config_get",
+      key: "memory"
+    });
+    expect(parseAgentCommand("config set model gpt-5.4-mini")).toEqual({
+      kind: "config_set",
+      key: "model",
+      value: "gpt-5.4-mini"
+    });
+    expect(parseAgentCommand("set memory off")).toEqual({
+      kind: "config_set",
+      key: "memory",
+      value: "off"
+    });
   });
 
   test("routes exec tasks", () => {
@@ -548,6 +570,91 @@ describe("buildAgentConfigResponse", () => {
 
     expect(configFile.path).toBe("/host/runtime.json");
     expect(configFile.redactedText).toContain("factory");
+  });
+});
+
+describe("agent user config commands", () => {
+  test("sets and reads user model and memory preferences", () => {
+    const store = createTokenStore(":memory:");
+
+    const modelResponse = applyAgentUserConfigSet({
+      config: agentConfig,
+      store,
+      workspaceId: "T123",
+      slackUserId: "U123",
+      key: "model",
+      value: "gpt-5.4-mini"
+    });
+    expect(modelResponse.text).toContain("Updated `model`");
+    expect(
+      store.getUserPreference("T123", "U123", "runtime.model")?.value
+    ).toBe("openai:gpt-5.4-mini");
+
+    const memoryResponse = applyAgentUserConfigSet({
+      config: agentConfig,
+      store,
+      workspaceId: "T123",
+      slackUserId: "U123",
+      key: "memory",
+      value: "on"
+    });
+    expect(memoryResponse.text).toContain("Updated `memory`");
+    expect(
+      store.getUserPreference("T123", "U123", "memory.user")?.value
+    ).toEqual({ enabled: true });
+
+    const getResponse = buildAgentUserConfigGetResponse({
+      config: agentConfig,
+      store,
+      workspaceId: "T123",
+      slackUserId: "U123"
+    });
+    expect(getResponse.text).toContain("openai:gpt-5.4-mini");
+    expect(getResponse.text).toContain("User memory: `on`");
+  });
+
+  test("supports disabling and enabling a user-scoped tool", () => {
+    const store = createTokenStore(":memory:");
+
+    const disableResponse = applyAgentUserConfigSet({
+      config: agentConfig,
+      store,
+      workspaceId: "T123",
+      slackUserId: "U123",
+      key: "disable-tool",
+      value: "github_create_pr"
+    });
+    expect(disableResponse.text).toContain("Disabled tool `github_create_pr`");
+    expect(
+      store.getUserPreference("T123", "U123", "tools.disabled")?.value
+    ).toEqual(["github_create_pr"]);
+
+    const enableResponse = applyAgentUserConfigSet({
+      config: agentConfig,
+      store,
+      workspaceId: "T123",
+      slackUserId: "U123",
+      key: "enable-tool",
+      value: "github_create_pr"
+    });
+    expect(enableResponse.text).toContain("Enabled tool `github_create_pr`");
+    expect(
+      store.getUserPreference("T123", "U123", "tools.disabled")?.value
+    ).toEqual([]);
+  });
+
+  test("rejects unsupported user config keys", () => {
+    const store = createTokenStore(":memory:");
+    const response = applyAgentUserConfigSet({
+      config: agentConfig,
+      store,
+      workspaceId: "T123",
+      slackUserId: "U123",
+      key: "workspace.policy",
+      value: "anything"
+    });
+
+    expect(response.text).toContain("Unknown user config key");
   });
 });
 
