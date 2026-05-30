@@ -33,6 +33,10 @@ def int_env(name: str, default: int) -> int:
         return default
 
 
+def yaml_string(value: str) -> str:
+    return json.dumps(value)
+
+
 class RunWaiter:
     def __init__(self) -> None:
         loop = asyncio.get_running_loop()
@@ -107,6 +111,7 @@ class BurbleHermesRuntime:
         run_id = str(body.get("runId") or uuid.uuid4())
         text = str((body.get("input") or {}).get("text") or "")
         conversation = ((body.get("input") or {}).get("conversation") or {})
+        principal = body.get("principal") or {}
         route_id = str(conversation.get("routeId") or "")
         if not route_id:
             return web.Response(text="Hermes Burble runtime requires input.conversation.routeId", status=400)
@@ -128,13 +133,15 @@ class BurbleHermesRuntime:
                     "routeId": route_id,
                     "text": text,
                     "threadId": conversation.get("rootId"),
-                    "slackUserId": (body.get("principal") or {}).get("slackUserId"),
+                    "actorId": principal.get("slackUserId"),
+                    "actorName": principal.get("slackUserId"),
+                    "slackUserId": principal.get("slackUserId"),
                     "isDirectMessage": conversation.get("isDirectMessage"),
                 },
             )
         )
         if self._prefers_async(request):
-            task.add_done_callback(lambda _task: asyncio.create_task(self._expire_run_later(run_id)))
+            task.add_done_callback(lambda done_task: self._on_async_run_done(run_id, done_task))
             return web.json_response(
                 {"runId": run_id, "eventsUrl": f"/runs/{run_id}/events"},
                 headers={"cache-control": "no-store"},
@@ -272,6 +279,13 @@ class BurbleHermesRuntime:
             await waiter.fail(str(error))
             raise
 
+    def _on_async_run_done(self, run_id: str, done_task: asyncio.Task[dict[str, Any]]) -> None:
+        try:
+            done_task.result()
+        except Exception:
+            pass
+        asyncio.create_task(self._expire_run_later(run_id))
+
     async def _expire_run_later(self, run_id: str) -> None:
         await asyncio.sleep(int_env("HERMES_COMPLETED_RUN_TTL_SECONDS", 300))
         self.runs.pop(run_id, None)
@@ -307,11 +321,17 @@ class BurbleHermesRuntime:
     def _ensure_gateway_config(self) -> None:
         config_path = self.home / "config.yaml"
         config_path.parent.mkdir(parents=True, exist_ok=True)
-        lines = [
-            "plugins:",
-            "  enabled:",
-            "    - burble-platform",
-        ]
+        lines = []
+        model_config = self._resolve_model_config()
+        if model_config:
+            lines.extend(
+                [
+                    "model:",
+                    f"  provider: {yaml_string(model_config['provider'])}",
+                    f"  default: {yaml_string(model_config['model'])}",
+                ]
+            )
+        lines.extend(["plugins:", "  enabled:", "    - burble-platform"])
         if env("BURBLE_MCP_GATEWAY_URL") and env("BURBLE_RUNTIME_JWT"):
             lines.extend(
                 [
@@ -326,6 +346,33 @@ class BurbleHermesRuntime:
                 ]
             )
         config_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    def _resolve_model_config(self) -> dict[str, str] | None:
+        raw = env("HERMES_INFERENCE_MODEL") or env("HERMES_MODEL") or env("AI_MODEL")
+        if not raw:
+            return None
+        provider = env("HERMES_INFERENCE_PROVIDER")
+        model = raw
+        if ":" in raw:
+            maybe_provider, maybe_model = raw.split(":", 1)
+            if maybe_provider and maybe_model:
+                provider = provider or maybe_provider
+                model = maybe_model
+        elif "/" in raw:
+            maybe_provider, maybe_model = raw.split("/", 1)
+            if maybe_provider and maybe_model:
+                provider = provider or maybe_provider
+                model = maybe_model
+        provider = self._normalize_provider(provider or "openai")
+        return {"provider": provider, "model": model}
+
+    def _normalize_provider(self, provider: str) -> str:
+        normalized = provider.strip().lower()
+        if normalized in {"openai", "openai-api"}:
+            return "openai-api"
+        if normalized in {"google", "google-ai-studio"}:
+            return "gemini"
+        return normalized
 
     def _start_gateway(self) -> None:
         self.home.mkdir(parents=True, exist_ok=True)

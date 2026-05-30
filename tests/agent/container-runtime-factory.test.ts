@@ -32,6 +32,10 @@ describe("buildContainerRuntimeSpec", () => {
       env: {
         AI_MODEL: "ollama:qwen3-coder:30b-cloud",
         OPENAI_API_KEY: "openai-key",
+        OPENAI_BASE_URL: "https://openai-compatible.example/v1",
+        OPENROUTER_API_KEY: "openrouter-key",
+        GOOGLE_API_KEY: "google-key",
+        GEMINI_API_KEY: "gemini-key",
         ANTHROPIC_API_KEY: "anthropic-key",
         OLLAMA_API_KEY: "ollama-key",
         OLLAMA_BASE_URL: "https://ollama.com",
@@ -48,6 +52,9 @@ describe("buildContainerRuntimeSpec", () => {
         OPENCLAW_GATEWAY_PORT: "18790",
         OPENCLAW_GATEWAY_BIND: "loopback",
         OPENCLAW_GATEWAY_TOKEN: "gateway-token",
+        HERMES_INFERENCE_MODEL: "openai:gpt-5.4",
+        HERMES_INFERENCE_PROVIDER: "openai-api",
+        HERMES_RUN_TIMEOUT_SECONDS: "240",
         GITHUB_TOKEN: "github-secret",
         SLACK_BOT_TOKEN: "slack-secret"
       }
@@ -69,6 +76,10 @@ describe("buildContainerRuntimeSpec", () => {
       OPENCLAW_CONFIG_PATH: "/data/openclaw/config/openclaw.json",
       AI_MODEL: "ollama:qwen3-coder:30b-cloud",
       OPENAI_API_KEY: "openai-key",
+      OPENAI_BASE_URL: "https://openai-compatible.example/v1",
+      OPENROUTER_API_KEY: "openrouter-key",
+      GOOGLE_API_KEY: "google-key",
+      GEMINI_API_KEY: "gemini-key",
       ANTHROPIC_API_KEY: "anthropic-key",
       OLLAMA_API_KEY: "ollama-key",
       OLLAMA_BASE_URL: "https://ollama.com",
@@ -84,7 +95,10 @@ describe("buildContainerRuntimeSpec", () => {
       OPENCLAW_RAW_STREAM_DEBUG: "true",
       OPENCLAW_GATEWAY_PORT: "18790",
       OPENCLAW_GATEWAY_BIND: "loopback",
-      OPENCLAW_GATEWAY_TOKEN: "gateway-token"
+      OPENCLAW_GATEWAY_TOKEN: "gateway-token",
+      HERMES_INFERENCE_MODEL: "openai:gpt-5.4",
+      HERMES_INFERENCE_PROVIDER: "openai-api",
+      HERMES_RUN_TIMEOUT_SECONDS: "240"
     });
     expect(spec.env.GITHUB_TOKEN).toBeUndefined();
     expect(spec.env.SLACK_BOT_TOKEN).toBeUndefined();

@@ -122,8 +122,16 @@ class BurbleAdapter(BasePlatformAdapter):
             return SendResult(success=True, message_id=f"burble:{route_id}:{int(time.time() * 1000)}")
 
         pending_run_id = self._pending_runs.pop(route_id, None)
+        print(
+            f"[INFO] Burble Hermes platform send routeId={route_id} textChars={len(text)} pendingRun={pending_run_id or 'none'}",
+            flush=True,
+        )
         if pending_run_id:
             callback = f"{self.runtime_callback_url}/{quote(pending_run_id, safe='')}/messages"
+            print(
+                f"[INFO] Burble Hermes platform callback start runId={pending_run_id} textChars={len(text)}",
+                flush=True,
+            )
             async with ClientSession(timeout=ClientTimeout(total=30)) as session:
                 async with session.post(
                     callback,
@@ -135,13 +143,25 @@ class BurbleAdapter(BasePlatformAdapter):
                 ) as response:
                     if response.status >= 400:
                         body = await response.text()
+                        print(
+                            f"[ERROR] Burble Hermes platform callback failed runId={pending_run_id} status={response.status}",
+                            flush=True,
+                        )
                         return SendResult(
                             success=False,
                             error=f"Burble runtime callback failed: {response.status} {body[:200]}",
                             retryable=response.status >= 500,
                         )
+                    print(
+                        f"[INFO] Burble Hermes platform callback finish runId={pending_run_id} status={response.status}",
+                        flush=True,
+                    )
             return SendResult(success=True, message_id=f"burble-run:{pending_run_id}")
 
+        print(
+            f"[INFO] Burble Hermes platform route send routeId={route_id} textChars={len(text)}",
+            flush=True,
+        )
         return await self._send_to_burble_route(route_id, text)
 
     async def send_typing(self, chat_id: str) -> bool:

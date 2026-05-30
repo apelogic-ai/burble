@@ -37,6 +37,10 @@ export type ContainerRuntimeSpec = {
 const approvedForwardedEnv = new Set([
   "AI_MODEL",
   "OPENAI_API_KEY",
+  "OPENAI_BASE_URL",
+  "OPENROUTER_API_KEY",
+  "GOOGLE_API_KEY",
+  "GEMINI_API_KEY",
   "ANTHROPIC_API_KEY",
   "OLLAMA_API_KEY",
   "OLLAMA_BASE_URL",
@@ -54,6 +58,9 @@ const approvedForwardedEnv = new Set([
   "OPENCLAW_GATEWAY_BIND",
   "OPENCLAW_GATEWAY_TOKEN",
   "HERMES_GATEWAY_COMMAND",
+  "HERMES_INFERENCE_MODEL",
+  "HERMES_MODEL",
+  "HERMES_INFERENCE_PROVIDER",
   "HERMES_RUN_TIMEOUT_SECONDS"
 ]);
 
