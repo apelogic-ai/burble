@@ -20,6 +20,7 @@ import type {
   AgentRunner,
   AgentUsage
 } from "./types";
+import type { ObservabilitySink } from "../observability";
 
 type AgentToolResult<TContent> = {
   classification: ToolClassification;
@@ -54,6 +55,7 @@ export type AiSdkAgentRunnerDeps = {
   resolveModel?: ModelResolver;
   generateText?: AgentGenerateText;
   logInfo?: (message: string) => void;
+  observability?: ObservabilitySink;
 };
 
 const systemPrompt = [
@@ -1269,6 +1271,22 @@ async function runAiSdkAgent(
       ].join(" ")
     );
 
+    const llmCallId = crypto.randomUUID();
+    const llmStartedAt = Date.now();
+    const principalId = `${input.principal.workspaceId}:${input.principal.slackUserId}`;
+    deps.observability?.emit({
+      name: "llm.call.started",
+      callId: llmCallId,
+      workspaceId: input.principal.workspaceId,
+      principalId,
+      model: deps.model,
+      provider: deps.resolvedModel.provider,
+      attributes: {
+        modelId: deps.resolvedModel.modelId,
+        textLength: input.text.length
+      }
+    });
+
     const result = await deps.generateTextFn({
       model: deps.resolvedModel,
       system: systemPrompt,
@@ -1301,6 +1319,22 @@ async function runAiSdkAgent(
         `textLength=${text.length}`
       ].join(" ")
     );
+    deps.observability?.emit({
+      name: "llm.call.completed",
+      callId: llmCallId,
+      workspaceId: input.principal.workspaceId,
+      principalId,
+      model: deps.model,
+      provider: deps.resolvedModel.provider,
+      classification,
+      durationMs: Date.now() - llmStartedAt,
+      status: "ok",
+      usage: result.usage ? toAgentUsage(result.usage) : undefined,
+      attributes: {
+        modelId: deps.resolvedModel.modelId,
+        textLength: text.length
+      }
+    });
 
     return {
       classification,

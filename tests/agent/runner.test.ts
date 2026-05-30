@@ -5,6 +5,7 @@ import type { DirectLanguageModel } from "../../src/agent/providers";
 import { collectAgentRun } from "../../src/agent/types";
 import { createGitHubTools } from "../../src/tools/github";
 import { createJiraTools } from "../../src/tools/jira";
+import type { ObservabilityEventInput } from "../../src/observability";
 
 type ExecutableTool = {
   execute: (input: unknown) => Promise<unknown>;
@@ -118,6 +119,85 @@ describe("createAiSdkAgentRunner", () => {
     expect(logs).toContain(
       "LLM call finish model=openai:test-model classification=user_private textLength=59"
     );
+  });
+
+  test("emits observability events for local LLM calls", async () => {
+    const model = { provider: "test", modelId: "model" } as DirectLanguageModel;
+    const observabilityEvents: ObservabilityEventInput[] = [];
+    const runner = createAiSdkAgentRunner({
+      model: "openai:test-model",
+      resolveModel: () => model,
+      githubTools: createGitHubTools({
+        getGitHubUser: async () => ({ login: "octocat" }),
+        listAssignedIssues: async () => [],
+        searchIssues: async () => [],
+        listMyPullRequests: async () => []
+      }),
+      generateText: async () => ({
+        text: "Hello from the model.",
+        usage: {
+          inputTokens: 20,
+          outputTokens: 5,
+          totalTokens: 25,
+          inputTokenDetails: {
+            noCacheTokens: 20,
+            cacheReadTokens: undefined,
+            cacheWriteTokens: undefined
+          },
+          outputTokenDetails: {
+            textTokens: 5,
+            reasoningTokens: undefined
+          }
+        }
+      }),
+      observability: {
+        emit: (event) => {
+          observabilityEvents.push(event);
+        }
+      }
+    });
+
+    const response = await collectAgentRun(runner, {
+      principal,
+      text: "say hello",
+      connections: { github: connection }
+    });
+
+    expect(response.text).toBe("Hello from the model.");
+    expect(observabilityEvents.map((event) => event.name)).toEqual([
+      "llm.call.started",
+      "llm.call.completed"
+    ]);
+    expect(observabilityEvents[0]).toMatchObject({
+      workspaceId: "T123",
+      principalId: "T123:U123",
+      model: "openai:test-model",
+      provider: "test",
+      attributes: {
+        modelId: "model",
+        textLength: 9
+      }
+    });
+    expect(observabilityEvents[1]).toMatchObject({
+      workspaceId: "T123",
+      principalId: "T123:U123",
+      model: "openai:test-model",
+      provider: "test",
+      classification: "public",
+      status: "ok",
+      usage: {
+        inputTokens: 20,
+        outputTokens: 5,
+        totalTokens: 25
+      },
+      attributes: {
+        textLength: 21
+      }
+    });
+    expect(observabilityEvents[0].callId).toBeString();
+    expect(observabilityEvents[1].callId).toBe(observabilityEvents[0].callId);
+    expect(JSON.stringify(observabilityEvents)).not.toContain("secret-token");
+    expect(JSON.stringify(observabilityEvents)).not.toContain("say hello");
   });
 
   test("includes current Slack channel history status in the prompt", async () => {

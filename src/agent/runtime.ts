@@ -39,7 +39,8 @@ export function createConfiguredAgentRunner(
         ...(deps.slackTools ? { slackTools: deps.slackTools } : {}),
         ...(deps.resolveModel ? { resolveModel: deps.resolveModel } : {}),
         ...(deps.generateText ? { generateText: deps.generateText } : {}),
-        ...(deps.logInfo ? { logInfo: deps.logInfo } : {})
+        ...(deps.logInfo ? { logInfo: deps.logInfo } : {}),
+        ...(deps.observability ? { observability: deps.observability } : {})
       });
 
     case "burble-runtime":
