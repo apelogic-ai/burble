@@ -18,7 +18,7 @@ const runtimeJwtIssuer = createRuntimeJwtIssuer({
   privateKeyPath: config.runtimeJwtPrivateKeyPath
 });
 const slack = createSlackRuntime(config, store, runtimeJwtIssuer, observability);
-const server = startOAuthServer(config, store, slack, runtimeJwtIssuer);
+const server = startOAuthServer(config, store, slack, runtimeJwtIssuer, observability);
 const logDebug =
   config.slackLogLevel === "debug"
     ? (message: string) => console.debug(formatLogLine("debug", message))

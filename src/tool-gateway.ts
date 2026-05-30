@@ -84,6 +84,7 @@ import {
   logAtlassianMcpCallStart
 } from "./mcp/atlassian-logging";
 import { verifyJiraAuthForOpaqueAtlassianMcpError } from "./mcp/atlassian-auth";
+import type { ObservabilitySink } from "./observability";
 
 type ToolGatewayDeps = Partial<Parameters<typeof createGitHubTools>[0]> &
   Partial<GoogleToolDeps> &
@@ -114,6 +115,7 @@ type ToolGatewayDeps = Partial<Parameters<typeof createGitHubTools>[0]> &
       name: string;
       arguments?: Record<string, unknown>;
     }) => Promise<UpstreamMcpToolResult>;
+    observability?: ObservabilitySink;
   };
 
 type ToolGatewayBody = {
@@ -191,6 +193,12 @@ type ToolGatewayAuth =
   | { kind: "legacy" }
   | { kind: "runtime"; runtime: AgentRuntimeRecord };
 
+type ToolGatewayObservabilityContext = {
+  observability?: ObservabilitySink;
+  startedAt: number;
+  body: ToolGatewayBody | null;
+};
+
 export async function handleToolGatewayRequest(
   config: Config,
   store: TokenStore,
@@ -215,6 +223,15 @@ export async function handleToolGatewayRequest(
   }
 
   const body = await readToolGatewayBody(request);
+  const toolStartedAt = Date.now();
+  emitToolGatewayStarted(deps.observability, auth, toolName, body);
+  const respondWithAudit = (result: ToolResult<unknown>): Response =>
+    jsonResponseWithAudit(store, auth, toolName, result, {
+      observability: deps.observability,
+      startedAt: toolStartedAt,
+      body
+    });
+
   if (toolName === "runtime.heartbeat") {
     if (auth.kind !== "runtime") {
       return new Response("Runtime auth required", { status: 403 });
@@ -253,7 +270,7 @@ export async function handleToolGatewayRequest(
       ...(destination.threadTs ? { threadTs: destination.threadTs } : {})
     });
 
-    return jsonResponseWithAudit(store, auth, toolName, {
+    return respondWithAudit({
       classification: "user_private",
       content: {
         ok: true,
@@ -289,7 +306,7 @@ export async function handleToolGatewayRequest(
       maxBytes: maxConversationAttachmentBytes
     });
 
-    return jsonResponseWithAudit(store, auth, toolName, {
+    return respondWithAudit({
       classification: "user_private",
       content
     });
@@ -338,18 +355,12 @@ export async function handleToolGatewayRequest(
 
   switch (toolName) {
     case "github.getAuthenticatedUser":
-      return jsonResponseWithAudit(
-        store,
-        auth,
-        toolName,
+      return respondWithAudit(
         await tools.getAuthenticatedUser.execute({ connection })
       );
 
     case "github.listAssignedIssues":
-      return jsonResponseWithAudit(
-        store,
-        auth,
-        toolName,
+      return respondWithAudit(
         await tools.listAssignedIssues.execute({ connection })
       );
 
@@ -358,10 +369,7 @@ export async function handleToolGatewayRequest(
         return new Response("Invalid tool input", { status: 400 });
       }
 
-      return jsonResponseWithAudit(
-        store,
-        auth,
-        toolName,
+      return respondWithAudit(
         await tools.searchIssues.execute({
           connection,
           input: { query: body.input.query }
@@ -374,10 +382,7 @@ export async function handleToolGatewayRequest(
         return new Response("Invalid tool input", { status: 400 });
       }
 
-      return jsonResponseWithAudit(
-        store,
-        auth,
-        toolName,
+      return respondWithAudit(
         await tools.listMyPullRequests.execute({
           connection,
           input: body.input ?? undefined
@@ -390,10 +395,7 @@ export async function handleToolGatewayRequest(
         return new Response("Invalid tool input", { status: 400 });
       }
 
-      return jsonResponseWithAudit(
-        store,
-        auth,
-        toolName,
+      return respondWithAudit(
         await tools.getIssue.execute({
           connection,
           input: body.input
@@ -406,10 +408,7 @@ export async function handleToolGatewayRequest(
         return new Response("Invalid tool input", { status: 400 });
       }
 
-      return jsonResponseWithAudit(
-        store,
-        auth,
-        toolName,
+      return respondWithAudit(
         await tools.getPullRequest.execute({
           connection,
           input: body.input
@@ -422,10 +421,7 @@ export async function handleToolGatewayRequest(
         return new Response("Invalid tool input", { status: 400 });
       }
 
-      return jsonResponseWithAudit(
-        store,
-        auth,
-        toolName,
+      return respondWithAudit(
         await tools.createIssue.execute({
           connection,
           input: body.input
@@ -438,10 +434,7 @@ export async function handleToolGatewayRequest(
         return new Response("Invalid tool input", { status: 400 });
       }
 
-      return jsonResponseWithAudit(
-        store,
-        auth,
-        toolName,
+      return respondWithAudit(
         await tools.updateIssue.execute({
           connection,
           input: body.input
@@ -454,10 +447,7 @@ export async function handleToolGatewayRequest(
         return new Response("Invalid tool input", { status: 400 });
       }
 
-      return jsonResponseWithAudit(
-        store,
-        auth,
-        toolName,
+      return respondWithAudit(
         await tools.closeIssue.execute({
           connection,
           input: body.input
@@ -470,10 +460,7 @@ export async function handleToolGatewayRequest(
         return new Response("Invalid tool input", { status: 400 });
       }
 
-      return jsonResponseWithAudit(
-        store,
-        auth,
-        toolName,
+      return respondWithAudit(
         await tools.reopenIssue.execute({
           connection,
           input: body.input
@@ -486,10 +473,7 @@ export async function handleToolGatewayRequest(
         return new Response("Invalid tool input", { status: 400 });
       }
 
-      return jsonResponseWithAudit(
-        store,
-        auth,
-        toolName,
+      return respondWithAudit(
         await tools.commentOnIssueOrPullRequest.execute({
           connection,
           input: body.input
@@ -502,10 +486,7 @@ export async function handleToolGatewayRequest(
         return new Response("Invalid tool input", { status: 400 });
       }
 
-      return jsonResponseWithAudit(
-        store,
-        auth,
-        toolName,
+      return respondWithAudit(
         await tools.createPullRequest.execute({
           connection,
           input: body.input
@@ -518,10 +499,7 @@ export async function handleToolGatewayRequest(
         return new Response("Invalid tool input", { status: 400 });
       }
 
-      return jsonResponseWithAudit(
-        store,
-        auth,
-        toolName,
+      return respondWithAudit(
         await tools.updatePullRequest.execute({
           connection,
           input: body.input
@@ -534,10 +512,7 @@ export async function handleToolGatewayRequest(
         return new Response("Invalid tool input", { status: 400 });
       }
 
-      return jsonResponseWithAudit(
-        store,
-        auth,
-        toolName,
+      return respondWithAudit(
         await tools.addLabels.execute({
           connection,
           input: body.input
@@ -550,10 +525,7 @@ export async function handleToolGatewayRequest(
         return new Response("Invalid tool input", { status: 400 });
       }
 
-      return jsonResponseWithAudit(
-        store,
-        auth,
-        toolName,
+      return respondWithAudit(
         await tools.removeLabels.execute({
           connection,
           input: body.input
@@ -566,10 +538,7 @@ export async function handleToolGatewayRequest(
         return new Response("Invalid tool input", { status: 400 });
       }
 
-      return jsonResponseWithAudit(
-        store,
-        auth,
-        toolName,
+      return respondWithAudit(
         await tools.requestReview.execute({
           connection,
           input: body.input
@@ -582,10 +551,7 @@ export async function handleToolGatewayRequest(
         return new Response("Invalid tool input", { status: 400 });
       }
 
-      return jsonResponseWithAudit(
-        store,
-        auth,
-        toolName,
+      return respondWithAudit(
         await tools.getFile.execute({
           connection,
           input: body.input
@@ -598,10 +564,7 @@ export async function handleToolGatewayRequest(
         return new Response("Invalid tool input", { status: 400 });
       }
 
-      return jsonResponseWithAudit(
-        store,
-        auth,
-        toolName,
+      return respondWithAudit(
         await tools.createOrUpdateFile.execute({
           connection,
           input: body.input
@@ -614,10 +577,7 @@ export async function handleToolGatewayRequest(
         return new Response("Invalid tool input", { status: 400 });
       }
 
-      return jsonResponseWithAudit(
-        store,
-        auth,
-        toolName,
+      return respondWithAudit(
         await tools.createBranch.execute({
           connection,
           input: body.input
@@ -626,18 +586,12 @@ export async function handleToolGatewayRequest(
     }
 
     case "jira.getAuthenticatedUser":
-      return jsonResponseWithAudit(
-        store,
-        auth,
-        toolName,
+      return respondWithAudit(
         await jiraTools.getAuthenticatedUser.execute({ connection })
       );
 
     case "jira.listAccessibleResources":
-      return jsonResponseWithAudit(
-        store,
-        auth,
-        toolName,
+      return respondWithAudit(
         await jiraTools.listAccessibleResources.execute({ connection })
       );
 
@@ -646,10 +600,7 @@ export async function handleToolGatewayRequest(
         return new Response("Invalid tool input", { status: 400 });
       }
 
-      return jsonResponseWithAudit(
-        store,
-        auth,
-        toolName,
+      return respondWithAudit(
         await jiraTools.listVisibleProjects.execute({
           connection,
           input: body.input
@@ -662,10 +613,7 @@ export async function handleToolGatewayRequest(
         return new Response("Invalid tool input", { status: 400 });
       }
 
-      return jsonResponseWithAudit(
-        store,
-        auth,
-        toolName,
+      return respondWithAudit(
         await jiraTools.searchUsers.execute({
           connection,
           input: { query: body.input.query }
@@ -678,10 +626,7 @@ export async function handleToolGatewayRequest(
         return new Response("Invalid tool input", { status: 400 });
       }
 
-      return jsonResponseWithAudit(
-        store,
-        auth,
-        toolName,
+      return respondWithAudit(
         await jiraTools.createIssue.execute({
           connection,
           input: body.input
@@ -694,10 +639,7 @@ export async function handleToolGatewayRequest(
         return new Response("Invalid tool input", { status: 400 });
       }
 
-      return jsonResponseWithAudit(
-        store,
-        auth,
-        toolName,
+      return respondWithAudit(
         await jiraTools.editIssue.execute({
           connection,
           input: body.input
@@ -706,10 +648,7 @@ export async function handleToolGatewayRequest(
     }
 
     case "jira.listAssignedIssues":
-      return jsonResponseWithAudit(
-        store,
-        auth,
-        toolName,
+      return respondWithAudit(
         await jiraTools.listAssignedIssues.execute({ connection })
       );
 
@@ -718,10 +657,7 @@ export async function handleToolGatewayRequest(
         return new Response("Invalid tool input", { status: 400 });
       }
 
-      return jsonResponseWithAudit(
-        store,
-        auth,
-        toolName,
+      return respondWithAudit(
         await jiraTools.searchIssues.execute({
           connection,
           input: { jql: body.input.jql }
@@ -734,10 +670,7 @@ export async function handleToolGatewayRequest(
         return new Response("Invalid tool input", { status: 400 });
       }
 
-      return jsonResponseWithAudit(
-        store,
-        auth,
-        toolName,
+      return respondWithAudit(
         await jiraTools.getIssue.execute({
           connection,
           input: body.input
@@ -750,10 +683,7 @@ export async function handleToolGatewayRequest(
         return new Response("Invalid tool input", { status: 400 });
       }
 
-      return jsonResponseWithAudit(
-        store,
-        auth,
-        toolName,
+      return respondWithAudit(
         await jiraTools.updateIssue.execute({
           connection,
           input: body.input
@@ -766,10 +696,7 @@ export async function handleToolGatewayRequest(
         return new Response("Invalid tool input", { status: 400 });
       }
 
-      return jsonResponseWithAudit(
-        store,
-        auth,
-        toolName,
+      return respondWithAudit(
         await jiraTools.addComment.execute({
           connection,
           input: body.input
@@ -782,10 +709,7 @@ export async function handleToolGatewayRequest(
         return new Response("Invalid tool input", { status: 400 });
       }
 
-      return jsonResponseWithAudit(
-        store,
-        auth,
-        toolName,
+      return respondWithAudit(
         await jiraTools.transitionIssue.execute({
           connection,
           input: body.input
@@ -798,10 +722,7 @@ export async function handleToolGatewayRequest(
         return new Response("Invalid tool input", { status: 400 });
       }
 
-      return jsonResponseWithAudit(
-        store,
-        auth,
-        toolName,
+      return respondWithAudit(
         await jiraTools.addLabels.execute({
           connection,
           input: body.input
@@ -814,10 +735,7 @@ export async function handleToolGatewayRequest(
         return new Response("Invalid tool input", { status: 400 });
       }
 
-      return jsonResponseWithAudit(
-        store,
-        auth,
-        toolName,
+      return respondWithAudit(
         await jiraTools.removeLabels.execute({
           connection,
           input: body.input
@@ -830,10 +748,7 @@ export async function handleToolGatewayRequest(
         return new Response("Invalid tool input", { status: 400 });
       }
 
-      return jsonResponseWithAudit(
-        store,
-        auth,
-        toolName,
+      return respondWithAudit(
         await jiraTools.linkIssues.execute({
           connection,
           input: body.input
@@ -846,10 +761,7 @@ export async function handleToolGatewayRequest(
         return new Response("Invalid tool input", { status: 400 });
       }
 
-      return jsonResponseWithAudit(
-        store,
-        auth,
-        toolName,
+      return respondWithAudit(
         await jiraTools.createSubtask.execute({
           connection,
           input: body.input
@@ -862,10 +774,7 @@ export async function handleToolGatewayRequest(
         return new Response("Invalid tool input", { status: 400 });
       }
 
-      return jsonResponseWithAudit(
-        store,
-        auth,
-        toolName,
+      return respondWithAudit(
         await slackTools.searchUsers.execute({
           connection,
           input: { query: body.input.query }
@@ -878,10 +787,7 @@ export async function handleToolGatewayRequest(
         return new Response("Invalid tool input", { status: 400 });
       }
 
-      return jsonResponseWithAudit(
-        store,
-        auth,
-        toolName,
+      return respondWithAudit(
         await slackTools.searchMessages.execute({
           connection,
           input: body.input
@@ -890,10 +796,7 @@ export async function handleToolGatewayRequest(
     }
 
     case "google.getAuthenticatedUser":
-      return jsonResponseWithAudit(
-        store,
-        auth,
-        toolName,
+      return respondWithAudit(
         await googleTools.getAuthenticatedUser.execute({ connection })
       );
 
@@ -902,10 +805,7 @@ export async function handleToolGatewayRequest(
         return new Response("Invalid tool input", { status: 400 });
       }
 
-      return jsonResponseWithAudit(
-        store,
-        auth,
-        toolName,
+      return respondWithAudit(
         await googleTools.searchDriveFiles.execute({
           connection,
           input: body.input
@@ -918,10 +818,7 @@ export async function handleToolGatewayRequest(
         return new Response("Invalid tool input", { status: 400 });
       }
 
-      return jsonResponseWithAudit(
-        store,
-        auth,
-        toolName,
+      return respondWithAudit(
         await googleTools.getDriveFile.execute({
           connection,
           input: body.input
@@ -934,10 +831,7 @@ export async function handleToolGatewayRequest(
         return new Response("Invalid tool input", { status: 400 });
       }
 
-      return jsonResponseWithAudit(
-        store,
-        auth,
-        toolName,
+      return respondWithAudit(
         await googleTools.createDriveTextFile.execute({
           connection,
           input: {
@@ -953,10 +847,7 @@ export async function handleToolGatewayRequest(
         return new Response("Invalid tool input", { status: 400 });
       }
 
-      return jsonResponseWithAudit(
-        store,
-        auth,
-        toolName,
+      return respondWithAudit(
         await googleTools.updateDriveTextFile.execute({
           connection,
           input: body.input
@@ -969,10 +860,7 @@ export async function handleToolGatewayRequest(
         return new Response("Invalid tool input", { status: 400 });
       }
 
-      return jsonResponseWithAudit(
-        store,
-        auth,
-        toolName,
+      return respondWithAudit(
         await googleTools.appendDriveTextFile.execute({
           connection,
           input: body.input
@@ -985,10 +873,7 @@ export async function handleToolGatewayRequest(
         return new Response("Invalid tool input", { status: 400 });
       }
 
-      return jsonResponseWithAudit(
-        store,
-        auth,
-        toolName,
+      return respondWithAudit(
         await googleTools.createDriveFolder.execute({
           connection,
           input: body.input
@@ -1001,10 +886,7 @@ export async function handleToolGatewayRequest(
         return new Response("Invalid tool input", { status: 400 });
       }
 
-      return jsonResponseWithAudit(
-        store,
-        auth,
-        toolName,
+      return respondWithAudit(
         await googleTools.moveDriveFile.execute({
           connection,
           input: body.input
@@ -1017,10 +899,7 @@ export async function handleToolGatewayRequest(
         return new Response("Invalid tool input", { status: 400 });
       }
 
-      return jsonResponseWithAudit(
-        store,
-        auth,
-        toolName,
+      return respondWithAudit(
         await googleTools.searchCalendarEvents.execute({
           connection,
           input: body.input
@@ -1033,10 +912,7 @@ export async function handleToolGatewayRequest(
         return new Response("Invalid tool input", { status: 400 });
       }
 
-      return jsonResponseWithAudit(
-        store,
-        auth,
-        toolName,
+      return respondWithAudit(
         await googleTools.createCalendarEvent.execute({
           connection,
           input: body.input
@@ -1049,10 +925,7 @@ export async function handleToolGatewayRequest(
         return new Response("Invalid tool input", { status: 400 });
       }
 
-      return jsonResponseWithAudit(
-        store,
-        auth,
-        toolName,
+      return respondWithAudit(
         await googleTools.updateCalendarEvent.execute({
           connection,
           input: body.input
@@ -1065,10 +938,7 @@ export async function handleToolGatewayRequest(
         return new Response("Invalid tool input", { status: 400 });
       }
 
-      return jsonResponseWithAudit(
-        store,
-        auth,
-        toolName,
+      return respondWithAudit(
         await googleTools.searchMailMessages.execute({
           connection,
           input: body.input
@@ -1081,10 +951,7 @@ export async function handleToolGatewayRequest(
         return new Response("Invalid tool input", { status: 400 });
       }
 
-      return jsonResponseWithAudit(
-        store,
-        auth,
-        toolName,
+      return respondWithAudit(
         await googleTools.createMailDraft.execute({
           connection,
           input: body.input
@@ -1127,10 +994,7 @@ export async function handleToolGatewayRequest(
         }
       );
 
-      return jsonResponseWithAudit(
-        store,
-        auth,
-        toolName,
+      return respondWithAudit(
         isJiraAuthErrorResult(result) ? result : result
       );
     }
@@ -1142,7 +1006,7 @@ export async function handleToolGatewayRequest(
       const atlassianInput = body.input;
 
       if (!isAllowedAtlassianMcpToolName(atlassianInput.name)) {
-        return jsonResponseWithAudit(store, auth, toolName, {
+        return respondWithAudit({
           classification: "user_private",
           content: {
             error: "atlassian_mcp_tool_not_allowed",
@@ -1208,10 +1072,7 @@ export async function handleToolGatewayRequest(
         }
       );
 
-      return jsonResponseWithAudit(
-        store,
-        auth,
-        toolName,
+      return respondWithAudit(
         isJiraAuthErrorResult(result) ? result : result
       );
     }
@@ -2597,7 +2458,8 @@ function jsonResponseWithAudit(
   store: TokenStore,
   auth: ToolGatewayAuth,
   toolName: string,
-  result: ToolResult<unknown>
+  result: ToolResult<unknown>,
+  observabilityContext?: ToolGatewayObservabilityContext
 ): Response {
   if (auth.kind === "runtime") {
     store.recordAgentRuntimeEvent({
@@ -2610,6 +2472,74 @@ function jsonResponseWithAudit(
       }
     });
   }
+  emitToolGatewayCompleted(observabilityContext, auth, toolName, result);
 
   return jsonResponse(result);
+}
+
+function emitToolGatewayStarted(
+  observability: ObservabilitySink | undefined,
+  auth: ToolGatewayAuth,
+  toolName: string,
+  body: ToolGatewayBody | null
+): void {
+  observability?.emit({
+    name: "tool.gateway.started",
+    ...toolGatewayIdentityFields(auth),
+    toolName,
+    attributes: {
+      authKind: auth.kind,
+      provider: readToolProviderForTelemetry(toolName),
+      hasUserEmail: typeof body?.user?.email === "string"
+    }
+  });
+}
+
+function emitToolGatewayCompleted(
+  context: ToolGatewayObservabilityContext | undefined,
+  auth: ToolGatewayAuth,
+  toolName: string,
+  result: ToolResult<unknown>
+): void {
+  context?.observability?.emit({
+    name: "tool.gateway.completed",
+    ...toolGatewayIdentityFields(auth),
+    toolName,
+    classification: result.classification,
+    durationMs: Date.now() - context.startedAt,
+    status: "ok",
+    attributes: {
+      authKind: auth.kind,
+      provider: readToolProviderForTelemetry(toolName),
+      itemCount: Array.isArray(result.content) ? result.content.length : null
+    }
+  });
+}
+
+function toolGatewayIdentityFields(auth: ToolGatewayAuth): {
+  workspaceId?: string;
+  principalId?: string;
+  runtimeId?: string;
+  runtimeType?: string;
+} {
+  if (auth.kind !== "runtime") {
+    return {};
+  }
+
+  return {
+    workspaceId: auth.runtime.workspaceId,
+    principalId: `${auth.runtime.workspaceId}:${auth.runtime.slackUserId}`,
+    runtimeId: auth.runtime.id,
+    runtimeType: auth.runtime.engine
+  };
+}
+
+function readToolProviderForTelemetry(toolName: string): string {
+  if (toolName.startsWith("conversation.")) {
+    return "conversation";
+  }
+  if (toolName.startsWith("runtime.")) {
+    return "runtime";
+  }
+  return readToolProvider(toolName);
 }

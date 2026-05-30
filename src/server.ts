@@ -9,6 +9,7 @@ import type { RuntimeJwtIssuer } from "./runtime-jwt";
 import { exchangeSlackCode } from "./providers/slack/client";
 import type { SlackRuntime } from "./slack";
 import { handleToolGatewayRequest } from "./tool-gateway";
+import type { ObservabilitySink } from "./observability";
 
 export type GitHubOAuthDeps = {
   exchangeGitHubCode: typeof exchangeGitHubCode;
@@ -52,7 +53,8 @@ export function startOAuthServer(
   config: Config,
   store: TokenStore,
   slack: SlackRuntime,
-  runtimeJwtIssuer: RuntimeJwtIssuer
+  runtimeJwtIssuer: RuntimeJwtIssuer,
+  observability?: ObservabilitySink
 ): ReturnType<typeof Bun.serve> {
   return Bun.serve({
     port: config.port,
@@ -95,7 +97,8 @@ export function startOAuthServer(
           config,
           store,
           decodeURIComponent(toolGatewayMatch[1]),
-          request
+          request,
+          { observability }
         );
       }
 

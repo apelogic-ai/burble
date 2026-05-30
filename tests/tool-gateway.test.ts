@@ -8,6 +8,7 @@ import type {
 } from "../src/db";
 import { JiraApiError } from "../src/providers/jira/client";
 import { handleToolGatewayRequest } from "../src/tool-gateway";
+import type { ObservabilityEventInput } from "../src/observability";
 
 const config: Config = {
   slackBotToken: "xoxb-test",
@@ -551,6 +552,66 @@ describe("handleToolGatewayRequest", () => {
         }
       }
     ]);
+  });
+
+  test("emits observability events for runtime-authenticated provider tools", async () => {
+    const observabilityEvents: ObservabilityEventInput[] = [];
+    const response = await handleToolGatewayRequest(
+      config,
+      createStore(connection, runtime),
+      "github.getAuthenticatedUser",
+      request(
+        "github.getAuthenticatedUser",
+        {
+          user: { email: "person@example.com" }
+        },
+        "runtime-token-u123",
+        "rt_u123"
+      ),
+      {
+        observability: {
+          emit: (event) => {
+            observabilityEvents.push(event);
+          }
+        },
+        getGitHubUser: async (token) => {
+          expect(token).toBe("secret-token");
+          return { login: "octocat" };
+        }
+      }
+    );
+
+    expect(response.status).toBe(200);
+    expect(observabilityEvents.map((event) => event.name)).toEqual([
+      "tool.gateway.started",
+      "tool.gateway.completed"
+    ]);
+    expect(observabilityEvents[0]).toMatchObject({
+      runtimeId: "rt_u123",
+      runtimeType: "openclaw",
+      workspaceId: "T123",
+      principalId: "T123:U123",
+      toolName: "github.getAuthenticatedUser",
+      attributes: {
+        authKind: "runtime",
+        provider: "github",
+        hasUserEmail: true
+      }
+    });
+    expect(observabilityEvents[1]).toMatchObject({
+      runtimeId: "rt_u123",
+      runtimeType: "openclaw",
+      workspaceId: "T123",
+      principalId: "T123:U123",
+      toolName: "github.getAuthenticatedUser",
+      classification: "user_private",
+      status: "ok",
+      attributes: {
+        itemCount: null
+      }
+    });
+    expect(JSON.stringify(observabilityEvents)).not.toContain("secret-token");
+    expect(JSON.stringify(observabilityEvents)).not.toContain("runtime-token-u123");
   });
 
   test("lets a runtime send to its active conversation without provider credentials", async () => {
