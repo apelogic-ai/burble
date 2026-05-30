@@ -76,6 +76,10 @@ import {
   formatWorkingMessage
 } from "./formatting";
 import { formatLogError, withUtcTimestamp } from "./logging";
+import {
+  createNoopObservabilitySink,
+  type ObservabilitySink
+} from "./observability";
 import type { RuntimeJwtIssuer } from "./runtime-jwt";
 
 export {
@@ -164,7 +168,8 @@ type AgentExecTask = {
 export function createSlackRuntime(
   config: Config,
   store: TokenStore,
-  runtimeJwtIssuer?: RuntimeJwtIssuer
+  runtimeJwtIssuer?: RuntimeJwtIssuer,
+  observability: ObservabilitySink = createNoopObservabilitySink()
 ): SlackRuntime {
   const app = new App({
     token: config.slackBotToken,
@@ -613,6 +618,7 @@ export function createSlackRuntime(
           },
           agentMode: config.agentMode,
           agentFastTrack: config.agentFastTrack,
+          observability,
           ...(resolveAgentExecutionMode()
             ? { agentExecutionMode: resolveAgentExecutionMode() }
             : {}),
@@ -783,6 +789,7 @@ export function createSlackRuntime(
           },
           agentMode: config.agentMode,
           agentFastTrack: config.agentFastTrack,
+          observability,
           ...(resolveAgentExecutionMode()
             ? { agentExecutionMode: resolveAgentExecutionMode() }
             : {}),

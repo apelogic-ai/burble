@@ -48,6 +48,8 @@ const config: Config = {
   runtimeJwtPrivateKeyPath: null,
   openClawConfigPatchHostPath: null,
   internalApiToken: "internal-secret",
+  observabilityJsonlPath: null,
+  observabilityIncludeContent: false,
   aiModel: "openai:gpt-5.4"
 };
 

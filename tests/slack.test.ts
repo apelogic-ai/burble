@@ -74,7 +74,9 @@ const agentConfig: Config = {
   runtimeJwtIssuer: "http://burble-app:3000",
   runtimeJwtPrivateKeyPath: "/data/runtime-jwt-private.pem",
   openClawConfigPatchHostPath: null,
-  internalApiToken: "internal-token"
+  internalApiToken: "internal-token",
+  observabilityJsonlPath: null,
+  observabilityIncludeContent: false
 };
 
 describe("formatIssuesMessage", () => {

@@ -10,6 +10,7 @@ import type {
 import { createGitHubTools } from "../../src/tools/github";
 import { createGoogleTools } from "../../src/tools/google";
 import { createJiraTools } from "../../src/tools/jira";
+import type { ObservabilityEventInput } from "../../src/observability";
 
 const baseRequest: ConversationRequest = {
   source: "slack",
@@ -465,6 +466,149 @@ describe("handleConversation", () => {
         callId: "call-1"
       }
     ]);
+  });
+
+  test("emits observability events around a successful conversation", async () => {
+    const observabilityEvents: ObservabilityEventInput[] = [];
+    const response = await handleConversation(
+      { ...baseRequest, text: "hello", isDirectMessage: true },
+      createDeps({
+        traceId: "trace-1",
+        observability: {
+          emit: (event) => {
+            observabilityEvents.push(event);
+          }
+        },
+        agentMode: "llm",
+        agentRunner: stubAgentRunner(() => ({
+          classification: "public",
+          text: "Hello."
+        }))
+      })
+    );
+
+    expect(response.text).toBe("Hello.");
+    expect(observabilityEvents.map((event) => event.name)).toEqual([
+      "conversation.request.started",
+      "conversation.response.completed"
+    ]);
+    expect(observabilityEvents.map((event) => event.traceId)).toEqual([
+      "trace-1",
+      "trace-1"
+    ]);
+    expect(observabilityEvents[0]).toMatchObject({
+      workspaceId: "T123",
+      principalId: "T123:U123",
+      sessionId: "1710000000.000100",
+      attributes: {
+        source: "slack",
+        isDirectMessage: true,
+        textLength: 5,
+        attachmentCount: 0,
+        agentMode: "llm",
+        fastTrackEnabled: false,
+        hasAgentRunner: true
+      },
+      content: {
+        text: "hello"
+      }
+    });
+    expect(observabilityEvents[1]).toMatchObject({
+      classification: "public",
+      status: "ok",
+      attributes: {
+        visibility: "public",
+        textLength: 6
+      },
+      content: {
+        text: "Hello."
+      }
+    });
+  });
+
+  test("emits observability events for agent tool calls and usage", async () => {
+    const observabilityEvents: ObservabilityEventInput[] = [];
+    const response = await handleConversation(
+      { ...baseRequest, text: "summarize my GitHub work", isDirectMessage: true },
+      createDeps({
+        traceId: "trace-tools",
+        observability: {
+          emit: (event) => {
+            observabilityEvents.push(event);
+          }
+        },
+        agentMode: "llm",
+        agentRunner: stubAgentRunner([
+          { type: "status", text: "Preparing runtime..." },
+          {
+            type: "tool_call",
+            toolName: "github_list_my_pull_requests",
+            callId: "call-1"
+          },
+          {
+            type: "tool_result",
+            toolName: "github_list_my_pull_requests",
+            callId: "call-1",
+            classification: "user_private"
+          },
+          {
+            type: "final",
+            response: {
+              classification: "user_private",
+              text: "One PR needs review.",
+              usage: {
+                inputTokens: 10,
+                outputTokens: 5,
+                totalTokens: 15
+              }
+            }
+          }
+        ])
+      })
+    );
+
+    expect(response.text).toBe("One PR needs review.");
+    expect(observabilityEvents.map((event) => event.name)).toEqual([
+      "conversation.request.started",
+      "agent.status",
+      "tool.call.started",
+      "tool.call.completed",
+      "conversation.response.completed"
+    ]);
+    expect(observabilityEvents.map((event) => event.traceId)).toEqual([
+      "trace-tools",
+      "trace-tools",
+      "trace-tools",
+      "trace-tools",
+      "trace-tools"
+    ]);
+    expect(observabilityEvents[1]).toMatchObject({
+      name: "agent.status",
+      attributes: {
+        text: "Preparing runtime..."
+      }
+    });
+    expect(observabilityEvents[2]).toMatchObject({
+      name: "tool.call.started",
+      toolName: "github_list_my_pull_requests",
+      callId: "call-1"
+    });
+    expect(observabilityEvents[3]).toMatchObject({
+      name: "tool.call.completed",
+      toolName: "github_list_my_pull_requests",
+      callId: "call-1",
+      classification: "user_private",
+      status: "ok"
+    });
+    expect(observabilityEvents[4]).toMatchObject({
+      name: "conversation.response.completed",
+      classification: "user_private",
+      usage: {
+        inputTokens: 10,
+        outputTokens: 5,
+        totalTokens: 15
+      }
+    });
   });
 
   test("keeps LLM responses public when they are not provider-backed", async () => {

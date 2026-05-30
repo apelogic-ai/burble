@@ -41,6 +41,8 @@ export type Config = {
   runtimeJwtPrivateKeyPath: string | null;
   openClawConfigPatchHostPath: string | null;
   internalApiToken: string | null;
+  observabilityJsonlPath: string | null;
+  observabilityIncludeContent: boolean;
 };
 
 type Env = Record<string, string | undefined>;
@@ -306,7 +308,13 @@ export function readConfig(env: Env): Config {
     openClawConfigPatchHostPath:
       optionalSecretEnv(env, "AGENT_RUNTIME_CONFIG_PATCH_HOST_PATH") ??
       optionalSecretEnv(env, "OPENCLAW_CONFIG_PATCH_HOST_PATH"),
-    internalApiToken
+    internalApiToken,
+    observabilityJsonlPath: optionalSecretEnv(env, "OBSERVABILITY_JSONL_PATH"),
+    observabilityIncludeContent: optionalBoolEnv(
+      env,
+      "OBSERVABILITY_INCLUDE_CONTENT",
+      false
+    )
   };
 }
 

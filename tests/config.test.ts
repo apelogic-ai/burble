@@ -52,7 +52,9 @@ describe("readConfig", () => {
       runtimeJwtIssuer: "https://example.ngrok-free.app",
       runtimeJwtPrivateKeyPath: null,
       openClawConfigPatchHostPath: null,
-      internalApiToken: null
+      internalApiToken: null,
+      observabilityJsonlPath: null,
+      observabilityIncludeContent: false
     });
   });
 
@@ -363,6 +365,25 @@ describe("readConfig", () => {
       readConfig({ ...validEnv, INTERNAL_API_TOKEN: "internal-secret" })
         .internalApiToken
     ).toBe("internal-secret");
+  });
+
+  test("reads optional observability JSONL settings", () => {
+    const config = readConfig({
+      ...validEnv,
+      OBSERVABILITY_JSONL_PATH: "/var/log/burble/events.jsonl",
+      OBSERVABILITY_INCLUDE_CONTENT: "true"
+    });
+
+    expect(config.observabilityJsonlPath).toBe("/var/log/burble/events.jsonl");
+    expect(config.observabilityIncludeContent).toBe(true);
+  });
+
+  test("rejects invalid observability content setting", () => {
+    expect(() =>
+      readConfig({ ...validEnv, OBSERVABILITY_INCLUDE_CONTENT: "sometimes" })
+    ).toThrow(
+      "Environment variable OBSERVABILITY_INCLUDE_CONTENT must be a boolean"
+    );
   });
 
   test("rejects gateway-style model ids", () => {
