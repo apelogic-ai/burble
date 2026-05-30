@@ -388,6 +388,16 @@ class BurbleHermesRuntime:
                     f"  default: {yaml_string(model_config['model'])}",
                 ]
             )
+        web_config = self._resolve_web_config()
+        if web_config:
+            lines.append("web:")
+            for key, value in web_config.items():
+                lines.append(f"  {key}: {yaml_string(value)}")
+        browser_config = self._resolve_browser_config()
+        if browser_config:
+            lines.append("browser:")
+            for key, value in browser_config.items():
+                lines.append(f"  {key}: {yaml_string(value)}")
         lines.extend(["plugins:", "  enabled:", "    - burble-platform"])
         if env("BURBLE_MCP_GATEWAY_URL") and env("BURBLE_RUNTIME_JWT"):
             lines.extend(
@@ -403,6 +413,32 @@ class BurbleHermesRuntime:
                 ]
             )
         config_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    def _resolve_web_config(self) -> dict[str, str]:
+        config: dict[str, str] = {}
+        mappings = {
+            "HERMES_WEB_BACKEND": "backend",
+            "HERMES_WEB_SEARCH_BACKEND": "search_backend",
+            "HERMES_WEB_EXTRACT_BACKEND": "extract_backend",
+        }
+        for env_key, config_key in mappings.items():
+            value = env(env_key)
+            if value:
+                config[config_key] = value
+        return config
+
+    def _resolve_browser_config(self) -> dict[str, str]:
+        config: dict[str, str] = {}
+        engine = env("HERMES_BROWSER_ENGINE") or env("AGENT_BROWSER_ENGINE")
+        cloud_provider = env("HERMES_BROWSER_CLOUD_PROVIDER")
+        cdp_url = env("BROWSER_CDP_URL")
+        if engine:
+            config["engine"] = engine
+        if cloud_provider:
+            config["cloud_provider"] = cloud_provider
+        if cdp_url:
+            config["cdp_url"] = cdp_url
+        return config
 
     def _resolve_model_config(self) -> dict[str, str] | None:
         raw = env("HERMES_INFERENCE_MODEL") or env("HERMES_MODEL") or env("AI_MODEL")
