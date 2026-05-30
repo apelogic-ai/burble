@@ -50,7 +50,7 @@ tools:
     alias: google.getDriveFile
     implementation: getDriveFile
     title: Google Drive get file
-    description: Read Google Drive file metadata and, by default, text content for app-accessible files.
+    description: Read Google Drive file metadata and, by default, text content for app-accessible files. With the current drive.file permission, app-accessible means files Burble created or files explicitly opened for this app; Drive metadata search may find files whose content cannot be read or edited.
     input:
       fileId:
         type: string
@@ -65,7 +65,7 @@ tools:
     alias: google.updateDriveTextFile
     implementation: updateDriveTextFile
     title: Google Drive update text file
-    description: Replace the content of an app-accessible Google Drive text file. Use google_get_drive_file first when preserving existing content matters.
+    description: Replace the content of an app-accessible Google Drive text file. With the current drive.file permission, app-accessible means files Burble created or files explicitly opened for this app. Use google_get_drive_file first when preserving existing content matters.
     risk: moderate_write
     confirmation: none
     input:
@@ -86,7 +86,7 @@ tools:
     alias: google.appendDriveTextFile
     implementation: appendDriveTextFile
     title: Google Drive append text file
-    description: Append text to an app-accessible Google Drive text file by reading existing content then replacing it.
+    description: Append text to an app-accessible Google Drive text file by reading existing content then replacing it. With the current drive.file permission, app-accessible means files Burble created or files explicitly opened for this app; reconnecting Google does not grant access to arbitrary existing Drive files.
     risk: moderate_write
     confirmation: none
     input:
@@ -131,7 +131,7 @@ tools:
     alias: google.moveDriveFile
     implementation: moveDriveFile
     title: Google Drive move file
-    description: Move an app-accessible Google Drive file into a folder. Does not delete the file.
+    description: Move an app-accessible Google Drive file into a folder. With the current drive.file permission, app-accessible means files Burble created or files explicitly opened for this app. Does not delete the file.
     risk: moderate_write
     confirmation: none
     input:

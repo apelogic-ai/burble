@@ -71,6 +71,45 @@ describe("createGoogleTools", () => {
     });
   });
 
+  test("explains Drive file app-access failures without asking for reauth", async () => {
+    const tools = createGoogleTools({
+      getGoogleUser: async () => ({
+        email: "person@google.example"
+      }),
+      searchGoogleDriveFiles: async () => [],
+      createGoogleDriveTextFile: async () => ({
+        id: "file-1",
+        name: "Test"
+      }),
+      appendGoogleDriveTextFile: async () => {
+        throw new GoogleApiError(
+          "The user has not granted the app 146084443593 read access to the file 1isJjEDSMUH3g",
+          403
+        );
+      },
+      searchGoogleCalendarEvents: async () => [],
+      searchGoogleMailMessages: async () => []
+    });
+
+    const result = await tools.appendDriveTextFile.execute({
+      connection,
+      input: {
+        fileId: "1isJjEDSMUH3g",
+        text: "another test"
+      }
+    });
+
+    expect(result.classification).toBe("user_private");
+    expect(result.content).toEqual({
+      error: "google_drive_file_not_accessible",
+      message:
+        "Google Drive blocked access to that file. Burble can search Drive metadata, but with the current `drive.file` permission it can only read or edit files it created, or files explicitly opened for this app. Reconnecting Google will not grant access to arbitrary existing files."
+    });
+    expect(JSON.stringify(result.content)).not.toContain("146084443593");
+    expect(JSON.stringify(result.content)).not.toContain("1isJjEDSMUH3g");
+    expect(JSON.stringify(result.content)).not.toContain("/auth google");
+  });
+
   test("refreshes an expiring token and persists the refreshed connection", async () => {
     const saved: ProviderConnection[] = [];
     const tools = createGoogleTools({

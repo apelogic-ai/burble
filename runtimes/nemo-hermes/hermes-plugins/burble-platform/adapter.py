@@ -296,6 +296,8 @@ def register(ctx: Any) -> None:
             "Use Burble MCP provider tools for GitHub, Jira, Google Workspace, "
             "and Slack facts/actions instead of asking for API tokens, provider "
             "URLs, browser sessions, or local config. "
+            "When a Burble provider tool returns an error object with a message, "
+            "explain that message in normal Slack text; do not print raw JSON. "
             "For scheduled/background delivery, target the Burble route provided "
             "by the conversation context; do not mention Slack IDs, webhooks, or "
             "internal Burble URLs."

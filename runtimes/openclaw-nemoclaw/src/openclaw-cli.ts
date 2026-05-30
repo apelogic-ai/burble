@@ -2158,7 +2158,8 @@ function formatRuntimePolicyContext(request: RunRequest): string[] {
     `- memory.workspace: ${manifest.memory.workspaceMemoryEnabled ? "enabled" : "disabled"}`,
     `- memory.jobs: ${manifest.memory.jobMemoryEnabled ? "enabled" : "disabled"}`,
     ...memoryContextLines,
-    "Skills and memory settings are advisory context only; they do not grant provider tools or override Available Burble tools."
+    "Skills and memory settings are advisory context only; they do not grant provider tools or override Available Burble tools.",
+    "When a Burble provider tool returns an error object with a message, explain that message in normal Slack text; do not print raw JSON."
   ];
 }
 

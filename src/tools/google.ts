@@ -522,6 +522,17 @@ function googleReconnectResult(): GoogleAuthErrorResult {
 }
 
 function googleApiErrorResult(error: GoogleApiError): GoogleAuthErrorResult {
+  if (isGoogleDriveFileAccessError(error)) {
+    return {
+      classification: "user_private",
+      content: {
+        error: "google_drive_file_not_accessible",
+        message:
+          "Google Drive blocked access to that file. Burble can search Drive metadata, but with the current `drive.file` permission it can only read or edit files it created, or files explicitly opened for this app. Reconnecting Google will not grant access to arbitrary existing files."
+      }
+    };
+  }
+
   return {
     classification: "user_private",
     content: {
@@ -529,6 +540,14 @@ function googleApiErrorResult(error: GoogleApiError): GoogleAuthErrorResult {
       message: `${error.message}. If you recently changed Google scopes, run \`/auth google\` again.`
     }
   };
+}
+
+function isGoogleDriveFileAccessError(error: GoogleApiError): boolean {
+  const message = error.message.toLowerCase();
+  return (
+    message.includes("has not granted the app") &&
+    message.includes("access to the file")
+  );
 }
 
 function isGoogleAuthErrorResult(value: unknown): value is GoogleAuthErrorResult {
