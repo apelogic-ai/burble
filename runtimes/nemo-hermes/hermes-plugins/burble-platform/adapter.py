@@ -293,6 +293,9 @@ def register(ctx: Any) -> None:
         allow_update_command=False,
         platform_hint=(
             "You are chatting through Burble. Use concise Slack mrkdwn. "
+            "Use Burble MCP provider tools for GitHub, Jira, Google Workspace, "
+            "and Slack facts/actions instead of asking for API tokens, provider "
+            "URLs, browser sessions, or local config. "
             "For scheduled/background delivery, target the Burble route provided "
             "by the conversation context; do not mention Slack IDs, webhooks, or "
             "internal Burble URLs."

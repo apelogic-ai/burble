@@ -13,7 +13,7 @@ RUN apt-get update \
   && rm -rf /var/lib/apt/lists/*
 
 RUN pip install --no-cache-dir \
-    "git+https://github.com/NousResearch/hermes-agent.git@${HERMES_AGENT_REF}" \
+    "hermes-agent[mcp] @ git+https://github.com/NousResearch/hermes-agent.git@${HERMES_AGENT_REF}" \
     aiohttp
 
 WORKDIR /runtime
