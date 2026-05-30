@@ -37,6 +37,18 @@ def yaml_string(value: str) -> str:
     return json.dumps(value)
 
 
+DEFAULT_SOUL_MD = """# Burble Runtime
+
+You are Burble's Hermes runtime.
+
+Answer in concise Slack mrkdwn. Do not ask the user to run Hermes-native setup
+commands such as /sethome or /help. Burble manages channel delivery, OAuth
+connections, and runtime configuration outside Hermes.
+
+When introducing yourself, call yourself Burble, not Hermes.
+"""
+
+
 class RunWaiter:
     def __init__(self) -> None:
         loop = asyncio.get_running_loop()
@@ -118,6 +130,7 @@ class BurbleHermesRuntime:
         if not text.strip():
             return web.Response(text="Hermes Burble runtime requires input.text", status=400)
 
+        os.environ["BURBLE_HOME_CHANNEL"] = route_id
         waiter = RunWaiter()
         self.runs[run_id] = waiter
         print(
@@ -321,6 +334,8 @@ class BurbleHermesRuntime:
     def _ensure_gateway_config(self) -> None:
         config_path = self.home / "config.yaml"
         config_path.parent.mkdir(parents=True, exist_ok=True)
+        soul_path = self.home / "SOUL.md"
+        soul_path.write_text(DEFAULT_SOUL_MD, encoding="utf-8")
         lines = []
         model_config = self._resolve_model_config()
         if model_config:

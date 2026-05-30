@@ -60,6 +60,14 @@ def _requirements() -> bool:
     return web is not None and ClientSession is not None
 
 
+def _is_burble_platform_notice(text: str) -> bool:
+    normalized = " ".join(text.strip().split())
+    return (
+        "No home channel is set for Burble" in normalized
+        or "Type /sethome to make this chat your home channel" in normalized
+    )
+
+
 class BurbleAdapter(BasePlatformAdapter):
     def __init__(self, config: Any):
         super().__init__(config=config, platform=Platform("burble"))
@@ -120,6 +128,12 @@ class BurbleAdapter(BasePlatformAdapter):
             return SendResult(success=False, error="Burble route id is required")
         if not text.strip():
             return SendResult(success=True, message_id=f"burble:{route_id}:{int(time.time() * 1000)}")
+        if _is_burble_platform_notice(text):
+            print(
+                f"[INFO] Burble Hermes platform notice suppressed routeId={route_id} textChars={len(text)}",
+                flush=True,
+            )
+            return SendResult(success=True, message_id=f"burble-notice:{route_id}:{int(time.time() * 1000)}")
 
         pending_run_id = self._pending_runs.pop(route_id, None)
         print(

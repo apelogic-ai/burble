@@ -11,6 +11,7 @@ import {
   type RuntimeHandle,
   type RuntimeManifestBuilder
 } from "./runtime-factory";
+import type { RuntimeManifest } from "./runtime-manifest";
 
 export type RuntimeCommandResult = {
   code: number;
@@ -154,6 +155,7 @@ export function createDockerRuntimeFactory(input: {
         runtimeId: runtime.id,
         runtimeJwt,
         runtimeDataId,
+        manifest,
         openClawConfigPatchPath: input.openClawConfigPatchPath ?? null,
         env: input.env ?? {}
       });
@@ -416,6 +418,7 @@ export function buildContainerRuntimeSpec(input: {
   runtimeId?: string;
   runtimeJwt?: string | null;
   runtimeDataId: string;
+  manifest?: RuntimeManifest | null;
   openClawConfigPatchPath?: string | null;
   env?: Record<string, string | undefined>;
 }): ContainerRuntimeSpec {
@@ -462,6 +465,9 @@ export function buildContainerRuntimeSpec(input: {
     if (value) {
       env[key] = value;
     }
+  }
+  if (input.manifest?.model) {
+    env.AI_MODEL = `${input.manifest.model.provider}:${input.manifest.model.model}`;
   }
 
   const openClawConfigPatchHostPath =

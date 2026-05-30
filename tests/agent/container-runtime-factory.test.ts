@@ -28,6 +28,27 @@ describe("buildContainerRuntimeSpec", () => {
       runtimeId: "rt_u123",
       runtimeJwt: "runtime-jwt",
       runtimeDataId,
+      manifest: {
+        version: "1",
+        principal,
+        runtime: {
+          engine: "openclaw",
+          factory: "docker",
+          ttlMs: 86400000,
+          reaperEnabled: true
+        },
+        model: { provider: "openai", model: "gpt-5.4" },
+        tools: [],
+        skills: [],
+        memory: {
+          userMemoryEnabled: false,
+          workspaceMemoryEnabled: false,
+          jobMemoryEnabled: true
+        },
+        memoryContext: [],
+        disabledTools: [],
+        policyHash: "policy"
+      },
       openClawConfigPatchPath: "/opt/burble/openclaw-patches",
       env: {
         AI_MODEL: "ollama:qwen3-coder:30b-cloud",
@@ -74,7 +95,7 @@ describe("buildContainerRuntimeSpec", () => {
       AGENT_RUNTIME_WORKSPACE_DIR: "/data/openclaw/workspace",
       OPENCLAW_NEMOCLAW_ENGINE: "openclaw",
       OPENCLAW_CONFIG_PATH: "/data/openclaw/config/openclaw.json",
-      AI_MODEL: "ollama:qwen3-coder:30b-cloud",
+      AI_MODEL: "openai:gpt-5.4",
       OPENAI_API_KEY: "openai-key",
       OPENAI_BASE_URL: "https://openai-compatible.example/v1",
       OPENROUTER_API_KEY: "openrouter-key",
@@ -258,7 +279,7 @@ describe("createDockerRuntimeFactory", () => {
       "run"
     ]);
     expect(commands[1].args).toContain("OPENAI_API_KEY=openai-key");
-    expect(commands[1].args).toContain("AI_MODEL=ollama:qwen3-coder:30b-cloud");
+    expect(commands[1].args).toContain("AI_MODEL=openai:gpt-5.4");
     expect(commands[1].args).toContain("BURBLE_MCP_GATEWAY_URL=http://agentgateway:3000/mcp");
     expect(commands[1].args.join(" ")).toContain(`BURBLE_RUNTIME_JWT=jwt:http://agentgateway:3000/mcp:${handle.id}:T123:U123:86400`);
     expect(commands[1].args.join(" ")).not.toContain("github-secret");
