@@ -240,6 +240,7 @@ OPENCLAW_DEBUG_MODEL_TRANSPORT=
 OPENCLAW_DEBUG_MODEL_PAYLOAD=
 OPENCLAW_DEBUG_SSE=
 OPENCLAW_DEBUG_CODE_MODE=
+OPENCLAW_FAST_MODE=false
 OPENCLAW_RAW_STREAM_DEBUG=false
 OPENCLAW_GATEWAY_PORT=18789
 OPENCLAW_GATEWAY_BIND=loopback
@@ -272,6 +273,11 @@ OpenClaw code mode is disabled by default for Burble runtimes because simple
 channel and cron turns should use direct OpenClaw tools instead of the
 `exec`/`wait` orchestration surface. Set `OPENCLAW_CODE_MODE=true` to opt back
 into code mode for broader tool-catalog or coding-style experiments.
+Set `OPENCLAW_FAST_MODE=true` to apply Burble's tightened OpenClaw defaults:
+`thinkingDefault=minimal`, `reasoningDefault=off`, `fastModeDefault=true`, and
+startup-only reductions for pricing catalog and shell-env import. This improves
+simple/model-only turns while leaving tool-heavy/search-heavy turns dependent on
+provider and tool behavior.
 Set `OPENCLAW_RAW_STREAM_DEBUG=true` temporarily to ask OpenClaw for per-run
 raw stream JSONL under `/data/openclaw/state/raw-streams`; Burble parses those
 files for token usage and logs only the summarized counts.

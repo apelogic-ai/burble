@@ -62,6 +62,34 @@ describe("buildOpenClawLlmPatch", () => {
     expect(patch.tools.codeMode.enabled).toBe(true);
   });
 
+  test("enables the tightened OpenClaw fast path only when requested", () => {
+    const patch = JSON.parse(
+      buildOpenClawLlmPatch({
+        modelId: "openai:gpt-5.4",
+        ollamaBaseUrl: "https://ollama.com",
+        agentId: "burble",
+        fastModeEnabled: true
+      })
+    );
+
+    expect(patch.agents.defaults.thinkingDefault).toBe("minimal");
+    expect(patch.agents.defaults.reasoningDefault).toBe("off");
+    expect(patch.agents.list).toEqual([
+      {
+        id: "burble",
+        fastModeDefault: true,
+        thinkingDefault: "minimal",
+        reasoningDefault: "off"
+      }
+    ]);
+    expect(patch.models.pricing.enabled).toBe(false);
+    expect(patch.env.shellEnv).toEqual({
+      enabled: false,
+      timeoutMs: 100
+    });
+    expect(patch.memory.qmd.update.startup).toBe("off");
+  });
+
   test("configures Burble MCP through the local runtime proxy", () => {
     const patch = JSON.parse(
       buildOpenClawLlmPatch({

@@ -177,6 +177,9 @@ describe("dev deploy config", () => {
       "OPENCLAW_RAW_STREAM_DEBUG=${OPENCLAW_RAW_STREAM_DEBUG:-false}"
     );
     expect(openClawCompose).toContain(
+      "OPENCLAW_FAST_MODE=${OPENCLAW_FAST_MODE:-false}"
+    );
+    expect(openClawCompose).toContain(
       "OPENCLAW_GATEWAY_PORT=${OPENCLAW_GATEWAY_PORT:-18789}"
     );
     expect(openClawCompose).toContain(
@@ -305,6 +308,7 @@ describe("dev deploy config", () => {
     expect(personalRuntimesCompose).toContain("OPENCLAW_LOG_LEVEL");
     expect(personalRuntimesCompose).toContain("OPENCLAW_DEBUG_MODEL_PAYLOAD");
     expect(personalRuntimesCompose).toContain("OPENCLAW_DEBUG_CODE_MODE");
+    expect(personalRuntimesCompose).toContain("OPENCLAW_FAST_MODE");
     expect(personalRuntimesCompose).toContain("OPENCLAW_RAW_STREAM_DEBUG");
     expect(personalRuntimesCompose).toContain("OPENCLAW_GATEWAY_PORT");
     expect(personalRuntimesCompose).toContain("OPENCLAW_GATEWAY_BIND");
