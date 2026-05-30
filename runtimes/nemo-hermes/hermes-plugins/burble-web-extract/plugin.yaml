@@ -1,0 +1,8 @@
+name: burble-web-extract
+label: Burble Web Extract
+kind: standalone
+version: 0.1.0
+description: >
+  Local fallback implementation for Hermes web_extract when only a search-only
+  web backend such as ddgs is configured.
+author: Apelogic AI

@@ -17,7 +17,7 @@ from typing import Any
 from aiohttp import ClientSession, ClientTimeout, web
 
 
-HERMES_PLUGIN_SOURCE = Path("/runtime/hermes-plugins/burble-platform")
+HERMES_PLUGIN_SOURCE = Path("/runtime/hermes-plugins")
 
 
 def env(name: str, default: str = "") -> str:
@@ -367,11 +367,15 @@ class BurbleHermesRuntime:
         )
 
     def _install_plugin(self) -> None:
-        plugins_dir = self.home / "plugins" / "burble-platform"
-        plugins_dir.parent.mkdir(parents=True, exist_ok=True)
-        if plugins_dir.exists():
-            shutil.rmtree(plugins_dir)
-        shutil.copytree(HERMES_PLUGIN_SOURCE, plugins_dir)
+        plugins_dir = self.home / "plugins"
+        plugins_dir.mkdir(parents=True, exist_ok=True)
+        for source_dir in HERMES_PLUGIN_SOURCE.iterdir():
+            if not source_dir.is_dir():
+                continue
+            target_dir = plugins_dir / source_dir.name
+            if target_dir.exists():
+                shutil.rmtree(target_dir)
+            shutil.copytree(source_dir, target_dir)
 
     def _ensure_gateway_config(self) -> None:
         config_path = self.home / "config.yaml"
@@ -398,7 +402,7 @@ class BurbleHermesRuntime:
             lines.append("browser:")
             for key, value in browser_config.items():
                 lines.append(f"  {key}: {yaml_string(value)}")
-        lines.extend(["plugins:", "  enabled:", "    - burble-platform"])
+        lines.extend(["plugins:", "  enabled:", "    - burble-platform", "    - burble-web-extract"])
         if env("BURBLE_MCP_GATEWAY_URL") and env("BURBLE_RUNTIME_JWT"):
             lines.extend(
                 [

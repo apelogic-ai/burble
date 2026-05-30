@@ -33,7 +33,7 @@ RUN npm install -g --silent --ignore-scripts \
 
 WORKDIR /runtime
 
-COPY hermes-plugins/burble-platform /runtime/hermes-plugins/burble-platform
+COPY hermes-plugins /runtime/hermes-plugins
 COPY runtime/entrypoint.py /runtime/entrypoint.py
 
 EXPOSE 8080 8766
