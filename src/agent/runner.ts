@@ -919,10 +919,14 @@ async function runAiSdkAgent(
       });
       tools.google_create_drive_text_file = tool({
         description:
-          "Create a new app-owned text file in Google Drive using the authenticated Slack user's connected Google account.",
+          "Create a new app-owned text file in Google Drive using the authenticated Slack user's connected Google account. If no text is supplied, create an empty text file.",
         inputSchema: z.object({
           name: z.string().min(1).max(200).describe("Drive file name"),
-          text: z.string().max(200_000).describe("Text body to write into the file"),
+          text: z
+            .string()
+            .max(200_000)
+            .optional()
+            .describe("Optional text body to write into the file"),
           mimeType: z.string().optional().describe("Optional MIME type")
         }),
         execute: async ({ name, text, mimeType }) =>
@@ -937,7 +941,7 @@ async function runAiSdkAgent(
                 connection,
                 input: {
                   name,
-                  text,
+                  text: text ?? "",
                   ...(mimeType ? { mimeType } : {})
                 }
               })

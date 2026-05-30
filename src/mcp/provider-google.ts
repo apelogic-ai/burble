@@ -74,7 +74,7 @@ function createGoogleMcpHandlers(
         connection,
         input: {
           name: stringArg(args, "name"),
-          text: stringArg(args, "text"),
+          text: optionalStringArg(args, "text") ?? "",
           ...optionalTruthyStringField(args, "mimeType")
         }
       }),
@@ -193,6 +193,10 @@ function createGoogleMcpHandlers(
 
 function stringArg(args: GoogleToolArgs, key: string): string {
   return args[key] as string;
+}
+
+function optionalStringArg(args: GoogleToolArgs, key: string): string | undefined {
+  return typeof args[key] === "string" ? (args[key] as string) : undefined;
 }
 
 function stringArrayArg(args: GoogleToolArgs, key: string): string[] {

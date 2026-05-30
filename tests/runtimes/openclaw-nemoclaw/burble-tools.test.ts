@@ -600,6 +600,10 @@ describe("createBurbleToolExecutor", () => {
         user: { email: "person@example.com" },
         input: { name: "Test", text: "Test One" }
       });
+      await executor("google.createDriveTextFile", {
+        user: { email: "person@example.com" },
+        input: { name: "Blank" }
+      });
       await executor("google.searchCalendarEvents", {
         user: { email: "person@example.com" },
         input: {
@@ -712,6 +716,13 @@ describe("createBurbleToolExecutor", () => {
           params: {
             name: "google_create_drive_text_file",
             arguments: { name: "Test", text: "Test One" }
+          }
+        },
+        {
+          method: "tools/call",
+          params: {
+            name: "google_create_drive_text_file",
+            arguments: { name: "Blank", text: "" }
           }
         },
         {

@@ -40,7 +40,8 @@ tools:
       text:
         type: string
         max: 200000
-        description: Text body to write into the file
+        optional: true
+        description: Text body to write into the file. Defaults to an empty text file.
       mimeType:
         type: string
         optional: true

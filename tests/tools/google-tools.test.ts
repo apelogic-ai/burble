@@ -230,4 +230,41 @@ describe("createGoogleTools", () => {
       }
     });
   });
+
+  test("creates an empty Drive text file when text is omitted", async () => {
+    const tools = createGoogleTools({
+      getGoogleUser: async () => ({
+        email: "person@google.example"
+      }),
+      searchGoogleDriveFiles: async () => [],
+      createGoogleDriveTextFile: async (token, input) => {
+        expect(token).toBe("google-token");
+        expect(input).toEqual({
+          name: "Blank",
+          text: ""
+        });
+        return {
+          id: "file-2",
+          name: "Blank"
+        };
+      },
+      searchGoogleCalendarEvents: async () => [],
+      searchGoogleMailMessages: async () => []
+    });
+
+    const result = await tools.createDriveTextFile.execute({
+      connection,
+      input: {
+        name: "Blank"
+      }
+    });
+
+    expect(result).toEqual({
+      classification: "user_private",
+      content: {
+        id: "file-2",
+        name: "Blank"
+      }
+    });
+  });
 });

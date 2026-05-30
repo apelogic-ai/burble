@@ -475,6 +475,40 @@ describe("handleToolGatewayRequest", () => {
     });
   });
 
+  test("creates an empty Google Drive text file when text is omitted", async () => {
+    const response = await handleToolGatewayRequest(
+      config,
+      createStore(googleConnection),
+      "google.createDriveTextFile",
+      request("google.createDriveTextFile", {
+        user: { email: "person@example.com" },
+        input: { name: "Blank" }
+      }),
+      {
+        createGoogleDriveTextFile: async (token, input) => {
+          expect(token).toBe("google-token");
+          expect(input).toEqual({
+            name: "Blank",
+            text: ""
+          });
+          return {
+            id: "file-2",
+            name: "Blank"
+          };
+        }
+      }
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      classification: "user_private",
+      content: {
+        id: "file-2",
+        name: "Blank"
+      }
+    });
+  });
+
   test("allows a principal-bound runtime token for its own provider account", async () => {
     const runtimeEvents: unknown[] = [];
     const touchedRuntimeIds: string[] = [];

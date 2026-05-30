@@ -137,14 +137,17 @@ export function createGoogleTools(deps: GoogleToolDeps) {
     createDriveTextFile: {
       async execute(
         context: GoogleToolContext & {
-          input: { name: string; text: string; mimeType?: string };
+          input: { name: string; text?: string; mimeType?: string };
         }
       ): Promise<ToolResult<GoogleDriveCreatedFile | GoogleAuthErrorContent>> {
         const file = await withGoogleToken(
           deps,
           context.connection,
           (accessToken) =>
-            deps.createGoogleDriveTextFile(accessToken, context.input)
+            deps.createGoogleDriveTextFile(accessToken, {
+              ...context.input,
+              text: context.input.text ?? ""
+            })
         );
         if (isGoogleAuthErrorResult(file)) {
           return file;
