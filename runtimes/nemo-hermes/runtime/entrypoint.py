@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import os
 import shutil
@@ -249,8 +250,12 @@ class BurbleHermesRuntime:
         waiter: RunWaiter,
         message: dict[str, Any],
     ) -> dict[str, Any]:
+        progress_task: asyncio.Task[None] | None = None
         try:
-            await waiter.emit({"type": "status", "text": "Hermes accepted the Burble turn."})
+            await waiter.emit({"type": "status", "text": "Burble accepted the turn."})
+            progress_task = asyncio.create_task(
+                self._emit_progress_until_finished(run_id, waiter)
+            )
             print(
                 f"[INFO] {timestamp()} Nemo Hermes run inject start runId={run_id}",
                 flush=True,
@@ -291,6 +296,37 @@ class BurbleHermesRuntime:
             )
             await waiter.fail(str(error))
             raise
+        finally:
+            if progress_task:
+                progress_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await progress_task
+
+    async def _emit_progress_until_finished(
+        self,
+        run_id: str,
+        waiter: RunWaiter,
+    ) -> None:
+        interval_seconds = max(1, int_env("HERMES_PROGRESS_INTERVAL_SECONDS", 8))
+        started_at = time.time()
+        try:
+            while not waiter.completed and not waiter.future.done():
+                await asyncio.sleep(interval_seconds)
+                if waiter.completed or waiter.future.done():
+                    return
+                elapsed_seconds = int(time.time() - started_at)
+                await waiter.emit({
+                    "type": "status",
+                    "text": f"Agent has thought for {elapsed_seconds}s..."
+                })
+        except asyncio.CancelledError:
+            raise
+        except Exception as error:
+            print(
+                f"[WARN] {timestamp()} Nemo Hermes progress emitter failed runId={run_id} error={error}",
+                file=sys.stderr,
+                flush=True,
+            )
 
     def _on_async_run_done(self, run_id: str, done_task: asyncio.Task[dict[str, Any]]) -> None:
         try:

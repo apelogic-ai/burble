@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 import time
@@ -256,10 +257,16 @@ class BurbleAdapter(BasePlatformAdapter):
                         error=f"Burble conversation gateway returned {response.status}: {body[:200]}",
                         retryable=response.status >= 500,
                     )
+        raw_response: dict[str, Any]
+        try:
+            parsed_body = json.loads(body)
+            raw_response = parsed_body if isinstance(parsed_body, dict) else {"body": parsed_body}
+        except json.JSONDecodeError:
+            raw_response = {"body": body}
         return SendResult(
             success=True,
             message_id=f"burble:{route_id}:{int(time.time() * 1000)}",
-            raw_response=body,
+            raw_response=raw_response,
         )
 
 

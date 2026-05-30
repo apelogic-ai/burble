@@ -76,6 +76,7 @@ describe("buildContainerRuntimeSpec", () => {
         HERMES_INFERENCE_MODEL: "openai:gpt-5.4",
         HERMES_INFERENCE_PROVIDER: "openai-api",
         HERMES_RUN_TIMEOUT_SECONDS: "240",
+        HERMES_PROGRESS_INTERVAL_SECONDS: "8",
         GITHUB_TOKEN: "github-secret",
         SLACK_BOT_TOKEN: "slack-secret"
       }
@@ -119,7 +120,8 @@ describe("buildContainerRuntimeSpec", () => {
       OPENCLAW_GATEWAY_TOKEN: "gateway-token",
       HERMES_INFERENCE_MODEL: "openai:gpt-5.4",
       HERMES_INFERENCE_PROVIDER: "openai-api",
-      HERMES_RUN_TIMEOUT_SECONDS: "240"
+      HERMES_RUN_TIMEOUT_SECONDS: "240",
+      HERMES_PROGRESS_INTERVAL_SECONDS: "8"
     });
     expect(spec.env.GITHUB_TOKEN).toBeUndefined();
     expect(spec.env.SLACK_BOT_TOKEN).toBeUndefined();

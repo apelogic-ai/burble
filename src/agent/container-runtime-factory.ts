@@ -62,7 +62,8 @@ const approvedForwardedEnv = new Set([
   "HERMES_INFERENCE_MODEL",
   "HERMES_MODEL",
   "HERMES_INFERENCE_PROVIDER",
-  "HERMES_RUN_TIMEOUT_SECONDS"
+  "HERMES_RUN_TIMEOUT_SECONDS",
+  "HERMES_PROGRESS_INTERVAL_SECONDS"
 ]);
 
 export function createDockerRuntimeFactory(input: {
