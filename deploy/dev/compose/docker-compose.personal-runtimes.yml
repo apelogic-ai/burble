@@ -17,9 +17,11 @@ services:
   burble-app:
     environment:
       - AGENT_MODE=llm
-      - AGENT_RUNTIME=openclaw-nemoclaw
+      - AGENT_FAST_TRACK=${AGENT_FAST_TRACK:-false}
+      - AGENT_RUNTIME=burble-runtime
       - AGENT_RUNTIME_FACTORY=docker
-      - AGENT_RUNTIME_IMAGE=${AGENT_RUNTIME_IMAGE:-burble-openclaw-nemoclaw-openclaw-cli:dev}
+      - AGENT_RUNTIME_IMAGE=${AGENT_RUNTIME_IMAGE:-}
+      - AGENT_RUNTIME_ENGINE=${AGENT_RUNTIME_ENGINE:-}
       - AGENT_RUNTIME_DOCKER_NETWORK=${AGENT_RUNTIME_DOCKER_NETWORK:-compose_default}
       - AGENT_RUNTIME_DATA_ROOT=${AGENT_RUNTIME_DATA_ROOT:-/opt/burble/runtimes}
       - AGENT_RUNTIME_IDLE_TTL_MS=${AGENT_RUNTIME_IDLE_TTL_MS:-86400000}
@@ -30,6 +32,7 @@ services:
       - AGENT_RUNTIME_TOOL_GATEWAY_URL=http://burble-app:3000/internal/tools
       - AGENT_RUNTIME_MCP_GATEWAY_URL=${AGENT_RUNTIME_MCP_GATEWAY_URL:-http://burble-app:3000/mcp}
       - AGENT_RUNTIME_MCP_AUDIENCE=${AGENT_RUNTIME_MCP_AUDIENCE:-}
+      - AGENT_RUNTIME_CONFIG_PATCH_HOST_PATH=${AGENT_RUNTIME_CONFIG_PATCH_HOST_PATH:-${OPENCLAW_CONFIG_PATCH_HOST_PATH:-}}
       - RUNTIME_JWT_ISSUER=${RUNTIME_JWT_ISSUER:-http://burble-app:3000}
       - RUNTIME_JWT_PRIVATE_KEY_PATH=${RUNTIME_JWT_PRIVATE_KEY_PATH:-/data/runtime-jwt-private.pem}
       - OPENCLAW_CONFIG_PATCH_HOST_PATH=${OPENCLAW_CONFIG_PATCH_HOST_PATH:-}
@@ -43,6 +46,7 @@ services:
       - OPENCLAW_DEBUG_SSE=${OPENCLAW_DEBUG_SSE:-}
       - OPENCLAW_DEBUG_CODE_MODE=${OPENCLAW_DEBUG_CODE_MODE:-}
       - OPENCLAW_CODE_MODE=${OPENCLAW_CODE_MODE:-false}
+      - OPENCLAW_FAST_MODE=${OPENCLAW_FAST_MODE:-false}
       - OPENCLAW_RAW_STREAM_DEBUG=${OPENCLAW_RAW_STREAM_DEBUG:-false}
       - OPENCLAW_GATEWAY_PORT=${OPENCLAW_GATEWAY_PORT:-18789}
       - OPENCLAW_GATEWAY_BIND=${OPENCLAW_GATEWAY_BIND:-loopback}
@@ -61,4 +65,13 @@ services:
       dockerfile: Dockerfile.openclaw-cli
       args:
         OPENCLAW_VERSION: ${OPENCLAW_VERSION:-2026.5.19}
+    command: ["bun", "--version"]
+
+  nemo-hermes-image:
+    profiles:
+      - runtime-image
+    image: ${AGENT_RUNTIME_IMAGE:-burble-nemo-hermes:dev}
+    build:
+      context: ../../../runtimes/nemo-hermes
+      dockerfile: Dockerfile
     command: ["bun", "--version"]

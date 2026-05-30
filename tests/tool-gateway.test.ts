@@ -26,9 +26,11 @@ const config: Config = {
   databasePath: ":memory:",
   slackLogLevel: "info",
   agentMode: "deterministic",
+  agentFastTrack: false,
   agentRuntime: "ai-sdk",
   agentRuntimeFactory: "static",
   openClawNemoClawUrl: null,
+  agentRuntimeEngine: "openclaw",
   openClawNemoClawEngine: "openclaw",
   agentRuntimeDataRoot: "/data/runtimes",
   agentRuntimeDockerNetwork: "compose_default",
@@ -470,6 +472,40 @@ describe("handleToolGatewayRequest", () => {
           permalink: "https://slack.test/archives/C123/p1"
         }
       ]
+    });
+  });
+
+  test("creates an empty Google Drive text file when text is omitted", async () => {
+    const response = await handleToolGatewayRequest(
+      config,
+      createStore(googleConnection),
+      "google.createDriveTextFile",
+      request("google.createDriveTextFile", {
+        user: { email: "person@example.com" },
+        input: { name: "Blank" }
+      }),
+      {
+        createGoogleDriveTextFile: async (token, input) => {
+          expect(token).toBe("google-token");
+          expect(input).toEqual({
+            name: "Blank",
+            text: ""
+          });
+          return {
+            id: "file-2",
+            name: "Blank"
+          };
+        }
+      }
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      classification: "user_private",
+      content: {
+        id: "file-2",
+        name: "Blank"
+      }
     });
   });
 

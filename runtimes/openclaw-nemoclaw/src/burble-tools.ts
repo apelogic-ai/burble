@@ -714,12 +714,10 @@ function toMcpToolArguments(
 
   if (toolName === "google.createDriveTextFile") {
     const name = readNestedString(body, "input", "name");
-    const text = readNestedString(body, "input", "text");
+    const rawText = readNestedValue(body, "input", "text");
+    const text = typeof rawText === "string" ? rawText : "";
     if (!name) {
       throw new Error("google.createDriveTextFile requires input.name");
-    }
-    if (text === null) {
-      throw new Error("google.createDriveTextFile requires input.text");
     }
     return {
       name,

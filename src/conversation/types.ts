@@ -73,6 +73,7 @@ export type ConversationDeps = {
   getConnection: (provider: Provider, email: string) => ProviderConnection | null;
   tools: ConversationToolCatalog;
   agentMode?: AgentMode;
+  agentFastTrack?: boolean;
   agentRunner?: AgentRunner;
   agentExecutionMode?: "default" | "openclaw-native";
   onAgentEvent?: AgentRunEventHandler;

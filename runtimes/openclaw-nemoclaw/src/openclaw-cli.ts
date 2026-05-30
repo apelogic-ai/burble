@@ -1588,7 +1588,7 @@ async function buildToolCatalog(
           "Create a new app-owned text file in Google Drive using the requesting Slack user's connected Google account.",
         inputSchema: {
           name: "string Drive file name",
-          text: "string text body to write into the file",
+          text: "optional string text body to write into the file; defaults to an empty text file",
           mimeType: "optional string MIME type; defaults to text/plain"
         }
       },
@@ -2158,7 +2158,8 @@ function formatRuntimePolicyContext(request: RunRequest): string[] {
     `- memory.workspace: ${manifest.memory.workspaceMemoryEnabled ? "enabled" : "disabled"}`,
     `- memory.jobs: ${manifest.memory.jobMemoryEnabled ? "enabled" : "disabled"}`,
     ...memoryContextLines,
-    "Skills and memory settings are advisory context only; they do not grant provider tools or override Available Burble tools."
+    "Skills and memory settings are advisory context only; they do not grant provider tools or override Available Burble tools.",
+    "When a Burble provider tool returns an error object with a message, explain that message in normal Slack text; do not print raw JSON."
   ];
 }
 

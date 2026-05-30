@@ -48,6 +48,7 @@ describe("dev deploy config", () => {
       "SLACK_CLIENT_SECRET",
       "SLACK_REDIRECT_URI",
       "AGENT_MODE",
+      "AGENT_FAST_TRACK",
       "AGENT_RUNTIME",
       "AGENT_RUNTIME_FACTORY",
       "AGENT_RUNTIME_DATA_ROOT",
@@ -61,6 +62,7 @@ describe("dev deploy config", () => {
       "AGENT_RUNTIME_TOOL_GATEWAY_URL",
       "AGENT_RUNTIME_MCP_GATEWAY_URL",
       "AGENT_RUNTIME_MCP_AUDIENCE",
+      "AGENT_RUNTIME_CONFIG_PATCH_HOST_PATH",
       "ATLASSIAN_MCP_URL",
       "RUNTIME_JWT_ISSUER",
       "RUNTIME_JWT_PRIVATE_KEY_PATH",
@@ -126,10 +128,14 @@ describe("dev deploy config", () => {
 
   test("provides an optional OpenClaw/NemoClaw compose override", () => {
     expect(openClawCompose).toContain("openclaw-nemoclaw:");
-    expect(openClawCompose).toContain("AGENT_RUNTIME=openclaw-nemoclaw");
+    expect(openClawCompose).toContain("AGENT_RUNTIME=burble-runtime");
+    expect(openClawCompose).toContain("AGENT_FAST_TRACK=${AGENT_FAST_TRACK:-false}");
     expect(openClawCompose).toContain("AGENT_RUNTIME_FACTORY=static");
     expect(openClawCompose).toContain(
       "OPENCLAW_NEMOCLAW_URL=http://openclaw-nemoclaw:8080"
+    );
+    expect(openClawCompose).toContain(
+      "AGENT_RUNTIME_ENGINE=${AGENT_RUNTIME_ENGINE:-}"
     );
     expect(openClawCompose).toContain("context: ../../../runtimes/openclaw-nemoclaw");
     expect(openClawCompose).toContain("dockerfile: Dockerfile");
@@ -171,6 +177,9 @@ describe("dev deploy config", () => {
     );
     expect(openClawCompose).toContain(
       "OPENCLAW_RAW_STREAM_DEBUG=${OPENCLAW_RAW_STREAM_DEBUG:-false}"
+    );
+    expect(openClawCompose).toContain(
+      "OPENCLAW_FAST_MODE=${OPENCLAW_FAST_MODE:-false}"
     );
     expect(openClawCompose).toContain(
       "OPENCLAW_GATEWAY_PORT=${OPENCLAW_GATEWAY_PORT:-18789}"
@@ -233,6 +242,8 @@ describe("dev deploy config", () => {
       "AGENT_RUNTIME_FACTORY",
       "AGENT_RUNTIME_DATA_ROOT",
       "AGENT_RUNTIME_IMAGE",
+      "AGENT_RUNTIME_ENGINE",
+      "AGENT_FAST_TRACK",
       "AGENT_RUNTIME_DOCKER_NETWORK",
       "AGENT_RUNTIME_IDLE_TTL_MS",
       "AGENT_RUNTIME_REAPER_ENABLED",
@@ -242,6 +253,7 @@ describe("dev deploy config", () => {
       "AGENT_RUNTIME_TOOL_GATEWAY_URL",
       "AGENT_RUNTIME_MCP_GATEWAY_URL",
       "AGENT_RUNTIME_MCP_AUDIENCE",
+      "AGENT_RUNTIME_CONFIG_PATCH_HOST_PATH",
       "ATLASSIAN_MCP_URL",
       "RUNTIME_JWT_ISSUER",
       "RUNTIME_JWT_PRIVATE_KEY_PATH",
@@ -253,6 +265,9 @@ describe("dev deploy config", () => {
 
   test("provides an optional personal runtime compose override", () => {
     expect(personalRuntimesCompose).toContain("AGENT_RUNTIME_FACTORY=docker");
+    expect(personalRuntimesCompose).toContain(
+      "AGENT_FAST_TRACK=${AGENT_FAST_TRACK:-false}"
+    );
     expect(personalRuntimesCompose).toContain("/var/run/docker.sock");
     expect(personalRuntimesCompose).toContain(
       "AGENT_RUNTIME_TOKEN_SECRET:?AGENT_RUNTIME_TOKEN_SECRET is required"
@@ -260,9 +275,18 @@ describe("dev deploy config", () => {
     expect(personalRuntimesCompose).toContain(
       "burble-openclaw-nemoclaw-openclaw-cli:dev"
     );
+    expect(personalRuntimesCompose).toContain(
+      "AGENT_RUNTIME_IMAGE=${AGENT_RUNTIME_IMAGE:-}"
+    );
+    expect(personalRuntimesCompose).toContain(
+      "AGENT_RUNTIME_ENGINE=${AGENT_RUNTIME_ENGINE:-}"
+    );
     expect(personalRuntimesCompose).toContain("openclaw-nemoclaw-image:");
+    expect(personalRuntimesCompose).toContain("nemo-hermes-image:");
     expect(personalRuntimesCompose).toContain("profiles:");
     expect(personalRuntimesCompose).toContain("dockerfile: Dockerfile.openclaw-cli");
+    expect(personalRuntimesCompose).toContain("context: ../../../runtimes/nemo-hermes");
+    expect(personalRuntimesCompose).toContain("burble-nemo-hermes:dev");
     expect(personalRuntimesCompose).toContain(
       "AGENT_RUNTIME_DATA_ROOT:-/opt/burble/runtimes"
     );
@@ -275,6 +299,9 @@ describe("dev deploy config", () => {
     );
     expect(personalRuntimesCompose).toContain("AGENT_RUNTIME_MCP_GATEWAY_URL");
     expect(personalRuntimesCompose).toContain("AGENT_RUNTIME_MCP_AUDIENCE");
+    expect(personalRuntimesCompose).toContain(
+      "AGENT_RUNTIME_CONFIG_PATCH_HOST_PATH=${AGENT_RUNTIME_CONFIG_PATCH_HOST_PATH:-${OPENCLAW_CONFIG_PATCH_HOST_PATH:-}}"
+    );
     expect(personalRuntimesCompose).toContain("RUNTIME_JWT_ISSUER");
     expect(personalRuntimesCompose).toContain("RUNTIME_JWT_PRIVATE_KEY_PATH");
     expect(personalRuntimesCompose).toContain(
@@ -287,6 +314,7 @@ describe("dev deploy config", () => {
     expect(personalRuntimesCompose).toContain("OPENCLAW_LOG_LEVEL");
     expect(personalRuntimesCompose).toContain("OPENCLAW_DEBUG_MODEL_PAYLOAD");
     expect(personalRuntimesCompose).toContain("OPENCLAW_DEBUG_CODE_MODE");
+    expect(personalRuntimesCompose).toContain("OPENCLAW_FAST_MODE");
     expect(personalRuntimesCompose).toContain("OPENCLAW_RAW_STREAM_DEBUG");
     expect(personalRuntimesCompose).toContain("OPENCLAW_GATEWAY_PORT");
     expect(personalRuntimesCompose).toContain("OPENCLAW_GATEWAY_BIND");
@@ -334,7 +362,11 @@ describe("dev deploy config", () => {
 
   test("provides a personal runtime deployment helper", () => {
     expect(personalRuntimeDeployScript).toContain("git pull --ff-only");
-    expect(personalRuntimeDeployScript).toContain("--profile runtime-image build openclaw-nemoclaw-image");
+    expect(personalRuntimeDeployScript).toContain("runtime_image_service=\"openclaw-nemoclaw-image\"");
+    expect(personalRuntimeDeployScript).toContain("runtime_image_service=\"nemo-hermes-image\"");
+    expect(personalRuntimeDeployScript).toContain("--profile runtime-image build \"${runtime_image_service}\"");
+    expect(personalRuntimeDeployScript).toContain("AGENT_RUNTIME_ENGINE=hermes");
+    expect(personalRuntimeDeployScript).toContain("burble-nemo-hermes:dev");
     expect(personalRuntimeDeployScript).toContain("docker-compose.personal-runtimes.yml");
     expect(personalRuntimeDeployScript).toContain("--agentgateway");
     expect(personalRuntimeDeployScript).toContain("docker-compose.agentgateway.yml");

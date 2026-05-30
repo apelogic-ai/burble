@@ -30,10 +30,12 @@ describe("readConfig", () => {
       databasePath: "test.db",
       slackLogLevel: "info",
       agentMode: "deterministic",
+      agentFastTrack: false,
       agentRuntime: "ai-sdk",
       agentRuntimeFactory: "static",
       aiModel: "openai:gpt-5.4",
       openClawNemoClawUrl: null,
+      agentRuntimeEngine: "openclaw",
       openClawNemoClawEngine: "openclaw",
       agentRuntimeDataRoot: "/data/runtimes",
       agentRuntimeDockerNetwork: "compose_default",
@@ -107,13 +109,33 @@ describe("readConfig", () => {
     const config = readConfig({
       ...validEnv,
       AGENT_MODE: "llm",
-      AGENT_RUNTIME: "openclaw-nemoclaw",
+      AGENT_RUNTIME: "burble-runtime",
       AI_MODEL: "anthropic:claude-opus-4.6"
     });
 
     expect(config.agentMode).toBe("llm");
-    expect(config.agentRuntime).toBe("openclaw-nemoclaw");
+    expect(config.agentFastTrack).toBe(false);
+    expect(config.agentRuntime).toBe("burble-runtime");
     expect(config.aiModel).toBe("anthropic:claude-opus-4.6");
+  });
+
+  test("allows explicit local provider fast-track opt-in", () => {
+    const config = readConfig({
+      ...validEnv,
+      AGENT_FAST_TRACK: "true"
+    });
+
+    expect(config.agentFastTrack).toBe(true);
+  });
+
+  test("accepts the legacy OpenClaw runtime adapter name", () => {
+    const config = readConfig({
+      ...validEnv,
+      AGENT_MODE: "llm",
+      AGENT_RUNTIME: "openclaw-nemoclaw"
+    });
+
+    expect(config.agentRuntime).toBe("burble-runtime");
   });
 
   test("allows Ollama model tags in normalized model ids", () => {
@@ -139,12 +161,14 @@ describe("readConfig", () => {
       AGENT_RUNTIME_TOOL_GATEWAY_URL: "http://burble-app:3000/internal/tools",
       AGENT_RUNTIME_MCP_GATEWAY_URL: "http://agentgateway:3000/mcp/",
       AGENT_RUNTIME_MCP_AUDIENCE: "http://agentgateway:3000/mcp/",
+      AGENT_RUNTIME_CONFIG_PATCH_HOST_PATH: "/srv/burble/runtime-patches",
       RUNTIME_JWT_ISSUER: "http://burble-app:3000/",
       RUNTIME_JWT_PRIVATE_KEY_PATH: "/data/runtime-jwt-private.pem",
       OPENCLAW_CONFIG_PATCH_HOST_PATH: "/srv/burble/openclaw-patches"
     });
 
     expect(config.agentRuntimeFactory).toBe("docker");
+    expect(config.agentRuntimeEngine).toBe("openclaw");
     expect(config.openClawNemoClawEngine).toBe("openclaw");
     expect(config.agentRuntimeImage).toBe(
       "burble-openclaw-nemoclaw-openclaw-cli:dev"
@@ -159,6 +183,38 @@ describe("readConfig", () => {
     expect(config.agentRuntimeMcpAudience).toBe("http://agentgateway:3000/mcp");
     expect(config.runtimeJwtIssuer).toBe("http://burble-app:3000");
     expect(config.runtimeJwtPrivateKeyPath).toBe("/data/runtime-jwt-private.pem");
+    expect(config.openClawConfigPatchHostPath).toBe("/srv/burble/runtime-patches");
+  });
+
+  test("defaults to the Hermes runtime image for Hermes engine", () => {
+    const config = readConfig({
+      ...validEnv,
+      AGENT_RUNTIME: "burble-runtime",
+      AGENT_RUNTIME_FACTORY: "docker",
+      AGENT_RUNTIME_ENGINE: "hermes"
+    });
+
+    expect(config.agentRuntimeImage).toBe("burble-nemo-hermes:dev");
+  });
+
+  test("ignores a blank runtime image override", () => {
+    const config = readConfig({
+      ...validEnv,
+      AGENT_RUNTIME: "burble-runtime",
+      AGENT_RUNTIME_FACTORY: "docker",
+      AGENT_RUNTIME_ENGINE: "hermes",
+      AGENT_RUNTIME_IMAGE: ""
+    });
+
+    expect(config.agentRuntimeImage).toBe("burble-nemo-hermes:dev");
+  });
+
+  test("falls back to the legacy OpenClaw config patch host path", () => {
+    const config = readConfig({
+      ...validEnv,
+      OPENCLAW_CONFIG_PATCH_HOST_PATH: "/srv/burble/openclaw-patches"
+    });
+
     expect(config.openClawConfigPatchHostPath).toBe(
       "/srv/burble/openclaw-patches"
     );
@@ -189,6 +245,39 @@ describe("readConfig", () => {
       OPENCLAW_NEMOCLAW_ENGINE: "openclaw-gateway"
     });
 
+    expect(config.agentRuntimeEngine).toBe("openclaw-gateway");
+    expect(config.openClawNemoClawEngine).toBe("openclaw-gateway");
+  });
+
+  test("allows generic agent runtime engine override", () => {
+    const config = readConfig({
+      ...validEnv,
+      AGENT_RUNTIME_ENGINE: "nemo-hermes"
+    });
+
+    expect(config.agentRuntimeEngine).toBe("hermes");
+    expect(config.openClawNemoClawEngine).toBe("hermes");
+  });
+
+  test("prefers generic agent runtime engine over legacy OpenClaw engine", () => {
+    const config = readConfig({
+      ...validEnv,
+      AGENT_RUNTIME_ENGINE: "hermes",
+      OPENCLAW_NEMOCLAW_ENGINE: "openclaw"
+    });
+
+    expect(config.agentRuntimeEngine).toBe("hermes");
+    expect(config.openClawNemoClawEngine).toBe("hermes");
+  });
+
+  test("falls back to the legacy OpenClaw engine when generic engine is blank", () => {
+    const config = readConfig({
+      ...validEnv,
+      AGENT_RUNTIME_ENGINE: "",
+      OPENCLAW_NEMOCLAW_ENGINE: "openclaw-gateway"
+    });
+
+    expect(config.agentRuntimeEngine).toBe("openclaw-gateway");
     expect(config.openClawNemoClawEngine).toBe("openclaw-gateway");
   });
 
@@ -205,7 +294,15 @@ describe("readConfig", () => {
     expect(() =>
       readConfig({ ...validEnv, OPENCLAW_NEMOCLAW_ENGINE: "magic" })
     ).toThrow(
-      "Environment variable OPENCLAW_NEMOCLAW_ENGINE must be one of deterministic, openclaw, openclaw-gateway, burble-direct"
+      "Environment variable OPENCLAW_NEMOCLAW_ENGINE must be one of deterministic, openclaw, openclaw-gateway, burble-direct, hermes"
+    );
+  });
+
+  test("rejects invalid generic agent runtime engines", () => {
+    expect(() =>
+      readConfig({ ...validEnv, AGENT_RUNTIME_ENGINE: "magic" })
+    ).toThrow(
+      "Environment variable AGENT_RUNTIME_ENGINE must be one of deterministic, openclaw, openclaw-gateway, burble-direct, hermes"
     );
   });
 
@@ -226,7 +323,7 @@ describe("readConfig", () => {
 
   test("rejects invalid agent runtimes", () => {
     expect(() => readConfig({ ...validEnv, AGENT_RUNTIME: "robot" })).toThrow(
-      "Environment variable AGENT_RUNTIME must be one of ai-sdk, openclaw-nemoclaw"
+      "Environment variable AGENT_RUNTIME must be one of ai-sdk, burble-runtime"
     );
   });
 
@@ -247,7 +344,7 @@ describe("readConfig", () => {
   test("normalizes OpenClaw/NemoClaw runtime URL", () => {
     const config = readConfig({
       ...validEnv,
-      AGENT_RUNTIME: "openclaw-nemoclaw",
+      AGENT_RUNTIME: "burble-runtime",
       OPENCLAW_NEMOCLAW_URL: "http://openclaw-runtime:8080/"
     });
 

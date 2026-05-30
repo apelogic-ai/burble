@@ -80,6 +80,7 @@ SLACK_CLIENT_ID=
 SLACK_CLIENT_SECRET=
 SLACK_REDIRECT_URI=
 AGENT_MODE=deterministic
+AGENT_FAST_TRACK=false
 AGENT_RUNTIME=ai-sdk
 AI_MODEL=openai:gpt-5.4
 OPENCLAW_NEMOCLAW_URL=
@@ -97,6 +98,9 @@ GOOGLE_CLIENT_SECRET=
 ```
 
 Use `AGENT_MODE=llm` to route mentions and DMs through an agent runner.
+`AGENT_FAST_TRACK=false` is the default: provider queries go through the agent
+when one is configured. Set `AGENT_FAST_TRACK=true` only to re-enable Burble's
+legacy deterministic provider shortcuts for simple GitHub/Jira/Gmail lookups.
 `AGENT_RUNTIME=ai-sdk` is the default in-process runner. `AI_MODEL` is the
 normalized model selector for both AI SDK and OpenClaw/NemoClaw runtimes. Use
 `provider:model` format, for example `openai:gpt-5.4`,
@@ -151,9 +155,10 @@ override file. Compose builds the runtime image from
 
 ```env
 AGENT_MODE=llm
-AGENT_RUNTIME=openclaw-nemoclaw
+AGENT_FAST_TRACK=false
+AGENT_RUNTIME=burble-runtime
 INTERNAL_API_TOKEN=<long-random-secret>
-OPENCLAW_NEMOCLAW_ENGINE=deterministic
+AGENT_RUNTIME_ENGINE=deterministic
 ```
 
 ```bash
@@ -169,18 +174,52 @@ policy; the remote runtime receives only sanitized connection summaries.
 
 Set `OPENCLAW_NEMOCLAW_IMAGE=some-registry/image:tag` only if you want Compose
 to tag/push/use a different image name. It is not required for dev deployment.
+Use this naming split for runtime configuration:
+
+- `AGENT_RUNTIME_*`: Burble-owned cross-engine runtime selection, lifecycle,
+  networking, MCP, JWT, and mounted patch paths.
+- `<ENGINE>_*`, for example `OPENCLAW_*` or `HERMES_*`: engine-native debug or
+  implementation knobs passed through to that runtime.
+- `OPENCLAW_NEMOCLAW_*`: legacy compatibility aliases. Prefer the
+  `AGENT_RUNTIME_*` equivalents for new deployment config.
+
+For new pluggable runtime images, prefer `AGENT_RUNTIME_IMAGE` and
+`AGENT_RUNTIME_ENGINE`. Use `AGENT_RUNTIME_CONFIG_PATCH_HOST_PATH` for runtime
+config patch mounts; `OPENCLAW_CONFIG_PATCH_HOST_PATH` remains as a legacy
+fallback.
+
+For example, the experimental Hermes-compatible image exposes the same Burble
+runtime HTTP contract and can be selected with:
+
+```env
+AGENT_RUNTIME_IMAGE=burble-nemo-hermes:dev
+AGENT_RUNTIME_ENGINE=hermes
+```
+
+Build that image locally with:
+
+```bash
+docker build -f ../../runtimes/nemo-hermes/Dockerfile \
+  -t burble-nemo-hermes:dev \
+  ../../runtimes/nemo-hermes
+```
+
+This is not a `hermes chat -q` wrapper. The image starts Hermes gateway with a
+Burble platform adapter so inbound turns, normal replies, and cron/background
+delivery flow through Burble route IDs. Burble still owns provider OAuth, MCP
+policy, and final Slack transport delivery.
 
 The runtime supports these internal engines:
 
 ```env
-OPENCLAW_NEMOCLAW_ENGINE=deterministic
+AGENT_RUNTIME_ENGINE=deterministic
 ```
 
 This is the default deployable bridge. It calls the Burble tool gateway and
 formats the answer itself.
 
 ```env
-OPENCLAW_NEMOCLAW_ENGINE=burble-direct
+AGENT_RUNTIME_ENGINE=burble-direct
 AI_MODEL=openai:gpt-5.4
 OPENAI_API_KEY=sk-...
 ```
@@ -189,7 +228,7 @@ This is the low-latency LLM path for Slack. It uses Burble's prompt and MCP
 tool loop, and sends planning turns directly to the selected model provider.
 
 ```env
-OPENCLAW_NEMOCLAW_ENGINE=openclaw
+AGENT_RUNTIME_ENGINE=openclaw
 OPENCLAW_COMMAND=openclaw
 OPENCLAW_AGENT=main
 OPENCLAW_TIMEOUT_MS=60000
@@ -206,6 +245,7 @@ OPENCLAW_DEBUG_MODEL_TRANSPORT=
 OPENCLAW_DEBUG_MODEL_PAYLOAD=
 OPENCLAW_DEBUG_SSE=
 OPENCLAW_DEBUG_CODE_MODE=
+OPENCLAW_FAST_MODE=false
 OPENCLAW_RAW_STREAM_DEBUG=false
 OPENCLAW_GATEWAY_PORT=18789
 OPENCLAW_GATEWAY_BIND=loopback
@@ -238,15 +278,20 @@ OpenClaw code mode is disabled by default for Burble runtimes because simple
 channel and cron turns should use direct OpenClaw tools instead of the
 `exec`/`wait` orchestration surface. Set `OPENCLAW_CODE_MODE=true` to opt back
 into code mode for broader tool-catalog or coding-style experiments.
+Set `OPENCLAW_FAST_MODE=true` to apply Burble's tightened OpenClaw defaults:
+`thinkingDefault=minimal`, `reasoningDefault=off`, `fastModeDefault=true`, and
+startup-only reductions for pricing catalog and shell-env import. This improves
+simple/model-only turns while leaving tool-heavy/search-heavy turns dependent on
+provider and tool behavior.
 Set `OPENCLAW_RAW_STREAM_DEBUG=true` temporarily to ask OpenClaw for per-run
 raw stream JSONL under `/data/openclaw/state/raw-streams`; Burble parses those
 files for token usage and logs only the summarized counts.
-Use `OPENCLAW_NEMOCLAW_ENGINE=burble-direct` for the low-latency Slack path:
+Use `AGENT_RUNTIME_ENGINE=burble-direct` for the low-latency Slack path:
 Burble keeps its own prompt and MCP tool loop, but sends planning turns directly
 to the selected provider from `AI_MODEL`. `/agent exec <task>` still asks the
 same private runtime container to use OpenClaw-native execution for that one
 request.
-Use `OPENCLAW_NEMOCLAW_ENGINE=openclaw-gateway` only when you want the real
+Use `AGENT_RUNTIME_ENGINE=openclaw-gateway` only when you want the real
 OpenClaw Gateway agent path. In that mode the runtime starts a private
 `openclaw gateway run` process once at boot using `OPENCLAW_GATEWAY_PORT`,
 `OPENCLAW_GATEWAY_BIND`, and token auth. Leave `OPENCLAW_GATEWAY_TOKEN` empty
@@ -271,7 +316,7 @@ OPENCLAW_VERSION=2026.5.19
 ```
 
 The CLI image installs the `openclaw` npm package during Docker build. If that
-build fails, switch back to `OPENCLAW_NEMOCLAW_ENGINE=deterministic` and deploy
+build fails, switch back to `AGENT_RUNTIME_ENGINE=deterministic` and deploy
 with only the first two compose files.
 
 For the Docker-backed personal runtime path, the compose directory includes a

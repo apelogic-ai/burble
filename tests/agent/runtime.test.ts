@@ -29,13 +29,13 @@ describe("createConfiguredAgentRunner", () => {
 
   test("selects the OpenClaw/NemoClaw runner when configured", () => {
     const runner = createConfiguredAgentRunner({
-      runtime: "openclaw-nemoclaw",
+      runtime: "burble-runtime",
       model: "openai:test-model",
       githubTools,
       openClawNemoClawUrl: "http://openclaw-runtime:8080"
     });
 
-    expect(runner.name).toBe("openclaw-nemoclaw");
+    expect(runner.name).toBe("burble-runtime");
     expect(runner.capabilities).toMatchObject({
       remote: true,
       requiresToolGateway: true
@@ -44,7 +44,7 @@ describe("createConfiguredAgentRunner", () => {
 
   test("selects the OpenClaw/NemoClaw runner with a runtime factory", () => {
     const runner = createConfiguredAgentRunner({
-      runtime: "openclaw-nemoclaw",
+      runtime: "burble-runtime",
       model: "openai:test-model",
       githubTools,
       runtimeFactory: {
@@ -56,13 +56,13 @@ describe("createConfiguredAgentRunner", () => {
       }
     });
 
-    expect(runner.name).toBe("openclaw-nemoclaw");
+    expect(runner.name).toBe("burble-runtime");
   });
 
   test("requires a runtime URL for OpenClaw/NemoClaw", () => {
     expect(() =>
       createConfiguredAgentRunner({
-        runtime: "openclaw-nemoclaw",
+        runtime: "burble-runtime",
         model: "openai:test-model",
         githubTools
       })

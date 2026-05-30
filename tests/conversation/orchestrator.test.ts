@@ -364,6 +364,7 @@ describe("handleConversation", () => {
       { ...baseRequest, text: "list latest email received via google mail" },
       createDeps({
         agentMode: "llm",
+        agentFastTrack: true,
         agentRunner: stubAgentRunner(() => {
           called = true;
           return {
@@ -386,6 +387,7 @@ describe("handleConversation", () => {
       { ...baseRequest, text: "what is my last created jira ticket?" },
       createDeps({
         agentMode: "llm",
+        agentFastTrack: true,
         agentRunner: stubAgentRunner(() => {
           called = true;
           return {
@@ -409,6 +411,7 @@ describe("handleConversation", () => {
       { ...baseRequest, text: "what is latest jira ticket assigned to me?" },
       createDeps({
         agentMode: "llm",
+        agentFastTrack: true,
         agentRunner: stubAgentRunner(() => {
           called = true;
           return {
@@ -502,12 +505,34 @@ describe("handleConversation", () => {
     );
   });
 
-  test("does not call the LLM runner for deterministic GitHub requests", async () => {
+  test("delegates deterministic GitHub-shaped requests to the LLM runner by default", async () => {
+    let calledWith = "";
+    const response = await handleConversation(
+      { ...baseRequest, text: "show my pull requests" },
+      createDeps({
+        agentMode: "llm",
+        agentRunner: stubAgentRunner((input) => {
+          calledWith = input.text;
+          return {
+            classification: "user_private",
+            text: "Agent listed pull requests."
+          };
+        })
+      })
+    );
+
+    expect(calledWith).toBe("show my pull requests");
+    expect(response.visibility).toBe("ephemeral");
+    expect(response.text).toBe("Agent listed pull requests.");
+  });
+
+  test("does not call the LLM runner for deterministic GitHub requests when fast-track is enabled", async () => {
     let called = false;
     const response = await handleConversation(
       { ...baseRequest, text: "show my pull requests" },
       createDeps({
         agentMode: "llm",
+        agentFastTrack: true,
         agentRunner: stubAgentRunner(() => {
           called = true;
           return {

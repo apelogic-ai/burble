@@ -75,6 +75,32 @@ Current implementation status:
 - Burble still owns outer admission, deterministic short-circuiting, runtime
   provisioning, and policy before forwarding an admitted turn to OpenClaw.
 
+## Hermes Adapter
+
+Hermes should be integrated as a first-class Burble channel, not as a one-shot
+CLI wrapper. The target implementation is a Hermes gateway platform
+plugin/adapter named `burble`.
+
+The Hermes adapter should map Hermes platform/session concepts onto the generic
+Burble connector:
+
+- Hermes platform name: `burble`.
+- Hermes chat/conversation identity: stable Burble route-derived session key.
+- Hermes outbound delivery: `send_message`/cron delivery resolves only to a
+  Burble `routeId`; Burble resolves the final Slack/transport destination.
+- Hermes inbound delivery: Burble injects Slack/user turns into Hermes through
+  the adapter so Hermes sees a normal platform conversation, including
+  interrupt/continuation semantics where Hermes supports them.
+- Hermes provider tools: use Burble MCP with route-scoped credentials and
+  manifest-filtered tool visibility.
+- Hermes local tools/toolsets: default-deny or explicitly manifest-scoped so a
+  Hermes runtime cannot bypass Burble provider policy through local config.
+
+The runtime image may still expose Burble's `/healthz` and `/runs` HTTP
+contract so the Burble control plane can provision, monitor, and test it like
+other runtime images. That HTTP layer should drive the Hermes channel/gateway
+adapter, not shell out to `hermes chat -q` as the normal production path.
+
 Follow-up for deeper OpenClaw SDK turn-kernel ingress:
 
 - Add a Burble channel inbound endpoint owned by the OpenClaw plugin.

@@ -131,7 +131,9 @@ function buildOpenClawNemoClawAgentConfig(
     buildOpenClawLlmPatch({
       modelId: config.llmModel,
       ollamaBaseUrl: config.ollamaBaseUrl,
+      agentId: config.openClawAgent,
       codeModeEnabled: config.openClawCodeMode,
+      fastModeEnabled: config.openClawFastMode,
       burbleChannelBaseUrl: buildLocalBurbleChannelBaseUrl(config),
       burbleMcpBaseUrl: buildLocalBurbleMcpBaseUrl(config)
     })
@@ -201,7 +203,9 @@ async function writeGeneratedLlmPatch(config: RuntimeConfig): Promise<string> {
     buildOpenClawLlmPatch({
       modelId: config.llmModel,
       ollamaBaseUrl: config.ollamaBaseUrl,
+      agentId: config.openClawAgent,
       codeModeEnabled: config.openClawCodeMode,
+      fastModeEnabled: config.openClawFastMode,
       burbleChannelBaseUrl: buildLocalBurbleChannelBaseUrl(config),
       burbleMcpBaseUrl: buildLocalBurbleMcpBaseUrl(config)
     })
@@ -233,7 +237,9 @@ async function buildSetupCacheKey(config: RuntimeConfig): Promise<string> {
       buildOpenClawLlmPatch({
         modelId: config.llmModel,
         ollamaBaseUrl: config.ollamaBaseUrl,
+        agentId: config.openClawAgent,
         codeModeEnabled: config.openClawCodeMode,
+        fastModeEnabled: config.openClawFastMode,
         burbleChannelBaseUrl: buildLocalBurbleChannelBaseUrl(config),
         burbleMcpBaseUrl: buildLocalBurbleMcpBaseUrl(config)
       })
@@ -255,7 +261,8 @@ async function buildSetupCacheKey(config: RuntimeConfig): Promise<string> {
         generatedLlmPatchHash,
         validateOnStart: config.openClawValidateOnStart,
         llmModel: config.llmModel,
-        ollamaBaseUrl: config.ollamaBaseUrl
+        ollamaBaseUrl: config.ollamaBaseUrl,
+        fastMode: config.openClawFastMode
       })
     )
     .digest("hex");

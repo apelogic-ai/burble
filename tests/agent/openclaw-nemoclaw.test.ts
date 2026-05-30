@@ -136,6 +136,7 @@ describe("createOpenClawNemoClawAgentRunner", () => {
 
     const body = JSON.parse(String(requests[0].init.body));
     expect(body).toMatchObject({
+      principal,
       executionMode: "openclaw-native",
       input: {
         text: "summarize my GitHub work",

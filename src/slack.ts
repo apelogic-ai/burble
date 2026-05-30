@@ -249,13 +249,20 @@ export function createSlackRuntime(
   const agentExecTasks = new Map<string, AgentExecTask>();
 
   const resolveAgentExecutionMode = (): "openclaw-native" | undefined =>
-    config.agentRuntime === "openclaw-nemoclaw" ? "openclaw-native" : undefined;
+    config.agentRuntime === "burble-runtime" ? "openclaw-native" : undefined;
 
-  const buildHomeViewForUser = (input: {
+  const buildHomeViewForUser = async (input: {
     workspaceId: string;
     slackUserId: string;
-  }) =>
-    buildAppHomeView({
+  }) => {
+    const agentSettings = await buildSyncedAgentHomeSettings({
+      config,
+      store,
+      runtimeFactory,
+      workspaceId: input.workspaceId,
+      slackUserId: input.slackUserId
+    });
+    return buildAppHomeView({
       githubUrl: buildGitHubOAuthUrl(
         config,
         store.createOAuthState(input.slackUserId)
@@ -278,13 +285,9 @@ export function createSlackRuntime(
         jira: store.getConnectionForSlackUser("jira", input.slackUserId),
         slack: store.getConnectionForSlackUser("slack", input.slackUserId)
       },
-      agentSettings: buildAgentHomeSettings({
-        config,
-        store,
-        workspaceId: input.workspaceId,
-        slackUserId: input.slackUserId
-      })
+      agentSettings
     });
+  };
 
   const publishHomeViewForUser = async (input: {
     client: SlackViewsPublishClient;
@@ -293,7 +296,7 @@ export function createSlackRuntime(
   }) => {
     await input.client.views.publish({
       user_id: input.slackUserId,
-      view: buildHomeViewForUser(input)
+      view: await buildHomeViewForUser(input)
     });
   };
 
@@ -440,7 +443,7 @@ export function createSlackRuntime(
       config,
       store,
       principal,
-      engine: config.openClawNemoClawEngine
+      engine: config.agentRuntimeEngine
     }).policyHash;
     applyAgentConfigModalValues({
       store,
@@ -451,7 +454,7 @@ export function createSlackRuntime(
       config,
       store,
       principal,
-      engine: config.openClawNemoClawEngine
+      engine: config.agentRuntimeEngine
     }).policyHash;
 
     await ack({
@@ -609,6 +612,7 @@ export function createSlackRuntime(
             slack: slackTools
           },
           agentMode: config.agentMode,
+          agentFastTrack: config.agentFastTrack,
           ...(resolveAgentExecutionMode()
             ? { agentExecutionMode: resolveAgentExecutionMode() }
             : {}),
@@ -778,6 +782,7 @@ export function createSlackRuntime(
             slack: slackTools
           },
           agentMode: config.agentMode,
+          agentFastTrack: config.agentFastTrack,
           ...(resolveAgentExecutionMode()
             ? { agentExecutionMode: resolveAgentExecutionMode() }
             : {}),
@@ -1030,7 +1035,7 @@ export function createSlackRuntime(
           config,
           store,
           principal,
-          engine: config.openClawNemoClawEngine
+          engine: config.agentRuntimeEngine
         }).policyHash;
         const response = applyAgentUserConfigSet({
           config,
@@ -1044,7 +1049,7 @@ export function createSlackRuntime(
           config,
           store,
           principal,
-          engine: config.openClawNemoClawEngine
+          engine: config.agentRuntimeEngine
         }).policyHash;
         const policyChanged = previousPolicyHash !== nextPolicyHash;
         await ack(
@@ -1397,7 +1402,7 @@ export async function getOrStartAgentStatusRuntime(input: {
   workspaceId: string;
   slackUserId: string;
 }): Promise<AgentRuntimeRecord | null> {
-  if (input.config.agentRuntime !== "openclaw-nemoclaw") {
+  if (input.config.agentRuntime !== "burble-runtime") {
     return null;
   }
 
@@ -1409,7 +1414,7 @@ export async function getOrStartAgentStatusRuntime(input: {
 
   return input.store.getAgentRuntimeForPrincipal({
     ...principal,
-    engine: input.config.openClawNemoClawEngine
+    engine: input.config.agentRuntimeEngine
   });
 }
 
@@ -1481,7 +1486,7 @@ function createOpenClawRuntimeFactory(
   store: TokenStore,
   runtimeJwtIssuer?: RuntimeJwtIssuer
 ): RuntimeFactory | undefined {
-  if (config.agentRuntime !== "openclaw-nemoclaw") {
+  if (config.agentRuntime !== "burble-runtime") {
     return undefined;
   }
 
@@ -1494,7 +1499,7 @@ function createOpenClawRuntimeFactory(
 
     return createDockerRuntimeFactory({
       store,
-      engine: config.openClawNemoClawEngine,
+      engine: config.agentRuntimeEngine,
       image: config.agentRuntimeImage,
       dataRoot: config.agentRuntimeDataRoot,
       dockerNetwork: config.agentRuntimeDockerNetwork,
@@ -1512,7 +1517,7 @@ function createOpenClawRuntimeFactory(
           config,
           store,
           principal,
-          engine: config.openClawNemoClawEngine
+          engine: config.agentRuntimeEngine
         })
     });
   }
@@ -1523,7 +1528,7 @@ function createOpenClawRuntimeFactory(
 
   return createStaticRuntimeFactory({
     store,
-    engine: config.openClawNemoClawEngine,
+    engine: config.agentRuntimeEngine,
     endpointUrl: config.openClawNemoClawUrl,
     authToken: config.internalApiToken ?? "",
     dataRoot: config.agentRuntimeDataRoot,
@@ -1532,7 +1537,7 @@ function createOpenClawRuntimeFactory(
         config,
         store,
         principal,
-        engine: config.openClawNemoClawEngine
+        engine: config.agentRuntimeEngine
       })
   });
 }
@@ -1726,6 +1731,7 @@ type AgentHomeSettingsView = {
   runtime: {
     id: string | null;
     status: string;
+    factory: string;
     engine: string;
     endpointUrl: string | null;
     createdAt: string | null;
@@ -1860,12 +1866,12 @@ export function buildAgentHomeSettings(input: {
     config: input.config,
     store: input.store,
     principal,
-    engine: input.config.openClawNemoClawEngine
+    engine: input.config.agentRuntimeEngine
   });
   const runtime = input.store.getAgentRuntimeForPrincipal({
     workspaceId: input.workspaceId,
     slackUserId: input.slackUserId,
-    engine: input.config.openClawNemoClawEngine
+    engine: input.config.agentRuntimeEngine
   });
 
   return {
@@ -1878,6 +1884,7 @@ export function buildAgentHomeSettings(input: {
       ? {
           id: runtime.id,
           status: runtime.status,
+          factory: input.config.agentRuntimeFactory,
           engine: runtime.engine,
           endpointUrl: runtime.endpointUrl,
           createdAt: runtime.createdAt,
@@ -1886,12 +1893,32 @@ export function buildAgentHomeSettings(input: {
       : {
           id: null,
           status: "not provisioned",
-          engine: input.config.openClawNemoClawEngine,
+          factory: input.config.agentRuntimeFactory,
+          engine: input.config.agentRuntimeEngine,
           endpointUrl: null,
           createdAt: null,
           lastUsedAt: null
-        }
+      }
   };
+}
+
+async function buildSyncedAgentHomeSettings(input: {
+  config: Config;
+  store: TokenStore;
+  runtimeFactory?: RuntimeFactory;
+  workspaceId: string;
+  slackUserId: string;
+}): Promise<AgentHomeSettingsView> {
+  const runtime = input.store.getAgentRuntimeForPrincipal({
+    workspaceId: input.workspaceId,
+    slackUserId: input.slackUserId,
+    engine: input.config.agentRuntimeEngine
+  });
+  if (runtime && input.runtimeFactory?.syncRuntimeStatus) {
+    await input.runtimeFactory.syncRuntimeStatus(runtime.id);
+  }
+
+  return buildAgentHomeSettings(input);
 }
 
 function buildAgentRuntimeHomeBlocks(settings?: AgentHomeSettingsView) {
@@ -1916,7 +1943,10 @@ function buildAgentRuntimeHomeBlocks(settings?: AgentHomeSettingsView) {
 
 function buildAgentRuntimeActionElements(settings: AgentHomeSettingsView) {
   const elements = [];
-  if (isRuntimeStartable(settings.runtime.status)) {
+  if (settings.runtime.factory !== "docker") {
+    // Static runtimes are shared externally managed services, so Burble cannot
+    // safely expose per-user container lifecycle actions for them.
+  } else if (isRuntimeStartable(settings.runtime.status)) {
     elements.push({
       type: "button",
       text: {
@@ -2005,6 +2035,8 @@ function formatRuntimeHomeSummary(settings: AgentHomeSettingsView): string {
   const lastUsed = settings.runtime.lastUsedAt ?? "never";
   return [
     `Status: \`${settings.runtime.status}\``,
+    `Factory: \`${settings.runtime.factory}\``,
+    `Engine: \`${settings.runtime.engine}\``,
     `Runtime: ${runtimeId}`,
     `Last used: ${lastUsed}`
   ].join("\n");
@@ -2075,6 +2107,7 @@ export function buildAgentRuntimeManageModalView(input: {
     `*Runtime ID:* ${
       settings.runtime.id ? `\`${settings.runtime.id}\`` : "`not provisioned yet`"
     }`,
+    `*Factory:* \`${settings.runtime.factory}\``,
     `*Engine:* \`${settings.runtime.engine}\``,
     `*Endpoint:* ${
       settings.runtime.endpointUrl ? `\`${settings.runtime.endpointUrl}\`` : "`none`"
@@ -2153,7 +2186,7 @@ export async function applyAgentRuntimeControl(input: {
   runtimeId: string | null;
   status: AgentRuntimeStatus | "not provisioned";
 }> {
-  if (input.config.agentRuntime !== "openclaw-nemoclaw" || !input.runtimeFactory) {
+  if (input.config.agentRuntime !== "burble-runtime" || !input.runtimeFactory) {
     return {
       action: input.action,
       runtimeId: null,
@@ -2168,7 +2201,7 @@ export async function applyAgentRuntimeControl(input: {
   const existing = input.store.getAgentRuntimeForPrincipal({
     workspaceId: input.workspaceId,
     slackUserId: input.slackUserId,
-    engine: input.config.openClawNemoClawEngine
+    engine: input.config.agentRuntimeEngine
   });
 
   if (input.action === "pause") {
@@ -3094,7 +3127,7 @@ export function buildAgentUserConfigGetResponse(input: {
     config: input.config,
     store: input.store,
     principal,
-    engine: input.config.openClawNemoClawEngine
+    engine: input.config.agentRuntimeEngine
   });
   const key = input.key ? normalizeAgentUserConfigKey(input.key) : null;
 
@@ -3180,7 +3213,7 @@ export function applyAgentUserConfigSet(input: {
           config: input.config,
           store: input.store,
           principal,
-          engine: input.config.openClawNemoClawEngine
+          engine: input.config.agentRuntimeEngine
         }),
         key
       })
@@ -3199,14 +3232,14 @@ export async function restartAgentRuntimeIfConfigChanged(input: {
   if (input.previousPolicyHash === input.nextPolicyHash) {
     return null;
   }
-  if (input.config.agentRuntime !== "openclaw-nemoclaw" || !input.runtimeFactory) {
+  if (input.config.agentRuntime !== "burble-runtime" || !input.runtimeFactory) {
     return null;
   }
 
   const runtime = input.store.getAgentRuntimeForPrincipal({
     workspaceId: input.principal.workspaceId,
     slackUserId: input.principal.slackUserId,
-    engine: input.config.openClawNemoClawEngine
+    engine: input.config.agentRuntimeEngine
   });
   if (
     !runtime ||
@@ -3314,7 +3347,7 @@ function applyAgentUserConfigSpecialSet(input: {
     config: input.config,
     store: input.store,
     principal: input.principal,
-    engine: input.config.openClawNemoClawEngine
+    engine: input.config.agentRuntimeEngine
   });
   return {
     response_type: "ephemeral",
@@ -3543,7 +3576,7 @@ export function buildAgentStatusResponse(input: {
             `• Agent mode: \`${input.config.agentMode}\``,
             `• Runtime: \`${input.config.agentRuntime}\``,
             `• Runtime factory: \`${input.config.agentRuntimeFactory}\``,
-            `• Runtime engine: \`${input.config.openClawNemoClawEngine}\``,
+            `• Runtime engine: \`${input.config.agentRuntimeEngine}\``,
             `• Model: \`${input.config.aiModel}\``
           ].join("\n")
         }

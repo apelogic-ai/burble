@@ -1,0 +1,34 @@
+name: burble-platform
+label: Burble
+kind: platform
+version: 0.1.0
+description: >
+  Burble gateway adapter for Hermes Agent. Receives route-scoped Burble turns
+  and delivers Hermes replies or scheduled job output through Burble routes.
+author: Apelogic AI
+requires_env:
+  - name: BURBLE_TOOL_GATEWAY_URL
+    description: "Burble internal tool gateway URL"
+    prompt: "Burble tool gateway URL"
+    password: false
+  - name: BURBLE_INTERNAL_TOKEN
+    description: "Runtime-scoped Burble internal token"
+    prompt: "Burble internal token"
+    password: true
+  - name: BURBLE_RUNTIME_ID
+    description: "Burble runtime identifier"
+    prompt: "Runtime ID"
+    password: false
+optional_env:
+  - name: BURBLE_HERMES_PLATFORM_HOST
+    description: "Host for the local Burble inbound HTTP listener"
+    prompt: "Burble platform host"
+    password: false
+  - name: BURBLE_HERMES_PLATFORM_PORT
+    description: "Port for the local Burble inbound HTTP listener"
+    prompt: "Burble platform port"
+    password: false
+  - name: BURBLE_HERMES_RUNTIME_CALLBACK_URL
+    description: "Local callback URL for interactive /runs responses"
+    prompt: "Burble runtime callback URL"
+    password: false

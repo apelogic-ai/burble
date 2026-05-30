@@ -40,7 +40,7 @@ export function createConfiguredAgentRunner(
         ...(deps.logInfo ? { logInfo: deps.logInfo } : {})
       });
 
-    case "openclaw-nemoclaw":
+    case "burble-runtime":
       if (!deps.openClawNemoClawUrl && !deps.runtimeFactory) {
         throw new Error("OPENCLAW_NEMOCLAW_URL is required");
       }

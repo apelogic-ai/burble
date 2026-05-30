@@ -940,7 +940,10 @@ export async function handleToolGatewayRequest(
         toolName,
         await googleTools.createDriveTextFile.execute({
           connection,
-          input: body.input
+          input: {
+            ...body.input,
+            text: body.input.text ?? ""
+          }
         })
       );
     }
@@ -1604,18 +1607,19 @@ function isGetGoogleDriveFileInput(input: unknown): input is {
 
 function isCreateGoogleDriveTextFileInput(input: unknown): input is {
   name: string;
-  text: string;
+  text?: string;
   mimeType?: string;
 } {
   if (!isOptionalObject(input)) {
     return false;
   }
+  const text = input.text;
   return (
     typeof input.name === "string" &&
     input.name.trim().length > 0 &&
     input.name.length <= 200 &&
-    typeof input.text === "string" &&
-    input.text.length <= 200_000 &&
+    (text === undefined ||
+      (typeof text === "string" && text.length <= 200_000)) &&
     optionalString(input.mimeType)
   );
 }

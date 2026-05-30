@@ -8,7 +8,9 @@ export type ParsedLlmModel = {
 type OpenClawPatchInput = {
   modelId: string;
   ollamaBaseUrl: string;
+  agentId?: string;
   codeModeEnabled?: boolean;
+  fastModeEnabled?: boolean;
   burbleChannelBaseUrl?: string;
   burbleMcpBaseUrl?: string | null;
   burbleChannelPluginPath?: string;
@@ -37,12 +39,22 @@ export function parseLlmModelId(modelId: string): ParsedLlmModel {
 export function buildOpenClawLlmPatch(input: OpenClawPatchInput): string {
   const parsed = parseLlmModelId(input.modelId);
   const modelRef = `${parsed.provider}/${parsed.model}`;
+  const agentId = input.agentId ?? "main";
   const providerConfig = buildProviderConfig(
     parsed,
     input.ollamaBaseUrl,
     input.burbleChannelBaseUrl ?? "http://127.0.0.1:8080",
     input.burbleChannelPluginPath ?? BURBLE_OPENCLAW_CHANNEL_PLUGIN_PATH
   );
+  if (input.fastModeEnabled) {
+    const models = readObject(providerConfig.models);
+    providerConfig.models = {
+      ...models,
+      pricing: {
+        enabled: false
+      }
+    };
+  }
   const systemPromptOverride = [
     "You are Burble's OpenClaw runtime.",
     "Follow the user prompt exactly.",
@@ -66,8 +78,26 @@ export function buildOpenClawLlmPatch(input: OpenClawPatchInput): string {
         skills: [],
         contextInjection: "never",
         skipBootstrap: true,
-        systemPromptOverride
-      }
+        systemPromptOverride,
+        ...(input.fastModeEnabled
+          ? {
+              thinkingDefault: "minimal",
+              reasoningDefault: "off"
+            }
+          : {})
+      },
+      ...(input.fastModeEnabled
+        ? {
+            list: [
+              {
+                id: agentId,
+                fastModeDefault: true,
+                thinkingDefault: "minimal",
+                reasoningDefault: "off"
+              }
+            ]
+          }
+        : {})
     },
     skills: {
       allowBundled: []
@@ -93,6 +123,23 @@ export function buildOpenClawLlmPatch(input: OpenClawPatchInput): string {
       file: "/data/openclaw/logs/openclaw.log",
       redactSensitive: "tools"
     },
+    ...(input.fastModeEnabled
+      ? {
+          env: {
+            shellEnv: {
+              enabled: false,
+              timeoutMs: 100
+            }
+          },
+          memory: {
+            qmd: {
+              update: {
+                startup: "off"
+              }
+            }
+          }
+        }
+      : {}),
     ...providerConfig,
     ...(input.burbleMcpBaseUrl
       ? {
@@ -109,6 +156,12 @@ export function buildOpenClawLlmPatch(input: OpenClawPatchInput): string {
   };
 
   return `${JSON.stringify(patch, null, 2)}\n`;
+}
+
+function readObject(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
 }
 
 function buildProviderConfig(

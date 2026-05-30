@@ -11,6 +11,7 @@ import {
   type RuntimeHandle,
   type RuntimeManifestBuilder
 } from "./runtime-factory";
+import type { RuntimeManifest } from "./runtime-manifest";
 
 export type RuntimeCommandResult = {
   code: number;
@@ -37,6 +38,10 @@ export type ContainerRuntimeSpec = {
 const approvedForwardedEnv = new Set([
   "AI_MODEL",
   "OPENAI_API_KEY",
+  "OPENAI_BASE_URL",
+  "OPENROUTER_API_KEY",
+  "GOOGLE_API_KEY",
+  "GEMINI_API_KEY",
   "ANTHROPIC_API_KEY",
   "OLLAMA_API_KEY",
   "OLLAMA_BASE_URL",
@@ -49,10 +54,45 @@ const approvedForwardedEnv = new Set([
   "OPENCLAW_DEBUG_MODEL_PAYLOAD",
   "OPENCLAW_DEBUG_SSE",
   "OPENCLAW_DEBUG_CODE_MODE",
+  "OPENCLAW_FAST_MODE",
   "OPENCLAW_RAW_STREAM_DEBUG",
   "OPENCLAW_GATEWAY_PORT",
   "OPENCLAW_GATEWAY_BIND",
-  "OPENCLAW_GATEWAY_TOKEN"
+  "OPENCLAW_GATEWAY_TOKEN",
+  "HERMES_GATEWAY_COMMAND",
+  "HERMES_INFERENCE_MODEL",
+  "HERMES_MODEL",
+  "HERMES_INFERENCE_PROVIDER",
+  "HERMES_RUN_TIMEOUT_SECONDS",
+  "HERMES_PROGRESS_INTERVAL_SECONDS",
+  "HERMES_WEB_BACKEND",
+  "HERMES_WEB_SEARCH_BACKEND",
+  "HERMES_WEB_EXTRACT_BACKEND",
+  "WEB_TOOLS_DEBUG",
+  "EXA_API_KEY",
+  "PARALLEL_API_KEY",
+  "PARALLEL_SEARCH_MODE",
+  "TAVILY_API_KEY",
+  "FIRECRAWL_API_KEY",
+  "FIRECRAWL_API_URL",
+  "FIRECRAWL_GATEWAY_URL",
+  "SEARXNG_URL",
+  "BRAVE_SEARCH_API_KEY",
+  "AGENT_BROWSER_ENGINE",
+  "AGENT_BROWSER_ARGS",
+  "AGENT_BROWSER_EXECUTABLE_PATH",
+  "AGENT_BROWSER_IDLE_TIMEOUT_MS",
+  "BROWSER_INACTIVITY_TIMEOUT",
+  "BROWSER_CDP_URL",
+  "BROWSER_USE_API_KEY",
+  "BROWSERBASE_API_KEY",
+  "BROWSERBASE_PROJECT_ID",
+  "BROWSERBASE_PROXIES",
+  "BROWSERBASE_ADVANCED_STEALTH",
+  "BROWSERBASE_KEEP_ALIVE",
+  "BROWSERBASE_SESSION_TIMEOUT",
+  "HERMES_BROWSER_ENGINE",
+  "HERMES_BROWSER_CLOUD_PROVIDER"
 ]);
 
 export function createDockerRuntimeFactory(input: {
@@ -145,6 +185,7 @@ export function createDockerRuntimeFactory(input: {
         runtimeId: runtime.id,
         runtimeJwt,
         runtimeDataId,
+        manifest,
         openClawConfigPatchPath: input.openClawConfigPatchPath ?? null,
         env: input.env ?? {}
       });
@@ -195,6 +236,80 @@ export function createDockerRuntimeFactory(input: {
       }
 
       return toRuntimeHandle(runtime, spec, token, manifest);
+    },
+
+    async syncRuntimeStatus(runtimeId) {
+      const runtime = input.store.getAgentRuntime(runtimeId);
+      if (!runtime) {
+        return null;
+      }
+
+      const runtimeDataId = buildRuntimeDataId(
+        {
+          workspaceId: runtime.workspaceId,
+          slackUserId: runtime.slackUserId
+        },
+        runtime.engine
+      );
+      const state = await inspectContainerState(
+        buildContainerName(runtimeDataId),
+        execute
+      );
+      if (!state.ok) {
+        input.store.updateAgentRuntimeStatus(runtime.id, {
+          status: "stopped",
+          failureReason: state.failureReason
+        });
+        return input.store.getAgentRuntime(runtime.id);
+      }
+
+      if (state.restarting) {
+        input.store.updateAgentRuntimeStatus(runtime.id, {
+          status: "failed",
+          failureReason: "Runtime container is restarting"
+        });
+        return input.store.getAgentRuntime(runtime.id);
+      }
+
+      if (!state.running) {
+        input.store.updateAgentRuntimeStatus(runtime.id, {
+          status: state.exitCode && state.exitCode !== 0 ? "failed" : "stopped",
+          failureReason:
+            state.exitCode && state.exitCode !== 0
+              ? `Runtime container exited with code ${state.exitCode}`
+              : null
+        });
+        return input.store.getAgentRuntime(runtime.id);
+      }
+
+      try {
+        const response = await requestFetch(`${runtime.endpointUrl}/healthz`);
+        if (!response.ok) {
+          input.store.updateAgentRuntimeStatus(runtime.id, {
+            status: "failed",
+            failureReason: `Runtime health check failed: HTTP ${response.status}`
+          });
+          return input.store.getAgentRuntime(runtime.id);
+        }
+      } catch (error) {
+        input.store.updateAgentRuntimeStatus(runtime.id, {
+          status: "failed",
+          failureReason:
+            error instanceof Error
+              ? `Runtime health check failed: ${error.message}`
+              : "Runtime health check failed"
+        });
+        return input.store.getAgentRuntime(runtime.id);
+      }
+
+      if (
+        runtime.status === "failed" ||
+        runtime.status === "stopped" ||
+        runtime.status === "provisioning"
+      ) {
+        input.store.updateAgentRuntimeStatus(runtime.id, { status: "ready" });
+      }
+      return input.store.getAgentRuntime(runtime.id);
     },
 
     async readRuntimeConfig(runtimeId) {
@@ -256,6 +371,55 @@ export function createDockerRuntimeFactory(input: {
   };
 }
 
+type DockerContainerState =
+  | {
+      ok: true;
+      running: boolean;
+      restarting: boolean;
+      exitCode: number | null;
+    }
+  | {
+      ok: false;
+      failureReason: string;
+    };
+
+async function inspectContainerState(
+  containerName: string,
+  execute: RuntimeCommandExecutor
+): Promise<DockerContainerState> {
+  const result = await execute("docker", [
+    "inspect",
+    "--format",
+    "{{json .State}}",
+    containerName
+  ]);
+  if (result.code !== 0) {
+    return {
+      ok: false,
+      failureReason: "Runtime container is not present"
+    };
+  }
+
+  try {
+    const state = JSON.parse(result.stdout.trim()) as {
+      Running?: unknown;
+      Restarting?: unknown;
+      ExitCode?: unknown;
+    };
+    return {
+      ok: true,
+      running: state.Running === true,
+      restarting: state.Restarting === true,
+      exitCode: typeof state.ExitCode === "number" ? state.ExitCode : null
+    };
+  } catch {
+    return {
+      ok: false,
+      failureReason: "Could not inspect runtime container state"
+    };
+  }
+}
+
 export function toRuntimeContainerPath(input: {
   hostPath: string;
   runtimeRoot: string;
@@ -284,19 +448,38 @@ export function buildContainerRuntimeSpec(input: {
   runtimeId?: string;
   runtimeJwt?: string | null;
   runtimeDataId: string;
+  manifest?: RuntimeManifest | null;
   openClawConfigPatchPath?: string | null;
   env?: Record<string, string | undefined>;
 }): ContainerRuntimeSpec {
   const name = buildContainerName(input.runtimeDataId);
   const runtimeRoot = `${input.dataRoot}/${input.runtimeDataId}`;
+  const runtimeConfigPath = `/data/openclaw/config/${nativeAgentConfigFileName(
+    input.engine
+  )}`;
   const env: Record<string, string> = {
     BURBLE_TOOL_GATEWAY_URL: input.toolGatewayUrl,
     BURBLE_INTERNAL_TOKEN: input.runtimeToken,
-    OPENCLAW_NEMOCLAW_ENGINE: input.engine,
-    OPENCLAW_STATE_DIR: "/data/openclaw/state",
-    OPENCLAW_CONFIG_PATH: "/data/openclaw/config/openclaw.json",
-    OPENCLAW_WORKSPACE_DIR: "/data/openclaw/workspace"
+    AGENT_RUNTIME_ENGINE: input.engine,
+    AGENT_RUNTIME_STATE_DIR: "/data/openclaw/state",
+    AGENT_RUNTIME_CONFIG_PATH: runtimeConfigPath,
+    AGENT_RUNTIME_WORKSPACE_DIR: "/data/openclaw/workspace"
   };
+
+  if (input.engine !== "hermes") {
+    Object.assign(env, {
+      OPENCLAW_NEMOCLAW_ENGINE: input.engine,
+      OPENCLAW_STATE_DIR: "/data/openclaw/state",
+      OPENCLAW_CONFIG_PATH: runtimeConfigPath,
+      OPENCLAW_WORKSPACE_DIR: "/data/openclaw/workspace"
+    });
+  }
+
+  if (input.engine === "hermes") {
+    Object.assign(env, {
+      HERMES_HOME: "/data/openclaw/hermes"
+    });
+  }
 
   if (input.runtimeId) {
     env.BURBLE_RUNTIME_ID = input.runtimeId;
@@ -313,8 +496,19 @@ export function buildContainerRuntimeSpec(input: {
       env[key] = value;
     }
   }
+  if (input.manifest?.model) {
+    const modelId = `${input.manifest.model.provider}:${input.manifest.model.model}`;
+    env.AI_MODEL = modelId;
+    if (input.engine === "hermes") {
+      env.HERMES_INFERENCE_MODEL = modelId;
+      env.HERMES_INFERENCE_PROVIDER = input.manifest.model.provider;
+    }
+  }
 
-  if (input.openClawConfigPatchPath) {
+  const openClawConfigPatchHostPath =
+    input.engine !== "hermes" ? input.openClawConfigPatchPath : null;
+
+  if (openClawConfigPatchHostPath) {
     env.OPENCLAW_CONFIG_PATCH_PATH = "/etc/openclaw/patches/openai.json5";
   }
 
@@ -326,10 +520,10 @@ export function buildContainerRuntimeSpec(input: {
     env,
     volumes: [
       { source: runtimeRoot, target: "/data/openclaw" },
-      ...(input.openClawConfigPatchPath
+      ...(openClawConfigPatchHostPath
         ? [
             {
-              source: input.openClawConfigPatchPath,
+              source: openClawConfigPatchHostPath,
               target: "/etc/openclaw/patches",
               readonly: true
             }

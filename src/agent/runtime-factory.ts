@@ -32,6 +32,7 @@ export type RuntimeConfigRead = {
 
 export type RuntimeFactory = {
   getOrCreateRuntime(principal: PrincipalId): Promise<RuntimeHandle>;
+  syncRuntimeStatus?(runtimeId: string): Promise<AgentRuntimeRecord | null>;
   readRuntimeConfig?(runtimeId: string): Promise<RuntimeConfigRead>;
   stopRuntime(runtimeId: string): Promise<void>;
   reapIdleRuntimes(now: Date): Promise<void>;

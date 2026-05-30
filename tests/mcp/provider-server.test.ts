@@ -26,9 +26,11 @@ const config: Config = {
   databasePath: ":memory:",
   slackLogLevel: "info",
   agentMode: "deterministic",
+  agentFastTrack: false,
   agentRuntime: "ai-sdk",
   agentRuntimeFactory: "static",
   openClawNemoClawUrl: null,
+  agentRuntimeEngine: "openclaw",
   openClawNemoClawEngine: "openclaw",
   agentRuntimeDataRoot: "/data/runtimes",
   agentRuntimeDockerNetwork: "compose_default",
@@ -837,6 +839,74 @@ describe("handleProviderMcpRequest", () => {
         name: "Test",
         mimeType: "text/plain",
         webViewLink: "https://drive.google.com/file-1"
+      }
+    });
+    store.close();
+  });
+
+  test("defaults Google Drive create text file content to empty text", async () => {
+    const issuer = createRuntimeJwtIssuer({ issuer: config.runtimeJwtIssuer });
+    const store = createTokenStore(":memory:");
+    const runtime = store.getOrCreateAgentRuntime({
+      workspaceId: "T123",
+      slackUserId: "U123",
+      engine: "openclaw",
+      endpointUrl: "http://runtime-u123:8080",
+      authTokenHash: "hash-u123",
+      statePath: "/data/runtimes/u123/state",
+      configPath: "/data/runtimes/u123/config/openclaw.json",
+      workspacePath: "/data/runtimes/u123/workspace"
+    });
+    store.upsertProviderConnection({
+      provider: "google",
+      email: "person@example.com",
+      slackUserId: "U123",
+      providerLogin: "google-user@example.com",
+      accessToken: "google-token",
+      refreshToken: null,
+      accessTokenExpiresAt: null
+    });
+    const token = issuer.issueRuntimeJwt({
+      audience: "http://agentgateway:3000/mcp",
+      runtimeId: runtime.id,
+      workspaceId: "T123",
+      slackUserId: "U123"
+    });
+
+    const response = await handleProviderMcpRequest(
+      config,
+      store,
+      issuer,
+      mcpRequest(
+        {
+          method: "tools/call",
+          params: {
+            name: "google_create_drive_text_file",
+            arguments: { name: "Blank" }
+          }
+        },
+        token
+      ),
+      {
+        createGoogleDriveTextFile: async (accessToken, input) => {
+          expect(accessToken).toBe("google-token");
+          expect(input).toEqual({ name: "Blank", text: "" });
+          return {
+            id: "file-2",
+            name: "Blank"
+          };
+        }
+      }
+    );
+    const body = readMcpBody(await response.text());
+    const toolResult = JSON.parse(body.result.content[0].text);
+
+    expect(response.status).toBe(200);
+    expect(toolResult).toEqual({
+      classification: "user_private",
+      content: {
+        id: "file-2",
+        name: "Blank"
       }
     });
     store.close();

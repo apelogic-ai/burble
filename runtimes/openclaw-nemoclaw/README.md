@@ -28,18 +28,21 @@ rules through TypeScript.
 
 Runtime engines:
 
-- `OPENCLAW_NEMOCLAW_ENGINE=deterministic` uses the deployable deterministic
+- `AGENT_RUNTIME_ENGINE=deterministic` uses the deployable deterministic
   bridge over the Burble tool gateway.
-- `OPENCLAW_NEMOCLAW_ENGINE=openclaw` invokes an `openclaw` CLI binary from
+- `AGENT_RUNTIME_ENGINE=openclaw` invokes an `openclaw` CLI binary from
   inside the runtime container with sanitized Burble tool context.
-- `OPENCLAW_NEMOCLAW_ENGINE=openclaw-gateway` invokes `openclaw agent` without
+- `AGENT_RUNTIME_ENGINE=openclaw-gateway` invokes `openclaw agent` without
   `--local` and starts a private `openclaw gateway run` process at runtime boot,
   preserving the same Burble runtime API while letting OpenClaw use its
   Gateway-backed execution path.
-- `OPENCLAW_NEMOCLAW_ENGINE=burble-direct` uses Burble's prompt and MCP tool
+- `AGENT_RUNTIME_ENGINE=burble-direct` uses Burble's prompt and MCP tool
   loop, but sends planning turns directly to the selected model provider. This
   avoids OpenClaw agent bootstrap and native tools in latency-sensitive Slack
   flows.
+
+`OPENCLAW_NEMOCLAW_ENGINE` remains a legacy alias for this bundled runtime, but
+new deployment config should prefer the vendor-neutral `AGENT_RUNTIME_ENGINE`.
 
 Slack `/agent exec <task>` can opt a single request into OpenClaw-native
 execution even when the default engine is `burble-direct`. The same user runtime
@@ -56,7 +59,7 @@ Slack or any future messaging surface.
 For routing diagrams of the `openclaw-gateway` and `burble-direct` paths, see
 [OpenClaw Runtime Flows](../../docs/openclaw-runtime-flows.md).
 
-When `OPENCLAW_NEMOCLAW_ENGINE=openclaw` or `openclaw-gateway`, runtime startup
+When `AGENT_RUNTIME_ENGINE=openclaw` or `openclaw-gateway`, runtime startup
 runs:
 
 ```bash

@@ -62,6 +62,7 @@ const systemPrompt = [
   "Use provider tools for GitHub, Jira, Slack, and Google facts. Do not invent provider data.",
   "Use Google tools for Drive, Calendar, and Gmail facts when Google is connected.",
   "Never ask for, print, or expose access tokens.",
+  "When a provider tool returns an error object with a message, explain that message in normal Slack text; do not print raw JSON.",
   "When a tool says GitHub is not connected, tell the user to run `@Burble connect github`.",
   "When a tool says Jira is not connected, tell the user Jira needs to be connected.",
   "When a tool says Slack is not connected, tell the user to run `/auth slack`.",
@@ -918,10 +919,14 @@ async function runAiSdkAgent(
       });
       tools.google_create_drive_text_file = tool({
         description:
-          "Create a new app-owned text file in Google Drive using the authenticated Slack user's connected Google account.",
+          "Create a new app-owned text file in Google Drive using the authenticated Slack user's connected Google account. If no text is supplied, create an empty text file.",
         inputSchema: z.object({
           name: z.string().min(1).max(200).describe("Drive file name"),
-          text: z.string().max(200_000).describe("Text body to write into the file"),
+          text: z
+            .string()
+            .max(200_000)
+            .optional()
+            .describe("Optional text body to write into the file"),
           mimeType: z.string().optional().describe("Optional MIME type")
         }),
         execute: async ({ name, text, mimeType }) =>
@@ -936,7 +941,7 @@ async function runAiSdkAgent(
                 connection,
                 input: {
                   name,
-                  text,
+                  text: text ?? "",
                   ...(mimeType ? { mimeType } : {})
                 }
               })
@@ -945,7 +950,7 @@ async function runAiSdkAgent(
       });
       tools.google_get_drive_file = tool({
         description:
-          "Get Google Drive file metadata and optionally text content for a file visible to this app.",
+          "Get Google Drive file metadata and optionally text content for an app-accessible file. With the current drive.file permission, app-accessible means files Burble created or files explicitly opened for this app.",
         inputSchema: z.object({
           fileId: z.string().min(1),
           includeContent: z.boolean().optional()
@@ -967,7 +972,7 @@ async function runAiSdkAgent(
       });
       tools.google_update_drive_text_file = tool({
         description:
-          "Replace the text contents of an app-accessible Google Drive text file. Use only when clearly requested.",
+          "Replace the text contents of an app-accessible Google Drive text file. With the current drive.file permission, app-accessible means files Burble created or files explicitly opened for this app. Use only when clearly requested.",
         inputSchema: z.object({
           fileId: z.string().min(1),
           text: z.string().max(200_000),
@@ -990,7 +995,7 @@ async function runAiSdkAgent(
       });
       tools.google_append_to_drive_text_file = tool({
         description:
-          "Append text to an app-accessible Google Drive text file. Use only when clearly requested.",
+          "Append text to an app-accessible Google Drive text file. With the current drive.file permission, app-accessible means files Burble created or files explicitly opened for this app; reconnecting Google does not grant access to arbitrary existing Drive files. Use only when clearly requested.",
         inputSchema: z.object({
           fileId: z.string().min(1),
           text: z.string().max(200_000),

@@ -28,10 +28,35 @@ describe("buildContainerRuntimeSpec", () => {
       runtimeId: "rt_u123",
       runtimeJwt: "runtime-jwt",
       runtimeDataId,
+      manifest: {
+        version: "1",
+        principal,
+        runtime: {
+          engine: "openclaw",
+          factory: "docker",
+          ttlMs: 86400000,
+          reaperEnabled: true
+        },
+        model: { provider: "openai", model: "gpt-5.4" },
+        tools: [],
+        skills: [],
+        memory: {
+          userMemoryEnabled: false,
+          workspaceMemoryEnabled: false,
+          jobMemoryEnabled: true
+        },
+        memoryContext: [],
+        disabledTools: [],
+        policyHash: "policy"
+      },
       openClawConfigPatchPath: "/opt/burble/openclaw-patches",
       env: {
         AI_MODEL: "ollama:qwen3-coder:30b-cloud",
         OPENAI_API_KEY: "openai-key",
+        OPENAI_BASE_URL: "https://openai-compatible.example/v1",
+        OPENROUTER_API_KEY: "openrouter-key",
+        GOOGLE_API_KEY: "google-key",
+        GEMINI_API_KEY: "gemini-key",
         ANTHROPIC_API_KEY: "anthropic-key",
         OLLAMA_API_KEY: "ollama-key",
         OLLAMA_BASE_URL: "https://ollama.com",
@@ -44,10 +69,43 @@ describe("buildContainerRuntimeSpec", () => {
         OPENCLAW_DEBUG_MODEL_PAYLOAD: "summary",
         OPENCLAW_DEBUG_SSE: "events",
         OPENCLAW_DEBUG_CODE_MODE: "true",
+        OPENCLAW_FAST_MODE: "true",
         OPENCLAW_RAW_STREAM_DEBUG: "true",
         OPENCLAW_GATEWAY_PORT: "18790",
         OPENCLAW_GATEWAY_BIND: "loopback",
         OPENCLAW_GATEWAY_TOKEN: "gateway-token",
+        HERMES_INFERENCE_MODEL: "openai:gpt-5.4",
+        HERMES_INFERENCE_PROVIDER: "openai-api",
+        HERMES_RUN_TIMEOUT_SECONDS: "240",
+        HERMES_PROGRESS_INTERVAL_SECONDS: "8",
+        HERMES_WEB_BACKEND: "ddgs",
+        HERMES_WEB_SEARCH_BACKEND: "ddgs",
+        HERMES_WEB_EXTRACT_BACKEND: "firecrawl",
+        WEB_TOOLS_DEBUG: "true",
+        EXA_API_KEY: "exa-key",
+        PARALLEL_API_KEY: "parallel-key",
+        PARALLEL_SEARCH_MODE: "web",
+        TAVILY_API_KEY: "tavily-key",
+        FIRECRAWL_API_KEY: "firecrawl-key",
+        FIRECRAWL_API_URL: "https://firecrawl.example",
+        FIRECRAWL_GATEWAY_URL: "https://firecrawl-gateway.example",
+        SEARXNG_URL: "https://searxng.example",
+        BRAVE_SEARCH_API_KEY: "brave-key",
+        AGENT_BROWSER_ENGINE: "chrome",
+        AGENT_BROWSER_ARGS: "--no-sandbox",
+        AGENT_BROWSER_EXECUTABLE_PATH: "/usr/bin/chromium",
+        AGENT_BROWSER_IDLE_TIMEOUT_MS: "300000",
+        BROWSER_INACTIVITY_TIMEOUT: "300",
+        BROWSER_CDP_URL: "ws://browser.example/devtools/browser/1",
+        BROWSER_USE_API_KEY: "browser-use-key",
+        BROWSERBASE_API_KEY: "browserbase-key",
+        BROWSERBASE_PROJECT_ID: "browserbase-project",
+        BROWSERBASE_PROXIES: "false",
+        BROWSERBASE_ADVANCED_STEALTH: "true",
+        BROWSERBASE_KEEP_ALIVE: "true",
+        BROWSERBASE_SESSION_TIMEOUT: "600",
+        HERMES_BROWSER_ENGINE: "chrome",
+        HERMES_BROWSER_CLOUD_PROVIDER: "browser-use",
         GITHUB_TOKEN: "github-secret",
         SLACK_BOT_TOKEN: "slack-secret"
       }
@@ -61,9 +119,18 @@ describe("buildContainerRuntimeSpec", () => {
       BURBLE_RUNTIME_ID: "rt_u123",
       BURBLE_MCP_GATEWAY_URL: "http://agentgateway:3000/mcp",
       BURBLE_RUNTIME_JWT: "runtime-jwt",
+      AGENT_RUNTIME_ENGINE: "openclaw",
+      AGENT_RUNTIME_STATE_DIR: "/data/openclaw/state",
+      AGENT_RUNTIME_CONFIG_PATH: "/data/openclaw/config/openclaw.json",
+      AGENT_RUNTIME_WORKSPACE_DIR: "/data/openclaw/workspace",
       OPENCLAW_NEMOCLAW_ENGINE: "openclaw",
-      AI_MODEL: "ollama:qwen3-coder:30b-cloud",
+      OPENCLAW_CONFIG_PATH: "/data/openclaw/config/openclaw.json",
+      AI_MODEL: "openai:gpt-5.4",
       OPENAI_API_KEY: "openai-key",
+      OPENAI_BASE_URL: "https://openai-compatible.example/v1",
+      OPENROUTER_API_KEY: "openrouter-key",
+      GOOGLE_API_KEY: "google-key",
+      GEMINI_API_KEY: "gemini-key",
       ANTHROPIC_API_KEY: "anthropic-key",
       OLLAMA_API_KEY: "ollama-key",
       OLLAMA_BASE_URL: "https://ollama.com",
@@ -76,16 +143,116 @@ describe("buildContainerRuntimeSpec", () => {
       OPENCLAW_DEBUG_MODEL_PAYLOAD: "summary",
       OPENCLAW_DEBUG_SSE: "events",
       OPENCLAW_DEBUG_CODE_MODE: "true",
+      OPENCLAW_FAST_MODE: "true",
       OPENCLAW_RAW_STREAM_DEBUG: "true",
       OPENCLAW_GATEWAY_PORT: "18790",
       OPENCLAW_GATEWAY_BIND: "loopback",
-      OPENCLAW_GATEWAY_TOKEN: "gateway-token"
+      OPENCLAW_GATEWAY_TOKEN: "gateway-token",
+      HERMES_INFERENCE_MODEL: "openai:gpt-5.4",
+      HERMES_INFERENCE_PROVIDER: "openai-api",
+      HERMES_RUN_TIMEOUT_SECONDS: "240",
+      HERMES_PROGRESS_INTERVAL_SECONDS: "8",
+      HERMES_WEB_BACKEND: "ddgs",
+      HERMES_WEB_SEARCH_BACKEND: "ddgs",
+      HERMES_WEB_EXTRACT_BACKEND: "firecrawl",
+      WEB_TOOLS_DEBUG: "true",
+      EXA_API_KEY: "exa-key",
+      PARALLEL_API_KEY: "parallel-key",
+      PARALLEL_SEARCH_MODE: "web",
+      TAVILY_API_KEY: "tavily-key",
+      FIRECRAWL_API_KEY: "firecrawl-key",
+      FIRECRAWL_API_URL: "https://firecrawl.example",
+      FIRECRAWL_GATEWAY_URL: "https://firecrawl-gateway.example",
+      SEARXNG_URL: "https://searxng.example",
+      BRAVE_SEARCH_API_KEY: "brave-key",
+      AGENT_BROWSER_ENGINE: "chrome",
+      AGENT_BROWSER_ARGS: "--no-sandbox",
+      AGENT_BROWSER_EXECUTABLE_PATH: "/usr/bin/chromium",
+      AGENT_BROWSER_IDLE_TIMEOUT_MS: "300000",
+      BROWSER_INACTIVITY_TIMEOUT: "300",
+      BROWSER_CDP_URL: "ws://browser.example/devtools/browser/1",
+      BROWSER_USE_API_KEY: "browser-use-key",
+      BROWSERBASE_API_KEY: "browserbase-key",
+      BROWSERBASE_PROJECT_ID: "browserbase-project",
+      BROWSERBASE_PROXIES: "false",
+      BROWSERBASE_ADVANCED_STEALTH: "true",
+      BROWSERBASE_KEEP_ALIVE: "true",
+      BROWSERBASE_SESSION_TIMEOUT: "600",
+      HERMES_BROWSER_ENGINE: "chrome",
+      HERMES_BROWSER_CLOUD_PROVIDER: "browser-use"
     });
     expect(spec.env.GITHUB_TOKEN).toBeUndefined();
     expect(spec.env.SLACK_BOT_TOKEN).toBeUndefined();
     expect(spec.volumes).toContainEqual({
       source: `/data/runtimes/${runtimeDataId}`,
       target: "/data/openclaw"
+    });
+  });
+
+  test("uses engine-specific runtime config filenames", () => {
+    const runtimeDataId = buildRuntimeDataId(principal, "hermes");
+    const spec = buildContainerRuntimeSpec({
+      principal,
+      engine: "hermes",
+      image: "nemo-hermes:dev",
+      dataRoot: "/data/runtimes",
+      dockerNetwork: "compose_default",
+      toolGatewayUrl: "http://burble-app:3000/internal/tools",
+      runtimeToken: "runtime-token",
+      runtimeDataId
+    });
+
+    expect(spec.env).toMatchObject({
+      AGENT_RUNTIME_ENGINE: "hermes",
+      AGENT_RUNTIME_CONFIG_PATH: "/data/openclaw/config/hermes.json",
+      HERMES_HOME: "/data/openclaw/hermes"
+    });
+    expect(spec.env.OPENCLAW_NEMOCLAW_ENGINE).toBeUndefined();
+    expect(spec.env.OPENCLAW_CONFIG_PATH).toBeUndefined();
+  });
+
+  test("makes the manifest model authoritative for Hermes runtime config", () => {
+    const runtimeDataId = buildRuntimeDataId(principal, "hermes");
+    const spec = buildContainerRuntimeSpec({
+      principal,
+      engine: "hermes",
+      image: "nemo-hermes:dev",
+      dataRoot: "/data/runtimes",
+      dockerNetwork: "compose_default",
+      toolGatewayUrl: "http://burble-app:3000/internal/tools",
+      runtimeToken: "runtime-token",
+      runtimeDataId,
+      manifest: {
+        version: "1",
+        principal,
+        runtime: {
+          engine: "hermes",
+          factory: "docker",
+          ttlMs: 86400000,
+          reaperEnabled: true
+        },
+        model: { provider: "openai", model: "gpt-5.4-mini" },
+        tools: [],
+        skills: [],
+        memory: {
+          userMemoryEnabled: false,
+          workspaceMemoryEnabled: false,
+          jobMemoryEnabled: true
+        },
+        disabledTools: [],
+        policyHash: "policy"
+      } as never,
+      env: {
+        AI_MODEL: "openai:gpt-5.5",
+        HERMES_INFERENCE_MODEL: "openai:gpt-5.5",
+        HERMES_INFERENCE_PROVIDER: "openai-api"
+      }
+    });
+
+    expect(spec.env).toMatchObject({
+      AI_MODEL: "openai:gpt-5.4-mini",
+      HERMES_INFERENCE_MODEL: "openai:gpt-5.4-mini",
+      HERMES_INFERENCE_PROVIDER: "openai"
     });
   });
 });
@@ -217,7 +384,7 @@ describe("createDockerRuntimeFactory", () => {
       "run"
     ]);
     expect(commands[1].args).toContain("OPENAI_API_KEY=openai-key");
-    expect(commands[1].args).toContain("AI_MODEL=ollama:qwen3-coder:30b-cloud");
+    expect(commands[1].args).toContain("AI_MODEL=openai:gpt-5.4");
     expect(commands[1].args).toContain("BURBLE_MCP_GATEWAY_URL=http://agentgateway:3000/mcp");
     expect(commands[1].args.join(" ")).toContain(`BURBLE_RUNTIME_JWT=jwt:http://agentgateway:3000/mcp:${handle.id}:T123:U123:86400`);
     expect(commands[1].args.join(" ")).not.toContain("github-secret");
@@ -355,6 +522,79 @@ describe("createDockerRuntimeFactory", () => {
         .listAgentRuntimeEvents(runtimeId)
         .map((event) => event.eventType)
     ).toEqual(["runtime_provision_requested", "runtime_provision_failed"]);
+
+    store.close();
+  });
+
+  test("syncs stale ready state when the container is gone", async () => {
+    const store = createTokenStore(":memory:");
+    const runtime = store.getOrCreateAgentRuntime({
+      workspaceId: "T123",
+      slackUserId: "U123",
+      engine: "hermes",
+      endpointUrl: "http://burble-rt-hermes:8080",
+      authTokenHash: "hash",
+      statePath: "/data/state",
+      configPath: "/data/config/hermes.json",
+      workspacePath: "/data/workspace",
+      policyHash: "policy"
+    });
+    const factory = createDockerRuntimeFactory({
+      store,
+      engine: "hermes",
+      image: "burble-nemo-hermes:dev",
+      dataRoot: "/data/runtimes",
+      dockerNetwork: "compose_default",
+      toolGatewayUrl: "http://burble-app:3000/internal/tools",
+      runtimeTokenSecret: "runtime-secret",
+      execute: async () => ({ code: 1, stdout: "", stderr: "not found" }),
+      fetch: async () => new Response("not used")
+    });
+
+    const synced = await factory.syncRuntimeStatus?.(runtime.id);
+
+    expect(synced?.status).toBe("stopped");
+    expect(synced?.failureReason).toBe("Runtime container is not present");
+    expect(store.getAgentRuntime(runtime.id)?.status).toBe("stopped");
+
+    store.close();
+  });
+
+  test("syncs runtime as failed when health check fails", async () => {
+    const store = createTokenStore(":memory:");
+    const runtime = store.getOrCreateAgentRuntime({
+      workspaceId: "T123",
+      slackUserId: "U123",
+      engine: "hermes",
+      endpointUrl: "http://burble-rt-hermes:8080",
+      authTokenHash: "hash",
+      statePath: "/data/state",
+      configPath: "/data/config/hermes.json",
+      workspacePath: "/data/workspace",
+      policyHash: "policy"
+    });
+    const factory = createDockerRuntimeFactory({
+      store,
+      engine: "hermes",
+      image: "burble-nemo-hermes:dev",
+      dataRoot: "/data/runtimes",
+      dockerNetwork: "compose_default",
+      toolGatewayUrl: "http://burble-app:3000/internal/tools",
+      runtimeTokenSecret: "runtime-secret",
+      execute: async () => ({
+        code: 0,
+        stdout: "{\"Running\":true,\"Restarting\":false,\"ExitCode\":0}\n",
+        stderr: ""
+      }),
+      fetch: async () => new Response("not ready", { status: 503 })
+    });
+
+    const synced = await factory.syncRuntimeStatus?.(runtime.id);
+
+    expect(synced?.status).toBe("failed");
+    expect(synced?.failureReason).toBe(
+      "Runtime health check failed: HTTP 503"
+    );
 
     store.close();
   });
