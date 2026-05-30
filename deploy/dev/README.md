@@ -80,6 +80,7 @@ SLACK_CLIENT_ID=
 SLACK_CLIENT_SECRET=
 SLACK_REDIRECT_URI=
 AGENT_MODE=deterministic
+AGENT_FAST_TRACK=false
 AGENT_RUNTIME=ai-sdk
 AI_MODEL=openai:gpt-5.4
 OPENCLAW_NEMOCLAW_URL=
@@ -97,6 +98,9 @@ GOOGLE_CLIENT_SECRET=
 ```
 
 Use `AGENT_MODE=llm` to route mentions and DMs through an agent runner.
+`AGENT_FAST_TRACK=false` is the default: provider queries go through the agent
+when one is configured. Set `AGENT_FAST_TRACK=true` only to re-enable Burble's
+legacy deterministic provider shortcuts for simple GitHub/Jira/Gmail lookups.
 `AGENT_RUNTIME=ai-sdk` is the default in-process runner. `AI_MODEL` is the
 normalized model selector for both AI SDK and OpenClaw/NemoClaw runtimes. Use
 `provider:model` format, for example `openai:gpt-5.4`,
@@ -151,6 +155,7 @@ override file. Compose builds the runtime image from
 
 ```env
 AGENT_MODE=llm
+AGENT_FAST_TRACK=false
 AGENT_RUNTIME=burble-runtime
 INTERNAL_API_TOKEN=<long-random-secret>
 AGENT_RUNTIME_ENGINE=deterministic

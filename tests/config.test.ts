@@ -30,6 +30,7 @@ describe("readConfig", () => {
       databasePath: "test.db",
       slackLogLevel: "info",
       agentMode: "deterministic",
+      agentFastTrack: false,
       agentRuntime: "ai-sdk",
       agentRuntimeFactory: "static",
       aiModel: "openai:gpt-5.4",
@@ -113,8 +114,18 @@ describe("readConfig", () => {
     });
 
     expect(config.agentMode).toBe("llm");
+    expect(config.agentFastTrack).toBe(false);
     expect(config.agentRuntime).toBe("burble-runtime");
     expect(config.aiModel).toBe("anthropic:claude-opus-4.6");
+  });
+
+  test("allows explicit local provider fast-track opt-in", () => {
+    const config = readConfig({
+      ...validEnv,
+      AGENT_FAST_TRACK: "true"
+    });
+
+    expect(config.agentFastTrack).toBe(true);
   });
 
   test("accepts the legacy OpenClaw runtime adapter name", () => {

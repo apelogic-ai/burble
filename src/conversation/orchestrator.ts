@@ -16,6 +16,7 @@ export async function handleConversation(
 ): Promise<ConversationResponse> {
   const intent = classifyDeterministicIntent(request.text);
   const forceAgent = shouldForceAgentDelegation(request.text);
+  const fastTrackEnabled = shouldUseFastTrack(deps);
 
   if (intent === "connect_github") {
     return {
@@ -75,14 +76,14 @@ export async function handleConversation(
     };
   }
 
-  if (!forceAgent) {
+  if (!forceAgent && fastTrackEnabled) {
     const fastPathResponse = await tryHandleLocalToolFastPath(request, deps);
     if (fastPathResponse) {
       return fastPathResponse;
     }
   }
 
-  if (!forceAgent && (
+  if (!forceAgent && fastTrackEnabled && (
     intent === "github_identity" ||
     intent === "github_issues" ||
     intent === "github_issue_search" ||
@@ -192,6 +193,14 @@ export async function handleConversation(
       "`@Burble what issues are assigned to me?`"
     ].join("\n")
   };
+}
+
+function shouldUseFastTrack(deps: ConversationDeps): boolean {
+  if (deps.agentFastTrack) {
+    return true;
+  }
+
+  return deps.agentMode !== "llm" || !deps.agentRunner;
 }
 
 function buildAgentConversation(request: ConversationRequest) {

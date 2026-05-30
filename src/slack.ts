@@ -612,6 +612,7 @@ export function createSlackRuntime(
             slack: slackTools
           },
           agentMode: config.agentMode,
+          agentFastTrack: config.agentFastTrack,
           ...(resolveAgentExecutionMode()
             ? { agentExecutionMode: resolveAgentExecutionMode() }
             : {}),
@@ -781,6 +782,7 @@ export function createSlackRuntime(
             slack: slackTools
           },
           agentMode: config.agentMode,
+          agentFastTrack: config.agentFastTrack,
           ...(resolveAgentExecutionMode()
             ? { agentExecutionMode: resolveAgentExecutionMode() }
             : {}),

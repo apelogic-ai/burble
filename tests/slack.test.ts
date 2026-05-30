@@ -52,6 +52,7 @@ const agentConfig: Config = {
   databasePath: ":memory:",
   slackLogLevel: "info",
   agentMode: "llm",
+  agentFastTrack: false,
   agentRuntime: "burble-runtime",
   agentRuntimeFactory: "docker",
   aiModel: "openai:gpt-5.4",

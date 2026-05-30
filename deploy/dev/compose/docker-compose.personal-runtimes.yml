@@ -17,6 +17,7 @@ services:
   burble-app:
     environment:
       - AGENT_MODE=llm
+      - AGENT_FAST_TRACK=${AGENT_FAST_TRACK:-false}
       - AGENT_RUNTIME=burble-runtime
       - AGENT_RUNTIME_FACTORY=docker
       - AGENT_RUNTIME_IMAGE=${AGENT_RUNTIME_IMAGE:-}

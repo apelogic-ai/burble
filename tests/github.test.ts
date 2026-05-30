@@ -31,6 +31,7 @@ const config: Config = {
   databasePath: ":memory:",
   slackLogLevel: "info",
   agentMode: "deterministic",
+  agentFastTrack: false,
   agentRuntime: "ai-sdk",
   agentRuntimeFactory: "static",
   openClawNemoClawUrl: null,

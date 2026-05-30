@@ -18,6 +18,7 @@ export type Config = {
   databasePath: string;
   slackLogLevel: SlackLogLevel;
   agentMode: AgentMode;
+  agentFastTrack: boolean;
   agentRuntime: AgentRuntime;
   agentRuntimeFactory: AgentRuntimeFactory;
   aiModel: string;
@@ -251,6 +252,7 @@ export function readConfig(env: Env): Config {
     databasePath: env.DATABASE_PATH ?? "burble.db",
     slackLogLevel: optionalSlackLogLevelEnv(env, "SLACK_LOG_LEVEL", "info"),
     agentMode: optionalAgentModeEnv(env, "AGENT_MODE", "deterministic"),
+    agentFastTrack: optionalBoolEnv(env, "AGENT_FAST_TRACK", false),
     agentRuntime: optionalAgentRuntimeEnv(env, "AGENT_RUNTIME", "ai-sdk"),
     agentRuntimeFactory,
     aiModel: validateAgentModelId(env.AI_MODEL ?? "openai:gpt-5.4"),

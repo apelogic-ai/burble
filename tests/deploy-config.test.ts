@@ -48,6 +48,7 @@ describe("dev deploy config", () => {
       "SLACK_CLIENT_SECRET",
       "SLACK_REDIRECT_URI",
       "AGENT_MODE",
+      "AGENT_FAST_TRACK",
       "AGENT_RUNTIME",
       "AGENT_RUNTIME_FACTORY",
       "AGENT_RUNTIME_DATA_ROOT",
@@ -128,6 +129,7 @@ describe("dev deploy config", () => {
   test("provides an optional OpenClaw/NemoClaw compose override", () => {
     expect(openClawCompose).toContain("openclaw-nemoclaw:");
     expect(openClawCompose).toContain("AGENT_RUNTIME=burble-runtime");
+    expect(openClawCompose).toContain("AGENT_FAST_TRACK=${AGENT_FAST_TRACK:-false}");
     expect(openClawCompose).toContain("AGENT_RUNTIME_FACTORY=static");
     expect(openClawCompose).toContain(
       "OPENCLAW_NEMOCLAW_URL=http://openclaw-nemoclaw:8080"
@@ -241,6 +243,7 @@ describe("dev deploy config", () => {
       "AGENT_RUNTIME_DATA_ROOT",
       "AGENT_RUNTIME_IMAGE",
       "AGENT_RUNTIME_ENGINE",
+      "AGENT_FAST_TRACK",
       "AGENT_RUNTIME_DOCKER_NETWORK",
       "AGENT_RUNTIME_IDLE_TTL_MS",
       "AGENT_RUNTIME_REAPER_ENABLED",
@@ -262,6 +265,9 @@ describe("dev deploy config", () => {
 
   test("provides an optional personal runtime compose override", () => {
     expect(personalRuntimesCompose).toContain("AGENT_RUNTIME_FACTORY=docker");
+    expect(personalRuntimesCompose).toContain(
+      "AGENT_FAST_TRACK=${AGENT_FAST_TRACK:-false}"
+    );
     expect(personalRuntimesCompose).toContain("/var/run/docker.sock");
     expect(personalRuntimesCompose).toContain(
       "AGENT_RUNTIME_TOKEN_SECRET:?AGENT_RUNTIME_TOKEN_SECRET is required"
