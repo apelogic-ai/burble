@@ -496,7 +496,12 @@ export function buildContainerRuntimeSpec(input: {
     }
   }
   if (input.manifest?.model) {
-    env.AI_MODEL = `${input.manifest.model.provider}:${input.manifest.model.model}`;
+    const modelId = `${input.manifest.model.provider}:${input.manifest.model.model}`;
+    env.AI_MODEL = modelId;
+    if (input.engine === "hermes") {
+      env.HERMES_INFERENCE_MODEL = modelId;
+      env.HERMES_INFERENCE_PROVIDER = input.manifest.model.provider;
+    }
   }
 
   const openClawConfigPatchHostPath =

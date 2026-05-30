@@ -385,6 +385,10 @@ class BurbleHermesRuntime:
         lines = []
         model_config = self._resolve_model_config()
         if model_config:
+            print(
+                f"[INFO] {timestamp()} Nemo Hermes model config provider={model_config['provider']} model={model_config['model']}",
+                flush=True,
+            )
             lines.extend(
                 [
                     "model:",
@@ -445,7 +449,7 @@ class BurbleHermesRuntime:
         return config
 
     def _resolve_model_config(self) -> dict[str, str] | None:
-        raw = env("HERMES_INFERENCE_MODEL") or env("HERMES_MODEL") or env("AI_MODEL")
+        raw = env("AI_MODEL") or env("HERMES_INFERENCE_MODEL") or env("HERMES_MODEL")
         if not raw:
             return None
         provider = env("HERMES_INFERENCE_PROVIDER")

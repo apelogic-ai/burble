@@ -208,6 +208,51 @@ describe("buildContainerRuntimeSpec", () => {
     expect(spec.env.OPENCLAW_NEMOCLAW_ENGINE).toBeUndefined();
     expect(spec.env.OPENCLAW_CONFIG_PATH).toBeUndefined();
   });
+
+  test("makes the manifest model authoritative for Hermes runtime config", () => {
+    const runtimeDataId = buildRuntimeDataId(principal, "hermes");
+    const spec = buildContainerRuntimeSpec({
+      principal,
+      engine: "hermes",
+      image: "nemo-hermes:dev",
+      dataRoot: "/data/runtimes",
+      dockerNetwork: "compose_default",
+      toolGatewayUrl: "http://burble-app:3000/internal/tools",
+      runtimeToken: "runtime-token",
+      runtimeDataId,
+      manifest: {
+        version: "1",
+        principal,
+        runtime: {
+          engine: "hermes",
+          factory: "docker",
+          ttlMs: 86400000,
+          reaperEnabled: true
+        },
+        model: { provider: "openai", model: "gpt-5.4-mini" },
+        tools: [],
+        skills: [],
+        memory: {
+          userMemoryEnabled: false,
+          workspaceMemoryEnabled: false,
+          jobMemoryEnabled: true
+        },
+        disabledTools: [],
+        policyHash: "policy"
+      } as never,
+      env: {
+        AI_MODEL: "openai:gpt-5.5",
+        HERMES_INFERENCE_MODEL: "openai:gpt-5.5",
+        HERMES_INFERENCE_PROVIDER: "openai-api"
+      }
+    });
+
+    expect(spec.env).toMatchObject({
+      AI_MODEL: "openai:gpt-5.4-mini",
+      HERMES_INFERENCE_MODEL: "openai:gpt-5.4-mini",
+      HERMES_INFERENCE_PROVIDER: "openai"
+    });
+  });
 });
 
 describe("deriveRuntimeToken", () => {
