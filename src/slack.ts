@@ -248,6 +248,7 @@ export function createSlackRuntime(
           jiraTools,
           openClawNemoClawUrl: config.openClawNemoClawUrl,
           ...(runtimeFactory ? { runtimeFactory } : {}),
+          observability,
           logInfo: (message) => app.logger.info(withUtcTimestamp(message))
         })
       : undefined;

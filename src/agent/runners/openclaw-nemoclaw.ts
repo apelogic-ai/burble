@@ -2,6 +2,7 @@ import { createParser } from "eventsource-parser";
 import type { AgentInput, AgentOutput, AgentRunEvent, AgentRunner } from "../types";
 import type { ToolClassification } from "../../conversation/types";
 import type { RuntimeFactory, RuntimeHandle } from "../runtime-factory";
+import type { ObservabilitySink } from "../../observability";
 
 export type AgentRuntimeFetch = (
   input: string,
@@ -26,6 +27,7 @@ export type OpenClawNemoClawAgentRunnerDeps = {
   fetch?: AgentRuntimeFetch;
   webSocketFactory?: AgentRuntimeWebSocketFactory;
   logInfo?: (message: string) => void;
+  observability?: ObservabilitySink;
 };
 
 type RemoteRunResponse = {
@@ -78,6 +80,7 @@ export function createOpenClawNemoClawAgentRunner(
   const createWebSocket: AgentRuntimeWebSocketFactory =
     deps.webSocketFactory ?? ((url) => new WebSocket(url));
   const logInfo = deps.logInfo ?? (() => undefined);
+  const observability = deps.observability;
 
   return {
     name: "burble-runtime",
@@ -104,13 +107,16 @@ export function createOpenClawNemoClawAgentRunner(
       yield { type: "status", text: "Agent is thinking..." };
 
       const runStartedAt = Date.now();
+      const runtimeId = runtime?.id ?? "static";
+      const runtimeType = runtime?.engine ?? "static";
+      const principalId = `${input.principal.workspaceId}:${input.principal.slackUserId}`;
       logInfo(
         [
           "OpenClaw/NemoClaw run start",
           `runId=${runId}`,
           `url=${baseUrl}/runs`,
-          `runtimeId=${runtime?.id ?? "static"}`,
-          `principal=${input.principal.workspaceId}:${input.principal.slackUserId}`,
+          `runtimeId=${runtimeId}`,
+          `principal=${principalId}`,
           `conversationRoot=${input.conversation?.rootId ?? "unknown"}`,
           `textLength=${input.text.length}`,
           `githubConnected=${Boolean(input.connections.github)}`,
@@ -119,6 +125,23 @@ export function createOpenClawNemoClawAgentRunner(
           `slackConnected=${Boolean(input.connections.slack)}`
         ].join(" ")
       );
+      observability?.emit({
+        name: "runtime.run.started",
+        runId,
+        workspaceId: input.principal.workspaceId,
+        principalId,
+        runtimeId,
+        runtimeType,
+        attributes: {
+          conversationRoot: input.conversation?.rootId ?? "unknown",
+          textLength: input.text.length,
+          githubConnected: Boolean(input.connections.github),
+          googleConnected: Boolean(input.connections.google),
+          jiraConnected: Boolean(input.connections.jira),
+          slackConnected: Boolean(input.connections.slack),
+          ...(runtime?.manifest ? { policyHash: runtime.manifest.policyHash } : {})
+        }
+      });
       if (runtime) {
         deps.runtimeFactory?.recordRuntimeEvent?.(runtime.id, {
           eventType: "runtime_run_started",
@@ -163,11 +186,24 @@ export function createOpenClawNemoClawAgentRunner(
         [
           "OpenClaw/NemoClaw run accepted",
           `runId=${runId}`,
-          `runtimeId=${runtime?.id ?? "static"}`,
+          `runtimeId=${runtimeId}`,
           `elapsedMs=${Date.now() - postStartedAt}`,
           `status=${response.status}`
         ].join(" ")
       );
+      observability?.emit({
+        name: "runtime.run.accepted",
+        runId,
+        workspaceId: input.principal.workspaceId,
+        principalId,
+        runtimeId,
+        runtimeType,
+        durationMs: Date.now() - postStartedAt,
+        status: "ok",
+        attributes: {
+          httpStatus: response.status
+        }
+      });
 
       let agentResponse: AgentOutput | null;
       const startPayload = (await response.json()) as RemoteRunResponse &
@@ -236,12 +272,27 @@ export function createOpenClawNemoClawAgentRunner(
         [
           "OpenClaw/NemoClaw run finish",
           `runId=${runId}`,
-          `runtimeId=${runtime?.id ?? "static"}`,
+          `runtimeId=${runtimeId}`,
           `classification=${agentResponse.classification}`,
           `textLength=${agentResponse.text.length}`,
           `elapsedMs=${Date.now() - runStartedAt}`
         ].join(" ")
       );
+      observability?.emit({
+        name: "runtime.run.completed",
+        runId,
+        workspaceId: input.principal.workspaceId,
+        principalId,
+        runtimeId,
+        runtimeType,
+        classification: agentResponse.classification,
+        durationMs: Date.now() - runStartedAt,
+        status: "ok",
+        usage: agentResponse.usage,
+        attributes: {
+          textLength: agentResponse.text.length
+        }
+      });
       if (runtime) {
         deps.runtimeFactory?.recordRuntimeEvent?.(runtime.id, {
           eventType: "runtime_run_finished",

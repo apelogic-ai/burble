@@ -9,6 +9,7 @@ import { createOpenClawNemoClawAgentRunner } from "./runners/openclaw-nemoclaw";
 import type { ModelResolver } from "./providers";
 import type { RuntimeFactory } from "./runtime-factory";
 import type { AgentRunner } from "./types";
+import type { ObservabilitySink } from "../observability";
 
 export type ConfiguredAgentRunnerDeps = {
   runtime: AgentRuntime;
@@ -22,6 +23,7 @@ export type ConfiguredAgentRunnerDeps = {
   resolveModel?: ModelResolver;
   generateText?: AgentGenerateText;
   logInfo?: (message: string) => void;
+  observability?: ObservabilitySink;
 };
 
 export function createConfiguredAgentRunner(
@@ -50,7 +52,8 @@ export function createConfiguredAgentRunner(
           ? { baseUrl: deps.openClawNemoClawUrl }
           : {}),
         ...(deps.runtimeFactory ? { runtimeFactory: deps.runtimeFactory } : {}),
-        ...(deps.logInfo ? { logInfo: deps.logInfo } : {})
+        ...(deps.logInfo ? { logInfo: deps.logInfo } : {}),
+        ...(deps.observability ? { observability: deps.observability } : {})
       });
   }
 }
