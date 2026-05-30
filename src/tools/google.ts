@@ -544,6 +544,23 @@ function googleApiErrorResult(error: GoogleApiError): GoogleAuthErrorResult {
 
 function isGoogleDriveFileAccessError(error: GoogleApiError): boolean {
   const message = error.message.toLowerCase();
+  if (error.status !== 403 && error.status !== 404) {
+    return false;
+  }
+  if (
+    message.includes("google drive file") &&
+    (
+      message.includes("access") ||
+      message.includes("permission") ||
+      message.includes("not found") ||
+      message.includes("forbidden") ||
+      message.includes("insufficient") ||
+      message.includes("lookup failed") ||
+      message.includes("update failed")
+    )
+  ) {
+    return true;
+  }
   return (
     message.includes("has not granted the app") &&
     message.includes("access to the file")

@@ -704,7 +704,11 @@ async function readGoogleDriveFileContent(
   const response = await fetch(url, { headers: googleHeaders(token) });
   if (!response.ok) {
     const detail = await readGoogleErrorText(response);
-    throw googleError(response, "Google Drive file content lookup failed", detail);
+    throw googleError(
+      response,
+      "Google Drive file content lookup failed",
+      detail ? `Google Drive file content lookup failed: ${detail}` : undefined
+    );
   }
   return response.text();
 }

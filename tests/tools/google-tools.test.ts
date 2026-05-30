@@ -110,6 +110,40 @@ describe("createGoogleTools", () => {
     expect(JSON.stringify(result.content)).not.toContain("/auth google");
   });
 
+  test("treats generic Drive file permission failures as file access errors", async () => {
+    const tools = createGoogleTools({
+      getGoogleUser: async () => ({
+        email: "person@google.example"
+      }),
+      searchGoogleDriveFiles: async () => [],
+      createGoogleDriveTextFile: async () => ({
+        id: "file-1",
+        name: "Test"
+      }),
+      appendGoogleDriveTextFile: async () => {
+        throw new GoogleApiError(
+          "Google Drive file content lookup failed: insufficient permissions for this file",
+          403
+        );
+      },
+      searchGoogleCalendarEvents: async () => [],
+      searchGoogleMailMessages: async () => []
+    });
+
+    const result = await tools.appendDriveTextFile.execute({
+      connection,
+      input: {
+        fileId: "file-1",
+        text: "another test"
+      }
+    });
+
+    expect(result.content).toMatchObject({
+      error: "google_drive_file_not_accessible"
+    });
+    expect(JSON.stringify(result.content)).not.toContain("/auth google");
+  });
+
   test("refreshes an expiring token and persists the refreshed connection", async () => {
     const saved: ProviderConnection[] = [];
     const tools = createGoogleTools({
