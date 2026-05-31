@@ -284,6 +284,16 @@ describe("createOpenClawNemoClawAgentRunner", () => {
               inputTokens: 12,
               outputTokens: 4,
               totalTokens: 16
+            },
+            telemetry: {
+              promptChars: 4096,
+              promptApproxTokens: 1024,
+              steps: [
+                {
+                  step: 1,
+                  usageSource: "provider-output"
+                }
+              ]
             }
           }
         })
@@ -330,6 +340,18 @@ describe("createOpenClawNemoClawAgentRunner", () => {
         inputTokens: 12,
         outputTokens: 4,
         totalTokens: 16
+      },
+      attributes: {
+        telemetry: {
+          promptChars: 4096,
+          promptApproxTokens: 1024,
+          steps: [
+            {
+              step: 1,
+              usageSource: "provider-output"
+            }
+          ]
+        }
       }
     });
     expect(

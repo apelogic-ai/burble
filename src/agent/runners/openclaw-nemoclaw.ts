@@ -290,7 +290,10 @@ export function createOpenClawNemoClawAgentRunner(
         status: "ok",
         usage: agentResponse.usage,
         attributes: {
-          textLength: agentResponse.text.length
+          textLength: agentResponse.text.length,
+          ...(agentResponse.telemetry
+            ? { telemetry: agentResponse.telemetry }
+            : {})
         }
       });
       if (runtime) {

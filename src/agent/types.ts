@@ -52,6 +52,7 @@ export type AgentOutput = {
   attachments?: ConversationAttachment[];
   blocks?: unknown[];
   usage?: AgentUsage;
+  telemetry?: AgentTelemetry;
 };
 
 export type AgentUsage = {
@@ -60,6 +61,12 @@ export type AgentUsage = {
   totalTokens?: number;
   cachedInputTokens?: number;
   reasoningTokens?: number;
+};
+
+export type AgentTelemetry = {
+  promptChars?: number;
+  promptApproxTokens?: number;
+  steps?: Array<Record<string, unknown>>;
 };
 
 export type AgentRunEvent =

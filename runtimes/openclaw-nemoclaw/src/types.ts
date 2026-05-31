@@ -98,6 +98,7 @@ export type RunResponse = {
     text: string;
     attachments?: ConversationAttachment[];
     usage?: RunUsage;
+    telemetry?: RunTelemetry;
   };
 };
 
@@ -107,6 +108,44 @@ export type RunUsage = {
   totalTokens?: number;
   cachedInputTokens?: number;
   reasoningTokens?: number;
+};
+
+export type RunTelemetry = {
+  promptChars?: number;
+  promptApproxTokens?: number;
+  steps?: RunTelemetryStep[];
+};
+
+export type RunTelemetryStep = {
+  step: number;
+  promptChars: number;
+  promptApproxTokens: number;
+  usageSource: "provider-output" | "estimate-only";
+  modelDiagnostics?: {
+    modelStarts?: number;
+    fetchStarts?: number;
+    streamDone?: number;
+    streamDoneElapsedMs?: number[];
+    streamDoneEvents?: number[];
+    compactions?: number;
+    exactUsageFields?: number;
+    exactUsageAvailable?: boolean;
+    rawStreamBytes?: number;
+  };
+  phaseTimings?: {
+    requestToLaneMs?: number;
+    laneWaitMs?: number;
+    laneToRunStartMs?: number;
+    runStartToPromptMs?: number;
+    promptToProviderMs?: number;
+    providerToFirstEventMs?: number;
+    providerStreamMs?: number;
+    providerElapsedMs?: number;
+    gatewayRunDurationMs?: number;
+    systemPromptChars?: number;
+    gatewayPromptChars?: number;
+    historyTextChars?: number;
+  };
 };
 
 export type RunEvent =

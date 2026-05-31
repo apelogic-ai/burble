@@ -16,6 +16,7 @@ import type {
   RunEvent,
   RunRequest,
   RunResponse,
+  RunTelemetry,
   RunUsage,
   ToolExecutor,
   ToolResult
@@ -26,6 +27,7 @@ export type CliCommandResult = {
   stdout: string;
   stderr: string;
   usage?: RunUsage;
+  telemetry?: RunTelemetry;
 };
 
 export type CliCommandRunner = (
@@ -77,6 +79,11 @@ type ExecutedToolCall = {
   toolResult: ToolResult;
 };
 
+type RunUsageTelemetryResult = {
+  usage?: RunUsage;
+  telemetry: RunTelemetry;
+};
+
 type BurbleToolContext = {
   baseline: RunResponse;
   catalog: ToolCatalogItem[];
@@ -121,6 +128,7 @@ export async function runOpenClawCliRequest(
   const rejectedDirectResponses: string[] = [];
   let classification = baseline.response.classification;
   let totalUsage: RunUsage | undefined;
+  let totalTelemetry: RunTelemetry | undefined;
 
   for (let step = 0; step <= maxPlannedToolCalls; step += 1) {
     const prompt = buildPlanningPrompt(
@@ -147,6 +155,7 @@ export async function runOpenClawCliRequest(
       readPlannedToolCall(result.stdout, toolContext.catalog)
     );
     totalUsage = addRunUsage(totalUsage, result.usage);
+    totalTelemetry = addRunTelemetry(totalTelemetry, result.telemetry);
 
     if (!plannedToolCall) {
       const lastToolResult = executedTools.at(-1)?.toolResult;
@@ -174,7 +183,8 @@ export async function runOpenClawCliRequest(
         response: {
           classification,
           text,
-          ...(totalUsage ? { usage: totalUsage } : {})
+          ...(totalUsage ? { usage: totalUsage } : {}),
+          ...(totalTelemetry ? { telemetry: totalTelemetry } : {})
         }
       };
     }
@@ -188,7 +198,8 @@ export async function runOpenClawCliRequest(
         response: {
           classification,
           text,
-          ...(totalUsage ? { usage: totalUsage } : {})
+          ...(totalUsage ? { usage: totalUsage } : {}),
+          ...(totalTelemetry ? { telemetry: totalTelemetry } : {})
         }
       };
     }
@@ -216,7 +227,8 @@ export async function runOpenClawCliRequest(
         response: {
           classification,
           text,
-          ...(totalUsage ? { usage: totalUsage } : {})
+          ...(totalUsage ? { usage: totalUsage } : {}),
+          ...(totalTelemetry ? { telemetry: totalTelemetry } : {})
         }
       };
     }
@@ -227,7 +239,8 @@ export async function runOpenClawCliRequest(
     response: {
       classification,
       text: baseline.response.text,
-      ...(totalUsage ? { usage: totalUsage } : {})
+      ...(totalUsage ? { usage: totalUsage } : {}),
+      ...(totalTelemetry ? { telemetry: totalTelemetry } : {})
     }
   };
 }
@@ -311,7 +324,7 @@ async function runOpenClawCommand(
   }
   const rawStream = await readRawStreamForUsage(rawStreamPath, logInfo, request, step);
   const gatewayDiagnostics = readGatewayDiagnosticTextSince(startedAt);
-  const usage = logOpenClawUsageFromOutput(
+  const usageTelemetry = logOpenClawUsageFromOutput(
     request,
     step,
     prompt,
@@ -325,7 +338,7 @@ async function runOpenClawCommand(
   logInfo(
     `OpenClaw command finish runId=${request.runId ?? "unknown"} step=${step} elapsedMs=${Date.now() - startedAt} stdoutChars=${result.stdout.length} stderrChars=${result.stderr.length}${summarizeLogObject("stderrPreview", result.stderr)}`
   );
-  return { ...result, usage };
+  return { ...result, ...usageTelemetry };
 }
 
 async function runOpenClawGatewayHttpRequest(
@@ -363,7 +376,7 @@ async function runOpenClawGatewayHttpRequest(
     if (!response.ok) {
       stderr = responseText;
       const gatewayDiagnostics = readGatewayDiagnosticTextSince(startedAt);
-      logOpenClawUsageFromOutput(
+      const usageTelemetry = logOpenClawUsageFromOutput(
         request,
         step,
         prompt,
@@ -378,12 +391,12 @@ async function runOpenClawGatewayHttpRequest(
       logInfo(
         `OpenClaw gateway http error runId=${request.runId ?? "unknown"} step=${step} status=${response.status}${summarizeLogObject("bodyPreview", responseText)}`
       );
-      return { exitCode: 1, stdout, stderr };
+      return { exitCode: 1, stdout, stderr, ...usageTelemetry };
     }
 
     stdout = extractOpenResponsesText(responseText) ?? responseText;
     const gatewayDiagnostics = readGatewayDiagnosticTextSince(startedAt);
-    logOpenClawUsageFromOutput(
+    const usageTelemetry = logOpenClawUsageFromOutput(
       request,
       step,
       prompt,
@@ -398,11 +411,11 @@ async function runOpenClawGatewayHttpRequest(
     logInfo(
       `OpenClaw gateway http finish runId=${request.runId ?? "unknown"} step=${step} elapsedMs=${Date.now() - startedAt} status=${response.status} stdoutChars=${stdout.length} responseChars=${responseText.length}`
     );
-    return { exitCode: 0, stdout, stderr };
+    return { exitCode: 0, stdout, stderr, ...usageTelemetry };
   } catch (error) {
     stderr = error instanceof Error ? error.message : String(error);
     const gatewayDiagnostics = readGatewayDiagnosticTextSince(startedAt);
-    logOpenClawUsageFromOutput(
+    const usageTelemetry = logOpenClawUsageFromOutput(
       request,
       step,
       prompt,
@@ -417,7 +430,7 @@ async function runOpenClawGatewayHttpRequest(
     logInfo(
       `OpenClaw gateway http error runId=${request.runId ?? "unknown"} step=${step}${summarizeLogObject("error", stderr)}`
     );
-    return { exitCode: 1, stdout, stderr };
+    return { exitCode: 1, stdout, stderr, ...usageTelemetry };
   }
 }
 
@@ -453,7 +466,7 @@ async function runBurbleDirectProviderRequest(
     const responseText = await response.text();
     if (!response.ok) {
       stderr = responseText;
-      const usage = logOpenClawUsageFromOutput(
+      const usageTelemetry = logOpenClawUsageFromOutput(
         request,
         step,
         prompt,
@@ -468,12 +481,12 @@ async function runBurbleDirectProviderRequest(
       logInfo(
         `Burble direct model error runId=${request.runId ?? "unknown"} step=${step} status=${response.status}${summarizeLogObject("bodyPreview", responseText)}`
       );
-      return { exitCode: 1, stdout, stderr, usage };
+      return { exitCode: 1, stdout, stderr, ...usageTelemetry };
     }
 
     stdout =
       extractDirectModelText(parsedModel.provider, responseText) ?? responseText;
-    const usage = logOpenClawUsageFromOutput(
+    const usageTelemetry = logOpenClawUsageFromOutput(
       request,
       step,
       prompt,
@@ -488,10 +501,10 @@ async function runBurbleDirectProviderRequest(
     logInfo(
       `Burble direct model finish runId=${request.runId ?? "unknown"} step=${step} elapsedMs=${Date.now() - startedAt} status=${response.status} stdoutChars=${stdout.length} responseChars=${responseText.length}`
     );
-    return { exitCode: 0, stdout, stderr, usage };
+    return { exitCode: 0, stdout, stderr, ...usageTelemetry };
   } catch (error) {
     stderr = error instanceof Error ? error.message : String(error);
-    const usage = logOpenClawUsageFromOutput(
+    const usageTelemetry = logOpenClawUsageFromOutput(
       request,
       step,
       prompt,
@@ -506,7 +519,7 @@ async function runBurbleDirectProviderRequest(
     logInfo(
       `Burble direct model error runId=${request.runId ?? "unknown"} step=${step}${summarizeLogObject("error", stderr)}`
     );
-    return { exitCode: 1, stdout, stderr, usage };
+    return { exitCode: 1, stdout, stderr, ...usageTelemetry };
   }
 }
 
@@ -519,7 +532,11 @@ async function* collectOpenClawGatewayHttpResponse(
   heartbeatMs: number,
   emitDeltas: boolean,
   step: number
-): AsyncGenerator<RunEvent, { stdout: string; usage?: RunUsage }, void> {
+): AsyncGenerator<
+  RunEvent,
+  { stdout: string; usage?: RunUsage; telemetry?: RunTelemetry },
+  void
+> {
   const startedAt = Date.now();
   const resultPromise =
     config.engine === "burble-direct"
@@ -596,7 +613,11 @@ async function* collectOpenClawGatewayHttpResponse(
     yield { type: "message_delta", text: result.stdout };
   }
 
-  return { stdout: result.stdout, usage: result.usage };
+  return {
+    stdout: result.stdout,
+    ...(result.usage ? { usage: result.usage } : {}),
+    ...(result.telemetry ? { telemetry: result.telemetry } : {})
+  };
 }
 
 function shouldEmitGatewayHttpDelta(stdout: string): boolean {
@@ -868,6 +889,7 @@ export async function* runOpenClawCliRequestStream(
   const rejectedDirectResponses: string[] = [];
   let classification = baseline.response.classification;
   let totalUsage: RunUsage | undefined;
+  let totalTelemetry: RunTelemetry | undefined;
 
   for (let step = 0; step <= maxPlannedToolCalls; step += 1) {
     const prompt = buildPlanningPrompt(
@@ -896,6 +918,7 @@ export async function* runOpenClawCliRequestStream(
       readPlannedToolCall(result.stdout, toolContext.catalog)
     );
     totalUsage = addRunUsage(totalUsage, result.usage);
+    totalTelemetry = addRunTelemetry(totalTelemetry, result.telemetry);
 
     if (!plannedToolCall) {
       const lastToolResult = executedTools.at(-1)?.toolResult;
@@ -924,7 +947,8 @@ export async function* runOpenClawCliRequestStream(
         response: {
           classification,
           text,
-          ...(totalUsage ? { usage: totalUsage } : {})
+          ...(totalUsage ? { usage: totalUsage } : {}),
+          ...(totalTelemetry ? { telemetry: totalTelemetry } : {})
         }
       };
       return;
@@ -940,7 +964,8 @@ export async function* runOpenClawCliRequestStream(
         response: {
           classification,
           text,
-          ...(totalUsage ? { usage: totalUsage } : {})
+          ...(totalUsage ? { usage: totalUsage } : {}),
+          ...(totalTelemetry ? { telemetry: totalTelemetry } : {})
         }
       };
       return;
@@ -982,7 +1007,8 @@ export async function* runOpenClawCliRequestStream(
         response: {
           classification,
           text,
-          ...(totalUsage ? { usage: totalUsage } : {})
+          ...(totalUsage ? { usage: totalUsage } : {}),
+          ...(totalTelemetry ? { telemetry: totalTelemetry } : {})
         }
       };
       return;
@@ -1001,7 +1027,11 @@ async function* collectOpenClawStream(
   heartbeatMs: number,
   emitDeltas: boolean,
   step: number
-): AsyncGenerator<RunEvent, { stdout: string; usage?: RunUsage }, void> {
+): AsyncGenerator<
+  RunEvent,
+  { stdout: string; usage?: RunUsage; telemetry?: RunTelemetry },
+  void
+> {
   if (config.engine === "openclaw-gateway" || config.engine === "burble-direct") {
     return yield* collectOpenClawGatewayHttpResponse(
       request,
@@ -1136,7 +1166,7 @@ async function* collectOpenClawStream(
   );
   const rawStream = await readRawStreamForUsage(rawStreamPath, logInfo, request, step);
   const gatewayDiagnostics = readGatewayDiagnosticTextSince(startedAt);
-  const usage = logOpenClawUsageFromOutput(
+  const usageTelemetry = logOpenClawUsageFromOutput(
     request,
     step,
     prompt,
@@ -1154,7 +1184,7 @@ async function* collectOpenClawStream(
     );
   }
 
-  return { stdout, usage };
+  return { stdout, ...usageTelemetry };
 }
 
 async function* withHeartbeat(
@@ -2854,6 +2884,24 @@ function addRunUsage(
   };
 }
 
+function addRunTelemetry(
+  current: RunTelemetry | undefined,
+  next: RunTelemetry | undefined
+): RunTelemetry | undefined {
+  if (!next) {
+    return current;
+  }
+
+  return {
+    promptChars: addOptionalUsageNumber(current?.promptChars, next.promptChars),
+    promptApproxTokens: addOptionalUsageNumber(
+      current?.promptApproxTokens,
+      next.promptApproxTokens
+    ),
+    steps: [...(current?.steps ?? []), ...(next.steps ?? [])]
+  };
+}
+
 function addOptionalUsageNumber(
   current: number | undefined,
   next: number | undefined
@@ -2894,7 +2942,7 @@ function logOpenClawUsageFromOutput(
   sessionId: string,
   logInfo: RuntimeLogger,
   startedAt?: number
-): RunUsage | undefined {
+): RunUsageTelemetryResult {
   const selectedGatewayDiagnostics = selectGatewayDiagnosticsForSession(
     gatewayDiagnostics,
     sessionId
@@ -2907,11 +2955,13 @@ function logOpenClawUsageFromOutput(
   ].join("\n");
   const usage = readModelUsage(output);
   const diagnostics = summarizeModelDiagnostics(output);
+  const promptApproxTokens = estimateTokens(prompt);
+  const rawStreamBytes = rawStream ? new TextEncoder().encode(rawStream).length : 0;
   logInfo(
     [
       `OpenClaw usage runId=${request.runId ?? "unknown"}`,
       `step=${step}`,
-      `promptApproxTokens=${estimateTokens(prompt)}`,
+      `promptApproxTokens=${promptApproxTokens}`,
       `inputTokens=${formatUsageNumber(usage?.inputTokens)}`,
       `outputTokens=${formatUsageNumber(usage?.outputTokens)}`,
       `totalTokens=${formatUsageNumber(usage?.totalTokens)}`,
@@ -2932,7 +2982,7 @@ function logOpenClawUsageFromOutput(
       `compactions=${diagnostics.compactions}`,
       `exactUsageFields=${diagnostics.exactUsageFields}`,
       `exactUsageAvailable=${diagnostics.exactUsageFields > 0 ? "true" : "false"}`,
-      `rawStreamBytes=${rawStream ? new TextEncoder().encode(rawStream).length : 0}`
+      `rawStreamBytes=${rawStreamBytes}`
     ].join(" ")
   );
   const phaseTimings = summarizeGatewayPhaseTimings(
@@ -2959,7 +3009,31 @@ function logOpenClawUsageFromOutput(
       ].join(" ")
     );
   }
-  return usage ?? undefined;
+  const telemetry = {
+    promptChars: prompt.length,
+    promptApproxTokens,
+    steps: [
+      {
+        step,
+        promptChars: prompt.length,
+        promptApproxTokens,
+        usageSource: usage ? "provider-output" : "estimate-only",
+        modelDiagnostics: {
+          modelStarts: diagnostics.modelStarts,
+          fetchStarts: diagnostics.fetchStarts,
+          streamDone: diagnostics.streamDone,
+          streamDoneElapsedMs: diagnostics.streamDoneElapsedMs,
+          streamDoneEvents: diagnostics.streamDoneEvents,
+          compactions: diagnostics.compactions,
+          exactUsageFields: diagnostics.exactUsageFields,
+          exactUsageAvailable: diagnostics.exactUsageFields > 0,
+          rawStreamBytes
+        },
+        ...(phaseTimings ? { phaseTimings } : {})
+      }
+    ]
+  } satisfies RunTelemetry;
+  return { ...(usage ? { usage } : {}), telemetry };
 }
 
 function selectGatewayDiagnosticsForSession(
