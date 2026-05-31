@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { mkdirSync, appendFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
@@ -55,7 +56,54 @@ export type JsonlObservabilityOptions = {
 export type PartitionedJsonlObservabilityOptions = {
   dir: string;
   includeContent?: boolean;
+  observerNormalized?: boolean;
   now?: () => Date;
+};
+
+export type ObserverTraceEntry = {
+  id: string;
+  timestamp: string;
+  agent: string;
+  sessionId: string;
+  entryType:
+    | "message"
+    | "tool_call"
+    | "tool_result"
+    | "reasoning"
+    | "task_summary"
+    | "token_usage";
+  role: "user" | "assistant" | "system" | "tool";
+  model: string | null;
+  tokenUsage: {
+    input: number;
+    output: number;
+    cacheRead: number;
+    cacheCreation: number;
+    reasoning: number;
+  } | null;
+  developer: string;
+  machine: string;
+  project: string;
+  toolName: string | null;
+  toolCallId: string | null;
+  filePath: string | null;
+  command: string | null;
+  taskSummary: string | null;
+  gitRepo: string | null;
+  gitBranch: string | null;
+  gitCommit: string | null;
+  userPrompt: string | null;
+  assistantText: string | null;
+  thinking: string | null;
+  reasoning: string | null;
+  systemPrompt: string | null;
+  toolResultContent: string | null;
+  fileContent: string | null;
+  stdout: string | null;
+  queryData: string | null;
+  exitCode: number | null;
+  durationMs: number | null;
+  success: boolean | null;
 };
 
 const sensitiveKeyPattern =
@@ -89,6 +137,7 @@ export function createPartitionedJsonlObservabilitySink(
 ): ObservabilitySink {
   mkdirSync(options.dir, { recursive: true });
   const now = options.now ?? (() => new Date());
+  const observerNormalized = options.observerNormalized ?? true;
   return {
     emit: (input) => {
       const timestamp = now();
@@ -100,6 +149,18 @@ export function createPartitionedJsonlObservabilitySink(
       const path = partitionedEventPath(options.dir, timestamp, event);
       mkdirSync(dirname(path), { recursive: true });
       appendFileSync(path, `${JSON.stringify(event)}\n`, "utf8");
+      if (observerNormalized) {
+        const traceEntry = toObserverTraceEntry(event);
+        if (traceEntry) {
+          const tracePath = observerNormalizedEventPath(
+            options.dir,
+            timestamp,
+            traceEntry
+          );
+          mkdirSync(dirname(tracePath), { recursive: true });
+          appendFileSync(tracePath, `${JSON.stringify(traceEntry)}\n`, "utf8");
+        }
+      }
     }
   };
 }
@@ -140,6 +201,169 @@ function partitionedEventPath(
     `runtime=${safePathSegment(event.runtimeType ?? "app")}`,
     "events.jsonl"
   );
+}
+
+function observerNormalizedEventPath(
+  rootDir: string,
+  timestamp: Date,
+  entry: ObserverTraceEntry
+): string {
+  return join(
+    rootDir,
+    "observer-normalized",
+    [
+      timestamp.getUTCFullYear(),
+      String(timestamp.getUTCMonth() + 1).padStart(2, "0"),
+      String(timestamp.getUTCDate()).padStart(2, "0")
+    ].join("-"),
+    safePathSegment(entry.agent),
+    `${safePathSegment(entry.sessionId)}.jsonl`
+  );
+}
+
+function toObserverTraceEntry(event: ObservabilityEvent): ObserverTraceEntry | null {
+  if (event.name === "runtime.heartbeat") {
+    return null;
+  }
+
+  const entryShape = observerEntryShape(event);
+  if (!entryShape) {
+    return null;
+  }
+
+  const textContent = typeof event.content?.text === "string"
+    ? event.content.text
+    : null;
+  const tokenUsage = event.usage
+    ? {
+        input: event.usage.inputTokens ?? 0,
+        output: event.usage.outputTokens ?? 0,
+        cacheRead: event.usage.cachedInputTokens ?? 0,
+        cacheCreation: 0,
+        reasoning: event.usage.reasoningTokens ?? 0
+      }
+    : null;
+  const taskSummary = typeof event.attributes?.text === "string"
+    ? event.attributes.text
+    : null;
+  const sessionId =
+    event.sessionId ?? event.runId ?? event.traceId ?? event.callId ?? "unknown";
+  const base: Omit<ObserverTraceEntry, "id"> = {
+    timestamp: event.timestamp,
+    agent: event.runtimeType ?? "burble",
+    sessionId,
+    entryType: entryShape.entryType,
+    role: entryShape.role,
+    model: event.model ?? null,
+    tokenUsage,
+    developer: event.principalId ?? "unknown",
+    machine: event.runtimeId ?? event.workspaceId ?? "unknown",
+    project: event.workspaceId ?? "unknown",
+    toolName: event.toolName ?? null,
+    toolCallId: event.callId ?? null,
+    filePath: null,
+    command: null,
+    taskSummary: entryShape.entryType === "task_summary" ? taskSummary : null,
+    gitRepo: null,
+    gitBranch: null,
+    gitCommit: null,
+    userPrompt:
+      entryShape.entryType === "message" && entryShape.role === "user"
+        ? textContent
+        : null,
+    assistantText:
+      entryShape.entryType === "message" && entryShape.role === "assistant"
+        ? textContent
+        : null,
+    thinking: null,
+    reasoning: null,
+    systemPrompt: null,
+    toolResultContent: null,
+    fileContent: null,
+    stdout: null,
+    queryData: null,
+    exitCode: null,
+    durationMs: event.durationMs ?? null,
+    success: event.status ? event.status === "ok" : null
+  };
+
+  return {
+    id: stableTraceEntryId(event, base),
+    ...base
+  };
+}
+
+function observerEntryShape(event: ObservabilityEvent): Pick<
+  ObserverTraceEntry,
+  "entryType" | "role"
+> | null {
+  if (event.name === "conversation.request.started") {
+    return { entryType: "message", role: "user" };
+  }
+
+  if (
+    event.name === "conversation.response.completed" ||
+    event.name === "agent.message.delta"
+  ) {
+    return { entryType: "message", role: "assistant" };
+  }
+
+  if (
+    event.name === "tool.call.started" ||
+    event.name === "tool.gateway.started"
+  ) {
+    return { entryType: "tool_call", role: "assistant" };
+  }
+
+  if (
+    event.name === "tool.call.completed" ||
+    event.name === "tool.gateway.completed"
+  ) {
+    return { entryType: "tool_result", role: "tool" };
+  }
+
+  if (event.name === "llm.call.completed" && event.usage) {
+    return { entryType: "token_usage", role: "assistant" };
+  }
+
+  if (event.name === "runtime.run.completed" && event.usage) {
+    return { entryType: "token_usage", role: "assistant" };
+  }
+
+  if (
+    event.name === "agent.status" ||
+    event.name === "runtime.run.started" ||
+    event.name === "runtime.run.accepted" ||
+    event.name === "conversation.request.failed"
+  ) {
+    return { entryType: "task_summary", role: "system" };
+  }
+
+  return null;
+}
+
+function stableTraceEntryId(
+  event: ObservabilityEvent,
+  entry: Omit<ObserverTraceEntry, "id">
+): string {
+  return createHash("sha256")
+    .update(
+      JSON.stringify({
+        timestamp: entry.timestamp,
+        name: event.name,
+        traceId: event.traceId,
+        runId: event.runId,
+        sessionId: entry.sessionId,
+        toolName: entry.toolName,
+        toolCallId: entry.toolCallId,
+        entryType: entry.entryType,
+        role: entry.role,
+        durationMs: entry.durationMs,
+        success: entry.success
+      })
+    )
+    .digest("hex")
+    .slice(0, 24);
 }
 
 function safePathSegment(input: string): string {

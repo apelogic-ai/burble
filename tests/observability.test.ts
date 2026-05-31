@@ -166,6 +166,131 @@ describe("createPartitionedJsonlObservabilitySink", () => {
     ]);
   });
 
+  test("also writes Observer-compatible normalized trace entries", () => {
+    const dir = mkdtempSync(join(tmpdir(), "burble-observability-"));
+    const sink = createPartitionedJsonlObservabilitySink({
+      dir,
+      now: () => new Date("2026-05-31T03:10:00.000Z")
+    });
+
+    sink.emit({
+      name: "tool.gateway.started",
+      workspaceId: "T123",
+      principalId: "T123:U123",
+      runtimeId: "rt_123",
+      runtimeType: "openclaw",
+      sessionId: "thread-1",
+      toolName: "github.listMyPullRequests",
+      callId: "call-1"
+    });
+    sink.emit({
+      name: "tool.gateway.completed",
+      workspaceId: "T123",
+      principalId: "T123:U123",
+      runtimeId: "rt_123",
+      runtimeType: "openclaw",
+      sessionId: "thread-1",
+      toolName: "github.listMyPullRequests",
+      callId: "call-1",
+      durationMs: 42,
+      status: "ok"
+    });
+    sink.emit({
+      name: "llm.call.completed",
+      workspaceId: "T123",
+      principalId: "T123:U123",
+      runtimeId: "rt_123",
+      runtimeType: "openclaw",
+      sessionId: "thread-1",
+      model: "openai:gpt-5.4",
+      durationMs: 1200,
+      status: "ok",
+      usage: {
+        inputTokens: 10,
+        outputTokens: 5,
+        cachedInputTokens: 3,
+        reasoningTokens: 2
+      }
+    });
+
+    const path = join(
+      dir,
+      "observer-normalized",
+      "2026-05-31",
+      "openclaw",
+      "thread-1.jsonl"
+    );
+    expect(readJsonl(path)).toEqual([
+      expect.objectContaining({
+        timestamp: "2026-05-31T03:10:00.000Z",
+        agent: "openclaw",
+        sessionId: "thread-1",
+        entryType: "tool_call",
+        role: "assistant",
+        developer: "T123:U123",
+        machine: "rt_123",
+        project: "T123",
+        toolName: "github.listMyPullRequests",
+        toolCallId: "call-1",
+        tokenUsage: null
+      }),
+      expect.objectContaining({
+        timestamp: "2026-05-31T03:10:00.000Z",
+        agent: "openclaw",
+        sessionId: "thread-1",
+        entryType: "tool_result",
+        role: "tool",
+        toolName: "github.listMyPullRequests",
+        toolCallId: "call-1",
+        durationMs: 42,
+        success: true
+      }),
+      expect.objectContaining({
+        timestamp: "2026-05-31T03:10:00.000Z",
+        agent: "openclaw",
+        sessionId: "thread-1",
+        entryType: "token_usage",
+        role: "assistant",
+        model: "openai:gpt-5.4",
+        tokenUsage: {
+          input: 10,
+          output: 5,
+          cacheRead: 3,
+          cacheCreation: 0,
+          reasoning: 2
+        },
+        durationMs: 1200,
+        success: true
+      })
+    ]);
+  });
+
+  test("does not write runtime heartbeats to Observer normalized traces", () => {
+    const dir = mkdtempSync(join(tmpdir(), "burble-observability-"));
+    const sink = createPartitionedJsonlObservabilitySink({
+      dir,
+      now: () => new Date("2026-05-31T03:10:00.000Z")
+    });
+
+    sink.emit({
+      name: "runtime.heartbeat",
+      workspaceId: "T123",
+      principalId: "T123:U123",
+      runtimeId: "rt_123",
+      runtimeType: "openclaw",
+      status: "ok"
+    });
+
+    const path = join(
+      dir,
+      "observer-normalized",
+      "2026-05-31",
+      "openclaw",
+      "unknown.jsonl"
+    );
+    expect(existsSync(path)).toBe(false);
+  });
+
   test("sanitizes partition path segments and keeps content policy", () => {
     const dir = mkdtempSync(join(tmpdir(), "burble-observability-"));
     const sink = createPartitionedJsonlObservabilitySink({

@@ -22,8 +22,28 @@ This follows the storage shape used by the sibling `observer` project: small
 append-only JSONL partitions are easier to scan, archive, compact, and delete
 than one global file. Partitioning is UTC and uses sanitized path segments.
 
+When directory-based logging is enabled, Burble also writes an
+Observer-compatible normalized projection:
+
+```text
+/data/observability/events/
+  observer-normalized/
+    YYYY-MM-DD/
+      <runtime-type>/
+        <session-id>.jsonl
+```
+
+Those rows follow Observer's local dashboard trace-entry shape closely enough
+for session/tool/token analysis: `message`, `tool_call`, `tool_result`,
+`task_summary`, and `token_usage` entries include stable IDs, timestamps,
+agent/runtime name, session ID, project/workspace, developer/principal,
+tool metadata, durations, success flags, and token usage. Runtime heartbeats
+are intentionally excluded from this projection so they do not create noisy
+fake sessions.
+
 `OBSERVABILITY_JSONL_PATH` remains as a compatibility override for a single
-JSONL file. If it is set, it takes precedence over `OBSERVABILITY_JSONL_DIR`.
+JSONL file. If it is set, it takes precedence over `OBSERVABILITY_JSONL_DIR`
+and disables the directory-local Observer projection.
 
 ## Content Policy
 
@@ -62,10 +82,11 @@ Observer has a more complete pipeline:
 - disclosure levels for local-only vs shipped data;
 - dashboard ingestion into SQLite for session/tool/token analysis.
 
-Burble’s current PR only implements the first layer: structured event emission
-and partitioned local JSONL. The next useful follow-up is a reader/rollup layer
-that can scan partitions and produce queryable per-workspace, per-principal,
-per-runtime, per-session, and per-job aggregates.
+Burble’s current PR implements structured native event emission, partitioned
+local JSONL, and an Observer-compatible normalized local projection. The next
+useful follow-up is a reader/rollup layer that can scan partitions and produce
+queryable per-workspace, per-principal, per-runtime, per-session, and per-job
+aggregates.
 
 ## Future Follow-Ups
 
