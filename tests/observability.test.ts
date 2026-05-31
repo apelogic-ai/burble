@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, test } from "bun:test";
 import {
+  createObservabilitySink,
   createJsonlObservabilitySink,
   createPartitionedJsonlObservabilitySink
 } from "../src/observability";
@@ -332,6 +333,52 @@ describe("createPartitionedJsonlObservabilitySink", () => {
           accessToken: "[redacted]"
         }
       }
+    ]);
+  });
+});
+
+describe("createObservabilitySink", () => {
+  test("prefers partitioned directory logging over legacy single-file path", () => {
+    const dir = mkdtempSync(join(tmpdir(), "burble-observability-dir-"));
+    const path = tempJsonlPath();
+    const sink = createObservabilitySink({
+      path,
+      dir,
+      includeContent: true,
+      now: () => new Date("2026-05-31T03:10:00.000Z")
+    });
+
+    sink.emit({
+      name: "runtime.run.completed",
+      workspaceId: "T123",
+      runtimeType: "openclaw",
+      content: {
+        text: "kept because includeContent is enabled"
+      }
+    });
+
+    const partitionPath = join(
+      dir,
+      "year=2026",
+      "month=05",
+      "day=31",
+      "hour=03",
+      "workspace=T123",
+      "runtime=openclaw",
+      "events.jsonl"
+    );
+
+    expect(existsSync(path)).toBe(false);
+    expect(readJsonl(partitionPath)).toEqual([
+      expect.objectContaining({
+        schemaVersion: 1,
+        name: "runtime.run.completed",
+        workspaceId: "T123",
+        runtimeType: "openclaw",
+        content: {
+          text: "kept because includeContent is enabled"
+        }
+      })
     ]);
   });
 });

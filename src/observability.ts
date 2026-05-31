@@ -169,21 +169,25 @@ export function createObservabilitySink(input: {
   path: string | null;
   dir?: string | null;
   includeContent?: boolean;
+  now?: () => Date;
 }): ObservabilitySink {
-  if (!input.path) {
-    if (input.dir) {
-      return createPartitionedJsonlObservabilitySink({
-        dir: input.dir,
-        includeContent: input.includeContent
-      });
-    }
-    return createNoopObservabilitySink();
+  if (input.dir) {
+    return createPartitionedJsonlObservabilitySink({
+      dir: input.dir,
+      includeContent: input.includeContent,
+      now: input.now
+    });
   }
 
-  return createJsonlObservabilitySink({
-    path: input.path,
-    includeContent: input.includeContent
-  });
+  if (input.path) {
+    return createJsonlObservabilitySink({
+      path: input.path,
+      includeContent: input.includeContent,
+      now: input.now
+    });
+  }
+
+  return createNoopObservabilitySink();
 }
 
 function partitionedEventPath(

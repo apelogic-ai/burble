@@ -41,9 +41,10 @@ tool metadata, durations, success flags, and token usage. Runtime heartbeats
 are intentionally excluded from this projection so they do not create noisy
 fake sessions.
 
-`OBSERVABILITY_JSONL_PATH` remains as a compatibility override for a single
-JSONL file. If it is set, it takes precedence over `OBSERVABILITY_JSONL_DIR`
-and disables the directory-local Observer projection.
+`OBSERVABILITY_JSONL_PATH` remains as a compatibility fallback for a single
+JSONL file. If both `OBSERVABILITY_JSONL_DIR` and `OBSERVABILITY_JSONL_PATH`
+are set, directory logging wins so deploys can safely leave an old path value
+in the environment while moving to partitioned storage.
 
 ## Content Policy
 
