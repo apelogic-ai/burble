@@ -5,6 +5,7 @@ import type { createJiraTools } from "../tools/jira";
 import type { createSlackTools } from "../tools/slack";
 import type { AgentMode } from "../config";
 import type { AgentRunEventHandler, AgentRunner, AgentUsage } from "../agent/types";
+import type { ObservabilitySink } from "../observability";
 
 export type ResponseVisibility = "public" | "ephemeral" | "dm";
 export type ToolClassification = "public" | "user_private" | "restricted";
@@ -77,4 +78,6 @@ export type ConversationDeps = {
   agentRunner?: AgentRunner;
   agentExecutionMode?: "default" | "openclaw-native";
   onAgentEvent?: AgentRunEventHandler;
+  observability?: ObservabilitySink;
+  traceId?: string;
 };

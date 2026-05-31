@@ -66,6 +66,8 @@ describe("dev deploy config", () => {
       "ATLASSIAN_MCP_URL",
       "RUNTIME_JWT_ISSUER",
       "RUNTIME_JWT_PRIVATE_KEY_PATH",
+      "OBSERVABILITY_JSONL_PATH",
+      "OBSERVABILITY_INCLUDE_CONTENT",
       "AI_MODEL",
       "OPENCLAW_NEMOCLAW_URL",
       "OPENCLAW_CONFIG_PATCH_HOST_PATH",
@@ -110,6 +112,27 @@ describe("dev deploy config", () => {
   test("requires the public domain before starting Caddy", () => {
     expect(compose).toContain("DOMAIN=${DOMAIN:?DOMAIN is required}");
     expect(compose).toContain("BASE_URL=https://${DOMAIN:?DOMAIN is required}");
+  });
+
+  test("passes metadata-only observability settings to the app", () => {
+    expect(compose).toContain(
+      "OBSERVABILITY_JSONL_PATH=${OBSERVABILITY_JSONL_PATH:-}"
+    );
+    expect(compose).toContain(
+      "OBSERVABILITY_JSONL_DIR=${OBSERVABILITY_JSONL_DIR:-/data/observability/events}"
+    );
+    expect(compose).toContain(
+      "OBSERVABILITY_INCLUDE_CONTENT=${OBSERVABILITY_INCLUDE_CONTENT:-false}"
+    );
+    expect(ansibleEnvTemplate).toContain(
+      "OBSERVABILITY_JSONL_PATH={{ observability_jsonl_path | default('') }}"
+    );
+    expect(ansibleEnvTemplate).toContain(
+      "OBSERVABILITY_JSONL_DIR={{ observability_jsonl_dir | default('/data/observability/events') }}"
+    );
+    expect(ansibleEnvTemplate).toContain(
+      "OBSERVABILITY_INCLUDE_CONTENT={{ observability_include_content | default('false') }}"
+    );
   });
 
   test("does not reference Observer runtime service names", () => {

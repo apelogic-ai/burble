@@ -1,6 +1,6 @@
 import { formatConnectGitHubMessage } from "../formatting";
 import { formatGitHubIdentityMessage, formatIssuesMessage } from "../formatting";
-import { collectAgentRun } from "../agent/types";
+import { collectAgentRun, type AgentRunEvent } from "../agent/types";
 import { parseGitHubPullRequestListInput } from "../github-query";
 import { tryHandleLocalToolFastPath } from "./local-tool-fast-paths";
 import { enforceVisibility } from "./visibility";
@@ -11,6 +11,26 @@ import type {
 } from "./types";
 
 export async function handleConversation(
+  request: ConversationRequest,
+  deps: ConversationDeps
+): Promise<ConversationResponse> {
+  const traceId = deps.traceId ?? crypto.randomUUID();
+  const startedAt = Date.now();
+  emitConversationStarted(traceId, request, deps);
+  try {
+    const response = await handleConversationInternal(request, {
+      ...deps,
+      traceId
+    });
+    emitConversationCompleted(traceId, request, response, deps, startedAt);
+    return response;
+  } catch (error) {
+    emitConversationFailed(traceId, request, deps, startedAt, error);
+    throw error;
+  }
+}
+
+async function handleConversationInternal(
   request: ConversationRequest,
   deps: ConversationDeps
 ): Promise<ConversationResponse> {
@@ -167,7 +187,10 @@ export async function handleConversation(
           slack: deps.getConnection("slack", request.user.email)
         }
       },
-      deps.onAgentEvent
+      async (event) => {
+        emitAgentEvent(deps.traceId ?? crypto.randomUUID(), request, deps, event);
+        await deps.onAgentEvent?.(event);
+      }
     );
 
     return enforceVisibility(
@@ -193,6 +216,163 @@ export async function handleConversation(
       "`@Burble what issues are assigned to me?`"
     ].join("\n")
   };
+}
+
+function emitConversationStarted(
+  traceId: string,
+  request: ConversationRequest,
+  deps: ConversationDeps
+): void {
+  deps.observability?.emit({
+    name: "conversation.request.started",
+    traceId,
+    workspaceId: request.workspaceId,
+    principalId: principalId(request),
+    routeId: request.conversationRouteId,
+    sessionId: request.threadTs ?? request.messageTs,
+    attributes: {
+      source: request.source,
+      channelId: request.channelId,
+      isDirectMessage: request.isDirectMessage,
+      textLength: request.text.length,
+      attachmentCount: request.attachments?.length ?? 0,
+      agentMode: deps.agentMode ?? "deterministic",
+      fastTrackEnabled: shouldUseFastTrack(deps),
+      hasAgentRunner: Boolean(deps.agentRunner)
+    },
+    content: {
+      text: request.text
+    }
+  });
+}
+
+function emitConversationCompleted(
+  traceId: string,
+  request: ConversationRequest,
+  response: ConversationResponse,
+  deps: ConversationDeps,
+  startedAt: number
+): void {
+  deps.observability?.emit({
+    name: "conversation.response.completed",
+    traceId,
+    workspaceId: request.workspaceId,
+    principalId: principalId(request),
+    routeId: request.conversationRouteId,
+    sessionId: request.threadTs ?? request.messageTs,
+    classification: response.classification,
+    durationMs: Date.now() - startedAt,
+    status: "ok",
+    usage: response.usage,
+    attributes: {
+      visibility: response.visibility,
+      textLength: response.text.length,
+      attachmentCount: response.attachments?.length ?? 0,
+      blockCount: response.blocks?.length ?? 0
+    },
+    content: {
+      text: response.text
+    }
+  });
+}
+
+function emitConversationFailed(
+  traceId: string,
+  request: ConversationRequest,
+  deps: ConversationDeps,
+  startedAt: number,
+  error: unknown
+): void {
+  deps.observability?.emit({
+    name: "conversation.request.failed",
+    traceId,
+    workspaceId: request.workspaceId,
+    principalId: principalId(request),
+    routeId: request.conversationRouteId,
+    sessionId: request.threadTs ?? request.messageTs,
+    durationMs: Date.now() - startedAt,
+    status: "error",
+    error: errorToObservabilityError(error)
+  });
+}
+
+function emitAgentEvent(
+  traceId: string,
+  request: ConversationRequest,
+  deps: ConversationDeps,
+  event: AgentRunEvent
+): void {
+  const common = {
+    traceId,
+    workspaceId: request.workspaceId,
+    principalId: principalId(request),
+    routeId: request.conversationRouteId,
+    sessionId: request.threadTs ?? request.messageTs
+  };
+
+  if (event.type === "tool_call") {
+    deps.observability?.emit({
+      ...common,
+      name: "tool.call.started",
+      toolName: event.toolName,
+      callId: event.callId
+    });
+    return;
+  }
+
+  if (event.type === "tool_result") {
+    deps.observability?.emit({
+      ...common,
+      name: "tool.call.completed",
+      toolName: event.toolName,
+      callId: event.callId,
+      classification: event.classification,
+      status: "ok"
+    });
+    return;
+  }
+
+  if (event.type === "status") {
+    deps.observability?.emit({
+      ...common,
+      name: "agent.status",
+      attributes: {
+        text: event.text
+      }
+    });
+    return;
+  }
+
+  if (event.type === "message_delta") {
+    deps.observability?.emit({
+      ...common,
+      name: "agent.message.delta",
+      attributes: {
+        textLength: event.text.length
+      },
+      content: {
+        text: event.text
+      }
+    });
+  }
+}
+
+function principalId(request: ConversationRequest): string {
+  return `${request.workspaceId}:${request.user.slackUserId}`;
+}
+
+function errorToObservabilityError(error: unknown): {
+  name?: string;
+  message: string;
+} {
+  if (error instanceof Error) {
+    return {
+      name: error.name,
+      message: error.message
+    };
+  }
+
+  return { message: String(error) };
 }
 
 function shouldUseFastTrack(deps: ConversationDeps): boolean {

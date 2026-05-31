@@ -76,6 +76,10 @@ import {
   formatWorkingMessage
 } from "./formatting";
 import { formatLogError, withUtcTimestamp } from "./logging";
+import {
+  createNoopObservabilitySink,
+  type ObservabilitySink
+} from "./observability";
 import type { RuntimeJwtIssuer } from "./runtime-jwt";
 
 export {
@@ -164,7 +168,8 @@ type AgentExecTask = {
 export function createSlackRuntime(
   config: Config,
   store: TokenStore,
-  runtimeJwtIssuer?: RuntimeJwtIssuer
+  runtimeJwtIssuer?: RuntimeJwtIssuer,
+  observability: ObservabilitySink = createNoopObservabilitySink()
 ): SlackRuntime {
   const app = new App({
     token: config.slackBotToken,
@@ -243,6 +248,7 @@ export function createSlackRuntime(
           jiraTools,
           openClawNemoClawUrl: config.openClawNemoClawUrl,
           ...(runtimeFactory ? { runtimeFactory } : {}),
+          observability,
           logInfo: (message) => app.logger.info(withUtcTimestamp(message))
         })
       : undefined;
@@ -613,6 +619,7 @@ export function createSlackRuntime(
           },
           agentMode: config.agentMode,
           agentFastTrack: config.agentFastTrack,
+          observability,
           ...(resolveAgentExecutionMode()
             ? { agentExecutionMode: resolveAgentExecutionMode() }
             : {}),
@@ -783,6 +790,7 @@ export function createSlackRuntime(
           },
           agentMode: config.agentMode,
           agentFastTrack: config.agentFastTrack,
+          observability,
           ...(resolveAgentExecutionMode()
             ? { agentExecutionMode: resolveAgentExecutionMode() }
             : {}),
@@ -4255,7 +4263,7 @@ function formatToolClassification(classification: ToolClassification): string {
   return String(classification).replace(/_/g, "-");
 }
 
-function formatFinalProgressLine(elapsedMs: number, usage?: AgentUsage): string {
+export function formatFinalProgressLine(elapsedMs: number, usage?: AgentUsage): string {
   const usageText = formatUsageSummary(usage);
   return `Final result in ${formatElapsedMs(elapsedMs)}${usageText ? ` (${usageText})` : ""}.`;
 }
@@ -4280,6 +4288,9 @@ function formatUsageSummary(usage?: AgentUsage): string | null {
   }
   if (typeof usage.reasoningTokens === "number" && usage.reasoningTokens > 0) {
     parts.push(`${usage.reasoningTokens} reasoning`);
+  }
+  if (usage.usageSource === "estimate-only") {
+    parts.push("estimated");
   }
   return parts.join(", ");
 }

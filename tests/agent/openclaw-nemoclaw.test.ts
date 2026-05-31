@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { createOpenClawNemoClawAgentRunner } from "../../src/agent/runners/openclaw-nemoclaw";
 import { collectAgentRun } from "../../src/agent/types";
 import type { ProviderConnection } from "../../src/db";
+import type { ObservabilityEventInput } from "../../src/observability";
 
 const connection: ProviderConnection = {
   provider: "github",
@@ -247,6 +248,117 @@ describe("createOpenClawNemoClawAgentRunner", () => {
         }
       }
     ]);
+  });
+
+  test("emits observability events for remote runtime calls", async () => {
+    const observabilityEvents: ObservabilityEventInput[] = [];
+    const runner = createOpenClawNemoClawAgentRunner({
+      runtimeFactory: {
+        async getOrCreateRuntime() {
+          return {
+            id: "rt_u123",
+            engine: "openclaw",
+            endpointUrl: "http://runtime-u123:8080/",
+            authToken: "runtime-token",
+            status: "ready",
+            statePath: "/data/runtimes/rt_u123/state",
+            configPath: "/data/runtimes/rt_u123/config/openclaw.json",
+            workspacePath: "/data/runtimes/rt_u123/workspace"
+          };
+        },
+        async stopRuntime() {},
+        async reapIdleRuntimes() {},
+        recordRuntimeEvent() {}
+      },
+      observability: {
+        emit: (event) => {
+          observabilityEvents.push(event);
+        }
+      },
+      fetch: async () =>
+        Response.json({
+          response: {
+            classification: "user_private",
+            text: "Runtime answer.",
+            usage: {
+              inputTokens: 12,
+              outputTokens: 4,
+              totalTokens: 16
+            },
+            telemetry: {
+              promptChars: 4096,
+              promptApproxTokens: 1024,
+              steps: [
+                {
+                  step: 1,
+                  usageSource: "provider-output"
+                }
+              ]
+            }
+          }
+        })
+    });
+
+    const result = await collectAgentRun(runner, {
+      principal,
+      conversation,
+      text: "summarize my GitHub work",
+      connections: { github: connection }
+    });
+
+    expect(result.text).toBe("Runtime answer.");
+    expect(observabilityEvents.map((event) => event.name)).toEqual([
+      "runtime.run.started",
+      "runtime.run.accepted",
+      "runtime.run.completed"
+    ]);
+    expect(observabilityEvents[0]).toMatchObject({
+      workspaceId: "T123",
+      principalId: "T123:U123",
+      runtimeId: "rt_u123",
+      runtimeType: "openclaw",
+      attributes: {
+        conversationRoot: "dm:D123",
+        textLength: 24,
+        githubConnected: true
+      }
+    });
+    expect(observabilityEvents[1]).toMatchObject({
+      runtimeId: "rt_u123",
+      runtimeType: "openclaw",
+      status: "ok",
+      attributes: {
+        httpStatus: 200
+      }
+    });
+    expect(observabilityEvents[2]).toMatchObject({
+      runtimeId: "rt_u123",
+      runtimeType: "openclaw",
+      classification: "user_private",
+      status: "ok",
+      usage: {
+        inputTokens: 12,
+        outputTokens: 4,
+        totalTokens: 16
+      },
+      attributes: {
+        telemetry: {
+          promptChars: 4096,
+          promptApproxTokens: 1024,
+          steps: [
+            {
+              step: 1,
+              usageSource: "provider-output"
+            }
+          ]
+        }
+      }
+    });
+    expect(
+      new Set(observabilityEvents.map((event) => event.runId)).size
+    ).toBe(1);
+    expect(JSON.stringify(observabilityEvents)).not.toContain("runtime-token");
+    expect(JSON.stringify(observabilityEvents)).not.toContain("secret-token");
   });
 
   test("streams remote runtime events over WebSocket before returning the final response", async () => {

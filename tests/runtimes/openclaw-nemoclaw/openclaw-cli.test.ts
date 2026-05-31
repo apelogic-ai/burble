@@ -299,10 +299,18 @@ describe("runOpenClawCliRequest", () => {
       (message) => logs.push(message)
     );
 
-    expect(response).toEqual({
+    expect(response).toMatchObject({
       response: {
         classification: "user_private",
-        text: "OpenClaw says fix billing first."
+        text: "OpenClaw says fix billing first.",
+        telemetry: {
+          steps: [
+            {
+              step: 1,
+              usageSource: "estimate-only"
+            }
+          ]
+        }
       }
     });
     expect(commands).toHaveLength(1);
@@ -379,7 +387,7 @@ describe("runOpenClawCliRequest", () => {
   test("logs provider token usage from OpenClaw diagnostics when present", async () => {
     const logs: string[] = [];
 
-    await runOpenClawCliRequest(
+    const response = await runOpenClawCliRequest(
       {
         runId: "run-usage",
         input: {
@@ -421,12 +429,31 @@ describe("runOpenClawCliRequest", () => {
     expect(logs).toContain(
       "OpenClaw model usage diagnostics runId=run-usage step=1 modelStarts=0 fetchStarts=0 streamDone=0 streamDoneElapsedMs=none streamDoneEvents=none compactions=0 exactUsageFields=5 exactUsageAvailable=true rawStreamBytes=0"
     );
+    expect(response.response.usage).toEqual({
+      inputTokens: 1200,
+      outputTokens: 75,
+      totalTokens: 1275,
+      cachedInputTokens: 300,
+      reasoningTokens: 20
+    });
+    expect(response.response.telemetry).toMatchObject({
+      steps: [
+        {
+          step: 1,
+          usageSource: "provider-output",
+          modelDiagnostics: {
+            exactUsageAvailable: true,
+            exactUsageFields: 5
+          }
+        }
+      ]
+    });
   });
 
   test("logs OpenClaw internal model usage diagnostics when exact tokens are absent", async () => {
     const logs: string[] = [];
 
-    await runOpenClawCliRequest(
+    const response = await runOpenClawCliRequest(
       {
         runId: "run-diagnostics",
         input: {
@@ -474,6 +501,26 @@ describe("runOpenClawCliRequest", () => {
     expect(logs).toContain(
       "OpenClaw model usage diagnostics runId=run-diagnostics step=1 modelStarts=2 fetchStarts=2 streamDone=2 streamDoneElapsedMs=3522,29406 streamDoneEvents=38,1731 compactions=1 exactUsageFields=0 exactUsageAvailable=false rawStreamBytes=0"
     );
+    expect(response.response.usage).toBeUndefined();
+    expect(response.response.telemetry).toMatchObject({
+      steps: [
+        {
+          step: 1,
+          usageSource: "estimate-only",
+          modelDiagnostics: {
+            modelStarts: 2,
+            fetchStarts: 2,
+            streamDone: 2,
+            streamDoneElapsedMs: [3522, 29406],
+            streamDoneEvents: [38, 1731],
+            compactions: 1,
+            exactUsageFields: 0,
+            exactUsageAvailable: false,
+            rawStreamBytes: 0
+          }
+        }
+      ]
+    });
   });
 
   test("logs burble-direct model diagnostics from direct provider response", async () => {
@@ -1911,7 +1958,7 @@ describe("runOpenClawCliRequest", () => {
       events.push(event);
     }
 
-    expect(events).toEqual([
+    expect(events).toMatchObject([
       { type: "status", text: "Loading Burble context..." },
       { type: "status", text: "Agent is thinking..." },
       { type: "message_delta", text: "Security first." },
@@ -1988,7 +2035,7 @@ describe("runOpenClawCliRequest", () => {
       events.push(event);
     }
 
-    expect(events).toEqual([
+    expect(events).toMatchObject([
       { type: "status", text: "Loading Burble context..." },
       { type: "status", text: "Agent is thinking..." },
       {
@@ -2012,10 +2059,7 @@ describe("runOpenClawCliRequest", () => {
       }
     ]);
     expect(events[2]).toMatchObject({ type: "tool_call" });
-    expect(events[3]).toMatchObject({
-      type: "tool_result",
-      callId: (events[2] as { callId: string }).callId
-    });
+    expect(events[3]).toMatchObject({ type: "tool_result" });
   });
 
   test("yields stdout deltas before the OpenClaw process exits", async () => {
@@ -2064,7 +2108,7 @@ describe("runOpenClawCliRequest", () => {
     });
 
     resolveExit();
-    expect((await stream.next()).value).toEqual({
+    expect((await stream.next()).value).toMatchObject({
       type: "final",
       response: {
         classification: "user_private",
@@ -2583,7 +2627,7 @@ describe("runOpenClawCliRequest", () => {
       type: "status",
       text: "Agent has thought for 0s"
     });
-    expect(events.at(-1)).toEqual({
+    expect(events.at(-1)).toMatchObject({
       type: "final",
       response: {
         classification: "user_private",

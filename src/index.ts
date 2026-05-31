@@ -5,15 +5,21 @@ import { startOAuthServer } from "./server";
 import { createSlackRuntime } from "./slack";
 import { formatLogError, formatLogLine, withUtcTimestamp } from "./logging";
 import { createRuntimeJwtIssuer } from "./runtime-jwt";
+import { createObservabilitySink } from "./observability";
 
 const config = loadConfig();
 const store = createTokenStore(config.databasePath);
+const observability = createObservabilitySink({
+  path: config.observabilityJsonlPath,
+  dir: config.observabilityJsonlDir,
+  includeContent: config.observabilityIncludeContent
+});
 const runtimeJwtIssuer = createRuntimeJwtIssuer({
   issuer: config.runtimeJwtIssuer,
   privateKeyPath: config.runtimeJwtPrivateKeyPath
 });
-const slack = createSlackRuntime(config, store, runtimeJwtIssuer);
-const server = startOAuthServer(config, store, slack, runtimeJwtIssuer);
+const slack = createSlackRuntime(config, store, runtimeJwtIssuer, observability);
+const server = startOAuthServer(config, store, slack, runtimeJwtIssuer, observability);
 const logDebug =
   config.slackLogLevel === "debug"
     ? (message: string) => console.debug(formatLogLine("debug", message))

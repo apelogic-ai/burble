@@ -19,6 +19,7 @@ import {
   formatAgentProgressEvent,
   readAgentConfigFile,
   buildReplyThreadTs,
+  formatFinalProgressLine,
   formatConnectGitHubMessage,
   formatConversationFailureMessage,
   formatGitHubIdentityMessage,
@@ -74,7 +75,10 @@ const agentConfig: Config = {
   runtimeJwtIssuer: "http://burble-app:3000",
   runtimeJwtPrivateKeyPath: "/data/runtime-jwt-private.pem",
   openClawConfigPatchHostPath: null,
-  internalApiToken: "internal-token"
+  internalApiToken: "internal-token",
+  observabilityJsonlPath: null,
+  observabilityJsonlDir: null,
+  observabilityIncludeContent: false
 };
 
 describe("formatIssuesMessage", () => {
@@ -184,6 +188,32 @@ describe("formatAgentProgressEvent", () => {
         ""
       )
     ).toBe("Agent is responding...");
+  });
+});
+
+describe("formatFinalProgressLine", () => {
+  test("labels estimate-only usage so it is not confused with exact provider usage", () => {
+    expect(
+      formatFinalProgressLine(12_300, {
+        inputTokens: 10,
+        outputTokens: 5,
+        totalTokens: 15,
+        usageSource: "estimate-only"
+      })
+    ).toBe("Final result in 12s (15 tokens, estimated).");
+  });
+
+  test("keeps provider-reported usage concise", () => {
+    expect(
+      formatFinalProgressLine(1200, {
+        inputTokens: 100,
+        outputTokens: 20,
+        totalTokens: 120,
+        cachedInputTokens: 50,
+        reasoningTokens: 10,
+        usageSource: "provider-output"
+      })
+    ).toBe("Final result in 1.2s (120 tokens, 50 cached, 10 reasoning).");
   });
 });
 
