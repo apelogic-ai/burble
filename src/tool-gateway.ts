@@ -224,19 +224,13 @@ export async function handleToolGatewayRequest(
 
   const body = await readToolGatewayBody(request);
   const toolStartedAt = Date.now();
-  emitToolGatewayStarted(deps.observability, auth, toolName, body);
-  const respondWithAudit = (result: ToolResult<unknown>): Response =>
-    jsonResponseWithAudit(store, auth, toolName, result, {
-      observability: deps.observability,
-      startedAt: toolStartedAt,
-      body
-    });
 
   if (toolName === "runtime.heartbeat") {
     if (auth.kind !== "runtime") {
       return new Response("Runtime auth required", { status: 403 });
     }
 
+    emitRuntimeHeartbeat(deps.observability, auth, toolStartedAt);
     return jsonResponse({
       classification: "user_private",
       content: {
@@ -245,6 +239,14 @@ export async function handleToolGatewayRequest(
       }
     });
   }
+
+  emitToolGatewayStarted(deps.observability, auth, toolName, body);
+  const respondWithAudit = (result: ToolResult<unknown>): Response =>
+    jsonResponseWithAudit(store, auth, toolName, result, {
+      observability: deps.observability,
+      startedAt: toolStartedAt,
+      body
+    });
 
   if (toolName === "conversation.sendMessage") {
     if (auth.kind !== "runtime") {
@@ -2512,6 +2514,22 @@ function emitToolGatewayCompleted(
       authKind: auth.kind,
       provider: readToolProviderForTelemetry(toolName),
       itemCount: Array.isArray(result.content) ? result.content.length : null
+    }
+  });
+}
+
+function emitRuntimeHeartbeat(
+  observability: ObservabilitySink | undefined,
+  auth: Extract<ToolGatewayAuth, { kind: "runtime" }>,
+  startedAt: number
+): void {
+  observability?.emit({
+    name: "runtime.heartbeat",
+    ...toolGatewayIdentityFields(auth),
+    durationMs: Date.now() - startedAt,
+    status: "ok",
+    attributes: {
+      authKind: auth.kind
     }
   });
 }

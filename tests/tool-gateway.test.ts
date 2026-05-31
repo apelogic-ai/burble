@@ -678,11 +678,19 @@ describe("handleToolGatewayRequest", () => {
   test("lets a runtime refresh heartbeat without provider credentials or audit noise", async () => {
     const runtimeEvents: unknown[] = [];
     const touchedRuntimeIds: string[] = [];
+    const observabilityEvents: ObservabilityEventInput[] = [];
     const response = await handleToolGatewayRequest(
       config,
       createStore(null, runtime, runtimeEvents, null, touchedRuntimeIds),
       "runtime.heartbeat",
-      request("runtime.heartbeat", {}, "runtime-token-u123", "rt_u123")
+      request("runtime.heartbeat", {}, "runtime-token-u123", "rt_u123"),
+      {
+        observability: {
+          emit: (event) => {
+            observabilityEvents.push(event);
+          }
+        }
+      }
     );
 
     expect(response.status).toBe(200);
@@ -695,6 +703,18 @@ describe("handleToolGatewayRequest", () => {
       }
     });
     expect(runtimeEvents).toEqual([]);
+    expect(observabilityEvents).toHaveLength(1);
+    expect(observabilityEvents[0]).toMatchObject({
+      name: "runtime.heartbeat",
+      runtimeId: "rt_u123",
+      runtimeType: "openclaw",
+      workspaceId: "T123",
+      principalId: "T123:U123",
+      status: "ok",
+      attributes: {
+        authKind: "runtime"
+      }
+    });
   });
 
   test("lets a runtime send through a durable conversation route", async () => {
