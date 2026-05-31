@@ -61,6 +61,7 @@ export type AgentUsage = {
   totalTokens?: number;
   cachedInputTokens?: number;
   reasoningTokens?: number;
+  usageSource?: "provider-output" | "estimate-only" | string;
 };
 
 export type AgentTelemetry = {

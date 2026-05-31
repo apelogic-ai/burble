@@ -38,6 +38,105 @@ def yaml_string(value: str) -> str:
     return json.dumps(value)
 
 
+def _to_non_negative_int(value: Any) -> int | None:
+    if isinstance(value, bool) or value is None:
+        return None
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        return None
+    return number if number >= 0 else None
+
+
+def _pick_int(source: dict[str, Any], *keys: str) -> int | None:
+    for key in keys:
+        if key in source:
+            value = _to_non_negative_int(source.get(key))
+            if value is not None:
+                return value
+    return None
+
+
+def normalize_usage(value: Any) -> dict[str, Any] | None:
+    if not isinstance(value, dict):
+        return None
+
+    input_tokens = _pick_int(
+        value,
+        "inputTokens",
+        "input_tokens",
+        "promptTokens",
+        "prompt_tokens",
+    )
+    output_tokens = _pick_int(
+        value,
+        "outputTokens",
+        "output_tokens",
+        "completionTokens",
+        "completion_tokens",
+    )
+    total_tokens = _pick_int(value, "totalTokens", "total_tokens")
+    cached_tokens = _pick_int(
+        value,
+        "cachedInputTokens",
+        "cached_input_tokens",
+        "cached_tokens",
+        "cacheReadTokens",
+        "cache_read_tokens",
+    )
+    reasoning_tokens = _pick_int(
+        value,
+        "reasoningTokens",
+        "reasoning_tokens",
+    )
+
+    if total_tokens is None and input_tokens is not None and output_tokens is not None:
+        total_tokens = input_tokens + output_tokens
+
+    usage: dict[str, Any] = {}
+    if input_tokens is not None:
+        usage["inputTokens"] = input_tokens
+    if output_tokens is not None:
+        usage["outputTokens"] = output_tokens
+    if total_tokens is not None:
+        usage["totalTokens"] = total_tokens
+    if cached_tokens is not None:
+        usage["cachedInputTokens"] = cached_tokens
+    if reasoning_tokens is not None:
+        usage["reasoningTokens"] = reasoning_tokens
+
+    source = value.get("usageSource") or value.get("usage_source") or value.get("source")
+    if isinstance(source, str) and source.strip():
+        usage["usageSource"] = source.strip()
+
+    return usage or None
+
+
+def estimate_visible_usage(prompt: str, response: str) -> dict[str, Any]:
+    input_tokens = max(1, (len(prompt) + 3) // 4)
+    output_tokens = max(1, (len(response) + 3) // 4)
+    return {
+        "inputTokens": input_tokens,
+        "outputTokens": output_tokens,
+        "totalTokens": input_tokens + output_tokens,
+        "usageSource": "estimate-only",
+    }
+
+
+def build_runtime_response(result: dict[str, Any], prompt: str = "") -> dict[str, Any]:
+    text = str(result.get("text") or "")
+    response: dict[str, Any] = {
+        "classification": result.get("classification") or "user_private",
+        "text": text,
+    }
+    usage = normalize_usage(result.get("usage"))
+    if usage is None and (prompt.strip() or text.strip()):
+        usage = estimate_visible_usage(prompt, text)
+    if usage:
+        response["usage"] = usage
+    return response
+
+
 DEFAULT_SOUL_MD = """# Burble Runtime
 
 You are Burble's Hermes runtime.
@@ -172,12 +271,7 @@ class BurbleHermesRuntime:
         try:
             result = await task
             return web.json_response(
-                {
-                    "response": {
-                        "classification": result.get("classification") or "user_private",
-                        "text": result.get("text") or "",
-                    }
-                },
+                {"response": build_runtime_response(result, text)},
                 headers={"cache-control": "no-store"},
             )
         finally:
@@ -277,10 +371,7 @@ class BurbleHermesRuntime:
                 waiter.future,
                 timeout=int_env("HERMES_RUN_TIMEOUT_SECONDS", 180),
             )
-            response = {
-                "classification": result.get("classification") or "user_private",
-                "text": result.get("text") or "",
-            }
+            response = build_runtime_response(result, str(message.get("text") or ""))
             await waiter.finish(response)
             print(
                 f"[INFO] {timestamp()} Nemo Hermes run finish runId={run_id} textChars={len(response['text'])}",

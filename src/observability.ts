@@ -8,6 +8,7 @@ export type ObservabilityUsage = {
   totalTokens?: number;
   cachedInputTokens?: number;
   reasoningTokens?: number;
+  usageSource?: string;
 };
 
 export type ObservabilityEventInput = {

@@ -4263,7 +4263,7 @@ function formatToolClassification(classification: ToolClassification): string {
   return String(classification).replace(/_/g, "-");
 }
 
-function formatFinalProgressLine(elapsedMs: number, usage?: AgentUsage): string {
+export function formatFinalProgressLine(elapsedMs: number, usage?: AgentUsage): string {
   const usageText = formatUsageSummary(usage);
   return `Final result in ${formatElapsedMs(elapsedMs)}${usageText ? ` (${usageText})` : ""}.`;
 }
@@ -4288,6 +4288,9 @@ function formatUsageSummary(usage?: AgentUsage): string | null {
   }
   if (typeof usage.reasoningTokens === "number" && usage.reasoningTokens > 0) {
     parts.push(`${usage.reasoningTokens} reasoning`);
+  }
+  if (usage.usageSource === "estimate-only") {
+    parts.push("estimated");
   }
   return parts.join(", ");
 }

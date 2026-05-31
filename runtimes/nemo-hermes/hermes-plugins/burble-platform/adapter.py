@@ -69,6 +69,99 @@ def _is_burble_platform_notice(text: str) -> bool:
     )
 
 
+def _to_non_negative_int(value: Any) -> Optional[int]:
+    if isinstance(value, bool) or value is None:
+        return None
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        return None
+    return number if number >= 0 else None
+
+
+def _pick_int(source: Dict[str, Any], *keys: str) -> Optional[int]:
+    for key in keys:
+        if key in source:
+            value = _to_non_negative_int(source.get(key))
+            if value is not None:
+                return value
+    return None
+
+
+def _normalize_usage(value: Any) -> Optional[dict[str, Any]]:
+    if not isinstance(value, dict):
+        return None
+
+    input_tokens = _pick_int(
+        value,
+        "inputTokens",
+        "input_tokens",
+        "promptTokens",
+        "prompt_tokens",
+    )
+    output_tokens = _pick_int(
+        value,
+        "outputTokens",
+        "output_tokens",
+        "completionTokens",
+        "completion_tokens",
+    )
+    total_tokens = _pick_int(value, "totalTokens", "total_tokens")
+    cached_tokens = _pick_int(
+        value,
+        "cachedInputTokens",
+        "cached_input_tokens",
+        "cached_tokens",
+        "cacheReadTokens",
+        "cache_read_tokens",
+    )
+    reasoning_tokens = _pick_int(
+        value,
+        "reasoningTokens",
+        "reasoning_tokens",
+    )
+
+    if total_tokens is None and input_tokens is not None and output_tokens is not None:
+        total_tokens = input_tokens + output_tokens
+
+    usage: dict[str, Any] = {}
+    if input_tokens is not None:
+        usage["inputTokens"] = input_tokens
+    if output_tokens is not None:
+        usage["outputTokens"] = output_tokens
+    if total_tokens is not None:
+        usage["totalTokens"] = total_tokens
+    if cached_tokens is not None:
+        usage["cachedInputTokens"] = cached_tokens
+    if reasoning_tokens is not None:
+        usage["reasoningTokens"] = reasoning_tokens
+
+    source = value.get("usageSource") or value.get("usage_source") or value.get("source")
+    if isinstance(source, str) and source.strip():
+        usage["usageSource"] = source.strip()
+
+    return usage or None
+
+
+def _usage_from_metadata(metadata: Optional[Dict[str, Any]]) -> Optional[dict[str, Any]]:
+    if not isinstance(metadata, dict):
+        return None
+
+    for key in ("usage", "token_usage", "tokenUsage", "llm_usage", "llmUsage"):
+        usage = _normalize_usage(metadata.get(key))
+        if usage:
+            return usage
+
+    for key in ("response", "result", "generation", "model", "llm"):
+        nested = metadata.get(key)
+        if isinstance(nested, dict):
+            usage = _usage_from_metadata(nested)
+            if usage:
+                return usage
+
+    return _normalize_usage(metadata)
+
+
 class BurbleAdapter(BasePlatformAdapter):
     def __init__(self, config: Any):
         super().__init__(config=config, platform=Platform("burble"))
@@ -143,18 +236,22 @@ class BurbleAdapter(BasePlatformAdapter):
         )
         if pending_run_id:
             callback = f"{self.runtime_callback_url}/{quote(pending_run_id, safe='')}/messages"
+            payload: dict[str, Any] = {
+                "routeId": route_id,
+                "text": text,
+                "classification": "user_private",
+            }
+            usage = _usage_from_metadata(metadata)
+            if usage:
+                payload["usage"] = usage
             print(
-                f"[INFO] Burble Hermes platform callback start runId={pending_run_id} textChars={len(text)}",
+                f"[INFO] Burble Hermes platform callback start runId={pending_run_id} textChars={len(text)} usage={'present' if usage else 'none'}",
                 flush=True,
             )
             async with ClientSession(timeout=ClientTimeout(total=30)) as session:
                 async with session.post(
                     callback,
-                    json={
-                        "routeId": route_id,
-                        "text": text,
-                        "classification": "user_private",
-                    },
+                    json=payload,
                 ) as response:
                     if response.status >= 400:
                         body = await response.text()
