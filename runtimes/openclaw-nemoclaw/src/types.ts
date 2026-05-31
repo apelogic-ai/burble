@@ -45,6 +45,18 @@ export type RunRequest = {
   };
   input: {
     text: string;
+    toolGroups?: {
+      groups: Array<
+        | "attachments"
+        | "conversation"
+        | "github"
+        | "google"
+        | "jira"
+        | "scheduler"
+        | "slack"
+      >;
+      reasons: string[];
+    };
     attachments?: ConversationAttachment[];
     conversation?: {
       routeId?: string;

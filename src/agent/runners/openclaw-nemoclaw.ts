@@ -733,6 +733,7 @@ function sanitizeAgentInput(input: AgentInput): {
   attachments?: RuntimeAttachment[];
   conversation?: NonNullable<AgentInput["conversation"]>;
   context?: NonNullable<AgentInput["context"]>;
+  toolGroups?: NonNullable<AgentInput["toolGroups"]>;
   connections: {
     github: ConnectionSummary;
     google: ConnectionSummary;
@@ -750,6 +751,7 @@ function sanitizeAgentInput(input: AgentInput): {
     ...(input.attachments ? { attachments: input.attachments } : {}),
     ...(input.conversation ? { conversation: input.conversation } : {}),
     ...(input.context ? { context: input.context } : {}),
+    ...(input.toolGroups ? { toolGroups: input.toolGroups } : {}),
     connections: {
       github: github
         ? {

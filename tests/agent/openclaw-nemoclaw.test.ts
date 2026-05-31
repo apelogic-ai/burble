@@ -108,6 +108,10 @@ describe("createOpenClawNemoClawAgentRunner", () => {
       executionMode: "openclaw-native",
       conversation,
       text: "summarize my GitHub work",
+      toolGroups: {
+        groups: ["conversation", "github"],
+        reasons: ["default:conversation", "keyword:github:github"]
+      },
       attachments: [
         {
           id: "slack:F123",
@@ -141,6 +145,10 @@ describe("createOpenClawNemoClawAgentRunner", () => {
       executionMode: "openclaw-native",
       input: {
         text: "summarize my GitHub work",
+        toolGroups: {
+          groups: ["conversation", "github"],
+          reasons: ["default:conversation", "keyword:github:github"]
+        },
         attachments: [
           {
             id: "slack:F123",
