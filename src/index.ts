@@ -11,6 +11,7 @@ const config = loadConfig();
 const store = createTokenStore(config.databasePath);
 const observability = createObservabilitySink({
   path: config.observabilityJsonlPath,
+  dir: config.observabilityJsonlDir,
   includeContent: config.observabilityIncludeContent
 });
 const runtimeJwtIssuer = createRuntimeJwtIssuer({

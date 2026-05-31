@@ -1,8 +1,11 @@
-import { mkdtempSync, readFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, test } from "bun:test";
-import { createJsonlObservabilitySink } from "../src/observability";
+import {
+  createJsonlObservabilitySink,
+  createPartitionedJsonlObservabilitySink
+} from "../src/observability";
 
 function tempJsonlPath(): string {
   return join(mkdtempSync(join(tmpdir(), "burble-observability-")), "events.jsonl");
@@ -115,6 +118,92 @@ describe("createJsonlObservabilitySink", () => {
         traceId: "trace-1",
         content: {
           text: "answer",
+          accessToken: "[redacted]"
+        }
+      }
+    ]);
+  });
+});
+
+describe("createPartitionedJsonlObservabilitySink", () => {
+  test("writes events to hourly workspace/runtime partitions", () => {
+    const dir = mkdtempSync(join(tmpdir(), "burble-observability-"));
+    const sink = createPartitionedJsonlObservabilitySink({
+      dir,
+      now: () => new Date("2026-05-31T03:10:00.000Z")
+    });
+
+    sink.emit({
+      name: "runtime.run.completed",
+      workspaceId: "T123",
+      runtimeType: "openclaw",
+      attributes: {
+        promptChars: 1200
+      }
+    });
+
+    const path = join(
+      dir,
+      "year=2026",
+      "month=05",
+      "day=31",
+      "hour=03",
+      "workspace=T123",
+      "runtime=openclaw",
+      "events.jsonl"
+    );
+    expect(readJsonl(path)).toEqual([
+      {
+        schemaVersion: 1,
+        timestamp: "2026-05-31T03:10:00.000Z",
+        name: "runtime.run.completed",
+        workspaceId: "T123",
+        runtimeType: "openclaw",
+        attributes: {
+          promptChars: 1200
+        }
+      }
+    ]);
+  });
+
+  test("sanitizes partition path segments and keeps content policy", () => {
+    const dir = mkdtempSync(join(tmpdir(), "burble-observability-"));
+    const sink = createPartitionedJsonlObservabilitySink({
+      dir,
+      now: () => new Date("2026-05-31T03:10:00.000Z")
+    });
+
+    sink.emit({
+      name: "tool.gateway.started",
+      workspaceId: "team/slack",
+      runtimeType: "openclaw gateway",
+      attributes: {
+        accessToken: "secret"
+      },
+      content: {
+        text: "private"
+      }
+    });
+
+    const path = join(
+      dir,
+      "year=2026",
+      "month=05",
+      "day=31",
+      "hour=03",
+      "workspace=team_slack",
+      "runtime=openclaw_gateway",
+      "events.jsonl"
+    );
+    expect(existsSync(path)).toBe(true);
+    expect(readJsonl(path)).toEqual([
+      {
+        schemaVersion: 1,
+        timestamp: "2026-05-31T03:10:00.000Z",
+        name: "tool.gateway.started",
+        workspaceId: "team/slack",
+        runtimeType: "openclaw gateway",
+        attributes: {
           accessToken: "[redacted]"
         }
       }

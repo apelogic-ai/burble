@@ -54,6 +54,7 @@ describe("readConfig", () => {
       openClawConfigPatchHostPath: null,
       internalApiToken: null,
       observabilityJsonlPath: null,
+      observabilityJsonlDir: null,
       observabilityIncludeContent: false
     });
   });
@@ -371,10 +372,12 @@ describe("readConfig", () => {
     const config = readConfig({
       ...validEnv,
       OBSERVABILITY_JSONL_PATH: "/var/log/burble/events.jsonl",
+      OBSERVABILITY_JSONL_DIR: "/var/log/burble/partitions",
       OBSERVABILITY_INCLUDE_CONTENT: "true"
     });
 
     expect(config.observabilityJsonlPath).toBe("/var/log/burble/events.jsonl");
+    expect(config.observabilityJsonlDir).toBe("/var/log/burble/partitions");
     expect(config.observabilityIncludeContent).toBe(true);
   });
 

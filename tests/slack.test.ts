@@ -76,6 +76,7 @@ const agentConfig: Config = {
   openClawConfigPatchHostPath: null,
   internalApiToken: "internal-token",
   observabilityJsonlPath: null,
+  observabilityJsonlDir: null,
   observabilityIncludeContent: false
 };
 

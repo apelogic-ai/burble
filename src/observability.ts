@@ -1,5 +1,5 @@
 import { mkdirSync, appendFileSync } from "node:fs";
-import { dirname } from "node:path";
+import { dirname, join } from "node:path";
 
 export type ObservabilityUsage = {
   inputTokens?: number;
@@ -52,6 +52,12 @@ export type JsonlObservabilityOptions = {
   now?: () => Date;
 };
 
+export type PartitionedJsonlObservabilityOptions = {
+  dir: string;
+  includeContent?: boolean;
+  now?: () => Date;
+};
+
 const sensitiveKeyPattern =
   /(authorization|cookie|credential|jwt|oauth|password|refresh|secret|token)/i;
 
@@ -78,11 +84,38 @@ export function createJsonlObservabilitySink(
   };
 }
 
+export function createPartitionedJsonlObservabilitySink(
+  options: PartitionedJsonlObservabilityOptions
+): ObservabilitySink {
+  mkdirSync(options.dir, { recursive: true });
+  const now = options.now ?? (() => new Date());
+  return {
+    emit: (input) => {
+      const timestamp = now();
+      const event: ObservabilityEvent = {
+        schemaVersion: 1,
+        timestamp: timestamp.toISOString(),
+        ...sanitizeEvent(input, Boolean(options.includeContent))
+      };
+      const path = partitionedEventPath(options.dir, timestamp, event);
+      mkdirSync(dirname(path), { recursive: true });
+      appendFileSync(path, `${JSON.stringify(event)}\n`, "utf8");
+    }
+  };
+}
+
 export function createObservabilitySink(input: {
   path: string | null;
+  dir?: string | null;
   includeContent?: boolean;
 }): ObservabilitySink {
   if (!input.path) {
+    if (input.dir) {
+      return createPartitionedJsonlObservabilitySink({
+        dir: input.dir,
+        includeContent: input.includeContent
+      });
+    }
     return createNoopObservabilitySink();
   }
 
@@ -90,6 +123,28 @@ export function createObservabilitySink(input: {
     path: input.path,
     includeContent: input.includeContent
   });
+}
+
+function partitionedEventPath(
+  rootDir: string,
+  timestamp: Date,
+  event: ObservabilityEvent
+): string {
+  return join(
+    rootDir,
+    `year=${timestamp.getUTCFullYear()}`,
+    `month=${String(timestamp.getUTCMonth() + 1).padStart(2, "0")}`,
+    `day=${String(timestamp.getUTCDate()).padStart(2, "0")}`,
+    `hour=${String(timestamp.getUTCHours()).padStart(2, "0")}`,
+    `workspace=${safePathSegment(event.workspaceId ?? "unknown")}`,
+    `runtime=${safePathSegment(event.runtimeType ?? "app")}`,
+    "events.jsonl"
+  );
+}
+
+function safePathSegment(input: string): string {
+  const normalized = input.replace(/[^a-zA-Z0-9._-]+/g, "_").slice(0, 96);
+  return normalized || "unknown";
 }
 
 function sanitizeEvent(

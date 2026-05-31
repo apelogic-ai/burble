@@ -42,6 +42,7 @@ export type Config = {
   openClawConfigPatchHostPath: string | null;
   internalApiToken: string | null;
   observabilityJsonlPath: string | null;
+  observabilityJsonlDir: string | null;
   observabilityIncludeContent: boolean;
 };
 
@@ -310,6 +311,7 @@ export function readConfig(env: Env): Config {
       optionalSecretEnv(env, "OPENCLAW_CONFIG_PATCH_HOST_PATH"),
     internalApiToken,
     observabilityJsonlPath: optionalSecretEnv(env, "OBSERVABILITY_JSONL_PATH"),
+    observabilityJsonlDir: optionalSecretEnv(env, "OBSERVABILITY_JSONL_DIR"),
     observabilityIncludeContent: optionalBoolEnv(
       env,
       "OBSERVABILITY_INCLUDE_CONTENT",

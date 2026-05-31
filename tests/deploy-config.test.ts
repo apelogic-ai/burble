@@ -116,13 +116,19 @@ describe("dev deploy config", () => {
 
   test("passes metadata-only observability settings to the app", () => {
     expect(compose).toContain(
-      "OBSERVABILITY_JSONL_PATH=${OBSERVABILITY_JSONL_PATH:-/data/observability/events.jsonl}"
+      "OBSERVABILITY_JSONL_PATH=${OBSERVABILITY_JSONL_PATH:-}"
+    );
+    expect(compose).toContain(
+      "OBSERVABILITY_JSONL_DIR=${OBSERVABILITY_JSONL_DIR:-/data/observability/events}"
     );
     expect(compose).toContain(
       "OBSERVABILITY_INCLUDE_CONTENT=${OBSERVABILITY_INCLUDE_CONTENT:-false}"
     );
     expect(ansibleEnvTemplate).toContain(
-      "OBSERVABILITY_JSONL_PATH={{ observability_jsonl_path | default('/data/observability/events.jsonl') }}"
+      "OBSERVABILITY_JSONL_PATH={{ observability_jsonl_path | default('') }}"
+    );
+    expect(ansibleEnvTemplate).toContain(
+      "OBSERVABILITY_JSONL_DIR={{ observability_jsonl_dir | default('/data/observability/events') }}"
     );
     expect(ansibleEnvTemplate).toContain(
       "OBSERVABILITY_INCLUDE_CONTENT={{ observability_include_content | default('false') }}"

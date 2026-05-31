@@ -54,6 +54,7 @@ const config: Config = {
   openClawConfigPatchHostPath: null,
   internalApiToken: null,
   observabilityJsonlPath: null,
+  observabilityJsonlDir: null,
   observabilityIncludeContent: false,
   aiModel: "openai:gpt-5.4"
 };
