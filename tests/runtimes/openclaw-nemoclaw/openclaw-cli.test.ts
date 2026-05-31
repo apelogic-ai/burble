@@ -173,6 +173,158 @@ describe("runOpenClawCliRequest", () => {
     expect(catalogText).not.toContain('"name":"jira.searchIssues"');
   });
 
+  test("filters MCP-discovered provider catalog by selected tool groups", async () => {
+    const prompts: string[] = [];
+
+    const response = await runOpenClawCliRequest(
+      {
+        input: {
+          text: "show my GitHub PRs",
+          toolGroups: {
+            groups: ["conversation", "github"],
+            reasons: ["matched github"]
+          },
+          connections: {
+            github: {
+              connected: true,
+              email: "person@example.com",
+              providerLogin: "octocat"
+            },
+            google: {
+              connected: true,
+              email: "person@example.com"
+            },
+            jira: {
+              connected: true,
+              email: "person@example.com"
+            }
+          }
+        }
+      },
+      {
+        ...config,
+        mcpGatewayUrl: "http://agentgateway:3000/mcp",
+        runtimeJwt: "runtime-jwt"
+      },
+      async (toolName) => {
+        if (toolName === "burble.mcp.listTools") {
+          return {
+            classification: "user_private",
+            content: [
+              {
+                name: "github_list_my_pull_requests",
+                description: "MCP-discovered PR listing tool",
+                inputSchema: {}
+              },
+              {
+                name: "google_search_drive_files",
+                description: "Should be hidden for GitHub-only requests",
+                inputSchema: {}
+              },
+              {
+                name: "jira_search_issues",
+                description: "Should be hidden for GitHub-only requests",
+                inputSchema: {}
+              }
+            ]
+          };
+        }
+
+        return {
+          classification: "user_private",
+          content: []
+        };
+      },
+      async (_command, args) => {
+        prompts.push(args[args.indexOf("--message") + 1] ?? "");
+        return {
+          exitCode: 0,
+          stdout: JSON.stringify({
+            response: {
+              text: "Hi."
+            }
+          }),
+          stderr: ""
+        };
+      },
+      () => undefined
+    );
+
+    expect(response.response.text).toBe("Hi.");
+    const catalogText =
+      prompts[0].split("Available Burble tools:\n")[1]?.split("\n\n")[0] ?? "";
+    expect(catalogText).toContain("github.listMyPullRequests");
+    expect(catalogText).not.toContain("google.searchDriveFiles");
+    expect(catalogText).not.toContain("jira.searchIssues");
+  });
+
+  test("filters preloaded runtime skills by selected tool groups", async () => {
+    const prompts: string[] = [];
+
+    const response = await runOpenClawCliRequest(
+      {
+        input: {
+          text: "hello",
+          toolGroups: {
+            groups: ["conversation"],
+            reasons: ["fallback conversation"]
+          },
+          connections: {
+            github: {
+              connected: true,
+              email: "person@example.com",
+              providerLogin: "octocat"
+            },
+            jira: {
+              connected: true,
+              email: "person@example.com"
+            }
+          }
+        },
+        runtime: {
+          id: "rt_123",
+          manifest: {
+            version: "1",
+            policyHash: "policy-hash-123",
+            skills: [
+              { id: "core", version: "1", enabled: true },
+              { id: "github", version: "1", enabled: true },
+              { id: "atlassian-jira", version: "1", enabled: true }
+            ],
+            memory: {
+              userMemoryEnabled: true,
+              workspaceMemoryEnabled: true,
+              jobMemoryEnabled: true
+            }
+          }
+        }
+      },
+      config,
+      async () => {
+        throw new Error("unexpected tool call");
+      },
+      async (_command, args) => {
+        prompts.push(args[args.indexOf("--message") + 1] ?? "");
+        return {
+          exitCode: 0,
+          stdout: JSON.stringify({
+            response: {
+              text: "Hi."
+            }
+          }),
+          stderr: ""
+        };
+      },
+      () => undefined
+    );
+
+    expect(response.response.text).toBe("Hi.");
+    expect(prompts[0]).toContain("# Burble Runtime Skill");
+    expect(prompts[0]).not.toContain("# GitHub Skill");
+    expect(prompts[0]).not.toContain("# Atlassian Jira Skill");
+    expect(prompts[0]).toContain("- enabled bundled skills: core@1");
+  });
+
   test("honors runtime manifest skills and memory context in the prompt", async () => {
     const prompts: string[] = [];
 

@@ -1094,6 +1094,30 @@ describe("handleRuntimeRequest", () => {
     expect(await response.text()).toBe("Invalid run request");
   });
 
+  test("rejects malformed runtime tool group selections", async () => {
+    const response = await handleRuntimeRequest(
+      new Request("http://runtime/runs", {
+        method: "POST",
+        body: JSON.stringify({
+          input: {
+            text: "hello",
+            toolGroups: {
+              groups: ["conversation", "not-a-real-group"],
+              reasons: ["test"]
+            },
+            connections: {
+              github: { connected: false }
+            }
+          }
+        })
+      }),
+      config
+    );
+
+    expect(response.status).toBe(400);
+    expect(await response.text()).toBe("Invalid run request");
+  });
+
   test("rejects malformed runtime metadata", async () => {
     const response = await handleRuntimeRequest(
       new Request("http://runtime/runs", {
