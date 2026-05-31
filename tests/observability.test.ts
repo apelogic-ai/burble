@@ -145,6 +145,7 @@ describe("createPartitionedJsonlObservabilitySink", () => {
 
     const path = join(
       dir,
+      "native",
       "year=2026",
       "month=05",
       "day=31",
@@ -313,6 +314,7 @@ describe("createPartitionedJsonlObservabilitySink", () => {
 
     const path = join(
       dir,
+      "native",
       "year=2026",
       "month=05",
       "day=31",
@@ -359,6 +361,7 @@ describe("createObservabilitySink", () => {
 
     const partitionPath = join(
       dir,
+      "native",
       "year=2026",
       "month=05",
       "day=31",

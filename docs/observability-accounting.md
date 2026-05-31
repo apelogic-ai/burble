@@ -9,13 +9,14 @@ The default deploy path is partitioned JSONL:
 
 ```text
 /data/observability/events/
-  year=YYYY/
-    month=MM/
-      day=DD/
-        hour=HH/
-          workspace=<workspace-id>/
-            runtime=<runtime-type>/
-              events.jsonl
+  native/
+    year=YYYY/
+      month=MM/
+        day=DD/
+          hour=HH/
+            workspace=<workspace-id>/
+              runtime=<runtime-type>/
+                events.jsonl
 ```
 
 This follows the storage shape used by the sibling `observer` project: small

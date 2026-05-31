@@ -197,6 +197,7 @@ function partitionedEventPath(
 ): string {
   return join(
     rootDir,
+    "native",
     `year=${timestamp.getUTCFullYear()}`,
     `month=${String(timestamp.getUTCMonth() + 1).padStart(2, "0")}`,
     `day=${String(timestamp.getUTCDate()).padStart(2, "0")}`,
