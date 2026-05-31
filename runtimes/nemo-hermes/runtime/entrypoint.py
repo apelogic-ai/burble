@@ -112,17 +112,6 @@ def normalize_usage(value: Any) -> dict[str, Any] | None:
     return usage or None
 
 
-def estimate_visible_usage(prompt: str, response: str) -> dict[str, Any]:
-    input_tokens = max(1, (len(prompt) + 3) // 4)
-    output_tokens = max(1, (len(response) + 3) // 4)
-    return {
-        "inputTokens": input_tokens,
-        "outputTokens": output_tokens,
-        "totalTokens": input_tokens + output_tokens,
-        "usageSource": "estimate-only",
-    }
-
-
 def build_runtime_response(result: dict[str, Any], prompt: str = "") -> dict[str, Any]:
     text = str(result.get("text") or "")
     response: dict[str, Any] = {
@@ -130,8 +119,6 @@ def build_runtime_response(result: dict[str, Any], prompt: str = "") -> dict[str
         "text": text,
     }
     usage = normalize_usage(result.get("usage"))
-    if usage is None and (prompt.strip() or text.strip()):
-        usage = estimate_visible_usage(prompt, text)
     if usage:
         response["usage"] = usage
     return response

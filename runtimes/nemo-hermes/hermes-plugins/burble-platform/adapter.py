@@ -5,6 +5,7 @@ import json
 import logging
 import os
 import time
+from collections.abc import Mapping
 from typing import Any, Dict, Optional
 from urllib.parse import quote
 
@@ -22,6 +23,7 @@ from gateway.platforms.base import (
     MessageType,
     SendResult,
 )
+from gateway.session import build_session_key
 
 logger = logging.getLogger(__name__)
 
@@ -79,17 +81,49 @@ def _to_non_negative_int(value: Any) -> Optional[int]:
     return number if number >= 0 else None
 
 
-def _pick_int(source: Dict[str, Any], *keys: str) -> Optional[int]:
+_MISSING = object()
+
+
+def _keyed(value: Any) -> bool:
+    return isinstance(value, Mapping) or callable(getattr(value, "keys", None))
+
+
+def _get_key(source: Any, key: str) -> Any:
+    if isinstance(source, Mapping):
+        return source.get(key, _MISSING)
+
+    keys = getattr(source, "keys", None)
+    if not callable(keys):
+        return _MISSING
+
+    try:
+        if key not in keys():
+            return _MISSING
+        return source[key]
+    except Exception:
+        return _MISSING
+
+
+def _first_key(source: Any, *keys: str) -> Any:
     for key in keys:
-        if key in source:
-            value = _to_non_negative_int(source.get(key))
+        value = _get_key(source, key)
+        if value is not _MISSING:
+            return value
+    return None
+
+
+def _pick_int(source: Any, *keys: str) -> Optional[int]:
+    for key in keys:
+        value = _get_key(source, key)
+        if value is not _MISSING:
+            value = _to_non_negative_int(value)
             if value is not None:
                 return value
     return None
 
 
 def _normalize_usage(value: Any) -> Optional[dict[str, Any]]:
-    if not isinstance(value, dict):
+    if not _keyed(value):
         return None
 
     input_tokens = _pick_int(
@@ -136,7 +170,7 @@ def _normalize_usage(value: Any) -> Optional[dict[str, Any]]:
     if reasoning_tokens is not None:
         usage["reasoningTokens"] = reasoning_tokens
 
-    source = value.get("usageSource") or value.get("usage_source") or value.get("source")
+    source = _first_key(value, "usageSource", "usage_source", "source")
     if isinstance(source, str) and source.strip():
         usage["usageSource"] = source.strip()
 
@@ -144,22 +178,101 @@ def _normalize_usage(value: Any) -> Optional[dict[str, Any]]:
 
 
 def _usage_from_metadata(metadata: Optional[Dict[str, Any]]) -> Optional[dict[str, Any]]:
-    if not isinstance(metadata, dict):
+    if not _keyed(metadata):
         return None
 
     for key in ("usage", "token_usage", "tokenUsage", "llm_usage", "llmUsage"):
-        usage = _normalize_usage(metadata.get(key))
+        usage = _normalize_usage(_get_key(metadata, key))
         if usage:
             return usage
 
     for key in ("response", "result", "generation", "model", "llm"):
-        nested = metadata.get(key)
-        if isinstance(nested, dict):
+        nested = _get_key(metadata, key)
+        if _keyed(nested):
             usage = _usage_from_metadata(nested)
             if usage:
                 return usage
 
     return _normalize_usage(metadata)
+
+
+def _usage_snapshot(value: Any) -> Optional[dict[str, int]]:
+    if not _keyed(value):
+        return None
+
+    input_tokens = _pick_int(value, "input_tokens", "inputTokens", "prompt_tokens", "promptTokens") or 0
+    output_tokens = (
+        _pick_int(value, "output_tokens", "outputTokens", "completion_tokens", "completionTokens") or 0
+    )
+    cache_read_tokens = (
+        _pick_int(value, "cache_read_tokens", "cacheReadTokens", "cached_input_tokens", "cachedInputTokens")
+        or 0
+    )
+    cache_write_tokens = _pick_int(value, "cache_write_tokens", "cacheWriteTokens") or 0
+    reasoning_tokens = _pick_int(value, "reasoning_tokens", "reasoningTokens") or 0
+    total_tokens = _pick_int(value, "total_tokens", "totalTokens")
+    if total_tokens is None:
+        total_tokens = (
+            input_tokens
+            + output_tokens
+            + cache_read_tokens
+            + cache_write_tokens
+            + reasoning_tokens
+        )
+
+    return {
+        "inputTokens": input_tokens,
+        "outputTokens": output_tokens,
+        "cachedInputTokens": cache_read_tokens,
+        "cacheWriteTokens": cache_write_tokens,
+        "reasoningTokens": reasoning_tokens,
+        "totalTokens": total_tokens,
+    }
+
+
+def _usage_delta(
+    before: Optional[dict[str, int]],
+    after: Optional[dict[str, int]],
+) -> Optional[dict[str, Any]]:
+    if not after:
+        return None
+
+    before = before or {}
+
+    def delta(key: str) -> int:
+        return max(0, int(after.get(key, 0)) - int(before.get(key, 0)))
+
+    input_tokens = delta("inputTokens")
+    output_tokens = delta("outputTokens")
+    cached_tokens = delta("cachedInputTokens")
+    cache_write_tokens = delta("cacheWriteTokens")
+    reasoning_tokens = delta("reasoningTokens")
+    total_tokens = delta("totalTokens")
+    if total_tokens <= 0:
+        total_tokens = (
+            input_tokens
+            + output_tokens
+            + cached_tokens
+            + cache_write_tokens
+            + reasoning_tokens
+        )
+
+    if total_tokens <= 0:
+        return None
+
+    usage: dict[str, Any] = {
+        "totalTokens": total_tokens,
+        "usageSource": "provider-output",
+    }
+    if input_tokens:
+        usage["inputTokens"] = input_tokens
+    if output_tokens:
+        usage["outputTokens"] = output_tokens
+    if cached_tokens:
+        usage["cachedInputTokens"] = cached_tokens
+    if reasoning_tokens:
+        usage["reasoningTokens"] = reasoning_tokens
+    return usage
 
 
 class BurbleAdapter(BasePlatformAdapter):
@@ -180,6 +293,8 @@ class BurbleAdapter(BasePlatformAdapter):
         ).rstrip("/")
         self._runner: Any = None
         self._pending_runs: dict[str, str] = {}
+        self._pending_run_sources: dict[str, Any] = {}
+        self._pending_usage_snapshots: dict[str, dict[str, int] | None] = {}
 
     async def connect(self) -> bool:
         if not _requirements():
@@ -241,7 +356,9 @@ class BurbleAdapter(BasePlatformAdapter):
                 "text": text,
                 "classification": "user_private",
             }
-            usage = _usage_from_metadata(metadata)
+            usage = _usage_from_metadata(metadata) or self._usage_delta_for_run(pending_run_id)
+            self._pending_run_sources.pop(pending_run_id, None)
+            self._pending_usage_snapshots.pop(pending_run_id, None)
             if usage:
                 payload["usage"] = usage
             print(
@@ -316,6 +433,9 @@ class BurbleAdapter(BasePlatformAdapter):
             thread_id=body.get("threadId"),
             message_id=run_id or body.get("messageId"),
         )
+        if run_id:
+            self._pending_run_sources[run_id] = source
+            self._pending_usage_snapshots[run_id] = self._usage_snapshot_for_source(source)
         event = MessageEvent(
             text=text,
             message_type=MessageType.TEXT,
@@ -331,6 +451,74 @@ class BurbleAdapter(BasePlatformAdapter):
             flush=True,
         )
         return web.json_response({"ok": True})
+
+    def _usage_delta_for_run(self, run_id: str) -> Optional[dict[str, Any]]:
+        source = self._pending_run_sources.get(run_id)
+        if source is None:
+            return None
+        before = self._pending_usage_snapshots.get(run_id)
+        after = self._usage_snapshot_for_source(source)
+        return _usage_delta(before, after)
+
+    def _usage_snapshot_for_source(self, source: Any) -> Optional[dict[str, int]]:
+        store = getattr(self, "_session_store", None)
+        if store is None:
+            return None
+
+        ensure_loaded = getattr(store, "_ensure_loaded", None)
+        if callable(ensure_loaded):
+            try:
+                ensure_loaded()
+            except Exception:
+                return None
+
+        session_key = self._session_key_for_source(source, store)
+        if not session_key:
+            return None
+
+        entry = getattr(store, "_entries", {}).get(session_key)
+        if entry is None:
+            return None
+
+        session_id = getattr(entry, "session_id", None)
+        db = getattr(store, "_db", None)
+        if db is not None and session_id:
+            try:
+                row = db.get_session(session_id)
+                snapshot = _usage_snapshot(row)
+                if snapshot is not None:
+                    return snapshot
+            except Exception:
+                pass
+
+        return _usage_snapshot(
+            {
+                "input_tokens": getattr(entry, "input_tokens", 0),
+                "output_tokens": getattr(entry, "output_tokens", 0),
+                "cache_read_tokens": getattr(entry, "cache_read_tokens", 0),
+                "cache_write_tokens": getattr(entry, "cache_write_tokens", 0),
+                "reasoning_tokens": getattr(entry, "reasoning_tokens", 0),
+                "total_tokens": getattr(entry, "total_tokens", 0),
+            }
+        )
+
+    def _session_key_for_source(self, source: Any, store: Any) -> Optional[str]:
+        generator = getattr(store, "_generate_session_key", None)
+        if callable(generator):
+            try:
+                return str(generator(source))
+            except Exception:
+                pass
+
+        extra = getattr(self.config, "extra", {}) or {}
+        try:
+            return build_session_key(
+                source,
+                group_sessions_per_user=bool(extra.get("group_sessions_per_user", True)),
+                thread_sessions_per_user=bool(extra.get("thread_sessions_per_user", False)),
+            )
+        except Exception:
+            return None
 
     async def _send_to_burble_route(self, route_id: str, text: str) -> SendResult:
         url = (
