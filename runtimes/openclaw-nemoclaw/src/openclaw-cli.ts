@@ -41,6 +41,8 @@ type PreloadedRuntimeSkillName = (typeof preloadedRuntimeSkillNames)[number];
 type RuntimeToolGroup = NonNullable<
   RunRequest["input"]["toolGroups"]
 >["groups"][number];
+const maxRecentSlackContextMessages = 12;
+const maxRecentSlackContextMessageChars = 300;
 const preloadedRuntimeSkillText: Record<PreloadedRuntimeSkillName, string> =
   Object.fromEntries(
     preloadedRuntimeSkillNames.map((name) => [name, loadRuntimeSkill(name)])
@@ -2571,9 +2573,10 @@ function buildBurbleDirectPrompt(
 }
 
 function formatRecentSlackContext(request: RunRequest): string[] {
-  const messages = request.input.context?.recentMessages ?? [];
+  const allMessages = request.input.context?.recentMessages ?? [];
+  const messages = allMessages.slice(-maxRecentSlackContextMessages);
   const currentChannel = request.input.context?.currentChannel;
-  if (!currentChannel && messages.length === 0) {
+  if (!currentChannel && allMessages.length === 0) {
     return [];
   }
 
@@ -2584,7 +2587,7 @@ function formatRecentSlackContext(request: RunRequest): string[] {
           `Current Slack channel type: ${currentChannel.isDirectMessage ? "direct_message" : "channel"}`,
           `Current Slack channel history: ${
             currentChannel.historyAvailable
-              ? `available (${messages.length} recent messages)`
+              ? formatRecentSlackHistoryStatus(messages.length, allMessages.length)
               : `unavailable (${currentChannel.historyError ?? "unknown_error"})`
           }`
         ]
@@ -2592,11 +2595,19 @@ function formatRecentSlackContext(request: RunRequest): string[] {
     ...(messages.length > 0 ? ["Recent Slack context (oldest to newest):"] : []),
     ...messages.map(
       (message) =>
-        `${formatSlackContextAuthor(message)}: ${truncate(message.text, 500)}`
+        `${formatSlackContextAuthor(message)}: ${truncate(message.text, maxRecentSlackContextMessageChars)}`
     )
   ];
 
   return lines;
+}
+
+function formatRecentSlackHistoryStatus(included: number, total: number): string {
+  if (included === total) {
+    return `available (${included} recent messages)`;
+  }
+
+  return `available (${included} of ${total} recent messages included)`;
 }
 
 function formatSlackContextAuthor(
@@ -3672,7 +3683,9 @@ async function readRawStreamForUsage(
 function buildRunSessionId(request: RunRequest): string {
   const channelSessionKey = buildBurbleChannelSessionKey(request);
   if (channelSessionKey) {
-    return `burble-channel-${hashSessionKey(channelSessionKey)}`;
+    return `burble-channel-${hashSessionKey(
+      `${channelSessionKey}:${buildRunSessionKey(request)}`
+    )}`;
   }
 
   return `burble-run-${hashSessionKey(

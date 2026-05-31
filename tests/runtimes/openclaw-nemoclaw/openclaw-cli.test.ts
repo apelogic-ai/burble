@@ -1128,6 +1128,61 @@ describe("runOpenClawCliRequest", () => {
     });
   });
 
+  test("bounds recent Slack context in OpenClaw prompts", async () => {
+    const prompts: string[] = [];
+
+    const response = await runOpenClawCliRequest(
+      {
+        input: {
+          text: "summarize current channel",
+          context: {
+            currentChannel: {
+              id: "C123",
+              isDirectMessage: false,
+              historyAvailable: true
+            },
+            recentMessages: Array.from({ length: 20 }, (_, index) => ({
+              author: "user" as const,
+              speaker: "<@U456>",
+              text:
+                index === 19
+                  ? `recent context ${index + 1} ${"x".repeat(500)}`
+                  : `${index === 0 ? "old" : "recent"} context ${index + 1}`
+            }))
+          },
+          connections: {
+            github: {
+              connected: true,
+              email: "person@example.com"
+            }
+          }
+        }
+      },
+      config,
+      async () => ({
+        classification: "user_private",
+        content: []
+      }),
+      async (_command, args) => {
+        prompts.push(args[args.indexOf("--message") + 1] ?? "");
+        return {
+          exitCode: 0,
+          stdout: "Bounded.",
+          stderr: ""
+        };
+      },
+      () => undefined
+    );
+
+    expect(response.response.text).toBe("Bounded.");
+    expect(prompts[0]).toContain(
+      "Current Slack channel history: available (12 of 20 recent messages included)"
+    );
+    expect(prompts[0]).not.toContain("old context 1");
+    expect(prompts[0]).toContain("recent context 20");
+    expect(prompts[0]).not.toContain("x".repeat(350));
+  });
+
   test("lets OpenClaw search Slack messages through the connected Slack token", async () => {
     const prompts: string[] = [];
     const toolCalls: Array<{ toolName: string; body: unknown }> = [];
@@ -2568,7 +2623,7 @@ describe("runOpenClawCliRequest", () => {
     expect(requests[0].body.input).toContain("what can you do?");
   });
 
-  test("uses the Burble channel and stable route session for native conversation turns", async () => {
+  test("uses the Burble channel with isolated model sessions for native conversation turns", async () => {
     const requests: Array<{
       headers: Headers;
       body: Record<string, unknown>;
@@ -2635,7 +2690,7 @@ describe("runOpenClawCliRequest", () => {
     expect(requests).toHaveLength(2);
     expect(requests[0].headers.get("x-openclaw-message-channel")).toBe("burble");
     expect(requests[1].headers.get("x-openclaw-message-channel")).toBe("burble");
-    expect(requests[0].headers.get("x-openclaw-session-key")).toBe(
+    expect(requests[0].headers.get("x-openclaw-session-key")).not.toBe(
       requests[1].headers.get("x-openclaw-session-key")
     );
     expect(requests[0].headers.get("x-openclaw-session-key")).toStartWith(

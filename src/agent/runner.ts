@@ -74,6 +74,8 @@ const systemPrompt = [
   "For Slack questions like 'what did I say about X', search Slack messages with the requesting Slack user's ID as fromUserId.",
   "Prefer short lists with links when showing issues or pull requests."
 ].join("\n");
+const MAX_RECENT_SLACK_CONTEXT_MESSAGES = 12;
+const MAX_RECENT_SLACK_CONTEXT_MESSAGE_CHARS = 300;
 
 export function createAiSdkAgentRunner(
   deps: AiSdkAgentRunnerDeps
@@ -1344,7 +1346,8 @@ async function runAiSdkAgent(
 }
 
 function formatAgentPrompt(input: AgentInput): string {
-  const recentMessages = input.context?.recentMessages ?? [];
+  const allRecentMessages = input.context?.recentMessages ?? [];
+  const recentMessages = selectRecentSlackContextMessages(allRecentMessages);
   const currentChannel = input.context?.currentChannel;
   const header = [
     `Requesting Slack user ID: ${input.principal.slackUserId}`,
@@ -1354,7 +1357,10 @@ function formatAgentPrompt(input: AgentInput): string {
           `Current Slack channel type: ${currentChannel.isDirectMessage ? "direct_message" : "channel"}`,
           `Current Slack channel history: ${
             currentChannel.historyAvailable
-              ? `available (${recentMessages.length} recent messages)`
+              ? formatRecentSlackHistoryStatus(
+                  recentMessages.length,
+                  allRecentMessages.length
+                )
               : `unavailable (${currentChannel.historyError ?? "unknown_error"})`
           }`
         ]
@@ -1374,12 +1380,32 @@ function formatAgentPrompt(input: AgentInput): string {
     "Recent Slack context (oldest to newest):",
     ...recentMessages.map(
       (message) =>
-        `${formatSlackContextAuthor(message)}: ${message.text}`
+        `${formatSlackContextAuthor(message)}: ${truncateSlackContextText(message.text)}`
     ),
     "",
     ...formatAgentAttachmentContext(input),
     `Current request: ${input.text}`
   ].join("\n");
+}
+
+function selectRecentSlackContextMessages(
+  messages: NonNullable<AgentInput["context"]>["recentMessages"]
+): NonNullable<AgentInput["context"]>["recentMessages"] {
+  return messages.slice(-MAX_RECENT_SLACK_CONTEXT_MESSAGES);
+}
+
+function formatRecentSlackHistoryStatus(included: number, total: number): string {
+  if (included === total) {
+    return `available (${included} recent messages)`;
+  }
+
+  return `available (${included} of ${total} recent messages included)`;
+}
+
+function truncateSlackContextText(text: string): string {
+  return text.length <= MAX_RECENT_SLACK_CONTEXT_MESSAGE_CHARS
+    ? text
+    : `${text.slice(0, MAX_RECENT_SLACK_CONTEXT_MESSAGE_CHARS - 3)}...`;
 }
 
 function formatAgentAttachmentContext(input: AgentInput): string[] {
