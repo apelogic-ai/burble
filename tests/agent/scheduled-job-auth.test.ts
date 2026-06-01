@@ -64,7 +64,7 @@ describe("issueScheduledJobRuntimeJwt", () => {
       workspace_id: "T123",
       slack_user_id: "U123",
       job_id: "job-123",
-      allowed_tools: ["google.appendToDriveTextFile", "google.getDriveFile"]
+      allowed_tools: ["google_append_to_drive_text_file", "google_get_drive_file"]
     });
     expect(claims.exp).toBeDefined();
     expect(claims.iat).toBeDefined();

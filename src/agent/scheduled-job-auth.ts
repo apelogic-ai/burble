@@ -1,5 +1,6 @@
 import type { AgentJobCapabilityRecord, AgentRuntimeRecord } from "../db";
 import type { RuntimeJwtIssuer } from "../runtime-jwt";
+import { normalizeScheduledJobToolNames } from "./scheduled-job-tools";
 
 export function issueScheduledJobRuntimeJwt(input: {
   issuer: RuntimeJwtIssuer;
@@ -16,7 +17,7 @@ export function issueScheduledJobRuntimeJwt(input: {
     workspaceId: input.runtime.workspaceId,
     slackUserId: input.runtime.slackUserId,
     jobId: input.capability.jobId,
-    allowedTools: input.capability.requiredTools,
+    allowedTools: normalizeScheduledJobToolNames(input.capability.requiredTools),
     ttlSeconds: input.ttlSeconds
   });
 }
