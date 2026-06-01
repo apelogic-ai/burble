@@ -680,6 +680,24 @@ describe("handleToolGatewayRequest", () => {
     expect(body.content.scheduledPromptInstruction).toContain(
       "Use Burble provider calls with this jobId"
     );
+    expect(body.content.scheduledPromptInstruction).toContain(
+      "These allowedTools are Burble provider tool names, not necessarily native runtime tool names."
+    );
+    expect(body.content.scheduledPromptInstruction).toContain(
+      "burble_provider_call"
+    );
+    expect(body.content.scheduledPromptInstruction).toContain(
+      'toolName="google_get_drive_file"'
+    );
+    expect(body.content.scheduledPromptInstruction).toContain(
+      'toolName="google_append_to_drive_text_file"'
+    );
+    expect(body.content.scheduledPromptInstruction).toContain(
+      '"jobId":"ai-news-hourly"'
+    );
+    expect(body.content.scheduledPromptInstruction).toContain(
+      "Do not use direct web/browser access to provider URLs"
+    );
   });
 
   test("returns field-level errors for invalid scheduled job provider registrations", async () => {
