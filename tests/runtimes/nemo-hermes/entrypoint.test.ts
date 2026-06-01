@@ -167,14 +167,11 @@ print(json.dumps({"text": mod.build_hermes_turn_text(payload)}))
     expect(text).toContain("Provider-backed scheduled job repair:");
     expect(text).toContain("Before manually triggering");
     expect(text).toContain("scheduledJob.registerCapability");
-    expect(text).toContain("google.getDriveFile");
-    expect(text).toContain("google.appendToDriveTextFile");
-    expect(text).toContain("Example Drive scratchpad registration input");
-    expect(text).toContain('"requiredTools": ["google.getDriveFile", "google.appendToDriveTextFile"]');
     expect(text).toContain(
-      '"stateRefs": [{"provider": "google", "kind": "drive_file"'
+      "Scheduled provider tool calls must include the returned jobId"
     );
     expect(text).toContain("must not use direct web/browser access to provider URLs");
+    expect(text).not.toContain("Example Drive scratchpad registration input");
   });
 
   test("uses per-run Hermes thread ids by default", () => {

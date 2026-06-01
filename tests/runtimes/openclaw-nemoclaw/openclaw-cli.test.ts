@@ -2850,18 +2850,17 @@ describe("runOpenClawCliRequest", () => {
     expect(String(requests[0].body.input)).toContain(
       "before manually triggering"
     );
-    expect(String(requests[0].body.input)).toContain("google.getDriveFile");
     expect(String(requests[0].body.input)).toContain(
-      "google.appendToDriveTextFile"
+      "GitHub, Jira, Google, or Slack search"
     );
     expect(String(requests[0].body.input)).toContain(
+      "Scheduled provider tool calls must include the returned jobId"
+    );
+    expect(String(requests[0].body.input)).toContain(
+      "must not use direct web/browser access to provider URLs"
+    );
+    expect(String(requests[0].body.input)).not.toContain(
       "Example Drive scratchpad registration input"
-    );
-    expect(String(requests[0].body.input)).toContain(
-      '"requiredTools":["google.getDriveFile","google.appendToDriveTextFile"]'
-    );
-    expect(String(requests[0].body.input)).toContain(
-      '"stateRefs":[{"provider":"google","kind":"drive_file"'
     );
   });
 

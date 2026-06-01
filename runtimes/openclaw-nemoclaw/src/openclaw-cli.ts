@@ -2550,10 +2550,9 @@ function formatScheduledProviderCapabilityInstruction(
   return [
     "Scheduled provider tool registration:",
     `If a native cron/background job will use Burble provider tools such as GitHub, Jira, Google, or Slack search, first call scheduledJob.registerCapability with routeId "${routeId}", requiredTools set to the exact Burble provider tool names the job will use, and stateRefs for any durable state files it should read or update.`,
-    `Example Drive scratchpad registration input: {"jobId":"stable-native-job-id","requiredTools":["google.getDriveFile","google.appendToDriveTextFile"],"routeId":"${routeId}","stateRefs":[{"provider":"google","kind":"drive_file","id":"GOOGLE_DRIVE_FILE_ID","name":"AI News Scratchpad","purpose":"dedupe_state"}],"visibilityPolicy":{"maxOutputVisibility":"user_private","allowPrivateToolDeclassification":false}}`,
     "Include the returned scheduledPromptInstruction verbatim in the native scheduled job prompt.",
     "Scheduled provider tool calls must include the returned jobId in each Burble provider tool input. Do not use routeId as provider-call identity; routeId is only a delivery/state binding.",
-    "Provider-backed scheduled job repair: before manually triggering, enabling, or rescheduling an existing native job, inspect whether it uses provider-backed state or provider URLs such as Google Drive, GitHub, Jira, Gmail, Calendar, or Slack. If it does and its prompt lacks Burble jobId provider-call instructions, update the job first by calling scheduledJob.registerCapability and rewriting the scheduled prompt to use Burble provider tools. For Google Drive scratchpads, use google.getDriveFile and google.appendToDriveTextFile through Burble provider calls; the job must not use direct web/browser access to provider URLs."
+    "Provider-backed scheduled job repair: before manually triggering, enabling, or rescheduling an existing native job, inspect whether it uses provider-backed state or provider URLs such as Google Drive, GitHub, Jira, Gmail, Calendar, or Slack. If it does and its prompt lacks Burble jobId provider-call instructions, update the job first by calling scheduledJob.registerCapability and rewriting the scheduled prompt to use Burble provider tools. The job must not use direct web/browser access to provider URLs for authenticated provider work."
   ];
 }
 

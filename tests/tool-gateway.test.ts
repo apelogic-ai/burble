@@ -698,6 +698,12 @@ describe("handleToolGatewayRequest", () => {
     expect(body.content.scheduledPromptInstruction).toContain(
       "Do not use direct web/browser access to provider URLs"
     );
+    expect(body.content.scheduledPromptInstruction).toContain(
+      "For every scheduled provider call, include this jobId"
+    );
+    expect(body.content.scheduledPromptInstruction).toContain(
+      "use only the listed allowedTools"
+    );
   });
 
   test("returns field-level errors for invalid scheduled job provider registrations", async () => {
