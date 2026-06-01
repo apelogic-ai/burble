@@ -1430,6 +1430,24 @@ async function buildToolCatalog(
           "optional durable Burble route ID for scheduled/background messages"
       }
     });
+    if (shouldExposeScheduledJobRegistration(request)) {
+      catalog.push({
+        name: "scheduledJob.registerCapability",
+        description:
+          "Register the Burble provider tools and durable state references a native scheduled/background job will need. Use before creating or updating a native cron/background job that will call Burble provider tools; include the returned scheduledPromptInstruction verbatim in the scheduled job prompt.",
+        inputSchema: {
+          jobId: "string stable native scheduler job id or name",
+          requiredTools:
+            "string[] Burble provider tools the scheduled job may call",
+          routeId:
+            "optional durable Burble route ID for scheduled/background delivery",
+          stateRefs:
+            "optional array of durable state references such as Drive scratchpad files",
+          visibilityPolicy:
+            "optional output visibility policy for scheduled delivery"
+        }
+      });
+    }
   }
   if ((request.input.attachments ?? []).length > 0) {
     catalog.push({
@@ -1817,6 +1835,9 @@ function isToolAllowedBySelectedGroups(
 function toolGroupsForToolName(toolName: string): RuntimeToolGroup[] {
   if (toolName === "conversation.getAttachment") {
     return ["attachments"];
+  }
+  if (toolName.startsWith("scheduledJob.")) {
+    return ["scheduler"];
   }
   if (toolName.startsWith("conversation.")) {
     return ["conversation"];
@@ -2472,6 +2493,7 @@ function formatNativeExecutionContext(
     "Native agent execution:",
     "This request explicitly asks for OpenClaw-native execution. Use OpenClaw native capabilities/tools directly when useful for code, shell/process work, cron, or long-running tasks. Use Burble JSON tool_call only for external provider data or actions listed in Available Burble tools.",
     ...formatActiveConversationRouteInstruction(config, request),
+    ...formatScheduledProviderCapabilityInstruction(request),
     ...formatScheduledJobContextInstruction(request),
     "When native code tools are available, you can run programs in this runtime. Do not say you cannot run arbitrary programs, cannot run code, or can only provide a local script; use native exec instead.",
     "For code execution tasks, prefer one deliberate exec call for the main work. If that exec succeeds and prints the requested result, summarize it and stop. Do not repeatedly rewrite, rerun, or optimize code after the requested result is available.",
@@ -2517,6 +2539,33 @@ function formatScheduledJobContextInstruction(request: RunRequest): string[] {
   return lines;
 }
 
+function formatScheduledProviderCapabilityInstruction(
+  request: RunRequest
+): string[] {
+  const routeId = request.input.conversation?.routeId;
+  if (!shouldExposeScheduledJobRegistration(request) || !routeId) {
+    return [];
+  }
+
+  return [
+    "Scheduled provider tool registration:",
+    `If a native cron/background job will use Burble provider tools such as GitHub, Jira, Google, or Slack search, first call scheduledJob.registerCapability with routeId "${routeId}", requiredTools set to the exact Burble provider tool names the job will use, and stateRefs for any durable state files it should read or update.`,
+    "Include the returned scheduledPromptInstruction verbatim in the native scheduled job prompt.",
+    "Scheduled provider tool calls must include the returned jobId in each Burble provider tool input. Do not use routeId as provider-call identity; routeId is only a delivery/state binding."
+  ];
+}
+
+function shouldExposeScheduledJobRegistration(request: RunRequest): boolean {
+  const groups = selectedRuntimeToolGroups(request);
+  if (groups?.has("scheduler")) {
+    return true;
+  }
+
+  return /\b(cron|schedule|scheduled|scheduler|background|recurring|reminder|every\s+\d+|hourly|daily|weekly)\b/i.test(
+    request.input.text
+  );
+}
+
 function formatActiveConversationRouteInstruction(
   _config: RuntimeConfig,
   request: RunRequest
@@ -2529,7 +2578,6 @@ function formatActiveConversationRouteInstruction(
   return [
     `Active Burble conversation channel route: ${routeId}.`,
     `Native OpenClaw Burble channel delivery is installed. For cron/background jobs, set delivery.mode to "announce", delivery.channel to "burble", and delivery.to to "${routeId}". The scheduled prompt should produce the final Slack-ready message text; Burble resolves the route to the actual transport outside OpenClaw.`,
-    `If a cron/background job will use Burble provider tools such as GitHub, Jira, Google, or Slack search, include this exact instruction in the scheduled prompt: use Burble provider tools with routeId "${routeId}". Burble route ids start with "convrt_"; never use a cron job id, run id, session id, or UUID as a provider tool routeId.`,
     `For an immediate request to send, post, message, or report something here now, do not create a cron job or background job unless the user explicitly asks for a schedule, delay, recurrence, or later delivery. Produce the final Slack-ready message once and stop.`,
     "Do not fetch, POST to, or mention local/private/internal Burble URLs for delivery. Do not create cron jobs that rely on conversation.sendMessage JSON blobs, announce delivery, Slack channel IDs, Slack credentials, or Burble credentials. Burble's channel connector owns route auth and transport delivery outside the OpenClaw process."
   ];

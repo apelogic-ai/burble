@@ -449,6 +449,63 @@ describe("createBurbleToolExecutor", () => {
     }
   });
 
+  test("registers scheduled job capabilities through the internal gateway", async () => {
+    const originalFetch = globalThis.fetch;
+    const requests: Request[] = [];
+    globalThis.fetch = (async (input, init) => {
+      const request = new Request(input, init);
+      requests.push(request);
+      return Response.json({
+        classification: "user_private",
+        content: {
+          ok: true,
+          scheduledPromptInstruction:
+            "Use Burble provider calls with this jobId for this scheduled job.\njobId=ai-news-hourly"
+        }
+      });
+    }) as typeof fetch;
+
+    try {
+      const executor = createBurbleToolExecutor(config, "rt_u123");
+      const result = await executor("scheduledJob.registerCapability", {
+        input: {
+          jobId: "ai-news-hourly",
+          requiredTools: [
+            "google.getDriveFile",
+            "google.appendToDriveTextFile"
+          ],
+          routeId: "convrt_abc123"
+        }
+      });
+
+      expect(result.content).toEqual({
+        ok: true,
+        scheduledPromptInstruction:
+          "Use Burble provider calls with this jobId for this scheduled job.\njobId=ai-news-hourly"
+      });
+      expect(requests).toHaveLength(1);
+      expect(requests[0].url).toBe(
+        "http://burble-app:3000/internal/tools/scheduledJob.registerCapability/execute"
+      );
+      expect(requests[0].headers.get("authorization")).toBe(
+        "Bearer runtime-secret"
+      );
+      expect(requests[0].headers.get("x-burble-runtime-id")).toBe("rt_u123");
+      expect(await requests[0].json()).toEqual({
+        input: {
+          jobId: "ai-news-hourly",
+          requiredTools: [
+            "google.getDriveFile",
+            "google.appendToDriveTextFile"
+          ],
+          routeId: "convrt_abc123"
+        }
+      });
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
   test("fetches current request attachments through the internal gateway", async () => {
     const originalFetch = globalThis.fetch;
     const requests: Request[] = [];

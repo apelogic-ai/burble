@@ -97,6 +97,8 @@ print(json.dumps({"text": mod.build_hermes_turn_text(payload)}))
     expect(text).toContain("Selected Burble provider tools");
     expect(text).toContain("github_list_my_pull_requests");
     expect(text).not.toContain("google_search_drive_files");
+    expect(text).toContain("scheduledJob.registerCapability");
+    expect(text).toContain("include the returned scheduledPromptInstruction verbatim");
     expect(text).toContain("Recent Burble context");
     expect(text).not.toContain("old message should not be included");
     expect(text).toContain("recent message 20");
@@ -249,6 +251,7 @@ print(json.dumps({
     "github": mod.normalize_burble_tool_name("github_list_my_pull_requests"),
     "google": mod.normalize_burble_tool_name("google_append_to_drive_text_file"),
     "jira": mod.normalize_burble_tool_name("jira_list_assigned_issues"),
+    "job": mod.normalize_burble_tool_name("scheduled_job_register_capability"),
     "dotted": mod.normalize_burble_tool_name("google.searchDriveFiles"),
 }))
 `);
@@ -257,6 +260,7 @@ print(json.dumps({
       github: "github.listMyPullRequests",
       google: "google.appendToDriveTextFile",
       jira: "jira.listAssignedIssues",
+      job: "scheduledJob.registerCapability",
       dotted: "google.searchDriveFiles"
     });
   });

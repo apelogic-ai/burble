@@ -309,6 +309,7 @@ def build_hermes_turn_text(input_body: dict[str, Any]) -> str:
                     lines = [
                         "Selected Burble provider tools:",
                         "Use Hermes tool burble_provider_call with toolName set to one of these names and input set to that tool's arguments.",
+                        "For native scheduled/background jobs that will use Burble provider tools, first call burble_provider_call with toolName scheduledJob.registerCapability and include the returned scheduledPromptInstruction verbatim in the scheduled job prompt.",
                     ]
                     for hint in tool_hints:
                         lines.append(

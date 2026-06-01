@@ -1313,12 +1313,10 @@ describe("runOpenClawCliRequest", () => {
     expect(prompts[0]).toContain('delivery.mode to "announce"');
     expect(prompts[0]).toContain('delivery.channel to "burble"');
     expect(prompts[0]).toContain('delivery.to to "convrt_abc123"');
-    expect(prompts[0]).toContain(
+    expect(prompts[0]).not.toContain(
       'use Burble provider tools with routeId "convrt_abc123"'
     );
-    expect(prompts[0]).toContain(
-      "never use a cron job id, run id, session id, or UUID as a provider tool routeId"
-    );
+    expect(prompts[0]).not.toContain("scheduledJob.registerCapability");
     expect(prompts[0]).toContain(
       "do not create a cron job or background job unless the user explicitly asks"
     );
@@ -2842,6 +2840,9 @@ describe("runOpenClawCliRequest", () => {
     expect(requests[0].headers.get("x-openclaw-message-channel")).toBe("burble");
     expect(String(requests[0].body.input)).toContain(
       'delivery.channel to "burble"'
+    );
+    expect(String(requests[0].body.input)).toContain(
+      "scheduledJob.registerCapability"
     );
   });
 

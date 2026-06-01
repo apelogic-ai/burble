@@ -62,6 +62,7 @@ TOOL_NAME_ALIASES = {
     "slack_search_messages": "slack.searchMessages",
     "atlassian_list_mcp_tools": "atlassian.listMcpTools",
     "atlassian_call_mcp_tool": "atlassian.callMcpTool",
+    "scheduled_job_register_capability": "scheduledJob.registerCapability",
 }
 
 
