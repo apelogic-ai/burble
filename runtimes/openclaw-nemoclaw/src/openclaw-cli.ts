@@ -3746,7 +3746,16 @@ function buildBurbleChannelSessionKey(request: RunRequest): string | null {
 }
 
 function resolveGatewayHttpMessageChannel(request: RunRequest): "webchat" | "burble" {
-  return buildBurbleChannelSessionKey(request) ? "burble" : "webchat";
+  if (!buildBurbleChannelSessionKey(request)) {
+    return "webchat";
+  }
+
+  const selectedGroups = selectedRuntimeToolGroups(request);
+  if (!selectedGroups) {
+    return "burble";
+  }
+
+  return selectedGroups.has("scheduler") ? "burble" : "webchat";
 }
 
 function hashSessionKey(value: string): string {

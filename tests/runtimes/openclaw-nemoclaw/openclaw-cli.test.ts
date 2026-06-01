@@ -2623,7 +2623,7 @@ describe("runOpenClawCliRequest", () => {
     expect(requests[0].body.input).toContain("what can you do?");
   });
 
-  test("uses the Burble channel with isolated model sessions for native conversation turns", async () => {
+  test("uses webchat with isolated model sessions for ordinary native conversation turns", async () => {
     const requests: Array<{
       headers: Headers;
       body: Record<string, unknown>;
@@ -2636,6 +2636,10 @@ describe("runOpenClawCliRequest", () => {
       },
       input: {
         text,
+        toolGroups: {
+          groups: ["conversation" as const],
+          reasons: ["default:conversation"]
+        },
         conversation: {
           routeId: "convrt_abc123",
           source: "slack" as const,
@@ -2688,8 +2692,8 @@ describe("runOpenClawCliRequest", () => {
     );
 
     expect(requests).toHaveLength(2);
-    expect(requests[0].headers.get("x-openclaw-message-channel")).toBe("burble");
-    expect(requests[1].headers.get("x-openclaw-message-channel")).toBe("burble");
+    expect(requests[0].headers.get("x-openclaw-message-channel")).toBe("webchat");
+    expect(requests[1].headers.get("x-openclaw-message-channel")).toBe("webchat");
     expect(requests[0].headers.get("x-openclaw-session-key")).not.toBe(
       requests[1].headers.get("x-openclaw-session-key")
     );
@@ -2698,6 +2702,69 @@ describe("runOpenClawCliRequest", () => {
     );
     expect(String(requests[0].body.input)).toContain(
       "Active Burble conversation channel route: convrt_abc123"
+    );
+  });
+
+  test("uses the Burble channel for native scheduled background delivery", async () => {
+    const requests: Array<{
+      headers: Headers;
+      body: Record<string, unknown>;
+    }> = [];
+
+    await withMockFetch(
+      (async (_input, init) => {
+        requests.push({
+          headers: new Headers(init?.headers),
+          body: JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>
+        });
+        return new Response(JSON.stringify(openResponsesText("Scheduled.")), {
+          status: 200,
+          headers: { "content-type": "application/json" }
+        });
+      }) as typeof fetch,
+      async () => {
+        await runOpenClawCliRequest(
+          {
+            runId: "run-scheduler",
+            executionMode: "openclaw-native",
+            runtime: {
+              id: "rt_123"
+            },
+            input: {
+              text: "create a cron job to post here in 2 minutes",
+              toolGroups: {
+                groups: ["conversation", "scheduler"],
+                reasons: ["default:conversation", "keyword:scheduler:cron"]
+              },
+              conversation: {
+                routeId: "convrt_abc123",
+                source: "slack",
+                workspaceId: "T123",
+                channelId: "C123",
+                rootId: "channel:C123:thread:1779841118.237",
+                isDirectMessage: false
+              },
+              connections: {
+                github: { connected: false }
+              }
+            }
+          },
+          { ...config, engine: "openclaw-gateway" },
+          async () => {
+            throw new Error("unexpected tool call");
+          },
+          async () => {
+            throw new Error("unexpected cli call");
+          },
+          () => undefined
+        );
+      }
+    );
+
+    expect(requests).toHaveLength(1);
+    expect(requests[0].headers.get("x-openclaw-message-channel")).toBe("burble");
+    expect(String(requests[0].body.input)).toContain(
+      'delivery.channel to "burble"'
     );
   });
 
