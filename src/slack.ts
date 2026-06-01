@@ -60,10 +60,12 @@ import {
   type AgentUsage
 } from "./agent/types";
 import { validateAgentModelId } from "./agent/providers";
+import { selectRuntimeToolGroups } from "./agent/tool-groups";
 import { createDockerRuntimeFactory } from "./agent/container-runtime-factory";
 import { buildRuntimeManifestForPrincipal } from "./agent/runtime-policy";
 import { createStaticRuntimeFactory } from "./agent/runtime-factory";
 import type { RuntimeFactory } from "./agent/runtime-factory";
+import type { RuntimeToolGroupSelection } from "./agent/tool-groups";
 import { createGitHubTools } from "./tools/github";
 import { createGoogleTools } from "./tools/google";
 import { createJiraTools } from "./tools/jira";
@@ -1237,6 +1239,7 @@ export function createSlackRuntime(
                 isDirectMessage: body.channel_id.startsWith("D")
               },
               text: action.task,
+              toolGroups: buildAgentExecToolGroups(action.task),
               connections: {
                 github: store.getConnection("github", email),
                 google: store.getConnection("google", email),
@@ -2517,6 +2520,12 @@ async function stopAgentExecTask(input: {
 
 function buildAgentExecLoadingText(_task: string): string {
   return "Agent task: Preparing agent runtime...";
+}
+
+export function buildAgentExecToolGroups(
+  task: string
+): RuntimeToolGroupSelection {
+  return selectRuntimeToolGroups({ text: task });
 }
 
 function formatAgentExecResponseMessage(
