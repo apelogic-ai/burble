@@ -138,6 +138,10 @@ export type AgentJobCapabilityRecord = {
   requiredTools: string[];
   routeId: string | null;
   policyHash: string | null;
+  capabilityProfile: string;
+  runtimeType: AgentRuntimeEngine | null;
+  stateRefs: unknown[];
+  visibilityPolicy: unknown;
   createdAt: string;
   updatedAt: string;
 };
@@ -188,9 +192,11 @@ type AgentJobStateRow = Omit<AgentJobStateRecord, "state"> & {
 
 type AgentJobCapabilityRow = Omit<
   AgentJobCapabilityRecord,
-  "requiredTools"
+  "requiredTools" | "stateRefs" | "visibilityPolicy"
 > & {
   requiredToolsJson: string;
+  stateRefsJson: string;
+  visibilityPolicyJson: string;
 };
 
 type SkillCatalogRow = Omit<SkillCatalogRecord, "metadata"> & {
@@ -343,6 +349,10 @@ export function createTokenStore(path: string) {
       required_tools_json TEXT NOT NULL,
       route_id TEXT,
       policy_hash TEXT,
+      capability_profile TEXT NOT NULL DEFAULT 'scheduled_job',
+      runtime_type TEXT,
+      state_refs_json TEXT NOT NULL DEFAULT '[]',
+      visibility_policy_json TEXT NOT NULL DEFAULT '{}',
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );
@@ -390,6 +400,22 @@ export function createTokenStore(path: string) {
   ensureProviderConnectionColumn(db, "refresh_token", "TEXT");
   ensureProviderConnectionColumn(db, "access_token_expires_at", "TEXT");
   ensureAgentRuntimeColumn(db, "policy_hash", "TEXT");
+  ensureAgentJobCapabilityColumn(
+    db,
+    "capability_profile",
+    "TEXT NOT NULL DEFAULT 'scheduled_job'"
+  );
+  ensureAgentJobCapabilityColumn(db, "runtime_type", "TEXT");
+  ensureAgentJobCapabilityColumn(
+    db,
+    "state_refs_json",
+    "TEXT NOT NULL DEFAULT '[]'"
+  );
+  ensureAgentJobCapabilityColumn(
+    db,
+    "visibility_policy_json",
+    "TEXT NOT NULL DEFAULT '{}'"
+  );
 
   const insertState = db.query(
     "INSERT INTO oauth_state (state, slack_user_id, expires_at) VALUES (?, ?, ?)"
@@ -815,16 +841,24 @@ export function createTokenStore(path: string) {
       required_tools_json,
       route_id,
       policy_hash,
+      capability_profile,
+      runtime_type,
+      state_refs_json,
+      visibility_policy_json,
       created_at,
       updated_at
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(job_id) DO UPDATE SET
       workspace_id = excluded.workspace_id,
       slack_user_id = excluded.slack_user_id,
       required_tools_json = excluded.required_tools_json,
       route_id = excluded.route_id,
       policy_hash = excluded.policy_hash,
+      capability_profile = excluded.capability_profile,
+      runtime_type = excluded.runtime_type,
+      state_refs_json = excluded.state_refs_json,
+      visibility_policy_json = excluded.visibility_policy_json,
       updated_at = excluded.updated_at
   `);
   const getAgentJobCapability = db.query<AgentJobCapabilityRow, [string]>(`
@@ -835,6 +869,10 @@ export function createTokenStore(path: string) {
       required_tools_json AS requiredToolsJson,
       route_id AS routeId,
       policy_hash AS policyHash,
+      capability_profile AS capabilityProfile,
+      runtime_type AS runtimeType,
+      state_refs_json AS stateRefsJson,
+      visibility_policy_json AS visibilityPolicyJson,
       created_at AS createdAt,
       updated_at AS updatedAt
     FROM agent_job_capabilities
@@ -851,6 +889,10 @@ export function createTokenStore(path: string) {
       required_tools_json AS requiredToolsJson,
       route_id AS routeId,
       policy_hash AS policyHash,
+      capability_profile AS capabilityProfile,
+      runtime_type AS runtimeType,
+      state_refs_json AS stateRefsJson,
+      visibility_policy_json AS visibilityPolicyJson,
       created_at AS createdAt,
       updated_at AS updatedAt
     FROM agent_job_capabilities
@@ -1425,6 +1467,10 @@ export function createTokenStore(path: string) {
       requiredTools: string[];
       routeId?: string | null;
       policyHash?: string | null;
+      capabilityProfile?: string | null;
+      runtimeType?: AgentRuntimeEngine | null;
+      stateRefs?: unknown[] | null;
+      visibilityPolicy?: unknown;
       now?: Date;
     }): AgentJobCapabilityRecord {
       const now = (input.now ?? new Date()).toISOString();
@@ -1436,6 +1482,10 @@ export function createTokenStore(path: string) {
         stableJson(normalizeRequiredTools(input.requiredTools)),
         input.routeId ?? null,
         input.policyHash ?? null,
+        normalizeCapabilityProfile(input.capabilityProfile),
+        input.runtimeType ?? null,
+        stableJson(normalizeStateRefs(input.stateRefs)),
+        stableJson(input.visibilityPolicy ?? {}),
         existing?.createdAt ?? now,
         now
       );
@@ -1623,6 +1673,20 @@ function ensureAgentRuntimeColumn(
   }
 }
 
+function ensureAgentJobCapabilityColumn(
+  db: Database,
+  name: string,
+  definition: string
+): void {
+  const columns = db
+    .query<{ name: string }, []>("PRAGMA table_info(agent_job_capabilities)")
+    .all()
+    .map((column) => column.name);
+  if (!columns.includes(name)) {
+    db.exec(`ALTER TABLE agent_job_capabilities ADD COLUMN ${name} ${definition}`);
+  }
+}
+
 function buildAgentRuntimeId(
   workspaceId: string,
   slackUserId: string,
@@ -1697,6 +1761,10 @@ function toAgentJobCapabilityRecord(
     requiredTools: requiredToolsFromJson(row.requiredToolsJson),
     routeId: row.routeId,
     policyHash: row.policyHash,
+    capabilityProfile: normalizeCapabilityProfile(row.capabilityProfile),
+    runtimeType: normalizeAgentRuntimeEngine(row.runtimeType),
+    stateRefs: stateRefsFromJson(row.stateRefsJson),
+    visibilityPolicy: parseStoredJson(row.visibilityPolicyJson),
     createdAt: row.createdAt,
     updatedAt: row.updatedAt
   };
@@ -1754,11 +1822,37 @@ function normalizeRequiredTools(requiredTools: string[]): string[] {
     .sort();
 }
 
+function normalizeCapabilityProfile(value: string | null | undefined): string {
+  const normalized = value?.trim();
+  return normalized || "scheduled_job";
+}
+
+function normalizeAgentRuntimeEngine(
+  value: string | null | undefined
+): AgentRuntimeEngine | null {
+  return value === "deterministic" ||
+    value === "openclaw" ||
+    value === "openclaw-gateway" ||
+    value === "burble-direct" ||
+    value === "hermes"
+    ? value
+    : null;
+}
+
+function normalizeStateRefs(value: unknown[] | null | undefined): unknown[] {
+  return Array.isArray(value) ? value : [];
+}
+
 function requiredToolsFromJson(valueJson: string): string[] {
   const value = parseStoredJson(valueJson);
   return Array.isArray(value)
     ? value.filter((tool): tool is string => typeof tool === "string")
     : [];
+}
+
+function stateRefsFromJson(valueJson: string): unknown[] {
+  const value = parseStoredJson(valueJson);
+  return Array.isArray(value) ? value : [];
 }
 
 function parseStoredJson(valueJson: string): unknown {

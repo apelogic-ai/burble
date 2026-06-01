@@ -642,6 +642,19 @@ describe("createTokenStore", () => {
       ],
       routeId: "convrt_123",
       policyHash: "policy-a",
+      capabilityProfile: "scheduled_job",
+      runtimeType: "hermes",
+      stateRefs: [
+        {
+          provider: "google",
+          kind: "drive_file",
+          id: "file-123"
+        }
+      ],
+      visibilityPolicy: {
+        maxOutputVisibility: "public",
+        privateToolOutput: "no_public_post_without_declassification"
+      },
       now: new Date("2026-05-28T00:00:00.000Z")
     });
     const updated = store.upsertAgentJobCapability({
@@ -651,6 +664,13 @@ describe("createTokenStore", () => {
       requiredTools: ["github_list_my_pull_requests"],
       routeId: "convrt_123",
       policyHash: "policy-b",
+      capabilityProfile: "scheduled_job",
+      runtimeType: "openclaw",
+      stateRefs: [],
+      visibilityPolicy: {
+        maxOutputVisibility: "user_private",
+        privateToolOutput: "block_public_delivery"
+      },
       now: new Date("2026-05-28T00:01:00.000Z")
     });
 
@@ -661,6 +681,19 @@ describe("createTokenStore", () => {
       requiredTools: ["github_list_my_pull_requests", "github_search_issues"],
       routeId: "convrt_123",
       policyHash: "policy-a",
+      capabilityProfile: "scheduled_job",
+      runtimeType: "hermes",
+      stateRefs: [
+        {
+          provider: "google",
+          kind: "drive_file",
+          id: "file-123"
+        }
+      ],
+      visibilityPolicy: {
+        maxOutputVisibility: "public",
+        privateToolOutput: "no_public_post_without_declassification"
+      },
       createdAt: "2026-05-28T00:00:00.000Z",
       updatedAt: "2026-05-28T00:00:00.000Z"
     });
@@ -671,6 +704,13 @@ describe("createTokenStore", () => {
       requiredTools: ["github_list_my_pull_requests"],
       routeId: "convrt_123",
       policyHash: "policy-b",
+      capabilityProfile: "scheduled_job",
+      runtimeType: "openclaw",
+      stateRefs: [],
+      visibilityPolicy: {
+        maxOutputVisibility: "user_private",
+        privateToolOutput: "block_public_delivery"
+      },
       createdAt: "2026-05-28T00:00:00.000Z",
       updatedAt: "2026-05-28T00:01:00.000Z"
     });
