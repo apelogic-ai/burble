@@ -288,7 +288,7 @@ print(json.dumps({
     });
   });
 
-  test("registers direct Burble provider alias tools for scheduled jobs", () => {
+  test("registers Burble provider bridge tools in a cron-visible toolset", () => {
     const result = runHermesEntrypointProbe(`${importProviderToolPlugin}
 class Ctx:
     def __init__(self):
@@ -310,28 +310,28 @@ print(json.dumps(ctx.tools))
     expect(result).toContainEqual(
       expect.objectContaining({
         name: "burble_provider_call",
-        toolset: "burble",
+        toolset: "cronjob",
         is_async: true
       })
     );
     expect(result).toContainEqual(
       expect.objectContaining({
         name: "google_get_drive_file",
-        toolset: "burble",
+        toolset: "cronjob",
         is_async: true
       })
     );
     expect(result).toContainEqual(
       expect.objectContaining({
         name: "google_append_to_drive_text_file",
-        toolset: "burble",
+        toolset: "cronjob",
         is_async: true
       })
     );
     expect(result).toContainEqual(
       expect.objectContaining({
         name: "scheduled_job_register_capability",
-        toolset: "burble",
+        toolset: "cronjob",
         is_async: true
       })
     );
