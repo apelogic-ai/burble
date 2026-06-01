@@ -57,6 +57,29 @@ export type RunRequest = {
       >;
       reasons: string[];
     };
+    scheduledJob?: {
+      jobId: string;
+      capabilityProfile: string;
+      allowedTools: string[];
+      routeId?: string;
+      runtimeType?:
+        | "deterministic"
+        | "openclaw"
+        | "openclaw-gateway"
+        | "burble-direct"
+        | "hermes";
+      stateRefs: Array<{
+        provider: string;
+        kind: string;
+        id?: string;
+        name?: string;
+        purpose?: string;
+      }>;
+      visibilityPolicy: {
+        maxOutputVisibility?: ToolClassification;
+        allowPrivateToolDeclassification?: boolean;
+      };
+    };
     attachments?: ConversationAttachment[];
     conversation?: {
       routeId?: string;

@@ -112,6 +112,17 @@ describe("createOpenClawNemoClawAgentRunner", () => {
         groups: ["conversation", "github"],
         reasons: ["default:conversation", "keyword:github:github"]
       },
+      scheduledJob: {
+        jobId: "job-123",
+        capabilityProfile: "scheduled_job",
+        allowedTools: ["github_list_my_pull_requests"],
+        routeId: "convrt_123",
+        runtimeType: "openclaw",
+        stateRefs: [],
+        visibilityPolicy: {
+          maxOutputVisibility: "user_private"
+        }
+      },
       attachments: [
         {
           id: "slack:F123",
@@ -161,6 +172,17 @@ describe("createOpenClawNemoClawAgentRunner", () => {
           }
         ],
         conversation,
+        scheduledJob: {
+          jobId: "job-123",
+          capabilityProfile: "scheduled_job",
+          allowedTools: ["github_list_my_pull_requests"],
+          routeId: "convrt_123",
+          runtimeType: "openclaw",
+          stateRefs: [],
+          visibilityPolicy: {
+            maxOutputVisibility: "user_private"
+          }
+        },
         connections: {
           github: {
             connected: true,

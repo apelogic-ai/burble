@@ -737,6 +737,7 @@ function sanitizeAgentInput(input: AgentInput): {
   conversation?: NonNullable<AgentInput["conversation"]>;
   context?: NonNullable<AgentInput["context"]>;
   toolGroups?: NonNullable<AgentInput["toolGroups"]>;
+  scheduledJob?: NonNullable<AgentInput["scheduledJob"]>;
   connections: {
     github: ConnectionSummary;
     google: ConnectionSummary;
@@ -755,6 +756,7 @@ function sanitizeAgentInput(input: AgentInput): {
     ...(input.conversation ? { conversation: input.conversation } : {}),
     ...(input.context ? { context: compactRuntimeContext(input.context) } : {}),
     ...(input.toolGroups ? { toolGroups: input.toolGroups } : {}),
+    ...(input.scheduledJob ? { scheduledJob: input.scheduledJob } : {}),
     connections: {
       github: github
         ? {
