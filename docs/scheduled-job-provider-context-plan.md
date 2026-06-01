@@ -146,21 +146,109 @@ A skill can say:
 
 But the runtime must still be prevented from using undeclared tools or posting private-derived output to the wrong place.
 
+## Runtime Types And Capability Profiles
+
+Runtime type and capability profile should be separate concepts.
+
+Runtime type answers:
+
+> Which agent runtime executes the work?
+
+Examples:
+
+- `openclaw`
+- `hermes`
+- future custom runtimes
+
+Capability profile answers:
+
+> What is this runtime, turn, or job allowed to do?
+
+Examples:
+
+```yaml
+profiles:
+  assistant:
+    description: Default Slack assistant profile.
+    toolsets:
+      - burble
+      - web
+      - cronjob
+    provider_tools: allowed_by_manifest
+    scratch_files: true
+    code_exec: bounded
+    terminal: false
+    repo_mounts: false
+    delivery: current_route
+
+  workbench:
+    description: Cross-provider analysis profile.
+    toolsets:
+      - burble
+      - web
+      - file
+      - code
+    provider_tools: allowed_by_manifest
+    scratch_files: true
+    code_exec: bounded
+    terminal: false
+    repo_mounts: optional
+
+  coding:
+    description: Explicit repo/code automation profile.
+    toolsets:
+      - burble
+      - web
+      - file
+      - code
+      - terminal
+    repo_mounts: explicit
+    terminal: sandboxed
+    requires_confirmation: true
+    observability: required
+
+  scheduled_job:
+    description: Background execution profile.
+    toolsets: explicit_per_job
+    provider_tools: explicit_per_job
+    scratch_files: optional
+    code_exec: optional
+    terminal: false
+    delivery_route: required
+    visibility_policy: required
+```
+
+This avoids global decisions like "Hermes has code" or "Hermes does not have code." Instead:
+
+- Hermes with `assistant` can answer ordinary Slack/provider questions safely.
+- Hermes with `workbench` can use isolated scratch files and bounded code for moderate cross-provider data processing.
+- OpenClaw or Hermes with `coding` can be granted repo and terminal capabilities when the user explicitly wants coding work.
+- Any runtime with `scheduled_job` must use job-scoped provider capabilities and route policy.
+
+For per-principal isolated runtimes, constrained file/code access is acceptable earlier than broad terminal access, but it still needs profile-level policy:
+
+- file access must be confined to runtime-owned scratch/state paths
+- code execution must be bounded by time, output, and resource limits
+- code execution should not have network, subprocess, or ambient secret access by default
+- scratch state must be observable and either ephemeral or explicitly promoted to durable state
+- scheduled jobs must not read arbitrary old scratch files unless their job capability grants that state reference
+
 ## Hermes-Specific First Slice
 
 For the next implementation PR:
 
-1. Add a Hermes scheduled-job execution envelope that includes Burble job context.
-2. Ensure `burble_provider_call` is available in scheduled job execution, not only interactive turns.
-3. Include a scheduled-job system hint that explicitly names available provider tools and state refs.
-4. Mint or refresh scoped auth for scheduled execution instead of relying on stale/static runtime context.
-5. Emit observability events:
+1. Introduce capability profile metadata for scheduled/background runs, starting with `scheduled_job`.
+2. Add a Hermes scheduled-job execution envelope that includes Burble job context.
+3. Ensure `burble_provider_call` is available in scheduled job execution, not only interactive turns.
+4. Include a scheduled-job system hint that explicitly names available provider tools and state refs.
+5. Mint or refresh scoped auth for scheduled execution instead of relying on stale/static runtime context.
+6. Emit observability events:
    - `scheduled_job.run.started`
    - `scheduled_job.tool.started`
    - `scheduled_job.tool.completed`
    - `scheduled_job.delivery.completed`
    - `scheduled_job.run.completed`
-6. Add tests proving a scheduled Hermes job calls Burble's Google provider bridge for a Drive scratchpad read/write.
+7. Add tests proving a scheduled Hermes job calls Burble's Google provider bridge for a Drive scratchpad read/write.
 
 ## Open Questions
 
