@@ -316,8 +316,80 @@ def build_hermes_turn_text(input_body: dict[str, Any]) -> str:
                         )
                     sections.append("\n".join(lines))
 
+    scheduled_job_context = format_scheduled_job_context(input_body)
+    if scheduled_job_context:
+        sections.append(scheduled_job_context)
+
     sections.append(f"User request:\n{text}")
     return "\n\n".join(sections)
+
+
+def format_scheduled_job_context(input_body: dict[str, Any]) -> str:
+    scheduled_job = input_body.get("scheduledJob")
+    if not isinstance(scheduled_job, dict):
+        return ""
+
+    allowed_tools = scheduled_job.get("allowedTools")
+    if isinstance(allowed_tools, list):
+        allowed_tool_text = ",".join(
+            sorted({str(tool) for tool in allowed_tools if str(tool).strip()})
+        )
+    else:
+        allowed_tool_text = ""
+
+    visibility_policy = scheduled_job.get("visibilityPolicy")
+    if not isinstance(visibility_policy, dict):
+        visibility_policy = {}
+
+    allow_declassification = (
+        "true"
+        if visibility_policy.get("allowPrivateToolDeclassification") is True
+        else "false"
+    )
+    max_visibility = str(
+        visibility_policy.get("maxOutputVisibility") or "user_private"
+    )
+
+    lines = [
+        "Scheduled Burble job context:",
+        f"- jobId={scheduled_job.get('jobId') or ''}",
+        f"- capabilityProfile={scheduled_job.get('capabilityProfile') or ''}",
+        f"- allowedTools={allowed_tool_text}",
+    ]
+    route_id = scheduled_job.get("routeId")
+    if route_id:
+        lines.append(f"- routeId={route_id}")
+    runtime_type = scheduled_job.get("runtimeType")
+    if runtime_type:
+        lines.append(f"- runtimeType={runtime_type}")
+
+    lines.append(f"- maxOutputVisibility={max_visibility}")
+    lines.append(f"- allowPrivateToolDeclassification={allow_declassification}")
+
+    state_refs = scheduled_job.get("stateRefs")
+    if isinstance(state_refs, list):
+        for state_ref in state_refs:
+            if not isinstance(state_ref, dict):
+                continue
+            parts = [
+                f"provider={state_ref.get('provider') or ''}",
+                f"kind={state_ref.get('kind') or ''}",
+            ]
+            if state_ref.get("id"):
+                parts.append(f"id={state_ref.get('id')}")
+            if state_ref.get("name"):
+                parts.append(f"name={state_ref.get('name')}")
+            if state_ref.get("purpose"):
+                parts.append(f"purpose={state_ref.get('purpose')}")
+            lines.append(f"- stateRef {' '.join(parts)}")
+
+    lines.append(
+        "For this scheduled job, use only the listed allowedTools for Burble provider calls. Treat stateRefs as durable job state locations supplied by Burble."
+    )
+    lines.append(
+        "Respect maxOutputVisibility when sending scheduled output. Do not publicly post private-tool-derived content unless allowPrivateToolDeclassification is true and the user explicitly asked for that behavior."
+    )
+    return "\n".join(lines)
 
 
 def selected_hermes_provider_tool_hints(groups: list[str]) -> list[dict[str, str]]:

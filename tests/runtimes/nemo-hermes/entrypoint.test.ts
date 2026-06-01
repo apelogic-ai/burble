@@ -103,6 +103,52 @@ print(json.dumps({"text": mod.build_hermes_turn_text(payload)}))
     expect(text).not.toContain("x".repeat(350));
   });
 
+  test("adds scheduled job context to Hermes turns", () => {
+    const result = runHermesEntrypointProbe(`${importEntrypoint}
+payload = {
+    "text": "run the scheduled provider job",
+    "scheduledJob": {
+        "jobId": "job-123",
+        "capabilityProfile": "scheduled_job",
+        "allowedTools": [
+            "google_get_drive_file",
+            "google_append_drive_text_file",
+        ],
+        "routeId": "convrt_abc123",
+        "runtimeType": "hermes",
+        "stateRefs": [
+            {
+                "provider": "google",
+                "kind": "drive_file",
+                "id": "file-123",
+                "purpose": "dedupe_state",
+            }
+        ],
+        "visibilityPolicy": {
+            "maxOutputVisibility": "public",
+            "allowPrivateToolDeclassification": False,
+        },
+    },
+}
+print(json.dumps({"text": mod.build_hermes_turn_text(payload)}))
+`);
+
+    const text = (result as { text: string }).text;
+    expect(text).toContain("Scheduled Burble job context:");
+    expect(text).toContain("jobId=job-123");
+    expect(text).toContain("capabilityProfile=scheduled_job");
+    expect(text).toContain(
+      "allowedTools=google_append_drive_text_file,google_get_drive_file"
+    );
+    expect(text).toContain("routeId=convrt_abc123");
+    expect(text).toContain("runtimeType=hermes");
+    expect(text).toContain("maxOutputVisibility=public");
+    expect(text).toContain("allowPrivateToolDeclassification=false");
+    expect(text).toContain(
+      "stateRef provider=google kind=drive_file id=file-123 purpose=dedupe_state"
+    );
+  });
+
   test("uses per-run Hermes thread ids by default", () => {
     const result = runHermesEntrypointProbe(`${importEntrypoint}
 print(json.dumps({
