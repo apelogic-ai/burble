@@ -1,0 +1,8 @@
+name: burble-provider-tool
+label: Burble Provider Tool
+kind: standalone
+version: 0.1.0
+description: >
+  Compact bridge from Hermes to Burble provider tools without exposing the full
+  provider MCP catalog to every turn.
+author: Apelogic AI

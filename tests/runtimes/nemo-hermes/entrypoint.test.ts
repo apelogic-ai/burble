@@ -10,7 +10,15 @@ function runHermesEntrypointProbe(source: string): unknown {
   if (proc.exitCode !== 0) {
     throw new Error(`python probe failed:\n${stdout}\n${stderr}`);
   }
-  return JSON.parse(stdout);
+  const jsonLine = stdout
+    .trim()
+    .split("\n")
+    .reverse()
+    .find((line) => line.trim().startsWith("{") || line.trim().startsWith("["));
+  if (!jsonLine) {
+    throw new Error(`python probe did not print JSON:\n${stdout}\n${stderr}`);
+  }
+  return JSON.parse(jsonLine);
 }
 
 const importEntrypoint = String.raw`
@@ -28,6 +36,25 @@ sys.modules["aiohttp"] = aiohttp
 spec = importlib.util.spec_from_file_location(
     "burble_hermes_entrypoint",
     "runtimes/nemo-hermes/runtime/entrypoint.py",
+)
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+`;
+
+const importProviderToolPlugin = String.raw`
+import importlib.util
+import json
+import sys
+import types
+
+aiohttp = types.ModuleType("aiohttp")
+aiohttp.ClientSession = object
+aiohttp.ClientTimeout = object
+sys.modules["aiohttp"] = aiohttp
+
+spec = importlib.util.spec_from_file_location(
+    "burble_provider_tool",
+    "runtimes/nemo-hermes/hermes-plugins/burble-provider-tool/__init__.py",
 )
 mod = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(mod)
@@ -67,6 +94,9 @@ print(json.dumps({"text": mod.build_hermes_turn_text(payload)}))
     expect(text).toContain("User request:");
     expect(text).toContain("what changed?");
     expect(text).toContain("Selected Burble tool groups: conversation, github");
+    expect(text).toContain("Selected Burble provider tools");
+    expect(text).toContain("github_list_my_pull_requests");
+    expect(text).not.toContain("google_search_drive_files");
     expect(text).toContain("Recent Burble context");
     expect(text).not.toContain("old message should not be included");
     expect(text).toContain("recent message 20");
@@ -92,6 +122,71 @@ print(json.dumps({
     expect(result).toEqual({
       run: "run-123",
       conversation: "dm:D123"
+    });
+  });
+
+  test("writes Hermes config with compact Burble provider tool instead of full MCP catalog", () => {
+    const result = runHermesEntrypointProbe(`${importEntrypoint}
+import os
+import tempfile
+
+home = tempfile.mkdtemp()
+os.environ["HERMES_HOME"] = home
+os.environ["BURBLE_MCP_GATEWAY_URL"] = "http://agentgateway:3000/mcp"
+os.environ["BURBLE_RUNTIME_JWT"] = "jwt"
+
+runtime = mod.BurbleHermesRuntime()
+runtime._ensure_gateway_config()
+print(json.dumps({
+    "config": (runtime.home / "config.yaml").read_text(),
+}))
+`);
+
+    const config = (result as { config: string }).config;
+    expect(config).toContain("burble-platform");
+    expect(config).toContain("burble-provider-tool");
+    expect(config).not.toContain("mcp_servers:");
+  });
+
+  test("can opt Hermes back into full MCP catalog for debugging", () => {
+    const result = runHermesEntrypointProbe(`${importEntrypoint}
+import os
+import tempfile
+
+home = tempfile.mkdtemp()
+os.environ["HERMES_HOME"] = home
+os.environ["BURBLE_MCP_GATEWAY_URL"] = "http://agentgateway:3000/mcp"
+os.environ["BURBLE_RUNTIME_JWT"] = "jwt"
+os.environ["BURBLE_HERMES_ENABLE_MCP_CATALOG"] = "true"
+
+runtime = mod.BurbleHermesRuntime()
+runtime._ensure_gateway_config()
+print(json.dumps({
+    "config": (runtime.home / "config.yaml").read_text(),
+}))
+`);
+
+    const config = (result as { config: string }).config;
+    expect(config).toContain("burble-provider-tool");
+    expect(config).toContain("mcp_servers:");
+    expect(config).toContain("url: ${BURBLE_MCP_GATEWAY_URL}");
+  });
+
+  test("normalizes selected Burble provider tool names", () => {
+    const result = runHermesEntrypointProbe(`${importProviderToolPlugin}
+print(json.dumps({
+    "github": mod.normalize_burble_tool_name("github_list_my_pull_requests"),
+    "google": mod.normalize_burble_tool_name("google_append_to_drive_text_file"),
+    "jira": mod.normalize_burble_tool_name("jira_list_assigned_issues"),
+    "dotted": mod.normalize_burble_tool_name("google.searchDriveFiles"),
+}))
+`);
+
+    expect(result).toEqual({
+      github: "github.listMyPullRequests",
+      google: "google.appendToDriveTextFile",
+      jira: "jira.listAssignedIssues",
+      dotted: "google.searchDriveFiles"
     });
   });
 });

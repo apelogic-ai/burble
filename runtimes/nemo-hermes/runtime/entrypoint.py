@@ -20,6 +20,111 @@ from aiohttp import ClientSession, ClientTimeout, web
 HERMES_PLUGIN_SOURCE = Path("/runtime/hermes-plugins")
 MAX_HERMES_CONTEXT_MESSAGES = 12
 MAX_HERMES_CONTEXT_MESSAGE_CHARS = 300
+HERMES_PROVIDER_TOOL_HINTS: dict[str, list[dict[str, str]]] = {
+    "github": [
+        {
+            "name": "github_list_my_pull_requests",
+            "alias": "github.listMyPullRequests",
+            "args": "limit?, state?, sort?, order?, owner?, repo?, query?",
+        },
+        {
+            "name": "github_search_issues",
+            "alias": "github.searchIssues",
+            "args": "query, limit?",
+        },
+        {
+            "name": "github_get_pr",
+            "alias": "github.getPullRequest",
+            "args": "repo, number",
+        },
+        {
+            "name": "github_create_issue",
+            "alias": "github.createIssue",
+            "args": "repo, title, body?, labels?, assignees?",
+        },
+        {
+            "name": "github_comment_on_issue_or_pr",
+            "alias": "github.commentOnIssueOrPullRequest",
+            "args": "repo, number, body",
+        },
+        {
+            "name": "github_request_review",
+            "alias": "github.requestReview",
+            "args": "repo, number, reviewers?, team_reviewers?",
+        },
+    ],
+    "google": [
+        {
+            "name": "google_search_drive_files",
+            "alias": "google.searchDriveFiles",
+            "args": "query?, limit?, orderBy?",
+        },
+        {
+            "name": "google_get_drive_file",
+            "alias": "google.getDriveFile",
+            "args": "fileId",
+        },
+        {
+            "name": "google_create_drive_text_file",
+            "alias": "google.createDriveTextFile",
+            "args": "name, text?, mimeType?",
+        },
+        {
+            "name": "google_append_to_drive_text_file",
+            "alias": "google.appendToDriveTextFile",
+            "args": "fileId, text",
+        },
+        {
+            "name": "google_search_calendar_events",
+            "alias": "google.searchCalendarEvents",
+            "args": "query?, timeMin?, timeMax?, limit?",
+        },
+        {
+            "name": "google_search_mail_messages",
+            "alias": "google.searchMailMessages",
+            "args": "query, limit?",
+        },
+    ],
+    "jira": [
+        {
+            "name": "jira_list_assigned_issues",
+            "alias": "jira.listAssignedIssues",
+            "args": "limit?, status?",
+        },
+        {
+            "name": "jira_search_issues",
+            "alias": "jira.searchIssues",
+            "args": "jql?, query?, limit?",
+        },
+        {
+            "name": "jira_get_issue",
+            "alias": "jira.getIssue",
+            "args": "issueKey",
+        },
+        {
+            "name": "jira_create_issue",
+            "alias": "jira.createIssue",
+            "args": "projectKey, issueTypeName, summary, description?",
+        },
+        {
+            "name": "jira_add_comment",
+            "alias": "jira.addComment",
+            "args": "issueKey, body",
+        },
+    ],
+    "slack": [
+        {
+            "name": "slack_search_users",
+            "alias": "slack.searchUsers",
+            "args": "query, limit?",
+        },
+        {
+            "name": "slack_search_messages",
+            "alias": "slack.searchMessages",
+            "args": "query, limit?",
+        },
+    ],
+}
 
 
 def env(name: str, default: str = "") -> str:
@@ -34,6 +139,10 @@ def int_env(name: str, default: int) -> int:
         return int(raw)
     except ValueError:
         return default
+
+
+def truthy_env(name: str) -> bool:
+    return env(name).lower() in {"1", "true", "yes", "on"}
 
 
 def yaml_string(value: str) -> str:
@@ -156,9 +265,32 @@ def build_hermes_turn_text(input_body: dict[str, Any]) -> str:
             names = [str(group) for group in groups if str(group).strip()]
             if names:
                 sections.append(f"Selected Burble tool groups: {', '.join(names)}")
+                tool_hints = selected_hermes_provider_tool_hints(names)
+                if tool_hints:
+                    lines = [
+                        "Selected Burble provider tools:",
+                        "Use Hermes tool burble_provider_call with toolName set to one of these names and input set to that tool's arguments.",
+                    ]
+                    for hint in tool_hints:
+                        lines.append(
+                            f"- {hint['name']} ({hint['alias']}): args {hint['args']}"
+                        )
+                    sections.append("\n".join(lines))
 
     sections.append(f"User request:\n{text}")
     return "\n\n".join(sections)
+
+
+def selected_hermes_provider_tool_hints(groups: list[str]) -> list[dict[str, str]]:
+    hints: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for group in groups:
+        for hint in HERMES_PROVIDER_TOOL_HINTS.get(group, []):
+            if hint["name"] in seen:
+                continue
+            seen.add(hint["name"])
+            hints.append(hint)
+    return hints
 
 
 def truncate_hermes_context_text(text: str) -> str:
@@ -542,8 +674,20 @@ class BurbleHermesRuntime:
             lines.append("browser:")
             for key, value in browser_config.items():
                 lines.append(f"  {key}: {yaml_string(value)}")
-        lines.extend(["plugins:", "  enabled:", "    - burble-platform", "    - burble-web-extract"])
-        if env("BURBLE_MCP_GATEWAY_URL") and env("BURBLE_RUNTIME_JWT"):
+        lines.extend(
+            [
+                "plugins:",
+                "  enabled:",
+                "    - burble-platform",
+                "    - burble-web-extract",
+                "    - burble-provider-tool",
+            ]
+        )
+        if (
+            truthy_env("BURBLE_HERMES_ENABLE_MCP_CATALOG")
+            and env("BURBLE_MCP_GATEWAY_URL")
+            and env("BURBLE_RUNTIME_JWT")
+        ):
             lines.extend(
                 [
                     "mcp_servers:",
