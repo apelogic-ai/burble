@@ -1,0 +1,175 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1000" viewBox="0 0 1600 1000" role="img" aria-labelledby="title desc">
+  <title id="title">Burble component and interface map</title>
+  <desc id="desc">Burble connects Slack, provider OAuth accounts, policy, tool gateways, pluggable runtimes, LLM providers, and observability storage through explicit interfaces.</desc>
+  <defs>
+    <marker id="arrow" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto" markerUnits="strokeWidth">
+      <path d="M2,2 L10,6 L2,10 Z" fill="#263238"/>
+    </marker>
+    <marker id="arrow-soft" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto" markerUnits="strokeWidth">
+      <path d="M2,2 L10,6 L2,10 Z" fill="#60727c"/>
+    </marker>
+    <style>
+      .bg { fill: #f7f8fa; }
+      .title { font: 700 34px Arial, sans-serif; fill: #172026; }
+      .subtitle { font: 400 18px Arial, sans-serif; fill: #4b5b64; }
+      .laneTitle { font: 700 17px Arial, sans-serif; fill: #3d4d55; }
+      .label { font: 700 18px Arial, sans-serif; fill: #172026; }
+      .small { font: 400 15px Arial, sans-serif; fill: #34444d; }
+      .tiny { font: 400 13px Arial, sans-serif; fill: #52636d; }
+      .box { fill: #ffffff; stroke: #a9b5bc; stroke-width: 2; rx: 8; }
+      .slack { fill: #f3efff; stroke: #7b5cc7; }
+      .burble { fill: #eef8f1; stroke: #3c9151; }
+      .runtime { fill: #fff3e3; stroke: #c27a21; }
+      .mcp { fill: #edf7f8; stroke: #2f8a94; }
+      .provider { fill: #fcecef; stroke: #b94f61; }
+      .storage { fill: #fffde8; stroke: #c0a63a; }
+      .model { fill: #eef4ff; stroke: #3584c5; }
+      .lane { fill: #ffffff; stroke: #d3d9dd; stroke-width: 1.5; rx: 10; }
+      .line { fill: none; stroke: #263238; stroke-width: 2.5; marker-end: url(#arrow); }
+      .soft { fill: none; stroke: #60727c; stroke-width: 2; stroke-dasharray: 8 6; marker-end: url(#arrow-soft); }
+      .note { fill: #ffffff; stroke: #d3d9dd; stroke-width: 1.5; rx: 8; }
+    </style>
+  </defs>
+
+  <rect class="bg" width="1600" height="1000"/>
+  <text class="title" x="70" y="70">Burble components and interfaces</text>
+  <text class="subtitle" x="70" y="104">Burble owns identity, policy, routing, provider credentials, and observability. Runtimes execute bounded turns through explicit contracts.</text>
+
+  <rect class="lane" x="55" y="145" width="265" height="720"/>
+  <text class="laneTitle" x="82" y="178">Slack workspace</text>
+
+  <rect class="lane" x="360" y="145" width="470" height="720"/>
+  <text class="laneTitle" x="388" y="178">Burble app</text>
+
+  <rect class="lane" x="870" y="145" width="315" height="720"/>
+  <text class="laneTitle" x="898" y="178">Agent runtime</text>
+
+  <rect class="lane" x="1225" y="145" width="320" height="720"/>
+  <text class="laneTitle" x="1252" y="178">External systems</text>
+
+  <rect class="box slack" x="85" y="220" width="205" height="110"/>
+  <text class="label" x="115" y="258">Slack UI</text>
+  <text class="small" x="115" y="288">DMs, channels,</text>
+  <text class="small" x="115" y="312">App Home, actions</text>
+
+  <rect class="box slack" x="85" y="410" width="205" height="112"/>
+  <text class="label" x="115" y="458">Slack APIs</text>
+  <text class="small" x="115" y="488">events, Block Kit,</text>
+  <text class="small" x="115" y="512">OAuth, chat.postMessage</text>
+
+  <rect class="box burble" x="395" y="210" width="190" height="110"/>
+  <text class="label" x="425" y="248">Slack adapter</text>
+  <text class="small" x="425" y="278">Bolt events, slash</text>
+  <text class="small" x="425" y="302">commands, App Home</text>
+
+  <rect class="box burble" x="615" y="210" width="180" height="110"/>
+  <text class="label" x="645" y="248">Conversation</text>
+  <text class="small" x="645" y="278">route, visibility,</text>
+  <text class="small" x="645" y="302">attachments, progress</text>
+
+  <rect class="box burble" x="395" y="375" width="190" height="118"/>
+  <text class="label" x="425" y="413">Policy and config</text>
+  <text class="small" x="425" y="443">manifest, skills,</text>
+  <text class="small" x="425" y="467">memory, tool groups</text>
+
+  <rect class="box burble" x="615" y="375" width="180" height="118"/>
+  <text class="label" x="645" y="413">Runtime factory</text>
+  <text class="small" x="645" y="443">Docker today,</text>
+  <text class="small" x="645" y="467">portable later</text>
+
+  <rect class="box mcp" x="395" y="550" width="190" height="118"/>
+  <text class="label" x="425" y="588">Tool gateway</text>
+  <text class="small" x="425" y="618">runtime JWT, policy,</text>
+  <text class="small" x="425" y="642">provider execution</text>
+
+  <rect class="box mcp" x="615" y="550" width="180" height="118"/>
+  <text class="label" x="645" y="588">Provider MCP</text>
+  <text class="small" x="645" y="618">tools/list and</text>
+  <text class="small" x="645" y="642">tools/call facade</text>
+
+  <rect class="box storage" x="395" y="720" width="190" height="96"/>
+  <text class="label" x="425" y="758">SQLite state</text>
+  <text class="small" x="425" y="788">tokens, routes,</text>
+  <text class="small" x="425" y="812">runtime records</text>
+
+  <rect class="box storage" x="615" y="720" width="180" height="96"/>
+  <text class="label" x="645" y="758">Observability</text>
+  <text class="small" x="645" y="788">native JSONL and</text>
+  <text class="small" x="645" y="812">Observer view</text>
+
+  <rect class="box runtime" x="905" y="220" width="245" height="118"/>
+  <text class="label" x="935" y="258">OpenClaw runtime</text>
+  <text class="small" x="935" y="288">Burble channel,</text>
+  <text class="small" x="935" y="312">filtered catalogs</text>
+
+  <rect class="box runtime" x="905" y="405" width="245" height="118"/>
+  <text class="label" x="935" y="443">Hermes runtime</text>
+  <text class="small" x="935" y="473">Burble platform,</text>
+  <text class="small" x="935" y="497">compact provider tool</text>
+
+  <rect class="box runtime" x="905" y="600" width="245" height="118"/>
+  <text class="label" x="935" y="638">Future runtimes</text>
+  <text class="small" x="935" y="668">same /runs and</text>
+  <text class="small" x="935" y="692">tool-gateway contracts</text>
+
+  <rect class="box model" x="1260" y="210" width="245" height="110"/>
+  <text class="label" x="1290" y="248">LLM providers</text>
+  <text class="small" x="1290" y="278">OpenAI, Anthropic,</text>
+  <text class="small" x="1290" y="302">Ollama-compatible</text>
+
+  <rect class="box provider" x="1260" y="385" width="245" height="130"/>
+  <text class="label" x="1290" y="423">Provider APIs</text>
+  <text class="small" x="1290" y="453">GitHub, Jira, Google,</text>
+  <text class="small" x="1290" y="477">Slack user-token APIs,</text>
+  <text class="small" x="1290" y="501">Atlassian MCP</text>
+
+  <rect class="box storage" x="1260" y="625" width="245" height="112"/>
+  <text class="label" x="1290" y="663">Runtime storage</text>
+  <text class="small" x="1290" y="693">per-runtime state,</text>
+  <text class="small" x="1290" y="717">scheduler, cache</text>
+
+  <path class="line" d="M290 275 H395"/>
+  <text class="tiny" x="312" y="260">Slack events</text>
+
+  <path class="line" d="M585 265 H615"/>
+
+  <path class="line" d="M490 320 V375"/>
+  <text class="tiny" x="505" y="352">identity</text>
+
+  <path class="line" d="M705 320 V375"/>
+  <text class="tiny" x="720" y="352">route</text>
+
+  <path class="line" d="M585 434 H615"/>
+  <text class="tiny" x="592" y="417">manifest</text>
+
+  <path class="line" d="M705 493 V550"/>
+  <text class="tiny" x="720" y="525">tool catalog</text>
+
+  <path class="line" d="M490 493 V550"/>
+  <path class="line" d="M585 609 H615"/>
+
+  <path class="line" d="M795 434 H905"/>
+  <text class="tiny" x="825" y="420">/runs + policy</text>
+
+  <path class="line" d="M795 610 C845 610, 870 510, 905 464"/>
+  <text class="tiny" x="805" y="590">scoped tool calls</text>
+
+  <path class="line" d="M1150 279 H1260"/>
+  <text class="tiny" x="1174" y="260">model API</text>
+
+  <path class="line" d="M795 609 C960 590, 1120 520, 1260 450"/>
+  <text class="tiny" x="905" y="570">OAuth-backed provider calls</text>
+
+  <path class="soft" d="M1150 464 C1210 540, 1235 620, 1260 681"/>
+  <text class="tiny" x="1175" y="585">native scheduler state</text>
+
+  <path class="line" d="M615 302 C485 350, 345 404, 290 466"/>
+  <text class="tiny" x="304" y="448">Block Kit replies</text>
+
+  <path class="soft" d="M490 668 V720"/>
+  <path class="soft" d="M705 668 V720"/>
+  <path class="soft" d="M1028 718 C980 790, 840 805, 795 780"/>
+
+  <rect class="note" x="85" y="900" width="1420" height="58"/>
+  <text class="small" x="115" y="935">Principle: provider credentials and policy stay in Burble; runtimes get scoped JWTs, bounded context, selected tools, and explicit delivery routes.</text>
+</svg>
