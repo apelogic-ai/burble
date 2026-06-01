@@ -113,6 +113,7 @@ export function createOpenClawNemoClawAgentRunner(
       const runtimeId = runtime?.id ?? "static";
       const runtimeType = runtime?.engine ?? "static";
       const principalId = `${input.principal.workspaceId}:${input.principal.slackUserId}`;
+      const scheduledJobSummary = summarizeScheduledJob(input);
       logInfo(
         [
           "OpenClaw/NemoClaw run start",
@@ -142,6 +143,9 @@ export function createOpenClawNemoClawAgentRunner(
           googleConnected: Boolean(input.connections.google),
           jiraConnected: Boolean(input.connections.jira),
           slackConnected: Boolean(input.connections.slack),
+          ...(scheduledJobSummary
+            ? { scheduledJob: scheduledJobSummary }
+            : {}),
           ...(runtime?.manifest ? { policyHash: runtime.manifest.policyHash } : {})
         }
       });
@@ -155,6 +159,9 @@ export function createOpenClawNemoClawAgentRunner(
             googleConnected: Boolean(input.connections.google),
             jiraConnected: Boolean(input.connections.jira),
             slackConnected: Boolean(input.connections.slack),
+            ...(scheduledJobSummary
+              ? { scheduledJob: scheduledJobSummary }
+              : {}),
             ...(runtime.manifest
               ? { policyHash: runtime.manifest.policyHash }
               : {})
@@ -609,6 +616,37 @@ function runtimeHeaders(runtime: RuntimeHandle | null): Record<string, string> {
 
   return {
     "x-burble-runtime-id": runtime.id
+  };
+}
+
+function summarizeScheduledJob(input: AgentInput):
+  | {
+      jobId: string;
+      capabilityProfile: string;
+      allowedToolCount: number;
+      routeId?: string;
+      runtimeType?: string;
+      stateRefCount: number;
+      maxOutputVisibility: ToolClassification | "user_private";
+      allowPrivateToolDeclassification: boolean;
+    }
+  | undefined {
+  const scheduledJob = input.scheduledJob;
+  if (!scheduledJob) {
+    return undefined;
+  }
+
+  return {
+    jobId: scheduledJob.jobId,
+    capabilityProfile: scheduledJob.capabilityProfile,
+    allowedToolCount: scheduledJob.allowedTools.length,
+    ...(scheduledJob.routeId ? { routeId: scheduledJob.routeId } : {}),
+    ...(scheduledJob.runtimeType ? { runtimeType: scheduledJob.runtimeType } : {}),
+    stateRefCount: scheduledJob.stateRefs.length,
+    maxOutputVisibility:
+      scheduledJob.visibilityPolicy.maxOutputVisibility ?? "user_private",
+    allowPrivateToolDeclassification:
+      scheduledJob.visibilityPolicy.allowPrivateToolDeclassification === true
   };
 }
 
