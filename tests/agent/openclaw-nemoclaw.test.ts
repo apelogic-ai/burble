@@ -174,6 +174,60 @@ describe("createOpenClawNemoClawAgentRunner", () => {
     expect(JSON.stringify(body)).not.toContain("secret-token");
   });
 
+  test("bounds Slack context before posting to any remote runtime", async () => {
+    const requests: Array<{ url: string; init: RequestInit }> = [];
+    const runner = createOpenClawNemoClawAgentRunner({
+      baseUrl: "http://runtime:8080",
+      fetch: async (url, init) => {
+        requests.push({ url: String(url), init: init ?? {} });
+        return Response.json({
+          response: {
+            classification: "user_private",
+            text: "Bounded context."
+          }
+        });
+      }
+    });
+
+    await collectAgentRun(runner, {
+      principal,
+      conversation,
+      text: "summarize this channel",
+      context: {
+        currentChannel: {
+          id: "D123",
+          isDirectMessage: true,
+          historyAvailable: true
+        },
+        recentMessages: Array.from({ length: 20 }, (_, index) => ({
+          author: "user" as const,
+          speaker: "Leo",
+          text:
+            index === 0
+              ? "old message should not cross the runtime boundary"
+              : `recent message ${index + 1} ${"x".repeat(500)}`
+        }))
+      },
+      connections: { github: null }
+    });
+
+    const body = JSON.parse(String(requests[0].init.body));
+    expect(body.input.context.recentMessages).toHaveLength(12);
+    expect(JSON.stringify(body.input.context)).not.toContain(
+      "old message should not cross the runtime boundary"
+    );
+    expect(body.input.context.recentMessages.at(-1).text.length).toBeLessThanOrEqual(
+      320
+    );
+    expect(body.input.context).toMatchObject({
+      currentChannel: {
+        id: "D123",
+        isDirectMessage: true,
+        historyAvailable: true
+      }
+    });
+  });
+
   test("routes requests through a principal-scoped runtime factory", async () => {
     const principals: unknown[] = [];
     const runtimeEvents: unknown[] = [];

@@ -68,6 +68,9 @@ type RuntimeAttachment = {
   externalId?: string;
 };
 
+const maxRuntimeRecentMessages = 12;
+const maxRuntimeRecentMessageChars = 300;
+
 export function createOpenClawNemoClawAgentRunner(
   deps: OpenClawNemoClawAgentRunnerDeps
 ): AgentRunner {
@@ -750,7 +753,7 @@ function sanitizeAgentInput(input: AgentInput): {
     text: input.text,
     ...(input.attachments ? { attachments: input.attachments } : {}),
     ...(input.conversation ? { conversation: input.conversation } : {}),
-    ...(input.context ? { context: input.context } : {}),
+    ...(input.context ? { context: compactRuntimeContext(input.context) } : {}),
     ...(input.toolGroups ? { toolGroups: input.toolGroups } : {}),
     connections: {
       github: github
@@ -791,6 +794,27 @@ function sanitizeAgentInput(input: AgentInput): {
           }
     }
   };
+}
+
+function compactRuntimeContext(
+  context: NonNullable<AgentInput["context"]>
+): NonNullable<AgentInput["context"]> {
+  return {
+    currentChannel: context.currentChannel,
+    recentMessages: context.recentMessages
+      .slice(-maxRuntimeRecentMessages)
+      .map((message) => ({
+        ...message,
+        text: truncateRuntimeText(message.text, maxRuntimeRecentMessageChars)
+      }))
+  };
+}
+
+function truncateRuntimeText(text: string, maxChars: number): string {
+  if (text.length <= maxChars) {
+    return text;
+  }
+  return `${text.slice(0, Math.max(0, maxChars - 1))}…`;
 }
 
 function isRuntimeAttachmentArray(value: unknown): value is RuntimeAttachment[] {
