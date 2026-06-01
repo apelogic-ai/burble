@@ -825,6 +825,157 @@ describe("handleProviderMcpRequest", () => {
     store.close();
   });
 
+  test("enforces scheduled job capabilities for principal-scoped MCP calls", async () => {
+    const issuer = createRuntimeJwtIssuer({ issuer: config.runtimeJwtIssuer });
+    const store = createTokenStore(":memory:");
+    const runtime = store.getOrCreateAgentRuntime({
+      workspaceId: "T123",
+      slackUserId: "U123",
+      engine: "openclaw",
+      endpointUrl: "http://runtime-u123:8080",
+      authTokenHash: "hash-u123",
+      statePath: "/data/runtimes/u123/state",
+      configPath: "/data/runtimes/u123/config/openclaw.json",
+      workspacePath: "/data/runtimes/u123/workspace"
+    });
+    store.upsertProviderConnection({
+      provider: "google",
+      email: "person@example.com",
+      slackUserId: "U123",
+      providerLogin: "google-user@example.com",
+      accessToken: "google-token",
+      refreshToken: null,
+      accessTokenExpiresAt: null
+    });
+    store.upsertAgentJobCapability({
+      jobId: "ai-news-hourly",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      requiredTools: ["google_search_drive_files"],
+      routeId: null,
+      policyHash: "policy-a",
+      capabilityProfile: "scheduled_job",
+      runtimeType: "openclaw"
+    });
+    const token = issuer.issueRuntimeJwt({
+      audience: "http://agentgateway:3000/mcp",
+      runtimeId: runtime.id,
+      workspaceId: "T123",
+      slackUserId: "U123"
+    });
+
+    const response = await handleProviderMcpRequest(
+      config,
+      store,
+      issuer,
+      mcpRequest(
+        {
+          method: "tools/call",
+          params: {
+            name: "google_search_drive_files",
+            arguments: {
+              jobId: "ai-news-hourly",
+              query: "AI News Scratchpad",
+              limit: 1
+            }
+          }
+        },
+        token
+      ),
+      {
+        searchGoogleDriveFiles: async (accessToken, input) => {
+          expect(accessToken).toBe("google-token");
+          expect(input).toEqual({
+            query: "AI News Scratchpad",
+            limit: 1
+          });
+          return [{ id: "file-1", name: "AI News Scratchpad" }];
+        }
+      }
+    );
+    const body = readMcpBody(await response.text());
+    const toolResult = JSON.parse(body.result.content[0].text);
+
+    expect(response.status).toBe(200);
+    expect(toolResult).toEqual({
+      classification: "user_private",
+      content: [{ id: "file-1", name: "AI News Scratchpad" }]
+    });
+    store.close();
+  });
+
+  test("blocks principal-scoped MCP calls outside scheduled job capabilities", async () => {
+    const issuer = createRuntimeJwtIssuer({ issuer: config.runtimeJwtIssuer });
+    const store = createTokenStore(":memory:");
+    const runtime = store.getOrCreateAgentRuntime({
+      workspaceId: "T123",
+      slackUserId: "U123",
+      engine: "openclaw",
+      endpointUrl: "http://runtime-u123:8080",
+      authTokenHash: "hash-u123",
+      statePath: "/data/runtimes/u123/state",
+      configPath: "/data/runtimes/u123/config/openclaw.json",
+      workspacePath: "/data/runtimes/u123/workspace"
+    });
+    store.upsertProviderConnection({
+      provider: "google",
+      email: "person@example.com",
+      slackUserId: "U123",
+      providerLogin: "google-user@example.com",
+      accessToken: "google-token",
+      refreshToken: null,
+      accessTokenExpiresAt: null
+    });
+    store.upsertAgentJobCapability({
+      jobId: "ai-news-hourly",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      requiredTools: ["google_search_drive_files"],
+      routeId: null,
+      policyHash: "policy-a",
+      capabilityProfile: "scheduled_job",
+      runtimeType: "openclaw"
+    });
+    const token = issuer.issueRuntimeJwt({
+      audience: "http://agentgateway:3000/mcp",
+      runtimeId: runtime.id,
+      workspaceId: "T123",
+      slackUserId: "U123"
+    });
+
+    const response = await handleProviderMcpRequest(
+      config,
+      store,
+      issuer,
+      mcpRequest(
+        {
+          method: "tools/call",
+          params: {
+            name: "google_append_to_drive_text_file",
+            arguments: {
+              jobId: "ai-news-hourly",
+              fileId: "file-1",
+              text: "Reported item"
+            }
+          }
+        },
+        token
+      ),
+      {
+        appendGoogleDriveTextFile: async () => {
+          throw new Error("job capability should block this tool");
+        }
+      }
+    );
+    const body = readMcpBody(await response.text());
+
+    expect(response.status).toBe(200);
+    expect(body.error.message).toBe(
+      "Tool google_append_to_drive_text_file is not available to scheduled job ai-news-hourly."
+    );
+    store.close();
+  });
+
   test("executes Google Drive create text file under the runtime principal", async () => {
     const issuer = createRuntimeJwtIssuer({ issuer: config.runtimeJwtIssuer });
     const store = createTokenStore(":memory:");

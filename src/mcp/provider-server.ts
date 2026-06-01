@@ -67,6 +67,7 @@ import {
 } from "../agent/runtime-policy";
 import type { RuntimeManifest } from "../agent/runtime-manifest";
 import { assertScheduledJobCapabilityMatchesRuntime } from "../agent/scheduled-job-auth";
+import { isScheduledJobToolAllowed } from "../agent/scheduled-job-tools";
 import {
   isAllowedAtlassianMcpToolName,
   isReadOnlyAtlassianMcpToolName,
@@ -196,6 +197,15 @@ export async function handleProviderMcpRequest(
   if (jobScopeValidation.response) {
     return jobScopeValidation.response;
   }
+  const jobArgumentValidation =
+    await validateScheduledJobArgumentProviderMcpToolAccess(
+      jobScopeValidation.request,
+      store,
+      runtime
+    );
+  if (jobArgumentValidation.response) {
+    return jobArgumentValidation.response;
+  }
 
   const server = createProviderMcpServer(config, store, runtime, deps, scope, {
     enabledTools
@@ -203,7 +213,7 @@ export async function handleProviderMcpRequest(
   const transport = new WebStandardStreamableHTTPServerTransport();
 
   await server.connect(transport);
-  return transport.handleRequest(routeValidation.request);
+  return transport.handleRequest(jobArgumentValidation.request);
 }
 
 function createProviderMcpServer(
@@ -365,21 +375,21 @@ async function validateJobScopedProviderMcpToolAccess(
   runtime: AgentRuntimeRecord,
   claims: RuntimeJwtClaims | null,
   enabledTools: ReadonlySet<string>
-): Promise<{ response: Response | null }> {
+): Promise<{ request: Request; response: Response | null }> {
   if (!claims?.allowed_tools || request.method !== "POST") {
-    return { response: null };
+    return { request, response: null };
   }
 
   let payload: unknown;
   try {
     payload = await request.clone().json();
   } catch {
-    return { response: null };
+    return { request, response: null };
   }
 
   const call = readJsonRpcToolCall(payload);
   if (!call || enabledTools.has(call.name)) {
-    return { response: null };
+    return { request, response: null };
   }
 
   store.recordAgentRuntimeEvent({
@@ -394,11 +404,95 @@ async function validateJobScopedProviderMcpToolAccess(
   });
 
   return {
+    request,
     response: mcpJsonRpcErrorResponse(
       readJsonRpcId(payload),
       -32020,
       `Tool ${call.name} is not available to this job.`
     )
+  };
+}
+
+async function validateScheduledJobArgumentProviderMcpToolAccess(
+  request: Request,
+  store: TokenStore,
+  runtime: AgentRuntimeRecord
+): Promise<{ request: Request; response: Response | null }> {
+  if (request.method !== "POST") {
+    return { request, response: null };
+  }
+
+  let payload: unknown;
+  try {
+    payload = await request.clone().json();
+  } catch {
+    return { request, response: null };
+  }
+
+  const call = readJsonRpcToolCall(payload);
+  const jobId = readProviderMcpScheduledJobId(payload);
+  if (!call || !jobId) {
+    return { request, response: null };
+  }
+
+  const capability = store.getAgentJobCapability(jobId);
+  if (!capability) {
+    return {
+      request,
+      response: mcpJsonRpcErrorResponse(
+        readJsonRpcId(payload),
+        -32021,
+        `Scheduled job capability ${jobId} was not found.`
+      )
+    };
+  }
+
+  try {
+    assertScheduledJobCapabilityMatchesRuntime(runtime, capability);
+  } catch {
+    return {
+      request,
+      response: mcpJsonRpcErrorResponse(
+        readJsonRpcId(payload),
+        -32022,
+        `Scheduled job capability ${jobId} does not belong to this runtime.`
+      )
+    };
+  }
+
+  if (
+    !isScheduledJobToolAllowed({
+      requiredTools: capability.requiredTools,
+      toolName: call.name
+    })
+  ) {
+    store.recordAgentRuntimeEvent({
+      runtimeId: runtime.id,
+      eventType: "runtime_tool_called",
+      summary: {
+        tool: call.name,
+        allowed: false,
+        reason: "job_capability_denied",
+        jobId
+      }
+    });
+
+    return {
+      request,
+      response: mcpJsonRpcErrorResponse(
+        readJsonRpcId(payload),
+        -32023,
+        `Tool ${call.name} is not available to scheduled job ${jobId}.`
+      )
+    };
+  }
+
+  return {
+    request: replaceRequestJsonBody(
+      request,
+      stripProviderMcpScheduledJobId(payload)
+    ),
+    response: null
   };
 }
 
@@ -573,6 +667,42 @@ function stripProviderMcpRouteId(payload: unknown): unknown {
     return payload;
   }
   const { routeId: _routeId, ...rest } = args as Record<string, unknown>;
+  return {
+    ...payload,
+    params: {
+      ...payload.params,
+      arguments: rest
+    }
+  };
+}
+
+function readProviderMcpScheduledJobId(payload: unknown): string | null {
+  if (!isJsonRpcToolCall(payload)) {
+    return null;
+  }
+  const args = payload.params.arguments;
+  if (!args || typeof args !== "object" || Array.isArray(args)) {
+    return null;
+  }
+  const jobId =
+    (args as Record<string, unknown>).jobId ??
+    (args as Record<string, unknown>).scheduledJobId;
+  return typeof jobId === "string" && jobId.trim() ? jobId.trim() : null;
+}
+
+function stripProviderMcpScheduledJobId(payload: unknown): unknown {
+  if (!isJsonRpcToolCall(payload)) {
+    return payload;
+  }
+  const args = payload.params.arguments;
+  if (!args || typeof args !== "object" || Array.isArray(args)) {
+    return payload;
+  }
+  const {
+    jobId: _jobId,
+    scheduledJobId: _scheduledJobId,
+    ...rest
+  } = args as Record<string, unknown>;
   return {
     ...payload,
     params: {

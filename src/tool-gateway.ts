@@ -1,5 +1,5 @@
 import type { Config } from "./config";
-import type { AgentRuntimeRecord, TokenStore } from "./db";
+import type { AgentRuntimeEngine, AgentRuntimeRecord, TokenStore } from "./db";
 import type { ConversationAttachment } from "./conversation/types";
 import { createHash, timingSafeEqual } from "node:crypto";
 import {
@@ -85,6 +85,12 @@ import {
 } from "./mcp/atlassian-logging";
 import { verifyJiraAuthForOpaqueAtlassianMcpError } from "./mcp/atlassian-auth";
 import type { ObservabilitySink } from "./observability";
+import { buildScheduledJobContext } from "./agent/scheduled-job-context";
+import { assertScheduledJobCapabilityMatchesRuntime } from "./agent/scheduled-job-auth";
+import {
+  isScheduledJobToolAllowed,
+  normalizeScheduledJobToolNames
+} from "./agent/scheduled-job-tools";
 
 type ToolGatewayDeps = Partial<Parameters<typeof createGitHubTools>[0]> &
   Partial<GoogleToolDeps> &
@@ -222,7 +228,7 @@ export async function handleToolGatewayRequest(
     return new Response("Unknown tool", { status: 404 });
   }
 
-  const body = await readToolGatewayBody(request);
+  let body = await readToolGatewayBody(request);
   const toolStartedAt = Date.now();
 
   if (toolName === "runtime.heartbeat") {
@@ -317,6 +323,60 @@ export async function handleToolGatewayRequest(
   if (!body) {
     return new Response("Invalid tool input", { status: 400 });
   }
+
+  if (toolName === "scheduledJob.registerCapability") {
+    if (auth.kind !== "runtime") {
+      return new Response("Runtime auth required", { status: 403 });
+    }
+    const input = readScheduledJobRegisterCapabilityInput(body.input);
+    if (!input) {
+      return new Response("Invalid tool input", { status: 400 });
+    }
+    if (input.routeId) {
+      const destination = resolveConversationRouteDestination(
+        store,
+        auth.runtime,
+        input.routeId
+      );
+      if (!destination.ok) {
+        return new Response(destination.message, { status: destination.status });
+      }
+    }
+    const requiredTools = normalizeScheduledJobToolNames(input.requiredTools);
+    const record = store.upsertAgentJobCapability({
+      jobId: input.jobId,
+      workspaceId: auth.runtime.workspaceId,
+      slackUserId: auth.runtime.slackUserId,
+      requiredTools,
+      routeId: input.routeId ?? null,
+      policyHash: auth.runtime.policyHash,
+      capabilityProfile: input.capabilityProfile ?? "scheduled_job",
+      runtimeType: input.runtimeType ?? auth.runtime.engine,
+      stateRefs: input.stateRefs ?? [],
+      visibilityPolicy: input.visibilityPolicy ?? {}
+    });
+    const scheduledJob = buildScheduledJobContext(record);
+    return respondWithAudit({
+      classification: "user_private",
+      content: {
+        ok: true,
+        scheduledJob,
+        scheduledPromptInstruction:
+          buildScheduledJobPromptInstruction(scheduledJob)
+      }
+    });
+  }
+
+  const scheduledValidation = validateAndStripScheduledJobToolGatewayInput(
+    store,
+    auth,
+    toolName,
+    body
+  );
+  if (scheduledValidation.response) {
+    return scheduledValidation.response;
+  }
+  body = scheduledValidation.body;
 
   const provider = readToolProvider(toolName);
   const connection = resolveToolGatewayConnection(store, auth, provider, body);
@@ -1183,6 +1243,7 @@ function isKnownTool(toolName: string): boolean {
     toolName === "slack.searchMessages" ||
     toolName === "conversation.sendMessage" ||
     toolName === "conversation.getAttachment" ||
+    toolName === "scheduledJob.registerCapability" ||
     toolName === "runtime.heartbeat" ||
     toolName === "atlassian.listMcpTools" ||
     toolName === "atlassian.callMcpTool"
@@ -1216,6 +1277,196 @@ function resolveToolGatewayConnection(
     return null;
   }
   return store.getConnection(provider, body.user.email);
+}
+
+function validateAndStripScheduledJobToolGatewayInput(
+  store: TokenStore,
+  auth: ToolGatewayAuth,
+  toolName: string,
+  body: ToolGatewayBody
+): { body: ToolGatewayBody; response: Response | null } {
+  const jobId = readScheduledJobId(body.input);
+  if (!jobId) {
+    return { body, response: null };
+  }
+  if (auth.kind !== "runtime") {
+    return {
+      body,
+      response: jsonResponse(
+        {
+          classification: "user_private",
+          content: {
+            error: "scheduled_job_runtime_required",
+            message: "Scheduled job provider calls require runtime auth."
+          }
+        },
+        403
+      )
+    };
+  }
+
+  const capability = store.getAgentJobCapability(jobId);
+  if (!capability) {
+    return {
+      body,
+      response: jsonResponse(
+        {
+          classification: "user_private",
+          content: {
+            error: "scheduled_job_not_found",
+            message: `Scheduled job capability ${jobId} was not found.`
+          }
+        },
+        403
+      )
+    };
+  }
+
+  try {
+    assertScheduledJobCapabilityMatchesRuntime(auth.runtime, capability);
+  } catch {
+    return {
+      body,
+      response: jsonResponse(
+        {
+          classification: "user_private",
+          content: {
+            error: "scheduled_job_principal_mismatch",
+            message: `Scheduled job capability ${jobId} does not belong to this runtime.`
+          }
+        },
+        403
+      )
+    };
+  }
+
+  if (
+    !isScheduledJobToolAllowed({
+      requiredTools: capability.requiredTools,
+      toolName
+    })
+  ) {
+    return {
+      body,
+      response: jsonResponse(
+        {
+          classification: "user_private",
+          content: {
+            error: "scheduled_job_tool_denied",
+            message: `Tool ${toolName} is not available to scheduled job ${jobId}.`
+          }
+        },
+        403
+      )
+    };
+  }
+
+  return {
+    body: {
+      ...body,
+      input: stripScheduledJobIds(body.input)
+    },
+    response: null
+  };
+}
+
+function readScheduledJobId(input: unknown): string | null {
+  if (!isOptionalObject(input)) {
+    return null;
+  }
+  const jobId = input.jobId ?? input.scheduledJobId;
+  return typeof jobId === "string" && jobId.trim() ? jobId.trim() : null;
+}
+
+function stripScheduledJobIds(input: unknown): unknown {
+  if (!isOptionalObject(input)) {
+    return input;
+  }
+  const { jobId: _jobId, scheduledJobId: _scheduledJobId, ...rest } = input;
+  return rest;
+}
+
+function readScheduledJobRegisterCapabilityInput(input: unknown):
+  | {
+      jobId: string;
+      requiredTools: string[];
+      routeId?: string;
+      capabilityProfile?: string;
+      runtimeType?: AgentRuntimeEngine;
+      stateRefs?: unknown[];
+      visibilityPolicy?: unknown;
+    }
+  | null {
+  if (!isOptionalObject(input)) {
+    return null;
+  }
+  if (
+    !isNonEmptyString(input.jobId) ||
+    !stringArray(input.requiredTools, 100)
+  ) {
+    return null;
+  }
+  if (
+    ("routeId" in input && input.routeId !== undefined && !isNonEmptyString(input.routeId)) ||
+    ("capabilityProfile" in input &&
+      input.capabilityProfile !== undefined &&
+      !isNonEmptyString(input.capabilityProfile)) ||
+    ("runtimeType" in input &&
+      input.runtimeType !== undefined &&
+      !isAgentRuntimeEngine(input.runtimeType)) ||
+    ("stateRefs" in input &&
+      input.stateRefs !== undefined &&
+      !Array.isArray(input.stateRefs))
+  ) {
+    return null;
+  }
+
+  return {
+    jobId: input.jobId,
+    requiredTools: input.requiredTools,
+    ...(typeof input.routeId === "string" ? { routeId: input.routeId } : {}),
+    ...(typeof input.capabilityProfile === "string"
+      ? { capabilityProfile: input.capabilityProfile }
+      : {}),
+    ...(isAgentRuntimeEngine(input.runtimeType)
+      ? { runtimeType: input.runtimeType }
+      : {}),
+    ...(Array.isArray(input.stateRefs) ? { stateRefs: input.stateRefs } : {}),
+    ...("visibilityPolicy" in input
+      ? { visibilityPolicy: input.visibilityPolicy }
+      : {})
+  };
+}
+
+function isAgentRuntimeEngine(value: unknown): value is AgentRuntimeEngine {
+  return (
+    value === "deterministic" ||
+    value === "openclaw" ||
+    value === "openclaw-gateway" ||
+    value === "burble-direct" ||
+    value === "hermes"
+  );
+}
+
+function buildScheduledJobPromptInstruction(
+  scheduledJob: ReturnType<typeof buildScheduledJobContext>
+): string {
+  const lines = [
+    "Use Burble provider calls with this jobId for this scheduled job.",
+    `jobId=${scheduledJob.jobId}`,
+    `allowedTools=${scheduledJob.allowedTools.join(",")}`,
+    `capabilityProfile=${scheduledJob.capabilityProfile}`,
+    ...(scheduledJob.routeId ? [`routeId=${scheduledJob.routeId}`] : []),
+    `maxOutputVisibility=${scheduledJob.visibilityPolicy.maxOutputVisibility ?? "user_private"}`,
+    `allowPrivateToolDeclassification=${scheduledJob.visibilityPolicy.allowPrivateToolDeclassification === true ? "true" : "false"}`
+  ];
+  if (scheduledJob.stateRefs.length) {
+    lines.push(`stateRefs=${JSON.stringify(scheduledJob.stateRefs)}`);
+  }
+  lines.push(
+    "For every scheduled provider call, include this jobId in the tool input and use only the listed allowedTools."
+  );
+  return lines.join("\n");
 }
 
 async function readToolGatewayBody(
@@ -2467,8 +2718,9 @@ function sanitizeMcpContentItem(item: unknown): unknown {
   return record;
 }
 
-function jsonResponse(result: ToolResult<unknown>): Response {
+function jsonResponse(result: ToolResult<unknown>, status = 200): Response {
   return Response.json(result, {
+    status,
     headers: {
       "cache-control": "no-store"
     }
@@ -2577,6 +2829,9 @@ function readToolProviderForTelemetry(toolName: string): string {
   }
   if (toolName.startsWith("runtime.")) {
     return "runtime";
+  }
+  if (toolName.startsWith("scheduledJob.")) {
+    return "scheduled_job";
   }
   return readToolProvider(toolName);
 }

@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { Config } from "../src/config";
 import type {
+  AgentJobCapabilityRecord,
   AgentRuntimeRecord,
   ConversationRouteRecord,
   ProviderConnection,
@@ -116,7 +117,11 @@ function createStore(
   foundRuntime: AgentRuntimeRecord | null = null,
   runtimeEvents: unknown[] = [],
   foundRoute: ConversationRouteRecord | null = null,
-  touchedRuntimeIds: string[] = []
+  touchedRuntimeIds: string[] = [],
+  jobCapabilities: {
+    found?: AgentJobCapabilityRecord | null;
+    upserts?: unknown[];
+  } = {}
 ): TokenStore {
   return {
     createOAuthState: () => "state",
@@ -168,10 +173,25 @@ function createStore(
     getAgentJobState: () => null,
     listAgentJobStatesForPrincipal: () => [],
     deleteAgentJobState: () => undefined,
-    upsertAgentJobCapability: () => {
-      throw new Error("unexpected agent job capability write");
+    upsertAgentJobCapability: (input) => {
+      jobCapabilities.upserts?.push(input);
+      return {
+        jobId: input.jobId,
+        workspaceId: input.workspaceId,
+        slackUserId: input.slackUserId,
+        requiredTools: input.requiredTools,
+        routeId: input.routeId ?? null,
+        policyHash: input.policyHash ?? null,
+        capabilityProfile: input.capabilityProfile ?? "scheduled_job",
+        runtimeType: input.runtimeType ?? null,
+        stateRefs: input.stateRefs ?? [],
+        visibilityPolicy: input.visibilityPolicy ?? {},
+        createdAt: "2026-06-01T00:00:00.000Z",
+        updatedAt: "2026-06-01T00:00:00.000Z"
+      };
     },
-    getAgentJobCapability: () => null,
+    getAgentJobCapability: (jobId) =>
+      jobId === jobCapabilities.found?.jobId ? jobCapabilities.found : null,
     listAgentJobCapabilitiesForPrincipal: () => [],
     deleteAgentJobCapability: () => undefined,
     upsertSkillCatalog: () => {
@@ -580,6 +600,179 @@ describe("handleToolGatewayRequest", () => {
     expect(await response.json()).toEqual({
       classification: "user_private",
       content: { login: "octocat" }
+    });
+  });
+
+  test("lets a runtime register a scheduled job provider capability", async () => {
+    const route: ConversationRouteRecord = {
+      id: "convrt_abc123",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      transport: "slack",
+      destinationJson: JSON.stringify({
+        channelId: "C123"
+      }),
+      createdAt: "2026-05-26T00:00:00.000Z",
+      updatedAt: "2026-05-26T00:00:00.000Z",
+      revokedAt: null
+    };
+    const upserts: unknown[] = [];
+    const response = await handleToolGatewayRequest(
+      config,
+      createStore(null, runtime, [], route, [], { upserts }),
+      "scheduledJob.registerCapability",
+      request(
+        "scheduledJob.registerCapability",
+        {
+          input: {
+            jobId: "ai-news-hourly",
+            requiredTools: [
+              "google.getDriveFile",
+              "google.appendToDriveTextFile"
+            ],
+            routeId: "convrt_abc123",
+            stateRefs: [
+              {
+                provider: "google",
+                kind: "drive_file",
+                id: "file-1",
+                purpose: "dedupe scratchpad"
+              }
+            ],
+            visibilityPolicy: {
+              maxOutputVisibility: "public",
+              allowPrivateToolDeclassification: true
+            }
+          }
+        },
+        "runtime-token-u123",
+        "rt_u123"
+      )
+    );
+
+    expect(response.status).toBe(200);
+    expect(upserts).toEqual([
+      expect.objectContaining({
+        jobId: "ai-news-hourly",
+        workspaceId: "T123",
+        slackUserId: "U123",
+        routeId: "convrt_abc123",
+        requiredTools: [
+          "google_append_to_drive_text_file",
+          "google_get_drive_file"
+        ],
+        runtimeType: "openclaw",
+        policyHash: "policy-hash"
+      })
+    ]);
+    const body = await response.json();
+    expect(body.content.scheduledJob).toMatchObject({
+      jobId: "ai-news-hourly",
+      allowedTools: [
+        "google_append_to_drive_text_file",
+        "google_get_drive_file"
+      ],
+      routeId: "convrt_abc123"
+    });
+    expect(body.content.scheduledPromptInstruction).toContain(
+      "jobId=ai-news-hourly"
+    );
+    expect(body.content.scheduledPromptInstruction).toContain(
+      "Use Burble provider calls with this jobId"
+    );
+  });
+
+  test("enforces scheduled job tool capabilities for runtime tool gateway calls", async () => {
+    const capability: AgentJobCapabilityRecord = {
+      jobId: "ai-news-hourly",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      requiredTools: ["google.searchDriveFiles"],
+      routeId: null,
+      policyHash: "policy-hash",
+      capabilityProfile: "scheduled_job",
+      runtimeType: "openclaw",
+      stateRefs: [],
+      visibilityPolicy: {},
+      createdAt: "2026-06-01T00:00:00.000Z",
+      updatedAt: "2026-06-01T00:00:00.000Z"
+    };
+    const response = await handleToolGatewayRequest(
+      config,
+      createStore(googleConnection, runtime, [], null, [], { found: capability }),
+      "google.searchDriveFiles",
+      request(
+        "google.searchDriveFiles",
+        {
+          input: {
+            jobId: "ai-news-hourly",
+            query: "AI News Scratchpad",
+            limit: 1
+          }
+        },
+        "runtime-token-u123",
+        "rt_u123"
+      ),
+      {
+        searchGoogleDriveFiles: async (token, input) => {
+          expect(token).toBe("google-token");
+          expect(input).toEqual({
+            query: "AI News Scratchpad",
+            limit: 1
+          });
+          return [{ id: "file-1", name: "AI News Scratchpad" }];
+        }
+      }
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({
+      classification: "user_private",
+      content: [{ id: "file-1", name: "AI News Scratchpad" }]
+    });
+  });
+
+  test("rejects runtime tool gateway calls outside the scheduled job capability", async () => {
+    const capability: AgentJobCapabilityRecord = {
+      jobId: "ai-news-hourly",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      requiredTools: ["google.searchDriveFiles"],
+      routeId: null,
+      policyHash: "policy-hash",
+      capabilityProfile: "scheduled_job",
+      runtimeType: "openclaw",
+      stateRefs: [],
+      visibilityPolicy: {},
+      createdAt: "2026-06-01T00:00:00.000Z",
+      updatedAt: "2026-06-01T00:00:00.000Z"
+    };
+    const response = await handleToolGatewayRequest(
+      config,
+      createStore(googleConnection, runtime, [], null, [], { found: capability }),
+      "google.appendToDriveTextFile",
+      request(
+        "google.appendToDriveTextFile",
+        {
+          input: {
+            jobId: "ai-news-hourly",
+            fileId: "file-1",
+            text: "Reported item"
+          }
+        },
+        "runtime-token-u123",
+        "rt_u123"
+      )
+    );
+
+    expect(response.status).toBe(403);
+    await expect(response.json()).resolves.toEqual({
+      classification: "user_private",
+      content: {
+        error: "scheduled_job_tool_denied",
+        message:
+          "Tool google.appendToDriveTextFile is not available to scheduled job ai-news-hourly."
+      }
     });
   });
 
