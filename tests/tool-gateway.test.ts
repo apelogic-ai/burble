@@ -682,6 +682,35 @@ describe("handleToolGatewayRequest", () => {
     );
   });
 
+  test("returns field-level errors for invalid scheduled job provider registrations", async () => {
+    const response = await handleToolGatewayRequest(
+      config,
+      createStore(null, runtime),
+      "scheduledJob.registerCapability",
+      request(
+        "scheduledJob.registerCapability",
+        {
+          input: {
+            jobId: "ai-news-hourly",
+            requiredTools: "google.getDriveFile"
+          }
+        },
+        "runtime-token-u123",
+        "rt_u123"
+      )
+    );
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toEqual({
+      classification: "user_private",
+      content: {
+        error: "invalid_scheduled_job_capability_input",
+        message:
+          "scheduledJob.registerCapability requires requiredTools to be a non-empty string array."
+      }
+    });
+  });
+
   test("enforces scheduled job tool capabilities for runtime tool gateway calls", async () => {
     const capability: AgentJobCapabilityRecord = {
       jobId: "ai-news-hourly",

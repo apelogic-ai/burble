@@ -2844,6 +2844,25 @@ describe("runOpenClawCliRequest", () => {
     expect(String(requests[0].body.input)).toContain(
       "scheduledJob.registerCapability"
     );
+    expect(String(requests[0].body.input)).toContain(
+      "Provider-backed scheduled job repair"
+    );
+    expect(String(requests[0].body.input)).toContain(
+      "before manually triggering"
+    );
+    expect(String(requests[0].body.input)).toContain("google.getDriveFile");
+    expect(String(requests[0].body.input)).toContain(
+      "google.appendToDriveTextFile"
+    );
+    expect(String(requests[0].body.input)).toContain(
+      "Example Drive scratchpad registration input"
+    );
+    expect(String(requests[0].body.input)).toContain(
+      '"requiredTools":["google.getDriveFile","google.appendToDriveTextFile"]'
+    );
+    expect(String(requests[0].body.input)).toContain(
+      '"stateRefs":[{"provider":"google","kind":"drive_file"'
+    );
   });
 
   test("instructs native execution to avoid repeated code tool loops", async () => {

@@ -151,6 +151,32 @@ print(json.dumps({"text": mod.build_hermes_turn_text(payload)}))
     );
   });
 
+  test("adds provider-backed scheduled job repair guidance to scheduler-only Hermes turns", () => {
+    const result = runHermesEntrypointProbe(`${importEntrypoint}
+payload = {
+    "text": "manually run our existing cron job",
+    "toolGroups": {
+        "groups": ["conversation", "scheduler"],
+        "reasons": ["default:conversation", "keyword:scheduler:cron"],
+    },
+}
+print(json.dumps({"text": mod.build_hermes_turn_text(payload)}))
+`);
+
+    const text = (result as { text: string }).text;
+    expect(text).toContain("Provider-backed scheduled job repair:");
+    expect(text).toContain("Before manually triggering");
+    expect(text).toContain("scheduledJob.registerCapability");
+    expect(text).toContain("google.getDriveFile");
+    expect(text).toContain("google.appendToDriveTextFile");
+    expect(text).toContain("Example Drive scratchpad registration input");
+    expect(text).toContain('"requiredTools": ["google.getDriveFile", "google.appendToDriveTextFile"]');
+    expect(text).toContain(
+      '"stateRefs": [{"provider": "google", "kind": "drive_file"'
+    );
+    expect(text).toContain("must not use direct web/browser access to provider URLs");
+  });
+
   test("uses per-run Hermes thread ids by default", () => {
     const result = runHermesEntrypointProbe(`${importEntrypoint}
 print(json.dumps({

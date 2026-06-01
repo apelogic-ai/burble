@@ -304,12 +304,25 @@ def build_hermes_turn_text(input_body: dict[str, Any]) -> str:
             names = [str(group) for group in groups if str(group).strip()]
             if names:
                 sections.append(f"Selected Burble tool groups: {', '.join(names)}")
+                if "scheduler" in names:
+                    sections.append(
+                        "\n".join(
+                            [
+                                "Provider-backed scheduled job repair:",
+                                "Before manually triggering, enabling, or rescheduling an existing native job, inspect whether it uses provider-backed state or provider URLs such as Google Drive, GitHub, Jira, Gmail, Calendar, or Slack.",
+                                "If it does and its prompt lacks Burble jobId provider-call instructions, update the job first by calling burble_provider_call with toolName scheduledJob.registerCapability and rewrite the scheduled prompt to include the returned scheduledPromptInstruction verbatim.",
+                                'Example Drive scratchpad registration input: {"jobId": "stable-native-job-id", "requiredTools": ["google.getDriveFile", "google.appendToDriveTextFile"], "stateRefs": [{"provider": "google", "kind": "drive_file", "id": "GOOGLE_DRIVE_FILE_ID", "name": "AI News Scratchpad", "purpose": "dedupe_state"}], "visibilityPolicy": {"maxOutputVisibility": "user_private", "allowPrivateToolDeclassification": false}}',
+                                "For Google Drive scratchpads, use google.getDriveFile and google.appendToDriveTextFile through Burble provider calls; the job must not use direct web/browser access to provider URLs.",
+                            ]
+                        )
+                    )
                 tool_hints = selected_hermes_provider_tool_hints(names)
                 if tool_hints:
                     lines = [
                         "Selected Burble provider tools:",
                         "Use Hermes tool burble_provider_call with toolName set to one of these names and input set to that tool's arguments.",
                         "For native scheduled/background jobs that will use Burble provider tools, first call burble_provider_call with toolName scheduledJob.registerCapability and include the returned scheduledPromptInstruction verbatim in the scheduled job prompt.",
+                        'For Google Drive scratchpad jobs, use input shaped like {"jobId": "stable-native-job-id", "requiredTools": ["google.getDriveFile", "google.appendToDriveTextFile"], "stateRefs": [{"provider": "google", "kind": "drive_file", "id": "GOOGLE_DRIVE_FILE_ID", "name": "AI News Scratchpad", "purpose": "dedupe_state"}]}.',
                     ]
                     for hint in tool_hints:
                         lines.append(

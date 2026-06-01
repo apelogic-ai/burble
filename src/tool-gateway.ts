@@ -328,6 +328,21 @@ export async function handleToolGatewayRequest(
     if (auth.kind !== "runtime") {
       return new Response("Runtime auth required", { status: 403 });
     }
+    const inputError = describeScheduledJobRegisterCapabilityInputError(
+      body.input
+    );
+    if (inputError) {
+      return jsonResponse(
+        {
+          classification: "user_private",
+          content: {
+            error: "invalid_scheduled_job_capability_input",
+            message: inputError
+          }
+        },
+        400
+      );
+    }
     const input = readScheduledJobRegisterCapabilityInput(body.input);
     if (!input) {
       return new Response("Invalid tool input", { status: 400 });
@@ -1436,6 +1451,56 @@ function readScheduledJobRegisterCapabilityInput(input: unknown):
       ? { visibilityPolicy: input.visibilityPolicy }
       : {})
   };
+}
+
+function describeScheduledJobRegisterCapabilityInputError(
+  input: unknown
+): string | null {
+  if (!isOptionalObject(input)) {
+    return "scheduledJob.registerCapability requires an object input.";
+  }
+
+  if (!isNonEmptyString(input.jobId)) {
+    return "scheduledJob.registerCapability requires jobId to be a non-empty string.";
+  }
+
+  if (!stringArray(input.requiredTools, 100)) {
+    return "scheduledJob.registerCapability requires requiredTools to be a non-empty string array.";
+  }
+
+  if (
+    "routeId" in input &&
+    input.routeId !== undefined &&
+    !isNonEmptyString(input.routeId)
+  ) {
+    return "scheduledJob.registerCapability requires routeId to be a non-empty string when provided.";
+  }
+
+  if (
+    "capabilityProfile" in input &&
+    input.capabilityProfile !== undefined &&
+    !isNonEmptyString(input.capabilityProfile)
+  ) {
+    return "scheduledJob.registerCapability requires capabilityProfile to be a non-empty string when provided.";
+  }
+
+  if (
+    "runtimeType" in input &&
+    input.runtimeType !== undefined &&
+    !isAgentRuntimeEngine(input.runtimeType)
+  ) {
+    return "scheduledJob.registerCapability requires runtimeType to be a supported runtime engine when provided.";
+  }
+
+  if (
+    "stateRefs" in input &&
+    input.stateRefs !== undefined &&
+    !Array.isArray(input.stateRefs)
+  ) {
+    return "scheduledJob.registerCapability requires stateRefs to be an array when provided.";
+  }
+
+  return null;
 }
 
 function isAgentRuntimeEngine(value: unknown): value is AgentRuntimeEngine {
