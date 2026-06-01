@@ -2472,10 +2472,49 @@ function formatNativeExecutionContext(
     "Native agent execution:",
     "This request explicitly asks for OpenClaw-native execution. Use OpenClaw native capabilities/tools directly when useful for code, shell/process work, cron, or long-running tasks. Use Burble JSON tool_call only for external provider data or actions listed in Available Burble tools.",
     ...formatActiveConversationRouteInstruction(config, request),
+    ...formatScheduledJobContextInstruction(request),
     "When native code tools are available, you can run programs in this runtime. Do not say you cannot run arbitrary programs, cannot run code, or can only provide a local script; use native exec instead.",
     "For code execution tasks, prefer one deliberate exec call for the main work. If that exec succeeds and prints the requested result, summarize it and stop. Do not repeatedly rewrite, rerun, or optimize code after the requested result is available.",
     "For duration or long-running tests, run exactly one timed program for the requested duration, then report its stdout/stderr summary and final observed result."
   ];
+}
+
+function formatScheduledJobContextInstruction(request: RunRequest): string[] {
+  const scheduledJob = request.input.scheduledJob;
+  if (!scheduledJob) {
+    return [];
+  }
+
+  const allowedTools = [...new Set(scheduledJob.allowedTools)].sort().join(",");
+  const lines = [
+    "Scheduled Burble job context:",
+    `- jobId=${scheduledJob.jobId}`,
+    `- capabilityProfile=${scheduledJob.capabilityProfile}`,
+    `- allowedTools=${allowedTools}`,
+    ...(scheduledJob.routeId ? [`- routeId=${scheduledJob.routeId}`] : []),
+    ...(scheduledJob.runtimeType
+      ? [`- runtimeType=${scheduledJob.runtimeType}`]
+      : []),
+    `- maxOutputVisibility=${scheduledJob.visibilityPolicy.maxOutputVisibility ?? "user_private"}`,
+    `- allowPrivateToolDeclassification=${scheduledJob.visibilityPolicy.allowPrivateToolDeclassification === true ? "true" : "false"}`,
+    ...scheduledJob.stateRefs.map((stateRef) => {
+      const parts = [
+        `provider=${stateRef.provider}`,
+        `kind=${stateRef.kind}`,
+        ...(stateRef.id ? [`id=${stateRef.id}`] : []),
+        ...(stateRef.name ? [`name=${stateRef.name}`] : []),
+        ...(stateRef.purpose ? [`purpose=${stateRef.purpose}`] : [])
+      ];
+      return `- stateRef ${parts.join(" ")}`;
+    })
+  ];
+
+  lines.push(
+    "For this scheduled job, use only the listed allowedTools for Burble provider calls. Treat stateRefs as durable job state locations supplied by Burble.",
+    "Respect maxOutputVisibility when sending scheduled output. Do not publicly post private-tool-derived content unless allowPrivateToolDeclassification is true and the user explicitly asked for that behavior."
+  );
+
+  return lines;
 }
 
 function formatActiveConversationRouteInstruction(
