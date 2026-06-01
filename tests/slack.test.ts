@@ -10,6 +10,7 @@ import {
   buildAgentUserConfigGetResponse,
   buildAgentExecLoadingResponse,
   buildAgentExecMissingTaskResponse,
+  buildAgentExecToolGroups,
   buildAgentStatusResponse,
   buildAppHomeView,
   buildAgentHomeSettings,
@@ -188,6 +189,24 @@ describe("formatAgentProgressEvent", () => {
         ""
       )
     ).toBe("Agent is responding...");
+  });
+});
+
+describe("buildAgentExecToolGroups", () => {
+  test("selects provider tool groups for explicit agent exec tasks", () => {
+    expect(
+      buildAgentExecToolGroups(
+        "create a cron job to list my latest GitHub PRs"
+      )
+    ).toEqual({
+      groups: ["conversation", "github", "scheduler"],
+      reasons: [
+        "default:conversation",
+        "keyword:github:github",
+        "keyword:github:pr",
+        "keyword:scheduler:cron"
+      ]
+    });
   });
 });
 

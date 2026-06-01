@@ -1,0 +1,175 @@
+from __future__ import annotations
+
+import json
+import os
+from typing import Any
+from urllib.parse import quote
+
+from aiohttp import ClientSession, ClientTimeout
+
+
+TOOL_NAME_ALIASES = {
+    "github_get_authenticated_user": "github.getAuthenticatedUser",
+    "github_list_assigned_issues": "github.listAssignedIssues",
+    "github_search_issues": "github.searchIssues",
+    "github_list_my_pull_requests": "github.listMyPullRequests",
+    "github_get_issue": "github.getIssue",
+    "github_get_pr": "github.getPullRequest",
+    "github_get_pull_request": "github.getPullRequest",
+    "github_create_issue": "github.createIssue",
+    "github_update_issue": "github.updateIssue",
+    "github_close_issue": "github.closeIssue",
+    "github_reopen_issue": "github.reopenIssue",
+    "github_comment_on_issue_or_pr": "github.commentOnIssueOrPullRequest",
+    "github_create_pr": "github.createPullRequest",
+    "github_update_pr": "github.updatePullRequest",
+    "github_add_labels": "github.addLabels",
+    "github_remove_labels": "github.removeLabels",
+    "github_request_review": "github.requestReview",
+    "github_get_file": "github.getFile",
+    "github_create_or_update_file": "github.createOrUpdateFile",
+    "github_create_branch": "github.createBranch",
+    "google_get_authenticated_user": "google.getAuthenticatedUser",
+    "google_search_drive_files": "google.searchDriveFiles",
+    "google_get_drive_file": "google.getDriveFile",
+    "google_create_drive_text_file": "google.createDriveTextFile",
+    "google_update_drive_text_file": "google.updateDriveTextFile",
+    "google_append_to_drive_text_file": "google.appendToDriveTextFile",
+    "google_create_drive_folder": "google.createDriveFolder",
+    "google_move_drive_file": "google.moveDriveFile",
+    "google_search_calendar_events": "google.searchCalendarEvents",
+    "google_create_calendar_event": "google.createCalendarEvent",
+    "google_update_calendar_event": "google.updateCalendarEvent",
+    "google_search_mail_messages": "google.searchMailMessages",
+    "gmail_create_draft": "gmail.createDraft",
+    "jira_get_authenticated_user": "jira.getAuthenticatedUser",
+    "jira_list_accessible_resources": "jira.listAccessibleResources",
+    "jira_list_visible_projects": "jira.listVisibleProjects",
+    "jira_search_users": "jira.searchUsers",
+    "jira_create_issue": "jira.createIssue",
+    "jira_edit_issue": "jira.editIssue",
+    "jira_list_assigned_issues": "jira.listAssignedIssues",
+    "jira_search_issues": "jira.searchIssues",
+    "jira_get_issue": "jira.getIssue",
+    "jira_update_issue": "jira.updateIssue",
+    "jira_add_comment": "jira.addComment",
+    "jira_transition_issue": "jira.transitionIssue",
+    "jira_add_labels": "jira.addLabels",
+    "jira_remove_labels": "jira.removeLabels",
+    "jira_link_issues": "jira.linkIssues",
+    "jira_create_subtask": "jira.createSubtask",
+    "slack_search_users": "slack.searchUsers",
+    "slack_search_messages": "slack.searchMessages",
+    "atlassian_list_mcp_tools": "atlassian.listMcpTools",
+    "atlassian_call_mcp_tool": "atlassian.callMcpTool",
+}
+
+
+BURBLE_PROVIDER_CALL_SCHEMA = {
+    "description": "Call one selected Burble provider tool through the runtime-scoped Burble tool gateway.",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "toolName": {
+                "type": "string",
+                "description": "Burble tool name from the selected tool hints, for example github_list_my_pull_requests or google.searchDriveFiles.",
+            },
+            "input": {
+                "type": "object",
+                "description": "Arguments for that Burble tool.",
+                "additionalProperties": True,
+            },
+        },
+        "required": ["toolName"],
+        "additionalProperties": False,
+    },
+}
+
+
+def _env(name: str) -> str:
+    return os.getenv(name, "").strip()
+
+
+def normalize_burble_tool_name(name: str) -> str:
+    clean_name = str(name or "").strip()
+    if not clean_name:
+        raise ValueError("toolName is required")
+    return TOOL_NAME_ALIASES.get(clean_name, clean_name)
+
+
+def _read_tool_name(args: dict[str, Any]) -> str:
+    raw_name = args.get("toolName") or args.get("tool") or args.get("name")
+    return normalize_burble_tool_name(str(raw_name or ""))
+
+
+def _read_tool_input(args: dict[str, Any]) -> dict[str, Any]:
+    raw_input = args.get("input")
+    if raw_input is None:
+        raw_input = args.get("arguments")
+    if raw_input is None:
+        return {}
+    if isinstance(raw_input, dict):
+        return raw_input
+    raise ValueError("input must be an object")
+
+
+async def _burble_provider_call(args: dict[str, Any], **_kwargs: Any) -> str:
+    gateway_url = _env("BURBLE_TOOL_GATEWAY_URL").rstrip("/")
+    internal_token = _env("BURBLE_INTERNAL_TOKEN")
+    runtime_id = _env("BURBLE_RUNTIME_ID")
+    if not gateway_url or not internal_token or not runtime_id:
+        return json.dumps(
+            {
+                "error": True,
+                "message": "Burble provider tool bridge is not configured.",
+            },
+            ensure_ascii=False,
+        )
+
+    try:
+        tool_name = _read_tool_name(args)
+        tool_input = _read_tool_input(args)
+    except ValueError as error:
+        return json.dumps({"error": True, "message": str(error)}, ensure_ascii=False)
+
+    url = f"{gateway_url}/{quote(tool_name, safe='')}/execute"
+    payload = {"input": tool_input}
+    headers = {
+        "authorization": f"Bearer {internal_token}",
+        "content-type": "application/json",
+        "x-burble-runtime-id": runtime_id,
+    }
+    try:
+        async with ClientSession(timeout=ClientTimeout(total=120)) as session:
+            async with session.post(url, json=payload, headers=headers) as response:
+                try:
+                    body = await response.json()
+                except Exception:
+                    body = {"message": await response.text()}
+                if response.status >= 400:
+                    return json.dumps(
+                        {
+                            "error": True,
+                            "status": response.status,
+                            "message": body.get("message") if isinstance(body, dict) else str(body),
+                            "body": body,
+                        },
+                        ensure_ascii=False,
+                    )
+                if isinstance(body, dict) and "content" in body:
+                    return json.dumps(body["content"], ensure_ascii=False)
+                return json.dumps(body, ensure_ascii=False)
+    except Exception as error:
+        return json.dumps({"error": True, "message": str(error)}, ensure_ascii=False)
+
+
+def register(ctx) -> None:
+    ctx.register_tool(
+        name="burble_provider_call",
+        toolset="burble",
+        schema=BURBLE_PROVIDER_CALL_SCHEMA,
+        handler=_burble_provider_call,
+        is_async=True,
+        description=BURBLE_PROVIDER_CALL_SCHEMA["description"],
+        override=True,
+    )

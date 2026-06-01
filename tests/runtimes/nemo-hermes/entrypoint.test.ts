@@ -1,0 +1,217 @@
+import { describe, expect, test } from "bun:test";
+
+function runHermesEntrypointProbe(source: string): unknown {
+  const proc = Bun.spawnSync(["python3", "-c", source], {
+    stdout: "pipe",
+    stderr: "pipe"
+  });
+  const stdout = new TextDecoder().decode(proc.stdout);
+  const stderr = new TextDecoder().decode(proc.stderr);
+  if (proc.exitCode !== 0) {
+    throw new Error(`python probe failed:\n${stdout}\n${stderr}`);
+  }
+  const jsonLine = stdout
+    .trim()
+    .split("\n")
+    .reverse()
+    .find((line) => line.trim().startsWith("{") || line.trim().startsWith("["));
+  if (!jsonLine) {
+    throw new Error(`python probe did not print JSON:\n${stdout}\n${stderr}`);
+  }
+  return JSON.parse(jsonLine);
+}
+
+const importEntrypoint = String.raw`
+import importlib.util
+import json
+import sys
+import types
+
+aiohttp = types.ModuleType("aiohttp")
+aiohttp.ClientSession = object
+aiohttp.ClientTimeout = object
+aiohttp.web = types.SimpleNamespace()
+sys.modules["aiohttp"] = aiohttp
+
+spec = importlib.util.spec_from_file_location(
+    "burble_hermes_entrypoint",
+    "runtimes/nemo-hermes/runtime/entrypoint.py",
+)
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+`;
+
+const importProviderToolPlugin = String.raw`
+import importlib.util
+import json
+import sys
+import types
+
+aiohttp = types.ModuleType("aiohttp")
+aiohttp.ClientSession = object
+aiohttp.ClientTimeout = object
+sys.modules["aiohttp"] = aiohttp
+
+spec = importlib.util.spec_from_file_location(
+    "burble_provider_tool",
+    "runtimes/nemo-hermes/hermes-plugins/burble-provider-tool/__init__.py",
+)
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+`;
+
+describe("nemo-hermes entrypoint", () => {
+  test("builds bounded Burble context for Hermes turns", () => {
+    const result = runHermesEntrypointProbe(`${importEntrypoint}
+payload = {
+    "text": "what changed?",
+    "toolGroups": {
+        "groups": ["conversation", "github"],
+        "reasons": ["default:conversation", "keyword:github:github"],
+    },
+    "context": {
+        "recentMessages": [
+            {
+                "author": "user",
+                "speaker": "Leo",
+                "text": "old message should not be included",
+            },
+            *[
+                {
+                    "author": "assistant",
+                    "speaker": "Burble",
+                    "text": f"recent message {index} " + ("x" * 500),
+                }
+                for index in range(2, 21)
+            ],
+        ],
+    },
+}
+print(json.dumps({"text": mod.build_hermes_turn_text(payload)}))
+`);
+
+    const text = (result as { text: string }).text;
+    expect(text).toContain("User request:");
+    expect(text).toContain("what changed?");
+    expect(text).toContain("Selected Burble tool groups: conversation, github");
+    expect(text).toContain("Selected Burble provider tools");
+    expect(text).toContain("github_list_my_pull_requests");
+    expect(text).not.toContain("google_search_drive_files");
+    expect(text).toContain("Recent Burble context");
+    expect(text).not.toContain("old message should not be included");
+    expect(text).toContain("recent message 20");
+    expect(text).not.toContain("x".repeat(350));
+  });
+
+  test("uses per-run Hermes thread ids by default", () => {
+    const result = runHermesEntrypointProbe(`${importEntrypoint}
+print(json.dumps({
+    "run": mod.build_hermes_thread_id(
+        "run-123",
+        {"rootId": "dm:D123"},
+        scope="run",
+    ),
+    "conversation": mod.build_hermes_thread_id(
+        "run-123",
+        {"rootId": "dm:D123"},
+        scope="conversation",
+    ),
+}))
+`);
+
+    expect(result).toEqual({
+      run: "run-123",
+      conversation: "dm:D123"
+    });
+  });
+
+  test("writes Hermes config with compact Burble provider tool instead of full MCP catalog", () => {
+    const result = runHermesEntrypointProbe(`${importEntrypoint}
+import os
+import tempfile
+
+home = tempfile.mkdtemp()
+os.environ["HERMES_HOME"] = home
+os.environ["BURBLE_MCP_GATEWAY_URL"] = "http://agentgateway:3000/mcp"
+os.environ["BURBLE_RUNTIME_JWT"] = "jwt"
+
+runtime = mod.BurbleHermesRuntime()
+runtime._ensure_gateway_config()
+print(json.dumps({
+    "config": (runtime.home / "config.yaml").read_text(),
+}))
+`);
+
+    const config = (result as { config: string }).config;
+    expect(config).toContain("burble-platform");
+    expect(config).toContain("burble-provider-tool");
+    expect(config).not.toContain("mcp_servers:");
+  });
+
+  test("restricts Hermes Burble platform to the minimal native tool surface", () => {
+    const result = runHermesEntrypointProbe(`${importEntrypoint}
+import os
+import tempfile
+
+home = tempfile.mkdtemp()
+os.environ["HERMES_HOME"] = home
+
+runtime = mod.BurbleHermesRuntime()
+runtime._ensure_gateway_config()
+print(json.dumps({
+    "config": (runtime.home / "config.yaml").read_text(),
+}))
+`);
+
+    const config = (result as { config: string }).config;
+    expect(config).toContain("memory:\n  memory_enabled: false\n  user_profile_enabled: false");
+    expect(config).toContain("platform_toolsets:\n  burble:\n    - burble\n    - cronjob\n    - web");
+    expect(config).toContain("  disabled_toolsets:");
+    expect(config).toContain("    - skills");
+    expect(config).toContain("    - memory");
+    expect(config).toContain("    - file");
+    expect(config).toContain("    - terminal");
+  });
+
+  test("can opt Hermes back into full MCP catalog for debugging", () => {
+    const result = runHermesEntrypointProbe(`${importEntrypoint}
+import os
+import tempfile
+
+home = tempfile.mkdtemp()
+os.environ["HERMES_HOME"] = home
+os.environ["BURBLE_MCP_GATEWAY_URL"] = "http://agentgateway:3000/mcp"
+os.environ["BURBLE_RUNTIME_JWT"] = "jwt"
+os.environ["BURBLE_HERMES_ENABLE_MCP_CATALOG"] = "true"
+
+runtime = mod.BurbleHermesRuntime()
+runtime._ensure_gateway_config()
+print(json.dumps({
+    "config": (runtime.home / "config.yaml").read_text(),
+}))
+`);
+
+    const config = (result as { config: string }).config;
+    expect(config).toContain("burble-provider-tool");
+    expect(config).toContain("mcp_servers:");
+    expect(config).toContain("url: ${BURBLE_MCP_GATEWAY_URL}");
+  });
+
+  test("normalizes selected Burble provider tool names", () => {
+    const result = runHermesEntrypointProbe(`${importProviderToolPlugin}
+print(json.dumps({
+    "github": mod.normalize_burble_tool_name("github_list_my_pull_requests"),
+    "google": mod.normalize_burble_tool_name("google_append_to_drive_text_file"),
+    "jira": mod.normalize_burble_tool_name("jira_list_assigned_issues"),
+    "dotted": mod.normalize_burble_tool_name("google.searchDriveFiles"),
+}))
+`);
+
+    expect(result).toEqual({
+      github: "github.listMyPullRequests",
+      google: "google.appendToDriveTextFile",
+      jira: "jira.listAssignedIssues",
+      dotted: "google.searchDriveFiles"
+    });
+  });
+});

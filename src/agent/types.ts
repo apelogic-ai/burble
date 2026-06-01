@@ -3,6 +3,7 @@ import type {
   ConversationAttachment,
   ToolClassification
 } from "../conversation/types";
+import type { RuntimeToolGroupSelection } from "./tool-groups";
 import type { PrincipalId } from "./runtime-factory";
 
 export type AgentRunnerCapabilities = {
@@ -37,6 +38,7 @@ export type AgentInput = {
     }>;
   };
   text: string;
+  toolGroups?: RuntimeToolGroupSelection;
   attachments?: ConversationAttachment[];
   connections: {
     github: ProviderConnection | null;

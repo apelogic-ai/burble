@@ -20,6 +20,15 @@ type SharedRun = {
 
 const sharedRuns = new Map<string, SharedRun>();
 const completedRunTtlMs = 5 * 60 * 1000;
+const runtimeToolGroups = new Set([
+  "attachments",
+  "conversation",
+  "github",
+  "google",
+  "jira",
+  "scheduler",
+  "slack"
+]);
 
 export async function handleRuntimeRequest(
   request: Request,
@@ -1035,6 +1044,14 @@ function isRunRequest(body: unknown): body is RunRequest {
     return false;
   }
 
+  if (
+    "toolGroups" in input &&
+    input.toolGroups !== undefined &&
+    !isRuntimeToolGroupSelection(input.toolGroups)
+  ) {
+    return false;
+  }
+
   const connections = input.connections;
   if (
     typeof connections !== "object" ||
@@ -1074,6 +1091,24 @@ function isRunRequest(body: unknown): body is RunRequest {
   }
 
   return true;
+}
+
+function isRuntimeToolGroupSelection(
+  value: unknown
+): value is NonNullable<RunRequest["input"]["toolGroups"]> {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return false;
+  }
+
+  const record = value as Record<string, unknown>;
+  return (
+    Array.isArray(record.groups) &&
+    record.groups.every(
+      (group) => typeof group === "string" && runtimeToolGroups.has(group)
+    ) &&
+    Array.isArray(record.reasons) &&
+    record.reasons.every((reason) => typeof reason === "string")
+  );
 }
 
 function hasVisibleText(value: string): boolean {

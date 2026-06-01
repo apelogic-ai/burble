@@ -18,6 +18,142 @@ from aiohttp import ClientSession, ClientTimeout, web
 
 
 HERMES_PLUGIN_SOURCE = Path("/runtime/hermes-plugins")
+MAX_HERMES_CONTEXT_MESSAGES = 12
+MAX_HERMES_CONTEXT_MESSAGE_CHARS = 300
+HERMES_PROVIDER_TOOL_HINTS: dict[str, list[dict[str, str]]] = {
+    "github": [
+        {
+            "name": "github_list_my_pull_requests",
+            "alias": "github.listMyPullRequests",
+            "args": "limit?, state?, sort?, order?, owner?, repo?, query?",
+        },
+        {
+            "name": "github_search_issues",
+            "alias": "github.searchIssues",
+            "args": "query, limit?",
+        },
+        {
+            "name": "github_get_pr",
+            "alias": "github.getPullRequest",
+            "args": "repo, number",
+        },
+        {
+            "name": "github_create_issue",
+            "alias": "github.createIssue",
+            "args": "repo, title, body?, labels?, assignees?",
+        },
+        {
+            "name": "github_comment_on_issue_or_pr",
+            "alias": "github.commentOnIssueOrPullRequest",
+            "args": "repo, number, body",
+        },
+        {
+            "name": "github_request_review",
+            "alias": "github.requestReview",
+            "args": "repo, number, reviewers?, team_reviewers?",
+        },
+    ],
+    "google": [
+        {
+            "name": "google_search_drive_files",
+            "alias": "google.searchDriveFiles",
+            "args": "query?, limit?, orderBy?",
+        },
+        {
+            "name": "google_get_drive_file",
+            "alias": "google.getDriveFile",
+            "args": "fileId",
+        },
+        {
+            "name": "google_create_drive_text_file",
+            "alias": "google.createDriveTextFile",
+            "args": "name, text?, mimeType?",
+        },
+        {
+            "name": "google_append_to_drive_text_file",
+            "alias": "google.appendToDriveTextFile",
+            "args": "fileId, text",
+        },
+        {
+            "name": "google_search_calendar_events",
+            "alias": "google.searchCalendarEvents",
+            "args": "query?, timeMin?, timeMax?, limit?",
+        },
+        {
+            "name": "google_search_mail_messages",
+            "alias": "google.searchMailMessages",
+            "args": "query, limit?",
+        },
+    ],
+    "jira": [
+        {
+            "name": "jira_list_assigned_issues",
+            "alias": "jira.listAssignedIssues",
+            "args": "limit?, status?",
+        },
+        {
+            "name": "jira_search_issues",
+            "alias": "jira.searchIssues",
+            "args": "jql?, query?, limit?",
+        },
+        {
+            "name": "jira_get_issue",
+            "alias": "jira.getIssue",
+            "args": "issueKey",
+        },
+        {
+            "name": "jira_create_issue",
+            "alias": "jira.createIssue",
+            "args": "projectKey, issueTypeName, summary, description?",
+        },
+        {
+            "name": "jira_add_comment",
+            "alias": "jira.addComment",
+            "args": "issueKey, body",
+        },
+    ],
+    "slack": [
+        {
+            "name": "slack_search_users",
+            "alias": "slack.searchUsers",
+            "args": "query, limit?",
+        },
+        {
+            "name": "slack_search_messages",
+            "alias": "slack.searchMessages",
+            "args": "query, limit?",
+        },
+    ],
+}
+
+DEFAULT_HERMES_PLATFORM_TOOLSETS = ["burble", "cronjob", "web"]
+DEFAULT_HERMES_DISABLED_TOOLSETS = [
+    "browser",
+    "clarify",
+    "code_execution",
+    "computer_use",
+    "context_engine",
+    "delegation",
+    "discord",
+    "discord_admin",
+    "file",
+    "homeassistant",
+    "image_gen",
+    "memory",
+    "messaging",
+    "moa",
+    "session_search",
+    "skills",
+    "spotify",
+    "terminal",
+    "todo",
+    "tts",
+    "video",
+    "video_gen",
+    "vision",
+    "x_search",
+    "yuanbao",
+]
 
 
 def env(name: str, default: str = "") -> str:
@@ -34,8 +170,22 @@ def int_env(name: str, default: int) -> int:
         return default
 
 
+def truthy_env(name: str) -> bool:
+    return env(name).lower() in {"1", "true", "yes", "on"}
+
+
 def yaml_string(value: str) -> str:
     return json.dumps(value)
+
+
+def env_list(name: str, default: list[str]) -> list[str]:
+    raw = env(name)
+    if not raw:
+        return list(default)
+    if raw.lower() in {"0", "false", "no", "none", "off"}:
+        return []
+    values = [value.strip() for value in raw.replace("\n", ",").split(",")]
+    return list(dict.fromkeys(value for value in values if value))
 
 
 def _to_non_negative_int(value: Any) -> int | None:
@@ -122,6 +272,82 @@ def build_runtime_response(result: dict[str, Any], prompt: str = "") -> dict[str
     if usage:
         response["usage"] = usage
     return response
+
+
+def build_hermes_turn_text(input_body: dict[str, Any]) -> str:
+    text = str(input_body.get("text") or "")
+    sections: list[str] = []
+
+    context = input_body.get("context")
+    recent_messages = []
+    if isinstance(context, dict):
+        raw_messages = context.get("recentMessages")
+        if isinstance(raw_messages, list):
+            recent_messages = raw_messages[-MAX_HERMES_CONTEXT_MESSAGES:]
+
+    if recent_messages:
+        lines = ["Recent Burble context (bounded, newest last):"]
+        for message in recent_messages:
+            if not isinstance(message, dict):
+                continue
+            speaker = str(message.get("speaker") or message.get("author") or "unknown")
+            message_text = truncate_hermes_context_text(str(message.get("text") or ""))
+            if message_text:
+                lines.append(f"- {speaker}: {message_text}")
+        if len(lines) > 1:
+            sections.append("\n".join(lines))
+
+    tool_groups = input_body.get("toolGroups")
+    if isinstance(tool_groups, dict):
+        groups = tool_groups.get("groups")
+        if isinstance(groups, list):
+            names = [str(group) for group in groups if str(group).strip()]
+            if names:
+                sections.append(f"Selected Burble tool groups: {', '.join(names)}")
+                tool_hints = selected_hermes_provider_tool_hints(names)
+                if tool_hints:
+                    lines = [
+                        "Selected Burble provider tools:",
+                        "Use Hermes tool burble_provider_call with toolName set to one of these names and input set to that tool's arguments.",
+                    ]
+                    for hint in tool_hints:
+                        lines.append(
+                            f"- {hint['name']} ({hint['alias']}): args {hint['args']}"
+                        )
+                    sections.append("\n".join(lines))
+
+    sections.append(f"User request:\n{text}")
+    return "\n\n".join(sections)
+
+
+def selected_hermes_provider_tool_hints(groups: list[str]) -> list[dict[str, str]]:
+    hints: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for group in groups:
+        for hint in HERMES_PROVIDER_TOOL_HINTS.get(group, []):
+            if hint["name"] in seen:
+                continue
+            seen.add(hint["name"])
+            hints.append(hint)
+    return hints
+
+
+def truncate_hermes_context_text(text: str) -> str:
+    if len(text) <= MAX_HERMES_CONTEXT_MESSAGE_CHARS:
+        return text
+    return f"{text[:MAX_HERMES_CONTEXT_MESSAGE_CHARS - 3]}..."
+
+
+def build_hermes_thread_id(
+    run_id: str,
+    conversation: dict[str, Any],
+    scope: str | None = None,
+) -> str:
+    selected_scope = (scope or env("HERMES_BURBLE_SESSION_SCOPE", "run")).strip().lower()
+    if selected_scope == "conversation":
+        root_id = str(conversation.get("rootId") or "")
+        return root_id or run_id
+    return run_id
 
 
 DEFAULT_SOUL_MD = """# Burble Runtime
@@ -216,8 +442,9 @@ class BurbleHermesRuntime:
     async def handle_run(self, request: web.Request) -> web.Response:
         body = await request.json()
         run_id = str(body.get("runId") or uuid.uuid4())
-        text = str((body.get("input") or {}).get("text") or "")
-        conversation = ((body.get("input") or {}).get("conversation") or {})
+        input_body = body.get("input") or {}
+        text = str(input_body.get("text") or "")
+        conversation = (input_body.get("conversation") or {})
         principal = body.get("principal") or {}
         route_id = str(conversation.get("routeId") or "")
         if not route_id:
@@ -239,8 +466,8 @@ class BurbleHermesRuntime:
                 {
                     "runId": run_id,
                     "routeId": route_id,
-                    "text": text,
-                    "threadId": conversation.get("rootId"),
+                    "text": build_hermes_turn_text(input_body),
+                    "threadId": build_hermes_thread_id(run_id, conversation),
                     "actorId": principal.get("slackUserId"),
                     "actorName": principal.get("slackUserId"),
                     "slackUserId": principal.get("slackUserId"),
@@ -486,8 +713,49 @@ class BurbleHermesRuntime:
             lines.append("browser:")
             for key, value in browser_config.items():
                 lines.append(f"  {key}: {yaml_string(value)}")
-        lines.extend(["plugins:", "  enabled:", "    - burble-platform", "    - burble-web-extract"])
-        if env("BURBLE_MCP_GATEWAY_URL") and env("BURBLE_RUNTIME_JWT"):
+        native_memory_enabled = truthy_env("BURBLE_HERMES_NATIVE_MEMORY")
+        lines.extend(
+            [
+                "memory:",
+                f"  memory_enabled: {str(native_memory_enabled).lower()}",
+                f"  user_profile_enabled: {str(native_memory_enabled).lower()}",
+            ]
+        )
+        disabled_toolsets = env_list(
+            "BURBLE_HERMES_DISABLED_TOOLSETS",
+            DEFAULT_HERMES_DISABLED_TOOLSETS,
+        )
+        if native_memory_enabled:
+            disabled_toolsets = [
+                toolset for toolset in disabled_toolsets if toolset != "memory"
+            ]
+        if disabled_toolsets:
+            lines.append("agent:")
+            lines.append("  disabled_toolsets:")
+            for toolset in disabled_toolsets:
+                lines.append(f"    - {toolset}")
+        platform_toolsets = env_list(
+            "BURBLE_HERMES_PLATFORM_TOOLSETS",
+            DEFAULT_HERMES_PLATFORM_TOOLSETS,
+        )
+        lines.append("platform_toolsets:")
+        lines.append("  burble:")
+        for toolset in platform_toolsets:
+            lines.append(f"    - {toolset}")
+        lines.extend(
+            [
+                "plugins:",
+                "  enabled:",
+                "    - burble-platform",
+                "    - burble-web-extract",
+                "    - burble-provider-tool",
+            ]
+        )
+        if (
+            truthy_env("BURBLE_HERMES_ENABLE_MCP_CATALOG")
+            and env("BURBLE_MCP_GATEWAY_URL")
+            and env("BURBLE_RUNTIME_JWT")
+        ):
             lines.extend(
                 [
                     "mcp_servers:",

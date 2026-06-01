@@ -244,6 +244,52 @@ describe("createAiSdkAgentRunner", () => {
     expect(response.text).toBe("The channel mentioned president once.");
   });
 
+  test("bounds recent Slack channel history in the prompt", async () => {
+    const model = { provider: "test", modelId: "model" } as DirectLanguageModel;
+    const runner = createAiSdkAgentRunner({
+      model: "openai:test-model",
+      resolveModel: () => model,
+      githubTools: createGitHubTools({
+        getGitHubUser: async () => ({ login: "octocat" }),
+        listAssignedIssues: async () => [],
+        searchIssues: async () => [],
+        listMyPullRequests: async () => []
+      }),
+      generateText: async (request) => {
+        expect(request.prompt).toContain(
+          "Current Slack channel history: available (12 of 20 recent messages included)"
+        );
+        expect(request.prompt).not.toContain("old context 1");
+        expect(request.prompt).toContain("recent context 20");
+        expect(request.prompt).not.toContain("x".repeat(350));
+        return { text: "Bounded." };
+      }
+    });
+
+    const response = await collectAgentRun(runner, {
+      principal,
+      text: "summarize current channel",
+      context: {
+        currentChannel: {
+          id: "C123",
+          isDirectMessage: false,
+          historyAvailable: true
+        },
+        recentMessages: Array.from({ length: 20 }, (_, index) => ({
+          author: "user" as const,
+          speaker: "<@U456>",
+          text:
+            index === 19
+              ? `recent context ${index + 1} ${"x".repeat(500)}`
+              : `${index === 0 ? "old" : "recent"} context ${index + 1}`
+        }))
+      },
+      connections: { github: null }
+    });
+
+    expect(response.text).toBe("Bounded.");
+  });
+
   test("returns a connect instruction when a GitHub tool is used without auth", async () => {
     const runner = createAiSdkAgentRunner({
       model: "openai:test-model",

@@ -38,6 +38,11 @@ export type CliCommandRunner = (
 
 const preloadedRuntimeSkillNames = ["core", "github", "atlassian-jira"] as const;
 type PreloadedRuntimeSkillName = (typeof preloadedRuntimeSkillNames)[number];
+type RuntimeToolGroup = NonNullable<
+  RunRequest["input"]["toolGroups"]
+>["groups"][number];
+const maxRecentSlackContextMessages = 12;
+const maxRecentSlackContextMessageChars = 300;
 const preloadedRuntimeSkillText: Record<PreloadedRuntimeSkillName, string> =
   Object.fromEntries(
     preloadedRuntimeSkillNames.map((name) => [name, loadRuntimeSkill(name)])
@@ -1394,7 +1399,7 @@ async function buildBurbleToolContext(
     buildToolCatalog(request, config, executeTool)
   ]);
   logInfo(
-    `OpenClaw context finish runId=${request.runId ?? "unknown"} elapsedMs=${Date.now() - startedAt} catalogTools=${catalogBuild.catalog.length} upstreamSchemas=${Object.keys(catalogBuild.upstreamMcpSchemas).length} baselineClassification=${baseline.response.classification}`
+    `OpenClaw context finish runId=${request.runId ?? "unknown"} elapsedMs=${Date.now() - startedAt} catalogTools=${catalogBuild.catalog.length} upstreamSchemas=${Object.keys(catalogBuild.upstreamMcpSchemas).length} toolGroups=${formatSelectedRuntimeToolGroups(request)} baselineClassification=${baseline.response.classification}`
   );
 
   return {
@@ -1449,7 +1454,10 @@ async function buildToolCatalog(
         upstreamMcpSchemas,
         discoveredProviderCatalog.upstreamMcpSchemas
       );
-      return { catalog, upstreamMcpSchemas };
+      return filterToolCatalogBySelectedGroups(request, {
+        catalog,
+        upstreamMcpSchemas
+      });
     }
   }
 
@@ -1746,7 +1754,105 @@ async function buildToolCatalog(
     }
   }
 
+  return filterToolCatalogBySelectedGroups(request, {
+    catalog,
+    upstreamMcpSchemas
+  });
+}
+
+function filterToolCatalogBySelectedGroups(
+  request: RunRequest,
+  catalogBuild: {
+    catalog: ToolCatalogItem[];
+    upstreamMcpSchemas: Record<string, unknown>;
+  }
+): {
+  catalog: ToolCatalogItem[];
+  upstreamMcpSchemas: Record<string, unknown>;
+} {
+  const selectedGroups = selectedRuntimeToolGroups(request);
+  if (!selectedGroups) {
+    return catalogBuild;
+  }
+
+  const catalog = catalogBuild.catalog.filter((tool) =>
+    isToolAllowedBySelectedGroups(tool.name, selectedGroups)
+  );
+  const allowedToolNames = new Set(catalog.map((tool) => tool.name));
+  const upstreamMcpSchemas = Object.fromEntries(
+    Object.entries(catalogBuild.upstreamMcpSchemas).filter(([name]) =>
+      allowedToolNames.has(name) ||
+      isToolAllowedBySelectedGroups(name, selectedGroups)
+    )
+  );
+
   return { catalog, upstreamMcpSchemas };
+}
+
+function selectedRuntimeToolGroups(
+  request: RunRequest
+): Set<RuntimeToolGroup> | null {
+  const groups = request.input.toolGroups?.groups;
+  if (!groups) {
+    return null;
+  }
+
+  return new Set(groups);
+}
+
+function formatSelectedRuntimeToolGroups(request: RunRequest): string {
+  const groups = selectedRuntimeToolGroups(request);
+  return groups ? [...groups].join(",") || "none" : "legacy-all";
+}
+
+function isToolAllowedBySelectedGroups(
+  toolName: string,
+  selectedGroups: Set<RuntimeToolGroup>
+): boolean {
+  return toolGroupsForToolName(toolName).some((group) =>
+    selectedGroups.has(group)
+  );
+}
+
+function toolGroupsForToolName(toolName: string): RuntimeToolGroup[] {
+  if (toolName === "conversation.getAttachment") {
+    return ["attachments"];
+  }
+  if (toolName.startsWith("conversation.")) {
+    return ["conversation"];
+  }
+  if (toolName.startsWith("github.") || toolName.startsWith("github_")) {
+    return ["github"];
+  }
+  if (
+    toolName.startsWith("google.") ||
+    toolName.startsWith("google_") ||
+    toolName.startsWith("gmail.") ||
+    toolName.startsWith("gmail_")
+  ) {
+    return ["google"];
+  }
+  if (
+    toolName.startsWith("jira.") ||
+    toolName.startsWith("jira_") ||
+    toolName.startsWith("atlassian.") ||
+    toolName.startsWith("atlassian_")
+  ) {
+    return ["jira"];
+  }
+  if (toolName.startsWith("slack.") || toolName.startsWith("slack_")) {
+    return ["slack"];
+  }
+  if (
+    toolName.startsWith("cron.") ||
+    toolName.startsWith("cron_") ||
+    toolName.startsWith("scheduler.") ||
+    toolName.startsWith("scheduler_")
+  ) {
+    return ["scheduler"];
+  }
+
+  return [];
 }
 
 async function readDiscoveredProviderToolCatalog(
@@ -2132,12 +2238,16 @@ function formatEnabledRuntimeSkills(request: RunRequest): string {
 function effectiveRuntimeSkills(
   request: RunRequest
 ): Array<{ id: PreloadedRuntimeSkillName; version: string; enabled: boolean }> {
+  const selectedGroups = selectedRuntimeToolGroups(request);
   const manifestSkills = request.runtime?.manifest?.skills;
   if (!manifestSkills || manifestSkills.length === 0) {
-    return defaultPreloadedRuntimeSkills;
+    return filterRuntimeSkillsBySelectedGroups(
+      defaultPreloadedRuntimeSkills,
+      selectedGroups
+    );
   }
 
-  return manifestSkills.flatMap((skill) => {
+  const enabledManifestSkills = manifestSkills.flatMap((skill) => {
     if (
       skill.enabled &&
       isPreloadedRuntimeSkillName(skill.id)
@@ -2152,6 +2262,43 @@ function effectiveRuntimeSkills(
     }
     return [];
   });
+  return filterRuntimeSkillsBySelectedGroups(
+    enabledManifestSkills,
+    selectedGroups
+  );
+}
+
+function filterRuntimeSkillsBySelectedGroups(
+  skills: Array<{
+    id: PreloadedRuntimeSkillName;
+    version: string;
+    enabled: boolean;
+  }>,
+  selectedGroups: Set<RuntimeToolGroup> | null
+): Array<{ id: PreloadedRuntimeSkillName; version: string; enabled: boolean }> {
+  if (!selectedGroups) {
+    return skills;
+  }
+
+  return skills.filter((skill) => {
+    const group = runtimeToolGroupForSkill(skill.id);
+    return group ? selectedGroups.has(group) : true;
+  });
+}
+
+function runtimeToolGroupForSkill(
+  skillId: PreloadedRuntimeSkillName
+): RuntimeToolGroup | null {
+  switch (skillId) {
+    case "core":
+      return "conversation";
+    case "github":
+      return "github";
+    case "atlassian-jira":
+      return "jira";
+    default:
+      return null;
+  }
 }
 
 function isPreloadedRuntimeSkillName(
@@ -2426,9 +2573,10 @@ function buildBurbleDirectPrompt(
 }
 
 function formatRecentSlackContext(request: RunRequest): string[] {
-  const messages = request.input.context?.recentMessages ?? [];
+  const allMessages = request.input.context?.recentMessages ?? [];
+  const messages = allMessages.slice(-maxRecentSlackContextMessages);
   const currentChannel = request.input.context?.currentChannel;
-  if (!currentChannel && messages.length === 0) {
+  if (!currentChannel && allMessages.length === 0) {
     return [];
   }
 
@@ -2439,7 +2587,7 @@ function formatRecentSlackContext(request: RunRequest): string[] {
           `Current Slack channel type: ${currentChannel.isDirectMessage ? "direct_message" : "channel"}`,
           `Current Slack channel history: ${
             currentChannel.historyAvailable
-              ? `available (${messages.length} recent messages)`
+              ? formatRecentSlackHistoryStatus(messages.length, allMessages.length)
               : `unavailable (${currentChannel.historyError ?? "unknown_error"})`
           }`
         ]
@@ -2447,11 +2595,19 @@ function formatRecentSlackContext(request: RunRequest): string[] {
     ...(messages.length > 0 ? ["Recent Slack context (oldest to newest):"] : []),
     ...messages.map(
       (message) =>
-        `${formatSlackContextAuthor(message)}: ${truncate(message.text, 500)}`
+        `${formatSlackContextAuthor(message)}: ${truncate(message.text, maxRecentSlackContextMessageChars)}`
     )
   ];
 
   return lines;
+}
+
+function formatRecentSlackHistoryStatus(included: number, total: number): string {
+  if (included === total) {
+    return `available (${included} recent messages)`;
+  }
+
+  return `available (${included} of ${total} recent messages included)`;
 }
 
 function formatSlackContextAuthor(
@@ -3527,7 +3683,9 @@ async function readRawStreamForUsage(
 function buildRunSessionId(request: RunRequest): string {
   const channelSessionKey = buildBurbleChannelSessionKey(request);
   if (channelSessionKey) {
-    return `burble-channel-${hashSessionKey(channelSessionKey)}`;
+    return `burble-channel-${hashSessionKey(
+      `${channelSessionKey}:${buildRunSessionKey(request)}`
+    )}`;
   }
 
   return `burble-run-${hashSessionKey(
@@ -3588,7 +3746,16 @@ function buildBurbleChannelSessionKey(request: RunRequest): string | null {
 }
 
 function resolveGatewayHttpMessageChannel(request: RunRequest): "webchat" | "burble" {
-  return buildBurbleChannelSessionKey(request) ? "burble" : "webchat";
+  if (!buildBurbleChannelSessionKey(request)) {
+    return "webchat";
+  }
+
+  const selectedGroups = selectedRuntimeToolGroups(request);
+  if (!selectedGroups) {
+    return "burble";
+  }
+
+  return selectedGroups.has("scheduler") ? "burble" : "webchat";
 }
 
 function hashSessionKey(value: string): string {

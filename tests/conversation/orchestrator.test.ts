@@ -344,6 +344,10 @@ describe("handleConversation", () => {
             rootId: "channel:C123:thread:1710000000.000100",
             isDirectMessage: false
           });
+          expect(input.toolGroups).toEqual({
+            groups: ["conversation", "github"],
+            reasons: ["default:conversation", "keyword:github:github"]
+          });
           expect(input.connections.github?.providerLogin).toBe("octocat");
           expect(input.connections.jira?.providerLogin).toBe("person@example.com");
           return {
@@ -507,7 +511,9 @@ describe("handleConversation", () => {
         attachmentCount: 0,
         agentMode: "llm",
         fastTrackEnabled: false,
-        hasAgentRunner: true
+        hasAgentRunner: true,
+        toolGroups: ["conversation"],
+        toolGroupReasons: ["default:conversation"]
       },
       content: {
         text: "hello"

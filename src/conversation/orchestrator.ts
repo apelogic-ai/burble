@@ -1,6 +1,7 @@
 import { formatConnectGitHubMessage } from "../formatting";
 import { formatGitHubIdentityMessage, formatIssuesMessage } from "../formatting";
 import { collectAgentRun, type AgentRunEvent } from "../agent/types";
+import { selectRuntimeToolGroups } from "../agent/tool-groups";
 import { parseGitHubPullRequestListInput } from "../github-query";
 import { tryHandleLocalToolFastPath } from "./local-tool-fast-paths";
 import { enforceVisibility } from "./visibility";
@@ -37,6 +38,10 @@ async function handleConversationInternal(
   const intent = classifyDeterministicIntent(request.text);
   const forceAgent = shouldForceAgentDelegation(request.text);
   const fastTrackEnabled = shouldUseFastTrack(deps);
+  const toolGroups = selectRuntimeToolGroups({
+    text: request.text,
+    attachmentCount: request.attachments?.length ?? 0
+  });
 
   if (intent === "connect_github") {
     return {
@@ -179,6 +184,7 @@ async function handleConversationInternal(
         conversation: buildAgentConversation(request),
         ...(request.context ? { context: request.context } : {}),
         text: request.text,
+        toolGroups,
         ...(request.attachments ? { attachments: request.attachments } : {}),
         connections: {
           github: deps.getConnection("github", request.user.email),
@@ -238,12 +244,26 @@ function emitConversationStarted(
       attachmentCount: request.attachments?.length ?? 0,
       agentMode: deps.agentMode ?? "deterministic",
       fastTrackEnabled: shouldUseFastTrack(deps),
-      hasAgentRunner: Boolean(deps.agentRunner)
+      hasAgentRunner: Boolean(deps.agentRunner),
+      ...toolGroupAttributes(request)
     },
     content: {
       text: request.text
     }
   });
+}
+
+function toolGroupAttributes(
+  request: ConversationRequest
+): { toolGroups: string[]; toolGroupReasons: string[] } {
+  const selection = selectRuntimeToolGroups({
+    text: request.text,
+    attachmentCount: request.attachments?.length ?? 0
+  });
+  return {
+    toolGroups: selection.groups,
+    toolGroupReasons: selection.reasons
+  };
 }
 
 function emitConversationCompleted(

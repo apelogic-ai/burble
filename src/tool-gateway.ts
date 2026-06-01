@@ -314,12 +314,12 @@ export async function handleToolGatewayRequest(
     });
   }
 
-  if (!body || typeof body.user?.email !== "string") {
+  if (!body) {
     return new Response("Invalid tool input", { status: 400 });
   }
 
   const provider = readToolProvider(toolName);
-  const connection = store.getConnection(provider, body.user.email);
+  const connection = resolveToolGatewayConnection(store, auth, provider, body);
   if (!connection) {
     return jsonResponse({
       classification: "user_private",
@@ -1197,6 +1197,25 @@ function readToolProvider(toolName: string): "github" | "google" | "jira" | "sla
     : toolName.startsWith("jira.") || toolName.startsWith("atlassian.")
     ? "jira"
     : "github";
+}
+
+function resolveToolGatewayConnection(
+  store: TokenStore,
+  auth: ToolGatewayAuth,
+  provider: "github" | "google" | "jira" | "slack",
+  body: ToolGatewayBody
+) {
+  if (auth.kind === "runtime") {
+    if (typeof body.user?.email === "string" && body.user.email.trim()) {
+      return store.getConnection(provider, body.user.email);
+    }
+    return store.getConnectionForSlackUser(provider, auth.runtime.slackUserId);
+  }
+
+  if (typeof body.user?.email !== "string" || !body.user.email.trim()) {
+    return null;
+  }
+  return store.getConnection(provider, body.user.email);
 }
 
 async function readToolGatewayBody(

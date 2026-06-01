@@ -1,0 +1,147 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1060" viewBox="0 0 1600 1060" role="img" aria-labelledby="title desc">
+  <title id="title">Burble typical agent turn flow</title>
+  <desc id="desc">A Slack message moves through Burble routing, policy, runtime provisioning, runtime execution, provider tools, final response delivery, and observability.</desc>
+  <defs>
+    <marker id="arrow" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto" markerUnits="strokeWidth">
+      <path d="M2,2 L10,6 L2,10 Z" fill="#263238"/>
+    </marker>
+    <style>
+      .bg { fill: #f8f8f6; }
+      .title { font: 700 34px Arial, sans-serif; fill: #172026; }
+      .subtitle { font: 400 18px Arial, sans-serif; fill: #4b5b64; }
+      .laneTitle { font: 700 17px Arial, sans-serif; fill: #3d4d55; }
+      .label { font: 700 17px Arial, sans-serif; fill: #172026; }
+      .small { font: 400 14px Arial, sans-serif; fill: #34444d; }
+      .tiny { font: 400 12px Arial, sans-serif; fill: #52636d; }
+      .step { font: 700 13px Arial, sans-serif; fill: #ffffff; }
+      .box { fill: #ffffff; stroke: #a9b5bc; stroke-width: 2; rx: 8; }
+      .slack { fill: #f3efff; stroke: #7b5cc7; }
+      .burble { fill: #eef8f1; stroke: #3c9151; }
+      .runtime { fill: #fff3e3; stroke: #c27a21; }
+      .mcp { fill: #edf7f8; stroke: #2f8a94; }
+      .provider { fill: #fcecef; stroke: #b94f61; }
+      .storage { fill: #fffde8; stroke: #c0a63a; }
+      .model { fill: #eef4ff; stroke: #3584c5; }
+      .lane { fill: #ffffff; stroke: #d3d9dd; stroke-width: 1.5; rx: 10; }
+      .num { fill: #263238; }
+      .line { fill: none; stroke: #263238; stroke-width: 2.4; marker-end: url(#arrow); }
+      .return { fill: none; stroke: #60727c; stroke-width: 2.1; stroke-dasharray: 8 6; marker-end: url(#arrow); }
+      .emit { fill: none; stroke: #8a6b18; stroke-width: 2; stroke-dasharray: 6 6; marker-end: url(#arrow); }
+      .note { fill: #ffffff; stroke: #d3d9dd; stroke-width: 1.5; rx: 8; }
+    </style>
+  </defs>
+
+  <rect class="bg" width="1600" height="1060"/>
+  <text class="title" x="70" y="70">Typical Burble agent turn</text>
+  <text class="subtitle" x="70" y="104">One Slack message becomes a bounded runtime turn. Burble controls policy and provider execution; the runtime controls model reasoning for the turn.</text>
+
+  <rect class="lane" x="55" y="150" width="210" height="780"/>
+  <text class="laneTitle" x="82" y="183">User and Slack</text>
+
+  <rect class="lane" x="300" y="150" width="360" height="780"/>
+  <text class="laneTitle" x="328" y="183">Burble control plane</text>
+
+  <rect class="lane" x="695" y="150" width="285" height="780"/>
+  <text class="laneTitle" x="723" y="183">Agent runtime</text>
+
+  <rect class="lane" x="1015" y="150" width="250" height="780"/>
+  <text class="laneTitle" x="1043" y="183">Model provider</text>
+
+  <rect class="lane" x="1300" y="150" width="245" height="780"/>
+  <text class="laneTitle" x="1328" y="183">Provider APIs</text>
+
+  <rect class="box slack" x="85" y="230" width="150" height="92"/>
+  <circle class="num" cx="105" cy="250" r="14"/><text class="step" x="101" y="255">1</text>
+  <text class="label" x="125" y="258">Slack message</text>
+  <text class="small" x="110" y="288">text, files, images</text>
+
+  <rect class="box burble" x="330" y="220" width="290" height="112"/>
+  <circle class="num" cx="350" cy="240" r="14"/><text class="step" x="346" y="245">2</text>
+  <text class="label" x="370" y="248">Normalize request</text>
+  <text class="small" x="370" y="278">resolve route, principal,</text>
+  <text class="small" x="370" y="302">attachments, visibility baseline</text>
+
+  <rect class="box burble" x="330" y="380" width="290" height="122"/>
+  <circle class="num" cx="350" cy="400" r="14"/><text class="step" x="346" y="405">3</text>
+  <text class="label" x="370" y="408">Build runtime envelope</text>
+  <text class="small" x="370" y="438">manifest, selected tool groups,</text>
+  <text class="small" x="370" y="462">bounded recent context,</text>
+  <text class="small" x="370" y="486">runtime JWT and route id</text>
+
+  <rect class="box burble" x="330" y="555" width="290" height="106"/>
+  <circle class="num" cx="350" cy="575" r="14"/><text class="step" x="346" y="580">4</text>
+  <text class="label" x="370" y="583">Ensure runtime</text>
+  <text class="small" x="370" y="613">start or reuse container,</text>
+  <text class="small" x="370" y="637">apply config and policy hash</text>
+
+  <rect class="box runtime" x="725" y="370" width="225" height="126"/>
+  <circle class="num" cx="745" cy="390" r="14"/><text class="step" x="741" y="395">5</text>
+  <text class="label" x="765" y="398">Execute turn</text>
+  <text class="small" x="765" y="428">OpenClaw or Hermes</text>
+  <text class="small" x="765" y="452">assembles prompt with</text>
+  <text class="small" x="765" y="476">constrained tools</text>
+
+  <rect class="box model" x="1045" y="370" width="190" height="100"/>
+  <circle class="num" cx="1065" cy="390" r="14"/><text class="step" x="1061" y="395">6</text>
+  <text class="label" x="1085" y="398">LLM call</text>
+  <text class="small" x="1085" y="428">plan, tool call,</text>
+  <text class="small" x="1085" y="452">or final answer</text>
+
+  <rect class="box mcp" x="725" y="590" width="225" height="116"/>
+  <circle class="num" cx="745" cy="610" r="14"/><text class="step" x="741" y="615">7</text>
+  <text class="label" x="765" y="618">Tool request</text>
+  <text class="small" x="765" y="648">runtime calls Burble</text>
+  <text class="small" x="765" y="672">provider facade with JWT</text>
+
+  <rect class="box mcp" x="330" y="725" width="290" height="122"/>
+  <circle class="num" cx="350" cy="745" r="14"/><text class="step" x="346" y="750">8</text>
+  <text class="label" x="370" y="753">Validate and execute tool</text>
+  <text class="small" x="370" y="783">check route, principal, policy,</text>
+  <text class="small" x="370" y="807">connection token, visibility,</text>
+  <text class="small" x="370" y="831">then call provider</text>
+
+  <rect class="box provider" x="1330" y="725" width="185" height="100"/>
+  <circle class="num" cx="1350" cy="745" r="14"/><text class="step" x="1346" y="750">9</text>
+  <text class="label" x="1370" y="753">Provider API</text>
+  <text class="small" x="1370" y="783">GitHub, Jira,</text>
+  <text class="small" x="1370" y="807">Google, Slack</text>
+
+  <rect class="box burble" x="330" y="910" width="290" height="90"/>
+  <circle class="num" cx="350" cy="930" r="14"/><text class="step" x="342" y="935">10</text>
+  <text class="label" x="370" y="938">Deliver response</text>
+  <text class="small" x="370" y="968">format Slack, enforce visibility,</text>
+  <text class="small" x="370" y="992">include token usage when known</text>
+
+  <rect class="box storage" x="725" y="910" width="225" height="90"/>
+  <circle class="num" cx="745" cy="930" r="14"/><text class="step" x="737" y="935">11</text>
+  <text class="label" x="765" y="938">Emit observability</text>
+  <text class="small" x="765" y="968">native and Observer JSONL:</text>
+  <text class="small" x="765" y="992">runs, tools, usage, status</text>
+
+  <path class="line" d="M235 276 H330"/>
+  <path class="line" d="M475 332 V380"/>
+  <path class="line" d="M475 502 V555"/>
+  <path class="line" d="M620 608 C670 565, 700 500, 725 450"/>
+  <text class="tiny" x="635" y="548">POST /runs</text>
+
+  <path class="line" d="M950 420 H1045"/>
+  <path class="return" d="M1045 450 C1010 520, 980 560, 950 620"/>
+  <text class="tiny" x="980" y="535">tool call</text>
+  <path class="line" d="M725 655 C650 690, 610 725, 620 780"/>
+  <text class="tiny" x="630" y="715">/internal/tools or MCP</text>
+  <path class="line" d="M620 785 C850 840, 1115 840, 1330 775"/>
+  <path class="return" d="M1330 800 C1120 915, 880 870, 620 810"/>
+  <path class="return" d="M620 755 C710 725, 760 705, 825 706"/>
+  <path class="line" d="M950 645 C1000 610, 1020 535, 1045 455"/>
+  <text class="tiny" x="985" y="615">result into next model turn</text>
+  <path class="return" d="M1045 405 C935 265, 770 265, 837 370"/>
+  <text class="tiny" x="875" y="292">final text</text>
+  <path class="line" d="M725 440 C620 540, 570 795, 475 910"/>
+  <path class="line" d="M330 955 H235"/>
+  <path class="emit" d="M475 332 C760 230, 880 650, 835 910"/>
+  <path class="emit" d="M950 650 C1060 790, 1030 900, 950 955"/>
+  <path class="emit" d="M620 790 C700 835, 745 870, 820 910"/>
+
+  <rect class="note" x="70" y="1012" width="1460" height="34"/>
+  <text class="tiny" x="100" y="1034">Scheduled jobs reuse the same contracts: a runtime scheduler runs a task, calls Burble tools with scoped identity, and posts through an approved conversation route.</text>
+</svg>
