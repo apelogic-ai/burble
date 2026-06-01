@@ -17,7 +17,6 @@ const runtime: AgentRuntimeRecord = {
   configPath: "/data/runtime/config/hermes.yaml",
   workspacePath: "/data/runtime/workspace",
   status: "ready",
-  desiredStatus: "ready",
   policyHash: "policy-a",
   createdAt: "2026-06-01T00:00:00.000Z",
   lastSeenAt: "2026-06-01T00:00:00.000Z",
@@ -56,6 +55,9 @@ describe("issueScheduledJobRuntimeJwt", () => {
       token,
       audience: "https://burble.test/mcp"
     });
+    if (!claims) {
+      throw new Error("expected runtime JWT claims");
+    }
 
     expect(claims).toMatchObject({
       runtime_id: "rt_123",
@@ -64,7 +66,9 @@ describe("issueScheduledJobRuntimeJwt", () => {
       job_id: "job-123",
       allowed_tools: ["google.appendToDriveTextFile", "google.getDriveFile"]
     });
-    expect(claims?.exp - claims?.iat).toBe(30);
+    expect(claims.exp).toBeDefined();
+    expect(claims.iat).toBeDefined();
+    expect(claims.exp! - claims.iat!).toBe(30);
   });
 
   test("rejects capabilities for a different principal", () => {
