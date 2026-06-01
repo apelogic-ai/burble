@@ -18,6 +18,8 @@ from aiohttp import ClientSession, ClientTimeout, web
 
 
 HERMES_PLUGIN_SOURCE = Path("/runtime/hermes-plugins")
+MAX_HERMES_CONTEXT_MESSAGES = 12
+MAX_HERMES_CONTEXT_MESSAGE_CHARS = 300
 
 
 def env(name: str, default: str = "") -> str:
@@ -124,6 +126,59 @@ def build_runtime_response(result: dict[str, Any], prompt: str = "") -> dict[str
     return response
 
 
+def build_hermes_turn_text(input_body: dict[str, Any]) -> str:
+    text = str(input_body.get("text") or "")
+    sections: list[str] = []
+
+    context = input_body.get("context")
+    recent_messages = []
+    if isinstance(context, dict):
+        raw_messages = context.get("recentMessages")
+        if isinstance(raw_messages, list):
+            recent_messages = raw_messages[-MAX_HERMES_CONTEXT_MESSAGES:]
+
+    if recent_messages:
+        lines = ["Recent Burble context (bounded, newest last):"]
+        for message in recent_messages:
+            if not isinstance(message, dict):
+                continue
+            speaker = str(message.get("speaker") or message.get("author") or "unknown")
+            message_text = truncate_hermes_context_text(str(message.get("text") or ""))
+            if message_text:
+                lines.append(f"- {speaker}: {message_text}")
+        if len(lines) > 1:
+            sections.append("\n".join(lines))
+
+    tool_groups = input_body.get("toolGroups")
+    if isinstance(tool_groups, dict):
+        groups = tool_groups.get("groups")
+        if isinstance(groups, list):
+            names = [str(group) for group in groups if str(group).strip()]
+            if names:
+                sections.append(f"Selected Burble tool groups: {', '.join(names)}")
+
+    sections.append(f"User request:\n{text}")
+    return "\n\n".join(sections)
+
+
+def truncate_hermes_context_text(text: str) -> str:
+    if len(text) <= MAX_HERMES_CONTEXT_MESSAGE_CHARS:
+        return text
+    return f"{text[:MAX_HERMES_CONTEXT_MESSAGE_CHARS - 3]}..."
+
+
+def build_hermes_thread_id(
+    run_id: str,
+    conversation: dict[str, Any],
+    scope: str | None = None,
+) -> str:
+    selected_scope = (scope or env("HERMES_BURBLE_SESSION_SCOPE", "run")).strip().lower()
+    if selected_scope == "conversation":
+        root_id = str(conversation.get("rootId") or "")
+        return root_id or run_id
+    return run_id
+
+
 DEFAULT_SOUL_MD = """# Burble Runtime
 
 You are Burble's Hermes runtime.
@@ -216,8 +271,9 @@ class BurbleHermesRuntime:
     async def handle_run(self, request: web.Request) -> web.Response:
         body = await request.json()
         run_id = str(body.get("runId") or uuid.uuid4())
-        text = str((body.get("input") or {}).get("text") or "")
-        conversation = ((body.get("input") or {}).get("conversation") or {})
+        input_body = body.get("input") or {}
+        text = str(input_body.get("text") or "")
+        conversation = (input_body.get("conversation") or {})
         principal = body.get("principal") or {}
         route_id = str(conversation.get("routeId") or "")
         if not route_id:
@@ -239,8 +295,8 @@ class BurbleHermesRuntime:
                 {
                     "runId": run_id,
                     "routeId": route_id,
-                    "text": text,
-                    "threadId": conversation.get("rootId"),
+                    "text": build_hermes_turn_text(input_body),
+                    "threadId": build_hermes_thread_id(run_id, conversation),
                     "actorId": principal.get("slackUserId"),
                     "actorName": principal.get("slackUserId"),
                     "slackUserId": principal.get("slackUserId"),
