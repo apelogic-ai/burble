@@ -126,6 +126,35 @@ HERMES_PROVIDER_TOOL_HINTS: dict[str, list[dict[str, str]]] = {
     ],
 }
 
+DEFAULT_HERMES_PLATFORM_TOOLSETS = ["burble", "cronjob", "web"]
+DEFAULT_HERMES_DISABLED_TOOLSETS = [
+    "browser",
+    "clarify",
+    "code_execution",
+    "computer_use",
+    "context_engine",
+    "delegation",
+    "discord",
+    "discord_admin",
+    "file",
+    "homeassistant",
+    "image_gen",
+    "memory",
+    "messaging",
+    "moa",
+    "session_search",
+    "skills",
+    "spotify",
+    "terminal",
+    "todo",
+    "tts",
+    "video",
+    "video_gen",
+    "vision",
+    "x_search",
+    "yuanbao",
+]
+
 
 def env(name: str, default: str = "") -> str:
     return os.getenv(name, default).strip()
@@ -147,6 +176,16 @@ def truthy_env(name: str) -> bool:
 
 def yaml_string(value: str) -> str:
     return json.dumps(value)
+
+
+def env_list(name: str, default: list[str]) -> list[str]:
+    raw = env(name)
+    if not raw:
+        return list(default)
+    if raw.lower() in {"0", "false", "no", "none", "off"}:
+        return []
+    values = [value.strip() for value in raw.replace("\n", ",").split(",")]
+    return list(dict.fromkeys(value for value in values if value))
 
 
 def _to_non_negative_int(value: Any) -> int | None:
@@ -674,6 +713,35 @@ class BurbleHermesRuntime:
             lines.append("browser:")
             for key, value in browser_config.items():
                 lines.append(f"  {key}: {yaml_string(value)}")
+        native_memory_enabled = truthy_env("BURBLE_HERMES_NATIVE_MEMORY")
+        lines.extend(
+            [
+                "memory:",
+                f"  memory_enabled: {str(native_memory_enabled).lower()}",
+                f"  user_profile_enabled: {str(native_memory_enabled).lower()}",
+            ]
+        )
+        disabled_toolsets = env_list(
+            "BURBLE_HERMES_DISABLED_TOOLSETS",
+            DEFAULT_HERMES_DISABLED_TOOLSETS,
+        )
+        if native_memory_enabled:
+            disabled_toolsets = [
+                toolset for toolset in disabled_toolsets if toolset != "memory"
+            ]
+        if disabled_toolsets:
+            lines.append("agent:")
+            lines.append("  disabled_toolsets:")
+            for toolset in disabled_toolsets:
+                lines.append(f"    - {toolset}")
+        platform_toolsets = env_list(
+            "BURBLE_HERMES_PLATFORM_TOOLSETS",
+            DEFAULT_HERMES_PLATFORM_TOOLSETS,
+        )
+        lines.append("platform_toolsets:")
+        lines.append("  burble:")
+        for toolset in platform_toolsets:
+            lines.append(f"    - {toolset}")
         lines.extend(
             [
                 "plugins:",

@@ -148,6 +148,31 @@ print(json.dumps({
     expect(config).not.toContain("mcp_servers:");
   });
 
+  test("restricts Hermes Burble platform to the minimal native tool surface", () => {
+    const result = runHermesEntrypointProbe(`${importEntrypoint}
+import os
+import tempfile
+
+home = tempfile.mkdtemp()
+os.environ["HERMES_HOME"] = home
+
+runtime = mod.BurbleHermesRuntime()
+runtime._ensure_gateway_config()
+print(json.dumps({
+    "config": (runtime.home / "config.yaml").read_text(),
+}))
+`);
+
+    const config = (result as { config: string }).config;
+    expect(config).toContain("memory:\n  memory_enabled: false\n  user_profile_enabled: false");
+    expect(config).toContain("platform_toolsets:\n  burble:\n    - burble\n    - cronjob\n    - web");
+    expect(config).toContain("  disabled_toolsets:");
+    expect(config).toContain("    - skills");
+    expect(config).toContain("    - memory");
+    expect(config).toContain("    - file");
+    expect(config).toContain("    - terminal");
+  });
+
   test("can opt Hermes back into full MCP catalog for debugging", () => {
     const result = runHermesEntrypointProbe(`${importEntrypoint}
 import os
