@@ -421,6 +421,16 @@ describe("handleProviderMcpRequest", () => {
         conversationId: "D123"
       }
     });
+    store.upsertAgentJobCapability({
+      jobId: "job-123",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      requiredTools: ["github_list_my_pull_requests"],
+      routeId: route.id,
+      policyHash: "policy-a",
+      capabilityProfile: "scheduled_job",
+      runtimeType: "openclaw"
+    });
     const token = issuer.issueRuntimeJwt({
       audience: "http://agentgateway:3000/mcp",
       runtimeId: runtime.id,
@@ -478,6 +488,46 @@ describe("handleProviderMcpRequest", () => {
       jobId: "job-123",
       reason: "job_scope_denied",
       tool: "github_search_issues"
+    });
+
+    store.close();
+  });
+
+  test("rejects job-scoped JWT claims without a stored job capability", async () => {
+    const issuer = createRuntimeJwtIssuer({ issuer: config.runtimeJwtIssuer });
+    const store = createTokenStore(":memory:");
+    const runtime = store.getOrCreateAgentRuntime({
+      workspaceId: "T123",
+      slackUserId: "U123",
+      engine: "openclaw",
+      endpointUrl: "http://runtime-u123:8080",
+      authTokenHash: "hash-u123",
+      statePath: "/data/runtimes/u123/state",
+      configPath: "/data/runtimes/u123/config/openclaw.json",
+      workspacePath: "/data/runtimes/u123/workspace"
+    });
+    const token = issuer.issueRuntimeJwt({
+      audience: "http://agentgateway:3000/mcp",
+      runtimeId: runtime.id,
+      workspaceId: "T123",
+      slackUserId: "U123",
+      jobId: "missing-job",
+      allowedTools: ["github_list_my_pull_requests"]
+    });
+
+    const response = await handleProviderMcpRequest(
+      config,
+      store,
+      issuer,
+      mcpRequest({ method: "tools/list" }, token),
+      {},
+      "github"
+    );
+
+    expect(response.status).toBe(403);
+    await expect(response.json()).resolves.toEqual({
+      error: "forbidden",
+      error_description: "Scheduled job capability not found or inactive"
     });
 
     store.close();

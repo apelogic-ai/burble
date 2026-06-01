@@ -66,6 +66,7 @@ import {
   enabledManifestToolNames
 } from "../agent/runtime-policy";
 import type { RuntimeManifest } from "../agent/runtime-manifest";
+import { assertScheduledJobCapabilityMatchesRuntime } from "../agent/scheduled-job-auth";
 import {
   isAllowedAtlassianMcpToolName,
   isReadOnlyAtlassianMcpToolName,
@@ -165,6 +166,15 @@ export async function handleProviderMcpRequest(
   store.touchAgentRuntime(runtime.id);
 
   const manifest = buildRuntimeManifestForRecord({ config, store, runtime });
+  const jobClaimValidation = validateJobScopedProviderMcpClaims(
+    store,
+    runtime,
+    auth.claims
+  );
+  if (jobClaimValidation.response) {
+    return jobClaimValidation.response;
+  }
+
   const routeValidation = await validateProviderMcpRoute(
     request,
     store,
@@ -299,6 +309,54 @@ function enabledToolsForClaims(
   return new Set(
     claims.allowed_tools.filter((toolName) => enabledTools.has(toolName))
   );
+}
+
+function validateJobScopedProviderMcpClaims(
+  store: TokenStore,
+  runtime: AgentRuntimeRecord,
+  claims: RuntimeJwtClaims | null
+): { response: Response | null } {
+  if (!claims?.job_id) {
+    return { response: null };
+  }
+
+  const capability = store.getAgentJobCapability(claims.job_id);
+  if (!capability) {
+    return {
+      response: forbiddenJsonResponse(
+        "Scheduled job capability not found or inactive"
+      )
+    };
+  }
+
+  try {
+    assertScheduledJobCapabilityMatchesRuntime(runtime, capability);
+  } catch {
+    return {
+      response: forbiddenJsonResponse(
+        "Scheduled job capability does not match runtime"
+      )
+    };
+  }
+
+  if (!claims.allowed_tools?.length) {
+    return {
+      response: forbiddenJsonResponse(
+        "Scheduled job runtime token must include allowed tools"
+      )
+    };
+  }
+
+  const requiredTools = new Set(capability.requiredTools);
+  if (claims.allowed_tools.some((toolName) => !requiredTools.has(toolName))) {
+    return {
+      response: forbiddenJsonResponse(
+        "Scheduled job runtime token exceeds stored tool capability"
+      )
+    };
+  }
+
+  return { response: null };
 }
 
 async function validateJobScopedProviderMcpToolAccess(
@@ -635,6 +693,16 @@ function replaceRequestJsonBody(request: Request, payload: unknown): Request {
     headers,
     body: JSON.stringify(payload)
   });
+}
+
+function forbiddenJsonResponse(errorDescription: string): Response {
+  return Response.json(
+    {
+      error: "forbidden",
+      error_description: errorDescription
+    },
+    { status: 403 }
+  );
 }
 
 function mcpJsonRpcErrorResponse(
