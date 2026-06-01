@@ -87,6 +87,20 @@ BURBLE_PROVIDER_CALL_SCHEMA = {
 }
 
 
+def _provider_alias_schema(alias: str, canonical_name: str) -> dict[str, Any]:
+    return {
+        "description": (
+            f"Call Burble provider tool {canonical_name}. "
+            "Pass the provider tool arguments directly. For scheduled jobs, include jobId."
+        ),
+        "parameters": {
+            "type": "object",
+            "description": f"Arguments for Burble provider tool {canonical_name}.",
+            "additionalProperties": True,
+        },
+    }
+
+
 def _env(name: str) -> str:
     return os.getenv(name, "").strip()
 
@@ -164,6 +178,15 @@ async def _burble_provider_call(args: dict[str, Any], **_kwargs: Any) -> str:
         return json.dumps({"error": True, "message": str(error)}, ensure_ascii=False)
 
 
+def _make_provider_alias_handler(canonical_name: str):
+    async def _provider_alias_call(args: dict[str, Any], **_kwargs: Any) -> str:
+        return await _burble_provider_call(
+            {"toolName": canonical_name, "input": args or {}}
+        )
+
+    return _provider_alias_call
+
+
 def register(ctx) -> None:
     ctx.register_tool(
         name="burble_provider_call",
@@ -174,3 +197,14 @@ def register(ctx) -> None:
         description=BURBLE_PROVIDER_CALL_SCHEMA["description"],
         override=True,
     )
+    for alias, canonical_name in sorted(TOOL_NAME_ALIASES.items()):
+        schema = _provider_alias_schema(alias, canonical_name)
+        ctx.register_tool(
+            name=alias,
+            toolset="burble",
+            schema=schema,
+            handler=_make_provider_alias_handler(canonical_name),
+            is_async=True,
+            description=schema["description"],
+            override=True,
+        )
