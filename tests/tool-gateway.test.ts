@@ -555,6 +555,34 @@ describe("handleToolGatewayRequest", () => {
     ]);
   });
 
+  test("allows a runtime token to use its own provider account without user email", async () => {
+    const response = await handleToolGatewayRequest(
+      config,
+      createStore(connection, runtime),
+      "github.getAuthenticatedUser",
+      request(
+        "github.getAuthenticatedUser",
+        {
+          input: {}
+        },
+        "runtime-token-u123",
+        "rt_u123"
+      ),
+      {
+        getGitHubUser: async (token) => {
+          expect(token).toBe("secret-token");
+          return { login: "octocat" };
+        }
+      }
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      classification: "user_private",
+      content: { login: "octocat" }
+    });
+  });
+
   test("emits observability events for runtime-authenticated provider tools", async () => {
     const observabilityEvents: ObservabilityEventInput[] = [];
     const response = await handleToolGatewayRequest(
