@@ -2,19 +2,19 @@
 
 ## Problem
 
-Hermes scheduled jobs can deliver messages back through Burble, but provider-backed work inside those jobs is not reliably executed with Burble's provider identity.
+Runtime-native scheduled jobs can deliver messages back through Burble, but provider-backed work inside those jobs must also execute with Burble's provider identity and policy.
 
 The concrete failure mode:
 
-- An interactive Hermes turn created a Google Drive scratchpad and updated a cron job to use it as mutable state.
-- The later Hermes cron run delivered a Slack message through Burble.
+- An interactive agent turn created a Google Drive scratchpad and updated a native cron job to use it as mutable state.
+- The later cron run delivered a Slack message through Burble.
 - The same cron run did not call Burble's Google provider bridge, and instead reported a Google Drive `401` / sign-in-required fallback.
 
 That means scheduled delivery is working, but scheduled provider access is not yet a first-class Burble capability.
 
 ## Diagnosis
 
-Interactive turns and scheduled turns currently have different execution context.
+Interactive turns and scheduled turns can have different execution context.
 
 Interactive turns have a Burble request envelope:
 
@@ -25,7 +25,7 @@ Interactive turns have a Burble request envelope:
 - selected tool hints
 - Burble provider bridge access
 
-Hermes scheduled jobs are native Hermes jobs. They can wake up and deliver through the Burble platform adapter, but provider access depends on whatever context, prompt, and tools Hermes includes in that job execution. That is advisory and runtime-specific.
+Runtime-native scheduled jobs are owned by their agent runtime. They can wake up and deliver through the Burble channel/platform adapter, but provider access must not depend only on whatever context, prompt, and native tools that runtime includes in the job execution. That is advisory and runtime-specific.
 
 The missing invariant is:
 
@@ -42,7 +42,7 @@ Each scheduled job should have durable metadata:
   "jobId": "ai-news-hourly-pacific-window",
   "ownerPrincipal": "T0B0BH273RR:U0B46E59T6K",
   "workspaceId": "T0B0BH273RR",
-  "runtimeType": "hermes",
+  "runtimeType": "openclaw",
   "deliveryRouteId": "convrt_...",
   "allowedTools": [
     "google.searchDriveFiles",
@@ -96,7 +96,7 @@ Cons:
 
 ### Option B: Runtime-native scheduler with Burble job context
 
-Hermes/OpenClaw keep their own schedulers, but every scheduled execution asks Burble for a fresh job-scoped context before running provider tools.
+Supported runtimes keep their own schedulers, but every scheduled execution asks Burble for a fresh job-scoped context before running provider tools.
 
 Pros:
 
@@ -108,7 +108,7 @@ Cons:
 - More runtime-specific adapter work.
 - Durability and policy still need careful enforcement.
 
-Near-term recommendation: start with Option B for Hermes, but keep the data model compatible with Option A.
+Near-term recommendation: start with Option B for all supported runtimes, but keep the data model compatible with Option A.
 
 ## Required Enforcement
 
@@ -128,7 +128,7 @@ Skills are useful, but they are not the security boundary.
 Use skills for:
 
 - Teaching the agent how to structure a provider-backed scheduled workflow.
-- Reminding the agent to use `burble_provider_call` for Google/Jira/GitHub/Slack.
+- Reminding the agent to use the runtime's Burble provider-tool adapter for Google/Jira/GitHub/Slack.
 - Explaining provider-specific workflow patterns, such as Drive scratchpad state.
 - Providing examples of safe scheduled job design.
 
@@ -218,11 +218,11 @@ profiles:
     visibility_policy: required
 ```
 
-This avoids global decisions like "Hermes has code" or "Hermes does not have code." Instead:
+This avoids global decisions like "this runtime has code" or "this runtime does not have code." Instead:
 
-- Hermes with `assistant` can answer ordinary Slack/provider questions safely.
-- Hermes with `workbench` can use isolated scratch files and bounded code for moderate cross-provider data processing.
-- OpenClaw or Hermes with `coding` can be granted repo and terminal capabilities when the user explicitly wants coding work.
+- Any supported runtime with `assistant` can answer ordinary Slack/provider questions safely.
+- Any supported runtime with `workbench` can use isolated scratch files and bounded code for moderate cross-provider data processing.
+- Any supported runtime with `coding` can be granted repo and terminal capabilities when the user explicitly wants coding work.
 - Any runtime with `scheduled_job` must use job-scoped provider capabilities and route policy.
 
 For per-principal isolated runtimes, constrained file/code access is acceptable earlier than broad terminal access, but it still needs profile-level policy:
@@ -233,26 +233,31 @@ For per-principal isolated runtimes, constrained file/code access is acceptable 
 - scratch state must be observable and either ephemeral or explicitly promoted to durable state
 - scheduled jobs must not read arbitrary old scratch files unless their job capability grants that state reference
 
-## Hermes-Specific First Slice
+## Runtime-Neutral First Slice
 
-For the next implementation PR:
+For the implementation PR:
 
 1. Introduce capability profile metadata for scheduled/background runs, starting with `scheduled_job`.
-2. Add a Hermes scheduled-job execution envelope that includes Burble job context.
-3. Ensure `burble_provider_call` is available in scheduled job execution, not only interactive turns.
-4. Include a scheduled-job system hint that explicitly names available provider tools and state refs.
-5. Mint or refresh scoped auth for scheduled execution instead of relying on stale/static runtime context.
-6. Emit observability events:
+2. Add a `scheduledJob.registerCapability` provider tool that native agents call before creating or updating provider-backed scheduled jobs.
+3. Store the job capability in Burble with principal, workspace, runtime, allowed tools, optional delivery route, state refs, and visibility policy.
+4. Return a `scheduledPromptInstruction` that the agent must include verbatim in the native scheduled-job prompt.
+5. Enforce `jobId` / `scheduledJobId` on provider calls through both the internal tool gateway and MCP provider server.
+6. Expose the registration affordance through thin runtime adapters:
+   - OpenClaw: direct Burble tool executor + scheduler-shaped prompt/catalog hints.
+   - Hermes: `burble_provider_call` alias + scheduler-shaped prompt hints.
+7. Keep the runtime-native scheduler in control of timers; Burble owns provider authority, route/state grants, and enforcement.
+8. Mint or refresh scoped auth for scheduled execution instead of relying on stale/static runtime context.
+9. Emit observability events:
    - `scheduled_job.run.started`
    - `scheduled_job.tool.started`
    - `scheduled_job.tool.completed`
    - `scheduled_job.delivery.completed`
    - `scheduled_job.run.completed`
-7. Add tests proving a scheduled Hermes job calls Burble's Google provider bridge for a Drive scratchpad read/write.
+10. Add tests proving scheduled job provider calls are allowed only inside the registered capability.
 
 ## Open Questions
 
-- Should existing Hermes-native cron jobs be migrated automatically into Burble job records?
+- Should existing runtime-native cron jobs be migrated automatically into Burble job records?
 - Should user-created scheduled jobs require explicit approval when provider tools are involved?
 - What is the default max output visibility for jobs using Google Drive, Gmail, Jira, Slack search, or private GitHub data?
 - Should Burble allow arbitrary channel delivery, or only routes where the job was created until a route grant UI exists?
