@@ -22,6 +22,16 @@ export type RuntimeContractWebSocketFactory = (
   url: string
 ) => RuntimeContractWebSocket;
 
+export class RuntimeCapabilityDiscoveryError extends Error {
+  constructor(
+    message: string,
+    readonly status?: number
+  ) {
+    super(message);
+    this.name = "RuntimeCapabilityDiscoveryError";
+  }
+}
+
 export function createRuntimeContractHttpClient(input: {
   baseUrl: string;
   manifest?: RuntimeCapabilityManifest;
@@ -44,7 +54,10 @@ export function createRuntimeContractHttpClient(input: {
         headers: input.headers
       });
       if (!response.ok) {
-        throw new Error(`Runtime capabilities returned HTTP ${response.status}`);
+        throw new RuntimeCapabilityDiscoveryError(
+          `Runtime capabilities returned HTTP ${response.status}`,
+          response.status
+        );
       }
       return parseRuntimeCapabilityManifest(await response.json());
     },

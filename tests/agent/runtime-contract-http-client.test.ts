@@ -1,5 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { createRuntimeContractHttpClient } from "../../src/agent/runtime-contract-http-client";
+import {
+  createRuntimeContractHttpClient,
+  RuntimeCapabilityDiscoveryError
+} from "../../src/agent/runtime-contract-http-client";
 import { runRuntimeContractSmokeTest } from "../../src/agent/runtime-contract-harness";
 import type { RuntimeCapabilityManifest } from "../../src/agent/runtime-contract";
 
@@ -145,6 +148,23 @@ describe("runtime contract HTTP client", () => {
       "http://runtime.local/healthz",
       "http://runtime.local/runs"
     ]);
+  });
+
+  test("reports typed capability discovery errors", async () => {
+    const client = createRuntimeContractHttpClient({
+      baseUrl: "http://runtime.local",
+      fetch: async () => new Response("not found", { status: 404 })
+    });
+
+    let error: unknown;
+    try {
+      await client.getCapabilityManifest();
+    } catch (caught) {
+      error = caught;
+    }
+
+    expect(error).toBeInstanceOf(RuntimeCapabilityDiscoveryError);
+    expect((error as RuntimeCapabilityDiscoveryError).status).toBe(404);
   });
 });
 

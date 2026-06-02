@@ -97,6 +97,9 @@ class RuntimeHarnessWebSocket {
 
   constructor() {
     queueMicrotask(() => {
+      // TODO(runtime-contract): replace this internal hook with a black-box
+      // WebSocket exercise once the shared smoke harness can host a fake
+      // runtime event endpoint.
       attachRuntimeEventWebSocket("run-openclaw-contract", {
         send: (message) => this.emit("message", { data: message }),
         close: () => this.emit("close", {})

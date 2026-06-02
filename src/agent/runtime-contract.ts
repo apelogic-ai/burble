@@ -302,7 +302,7 @@ export const runtimeCapabilityManifestSchema = z
     conversationSend: z.boolean(),
     jobScopedAuth: z.boolean()
   })
-  .strict();
+  .passthrough();
 
 export type RuntimeRunRequest = z.infer<typeof runtimeRunRequestSchema>;
 export type RuntimeRunEvent = z.infer<typeof runtimeRunEventSchema>;
