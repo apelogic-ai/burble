@@ -1455,7 +1455,7 @@ function readScheduledJobRegisterCapabilityInput(input: unknown):
       !isAgentRuntimeEngine(normalized.runtimeType)) ||
     (normalized.stateRefs !== undefined &&
       normalized.stateRefs !== null &&
-      !Array.isArray(normalized.stateRefs))
+      !isScheduledJobStateRefArray(normalized.stateRefs))
   ) {
     return null;
   }
@@ -1470,7 +1470,9 @@ function readScheduledJobRegisterCapabilityInput(input: unknown):
     ...(isAgentRuntimeEngine(normalized.runtimeType)
       ? { runtimeType: normalized.runtimeType }
       : {}),
-    ...(Array.isArray(normalized.stateRefs) ? { stateRefs: normalized.stateRefs } : {}),
+    ...(isScheduledJobStateRefArray(normalized.stateRefs)
+      ? { stateRefs: normalized.stateRefs }
+      : {}),
     ...(normalized.visibilityPolicy !== undefined
       ? { visibilityPolicy: normalized.visibilityPolicy }
       : {})
@@ -1526,7 +1528,14 @@ function describeScheduledJobRegisterCapabilityInputError(
     normalized.stateRefs !== null &&
     !Array.isArray(normalized.stateRefs)
   ) {
-    return "scheduledJob.registerCapability requires stateRefs to be an array when provided.";
+    return "scheduledJob.registerCapability requires stateRefs to be an object or array of objects when provided.";
+  }
+
+  if (
+    Array.isArray(normalized.stateRefs) &&
+    !isScheduledJobStateRefArray(normalized.stateRefs)
+  ) {
+    return "scheduledJob.registerCapability requires every stateRefs entry to include provider and kind strings.";
   }
 
   return null;
@@ -1579,26 +1588,14 @@ function normalizeScheduledJobRegistrationInput(
       "jobId",
       "scheduledJobId",
       "job_id",
-      "scheduled_job_id",
-      "job",
-      "id"
+      "scheduled_job_id"
     ]),
     requiredTools: readUnknownAlias(source, [
       "requiredTools",
       "allowedTools",
       "required_tools",
       "allowed_tools",
-      "tools",
-      "toolNames",
-      "tool_names",
-      "providerTools",
-      "provider_tools",
-      "requiredProviderTools",
-      "required_provider_tools",
-      "allowedProviderTools",
-      "allowed_provider_tools",
-      "providerToolNames",
-      "provider_tool_names"
+      "tools"
     ]),
     routeId: readUnknownAlias(source, ["routeId", "route_id"]),
     capabilityProfile: readUnknownAlias(source, [
@@ -1650,10 +1647,7 @@ function normalizeScheduledJobRegistrationTools(value: unknown): string[] | null
             "name",
             "toolName",
             "tool_name",
-            "tool",
-            "canonicalName",
-            "canonical_name",
-            "id"
+            "tool"
           ]) ?? "";
         }
         return "";
@@ -1671,9 +1665,7 @@ function normalizeScheduledJobRegistrationTools(value: unknown): string[] | null
               "name",
               "toolName",
               "tool_name",
-              "canonicalName",
-              "canonical_name",
-              "id"
+              "tool"
             ]) ?? toolName
           );
         }
@@ -1697,6 +1689,22 @@ function normalizeScheduledJobStateRefs(value: unknown): unknown[] | unknown {
     return [value];
   }
   return value;
+}
+
+function isScheduledJobStateRefArray(value: unknown): value is unknown[] {
+  return Array.isArray(value) && value.every(isScheduledJobStateRefInput);
+}
+
+function isScheduledJobStateRefInput(value: unknown): boolean {
+  if (!isOptionalObject(value)) {
+    return false;
+  }
+  return (
+    typeof value.provider === "string" &&
+    value.provider.trim().length > 0 &&
+    typeof value.kind === "string" &&
+    value.kind.trim().length > 0
+  );
 }
 
 function normalizeScheduledJobRuntimeType(value: unknown): unknown {
@@ -1761,7 +1769,10 @@ function buildScheduledJobPromptInstruction(
     const input = {
       jobId: scheduledJob.jobId
     };
-    return `- burble_provider_call with toolName="${toolName}" and input=${JSON.stringify(input)}`;
+    if (scheduledJob.runtimeType === "hermes") {
+      return `- burble_provider_call with toolName="${toolName}" and input=${JSON.stringify(input)}`;
+    }
+    return `- ${toolName} with input=${JSON.stringify(input)}`;
   });
   const lines = [
     "Use Burble provider calls with this jobId for this scheduled job.",
@@ -1777,14 +1788,19 @@ function buildScheduledJobPromptInstruction(
   }
   lines.push(
     "These allowedTools are Burble provider tool names, not necessarily native runtime tool names.",
-    "Ensure the native scheduled job enables the runtime provider bridge toolset. For runtimes with per-job toolsets, include the cronjob toolset along with any other needed toolsets such as web; do not create provider-backed scheduled jobs with only web enabled.",
-    "Use the runtime's Burble provider bridge for these tools. If the runtime exposes burble_provider_call, call it with toolName set to one of the allowedTools and input containing this jobId plus the provider tool arguments.",
+    "Use the runtime's Burble provider bridge for these tools.",
     "Provider bridge call examples:",
     ...bridgeExamples,
     "Do not call these provider tool names as native tools unless the runtime explicitly exposes them directly.",
     "Do not use direct web/browser access to provider URLs such as Google Drive, GitHub, Jira, Gmail, Calendar, or Slack URLs for this state.",
     "For every scheduled provider call, include this jobId in the tool input and use only the listed allowedTools."
   );
+  if (scheduledJob.runtimeType === "hermes") {
+    lines.push(
+      "Hermes scheduled jobs must enable the Burble provider bridge toolset for this job.",
+      "If Hermes exposes burble_provider_call, call it with toolName set to one of the allowedTools and input containing this jobId plus the provider tool arguments."
+    );
+  }
   return lines.join("\n");
 }
 

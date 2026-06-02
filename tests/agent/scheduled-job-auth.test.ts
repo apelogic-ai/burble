@@ -86,4 +86,33 @@ describe("issueScheduledJobRuntimeJwt", () => {
       })
     ).toThrow("Scheduled job capability does not match runtime principal");
   });
+
+  test("defaults and clamps scheduled job runtime JWT TTLs", () => {
+    const issuer = createRuntimeJwtIssuer({ issuer: "https://burble.test" });
+
+    const defaultToken = issueScheduledJobRuntimeJwt({
+      issuer,
+      audience: "https://burble.test/mcp",
+      runtime,
+      capability
+    });
+    const defaultClaims = issuer.verifyRuntimeJwt({
+      token: defaultToken,
+      audience: "https://burble.test/mcp"
+    });
+    expect(defaultClaims!.exp - defaultClaims!.iat).toBe(15 * 60);
+
+    const clampedToken = issueScheduledJobRuntimeJwt({
+      issuer,
+      audience: "https://burble.test/mcp",
+      runtime,
+      capability,
+      ttlSeconds: 60 * 60
+    });
+    const clampedClaims = issuer.verifyRuntimeJwt({
+      token: clampedToken,
+      audience: "https://burble.test/mcp"
+    });
+    expect(clampedClaims!.exp - clampedClaims!.iat).toBe(15 * 60);
+  });
 });

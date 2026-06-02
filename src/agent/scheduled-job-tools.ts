@@ -7,12 +7,10 @@ for (const tool of providerToolCatalog) {
   if (tool.alias) {
     providerToolAliases.set(tool.alias, tool.name);
   }
+  for (const alias of tool.aliases ?? []) {
+    providerToolAliases.set(alias, tool.name);
+  }
 }
-
-providerToolAliases.set(
-  "google.appendToDriveTextFile",
-  "google_append_to_drive_text_file"
-);
 
 export function normalizeScheduledJobToolName(toolName: string): string {
   const trimmed = toolName.trim();

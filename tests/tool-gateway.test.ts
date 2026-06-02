@@ -683,18 +683,15 @@ describe("handleToolGatewayRequest", () => {
     expect(body.content.scheduledPromptInstruction).toContain(
       "These allowedTools are Burble provider tool names, not necessarily native runtime tool names."
     );
-    expect(body.content.scheduledPromptInstruction).toContain(
-      "Ensure the native scheduled job enables the runtime provider bridge toolset"
-    );
-    expect(body.content.scheduledPromptInstruction).toContain("cronjob");
-    expect(body.content.scheduledPromptInstruction).toContain(
+    expect(body.content.scheduledPromptInstruction).not.toContain("cronjob");
+    expect(body.content.scheduledPromptInstruction).not.toContain(
       "burble_provider_call"
     );
     expect(body.content.scheduledPromptInstruction).toContain(
-      'toolName="google_get_drive_file"'
+      '- google_get_drive_file with input={"jobId":"ai-news-hourly"}'
     );
     expect(body.content.scheduledPromptInstruction).toContain(
-      'toolName="google_append_to_drive_text_file"'
+      '- google_append_to_drive_text_file with input={"jobId":"ai-news-hourly"}'
     );
     expect(body.content.scheduledPromptInstruction).toContain(
       '"jobId":"ai-news-hourly"'
@@ -769,10 +766,10 @@ describe("handleToolGatewayRequest", () => {
         }
       },
       {
-        name: "comma-delimited provider tools",
+        name: "comma-delimited tools",
         input: {
-          job: "ai-news-hourly",
-          provider_tools:
+          jobId: "ai-news-hourly",
+          tools:
             "google_get_drive_file, google_append_to_drive_text_file",
           route_id: null,
           state_refs: {
@@ -784,20 +781,20 @@ describe("handleToolGatewayRequest", () => {
         }
       },
       {
-        name: "object provider tools",
+        name: "descriptor tools",
         input: {
-          id: "ai-news-hourly",
-          tool_names: [
+          jobId: "ai-news-hourly",
+          tools: [
             { name: "google_get_drive_file" },
             { toolName: "google_append_to_drive_text_file" }
           ]
         }
       },
       {
-        name: "provider tool map",
+        name: "tool map",
         input: {
-          id: "ai-news-hourly",
-          providerToolNames: {
+          jobId: "ai-news-hourly",
+          tools: {
             google_get_drive_file: true,
             google_append_to_drive_text_file: {
               tool_name: "google_append_to_drive_text_file"
@@ -946,6 +943,61 @@ describe("handleToolGatewayRequest", () => {
           nestedKeys: [],
           normalizedKeys: ["jobId", "requiredTools"]
         }
+      }
+    });
+  });
+
+  test("rejects overly broad scheduled job registration aliases and malformed state refs", async () => {
+    const idAliasResponse = await handleToolGatewayRequest(
+      config,
+      createStore(null, runtime),
+      "scheduledJob.registerCapability",
+      request(
+        "scheduledJob.registerCapability",
+        {
+          input: {
+            id: "ai-news-hourly",
+            requiredTools: ["google_get_drive_file"]
+          }
+        },
+        "runtime-token-u123",
+        "rt_u123"
+      )
+    );
+
+    expect(idAliasResponse.status).toBe(400);
+    await expect(idAliasResponse.json()).resolves.toMatchObject({
+      content: {
+        error: "invalid_scheduled_job_capability_input",
+        message:
+          "scheduledJob.registerCapability requires jobId, scheduledJobId, job_id, or scheduled_job_id to be a non-empty string."
+      }
+    });
+
+    const stateRefResponse = await handleToolGatewayRequest(
+      config,
+      createStore(null, runtime),
+      "scheduledJob.registerCapability",
+      request(
+        "scheduledJob.registerCapability",
+        {
+          input: {
+            jobId: "ai-news-hourly",
+            requiredTools: ["google_get_drive_file"],
+            stateRefs: [{ provider: "google", id: "file-1" }]
+          }
+        },
+        "runtime-token-u123",
+        "rt_u123"
+      )
+    );
+
+    expect(stateRefResponse.status).toBe(400);
+    await expect(stateRefResponse.json()).resolves.toMatchObject({
+      content: {
+        error: "invalid_scheduled_job_capability_input",
+        message:
+          "scheduledJob.registerCapability requires every stateRefs entry to include provider and kind strings."
       }
     });
   });

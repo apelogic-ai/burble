@@ -6,6 +6,7 @@ export type ProviderToolSpec = {
   provider: string;
   name: string;
   alias: string;
+  aliases?: string[];
   implementation: string;
   title: string;
   description: string;
@@ -193,6 +194,7 @@ function parseProviderToolSpec(
   return {
     name: readRequiredString(parsed, "name", source),
     alias: readRequiredString(parsed, "alias", source),
+    aliases: readOptionalStringArray(parsed, "aliases", source),
     implementation: readRequiredString(parsed, "implementation", source),
     title: readRequiredString(parsed, "title", source),
     description: readRequiredString(parsed, "description", source),
@@ -315,6 +317,22 @@ function readOptionalStringEnum<const T extends readonly string[]>(
     throw new Error(`${source}.${key} must be one of: ${allowed.join(", ")}`);
   }
   return value;
+}
+
+function readOptionalStringArray(
+  record: Record<string, unknown>,
+  key: string,
+  source: string
+): string[] | undefined {
+  const value = record[key];
+  if (value === undefined) return undefined;
+  if (
+    !Array.isArray(value) ||
+    value.some((item) => typeof item !== "string" || item.trim().length === 0)
+  ) {
+    throw new Error(`${source}.${key} must be a non-empty string array`);
+  }
+  return value.map((item) => item.trim());
 }
 
 function readOptionalNumber(

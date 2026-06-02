@@ -2,6 +2,9 @@ import type { AgentJobCapabilityRecord, AgentRuntimeRecord } from "../db";
 import type { RuntimeJwtIssuer } from "../runtime-jwt";
 import { normalizeScheduledJobToolNames } from "./scheduled-job-tools";
 
+const defaultScheduledJobJwtTtlSeconds = 15 * 60;
+const maxScheduledJobJwtTtlSeconds = 15 * 60;
+
 export function issueScheduledJobRuntimeJwt(input: {
   issuer: RuntimeJwtIssuer;
   audience: string;
@@ -18,7 +21,7 @@ export function issueScheduledJobRuntimeJwt(input: {
     slackUserId: input.runtime.slackUserId,
     jobId: input.capability.jobId,
     allowedTools: normalizeScheduledJobToolNames(input.capability.requiredTools),
-    ttlSeconds: input.ttlSeconds
+    ttlSeconds: normalizeScheduledJobJwtTtlSeconds(input.ttlSeconds)
   });
 }
 
@@ -33,7 +36,16 @@ export function assertScheduledJobCapabilityMatchesRuntime(
     throw new Error("Scheduled job capability does not match runtime principal");
   }
 
+  // A null runtimeType is only tolerated for rows written before runtime-type
+  // metadata existed. Fresh registrations always store a concrete runtime type.
   if (capability.runtimeType && capability.runtimeType !== runtime.engine) {
     throw new Error("Scheduled job capability does not match runtime type");
   }
+}
+
+function normalizeScheduledJobJwtTtlSeconds(value: number | undefined): number {
+  if (value === undefined || !Number.isFinite(value) || value <= 0) {
+    return defaultScheduledJobJwtTtlSeconds;
+  }
+  return Math.min(Math.floor(value), maxScheduledJobJwtTtlSeconds);
 }
