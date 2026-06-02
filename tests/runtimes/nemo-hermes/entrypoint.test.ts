@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { parseRuntimeCapabilityManifest } from "../../../src/agent/runtime-contract";
 
 function runHermesEntrypointProbe(source: string): unknown {
   const proc = Bun.spawnSync(["python3", "-c", source], {
@@ -61,6 +62,32 @@ spec.loader.exec_module(mod)
 `;
 
 describe("nemo-hermes entrypoint", () => {
+  test("builds a runtime capability manifest", () => {
+    const result = runHermesEntrypointProbe(`${importEntrypoint}
+print(json.dumps(mod.build_runtime_capability_manifest()))
+`);
+
+    expect(parseRuntimeCapabilityManifest(result)).toEqual({
+      runtimeType: "hermes",
+      version: expect.any(String),
+      transports: ["http", "websocket"],
+      streaming: true,
+      cancellation: false,
+      nativeScheduler: true,
+      scheduledProviderCalls: true,
+      toolCalls: true,
+      toolBridgeModes: ["tool_gateway"],
+      usageReporting: "exact",
+      multimodalInput: false,
+      multimodalOutput: false,
+      memory: false,
+      durableWorkflowState: true,
+      attachments: false,
+      conversationSend: true,
+      jobScopedAuth: true
+    });
+  });
+
   test("builds bounded Burble context for Hermes turns", () => {
     const result = runHermesEntrypointProbe(`${importEntrypoint}
 payload = {
