@@ -3,6 +3,8 @@ import type { AgentInput, AgentOutput, AgentRunEvent, AgentRunner } from "../typ
 import type { ToolClassification } from "../../conversation/types";
 import type { RuntimeFactory, RuntimeHandle } from "../runtime-factory";
 import type { ObservabilitySink } from "../../observability";
+import type { RuntimeCapabilityManifest } from "../runtime-contract";
+import { createRuntimeContractHttpClient } from "../runtime-contract-http-client";
 
 export type AgentRuntimeFetch = (
   input: string,
@@ -114,6 +116,17 @@ export function createOpenClawNemoClawAgentRunner(
       const runtimeType = runtime?.engine ?? "static";
       const principalId = `${input.principal.workspaceId}:${input.principal.slackUserId}`;
       const scheduledJobSummary = summarizeScheduledJob(input);
+      const capabilityManifest = await discoverRuntimeCapabilityManifest({
+        baseUrl,
+        requestFetch,
+        runtime,
+        runtimeId,
+        runtimeType,
+        principalId,
+        workspaceId: input.principal.workspaceId,
+        logInfo,
+        observability
+      });
       logInfo(
         [
           "OpenClaw/NemoClaw run start",
@@ -146,6 +159,9 @@ export function createOpenClawNemoClawAgentRunner(
           ...(scheduledJobSummary
             ? { scheduledJob: scheduledJobSummary }
             : {}),
+          ...(capabilityManifest
+            ? { runtimeCapabilities: summarizeCapabilityManifest(capabilityManifest) }
+            : {}),
           ...(runtime?.manifest ? { policyHash: runtime.manifest.policyHash } : {})
         }
       });
@@ -161,6 +177,12 @@ export function createOpenClawNemoClawAgentRunner(
             slackConnected: Boolean(input.connections.slack),
             ...(scheduledJobSummary
               ? { scheduledJob: scheduledJobSummary }
+              : {}),
+            ...(capabilityManifest
+              ? {
+                  runtimeCapabilities:
+                    summarizeCapabilityManifest(capabilityManifest)
+                }
               : {}),
             ...(runtime.manifest
               ? { policyHash: runtime.manifest.policyHash }
@@ -318,6 +340,117 @@ export function createOpenClawNemoClawAgentRunner(
 
       yield { type: "final", response: agentResponse };
     }
+  };
+}
+
+async function discoverRuntimeCapabilityManifest(input: {
+  baseUrl: string;
+  requestFetch: AgentRuntimeFetch;
+  runtime: RuntimeHandle | null;
+  runtimeId: string;
+  runtimeType: string;
+  principalId: string;
+  workspaceId: string;
+  logInfo: (message: string) => void;
+  observability?: ObservabilitySink;
+}): Promise<RuntimeCapabilityManifest | null> {
+  if (!input.runtime) {
+    return null;
+  }
+
+  const startedAt = Date.now();
+  try {
+    const manifest = await createRuntimeContractHttpClient({
+      baseUrl: input.baseUrl,
+      fetch: (url, init) => input.requestFetch(url, init ?? {}),
+      headers: runtimeHeaders(input.runtime)
+    }).getCapabilityManifest();
+
+    if (manifest.runtimeType !== input.runtime.engine) {
+      throw new Error(
+        `Runtime capability manifest type ${manifest.runtimeType} does not match runtime engine ${input.runtime.engine}`
+      );
+    }
+
+    input.logInfo(
+      [
+        "OpenClaw/NemoClaw capabilities discovered",
+        `runtimeId=${input.runtimeId}`,
+        `runtimeType=${manifest.runtimeType}`,
+        `transports=${manifest.transports.join(",")}`,
+        `toolBridgeModes=${manifest.toolBridgeModes.join(",")}`
+      ].join(" ")
+    );
+    input.observability?.emit({
+      name: "runtime.capabilities.discovered",
+      workspaceId: input.workspaceId,
+      principalId: input.principalId,
+      runtimeId: input.runtimeId,
+      runtimeType: manifest.runtimeType,
+      durationMs: Date.now() - startedAt,
+      status: "ok",
+      attributes: {
+        transports: manifest.transports,
+        streaming: manifest.streaming,
+        nativeScheduler: manifest.nativeScheduler,
+        scheduledProviderCalls: manifest.scheduledProviderCalls,
+        toolCalls: manifest.toolCalls,
+        toolBridgeModes: manifest.toolBridgeModes,
+        usageReporting: manifest.usageReporting,
+        multimodalInput: manifest.multimodalInput,
+        attachments: manifest.attachments,
+        jobScopedAuth: manifest.jobScopedAuth
+      }
+    });
+    return manifest;
+  } catch (error) {
+    if (!isMissingRuntimeCapabilitiesError(error)) {
+      throw error;
+    }
+
+    input.logInfo(
+      [
+        "OpenClaw/NemoClaw capabilities unavailable",
+        `runtimeId=${input.runtimeId}`,
+        `runtimeType=${input.runtimeType}`,
+        `reason=${error instanceof Error ? error.message : String(error)}`
+      ].join(" ")
+    );
+    input.observability?.emit({
+      name: "runtime.capabilities.unavailable",
+      workspaceId: input.workspaceId,
+      principalId: input.principalId,
+      runtimeId: input.runtimeId,
+      runtimeType: input.runtimeType,
+      durationMs: Date.now() - startedAt,
+      status: "error",
+      attributes: {
+        reason: error instanceof Error ? error.message : String(error)
+      }
+    });
+    return null;
+  }
+}
+
+function isMissingRuntimeCapabilitiesError(error: unknown): boolean {
+  return error instanceof Error && /HTTP 404|HTTP 405/i.test(error.message);
+}
+
+function summarizeCapabilityManifest(
+  manifest: RuntimeCapabilityManifest
+): Record<string, unknown> {
+  return {
+    runtimeType: manifest.runtimeType,
+    transports: manifest.transports,
+    streaming: manifest.streaming,
+    nativeScheduler: manifest.nativeScheduler,
+    scheduledProviderCalls: manifest.scheduledProviderCalls,
+    toolCalls: manifest.toolCalls,
+    toolBridgeModes: manifest.toolBridgeModes,
+    usageReporting: manifest.usageReporting,
+    multimodalInput: manifest.multimodalInput,
+    attachments: manifest.attachments,
+    jobScopedAuth: manifest.jobScopedAuth
   };
 }
 
