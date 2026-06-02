@@ -637,6 +637,51 @@ describe("createOpenClawNemoClawAgentRunner", () => {
     );
   });
 
+  test("accepts OpenClaw family capability aliases", async () => {
+    const runner = createOpenClawNemoClawAgentRunner({
+      runtimeFactory: {
+        async getOrCreateRuntime() {
+          return {
+            id: "rt_openclaw_family",
+            engine: "openclaw",
+            endpointUrl: "http://runtime-openclaw-family:8080/",
+            authToken: "runtime-token",
+            status: "ready",
+            statePath: "/data/runtimes/rt_openclaw_family/state",
+            configPath: "/data/runtimes/rt_openclaw_family/config/openclaw.json",
+            workspacePath: "/data/runtimes/rt_openclaw_family/workspace"
+          };
+        },
+        async stopRuntime() {},
+        async reapIdleRuntimes() {},
+        recordRuntimeEvent() {}
+      },
+      fetch: async (url) => {
+        if (String(url).endsWith("/capabilities")) {
+          return Response.json({
+            ...openClawCapabilityManifest,
+            runtimeType: "openclaw-gateway"
+          });
+        }
+        return Response.json({
+          response: {
+            classification: "user_private",
+            text: "OpenClaw family runtime answer."
+          }
+        });
+      }
+    });
+
+    const result = await collectAgentRun(runner, {
+      principal,
+      conversation,
+      text: "hello",
+      connections: { github: null }
+    });
+
+    expect(result.text).toBe("OpenClaw family runtime answer.");
+  });
+
   test("emits observability events for remote runtime calls", async () => {
     const observabilityEvents: ObservabilityEventInput[] = [];
     const runner = createOpenClawNemoClawAgentRunner({

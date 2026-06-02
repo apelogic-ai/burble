@@ -88,6 +88,24 @@ print(json.dumps(mod.build_runtime_capability_manifest()))
     });
   });
 
+  test("advertises MCP bridge support only when Hermes MCP env is configured", () => {
+    const result = runHermesEntrypointProbe(`${importEntrypoint}
+import os
+default_modes = mod.build_runtime_capability_manifest()["toolBridgeModes"]
+os.environ["BURBLE_MCP_GATEWAY_URL"] = "http://burble-mcp"
+os.environ["BURBLE_RUNTIME_JWT"] = "runtime-jwt"
+print(json.dumps({
+  "default": default_modes,
+  "configured": mod.build_runtime_capability_manifest()["toolBridgeModes"],
+}))
+`);
+
+    expect(result).toEqual({
+      default: ["tool_gateway"],
+      configured: ["tool_gateway", "mcp"]
+    });
+  });
+
   test("builds bounded Burble context for Hermes turns", () => {
     const result = runHermesEntrypointProbe(`${importEntrypoint}
 payload = {

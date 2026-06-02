@@ -274,6 +274,13 @@ def build_runtime_response(result: dict[str, Any], prompt: str = "") -> dict[str
     return response
 
 
+def build_runtime_tool_bridge_modes() -> list[str]:
+    modes = ["tool_gateway"]
+    if env("BURBLE_MCP_GATEWAY_URL") and env("BURBLE_RUNTIME_JWT"):
+        modes.append("mcp")
+    return modes
+
+
 def build_runtime_capability_manifest() -> dict[str, Any]:
     return {
         "runtimeType": "hermes",
@@ -284,7 +291,7 @@ def build_runtime_capability_manifest() -> dict[str, Any]:
         "nativeScheduler": True,
         "scheduledProviderCalls": True,
         "toolCalls": True,
-        "toolBridgeModes": ["tool_gateway"],
+        "toolBridgeModes": build_runtime_tool_bridge_modes(),
         "usageReporting": "exact",
         "multimodalInput": False,
         "multimodalOutput": False,

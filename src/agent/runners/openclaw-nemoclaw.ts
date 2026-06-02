@@ -455,11 +455,21 @@ function assertRuntimeCapabilityManifestMatchesRuntime(
   manifest: RuntimeCapabilityManifest,
   runtime: RuntimeHandle
 ): void {
-  if (manifest.runtimeType !== runtime.engine) {
+  if (
+    runtimeEngineCompatibilityFamily(manifest.runtimeType) !==
+    runtimeEngineCompatibilityFamily(runtime.engine)
+  ) {
     throw new Error(
       `Runtime capability manifest type ${manifest.runtimeType} does not match runtime engine ${runtime.engine}`
     );
   }
+}
+
+function runtimeEngineCompatibilityFamily(engine: string): string {
+  if (engine === "openclaw" || engine === "openclaw-gateway") {
+    return "openclaw";
+  }
+  return engine;
 }
 
 function recordRuntimeCapabilitiesUnavailable(
