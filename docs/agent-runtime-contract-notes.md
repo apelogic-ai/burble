@@ -343,6 +343,64 @@ Suggested fields:
 The manifest should be advisory, not a replacement for policy. Burble still
 enforces runtime policy and tool permissions.
 
+## User Runtime Choice
+
+User-selected runtimes fit directly into this contract, but only after the
+contract is executable.
+
+The effective runtime for a request should be resolved by Burble from:
+
+- workspace/admin policy: which runtime engines are allowed in this workspace;
+- user preference: which allowed runtime the user prefers;
+- request/job constraints: whether the task needs scheduler, multimodal input,
+  exact usage reporting, provider tools, job-scoped auth, or another capability;
+- runtime health: whether the preferred runtime is currently available;
+- fallback policy: which runtime to use when the preference is unavailable or
+  unsupported for the requested capability.
+
+The selected runtime changes execution behavior, not authority. Provider OAuth,
+tool policy, route delivery, visibility, runtime JWTs, scheduled job
+capabilities, and observability remain Burble-owned.
+
+Example effective policy:
+
+```yaml
+workspace:
+  runtimes:
+    allowed:
+      - openclaw-gateway
+      - hermes
+    default: openclaw-gateway
+    fallback: openclaw-gateway
+
+users:
+  U123:
+    runtime:
+      preferred: hermes
+```
+
+Resolution examples:
+
+- User A prefers Hermes and Hermes passes the required contract checks: use
+  Hermes.
+- User B has no preference: use the workspace default.
+- User C prefers Hermes, but the request requires a capability Hermes does not
+  advertise: use the workspace fallback or ask for confirmation, depending on
+  policy.
+- User D prefers a runtime not allowed by the workspace: ignore the preference
+  and report the effective runtime in App Home/settings.
+
+Runtime selection should be exposed through user settings, not admin-only
+configuration:
+
+```text
+/agent config get runtime
+/agent config set runtime hermes
+```
+
+The admin surface should control the allowed set and defaults. The user surface
+should only choose within that allowed set.
+
 ## Runtime Adapter Compatibility Matrix
 
 Current rough shape:
@@ -430,12 +488,31 @@ the contract explicit and testable:
 1. Add shared TypeScript schemas for run request, run events, final response,
    tool calls, scheduled job context, usage, and runtime capability manifests.
 2. Add a runtime contract test harness.
-3. Make the OpenClaw Gateway adapter pass the harness.
-4. Make the Hermes adapter pass the same harness.
-5. Document runtime-specific caveats that remain after the harness passes.
+3. Add a reusable HTTP/WebSocket contract client so the harness can run against
+   resident runtime containers.
+4. Make the OpenClaw Gateway adapter pass the harness.
+5. Make the Hermes adapter pass the same harness.
+6. Document runtime-specific caveats that remain after the harness passes.
 
 After that, a WebSocket runtime-control PR can add the resident control channel
 without breaking HTTP/SSE runtimes.
+
+## Implementation Roadmap
+
+Recommended sequence:
+
+1. **Contract foundation.** Land shared schemas, parser helpers, and the
+   contract smoke harness. This PR should be mostly additive and behavior-neutral.
+2. **Runtime conformance tests.** Run the same harness against OpenClaw Gateway
+   and Hermes containers in CI or an integration test profile.
+3. **Tool bridge unification.** Make each runtime call one canonical Burble tool
+   bridge shape, even if the runtime exposes ergonomic aliases internally.
+4. **Generated runtime tool catalog.** Generate OpenClaw and Hermes tool aliases
+   from provider specs so aliases do not drift.
+5. **Runtime selection policy.** Add workspace-allowed runtime engines, user
+   runtime preference, effective runtime resolution, and App Home/settings UI.
+6. **Runtime control channel.** Add optional WebSocket `/runtime` control for
+   pause, resume, cancel, config reload, liveness, and diagnostics.
 
 ## Product Proposition
 
