@@ -256,8 +256,8 @@ export function createSlackRuntime(
       : undefined;
   const agentExecTasks = new Map<string, AgentExecTask>();
 
-  const resolveAgentExecutionMode = (): "openclaw-native" | undefined =>
-    config.agentRuntime === "burble-runtime" ? "openclaw-native" : undefined;
+  const resolveAgentExecutionMode = (): "native-runtime" | undefined =>
+    config.agentRuntime === "burble-runtime" ? "native-runtime" : undefined;
 
   const buildHomeViewForUser = async (input: {
     workspaceId: string;
@@ -1229,7 +1229,7 @@ export function createSlackRuntime(
             agentRunner,
             {
               principal,
-              executionMode: "openclaw-native",
+              executionMode: "native-runtime",
               conversation: {
                 routeId: conversationRoute.id,
                 source: "slack",

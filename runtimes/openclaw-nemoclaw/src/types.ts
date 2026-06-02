@@ -17,7 +17,7 @@ export type ToolResult<TContent = unknown> = {
 
 export type RunRequest = {
   runId?: string;
-  executionMode?: "default" | "openclaw-native";
+  executionMode?: "default" | "native-runtime" | "openclaw-native";
   runtime?: {
     id: string;
     policyHash?: string;

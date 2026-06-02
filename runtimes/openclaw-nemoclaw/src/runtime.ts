@@ -56,7 +56,7 @@ export function resolveRuntimeConfigForRequest(
   config: RuntimeConfig,
   request: Pick<RunRequest, "executionMode">
 ): RuntimeConfig {
-  if (request.executionMode !== "openclaw-native") {
+  if (!isNativeRuntimeExecutionMode(request)) {
     return config;
   }
 
@@ -73,7 +73,7 @@ async function* prepareRuntimeConfigForRequest(
   request: Pick<RunRequest, "executionMode">,
   options: RuntimeRunnerOptions
 ): AsyncIterable<RunEvent> {
-  if (request.executionMode !== "openclaw-native") {
+  if (!isNativeRuntimeExecutionMode(request)) {
     return;
   }
 
@@ -89,11 +89,20 @@ async function prepareNativeOpenClawIfNeeded(
   request: Pick<RunRequest, "executionMode">,
   options: RuntimeRunnerOptions
 ): Promise<void> {
-  if (request.executionMode !== "openclaw-native") {
+  if (!isNativeRuntimeExecutionMode(request)) {
     return;
   }
 
   await options.prepareNativeOpenClaw?.(config);
+}
+
+function isNativeRuntimeExecutionMode(
+  request: Pick<RunRequest, "executionMode">
+): boolean {
+  return (
+    request.executionMode === "native-runtime" ||
+    request.executionMode === "openclaw-native"
+  );
 }
 
 export function createRuntimeAgentAdapter(

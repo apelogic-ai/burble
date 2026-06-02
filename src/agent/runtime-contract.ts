@@ -119,7 +119,9 @@ export const scheduledJobContextSchema = z
 export const runtimeRunRequestSchema = z
   .object({
     runId: z.string().min(1).optional(),
-    executionMode: z.enum(["default", "openclaw-native"]).optional(),
+    executionMode: z
+      .enum(["default", "native-runtime", "openclaw-native"])
+      .optional(),
     principal: runtimePrincipalSchema,
     runtime: z
       .object({

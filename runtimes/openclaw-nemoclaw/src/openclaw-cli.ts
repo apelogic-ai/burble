@@ -2485,13 +2485,13 @@ function formatNativeExecutionContext(
   config: RuntimeConfig,
   request: RunRequest
 ): string[] {
-  if (request.executionMode !== "openclaw-native") {
+  if (!isNativeRuntimeExecutionMode(request)) {
     return [];
   }
 
   return [
     "Native agent execution:",
-    "This request explicitly asks for OpenClaw-native execution. Use OpenClaw native capabilities/tools directly when useful for code, shell/process work, cron, or long-running tasks. Use Burble JSON tool_call only for external provider data or actions listed in Available Burble tools.",
+    "This request explicitly asks for native runtime execution. Use native capabilities/tools directly when useful for code, shell/process work, cron, or long-running tasks. Use Burble JSON tool_call only for external provider data or actions listed in Available Burble tools.",
     ...formatActiveConversationRouteInstruction(config, request),
     ...formatScheduledProviderCapabilityInstruction(request),
     ...formatScheduledJobContextInstruction(request),
@@ -2585,8 +2585,8 @@ function formatActiveConversationRouteInstruction(
 }
 
 function formatFinalInstruction(request: RunRequest): string {
-  if (request.executionMode === "openclaw-native") {
-    return "For provider data/actions, return exactly one Burble tool_call JSON object if required. Otherwise use OpenClaw native capabilities when appropriate, avoid unnecessary extra tool loops, and return the final Slack-ready answer as soon as the requested result is available.";
+  if (isNativeRuntimeExecutionMode(request)) {
+    return "For provider data/actions, return exactly one Burble tool_call JSON object if required. Otherwise use native runtime capabilities when appropriate, avoid unnecessary extra tool loops, and return the final Slack-ready answer as soon as the requested result is available.";
   }
 
   return "Return either exactly one tool_call JSON object or the final Slack-ready answer.";
@@ -3815,7 +3815,7 @@ function buildSessionRoot(request: RunRequest): string {
 }
 
 function buildBurbleChannelSessionKey(request: RunRequest): string | null {
-  if (request.executionMode !== "openclaw-native") {
+  if (!isNativeRuntimeExecutionMode(request)) {
     return null;
   }
 
@@ -3831,6 +3831,13 @@ function buildBurbleChannelSessionKey(request: RunRequest): string | null {
     conversation.rootId,
     conversation.isDirectMessage ? "dm" : "channel"
   ].join(":");
+}
+
+function isNativeRuntimeExecutionMode(request: RunRequest): boolean {
+  return (
+    request.executionMode === "native-runtime" ||
+    request.executionMode === "openclaw-native"
+  );
 }
 
 function resolveGatewayHttpMessageChannel(request: RunRequest): "webchat" | "burble" {
