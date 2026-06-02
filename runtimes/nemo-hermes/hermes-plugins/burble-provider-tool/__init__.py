@@ -90,6 +90,47 @@ BURBLE_PROVIDER_CALL_SCHEMA = {
 
 
 def _provider_alias_schema(alias: str, canonical_name: str) -> dict[str, Any]:
+    if canonical_name == "scheduledJob.registerCapability":
+        return {
+            "description": (
+                "Register the Burble provider tools a native scheduled/background job "
+                "will need before creating, updating, or manually triggering that job. "
+                "Include the returned scheduledPromptInstruction verbatim in the job prompt."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "jobId": {
+                        "type": "string",
+                        "description": "Stable native scheduler job id or job name.",
+                    },
+                    "requiredTools": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": (
+                            "Exact Burble provider tool names the scheduled job may call, "
+                            "for example google_get_drive_file and google_append_to_drive_text_file."
+                        ),
+                    },
+                    "routeId": {
+                        "type": "string",
+                        "description": "Optional durable Burble route id for scheduled/background delivery.",
+                    },
+                    "stateRefs": {
+                        "type": "array",
+                        "description": "Optional durable state references such as Drive scratchpad files.",
+                        "items": {"type": "object", "additionalProperties": True},
+                    },
+                    "visibilityPolicy": {
+                        "type": "object",
+                        "description": "Optional output visibility policy for scheduled delivery.",
+                        "additionalProperties": True,
+                    },
+                },
+                "required": ["jobId", "requiredTools"],
+                "additionalProperties": True,
+            },
+        }
     return {
         "description": (
             f"Call Burble provider tool {canonical_name}. "

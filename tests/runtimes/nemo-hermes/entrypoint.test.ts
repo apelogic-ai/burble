@@ -97,7 +97,7 @@ print(json.dumps({"text": mod.build_hermes_turn_text(payload)}))
     expect(text).toContain("Selected Burble provider tools");
     expect(text).toContain("github_list_my_pull_requests");
     expect(text).not.toContain("google_search_drive_files");
-    expect(text).toContain("scheduledJob.registerCapability");
+    expect(text).toContain("scheduled_job_register_capability");
     expect(text).toContain("include the returned scheduledPromptInstruction verbatim");
     expect(text).toContain("Recent Burble context");
     expect(text).not.toContain("old message should not be included");
@@ -166,7 +166,7 @@ print(json.dumps({"text": mod.build_hermes_turn_text(payload)}))
     const text = (result as { text: string }).text;
     expect(text).toContain("Provider-backed scheduled job repair:");
     expect(text).toContain("Before manually triggering");
-    expect(text).toContain("scheduledJob.registerCapability");
+    expect(text).toContain("scheduled_job_register_capability");
     expect(text).toContain(
       "Scheduled provider tool calls must include the returned jobId"
     );
@@ -300,6 +300,7 @@ class Ctx:
             "toolset": kwargs.get("toolset"),
             "is_async": kwargs.get("is_async"),
             "description": kwargs.get("description"),
+            "schema": kwargs.get("schema"),
         })
 
 ctx = Ctx()
@@ -335,5 +336,24 @@ print(json.dumps(ctx.tools))
         is_async: true
       })
     );
+    const tools = result as Array<{
+      name?: string;
+      schema?: {
+        parameters?: {
+          required?: string[];
+          properties?: Record<string, { items?: unknown }>;
+        };
+      };
+    }>;
+    const registrationTool = tools.find(
+      (tool: { name?: string }) => tool.name === "scheduled_job_register_capability"
+    );
+    expect(registrationTool?.schema?.parameters?.required).toEqual([
+      "jobId",
+      "requiredTools"
+    ]);
+    expect(
+      registrationTool?.schema?.parameters?.properties?.requiredTools?.items
+    ).toEqual({ type: "string" });
   });
 });
