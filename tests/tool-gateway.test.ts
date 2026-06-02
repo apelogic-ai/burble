@@ -707,20 +707,142 @@ describe("handleToolGatewayRequest", () => {
   });
 
   test("accepts scheduled job provider capability aliases used by native runtimes", async () => {
+    const cases: Array<{ name: string; input: unknown }> = [
+      {
+        name: "camelCase",
+        input: {
+          scheduledJobId: "ai-news-hourly",
+          allowedTools: [
+            "google_get_drive_file",
+            "google_append_to_drive_text_file"
+          ]
+        }
+      },
+      {
+        name: "snake_case",
+        input: {
+          scheduled_job_id: "ai-news-hourly",
+          allowed_tools: [
+            "google_get_drive_file",
+            "google_append_to_drive_text_file"
+          ]
+        }
+      },
+      {
+        name: "nested scheduledJob",
+        input: {
+          scheduledJob: {
+            jobId: "ai-news-hourly",
+            requiredTools: [
+              "google_get_drive_file",
+              "google_append_to_drive_text_file"
+            ]
+          }
+        }
+      },
+      {
+        name: "nested scheduled_job",
+        input: {
+          scheduled_job: {
+            job_id: "ai-news-hourly",
+            required_tools: [
+              "google_get_drive_file",
+              "google_append_to_drive_text_file"
+            ]
+          }
+        }
+      },
+      {
+        name: "nested capability",
+        input: {
+          capability: {
+            job_id: "ai-news-hourly",
+            tools: [
+              "google_get_drive_file",
+              "google_append_to_drive_text_file"
+            ]
+          }
+        }
+      }
+    ];
+
+    for (const testCase of cases) {
+      const upserts: unknown[] = [];
+      const response = await handleToolGatewayRequest(
+        config,
+        createStore(null, runtime, [], null, [], { upserts }),
+        "scheduledJob.registerCapability",
+        request(
+          "scheduledJob.registerCapability",
+          { input: testCase.input },
+          "runtime-token-u123",
+          "rt_u123"
+        )
+      );
+
+      expect(response.status, testCase.name).toBe(200);
+      expect(upserts, testCase.name).toEqual([
+        expect.objectContaining({
+          jobId: "ai-news-hourly",
+          requiredTools: [
+            "google_append_to_drive_text_file",
+            "google_get_drive_file"
+          ]
+        })
+      ]);
+      const body = await response.json();
+      expect(body.content.scheduledJob, testCase.name).toMatchObject({
+        jobId: "ai-news-hourly",
+        allowedTools: [
+          "google_append_to_drive_text_file",
+          "google_get_drive_file"
+        ]
+      });
+    }
+  });
+
+  test("normalizes scheduled job registration metadata aliases", async () => {
+    const route: ConversationRouteRecord = {
+      id: "convrt_abc123",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      transport: "slack",
+      destinationJson: JSON.stringify({
+        channelId: "C123"
+      }),
+      createdAt: "2026-05-26T00:00:00.000Z",
+      updatedAt: "2026-05-26T00:00:00.000Z",
+      revokedAt: null
+    };
     const upserts: unknown[] = [];
     const response = await handleToolGatewayRequest(
       config,
-      createStore(null, runtime, [], null, [], { upserts }),
+      createStore(null, runtime, [], route, [], { upserts }),
       "scheduledJob.registerCapability",
       request(
         "scheduledJob.registerCapability",
         {
           input: {
-            scheduledJobId: "ai-news-hourly",
-            allowedTools: [
-              "google_get_drive_file",
-              "google_append_to_drive_text_file"
-            ]
+            scheduled_job: {
+              job_id: "ai-news-hourly",
+              allowed_tools: [
+                "google_get_drive_file",
+                "google_append_to_drive_text_file"
+              ],
+              route_id: "convrt_abc123",
+              capability_profile: "scheduled_job",
+              runtime_type: "hermes",
+              state_refs: [
+                {
+                  provider: "google",
+                  kind: "drive_file",
+                  id: "file-1"
+                }
+              ],
+              visibility_policy: {
+                maxOutputVisibility: "public"
+              }
+            }
           }
         },
         "runtime-token-u123",
@@ -732,20 +854,25 @@ describe("handleToolGatewayRequest", () => {
     expect(upserts).toEqual([
       expect.objectContaining({
         jobId: "ai-news-hourly",
+        routeId: "convrt_abc123",
+        capabilityProfile: "scheduled_job",
+        runtimeType: "hermes",
         requiredTools: [
           "google_append_to_drive_text_file",
           "google_get_drive_file"
-        ]
+        ],
+        stateRefs: [
+          {
+            provider: "google",
+            kind: "drive_file",
+            id: "file-1"
+          }
+        ],
+        visibilityPolicy: {
+          maxOutputVisibility: "public"
+        }
       })
     ]);
-    const body = await response.json();
-    expect(body.content.scheduledJob).toMatchObject({
-      jobId: "ai-news-hourly",
-      allowedTools: [
-        "google_append_to_drive_text_file",
-        "google_get_drive_file"
-      ]
-    });
   });
 
   test("returns field-level errors for invalid scheduled job provider registrations", async () => {
@@ -757,7 +884,7 @@ describe("handleToolGatewayRequest", () => {
         "scheduledJob.registerCapability",
         {
           input: {
-            jobId: "ai-news-hourly",
+            job_id: "ai-news-hourly",
             requiredTools: "google.getDriveFile"
           }
         },
@@ -772,7 +899,7 @@ describe("handleToolGatewayRequest", () => {
       content: {
         error: "invalid_scheduled_job_capability_input",
         message:
-          "scheduledJob.registerCapability requires requiredTools or allowedTools to be a non-empty string array."
+          "scheduledJob.registerCapability requires requiredTools, allowedTools, required_tools, allowed_tools, or tools to be a non-empty string array."
       }
     });
   });
@@ -800,7 +927,7 @@ describe("handleToolGatewayRequest", () => {
         "google.searchDriveFiles",
         {
           input: {
-            jobId: "ai-news-hourly",
+            job_id: "ai-news-hourly",
             query: "AI News Scratchpad",
             limit: 1
           }

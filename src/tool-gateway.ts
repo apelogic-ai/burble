@@ -1389,15 +1389,25 @@ function readScheduledJobId(input: unknown): string | null {
   if (!isOptionalObject(input)) {
     return null;
   }
-  const jobId = input.jobId ?? input.scheduledJobId;
-  return typeof jobId === "string" && jobId.trim() ? jobId.trim() : null;
+  return readStringAlias(input, [
+    "jobId",
+    "scheduledJobId",
+    "job_id",
+    "scheduled_job_id"
+  ]);
 }
 
 function stripScheduledJobIds(input: unknown): unknown {
   if (!isOptionalObject(input)) {
     return input;
   }
-  const { jobId: _jobId, scheduledJobId: _scheduledJobId, ...rest } = input;
+  const {
+    jobId: _jobId,
+    scheduledJobId: _scheduledJobId,
+    job_id: _job_id,
+    scheduled_job_id: _scheduled_job_id,
+    ...rest
+  } = input;
   return rest;
 }
 
@@ -1412,11 +1422,12 @@ function readScheduledJobRegisterCapabilityInput(input: unknown):
       visibilityPolicy?: unknown;
     }
   | null {
-  if (!isOptionalObject(input)) {
+  const normalized = normalizeScheduledJobRegistrationInput(input);
+  if (!normalized) {
     return null;
   }
-  const jobId = readScheduledJobRegistrationId(input);
-  const requiredTools = readScheduledJobRegistrationTools(input);
+  const jobId = readScheduledJobRegistrationId(normalized);
+  const requiredTools = readScheduledJobRegistrationTools(normalized);
   if (
     !jobId ||
     !requiredTools
@@ -1424,16 +1435,13 @@ function readScheduledJobRegisterCapabilityInput(input: unknown):
     return null;
   }
   if (
-    ("routeId" in input && input.routeId !== undefined && !isNonEmptyString(input.routeId)) ||
-    ("capabilityProfile" in input &&
-      input.capabilityProfile !== undefined &&
-      !isNonEmptyString(input.capabilityProfile)) ||
-    ("runtimeType" in input &&
-      input.runtimeType !== undefined &&
-      !isAgentRuntimeEngine(input.runtimeType)) ||
-    ("stateRefs" in input &&
-      input.stateRefs !== undefined &&
-      !Array.isArray(input.stateRefs))
+    (normalized.routeId !== undefined && !isNonEmptyString(normalized.routeId)) ||
+    (normalized.capabilityProfile !== undefined &&
+      !isNonEmptyString(normalized.capabilityProfile)) ||
+    (normalized.runtimeType !== undefined &&
+      !isAgentRuntimeEngine(normalized.runtimeType)) ||
+    (normalized.stateRefs !== undefined &&
+      !Array.isArray(normalized.stateRefs))
   ) {
     return null;
   }
@@ -1441,16 +1449,16 @@ function readScheduledJobRegisterCapabilityInput(input: unknown):
   return {
     jobId,
     requiredTools,
-    ...(typeof input.routeId === "string" ? { routeId: input.routeId } : {}),
-    ...(typeof input.capabilityProfile === "string"
-      ? { capabilityProfile: input.capabilityProfile }
+    ...(typeof normalized.routeId === "string" ? { routeId: normalized.routeId } : {}),
+    ...(typeof normalized.capabilityProfile === "string"
+      ? { capabilityProfile: normalized.capabilityProfile }
       : {}),
-    ...(isAgentRuntimeEngine(input.runtimeType)
-      ? { runtimeType: input.runtimeType }
+    ...(isAgentRuntimeEngine(normalized.runtimeType)
+      ? { runtimeType: normalized.runtimeType }
       : {}),
-    ...(Array.isArray(input.stateRefs) ? { stateRefs: input.stateRefs } : {}),
-    ...("visibilityPolicy" in input
-      ? { visibilityPolicy: input.visibilityPolicy }
+    ...(Array.isArray(normalized.stateRefs) ? { stateRefs: normalized.stateRefs } : {}),
+    ...(normalized.visibilityPolicy !== undefined
+      ? { visibilityPolicy: normalized.visibilityPolicy }
       : {})
   };
 }
@@ -1462,42 +1470,43 @@ function describeScheduledJobRegisterCapabilityInputError(
     return "scheduledJob.registerCapability requires an object input.";
   }
 
-  if (!readScheduledJobRegistrationId(input)) {
-    return "scheduledJob.registerCapability requires jobId or scheduledJobId to be a non-empty string.";
+  const normalized = normalizeScheduledJobRegistrationInput(input);
+  if (!normalized) {
+    return "scheduledJob.registerCapability requires an object input.";
   }
 
-  if (!readScheduledJobRegistrationTools(input)) {
-    return "scheduledJob.registerCapability requires requiredTools or allowedTools to be a non-empty string array.";
+  if (!readScheduledJobRegistrationId(normalized)) {
+    return "scheduledJob.registerCapability requires jobId, scheduledJobId, job_id, or scheduled_job_id to be a non-empty string.";
+  }
+
+  if (!readScheduledJobRegistrationTools(normalized)) {
+    return "scheduledJob.registerCapability requires requiredTools, allowedTools, required_tools, allowed_tools, or tools to be a non-empty string array.";
   }
 
   if (
-    "routeId" in input &&
-    input.routeId !== undefined &&
-    !isNonEmptyString(input.routeId)
+    normalized.routeId !== undefined &&
+    !isNonEmptyString(normalized.routeId)
   ) {
     return "scheduledJob.registerCapability requires routeId to be a non-empty string when provided.";
   }
 
   if (
-    "capabilityProfile" in input &&
-    input.capabilityProfile !== undefined &&
-    !isNonEmptyString(input.capabilityProfile)
+    normalized.capabilityProfile !== undefined &&
+    !isNonEmptyString(normalized.capabilityProfile)
   ) {
     return "scheduledJob.registerCapability requires capabilityProfile to be a non-empty string when provided.";
   }
 
   if (
-    "runtimeType" in input &&
-    input.runtimeType !== undefined &&
-    !isAgentRuntimeEngine(input.runtimeType)
+    normalized.runtimeType !== undefined &&
+    !isAgentRuntimeEngine(normalized.runtimeType)
   ) {
     return "scheduledJob.registerCapability requires runtimeType to be a supported runtime engine when provided.";
   }
 
   if (
-    "stateRefs" in input &&
-    input.stateRefs !== undefined &&
-    !Array.isArray(input.stateRefs)
+    normalized.stateRefs !== undefined &&
+    !Array.isArray(normalized.stateRefs)
   ) {
     return "scheduledJob.registerCapability requires stateRefs to be an array when provided.";
   }
@@ -1505,18 +1514,95 @@ function describeScheduledJobRegisterCapabilityInputError(
   return null;
 }
 
+type ScheduledJobRegistrationInput = {
+  jobId?: unknown;
+  requiredTools?: unknown;
+  routeId?: unknown;
+  capabilityProfile?: unknown;
+  runtimeType?: unknown;
+  stateRefs?: unknown;
+  visibilityPolicy?: unknown;
+};
+
+function normalizeScheduledJobRegistrationInput(
+  input: unknown
+): ScheduledJobRegistrationInput | null {
+  if (!isOptionalObject(input)) {
+    return null;
+  }
+
+  const source =
+    readObjectAlias(input, ["scheduledJob", "scheduled_job", "capability"]) ??
+    input;
+
+  return {
+    jobId: readUnknownAlias(source, [
+      "jobId",
+      "scheduledJobId",
+      "job_id",
+      "scheduled_job_id"
+    ]),
+    requiredTools: readUnknownAlias(source, [
+      "requiredTools",
+      "allowedTools",
+      "required_tools",
+      "allowed_tools",
+      "tools"
+    ]),
+    routeId: readUnknownAlias(source, ["routeId", "route_id"]),
+    capabilityProfile: readUnknownAlias(source, [
+      "capabilityProfile",
+      "capability_profile"
+    ]),
+    runtimeType: readUnknownAlias(source, ["runtimeType", "runtime_type"]),
+    stateRefs: readUnknownAlias(source, ["stateRefs", "state_refs"]),
+    visibilityPolicy: readUnknownAlias(source, [
+      "visibilityPolicy",
+      "visibility_policy"
+    ])
+  };
+}
+
 function readScheduledJobRegistrationId(
-  input: Record<string, unknown>
+  input: ScheduledJobRegistrationInput
 ): string | null {
-  const jobId = input.jobId ?? input.scheduledJobId;
+  const jobId = input.jobId;
   return typeof jobId === "string" && jobId.trim() ? jobId.trim() : null;
 }
 
 function readScheduledJobRegistrationTools(
-  input: Record<string, unknown>
+  input: ScheduledJobRegistrationInput
 ): string[] | null {
-  const tools = input.requiredTools ?? input.allowedTools;
+  const tools = input.requiredTools;
   return stringArray(tools, 100) ? tools : null;
+}
+
+function readUnknownAlias(
+  input: Record<string, unknown>,
+  names: string[]
+): unknown {
+  for (const name of names) {
+    if (name in input) {
+      return input[name];
+    }
+  }
+  return undefined;
+}
+
+function readStringAlias(
+  input: Record<string, unknown>,
+  names: string[]
+): string | null {
+  const value = readUnknownAlias(input, names);
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function readObjectAlias(
+  input: Record<string, unknown>,
+  names: string[]
+): Record<string, unknown> | null {
+  const value = readUnknownAlias(input, names);
+  return isOptionalObject(value) ? value : null;
 }
 
 function isAgentRuntimeEngine(value: unknown): value is AgentRuntimeEngine {
