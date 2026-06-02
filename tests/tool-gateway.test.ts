@@ -684,6 +684,10 @@ describe("handleToolGatewayRequest", () => {
       "These allowedTools are Burble provider tool names, not necessarily native runtime tool names."
     );
     expect(body.content.scheduledPromptInstruction).toContain(
+      "Ensure the native scheduled job enables the runtime provider bridge toolset"
+    );
+    expect(body.content.scheduledPromptInstruction).toContain("cronjob");
+    expect(body.content.scheduledPromptInstruction).toContain(
       "burble_provider_call"
     );
     expect(body.content.scheduledPromptInstruction).toContain(

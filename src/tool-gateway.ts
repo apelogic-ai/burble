@@ -1777,6 +1777,7 @@ function buildScheduledJobPromptInstruction(
   }
   lines.push(
     "These allowedTools are Burble provider tool names, not necessarily native runtime tool names.",
+    "Ensure the native scheduled job enables the runtime provider bridge toolset. For runtimes with per-job toolsets, include the cronjob toolset along with any other needed toolsets such as web; do not create provider-backed scheduled jobs with only web enabled.",
     "Use the runtime's Burble provider bridge for these tools. If the runtime exposes burble_provider_call, call it with toolName set to one of the allowedTools and input containing this jobId plus the provider tool arguments.",
     "Provider bridge call examples:",
     ...bridgeExamples,

@@ -149,6 +149,10 @@ print(json.dumps({"text": mod.build_hermes_turn_text(payload)}))
     expect(text).toContain(
       "stateRef provider=google kind=drive_file id=file-123 purpose=dedupe_state"
     );
+    expect(text).toContain(
+      "Ensure this native scheduled job has the provider bridge toolset enabled"
+    );
+    expect(text).toContain("cronjob");
   });
 
   test("adds provider-backed scheduled job repair guidance to scheduler-only Hermes turns", () => {
