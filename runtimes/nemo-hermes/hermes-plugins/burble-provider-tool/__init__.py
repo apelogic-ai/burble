@@ -66,6 +66,10 @@ TOOL_NAME_ALIASES = {
 }
 
 PROVIDER_BRIDGE_TOOLSETS = ["cronjob", "web"]
+WEB_TOOLSET_BRIDGE_TOOLS = [
+    "burble_provider_call",
+    *sorted(TOOL_NAME_ALIASES.keys()),
+]
 
 
 BURBLE_PROVIDER_CALL_SCHEMA = {
@@ -230,7 +234,33 @@ def _make_provider_alias_handler(canonical_name: str):
     return _provider_alias_call
 
 
+def _pin_provider_bridge_to_web_toolset() -> None:
+    try:
+        import toolsets
+
+        web_toolset = toolsets.TOOLSETS.setdefault(
+            "web",
+            {
+                "description": "Web research and content extraction tools",
+                "tools": [],
+                "includes": [],
+            },
+        )
+        tools = web_toolset.setdefault("tools", [])
+        if not isinstance(tools, list):
+            return
+        for tool_name in WEB_TOOLSET_BRIDGE_TOOLS:
+            if tool_name not in tools:
+                tools.append(tool_name)
+    except Exception as error:
+        print(
+            f"[WARN] Burble provider bridge web toolset install failed: {error}",
+            flush=True,
+        )
+
+
 def register(ctx) -> None:
+    _pin_provider_bridge_to_web_toolset()
     for toolset in PROVIDER_BRIDGE_TOOLSETS:
         ctx.register_tool(
             name="burble_provider_call",

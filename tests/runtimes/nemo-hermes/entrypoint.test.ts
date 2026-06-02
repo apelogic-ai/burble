@@ -381,4 +381,32 @@ print(json.dumps(ctx.tools))
       registrationTool?.schema?.parameters?.properties?.requiredTools?.items
     ).toEqual({ type: "string" });
   });
+
+  test("pins Burble provider bridge tools into the Hermes web toolset for cron jobs", () => {
+    const result = runHermesEntrypointProbe(`${importProviderToolPlugin}
+toolsets = types.ModuleType("toolsets")
+toolsets.TOOLSETS = {
+    "web": {
+        "description": "Web research and content extraction tools",
+        "tools": ["web_search", "web_extract"],
+        "includes": [],
+    }
+}
+sys.modules["toolsets"] = toolsets
+
+class Ctx:
+    def register_tool(self, **kwargs):
+        pass
+
+mod.register(Ctx())
+print(json.dumps(toolsets.TOOLSETS["web"]["tools"]))
+`);
+
+    expect(result).toContain("web_search");
+    expect(result).toContain("web_extract");
+    expect(result).toContain("burble_provider_call");
+    expect(result).toContain("google_get_drive_file");
+    expect(result).toContain("google_append_to_drive_text_file");
+    expect(result).toContain("scheduled_job_register_capability");
+  });
 });
