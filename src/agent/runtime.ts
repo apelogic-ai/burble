@@ -5,7 +5,7 @@ import type { createJiraTools } from "../tools/jira";
 import type { createSlackTools } from "../tools/slack";
 import { createAiSdkAgentRunner } from "./runner";
 import type { AgentGenerateText } from "./runner";
-import { createOpenClawNemoClawAgentRunner } from "./runners/openclaw-nemoclaw";
+import { createManagedRuntimeAgentRunner } from "./runners/managed-runtime";
 import type { ModelResolver } from "./providers";
 import type { RuntimeFactory } from "./runtime-factory";
 import type { AgentRunner } from "./types";
@@ -18,6 +18,8 @@ export type ConfiguredAgentRunnerDeps = {
   googleTools?: ReturnType<typeof createGoogleTools>;
   jiraTools?: ReturnType<typeof createJiraTools>;
   slackTools?: ReturnType<typeof createSlackTools>;
+  managedRuntimeUrl?: string | null;
+  /** Compatibility alias for older call sites. */
   openClawNemoClawUrl?: string | null;
   runtimeFactory?: RuntimeFactory;
   resolveModel?: ModelResolver;
@@ -43,18 +45,19 @@ export function createConfiguredAgentRunner(
         ...(deps.observability ? { observability: deps.observability } : {})
       });
 
-    case "burble-runtime":
-      if (!deps.openClawNemoClawUrl && !deps.runtimeFactory) {
-        throw new Error("OPENCLAW_NEMOCLAW_URL is required");
+    case "burble-runtime": {
+      const managedRuntimeUrl =
+        deps.managedRuntimeUrl ?? deps.openClawNemoClawUrl;
+      if (!managedRuntimeUrl && !deps.runtimeFactory) {
+        throw new Error("managed runtime URL is required");
       }
 
-      return createOpenClawNemoClawAgentRunner({
-        ...(deps.openClawNemoClawUrl
-          ? { baseUrl: deps.openClawNemoClawUrl }
-          : {}),
+      return createManagedRuntimeAgentRunner({
+        ...(managedRuntimeUrl ? { baseUrl: managedRuntimeUrl } : {}),
         ...(deps.runtimeFactory ? { runtimeFactory: deps.runtimeFactory } : {}),
         ...(deps.logInfo ? { logInfo: deps.logInfo } : {}),
         ...(deps.observability ? { observability: deps.observability } : {})
       });
+    }
   }
 }

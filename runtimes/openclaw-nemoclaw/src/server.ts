@@ -1042,6 +1042,7 @@ function isRunRequest(body: unknown): body is RunRequest {
     "executionMode" in body &&
     body.executionMode !== undefined &&
     body.executionMode !== "default" &&
+    body.executionMode !== "native-runtime" &&
     body.executionMode !== "openclaw-native"
   ) {
     return false;

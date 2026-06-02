@@ -234,7 +234,7 @@ export function createSlackRuntime(
     searchSlackUsers,
     searchSlackMessages
   });
-  const runtimeFactory = createOpenClawRuntimeFactory(
+  const runtimeFactory = createManagedRuntimeFactory(
     config,
     store,
     runtimeJwtIssuer
@@ -248,7 +248,7 @@ export function createSlackRuntime(
           googleTools,
           slackTools,
           jiraTools,
-          openClawNemoClawUrl: config.openClawNemoClawUrl,
+          managedRuntimeUrl: config.managedRuntimeUrl,
           ...(runtimeFactory ? { runtimeFactory } : {}),
           observability,
           logInfo: (message) => app.logger.info(withUtcTimestamp(message))
@@ -256,8 +256,8 @@ export function createSlackRuntime(
       : undefined;
   const agentExecTasks = new Map<string, AgentExecTask>();
 
-  const resolveAgentExecutionMode = (): "openclaw-native" | undefined =>
-    config.agentRuntime === "burble-runtime" ? "openclaw-native" : undefined;
+  const resolveAgentExecutionMode = (): "native-runtime" | undefined =>
+    config.agentRuntime === "burble-runtime" ? "native-runtime" : undefined;
 
   const buildHomeViewForUser = async (input: {
     workspaceId: string;
@@ -1229,7 +1229,7 @@ export function createSlackRuntime(
             agentRunner,
             {
               principal,
-              executionMode: "openclaw-native",
+              executionMode: "native-runtime",
               conversation: {
                 routeId: conversationRoute.id,
                 source: "slack",
@@ -1492,7 +1492,7 @@ export async function readAgentConfigFile(
   }
 }
 
-function createOpenClawRuntimeFactory(
+function createManagedRuntimeFactory(
   config: Config,
   store: TokenStore,
   runtimeJwtIssuer?: RuntimeJwtIssuer
@@ -1533,14 +1533,14 @@ function createOpenClawRuntimeFactory(
     });
   }
 
-  if (!config.openClawNemoClawUrl) {
+  if (!config.managedRuntimeUrl) {
     return undefined;
   }
 
   return createStaticRuntimeFactory({
     store,
     engine: config.agentRuntimeEngine,
-    endpointUrl: config.openClawNemoClawUrl,
+    endpointUrl: config.managedRuntimeUrl,
     authToken: config.internalApiToken ?? "",
     dataRoot: config.agentRuntimeDataRoot,
     buildManifest: (principal) =>

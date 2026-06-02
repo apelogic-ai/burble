@@ -34,7 +34,21 @@ describe("resolveRuntimeConfigForRequest", () => {
     expect(resolveRuntimeConfigForRequest(config, {})).toBe(config);
   });
 
-  test("routes native execution through OpenClaw Gateway in the same runtime", () => {
+  test("routes native-runtime execution through OpenClaw Gateway in the same runtime", () => {
+    const resolved = resolveRuntimeConfigForRequest(config, {
+      executionMode: "native-runtime"
+    });
+
+    expect(resolved).toMatchObject({
+      engine: "openclaw-gateway",
+      openClawSetupOnStart: true,
+      openClawTimeoutMs: 600000,
+      openClawConfigPath: "/data/openclaw/config/openclaw.json",
+      openClawWorkspaceDir: "/data/openclaw/workspace"
+    });
+  });
+
+  test("keeps openclaw-native as a legacy native execution alias", () => {
     const resolved = resolveRuntimeConfigForRequest(config, {
       executionMode: "openclaw-native"
     });

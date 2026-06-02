@@ -7,6 +7,8 @@ import type { RuntimeToolGroupSelection } from "./tool-groups";
 import type { PrincipalId } from "./runtime-factory";
 import type { ScheduledJobContext } from "./scheduled-job-context";
 
+export type AgentExecutionMode = "default" | "native-runtime" | "openclaw-native";
+
 export type AgentRunnerCapabilities = {
   streaming: boolean;
   toolEvents: boolean;
@@ -16,7 +18,7 @@ export type AgentRunnerCapabilities = {
 
 export type AgentInput = {
   principal: PrincipalId;
-  executionMode?: "default" | "openclaw-native";
+  executionMode?: AgentExecutionMode;
   conversation?: {
     routeId?: string;
     source: "slack";

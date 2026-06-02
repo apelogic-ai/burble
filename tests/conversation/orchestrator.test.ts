@@ -328,10 +328,10 @@ describe("handleConversation", () => {
       },
       createDeps({
         agentMode: "llm",
-        agentExecutionMode: "openclaw-native",
+        agentExecutionMode: "native-runtime",
         agentRunner: stubAgentRunner((input) => {
           calls.push(input.text);
-          expect(input.executionMode).toBe("openclaw-native");
+          expect(input.executionMode).toBe("native-runtime");
           expect(input.principal).toEqual({
             workspaceId: "T123",
             slackUserId: "U123"

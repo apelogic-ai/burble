@@ -58,6 +58,7 @@ const agentConfig: Config = {
   agentRuntime: "burble-runtime",
   agentRuntimeFactory: "docker",
   aiModel: "openai:gpt-5.4",
+  managedRuntimeUrl: null,
   openClawNemoClawUrl: null,
   agentRuntimeEngine: "burble-direct",
   openClawNemoClawEngine: "burble-direct",
