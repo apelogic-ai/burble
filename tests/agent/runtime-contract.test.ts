@@ -199,4 +199,30 @@ describe("runtime contract schemas", () => {
     expect(manifest.runtimeType).toBe("openclaw-gateway");
     expect(manifest.toolBridgeModes).toEqual(["mcp", "tool_gateway"]);
   });
+
+  test("allows forward-compatible runtime capability manifest fields", () => {
+    const manifest = parseRuntimeCapabilityManifest({
+      runtimeType: "hermes",
+      version: "2026.6.1",
+      transports: ["http"],
+      streaming: true,
+      cancellation: false,
+      nativeScheduler: true,
+      scheduledProviderCalls: true,
+      toolCalls: true,
+      toolBridgeModes: ["tool_gateway"],
+      usageReporting: "exact",
+      multimodalInput: false,
+      multimodalOutput: false,
+      memory: false,
+      durableWorkflowState: false,
+      attachments: false,
+      conversationSend: true,
+      jobScopedAuth: true,
+      concurrencyHint: 4
+    });
+
+    expect(manifest.runtimeType).toBe("hermes");
+    expect((manifest as { concurrencyHint?: unknown }).concurrencyHint).toBe(4);
+  });
 });

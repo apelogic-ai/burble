@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { createOpenClawNemoClawAgentRunner } from "../../src/agent/runners/openclaw-nemoclaw";
+import type { RuntimeCapabilityManifest } from "../../src/agent/runtime-contract";
 import { collectAgentRun } from "../../src/agent/types";
 import type { ProviderConnection } from "../../src/db";
 import type { ObservabilityEventInput } from "../../src/observability";
@@ -24,6 +25,26 @@ const conversation = {
   channelId: "D123",
   rootId: "dm:D123",
   isDirectMessage: true
+};
+
+const openClawCapabilityManifest: RuntimeCapabilityManifest = {
+  runtimeType: "openclaw",
+  version: "1",
+  transports: ["http", "websocket"],
+  streaming: true,
+  cancellation: false,
+  nativeScheduler: true,
+  scheduledProviderCalls: true,
+  toolCalls: true,
+  toolBridgeModes: ["tool_gateway", "mcp"],
+  usageReporting: "exact",
+  multimodalInput: true,
+  multimodalOutput: false,
+  memory: true,
+  durableWorkflowState: true,
+  attachments: true,
+  conversationSend: true,
+  jobScopedAuth: true
 };
 
 function sseEvent(event: unknown): string {
@@ -277,6 +298,9 @@ describe("createOpenClawNemoClawAgentRunner", () => {
       },
       fetch: async (url, init) => {
         requests.push({ url: String(url), init: init ?? {} });
+        if (String(url).endsWith("/capabilities")) {
+          return Response.json(openClawCapabilityManifest);
+        }
         return Response.json({
           response: {
             classification: "user_private",
@@ -314,21 +338,25 @@ describe("createOpenClawNemoClawAgentRunner", () => {
 
     expect(result.text).toBe("Runtime answer.");
     expect(principals).toEqual([principal]);
-    expect(requests[0].url).toBe("http://runtime-u123:8080/runs");
+    expect(requests[0].url).toBe("http://runtime-u123:8080/capabilities");
     expect(requests[0].init.headers).toEqual({
+      "x-burble-runtime-id": "rt_u123"
+    });
+    expect(requests[1].url).toBe("http://runtime-u123:8080/runs");
+    expect(requests[1].init.headers).toEqual({
       accept: "application/json",
       "content-type": "application/json",
       prefer: "respond-async",
       "x-burble-runtime-id": "rt_u123"
     });
-    expect(JSON.parse(String(requests[0].init.body))).toMatchObject({
+    expect(JSON.parse(String(requests[1].init.body))).toMatchObject({
       runtime: {
         id: "rt_u123",
         engine: "openclaw",
         status: "ready"
       }
     });
-    expect(String(requests[0].init.body)).not.toContain("runtime-token");
+    expect(String(requests[1].init.body)).not.toContain("runtime-token");
     expect(runtimeEvents).toEqual([
       {
         runtimeId: "rt_u123",
@@ -349,6 +377,19 @@ describe("createOpenClawNemoClawAgentRunner", () => {
             stateRefCount: 1,
             maxOutputVisibility: "public",
             allowPrivateToolDeclassification: false
+          },
+          runtimeCapabilities: {
+            runtimeType: "openclaw",
+            transports: ["http", "websocket"],
+            streaming: true,
+            nativeScheduler: true,
+            scheduledProviderCalls: true,
+            toolCalls: true,
+            toolBridgeModes: ["tool_gateway", "mcp"],
+            usageReporting: "exact",
+            multimodalInput: true,
+            attachments: true,
+            jobScopedAuth: true
           }
         }
       },
@@ -361,6 +402,284 @@ describe("createOpenClawNemoClawAgentRunner", () => {
         }
       }
     ]);
+  });
+
+  test("continues when an older managed runtime has no capabilities endpoint", async () => {
+    const observabilityEvents: ObservabilityEventInput[] = [];
+    const requests: Array<{ url: string; init: RequestInit }> = [];
+    const runner = createOpenClawNemoClawAgentRunner({
+      runtimeFactory: {
+        async getOrCreateRuntime() {
+          return {
+            id: "rt_legacy",
+            engine: "openclaw",
+            endpointUrl: "http://runtime-legacy:8080/",
+            authToken: "runtime-token",
+            status: "ready",
+            statePath: "/data/runtimes/rt_legacy/state",
+            configPath: "/data/runtimes/rt_legacy/config/openclaw.json",
+            workspacePath: "/data/runtimes/rt_legacy/workspace"
+          };
+        },
+        async stopRuntime() {},
+        async reapIdleRuntimes() {},
+        recordRuntimeEvent() {}
+      },
+      observability: {
+        emit(event) {
+          observabilityEvents.push(event);
+        }
+      },
+      fetch: async (url, init) => {
+        requests.push({ url: String(url), init: init ?? {} });
+        if (String(url).endsWith("/capabilities")) {
+          return new Response("not found", { status: 404 });
+        }
+        return Response.json({
+          response: {
+            classification: "user_private",
+            text: "Legacy runtime answer."
+          }
+        });
+      }
+    });
+
+    const result = await collectAgentRun(runner, {
+      principal,
+      conversation,
+      text: "hello",
+      connections: { github: null }
+    });
+
+    expect(result.text).toBe("Legacy runtime answer.");
+    expect(requests.map((request) => request.url)).toEqual([
+      "http://runtime-legacy:8080/capabilities",
+      "http://runtime-legacy:8080/runs"
+    ]);
+    expect(observabilityEvents.map((event) => event.name)).toEqual([
+      "runtime.capabilities.unavailable",
+      "runtime.run.started",
+      "runtime.run.accepted",
+      "runtime.run.completed"
+    ]);
+  });
+
+  test("continues when managed runtime capability discovery returns invalid data", async () => {
+    const observabilityEvents: ObservabilityEventInput[] = [];
+    const requests: Array<{ url: string; init: RequestInit }> = [];
+    const runner = createOpenClawNemoClawAgentRunner({
+      runtimeFactory: {
+        async getOrCreateRuntime() {
+          return {
+            id: "rt_bad_manifest",
+            engine: "openclaw",
+            endpointUrl: "http://runtime-bad-manifest:8080/",
+            authToken: "runtime-token",
+            status: "ready",
+            statePath: "/data/runtimes/rt_bad_manifest/state",
+            configPath: "/data/runtimes/rt_bad_manifest/config/openclaw.json",
+            workspacePath: "/data/runtimes/rt_bad_manifest/workspace"
+          };
+        },
+        async stopRuntime() {},
+        async reapIdleRuntimes() {},
+        recordRuntimeEvent() {}
+      },
+      observability: {
+        emit(event) {
+          observabilityEvents.push(event);
+        }
+      },
+      fetch: async (url, init) => {
+        requests.push({ url: String(url), init: init ?? {} });
+        if (String(url).endsWith("/capabilities")) {
+          return Response.json({ runtimeType: "openclaw" });
+        }
+        return Response.json({
+          response: {
+            classification: "user_private",
+            text: "Runtime answer despite bad manifest."
+          }
+        });
+      }
+    });
+
+    const result = await collectAgentRun(runner, {
+      principal,
+      conversation,
+      text: "hello",
+      connections: { github: null }
+    });
+
+    expect(result.text).toBe("Runtime answer despite bad manifest.");
+    expect(requests.map((request) => request.url)).toEqual([
+      "http://runtime-bad-manifest:8080/capabilities",
+      "http://runtime-bad-manifest:8080/runs"
+    ]);
+    expect(observabilityEvents.map((event) => event.name)).toEqual([
+      "runtime.capabilities.unavailable",
+      "runtime.run.started",
+      "runtime.run.accepted",
+      "runtime.run.completed"
+    ]);
+  });
+
+  test("caches managed runtime capabilities for repeated runs", async () => {
+    const observabilityEvents: ObservabilityEventInput[] = [];
+    const requests: Array<{ url: string; init: RequestInit }> = [];
+    const runner = createOpenClawNemoClawAgentRunner({
+      runtimeFactory: {
+        async getOrCreateRuntime() {
+          return {
+            id: "rt_cache",
+            engine: "openclaw",
+            endpointUrl: "http://runtime-cache:8080/",
+            authToken: "runtime-token",
+            status: "ready",
+            statePath: "/data/runtimes/rt_cache/state",
+            configPath: "/data/runtimes/rt_cache/config/openclaw.json",
+            workspacePath: "/data/runtimes/rt_cache/workspace"
+          };
+        },
+        async stopRuntime() {},
+        async reapIdleRuntimes() {},
+        recordRuntimeEvent() {}
+      },
+      observability: {
+        emit(event) {
+          observabilityEvents.push(event);
+        }
+      },
+      fetch: async (url, init) => {
+        requests.push({ url: String(url), init: init ?? {} });
+        if (String(url).endsWith("/capabilities")) {
+          return Response.json(openClawCapabilityManifest);
+        }
+        return Response.json({
+          response: {
+            classification: "user_private",
+            text: "Runtime answer."
+          }
+        });
+      }
+    });
+
+    await collectAgentRun(runner, {
+      principal,
+      conversation,
+      text: "hello one",
+      connections: { github: null }
+    });
+    await collectAgentRun(runner, {
+      principal,
+      conversation,
+      text: "hello two",
+      connections: { github: null }
+    });
+
+    expect(
+      requests.filter((request) => request.url.endsWith("/capabilities"))
+    ).toHaveLength(1);
+    expect(requests.filter((request) => request.url.endsWith("/runs"))).toHaveLength(
+      2
+    );
+    expect(
+      observabilityEvents.filter(
+        (event) => event.name === "runtime.capabilities.discovered"
+      )
+    ).toHaveLength(1);
+  });
+
+  test("rejects a managed runtime whose capabilities report a different engine", async () => {
+    const runner = createOpenClawNemoClawAgentRunner({
+      runtimeFactory: {
+        async getOrCreateRuntime() {
+          return {
+            id: "rt_u123",
+            engine: "openclaw",
+            endpointUrl: "http://runtime-u123:8080/",
+            authToken: "runtime-token",
+            status: "ready",
+            statePath: "/data/runtimes/rt_u123/state",
+            configPath: "/data/runtimes/rt_u123/config/openclaw.json",
+            workspacePath: "/data/runtimes/rt_u123/workspace"
+          };
+        },
+        async stopRuntime() {},
+        async reapIdleRuntimes() {},
+        recordRuntimeEvent() {}
+      },
+      fetch: async (url) => {
+        if (String(url).endsWith("/capabilities")) {
+          return Response.json({
+            ...openClawCapabilityManifest,
+            runtimeType: "hermes"
+          });
+        }
+        return Response.json({
+          response: {
+            classification: "user_private",
+            text: "Should not run."
+          }
+        });
+      }
+    });
+
+    await expect(
+      collectAgentRun(runner, {
+        principal,
+        conversation,
+        text: "hello",
+        connections: { github: null }
+      })
+    ).rejects.toThrow(
+      "Runtime capability manifest type hermes does not match runtime engine openclaw"
+    );
+  });
+
+  test("accepts OpenClaw family capability aliases", async () => {
+    const runner = createOpenClawNemoClawAgentRunner({
+      runtimeFactory: {
+        async getOrCreateRuntime() {
+          return {
+            id: "rt_openclaw_family",
+            engine: "openclaw",
+            endpointUrl: "http://runtime-openclaw-family:8080/",
+            authToken: "runtime-token",
+            status: "ready",
+            statePath: "/data/runtimes/rt_openclaw_family/state",
+            configPath: "/data/runtimes/rt_openclaw_family/config/openclaw.json",
+            workspacePath: "/data/runtimes/rt_openclaw_family/workspace"
+          };
+        },
+        async stopRuntime() {},
+        async reapIdleRuntimes() {},
+        recordRuntimeEvent() {}
+      },
+      fetch: async (url) => {
+        if (String(url).endsWith("/capabilities")) {
+          return Response.json({
+            ...openClawCapabilityManifest,
+            runtimeType: "openclaw-gateway"
+          });
+        }
+        return Response.json({
+          response: {
+            classification: "user_private",
+            text: "OpenClaw family runtime answer."
+          }
+        });
+      }
+    });
+
+    const result = await collectAgentRun(runner, {
+      principal,
+      conversation,
+      text: "hello",
+      connections: { github: null }
+    });
+
+    expect(result.text).toBe("OpenClaw family runtime answer.");
   });
 
   test("emits observability events for remote runtime calls", async () => {
@@ -388,8 +707,11 @@ describe("createOpenClawNemoClawAgentRunner", () => {
           observabilityEvents.push(event);
         }
       },
-      fetch: async () =>
-        Response.json({
+      fetch: async (url) => {
+        if (String(url).endsWith("/capabilities")) {
+          return Response.json(openClawCapabilityManifest);
+        }
+        return Response.json({
           response: {
             classification: "user_private",
             text: "Runtime answer.",
@@ -409,7 +731,8 @@ describe("createOpenClawNemoClawAgentRunner", () => {
               ]
             }
           }
-        })
+        });
+      }
     });
 
     const result = await collectAgentRun(runner, {
@@ -440,11 +763,31 @@ describe("createOpenClawNemoClawAgentRunner", () => {
 
     expect(result.text).toBe("Runtime answer.");
     expect(observabilityEvents.map((event) => event.name)).toEqual([
+      "runtime.capabilities.discovered",
       "runtime.run.started",
       "runtime.run.accepted",
       "runtime.run.completed"
     ]);
     expect(observabilityEvents[0]).toMatchObject({
+      workspaceId: "T123",
+      principalId: "T123:U123",
+      runtimeId: "rt_u123",
+      runtimeType: "openclaw",
+      status: "ok",
+      attributes: {
+        transports: ["http", "websocket"],
+        streaming: true,
+        nativeScheduler: true,
+        scheduledProviderCalls: true,
+        toolCalls: true,
+        toolBridgeModes: ["tool_gateway", "mcp"],
+        usageReporting: "exact",
+        multimodalInput: true,
+        attachments: true,
+        jobScopedAuth: true
+      }
+    });
+    expect(observabilityEvents[1]).toMatchObject({
       workspaceId: "T123",
       principalId: "T123:U123",
       runtimeId: "rt_u123",
@@ -462,10 +805,23 @@ describe("createOpenClawNemoClawAgentRunner", () => {
           stateRefCount: 1,
           maxOutputVisibility: "public",
           allowPrivateToolDeclassification: false
+        },
+        runtimeCapabilities: {
+          runtimeType: "openclaw",
+          transports: ["http", "websocket"],
+          streaming: true,
+          nativeScheduler: true,
+          scheduledProviderCalls: true,
+          toolCalls: true,
+          toolBridgeModes: ["tool_gateway", "mcp"],
+          usageReporting: "exact",
+          multimodalInput: true,
+          attachments: true,
+          jobScopedAuth: true
         }
       }
     });
-    expect(observabilityEvents[1]).toMatchObject({
+    expect(observabilityEvents[2]).toMatchObject({
       runtimeId: "rt_u123",
       runtimeType: "openclaw",
       status: "ok",
@@ -473,7 +829,7 @@ describe("createOpenClawNemoClawAgentRunner", () => {
         httpStatus: 200
       }
     });
-    expect(observabilityEvents[2]).toMatchObject({
+    expect(observabilityEvents[3]).toMatchObject({
       runtimeId: "rt_u123",
       runtimeType: "openclaw",
       classification: "user_private",
@@ -497,7 +853,11 @@ describe("createOpenClawNemoClawAgentRunner", () => {
       }
     });
     expect(
-      new Set(observabilityEvents.map((event) => event.runId)).size
+      new Set(
+        observabilityEvents
+          .filter((event) => event.name.startsWith("runtime.run."))
+          .map((event) => event.runId)
+      ).size
     ).toBe(1);
     expect(JSON.stringify(observabilityEvents)).not.toContain("runtime-token");
     expect(JSON.stringify(observabilityEvents)).not.toContain("secret-token");

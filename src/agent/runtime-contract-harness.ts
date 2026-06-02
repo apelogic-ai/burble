@@ -9,7 +9,7 @@ import {
 } from "./runtime-contract";
 
 export type RuntimeContractClient = {
-  getCapabilityManifest: () => Promise<unknown>;
+  getCapabilityManifest: () => Promise<RuntimeCapabilityManifest>;
   health: () => Promise<{ ok: boolean; detail?: string }>;
   startRun: (request: RuntimeRunRequest) => Promise<{ runId: string }>;
   streamRunEvents: (runId: string) => AsyncIterable<unknown>;

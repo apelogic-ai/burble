@@ -1,4 +1,4 @@
-import type { RuntimeConfig } from "./config";
+import type { RuntimeConfig, RuntimeEngine } from "./config";
 import { createBurbleConversationConnector } from "./burble-conversation-connector";
 import { info } from "./logger";
 import { createRuntimeRunner } from "./runtime";
@@ -43,6 +43,18 @@ export async function handleRuntimeRequest(
 
   if (url.pathname === "/healthz") {
     return new Response("ok");
+  }
+
+  if (url.pathname === "/capabilities") {
+    if (request.method !== "GET") {
+      return new Response("Method not allowed", { status: 405 });
+    }
+
+    return Response.json(buildRuntimeCapabilityManifest(config), {
+      headers: {
+        "cache-control": "no-store"
+      }
+    });
   }
 
   if (url.pathname === "/internal/conversation/messages") {
@@ -177,6 +189,40 @@ export async function handleRuntimeRequest(
       "cache-control": "no-store"
     }
   });
+}
+
+function buildRuntimeCapabilityManifest(config: RuntimeConfig) {
+  return {
+    runtimeType: config.engine,
+    version: "1",
+    transports: ["http", "sse", "ndjson", "websocket"],
+    streaming: true,
+    cancellation: false,
+    nativeScheduler: true,
+    scheduledProviderCalls: true,
+    toolCalls: true,
+    toolBridgeModes: buildRuntimeToolBridgeModes(config),
+    usageReporting: runtimeUsageReporting(config.engine),
+    multimodalInput: true,
+    multimodalOutput: false,
+    memory: true,
+    durableWorkflowState: true,
+    attachments: true,
+    conversationSend: true,
+    jobScopedAuth: true
+  };
+}
+
+function buildRuntimeToolBridgeModes(config: RuntimeConfig) {
+  const modes = ["tool_gateway"];
+  if (config.mcpGatewayUrl && config.runtimeJwt) {
+    modes.push("mcp");
+  }
+  return modes;
+}
+
+function runtimeUsageReporting(engine: RuntimeEngine) {
+  return engine === "deterministic" ? "none" : "exact";
 }
 
 async function handleLocalConversationMessageRequest(

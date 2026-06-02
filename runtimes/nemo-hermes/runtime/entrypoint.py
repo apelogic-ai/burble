@@ -274,6 +274,35 @@ def build_runtime_response(result: dict[str, Any], prompt: str = "") -> dict[str
     return response
 
 
+def build_runtime_tool_bridge_modes() -> list[str]:
+    modes = ["tool_gateway"]
+    if env("BURBLE_MCP_GATEWAY_URL") and env("BURBLE_RUNTIME_JWT"):
+        modes.append("mcp")
+    return modes
+
+
+def build_runtime_capability_manifest() -> dict[str, Any]:
+    return {
+        "runtimeType": "hermes",
+        "version": "1",
+        "transports": ["http", "websocket"],
+        "streaming": True,
+        "cancellation": False,
+        "nativeScheduler": True,
+        "scheduledProviderCalls": True,
+        "toolCalls": True,
+        "toolBridgeModes": build_runtime_tool_bridge_modes(),
+        "usageReporting": "exact",
+        "multimodalInput": False,
+        "multimodalOutput": False,
+        "memory": False,
+        "durableWorkflowState": True,
+        "attachments": False,
+        "conversationSend": True,
+        "jobScopedAuth": True,
+    }
+
+
 def build_hermes_turn_text(input_body: dict[str, Any]) -> str:
     text = str(input_body.get("text") or "")
     sections: list[str] = []
@@ -499,6 +528,7 @@ class BurbleHermesRuntime:
 
         app = web.Application()
         app.router.add_get("/healthz", self.handle_healthz)
+        app.router.add_get("/capabilities", self.handle_capabilities)
         app.router.add_post("/runs", self.handle_run)
         app.router.add_get("/runs/{run_id}", self.handle_run_snapshot)
         app.router.add_get("/runs/{run_id}/events", self.handle_run_events)
@@ -526,6 +556,12 @@ class BurbleHermesRuntime:
         if self.gateway_process and self.gateway_process.poll() is not None:
             return web.Response(text="gateway stopped", status=503)
         return web.Response(text="ok")
+
+    async def handle_capabilities(self, _request: web.Request) -> web.Response:
+        return web.json_response(
+            build_runtime_capability_manifest(),
+            headers={"cache-control": "no-store"},
+        )
 
     async def handle_run(self, request: web.Request) -> web.Response:
         body = await request.json()

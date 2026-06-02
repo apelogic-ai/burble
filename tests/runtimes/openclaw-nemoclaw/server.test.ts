@@ -4,6 +4,7 @@ import {
   handleRuntimeRequest
 } from "../../../runtimes/openclaw-nemoclaw/src/server";
 import type { RuntimeConfig } from "../../../runtimes/openclaw-nemoclaw/src/config";
+import { parseRuntimeCapabilityManifest } from "../../../src/agent/runtime-contract";
 
 class FakeRuntimeWebSocket {
   readonly messages: string[] = [];
@@ -69,6 +70,40 @@ describe("handleRuntimeRequest", () => {
 
     expect(response.status).toBe(200);
     expect(await response.text()).toBe("ok");
+  });
+
+  test("serves a runtime capability manifest", async () => {
+    const response = await handleRuntimeRequest(
+      new Request("http://runtime/capabilities"),
+      {
+        ...config,
+        engine: "openclaw-gateway",
+        mcpGatewayUrl: "http://agentgateway:3000/mcp",
+        runtimeJwt: "jwt"
+      }
+    );
+
+    expect(response.status).toBe(200);
+    const manifest = parseRuntimeCapabilityManifest(await response.json());
+    expect(manifest).toEqual({
+      runtimeType: "openclaw-gateway",
+      version: expect.any(String),
+      transports: ["http", "sse", "ndjson", "websocket"],
+      streaming: true,
+      cancellation: false,
+      nativeScheduler: true,
+      scheduledProviderCalls: true,
+      toolCalls: true,
+      toolBridgeModes: ["tool_gateway", "mcp"],
+      usageReporting: "exact",
+      multimodalInput: true,
+      multimodalOutput: false,
+      memory: true,
+      durableWorkflowState: true,
+      attachments: true,
+      conversationSend: true,
+      jobScopedAuth: true
+    });
   });
 
   test("handles run requests", async () => {
