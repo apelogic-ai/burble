@@ -307,6 +307,7 @@ export const runtimeCapabilityManifestSchema = z
 export type RuntimeRunRequest = z.infer<typeof runtimeRunRequestSchema>;
 export type RuntimeRunEvent = z.infer<typeof runtimeRunEventSchema>;
 export type RuntimeFinalResponse = z.infer<typeof runtimeFinalResponseSchema>;
+export type RuntimeUsage = z.infer<typeof runtimeUsageSchema>;
 export type RuntimeCapabilityManifest = z.infer<
   typeof runtimeCapabilityManifestSchema
 >;
