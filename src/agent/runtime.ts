@@ -18,6 +18,8 @@ export type ConfiguredAgentRunnerDeps = {
   googleTools?: ReturnType<typeof createGoogleTools>;
   jiraTools?: ReturnType<typeof createJiraTools>;
   slackTools?: ReturnType<typeof createSlackTools>;
+  managedRuntimeUrl?: string | null;
+  /** Compatibility alias for older call sites. */
   openClawNemoClawUrl?: string | null;
   runtimeFactory?: RuntimeFactory;
   resolveModel?: ModelResolver;
@@ -43,18 +45,19 @@ export function createConfiguredAgentRunner(
         ...(deps.observability ? { observability: deps.observability } : {})
       });
 
-    case "burble-runtime":
-      if (!deps.openClawNemoClawUrl && !deps.runtimeFactory) {
+    case "burble-runtime": {
+      const managedRuntimeUrl =
+        deps.managedRuntimeUrl ?? deps.openClawNemoClawUrl;
+      if (!managedRuntimeUrl && !deps.runtimeFactory) {
         throw new Error("managed runtime URL is required");
       }
 
       return createManagedRuntimeAgentRunner({
-        ...(deps.openClawNemoClawUrl
-          ? { baseUrl: deps.openClawNemoClawUrl }
-          : {}),
+        ...(managedRuntimeUrl ? { baseUrl: managedRuntimeUrl } : {}),
         ...(deps.runtimeFactory ? { runtimeFactory: deps.runtimeFactory } : {}),
         ...(deps.logInfo ? { logInfo: deps.logInfo } : {}),
         ...(deps.observability ? { observability: deps.observability } : {})
       });
+    }
   }
 }

@@ -22,6 +22,8 @@ export type Config = {
   agentRuntime: AgentRuntime;
   agentRuntimeFactory: AgentRuntimeFactory;
   aiModel: string;
+  managedRuntimeUrl: string | null;
+  /** Compatibility alias for existing OPENCLAW_NEMOCLAW_URL deployments. */
   openClawNemoClawUrl: string | null;
   agentRuntimeEngine: AgentRuntimeEngine;
   openClawNemoClawEngine: OpenClawNemoClawEngine;
@@ -235,6 +237,9 @@ export function readConfig(env: Env): Config {
   const configuredAgentRuntimeImage =
     optionalSecretEnv(env, "AGENT_RUNTIME_IMAGE") ??
     optionalSecretEnv(env, "OPENCLAW_NEMOCLAW_IMAGE");
+  const managedRuntimeUrl =
+    optionalUrlEnv(env, "AGENT_RUNTIME_URL") ??
+    optionalUrlEnv(env, "OPENCLAW_NEMOCLAW_URL");
 
   return {
     slackBotToken: requiredEnv(env, "SLACK_BOT_TOKEN"),
@@ -259,7 +264,8 @@ export function readConfig(env: Env): Config {
     agentRuntime: optionalAgentRuntimeEnv(env, "AGENT_RUNTIME", "ai-sdk"),
     agentRuntimeFactory,
     aiModel: validateAgentModelId(env.AI_MODEL ?? "openai:gpt-5.4"),
-    openClawNemoClawUrl: optionalUrlEnv(env, "OPENCLAW_NEMOCLAW_URL"),
+    managedRuntimeUrl,
+    openClawNemoClawUrl: managedRuntimeUrl,
     agentRuntimeEngine,
     openClawNemoClawEngine: agentRuntimeEngine,
     agentRuntimeDataRoot: env.AGENT_RUNTIME_DATA_ROOT ?? "/data/runtimes",

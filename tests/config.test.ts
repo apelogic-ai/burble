@@ -34,6 +34,7 @@ describe("readConfig", () => {
       agentRuntime: "ai-sdk",
       agentRuntimeFactory: "static",
       aiModel: "openai:gpt-5.4",
+      managedRuntimeUrl: null,
       openClawNemoClawUrl: null,
       agentRuntimeEngine: "openclaw",
       openClawNemoClawEngine: "openclaw",
@@ -344,13 +345,25 @@ describe("readConfig", () => {
     );
   });
 
-  test("normalizes OpenClaw/NemoClaw runtime URL", () => {
+  test("normalizes managed runtime URL", () => {
+    const config = readConfig({
+      ...validEnv,
+      AGENT_RUNTIME: "burble-runtime",
+      AGENT_RUNTIME_URL: "http://managed-runtime:8080/"
+    });
+
+    expect(config.managedRuntimeUrl).toBe("http://managed-runtime:8080");
+    expect(config.openClawNemoClawUrl).toBe("http://managed-runtime:8080");
+  });
+
+  test("keeps OPENCLAW_NEMOCLAW_URL as a managed runtime URL alias", () => {
     const config = readConfig({
       ...validEnv,
       AGENT_RUNTIME: "burble-runtime",
       OPENCLAW_NEMOCLAW_URL: "http://openclaw-runtime:8080/"
     });
 
+    expect(config.managedRuntimeUrl).toBe("http://openclaw-runtime:8080");
     expect(config.openClawNemoClawUrl).toBe("http://openclaw-runtime:8080");
   });
 

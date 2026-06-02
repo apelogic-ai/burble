@@ -248,7 +248,7 @@ export function createSlackRuntime(
           googleTools,
           slackTools,
           jiraTools,
-          openClawNemoClawUrl: config.openClawNemoClawUrl,
+          managedRuntimeUrl: config.managedRuntimeUrl,
           ...(runtimeFactory ? { runtimeFactory } : {}),
           observability,
           logInfo: (message) => app.logger.info(withUtcTimestamp(message))
@@ -1533,14 +1533,14 @@ function createOpenClawRuntimeFactory(
     });
   }
 
-  if (!config.openClawNemoClawUrl) {
+  if (!config.managedRuntimeUrl) {
     return undefined;
   }
 
   return createStaticRuntimeFactory({
     store,
     engine: config.agentRuntimeEngine,
-    endpointUrl: config.openClawNemoClawUrl,
+    endpointUrl: config.managedRuntimeUrl,
     authToken: config.internalApiToken ?? "",
     dataRoot: config.agentRuntimeDataRoot,
     buildManifest: (principal) =>

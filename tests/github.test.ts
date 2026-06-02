@@ -34,6 +34,7 @@ const config: Config = {
   agentFastTrack: false,
   agentRuntime: "ai-sdk",
   agentRuntimeFactory: "static",
+  managedRuntimeUrl: null,
   openClawNemoClawUrl: null,
   agentRuntimeEngine: "openclaw",
   openClawNemoClawEngine: "openclaw",

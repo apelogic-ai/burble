@@ -32,7 +32,7 @@ describe("createConfiguredAgentRunner", () => {
       runtime: "burble-runtime",
       model: "openai:test-model",
       githubTools,
-      openClawNemoClawUrl: "http://openclaw-runtime:8080"
+      managedRuntimeUrl: "http://managed-runtime:8080"
     });
 
     expect(runner.name).toBe("burble-runtime");
@@ -40,6 +40,17 @@ describe("createConfiguredAgentRunner", () => {
       remote: true,
       requiresToolGateway: true
     });
+  });
+
+  test("keeps the legacy OpenClaw/NemoClaw URL dependency as an alias", () => {
+    const runner = createConfiguredAgentRunner({
+      runtime: "burble-runtime",
+      model: "openai:test-model",
+      githubTools,
+      openClawNemoClawUrl: "http://openclaw-runtime:8080"
+    });
+
+    expect(runner.name).toBe("burble-runtime");
   });
 
   test("selects the managed runtime runner with a runtime factory", () => {
