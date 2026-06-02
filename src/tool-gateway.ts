@@ -337,7 +337,8 @@ export async function handleToolGatewayRequest(
           classification: "user_private",
           content: {
             error: "invalid_scheduled_job_capability_input",
-            message: inputError
+            message: inputError,
+            diagnostics: describeScheduledJobRegisterCapabilityInput(body.input)
           }
         },
         400
@@ -1435,12 +1436,17 @@ function readScheduledJobRegisterCapabilityInput(input: unknown):
     return null;
   }
   if (
-    (normalized.routeId !== undefined && !isNonEmptyString(normalized.routeId)) ||
+    (normalized.routeId !== undefined &&
+      normalized.routeId !== null &&
+      !isNonEmptyString(normalized.routeId)) ||
     (normalized.capabilityProfile !== undefined &&
+      normalized.capabilityProfile !== null &&
       !isNonEmptyString(normalized.capabilityProfile)) ||
     (normalized.runtimeType !== undefined &&
+      normalized.runtimeType !== null &&
       !isAgentRuntimeEngine(normalized.runtimeType)) ||
     (normalized.stateRefs !== undefined &&
+      normalized.stateRefs !== null &&
       !Array.isArray(normalized.stateRefs))
   ) {
     return null;
@@ -1480,11 +1486,12 @@ function describeScheduledJobRegisterCapabilityInputError(
   }
 
   if (!readScheduledJobRegistrationTools(normalized)) {
-    return "scheduledJob.registerCapability requires requiredTools, allowedTools, required_tools, allowed_tools, or tools to be a non-empty string array.";
+    return "scheduledJob.registerCapability requires requiredTools, allowedTools, required_tools, allowed_tools, or tools to be a non-empty string, string array, or tool descriptor array.";
   }
 
   if (
     normalized.routeId !== undefined &&
+    normalized.routeId !== null &&
     !isNonEmptyString(normalized.routeId)
   ) {
     return "scheduledJob.registerCapability requires routeId to be a non-empty string when provided.";
@@ -1492,6 +1499,7 @@ function describeScheduledJobRegisterCapabilityInputError(
 
   if (
     normalized.capabilityProfile !== undefined &&
+    normalized.capabilityProfile !== null &&
     !isNonEmptyString(normalized.capabilityProfile)
   ) {
     return "scheduledJob.registerCapability requires capabilityProfile to be a non-empty string when provided.";
@@ -1499,6 +1507,7 @@ function describeScheduledJobRegisterCapabilityInputError(
 
   if (
     normalized.runtimeType !== undefined &&
+    normalized.runtimeType !== null &&
     !isAgentRuntimeEngine(normalized.runtimeType)
   ) {
     return "scheduledJob.registerCapability requires runtimeType to be a supported runtime engine when provided.";
@@ -1506,12 +1515,34 @@ function describeScheduledJobRegisterCapabilityInputError(
 
   if (
     normalized.stateRefs !== undefined &&
+    normalized.stateRefs !== null &&
     !Array.isArray(normalized.stateRefs)
   ) {
     return "scheduledJob.registerCapability requires stateRefs to be an array when provided.";
   }
 
   return null;
+}
+
+function describeScheduledJobRegisterCapabilityInput(
+  input: unknown
+): { receivedKeys: string[]; nestedKeys: string[]; normalizedKeys: string[] } {
+  const receivedKeys = isOptionalObject(input)
+    ? Object.keys(input).sort()
+    : [];
+  const nested =
+    isOptionalObject(input)
+      ? readObjectAlias(input, ["scheduledJob", "scheduled_job", "capability"])
+      : null;
+  const nestedKeys = nested ? Object.keys(nested).sort() : [];
+  const normalized = normalizeScheduledJobRegistrationInput(input);
+  const normalizedKeys = normalized
+    ? Object.entries(normalized)
+        .filter(([, value]) => value !== undefined)
+        .map(([key]) => key)
+        .sort()
+    : [];
+  return { receivedKeys, nestedKeys, normalizedKeys };
 }
 
 type ScheduledJobRegistrationInput = {
@@ -1540,22 +1571,36 @@ function normalizeScheduledJobRegistrationInput(
       "jobId",
       "scheduledJobId",
       "job_id",
-      "scheduled_job_id"
+      "scheduled_job_id",
+      "job",
+      "id"
     ]),
     requiredTools: readUnknownAlias(source, [
       "requiredTools",
       "allowedTools",
       "required_tools",
       "allowed_tools",
-      "tools"
+      "tools",
+      "toolNames",
+      "tool_names",
+      "providerTools",
+      "provider_tools",
+      "requiredProviderTools",
+      "required_provider_tools",
+      "allowedProviderTools",
+      "allowed_provider_tools"
     ]),
     routeId: readUnknownAlias(source, ["routeId", "route_id"]),
     capabilityProfile: readUnknownAlias(source, [
       "capabilityProfile",
       "capability_profile"
     ]),
-    runtimeType: readUnknownAlias(source, ["runtimeType", "runtime_type"]),
-    stateRefs: readUnknownAlias(source, ["stateRefs", "state_refs"]),
+    runtimeType: normalizeScheduledJobRuntimeType(
+      readUnknownAlias(source, ["runtimeType", "runtime_type"])
+    ),
+    stateRefs: normalizeScheduledJobStateRefs(
+      readUnknownAlias(source, ["stateRefs", "state_refs"])
+    ),
     visibilityPolicy: readUnknownAlias(source, [
       "visibilityPolicy",
       "visibility_policy"
@@ -1573,8 +1618,62 @@ function readScheduledJobRegistrationId(
 function readScheduledJobRegistrationTools(
   input: ScheduledJobRegistrationInput
 ): string[] | null {
-  const tools = input.requiredTools;
-  return stringArray(tools, 100) ? tools : null;
+  return normalizeScheduledJobRegistrationTools(input.requiredTools);
+}
+
+function normalizeScheduledJobRegistrationTools(value: unknown): string[] | null {
+  if (typeof value === "string") {
+    const tools = value
+      .split(/[,\s]+/)
+      .map((toolName) => toolName.trim())
+      .filter(Boolean);
+    return tools.length ? tools.slice(0, 100) : null;
+  }
+  if (Array.isArray(value)) {
+    const tools = value
+      .map((item) => {
+        if (typeof item === "string") {
+          return item.trim();
+        }
+        if (isOptionalObject(item)) {
+          return readStringAlias(item, ["name", "toolName", "tool", "id"]) ?? "";
+        }
+        return "";
+      })
+      .filter(Boolean);
+    return tools.length ? tools.slice(0, 100) : null;
+  }
+  return null;
+}
+
+function normalizeScheduledJobStateRefs(value: unknown): unknown[] | unknown {
+  if (value === null || value === undefined) {
+    return value;
+  }
+  if (Array.isArray(value)) {
+    return value;
+  }
+  if (isOptionalObject(value)) {
+    return [value];
+  }
+  return value;
+}
+
+function normalizeScheduledJobRuntimeType(value: unknown): unknown {
+  if (typeof value !== "string") {
+    return value;
+  }
+  const normalized = value.trim().toLowerCase();
+  if (normalized === "nemo-hermes" || normalized === "nemo_hermes") {
+    return "hermes";
+  }
+  if (
+    normalized === "openclaw-nemoclaw" ||
+    normalized === "openclaw_nemoclaw"
+  ) {
+    return "openclaw";
+  }
+  return value;
 }
 
 function readUnknownAlias(

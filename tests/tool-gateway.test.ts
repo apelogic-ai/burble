@@ -763,6 +763,31 @@ describe("handleToolGatewayRequest", () => {
             ]
           }
         }
+      },
+      {
+        name: "comma-delimited provider tools",
+        input: {
+          job: "ai-news-hourly",
+          provider_tools:
+            "google_get_drive_file, google_append_to_drive_text_file",
+          route_id: null,
+          state_refs: {
+            provider: "google",
+            kind: "drive_file",
+            id: "file-1"
+          },
+          runtime_type: "nemo-hermes"
+        }
+      },
+      {
+        name: "object provider tools",
+        input: {
+          id: "ai-news-hourly",
+          tool_names: [
+            { name: "google_get_drive_file" },
+            { toolName: "google_append_to_drive_text_file" }
+          ]
+        }
       }
     ];
 
@@ -885,7 +910,7 @@ describe("handleToolGatewayRequest", () => {
         {
           input: {
             job_id: "ai-news-hourly",
-            requiredTools: "google.getDriveFile"
+            requiredTools: 42
           }
         },
         "runtime-token-u123",
@@ -899,7 +924,12 @@ describe("handleToolGatewayRequest", () => {
       content: {
         error: "invalid_scheduled_job_capability_input",
         message:
-          "scheduledJob.registerCapability requires requiredTools, allowedTools, required_tools, allowed_tools, or tools to be a non-empty string array."
+          "scheduledJob.registerCapability requires requiredTools, allowedTools, required_tools, allowed_tools, or tools to be a non-empty string, string array, or tool descriptor array.",
+        diagnostics: {
+          receivedKeys: ["job_id", "requiredTools"],
+          nestedKeys: [],
+          normalizedKeys: ["jobId", "requiredTools"]
+        }
       }
     });
   });
