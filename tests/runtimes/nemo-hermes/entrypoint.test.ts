@@ -340,6 +340,27 @@ print(json.dumps(ctx.tools))
         is_async: true
       })
     );
+    expect(result).toContainEqual(
+      expect.objectContaining({
+        name: "burble_provider_call",
+        toolset: "web",
+        is_async: true
+      })
+    );
+    expect(result).toContainEqual(
+      expect.objectContaining({
+        name: "google_get_drive_file",
+        toolset: "web",
+        is_async: true
+      })
+    );
+    expect(result).toContainEqual(
+      expect.objectContaining({
+        name: "google_append_to_drive_text_file",
+        toolset: "web",
+        is_async: true
+      })
+    );
     const tools = result as Array<{
       name?: string;
       schema?: {

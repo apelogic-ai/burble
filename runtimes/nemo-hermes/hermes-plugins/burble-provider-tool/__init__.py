@@ -65,7 +65,7 @@ TOOL_NAME_ALIASES = {
     "scheduled_job_register_capability": "scheduledJob.registerCapability",
 }
 
-PROVIDER_BRIDGE_TOOLSET = "cronjob"
+PROVIDER_BRIDGE_TOOLSETS = ["cronjob", "web"]
 
 
 BURBLE_PROVIDER_CALL_SCHEMA = {
@@ -231,23 +231,24 @@ def _make_provider_alias_handler(canonical_name: str):
 
 
 def register(ctx) -> None:
-    ctx.register_tool(
-        name="burble_provider_call",
-        toolset=PROVIDER_BRIDGE_TOOLSET,
-        schema=BURBLE_PROVIDER_CALL_SCHEMA,
-        handler=_burble_provider_call,
-        is_async=True,
-        description=BURBLE_PROVIDER_CALL_SCHEMA["description"],
-        override=True,
-    )
-    for alias, canonical_name in sorted(TOOL_NAME_ALIASES.items()):
-        schema = _provider_alias_schema(alias, canonical_name)
+    for toolset in PROVIDER_BRIDGE_TOOLSETS:
         ctx.register_tool(
-            name=alias,
-            toolset=PROVIDER_BRIDGE_TOOLSET,
-            schema=schema,
-            handler=_make_provider_alias_handler(canonical_name),
+            name="burble_provider_call",
+            toolset=toolset,
+            schema=BURBLE_PROVIDER_CALL_SCHEMA,
+            handler=_burble_provider_call,
             is_async=True,
-            description=schema["description"],
+            description=BURBLE_PROVIDER_CALL_SCHEMA["description"],
             override=True,
         )
+        for alias, canonical_name in sorted(TOOL_NAME_ALIASES.items()):
+            schema = _provider_alias_schema(alias, canonical_name)
+            ctx.register_tool(
+                name=alias,
+                toolset=toolset,
+                schema=schema,
+                handler=_make_provider_alias_handler(canonical_name),
+                is_async=True,
+                description=schema["description"],
+                override=True,
+            )
