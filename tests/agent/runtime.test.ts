@@ -27,7 +27,7 @@ describe("createConfiguredAgentRunner", () => {
     });
   });
 
-  test("selects the OpenClaw/NemoClaw runner when configured", () => {
+  test("selects the managed runtime runner when configured", () => {
     const runner = createConfiguredAgentRunner({
       runtime: "burble-runtime",
       model: "openai:test-model",
@@ -42,7 +42,7 @@ describe("createConfiguredAgentRunner", () => {
     });
   });
 
-  test("selects the OpenClaw/NemoClaw runner with a runtime factory", () => {
+  test("selects the managed runtime runner with a runtime factory", () => {
     const runner = createConfiguredAgentRunner({
       runtime: "burble-runtime",
       model: "openai:test-model",
@@ -59,13 +59,13 @@ describe("createConfiguredAgentRunner", () => {
     expect(runner.name).toBe("burble-runtime");
   });
 
-  test("requires a runtime URL for OpenClaw/NemoClaw", () => {
+  test("requires a runtime URL for managed runtimes", () => {
     expect(() =>
       createConfiguredAgentRunner({
         runtime: "burble-runtime",
         model: "openai:test-model",
         githubTools
       })
-    ).toThrow("OPENCLAW_NEMOCLAW_URL is required");
+    ).toThrow("managed runtime URL is required");
   });
 });

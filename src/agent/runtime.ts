@@ -5,7 +5,7 @@ import type { createJiraTools } from "../tools/jira";
 import type { createSlackTools } from "../tools/slack";
 import { createAiSdkAgentRunner } from "./runner";
 import type { AgentGenerateText } from "./runner";
-import { createOpenClawNemoClawAgentRunner } from "./runners/openclaw-nemoclaw";
+import { createManagedRuntimeAgentRunner } from "./runners/managed-runtime";
 import type { ModelResolver } from "./providers";
 import type { RuntimeFactory } from "./runtime-factory";
 import type { AgentRunner } from "./types";
@@ -45,10 +45,10 @@ export function createConfiguredAgentRunner(
 
     case "burble-runtime":
       if (!deps.openClawNemoClawUrl && !deps.runtimeFactory) {
-        throw new Error("OPENCLAW_NEMOCLAW_URL is required");
+        throw new Error("managed runtime URL is required");
       }
 
-      return createOpenClawNemoClawAgentRunner({
+      return createManagedRuntimeAgentRunner({
         ...(deps.openClawNemoClawUrl
           ? { baseUrl: deps.openClawNemoClawUrl }
           : {}),

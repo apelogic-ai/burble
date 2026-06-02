@@ -1028,7 +1028,7 @@ describe("createOpenClawNemoClawAgentRunner", () => {
         text: "hello",
         connections: { github: null }
       })
-    ).rejects.toThrow("OpenClaw/NemoClaw runtime returned HTTP 500");
+    ).rejects.toThrow("Managed runtime returned HTTP 500");
   });
 
   test("rejects malformed remote runtime responses", async () => {
@@ -1049,6 +1049,6 @@ describe("createOpenClawNemoClawAgentRunner", () => {
         text: "hello",
         connections: { github: null }
       })
-    ).rejects.toThrow("OpenClaw/NemoClaw runtime returned an invalid response");
+    ).rejects.toThrow("Managed runtime returned an invalid response");
   });
 });
