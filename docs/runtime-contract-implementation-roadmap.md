@@ -24,6 +24,12 @@ Already landed or in flight:
   `/capabilities`;
 - a smoke-harness contract test against the OpenClaw/NemoClaw deterministic
   handler.
+- a Burble-side managed runtime adapter seam, with the previous
+  OpenClaw/NemoClaw runner name retained as a compatibility export;
+- `AGENT_RUNTIME_URL` / `managedRuntimeUrl` as the canonical configured runtime
+  endpoint, with `OPENCLAW_NEMOCLAW_URL` retained as a compatibility alias;
+- `native-runtime` as the canonical execution mode for native runtime turns,
+  with `openclaw-native` retained as a compatibility alias.
 
 ## PR 1: Runtime Adapter Unification
 
@@ -38,6 +44,17 @@ Scope:
 - remove direct call-site knowledge of OpenClaw-vs-Hermes where Burble only
   needs the runtime contract;
 - extend shared contract tests to both adapters where possible.
+
+Current PR slice:
+
+- `RuntimeAdapter` is now the Burble-side seam used to wrap managed runtime
+  implementations as `AgentRunner`s;
+- the current HTTP/WebSocket contract path is exposed as the managed runtime
+  adapter and still supports the old OpenClaw/NemoClaw export name;
+- Burble app config and Slack runtime setup use managed-runtime naming while
+  preserving legacy env/config aliases;
+- the request contract accepts canonical `native-runtime` execution mode and
+  legacy `openclaw-native` for older callers.
 
 Likely regression points:
 

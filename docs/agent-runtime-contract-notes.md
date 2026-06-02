@@ -499,6 +499,18 @@ the contract explicit and testable:
 After that, a WebSocket runtime-control PR can add the resident control channel
 without breaking HTTP/SSE runtimes.
 
+The first adapter-unification implementation keeps existing deployments and
+runtime images compatible while moving the Burble-facing names to runtime-neutral
+terms:
+
+- `RuntimeAdapter` is the Burble-side seam; the existing managed HTTP/WebSocket
+  runtime path is the first implementation;
+- `AGENT_RUNTIME_URL` / `managedRuntimeUrl` is the canonical static runtime
+  endpoint, while `OPENCLAW_NEMOCLAW_URL` remains an alias;
+- `native-runtime` is the canonical execution mode for native agent runtime
+  turns, while `openclaw-native` remains an accepted wire alias for existing
+  OpenClaw/NemoClaw code and tests.
+
 ## Implementation Roadmap
 
 Recommended sequence:
