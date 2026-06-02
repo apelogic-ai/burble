@@ -234,7 +234,7 @@ export function createSlackRuntime(
     searchSlackUsers,
     searchSlackMessages
   });
-  const runtimeFactory = createOpenClawRuntimeFactory(
+  const runtimeFactory = createManagedRuntimeFactory(
     config,
     store,
     runtimeJwtIssuer
@@ -1492,7 +1492,7 @@ export async function readAgentConfigFile(
   }
 }
 
-function createOpenClawRuntimeFactory(
+function createManagedRuntimeFactory(
   config: Config,
   store: TokenStore,
   runtimeJwtIssuer?: RuntimeJwtIssuer

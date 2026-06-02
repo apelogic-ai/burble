@@ -5,6 +5,10 @@ import type { RuntimeFactory, RuntimeHandle } from "../runtime-factory";
 import type { ObservabilitySink } from "../../observability";
 import type { RuntimeCapabilityManifest } from "../runtime-contract";
 import {
+  createAgentRunnerFromRuntimeAdapter,
+  type RuntimeAdapter
+} from "../runtime-adapter";
+import {
   createRuntimeContractHttpClient,
   RuntimeCapabilityDiscoveryError
 } from "../runtime-contract-http-client";
@@ -87,6 +91,12 @@ type RuntimeCapabilityCache = Map<string, RuntimeCapabilityCacheEntry>;
 export function createManagedRuntimeAgentRunner(
   deps: ManagedRuntimeAgentRunnerDeps
 ): AgentRunner {
+  return createAgentRunnerFromRuntimeAdapter(createManagedRuntimeAdapter(deps));
+}
+
+export function createManagedRuntimeAdapter(
+  deps: ManagedRuntimeAgentRunnerDeps
+): RuntimeAdapter {
   if (!deps.baseUrl && !deps.runtimeFactory) {
     throw new Error("managed runtime URL or runtimeFactory is required");
   }
