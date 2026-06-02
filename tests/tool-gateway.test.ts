@@ -706,6 +706,48 @@ describe("handleToolGatewayRequest", () => {
     );
   });
 
+  test("accepts scheduled job provider capability aliases used by native runtimes", async () => {
+    const upserts: unknown[] = [];
+    const response = await handleToolGatewayRequest(
+      config,
+      createStore(null, runtime, [], null, [], { upserts }),
+      "scheduledJob.registerCapability",
+      request(
+        "scheduledJob.registerCapability",
+        {
+          input: {
+            scheduledJobId: "ai-news-hourly",
+            allowedTools: [
+              "google_get_drive_file",
+              "google_append_to_drive_text_file"
+            ]
+          }
+        },
+        "runtime-token-u123",
+        "rt_u123"
+      )
+    );
+
+    expect(response.status).toBe(200);
+    expect(upserts).toEqual([
+      expect.objectContaining({
+        jobId: "ai-news-hourly",
+        requiredTools: [
+          "google_append_to_drive_text_file",
+          "google_get_drive_file"
+        ]
+      })
+    ]);
+    const body = await response.json();
+    expect(body.content.scheduledJob).toMatchObject({
+      jobId: "ai-news-hourly",
+      allowedTools: [
+        "google_append_to_drive_text_file",
+        "google_get_drive_file"
+      ]
+    });
+  });
+
   test("returns field-level errors for invalid scheduled job provider registrations", async () => {
     const response = await handleToolGatewayRequest(
       config,
@@ -730,7 +772,7 @@ describe("handleToolGatewayRequest", () => {
       content: {
         error: "invalid_scheduled_job_capability_input",
         message:
-          "scheduledJob.registerCapability requires requiredTools to be a non-empty string array."
+          "scheduledJob.registerCapability requires requiredTools or allowedTools to be a non-empty string array."
       }
     });
   });

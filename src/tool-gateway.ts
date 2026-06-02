@@ -1415,9 +1415,11 @@ function readScheduledJobRegisterCapabilityInput(input: unknown):
   if (!isOptionalObject(input)) {
     return null;
   }
+  const jobId = readScheduledJobRegistrationId(input);
+  const requiredTools = readScheduledJobRegistrationTools(input);
   if (
-    !isNonEmptyString(input.jobId) ||
-    !stringArray(input.requiredTools, 100)
+    !jobId ||
+    !requiredTools
   ) {
     return null;
   }
@@ -1437,8 +1439,8 @@ function readScheduledJobRegisterCapabilityInput(input: unknown):
   }
 
   return {
-    jobId: input.jobId,
-    requiredTools: input.requiredTools,
+    jobId,
+    requiredTools,
     ...(typeof input.routeId === "string" ? { routeId: input.routeId } : {}),
     ...(typeof input.capabilityProfile === "string"
       ? { capabilityProfile: input.capabilityProfile }
@@ -1460,12 +1462,12 @@ function describeScheduledJobRegisterCapabilityInputError(
     return "scheduledJob.registerCapability requires an object input.";
   }
 
-  if (!isNonEmptyString(input.jobId)) {
-    return "scheduledJob.registerCapability requires jobId to be a non-empty string.";
+  if (!readScheduledJobRegistrationId(input)) {
+    return "scheduledJob.registerCapability requires jobId or scheduledJobId to be a non-empty string.";
   }
 
-  if (!stringArray(input.requiredTools, 100)) {
-    return "scheduledJob.registerCapability requires requiredTools to be a non-empty string array.";
+  if (!readScheduledJobRegistrationTools(input)) {
+    return "scheduledJob.registerCapability requires requiredTools or allowedTools to be a non-empty string array.";
   }
 
   if (
@@ -1501,6 +1503,20 @@ function describeScheduledJobRegisterCapabilityInputError(
   }
 
   return null;
+}
+
+function readScheduledJobRegistrationId(
+  input: Record<string, unknown>
+): string | null {
+  const jobId = input.jobId ?? input.scheduledJobId;
+  return typeof jobId === "string" && jobId.trim() ? jobId.trim() : null;
+}
+
+function readScheduledJobRegistrationTools(
+  input: Record<string, unknown>
+): string[] | null {
+  const tools = input.requiredTools ?? input.allowedTools;
+  return stringArray(tools, 100) ? tools : null;
 }
 
 function isAgentRuntimeEngine(value: unknown): value is AgentRuntimeEngine {
