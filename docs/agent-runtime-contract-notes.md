@@ -143,6 +143,7 @@ Expected environment:
 Expected endpoints:
 
 - `GET /healthz`
+- `GET /capabilities`
 - `POST /runs`
 - `GET /runs/:runId`
 - `GET /runs/:runId/events`
@@ -157,6 +158,7 @@ integration and WebSocket as the preferred resident-runtime control channel.
 
 Minimum required transport:
 
+- `GET /capabilities`
 - `GET /healthz`
 - `POST /runs`
 - `GET /runs/:runId`
@@ -504,7 +506,13 @@ Recommended sequence:
 1. **Contract foundation.** Land shared schemas, parser helpers, and the
    contract smoke harness. This PR should be mostly additive and behavior-neutral.
 2. **Runtime conformance tests.** Run the same harness against OpenClaw Gateway
-   and Hermes containers in CI or an integration test profile.
+   and Hermes containers in CI or an integration test profile. The first
+   local slice should keep dependencies light: run the shared smoke harness
+   against the TypeScript OpenClaw/NemoClaw runtime handler in deterministic
+   mode, and validate Hermes' advertised manifest through the Python entrypoint
+   probe. Full Hermes HTTP/WebSocket conformance should run against the built
+   runtime image because the local TypeScript test environment does not install
+   Hermes' Python HTTP stack.
 3. **Tool bridge unification.** Make each runtime call one canonical Burble tool
    bridge shape, even if the runtime exposes ergonomic aliases internally.
 4. **Generated runtime tool catalog.** Generate OpenClaw and Hermes tool aliases
