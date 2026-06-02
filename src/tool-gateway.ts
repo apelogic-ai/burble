@@ -85,6 +85,7 @@ import {
 } from "./mcp/atlassian-logging";
 import { verifyJiraAuthForOpaqueAtlassianMcpError } from "./mcp/atlassian-auth";
 import type { ObservabilitySink } from "./observability";
+import { formatLogLine } from "./logging";
 import { buildScheduledJobContext } from "./agent/scheduled-job-context";
 import { assertScheduledJobCapabilityMatchesRuntime } from "./agent/scheduled-job-auth";
 import {
@@ -332,13 +333,20 @@ export async function handleToolGatewayRequest(
       body.input
     );
     if (inputError) {
+      const diagnostics = describeScheduledJobRegisterCapabilityInput(body.input);
+      console.warn(
+        formatLogLine(
+          "warn",
+          `scheduledJob.registerCapability invalid input runtimeId=${auth.runtime.id} message=${JSON.stringify(inputError)} diagnostics=${JSON.stringify(diagnostics)}`
+        )
+      );
       return jsonResponse(
         {
           classification: "user_private",
           content: {
             error: "invalid_scheduled_job_capability_input",
             message: inputError,
-            diagnostics: describeScheduledJobRegisterCapabilityInput(body.input)
+            diagnostics
           }
         },
         400
@@ -1588,7 +1596,9 @@ function normalizeScheduledJobRegistrationInput(
       "requiredProviderTools",
       "required_provider_tools",
       "allowedProviderTools",
-      "allowed_provider_tools"
+      "allowed_provider_tools",
+      "providerToolNames",
+      "provider_tool_names"
     ]),
     routeId: readUnknownAlias(source, ["routeId", "route_id"]),
     capabilityProfile: readUnknownAlias(source, [
@@ -1636,10 +1646,40 @@ function normalizeScheduledJobRegistrationTools(value: unknown): string[] | null
           return item.trim();
         }
         if (isOptionalObject(item)) {
-          return readStringAlias(item, ["name", "toolName", "tool", "id"]) ?? "";
+          return readStringAlias(item, [
+            "name",
+            "toolName",
+            "tool_name",
+            "tool",
+            "canonicalName",
+            "canonical_name",
+            "id"
+          ]) ?? "";
         }
         return "";
       })
+      .filter(Boolean);
+    return tools.length ? tools.slice(0, 100) : null;
+  }
+  if (isOptionalObject(value)) {
+    const tools = Object.entries(value)
+      .filter(([, enabled]) => enabled !== false && enabled !== null)
+      .map(([toolName, descriptor]) => {
+        if (isOptionalObject(descriptor)) {
+          return (
+            readStringAlias(descriptor, [
+              "name",
+              "toolName",
+              "tool_name",
+              "canonicalName",
+              "canonical_name",
+              "id"
+            ]) ?? toolName
+          );
+        }
+        return toolName;
+      })
+      .map((toolName) => toolName.trim())
       .filter(Boolean);
     return tools.length ? tools.slice(0, 100) : null;
   }

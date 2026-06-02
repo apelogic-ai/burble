@@ -788,6 +788,18 @@ describe("handleToolGatewayRequest", () => {
             { toolName: "google_append_to_drive_text_file" }
           ]
         }
+      },
+      {
+        name: "provider tool map",
+        input: {
+          id: "ai-news-hourly",
+          providerToolNames: {
+            google_get_drive_file: true,
+            google_append_to_drive_text_file: {
+              tool_name: "google_append_to_drive_text_file"
+            }
+          }
+        }
       }
     ];
 
