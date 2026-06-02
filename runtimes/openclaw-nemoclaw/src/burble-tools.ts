@@ -28,6 +28,9 @@ function createBurbleMcpToolExecutor(
     if (toolName === "conversation.getAttachment") {
       return getConversationAttachment(config, runtimeId, request, body);
     }
+    if (toolName === "scheduledJob.registerCapability") {
+      return registerScheduledJobCapability(config, runtimeId, body);
+    }
     if (!config.mcpGatewayUrl || !config.runtimeJwt) {
       throw new Error(
         "Burble MCP gateway URL and runtime JWT are required for provider tools"
@@ -137,6 +140,53 @@ async function sendConversationMessage(
 
   info(
     `Burble conversation tool finish tool=conversation.sendMessage classification=${result.classification}${summarizeLogObject("result", result.content)}`
+  );
+  return result;
+}
+
+async function registerScheduledJobCapability(
+  config: RuntimeConfig,
+  runtimeId: string | undefined,
+  body: unknown
+): Promise<ToolResult> {
+  if (!runtimeId) {
+    throw new Error("scheduledJob.registerCapability requires a runtime id");
+  }
+  const input = readNestedObject(body, "input");
+  if (!input) {
+    throw new Error("scheduledJob.registerCapability requires input");
+  }
+
+  info(
+    `Burble scheduled job tool start tool=scheduledJob.registerCapability${summarizeLogObject("input", input)}`
+  );
+
+  const response = await fetch(
+    `${config.toolGatewayUrl}/${encodeURIComponent("scheduledJob.registerCapability")}/execute`,
+    {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${config.internalToken}`,
+        "x-burble-runtime-id": runtimeId
+      },
+      body: JSON.stringify({ input })
+    }
+  );
+
+  if (!response.ok) {
+    throw new Error(
+      `Burble scheduled job gateway returned HTTP ${response.status}${await readErrorDetail(response)}`
+    );
+  }
+
+  const result = (await response.json()) as unknown;
+  if (!isToolResult(result)) {
+    throw new Error("Burble scheduled job gateway returned invalid tool result");
+  }
+
+  info(
+    `Burble scheduled job tool finish tool=scheduledJob.registerCapability classification=${result.classification}${summarizeLogObject("result", result.content)}`
   );
   return result;
 }
@@ -986,6 +1036,20 @@ function readNestedAttachments(
   }
   const inner = (outer as Record<string, unknown>)[innerKey];
   return isConversationAttachmentArray(inner) ? inner : null;
+}
+
+function readNestedObject(
+  value: unknown,
+  outerKey: string
+): Record<string, unknown> | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+  const outer = (value as Record<string, unknown>)[outerKey];
+  if (!outer || typeof outer !== "object" || Array.isArray(outer)) {
+    return null;
+  }
+  return outer as Record<string, unknown>;
 }
 
 function isConversationAttachmentArray(

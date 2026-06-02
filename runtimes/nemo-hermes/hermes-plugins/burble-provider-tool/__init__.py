@@ -62,7 +62,14 @@ TOOL_NAME_ALIASES = {
     "slack_search_messages": "slack.searchMessages",
     "atlassian_list_mcp_tools": "atlassian.listMcpTools",
     "atlassian_call_mcp_tool": "atlassian.callMcpTool",
+    "scheduled_job_register_capability": "scheduledJob.registerCapability",
 }
+
+PROVIDER_BRIDGE_TOOLSETS = ["cronjob", "web"]
+WEB_TOOLSET_BRIDGE_TOOLS = [
+    "burble_provider_call",
+    *sorted(TOOL_NAME_ALIASES.keys()),
+]
 
 
 BURBLE_PROVIDER_CALL_SCHEMA = {
@@ -84,6 +91,61 @@ BURBLE_PROVIDER_CALL_SCHEMA = {
         "additionalProperties": False,
     },
 }
+
+
+def _provider_alias_schema(alias: str, canonical_name: str) -> dict[str, Any]:
+    if canonical_name == "scheduledJob.registerCapability":
+        return {
+            "description": (
+                "Register the Burble provider tools a native scheduled/background job "
+                "will need before creating, updating, or manually triggering that job. "
+                "Include the returned scheduledPromptInstruction verbatim in the job prompt."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "jobId": {
+                        "type": "string",
+                        "description": "Stable native scheduler job id or job name.",
+                    },
+                    "requiredTools": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": (
+                            "Exact Burble provider tool names the scheduled job may call, "
+                            "for example google_get_drive_file and google_append_to_drive_text_file."
+                        ),
+                    },
+                    "routeId": {
+                        "type": "string",
+                        "description": "Optional durable Burble route id for scheduled/background delivery.",
+                    },
+                    "stateRefs": {
+                        "type": "array",
+                        "description": "Optional durable state references such as Drive scratchpad files.",
+                        "items": {"type": "object", "additionalProperties": True},
+                    },
+                    "visibilityPolicy": {
+                        "type": "object",
+                        "description": "Optional output visibility policy for scheduled delivery.",
+                        "additionalProperties": True,
+                    },
+                },
+                "required": ["jobId", "requiredTools"],
+                "additionalProperties": True,
+            },
+        }
+    return {
+        "description": (
+            f"Call Burble provider tool {canonical_name}. "
+            "Pass the provider tool arguments directly. For scheduled jobs, include jobId."
+        ),
+        "parameters": {
+            "type": "object",
+            "description": f"Arguments for Burble provider tool {canonical_name}.",
+            "additionalProperties": True,
+        },
+    }
 
 
 def _env(name: str) -> str:
@@ -163,13 +225,60 @@ async def _burble_provider_call(args: dict[str, Any], **_kwargs: Any) -> str:
         return json.dumps({"error": True, "message": str(error)}, ensure_ascii=False)
 
 
+def _make_provider_alias_handler(canonical_name: str):
+    async def _provider_alias_call(args: dict[str, Any], **_kwargs: Any) -> str:
+        return await _burble_provider_call(
+            {"toolName": canonical_name, "input": args or {}}
+        )
+
+    return _provider_alias_call
+
+
+def _pin_provider_bridge_to_web_toolset() -> None:
+    try:
+        import toolsets
+
+        web_toolset = toolsets.TOOLSETS.setdefault(
+            "web",
+            {
+                "description": "Web research and content extraction tools",
+                "tools": [],
+                "includes": [],
+            },
+        )
+        tools = web_toolset.setdefault("tools", [])
+        if not isinstance(tools, list):
+            return
+        for tool_name in WEB_TOOLSET_BRIDGE_TOOLS:
+            if tool_name not in tools:
+                tools.append(tool_name)
+    except Exception as error:
+        print(
+            f"[WARN] Burble provider bridge web toolset install failed: {error}",
+            flush=True,
+        )
+
+
 def register(ctx) -> None:
-    ctx.register_tool(
-        name="burble_provider_call",
-        toolset="burble",
-        schema=BURBLE_PROVIDER_CALL_SCHEMA,
-        handler=_burble_provider_call,
-        is_async=True,
-        description=BURBLE_PROVIDER_CALL_SCHEMA["description"],
-        override=True,
-    )
+    _pin_provider_bridge_to_web_toolset()
+    for toolset in PROVIDER_BRIDGE_TOOLSETS:
+        ctx.register_tool(
+            name="burble_provider_call",
+            toolset=toolset,
+            schema=BURBLE_PROVIDER_CALL_SCHEMA,
+            handler=_burble_provider_call,
+            is_async=True,
+            description=BURBLE_PROVIDER_CALL_SCHEMA["description"],
+            override=True,
+        )
+        for alias, canonical_name in sorted(TOOL_NAME_ALIASES.items()):
+            schema = _provider_alias_schema(alias, canonical_name)
+            ctx.register_tool(
+                name=alias,
+                toolset=toolset,
+                schema=schema,
+                handler=_make_provider_alias_handler(canonical_name),
+                is_async=True,
+                description=schema["description"],
+                override=True,
+            )

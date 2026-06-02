@@ -1313,12 +1313,10 @@ describe("runOpenClawCliRequest", () => {
     expect(prompts[0]).toContain('delivery.mode to "announce"');
     expect(prompts[0]).toContain('delivery.channel to "burble"');
     expect(prompts[0]).toContain('delivery.to to "convrt_abc123"');
-    expect(prompts[0]).toContain(
+    expect(prompts[0]).not.toContain(
       'use Burble provider tools with routeId "convrt_abc123"'
     );
-    expect(prompts[0]).toContain(
-      "never use a cron job id, run id, session id, or UUID as a provider tool routeId"
-    );
+    expect(prompts[0]).not.toContain("scheduledJob.registerCapability");
     expect(prompts[0]).toContain(
       "do not create a cron job or background job unless the user explicitly asks"
     );
@@ -1337,6 +1335,83 @@ describe("runOpenClawCliRequest", () => {
         input: { text: "Still working on it." }
       }
     });
+  });
+
+  test("adds scheduled job context to OpenClaw native prompts", async () => {
+    const prompts: string[] = [];
+    await runOpenClawCliRequest(
+      {
+        executionMode: "openclaw-native",
+        input: {
+          text: "run the scheduled provider job",
+          conversation: {
+            routeId: "convrt_abc123",
+            source: "slack",
+            workspaceId: "T123",
+            channelId: "C123",
+            rootId: "channel:C123:thread:1779841118.237",
+            isDirectMessage: false
+          },
+          scheduledJob: {
+            jobId: "job-123",
+            capabilityProfile: "scheduled_job",
+            allowedTools: [
+              "google_get_drive_file",
+              "google_append_drive_text_file"
+            ],
+            routeId: "convrt_abc123",
+            runtimeType: "openclaw",
+            stateRefs: [
+              {
+                provider: "google",
+                kind: "drive_file",
+                id: "file-123",
+                purpose: "dedupe_state"
+              }
+            ],
+            visibilityPolicy: {
+              maxOutputVisibility: "public",
+              allowPrivateToolDeclassification: false
+            }
+          },
+          connections: {
+            github: { connected: false },
+            google: {
+              connected: true,
+              email: "person@example.com",
+              providerLogin: "person@example.com"
+            }
+          }
+        }
+      },
+      config,
+      async () => ({
+        classification: "user_private",
+        content: {}
+      }),
+      async (_command, args) => {
+        prompts.push(args[args.indexOf("--message") + 1]);
+        return {
+          exitCode: 0,
+          stdout: "Job run complete.",
+          stderr: ""
+        };
+      },
+      () => undefined
+    );
+
+    expect(prompts[0]).toContain("Scheduled Burble job context:");
+    expect(prompts[0]).toContain("jobId=job-123");
+    expect(prompts[0]).toContain("capabilityProfile=scheduled_job");
+    expect(prompts[0]).toContain(
+      "allowedTools=google_append_drive_text_file,google_get_drive_file"
+    );
+    expect(prompts[0]).toContain("routeId=convrt_abc123");
+    expect(prompts[0]).toContain("maxOutputVisibility=public");
+    expect(prompts[0]).toContain("allowPrivateToolDeclassification=false");
+    expect(prompts[0]).toContain(
+      "stateRef provider=google kind=drive_file id=file-123 purpose=dedupe_state"
+    );
   });
 
   test("lets OpenClaw fetch current request attachments", async () => {
@@ -2765,6 +2840,27 @@ describe("runOpenClawCliRequest", () => {
     expect(requests[0].headers.get("x-openclaw-message-channel")).toBe("burble");
     expect(String(requests[0].body.input)).toContain(
       'delivery.channel to "burble"'
+    );
+    expect(String(requests[0].body.input)).toContain(
+      "scheduledJob.registerCapability"
+    );
+    expect(String(requests[0].body.input)).toContain(
+      "Provider-backed scheduled job repair"
+    );
+    expect(String(requests[0].body.input)).toContain(
+      "before manually triggering"
+    );
+    expect(String(requests[0].body.input)).toContain(
+      "GitHub, Jira, Google, or Slack search"
+    );
+    expect(String(requests[0].body.input)).toContain(
+      "Scheduled provider tool calls must include the returned jobId"
+    );
+    expect(String(requests[0].body.input)).toContain(
+      "must not use direct web/browser access to provider URLs"
+    );
+    expect(String(requests[0].body.input)).not.toContain(
+      "Example Drive scratchpad registration input"
     );
   });
 

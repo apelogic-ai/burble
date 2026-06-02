@@ -1,0 +1,51 @@
+import type { AgentJobCapabilityRecord, AgentRuntimeRecord } from "../db";
+import type { RuntimeJwtIssuer } from "../runtime-jwt";
+import { normalizeScheduledJobToolNames } from "./scheduled-job-tools";
+
+const defaultScheduledJobJwtTtlSeconds = 15 * 60;
+const maxScheduledJobJwtTtlSeconds = 15 * 60;
+
+export function issueScheduledJobRuntimeJwt(input: {
+  issuer: RuntimeJwtIssuer;
+  audience: string;
+  runtime: AgentRuntimeRecord;
+  capability: AgentJobCapabilityRecord;
+  ttlSeconds?: number;
+}): string {
+  assertScheduledJobCapabilityMatchesRuntime(input.runtime, input.capability);
+
+  return input.issuer.issueRuntimeJwt({
+    audience: input.audience,
+    runtimeId: input.runtime.id,
+    workspaceId: input.runtime.workspaceId,
+    slackUserId: input.runtime.slackUserId,
+    jobId: input.capability.jobId,
+    allowedTools: normalizeScheduledJobToolNames(input.capability.requiredTools),
+    ttlSeconds: normalizeScheduledJobJwtTtlSeconds(input.ttlSeconds)
+  });
+}
+
+export function assertScheduledJobCapabilityMatchesRuntime(
+  runtime: AgentRuntimeRecord,
+  capability: AgentJobCapabilityRecord
+): void {
+  if (
+    capability.workspaceId !== runtime.workspaceId ||
+    capability.slackUserId !== runtime.slackUserId
+  ) {
+    throw new Error("Scheduled job capability does not match runtime principal");
+  }
+
+  // A null runtimeType is only tolerated for rows written before runtime-type
+  // metadata existed. Fresh registrations always store a concrete runtime type.
+  if (capability.runtimeType && capability.runtimeType !== runtime.engine) {
+    throw new Error("Scheduled job capability does not match runtime type");
+  }
+}
+
+function normalizeScheduledJobJwtTtlSeconds(value: number | undefined): number {
+  if (value === undefined || !Number.isFinite(value) || value <= 0) {
+    return defaultScheduledJobJwtTtlSeconds;
+  }
+  return Math.min(Math.floor(value), maxScheduledJobJwtTtlSeconds);
+}

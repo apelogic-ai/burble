@@ -1052,6 +1052,14 @@ function isRunRequest(body: unknown): body is RunRequest {
     return false;
   }
 
+  if (
+    "scheduledJob" in input &&
+    input.scheduledJob !== undefined &&
+    !isScheduledJobContext(input.scheduledJob)
+  ) {
+    return false;
+  }
+
   const connections = input.connections;
   if (
     typeof connections !== "object" ||
@@ -1091,6 +1099,77 @@ function isRunRequest(body: unknown): body is RunRequest {
   }
 
   return true;
+}
+
+const runtimeEngines = new Set([
+  "deterministic",
+  "openclaw",
+  "openclaw-gateway",
+  "burble-direct",
+  "hermes"
+]);
+
+function isScheduledJobContext(
+  value: unknown
+): value is NonNullable<RunRequest["input"]["scheduledJob"]> {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return false;
+  }
+
+  const record = value as Record<string, unknown>;
+  return (
+    typeof record.jobId === "string" &&
+    record.jobId.trim().length > 0 &&
+    typeof record.capabilityProfile === "string" &&
+    record.capabilityProfile.trim().length > 0 &&
+    Array.isArray(record.allowedTools) &&
+    record.allowedTools.length > 0 &&
+    record.allowedTools.every((toolName) => typeof toolName === "string") &&
+    (!("routeId" in record) ||
+      record.routeId === undefined ||
+      (typeof record.routeId === "string" &&
+        record.routeId.trim().length > 0)) &&
+    (!("runtimeType" in record) ||
+      record.runtimeType === undefined ||
+      (typeof record.runtimeType === "string" &&
+        runtimeEngines.has(record.runtimeType))) &&
+    Array.isArray(record.stateRefs) &&
+    record.stateRefs.every(isScheduledJobStateRef) &&
+    isScheduledJobVisibilityPolicy(record.visibilityPolicy)
+  );
+}
+
+function isScheduledJobStateRef(value: unknown): boolean {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return false;
+  }
+  const record = value as Record<string, unknown>;
+  return (
+    typeof record.provider === "string" &&
+    record.provider.trim().length > 0 &&
+    typeof record.kind === "string" &&
+    record.kind.trim().length > 0 &&
+    optionalString(record.id) &&
+    optionalString(record.name) &&
+    optionalString(record.purpose)
+  );
+}
+
+function isScheduledJobVisibilityPolicy(value: unknown): boolean {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return false;
+  }
+  const record = value as Record<string, unknown>;
+  return (
+    (!("maxOutputVisibility" in record) ||
+      record.maxOutputVisibility === undefined ||
+      record.maxOutputVisibility === "public" ||
+      record.maxOutputVisibility === "user_private" ||
+      record.maxOutputVisibility === "restricted") &&
+    (!("allowPrivateToolDeclassification" in record) ||
+      record.allowPrivateToolDeclassification === undefined ||
+      typeof record.allowPrivateToolDeclassification === "boolean")
+  );
 }
 
 function isRuntimeToolGroupSelection(

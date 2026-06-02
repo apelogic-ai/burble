@@ -5,6 +5,7 @@ import type {
 } from "../conversation/types";
 import type { RuntimeToolGroupSelection } from "./tool-groups";
 import type { PrincipalId } from "./runtime-factory";
+import type { ScheduledJobContext } from "./scheduled-job-context";
 
 export type AgentRunnerCapabilities = {
   streaming: boolean;
@@ -39,6 +40,7 @@ export type AgentInput = {
   };
   text: string;
   toolGroups?: RuntimeToolGroupSelection;
+  scheduledJob?: ScheduledJobContext;
   attachments?: ConversationAttachment[];
   connections: {
     github: ProviderConnection | null;

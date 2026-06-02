@@ -112,6 +112,17 @@ describe("createOpenClawNemoClawAgentRunner", () => {
         groups: ["conversation", "github"],
         reasons: ["default:conversation", "keyword:github:github"]
       },
+      scheduledJob: {
+        jobId: "job-123",
+        capabilityProfile: "scheduled_job",
+        allowedTools: ["github_list_my_pull_requests"],
+        routeId: "convrt_123",
+        runtimeType: "openclaw",
+        stateRefs: [],
+        visibilityPolicy: {
+          maxOutputVisibility: "user_private"
+        }
+      },
       attachments: [
         {
           id: "slack:F123",
@@ -161,6 +172,17 @@ describe("createOpenClawNemoClawAgentRunner", () => {
           }
         ],
         conversation,
+        scheduledJob: {
+          jobId: "job-123",
+          capabilityProfile: "scheduled_job",
+          allowedTools: ["github_list_my_pull_requests"],
+          routeId: "convrt_123",
+          runtimeType: "openclaw",
+          stateRefs: [],
+          visibilityPolicy: {
+            maxOutputVisibility: "user_private"
+          }
+        },
         connections: {
           github: {
             connected: true,
@@ -268,6 +290,25 @@ describe("createOpenClawNemoClawAgentRunner", () => {
       principal,
       conversation,
       text: "summarize my GitHub work",
+      scheduledJob: {
+        jobId: "job-123",
+        capabilityProfile: "scheduled_job",
+        allowedTools: ["github_list_my_pull_requests"],
+        routeId: "convrt_abc123",
+        runtimeType: "openclaw",
+        stateRefs: [
+          {
+            provider: "google",
+            kind: "drive_file",
+            id: "file-123",
+            purpose: "dedupe_state"
+          }
+        ],
+        visibilityPolicy: {
+          maxOutputVisibility: "public",
+          allowPrivateToolDeclassification: false
+        }
+      },
       connections: { github: connection }
     });
 
@@ -298,7 +339,17 @@ describe("createOpenClawNemoClawAgentRunner", () => {
           githubConnected: true,
           googleConnected: false,
           jiraConnected: false,
-          slackConnected: false
+          slackConnected: false,
+          scheduledJob: {
+            jobId: "job-123",
+            capabilityProfile: "scheduled_job",
+            allowedToolCount: 1,
+            routeId: "convrt_abc123",
+            runtimeType: "openclaw",
+            stateRefCount: 1,
+            maxOutputVisibility: "public",
+            allowPrivateToolDeclassification: false
+          }
         }
       },
       {
@@ -365,6 +416,25 @@ describe("createOpenClawNemoClawAgentRunner", () => {
       principal,
       conversation,
       text: "summarize my GitHub work",
+      scheduledJob: {
+        jobId: "job-123",
+        capabilityProfile: "scheduled_job",
+        allowedTools: ["github_list_my_pull_requests"],
+        routeId: "convrt_abc123",
+        runtimeType: "openclaw",
+        stateRefs: [
+          {
+            provider: "google",
+            kind: "drive_file",
+            id: "file-123",
+            purpose: "dedupe_state"
+          }
+        ],
+        visibilityPolicy: {
+          maxOutputVisibility: "public",
+          allowPrivateToolDeclassification: false
+        }
+      },
       connections: { github: connection }
     });
 
@@ -382,7 +452,17 @@ describe("createOpenClawNemoClawAgentRunner", () => {
       attributes: {
         conversationRoot: "dm:D123",
         textLength: 24,
-        githubConnected: true
+        githubConnected: true,
+        scheduledJob: {
+          jobId: "job-123",
+          capabilityProfile: "scheduled_job",
+          allowedToolCount: 1,
+          routeId: "convrt_abc123",
+          runtimeType: "openclaw",
+          stateRefCount: 1,
+          maxOutputVisibility: "public",
+          allowPrivateToolDeclassification: false
+        }
       }
     });
     expect(observabilityEvents[1]).toMatchObject({
