@@ -94,6 +94,58 @@ describe("runtime contract HTTP client", () => {
       "http://runtime.local/runs"
     ]);
   });
+
+  test("discovers runtime capabilities over HTTP when no manifest is provided", async () => {
+    const calls: Array<{ url: string; init?: RequestInit }> = [];
+    const fetchMock = async (url: string, init?: RequestInit): Promise<Response> => {
+      calls.push({ url, init });
+      if (url === "http://runtime.local/capabilities") {
+        return Response.json(manifest);
+      }
+      if (url === "http://runtime.local/healthz") {
+        return new Response("ok");
+      }
+      if (url === "http://runtime.local/runs") {
+        return Response.json({
+          runId: "run-http-contract",
+          eventsUrl: "/runs/run-http-contract/events"
+        });
+      }
+      throw new Error(`Unexpected fetch ${url}`);
+    };
+
+    const client = createRuntimeContractHttpClient({
+      baseUrl: "http://runtime.local",
+      fetch: fetchMock,
+      webSocketFactory: (url) =>
+        new FakeWebSocket(url, [
+          { type: "status", text: "Working..." },
+          {
+            type: "final",
+            response: {
+              classification: "user_private",
+              text: "Hello.",
+              usage: {
+                totalTokens: 6,
+                usageSource: "provider-output"
+              }
+            }
+          }
+        ])
+    });
+
+    await expect(
+      runRuntimeContractSmokeTest({ client, request })
+    ).resolves.toMatchObject({
+      runtimeType: "openclaw-gateway",
+      runId: "run-http-contract"
+    });
+    expect(calls.map((call) => call.url)).toEqual([
+      "http://runtime.local/capabilities",
+      "http://runtime.local/healthz",
+      "http://runtime.local/runs"
+    ]);
+  });
 });
 
 function header(init: RequestInit | undefined, name: string): string | null {

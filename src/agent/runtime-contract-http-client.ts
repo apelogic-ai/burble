@@ -2,6 +2,7 @@ import type {
   RuntimeCapabilityManifest,
   RuntimeRunRequest
 } from "./runtime-contract";
+import { parseRuntimeCapabilityManifest } from "./runtime-contract";
 import type { RuntimeContractClient } from "./runtime-contract-harness";
 
 export type RuntimeContractFetch = (
@@ -23,7 +24,7 @@ export type RuntimeContractWebSocketFactory = (
 
 export function createRuntimeContractHttpClient(input: {
   baseUrl: string;
-  manifest: RuntimeCapabilityManifest;
+  manifest?: RuntimeCapabilityManifest;
   fetch?: RuntimeContractFetch;
   webSocketFactory?: RuntimeContractWebSocketFactory;
   headers?: HeadersInit;
@@ -35,7 +36,17 @@ export function createRuntimeContractHttpClient(input: {
 
   return {
     async getCapabilityManifest() {
-      return input.manifest;
+      if (input.manifest) {
+        return input.manifest;
+      }
+      const response = await requestFetch(`${baseUrl}/capabilities`, {
+        method: "GET",
+        headers: input.headers
+      });
+      if (!response.ok) {
+        throw new Error(`Runtime capabilities returned HTTP ${response.status}`);
+      }
+      return parseRuntimeCapabilityManifest(await response.json());
     },
     async health() {
       const response = await requestFetch(`${baseUrl}/healthz`, {
