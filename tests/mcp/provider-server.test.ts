@@ -876,6 +876,7 @@ describe("handleProviderMcpRequest", () => {
             name: "google_search_drive_files",
             arguments: {
               jobId: "ai-news-hourly",
+              routeId: "convrt_stale",
               query: "AI News Scratchpad",
               limit: 1
             }

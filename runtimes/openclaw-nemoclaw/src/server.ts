@@ -265,14 +265,15 @@ async function handleLocalBurbleMcpRequest(
   const payload = readMcpJsonRpcPayload(bodyText);
   if (isMcpToolCall(payload)) {
     const routeId = readMcpToolCallRouteId(payload);
-    if (!routeId) {
+    const jobId = readMcpToolCallJobId(payload);
+    if (!routeId && !jobId) {
       return mcpJsonRpcErrorResponse(
         readMcpJsonRpcId(payload),
         -32602,
-        "Burble provider tools require a routeId argument."
+        "Burble provider tools require a routeId or jobId argument."
       );
     }
-    if (!isBurbleConversationRouteId(routeId)) {
+    if (routeId && !isBurbleConversationRouteId(routeId)) {
       return mcpJsonRpcErrorResponse(
         readMcpJsonRpcId(payload),
         -32602,
@@ -857,6 +858,24 @@ function readMcpToolCallRouteId(payload: {
     : null;
 }
 
+function readMcpToolCallJobId(payload: {
+  method: "tools/call";
+  params?: unknown;
+}): string | null {
+  const params = payload.params;
+  if (!params || typeof params !== "object" || Array.isArray(params)) {
+    return null;
+  }
+  const args = (params as Record<string, unknown>).arguments;
+  if (!args || typeof args !== "object" || Array.isArray(args)) {
+    return null;
+  }
+  const jobId = (args as Record<string, unknown>).jobId;
+  return typeof jobId === "string" && jobId.trim().length > 0
+    ? jobId.trim()
+    : null;
+}
+
 function isBurbleConversationRouteId(routeId: string): boolean {
   return /^convrt_[A-Za-z0-9_-]+$/.test(routeId);
 }
@@ -940,9 +959,15 @@ function addRouteIdToMcpToolSchema(tool: unknown): unknown {
           pattern: "^convrt_[A-Za-z0-9_-]+$",
           description:
             "Exact Burble convrt_* conversation route id for this Slack conversation. Never use a cron job id, run id, session id, or UUID."
+        },
+        jobId: {
+          type: "string",
+          minLength: 1,
+          description:
+            "Scheduled Burble job id. Use this instead of routeId for scheduled/background provider calls."
         }
       },
-      required: Array.from(new Set([...required, "routeId"]))
+      required
     }
   };
 }

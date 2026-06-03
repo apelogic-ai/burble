@@ -566,6 +566,15 @@ async function validateProviderMcpRoute(
   }
 
   const routeId = readProviderMcpRouteId(payload);
+  if (readProviderMcpScheduledJobId(payload)) {
+    return {
+      request: replaceRequestJsonBody(
+        request,
+        stripProviderMcpRouteId(confirmationValidation.request ?? payload)
+      ),
+      response: null
+    };
+  }
   if (!routeId) {
     return {
       request: confirmationValidation.request

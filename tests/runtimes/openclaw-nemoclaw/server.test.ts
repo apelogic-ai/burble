@@ -738,7 +738,7 @@ describe("handleRuntimeRequest", () => {
     });
   });
 
-  test("requires route ids for local Burble MCP tool calls", async () => {
+  test("requires route ids or job ids for local Burble MCP tool calls", async () => {
     const requests: Request[] = [];
     const response = await withMockFetch(
       (async (input, init) => {
@@ -771,9 +771,77 @@ describe("handleRuntimeRequest", () => {
     expect(response.status).toBe(200);
     const body = readMcpData(await response.text());
     expect(body.error.message).toBe(
-      "Burble provider tools require a routeId argument."
+      "Burble provider tools require a routeId or jobId argument."
     );
     expect(requests).toEqual([]);
+  });
+
+  test("allows job ids for local scheduled Burble MCP tool calls", async () => {
+    const requests: Request[] = [];
+    const response = await withMockFetch(
+      (async (input, init) => {
+        const request = new Request(input, init);
+        requests.push(request);
+        return new Response(
+          `event: message\ndata: ${JSON.stringify({
+            jsonrpc: "2.0",
+            id: 1,
+            result: {
+              content: [
+                {
+                  type: "text",
+                  text: JSON.stringify({
+                    classification: "user_private",
+                    content: { ok: true }
+                  })
+                }
+              ]
+            }
+          })}\n\n`,
+          { headers: { "content-type": "text/event-stream" } }
+        );
+      }) as typeof fetch,
+      () =>
+        handleRuntimeRequest(
+          new Request("http://runtime/internal/burble/mcp", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({
+              jsonrpc: "2.0",
+              id: 1,
+              method: "tools/call",
+              params: {
+                name: "google_get_drive_file",
+                arguments: {
+                  fileId: "file-123",
+                  jobId: "job-123"
+                }
+              }
+            })
+          }),
+          {
+            ...config,
+            mcpGatewayUrl: "http://burble-app:3000/mcp",
+            runtimeJwt: "runtime-jwt"
+          }
+        )
+    );
+
+    expect(response.status).toBe(200);
+    expect(readMcpData(await response.text()).result.content[0].text).toContain(
+      '"ok":true'
+    );
+    expect(requests).toHaveLength(1);
+    expect(await requests[0].json()).toMatchObject({
+      method: "tools/call",
+      params: {
+        name: "google_get_drive_file",
+        arguments: {
+          fileId: "file-123",
+          jobId: "job-123"
+        }
+      }
+    });
   });
 
   test("rejects non-conversation route ids for local Burble MCP tool calls", async () => {
@@ -817,7 +885,7 @@ describe("handleRuntimeRequest", () => {
     expect(requests).toEqual([]);
   });
 
-  test("adds required route ids to local Burble MCP tool schemas", async () => {
+  test("adds route and scheduled job identity hints to local Burble MCP tool schemas", async () => {
     const upstreamPayload = {
       jsonrpc: "2.0",
       id: 1,
@@ -871,7 +939,12 @@ describe("handleRuntimeRequest", () => {
     expect(schema.properties.routeId.description).toContain(
       "Never use a cron job id"
     );
-    expect(schema.required).toEqual(["query", "routeId"]);
+    expect(schema.properties.jobId).toMatchObject({
+      type: "string",
+      minLength: 1
+    });
+    expect(schema.properties.jobId.description).toContain("scheduled");
+    expect(schema.required).toEqual(["query"]);
   });
 
   test("delivers Burble channel events through the Burble tool gateway", async () => {
