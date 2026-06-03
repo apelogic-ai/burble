@@ -1317,7 +1317,9 @@ describe("runOpenClawCliRequest", () => {
     expect(prompts[0]).not.toContain(
       'use Burble provider tools with routeId "convrt_abc123"'
     );
-    expect(prompts[0]).not.toContain("scheduledJob.registerCapability");
+    expect(prompts[0]).toContain("scheduledJob.registerCapability");
+    expect(prompts[0]).toContain("Scheduled provider tool registration guard:");
+    expect(prompts[0]).not.toContain("Scheduled provider tool registration:\n");
     expect(prompts[0]).toContain(
       "do not create a cron job or background job unless the user explicitly asks"
     );
@@ -3071,6 +3073,82 @@ describe("runOpenClawCliRequest", () => {
     );
     expect(String(requests[0].body.input)).not.toContain("Drive scratchpad");
     expect(String(requests[0].body.input)).not.toContain("Google Drive scratchpad");
+  });
+
+  test("keeps scheduled registration route-scoped even when scheduler group is absent", async () => {
+    const requests: Array<{
+      body: Record<string, unknown>;
+    }> = [];
+
+    await withMockFetch(
+      (async (_input, init) => {
+        requests.push({
+          body: JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>
+        });
+        return new Response(JSON.stringify(openResponsesText("Drafted.")), {
+          status: 200,
+          headers: { "content-type": "application/json" }
+        });
+      }) as typeof fetch,
+      async () => {
+        await runOpenClawCliRequest(
+          {
+            runId: "run-scheduler-missing-group",
+            executionMode: "openclaw-native",
+            runtime: {
+              id: "rt_123"
+            },
+            input: {
+              text: "please prepare the requested Google state for later use",
+              toolGroups: {
+                groups: ["conversation", "google"],
+                reasons: ["default:conversation", "keyword:google:google"]
+              },
+              conversation: {
+                routeId: "convrt_abc123",
+                source: "slack",
+                workspaceId: "T123",
+                channelId: "D123",
+                rootId: "dm:D123",
+                isDirectMessage: true
+              },
+              connections: {
+                github: { connected: false },
+                google: {
+                  connected: true,
+                  email: "person@example.com"
+                }
+              }
+            }
+          },
+          { ...config, engine: "openclaw-gateway" },
+          async () => {
+            throw new Error("unexpected tool call");
+          },
+          async () => {
+            throw new Error("unexpected cli call");
+          },
+          () => undefined
+        );
+      }
+    );
+
+    expect(requests).toHaveLength(1);
+    expect(String(requests[0].body.input)).toContain(
+      "scheduledJob.registerCapability"
+    );
+    expect(String(requests[0].body.input)).not.toContain(
+      "\"name\":\"burble_provider_call\""
+    );
+    expect(String(requests[0].body.input)).toContain(
+      "Scheduled provider tool registration guard:"
+    );
+    expect(String(requests[0].body.input)).not.toContain(
+      "Scheduled provider tool registration:\n"
+    );
+    expect(String(requests[0].body.input)).toContain(
+      "after the native scheduler returns the stable job id"
+    );
   });
 
   test("executes scheduled job registration as a Burble-internal tool", async () => {

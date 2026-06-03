@@ -1466,23 +1466,23 @@ async function buildToolCatalog(
           "optional durable Burble route ID for scheduled/background messages"
       }
     });
-    if (shouldExposeScheduledJobRegistration(request)) {
-      catalog.push({
-        name: "scheduledJob.registerCapability",
-        description:
-          "Register the Burble provider tools and durable state references a native scheduled/background job will need. Use before creating or updating a native cron/background job that will call Burble provider tools; include the returned scheduledPromptInstruction verbatim in the scheduled job prompt.",
-        inputSchema: {
-          jobId: "string stable native scheduler job id or name",
-          requiredTools:
-            "string[] Burble provider tools the scheduled job may call",
-          routeId:
-            "optional durable Burble route ID for scheduled/background delivery",
-          stateRefs:
-            "optional array of durable provider-backed state references",
-          visibilityPolicy:
-            "optional output visibility policy for scheduled delivery"
-        }
-      });
+    catalog.push({
+      name: "scheduledJob.registerCapability",
+      description:
+        "Register the Burble provider tools and durable state references a native scheduled/background job will need. Use before creating or updating a native cron/background job that will call Burble provider tools; include the returned scheduledPromptInstruction verbatim in the scheduled job prompt.",
+      inputSchema: {
+        jobId: "string stable native scheduler job id or name",
+        requiredTools:
+          "string[] Burble provider tools the scheduled job may call",
+        routeId:
+          "optional durable Burble route ID for scheduled/background delivery",
+        stateRefs:
+          "optional array of durable provider-backed state references",
+        visibilityPolicy:
+          "optional output visibility policy for scheduled delivery"
+      }
+    });
+    if (selectedRuntimeToolGroups(request)?.has("scheduler")) {
       catalog.push({
         name: "burble_provider_call",
         description:
@@ -1841,6 +1841,7 @@ function filterToolCatalogBySelectedGroups(
   }
 
   const catalog = catalogBuild.catalog.filter((tool) =>
+    isRouteScopedControlPlaneTool(tool.name) ||
     isToolAllowedBySelectedGroups(tool.name, selectedGroups)
   );
   const allowedToolNames = new Set(catalog.map((tool) => tool.name));
@@ -1868,6 +1869,10 @@ function selectedRuntimeToolGroups(
 function formatSelectedRuntimeToolGroups(request: RunRequest): string {
   const groups = selectedRuntimeToolGroups(request);
   return groups ? [...groups].join(",") || "none" : "legacy-all";
+}
+
+function isRouteScopedControlPlaneTool(toolName: string): boolean {
+  return toolName === "scheduledJob.registerCapability";
 }
 
 function isToolAllowedBySelectedGroups(
@@ -2593,8 +2598,15 @@ function formatScheduledProviderCapabilityInstruction(
   request: RunRequest
 ): string[] {
   const routeId = request.input.conversation?.routeId;
-  if (!shouldExposeScheduledJobRegistration(request) || !routeId) {
+  if (!routeId) {
     return [];
+  }
+
+  if (!selectedRuntimeToolGroups(request)?.has("scheduler")) {
+    return [
+      "Scheduled provider tool registration guard:",
+      "If this turn creates, updates, enables, or manually triggers a native scheduled/background job that will use Burble provider tools, call scheduledJob.registerCapability after the native scheduler returns the stable job id and before enabling or triggering that job."
+    ];
   }
 
   return [
@@ -2609,17 +2621,6 @@ function formatScheduledProviderCapabilityInstruction(
     "Scheduled provider tool calls must include the returned jobId in each Burble provider tool input. Do not use routeId as provider-call identity; routeId is only a delivery/state binding.",
     "Provider-backed scheduled job repair: before manually triggering, enabling, or rescheduling an existing native job, inspect whether it uses provider-backed state or authenticated provider resources. If it does and its prompt lacks Burble jobId provider-call instructions, update the job first by calling scheduledJob.registerCapability and rewriting the scheduled prompt to use Burble provider tools. The job must not use direct web/browser access to provider URLs for authenticated provider work."
   ];
-}
-
-function shouldExposeScheduledJobRegistration(request: RunRequest): boolean {
-  const groups = selectedRuntimeToolGroups(request);
-  if (groups?.has("scheduler")) {
-    return true;
-  }
-
-  return /\b(cron|schedule|scheduled|scheduler|background|recurring|reminder|every\s+\d+|hourly|daily|weekly)\b/i.test(
-    request.input.text
-  );
 }
 
 function formatActiveConversationRouteInstruction(
