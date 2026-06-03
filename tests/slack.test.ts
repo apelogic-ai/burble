@@ -483,6 +483,8 @@ describe("buildAppHomeView", () => {
     expect(serialized).toContain("User auth");
     expect(serialized).toContain("Details");
     expect(serialized).toContain("agent_runtime_manage");
+    expect(serialized).toContain("Refresh");
+    expect(serialized).toContain("agent_runtime_refresh");
     expect(serialized).toContain("agent_runtime_pause");
     expect(serialized).toContain("agent_runtime_restart");
     expect(serialized).toContain("Runtime settings");

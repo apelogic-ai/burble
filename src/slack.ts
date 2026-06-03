@@ -427,6 +427,25 @@ export function createSlackRuntime(
     await handleRuntimeControlAction("restart", body, client, logger);
   });
 
+  app.action("agent_runtime_refresh", async ({ ack, body, client, logger }) => {
+    await ack();
+    const context = slackInteractionContext(body);
+    if (!context) {
+      logger.warn(withUtcTimestamp("Ignoring runtime refresh action without context"));
+      return;
+    }
+
+    try {
+      await publishHomeViewForUser({
+        client,
+        workspaceId: context.workspaceId,
+        slackUserId: context.slackUserId
+      });
+    } catch (error) {
+      logger.error(formatLogError(error));
+    }
+  });
+
   app.action("agent_runtime_engine_select", async ({ ack, body, client, logger }) => {
     await ack();
     const context = slackInteractionContext(body);
@@ -2235,6 +2254,14 @@ function buildAgentRuntimeActionElements(settings: AgentHomeSettingsView) {
       text: "Details"
     },
     action_id: "agent_runtime_manage"
+  });
+  elements.push({
+    type: "button",
+    text: {
+      type: "plain_text",
+      text: "Refresh"
+    },
+    action_id: "agent_runtime_refresh"
   });
   return elements;
 }
