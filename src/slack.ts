@@ -490,8 +490,36 @@ export function createSlackRuntime(
           workspaceId: context.workspaceId,
           slackUserId: context.slackUserId
         },
-        engine
+        engine,
+        afterPreferenceSaved: async () => {
+          await publishHomeViewForUser({
+            client,
+            workspaceId: context.workspaceId,
+            slackUserId: context.slackUserId
+          });
+        }
       });
+      await publishHomeViewForUser({
+        client,
+        workspaceId: context.workspaceId,
+        slackUserId: context.slackUserId
+      });
+    } catch (error) {
+      logger.error(formatLogError(error));
+    }
+  });
+
+  app.action("provider_disconnect", async ({ ack, body, client, logger }) => {
+    await ack();
+    const context = slackInteractionContext(body);
+    const provider = readSlackActionSelectedValue(body);
+    if (!context || !isDisconnectableProvider(provider)) {
+      logger.warn(withUtcTimestamp("Ignoring provider disconnect without valid context"));
+      return;
+    }
+
+    try {
+      store.deleteConnectionForSlackUser(provider, context.slackUserId);
       await publishHomeViewForUser({
         client,
         workspaceId: context.workspaceId,
@@ -2129,7 +2157,7 @@ function buildProviderConnectionBlocks(input: ProviderConnectionViewInput) {
       actionId: "connect_slack",
       usage: "User search and message search through your Slack identity"
     })
-  ];
+  ].flat();
 }
 
 export function buildAgentHomeSettings(input: {
@@ -2604,7 +2632,50 @@ function buildProviderConnectionBlock(input: {
   actionId: string;
   usage: string;
 }) {
-  return {
+  const actions = [];
+  if (input.configured && input.url) {
+    actions.push({
+      type: "button",
+      text: {
+        type: "plain_text",
+        text: input.connected ? "Reconnect" : "Connect"
+      },
+      url: input.url,
+      action_id: input.actionId
+    });
+  }
+  if (input.connected) {
+    actions.push({
+      type: "button",
+      text: {
+        type: "plain_text",
+        text: "Disconnect"
+      },
+      style: "danger",
+      action_id: "provider_disconnect",
+      value: input.provider,
+      confirm: {
+        title: {
+          type: "plain_text",
+          text: `Disconnect ${input.title}?`
+        },
+        text: {
+          type: "mrkdwn",
+          text: `Burble and your agent runtime will stop using this ${input.title} connection.`
+        },
+        confirm: {
+          type: "plain_text",
+          text: "Disconnect"
+        },
+        deny: {
+          type: "plain_text",
+          text: "Cancel"
+        }
+      }
+    });
+  }
+
+  const section = {
     type: "section",
     fields: [
       {
@@ -2615,21 +2686,17 @@ function buildProviderConnectionBlock(input: {
         type: "mrkdwn",
         text: `*Used for*\n${input.usage}`
       }
-    ],
-    ...(input.configured && input.url
-      ? {
-          accessory: {
-            type: "button",
-            text: {
-              type: "plain_text",
-              text: input.connected ? "Reconnect" : "Connect"
-            },
-            url: input.url,
-            action_id: input.actionId
-          }
-        }
-      : {})
+    ]
   };
+  return actions.length
+    ? [
+        section,
+        {
+          type: "actions",
+          elements: actions
+        }
+      ]
+    : [section];
 }
 
 export function buildHelpResponse() {
@@ -3443,12 +3510,16 @@ function readSlackActionSelectedValue(body: unknown): string {
     return "";
   }
   const action = actions[0];
-  return action &&
-    typeof action === "object" &&
-    typeof (action as { selected_option?: { value?: unknown } }).selected_option
-      ?.value === "string"
-    ? ((action as { selected_option: { value: string } }).selected_option.value)
-    : "";
+  if (!action || typeof action !== "object") {
+    return "";
+  }
+  const selectedValue = (action as { selected_option?: { value?: unknown } })
+    .selected_option?.value;
+  if (typeof selectedValue === "string") {
+    return selectedValue;
+  }
+  const buttonValue = (action as { value?: unknown }).value;
+  return typeof buttonValue === "string" ? buttonValue : "";
 }
 
 function slackModalStateValues(body: unknown):
@@ -3751,6 +3822,7 @@ export async function applyAgentRuntimeEngineSelection(input: {
   runtimeFactory?: RuntimeFactory;
   principal: { workspaceId: string; slackUserId: string };
   engine: AgentRuntimeEngine;
+  afterPreferenceSaved?: () => void | Promise<void>;
 }): Promise<{ policyChanged: boolean; restart: Awaited<ReturnType<typeof restartAgentRuntimeIfConfigChanged>> }> {
   const previousSelection = resolveRuntimeEngineForPrincipal({
     config: input.config,
@@ -3781,6 +3853,12 @@ export async function applyAgentRuntimeEngineSelection(input: {
     store: input.store,
     principal: input.principal
   }).policyHash;
+  try {
+    await input.afterPreferenceSaved?.();
+  } catch {
+    // The final publish after restart will still refresh App Home; a transient
+    // publish failure should not prevent applying the selected runtime.
+  }
 
   return {
     policyChanged: previousPolicyHash !== nextPolicyHash,
@@ -3794,6 +3872,16 @@ export async function applyAgentRuntimeEngineSelection(input: {
       previousEngine: previousSelection.effectiveEngine
     })
   };
+}
+
+function isDisconnectableProvider(value: unknown): value is Provider {
+  return (
+    value === "github" ||
+    value === "google" ||
+    value === "hubspot" ||
+    value === "jira" ||
+    value === "slack"
+  );
 }
 
 export async function restartAgentRuntimeIfConfigChanged(input: {

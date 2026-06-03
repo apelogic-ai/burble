@@ -80,6 +80,7 @@ function createFakeStore() {
     getConnectedUserByEmail: () => null,
     getConnection: () => null,
     getConnectionForSlackUser: () => null,
+    deleteConnectionForSlackUser: () => false,
     getOrCreateAgentRuntime: () => {
       throw new Error("unexpected agent runtime call");
     },

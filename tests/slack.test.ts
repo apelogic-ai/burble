@@ -422,6 +422,12 @@ describe("buildAuthResponse", () => {
     expect(JSON.stringify(response.blocks)).toContain("Connected as `person@example.com`");
     expect(JSON.stringify(response.blocks)).toContain("Connected as <@U123>");
     expect(JSON.stringify(response.blocks)).toContain("Not connected");
+    expect(JSON.stringify(response.blocks)).toContain("provider_disconnect");
+    expect(JSON.stringify(response.blocks)).toContain("\"style\":\"danger\"");
+    expect(JSON.stringify(response.blocks)).toContain("\"value\":\"github\"");
+    expect(JSON.stringify(response.blocks)).toContain("\"value\":\"hubspot\"");
+    expect(JSON.stringify(response.blocks)).toContain("\"value\":\"jira\"");
+    expect(JSON.stringify(response.blocks)).toContain("\"value\":\"slack\"");
     expect(JSON.stringify(response.blocks)).toContain("https://example.test/github");
     expect(JSON.stringify(response.blocks)).toContain("https://example.test/google");
     expect(JSON.stringify(response.blocks)).toContain("https://example.test/hubspot");
@@ -522,6 +528,8 @@ describe("buildAppHomeView", () => {
     expect(serialized).toContain("agent_runtime_refresh");
     expect(serialized).toContain("agent_runtime_pause");
     expect(serialized).toContain("agent_runtime_restart");
+    expect(serialized).toContain("provider_disconnect");
+    expect(serialized).toContain("\"style\":\"danger\"");
     expect(serialized).toContain("Runtime settings");
     expect(serialized).toContain("Edit settings");
     expect(serialized).toContain("agent_config_edit");
@@ -832,11 +840,13 @@ describe("buildAppHomeView", () => {
     });
     const stopped: string[] = [];
     const started: string[] = [];
+    const events: string[] = [];
     const result = await applyAgentRuntimeEngineSelection({
       config: agentConfig,
       store,
       runtimeFactory: {
         async getOrCreateRuntime(principal) {
+          events.push(`start:${principal.workspaceId}:${principal.slackUserId}`);
           started.push(`${principal.workspaceId}:${principal.slackUserId}`);
           const runtime = store.getOrCreateAgentRuntime({
             workspaceId: principal.workspaceId,
@@ -861,6 +871,7 @@ describe("buildAppHomeView", () => {
           };
         },
         async stopRuntime(runtimeId) {
+          events.push(`stop:${runtimeId}`);
           stopped.push(runtimeId);
           store.updateAgentRuntimeStatus(runtimeId, { status: "stopped" });
         },
@@ -870,13 +881,31 @@ describe("buildAppHomeView", () => {
         workspaceId: "T123",
         slackUserId: "U123"
       },
-      engine: "hermes"
+      engine: "hermes",
+      afterPreferenceSaved: () => {
+        events.push(
+          `saved:${store.getUserPreference("T123", "U123", "runtime.engine")?.value}`
+        );
+        const settings = buildAgentHomeSettings({
+          config: agentConfig,
+          store,
+          workspaceId: "T123",
+          slackUserId: "U123"
+        });
+        expect(settings.runtime.engine).toBe("hermes");
+        expect(settings.runtime.status).toBe("not provisioned");
+      }
     });
 
     expect(result.policyChanged).toBe(true);
     expect(result.restart?.stoppedRuntimeId).toBe(previousRuntime.id);
     expect(stopped).toEqual([previousRuntime.id]);
     expect(started).toEqual(["T123:U123"]);
+    expect(events).toEqual([
+      "saved:hermes",
+      `stop:${previousRuntime.id}`,
+      "start:T123:U123"
+    ]);
     expect(
       store.getUserPreference("T123", "U123", "runtime.engine")?.value
     ).toBe("hermes");

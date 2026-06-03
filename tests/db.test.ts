@@ -91,6 +91,42 @@ describe("createTokenStore", () => {
     store.close();
   });
 
+  test("deletes provider connections by Slack user", () => {
+    const store = createTokenStore(":memory:");
+
+    store.upsertProviderConnection({
+      provider: "jira",
+      email: "person@example.com",
+      slackUserId: "U123",
+      providerLogin: "person@atlassian.example",
+      accessToken: "jira-token"
+    });
+
+    expect(store.deleteConnectionForSlackUser("jira", "U123")).toBe(true);
+    expect(store.getConnection("jira", "person@example.com")).toBeNull();
+    expect(store.getConnectionForSlackUser("jira", "U123")).toBeNull();
+    expect(store.deleteConnectionForSlackUser("jira", "U123")).toBe(false);
+
+    store.close();
+  });
+
+  test("deletes legacy GitHub user connections by Slack user", () => {
+    const store = createTokenStore(":memory:");
+
+    store.upsertConnectedUser({
+      email: "person@example.com",
+      slackUserId: "U123",
+      githubLogin: "octocat",
+      githubToken: "gh-token"
+    });
+
+    expect(store.deleteConnectionForSlackUser("github", "U123")).toBe(true);
+    expect(store.getConnection("github", "person@example.com")).toBeNull();
+    expect(store.getConnectionForSlackUser("github", "U123")).toBeNull();
+
+    store.close();
+  });
+
   test("migrates existing provider connections with refresh-token columns", () => {
     const path = join(mkdtempSync(join(tmpdir(), "burble-db-")), "burble.db");
     const db = new Database(path);

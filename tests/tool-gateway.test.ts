@@ -150,6 +150,7 @@ function createStore(
       slackUserId === foundConnection.slackUserId
         ? foundConnection
         : null,
+    deleteConnectionForSlackUser: () => false,
     getOrCreateAgentRuntime: () => {
       throw new Error("unexpected agent runtime call");
     },
