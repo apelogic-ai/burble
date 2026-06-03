@@ -1,7 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import type { Config } from "../../src/config";
 import { createTokenStore } from "../../src/db";
-import { buildRuntimeManifestForPrincipal } from "../../src/agent/runtime-policy";
+import {
+  buildRuntimeManifestForPrincipal,
+  RuntimeEngineSelectionError,
+  resolveRuntimeEngineForPrincipal
+} from "../../src/agent/runtime-policy";
 
 const config: Config = {
   slackBotToken: "xoxb-test",
@@ -94,6 +98,174 @@ describe("buildRuntimeManifestForPrincipal", () => {
     });
 
     expect(manifest.skills).toEqual([{ id: "core", version: "1", enabled: true }]);
+    store.close();
+  });
+});
+
+describe("resolveRuntimeEngineForPrincipal", () => {
+  test("defaults to the configured runtime engine", () => {
+    const store = createTokenStore(":memory:");
+    const selection = resolveRuntimeEngineForPrincipal({
+      config,
+      store,
+      principal: {
+        workspaceId: "T123",
+        slackUserId: "U123"
+      }
+    });
+
+    expect(selection).toEqual({
+      configuredEngine: "openclaw",
+      effectiveEngine: "openclaw",
+      preferredEngine: null,
+      allowedEngines: ["openclaw"],
+      selectableEngines: ["openclaw"],
+      compatibility: [
+        {
+          engine: "openclaw",
+          selectable: true,
+          reasons: []
+        }
+      ]
+    });
+    store.close();
+  });
+
+  test("uses a user runtime preference when the workspace allows it", () => {
+    const store = createTokenStore(":memory:");
+    store.upsertWorkspacePolicy({
+      workspaceId: "T123",
+      key: "runtime.allowedEngines",
+      value: ["openclaw", "hermes"],
+      updatedBySlackUserId: "UADMIN"
+    });
+    store.upsertUserPreference({
+      workspaceId: "T123",
+      slackUserId: "U123",
+      key: "runtime.engine",
+      value: "hermes"
+    });
+
+    const selection = resolveRuntimeEngineForPrincipal({
+      config,
+      store,
+      principal: {
+        workspaceId: "T123",
+        slackUserId: "U123"
+      }
+    });
+
+    expect(selection.effectiveEngine).toBe("hermes");
+    expect(selection.preferredEngine).toBe("hermes");
+    expect(selection.allowedEngines).toEqual(["openclaw", "hermes"]);
+    expect(selection.selectableEngines).toEqual(["openclaw", "hermes"]);
+    store.close();
+  });
+
+  test("ignores a user runtime preference that is not allowed", () => {
+    const store = createTokenStore(":memory:");
+    store.upsertWorkspacePolicy({
+      workspaceId: "T123",
+      key: "runtime.allowedEngines",
+      value: ["openclaw"],
+      updatedBySlackUserId: "UADMIN"
+    });
+    store.upsertUserPreference({
+      workspaceId: "T123",
+      slackUserId: "U123",
+      key: "runtime.engine",
+      value: "hermes"
+    });
+
+    const selection = resolveRuntimeEngineForPrincipal({
+      config,
+      store,
+      principal: {
+        workspaceId: "T123",
+        slackUserId: "U123"
+      }
+    });
+
+    expect(selection.effectiveEngine).toBe("openclaw");
+    expect(selection.preferredEngine).toBe("hermes");
+    expect(selection.allowedEngines).toEqual(["openclaw"]);
+    expect(selection.selectableEngines).toEqual(["openclaw"]);
+    store.close();
+  });
+
+  test("ignores a user runtime preference that fails required compatibility", () => {
+    const store = createTokenStore(":memory:");
+    store.upsertWorkspacePolicy({
+      workspaceId: "T123",
+      key: "runtime.allowedEngines",
+      value: ["openclaw", "deterministic"],
+      updatedBySlackUserId: "UADMIN"
+    });
+    store.upsertUserPreference({
+      workspaceId: "T123",
+      slackUserId: "U123",
+      key: "runtime.engine",
+      value: "deterministic"
+    });
+
+    const selection = resolveRuntimeEngineForPrincipal({
+      config,
+      store,
+      principal: {
+        workspaceId: "T123",
+        slackUserId: "U123"
+      }
+    });
+
+    expect(selection.effectiveEngine).toBe("openclaw");
+    expect(selection.preferredEngine).toBe("deterministic");
+    expect(selection.allowedEngines).toEqual(["openclaw", "deterministic"]);
+    expect(selection.selectableEngines).toEqual(["openclaw"]);
+    expect(selection.compatibility).toContainEqual({
+      engine: "deterministic",
+      selectable: false,
+      reasons: ["missing usage reporting"]
+    });
+    store.close();
+  });
+
+  test("fails explicitly when policy leaves no selectable runtime engine", () => {
+    const store = createTokenStore(":memory:");
+    store.upsertWorkspacePolicy({
+      workspaceId: "T123",
+      key: "runtime.allowedEngines",
+      value: ["deterministic"],
+      updatedBySlackUserId: "UADMIN"
+    });
+
+    expect(() =>
+      resolveRuntimeEngineForPrincipal({
+        config,
+        store,
+        principal: {
+          workspaceId: "T123",
+          slackUserId: "U123"
+        }
+      })
+    ).toThrow(RuntimeEngineSelectionError);
+    try {
+      resolveRuntimeEngineForPrincipal({
+        config,
+        store,
+        principal: {
+          workspaceId: "T123",
+          slackUserId: "U123"
+        }
+      });
+    } catch (error) {
+      expect(error).toBeInstanceOf(RuntimeEngineSelectionError);
+      expect((error as RuntimeEngineSelectionError).selection).toMatchObject({
+        configuredEngine: "openclaw",
+        allowedEngines: ["deterministic"],
+        selectableEngines: []
+      });
+      expect(String(error)).toContain("missing usage reporting");
+    }
     store.close();
   });
 });
