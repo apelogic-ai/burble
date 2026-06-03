@@ -1047,6 +1047,37 @@ describe("handleProviderMcpRequest", () => {
     expect(body.error.message).toBe(
       "Scheduled job provider calls must include jobId matching the runtime token."
     );
+
+    const aliasResponse = await handleProviderMcpRequest(
+      config,
+      store,
+      issuer,
+      mcpRequest(
+        {
+          method: "tools/call",
+          params: {
+            name: "google_search_drive_files",
+            arguments: {
+              query: "AI News Scratchpad",
+              limit: 1,
+              scheduledJobId: "ai-news-hourly"
+            }
+          }
+        },
+        token
+      ),
+      {
+        searchGoogleDriveFiles: async () => {
+          throw new Error("job-scoped calls must use canonical jobId");
+        }
+      }
+    );
+    const aliasBody = readMcpBody(await aliasResponse.text());
+
+    expect(aliasResponse.status).toBe(200);
+    expect(aliasBody.error.message).toBe(
+      "Scheduled job provider calls must include jobId matching the runtime token."
+    );
     store.close();
   });
 

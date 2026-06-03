@@ -318,23 +318,30 @@ resolve to the same policy-checked operation:
 Runtimes may offer native aliases for model ergonomics, but aliases must map
 back to canonical Burble tool names.
 
-The canonical runtime-to-Burble provider bridge envelope is:
+The canonical runtime-to-Burble provider bridge wrapper is
+`burble_provider_call`. Its input envelope is:
 
 ```json
 {
-  "toolName": "google.getDriveFile",
   "input": {
-    "fileId": "file-123",
-    "jobId": "job-123"
+    "toolName": "google_get_drive_file",
+    "input": {
+      "fileId": "file-123",
+      "jobId": "job-123"
+    }
   }
 }
 ```
 
-Runtime adapters may expose that as a native `burble_provider_call` tool, an
-SDK helper, or a direct alias. The contract is the envelope, not the native
-tool spelling. For scheduled/background work, `input.jobId` is mandatory and
-must match the job-scoped runtime token when one is used. Burble strips the job
-id before forwarding the call to the provider implementation.
+Runtime adapters may expose compatibility aliases, but `burble_provider_call`
+is the public spelling agents should prefer. The same wrapper is used for
+provider tools and Burble control-plane tools such as
+`scheduledJob.registerCapability`; registration is handled by Burble's internal
+tool gateway rather than forwarded to the provider MCP gateway.
+
+For scheduled/background work, `input.input.jobId` is mandatory and must match
+the job-scoped runtime token when one is used. Burble strips the job id before
+forwarding the call to the provider implementation.
 
 Direct provider aliases are still allowed when a runtime exposes them, but they
 must preserve the scheduled job id through the adapter layer. A provider call

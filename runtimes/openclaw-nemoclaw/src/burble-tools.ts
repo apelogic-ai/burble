@@ -22,24 +22,27 @@ function createBurbleMcpToolExecutor(
 ): ToolExecutor {
   let sessionIdPromise: Promise<string> | null = null;
   return async (toolName, body) => {
-    if (isBurbleProviderBridgeTool(toolName)) {
-      const bridgeCall = readBurbleProviderBridgeCall(body);
-      if (bridgeCall.toolName === "scheduledJob.registerCapability") {
+    const bridgeCall = isBurbleProviderBridgeTool(toolName)
+      ? readBurbleProviderBridgeCall(body)
+      : null;
+    const actualToolName = bridgeCall?.toolName ?? toolName;
+    const actualBody = bridgeCall ? { input: bridgeCall.input } : body;
+
+    if (bridgeCall) {
+      if (actualToolName === "scheduledJob.registerCapability") {
         return registerScheduledJobCapability(config, runtimeId, {
           input: bridgeCall.input
         });
       }
-      toolName = bridgeCall.toolName;
-      body = { input: bridgeCall.input };
     }
-    if (toolName === "conversation.sendMessage") {
-      return sendConversationMessage(config, runtimeId, request, body);
+    if (actualToolName === "conversation.sendMessage") {
+      return sendConversationMessage(config, runtimeId, request, actualBody);
     }
-    if (toolName === "conversation.getAttachment") {
-      return getConversationAttachment(config, runtimeId, request, body);
+    if (actualToolName === "conversation.getAttachment") {
+      return getConversationAttachment(config, runtimeId, request, actualBody);
     }
-    if (toolName === "scheduledJob.registerCapability") {
-      return registerScheduledJobCapability(config, runtimeId, body);
+    if (actualToolName === "scheduledJob.registerCapability") {
+      return registerScheduledJobCapability(config, runtimeId, actualBody);
     }
     if (!config.mcpGatewayUrl || !config.runtimeJwt) {
       throw new Error(
@@ -48,13 +51,13 @@ function createBurbleMcpToolExecutor(
     }
 
     sessionIdPromise ??= initializeMcpSession(config);
-    if (toolName === "burble.mcp.listTools") {
+    if (actualToolName === "burble.mcp.listTools") {
       const sessionId = await sessionIdPromise;
       return listBurbleMcpTools(config, sessionId);
     }
 
-    const mcpToolName = toMcpToolName(toolName);
-    const args = toMcpToolArguments(toolName, body);
+    const mcpToolName = toMcpToolName(actualToolName);
+    const args = toMcpToolArguments(actualToolName, actualBody);
     const sessionId = await sessionIdPromise;
     info(`Burble MCP tool start tool=${mcpToolName}${summarizeLogObject("args", args)}`);
 
@@ -89,15 +92,22 @@ function createBurbleMcpToolExecutor(
   };
 }
 
+const BURBLE_PROVIDER_BRIDGE_TOOL = "burble_provider_call";
+const BURBLE_PROVIDER_BRIDGE_COMPAT_TOOL = "burble.providerCall";
+
 function isBurbleProviderBridgeTool(toolName: string): boolean {
-  return toolName === "burble_provider_call" || toolName === "burble.providerCall";
+  return toolName === BURBLE_PROVIDER_BRIDGE_TOOL ||
+    toolName === BURBLE_PROVIDER_BRIDGE_COMPAT_TOOL;
 }
 
 function readBurbleProviderBridgeCall(body: unknown): {
   toolName: string;
   input: Record<string, unknown>;
 } {
-  const source = readRecordKey(body, "input") ?? asRecord(body);
+  const source = readRecordKey(body, "input");
+  if (!source) {
+    throw new Error("burble_provider_call requires input to be an object");
+  }
   const toolName = readProviderBridgeToolName(source);
   const input =
     readRecordKey(source, "input") ??
@@ -109,10 +119,7 @@ function readBurbleProviderBridgeCall(body: unknown): {
 function readProviderBridgeToolName(
   source: Record<string, unknown> | null
 ): string {
-  const raw =
-    source?.toolName ??
-    source?.tool ??
-    source?.name;
+  const raw = source?.toolName;
   if (typeof raw !== "string" || !raw.trim()) {
     throw new Error("burble_provider_call requires input.toolName");
   }
@@ -1047,11 +1054,7 @@ function withScheduledJobIdentity(
 function readScheduledJobIdFromInput(
   input: Record<string, unknown> | null
 ): string | null {
-  const raw =
-    input?.jobId ??
-    input?.scheduledJobId ??
-    input?.job_id ??
-    input?.scheduled_job_id;
+  const raw = input?.jobId;
   return typeof raw === "string" && raw.trim() ? raw.trim() : null;
 }
 

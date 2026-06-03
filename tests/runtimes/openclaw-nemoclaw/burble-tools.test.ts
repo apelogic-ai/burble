@@ -208,6 +208,24 @@ describe("createBurbleToolExecutor", () => {
     }
   });
 
+  test("requires the documented provider bridge input wrapper", async () => {
+    const executor = createBurbleToolExecutor({
+      ...config,
+      mcpGatewayUrl: "http://agentgateway:3000/mcp",
+      runtimeJwt: "runtime-jwt"
+    });
+
+    await expect(
+      executor("burble_provider_call", {
+        toolName: "google.getDriveFile",
+        input: {
+          fileId: "file-123",
+          jobId: "job-123"
+        }
+      })
+    ).rejects.toThrow("burble_provider_call requires input.toolName");
+  });
+
   test("preserves scheduled job identity for direct provider MCP calls", async () => {
     const originalFetch = globalThis.fetch;
     const calls: Array<{ name: string; arguments: Record<string, unknown> }> = [];

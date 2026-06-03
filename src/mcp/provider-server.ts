@@ -388,23 +388,19 @@ async function validateJobScopedProviderMcpToolAccess(
   }
 
   const call = readJsonRpcToolCall(payload);
-  if (!call || enabledTools.has(call.name)) {
-    if (!call || !claims.job_id) {
-      return { request, response: null };
-    }
-    const argumentJobId = readProviderMcpScheduledJobId(payload);
-    if (argumentJobId === claims.job_id) {
-      return { request, response: null };
-    }
+  if (!call) {
+    return { request, response: null };
+  }
 
+  if (!enabledTools.has(call.name)) {
     store.recordAgentRuntimeEvent({
       runtimeId: runtime.id,
       eventType: "runtime_tool_called",
       summary: {
         tool: call.name,
         allowed: false,
-        reason: "job_scope_argument_mismatch",
-        jobId: claims.job_id
+        reason: "job_scope_denied",
+        jobId: claims.job_id ?? null
       }
     });
 
@@ -412,10 +408,19 @@ async function validateJobScopedProviderMcpToolAccess(
       request,
       response: mcpJsonRpcErrorResponse(
         readJsonRpcId(payload),
-        -32024,
-        "Scheduled job provider calls must include jobId matching the runtime token."
+        -32020,
+        `Tool ${call.name} is not available to this job.`
       )
     };
+  }
+
+  if (!claims.job_id) {
+    return { request, response: null };
+  }
+
+  const argumentJobId = readProviderMcpScheduledJobId(payload);
+  if (argumentJobId === claims.job_id) {
+    return { request, response: null };
   }
 
   store.recordAgentRuntimeEvent({
@@ -424,8 +429,8 @@ async function validateJobScopedProviderMcpToolAccess(
     summary: {
       tool: call.name,
       allowed: false,
-      reason: "job_scope_denied",
-      jobId: claims.job_id ?? null
+      reason: "job_scope_argument_mismatch",
+      jobId: claims.job_id
     }
   });
 
@@ -433,8 +438,8 @@ async function validateJobScopedProviderMcpToolAccess(
     request,
     response: mcpJsonRpcErrorResponse(
       readJsonRpcId(payload),
-      -32020,
-      `Tool ${call.name} is not available to this job.`
+      -32024,
+      "Scheduled job provider calls must include jobId matching the runtime token."
     )
   };
 }
@@ -710,9 +715,7 @@ function readProviderMcpScheduledJobId(payload: unknown): string | null {
   if (!args || typeof args !== "object" || Array.isArray(args)) {
     return null;
   }
-  const jobId =
-    (args as Record<string, unknown>).jobId ??
-    (args as Record<string, unknown>).scheduledJobId;
+  const jobId = (args as Record<string, unknown>).jobId;
   return typeof jobId === "string" && jobId.trim() ? jobId.trim() : null;
 }
 

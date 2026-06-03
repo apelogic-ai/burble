@@ -1453,7 +1453,7 @@ async function buildToolCatalog(
           "Call one Burble provider tool through the runtime-scoped Burble provider bridge. Use this envelope for scheduled/background provider calls; set toolName to an allowed Burble provider tool and input to that tool's arguments, including jobId for scheduled jobs.",
         inputSchema: {
           toolName:
-            "Burble provider tool name, for example google.getDriveFile or google_get_drive_file",
+            "Burble provider tool name, for example google_get_drive_file",
           input:
             "object arguments for that Burble provider tool; scheduled jobs must include jobId"
         }
