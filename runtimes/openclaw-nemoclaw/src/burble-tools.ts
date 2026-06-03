@@ -22,6 +22,16 @@ function createBurbleMcpToolExecutor(
 ): ToolExecutor {
   let sessionIdPromise: Promise<string> | null = null;
   return async (toolName, body) => {
+    if (isBurbleProviderBridgeTool(toolName)) {
+      const bridgeCall = readBurbleProviderBridgeCall(body);
+      if (bridgeCall.toolName === "scheduledJob.registerCapability") {
+        return registerScheduledJobCapability(config, runtimeId, {
+          input: bridgeCall.input
+        });
+      }
+      toolName = bridgeCall.toolName;
+      body = { input: bridgeCall.input };
+    }
     if (toolName === "conversation.sendMessage") {
       return sendConversationMessage(config, runtimeId, request, body);
     }
@@ -77,6 +87,36 @@ function createBurbleMcpToolExecutor(
     );
     return result;
   };
+}
+
+function isBurbleProviderBridgeTool(toolName: string): boolean {
+  return toolName === "burble_provider_call" || toolName === "burble.providerCall";
+}
+
+function readBurbleProviderBridgeCall(body: unknown): {
+  toolName: string;
+  input: Record<string, unknown>;
+} {
+  const source = readRecordKey(body, "input") ?? asRecord(body);
+  const toolName = readProviderBridgeToolName(source);
+  const input =
+    readRecordKey(source, "input") ??
+    readRecordKey(source, "arguments") ??
+    {};
+  return { toolName, input };
+}
+
+function readProviderBridgeToolName(
+  source: Record<string, unknown> | null
+): string {
+  const raw =
+    source?.toolName ??
+    source?.tool ??
+    source?.name;
+  if (typeof raw !== "string" || !raw.trim()) {
+    throw new Error("burble_provider_call requires input.toolName");
+  }
+  return raw.trim();
 }
 
 async function sendConversationMessage(
@@ -513,6 +553,16 @@ function toMcpToolName(toolName: string): string {
 }
 
 function toMcpToolArguments(
+  toolName: string,
+  body: unknown
+): Record<string, unknown> {
+  return withScheduledJobIdentity(
+    toMcpToolArgumentsWithoutScheduledJobIdentity(toolName, body),
+    readRecordKey(body, "input")
+  );
+}
+
+function toMcpToolArgumentsWithoutScheduledJobIdentity(
   toolName: string,
   body: unknown
 ): Record<string, unknown> {
@@ -986,6 +1036,25 @@ function toMcpToolArguments(
   return {};
 }
 
+function withScheduledJobIdentity(
+  args: Record<string, unknown>,
+  input: Record<string, unknown> | null
+): Record<string, unknown> {
+  const jobId = readScheduledJobIdFromInput(input);
+  return jobId ? { ...args, jobId } : args;
+}
+
+function readScheduledJobIdFromInput(
+  input: Record<string, unknown> | null
+): string | null {
+  const raw =
+    input?.jobId ??
+    input?.scheduledJobId ??
+    input?.job_id ??
+    input?.scheduled_job_id;
+  return typeof raw === "string" && raw.trim() ? raw.trim() : null;
+}
+
 function readNestedString(
   value: unknown,
   outerKey: string,
@@ -1117,6 +1186,12 @@ function readRecordKey(
   const inner = (value as Record<string, unknown>)[key];
   return inner && typeof inner === "object" && !Array.isArray(inner)
     ? (inner as Record<string, unknown>)
+    : null;
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
     : null;
 }
 

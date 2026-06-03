@@ -2844,6 +2844,8 @@ describe("runOpenClawCliRequest", () => {
     expect(String(requests[0].body.input)).toContain(
       "scheduledJob.registerCapability"
     );
+    expect(String(requests[0].body.input)).toContain("burble_provider_call");
+    expect(String(requests[0].body.input)).toContain("toolName");
     expect(String(requests[0].body.input)).toContain(
       "Provider-backed scheduled job repair"
     );

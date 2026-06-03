@@ -1447,6 +1447,17 @@ async function buildToolCatalog(
             "optional output visibility policy for scheduled delivery"
         }
       });
+      catalog.push({
+        name: "burble_provider_call",
+        description:
+          "Call one Burble provider tool through the runtime-scoped Burble provider bridge. Use this envelope for scheduled/background provider calls; set toolName to an allowed Burble provider tool and input to that tool's arguments, including jobId for scheduled jobs.",
+        inputSchema: {
+          toolName:
+            "Burble provider tool name, for example google.getDriveFile or google_get_drive_file",
+          input:
+            "object arguments for that Burble provider tool; scheduled jobs must include jobId"
+        }
+      });
     }
   }
   if ((request.input.attachments ?? []).length > 0) {
@@ -1837,6 +1848,9 @@ function toolGroupsForToolName(toolName: string): RuntimeToolGroup[] {
     return ["attachments"];
   }
   if (toolName.startsWith("scheduledJob.")) {
+    return ["scheduler"];
+  }
+  if (toolName === "burble_provider_call" || toolName === "burble.providerCall") {
     return ["scheduler"];
   }
   if (toolName.startsWith("conversation.")) {
