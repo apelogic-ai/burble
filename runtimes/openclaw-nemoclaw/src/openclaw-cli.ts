@@ -2876,7 +2876,10 @@ async function executePlannedToolCall(
 ): Promise<ToolResult> {
   if (
     toolCall.name === "conversation.sendMessage" ||
-    toolCall.name === "conversation.getAttachment"
+    toolCall.name === "conversation.getAttachment" ||
+    toolCall.name === "scheduledJob.registerCapability" ||
+    toolCall.name === "burble_provider_call" ||
+    toolCall.name === "burble.providerCall"
   ) {
     const validationError = validatePlannedToolCall(toolCall, toolContext);
     if (validationError) {

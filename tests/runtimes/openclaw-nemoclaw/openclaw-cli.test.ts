@@ -2889,6 +2889,158 @@ describe("runOpenClawCliRequest", () => {
     expect(String(requests[0].body.input)).not.toContain("Google Drive scratchpad");
   });
 
+  test("executes scheduled job registration as a Burble-internal tool", async () => {
+    const toolCalls: Array<{ toolName: string; body: Record<string, unknown> }> =
+      [];
+
+    const response = await runOpenClawCliRequest(
+      {
+        runId: "run-register-scheduled-job",
+        executionMode: "openclaw-native",
+        input: {
+          text: "create a cron job to read AI news every hour",
+          toolGroups: {
+            groups: ["conversation", "scheduler"],
+            reasons: ["default:conversation", "keyword:scheduler:cron"]
+          },
+          conversation: {
+            routeId: "convrt_abc123",
+            source: "slack",
+            workspaceId: "T123",
+            channelId: "C123",
+            rootId: "dm:D123",
+            isDirectMessage: true
+          },
+          connections: {
+            github: { connected: false },
+            google: { connected: false },
+            jira: { connected: false },
+            slack: { connected: false }
+          }
+        }
+      },
+      { ...config, engine: "openclaw" },
+      async (toolName, body) => {
+        toolCalls.push({ toolName, body: body as Record<string, unknown> });
+        return {
+          classification: "user_private",
+          content: {
+            ok: true,
+            scheduledPromptInstruction:
+              "Use Burble provider calls with this jobId for this scheduled job."
+          }
+        };
+      },
+      async () => {
+        if (toolCalls.length === 0) {
+          return openClawToolCall("scheduledJob.registerCapability", {
+            jobId: "job-ai-news",
+            requiredTools: ["google.getDriveFile"],
+            routeId: "convrt_abc123"
+          });
+        }
+
+        return {
+          exitCode: 0,
+          stdout: "Registered and stopped before manual trigger.",
+          stderr: ""
+        };
+      },
+      () => undefined
+    );
+
+    expect(response.response.text).toBe(
+      "Registered and stopped before manual trigger."
+    );
+    expect(toolCalls).toEqual([
+      {
+        toolName: "scheduledJob.registerCapability",
+        body: {
+          input: {
+            jobId: "job-ai-news",
+            requiredTools: ["google.getDriveFile"],
+            routeId: "convrt_abc123"
+          }
+        }
+      }
+    ]);
+  });
+
+  test("executes provider bridge calls as Burble-internal tools", async () => {
+    const toolCalls: Array<{ toolName: string; body: Record<string, unknown> }> =
+      [];
+
+    const response = await runOpenClawCliRequest(
+      {
+        runId: "run-provider-bridge",
+        executionMode: "openclaw-native",
+        input: {
+          text: "run scheduled provider bridge call",
+          toolGroups: {
+            groups: ["conversation", "scheduler"],
+            reasons: ["default:conversation", "keyword:scheduler:cron"]
+          },
+          conversation: {
+            routeId: "convrt_abc123",
+            source: "slack",
+            workspaceId: "T123",
+            channelId: "C123",
+            rootId: "dm:D123",
+            isDirectMessage: true
+          },
+          connections: {
+            github: { connected: false },
+            google: { connected: false },
+            jira: { connected: false },
+            slack: { connected: false }
+          }
+        }
+      },
+      { ...config, engine: "openclaw" },
+      async (toolName, body) => {
+        toolCalls.push({ toolName, body: body as Record<string, unknown> });
+        return {
+          classification: "user_private",
+          content: { name: "scratchpad.txt", text: "already reported" }
+        };
+      },
+      async () => {
+        if (toolCalls.length === 0) {
+          return openClawToolCall("burble_provider_call", {
+            toolName: "google.getDriveFile",
+            input: {
+              jobId: "job-ai-news",
+              fileId: "file-123"
+            }
+          });
+        }
+
+        return {
+          exitCode: 0,
+          stdout: "Read scheduled scratchpad.",
+          stderr: ""
+        };
+      },
+      () => undefined
+    );
+
+    expect(response.response.text).toBe("Read scheduled scratchpad.");
+    expect(toolCalls).toEqual([
+      {
+        toolName: "burble_provider_call",
+        body: {
+          input: {
+            toolName: "google.getDriveFile",
+            input: {
+              jobId: "job-ai-news",
+              fileId: "file-123"
+            }
+          }
+        }
+      }
+    ]);
+  });
+
   test("instructs native execution to avoid repeated code tool loops", async () => {
     const requests: Array<{ body: Record<string, unknown> }> = [];
     await withMockFetch(
