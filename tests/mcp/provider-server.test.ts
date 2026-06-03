@@ -977,6 +977,79 @@ describe("handleProviderMcpRequest", () => {
     store.close();
   });
 
+  test("requires job-scoped MCP calls to include the matching scheduled job id argument", async () => {
+    const issuer = createRuntimeJwtIssuer({ issuer: config.runtimeJwtIssuer });
+    const store = createTokenStore(":memory:");
+    const runtime = store.getOrCreateAgentRuntime({
+      workspaceId: "T123",
+      slackUserId: "U123",
+      engine: "openclaw",
+      endpointUrl: "http://runtime-u123:8080",
+      authTokenHash: "hash-u123",
+      statePath: "/data/runtimes/u123/state",
+      configPath: "/data/runtimes/u123/config/openclaw.json",
+      workspacePath: "/data/runtimes/u123/workspace"
+    });
+    store.upsertProviderConnection({
+      provider: "google",
+      email: "person@example.com",
+      slackUserId: "U123",
+      providerLogin: "google-user@example.com",
+      accessToken: "google-token",
+      refreshToken: null,
+      accessTokenExpiresAt: null
+    });
+    store.upsertAgentJobCapability({
+      jobId: "ai-news-hourly",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      requiredTools: ["google_search_drive_files"],
+      routeId: null,
+      policyHash: "policy-a",
+      capabilityProfile: "scheduled_job",
+      runtimeType: "openclaw"
+    });
+    const token = issuer.issueRuntimeJwt({
+      audience: "http://agentgateway:3000/mcp",
+      runtimeId: runtime.id,
+      workspaceId: "T123",
+      slackUserId: "U123",
+      jobId: "ai-news-hourly",
+      allowedTools: ["google_search_drive_files"]
+    });
+
+    const response = await handleProviderMcpRequest(
+      config,
+      store,
+      issuer,
+      mcpRequest(
+        {
+          method: "tools/call",
+          params: {
+            name: "google_search_drive_files",
+            arguments: {
+              query: "AI News Scratchpad",
+              limit: 1
+            }
+          }
+        },
+        token
+      ),
+      {
+        searchGoogleDriveFiles: async () => {
+          throw new Error("job-scoped calls must include jobId");
+        }
+      }
+    );
+    const body = readMcpBody(await response.text());
+
+    expect(response.status).toBe(200);
+    expect(body.error.message).toBe(
+      "Scheduled job provider calls must include jobId matching the runtime token."
+    );
+    store.close();
+  });
+
   test("executes Google Drive create text file under the runtime principal", async () => {
     const issuer = createRuntimeJwtIssuer({ issuer: config.runtimeJwtIssuer });
     const store = createTokenStore(":memory:");

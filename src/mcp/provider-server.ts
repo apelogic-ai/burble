@@ -389,7 +389,33 @@ async function validateJobScopedProviderMcpToolAccess(
 
   const call = readJsonRpcToolCall(payload);
   if (!call || enabledTools.has(call.name)) {
-    return { request, response: null };
+    if (!call || !claims.job_id) {
+      return { request, response: null };
+    }
+    const argumentJobId = readProviderMcpScheduledJobId(payload);
+    if (argumentJobId === claims.job_id) {
+      return { request, response: null };
+    }
+
+    store.recordAgentRuntimeEvent({
+      runtimeId: runtime.id,
+      eventType: "runtime_tool_called",
+      summary: {
+        tool: call.name,
+        allowed: false,
+        reason: "job_scope_argument_mismatch",
+        jobId: claims.job_id
+      }
+    });
+
+    return {
+      request,
+      response: mcpJsonRpcErrorResponse(
+        readJsonRpcId(payload),
+        -32024,
+        "Scheduled job provider calls must include jobId matching the runtime token."
+      )
+    };
   }
 
   store.recordAgentRuntimeEvent({
