@@ -369,17 +369,68 @@ async function runOpenClawGatewayHttpRequest(
 
   let stdout = "";
   let stderr = "";
-  try {
-    const response = await fetchGatewayHttpResponse(
-      endpoint,
-      config,
-      request,
-      sessionKey,
-      prompt
-    );
-    const responseText = await response.text();
-    if (!response.ok) {
-      stderr = responseText;
+  const maxAttempts = 3;
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    const attemptStartedAt = Date.now();
+    try {
+      const response = await fetchGatewayHttpResponse(
+        endpoint,
+        config,
+        request,
+        sessionKey,
+        prompt
+      );
+      const responseText = await response.text();
+      if (!response.ok) {
+        stderr = responseText;
+        const gatewayDiagnostics = readGatewayDiagnosticTextSince(startedAt);
+        const usageTelemetry = logOpenClawUsageFromOutput(
+          request,
+          step,
+          prompt,
+          stdout,
+          stderr,
+          null,
+          gatewayDiagnostics,
+          sessionId,
+          logInfo,
+          startedAt
+        );
+        logInfo(
+          `OpenClaw gateway http error runId=${request.runId ?? "unknown"} step=${step} status=${response.status}${summarizeLogObject("bodyPreview", responseText)}`
+        );
+        if (
+          attempt < maxAttempts &&
+          isRetryableOpenClawGatewayProviderError(response.status, responseText)
+        ) {
+          logInfo(
+            `OpenClaw gateway http retry runId=${request.runId ?? "unknown"} step=${step} attempt=${attempt} status=${response.status} reason=upstream_provider_timeout elapsedMs=${Date.now() - attemptStartedAt}`
+          );
+          continue;
+        }
+        return { exitCode: 1, stdout, stderr, ...usageTelemetry };
+      }
+
+      stdout = extractOpenResponsesText(responseText) ?? responseText;
+      const gatewayDiagnostics = readGatewayDiagnosticTextSince(startedAt);
+      const usageTelemetry = logOpenClawUsageFromOutput(
+        request,
+        step,
+        prompt,
+        [responseText, stdout].join("\n"),
+        stderr,
+        null,
+        gatewayDiagnostics,
+        sessionId,
+        logInfo,
+        startedAt
+      );
+      logInfo(
+        `OpenClaw gateway http finish runId=${request.runId ?? "unknown"} step=${step} elapsedMs=${Date.now() - startedAt} status=${response.status} stdoutChars=${stdout.length} responseChars=${responseText.length}`
+      );
+      return { exitCode: 0, stdout, stderr, ...usageTelemetry };
+    } catch (error) {
+      stderr = error instanceof Error ? error.message : String(error);
       const gatewayDiagnostics = readGatewayDiagnosticTextSince(startedAt);
       const usageTelemetry = logOpenClawUsageFromOutput(
         request,
@@ -394,49 +445,28 @@ async function runOpenClawGatewayHttpRequest(
         startedAt
       );
       logInfo(
-        `OpenClaw gateway http error runId=${request.runId ?? "unknown"} step=${step} status=${response.status}${summarizeLogObject("bodyPreview", responseText)}`
+        `OpenClaw gateway http error runId=${request.runId ?? "unknown"} step=${step}${summarizeLogObject("error", stderr)}`
       );
       return { exitCode: 1, stdout, stderr, ...usageTelemetry };
     }
-
-    stdout = extractOpenResponsesText(responseText) ?? responseText;
-    const gatewayDiagnostics = readGatewayDiagnosticTextSince(startedAt);
-    const usageTelemetry = logOpenClawUsageFromOutput(
-      request,
-      step,
-      prompt,
-      [responseText, stdout].join("\n"),
-      stderr,
-      null,
-      gatewayDiagnostics,
-      sessionId,
-      logInfo,
-      startedAt
-    );
-    logInfo(
-      `OpenClaw gateway http finish runId=${request.runId ?? "unknown"} step=${step} elapsedMs=${Date.now() - startedAt} status=${response.status} stdoutChars=${stdout.length} responseChars=${responseText.length}`
-    );
-    return { exitCode: 0, stdout, stderr, ...usageTelemetry };
-  } catch (error) {
-    stderr = error instanceof Error ? error.message : String(error);
-    const gatewayDiagnostics = readGatewayDiagnosticTextSince(startedAt);
-    const usageTelemetry = logOpenClawUsageFromOutput(
-      request,
-      step,
-      prompt,
-      stdout,
-      stderr,
-      null,
-      gatewayDiagnostics,
-      sessionId,
-      logInfo,
-      startedAt
-    );
-    logInfo(
-      `OpenClaw gateway http error runId=${request.runId ?? "unknown"} step=${step}${summarizeLogObject("error", stderr)}`
-    );
-    return { exitCode: 1, stdout, stderr, ...usageTelemetry };
   }
+  return { exitCode: 1, stdout, stderr };
+}
+
+function isRetryableOpenClawGatewayProviderError(
+  status: number,
+  responseText: string
+): boolean {
+  if (status !== 408 && status < 500) {
+    return false;
+  }
+  const normalized = responseText.toLowerCase();
+  return (
+    normalized.includes("upstream provider timeout") ||
+    normalized.includes("server_error") ||
+    normalized.includes('"code":"api_error"') ||
+    normalized.includes('"code":"server_error"')
+  );
 }
 
 async function runBurbleDirectProviderRequest(

@@ -2698,6 +2698,79 @@ describe("runOpenClawCliRequest", () => {
     expect(requests[0].body.input).toContain("what can you do?");
   });
 
+  test("retries retryable OpenClaw Gateway provider timeouts", async () => {
+    const requests: Array<{
+      url: string;
+      headers: Headers;
+      body: Record<string, unknown>;
+    }> = [];
+    const logs: string[] = [];
+    const response = await withMockFetch(
+      (async (input, init) => {
+        requests.push({
+          url: String(input),
+          headers: new Headers(init?.headers),
+          body: JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>
+        });
+        if (requests.length === 1) {
+          return new Response(
+            JSON.stringify({
+              status: "failed",
+              error: {
+                code: "api_error",
+                message: "upstream provider timeout"
+              },
+              usage: {
+                input_tokens: 0,
+                output_tokens: 0,
+                total_tokens: 0
+              }
+            }),
+            {
+              status: 408,
+              headers: { "content-type": "application/json" }
+            }
+          );
+        }
+        return new Response(JSON.stringify(openResponsesText("Gateway answer.")), {
+          status: 200,
+          headers: { "content-type": "application/json" }
+        });
+      }) as typeof fetch,
+      async () =>
+        runOpenClawCliRequest(
+          {
+            runId: "run-openclaw-retry",
+            input: {
+              text: "what can you do?",
+              connections: {
+                github: { connected: false }
+              }
+            }
+          },
+          { ...config, engine: "openclaw-gateway" },
+          async () => {
+            throw new Error("unexpected tool call");
+          },
+          async (_command, args) => {
+            throw new Error(`unexpected cli call: ${args.join(" ")}`);
+          },
+          (line) => logs.push(line)
+        )
+    );
+
+    expect(response.response.text).toBe("Gateway answer.");
+    expect(requests).toHaveLength(2);
+    expect(requests[0].body.input).toBe(requests[1].body.input);
+    expect(
+      logs.some((line) =>
+        line.includes(
+          "OpenClaw gateway http retry runId=run-openclaw-retry step=1 attempt=1 status=408 reason=upstream_provider_timeout"
+        )
+      )
+    ).toBe(true);
+  });
+
   test("uses webchat with isolated model sessions for ordinary native conversation turns", async () => {
     const requests: Array<{
       headers: Headers;
