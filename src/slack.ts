@@ -427,6 +427,36 @@ export function createSlackRuntime(
     await handleRuntimeControlAction("restart", body, client, logger);
   });
 
+  app.action("agent_runtime_engine_select", async ({ ack, body, client, logger }) => {
+    await ack();
+    const context = slackInteractionContext(body);
+    const engine = readSlackActionSelectedValue(body);
+    if (!context || !engine || !isAgentRuntimeEngine(engine)) {
+      logger.warn(withUtcTimestamp("Ignoring runtime engine selection without valid context"));
+      return;
+    }
+
+    try {
+      await applyAgentRuntimeEngineSelection({
+        config,
+        store,
+        runtimeFactory,
+        principal: {
+          workspaceId: context.workspaceId,
+          slackUserId: context.slackUserId
+        },
+        engine
+      });
+      await publishHomeViewForUser({
+        client,
+        workspaceId: context.workspaceId,
+        slackUserId: context.slackUserId
+      });
+    } catch (error) {
+      logger.error(formatLogError(error));
+    }
+  });
+
   app.view("agent_config_submit", async ({ ack, body, client, logger }) => {
     const context = slackViewSubmissionContext(body);
     if (!context) {
@@ -1874,29 +1904,46 @@ export function buildAppHomeView(input: ProviderConnectionViewInput): View {
         type: "section",
         text: {
           type: "mrkdwn",
-          text: "Connect provider accounts so Burble and your agent runtime can use them on your behalf."
+          text: buildAppHomeIntroText(input)
         }
       },
       ...buildAgentRuntimeHomeBlocks(input.agentSettings),
       {
         type: "divider"
       },
+      {
+        type: "header",
+        text: {
+          type: "plain_text",
+          text: "User auth"
+        }
+      },
+      {
+        type: "section",
+        text: {
+          type: "mrkdwn",
+          text: "Connect provider accounts so Burble can use your GitHub, Google Workspace, Jira, and Slack identity on your behalf."
+        }
+      },
       ...buildProviderConnectionBlocks(input),
       {
         type: "divider"
       },
-      ...buildAgentSettingsHomeBlocks(input.agentSettings),
-      {
-        type: "context",
-        elements: [
-          {
-            type: "mrkdwn",
-            text: "You can also manage connections with `/auth` and agent settings with `/agent config`."
-          }
-        ]
-      }
+      buildAppHomeShortcutContext()
     ]
   };
+}
+
+function buildAppHomeIntroText(input: ProviderConnectionViewInput): string {
+  const connectedCount = Object.values(input.connections ?? {}).filter(Boolean).length;
+  if (connectedCount === 0 && !input.agentSettings?.runtime.id) {
+    return [
+      "Start by connecting the provider accounts you want Burble to use.",
+      "You can also message Burble directly; if a task needs a missing account, Burble will send you back here to connect it."
+    ].join(" ");
+  }
+
+  return "Manage your personal Burble runtime, provider connections, and agent preferences.";
 }
 
 export function buildAuthResponse(input: ProviderConnectionViewInput) {
@@ -2071,21 +2118,46 @@ function buildAgentRuntimeHomeBlocks(settings?: AgentHomeSettingsView) {
 
   return [
     {
+      type: "header",
+      text: {
+        type: "plain_text",
+        text: "Agent runtime"
+      }
+    },
+    {
       type: "section",
       text: {
         type: "mrkdwn",
-        text: ["*Agent runtime*", formatRuntimeHomeSummary(settings)].join("\n")
+        text: formatRuntimeHomeSummary(settings)
       },
     },
     {
       type: "actions",
       elements: buildAgentRuntimeActionElements(settings)
-    }
+    },
+    ...buildAgentSettingsHomeBlocks(settings)
   ];
 }
 
 function buildAgentRuntimeActionElements(settings: AgentHomeSettingsView) {
   const elements = [];
+  if (settings.runtime.selectableEngines.length > 1) {
+    elements.push({
+      type: "static_select",
+      action_id: "agent_runtime_engine_select",
+      placeholder: {
+        type: "plain_text",
+        text: "Choose runtime"
+      },
+      initial_option: agentConfigRuntimeEngineOption(
+        settings.runtime.engine as AgentRuntimeEngine
+      ),
+      options: runtimeEngineHomeOptions(settings).map((engine) =>
+        agentConfigRuntimeEngineOption(engine as AgentRuntimeEngine)
+      )
+    });
+  }
+
   if (settings.runtime.factory !== "docker") {
     // Static runtimes are shared externally managed services, so Burble cannot
     // safely expose per-user container lifecycle actions for them.
@@ -2167,6 +2239,12 @@ function buildAgentRuntimeActionElements(settings: AgentHomeSettingsView) {
   return elements;
 }
 
+function runtimeEngineHomeOptions(settings: AgentHomeSettingsView): string[] {
+  return settings.runtime.selectableEngines.includes(settings.runtime.engine)
+    ? settings.runtime.selectableEngines
+    : [settings.runtime.engine, ...settings.runtime.selectableEngines];
+}
+
 function isRuntimeStartable(status: string): boolean {
   return status === "not provisioned" || status === "stopped" || status === "failed";
 }
@@ -2194,14 +2272,11 @@ function buildAgentSettingsHomeBlocks(settings?: AgentHomeSettingsView) {
 
   return [
     {
-      type: "header",
-      text: {
-        type: "plain_text",
-        text: "Agent settings"
-      }
-    },
-    {
       type: "section",
+      text: {
+        type: "mrkdwn",
+        text: "*Runtime settings*"
+      },
       fields: [
         {
           type: "mrkdwn",
@@ -2238,6 +2313,18 @@ function buildAgentSettingsHomeBlocks(settings?: AgentHomeSettingsView) {
       }
     }
   ];
+}
+
+function buildAppHomeShortcutContext() {
+  return {
+    type: "context",
+    elements: [
+      {
+        type: "mrkdwn",
+        text: "You can also manage connections with `/auth` and agent settings with `/agent config`."
+      }
+    ]
+  };
 }
 
 export function buildAgentRuntimeManageModalView(input: {
@@ -3224,6 +3311,23 @@ function readSlackModalSelectedValue(
     : "";
 }
 
+function readSlackActionSelectedValue(body: unknown): string {
+  if (!body || typeof body !== "object") {
+    return "";
+  }
+  const actions = (body as { actions?: unknown }).actions;
+  if (!Array.isArray(actions)) {
+    return "";
+  }
+  const action = actions[0];
+  return action &&
+    typeof action === "object" &&
+    typeof (action as { selected_option?: { value?: unknown } }).selected_option
+      ?.value === "string"
+    ? ((action as { selected_option: { value: string } }).selected_option.value)
+    : "";
+}
+
 function slackModalStateValues(body: unknown):
   | Record<string, Record<string, { value?: string; selected_option?: { value?: string } }>>
   | undefined {
@@ -3516,6 +3620,57 @@ export function validateAgentRuntimeEngineSelection(
   }
 
   return null;
+}
+
+export async function applyAgentRuntimeEngineSelection(input: {
+  config: Config;
+  store: TokenStore;
+  runtimeFactory?: RuntimeFactory;
+  principal: { workspaceId: string; slackUserId: string };
+  engine: AgentRuntimeEngine;
+}): Promise<{ policyChanged: boolean; restart: Awaited<ReturnType<typeof restartAgentRuntimeIfConfigChanged>> }> {
+  const previousSelection = resolveRuntimeEngineForPrincipal({
+    config: input.config,
+    store: input.store,
+    principal: input.principal
+  });
+  const validation = validateAgentRuntimeEngineSelection(
+    previousSelection,
+    input.engine
+  );
+  if (validation) {
+    throw new Error(validation.modalError);
+  }
+
+  const previousPolicyHash = buildRuntimeManifestForEffectiveEngine({
+    config: input.config,
+    store: input.store,
+    principal: input.principal
+  }).policyHash;
+  input.store.upsertUserPreference({
+    workspaceId: input.principal.workspaceId,
+    slackUserId: input.principal.slackUserId,
+    key: "runtime.engine",
+    value: input.engine
+  });
+  const nextPolicyHash = buildRuntimeManifestForEffectiveEngine({
+    config: input.config,
+    store: input.store,
+    principal: input.principal
+  }).policyHash;
+
+  return {
+    policyChanged: previousPolicyHash !== nextPolicyHash,
+    restart: await restartAgentRuntimeIfConfigChanged({
+      config: input.config,
+      store: input.store,
+      runtimeFactory: input.runtimeFactory,
+      principal: input.principal,
+      previousPolicyHash,
+      nextPolicyHash,
+      previousEngine: previousSelection.effectiveEngine
+    })
+  };
 }
 
 export async function restartAgentRuntimeIfConfigChanged(input: {
