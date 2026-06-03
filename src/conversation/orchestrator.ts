@@ -40,7 +40,8 @@ async function handleConversationInternal(
   const fastTrackEnabled = shouldUseFastTrack(deps);
   const toolGroups = selectRuntimeToolGroups({
     text: request.text,
-    attachmentCount: request.attachments?.length ?? 0
+    attachmentCount: request.attachments?.length ?? 0,
+    contextTexts: recentConversationTexts(request)
   });
 
   if (intent === "connect_github") {
@@ -275,12 +276,19 @@ function toolGroupAttributes(
 ): { toolGroups: string[]; toolGroupReasons: string[] } {
   const selection = selectRuntimeToolGroups({
     text: request.text,
-    attachmentCount: request.attachments?.length ?? 0
+    attachmentCount: request.attachments?.length ?? 0,
+    contextTexts: recentConversationTexts(request)
   });
   return {
     toolGroups: selection.groups,
     toolGroupReasons: selection.reasons
   };
+}
+
+function recentConversationTexts(request: ConversationRequest): string[] {
+  return (request.context?.recentMessages ?? [])
+    .map((message) => message.text)
+    .filter((text) => text.trim().length > 0);
 }
 
 function emitConversationCompleted(
