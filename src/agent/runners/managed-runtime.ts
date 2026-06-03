@@ -220,105 +220,131 @@ export function createManagedRuntimeAdapter(
         input: sanitizeAgentInput(input)
       };
       const runUrl = `${baseUrl}/runs`;
-      const postStartedAt = Date.now();
-      const response = await postRuntimeRun(
-        requestFetch,
-        runUrl,
-        runtime,
-        runBody,
-        "application/json",
-        "respond-async"
-      );
-
-      if (!response.ok) {
-        throw new Error(
-          `Managed runtime returned HTTP ${response.status}`
-        );
-      }
-      logInfo(
-        [
-          "Managed runtime run accepted",
-          `runId=${runId}`,
-          `runtimeId=${runtimeId}`,
-          `elapsedMs=${Date.now() - postStartedAt}`,
-          `status=${response.status}`
-        ].join(" ")
-      );
-      observability?.emit({
-        name: "runtime.run.accepted",
-        runId,
-        workspaceId: input.principal.workspaceId,
-        principalId,
-        runtimeId,
-        runtimeType,
-        durationMs: Date.now() - postStartedAt,
-        status: "ok",
-        attributes: {
-          httpStatus: response.status
-        }
-      });
-
       let agentResponse: AgentOutput | null;
-      const startPayload = (await response.json()) as RemoteRunResponse &
-        RemoteRunStartResponse;
-      const legacyResponse = validateRemoteRunResponse(startPayload);
-      if (legacyResponse) {
-        agentResponse = legacyResponse;
-      } else {
-        const startedRunId = validateRemoteRunStartResponse(startPayload);
-        if (!startedRunId) {
+      try {
+        const postStartedAt = Date.now();
+        const response = await postRuntimeRun(
+          requestFetch,
+          runUrl,
+          runtime,
+          runBody,
+          "application/json",
+          "respond-async"
+        );
+
+        if (!response.ok) {
+          throw new Error(`Managed runtime returned HTTP ${response.status}`);
+        }
+        logInfo(
+          [
+            "Managed runtime run accepted",
+            `runId=${runId}`,
+            `runtimeId=${runtimeId}`,
+            `elapsedMs=${Date.now() - postStartedAt}`,
+            `status=${response.status}`
+          ].join(" ")
+        );
+        observability?.emit({
+          name: "runtime.run.accepted",
+          runId,
+          workspaceId: input.principal.workspaceId,
+          principalId,
+          runtimeId,
+          runtimeType,
+          durationMs: Date.now() - postStartedAt,
+          status: "ok",
+          attributes: {
+            httpStatus: response.status
+          }
+        });
+
+        const startPayload = (await response.json()) as RemoteRunResponse &
+          RemoteRunStartResponse;
+        const legacyResponse = validateRemoteRunResponse(startPayload);
+        if (legacyResponse) {
+          agentResponse = legacyResponse;
+        } else {
+          const startedRunId = validateRemoteRunStartResponse(startPayload);
+          if (!startedRunId) {
+            throw new Error("Managed runtime returned an invalid response");
+          }
+
+          const eventsUrl = toWebSocketUrl(
+            new URL(
+              startPayload.eventsUrl ?? `/runs/${encodeURIComponent(startedRunId)}/events`,
+              `${baseUrl}/`
+            ).toString()
+          );
+
+          try {
+            agentResponse = yield* readWebSocketRunResponse(
+              createWebSocket(eventsUrl),
+              (event) => {
+                logInfo(
+                  [
+                    "Managed runtime stream event",
+                    `runId=${startedRunId}`,
+                    `runtimeId=${runtime?.id ?? "static"}`,
+                    `elapsedMs=${Date.now() - runStartedAt}`,
+                    `type=${event.type}`
+                  ].join(" ")
+                );
+                observeRuntimeStreamEvent(event, {
+                  observability,
+                  runtimeFactory: deps.runtimeFactory,
+                  workspaceId: input.principal.workspaceId,
+                  principalId,
+                  runId,
+                  runtimeId,
+                  runtimeType,
+                  runtime,
+                  elapsedMs: Date.now() - runStartedAt
+                });
+              }
+            );
+          } catch (error) {
+            if (!isRuntimeStreamClosedError(error)) {
+              throw error;
+            }
+
+            logInfo(
+              [
+                "Managed runtime event socket closed before final",
+                `runId=${startedRunId}`,
+                `runtimeId=${runtime?.id ?? "static"}`,
+                "fallback=json"
+              ].join(" ")
+            );
+            const fallbackResponse = await getRuntimeRun(
+              requestFetch,
+              `${baseUrl}/runs/${encodeURIComponent(startedRunId)}`,
+              runtime
+            );
+            if (!fallbackResponse.ok) {
+              throw new Error(
+                `Managed runtime returned HTTP ${fallbackResponse.status}`
+              );
+            }
+            agentResponse = await readJsonRunResponse(fallbackResponse);
+          }
+        }
+        if (!agentResponse) {
           throw new Error("Managed runtime returned an invalid response");
         }
-
-        const eventsUrl = toWebSocketUrl(
-          new URL(
-            startPayload.eventsUrl ?? `/runs/${encodeURIComponent(startedRunId)}/events`,
-            `${baseUrl}/`
-          ).toString()
-        );
-
-        try {
-          agentResponse = yield* readWebSocketRunResponse(
-            createWebSocket(eventsUrl),
-            (event) =>
-              logInfo(
-                [
-                  "Managed runtime stream event",
-                  `runId=${startedRunId}`,
-                  `runtimeId=${runtime?.id ?? "static"}`,
-                  `elapsedMs=${Date.now() - runStartedAt}`,
-                  `type=${event.type}`
-                ].join(" ")
-              )
-          );
-        } catch (error) {
-          if (!isRuntimeStreamClosedError(error)) {
-            throw error;
-          }
-
-          logInfo(
-            [
-              "Managed runtime event socket closed before final",
-              `runId=${startedRunId}`,
-              `runtimeId=${runtime?.id ?? "static"}`,
-              "fallback=json"
-            ].join(" ")
-          );
-          const fallbackResponse = await getRuntimeRun(
-            requestFetch,
-            `${baseUrl}/runs/${encodeURIComponent(startedRunId)}`,
-            runtime
-          );
-          if (!fallbackResponse.ok) {
-            throw new Error(
-              `Managed runtime returned HTTP ${fallbackResponse.status}`
-            );
-          }
-          agentResponse = await readJsonRunResponse(fallbackResponse);
-        }
-      }
-      if (!agentResponse) {
-        throw new Error("Managed runtime returned an invalid response");
+      } catch (error) {
+        recordRuntimeRunFailed({
+          observability,
+          runtimeFactory: deps.runtimeFactory,
+          workspaceId: input.principal.workspaceId,
+          principalId,
+          runId,
+          runtimeId,
+          runtimeType,
+          runtime,
+          durationMs: Date.now() - runStartedAt,
+          error
+        });
+        throw error;
       }
 
       logInfo(
@@ -354,7 +380,11 @@ export function createManagedRuntimeAdapter(
           eventType: "runtime_run_finished",
           summary: {
             classification: agentResponse.classification,
-            textLength: agentResponse.text.length
+            textLength: agentResponse.text.length,
+            ...(agentResponse.usage ? { usage: agentResponse.usage } : {}),
+            ...(agentResponse.telemetry
+              ? { telemetry: agentResponse.telemetry }
+              : {})
           }
         });
       }
@@ -514,6 +544,152 @@ function recordRuntimeCapabilitiesUnavailable(
       reason: error instanceof Error ? error.message : String(error)
     }
   });
+}
+
+function observeRuntimeStreamEvent(
+  event: AgentRunEvent,
+  input: {
+    observability?: ObservabilitySink;
+    runtimeFactory?: RuntimeFactory;
+    workspaceId: string;
+    principalId: string;
+    runId: string;
+    runtimeId: string;
+    runtimeType: string;
+    runtime: RuntimeHandle | null;
+    elapsedMs: number;
+  }
+): void {
+  const common = {
+    runId: input.runId,
+    workspaceId: input.workspaceId,
+    principalId: input.principalId,
+    runtimeId: input.runtimeId,
+    runtimeType: input.runtimeType,
+    durationMs: input.elapsedMs
+  };
+
+  if (event.type === "status") {
+    input.observability?.emit({
+      ...common,
+      name: "runtime.status",
+      attributes: {
+        text: event.text
+      }
+    });
+    return;
+  }
+
+  if (event.type === "message_delta") {
+    input.observability?.emit({
+      ...common,
+      name: "runtime.message.delta",
+      attributes: {
+        textLength: event.text.length
+      },
+      content: {
+        text: event.text
+      }
+    });
+    return;
+  }
+
+  if (event.type === "tool_call") {
+    input.observability?.emit({
+      ...common,
+      name: "runtime.tool.call.started",
+      toolName: event.toolName,
+      callId: event.callId
+    });
+    if (input.runtime) {
+      input.runtimeFactory?.recordRuntimeEvent?.(input.runtime.id, {
+        eventType: "runtime_tool_called",
+        summary: {
+          phase: "started",
+          toolName: event.toolName,
+          callId: event.callId
+        }
+      });
+    }
+    return;
+  }
+
+  if (event.type === "tool_result") {
+    input.observability?.emit({
+      ...common,
+      name: "runtime.tool.call.completed",
+      toolName: event.toolName,
+      callId: event.callId,
+      classification: event.classification,
+      status: "ok"
+    });
+    if (input.runtime) {
+      input.runtimeFactory?.recordRuntimeEvent?.(input.runtime.id, {
+        eventType: "runtime_tool_called",
+        summary: {
+          phase: "completed",
+          toolName: event.toolName,
+          callId: event.callId,
+          classification: event.classification
+        }
+      });
+    }
+    return;
+  }
+
+  if (event.type === "error") {
+    return;
+  }
+}
+
+function recordRuntimeRunFailed(input: {
+  observability?: ObservabilitySink;
+  runtimeFactory?: RuntimeFactory;
+  workspaceId: string;
+  principalId: string;
+  runId: string;
+  runtimeId: string;
+  runtimeType: string;
+  runtime: RuntimeHandle | null;
+  durationMs: number;
+  error: unknown;
+}): void {
+  const error = toRuntimeObservabilityError(input.error);
+  input.observability?.emit({
+    name: "runtime.run.failed",
+    runId: input.runId,
+    workspaceId: input.workspaceId,
+    principalId: input.principalId,
+    runtimeId: input.runtimeId,
+    runtimeType: input.runtimeType,
+    durationMs: input.durationMs,
+    status: "error",
+    error
+  });
+  if (input.runtime) {
+    input.runtimeFactory?.recordRuntimeEvent?.(input.runtime.id, {
+      eventType: "runtime_run_finished",
+      summary: {
+        status: "error",
+        error
+      }
+    });
+  }
+}
+
+function toRuntimeObservabilityError(error: unknown): {
+  name?: string;
+  message: string;
+} {
+  if (error instanceof Error) {
+    return {
+      name: error.name,
+      message: error.message
+    };
+  }
+  return {
+    message: String(error)
+  };
 }
 
 function isRuntimeCapabilitiesNotImplementedError(error: unknown): boolean {

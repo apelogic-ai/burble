@@ -932,6 +932,279 @@ describe("createOpenClawNemoClawAgentRunner", () => {
     });
   });
 
+  test("emits runtime-scoped observability for streamed tool and message events", async () => {
+    const observabilityEvents: ObservabilityEventInput[] = [];
+    const runtimeEvents: Array<{ eventType: string; summary?: unknown }> = [];
+    const sockets: FakeRuntimeWebSocket[] = [];
+    const runner = createOpenClawNemoClawAgentRunner({
+      runtimeFactory: {
+        async getOrCreateRuntime() {
+          return {
+            id: "rt_stream",
+            engine: "openclaw",
+            endpointUrl: "http://runtime-stream:8080",
+            authToken: "runtime-token",
+            status: "ready",
+            statePath: "/data/runtimes/rt_stream/state",
+            configPath: "/data/runtimes/rt_stream/config/openclaw.json",
+            workspacePath: "/data/runtimes/rt_stream/workspace"
+          };
+        },
+        async stopRuntime() {},
+        async reapIdleRuntimes() {},
+        recordRuntimeEvent(_runtimeId, event) {
+          runtimeEvents.push(event);
+        }
+      },
+      observability: {
+        emit: (event) => {
+          observabilityEvents.push(event);
+        }
+      },
+      fetch: async (url, init) => {
+        if (String(url).endsWith("/capabilities")) {
+          return Response.json(openClawCapabilityManifest);
+        }
+        expect(init.method).toBe("POST");
+        return Response.json({
+          runId: "run-stream",
+          eventsUrl: "/runs/run-stream/events"
+        });
+      },
+      webSocketFactory: (url) => {
+        const socket = new FakeRuntimeWebSocket(url);
+        sockets.push(socket);
+        return socket;
+      }
+    });
+
+    const resultPromise = collectAgentRun(runner, {
+      principal,
+      conversation,
+      text: "summarize my GitHub work",
+      connections: { github: connection }
+    });
+    const socket = await waitForSocket(sockets);
+    socket.sendEvent({ type: "status", text: "Loading context..." });
+    socket.sendEvent({
+      type: "tool_call",
+      toolName: "jira.searchIssues",
+      callId: "call-1"
+    });
+    socket.sendEvent({
+      type: "tool_result",
+      toolName: "jira.searchIssues",
+      callId: "call-1",
+      classification: "user_private"
+    });
+    socket.sendEvent({ type: "message_delta", text: "Partial answer" });
+    socket.sendEvent({
+      type: "final",
+      response: {
+        classification: "user_private",
+        text: "Final answer"
+      }
+    });
+
+    await expect(resultPromise).resolves.toEqual({
+      classification: "user_private",
+      text: "Final answer"
+    });
+    expect(observabilityEvents.map((event) => event.name)).toEqual([
+      "runtime.capabilities.discovered",
+      "runtime.run.started",
+      "runtime.run.accepted",
+      "runtime.status",
+      "runtime.tool.call.started",
+      "runtime.tool.call.completed",
+      "runtime.message.delta",
+      "runtime.run.completed"
+    ]);
+    expect(observabilityEvents[4]).toMatchObject({
+      runtimeId: "rt_stream",
+      runtimeType: "openclaw",
+      toolName: "jira.searchIssues",
+      callId: "call-1"
+    });
+    expect(observabilityEvents[5]).toMatchObject({
+      runtimeId: "rt_stream",
+      runtimeType: "openclaw",
+      toolName: "jira.searchIssues",
+      callId: "call-1",
+      classification: "user_private",
+      status: "ok"
+    });
+    expect(observabilityEvents[6]).toMatchObject({
+      runtimeId: "rt_stream",
+      runtimeType: "openclaw",
+      attributes: {
+        textLength: 14
+      }
+    });
+    expect(runtimeEvents).toEqual([
+      {
+        eventType: "runtime_run_started",
+        summary: expect.objectContaining({
+          textLength: 24
+        })
+      },
+      {
+        eventType: "runtime_tool_called",
+        summary: {
+          phase: "started",
+          toolName: "jira.searchIssues",
+          callId: "call-1"
+        }
+      },
+      {
+        eventType: "runtime_tool_called",
+        summary: {
+          phase: "completed",
+          toolName: "jira.searchIssues",
+          callId: "call-1",
+          classification: "user_private"
+        }
+      },
+      {
+        eventType: "runtime_run_finished",
+        summary: {
+          classification: "user_private",
+          textLength: 12
+        }
+      }
+    ]);
+  });
+
+  test("emits runtime failure observability when a remote run is rejected", async () => {
+    const observabilityEvents: ObservabilityEventInput[] = [];
+    const runtimeEvents: Array<{ eventType: string; summary?: unknown }> = [];
+    const runner = createOpenClawNemoClawAgentRunner({
+      runtimeFactory: {
+        async getOrCreateRuntime() {
+          return {
+            id: "rt_failed",
+            engine: "openclaw",
+            endpointUrl: "http://runtime-failed:8080",
+            authToken: "runtime-token",
+            status: "ready",
+            statePath: "/data/runtimes/rt_failed/state",
+            configPath: "/data/runtimes/rt_failed/config/openclaw.json",
+            workspacePath: "/data/runtimes/rt_failed/workspace"
+          };
+        },
+        async stopRuntime() {},
+        async reapIdleRuntimes() {},
+        recordRuntimeEvent(_runtimeId, event) {
+          runtimeEvents.push(event);
+        }
+      },
+      observability: {
+        emit: (event) => {
+          observabilityEvents.push(event);
+        }
+      },
+      fetch: async (url) => {
+        if (String(url).endsWith("/capabilities")) {
+          return Response.json(openClawCapabilityManifest);
+        }
+        return new Response("unavailable", { status: 503 });
+      }
+    });
+
+    await expect(
+      collectAgentRun(runner, {
+        principal,
+        conversation,
+        text: "summarize my GitHub work",
+        connections: { github: connection }
+      })
+    ).rejects.toThrow("Managed runtime returned HTTP 503");
+
+    expect(observabilityEvents.map((event) => event.name)).toEqual([
+      "runtime.capabilities.discovered",
+      "runtime.run.started",
+      "runtime.run.failed"
+    ]);
+    expect(observabilityEvents[2]).toMatchObject({
+      runtimeId: "rt_failed",
+      runtimeType: "openclaw",
+      status: "error",
+      error: {
+        name: "Error",
+        message: "Managed runtime returned HTTP 503"
+      }
+    });
+    expect(runtimeEvents.at(-1)).toEqual({
+      eventType: "runtime_run_finished",
+      summary: {
+        status: "error",
+        error: {
+          name: "Error",
+          message: "Managed runtime returned HTTP 503"
+        }
+      }
+    });
+  });
+
+  test("emits one runtime failure when a streamed run reports an error", async () => {
+    const observabilityEvents: ObservabilityEventInput[] = [];
+    const sockets: FakeRuntimeWebSocket[] = [];
+    const runner = createOpenClawNemoClawAgentRunner({
+      runtimeFactory: {
+        async getOrCreateRuntime() {
+          return {
+            id: "rt_stream_error",
+            engine: "openclaw",
+            endpointUrl: "http://runtime-stream-error:8080",
+            authToken: "runtime-token",
+            status: "ready",
+            statePath: "/data/runtimes/rt_stream_error/state",
+            configPath: "/data/runtimes/rt_stream_error/config/openclaw.json",
+            workspacePath: "/data/runtimes/rt_stream_error/workspace"
+          };
+        },
+        async stopRuntime() {},
+        async reapIdleRuntimes() {}
+      },
+      observability: {
+        emit: (event) => {
+          observabilityEvents.push(event);
+        }
+      },
+      fetch: async (url) => {
+        if (String(url).endsWith("/capabilities")) {
+          return Response.json(openClawCapabilityManifest);
+        }
+        return Response.json({
+          runId: "run-stream-error",
+          eventsUrl: "/runs/run-stream-error/events"
+        });
+      },
+      webSocketFactory: (url) => {
+        const socket = new FakeRuntimeWebSocket(url);
+        sockets.push(socket);
+        return socket;
+      }
+    });
+
+    const resultPromise = collectAgentRun(runner, {
+      principal,
+      conversation,
+      text: "summarize my GitHub work",
+      connections: { github: connection }
+    });
+    const socket = await waitForSocket(sockets);
+    socket.sendEvent({ type: "error", message: "remote runtime exploded" });
+
+    await expect(resultPromise).rejects.toThrow("remote runtime exploded");
+    expect(observabilityEvents.map((event) => event.name)).toEqual([
+      "runtime.capabilities.discovered",
+      "runtime.run.started",
+      "runtime.run.accepted",
+      "runtime.run.failed"
+    ]);
+  });
+
   test("falls back to the run snapshot when the runtime event socket closes before final", async () => {
     const requests: Array<{
       url: string;
