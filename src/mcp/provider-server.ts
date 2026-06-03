@@ -491,6 +491,19 @@ async function validateScheduledJobArgumentProviderMcpToolAccess(
     };
   }
 
+  const routeValidation = validateScheduledJobCapabilityRoute(
+    payload,
+    store,
+    runtime,
+    capability.routeId
+  );
+  if (routeValidation.response) {
+    return {
+      request,
+      response: routeValidation.response
+    };
+  }
+
   if (
     !isScheduledJobToolAllowed({
       requiredTools: capability.requiredTools,
@@ -566,15 +579,6 @@ async function validateProviderMcpRoute(
   }
 
   const routeId = readProviderMcpRouteId(payload);
-  if (readProviderMcpScheduledJobId(payload)) {
-    return {
-      request: replaceRequestJsonBody(
-        request,
-        stripProviderMcpRouteId(confirmationValidation.request ?? payload)
-      ),
-      response: null
-    };
-  }
   if (!routeId) {
     return {
       request: confirmationValidation.request
@@ -724,7 +728,11 @@ function readProviderMcpScheduledJobId(payload: unknown): string | null {
   if (!args || typeof args !== "object" || Array.isArray(args)) {
     return null;
   }
-  const jobId = (args as Record<string, unknown>).jobId;
+  const jobId =
+    (args as Record<string, unknown>).jobId ??
+    (args as Record<string, unknown>).scheduledJobId ??
+    (args as Record<string, unknown>).job_id ??
+    (args as Record<string, unknown>).scheduled_job_id;
   return typeof jobId === "string" && jobId.trim() ? jobId.trim() : null;
 }
 
@@ -739,6 +747,8 @@ function stripProviderMcpScheduledJobId(payload: unknown): unknown {
   const {
     jobId: _jobId,
     scheduledJobId: _scheduledJobId,
+    job_id: _job_id,
+    scheduled_job_id: _scheduled_job_id,
     ...rest
   } = args as Record<string, unknown>;
   return {
@@ -748,6 +758,57 @@ function stripProviderMcpScheduledJobId(payload: unknown): unknown {
       arguments: rest
     }
   };
+}
+
+function validateScheduledJobCapabilityRoute(
+  payload: unknown,
+  store: TokenStore,
+  runtime: AgentRuntimeRecord,
+  routeId: string | null
+): { response: Response | null } {
+  if (!routeId) {
+    return { response: null };
+  }
+
+  const route = store.getConversationRoute(routeId);
+  if (!route || route.revokedAt) {
+    return {
+      response: mcpJsonRpcErrorResponse(
+        readJsonRpcId(payload),
+        -32025,
+        `Scheduled job route ${routeId} is not available.`
+      )
+    };
+  }
+
+  if (
+    route.workspaceId !== runtime.workspaceId ||
+    route.slackUserId !== runtime.slackUserId
+  ) {
+    return {
+      response: mcpJsonRpcErrorResponse(
+        readJsonRpcId(payload),
+        -32026,
+        `Scheduled job route ${routeId} does not belong to this runtime principal.`
+      )
+    };
+  }
+
+  const destination = parseRouteDestination(route.destinationJson);
+  if (
+    typeof destination.runtimeId === "string" &&
+    destination.runtimeId !== runtime.id
+  ) {
+    return {
+      response: mcpJsonRpcErrorResponse(
+        readJsonRpcId(payload),
+        -32027,
+        `Scheduled job route ${routeId} is bound to a different runtime.`
+      )
+    };
+  }
+
+  return { response: null };
 }
 
 function readProviderMcpConfirmation(payload: unknown): {

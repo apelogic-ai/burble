@@ -876,7 +876,6 @@ describe("handleProviderMcpRequest", () => {
             name: "google_search_drive_files",
             arguments: {
               jobId: "ai-news-hourly",
-              routeId: "convrt_stale",
               query: "AI News Scratchpad",
               limit: 1
             }
@@ -1068,16 +1067,94 @@ describe("handleProviderMcpRequest", () => {
         token
       ),
       {
-        searchGoogleDriveFiles: async () => {
-          throw new Error("job-scoped calls must use canonical jobId");
+        searchGoogleDriveFiles: async (_accessToken, input) => {
+          expect(input).toEqual({
+            query: "AI News Scratchpad",
+            limit: 1
+          });
+          return [{ id: "file-1", name: "AI News Scratchpad" }];
         }
       }
     );
     const aliasBody = readMcpBody(await aliasResponse.text());
+    const aliasToolResult = JSON.parse(aliasBody.result.content[0].text);
 
     expect(aliasResponse.status).toBe(200);
-    expect(aliasBody.error.message).toBe(
-      "Scheduled job provider calls must include jobId matching the runtime token."
+    expect(aliasToolResult).toEqual({
+      classification: "user_private",
+      content: [{ id: "file-1", name: "AI News Scratchpad" }]
+    });
+    store.close();
+  });
+
+  test("rejects scheduled MCP calls when the stored job route no longer matches the runtime", async () => {
+    const issuer = createRuntimeJwtIssuer({ issuer: config.runtimeJwtIssuer });
+    const store = createTokenStore(":memory:");
+    const runtime = store.getOrCreateAgentRuntime({
+      workspaceId: "T123",
+      slackUserId: "U123",
+      engine: "openclaw",
+      endpointUrl: "http://runtime-u123:8080",
+      authTokenHash: "hash-u123",
+      statePath: "/data/runtimes/u123/state",
+      configPath: "/data/runtimes/u123/config/openclaw.json",
+      workspacePath: "/data/runtimes/u123/workspace"
+    });
+    const route = store.upsertConversationRoute({
+      workspaceId: "T123",
+      slackUserId: "U123",
+      transport: "slack",
+      destination: {
+        runtimeId: "rt_other",
+        conversationId: "D123"
+      }
+    });
+    store.upsertAgentJobCapability({
+      jobId: "ai-news-hourly",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      requiredTools: ["google_search_drive_files"],
+      routeId: route.id,
+      policyHash: "policy-a",
+      capabilityProfile: "scheduled_job",
+      runtimeType: "openclaw"
+    });
+    const token = issuer.issueRuntimeJwt({
+      audience: "http://agentgateway:3000/mcp",
+      runtimeId: runtime.id,
+      workspaceId: "T123",
+      slackUserId: "U123"
+    });
+
+    const response = await handleProviderMcpRequest(
+      config,
+      store,
+      issuer,
+      mcpRequest(
+        {
+          method: "tools/call",
+          params: {
+            name: "google_search_drive_files",
+            arguments: {
+              jobId: "ai-news-hourly",
+              query: "AI News Scratchpad",
+              limit: 1
+            }
+          }
+        },
+        token
+      ),
+      {
+        searchGoogleDriveFiles: async () => {
+          throw new Error("job route should block this tool call");
+        }
+      }
+    );
+    const body = readMcpBody(await response.text());
+
+    expect(response.status).toBe(200);
+    expect(body.error.message).toBe(
+      `Scheduled job route ${route.id} is bound to a different runtime.`
     );
     store.close();
   });

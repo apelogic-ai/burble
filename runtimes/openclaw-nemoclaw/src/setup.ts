@@ -93,7 +93,6 @@ async function ensureOpenClawConfig(
     `OpenClaw LLM config selected model=${config.llmModel} ollamaBaseUrl=${config.ollamaBaseUrl}`
   );
   await applyOpenClawConfigPatch(llmPatchPath, config, runCommand, logInfo);
-  await applyOpenClawAgentIdentity(config, runCommand, logInfo);
 
   if (!config.openClawValidateOnStart) {
     logInfo("OpenClaw config validate skipped validateOnStart=false");
@@ -196,53 +195,12 @@ async function applyOpenClawConfigPatch(
   logInfo("OpenClaw config patch finish");
 }
 
-async function applyOpenClawAgentIdentity(
-  config: RuntimeConfig,
-  runCommand: CliCommandRunner,
-  logInfo: RuntimeLogger
-): Promise<void> {
-  logInfo(`OpenClaw agent identity start agent=${config.openClawAgent}`);
-  const result = await runCommand(
-    config.openClawCommand,
-    [
-      "agents",
-      "set-identity",
-      "--agent",
-      config.openClawAgent,
-      "--name",
-      "Burble",
-      "--theme",
-      "Slack assistant",
-      "--emoji",
-      ":robot_face:",
-      "--json"
-    ],
-    {
-      timeoutMs: config.openClawTimeoutMs,
-      env: openClawEnv(config)
-    }
-  );
-
-  if (result.exitCode !== 0) {
-    throw new Error(`OpenClaw agent identity exited with code ${result.exitCode}`);
-  }
-  logInfo("OpenClaw agent identity finish");
-}
-
 async function writeGeneratedLlmPatch(config: RuntimeConfig): Promise<string> {
   await mkdir(config.openClawStateDir, { recursive: true });
   const path = join(config.openClawStateDir, generatedLlmPatchFile);
   await writeFile(
     path,
-    buildOpenClawLlmPatch({
-      modelId: config.llmModel,
-      ollamaBaseUrl: config.ollamaBaseUrl,
-      agentId: config.openClawAgent,
-      codeModeEnabled: config.openClawCodeMode,
-      fastModeEnabled: config.openClawFastMode,
-      burbleChannelBaseUrl: buildLocalBurbleChannelBaseUrl(config),
-      burbleMcpBaseUrl: buildLocalBurbleMcpBaseUrl(config)
-    })
+    `${JSON.stringify(buildOpenClawNemoClawAgentConfig(config), null, 2)}\n`
   );
   return path;
 }

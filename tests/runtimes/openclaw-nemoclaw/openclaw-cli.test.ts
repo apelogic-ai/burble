@@ -2258,7 +2258,7 @@ describe("runOpenClawCliRequest", () => {
     ]);
   });
 
-  test("streams Burble greeting fallback when OpenClaw repeats bootstrap answers", async () => {
+  test("streams Burble baseline fallback when OpenClaw repeats bootstrap answers", async () => {
     const requests: Array<Record<string, unknown>> = [];
     const events: Array<RunEvent> = [];
 
@@ -2308,7 +2308,7 @@ describe("runOpenClawCliRequest", () => {
       type: "final",
       response: {
         classification: "user_private",
-        text: "Hey — I’m Burble. What can I help with?"
+        text: "No Burble tool context is needed for this request."
       }
     });
   });
@@ -2702,7 +2702,7 @@ describe("runOpenClawCliRequest", () => {
     ).toBe(true);
   });
 
-  test("falls back to Burble greeting when OpenClaw gateway repeats bootstrap answers", async () => {
+  test("falls back to Burble baseline when OpenClaw gateway repeats bootstrap answers", async () => {
     const requests: Array<Record<string, unknown>> = [];
     const logs: string[] = [];
 
@@ -2746,7 +2746,9 @@ describe("runOpenClawCliRequest", () => {
         )
     );
 
-    expect(response.response.text).toBe("Hey — I’m Burble. What can I help with?");
+    expect(response.response.text).toBe(
+      "No Burble tool context is needed for this request."
+    );
     expect(requests).toHaveLength(2);
     expect(
       logs.some((line) =>
@@ -2879,6 +2881,55 @@ describe("runOpenClawCliRequest", () => {
       logs.some((line) =>
         line.includes(
           "OpenClaw gateway http retry runId=run-openclaw-retry step=1 attempt=1 status=408 reason=upstream_provider_timeout"
+        )
+      )
+    ).toBe(true);
+  });
+
+  test("retries retryable OpenClaw Gateway transport timeouts", async () => {
+    const requests: Array<Record<string, unknown>> = [];
+    const logs: string[] = [];
+    const response = await withMockFetch(
+      (async (_input, init) => {
+        requests.push(JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>);
+        if (requests.length === 1) {
+          const error = new Error("The operation timed out");
+          error.name = "AbortError";
+          throw error;
+        }
+        return new Response(JSON.stringify(openResponsesText("Gateway answer.")), {
+          status: 200,
+          headers: { "content-type": "application/json" }
+        });
+      }) as typeof fetch,
+      async () =>
+        runOpenClawCliRequest(
+          {
+            runId: "run-openclaw-transport-retry",
+            input: {
+              text: "what can you do?",
+              connections: {
+                github: { connected: false }
+              }
+            }
+          },
+          { ...config, engine: "openclaw-gateway" },
+          async () => {
+            throw new Error("unexpected tool call");
+          },
+          async (_command, args) => {
+            throw new Error(`unexpected cli call: ${args.join(" ")}`);
+          },
+          (line) => logs.push(line)
+        )
+    );
+
+    expect(response.response.text).toBe("Gateway answer.");
+    expect(requests).toHaveLength(2);
+    expect(
+      logs.some((line) =>
+        line.includes(
+          "OpenClaw gateway http retry runId=run-openclaw-transport-retry step=1 attempt=1 reason=transport_error"
         )
       )
     ).toBe(true);
