@@ -947,6 +947,121 @@ describe("handleRuntimeRequest", () => {
     expect(schema.required).toEqual(["query"]);
   });
 
+  test("exposes scheduled job registration through local Burble MCP tools/list", async () => {
+    const upstreamPayload = {
+      jsonrpc: "2.0",
+      id: 1,
+      result: {
+        tools: []
+      }
+    };
+
+    const response = await withMockFetch(
+      (async (_input, _init) =>
+        new Response(`event: message\ndata: ${JSON.stringify(upstreamPayload)}\n\n`, {
+          headers: { "content-type": "text/event-stream" }
+        })) as typeof fetch,
+      () =>
+        handleRuntimeRequest(
+          new Request("http://runtime/internal/burble/mcp", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({
+              jsonrpc: "2.0",
+              id: 1,
+              method: "tools/list"
+            })
+          }),
+          {
+            ...config,
+            mcpGatewayUrl: "http://burble-app:3000/mcp",
+            runtimeJwt: "runtime-jwt"
+          }
+        )
+    );
+
+    expect(response.status).toBe(200);
+    const body = readMcpData(await response.text());
+    const tool = body.result.tools.find(
+      (entry: { name?: string }) =>
+        entry.name === "scheduled_job_register_capability"
+    );
+    expect(tool).toBeTruthy();
+    expect(tool.description).toContain("scheduledJob.registerCapability");
+    expect(tool.inputSchema.required).toEqual(["jobId", "requiredTools"]);
+    expect(tool.inputSchema.properties.stateRefs.description).toContain(
+      "objects, never strings"
+    );
+  });
+
+  test("executes scheduled job registration through local Burble MCP", async () => {
+    const requests: Request[] = [];
+    const response = await withMockFetch(
+      (async (input, init) => {
+        const request = new Request(input, init);
+        requests.push(request);
+        return Response.json({
+          classification: "user_private",
+          content: {
+            ok: true,
+            scheduledPromptInstruction: "Use job id job-123."
+          }
+        });
+      }) as typeof fetch,
+      () =>
+        handleRuntimeRequest(
+          new Request("http://runtime/internal/burble/mcp", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({
+              jsonrpc: "2.0",
+              id: 1,
+              method: "tools/call",
+              params: {
+                name: "scheduled_job_register_capability",
+                arguments: {
+                  jobId: "job-123",
+                  requiredTools: ["google.getDriveFile"],
+                  routeId: "convrt_abc123",
+                  stateRefs: ["google-drive:file:file-123"]
+                }
+              }
+            })
+          }),
+          {
+            ...config,
+            runtimeId: "rt_u123",
+            mcpGatewayUrl: "http://burble-app:3000/mcp",
+            runtimeJwt: "runtime-jwt"
+          }
+        )
+    );
+
+    expect(response.status).toBe(200);
+    const body = readMcpData(await response.text());
+    expect(body.result.content[0].text).toContain('"ok":true');
+    expect(requests).toHaveLength(1);
+    expect(requests[0].url).toBe(
+      "http://burble-app:3000/internal/tools/scheduledJob.registerCapability/execute"
+    );
+    expect(requests[0].headers.get("authorization")).toBe("Bearer secret");
+    expect(requests[0].headers.get("x-burble-runtime-id")).toBe("rt_u123");
+    expect(await requests[0].json()).toEqual({
+      input: {
+        jobId: "job-123",
+        requiredTools: ["google.getDriveFile"],
+        routeId: "convrt_abc123",
+        stateRefs: [
+          {
+            provider: "google",
+            kind: "drive_file",
+            id: "file-123"
+          }
+        ]
+      }
+    });
+  });
+
   test("delivers Burble channel events through the Burble tool gateway", async () => {
     const requests: Request[] = [];
     const response = await withMockFetch(

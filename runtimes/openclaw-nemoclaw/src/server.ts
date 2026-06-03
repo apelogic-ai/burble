@@ -1,4 +1,5 @@
 import type { RuntimeConfig, RuntimeEngine } from "./config";
+import { createBurbleToolExecutor } from "./burble-tools";
 import { createBurbleConversationConnector } from "./burble-conversation-connector";
 import { info } from "./logger";
 import { createRuntimeRunner } from "./runtime";
@@ -29,6 +30,8 @@ const runtimeToolGroups = new Set([
   "scheduler",
   "slack"
 ]);
+const localScheduledJobRegisterCapabilityToolName =
+  "scheduled_job_register_capability";
 
 export async function handleRuntimeRequest(
   request: Request,
@@ -264,6 +267,9 @@ async function handleLocalBurbleMcpRequest(
   const bodyText = await request.text();
   const payload = readMcpJsonRpcPayload(bodyText);
   if (isMcpToolCall(payload)) {
+    if (isLocalScheduledJobRegisterCapabilityCall(payload)) {
+      return handleLocalScheduledJobRegisterCapabilityMcpCall(payload, config);
+    }
     const routeId = readMcpToolCallRouteId(payload);
     const jobId = readMcpToolCallJobId(payload);
     if (!routeId && !jobId) {
@@ -840,6 +846,42 @@ function isMcpToolCall(
   );
 }
 
+function isLocalScheduledJobRegisterCapabilityCall(payload: {
+  method: "tools/call";
+  params?: unknown;
+}): boolean {
+  return readMcpToolCallName(payload) === localScheduledJobRegisterCapabilityToolName;
+}
+
+function readMcpToolCallName(payload: {
+  method: "tools/call";
+  params?: unknown;
+}): string | null {
+  const params = payload.params;
+  if (!params || typeof params !== "object" || Array.isArray(params)) {
+    return null;
+  }
+  const name = (params as Record<string, unknown>).name;
+  return typeof name === "string" && name.trim().length > 0
+    ? name.trim()
+    : null;
+}
+
+function readMcpToolCallArguments(payload: {
+  method: "tools/call";
+  params?: unknown;
+}): Record<string, unknown> {
+  const params = payload.params;
+  if (!params || typeof params !== "object" || Array.isArray(params)) {
+    return {};
+  }
+  const args = (params as Record<string, unknown>).arguments;
+  if (!args || typeof args !== "object" || Array.isArray(args)) {
+    return {};
+  }
+  return args as Record<string, unknown>;
+}
+
 function readMcpToolCallRouteId(payload: {
   method: "tools/call";
   params?: unknown;
@@ -921,7 +963,76 @@ function addRouteIdToMcpToolsListPayload(payload: unknown): unknown {
     ...payload,
     result: {
       ...result,
-      tools: tools.map(addRouteIdToMcpToolSchema)
+      tools: addLocalBurbleMcpTools(tools.map(addRouteIdToMcpToolSchema))
+    }
+  };
+}
+
+function addLocalBurbleMcpTools(tools: unknown[]): unknown[] {
+  if (
+    tools.some(
+      (tool) =>
+        typeof tool === "object" &&
+        tool !== null &&
+        !Array.isArray(tool) &&
+        (tool as { name?: unknown }).name ===
+          localScheduledJobRegisterCapabilityToolName
+    )
+  ) {
+    return tools;
+  }
+  return [...tools, scheduledJobRegisterCapabilityMcpTool()];
+}
+
+function scheduledJobRegisterCapabilityMcpTool(): Record<string, unknown> {
+  return {
+    name: localScheduledJobRegisterCapabilityToolName,
+    description:
+      "Register a native scheduled/background job with Burble's scheduledJob.registerCapability control-plane tool before enabling or triggering provider-backed scheduled work.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        jobId: {
+          type: "string",
+          minLength: 1,
+          description: "Stable native scheduler job id returned by the runtime scheduler."
+        },
+        requiredTools: {
+          type: "array",
+          items: { type: "string", minLength: 1 },
+          minItems: 1,
+          description:
+            "Exact Burble provider tool names this scheduled job may call, for example google.getDriveFile."
+        },
+        routeId: {
+          type: "string",
+          minLength: 1,
+          pattern: "^convrt_[A-Za-z0-9_-]+$",
+          description:
+            "Optional durable Burble convrt_* conversation route for scheduled delivery."
+        },
+        stateRefs: {
+          type: "array",
+          description:
+            'Optional durable provider-backed state reference objects, never strings; each entry must include provider and kind strings, for example {"provider":"google","kind":"drive_file","id":"<fileId>"}.',
+          items: {
+            type: "object",
+            properties: {
+              provider: { type: "string", minLength: 1 },
+              kind: { type: "string", minLength: 1 },
+              id: { type: "string" },
+              name: { type: "string" },
+              purpose: { type: "string" }
+            },
+            required: ["provider", "kind"]
+          }
+        },
+        visibilityPolicy: {
+          type: "object",
+          description: "Optional output visibility policy for scheduled delivery."
+        }
+      },
+      required: ["jobId", "requiredTools"]
     }
   };
 }
@@ -972,6 +1083,39 @@ function addRouteIdToMcpToolSchema(tool: unknown): unknown {
   };
 }
 
+async function handleLocalScheduledJobRegisterCapabilityMcpCall(
+  payload: { id?: unknown; method: "tools/call"; params?: unknown },
+  config: RuntimeConfig
+): Promise<Response> {
+  if (!config.runtimeId) {
+    return mcpJsonRpcErrorResponse(
+      readMcpJsonRpcId(payload),
+      -32000,
+      "Runtime id is not configured."
+    );
+  }
+  const executor = createBurbleToolExecutor(config, config.runtimeId);
+  try {
+    const result = await executor("scheduledJob.registerCapability", {
+      input: readMcpToolCallArguments(payload)
+    });
+    return mcpJsonRpcResultResponse(readMcpJsonRpcId(payload), {
+      content: [
+        {
+          type: "text",
+          text: JSON.stringify(result)
+        }
+      ]
+    });
+  } catch (error) {
+    return mcpJsonRpcErrorResponse(
+      readMcpJsonRpcId(payload),
+      -32000,
+      error instanceof Error ? error.message : String(error)
+    );
+  }
+}
+
 function mcpJsonRpcErrorResponse(
   id: unknown,
   code: number,
@@ -984,6 +1128,21 @@ function mcpJsonRpcErrorResponse(
       code,
       message
     }
+  };
+  return new Response(`event: message\ndata: ${JSON.stringify(payload)}\n\n`, {
+    status: 200,
+    headers: {
+      "content-type": "text/event-stream",
+      "cache-control": "no-store"
+    }
+  });
+}
+
+function mcpJsonRpcResultResponse(id: unknown, result: unknown): Response {
+  const payload = {
+    jsonrpc: "2.0",
+    id,
+    result
   };
   return new Response(`event: message\ndata: ${JSON.stringify(payload)}\n\n`, {
     status: 200,
