@@ -84,24 +84,21 @@ export function buildOpenClawLlmPatch(input: OpenClawPatchInput): string {
         }
       : {})
   };
-  const concreteAgentRuntimeConfig = {
-    id: agentId,
-    skills: [],
-    contextInjection: "never",
-    skipBootstrap: true,
-    systemPromptOverride,
-    ...(input.fastModeEnabled
-      ? {
-          fastModeDefault: true,
-          thinkingDefault: "minimal",
-          reasoningDefault: "off"
-        }
-      : {})
-  };
   const patch = {
     agents: {
       defaults: agentRuntimeDefaults,
-      list: [concreteAgentRuntimeConfig]
+      ...(input.fastModeEnabled
+        ? {
+            list: [
+              {
+                id: agentId,
+                fastModeDefault: true,
+                thinkingDefault: "minimal",
+                reasoningDefault: "off"
+              }
+            ]
+          }
+        : {})
     },
     skills: {
       allowBundled: []

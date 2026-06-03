@@ -320,6 +320,51 @@ describe("ensureOpenClawSetup", () => {
     ]);
   });
 
+  test("writes a schema-compatible generated LLM patch", async () => {
+    const runtimeConfig = await configWithState({
+      openClawSetupOnStart: false,
+      openClawValidateOnStart: false,
+      openClawAgent: "burble",
+      openClawFastMode: true
+    });
+
+    await ensureOpenClawSetup(runtimeConfig, async () => ({
+      exitCode: 0,
+      stdout: "",
+      stderr: ""
+    }));
+
+    const generatedPatch = JSON.parse(
+      await readFile(llmPatchPath(runtimeConfig), "utf8")
+    );
+
+    expect(generatedPatch.agents.defaults).toMatchObject({
+      skipBootstrap: true,
+      contextInjection: "never",
+      skills: [],
+      systemPromptOverride: expect.stringContaining("Burble's OpenClaw runtime")
+    });
+    expect(generatedPatch.agents.list).toEqual([
+      {
+        id: "burble",
+        fastModeDefault: true,
+        thinkingDefault: "minimal",
+        reasoningDefault: "off"
+      }
+    ]);
+    expect(JSON.stringify(generatedPatch.agents.list)).not.toContain(
+      "skipBootstrap"
+    );
+    expect(JSON.stringify(generatedPatch.agents.list)).not.toContain(
+      "contextInjection"
+    );
+    expect(JSON.stringify(generatedPatch.agents.list)).not.toContain(
+      "systemPromptOverride"
+    );
+    expect(JSON.stringify(generatedPatch.agents.list)).not.toContain("skills");
+    expect(generatedPatch.memory.qmd.update.startup).toBe("off");
+  });
+
   test("skips repeated setup when persisted state is already initialized", async () => {
     const stateDir = await mkdtemp(join(tmpdir(), "burble-openclaw-state-"));
     const calls: string[][] = [];
