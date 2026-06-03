@@ -109,7 +109,16 @@ export function resolveRuntimeEngineForPrincipal(input: {
 export function runtimeEngineCompatibility(
   engine: RuntimeManifest["runtime"]["engine"]
 ): RuntimeEngineCompatibility {
-  const manifest = knownRuntimeCapabilityManifest(engine);
+  return runtimeCapabilityManifestCompatibility(
+    engine,
+    knownRuntimeCapabilityManifest(engine)
+  );
+}
+
+export function runtimeCapabilityManifestCompatibility(
+  engine: RuntimeManifest["runtime"]["engine"],
+  manifest: RuntimeCapabilityManifest
+): RuntimeEngineCompatibility {
   const reasons: string[] = [];
   if (!manifest.transports.includes("http")) {
     reasons.push("missing HTTP transport");
