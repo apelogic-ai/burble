@@ -66,9 +66,7 @@ describe("ensureOpenClawSetup", () => {
             default: true,
             identity: {
               name: "Burble",
-              nature: "AI copilot",
               theme: "Slack assistant",
-              vibe: "concise and helpful",
               emoji: ":robot_face:"
             }
           }
@@ -121,9 +119,7 @@ describe("ensureOpenClawSetup", () => {
             default: true,
             identity: {
               name: "Burble",
-              nature: "AI copilot",
               theme: "Slack assistant",
-              vibe: "concise and helpful",
               emoji: ":robot_face:"
             }
           }
@@ -320,7 +316,7 @@ describe("ensureOpenClawSetup", () => {
     ]);
   });
 
-  test("writes declarative identity for the configured OpenClaw agent", async () => {
+  test("writes a schema-compatible configured OpenClaw agent entry", async () => {
     const calls: string[][] = [];
     const runtimeConfig = await configWithState({
       openClawSetupOnStart: false,
@@ -343,15 +339,16 @@ describe("ensureOpenClawSetup", () => {
     expect(generatedPatch.agents.list).toContainEqual(
       expect.objectContaining({
         id: "burble",
+        default: true,
         identity: {
           name: "Burble",
-          nature: "AI copilot",
           theme: "Slack assistant",
-          vibe: "concise and helpful",
           emoji: ":robot_face:"
         }
       })
     );
+    expect(JSON.stringify(generatedPatch.agents.list)).not.toContain("nature");
+    expect(JSON.stringify(generatedPatch.agents.list)).not.toContain("vibe");
   });
 
   test("writes a schema-compatible generated LLM patch", async () => {
@@ -384,9 +381,7 @@ describe("ensureOpenClawSetup", () => {
         default: true,
         identity: {
           name: "Burble",
-          nature: "AI copilot",
           theme: "Slack assistant",
-          vibe: "concise and helpful",
           emoji: ":robot_face:"
         }
       }
@@ -401,7 +396,27 @@ describe("ensureOpenClawSetup", () => {
       "systemPromptOverride"
     );
     expect(JSON.stringify(generatedPatch.agents.list)).not.toContain("skills");
+    expect(JSON.stringify(generatedPatch.agents.list)).not.toContain("nature");
+    expect(JSON.stringify(generatedPatch.agents.list)).not.toContain("vibe");
     expect(generatedPatch.memory.qmd.update.startup).toBe("off");
+  });
+
+  test("includes sanitized CLI details when config patch fails", async () => {
+    const runtimeConfig = await configWithState({
+      openClawSetupOnStart: false,
+      openClawValidateOnStart: false
+    });
+
+    await expect(
+      ensureOpenClawSetup(runtimeConfig, async () => ({
+        exitCode: 1,
+        stdout: "",
+        stderr:
+          "Error: Config validation failed: agents.list.0.identity: Invalid input Bearer runtime-secret sk-openai-secret"
+      }))
+    ).rejects.toThrow(
+      "OpenClaw config patch exited with code 1: Error: Config validation failed: agents.list.0.identity: Invalid input Bearer *** sk-***"
+    );
   });
 
   test("skips repeated setup when persisted state is already initialized", async () => {
