@@ -143,7 +143,9 @@ print(json.dumps({"text": mod.build_hermes_turn_text(payload)}))
     expect(text).toContain("github_list_my_pull_requests");
     expect(text).not.toContain("google_search_drive_files");
     expect(text).toContain("scheduled_job_register_capability");
-    expect(text).toContain("include the returned scheduledPromptInstruction verbatim");
+    expect(text).toContain("without an immediate/manual run");
+    expect(text).toContain("with the exact returned jobId");
+    expect(text).toContain("before enabling or triggering it");
     expect(text).toContain("Recent Burble context");
     expect(text).not.toContain("old message should not be included");
     expect(text).toContain("recent message 20");
@@ -215,6 +217,10 @@ print(json.dumps({"text": mod.build_hermes_turn_text(payload)}))
     const text = (result as { text: string }).text;
     expect(text).toContain("Provider-backed scheduled job repair:");
     expect(text).toContain("Before manually triggering");
+    expect(text).toContain("do not request an immediate/manual run");
+    expect(text).toContain("After the native scheduler returns the stable job id");
+    expect(text).toContain("If registration does not return ok, do not trigger");
+    expect(text).toContain("Only after the job prompt has been updated");
     expect(text).toContain("scheduled_job_register_capability");
     expect(text).toContain(
       "Scheduled provider tool calls must include the returned jobId"

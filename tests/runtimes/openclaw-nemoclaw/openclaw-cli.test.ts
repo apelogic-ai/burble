@@ -2850,6 +2850,18 @@ describe("runOpenClawCliRequest", () => {
       "Provider-backed scheduled job repair"
     );
     expect(String(requests[0].body.input)).toContain(
+      "do not request an immediate/manual run"
+    );
+    expect(String(requests[0].body.input)).toContain(
+      "After the native scheduler returns the stable job id"
+    );
+    expect(String(requests[0].body.input)).toContain(
+      "If registration does not return ok, do not trigger"
+    );
+    expect(String(requests[0].body.input)).toContain(
+      "Only after the job prompt has been updated"
+    );
+    expect(String(requests[0].body.input)).toContain(
       "before manually triggering"
     );
     expect(String(requests[0].body.input)).toContain(
