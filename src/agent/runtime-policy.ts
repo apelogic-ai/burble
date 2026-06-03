@@ -1,4 +1,5 @@
 import type { Config } from "../config";
+import { agentRuntimeEngines } from "../config";
 import type { AgentRuntimeRecord, TokenStore, WorkspacePolicyRecord } from "../db";
 import { providerToolCatalog } from "../providers/catalog";
 import { buildRuntimeManifest, type RuntimeManifest } from "./runtime-manifest";
@@ -18,6 +19,45 @@ export const defaultWorkspaceRuntimePolicy = {
     ]
   }
 } as const;
+
+const agentRuntimeEngineSet = new Set<string>(agentRuntimeEngines);
+
+export type RuntimeEngineSelection = {
+  configuredEngine: RuntimeManifest["runtime"]["engine"];
+  effectiveEngine: RuntimeManifest["runtime"]["engine"];
+  preferredEngine: RuntimeManifest["runtime"]["engine"] | null;
+  allowedEngines: RuntimeManifest["runtime"]["engine"][];
+};
+
+export function resolveRuntimeEngineForPrincipal(input: {
+  config: Config;
+  store: TokenStore;
+  principal: PrincipalId;
+}): RuntimeEngineSelection {
+  const configuredEngine = input.config.agentRuntimeEngine;
+  const allowedEngines = readAllowedRuntimeEngines({
+    config: input.config,
+    store: input.store,
+    workspaceId: input.principal.workspaceId
+  });
+  const preferredEngine = readUserRuntimeEnginePreference({
+    store: input.store,
+    principal: input.principal
+  });
+  const effectiveEngine =
+    preferredEngine && allowedEngines.includes(preferredEngine)
+      ? preferredEngine
+      : allowedEngines.includes(configuredEngine)
+        ? configuredEngine
+        : (allowedEngines[0] ?? configuredEngine);
+
+  return {
+    configuredEngine,
+    effectiveEngine,
+    preferredEngine,
+    allowedEngines
+  };
+}
 
 export function buildRuntimeManifestForPrincipal(input: {
   config: Config;
@@ -150,6 +190,53 @@ function defaultWorkspacePolicyRecords(
       updatedAt
     }
   ];
+}
+
+function readAllowedRuntimeEngines(input: {
+  config: Config;
+  store: TokenStore;
+  workspaceId: string;
+}): RuntimeManifest["runtime"]["engine"][] {
+  const explicit = input.store
+    .listWorkspacePolicy(input.workspaceId)
+    .find((record) => record.key === "runtime.allowedEngines")?.value;
+  const engines = normalizeRuntimeEngineList(explicit);
+  return engines.length > 0 ? engines : [input.config.agentRuntimeEngine];
+}
+
+function readUserRuntimeEnginePreference(input: {
+  store: TokenStore;
+  principal: PrincipalId;
+}): RuntimeManifest["runtime"]["engine"] | null {
+  const value = input.store.getUserPreference(
+    input.principal.workspaceId,
+    input.principal.slackUserId,
+    "runtime.engine"
+  )?.value;
+  return normalizeRuntimeEngine(value);
+}
+
+function normalizeRuntimeEngineList(
+  value: unknown
+): RuntimeManifest["runtime"]["engine"][] {
+  const rawValues = Array.isArray(value)
+    ? value
+    : typeof value === "string"
+      ? value.split(/[,\s]+/)
+      : [];
+  return [...new Set(rawValues.map(normalizeRuntimeEngine).filter(Boolean))] as RuntimeManifest["runtime"]["engine"][];
+}
+
+function normalizeRuntimeEngine(
+  value: unknown
+): RuntimeManifest["runtime"]["engine"] | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+  const normalized = value.trim().toLowerCase();
+  return agentRuntimeEngineSet.has(normalized)
+    ? (normalized as RuntimeManifest["runtime"]["engine"])
+    : null;
 }
 
 export function buildRuntimeManifestForRecord(input: {

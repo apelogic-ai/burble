@@ -624,6 +624,60 @@ describe("buildAppHomeView", () => {
     expect(started).toEqual(["T123:U123", "T123:U123"]);
     expect(stopped).toEqual([runtime.id]);
   });
+
+  test("pauses the effective preferred runtime engine", async () => {
+    const store = createTokenStore(":memory:");
+    store.upsertWorkspacePolicy({
+      workspaceId: "T123",
+      key: "runtime.allowedEngines",
+      value: ["burble-direct", "hermes"],
+      updatedBySlackUserId: "UADMIN"
+    });
+    store.upsertUserPreference({
+      workspaceId: "T123",
+      slackUserId: "U123",
+      key: "runtime.engine",
+      value: "hermes"
+    });
+    const runtime = store.getOrCreateAgentRuntime({
+      workspaceId: "T123",
+      slackUserId: "U123",
+      engine: "hermes",
+      endpointUrl: "http://hermes-runtime:8080",
+      authTokenHash: "hash",
+      statePath: "/data/state",
+      configPath: "/data/config/hermes.json",
+      workspacePath: "/data/workspace",
+      policyHash: "policy"
+    });
+    const stopped: string[] = [];
+
+    const result = await applyAgentRuntimeControl({
+      config: agentConfig,
+      store,
+      runtimeFactory: {
+        async getOrCreateRuntime() {
+          throw new Error("unexpected start");
+        },
+        async stopRuntime(runtimeId) {
+          stopped.push(runtimeId);
+          store.updateAgentRuntimeStatus(runtimeId, { status: "stopped" });
+        },
+        async reapIdleRuntimes() {}
+      },
+      workspaceId: "T123",
+      slackUserId: "U123",
+      action: "pause"
+    });
+
+    expect(result).toMatchObject({
+      action: "pause",
+      runtimeId: runtime.id,
+      status: "stopped"
+    });
+    expect(stopped).toEqual([runtime.id]);
+    store.close();
+  });
 });
 
 describe("buildHelpResponse", () => {
@@ -708,6 +762,55 @@ describe("buildAgentStatusResponse", () => {
     expect(blocks).toContain("ready");
     expect(blocks).toContain("http://runtime:8080");
     expect(blocks).not.toContain("hash");
+  });
+
+  test("shows the effective preferred runtime engine when allowed", () => {
+    const store = createTokenStore(":memory:");
+    store.upsertWorkspacePolicy({
+      workspaceId: "T123",
+      key: "runtime.allowedEngines",
+      value: ["burble-direct", "hermes"],
+      updatedBySlackUserId: "UADMIN"
+    });
+    store.upsertUserPreference({
+      workspaceId: "T123",
+      slackUserId: "U123",
+      key: "runtime.engine",
+      value: "hermes"
+    });
+    store.getOrCreateAgentRuntime({
+      workspaceId: "T123",
+      slackUserId: "U123",
+      engine: "hermes",
+      endpointUrl: "http://hermes-runtime:8080",
+      authTokenHash: "hash",
+      statePath: "/data/state",
+      configPath: "/data/config/hermes.json",
+      workspacePath: "/data/workspace",
+      policyHash: "policy"
+    });
+
+    const settings = buildAgentHomeSettings({
+      config: agentConfig,
+      store,
+      workspaceId: "T123",
+      slackUserId: "U123"
+    });
+    const blocks = JSON.stringify(
+      buildAgentRuntimeManageModalView({
+        config: agentConfig,
+        store,
+        workspaceId: "T123",
+        slackUserId: "U123"
+      }).blocks
+    );
+
+    expect(settings.runtime.engine).toBe("hermes");
+    expect(settings.runtime.preferredEngine).toBe("hermes");
+    expect(settings.runtime.allowedEngines).toEqual(["burble-direct", "hermes"]);
+    expect(blocks).toContain("http://hermes-runtime:8080");
+    expect(blocks).toContain("Preferred engine");
+    store.close();
   });
 });
 
@@ -840,6 +943,59 @@ describe("agent user config commands", () => {
     expect(getResponse.text).toContain("User memory: `on`");
   });
 
+  test("sets and reads the user runtime engine preference", () => {
+    const store = createTokenStore(":memory:");
+    store.upsertWorkspacePolicy({
+      workspaceId: "T123",
+      key: "runtime.allowedEngines",
+      value: ["burble-direct", "hermes"],
+      updatedBySlackUserId: "UADMIN"
+    });
+
+    const response = applyAgentUserConfigSet({
+      config: agentConfig,
+      store,
+      workspaceId: "T123",
+      slackUserId: "U123",
+      key: "runtime.engine",
+      value: "hermes"
+    });
+    expect(response.text).toContain("Updated `runtime.engine`");
+    expect(
+      store.getUserPreference("T123", "U123", "runtime.engine")?.value
+    ).toBe("hermes");
+
+    const getResponse = buildAgentUserConfigGetResponse({
+      config: agentConfig,
+      store,
+      workspaceId: "T123",
+      slackUserId: "U123",
+      key: "runtime.engine"
+    });
+    expect(getResponse.text).toContain("Effective: `hermes`");
+    expect(getResponse.text).toContain("Stored preference: `hermes`");
+    store.close();
+  });
+
+  test("rejects runtime engine preferences outside workspace policy", () => {
+    const store = createTokenStore(":memory:");
+
+    const response = applyAgentUserConfigSet({
+      config: agentConfig,
+      store,
+      workspaceId: "T123",
+      slackUserId: "U123",
+      key: "runtime.engine",
+      value: "hermes"
+    });
+
+    expect(response.text).toContain("not allowed in this workspace");
+    expect(
+      store.getUserPreference("T123", "U123", "runtime.engine")
+    ).toBeNull();
+    store.close();
+  });
+
   test("supports disabling and enabling a user-scoped tool", () => {
     const store = createTokenStore(":memory:");
 
@@ -933,6 +1089,68 @@ describe("agent user config commands", () => {
     });
     expect(stopped).toEqual([runtime.id]);
     expect(started).toEqual(["T123:U123"]);
+  });
+
+  test("stops the previous engine runtime when runtime preference changes", async () => {
+    const store = createTokenStore(":memory:");
+    store.upsertWorkspacePolicy({
+      workspaceId: "T123",
+      key: "runtime.allowedEngines",
+      value: ["burble-direct", "hermes"],
+      updatedBySlackUserId: "UADMIN"
+    });
+    const runtime = store.getOrCreateAgentRuntime({
+      workspaceId: "T123",
+      slackUserId: "U123",
+      engine: "burble-direct",
+      endpointUrl: "http://runtime:8080",
+      authTokenHash: "hash",
+      statePath: "/data/state",
+      configPath: "/data/config/runtime.json",
+      workspacePath: "/data/workspace",
+      policyHash: "policy-old"
+    });
+    store.upsertUserPreference({
+      workspaceId: "T123",
+      slackUserId: "U123",
+      key: "runtime.engine",
+      value: "hermes"
+    });
+    const stopped: string[] = [];
+
+    const restart = await restartAgentRuntimeIfConfigChanged({
+      config: agentConfig,
+      store,
+      runtimeFactory: {
+        async getOrCreateRuntime() {
+          return {
+            id: "rt_hermes",
+            engine: "hermes",
+            endpointUrl: "http://hermes-runtime:8080",
+            authToken: "token",
+            status: "ready",
+            statePath: "/data/hermes-state",
+            configPath: "/data/config/hermes.json",
+            workspacePath: "/data/hermes-workspace"
+          };
+        },
+        async stopRuntime(runtimeId) {
+          stopped.push(runtimeId);
+        },
+        async reapIdleRuntimes() {}
+      },
+      principal: { workspaceId: "T123", slackUserId: "U123" },
+      previousPolicyHash: "policy-old",
+      nextPolicyHash: "policy-new",
+      previousEngine: "burble-direct"
+    });
+
+    expect(restart).toEqual({
+      stoppedRuntimeId: runtime.id,
+      startedRuntimeId: "rt_hermes"
+    });
+    expect(stopped).toEqual([runtime.id]);
+    store.close();
   });
 
   test("does not stop runtime when user config keeps the same manifest hash", async () => {

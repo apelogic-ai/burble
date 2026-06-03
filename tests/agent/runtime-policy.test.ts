@@ -1,7 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import type { Config } from "../../src/config";
 import { createTokenStore } from "../../src/db";
-import { buildRuntimeManifestForPrincipal } from "../../src/agent/runtime-policy";
+import {
+  buildRuntimeManifestForPrincipal,
+  resolveRuntimeEngineForPrincipal
+} from "../../src/agent/runtime-policy";
 
 const config: Config = {
   slackBotToken: "xoxb-test",
@@ -94,6 +97,88 @@ describe("buildRuntimeManifestForPrincipal", () => {
     });
 
     expect(manifest.skills).toEqual([{ id: "core", version: "1", enabled: true }]);
+    store.close();
+  });
+});
+
+describe("resolveRuntimeEngineForPrincipal", () => {
+  test("defaults to the configured runtime engine", () => {
+    const store = createTokenStore(":memory:");
+    const selection = resolveRuntimeEngineForPrincipal({
+      config,
+      store,
+      principal: {
+        workspaceId: "T123",
+        slackUserId: "U123"
+      }
+    });
+
+    expect(selection).toEqual({
+      configuredEngine: "openclaw",
+      effectiveEngine: "openclaw",
+      preferredEngine: null,
+      allowedEngines: ["openclaw"]
+    });
+    store.close();
+  });
+
+  test("uses a user runtime preference when the workspace allows it", () => {
+    const store = createTokenStore(":memory:");
+    store.upsertWorkspacePolicy({
+      workspaceId: "T123",
+      key: "runtime.allowedEngines",
+      value: ["openclaw", "hermes"],
+      updatedBySlackUserId: "UADMIN"
+    });
+    store.upsertUserPreference({
+      workspaceId: "T123",
+      slackUserId: "U123",
+      key: "runtime.engine",
+      value: "hermes"
+    });
+
+    const selection = resolveRuntimeEngineForPrincipal({
+      config,
+      store,
+      principal: {
+        workspaceId: "T123",
+        slackUserId: "U123"
+      }
+    });
+
+    expect(selection.effectiveEngine).toBe("hermes");
+    expect(selection.preferredEngine).toBe("hermes");
+    expect(selection.allowedEngines).toEqual(["openclaw", "hermes"]);
+    store.close();
+  });
+
+  test("ignores a user runtime preference that is not allowed", () => {
+    const store = createTokenStore(":memory:");
+    store.upsertWorkspacePolicy({
+      workspaceId: "T123",
+      key: "runtime.allowedEngines",
+      value: ["openclaw"],
+      updatedBySlackUserId: "UADMIN"
+    });
+    store.upsertUserPreference({
+      workspaceId: "T123",
+      slackUserId: "U123",
+      key: "runtime.engine",
+      value: "hermes"
+    });
+
+    const selection = resolveRuntimeEngineForPrincipal({
+      config,
+      store,
+      principal: {
+        workspaceId: "T123",
+        slackUserId: "U123"
+      }
+    });
+
+    expect(selection.effectiveEngine).toBe("openclaw");
+    expect(selection.preferredEngine).toBe("hermes");
+    expect(selection.allowedEngines).toEqual(["openclaw"]);
     store.close();
   });
 });

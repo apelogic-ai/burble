@@ -58,7 +58,7 @@ const slackLogLevels = ["debug", "info", "warn", "error"] as const;
 const agentModes = ["deterministic", "llm"] as const;
 const agentRuntimes = ["ai-sdk", "burble-runtime"] as const;
 const agentRuntimeFactories = ["static", "docker"] as const;
-const agentRuntimeEngines = [
+export const agentRuntimeEngines = [
   "deterministic",
   "openclaw",
   "openclaw-gateway",
@@ -326,7 +326,7 @@ export function readConfig(env: Env): Config {
   };
 }
 
-function defaultAgentRuntimeImage(engine: AgentRuntimeEngine): string {
+export function defaultAgentRuntimeImage(engine: AgentRuntimeEngine): string {
   return engine === "hermes"
     ? "burble-nemo-hermes:dev"
     : "burble-openclaw-nemoclaw:dev";

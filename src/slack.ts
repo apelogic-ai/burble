@@ -2,7 +2,7 @@ import { App, LogLevel } from "@slack/bolt";
 import type { View } from "@slack/types";
 import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
-import type { Config } from "./config";
+import { agentRuntimeEngines, defaultAgentRuntimeImage, type Config } from "./config";
 import type { SlackLogLevel } from "./config";
 import {
   addGitHubIssueLabels,
@@ -41,6 +41,7 @@ import {
 } from "./providers/slack/client";
 import type {
   AgentRuntimeRecord,
+  AgentRuntimeEngine,
   AgentRuntimeStatus,
   ProviderConnection,
   TokenStore
@@ -62,7 +63,10 @@ import {
 import { validateAgentModelId } from "./agent/providers";
 import { selectRuntimeToolGroups } from "./agent/tool-groups";
 import { createDockerRuntimeFactory } from "./agent/container-runtime-factory";
-import { buildRuntimeManifestForPrincipal } from "./agent/runtime-policy";
+import {
+  buildRuntimeManifestForPrincipal,
+  resolveRuntimeEngineForPrincipal
+} from "./agent/runtime-policy";
 import { createStaticRuntimeFactory } from "./agent/runtime-factory";
 import type { RuntimeFactory } from "./agent/runtime-factory";
 import type { RuntimeToolGroupSelection } from "./agent/tool-groups";
@@ -447,22 +451,25 @@ export function createSlackRuntime(
       workspaceId: context.workspaceId,
       slackUserId: context.slackUserId
     };
-    const previousPolicyHash = buildRuntimeManifestForPrincipal({
+    const previousSelection = resolveRuntimeEngineForPrincipal({
       config,
       store,
-      principal,
-      engine: config.agentRuntimeEngine
+      principal
+    });
+    const previousPolicyHash = buildRuntimeManifestForEffectiveEngine({
+      config,
+      store,
+      principal
     }).policyHash;
     applyAgentConfigModalValues({
       store,
       principal,
       values: parsed.values
     });
-    const nextPolicyHash = buildRuntimeManifestForPrincipal({
+    const nextPolicyHash = buildRuntimeManifestForEffectiveEngine({
       config,
       store,
-      principal,
-      engine: config.agentRuntimeEngine
+      principal
     }).policyHash;
 
     await ack({
@@ -482,7 +489,8 @@ export function createSlackRuntime(
         runtimeFactory,
         principal,
         previousPolicyHash,
-        nextPolicyHash
+        nextPolicyHash,
+        previousEngine: previousSelection.effectiveEngine
       });
     } catch (error) {
       logger.error(formatLogError(error));
@@ -1041,11 +1049,15 @@ export function createSlackRuntime(
           workspaceId: body.team_id ?? "",
           slackUserId: body.user_id
         };
-        const previousPolicyHash = buildRuntimeManifestForPrincipal({
+        const previousSelection = resolveRuntimeEngineForPrincipal({
           config,
           store,
-          principal,
-          engine: config.agentRuntimeEngine
+          principal
+        });
+        const previousPolicyHash = buildRuntimeManifestForEffectiveEngine({
+          config,
+          store,
+          principal
         }).policyHash;
         const response = applyAgentUserConfigSet({
           config,
@@ -1055,11 +1067,10 @@ export function createSlackRuntime(
           key: action.key,
           value: action.value
         });
-        const nextPolicyHash = buildRuntimeManifestForPrincipal({
+        const nextPolicyHash = buildRuntimeManifestForEffectiveEngine({
           config,
           store,
-          principal,
-          engine: config.agentRuntimeEngine
+          principal
         }).policyHash;
         const policyChanged = previousPolicyHash !== nextPolicyHash;
         await ack(
@@ -1081,7 +1092,8 @@ export function createSlackRuntime(
             runtimeFactory,
             principal,
             previousPolicyHash,
-            nextPolicyHash
+            nextPolicyHash,
+            previousEngine: previousSelection.effectiveEngine
           });
           await respond(
             withDirectMessageSlashCommandVisibility(
@@ -1422,10 +1434,15 @@ export async function getOrStartAgentStatusRuntime(input: {
     slackUserId: input.slackUserId
   };
   await input.runtimeFactory?.getOrCreateRuntime(principal);
+  const selection = resolveRuntimeEngineForPrincipal({
+    config: input.config,
+    store: input.store,
+    principal
+  });
 
   return input.store.getAgentRuntimeForPrincipal({
     ...principal,
-    engine: input.config.agentRuntimeEngine
+    engine: selection.effectiveEngine
   });
 }
 
@@ -1501,55 +1518,134 @@ function createManagedRuntimeFactory(
     return undefined;
   }
 
-  if (config.agentRuntimeFactory === "docker") {
-    if (!config.agentRuntimeTokenSecret) {
-      throw new Error(
-        "AGENT_RUNTIME_TOKEN_SECRET or INTERNAL_API_TOKEN is required for docker runtime factory"
-      );
-    }
-
-    return createDockerRuntimeFactory({
-      store,
-      engine: config.agentRuntimeEngine,
-      image: config.agentRuntimeImage,
-      dataRoot: config.agentRuntimeDataRoot,
-      dockerNetwork: config.agentRuntimeDockerNetwork,
-      toolGatewayUrl: config.agentRuntimeToolGatewayUrl,
-      mcpGatewayUrl: config.agentRuntimeMcpGatewayUrl,
-      mcpAudience: config.agentRuntimeMcpAudience,
-      runtimeJwtIssuer,
-      runtimeJwtTtlSeconds: config.agentRuntimeJwtTtlSeconds,
-      runtimeTokenSecret: config.agentRuntimeTokenSecret,
-      openClawConfigPatchPath: config.openClawConfigPatchHostPath,
-      idleTtlMs: config.agentRuntimeIdleTtlMs,
-      env: Bun.env,
-      buildManifest: (principal) =>
-        buildRuntimeManifestForPrincipal({
-          config,
-          store,
-          principal,
-          engine: config.agentRuntimeEngine
-        })
-    });
+  if (
+    config.agentRuntimeFactory === "docker" &&
+    !config.agentRuntimeTokenSecret
+  ) {
+    throw new Error(
+      "AGENT_RUNTIME_TOKEN_SECRET or INTERNAL_API_TOKEN is required for docker runtime factory"
+    );
   }
-
-  if (!config.managedRuntimeUrl) {
+  if (config.agentRuntimeFactory === "static" && !config.managedRuntimeUrl) {
     return undefined;
   }
 
-  return createStaticRuntimeFactory({
-    store,
-    engine: config.agentRuntimeEngine,
-    endpointUrl: config.managedRuntimeUrl,
-    authToken: config.internalApiToken ?? "",
-    dataRoot: config.agentRuntimeDataRoot,
-    buildManifest: (principal) =>
+  const delegates = new Map<AgentRuntimeEngine, RuntimeFactory>();
+  const delegateForEngine = (engine: AgentRuntimeEngine): RuntimeFactory => {
+    const existing = delegates.get(engine);
+    if (existing) {
+      return existing;
+    }
+    const buildManifest = (principal: { workspaceId: string; slackUserId: string }) =>
       buildRuntimeManifestForPrincipal({
         config,
         store,
         principal,
-        engine: config.agentRuntimeEngine
-      })
+        engine
+      });
+    const delegate =
+      config.agentRuntimeFactory === "docker"
+        ? createDockerRuntimeFactory({
+            store,
+            engine,
+            image: runtimeImageForEngine(config, engine),
+            dataRoot: config.agentRuntimeDataRoot,
+            dockerNetwork: config.agentRuntimeDockerNetwork,
+            toolGatewayUrl: config.agentRuntimeToolGatewayUrl,
+            mcpGatewayUrl: config.agentRuntimeMcpGatewayUrl,
+            mcpAudience: config.agentRuntimeMcpAudience,
+            runtimeJwtIssuer,
+            runtimeJwtTtlSeconds: config.agentRuntimeJwtTtlSeconds,
+            runtimeTokenSecret: config.agentRuntimeTokenSecret ?? "",
+            openClawConfigPatchPath: config.openClawConfigPatchHostPath,
+            idleTtlMs: config.agentRuntimeIdleTtlMs,
+            env: Bun.env,
+            buildManifest
+          })
+        : createStaticRuntimeFactory({
+            store,
+            engine,
+            endpointUrl: config.managedRuntimeUrl ?? "",
+            authToken: config.internalApiToken ?? "",
+            dataRoot: config.agentRuntimeDataRoot,
+            buildManifest
+          });
+    delegates.set(engine, delegate);
+    return delegate;
+  };
+  const resolveEngine = (principal: { workspaceId: string; slackUserId: string }) =>
+    resolveRuntimeEngineForPrincipal({ config, store, principal }).effectiveEngine;
+
+  return {
+    async getOrCreateRuntime(principal) {
+      return delegateForEngine(resolveEngine(principal)).getOrCreateRuntime(
+        principal
+      );
+    },
+
+    async syncRuntimeStatus(runtimeId) {
+      const runtime = store.getAgentRuntime(runtimeId);
+      return runtime
+        ? (await delegateForEngine(runtime.engine).syncRuntimeStatus?.(runtimeId)) ??
+            store.getAgentRuntime(runtimeId)
+        : null;
+    },
+
+    async readRuntimeConfig(runtimeId) {
+      const runtime = store.getAgentRuntime(runtimeId);
+      if (!runtime) {
+        throw new Error(`Runtime ${runtimeId} was not found`);
+      }
+      return delegateForEngine(runtime.engine).readRuntimeConfig?.(runtimeId) ??
+        Promise.reject(new Error("Runtime config reads are not supported"));
+    },
+
+    async stopRuntime(runtimeId) {
+      const runtime = store.getAgentRuntime(runtimeId);
+      if (runtime) {
+        await delegateForEngine(runtime.engine).stopRuntime(runtimeId);
+      }
+    },
+
+    async reapIdleRuntimes(now) {
+      for (const engine of agentRuntimeEngines) {
+        await delegateForEngine(engine).reapIdleRuntimes(now);
+      }
+    },
+
+    recordRuntimeEvent(runtimeId, event) {
+      const runtime = store.getAgentRuntime(runtimeId);
+      if (runtime) {
+        delegateForEngine(runtime.engine).recordRuntimeEvent?.(runtimeId, event);
+      } else {
+        store.recordAgentRuntimeEvent({
+          runtimeId,
+          eventType: event.eventType,
+          summary: event.summary
+        });
+      }
+    }
+  };
+}
+
+function runtimeImageForEngine(
+  config: Config,
+  engine: AgentRuntimeEngine
+): string {
+  return engine === config.agentRuntimeEngine
+    ? config.agentRuntimeImage
+    : defaultAgentRuntimeImage(engine);
+}
+
+function buildRuntimeManifestForEffectiveEngine(input: {
+  config: Config;
+  store: TokenStore;
+  principal: { workspaceId: string; slackUserId: string };
+}) {
+  const selection = resolveRuntimeEngineForPrincipal(input);
+  return buildRuntimeManifestForPrincipal({
+    ...input,
+    engine: selection.effectiveEngine
   });
 }
 
@@ -1744,6 +1840,9 @@ type AgentHomeSettingsView = {
     status: string;
     factory: string;
     engine: string;
+    configuredEngine: string;
+    preferredEngine: string | null;
+    allowedEngines: string[];
     endpointUrl: string | null;
     createdAt: string | null;
     lastUsedAt: string | null;
@@ -1873,16 +1972,21 @@ export function buildAgentHomeSettings(input: {
     workspaceId: input.workspaceId,
     slackUserId: input.slackUserId
   };
+  const selection = resolveRuntimeEngineForPrincipal({
+    config: input.config,
+    store: input.store,
+    principal
+  });
   const manifest = buildRuntimeManifestForPrincipal({
     config: input.config,
     store: input.store,
     principal,
-    engine: input.config.agentRuntimeEngine
+    engine: selection.effectiveEngine
   });
   const runtime = input.store.getAgentRuntimeForPrincipal({
     workspaceId: input.workspaceId,
     slackUserId: input.slackUserId,
-    engine: input.config.agentRuntimeEngine
+    engine: selection.effectiveEngine
   });
 
   return {
@@ -1897,6 +2001,9 @@ export function buildAgentHomeSettings(input: {
           status: runtime.status,
           factory: input.config.agentRuntimeFactory,
           engine: runtime.engine,
+          configuredEngine: selection.configuredEngine,
+          preferredEngine: selection.preferredEngine,
+          allowedEngines: selection.allowedEngines,
           endpointUrl: runtime.endpointUrl,
           createdAt: runtime.createdAt,
           lastUsedAt: runtime.lastUsedAt
@@ -1905,7 +2012,10 @@ export function buildAgentHomeSettings(input: {
           id: null,
           status: "not provisioned",
           factory: input.config.agentRuntimeFactory,
-          engine: input.config.agentRuntimeEngine,
+          engine: selection.effectiveEngine,
+          configuredEngine: selection.configuredEngine,
+          preferredEngine: selection.preferredEngine,
+          allowedEngines: selection.allowedEngines,
           endpointUrl: null,
           createdAt: null,
           lastUsedAt: null
@@ -1920,10 +2030,18 @@ async function buildSyncedAgentHomeSettings(input: {
   workspaceId: string;
   slackUserId: string;
 }): Promise<AgentHomeSettingsView> {
-  const runtime = input.store.getAgentRuntimeForPrincipal({
+  const principal = {
     workspaceId: input.workspaceId,
-    slackUserId: input.slackUserId,
-    engine: input.config.agentRuntimeEngine
+    slackUserId: input.slackUserId
+  };
+  const selection = resolveRuntimeEngineForPrincipal({
+    config: input.config,
+    store: input.store,
+    principal
+  });
+  const runtime = input.store.getAgentRuntimeForPrincipal({
+    ...principal,
+    engine: selection.effectiveEngine
   });
   if (runtime && input.runtimeFactory?.syncRuntimeStatus) {
     await input.runtimeFactory.syncRuntimeStatus(runtime.id);
@@ -2048,6 +2166,7 @@ function formatRuntimeHomeSummary(settings: AgentHomeSettingsView): string {
     `Status: \`${settings.runtime.status}\``,
     `Factory: \`${settings.runtime.factory}\``,
     `Engine: \`${settings.runtime.engine}\``,
+    `Preferred engine: \`${settings.runtime.preferredEngine ?? "not set"}\``,
     `Runtime: ${runtimeId}`,
     `Last used: ${lastUsed}`
   ].join("\n");
@@ -2119,7 +2238,10 @@ export function buildAgentRuntimeManageModalView(input: {
       settings.runtime.id ? `\`${settings.runtime.id}\`` : "`not provisioned yet`"
     }`,
     `*Factory:* \`${settings.runtime.factory}\``,
-    `*Engine:* \`${settings.runtime.engine}\``,
+    `*Effective engine:* \`${settings.runtime.engine}\``,
+    `*Configured engine:* \`${settings.runtime.configuredEngine}\``,
+    `*Preferred engine:* \`${settings.runtime.preferredEngine ?? "not set"}\``,
+    `*Allowed engines:* \`${formatStringList(settings.runtime.allowedEngines)}\``,
     `*Endpoint:* ${
       settings.runtime.endpointUrl ? `\`${settings.runtime.endpointUrl}\`` : "`none`"
     }`,
@@ -2209,10 +2331,15 @@ export async function applyAgentRuntimeControl(input: {
     workspaceId: input.workspaceId,
     slackUserId: input.slackUserId
   };
+  const selection = resolveRuntimeEngineForPrincipal({
+    config: input.config,
+    store: input.store,
+    principal
+  });
   const existing = input.store.getAgentRuntimeForPrincipal({
     workspaceId: input.workspaceId,
     slackUserId: input.slackUserId,
-    engine: input.config.agentRuntimeEngine
+    engine: selection.effectiveEngine
   });
 
   if (input.action === "pause") {
@@ -2718,6 +2845,7 @@ export function buildAgentConfigLoadingResponse() {
 }
 
 type AgentUserConfigKey =
+  | "runtime.engine"
   | "runtime.model"
   | "memory.user"
   | "tools.disabled"
@@ -2756,6 +2884,7 @@ export function isDirectMessageSlashCommand(
 
 type AgentConfigModalValues = {
   model: string;
+  runtimeEngine: AgentRuntimeEngine;
   memory: "on" | "off";
   disabledTools: string[];
   enabledSkills: string[];
@@ -2800,6 +2929,24 @@ export function buildAgentConfigModalView(input: {
           type: "plain_text_input",
           action_id: "value",
           initial_value: settings.model
+        }
+      },
+      {
+        type: "input",
+        block_id: "agent_config_runtime_engine",
+        label: {
+          type: "plain_text",
+          text: "Runtime engine"
+        },
+        element: {
+          type: "static_select",
+          action_id: "value",
+          initial_option: agentConfigRuntimeEngineOption(
+            settings.runtime.engine as AgentRuntimeEngine
+          ),
+          options: settings.runtime.allowedEngines.map((engine) =>
+            agentConfigRuntimeEngineOption(engine as AgentRuntimeEngine)
+          )
         }
       },
       {
@@ -2871,6 +3018,20 @@ function agentConfigMemoryOption(value: "on" | "off") {
   } as const;
 }
 
+function agentConfigRuntimeEngineOption(value: AgentRuntimeEngine) {
+  return {
+    text: {
+      type: "plain_text",
+      text: value
+    },
+    value
+  } as const;
+}
+
+function isAgentRuntimeEngine(value: string): value is AgentRuntimeEngine {
+  return agentRuntimeEngines.includes(value as AgentRuntimeEngine);
+}
+
 export function buildAgentConfigSavedModalView(policyChanged: boolean): View {
   return {
     type: "modal" as const,
@@ -2911,6 +3072,11 @@ function parseAgentConfigModalSubmission(
     "agent_config_memory",
     "value"
   );
+  const runtimeEngine = readSlackModalSelectedValue(
+    body,
+    "agent_config_runtime_engine",
+    "value"
+  );
   const disabledTools = readSlackModalPlainTextValue(
     body,
     "agent_config_disabled_tools",
@@ -2935,6 +3101,9 @@ function parseAgentConfigModalSubmission(
   if (memory !== "on" && memory !== "off") {
     errors.agent_config_memory = "Choose whether user memory is on or off.";
   }
+  if (!isAgentRuntimeEngine(runtimeEngine)) {
+    errors.agent_config_runtime_engine = "Choose a supported runtime engine.";
+  }
 
   if (Object.keys(errors).length > 0) {
     return { ok: false, errors };
@@ -2945,6 +3114,7 @@ function parseAgentConfigModalSubmission(
     ok: true,
     values: {
       model: modelId,
+      runtimeEngine: runtimeEngine as AgentRuntimeEngine,
       memory: memoryValue,
       disabledTools: parseStringListConfigValue(disabledTools),
       enabledSkills: parseStringListConfigValue(enabledSkills)
@@ -2962,6 +3132,12 @@ function applyAgentConfigModalValues(input: {
     slackUserId: input.principal.slackUserId,
     key: "runtime.model",
     value: input.values.model
+  });
+  input.store.upsertUserPreference({
+    workspaceId: input.principal.workspaceId,
+    slackUserId: input.principal.slackUserId,
+    key: "runtime.engine",
+    value: input.values.runtimeEngine
   });
   input.store.upsertUserPreference({
     workspaceId: input.principal.workspaceId,
@@ -3140,11 +3316,16 @@ export function buildAgentUserConfigGetResponse(input: {
     workspaceId: input.workspaceId,
     slackUserId: input.slackUserId
   };
+  const selection = resolveRuntimeEngineForPrincipal({
+    config: input.config,
+    store: input.store,
+    principal
+  });
   const manifest = buildRuntimeManifestForPrincipal({
     config: input.config,
     store: input.store,
     principal,
-    engine: input.config.agentRuntimeEngine
+    engine: selection.effectiveEngine
   });
   const key = input.key ? normalizeAgentUserConfigKey(input.key) : null;
 
@@ -3159,6 +3340,7 @@ export function buildAgentUserConfigGetResponse(input: {
     ? formatAgentUserConfigKeyLines({ store: input.store, principal, manifest, key })
     : [
         "*Agent user config*",
+        `• Runtime engine: \`${selection.effectiveEngine}\``,
         `• Model: \`${manifest.model.provider}:${manifest.model.model}\``,
         `• User memory: \`${manifest.memory.userMemoryEnabled ? "on" : "off"}\``,
         `• Disabled tools: \`${formatStringList(manifest.disabledTools)}\``,
@@ -3166,6 +3348,7 @@ export function buildAgentUserConfigGetResponse(input: {
         `• Policy hash: \`${manifest.policyHash}\``,
         "",
         "*Settable keys*",
+        "• `runtime.engine`",
         "• `model`",
         "• `memory`",
         "• `tools.disabled`",
@@ -3210,12 +3393,34 @@ export function applyAgentUserConfigSet(input: {
       text: parsed.error
     };
   }
+  const beforeSelection = resolveRuntimeEngineForPrincipal({
+    config: input.config,
+    store: input.store,
+    principal
+  });
+  if (
+    key === "runtime.engine" &&
+    !beforeSelection.allowedEngines.includes(parsed.value as AgentRuntimeEngine)
+  ) {
+    return {
+      response_type: "ephemeral",
+      text: [
+        `Runtime engine \`${parsed.value}\` is not allowed in this workspace.`,
+        `Allowed engines: \`${formatStringList(beforeSelection.allowedEngines)}\`.`
+      ].join("\n")
+    };
+  }
 
   input.store.upsertUserPreference({
     workspaceId: input.workspaceId,
     slackUserId: input.slackUserId,
     key,
     value: parsed.value
+  });
+  const selection = resolveRuntimeEngineForPrincipal({
+    config: input.config,
+    store: input.store,
+    principal
   });
 
   return {
@@ -3230,7 +3435,7 @@ export function applyAgentUserConfigSet(input: {
           config: input.config,
           store: input.store,
           principal,
-          engine: input.config.agentRuntimeEngine
+          engine: selection.effectiveEngine
         }),
         key
       })
@@ -3245,6 +3450,7 @@ export async function restartAgentRuntimeIfConfigChanged(input: {
   principal: { workspaceId: string; slackUserId: string };
   previousPolicyHash: string;
   nextPolicyHash: string;
+  previousEngine?: AgentRuntimeEngine;
 }): Promise<{ stoppedRuntimeId: string; startedRuntimeId: string } | null> {
   if (input.previousPolicyHash === input.nextPolicyHash) {
     return null;
@@ -3256,7 +3462,13 @@ export async function restartAgentRuntimeIfConfigChanged(input: {
   const runtime = input.store.getAgentRuntimeForPrincipal({
     workspaceId: input.principal.workspaceId,
     slackUserId: input.principal.slackUserId,
-    engine: input.config.agentRuntimeEngine
+    engine:
+      input.previousEngine ??
+      resolveRuntimeEngineForPrincipal({
+        config: input.config,
+        store: input.store,
+        principal: input.principal
+      }).effectiveEngine
   });
   if (
     !runtime ||
@@ -3360,11 +3572,10 @@ function applyAgentUserConfigSpecialSet(input: {
     value: next
   });
 
-  const manifest = buildRuntimeManifestForPrincipal({
+  const manifest = buildRuntimeManifestForEffectiveEngine({
     config: input.config,
     store: input.store,
-    principal: input.principal,
-    engine: input.config.agentRuntimeEngine
+    principal: input.principal
   });
   return {
     response_type: "ephemeral",
@@ -3408,6 +3619,17 @@ function parseAgentUserConfigValue(
     return { ok: true, value: modelId };
   }
 
+  if (key === "runtime.engine") {
+    const normalized = trimmed.toLowerCase();
+    if (!isAgentRuntimeEngine(normalized)) {
+      return {
+        ok: false,
+        error: `Runtime engine must be one of ${agentRuntimeEngines.join(", ")}.`
+      };
+    }
+    return { ok: true, value: normalized };
+  }
+
   if (key === "memory.user") {
     const enabled = parseBooleanConfigValue(trimmed);
     if (enabled === null) {
@@ -3432,6 +3654,10 @@ function parseAgentUserConfigValue(
 function normalizeAgentUserConfigKey(key: string): AgentUserConfigKey | null {
   const normalized = key.trim().toLowerCase().replace(/[_\s-]+/g, ".");
   switch (normalized) {
+    case "engine":
+    case "runtime":
+    case "runtime.engine":
+      return "runtime.engine";
     case "model":
     case "runtime.model":
       return "runtime.model";
@@ -3454,6 +3680,8 @@ function normalizeAgentUserConfigKey(key: string): AgentUserConfigKey | null {
 
 function displayAgentUserConfigKey(key: AgentUserConfigKey): string {
   switch (key) {
+    case "runtime.engine":
+      return "runtime.engine";
     case "runtime.model":
       return "model";
     case "memory.user":
@@ -3466,7 +3694,7 @@ function displayAgentUserConfigKey(key: AgentUserConfigKey): string {
 function formatUnknownAgentUserConfigKey(key: string): string {
   return [
     `Unknown user config key: \`${truncateSlackConfigValue(key, 80)}\`.`,
-    "Allowed keys: `model`, `memory`, `tools.disabled`, `skills.enabled`.",
+    "Allowed keys: `runtime.engine`, `model`, `memory`, `tools.disabled`, `skills.enabled`.",
     "Shortcuts: `disable-tool <tool_name>`, `enable-tool <tool_name>`."
   ].join("\n");
 }
@@ -3478,6 +3706,19 @@ function formatAgentUserConfigKeyLines(input: {
   key: AgentUserConfigKey;
 }): string[] {
   switch (input.key) {
+    case "runtime.engine": {
+      return [
+        "*Runtime engine*",
+        `• Effective: \`${input.manifest.runtime.engine}\``,
+        `• Stored preference: \`${formatPreferenceValue(
+          input.store.getUserPreference(
+            input.principal.workspaceId,
+            input.principal.slackUserId,
+            "runtime.engine"
+          )?.value
+        )}\``
+      ];
+    }
     case "runtime.model":
       return [
         "*Model*",
