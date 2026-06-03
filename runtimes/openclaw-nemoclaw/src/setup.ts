@@ -148,9 +148,7 @@ function buildOpenClawNemoClawAgentConfig(
       default: true,
       identity: {
         name: "Burble",
-        nature: "AI copilot",
         theme: "Slack assistant",
-        vibe: "concise and helpful",
         emoji: ":robot_face:"
       }
     }
@@ -190,9 +188,24 @@ async function applyOpenClawConfigPatch(
   );
 
   if (result.exitCode !== 0) {
-    throw new Error(`OpenClaw config patch exited with code ${result.exitCode}`);
+    throw new Error(
+      `OpenClaw config patch exited with code ${result.exitCode}${formatCliFailureDetail(
+        result
+      )}`
+    );
   }
   logInfo("OpenClaw config patch finish");
+}
+
+function formatCliFailureDetail(result: { stdout: string; stderr: string }): string {
+  const text = [result.stderr, result.stdout]
+    .map((value) => value.trim())
+    .filter(Boolean)
+    .join("\n")
+    .replace(/sk-[A-Za-z0-9_-]+/g, "sk-***")
+    .replace(/Bearer\s+[A-Za-z0-9._-]+/gi, "Bearer ***")
+    .slice(0, 1000);
+  return text ? `: ${text}` : "";
 }
 
 async function writeGeneratedLlmPatch(config: RuntimeConfig): Promise<string> {
