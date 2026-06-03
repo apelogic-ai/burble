@@ -685,14 +685,14 @@ describe("handleToolGatewayRequest", () => {
       "These allowedTools are Burble provider tool names, not necessarily native runtime tool names."
     );
     expect(body.content.scheduledPromptInstruction).not.toContain("cronjob");
-    expect(body.content.scheduledPromptInstruction).not.toContain(
+    expect(body.content.scheduledPromptInstruction).toContain(
       "burble_provider_call"
     );
     expect(body.content.scheduledPromptInstruction).toContain(
-      '- google_get_drive_file with input={"jobId":"ai-news-hourly"}'
+      '- burble_provider_call with {"toolName":"google_get_drive_file","input":{"jobId":"ai-news-hourly"}}'
     );
     expect(body.content.scheduledPromptInstruction).toContain(
-      '- google_append_to_drive_text_file with input={"jobId":"ai-news-hourly"}'
+      '- burble_provider_call with {"toolName":"google_append_to_drive_text_file","input":{"jobId":"ai-news-hourly"}}'
     );
     expect(body.content.scheduledPromptInstruction).toContain(
       '"jobId":"ai-news-hourly"'
@@ -706,6 +706,7 @@ describe("handleToolGatewayRequest", () => {
     expect(body.content.scheduledPromptInstruction).toContain(
       "use only the listed allowedTools"
     );
+    expect(body.content.scheduledPromptInstruction).not.toContain("Hermes");
   });
 
   test("accepts scheduled job provider capability aliases used by native runtimes", async () => {

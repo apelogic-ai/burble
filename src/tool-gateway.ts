@@ -1769,10 +1769,10 @@ function buildScheduledJobPromptInstruction(
     const input = {
       jobId: scheduledJob.jobId
     };
-    if (scheduledJob.runtimeType === "hermes") {
-      return `- burble_provider_call with toolName="${toolName}" and input=${JSON.stringify(input)}`;
-    }
-    return `- ${toolName} with input=${JSON.stringify(input)}`;
+    return `- burble_provider_call with ${JSON.stringify({
+      toolName,
+      input
+    })}`;
   });
   const lines = [
     "Use Burble provider calls with this jobId for this scheduled job.",
@@ -1788,19 +1788,13 @@ function buildScheduledJobPromptInstruction(
   }
   lines.push(
     "These allowedTools are Burble provider tool names, not necessarily native runtime tool names.",
-    "Use the runtime's Burble provider bridge for these tools.",
+    "Use the runtime's Burble provider bridge tool burble_provider_call for these tools.",
     "Provider bridge call examples:",
     ...bridgeExamples,
-    "Do not call these provider tool names as native tools unless the runtime explicitly exposes them directly.",
+    "Do not call these provider tool names as native tools unless the runtime explicitly exposes equivalent direct aliases.",
     "Do not use direct web/browser access to provider URLs such as Google Drive, GitHub, Jira, Gmail, Calendar, or Slack URLs for this state.",
     "For every scheduled provider call, include this jobId in the tool input and use only the listed allowedTools."
   );
-  if (scheduledJob.runtimeType === "hermes") {
-    lines.push(
-      "Hermes scheduled jobs must enable the Burble provider bridge toolset for this job.",
-      "If Hermes exposes burble_provider_call, call it with toolName set to one of the allowedTools and input containing this jobId plus the provider tool arguments."
-    );
-  }
   return lines.join("\n");
 }
 
