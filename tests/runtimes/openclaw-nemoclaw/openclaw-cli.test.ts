@@ -3063,6 +3063,15 @@ describe("runOpenClawCliRequest", () => {
       "GitHub, Jira, Google, or Slack search"
     );
     expect(String(requests[0].body.input)).toContain(
+      "stateRefs entries must be objects"
+    );
+    expect(String(requests[0].body.input)).toContain(
+      '"provider":"google","kind":"drive_file","id":"<fileId>"'
+    );
+    expect(String(requests[0].body.input)).toContain(
+      "not compact strings"
+    );
+    expect(String(requests[0].body.input)).toContain(
       "Scheduled provider tool calls must include the returned jobId"
     );
     expect(String(requests[0].body.input)).toContain(

@@ -686,6 +686,87 @@ describe("createBurbleToolExecutor", () => {
     }
   });
 
+  test("normalizes compact scheduled state refs before registration", async () => {
+    const originalFetch = globalThis.fetch;
+    const requests: Request[] = [];
+    globalThis.fetch = (async (input, init) => {
+      const request = new Request(input, init);
+      requests.push(request);
+      return Response.json({
+        classification: "user_private",
+        content: { ok: true }
+      });
+    }) as typeof fetch;
+
+    try {
+      const executor = createBurbleToolExecutor(config, "rt_u123");
+      await executor("scheduledJob.registerCapability", {
+        input: {
+          jobId: "ai-news-hourly",
+          requiredTools: ["google.getDriveFile"],
+          routeId: "convrt_abc123",
+          stateRefs: ["google-drive:file:file-123"]
+        }
+      });
+
+      expect(requests).toHaveLength(1);
+      expect(await requests[0].json()).toEqual({
+        input: {
+          jobId: "ai-news-hourly",
+          requiredTools: ["google.getDriveFile"],
+          routeId: "convrt_abc123",
+          stateRefs: [
+            {
+              provider: "google",
+              kind: "drive_file",
+              id: "file-123"
+            }
+          ]
+        }
+      });
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  test("returns scheduled registration validation errors as tool results", async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (_input, _init) =>
+      Response.json(
+        {
+          classification: "user_private",
+          content: {
+            error: "invalid_scheduled_job_capability_input",
+            message:
+              "scheduledJob.registerCapability requires every stateRefs entry to include provider and kind strings."
+          }
+        },
+        { status: 400 }
+      )) as typeof fetch;
+
+    try {
+      const executor = createBurbleToolExecutor(config, "rt_u123");
+      const result = await executor("scheduledJob.registerCapability", {
+        input: {
+          jobId: "ai-news-hourly",
+          requiredTools: ["google.getDriveFile"],
+          stateRefs: [{ provider: "google" }]
+        }
+      });
+
+      expect(result).toEqual({
+        classification: "user_private",
+        content: {
+          error: "invalid_scheduled_job_capability_input",
+          message:
+            "scheduledJob.registerCapability requires every stateRefs entry to include provider and kind strings."
+        }
+      });
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
   test("fetches current request attachments through the internal gateway", async () => {
     const originalFetch = globalThis.fetch;
     const requests: Request[] = [];

@@ -1477,7 +1477,7 @@ async function buildToolCatalog(
         routeId:
           "optional durable Burble route ID for scheduled/background delivery",
         stateRefs:
-          "optional array of durable provider-backed state references",
+          'optional array of durable provider-backed state reference objects, never strings; each entry must include provider and kind strings, for example {"provider":"google","kind":"drive_file","id":"<fileId>","purpose":"dedupe_state"}',
         visibilityPolicy:
           "optional output visibility policy for scheduled delivery"
       }
@@ -2614,6 +2614,7 @@ function formatScheduledProviderCapabilityInstruction(
     "Setup-time provider calls are not scheduled provider calls. If you need to create, find, read, or validate durable provider state during the current user turn, use ordinary Burble provider calls for the active conversation and do not include jobId.",
     "Never invent placeholder job ids for setup-time provider calls. jobId is only valid after the native scheduler has returned a stable job id and scheduledJob.registerCapability has returned ok for that exact id.",
     `If a native cron/background job will use Burble provider tools such as GitHub, Jira, Google, or Slack search, first call scheduledJob.registerCapability with routeId "${routeId}", requiredTools set to the exact Burble provider tool names the job will use, and stateRefs for any durable state files it should read or update.`,
+    'stateRefs entries must be objects, not compact strings. Each entry must include provider and kind strings, for example {"provider":"google","kind":"drive_file","id":"<fileId>","purpose":"dedupe_state"}.',
     "When creating a new provider-backed native job, do not request an immediate/manual run as part of the create call. Create it paused/disabled or without an immediate trigger if the scheduler supports that; otherwise create it, then stop before triggering.",
     "After the native scheduler returns the stable job id, call scheduledJob.registerCapability with that exact jobId and wait for an ok result. If registration does not return ok, do not trigger the job and report the registration failure.",
     "Include the returned scheduledPromptInstruction verbatim in the native scheduled job prompt.",

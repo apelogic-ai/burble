@@ -203,9 +203,10 @@ async function registerScheduledJobCapability(
   if (!input) {
     throw new Error("scheduledJob.registerCapability requires input");
   }
+  const normalizedInput = normalizeScheduledJobCapabilityInput(input);
 
   info(
-    `Burble scheduled job tool start tool=scheduledJob.registerCapability${summarizeLogObject("input", input)}`
+    `Burble scheduled job tool start tool=scheduledJob.registerCapability${summarizeLogObject("input", normalizedInput)}`
   );
 
   const response = await fetch(
@@ -217,11 +218,18 @@ async function registerScheduledJobCapability(
         authorization: `Bearer ${config.internalToken}`,
         "x-burble-runtime-id": runtimeId
       },
-      body: JSON.stringify({ input })
+      body: JSON.stringify({ input: normalizedInput })
     }
   );
 
   if (!response.ok) {
+    const errorResult = await readToolGatewayErrorResult(response.clone());
+    if (errorResult) {
+      info(
+        `Burble scheduled job tool finish tool=scheduledJob.registerCapability status=${response.status} classification=${errorResult.classification}${summarizeLogObject("result", errorResult.content)}`
+      );
+      return errorResult;
+    }
     throw new Error(
       `Burble scheduled job gateway returned HTTP ${response.status}${await readErrorDetail(response)}`
     );
@@ -236,6 +244,36 @@ async function registerScheduledJobCapability(
     `Burble scheduled job tool finish tool=scheduledJob.registerCapability classification=${result.classification}${summarizeLogObject("result", result.content)}`
   );
   return result;
+}
+
+function normalizeScheduledJobCapabilityInput(
+  input: Record<string, unknown>
+): Record<string, unknown> {
+  const stateRefs = input.stateRefs;
+  if (!Array.isArray(stateRefs)) {
+    return input;
+  }
+  return {
+    ...input,
+    stateRefs: stateRefs.map(normalizeScheduledJobStateRef)
+  };
+}
+
+function normalizeScheduledJobStateRef(value: unknown): unknown {
+  if (typeof value !== "string") {
+    return value;
+  }
+  const compactGoogleDriveFile = value
+    .trim()
+    .match(/^google-drive:file:(.+)$/i);
+  if (!compactGoogleDriveFile) {
+    return value;
+  }
+  return {
+    provider: "google",
+    kind: "drive_file",
+    id: compactGoogleDriveFile[1]
+  };
 }
 
 async function getConversationAttachment(
@@ -1332,6 +1370,17 @@ function parseMcpResponsePayload(body: string): {
 async function readErrorDetail(response: Response): Promise<string> {
   const text = (await response.text()).trim().replace(/\s+/g, " ");
   return text ? `: ${text.slice(0, 300)}` : "";
+}
+
+async function readToolGatewayErrorResult(
+  response: Response
+): Promise<ToolResult | null> {
+  try {
+    const parsed = (await response.json()) as unknown;
+    return isToolResult(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
 }
 
 function summarizeLogObject(label: string, value: unknown): string {
