@@ -86,14 +86,6 @@ export function buildOpenClawLlmPatch(input: OpenClawPatchInput): string {
   };
   const concreteAgentRuntimeConfig = {
     id: agentId,
-    default: true,
-    identity: {
-      name: "Burble",
-      nature: "AI copilot",
-      theme: "Slack assistant",
-      vibe: "concise and helpful",
-      emoji: ":robot_face:"
-    },
     ...(input.fastModeEnabled
       ? {
           fastModeDefault: true,

@@ -33,15 +33,7 @@ describe("buildOpenClawLlmPatch", () => {
     );
     expect(patch.agents.list).toEqual([
       {
-        id: "main",
-        default: true,
-        identity: {
-          name: "Burble",
-          nature: "AI copilot",
-          theme: "Slack assistant",
-          vibe: "concise and helpful",
-          emoji: ":robot_face:"
-        }
+        id: "main"
       }
     ]);
     expect(patch.memory.qmd.update.startup).toBe("off");
@@ -91,14 +83,6 @@ describe("buildOpenClawLlmPatch", () => {
     expect(patch.agents.list).toEqual([
       {
         id: "burble",
-        default: true,
-        identity: {
-          name: "Burble",
-          nature: "AI copilot",
-          theme: "Slack assistant",
-          vibe: "concise and helpful",
-          emoji: ":robot_face:"
-        },
         fastModeDefault: true,
         thinkingDefault: "minimal",
         reasoningDefault: "off"
@@ -108,6 +92,8 @@ describe("buildOpenClawLlmPatch", () => {
     expect(JSON.stringify(patch.agents.list)).not.toContain("contextInjection");
     expect(JSON.stringify(patch.agents.list)).not.toContain("systemPromptOverride");
     expect(JSON.stringify(patch.agents.list)).not.toContain("skills");
+    expect(JSON.stringify(patch.agents.list)).not.toContain("identity");
+    expect(JSON.stringify(patch.agents.list)).not.toContain("default");
     expect(patch.models.pricing.enabled).toBe(false);
     expect(patch.env.shellEnv).toEqual({
       enabled: false,
