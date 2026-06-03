@@ -195,6 +195,10 @@ describe("runOpenClawCliRequest", () => {
               connected: true,
               email: "person@example.com"
             },
+            hubspot: {
+              connected: true,
+              email: "person@example.com"
+            },
             jira: {
               connected: true,
               email: "person@example.com"
@@ -219,6 +223,11 @@ describe("runOpenClawCliRequest", () => {
               },
               {
                 name: "google_search_drive_files",
+                description: "Should be hidden for GitHub-only requests",
+                inputSchema: {}
+              },
+              {
+                name: "hubspot_search_contacts",
                 description: "Should be hidden for GitHub-only requests",
                 inputSchema: {}
               },
@@ -256,7 +265,138 @@ describe("runOpenClawCliRequest", () => {
       prompts[0].split("Available Burble tools:\n")[1]?.split("\n\n")[0] ?? "";
     expect(catalogText).toContain("github.listMyPullRequests");
     expect(catalogText).not.toContain("google.searchDriveFiles");
+    expect(catalogText).not.toContain("hubspot.searchContacts");
     expect(catalogText).not.toContain("jira.searchIssues");
+  });
+
+  test("includes HubSpot tools in discovered and fallback catalogs", async () => {
+    const discoveredPrompts: string[] = [];
+    const fallbackPrompts: string[] = [];
+
+    const discoveredResponse = await runOpenClawCliRequest(
+      {
+        input: {
+          text: "find HubSpot contacts for Acme",
+          toolGroups: {
+            groups: ["conversation", "hubspot"],
+            reasons: ["matched hubspot"]
+          },
+          connections: {
+            github: {
+              connected: false
+            },
+            hubspot: {
+              connected: true,
+              email: "person@example.com"
+            }
+          }
+        }
+      },
+      {
+        ...config,
+        mcpGatewayUrl: "http://agentgateway:3000/mcp",
+        runtimeJwt: "runtime-jwt"
+      },
+      async (toolName) => {
+        if (toolName === "burble.mcp.listTools") {
+          return {
+            classification: "user_private",
+            content: [
+              {
+                name: "hubspot_search_contacts",
+                description: "MCP-discovered HubSpot contact search",
+                inputSchema: {}
+              },
+              {
+                name: "google_search_drive_files",
+                description: "Should be hidden for HubSpot-only requests",
+                inputSchema: {}
+              }
+            ]
+          };
+        }
+
+        return {
+          classification: "user_private",
+          content: []
+        };
+      },
+      async (_command, args) => {
+        discoveredPrompts.push(args[args.indexOf("--message") + 1] ?? "");
+        return {
+          exitCode: 0,
+          stdout: JSON.stringify({
+            response: {
+              text: "Hi."
+            }
+          }),
+          stderr: ""
+        };
+      },
+      () => undefined
+    );
+
+    expect(discoveredResponse.response.text).toBe("Hi.");
+    const discoveredCatalogText =
+      discoveredPrompts[0]
+        .split("Available Burble tools:\n")[1]
+        ?.split("\n\n")[0] ?? "";
+    expect(discoveredCatalogText).toContain("hubspot.searchContacts");
+    expect(discoveredCatalogText).toContain(
+      "MCP-discovered HubSpot contact search"
+    );
+    expect(discoveredCatalogText).not.toContain("google.searchDriveFiles");
+
+    const fallbackResponse = await runOpenClawCliRequest(
+      {
+        input: {
+          text: "find HubSpot companies for Acme",
+          toolGroups: {
+            groups: ["conversation", "hubspot"],
+            reasons: ["matched hubspot"]
+          },
+          connections: {
+            github: {
+              connected: false
+            },
+            hubspot: {
+              connected: true,
+              email: "person@example.com"
+            },
+            google: {
+              connected: true,
+              email: "person@example.com"
+            }
+          }
+        }
+      },
+      config,
+      async () => {
+        throw new Error("unexpected tool call");
+      },
+      async (_command, args) => {
+        fallbackPrompts.push(args[args.indexOf("--message") + 1] ?? "");
+        return {
+          exitCode: 0,
+          stdout: JSON.stringify({
+            response: {
+              text: "Hi."
+            }
+          }),
+          stderr: ""
+        };
+      },
+      () => undefined
+    );
+
+    expect(fallbackResponse.response.text).toBe("Hi.");
+    const fallbackCatalogText =
+      fallbackPrompts[0].split("Available Burble tools:\n")[1]?.split("\n\n")[0] ??
+      "";
+    expect(fallbackCatalogText).toContain("hubspot.getAuthenticatedUser");
+    expect(fallbackCatalogText).toContain("hubspot.searchCompanies");
+    expect(fallbackCatalogText).toContain("hubspot.searchDeals");
+    expect(fallbackCatalogText).not.toContain("google.searchDriveFiles");
   });
 
   test("filters preloaded runtime skills by selected tool groups", async () => {

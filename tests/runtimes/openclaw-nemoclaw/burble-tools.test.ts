@@ -940,6 +940,21 @@ describe("createBurbleToolExecutor", () => {
         user: { email: "person@example.com" },
         input: { query: "from:alex", limit: 2 }
       });
+      await executor("hubspot.getAuthenticatedUser", {
+        user: { email: "person@example.com" }
+      });
+      await executor("hubspot.searchContacts", {
+        user: { email: "person@example.com" },
+        input: { query: "Acme", limit: 5 }
+      });
+      await executor("hubspot.searchCompanies", {
+        user: { email: "person@example.com" },
+        input: { query: "Acme", limit: 5 }
+      });
+      await executor("hubspot.searchDeals", {
+        user: { email: "person@example.com" },
+        input: { query: "renewal", limit: 3 }
+      });
       await executor("jira.createIssue", {
         user: { email: "person@example.com" },
         input: {
@@ -1065,6 +1080,34 @@ describe("createBurbleToolExecutor", () => {
           params: {
             name: "google_search_mail_messages",
             arguments: { query: "from:alex", limit: 2 }
+          }
+        },
+        {
+          method: "tools/call",
+          params: {
+            name: "hubspot_get_authenticated_user",
+            arguments: {}
+          }
+        },
+        {
+          method: "tools/call",
+          params: {
+            name: "hubspot_search_contacts",
+            arguments: { query: "Acme", limit: 5 }
+          }
+        },
+        {
+          method: "tools/call",
+          params: {
+            name: "hubspot_search_companies",
+            arguments: { query: "Acme", limit: 5 }
+          }
+        },
+        {
+          method: "tools/call",
+          params: {
+            name: "hubspot_search_deals",
+            arguments: { query: "renewal", limit: 3 }
           }
         },
         {

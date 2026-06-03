@@ -51,6 +51,7 @@ export type RunRequest = {
         | "conversation"
         | "github"
         | "google"
+        | "hubspot"
         | "jira"
         | "scheduler"
         | "slack"
@@ -109,6 +110,11 @@ export type RunRequest = {
         providerLogin?: string;
       };
       google?: {
+        connected: boolean;
+        email?: string;
+        providerLogin?: string;
+      };
+      hubspot?: {
         connected: boolean;
         email?: string;
         providerLogin?: string;

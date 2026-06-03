@@ -140,6 +140,38 @@ describe("handleRuntimeRequest", () => {
     });
   });
 
+  test("accepts HubSpot runtime tool groups and connection summaries", async () => {
+    const response = await handleRuntimeRequest(
+      new Request("http://runtime/runs", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          runtime: { id: "rt_u123" },
+          input: {
+            text: "Find HubSpot contacts for Acme",
+            toolGroups: {
+              groups: ["conversation", "hubspot"],
+              reasons: ["keyword:hubspot:hubspot"]
+            },
+            connections: {
+              github: {
+                connected: false
+              },
+              hubspot: {
+                connected: true,
+                email: "person@example.com",
+                providerLogin: "hubspot-user@example.com"
+              }
+            }
+          }
+        })
+      }),
+      config
+    );
+
+    expect(response.status).toBe(200);
+  });
+
   test("streams run events as SSE when requested", async () => {
     const response = await handleRuntimeRequest(
       new Request("http://runtime/runs", {

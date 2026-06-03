@@ -154,6 +154,28 @@ print(json.dumps({"text": mod.build_hermes_turn_text(payload)}))
     expect(text).not.toContain("x".repeat(350));
   });
 
+  test("adds HubSpot provider tool hints to Hermes turns", () => {
+    const result = runHermesEntrypointProbe(`${importEntrypoint}
+payload = {
+    "text": "find HubSpot contacts for Acme",
+    "toolGroups": {
+        "groups": ["conversation", "hubspot"],
+        "reasons": ["default:conversation", "keyword:hubspot:hubspot"],
+    },
+}
+print(json.dumps({"text": mod.build_hermes_turn_text(payload)}))
+`);
+
+    const text = (result as { text: string }).text;
+    expect(text).toContain("Selected Burble tool groups: conversation, hubspot");
+    expect(text).toContain("hubspot_get_authenticated_user");
+    expect(text).toContain("hubspot_search_contacts");
+    expect(text).toContain("hubspot_search_companies");
+    expect(text).toContain("hubspot_search_deals");
+    expect(text).not.toContain("google_search_drive_files");
+  });
+
+
   test("adds scheduled job context to Hermes turns", () => {
     const result = runHermesEntrypointProbe(`${importEntrypoint}
 payload = {
@@ -335,6 +357,7 @@ print(json.dumps({
 print(json.dumps({
     "github": mod.normalize_burble_tool_name("github_list_my_pull_requests"),
     "google": mod.normalize_burble_tool_name("google_append_to_drive_text_file"),
+    "hubspot": mod.normalize_burble_tool_name("hubspot_search_contacts"),
     "jira": mod.normalize_burble_tool_name("jira_list_assigned_issues"),
     "job": mod.normalize_burble_tool_name("scheduled_job_register_capability"),
     "dotted": mod.normalize_burble_tool_name("google.searchDriveFiles"),
@@ -344,6 +367,7 @@ print(json.dumps({
     expect(result).toEqual({
       github: "github.listMyPullRequests",
       google: "google.appendToDriveTextFile",
+      hubspot: "hubspot.searchContacts",
       jira: "jira.listAssignedIssues",
       job: "scheduledJob.registerCapability",
       dotted: "google.searchDriveFiles"
@@ -393,6 +417,13 @@ print(json.dumps(ctx.tools))
     );
     expect(result).toContainEqual(
       expect.objectContaining({
+        name: "hubspot_search_contacts",
+        toolset: "cronjob",
+        is_async: true
+      })
+    );
+    expect(result).toContainEqual(
+      expect.objectContaining({
         name: "scheduled_job_register_capability",
         toolset: "cronjob",
         is_async: true
@@ -415,6 +446,13 @@ print(json.dumps(ctx.tools))
     expect(result).toContainEqual(
       expect.objectContaining({
         name: "google_append_to_drive_text_file",
+        toolset: "web",
+        is_async: true
+      })
+    );
+    expect(result).toContainEqual(
+      expect.objectContaining({
+        name: "hubspot_search_contacts",
         toolset: "web",
         is_async: true
       })

@@ -26,6 +26,7 @@ const runtimeToolGroups = new Set([
   "conversation",
   "github",
   "google",
+  "hubspot",
   "jira",
   "scheduler",
   "slack"
@@ -1316,6 +1317,14 @@ function isRunRequest(body: unknown): body is RunRequest {
     "jira" in connections &&
     connections.jira !== undefined &&
     !isConnectionSummary(connections.jira)
+  ) {
+    return false;
+  }
+
+  if (
+    "hubspot" in connections &&
+    connections.hubspot !== undefined &&
+    !isConnectionSummary(connections.hubspot)
   ) {
     return false;
   }
