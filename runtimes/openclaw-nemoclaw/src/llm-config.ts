@@ -61,43 +61,47 @@ export function buildOpenClawLlmPatch(input: OpenClawPatchInput): string {
     "Answer final responses in concise Slack mrkdwn.",
     "When the user prompt requests a JSON tool_call object, output only that JSON object and no prose."
   ].join(" ");
+  const agentRuntimeDefaults = {
+    model: {
+      primary: modelRef
+    },
+    models: {
+      [modelRef]: {
+        alias: modelAlias(parsed.provider)
+      }
+    },
+    heartbeat: {
+      every: "0m"
+    },
+    skills: [],
+    contextInjection: "never",
+    skipBootstrap: true,
+    systemPromptOverride,
+    ...(input.fastModeEnabled
+      ? {
+          thinkingDefault: "minimal",
+          reasoningDefault: "off"
+        }
+      : {})
+  };
+  const concreteAgentRuntimeConfig = {
+    id: agentId,
+    skills: [],
+    contextInjection: "never",
+    skipBootstrap: true,
+    systemPromptOverride,
+    ...(input.fastModeEnabled
+      ? {
+          fastModeDefault: true,
+          thinkingDefault: "minimal",
+          reasoningDefault: "off"
+        }
+      : {})
+  };
   const patch = {
     agents: {
-      defaults: {
-        model: {
-          primary: modelRef
-        },
-        models: {
-          [modelRef]: {
-            alias: modelAlias(parsed.provider)
-          }
-        },
-        heartbeat: {
-          every: "0m"
-        },
-        skills: [],
-        contextInjection: "never",
-        skipBootstrap: true,
-        systemPromptOverride,
-        ...(input.fastModeEnabled
-          ? {
-              thinkingDefault: "minimal",
-              reasoningDefault: "off"
-            }
-          : {})
-      },
-      ...(input.fastModeEnabled
-        ? {
-            list: [
-              {
-                id: agentId,
-                fastModeDefault: true,
-                thinkingDefault: "minimal",
-                reasoningDefault: "off"
-              }
-            ]
-          }
-        : {})
+      defaults: agentRuntimeDefaults,
+      list: [concreteAgentRuntimeConfig]
     },
     skills: {
       allowBundled: []
@@ -130,16 +134,16 @@ export function buildOpenClawLlmPatch(input: OpenClawPatchInput): string {
               enabled: false,
               timeoutMs: 100
             }
-          },
-          memory: {
-            qmd: {
-              update: {
-                startup: "off"
-              }
-            }
           }
         }
       : {}),
+    memory: {
+      qmd: {
+        update: {
+          startup: "off"
+        }
+      }
+    },
     ...providerConfig,
     ...(input.burbleMcpBaseUrl
       ? {
