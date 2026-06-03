@@ -143,6 +143,8 @@ print(json.dumps({"text": mod.build_hermes_turn_text(payload)}))
     expect(text).toContain("github_list_my_pull_requests");
     expect(text).not.toContain("google_search_drive_files");
     expect(text).toContain("scheduled_job_register_capability");
+    expect(text).toContain("For setup-time provider calls");
+    expect(text).toContain("do not include jobId");
     expect(text).toContain("without an immediate/manual run");
     expect(text).toContain("with the exact returned jobId");
     expect(text).toContain("before enabling or triggering it");
@@ -217,6 +219,9 @@ print(json.dumps({"text": mod.build_hermes_turn_text(payload)}))
     const text = (result as { text: string }).text;
     expect(text).toContain("Provider-backed scheduled job repair:");
     expect(text).toContain("Before manually triggering");
+    expect(text).toContain("Setup-time provider calls are not scheduled provider calls");
+    expect(text).toContain("use ordinary Burble provider calls");
+    expect(text).toContain("Never invent placeholder job ids");
     expect(text).toContain("do not request an immediate/manual run");
     expect(text).toContain("After the native scheduler returns the stable job id");
     expect(text).toContain("If registration does not return ok, do not trigger");
@@ -227,6 +232,8 @@ print(json.dumps({"text": mod.build_hermes_turn_text(payload)}))
     );
     expect(text).toContain("must not use direct web/browser access to provider URLs");
     expect(text).not.toContain("Example Drive scratchpad registration input");
+    expect(text).not.toContain("Drive scratchpad");
+    expect(text).not.toContain("Google Drive scratchpad");
   });
 
   test("uses per-run Hermes thread ids by default", () => {

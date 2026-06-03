@@ -1442,7 +1442,7 @@ async function buildToolCatalog(
           routeId:
             "optional durable Burble route ID for scheduled/background delivery",
           stateRefs:
-            "optional array of durable state references such as Drive scratchpad files",
+            "optional array of durable provider-backed state references",
           visibilityPolicy:
             "optional output visibility policy for scheduled delivery"
         }
@@ -2563,13 +2563,15 @@ function formatScheduledProviderCapabilityInstruction(
 
   return [
     "Scheduled provider tool registration:",
+    "Setup-time provider calls are not scheduled provider calls. If you need to create, find, read, or validate durable provider state during the current user turn, use ordinary Burble provider calls for the active conversation and do not include jobId.",
+    "Never invent placeholder job ids for setup-time provider calls. jobId is only valid after the native scheduler has returned a stable job id and scheduledJob.registerCapability has returned ok for that exact id.",
     `If a native cron/background job will use Burble provider tools such as GitHub, Jira, Google, or Slack search, first call scheduledJob.registerCapability with routeId "${routeId}", requiredTools set to the exact Burble provider tool names the job will use, and stateRefs for any durable state files it should read or update.`,
     "When creating a new provider-backed native job, do not request an immediate/manual run as part of the create call. Create it paused/disabled or without an immediate trigger if the scheduler supports that; otherwise create it, then stop before triggering.",
     "After the native scheduler returns the stable job id, call scheduledJob.registerCapability with that exact jobId and wait for an ok result. If registration does not return ok, do not trigger the job and report the registration failure.",
     "Include the returned scheduledPromptInstruction verbatim in the native scheduled job prompt.",
     "Only after the job prompt has been updated with the returned scheduledPromptInstruction may you enable, manually trigger, or reschedule the job.",
     "Scheduled provider tool calls must include the returned jobId in each Burble provider tool input. Do not use routeId as provider-call identity; routeId is only a delivery/state binding.",
-    "Provider-backed scheduled job repair: before manually triggering, enabling, or rescheduling an existing native job, inspect whether it uses provider-backed state or provider URLs such as Google Drive, GitHub, Jira, Gmail, Calendar, or Slack. If it does and its prompt lacks Burble jobId provider-call instructions, update the job first by calling scheduledJob.registerCapability and rewriting the scheduled prompt to use Burble provider tools. The job must not use direct web/browser access to provider URLs for authenticated provider work."
+    "Provider-backed scheduled job repair: before manually triggering, enabling, or rescheduling an existing native job, inspect whether it uses provider-backed state or authenticated provider resources. If it does and its prompt lacks Burble jobId provider-call instructions, update the job first by calling scheduledJob.registerCapability and rewriting the scheduled prompt to use Burble provider tools. The job must not use direct web/browser access to provider URLs for authenticated provider work."
   ];
 }
 

@@ -2850,6 +2850,15 @@ describe("runOpenClawCliRequest", () => {
       "Provider-backed scheduled job repair"
     );
     expect(String(requests[0].body.input)).toContain(
+      "Setup-time provider calls are not scheduled provider calls"
+    );
+    expect(String(requests[0].body.input)).toContain(
+      "use ordinary Burble provider calls"
+    );
+    expect(String(requests[0].body.input)).toContain(
+      "Never invent placeholder job ids"
+    );
+    expect(String(requests[0].body.input)).toContain(
       "do not request an immediate/manual run"
     );
     expect(String(requests[0].body.input)).toContain(
@@ -2876,6 +2885,8 @@ describe("runOpenClawCliRequest", () => {
     expect(String(requests[0].body.input)).not.toContain(
       "Example Drive scratchpad registration input"
     );
+    expect(String(requests[0].body.input)).not.toContain("Drive scratchpad");
+    expect(String(requests[0].body.input)).not.toContain("Google Drive scratchpad");
   });
 
   test("instructs native execution to avoid repeated code tool loops", async () => {

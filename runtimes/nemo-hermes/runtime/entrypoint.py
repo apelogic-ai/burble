@@ -338,7 +338,9 @@ def build_hermes_turn_text(input_body: dict[str, Any]) -> str:
                         "\n".join(
                             [
                                 "Provider-backed scheduled job repair:",
-                                "Before manually triggering, enabling, or rescheduling an existing native job, inspect whether it uses provider-backed state or provider URLs such as Google Drive, GitHub, Jira, Gmail, Calendar, or Slack.",
+                                "Before manually triggering, enabling, or rescheduling an existing native job, inspect whether it uses provider-backed state or authenticated provider resources.",
+                                "Setup-time provider calls are not scheduled provider calls. If you need to create, find, read, or validate durable provider state during the current user turn, use ordinary Burble provider calls for the active conversation and do not include jobId.",
+                                "Never invent placeholder job ids for setup-time provider calls. jobId is only valid after the native scheduler has returned a stable job id and scheduled_job_register_capability has returned ok for that exact id.",
                                 "When creating a new provider-backed native job, do not request an immediate/manual run as part of the create call. Create it paused/disabled or without an immediate trigger if the scheduler supports that; otherwise create it, then stop before triggering.",
                                 "After the native scheduler returns the stable job id, call the dedicated scheduled provider registration tool scheduled_job_register_capability with that exact jobId and requiredTools, then wait for an ok result. If registration does not return ok, do not trigger the job and report the registration failure.",
                                 "If it does and its prompt lacks Burble jobId provider-call instructions, update the job first by calling the dedicated scheduled provider registration tool scheduled_job_register_capability with jobId and requiredTools, then rewrite the scheduled prompt to include the returned scheduledPromptInstruction verbatim.",
@@ -353,6 +355,7 @@ def build_hermes_turn_text(input_body: dict[str, Any]) -> str:
                     lines = [
                         "Selected Burble provider tools:",
                         "Use Hermes tool burble_provider_call with toolName set to one of these names and input set to that tool's arguments.",
+                        "For setup-time provider calls in the current user turn, do not include jobId.",
                         "For native scheduled/background jobs that will use Burble provider tools, first create the native job without an immediate/manual run, then call the dedicated scheduled provider registration tool scheduled_job_register_capability with the exact returned jobId and requiredTools, then include the returned scheduledPromptInstruction verbatim in the scheduled job prompt before enabling or triggering it.",
                     ]
                     for hint in tool_hints:
