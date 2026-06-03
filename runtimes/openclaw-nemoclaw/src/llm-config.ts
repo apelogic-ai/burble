@@ -84,21 +84,28 @@ export function buildOpenClawLlmPatch(input: OpenClawPatchInput): string {
         }
       : {})
   };
+  const concreteAgentRuntimeConfig = {
+    id: agentId,
+    default: true,
+    identity: {
+      name: "Burble",
+      nature: "AI copilot",
+      theme: "Slack assistant",
+      vibe: "concise and helpful",
+      emoji: ":robot_face:"
+    },
+    ...(input.fastModeEnabled
+      ? {
+          fastModeDefault: true,
+          thinkingDefault: "minimal",
+          reasoningDefault: "off"
+        }
+      : {})
+  };
   const patch = {
     agents: {
       defaults: agentRuntimeDefaults,
-      ...(input.fastModeEnabled
-        ? {
-            list: [
-              {
-                id: agentId,
-                fastModeDefault: true,
-                thinkingDefault: "minimal",
-                reasoningDefault: "off"
-              }
-            ]
-          }
-        : {})
+      list: [concreteAgentRuntimeConfig]
     },
     skills: {
       allowBundled: []

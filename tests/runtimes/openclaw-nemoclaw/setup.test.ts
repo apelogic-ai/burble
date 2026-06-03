@@ -347,6 +347,14 @@ describe("ensureOpenClawSetup", () => {
     expect(generatedPatch.agents.list).toEqual([
       {
         id: "burble",
+        default: true,
+        identity: {
+          name: "Burble",
+          nature: "AI copilot",
+          theme: "Slack assistant",
+          vibe: "concise and helpful",
+          emoji: ":robot_face:"
+        },
         fastModeDefault: true,
         thinkingDefault: "minimal",
         reasoningDefault: "off"

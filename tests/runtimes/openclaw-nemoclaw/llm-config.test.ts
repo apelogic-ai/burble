@@ -31,7 +31,19 @@ describe("buildOpenClawLlmPatch", () => {
     expect(patch.agents.defaults.systemPromptOverride).toContain(
       "Burble's OpenClaw runtime"
     );
-    expect(patch.agents.list).toBeUndefined();
+    expect(patch.agents.list).toEqual([
+      {
+        id: "main",
+        default: true,
+        identity: {
+          name: "Burble",
+          nature: "AI copilot",
+          theme: "Slack assistant",
+          vibe: "concise and helpful",
+          emoji: ":robot_face:"
+        }
+      }
+    ]);
     expect(patch.memory.qmd.update.startup).toBe("off");
     expect(patch.skills.allowBundled).toEqual([]);
     expect(patch.gateway.http.endpoints.responses.enabled).toBe(true);
@@ -79,6 +91,14 @@ describe("buildOpenClawLlmPatch", () => {
     expect(patch.agents.list).toEqual([
       {
         id: "burble",
+        default: true,
+        identity: {
+          name: "Burble",
+          nature: "AI copilot",
+          theme: "Slack assistant",
+          vibe: "concise and helpful",
+          emoji: ":robot_face:"
+        },
         fastModeDefault: true,
         thinkingDefault: "minimal",
         reasoningDefault: "off"
