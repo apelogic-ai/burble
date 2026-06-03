@@ -85,6 +85,28 @@ HERMES_PROVIDER_TOOL_HINTS: dict[str, list[dict[str, str]]] = {
             "args": "query, limit?",
         },
     ],
+    "hubspot": [
+        {
+            "name": "hubspot_get_authenticated_user",
+            "alias": "hubspot.getAuthenticatedUser",
+            "args": "",
+        },
+        {
+            "name": "hubspot_search_contacts",
+            "alias": "hubspot.searchContacts",
+            "args": "query?, limit?",
+        },
+        {
+            "name": "hubspot_search_companies",
+            "alias": "hubspot.searchCompanies",
+            "args": "query?, limit?",
+        },
+        {
+            "name": "hubspot_search_deals",
+            "alias": "hubspot.searchDeals",
+            "args": "query?, limit?",
+        },
+    ],
     "jira": [
         {
             "name": "jira_list_assigned_issues",
