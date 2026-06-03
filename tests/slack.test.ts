@@ -7,6 +7,7 @@ import {
   buildAgentConfigModalView,
   buildAgentConfigResponse,
   buildAgentCommandHelpResponse,
+  applyAgentRuntimeEngineSelection,
   buildAgentUserConfigGetResponse,
   buildAgentExecLoadingResponse,
   buildAgentExecMissingTaskResponse,
@@ -479,14 +480,80 @@ describe("buildAppHomeView", () => {
     expect(serialized).toContain("Not connected");
     expect(serialized).toContain("https://example.test/google");
     expect(serialized).toContain("Agent runtime");
+    expect(serialized).toContain("User auth");
     expect(serialized).toContain("Details");
     expect(serialized).toContain("agent_runtime_manage");
     expect(serialized).toContain("agent_runtime_pause");
     expect(serialized).toContain("agent_runtime_restart");
-    expect(serialized).toContain("Agent settings");
+    expect(serialized).toContain("Runtime settings");
     expect(serialized).toContain("Edit settings");
     expect(serialized).toContain("agent_config_edit");
     expect(serialized).toContain("openai:gpt-5.4");
+  });
+
+  test("shows a runtime selector when multiple engines are selectable", () => {
+    const store = createTokenStore(":memory:");
+    store.upsertWorkspacePolicy({
+      workspaceId: "T123",
+      key: "runtime.allowedEngines",
+      value: ["burble-direct", "hermes"],
+      updatedBySlackUserId: "UADMIN"
+    });
+    const agentSettings = buildAgentHomeSettings({
+      config: agentConfig,
+      store,
+      workspaceId: "T123",
+      slackUserId: "U123"
+    });
+    const view = buildAppHomeView({
+      githubUrl: "https://example.test/github",
+      googleUrl: "https://example.test/google",
+      jiraUrl: "https://example.test/jira",
+      slackUrl: "https://example.test/slack",
+      connections: {
+        github: null,
+        google: null,
+        jira: null,
+        slack: null
+      },
+      agentSettings
+    });
+    const serialized = JSON.stringify(view);
+
+    expect(serialized).toContain("agent_runtime_engine_select");
+    expect(serialized).toContain("Choose runtime");
+    expect(serialized).toContain("\"value\":\"burble-direct\"");
+    expect(serialized).toContain("\"value\":\"hermes\"");
+    store.close();
+  });
+
+  test("shows first-time guidance before connections and runtime provisioning", () => {
+    const store = createTokenStore(":memory:");
+    const agentSettings = buildAgentHomeSettings({
+      config: agentConfig,
+      store,
+      workspaceId: "T123",
+      slackUserId: "U123"
+    });
+    const view = buildAppHomeView({
+      githubUrl: "https://example.test/github",
+      googleUrl: "https://example.test/google",
+      jiraUrl: "https://example.test/jira",
+      slackUrl: "https://example.test/slack",
+      connections: {
+        github: null,
+        google: null,
+        jira: null,
+        slack: null
+      },
+      agentSettings
+    });
+    const serialized = JSON.stringify(view);
+
+    expect(serialized).toContain("Start by connecting");
+    expect(serialized).toContain("message Burble directly");
+    expect(serialized).toContain("User auth");
+    store.close();
   });
 
   test("builds an agent settings modal from effective config", () => {
@@ -700,6 +767,78 @@ describe("buildAppHomeView", () => {
       status: "stopped"
     });
     expect(stopped).toEqual([runtime.id]);
+    store.close();
+  });
+
+  test("selects one active runtime engine from App Home", async () => {
+    const store = createTokenStore(":memory:");
+    store.upsertWorkspacePolicy({
+      workspaceId: "T123",
+      key: "runtime.allowedEngines",
+      value: ["burble-direct", "hermes"],
+      updatedBySlackUserId: "UADMIN"
+    });
+    const previousRuntime = store.getOrCreateAgentRuntime({
+      workspaceId: "T123",
+      slackUserId: "U123",
+      engine: "burble-direct",
+      endpointUrl: "http://direct-runtime:8080",
+      authTokenHash: "hash",
+      statePath: "/data/state",
+      configPath: "/data/config/openclaw.json",
+      workspacePath: "/data/workspace",
+      policyHash: "policy-old"
+    });
+    const stopped: string[] = [];
+    const started: string[] = [];
+    const result = await applyAgentRuntimeEngineSelection({
+      config: agentConfig,
+      store,
+      runtimeFactory: {
+        async getOrCreateRuntime(principal) {
+          started.push(`${principal.workspaceId}:${principal.slackUserId}`);
+          const runtime = store.getOrCreateAgentRuntime({
+            workspaceId: principal.workspaceId,
+            slackUserId: principal.slackUserId,
+            engine: "hermes",
+            endpointUrl: "http://hermes-runtime:8080",
+            authTokenHash: "hash",
+            statePath: "/data/state",
+            configPath: "/data/config/hermes.json",
+            workspacePath: "/data/workspace",
+            policyHash: "policy-new"
+          });
+          return {
+            id: runtime.id,
+            engine: runtime.engine,
+            endpointUrl: runtime.endpointUrl,
+            authToken: "runtime-token",
+            status: "ready",
+            statePath: runtime.statePath,
+            configPath: runtime.configPath,
+            workspacePath: runtime.workspacePath
+          };
+        },
+        async stopRuntime(runtimeId) {
+          stopped.push(runtimeId);
+          store.updateAgentRuntimeStatus(runtimeId, { status: "stopped" });
+        },
+        async reapIdleRuntimes() {}
+      },
+      principal: {
+        workspaceId: "T123",
+        slackUserId: "U123"
+      },
+      engine: "hermes"
+    });
+
+    expect(result.policyChanged).toBe(true);
+    expect(result.restart?.stoppedRuntimeId).toBe(previousRuntime.id);
+    expect(stopped).toEqual([previousRuntime.id]);
+    expect(started).toEqual(["T123:U123"]);
+    expect(
+      store.getUserPreference("T123", "U123", "runtime.engine")?.value
+    ).toBe("hermes");
     store.close();
   });
 });
