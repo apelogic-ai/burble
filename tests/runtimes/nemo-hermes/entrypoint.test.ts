@@ -427,6 +427,80 @@ print(json.dumps(ctx.tools))
     ).toEqual({ type: "string" });
   });
 
+  test("forwards the canonical provider bridge envelope with scheduled job identity", () => {
+    const result = runHermesEntrypointProbe(`${importProviderToolPlugin}
+import asyncio
+import os
+
+os.environ["BURBLE_TOOL_GATEWAY_URL"] = "http://burble-app:3000/internal/tools"
+os.environ["BURBLE_INTERNAL_TOKEN"] = "runtime-secret"
+os.environ["BURBLE_RUNTIME_ID"] = "rt_u123"
+
+calls = []
+
+class FakeResponse:
+    status = 200
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *_args):
+        return None
+
+    async def json(self):
+        return {
+            "classification": "user_private",
+            "content": {"name": "Scratchpad"},
+        }
+
+class FakeSession:
+    def __init__(self, *args, **kwargs):
+        pass
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *_args):
+        return None
+
+    def post(self, url, json=None, headers=None):
+        calls.append({"url": url, "json": json, "headers": headers})
+        return FakeResponse()
+
+mod.ClientSession = FakeSession
+mod.ClientTimeout = lambda **_kwargs: None
+
+async def main():
+    result = await mod._burble_provider_call({
+        "toolName": "google.getDriveFile",
+        "input": {"fileId": "file-123", "jobId": "job-123"},
+    })
+    print(json.dumps({"result": json.loads(result), "calls": calls}))
+
+asyncio.run(main())
+`);
+
+    expect(result).toEqual({
+      result: { name: "Scratchpad" },
+      calls: [
+        {
+          url: "http://burble-app:3000/internal/tools/google.getDriveFile/execute",
+          json: {
+            input: {
+              fileId: "file-123",
+              jobId: "job-123"
+            }
+          },
+          headers: {
+            authorization: "Bearer runtime-secret",
+            "content-type": "application/json",
+            "x-burble-runtime-id": "rt_u123"
+          }
+        }
+      ]
+    });
+  });
+
   test("pins Burble provider bridge tools into the Hermes web toolset for cron jobs", () => {
     const result = runHermesEntrypointProbe(`${importProviderToolPlugin}
 toolsets = types.ModuleType("toolsets")
