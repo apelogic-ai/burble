@@ -4,6 +4,7 @@ import {
   runOpenClawCliRequestStream
 } from "../../../runtimes/openclaw-nemoclaw/src/openclaw-cli";
 import type { RuntimeConfig } from "../../../runtimes/openclaw-nemoclaw/src/config";
+import type { RunEvent } from "../../../runtimes/openclaw-nemoclaw/src/types";
 import { clearGatewayDiagnosticText } from "../../../runtimes/openclaw-nemoclaw/src/gateway-diagnostics";
 import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -2255,6 +2256,61 @@ describe("runOpenClawCliRequest", () => {
     ]);
   });
 
+  test("streams Burble greeting fallback when OpenClaw repeats bootstrap answers", async () => {
+    const requests: Array<Record<string, unknown>> = [];
+    const events: Array<RunEvent> = [];
+
+    await withMockFetch(
+      (async (_input, init) => {
+        requests.push(
+          JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>
+        );
+        return new Response(
+          JSON.stringify(
+            openResponsesText("Hey. I just came online. Who am I? Who are you?")
+          ),
+          {
+            status: 200,
+            headers: { "content-type": "application/json" }
+          }
+        );
+      }) as typeof fetch,
+      async () => {
+        for await (const event of runOpenClawCliRequestStream(
+          {
+            runId: "run-stream-bootstrap-repeat",
+            executionMode: "openclaw-native",
+            input: {
+              text: "hey agent",
+              connections: {
+                github: { connected: false }
+              }
+            }
+          },
+          { ...config, engine: "openclaw-gateway" },
+          async () => {
+            throw new Error("unexpected tool call");
+          },
+          async function* () {
+            throw new Error("unexpected cli call");
+          },
+          () => undefined
+        )) {
+          events.push(event);
+        }
+      }
+    );
+
+    expect(requests).toHaveLength(2);
+    expect(events.at(-1)).toMatchObject({
+      type: "final",
+      response: {
+        classification: "user_private",
+        text: "Hey — I’m Burble. What can I help with?"
+      }
+    });
+  });
+
   test("streams a planned tool call without showing the JSON protocol to Slack", async () => {
     const events = [];
     let commandCount = 0;
@@ -2644,6 +2700,61 @@ describe("runOpenClawCliRequest", () => {
     ).toBe(true);
   });
 
+  test("falls back to Burble greeting when OpenClaw gateway repeats bootstrap answers", async () => {
+    const requests: Array<Record<string, unknown>> = [];
+    const logs: string[] = [];
+
+    const response = await withMockFetch(
+      (async (_input, init) => {
+        const body = JSON.parse(String(init?.body ?? "{}")) as Record<
+          string,
+          unknown
+        >;
+        requests.push(body);
+        return new Response(
+          JSON.stringify(
+            openResponsesText("Hey. I just came online. Who am I? Who are you?")
+          ),
+          {
+            status: 200,
+            headers: { "content-type": "application/json" }
+          }
+        );
+      }) as typeof fetch,
+      async () =>
+        runOpenClawCliRequest(
+          {
+            runId: "run-gateway-bootstrap-repeat",
+            executionMode: "openclaw-native",
+            input: {
+              text: "hey agent",
+              connections: {
+                github: { connected: false }
+              }
+            }
+          },
+          { ...config, engine: "openclaw-gateway" },
+          async () => {
+            throw new Error("unexpected tool call");
+          },
+          async () => {
+            throw new Error("unexpected cli call");
+          },
+          (message) => logs.push(message)
+        )
+    );
+
+    expect(response.response.text).toBe("Hey — I’m Burble. What can I help with?");
+    expect(requests).toHaveLength(2);
+    expect(
+      logs.some((line) =>
+        line.includes(
+          "OpenClaw bootstrap retry runId=run-gateway-bootstrap-repeat step=1 reason=bootstrap_response"
+        )
+      )
+    ).toBe(true);
+  });
+
   test("can invoke OpenClaw through Gateway mode without local CLI execution", async () => {
     const commands: Array<{ args: string[] }> = [];
     const requests: Array<{
@@ -2771,7 +2882,7 @@ describe("runOpenClawCliRequest", () => {
     ).toBe(true);
   });
 
-  test("uses webchat with isolated model sessions for ordinary native conversation turns", async () => {
+  test("uses route-scoped Burble sessions for ordinary native conversation turns", async () => {
     const requests: Array<{
       headers: Headers;
       body: Record<string, unknown>;
@@ -2840,9 +2951,9 @@ describe("runOpenClawCliRequest", () => {
     );
 
     expect(requests).toHaveLength(2);
-    expect(requests[0].headers.get("x-openclaw-message-channel")).toBe("webchat");
-    expect(requests[1].headers.get("x-openclaw-message-channel")).toBe("webchat");
-    expect(requests[0].headers.get("x-openclaw-session-key")).not.toBe(
+    expect(requests[0].headers.get("x-openclaw-message-channel")).toBe("burble");
+    expect(requests[1].headers.get("x-openclaw-message-channel")).toBe("burble");
+    expect(requests[0].headers.get("x-openclaw-session-key")).toBe(
       requests[1].headers.get("x-openclaw-session-key")
     );
     expect(requests[0].headers.get("x-openclaw-session-key")).toStartWith(

@@ -167,7 +167,6 @@ export async function runOpenClawCliRequest(
       const rawText =
         extractOpenClawText(result.stdout) ||
         (lastToolResult ? formatToolResult(lastToolResult) : baseline.response.text);
-      const text = sanitizeBootstrapFragments(rawText);
       if (
         rejectedDirectResponses.length < maxBootstrapRetries &&
         isBootstrapSetupAnswer(rawText)
@@ -180,6 +179,10 @@ export async function runOpenClawCliRequest(
         );
         continue;
       }
+      const text = sanitizeBootstrapFragments(
+        rawText,
+        formatBootstrapFallbackAnswer(request)
+      );
       logInfo(
         `OpenClaw agent finish runId=${request.runId ?? "unknown"} classification=${classification} textLength=${text.length}`
       );
@@ -960,7 +963,6 @@ export async function* runOpenClawCliRequestStream(
       const rawText =
         extractOpenClawText(result.stdout) ||
         (lastToolResult ? formatToolResult(lastToolResult) : baseline.response.text);
-      const text = sanitizeBootstrapFragments(rawText);
       if (
         rejectedDirectResponses.length < maxBootstrapRetries &&
         isBootstrapSetupAnswer(rawText)
@@ -973,6 +975,10 @@ export async function* runOpenClawCliRequestStream(
         );
         continue;
       }
+      const text = sanitizeBootstrapFragments(
+        rawText,
+        formatBootstrapFallbackAnswer(request)
+      );
       logInfo(
         `OpenClaw agent finish runId=${request.runId ?? "unknown"} classification=${classification} textLength=${text.length}`
       );
@@ -2789,7 +2795,7 @@ function isBootstrapSetupAnswer(text: string): boolean {
   );
 }
 
-function sanitizeBootstrapFragments(text: string): string {
+function sanitizeBootstrapFragments(text: string, fallbackText: string = text): string {
   if (!isBootstrapSetupAnswer(text)) {
     return text;
   }
@@ -2800,10 +2806,23 @@ function sanitizeBootstrapFragments(text: string): string {
     .filter(Boolean);
   const kept = paragraphs.filter((paragraph) => !isBootstrapSetupAnswer(paragraph));
   if (kept.length === 0) {
-    return text;
+    return fallbackText;
   }
 
   return kept.join("\n\n");
+}
+
+function formatBootstrapFallbackAnswer(request: RunRequest): string {
+  return isGreetingRequest(request.input.text)
+    ? "Hey — I’m Burble. What can I help with?"
+    : "I’m Burble. What can I help with?";
+}
+
+function isGreetingRequest(text: string): boolean {
+  const normalized = text.trim().toLowerCase();
+  return /^(hi|hello|hey|yo|gm|good morning|good afternoon|good evening)(\s+(agent|burble))?[.!?]*$/.test(
+    normalized
+  );
 }
 
 function readPlannedToolCall(
@@ -3823,9 +3842,7 @@ async function readRawStreamForUsage(
 function buildRunSessionId(request: RunRequest): string {
   const channelSessionKey = buildBurbleChannelSessionKey(request);
   if (channelSessionKey) {
-    return `burble-channel-${hashSessionKey(
-      `${channelSessionKey}:${buildRunSessionKey(request)}`
-    )}`;
+    return `burble-channel-${hashSessionKey(channelSessionKey)}`;
   }
 
   return `burble-run-${hashSessionKey(
@@ -3897,12 +3914,7 @@ function resolveGatewayHttpMessageChannel(request: RunRequest): "webchat" | "bur
     return "webchat";
   }
 
-  const selectedGroups = selectedRuntimeToolGroups(request);
-  if (!selectedGroups) {
-    return "burble";
-  }
-
-  return selectedGroups.has("scheduler") ? "burble" : "webchat";
+  return "burble";
 }
 
 function hashSessionKey(value: string): string {
