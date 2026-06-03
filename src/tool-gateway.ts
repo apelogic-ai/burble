@@ -40,6 +40,13 @@ import {
   updateGoogleDriveTextFile
 } from "./providers/google/client";
 import {
+  getHubSpotAccessTokenInfo,
+  refreshHubSpotAccessToken,
+  searchHubSpotCompanies,
+  searchHubSpotContacts,
+  searchHubSpotDeals
+} from "./providers/hubspot/client";
+import {
   addJiraIssueComment,
   addJiraIssueLabels,
   createJiraIssue,
@@ -70,6 +77,7 @@ import {
   type GitHubPullRequestListInput
 } from "./tools/github";
 import { createGoogleTools, type GoogleToolDeps } from "./tools/google";
+import { createHubSpotTools, type HubSpotToolDeps } from "./tools/hubspot";
 import {
   createJiraTools,
   isJiraAuthErrorResult,
@@ -95,6 +103,7 @@ import {
 
 type ToolGatewayDeps = Partial<Parameters<typeof createGitHubTools>[0]> &
   Partial<GoogleToolDeps> &
+  Partial<HubSpotToolDeps> &
   Partial<JiraToolDeps> &
   Partial<SlackToolDeps> & {
     fetchConversationAttachment?: (input: {
@@ -176,6 +185,10 @@ const defaultDeps = {
   updateGoogleCalendarEvent,
   searchGoogleMailMessages,
   createGmailDraft,
+  getHubSpotAccessTokenInfo,
+  searchHubSpotContacts,
+  searchHubSpotCompanies,
+  searchHubSpotDeals,
   getJiraUser,
   listJiraAccessibleResources,
   listAssignedJiraIssues,
@@ -412,6 +425,10 @@ export async function handleToolGatewayRequest(
         message:
           provider === "github"
             ? "Connect GitHub first: `@Burble connect github`."
+            : provider === "google"
+              ? "Connect Google first: `/auth google`."
+            : provider === "hubspot"
+              ? "Connect HubSpot first: `/auth hubspot`."
             : provider === "jira"
               ? "Connect Jira first."
               : "Connect Slack search first: `/auth slack`."
@@ -428,6 +445,14 @@ export async function handleToolGatewayRequest(
     refreshGoogleAccessToken: (refreshToken) =>
       refreshGoogleAccessToken(config, refreshToken),
     saveGoogleConnection: (connection) => store.upsertProviderConnection(connection),
+    ...deps
+  });
+  const hubspotTools = createHubSpotTools({
+    ...defaultDeps,
+    refreshHubSpotAccessToken: (refreshToken) =>
+      refreshHubSpotAccessToken(config, refreshToken),
+    saveHubSpotConnection: (connection) =>
+      store.upsertProviderConnection(connection),
     ...deps
   });
   const jiraTools = createJiraTools({
@@ -1032,6 +1057,50 @@ export async function handleToolGatewayRequest(
       );
     }
 
+    case "hubspot.getAuthenticatedUser":
+      return respondWithAudit(
+        await hubspotTools.getAuthenticatedUser.execute({ connection })
+      );
+
+    case "hubspot.searchContacts": {
+      if (!isHubSpotSearchInput(body.input)) {
+        return new Response("Invalid tool input", { status: 400 });
+      }
+
+      return respondWithAudit(
+        await hubspotTools.searchContacts.execute({
+          connection,
+          input: body.input
+        })
+      );
+    }
+
+    case "hubspot.searchCompanies": {
+      if (!isHubSpotSearchInput(body.input)) {
+        return new Response("Invalid tool input", { status: 400 });
+      }
+
+      return respondWithAudit(
+        await hubspotTools.searchCompanies.execute({
+          connection,
+          input: body.input
+        })
+      );
+    }
+
+    case "hubspot.searchDeals": {
+      if (!isHubSpotSearchInput(body.input)) {
+        return new Response("Invalid tool input", { status: 400 });
+      }
+
+      return respondWithAudit(
+        await hubspotTools.searchDeals.execute({
+          connection,
+          input: body.input
+        })
+      );
+    }
+
     case "gmail.createDraft": {
       if (!isCreateGmailDraftInput(body.input)) {
         return new Response("Invalid tool input", { status: 400 });
@@ -1247,6 +1316,10 @@ function isKnownTool(toolName: string): boolean {
     toolName === "google.updateCalendarEvent" ||
     toolName === "google.searchMailMessages" ||
     toolName === "gmail.createDraft" ||
+    toolName === "hubspot.getAuthenticatedUser" ||
+    toolName === "hubspot.searchContacts" ||
+    toolName === "hubspot.searchCompanies" ||
+    toolName === "hubspot.searchDeals" ||
     toolName === "jira.getAuthenticatedUser" ||
     toolName === "jira.listAccessibleResources" ||
     toolName === "jira.listVisibleProjects" ||
@@ -1274,9 +1347,13 @@ function isKnownTool(toolName: string): boolean {
   );
 }
 
-function readToolProvider(toolName: string): "github" | "google" | "jira" | "slack" {
+function readToolProvider(
+  toolName: string
+): "github" | "google" | "hubspot" | "jira" | "slack" {
   return toolName.startsWith("slack.")
     ? "slack"
+    : toolName.startsWith("hubspot.")
+    ? "hubspot"
     : toolName.startsWith("google.") || toolName.startsWith("gmail.")
     ? "google"
     : toolName.startsWith("jira.") || toolName.startsWith("atlassian.")
@@ -1287,7 +1364,7 @@ function readToolProvider(toolName: string): "github" | "google" | "jira" | "sla
 function resolveToolGatewayConnection(
   store: TokenStore,
   auth: ToolGatewayAuth,
-  provider: "github" | "google" | "jira" | "slack",
+  provider: "github" | "google" | "hubspot" | "jira" | "slack",
   body: ToolGatewayBody
 ) {
   if (auth.kind === "runtime") {
@@ -2238,6 +2315,19 @@ function isCreateGmailDraftInput(input: unknown): input is {
     input.body.length <= 200_000 &&
     optionalStringArray(input.cc, 50) &&
     optionalStringArray(input.bcc, 50)
+  );
+}
+
+function isHubSpotSearchInput(input: unknown): input is {
+  query: string;
+  limit?: number;
+} {
+  return (
+    isOptionalObject(input) &&
+    isNonEmptyString(input.query) &&
+    input.query.length <= 200 &&
+    (input.limit === undefined ||
+      (isPositiveInteger(input.limit) && input.limit <= 20))
   );
 }
 

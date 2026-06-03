@@ -8,6 +8,7 @@ import type {
 import { z } from "zod";
 import type { createGitHubTools } from "../tools/github";
 import type { createGoogleTools } from "../tools/google";
+import type { createHubSpotTools } from "../tools/hubspot";
 import type { createJiraTools } from "../tools/jira";
 import type { createSlackTools } from "../tools/slack";
 import type { ToolClassification } from "../conversation/types";
@@ -50,6 +51,7 @@ export type AiSdkAgentRunnerDeps = {
   model: string;
   githubTools: ReturnType<typeof createGitHubTools>;
   googleTools?: ReturnType<typeof createGoogleTools>;
+  hubspotTools?: ReturnType<typeof createHubSpotTools>;
   jiraTools?: ReturnType<typeof createJiraTools>;
   slackTools?: ReturnType<typeof createSlackTools>;
   resolveModel?: ModelResolver;
@@ -63,6 +65,7 @@ const systemPrompt = [
   "Answer in concise Slack mrkdwn.",
   "Use provider tools for GitHub, Jira, Slack, and Google facts. Do not invent provider data.",
   "Use Google tools for Drive, Calendar, and Gmail facts when Google is connected.",
+  "Use HubSpot tools for CRM contacts, companies, and deals when HubSpot is connected.",
   "Never ask for, print, or expose access tokens.",
   "When a provider tool returns an error object with a message, explain that message in normal Slack text; do not print raw JSON.",
   "When a tool says GitHub is not connected, tell the user to run `@Burble connect github`.",
@@ -160,6 +163,14 @@ async function runAiSdkAgent(
         content: {
           error: "google_not_connected",
           message: "Connect Google first: `/auth google`."
+        }
+      });
+    const missingHubSpotConnection = () =>
+      record({
+        classification: "user_private",
+        content: {
+          error: "hubspot_not_connected",
+          message: "Connect HubSpot first: `/auth hubspot`."
         }
       });
 
@@ -1203,6 +1214,92 @@ async function runAiSdkAgent(
             })
           );
         })
+      });
+    }
+
+    if (deps.hubspotTools) {
+      tools.hubspot_get_authenticated_user = tool({
+        description: "Return the authenticated HubSpot account for the Slack user.",
+        inputSchema: z.object({}),
+        execute: async () =>
+          executeTool("hubspot_get_authenticated_user", async () => {
+            const connection = input.connections.hubspot;
+            if (!connection) {
+              return missingHubSpotConnection();
+            }
+
+            return record(
+              await deps.hubspotTools!.getAuthenticatedUser.execute({
+                connection
+              })
+            );
+          })
+      });
+      tools.hubspot_search_contacts = tool({
+        description:
+          "Search HubSpot CRM contacts visible to the authenticated Slack user's connected HubSpot account.",
+        inputSchema: z.object({
+          query: z.string().min(1).max(200).describe("Contact search terms"),
+          limit: z.number().int().positive().max(20).optional()
+        }),
+        execute: async (toolInput) =>
+          executeTool("hubspot_search_contacts", async () => {
+            const connection = input.connections.hubspot;
+            if (!connection) {
+              return missingHubSpotConnection();
+            }
+
+            return record(
+              await deps.hubspotTools!.searchContacts.execute({
+                connection,
+                input: toolInput
+              })
+            );
+          })
+      });
+      tools.hubspot_search_companies = tool({
+        description:
+          "Search HubSpot CRM companies visible to the authenticated Slack user's connected HubSpot account.",
+        inputSchema: z.object({
+          query: z.string().min(1).max(200).describe("Company search terms"),
+          limit: z.number().int().positive().max(20).optional()
+        }),
+        execute: async (toolInput) =>
+          executeTool("hubspot_search_companies", async () => {
+            const connection = input.connections.hubspot;
+            if (!connection) {
+              return missingHubSpotConnection();
+            }
+
+            return record(
+              await deps.hubspotTools!.searchCompanies.execute({
+                connection,
+                input: toolInput
+              })
+            );
+          })
+      });
+      tools.hubspot_search_deals = tool({
+        description:
+          "Search HubSpot CRM deals visible to the authenticated Slack user's connected HubSpot account.",
+        inputSchema: z.object({
+          query: z.string().min(1).max(200).describe("Deal search terms"),
+          limit: z.number().int().positive().max(20).optional()
+        }),
+        execute: async (toolInput) =>
+          executeTool("hubspot_search_deals", async () => {
+            const connection = input.connections.hubspot;
+            if (!connection) {
+              return missingHubSpotConnection();
+            }
+
+            return record(
+              await deps.hubspotTools!.searchDeals.execute({
+                connection,
+                input: toolInput
+              })
+            );
+          })
       });
     }
 

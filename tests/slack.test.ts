@@ -53,6 +53,8 @@ const agentConfig: Config = {
   jiraClientSecret: "jira-client-secret",
   googleClientId: "google-client-id",
   googleClientSecret: "google-client-secret",
+  hubspotClientId: "hubspot-client-id",
+  hubspotClientSecret: "hubspot-client-secret",
   baseUrl: "https://example.test",
   port: 3000,
   databasePath: ":memory:",
@@ -369,6 +371,7 @@ describe("buildAuthResponse", () => {
     const response = buildAuthResponse({
       githubUrl: "https://example.test/github",
       googleUrl: "https://example.test/google",
+      hubspotUrl: "https://example.test/hubspot",
       jiraUrl: "https://example.test/jira",
       slackUrl: "https://example.test/slack",
       connections: {
@@ -381,7 +384,22 @@ describe("buildAuthResponse", () => {
           connectedAt: "2026-05-26T00:00:00.000Z"
         },
         google: null,
-        jira: null,
+        hubspot: {
+          provider: "hubspot",
+          email: "person@example.com",
+          slackUserId: "U123",
+          providerLogin: "hubspot-user@example.com",
+          accessToken: "hubspot-token",
+          connectedAt: "2026-05-26T00:00:00.000Z"
+        },
+        jira: {
+          provider: "jira",
+          email: "person@example.com",
+          slackUserId: "U123",
+          providerLogin: "person@example.com",
+          accessToken: "jira-token",
+          connectedAt: "2026-05-26T00:00:00.000Z"
+        },
         slack: {
           provider: "slack",
           email: "person@example.com",
@@ -396,13 +414,23 @@ describe("buildAuthResponse", () => {
     expect(response.text).toContain("connections");
     expect(JSON.stringify(response.blocks)).toContain("GitHub");
     expect(JSON.stringify(response.blocks)).toContain("Google Workspace");
+    expect(JSON.stringify(response.blocks)).toContain("HubSpot");
     expect(JSON.stringify(response.blocks)).toContain("Atlassian");
     expect(JSON.stringify(response.blocks)).toContain("Slack search");
     expect(JSON.stringify(response.blocks)).toContain("Connected as `octocat`");
+    expect(JSON.stringify(response.blocks)).toContain("Connected as `hubspot-user@example.com`");
+    expect(JSON.stringify(response.blocks)).toContain("Connected as `person@example.com`");
     expect(JSON.stringify(response.blocks)).toContain("Connected as <@U123>");
     expect(JSON.stringify(response.blocks)).toContain("Not connected");
+    expect(JSON.stringify(response.blocks)).toContain("provider_disconnect");
+    expect(JSON.stringify(response.blocks)).toContain("\"style\":\"danger\"");
+    expect(JSON.stringify(response.blocks)).toContain("\"value\":\"github\"");
+    expect(JSON.stringify(response.blocks)).toContain("\"value\":\"hubspot\"");
+    expect(JSON.stringify(response.blocks)).toContain("\"value\":\"jira\"");
+    expect(JSON.stringify(response.blocks)).toContain("\"value\":\"slack\"");
     expect(JSON.stringify(response.blocks)).toContain("https://example.test/github");
     expect(JSON.stringify(response.blocks)).toContain("https://example.test/google");
+    expect(JSON.stringify(response.blocks)).toContain("https://example.test/hubspot");
     expect(JSON.stringify(response.blocks)).toContain("https://example.test/jira");
     expect(JSON.stringify(response.blocks)).toContain("https://example.test/slack");
   });
@@ -411,11 +439,13 @@ describe("buildAuthResponse", () => {
     const response = buildAuthResponse({
       githubUrl: "https://example.test/github",
       googleUrl: null,
+      hubspotUrl: null,
       jiraUrl: null,
       slackUrl: null
     });
 
     expect(JSON.stringify(response.blocks)).toContain("Google OAuth is not configured");
+    expect(JSON.stringify(response.blocks)).toContain("HubSpot OAuth is not configured");
     expect(JSON.stringify(response.blocks)).toContain("Jira OAuth is not configured");
     expect(JSON.stringify(response.blocks)).toContain("Slack OAuth is not configured");
   });
@@ -444,6 +474,7 @@ describe("buildAppHomeView", () => {
     const view = buildAppHomeView({
       githubUrl: "https://example.test/github",
       googleUrl: "https://example.test/google",
+      hubspotUrl: "https://example.test/hubspot",
       jiraUrl: "https://example.test/jira",
       slackUrl: "https://example.test/slack",
       connections: {
@@ -456,6 +487,14 @@ describe("buildAppHomeView", () => {
           connectedAt: "2026-05-26T00:00:00.000Z"
         },
         google: null,
+        hubspot: {
+          provider: "hubspot",
+          email: "person@example.com",
+          slackUserId: "U123",
+          providerLogin: "hubspot-user@example.com",
+          accessToken: "hubspot-token",
+          connectedAt: "2026-05-26T00:00:00.000Z"
+        },
         jira: {
           provider: "jira",
           email: "person@example.com",
@@ -473,18 +512,24 @@ describe("buildAppHomeView", () => {
     expect(view.type).toBe("home");
     expect(serialized).toContain("GitHub");
     expect(serialized).toContain("Google Workspace");
+    expect(serialized).toContain("HubSpot");
     expect(serialized).toContain("Atlassian Jira");
     expect(serialized).toContain("Slack search");
     expect(serialized).toContain("Connected as `octocat`");
     expect(serialized).toContain("Connected as `person@example.com`");
+    expect(serialized).toContain("Connected as `hubspot-user@example.com`");
     expect(serialized).toContain("Not connected");
     expect(serialized).toContain("https://example.test/google");
     expect(serialized).toContain("Agent runtime");
     expect(serialized).toContain("User auth");
     expect(serialized).toContain("Details");
     expect(serialized).toContain("agent_runtime_manage");
+    expect(serialized).toContain("Refresh");
+    expect(serialized).toContain("agent_runtime_refresh");
     expect(serialized).toContain("agent_runtime_pause");
     expect(serialized).toContain("agent_runtime_restart");
+    expect(serialized).toContain("provider_disconnect");
+    expect(serialized).toContain("\"style\":\"danger\"");
     expect(serialized).toContain("Runtime settings");
     expect(serialized).toContain("Edit settings");
     expect(serialized).toContain("agent_config_edit");
@@ -508,11 +553,13 @@ describe("buildAppHomeView", () => {
     const view = buildAppHomeView({
       githubUrl: "https://example.test/github",
       googleUrl: "https://example.test/google",
+      hubspotUrl: "https://example.test/hubspot",
       jiraUrl: "https://example.test/jira",
       slackUrl: "https://example.test/slack",
       connections: {
         github: null,
         google: null,
+        hubspot: null,
         jira: null,
         slack: null
       },
@@ -538,11 +585,13 @@ describe("buildAppHomeView", () => {
     const view = buildAppHomeView({
       githubUrl: "https://example.test/github",
       googleUrl: "https://example.test/google",
+      hubspotUrl: "https://example.test/hubspot",
       jiraUrl: "https://example.test/jira",
       slackUrl: "https://example.test/slack",
       connections: {
         github: null,
         google: null,
+        hubspot: null,
         jira: null,
         slack: null
       },
@@ -791,11 +840,13 @@ describe("buildAppHomeView", () => {
     });
     const stopped: string[] = [];
     const started: string[] = [];
+    const events: string[] = [];
     const result = await applyAgentRuntimeEngineSelection({
       config: agentConfig,
       store,
       runtimeFactory: {
         async getOrCreateRuntime(principal) {
+          events.push(`start:${principal.workspaceId}:${principal.slackUserId}`);
           started.push(`${principal.workspaceId}:${principal.slackUserId}`);
           const runtime = store.getOrCreateAgentRuntime({
             workspaceId: principal.workspaceId,
@@ -820,6 +871,7 @@ describe("buildAppHomeView", () => {
           };
         },
         async stopRuntime(runtimeId) {
+          events.push(`stop:${runtimeId}`);
           stopped.push(runtimeId);
           store.updateAgentRuntimeStatus(runtimeId, { status: "stopped" });
         },
@@ -829,13 +881,31 @@ describe("buildAppHomeView", () => {
         workspaceId: "T123",
         slackUserId: "U123"
       },
-      engine: "hermes"
+      engine: "hermes",
+      afterPreferenceSaved: () => {
+        events.push(
+          `saved:${store.getUserPreference("T123", "U123", "runtime.engine")?.value}`
+        );
+        const settings = buildAgentHomeSettings({
+          config: agentConfig,
+          store,
+          workspaceId: "T123",
+          slackUserId: "U123"
+        });
+        expect(settings.runtime.engine).toBe("hermes");
+        expect(settings.runtime.status).toBe("not provisioned");
+      }
     });
 
     expect(result.policyChanged).toBe(true);
     expect(result.restart?.stoppedRuntimeId).toBe(previousRuntime.id);
     expect(stopped).toEqual([previousRuntime.id]);
     expect(started).toEqual(["T123:U123"]);
+    expect(events).toEqual([
+      "saved:hermes",
+      `stop:${previousRuntime.id}`,
+      "start:T123:U123"
+    ]);
     expect(
       store.getUserPreference("T123", "U123", "runtime.engine")?.value
     ).toBe("hermes");

@@ -25,6 +25,8 @@ describe("readConfig", () => {
       jiraClientSecret: null,
       googleClientId: null,
       googleClientSecret: null,
+      hubspotClientId: null,
+      hubspotClientSecret: null,
       baseUrl: "https://example.ngrok-free.app",
       port: 4242,
       databasePath: "test.db",
@@ -101,6 +103,17 @@ describe("readConfig", () => {
 
     expect(config.googleClientId).toBe("google-client-id");
     expect(config.googleClientSecret).toBe("google-client-secret");
+  });
+
+  test("reads optional HubSpot OAuth settings", () => {
+    const config = readConfig({
+      ...validEnv,
+      HUBSPOT_CLIENT_ID: "hubspot-client-id",
+      HUBSPOT_CLIENT_SECRET: "hubspot-client-secret"
+    });
+
+    expect(config.hubspotClientId).toBe("hubspot-client-id");
+    expect(config.hubspotClientSecret).toBe("hubspot-client-secret");
   });
 
   test("rejects invalid Slack log levels", () => {

@@ -15,7 +15,7 @@ export type ConnectedUser = {
   connectedAt: string;
 };
 
-export type Provider = "github" | "jira" | "slack" | "google";
+export type Provider = "github" | "jira" | "slack" | "google" | "hubspot";
 
 export type ProviderConnection = {
   provider: Provider;
@@ -501,6 +501,14 @@ export function createTokenStore(path: string) {
     WHERE provider = ? AND slack_user_id = ?
     ORDER BY connected_at DESC
     LIMIT 1
+  `);
+  const deleteProviderConnectionBySlackUser = db.query(`
+    DELETE FROM provider_connections
+    WHERE provider = ? AND slack_user_id = ?
+  `);
+  const deleteLegacyGitHubUserBySlackUser = db.query(`
+    DELETE FROM users
+    WHERE slack_user_id = ?
   `);
   const getUserBySlackUser = db.query<ConnectedUser, [string]>(`
     SELECT
@@ -1121,6 +1129,18 @@ export function createTokenStore(path: string) {
         accessTokenExpiresAt: null,
         connectedAt: user.connectedAt
       };
+    },
+
+    deleteConnectionForSlackUser(provider: Provider, slackUserId: string): boolean {
+      const deleted = deleteProviderConnectionBySlackUser.run(
+        provider,
+        slackUserId
+      ).changes;
+      const legacyDeleted =
+        provider === "github"
+          ? deleteLegacyGitHubUserBySlackUser.run(slackUserId).changes
+          : 0;
+      return deleted > 0 || legacyDeleted > 0;
     },
 
     getOrCreateAgentRuntime(input: {

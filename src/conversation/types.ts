@@ -1,6 +1,7 @@
 import type { Provider, ProviderConnection } from "../db";
 import type { createGitHubTools } from "../tools/github";
 import type { createGoogleTools } from "../tools/google";
+import type { createHubSpotTools } from "../tools/hubspot";
 import type { createJiraTools } from "../tools/jira";
 import type { createSlackTools } from "../tools/slack";
 import type { AgentMode } from "../config";
@@ -62,6 +63,7 @@ export type ConversationResponse = {
 export type ConversationToolCatalog = {
   github: ReturnType<typeof createGitHubTools>;
   google?: ReturnType<typeof createGoogleTools>;
+  hubspot?: ReturnType<typeof createHubSpotTools>;
   jira?: ReturnType<typeof createJiraTools>;
   slack?: ReturnType<typeof createSlackTools>;
 };
@@ -71,6 +73,7 @@ export type ConversationDeps = {
   createJiraOAuthUrl?: (slackUserId: string) => string;
   createSlackOAuthUrl?: (slackUserId: string) => string;
   createGoogleOAuthUrl?: (slackUserId: string) => string;
+  createHubSpotOAuthUrl?: (slackUserId: string) => string;
   getConnection: (provider: Provider, email: string) => ProviderConnection | null;
   tools: ConversationToolCatalog;
   agentMode?: AgentMode;

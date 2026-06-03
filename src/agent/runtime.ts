@@ -1,6 +1,7 @@
 import type { AgentRuntime } from "../config";
 import type { createGitHubTools } from "../tools/github";
 import type { createGoogleTools } from "../tools/google";
+import type { createHubSpotTools } from "../tools/hubspot";
 import type { createJiraTools } from "../tools/jira";
 import type { createSlackTools } from "../tools/slack";
 import { createAiSdkAgentRunner } from "./runner";
@@ -16,6 +17,7 @@ export type ConfiguredAgentRunnerDeps = {
   model: string;
   githubTools: ReturnType<typeof createGitHubTools>;
   googleTools?: ReturnType<typeof createGoogleTools>;
+  hubspotTools?: ReturnType<typeof createHubSpotTools>;
   jiraTools?: ReturnType<typeof createJiraTools>;
   slackTools?: ReturnType<typeof createSlackTools>;
   managedRuntimeUrl?: string | null;
@@ -37,6 +39,7 @@ export function createConfiguredAgentRunner(
         model: deps.model,
         githubTools: deps.githubTools,
         ...(deps.googleTools ? { googleTools: deps.googleTools } : {}),
+        ...(deps.hubspotTools ? { hubspotTools: deps.hubspotTools } : {}),
         ...(deps.jiraTools ? { jiraTools: deps.jiraTools } : {}),
         ...(deps.slackTools ? { slackTools: deps.slackTools } : {}),
         ...(deps.resolveModel ? { resolveModel: deps.resolveModel } : {}),

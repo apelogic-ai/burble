@@ -19,6 +19,7 @@ export const runtimeToolGroupSchema = z.enum([
   "conversation",
   "github",
   "google",
+  "hubspot",
   "jira",
   "scheduler",
   "slack"
@@ -181,6 +182,7 @@ export const runtimeRunRequestSchema = z
           .object({
             github: runtimeConnectionSummarySchema.optional(),
             google: runtimeConnectionSummarySchema.optional(),
+            hubspot: runtimeConnectionSummarySchema.optional(),
             jira: runtimeConnectionSummarySchema.optional(),
             slack: runtimeConnectionSummarySchema.optional()
           })

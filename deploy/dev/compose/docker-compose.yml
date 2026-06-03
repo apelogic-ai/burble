@@ -77,6 +77,8 @@ services:
       - JIRA_CLIENT_SECRET=${JIRA_CLIENT_SECRET:-}
       - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID:-}
       - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET:-}
+      - HUBSPOT_CLIENT_ID=${HUBSPOT_CLIENT_ID:-}
+      - HUBSPOT_CLIENT_SECRET=${HUBSPOT_CLIENT_SECRET:-}
     volumes:
       - burble_data:/data
     healthcheck:

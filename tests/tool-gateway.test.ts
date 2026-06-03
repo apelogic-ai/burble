@@ -23,6 +23,8 @@ const config: Config = {
   jiraClientSecret: null,
   googleClientId: null,
   googleClientSecret: null,
+  hubspotClientId: null,
+  hubspotClientSecret: null,
   baseUrl: "https://example.ngrok-free.app",
   port: 3000,
   databasePath: ":memory:",
@@ -93,6 +95,15 @@ const googleConnection: ProviderConnection = {
   connectedAt: "2026-05-25T00:00:00Z"
 };
 
+const hubspotConnection: ProviderConnection = {
+  provider: "hubspot",
+  email: "person@example.com",
+  slackUserId: "U123",
+  providerLogin: "hubspot-user@example.com",
+  accessToken: "hubspot-token",
+  connectedAt: "2026-05-25T00:00:00Z"
+};
+
 const runtime: AgentRuntimeRecord = {
   id: "rt_u123",
   workspaceId: "T123",
@@ -139,6 +150,7 @@ function createStore(
       slackUserId === foundConnection.slackUserId
         ? foundConnection
         : null,
+    deleteConnectionForSlackUser: () => false,
     getOrCreateAgentRuntime: () => {
       throw new Error("unexpected agent runtime call");
     },
@@ -532,6 +544,51 @@ describe("handleToolGatewayRequest", () => {
         name: "Blank"
       }
     });
+  });
+
+  test("executes HubSpot CRM search tools with the stored caller token", async () => {
+    const response = await handleToolGatewayRequest(
+      config,
+      createStore(hubspotConnection),
+      "hubspot.searchContacts",
+      request("hubspot.searchContacts", {
+        user: { email: "person@example.com" },
+        input: { query: "Acme", limit: 5 }
+      }),
+      {
+        searchHubSpotContacts: async (token, input) => {
+          expect(token).toBe("hubspot-token");
+          expect(input).toEqual({ query: "Acme", limit: 5 });
+          return [
+            {
+              id: "contact-1",
+              properties: {
+                email: "person@example.com",
+                firstname: "Person"
+              },
+              createdAt: "2026-06-01T00:00:00.000Z"
+            }
+          ];
+        }
+      }
+    );
+
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body).toEqual({
+      classification: "user_private",
+      content: [
+        {
+          id: "contact-1",
+          properties: {
+            email: "person@example.com",
+            firstname: "Person"
+          },
+          createdAt: "2026-06-01T00:00:00.000Z"
+        }
+      ]
+    });
+    expect(JSON.stringify(body)).not.toContain("hubspot-token");
   });
 
   test("allows a principal-bound runtime token for its own provider account", async () => {

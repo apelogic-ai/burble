@@ -1,7 +1,7 @@
 # Burble
 
-Slack-as-TUI assistant for identity-scoped GitHub, Jira, Google Workspace, and
-Slack search access.
+Slack-as-TUI assistant for identity-scoped GitHub, Jira, Google Workspace,
+HubSpot, and Slack search access.
 
 ## Run
 
@@ -24,6 +24,7 @@ Then set `BASE_URL` in `.env` and configure OAuth callback URLs:
 {BASE_URL}/oauth/jira/callback
 {BASE_URL}/oauth/slack/callback
 {BASE_URL}/oauth/google/callback
+{BASE_URL}/oauth/hubspot/callback
 ```
 
 ## Slack Commands
@@ -37,6 +38,7 @@ Then set `BASE_URL` in `.env` and configure OAuth callback URLs:
 - `/auth` shows connected account status and auth buttons.
 - `/auth github` starts the GitHub OAuth flow.
 - `/auth google` starts the Google OAuth flow for Drive files, Calendar, and Gmail.
+- `/auth hubspot` starts the HubSpot OAuth flow for CRM contacts, companies, and deals.
 - `/auth jira` starts the Jira OAuth flow.
 - `/auth slack` starts the Slack user OAuth flow for message search.
 - `/agent status` powers up and shows the current agent runtime status for the Slack user.
@@ -67,6 +69,18 @@ https://www.googleapis.com/auth/drive.metadata.readonly
 https://www.googleapis.com/auth/drive.file
 https://www.googleapis.com/auth/calendar.readonly
 https://www.googleapis.com/auth/gmail.readonly
+```
+
+HubSpot OAuth uses a HubSpot public app with redirect URI:
+
+```text
+{BASE_URL}/oauth/hubspot/callback
+```
+
+Configure these scopes:
+
+```text
+oauth crm.objects.contacts.read crm.objects.companies.read crm.objects.deals.read
 ```
 
 Required Slack bot scopes:

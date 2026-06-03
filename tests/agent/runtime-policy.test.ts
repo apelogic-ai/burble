@@ -19,6 +19,8 @@ const config: Config = {
   jiraClientSecret: null,
   googleClientId: null,
   googleClientSecret: null,
+  hubspotClientId: null,
+  hubspotClientSecret: null,
   baseUrl: "https://example.ngrok-free.app",
   port: 3000,
   databasePath: ":memory:",
