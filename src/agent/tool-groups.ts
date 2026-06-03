@@ -17,6 +17,7 @@ export type RuntimeToolGroupSelectionInput = {
   text: string;
   attachmentCount?: number;
   allowedGroups?: RuntimeToolGroup[];
+  contextTexts?: string[];
 };
 
 const groupKeywords: Record<Exclude<RuntimeToolGroup, "attachments" | "conversation">, string[]> = {
@@ -60,6 +61,54 @@ const groupKeywords: Record<Exclude<RuntimeToolGroup, "attachments" | "conversat
   slack: ["slack", "channel", "dm", "message history"]
 };
 
+const contextAnchorKeywords: Partial<
+  Record<Exclude<RuntimeToolGroup, "attachments" | "conversation">, string[]>
+> = {
+  github: ["github"],
+  google: ["google", "drive", "gmail", "calendar"],
+  hubspot: ["hubspot", "crm"],
+  jira: ["jira", "atlassian"],
+  slack: ["slack"]
+};
+
+const followUpKeywords: Partial<
+  Record<Exclude<RuntimeToolGroup, "attachments" | "conversation">, string[]>
+> = {
+  google: [
+    "drive",
+    "file",
+    "files",
+    "folder",
+    "folders",
+    "doc",
+    "docs",
+    "document",
+    "documents",
+    "sheet",
+    "sheets",
+    "spreadsheet",
+    "spreadsheets",
+    "calendar",
+    "event",
+    "events",
+    "email",
+    "emails",
+    "mail",
+    "draft",
+    "drafts"
+  ],
+  hubspot: [
+    "client",
+    "clients",
+    "contact",
+    "contacts",
+    "company",
+    "companies",
+    "deal",
+    "deals"
+  ]
+};
+
 export function selectRuntimeToolGroups(
   input: RuntimeToolGroupSelectionInput
 ): RuntimeToolGroupSelection {
@@ -80,6 +129,29 @@ export function selectRuntimeToolGroups(
     for (const keyword of keywords) {
       if (containsKeyword(text, keyword)) {
         addGroup(group, `keyword:${group}:${keyword}`);
+      }
+    }
+  }
+
+  const contextText = (input.contextTexts ?? [])
+    .map((value) => value.toLocaleLowerCase())
+    .join("\n");
+  if (contextText) {
+    for (const [group, keywords] of Object.entries(followUpKeywords) as Array<
+      [Exclude<RuntimeToolGroup, "attachments" | "conversation">, string[]]
+    >) {
+      if (selected.has(group)) {
+        continue;
+      }
+      const anchors = contextAnchorKeywords[group] ?? [];
+      const matchedAnchor = anchors.find((keyword) =>
+        containsKeyword(contextText, keyword)
+      );
+      const matchedFollowUp = keywords.find((keyword) =>
+        containsKeyword(text, keyword)
+      );
+      if (matchedAnchor && matchedFollowUp) {
+        addGroup(group, `context:${group}:${matchedAnchor}:${matchedFollowUp}`);
       }
     }
   }

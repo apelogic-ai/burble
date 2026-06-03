@@ -72,6 +72,35 @@ describe("selectRuntimeToolGroups", () => {
     });
   });
 
+  test("selects HubSpot for CRM follow-up language when recent context names HubSpot", () => {
+    expect(
+      selectRuntimeToolGroups({
+        text: "ok let's start with the 3 most recent companies",
+        contextTexts: [
+          "Do you mean the 3 most recent companies, contacts, or deals in HubSpot?"
+        ]
+      })
+    ).toEqual({
+      groups: ["conversation", "hubspot"],
+      reasons: [
+        "default:conversation",
+        "context:hubspot:hubspot:companies"
+      ]
+    });
+  });
+
+  test("selects Google for file follow-up language when recent context names Drive", () => {
+    expect(
+      selectRuntimeToolGroups({
+        text: "open the newest file",
+        contextTexts: ["I found three matching Google Drive files."]
+      })
+    ).toEqual({
+      groups: ["conversation", "google"],
+      reasons: ["default:conversation", "context:google:google:file"]
+    });
+  });
+
   test("selects attachment group when files are present", () => {
     expect(
       selectRuntimeToolGroups({

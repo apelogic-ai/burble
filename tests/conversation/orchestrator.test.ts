@@ -363,6 +363,47 @@ describe("handleConversation", () => {
     expect(response.text).toBe("You have one issue and one pull request.");
   });
 
+  test("keeps provider tool groups for follow-up turns with provider context", async () => {
+    const response = await handleConversation(
+      {
+        ...baseRequest,
+        text: "ok let's start with the 3 most recent companies",
+        context: {
+          recentMessages: [
+            {
+              author: "user",
+              speaker: "Leo",
+              text: "list our 3 most recent clients on hubspot?"
+            },
+            {
+              author: "assistant",
+              speaker: "Burble",
+              text: "Do you mean the 3 most recent companies, contacts, or deals in HubSpot?"
+            }
+          ]
+        }
+      },
+      createDeps({
+        agentMode: "llm",
+        agentRunner: stubAgentRunner((input) => {
+          expect(input.toolGroups).toEqual({
+            groups: ["conversation", "hubspot"],
+            reasons: [
+              "default:conversation",
+              "context:hubspot:hubspot:companies"
+            ]
+          });
+          return {
+            classification: "user_private",
+            text: "Here are the three most recent HubSpot companies."
+          };
+        })
+      })
+    );
+
+    expect(response.text).toBe("Here are the three most recent HubSpot companies.");
+  });
+
   test("fast-paths latest Gmail requests before the LLM runner", async () => {
     let called = false;
     const response = await handleConversation(
