@@ -1,0 +1,76 @@
+provider: hubspot
+source:
+  url: https://developers.hubspot.com/docs/apps/developer-platform/build-apps/authentication/scopes
+  retrievedAt: "2026-06-03"
+filter:
+  include:
+    - Scope names ending in ".read" from the HubSpot developer-platform scopes reference.
+  exclude:
+    - Sensitive-data scopes containing ".sensitive." or ".highly_sensitive.".
+    - Deprecated scopes listed by HubSpot: accounting, actions, e-commerce, integration-sync, social.
+    - Read scopes that HubSpot flags as appearing in app configuration without a corresponding API.
+scopes:
+  - account-info.security.read
+  - automation.sequences.read
+  - behavioral_events.event_definitions.read
+  - business_units_view.read
+  - cms.domains.read
+  - cms.functions.read
+  - cms.knowledge_base.articles.read
+  - cms.membership.access_groups.read
+  - collector.graphql_schema.read
+  - communication_preferences.read
+  - communication_preferences.statuses.batch.read
+  - conversations.custom_channels.read
+  - conversations.read
+  - crm.dealsplits.read
+  - crm.lists.read
+  - crm.objects.appointments.read
+  - crm.objects.carts.read
+  - crm.objects.commercepayments.read
+  - crm.objects.companies.read
+  - crm.objects.contacts.read
+  - crm.objects.courses.read
+  - crm.objects.custom.read
+  - crm.objects.deals.read
+  - crm.objects.feedback_submission.read
+  - crm.objects.goals.read
+  - crm.objects.invoices.read
+  - crm.objects.leads.read
+  - crm.objects.line_items.read
+  - crm.objects.listings.read
+  - crm.objects.marketing_events.read
+  - crm.objects.orders.read
+  - crm.objects.owners.read
+  - crm.objects.partner-clients.read
+  - crm.objects.partner-services.read
+  - crm.objects.quotes.read
+  - crm.objects.services.read
+  - crm.objects.subscriptions.read
+  - crm.objects.users.read
+  - crm.pipelines.orders.read
+  - crm.schemas.appointments.read
+  - crm.schemas.carts.read
+  - crm.schemas.commercepayments.read
+  - crm.schemas.companies.read
+  - crm.schemas.contacts.read
+  - crm.schemas.courses.read
+  - crm.schemas.custom.read
+  - crm.schemas.deals.read
+  - crm.schemas.invoices.read
+  - crm.schemas.line_items.read
+  - crm.schemas.listings.read
+  - crm.schemas.orders.read
+  - crm.schemas.quotes.read
+  - crm.schemas.services.read
+  - crm.schemas.subscriptions.read
+  - document.read
+  - files.ui_hidden.read
+  - marketing.campaigns.read
+  - marketing.campaigns.revenue.read
+  - media_bridge.read
+  - scheduler.meetings.meeting-link.read
+  - settings.currencies.read
+  - settings.users.read
+  - settings.users.teams.read
+  - tax_rates.read
