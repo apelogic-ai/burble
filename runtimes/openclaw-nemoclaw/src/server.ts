@@ -260,10 +260,6 @@ async function handleLocalBurbleMcpRequest(
   if (request.method !== "POST") {
     return new Response("Method not allowed", { status: 405 });
   }
-  if (!config.mcpGatewayUrl || !config.runtimeJwt) {
-    return new Response("Burble MCP gateway is not configured", { status: 503 });
-  }
-
   const bodyText = await request.text();
   const payload = readMcpJsonRpcPayload(bodyText);
   if (isMcpToolCall(payload)) {
@@ -286,6 +282,9 @@ async function handleLocalBurbleMcpRequest(
         "Burble provider tool routeId must be the active convrt_* conversation route, not a cron job id, run id, session id, or UUID."
       );
     }
+  }
+  if (!config.mcpGatewayUrl || !config.runtimeJwt) {
+    return new Response("Burble MCP gateway is not configured", { status: 503 });
   }
 
   const upstreamResponse = await fetch(config.mcpGatewayUrl, {

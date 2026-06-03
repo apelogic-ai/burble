@@ -686,7 +686,7 @@ describe("createBurbleToolExecutor", () => {
     }
   });
 
-  test("normalizes compact scheduled state refs before registration", async () => {
+  test("forwards object scheduled state refs before registration", async () => {
     const originalFetch = globalThis.fetch;
     const requests: Request[] = [];
     globalThis.fetch = (async (input, init) => {
@@ -705,7 +705,13 @@ describe("createBurbleToolExecutor", () => {
           jobId: "ai-news-hourly",
           requiredTools: ["google.getDriveFile"],
           routeId: "convrt_abc123",
-          stateRefs: ["google-drive:file:file-123"]
+          stateRefs: [
+            {
+              provider: "google",
+              kind: "drive_file",
+              id: "file-123"
+            }
+          ]
         }
       });
 

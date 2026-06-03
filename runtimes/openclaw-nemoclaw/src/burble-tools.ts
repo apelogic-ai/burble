@@ -28,13 +28,6 @@ function createBurbleMcpToolExecutor(
     const actualToolName = bridgeCall?.toolName ?? toolName;
     const actualBody = bridgeCall ? { input: bridgeCall.input } : body;
 
-    if (bridgeCall) {
-      if (actualToolName === "scheduledJob.registerCapability") {
-        return registerScheduledJobCapability(config, runtimeId, {
-          input: bridgeCall.input
-        });
-      }
-    }
     if (actualToolName === "conversation.sendMessage") {
       return sendConversationMessage(config, runtimeId, request, actualBody);
     }
@@ -203,10 +196,8 @@ async function registerScheduledJobCapability(
   if (!input) {
     throw new Error("scheduledJob.registerCapability requires input");
   }
-  const normalizedInput = normalizeScheduledJobCapabilityInput(input);
-
   info(
-    `Burble scheduled job tool start tool=scheduledJob.registerCapability${summarizeLogObject("input", normalizedInput)}`
+    `Burble scheduled job tool start tool=scheduledJob.registerCapability${summarizeLogObject("input", input)}`
   );
 
   const response = await fetch(
@@ -218,7 +209,7 @@ async function registerScheduledJobCapability(
         authorization: `Bearer ${config.internalToken}`,
         "x-burble-runtime-id": runtimeId
       },
-      body: JSON.stringify({ input: normalizedInput })
+      body: JSON.stringify({ input })
     }
   );
 
@@ -244,36 +235,6 @@ async function registerScheduledJobCapability(
     `Burble scheduled job tool finish tool=scheduledJob.registerCapability classification=${result.classification}${summarizeLogObject("result", result.content)}`
   );
   return result;
-}
-
-function normalizeScheduledJobCapabilityInput(
-  input: Record<string, unknown>
-): Record<string, unknown> {
-  const stateRefs = input.stateRefs;
-  if (!Array.isArray(stateRefs)) {
-    return input;
-  }
-  return {
-    ...input,
-    stateRefs: stateRefs.map(normalizeScheduledJobStateRef)
-  };
-}
-
-function normalizeScheduledJobStateRef(value: unknown): unknown {
-  if (typeof value !== "string") {
-    return value;
-  }
-  const compactGoogleDriveFile = value
-    .trim()
-    .match(/^google-drive:file:(.+)$/i);
-  if (!compactGoogleDriveFile) {
-    return value;
-  }
-  return {
-    provider: "google",
-    kind: "drive_file",
-    id: compactGoogleDriveFile[1]
-  };
 }
 
 async function getConversationAttachment(
@@ -1227,12 +1188,6 @@ function readRecordKey(
   const inner = (value as Record<string, unknown>)[key];
   return inner && typeof inner === "object" && !Array.isArray(inner)
     ? (inner as Record<string, unknown>)
-    : null;
-}
-
-function asRecord(value: unknown): Record<string, unknown> | null {
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
     : null;
 }
 

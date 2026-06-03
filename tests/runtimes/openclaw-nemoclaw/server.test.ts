@@ -1023,7 +1023,13 @@ describe("handleRuntimeRequest", () => {
                   jobId: "job-123",
                   requiredTools: ["google.getDriveFile"],
                   routeId: "convrt_abc123",
-                  stateRefs: ["google-drive:file:file-123"]
+                  stateRefs: [
+                    {
+                      provider: "google",
+                      kind: "drive_file",
+                      id: "file-123"
+                    }
+                  ]
                 }
               }
             })
@@ -1031,8 +1037,8 @@ describe("handleRuntimeRequest", () => {
           {
             ...config,
             runtimeId: "rt_u123",
-            mcpGatewayUrl: "http://burble-app:3000/mcp",
-            runtimeJwt: "runtime-jwt"
+            mcpGatewayUrl: null,
+            runtimeJwt: null
           }
         )
     );

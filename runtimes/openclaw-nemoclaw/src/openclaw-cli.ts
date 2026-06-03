@@ -179,10 +179,7 @@ export async function runOpenClawCliRequest(
         );
         continue;
       }
-      const text = sanitizeBootstrapFragments(
-        rawText,
-        formatBootstrapFallbackAnswer(request)
-      );
+      const text = sanitizeBootstrapFragments(rawText, baseline.response.text);
       logInfo(
         `OpenClaw agent finish runId=${request.runId ?? "unknown"} classification=${classification} textLength=${text.length}`
       );
@@ -386,6 +383,18 @@ async function runOpenClawGatewayHttpRequest(
       const responseText = await response.text();
       if (!response.ok) {
         stderr = responseText;
+        logInfo(
+          `OpenClaw gateway http error runId=${request.runId ?? "unknown"} step=${step} status=${response.status}${summarizeLogObject("bodyPreview", responseText)}`
+        );
+        if (
+          attempt < maxAttempts &&
+          isRetryableOpenClawGatewayProviderError(response.status, responseText)
+        ) {
+          logInfo(
+            `OpenClaw gateway http retry runId=${request.runId ?? "unknown"} step=${step} attempt=${attempt} status=${response.status} reason=upstream_provider_timeout elapsedMs=${Date.now() - attemptStartedAt}`
+          );
+          continue;
+        }
         const gatewayDiagnostics = readGatewayDiagnosticTextSince(startedAt);
         const usageTelemetry = logOpenClawUsageFromOutput(
           request,
@@ -399,18 +408,6 @@ async function runOpenClawGatewayHttpRequest(
           logInfo,
           startedAt
         );
-        logInfo(
-          `OpenClaw gateway http error runId=${request.runId ?? "unknown"} step=${step} status=${response.status}${summarizeLogObject("bodyPreview", responseText)}`
-        );
-        if (
-          attempt < maxAttempts &&
-          isRetryableOpenClawGatewayProviderError(response.status, responseText)
-        ) {
-          logInfo(
-            `OpenClaw gateway http retry runId=${request.runId ?? "unknown"} step=${step} attempt=${attempt} status=${response.status} reason=upstream_provider_timeout elapsedMs=${Date.now() - attemptStartedAt}`
-          );
-          continue;
-        }
         return { exitCode: 1, stdout, stderr, ...usageTelemetry };
       }
 
@@ -434,6 +431,15 @@ async function runOpenClawGatewayHttpRequest(
       return { exitCode: 0, stdout, stderr, ...usageTelemetry };
     } catch (error) {
       stderr = error instanceof Error ? error.message : String(error);
+      if (
+        attempt < maxAttempts &&
+        isRetryableOpenClawGatewayTransportError(error)
+      ) {
+        logInfo(
+          `OpenClaw gateway http retry runId=${request.runId ?? "unknown"} step=${step} attempt=${attempt} reason=transport_error elapsedMs=${Date.now() - attemptStartedAt}${summarizeLogObject("error", stderr)}`
+        );
+        continue;
+      }
       const gatewayDiagnostics = readGatewayDiagnosticTextSince(startedAt);
       const usageTelemetry = logOpenClawUsageFromOutput(
         request,
@@ -453,7 +459,7 @@ async function runOpenClawGatewayHttpRequest(
       return { exitCode: 1, stdout, stderr, ...usageTelemetry };
     }
   }
-  return { exitCode: 1, stdout, stderr };
+  throw new Error("OpenClaw gateway HTTP retry loop exhausted unexpectedly");
 }
 
 function isRetryableOpenClawGatewayProviderError(
@@ -469,6 +475,22 @@ function isRetryableOpenClawGatewayProviderError(
     normalized.includes("server_error") ||
     normalized.includes('"code":"api_error"') ||
     normalized.includes('"code":"server_error"')
+  );
+}
+
+function isRetryableOpenClawGatewayTransportError(error: unknown): boolean {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+  const normalized = `${error.name} ${error.message}`.toLowerCase();
+  return (
+    normalized.includes("abort") ||
+    normalized.includes("timeout") ||
+    normalized.includes("timed out") ||
+    normalized.includes("econnreset") ||
+    normalized.includes("econnrefused") ||
+    normalized.includes("socket hang up") ||
+    normalized.includes("network")
   );
 }
 
@@ -975,10 +997,7 @@ export async function* runOpenClawCliRequestStream(
         );
         continue;
       }
-      const text = sanitizeBootstrapFragments(
-        rawText,
-        formatBootstrapFallbackAnswer(request)
-      );
+      const text = sanitizeBootstrapFragments(rawText, baseline.response.text);
       logInfo(
         `OpenClaw agent finish runId=${request.runId ?? "unknown"} classification=${classification} textLength=${text.length}`
       );
@@ -2812,19 +2831,6 @@ function sanitizeBootstrapFragments(text: string, fallbackText: string = text): 
   }
 
   return kept.join("\n\n");
-}
-
-function formatBootstrapFallbackAnswer(request: RunRequest): string {
-  return isGreetingRequest(request.input.text)
-    ? "Hey — I’m Burble. What can I help with?"
-    : "I’m Burble. What can I help with?";
-}
-
-function isGreetingRequest(text: string): boolean {
-  const normalized = text.trim().toLowerCase();
-  return /^(hi|hello|hey|yo|gm|good morning|good afternoon|good evening)(\s+(agent|burble))?[.!?]*$/.test(
-    normalized
-  );
 }
 
 function readPlannedToolCall(
