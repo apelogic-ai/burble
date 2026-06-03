@@ -46,18 +46,29 @@ describe("selectRuntimeToolGroups", () => {
   test("selects HubSpot from CRM language", () => {
     expect(
       selectRuntimeToolGroups({
-        text: "find deals and contacts in HubSpot for Acme"
+        text: "find HubSpot deals and HubSpot contacts for Acme"
       })
     ).toEqual({
       groups: ["conversation", "hubspot"],
       reasons: [
         "default:conversation",
         "keyword:hubspot:hubspot",
-        "keyword:hubspot:contact",
-        "keyword:hubspot:contacts",
-        "keyword:hubspot:deal",
-        "keyword:hubspot:deals"
+        "keyword:hubspot:hubspot contact",
+        "keyword:hubspot:hubspot contacts",
+        "keyword:hubspot:hubspot deal",
+        "keyword:hubspot:hubspot deals"
       ]
+    });
+  });
+
+  test("does not select HubSpot for generic contact, company, or deal language", () => {
+    expect(
+      selectRuntimeToolGroups({
+        text: "contact Leo about the company plan and deal with the deploy note"
+      })
+    ).toEqual({
+      groups: ["conversation"],
+      reasons: ["default:conversation"]
     });
   });
 

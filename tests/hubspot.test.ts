@@ -4,8 +4,11 @@ import {
   buildHubSpotOAuthUrl,
   exchangeHubSpotCode,
   getHubSpotAccessTokenInfo,
+  HubSpotApiError,
   searchHubSpotContacts
 } from "../src/providers/hubspot/client";
+import { createHubSpotTools } from "../src/tools/hubspot";
+import type { ProviderConnection } from "../src/db";
 
 const config: Config = {
   slackBotToken: "xoxb-test",
@@ -137,6 +140,27 @@ describe("HubSpot OAuth and API helpers", () => {
     }
   });
 
+  test("redacts access tokens from account lookup transport errors", async () => {
+    const originalFetch = globalThis.fetch;
+    const token = "hubspot-token/with-path";
+    globalThis.fetch = (async (input, _init): Promise<Response> => {
+      throw new Error(`failed to fetch ${String(input)}`);
+    }) as typeof fetch;
+
+    try {
+      await getHubSpotAccessTokenInfo(token);
+      throw new Error("expected getHubSpotAccessTokenInfo to fail");
+    } catch (error) {
+      expect(error).toBeInstanceOf(Error);
+      const message = (error as Error).message;
+      expect(message).toContain("[redacted]");
+      expect(message).not.toContain(token);
+      expect(message).not.toContain(encodeURIComponent(token));
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
   test("searches contacts with sanitized CRM properties", async () => {
     const originalFetch = globalThis.fetch;
     globalThis.fetch = (async (input, init) => {
@@ -185,3 +209,145 @@ describe("HubSpot OAuth and API helpers", () => {
     }
   });
 });
+
+describe("HubSpot tools", () => {
+  test("refreshes expiring access tokens before a provider call", async () => {
+    const saved: ProviderConnection[] = [];
+    const searchedWith: string[] = [];
+    const tools = createHubSpotTools({
+      searchHubSpotContacts: async (token) => {
+        searchedWith.push(token);
+        return [];
+      },
+      searchHubSpotCompanies: async () => [],
+      searchHubSpotDeals: async () => [],
+      getHubSpotAccessTokenInfo: async () => ({
+        hubId: 123,
+        scopes: []
+      }),
+      refreshHubSpotAccessToken: async (refreshToken) => {
+        expect(refreshToken).toBe("hubspot-refresh");
+        return {
+          accessToken: "fresh-token",
+          refreshToken,
+          accessTokenExpiresAt: "2026-06-03T12:30:00.000Z"
+        };
+      },
+      saveHubSpotConnection: (connection) => saved.push(connection),
+      now: () => new Date("2026-06-03T12:00:00.000Z")
+    });
+
+    await expect(
+      tools.searchContacts.execute({
+        connection: hubSpotConnection({
+          accessToken: "stale-token",
+          refreshToken: "hubspot-refresh",
+          accessTokenExpiresAt: "2026-06-03T12:00:30.000Z"
+        }),
+        input: { query: "Acme" }
+      })
+    ).resolves.toEqual({
+      classification: "user_private",
+      content: []
+    });
+    expect(searchedWith).toEqual(["fresh-token"]);
+    expect(saved.map((connection) => connection.accessToken)).toEqual([
+      "fresh-token"
+    ]);
+  });
+
+  test("refreshes once and retries when HubSpot returns 401", async () => {
+    const searchedWith: string[] = [];
+    const tools = createHubSpotTools({
+      searchHubSpotContacts: async (token) => {
+        searchedWith.push(token);
+        if (token === "expired-token") {
+          throw new HubSpotApiError("expired", 401);
+        }
+        return [];
+      },
+      searchHubSpotCompanies: async () => [],
+      searchHubSpotDeals: async () => [],
+      getHubSpotAccessTokenInfo: async () => ({
+        hubId: 123,
+        scopes: []
+      }),
+      refreshHubSpotAccessToken: async () => ({
+        accessToken: "fresh-token",
+        refreshToken: "hubspot-refresh",
+        accessTokenExpiresAt: "2026-06-03T12:30:00.000Z"
+      }),
+      now: () => new Date("2026-06-03T12:00:00.000Z")
+    });
+
+    await expect(
+      tools.searchContacts.execute({
+        connection: hubSpotConnection({
+          accessToken: "expired-token",
+          refreshToken: "hubspot-refresh",
+          accessTokenExpiresAt: "2026-06-03T12:30:00.000Z"
+        }),
+        input: { query: "Acme" }
+      })
+    ).resolves.toEqual({
+      classification: "user_private",
+      content: []
+    });
+    expect(searchedWith).toEqual(["expired-token", "fresh-token"]);
+  });
+
+  test("does not refresh or ask users to reconnect when HubSpot returns 403", async () => {
+    let refreshCalls = 0;
+    const tools = createHubSpotTools({
+      searchHubSpotContacts: async () => {
+        throw new HubSpotApiError("missing scope", 403);
+      },
+      searchHubSpotCompanies: async () => [],
+      searchHubSpotDeals: async () => [],
+      getHubSpotAccessTokenInfo: async () => ({
+        hubId: 123,
+        scopes: []
+      }),
+      refreshHubSpotAccessToken: async () => {
+        refreshCalls += 1;
+        return {
+          accessToken: "fresh-token",
+          refreshToken: "hubspot-refresh",
+          accessTokenExpiresAt: "2026-06-03T12:30:00.000Z"
+        };
+      }
+    });
+
+    await expect(
+      tools.searchContacts.execute({
+        connection: hubSpotConnection({
+          accessToken: "token-with-missing-scope",
+          refreshToken: "hubspot-refresh"
+        }),
+        input: { query: "Acme" }
+      })
+    ).resolves.toEqual({
+      classification: "user_private",
+      content: {
+        error: "hubspot_permission_denied",
+        message:
+          "HubSpot denied this request. Check that the connected HubSpot app has the required CRM read scopes."
+      }
+    });
+    expect(refreshCalls).toBe(0);
+  });
+});
+
+function hubSpotConnection(
+  overrides: Partial<ProviderConnection> = {}
+): ProviderConnection {
+  return {
+    provider: "hubspot",
+    email: "person@example.com",
+    slackUserId: "U123",
+    providerLogin: "hubspot-user@example.com",
+    accessToken: "hubspot-token",
+    connectedAt: "2026-06-03T12:00:00.000Z",
+    ...overrides
+  };
+}

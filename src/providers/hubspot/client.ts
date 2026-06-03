@@ -145,12 +145,17 @@ export async function refreshHubSpotAccessToken(
 export async function getHubSpotAccessTokenInfo(
   token: string
 ): Promise<HubSpotAccessTokenInfo> {
-  const response = await fetch(
-    `https://api.hubapi.com/oauth/v1/access-tokens/${encodeURIComponent(token)}`,
-    {
-      headers: hubSpotHeaders(token)
-    }
-  );
+  let response: Response;
+  try {
+    response = await fetch(
+      `https://api.hubapi.com/oauth/v1/access-tokens/${encodeURIComponent(token)}`,
+      {
+        headers: hubSpotHeaders(token)
+      }
+    );
+  } catch (error) {
+    throw redactHubSpotAccessTokenTransportError(error, token);
+  }
   const body = (await response.json()) as HubSpotAccessTokenInfoResponse;
   if (!response.ok) {
     throw hubSpotError(response, "HubSpot account lookup failed", body.message);
@@ -212,7 +217,7 @@ export const searchHubSpotDeals = (
 ) => searchHubSpotCrmObjects(token, "deals", input);
 
 export function isHubSpotAuthorizationError(error: unknown): boolean {
-  return error instanceof HubSpotApiError && [401, 403].includes(error.status);
+  return error instanceof HubSpotApiError && error.status === 401;
 }
 
 function hubSpotTokenSetFromResponse(
@@ -247,6 +252,33 @@ function hubSpotError(
   message?: string
 ): HubSpotApiError {
   return new HubSpotApiError(message ?? fallback, response.status);
+}
+
+function redactHubSpotAccessTokenTransportError(
+  error: unknown,
+  token: string
+): Error {
+  const fallback = "HubSpot account lookup request failed";
+  if (!(error instanceof Error)) {
+    return new Error(fallback);
+  }
+
+  const sanitized = new Error(
+    redactSecrets(error.message || fallback, [
+      token,
+      encodeURIComponent(token)
+    ])
+  );
+  sanitized.name = error.name;
+  return sanitized;
+}
+
+function redactSecrets(value: string, secrets: string[]): string {
+  return secrets.reduce(
+    (current, secret) =>
+      secret ? current.split(secret).join("[redacted]") : current,
+    value
+  );
 }
 
 function sanitizeHubSpotCrmObject(object: HubSpotCrmObject): HubSpotCrmObject {

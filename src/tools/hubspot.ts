@@ -1,5 +1,6 @@
 import type { ProviderConnection } from "../db";
 import {
+  HubSpotApiError,
   isHubSpotAuthorizationError,
   type HubSpotAccessTokenInfo,
   type HubSpotCrmObject,
@@ -98,37 +99,74 @@ export async function withHubSpotToken<T>(
   connection: ProviderConnection,
   callback: (accessToken: string) => Promise<T>
 ): Promise<T | HubSpotAuthErrorResult> {
+  let current = await refreshIfNeeded(deps, connection);
+
   try {
-    return await callback(connection.accessToken);
+    return await callback(current.accessToken);
   } catch (error) {
-    if (
-      isHubSpotAuthorizationError(error) &&
-      connection.refreshToken &&
-      deps.refreshHubSpotAccessToken
-    ) {
-      const token = await deps.refreshHubSpotAccessToken(connection.refreshToken);
-      const updatedConnection = {
-        ...connection,
-        accessToken: token.accessToken,
-        refreshToken: token.refreshToken ?? connection.refreshToken,
-        accessTokenExpiresAt: token.accessTokenExpiresAt
-      };
-      deps.saveHubSpotConnection?.(updatedConnection);
-      try {
-        return await callback(updatedConnection.accessToken);
-      } catch (retryError) {
-        if (isHubSpotAuthorizationError(retryError)) {
-          return hubSpotAuthError();
-        }
-        throw retryError;
+    if (!isHubSpotAuthorizationError(error)) {
+      if (error instanceof HubSpotApiError) {
+        return hubSpotApiErrorResult(error);
       }
+      throw error;
     }
 
-    if (isHubSpotAuthorizationError(error)) {
+    const refreshed = await refreshConnection(deps, current);
+    if (!refreshed) {
       return hubSpotAuthError();
     }
-    throw error;
+
+    current = refreshed;
+    try {
+      return await callback(current.accessToken);
+    } catch (retryError) {
+      if (isHubSpotAuthorizationError(retryError)) {
+        return hubSpotAuthError();
+      }
+      if (retryError instanceof HubSpotApiError) {
+        return hubSpotApiErrorResult(retryError);
+      }
+      throw retryError;
+    }
   }
+}
+
+async function refreshIfNeeded(
+  deps: HubSpotToolDeps,
+  connection: ProviderConnection
+): Promise<ProviderConnection> {
+  if (!connection.accessTokenExpiresAt) {
+    return connection;
+  }
+
+  const expiresAtMs = new Date(connection.accessTokenExpiresAt).getTime();
+  if (!Number.isFinite(expiresAtMs)) {
+    return connection;
+  }
+
+  const nowMs = (deps.now ?? (() => new Date()))().getTime();
+  return expiresAtMs - nowMs <= 60_000
+    ? (await refreshConnection(deps, connection)) ?? connection
+    : connection;
+}
+
+async function refreshConnection(
+  deps: HubSpotToolDeps,
+  connection: ProviderConnection
+): Promise<ProviderConnection | null> {
+  if (!connection.refreshToken || !deps.refreshHubSpotAccessToken) {
+    return null;
+  }
+
+  const tokenSet = await deps.refreshHubSpotAccessToken(connection.refreshToken);
+  const refreshed = {
+    ...connection,
+    accessToken: tokenSet.accessToken,
+    refreshToken: tokenSet.refreshToken ?? connection.refreshToken,
+    accessTokenExpiresAt: tokenSet.accessTokenExpiresAt
+  };
+  deps.saveHubSpotConnection?.(refreshed);
+  return refreshed;
 }
 
 function hubSpotSearchResult(
@@ -150,6 +188,27 @@ function hubSpotAuthError(): HubSpotAuthErrorResult {
     content: {
       error: "hubspot_auth_required",
       message: "Reconnect HubSpot: `/auth hubspot`."
+    }
+  };
+}
+
+function hubSpotApiErrorResult(error: HubSpotApiError): HubSpotAuthErrorResult {
+  if (error.status === 403) {
+    return {
+      classification: "user_private",
+      content: {
+        error: "hubspot_permission_denied",
+        message:
+          "HubSpot denied this request. Check that the connected HubSpot app has the required CRM read scopes."
+      }
+    };
+  }
+
+  return {
+    classification: "user_private",
+    content: {
+      error: "hubspot_api_error",
+      message: `HubSpot request failed (${error.status}): ${error.message}`
     }
   };
 }

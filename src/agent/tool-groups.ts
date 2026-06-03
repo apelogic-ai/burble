@@ -39,7 +39,22 @@ const groupKeywords: Record<Exclude<RuntimeToolGroup, "attachments" | "conversat
     "email",
     "calendar"
   ],
-  hubspot: ["hubspot", "crm", "contact", "contacts", "company", "companies", "deal", "deals"],
+  hubspot: [
+    "hubspot",
+    "crm",
+    "hubspot contact",
+    "hubspot contacts",
+    "hubspot company",
+    "hubspot companies",
+    "hubspot deal",
+    "hubspot deals",
+    "crm contact",
+    "crm contacts",
+    "crm company",
+    "crm companies",
+    "crm deal",
+    "crm deals"
+  ],
   jira: ["jira", "atlassian", "ticket", "sprint", "project"],
   scheduler: ["cron", "schedule", "scheduled", "recurring", "reminder", "every"],
   slack: ["slack", "channel", "dm", "message history"]
