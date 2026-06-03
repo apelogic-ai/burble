@@ -122,7 +122,7 @@ def _provider_alias_schema(alias: str, canonical_name: str) -> dict[str, Any]:
                     },
                     "stateRefs": {
                         "type": "array",
-                        "description": "Optional durable state references such as Drive scratchpad files.",
+                        "description": "Optional durable provider-backed state references.",
                         "items": {"type": "object", "additionalProperties": True},
                     },
                     "visibilityPolicy": {

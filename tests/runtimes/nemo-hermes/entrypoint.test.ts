@@ -143,7 +143,11 @@ print(json.dumps({"text": mod.build_hermes_turn_text(payload)}))
     expect(text).toContain("github_list_my_pull_requests");
     expect(text).not.toContain("google_search_drive_files");
     expect(text).toContain("scheduled_job_register_capability");
-    expect(text).toContain("include the returned scheduledPromptInstruction verbatim");
+    expect(text).toContain("For setup-time provider calls");
+    expect(text).toContain("do not include jobId");
+    expect(text).toContain("without an immediate/manual run");
+    expect(text).toContain("with the exact returned jobId");
+    expect(text).toContain("before enabling or triggering it");
     expect(text).toContain("Recent Burble context");
     expect(text).not.toContain("old message should not be included");
     expect(text).toContain("recent message 20");
@@ -215,12 +219,21 @@ print(json.dumps({"text": mod.build_hermes_turn_text(payload)}))
     const text = (result as { text: string }).text;
     expect(text).toContain("Provider-backed scheduled job repair:");
     expect(text).toContain("Before manually triggering");
+    expect(text).toContain("Setup-time provider calls are not scheduled provider calls");
+    expect(text).toContain("use ordinary Burble provider calls");
+    expect(text).toContain("Never invent placeholder job ids");
+    expect(text).toContain("do not request an immediate/manual run");
+    expect(text).toContain("After the native scheduler returns the stable job id");
+    expect(text).toContain("If registration does not return ok, do not trigger");
+    expect(text).toContain("Only after the job prompt has been updated");
     expect(text).toContain("scheduled_job_register_capability");
     expect(text).toContain(
       "Scheduled provider tool calls must include the returned jobId"
     );
     expect(text).toContain("must not use direct web/browser access to provider URLs");
     expect(text).not.toContain("Example Drive scratchpad registration input");
+    expect(text).not.toContain("Drive scratchpad");
+    expect(text).not.toContain("Google Drive scratchpad");
   });
 
   test("uses per-run Hermes thread ids by default", () => {
@@ -425,6 +438,80 @@ print(json.dumps(ctx.tools))
     expect(
       registrationTool?.schema?.parameters?.properties?.requiredTools?.items
     ).toEqual({ type: "string" });
+  });
+
+  test("forwards the canonical provider bridge envelope with scheduled job identity", () => {
+    const result = runHermesEntrypointProbe(`${importProviderToolPlugin}
+import asyncio
+import os
+
+os.environ["BURBLE_TOOL_GATEWAY_URL"] = "http://burble-app:3000/internal/tools"
+os.environ["BURBLE_INTERNAL_TOKEN"] = "runtime-secret"
+os.environ["BURBLE_RUNTIME_ID"] = "rt_u123"
+
+calls = []
+
+class FakeResponse:
+    status = 200
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *_args):
+        return None
+
+    async def json(self):
+        return {
+            "classification": "user_private",
+            "content": {"name": "Scratchpad"},
+        }
+
+class FakeSession:
+    def __init__(self, *args, **kwargs):
+        pass
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *_args):
+        return None
+
+    def post(self, url, json=None, headers=None):
+        calls.append({"url": url, "json": json, "headers": headers})
+        return FakeResponse()
+
+mod.ClientSession = FakeSession
+mod.ClientTimeout = lambda **_kwargs: None
+
+async def main():
+    result = await mod._burble_provider_call({
+        "toolName": "google.getDriveFile",
+        "input": {"fileId": "file-123", "jobId": "job-123"},
+    })
+    print(json.dumps({"result": json.loads(result), "calls": calls}))
+
+asyncio.run(main())
+`);
+
+    expect(result).toEqual({
+      result: { name: "Scratchpad" },
+      calls: [
+        {
+          url: "http://burble-app:3000/internal/tools/google.getDriveFile/execute",
+          json: {
+            input: {
+              fileId: "file-123",
+              jobId: "job-123"
+            }
+          },
+          headers: {
+            authorization: "Bearer runtime-secret",
+            "content-type": "application/json",
+            "x-burble-runtime-id": "rt_u123"
+          }
+        }
+      ]
+    });
   });
 
   test("pins Burble provider bridge tools into the Hermes web toolset for cron jobs", () => {

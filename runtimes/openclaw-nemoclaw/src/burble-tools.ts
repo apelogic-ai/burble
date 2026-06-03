@@ -22,14 +22,27 @@ function createBurbleMcpToolExecutor(
 ): ToolExecutor {
   let sessionIdPromise: Promise<string> | null = null;
   return async (toolName, body) => {
-    if (toolName === "conversation.sendMessage") {
-      return sendConversationMessage(config, runtimeId, request, body);
+    const bridgeCall = isBurbleProviderBridgeTool(toolName)
+      ? readBurbleProviderBridgeCall(body)
+      : null;
+    const actualToolName = bridgeCall?.toolName ?? toolName;
+    const actualBody = bridgeCall ? { input: bridgeCall.input } : body;
+
+    if (bridgeCall) {
+      if (actualToolName === "scheduledJob.registerCapability") {
+        return registerScheduledJobCapability(config, runtimeId, {
+          input: bridgeCall.input
+        });
+      }
     }
-    if (toolName === "conversation.getAttachment") {
-      return getConversationAttachment(config, runtimeId, request, body);
+    if (actualToolName === "conversation.sendMessage") {
+      return sendConversationMessage(config, runtimeId, request, actualBody);
     }
-    if (toolName === "scheduledJob.registerCapability") {
-      return registerScheduledJobCapability(config, runtimeId, body);
+    if (actualToolName === "conversation.getAttachment") {
+      return getConversationAttachment(config, runtimeId, request, actualBody);
+    }
+    if (actualToolName === "scheduledJob.registerCapability") {
+      return registerScheduledJobCapability(config, runtimeId, actualBody);
     }
     if (!config.mcpGatewayUrl || !config.runtimeJwt) {
       throw new Error(
@@ -38,13 +51,13 @@ function createBurbleMcpToolExecutor(
     }
 
     sessionIdPromise ??= initializeMcpSession(config);
-    if (toolName === "burble.mcp.listTools") {
+    if (actualToolName === "burble.mcp.listTools") {
       const sessionId = await sessionIdPromise;
       return listBurbleMcpTools(config, sessionId);
     }
 
-    const mcpToolName = toMcpToolName(toolName);
-    const args = toMcpToolArguments(toolName, body);
+    const mcpToolName = toMcpToolName(actualToolName);
+    const args = toMcpToolArguments(actualToolName, actualBody);
     const sessionId = await sessionIdPromise;
     info(`Burble MCP tool start tool=${mcpToolName}${summarizeLogObject("args", args)}`);
 
@@ -77,6 +90,40 @@ function createBurbleMcpToolExecutor(
     );
     return result;
   };
+}
+
+const BURBLE_PROVIDER_BRIDGE_TOOL = "burble_provider_call";
+const BURBLE_PROVIDER_BRIDGE_COMPAT_TOOL = "burble.providerCall";
+
+function isBurbleProviderBridgeTool(toolName: string): boolean {
+  return toolName === BURBLE_PROVIDER_BRIDGE_TOOL ||
+    toolName === BURBLE_PROVIDER_BRIDGE_COMPAT_TOOL;
+}
+
+function readBurbleProviderBridgeCall(body: unknown): {
+  toolName: string;
+  input: Record<string, unknown>;
+} {
+  const source = readRecordKey(body, "input");
+  if (!source) {
+    throw new Error("burble_provider_call requires input to be an object");
+  }
+  const toolName = readProviderBridgeToolName(source);
+  const input =
+    readRecordKey(source, "input") ??
+    readRecordKey(source, "arguments") ??
+    {};
+  return { toolName, input };
+}
+
+function readProviderBridgeToolName(
+  source: Record<string, unknown> | null
+): string {
+  const raw = source?.toolName;
+  if (typeof raw !== "string" || !raw.trim()) {
+    throw new Error("burble_provider_call requires input.toolName");
+  }
+  return raw.trim();
 }
 
 async function sendConversationMessage(
@@ -156,9 +203,10 @@ async function registerScheduledJobCapability(
   if (!input) {
     throw new Error("scheduledJob.registerCapability requires input");
   }
+  const normalizedInput = normalizeScheduledJobCapabilityInput(input);
 
   info(
-    `Burble scheduled job tool start tool=scheduledJob.registerCapability${summarizeLogObject("input", input)}`
+    `Burble scheduled job tool start tool=scheduledJob.registerCapability${summarizeLogObject("input", normalizedInput)}`
   );
 
   const response = await fetch(
@@ -170,11 +218,18 @@ async function registerScheduledJobCapability(
         authorization: `Bearer ${config.internalToken}`,
         "x-burble-runtime-id": runtimeId
       },
-      body: JSON.stringify({ input })
+      body: JSON.stringify({ input: normalizedInput })
     }
   );
 
   if (!response.ok) {
+    const errorResult = await readToolGatewayErrorResult(response.clone());
+    if (errorResult) {
+      info(
+        `Burble scheduled job tool finish tool=scheduledJob.registerCapability status=${response.status} classification=${errorResult.classification}${summarizeLogObject("result", errorResult.content)}`
+      );
+      return errorResult;
+    }
     throw new Error(
       `Burble scheduled job gateway returned HTTP ${response.status}${await readErrorDetail(response)}`
     );
@@ -189,6 +244,36 @@ async function registerScheduledJobCapability(
     `Burble scheduled job tool finish tool=scheduledJob.registerCapability classification=${result.classification}${summarizeLogObject("result", result.content)}`
   );
   return result;
+}
+
+function normalizeScheduledJobCapabilityInput(
+  input: Record<string, unknown>
+): Record<string, unknown> {
+  const stateRefs = input.stateRefs;
+  if (!Array.isArray(stateRefs)) {
+    return input;
+  }
+  return {
+    ...input,
+    stateRefs: stateRefs.map(normalizeScheduledJobStateRef)
+  };
+}
+
+function normalizeScheduledJobStateRef(value: unknown): unknown {
+  if (typeof value !== "string") {
+    return value;
+  }
+  const compactGoogleDriveFile = value
+    .trim()
+    .match(/^google-drive:file:(.+)$/i);
+  if (!compactGoogleDriveFile) {
+    return value;
+  }
+  return {
+    provider: "google",
+    kind: "drive_file",
+    id: compactGoogleDriveFile[1]
+  };
 }
 
 async function getConversationAttachment(
@@ -513,6 +598,16 @@ function toMcpToolName(toolName: string): string {
 }
 
 function toMcpToolArguments(
+  toolName: string,
+  body: unknown
+): Record<string, unknown> {
+  return withScheduledJobIdentity(
+    toMcpToolArgumentsWithoutScheduledJobIdentity(toolName, body),
+    readRecordKey(body, "input")
+  );
+}
+
+function toMcpToolArgumentsWithoutScheduledJobIdentity(
   toolName: string,
   body: unknown
 ): Record<string, unknown> {
@@ -986,6 +1081,21 @@ function toMcpToolArguments(
   return {};
 }
 
+function withScheduledJobIdentity(
+  args: Record<string, unknown>,
+  input: Record<string, unknown> | null
+): Record<string, unknown> {
+  const jobId = readScheduledJobIdFromInput(input);
+  return jobId ? { ...args, jobId } : args;
+}
+
+function readScheduledJobIdFromInput(
+  input: Record<string, unknown> | null
+): string | null {
+  const raw = input?.jobId;
+  return typeof raw === "string" && raw.trim() ? raw.trim() : null;
+}
+
 function readNestedString(
   value: unknown,
   outerKey: string,
@@ -1117,6 +1227,12 @@ function readRecordKey(
   const inner = (value as Record<string, unknown>)[key];
   return inner && typeof inner === "object" && !Array.isArray(inner)
     ? (inner as Record<string, unknown>)
+    : null;
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
     : null;
 }
 
@@ -1254,6 +1370,17 @@ function parseMcpResponsePayload(body: string): {
 async function readErrorDetail(response: Response): Promise<string> {
   const text = (await response.text()).trim().replace(/\s+/g, " ");
   return text ? `: ${text.slice(0, 300)}` : "";
+}
+
+async function readToolGatewayErrorResult(
+  response: Response
+): Promise<ToolResult | null> {
+  try {
+    const parsed = (await response.json()) as unknown;
+    return isToolResult(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
 }
 
 function summarizeLogObject(label: string, value: unknown): string {

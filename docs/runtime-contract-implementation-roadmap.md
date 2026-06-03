@@ -89,6 +89,19 @@ Scope:
 - add conformance coverage for scheduled jobs invoking GitHub, Jira, and Google
   tools.
 
+Current PR slice:
+
+- `burble_provider_call` is the runtime-neutral provider bridge envelope for
+  scheduled/background provider calls: `{ toolName, input }`;
+- OpenClaw/NemoClaw now accepts that envelope in addition to direct provider
+  tool names, and preserves `jobId` when direct provider aliases are used;
+- Hermes has a contract test proving the same envelope is forwarded to the
+  Burble tool gateway with `jobId` intact;
+- `scheduledJob.registerCapability` returns runtime-neutral bridge examples
+  instead of runtime-specific prompt branches;
+- job-scoped MCP runtime tokens now require matching `jobId` in the provider
+  call arguments, closing the "allowed tool but no job argument" gap.
+
 Likely regression points:
 
 - scheduled jobs can no longer call provider tools;

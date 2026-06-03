@@ -208,7 +208,9 @@ export function createDockerRuntimeFactory(input: {
         await waitForRuntimeHealth({
           endpointUrl: spec.endpointUrl,
           fetch: requestFetch,
-          attempts: input.healthCheckAttempts ?? 30,
+          attempts:
+            input.healthCheckAttempts ??
+            defaultRuntimeHealthCheckAttempts(input.engine),
           intervalMs: input.healthCheckIntervalMs ?? 1000
         });
         input.store.updateAgentRuntimeStatus(runtime.id, { status: "ready" });
@@ -577,6 +579,10 @@ async function ensureContainerRunning(
   }
 
   await runContainer(spec, execute);
+}
+
+function defaultRuntimeHealthCheckAttempts(engine: AgentRuntimeEngine): number {
+  return engine === "openclaw" || engine === "openclaw-gateway" ? 90 : 30;
 }
 
 async function runContainer(

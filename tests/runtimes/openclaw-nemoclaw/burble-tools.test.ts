@@ -130,6 +130,186 @@ describe("createBurbleToolExecutor", () => {
     }
   });
 
+  test("supports the generic Burble provider bridge envelope", async () => {
+    const originalFetch = globalThis.fetch;
+    const requests: Request[] = [];
+    globalThis.fetch = (async (input, init) => {
+      const request = new Request(input, init);
+      requests.push(request);
+      const payload = await request.clone().json();
+      if (payload.method === "initialize") {
+        return Response.json(
+          {
+            result: {
+              protocolVersion: "2025-06-18",
+              capabilities: {},
+              serverInfo: { name: "agentgateway", version: "test" }
+            }
+          },
+          { headers: { "mcp-session-id": "session-123" } }
+        );
+      }
+      if (payload.method === "notifications/initialized") {
+        return new Response(null, { status: 202 });
+      }
+      return new Response(
+        [
+          "event: message",
+          `data: ${JSON.stringify({
+            result: {
+              content: [
+                {
+                  type: "text",
+                  text: JSON.stringify({
+                    classification: "user_private",
+                    content: { name: "Scratchpad" }
+                  })
+                }
+              ]
+            },
+            jsonrpc: "2.0",
+            id: "request-id"
+          })}`,
+          ""
+        ].join("\n"),
+        { headers: { "content-type": "text/event-stream" } }
+      );
+    }) as typeof fetch;
+
+    try {
+      const executor = createBurbleToolExecutor({
+        ...config,
+        mcpGatewayUrl: "http://agentgateway:3000/mcp",
+        runtimeJwt: "runtime-jwt"
+      });
+      const result = await executor("burble_provider_call", {
+        input: {
+          toolName: "google.getDriveFile",
+          input: {
+            fileId: "file-123",
+            jobId: "job-123"
+          }
+        }
+      });
+
+      expect(result.content).toEqual({ name: "Scratchpad" });
+      expect(await requests[2].json()).toMatchObject({
+        method: "tools/call",
+        params: {
+          name: "google_get_drive_file",
+          arguments: {
+            fileId: "file-123",
+            jobId: "job-123"
+          }
+        }
+      });
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  test("requires the documented provider bridge input wrapper", async () => {
+    const executor = createBurbleToolExecutor({
+      ...config,
+      mcpGatewayUrl: "http://agentgateway:3000/mcp",
+      runtimeJwt: "runtime-jwt"
+    });
+
+    await expect(
+      executor("burble_provider_call", {
+        toolName: "google.getDriveFile",
+        input: {
+          fileId: "file-123",
+          jobId: "job-123"
+        }
+      })
+    ).rejects.toThrow("burble_provider_call requires input.toolName");
+  });
+
+  test("preserves scheduled job identity for direct provider MCP calls", async () => {
+    const originalFetch = globalThis.fetch;
+    const calls: Array<{ name: string; arguments: Record<string, unknown> }> = [];
+    globalThis.fetch = (async (input, init) => {
+      const request = new Request(input, init);
+      const payload = await request.clone().json();
+      if (payload.method === "initialize") {
+        return Response.json(
+          {
+            result: {
+              protocolVersion: "2025-06-18",
+              capabilities: {},
+              serverInfo: { name: "agentgateway", version: "test" }
+            }
+          },
+          { headers: { "mcp-session-id": "session-123" } }
+        );
+      }
+      if (payload.method === "notifications/initialized") {
+        return new Response(null, { status: 202 });
+      }
+      if (payload.method === "tools/call") {
+        calls.push(payload.params);
+      }
+      return new Response(
+        [
+          "event: message",
+          `data: ${JSON.stringify({
+            result: {
+              content: [
+                {
+                  type: "text",
+                  text: JSON.stringify({
+                    classification: "user_private",
+                    content: { ok: true }
+                  })
+                }
+              ]
+            },
+            jsonrpc: "2.0",
+            id: "request-id"
+          })}`,
+          ""
+        ].join("\n"),
+        { headers: { "content-type": "text/event-stream" } }
+      );
+    }) as typeof fetch;
+
+    try {
+      const executor = createBurbleToolExecutor({
+        ...config,
+        mcpGatewayUrl: "http://agentgateway:3000/mcp",
+        runtimeJwt: "runtime-jwt"
+      });
+
+      await executor("github.listMyPullRequests", {
+        input: { limit: 3, jobId: "job-123" }
+      });
+      await executor("jira.searchIssues", {
+        input: { jql: "assignee = currentUser()", jobId: "job-123" }
+      });
+      await executor("google.getDriveFile", {
+        input: { fileId: "file-123", jobId: "job-123" }
+      });
+
+      expect(calls).toEqual([
+        {
+          name: "github_list_my_pull_requests",
+          arguments: { limit: 3, jobId: "job-123" }
+        },
+        {
+          name: "jira_search_issues",
+          arguments: { jql: "assignee = currentUser()", jobId: "job-123" }
+        },
+        {
+          name: "google_get_drive_file",
+          arguments: { fileId: "file-123", jobId: "job-123" }
+        }
+      ]);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
   test("passes GitHub pull request list arguments to MCP", async () => {
     const originalFetch = globalThis.fetch;
     const requests: Request[] = [];
@@ -499,6 +679,87 @@ describe("createBurbleToolExecutor", () => {
             "google.appendToDriveTextFile"
           ],
           routeId: "convrt_abc123"
+        }
+      });
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  test("normalizes compact scheduled state refs before registration", async () => {
+    const originalFetch = globalThis.fetch;
+    const requests: Request[] = [];
+    globalThis.fetch = (async (input, init) => {
+      const request = new Request(input, init);
+      requests.push(request);
+      return Response.json({
+        classification: "user_private",
+        content: { ok: true }
+      });
+    }) as typeof fetch;
+
+    try {
+      const executor = createBurbleToolExecutor(config, "rt_u123");
+      await executor("scheduledJob.registerCapability", {
+        input: {
+          jobId: "ai-news-hourly",
+          requiredTools: ["google.getDriveFile"],
+          routeId: "convrt_abc123",
+          stateRefs: ["google-drive:file:file-123"]
+        }
+      });
+
+      expect(requests).toHaveLength(1);
+      expect(await requests[0].json()).toEqual({
+        input: {
+          jobId: "ai-news-hourly",
+          requiredTools: ["google.getDriveFile"],
+          routeId: "convrt_abc123",
+          stateRefs: [
+            {
+              provider: "google",
+              kind: "drive_file",
+              id: "file-123"
+            }
+          ]
+        }
+      });
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  test("returns scheduled registration validation errors as tool results", async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (_input, _init) =>
+      Response.json(
+        {
+          classification: "user_private",
+          content: {
+            error: "invalid_scheduled_job_capability_input",
+            message:
+              "scheduledJob.registerCapability requires every stateRefs entry to include provider and kind strings."
+          }
+        },
+        { status: 400 }
+      )) as typeof fetch;
+
+    try {
+      const executor = createBurbleToolExecutor(config, "rt_u123");
+      const result = await executor("scheduledJob.registerCapability", {
+        input: {
+          jobId: "ai-news-hourly",
+          requiredTools: ["google.getDriveFile"],
+          stateRefs: [{ provider: "google" }]
+        }
+      });
+
+      expect(result).toEqual({
+        classification: "user_private",
+        content: {
+          error: "invalid_scheduled_job_capability_input",
+          message:
+            "scheduledJob.registerCapability requires every stateRefs entry to include provider and kind strings."
         }
       });
     } finally {

@@ -633,6 +633,39 @@ describe("createDockerRuntimeFactory", () => {
     store.close();
   });
 
+  test("allows OpenClaw cold start to exceed the legacy 30 second readiness window", async () => {
+    const store = createTokenStore(":memory:");
+    let healthChecks = 0;
+    const factory = createDockerRuntimeFactory({
+      store,
+      engine: "openclaw",
+      image: "burble-openclaw-nemoclaw:dev",
+      dataRoot: "/data/runtimes",
+      dockerNetwork: "compose_default",
+      toolGatewayUrl: "http://burble-app:3000/internal/tools",
+      runtimeTokenSecret: "runtime-secret",
+      healthCheckIntervalMs: 0,
+      execute: async (_command, args) =>
+        args[0] === "inspect"
+          ? { code: 1, stdout: "", stderr: "not found" }
+          : { code: 0, stdout: "container-id\n", stderr: "" },
+      fetch: async () => {
+        healthChecks += 1;
+        if (healthChecks < 42) {
+          throw new Error("ConnectionRefused");
+        }
+        return new Response("ok");
+      }
+    });
+
+    await expect(factory.getOrCreateRuntime(principal)).resolves.toMatchObject({
+      status: "ready"
+    });
+    expect(healthChecks).toBe(42);
+
+    store.close();
+  });
+
   test("reaps stale ready and idle containers only", async () => {
     const store = createTokenStore(":memory:");
     const stopped: string[] = [];

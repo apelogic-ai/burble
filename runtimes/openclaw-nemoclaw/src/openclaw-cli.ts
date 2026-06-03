@@ -167,7 +167,6 @@ export async function runOpenClawCliRequest(
       const rawText =
         extractOpenClawText(result.stdout) ||
         (lastToolResult ? formatToolResult(lastToolResult) : baseline.response.text);
-      const text = sanitizeBootstrapFragments(rawText);
       if (
         rejectedDirectResponses.length < maxBootstrapRetries &&
         isBootstrapSetupAnswer(rawText)
@@ -180,6 +179,10 @@ export async function runOpenClawCliRequest(
         );
         continue;
       }
+      const text = sanitizeBootstrapFragments(
+        rawText,
+        formatBootstrapFallbackAnswer(request)
+      );
       logInfo(
         `OpenClaw agent finish runId=${request.runId ?? "unknown"} classification=${classification} textLength=${text.length}`
       );
@@ -369,17 +372,68 @@ async function runOpenClawGatewayHttpRequest(
 
   let stdout = "";
   let stderr = "";
-  try {
-    const response = await fetchGatewayHttpResponse(
-      endpoint,
-      config,
-      request,
-      sessionKey,
-      prompt
-    );
-    const responseText = await response.text();
-    if (!response.ok) {
-      stderr = responseText;
+  const maxAttempts = 3;
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    const attemptStartedAt = Date.now();
+    try {
+      const response = await fetchGatewayHttpResponse(
+        endpoint,
+        config,
+        request,
+        sessionKey,
+        prompt
+      );
+      const responseText = await response.text();
+      if (!response.ok) {
+        stderr = responseText;
+        const gatewayDiagnostics = readGatewayDiagnosticTextSince(startedAt);
+        const usageTelemetry = logOpenClawUsageFromOutput(
+          request,
+          step,
+          prompt,
+          stdout,
+          stderr,
+          null,
+          gatewayDiagnostics,
+          sessionId,
+          logInfo,
+          startedAt
+        );
+        logInfo(
+          `OpenClaw gateway http error runId=${request.runId ?? "unknown"} step=${step} status=${response.status}${summarizeLogObject("bodyPreview", responseText)}`
+        );
+        if (
+          attempt < maxAttempts &&
+          isRetryableOpenClawGatewayProviderError(response.status, responseText)
+        ) {
+          logInfo(
+            `OpenClaw gateway http retry runId=${request.runId ?? "unknown"} step=${step} attempt=${attempt} status=${response.status} reason=upstream_provider_timeout elapsedMs=${Date.now() - attemptStartedAt}`
+          );
+          continue;
+        }
+        return { exitCode: 1, stdout, stderr, ...usageTelemetry };
+      }
+
+      stdout = extractOpenResponsesText(responseText) ?? responseText;
+      const gatewayDiagnostics = readGatewayDiagnosticTextSince(startedAt);
+      const usageTelemetry = logOpenClawUsageFromOutput(
+        request,
+        step,
+        prompt,
+        [responseText, stdout].join("\n"),
+        stderr,
+        null,
+        gatewayDiagnostics,
+        sessionId,
+        logInfo,
+        startedAt
+      );
+      logInfo(
+        `OpenClaw gateway http finish runId=${request.runId ?? "unknown"} step=${step} elapsedMs=${Date.now() - startedAt} status=${response.status} stdoutChars=${stdout.length} responseChars=${responseText.length}`
+      );
+      return { exitCode: 0, stdout, stderr, ...usageTelemetry };
+    } catch (error) {
+      stderr = error instanceof Error ? error.message : String(error);
       const gatewayDiagnostics = readGatewayDiagnosticTextSince(startedAt);
       const usageTelemetry = logOpenClawUsageFromOutput(
         request,
@@ -394,49 +448,28 @@ async function runOpenClawGatewayHttpRequest(
         startedAt
       );
       logInfo(
-        `OpenClaw gateway http error runId=${request.runId ?? "unknown"} step=${step} status=${response.status}${summarizeLogObject("bodyPreview", responseText)}`
+        `OpenClaw gateway http error runId=${request.runId ?? "unknown"} step=${step}${summarizeLogObject("error", stderr)}`
       );
       return { exitCode: 1, stdout, stderr, ...usageTelemetry };
     }
-
-    stdout = extractOpenResponsesText(responseText) ?? responseText;
-    const gatewayDiagnostics = readGatewayDiagnosticTextSince(startedAt);
-    const usageTelemetry = logOpenClawUsageFromOutput(
-      request,
-      step,
-      prompt,
-      [responseText, stdout].join("\n"),
-      stderr,
-      null,
-      gatewayDiagnostics,
-      sessionId,
-      logInfo,
-      startedAt
-    );
-    logInfo(
-      `OpenClaw gateway http finish runId=${request.runId ?? "unknown"} step=${step} elapsedMs=${Date.now() - startedAt} status=${response.status} stdoutChars=${stdout.length} responseChars=${responseText.length}`
-    );
-    return { exitCode: 0, stdout, stderr, ...usageTelemetry };
-  } catch (error) {
-    stderr = error instanceof Error ? error.message : String(error);
-    const gatewayDiagnostics = readGatewayDiagnosticTextSince(startedAt);
-    const usageTelemetry = logOpenClawUsageFromOutput(
-      request,
-      step,
-      prompt,
-      stdout,
-      stderr,
-      null,
-      gatewayDiagnostics,
-      sessionId,
-      logInfo,
-      startedAt
-    );
-    logInfo(
-      `OpenClaw gateway http error runId=${request.runId ?? "unknown"} step=${step}${summarizeLogObject("error", stderr)}`
-    );
-    return { exitCode: 1, stdout, stderr, ...usageTelemetry };
   }
+  return { exitCode: 1, stdout, stderr };
+}
+
+function isRetryableOpenClawGatewayProviderError(
+  status: number,
+  responseText: string
+): boolean {
+  if (status !== 408 && status < 500) {
+    return false;
+  }
+  const normalized = responseText.toLowerCase();
+  return (
+    normalized.includes("upstream provider timeout") ||
+    normalized.includes("server_error") ||
+    normalized.includes('"code":"api_error"') ||
+    normalized.includes('"code":"server_error"')
+  );
 }
 
 async function runBurbleDirectProviderRequest(
@@ -930,7 +963,6 @@ export async function* runOpenClawCliRequestStream(
       const rawText =
         extractOpenClawText(result.stdout) ||
         (lastToolResult ? formatToolResult(lastToolResult) : baseline.response.text);
-      const text = sanitizeBootstrapFragments(rawText);
       if (
         rejectedDirectResponses.length < maxBootstrapRetries &&
         isBootstrapSetupAnswer(rawText)
@@ -943,6 +975,10 @@ export async function* runOpenClawCliRequestStream(
         );
         continue;
       }
+      const text = sanitizeBootstrapFragments(
+        rawText,
+        formatBootstrapFallbackAnswer(request)
+      );
       logInfo(
         `OpenClaw agent finish runId=${request.runId ?? "unknown"} classification=${classification} textLength=${text.length}`
       );
@@ -1430,21 +1466,32 @@ async function buildToolCatalog(
           "optional durable Burble route ID for scheduled/background messages"
       }
     });
-    if (shouldExposeScheduledJobRegistration(request)) {
+    catalog.push({
+      name: "scheduledJob.registerCapability",
+      description:
+        "Register the Burble provider tools and durable state references a native scheduled/background job will need. Use before creating or updating a native cron/background job that will call Burble provider tools; include the returned scheduledPromptInstruction verbatim in the scheduled job prompt.",
+      inputSchema: {
+        jobId: "string stable native scheduler job id or name",
+        requiredTools:
+          "string[] Burble provider tools the scheduled job may call",
+        routeId:
+          "optional durable Burble route ID for scheduled/background delivery",
+        stateRefs:
+          'optional array of durable provider-backed state reference objects, never strings; each entry must include provider and kind strings, for example {"provider":"google","kind":"drive_file","id":"<fileId>","purpose":"dedupe_state"}',
+        visibilityPolicy:
+          "optional output visibility policy for scheduled delivery"
+      }
+    });
+    if (selectedRuntimeToolGroups(request)?.has("scheduler")) {
       catalog.push({
-        name: "scheduledJob.registerCapability",
+        name: "burble_provider_call",
         description:
-          "Register the Burble provider tools and durable state references a native scheduled/background job will need. Use before creating or updating a native cron/background job that will call Burble provider tools; include the returned scheduledPromptInstruction verbatim in the scheduled job prompt.",
+          "Call one Burble provider tool through the runtime-scoped Burble provider bridge. Use this envelope for scheduled/background provider calls; set toolName to an allowed Burble provider tool and input to that tool's arguments, including jobId for scheduled jobs.",
         inputSchema: {
-          jobId: "string stable native scheduler job id or name",
-          requiredTools:
-            "string[] Burble provider tools the scheduled job may call",
-          routeId:
-            "optional durable Burble route ID for scheduled/background delivery",
-          stateRefs:
-            "optional array of durable state references such as Drive scratchpad files",
-          visibilityPolicy:
-            "optional output visibility policy for scheduled delivery"
+          toolName:
+            "Burble provider tool name, for example google_get_drive_file",
+          input:
+            "object arguments for that Burble provider tool; scheduled jobs must include jobId"
         }
       });
     }
@@ -1794,6 +1841,7 @@ function filterToolCatalogBySelectedGroups(
   }
 
   const catalog = catalogBuild.catalog.filter((tool) =>
+    isRouteScopedControlPlaneTool(tool.name) ||
     isToolAllowedBySelectedGroups(tool.name, selectedGroups)
   );
   const allowedToolNames = new Set(catalog.map((tool) => tool.name));
@@ -1823,6 +1871,10 @@ function formatSelectedRuntimeToolGroups(request: RunRequest): string {
   return groups ? [...groups].join(",") || "none" : "legacy-all";
 }
 
+function isRouteScopedControlPlaneTool(toolName: string): boolean {
+  return toolName === "scheduledJob.registerCapability";
+}
+
 function isToolAllowedBySelectedGroups(
   toolName: string,
   selectedGroups: Set<RuntimeToolGroup>
@@ -1837,6 +1889,9 @@ function toolGroupsForToolName(toolName: string): RuntimeToolGroup[] {
     return ["attachments"];
   }
   if (toolName.startsWith("scheduledJob.")) {
+    return ["scheduler"];
+  }
+  if (toolName === "burble_provider_call" || toolName === "burble.providerCall") {
     return ["scheduler"];
   }
   if (toolName.startsWith("conversation.")) {
@@ -2543,28 +2598,30 @@ function formatScheduledProviderCapabilityInstruction(
   request: RunRequest
 ): string[] {
   const routeId = request.input.conversation?.routeId;
-  if (!shouldExposeScheduledJobRegistration(request) || !routeId) {
+  if (!routeId) {
     return [];
+  }
+
+  if (!selectedRuntimeToolGroups(request)?.has("scheduler")) {
+    return [
+      "Scheduled provider tool registration guard:",
+      "If this turn creates, updates, enables, or manually triggers a native scheduled/background job that will use Burble provider tools, call scheduledJob.registerCapability after the native scheduler returns the stable job id and before enabling or triggering that job."
+    ];
   }
 
   return [
     "Scheduled provider tool registration:",
+    "Setup-time provider calls are not scheduled provider calls. If you need to create, find, read, or validate durable provider state during the current user turn, use ordinary Burble provider calls for the active conversation and do not include jobId.",
+    "Never invent placeholder job ids for setup-time provider calls. jobId is only valid after the native scheduler has returned a stable job id and scheduledJob.registerCapability has returned ok for that exact id.",
     `If a native cron/background job will use Burble provider tools such as GitHub, Jira, Google, or Slack search, first call scheduledJob.registerCapability with routeId "${routeId}", requiredTools set to the exact Burble provider tool names the job will use, and stateRefs for any durable state files it should read or update.`,
+    'stateRefs entries must be objects, not compact strings. Each entry must include provider and kind strings, for example {"provider":"google","kind":"drive_file","id":"<fileId>","purpose":"dedupe_state"}.',
+    "When creating a new provider-backed native job, do not request an immediate/manual run as part of the create call. Create it paused/disabled or without an immediate trigger if the scheduler supports that; otherwise create it, then stop before triggering.",
+    "After the native scheduler returns the stable job id, call scheduledJob.registerCapability with that exact jobId and wait for an ok result. If registration does not return ok, do not trigger the job and report the registration failure.",
     "Include the returned scheduledPromptInstruction verbatim in the native scheduled job prompt.",
+    "Only after the job prompt has been updated with the returned scheduledPromptInstruction may you enable, manually trigger, or reschedule the job.",
     "Scheduled provider tool calls must include the returned jobId in each Burble provider tool input. Do not use routeId as provider-call identity; routeId is only a delivery/state binding.",
-    "Provider-backed scheduled job repair: before manually triggering, enabling, or rescheduling an existing native job, inspect whether it uses provider-backed state or provider URLs such as Google Drive, GitHub, Jira, Gmail, Calendar, or Slack. If it does and its prompt lacks Burble jobId provider-call instructions, update the job first by calling scheduledJob.registerCapability and rewriting the scheduled prompt to use Burble provider tools. The job must not use direct web/browser access to provider URLs for authenticated provider work."
+    "Provider-backed scheduled job repair: before manually triggering, enabling, or rescheduling an existing native job, inspect whether it uses provider-backed state or authenticated provider resources. If it does and its prompt lacks Burble jobId provider-call instructions, update the job first by calling scheduledJob.registerCapability and rewriting the scheduled prompt to use Burble provider tools. The job must not use direct web/browser access to provider URLs for authenticated provider work."
   ];
-}
-
-function shouldExposeScheduledJobRegistration(request: RunRequest): boolean {
-  const groups = selectedRuntimeToolGroups(request);
-  if (groups?.has("scheduler")) {
-    return true;
-  }
-
-  return /\b(cron|schedule|scheduled|scheduler|background|recurring|reminder|every\s+\d+|hourly|daily|weekly)\b/i.test(
-    request.input.text
-  );
 }
 
 function formatActiveConversationRouteInstruction(
@@ -2740,7 +2797,7 @@ function isBootstrapSetupAnswer(text: string): boolean {
   );
 }
 
-function sanitizeBootstrapFragments(text: string): string {
+function sanitizeBootstrapFragments(text: string, fallbackText: string = text): string {
   if (!isBootstrapSetupAnswer(text)) {
     return text;
   }
@@ -2751,10 +2808,23 @@ function sanitizeBootstrapFragments(text: string): string {
     .filter(Boolean);
   const kept = paragraphs.filter((paragraph) => !isBootstrapSetupAnswer(paragraph));
   if (kept.length === 0) {
-    return text;
+    return fallbackText;
   }
 
   return kept.join("\n\n");
+}
+
+function formatBootstrapFallbackAnswer(request: RunRequest): string {
+  return isGreetingRequest(request.input.text)
+    ? "Hey — I’m Burble. What can I help with?"
+    : "I’m Burble. What can I help with?";
+}
+
+function isGreetingRequest(text: string): boolean {
+  const normalized = text.trim().toLowerCase();
+  return /^(hi|hello|hey|yo|gm|good morning|good afternoon|good evening)(\s+(agent|burble))?[.!?]*$/.test(
+    normalized
+  );
 }
 
 function readPlannedToolCall(
@@ -2857,7 +2927,10 @@ async function executePlannedToolCall(
 ): Promise<ToolResult> {
   if (
     toolCall.name === "conversation.sendMessage" ||
-    toolCall.name === "conversation.getAttachment"
+    toolCall.name === "conversation.getAttachment" ||
+    toolCall.name === "scheduledJob.registerCapability" ||
+    toolCall.name === "burble_provider_call" ||
+    toolCall.name === "burble.providerCall"
   ) {
     const validationError = validatePlannedToolCall(toolCall, toolContext);
     if (validationError) {
@@ -3771,9 +3844,7 @@ async function readRawStreamForUsage(
 function buildRunSessionId(request: RunRequest): string {
   const channelSessionKey = buildBurbleChannelSessionKey(request);
   if (channelSessionKey) {
-    return `burble-channel-${hashSessionKey(
-      `${channelSessionKey}:${buildRunSessionKey(request)}`
-    )}`;
+    return `burble-channel-${hashSessionKey(channelSessionKey)}`;
   }
 
   return `burble-run-${hashSessionKey(
@@ -3845,12 +3916,7 @@ function resolveGatewayHttpMessageChannel(request: RunRequest): "webchat" | "bur
     return "webchat";
   }
 
-  const selectedGroups = selectedRuntimeToolGroups(request);
-  if (!selectedGroups) {
-    return "burble";
-  }
-
-  return selectedGroups.has("scheduler") ? "burble" : "webchat";
+  return "burble";
 }
 
 function hashSessionKey(value: string): string {

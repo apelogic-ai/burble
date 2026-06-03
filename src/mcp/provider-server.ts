@@ -388,7 +388,38 @@ async function validateJobScopedProviderMcpToolAccess(
   }
 
   const call = readJsonRpcToolCall(payload);
-  if (!call || enabledTools.has(call.name)) {
+  if (!call) {
+    return { request, response: null };
+  }
+
+  if (!enabledTools.has(call.name)) {
+    store.recordAgentRuntimeEvent({
+      runtimeId: runtime.id,
+      eventType: "runtime_tool_called",
+      summary: {
+        tool: call.name,
+        allowed: false,
+        reason: "job_scope_denied",
+        jobId: claims.job_id ?? null
+      }
+    });
+
+    return {
+      request,
+      response: mcpJsonRpcErrorResponse(
+        readJsonRpcId(payload),
+        -32020,
+        `Tool ${call.name} is not available to this job.`
+      )
+    };
+  }
+
+  if (!claims.job_id) {
+    return { request, response: null };
+  }
+
+  const argumentJobId = readProviderMcpScheduledJobId(payload);
+  if (argumentJobId === claims.job_id) {
     return { request, response: null };
   }
 
@@ -398,8 +429,8 @@ async function validateJobScopedProviderMcpToolAccess(
     summary: {
       tool: call.name,
       allowed: false,
-      reason: "job_scope_denied",
-      jobId: claims.job_id ?? null
+      reason: "job_scope_argument_mismatch",
+      jobId: claims.job_id
     }
   });
 
@@ -407,8 +438,8 @@ async function validateJobScopedProviderMcpToolAccess(
     request,
     response: mcpJsonRpcErrorResponse(
       readJsonRpcId(payload),
-      -32020,
-      `Tool ${call.name} is not available to this job.`
+      -32024,
+      "Scheduled job provider calls must include jobId matching the runtime token."
     )
   };
 }
@@ -535,6 +566,15 @@ async function validateProviderMcpRoute(
   }
 
   const routeId = readProviderMcpRouteId(payload);
+  if (readProviderMcpScheduledJobId(payload)) {
+    return {
+      request: replaceRequestJsonBody(
+        request,
+        stripProviderMcpRouteId(confirmationValidation.request ?? payload)
+      ),
+      response: null
+    };
+  }
   if (!routeId) {
     return {
       request: confirmationValidation.request
@@ -684,9 +724,7 @@ function readProviderMcpScheduledJobId(payload: unknown): string | null {
   if (!args || typeof args !== "object" || Array.isArray(args)) {
     return null;
   }
-  const jobId =
-    (args as Record<string, unknown>).jobId ??
-    (args as Record<string, unknown>).scheduledJobId;
+  const jobId = (args as Record<string, unknown>).jobId;
   return typeof jobId === "string" && jobId.trim() ? jobId.trim() : null;
 }
 

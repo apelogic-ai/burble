@@ -4,6 +4,7 @@ import {
   runOpenClawCliRequestStream
 } from "../../../runtimes/openclaw-nemoclaw/src/openclaw-cli";
 import type { RuntimeConfig } from "../../../runtimes/openclaw-nemoclaw/src/config";
+import type { RunEvent } from "../../../runtimes/openclaw-nemoclaw/src/types";
 import { clearGatewayDiagnosticText } from "../../../runtimes/openclaw-nemoclaw/src/gateway-diagnostics";
 import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -1316,7 +1317,9 @@ describe("runOpenClawCliRequest", () => {
     expect(prompts[0]).not.toContain(
       'use Burble provider tools with routeId "convrt_abc123"'
     );
-    expect(prompts[0]).not.toContain("scheduledJob.registerCapability");
+    expect(prompts[0]).toContain("scheduledJob.registerCapability");
+    expect(prompts[0]).toContain("Scheduled provider tool registration guard:");
+    expect(prompts[0]).not.toContain("Scheduled provider tool registration:\n");
     expect(prompts[0]).toContain(
       "do not create a cron job or background job unless the user explicitly asks"
     );
@@ -2255,6 +2258,61 @@ describe("runOpenClawCliRequest", () => {
     ]);
   });
 
+  test("streams Burble greeting fallback when OpenClaw repeats bootstrap answers", async () => {
+    const requests: Array<Record<string, unknown>> = [];
+    const events: Array<RunEvent> = [];
+
+    await withMockFetch(
+      (async (_input, init) => {
+        requests.push(
+          JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>
+        );
+        return new Response(
+          JSON.stringify(
+            openResponsesText("Hey. I just came online. Who am I? Who are you?")
+          ),
+          {
+            status: 200,
+            headers: { "content-type": "application/json" }
+          }
+        );
+      }) as typeof fetch,
+      async () => {
+        for await (const event of runOpenClawCliRequestStream(
+          {
+            runId: "run-stream-bootstrap-repeat",
+            executionMode: "openclaw-native",
+            input: {
+              text: "hey agent",
+              connections: {
+                github: { connected: false }
+              }
+            }
+          },
+          { ...config, engine: "openclaw-gateway" },
+          async () => {
+            throw new Error("unexpected tool call");
+          },
+          async function* () {
+            throw new Error("unexpected cli call");
+          },
+          () => undefined
+        )) {
+          events.push(event);
+        }
+      }
+    );
+
+    expect(requests).toHaveLength(2);
+    expect(events.at(-1)).toMatchObject({
+      type: "final",
+      response: {
+        classification: "user_private",
+        text: "Hey — I’m Burble. What can I help with?"
+      }
+    });
+  });
+
   test("streams a planned tool call without showing the JSON protocol to Slack", async () => {
     const events = [];
     let commandCount = 0;
@@ -2644,6 +2702,61 @@ describe("runOpenClawCliRequest", () => {
     ).toBe(true);
   });
 
+  test("falls back to Burble greeting when OpenClaw gateway repeats bootstrap answers", async () => {
+    const requests: Array<Record<string, unknown>> = [];
+    const logs: string[] = [];
+
+    const response = await withMockFetch(
+      (async (_input, init) => {
+        const body = JSON.parse(String(init?.body ?? "{}")) as Record<
+          string,
+          unknown
+        >;
+        requests.push(body);
+        return new Response(
+          JSON.stringify(
+            openResponsesText("Hey. I just came online. Who am I? Who are you?")
+          ),
+          {
+            status: 200,
+            headers: { "content-type": "application/json" }
+          }
+        );
+      }) as typeof fetch,
+      async () =>
+        runOpenClawCliRequest(
+          {
+            runId: "run-gateway-bootstrap-repeat",
+            executionMode: "openclaw-native",
+            input: {
+              text: "hey agent",
+              connections: {
+                github: { connected: false }
+              }
+            }
+          },
+          { ...config, engine: "openclaw-gateway" },
+          async () => {
+            throw new Error("unexpected tool call");
+          },
+          async () => {
+            throw new Error("unexpected cli call");
+          },
+          (message) => logs.push(message)
+        )
+    );
+
+    expect(response.response.text).toBe("Hey — I’m Burble. What can I help with?");
+    expect(requests).toHaveLength(2);
+    expect(
+      logs.some((line) =>
+        line.includes(
+          "OpenClaw bootstrap retry runId=run-gateway-bootstrap-repeat step=1 reason=bootstrap_response"
+        )
+      )
+    ).toBe(true);
+  });
+
   test("can invoke OpenClaw through Gateway mode without local CLI execution", async () => {
     const commands: Array<{ args: string[] }> = [];
     const requests: Array<{
@@ -2698,7 +2811,80 @@ describe("runOpenClawCliRequest", () => {
     expect(requests[0].body.input).toContain("what can you do?");
   });
 
-  test("uses webchat with isolated model sessions for ordinary native conversation turns", async () => {
+  test("retries retryable OpenClaw Gateway provider timeouts", async () => {
+    const requests: Array<{
+      url: string;
+      headers: Headers;
+      body: Record<string, unknown>;
+    }> = [];
+    const logs: string[] = [];
+    const response = await withMockFetch(
+      (async (input, init) => {
+        requests.push({
+          url: String(input),
+          headers: new Headers(init?.headers),
+          body: JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>
+        });
+        if (requests.length === 1) {
+          return new Response(
+            JSON.stringify({
+              status: "failed",
+              error: {
+                code: "api_error",
+                message: "upstream provider timeout"
+              },
+              usage: {
+                input_tokens: 0,
+                output_tokens: 0,
+                total_tokens: 0
+              }
+            }),
+            {
+              status: 408,
+              headers: { "content-type": "application/json" }
+            }
+          );
+        }
+        return new Response(JSON.stringify(openResponsesText("Gateway answer.")), {
+          status: 200,
+          headers: { "content-type": "application/json" }
+        });
+      }) as typeof fetch,
+      async () =>
+        runOpenClawCliRequest(
+          {
+            runId: "run-openclaw-retry",
+            input: {
+              text: "what can you do?",
+              connections: {
+                github: { connected: false }
+              }
+            }
+          },
+          { ...config, engine: "openclaw-gateway" },
+          async () => {
+            throw new Error("unexpected tool call");
+          },
+          async (_command, args) => {
+            throw new Error(`unexpected cli call: ${args.join(" ")}`);
+          },
+          (line) => logs.push(line)
+        )
+    );
+
+    expect(response.response.text).toBe("Gateway answer.");
+    expect(requests).toHaveLength(2);
+    expect(requests[0].body.input).toBe(requests[1].body.input);
+    expect(
+      logs.some((line) =>
+        line.includes(
+          "OpenClaw gateway http retry runId=run-openclaw-retry step=1 attempt=1 status=408 reason=upstream_provider_timeout"
+        )
+      )
+    ).toBe(true);
+  });
+
+  test("uses route-scoped Burble sessions for ordinary native conversation turns", async () => {
     const requests: Array<{
       headers: Headers;
       body: Record<string, unknown>;
@@ -2767,9 +2953,9 @@ describe("runOpenClawCliRequest", () => {
     );
 
     expect(requests).toHaveLength(2);
-    expect(requests[0].headers.get("x-openclaw-message-channel")).toBe("webchat");
-    expect(requests[1].headers.get("x-openclaw-message-channel")).toBe("webchat");
-    expect(requests[0].headers.get("x-openclaw-session-key")).not.toBe(
+    expect(requests[0].headers.get("x-openclaw-message-channel")).toBe("burble");
+    expect(requests[1].headers.get("x-openclaw-message-channel")).toBe("burble");
+    expect(requests[0].headers.get("x-openclaw-session-key")).toBe(
       requests[1].headers.get("x-openclaw-session-key")
     );
     expect(requests[0].headers.get("x-openclaw-session-key")).toStartWith(
@@ -2844,14 +3030,46 @@ describe("runOpenClawCliRequest", () => {
     expect(String(requests[0].body.input)).toContain(
       "scheduledJob.registerCapability"
     );
+    expect(String(requests[0].body.input)).toContain("burble_provider_call");
+    expect(String(requests[0].body.input)).toContain("toolName");
     expect(String(requests[0].body.input)).toContain(
       "Provider-backed scheduled job repair"
+    );
+    expect(String(requests[0].body.input)).toContain(
+      "Setup-time provider calls are not scheduled provider calls"
+    );
+    expect(String(requests[0].body.input)).toContain(
+      "use ordinary Burble provider calls"
+    );
+    expect(String(requests[0].body.input)).toContain(
+      "Never invent placeholder job ids"
+    );
+    expect(String(requests[0].body.input)).toContain(
+      "do not request an immediate/manual run"
+    );
+    expect(String(requests[0].body.input)).toContain(
+      "After the native scheduler returns the stable job id"
+    );
+    expect(String(requests[0].body.input)).toContain(
+      "If registration does not return ok, do not trigger"
+    );
+    expect(String(requests[0].body.input)).toContain(
+      "Only after the job prompt has been updated"
     );
     expect(String(requests[0].body.input)).toContain(
       "before manually triggering"
     );
     expect(String(requests[0].body.input)).toContain(
       "GitHub, Jira, Google, or Slack search"
+    );
+    expect(String(requests[0].body.input)).toContain(
+      "stateRefs entries must be objects"
+    );
+    expect(String(requests[0].body.input)).toContain(
+      '"provider":"google","kind":"drive_file","id":"<fileId>"'
+    );
+    expect(String(requests[0].body.input)).toContain(
+      "not compact strings"
     );
     expect(String(requests[0].body.input)).toContain(
       "Scheduled provider tool calls must include the returned jobId"
@@ -2862,6 +3080,236 @@ describe("runOpenClawCliRequest", () => {
     expect(String(requests[0].body.input)).not.toContain(
       "Example Drive scratchpad registration input"
     );
+    expect(String(requests[0].body.input)).not.toContain("Drive scratchpad");
+    expect(String(requests[0].body.input)).not.toContain("Google Drive scratchpad");
+  });
+
+  test("keeps scheduled registration route-scoped even when scheduler group is absent", async () => {
+    const requests: Array<{
+      body: Record<string, unknown>;
+    }> = [];
+
+    await withMockFetch(
+      (async (_input, init) => {
+        requests.push({
+          body: JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>
+        });
+        return new Response(JSON.stringify(openResponsesText("Drafted.")), {
+          status: 200,
+          headers: { "content-type": "application/json" }
+        });
+      }) as typeof fetch,
+      async () => {
+        await runOpenClawCliRequest(
+          {
+            runId: "run-scheduler-missing-group",
+            executionMode: "openclaw-native",
+            runtime: {
+              id: "rt_123"
+            },
+            input: {
+              text: "please prepare the requested Google state for later use",
+              toolGroups: {
+                groups: ["conversation", "google"],
+                reasons: ["default:conversation", "keyword:google:google"]
+              },
+              conversation: {
+                routeId: "convrt_abc123",
+                source: "slack",
+                workspaceId: "T123",
+                channelId: "D123",
+                rootId: "dm:D123",
+                isDirectMessage: true
+              },
+              connections: {
+                github: { connected: false },
+                google: {
+                  connected: true,
+                  email: "person@example.com"
+                }
+              }
+            }
+          },
+          { ...config, engine: "openclaw-gateway" },
+          async () => {
+            throw new Error("unexpected tool call");
+          },
+          async () => {
+            throw new Error("unexpected cli call");
+          },
+          () => undefined
+        );
+      }
+    );
+
+    expect(requests).toHaveLength(1);
+    expect(String(requests[0].body.input)).toContain(
+      "scheduledJob.registerCapability"
+    );
+    expect(String(requests[0].body.input)).not.toContain(
+      "\"name\":\"burble_provider_call\""
+    );
+    expect(String(requests[0].body.input)).toContain(
+      "Scheduled provider tool registration guard:"
+    );
+    expect(String(requests[0].body.input)).not.toContain(
+      "Scheduled provider tool registration:\n"
+    );
+    expect(String(requests[0].body.input)).toContain(
+      "after the native scheduler returns the stable job id"
+    );
+  });
+
+  test("executes scheduled job registration as a Burble-internal tool", async () => {
+    const toolCalls: Array<{ toolName: string; body: Record<string, unknown> }> =
+      [];
+
+    const response = await runOpenClawCliRequest(
+      {
+        runId: "run-register-scheduled-job",
+        executionMode: "openclaw-native",
+        input: {
+          text: "create a cron job to read AI news every hour",
+          toolGroups: {
+            groups: ["conversation", "scheduler"],
+            reasons: ["default:conversation", "keyword:scheduler:cron"]
+          },
+          conversation: {
+            routeId: "convrt_abc123",
+            source: "slack",
+            workspaceId: "T123",
+            channelId: "C123",
+            rootId: "dm:D123",
+            isDirectMessage: true
+          },
+          connections: {
+            github: { connected: false },
+            google: { connected: false },
+            jira: { connected: false },
+            slack: { connected: false }
+          }
+        }
+      },
+      { ...config, engine: "openclaw" },
+      async (toolName, body) => {
+        toolCalls.push({ toolName, body: body as Record<string, unknown> });
+        return {
+          classification: "user_private",
+          content: {
+            ok: true,
+            scheduledPromptInstruction:
+              "Use Burble provider calls with this jobId for this scheduled job."
+          }
+        };
+      },
+      async () => {
+        if (toolCalls.length === 0) {
+          return openClawToolCall("scheduledJob.registerCapability", {
+            jobId: "job-ai-news",
+            requiredTools: ["google.getDriveFile"],
+            routeId: "convrt_abc123"
+          });
+        }
+
+        return {
+          exitCode: 0,
+          stdout: "Registered and stopped before manual trigger.",
+          stderr: ""
+        };
+      },
+      () => undefined
+    );
+
+    expect(response.response.text).toBe(
+      "Registered and stopped before manual trigger."
+    );
+    expect(toolCalls).toEqual([
+      {
+        toolName: "scheduledJob.registerCapability",
+        body: {
+          input: {
+            jobId: "job-ai-news",
+            requiredTools: ["google.getDriveFile"],
+            routeId: "convrt_abc123"
+          }
+        }
+      }
+    ]);
+  });
+
+  test("executes provider bridge calls as Burble-internal tools", async () => {
+    const toolCalls: Array<{ toolName: string; body: Record<string, unknown> }> =
+      [];
+
+    const response = await runOpenClawCliRequest(
+      {
+        runId: "run-provider-bridge",
+        executionMode: "openclaw-native",
+        input: {
+          text: "run scheduled provider bridge call",
+          toolGroups: {
+            groups: ["conversation", "scheduler"],
+            reasons: ["default:conversation", "keyword:scheduler:cron"]
+          },
+          conversation: {
+            routeId: "convrt_abc123",
+            source: "slack",
+            workspaceId: "T123",
+            channelId: "C123",
+            rootId: "dm:D123",
+            isDirectMessage: true
+          },
+          connections: {
+            github: { connected: false },
+            google: { connected: false },
+            jira: { connected: false },
+            slack: { connected: false }
+          }
+        }
+      },
+      { ...config, engine: "openclaw" },
+      async (toolName, body) => {
+        toolCalls.push({ toolName, body: body as Record<string, unknown> });
+        return {
+          classification: "user_private",
+          content: { name: "scratchpad.txt", text: "already reported" }
+        };
+      },
+      async () => {
+        if (toolCalls.length === 0) {
+          return openClawToolCall("burble_provider_call", {
+            toolName: "google.getDriveFile",
+            input: {
+              jobId: "job-ai-news",
+              fileId: "file-123"
+            }
+          });
+        }
+
+        return {
+          exitCode: 0,
+          stdout: "Read scheduled scratchpad.",
+          stderr: ""
+        };
+      },
+      () => undefined
+    );
+
+    expect(response.response.text).toBe("Read scheduled scratchpad.");
+    expect(toolCalls).toEqual([
+      {
+        toolName: "burble_provider_call",
+        body: {
+          input: {
+            toolName: "google.getDriveFile",
+            input: {
+              jobId: "job-ai-news",
+              fileId: "file-123"
+            }
+          }
+        }
+      }
+    ]);
   });
 
   test("instructs native execution to avoid repeated code tool loops", async () => {

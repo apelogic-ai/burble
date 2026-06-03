@@ -32,6 +32,22 @@ const config: RuntimeConfig = {
   ollamaBaseUrl: "https://ollama.com"
 };
 
+function burbleAgentIdentityArgs(agentId = "main"): string[] {
+  return [
+    "agents",
+    "set-identity",
+    "--agent",
+    agentId,
+    "--name",
+    "Burble",
+    "--theme",
+    "Slack assistant",
+    "--emoji",
+    ":robot_face:",
+    "--json"
+  ];
+}
+
 describe("ensureOpenClawSetup", () => {
   test("skips setup for deterministic engine", async () => {
     let called = false;
@@ -159,6 +175,7 @@ describe("ensureOpenClawSetup", () => {
 
     expect(calls).toEqual([
       ["config", "patch", "--file", llmPatchPath(runtimeConfig)],
+      burbleAgentIdentityArgs(),
       ["config", "validate"]
     ]);
   });
@@ -213,6 +230,14 @@ describe("ensureOpenClawSetup", () => {
       },
       {
         command: "openclaw",
+        args: burbleAgentIdentityArgs(),
+        env: {
+          OPENCLAW_STATE_DIR: runtimeConfig.openClawStateDir,
+          OPENCLAW_CONFIG_PATH: "/data/openclaw/config/openclaw.json"
+        }
+      },
+      {
+        command: "openclaw",
         args: ["config", "validate"],
         env: {
           OPENCLAW_STATE_DIR: runtimeConfig.openClawStateDir,
@@ -240,6 +265,8 @@ describe("ensureOpenClawSetup", () => {
       "OpenClaw LLM config selected model=openai:gpt-5.4 ollamaBaseUrl=https://ollama.com",
       expect.stringContaining("OpenClaw config patch start path="),
       "OpenClaw config patch finish",
+      "OpenClaw agent identity start agent=main",
+      "OpenClaw agent identity finish",
       "OpenClaw config validate start",
       "OpenClaw config validate finish"
     ]);
@@ -280,6 +307,7 @@ describe("ensureOpenClawSetup", () => {
       ],
       ["config", "patch", "--file", patchPath],
       ["config", "patch", "--file", llmPatchPath(runtimeConfig)],
+      burbleAgentIdentityArgs(),
       ["config", "validate"]
     ]);
   });
@@ -316,8 +344,75 @@ describe("ensureOpenClawSetup", () => {
         "/data/openclaw/workspace",
         "--json"
       ],
-      ["config", "patch", "--file", llmPatchPath(runtimeConfig)]
+      ["config", "patch", "--file", llmPatchPath(runtimeConfig)],
+      burbleAgentIdentityArgs()
     ]);
+  });
+
+  test("applies identity to the configured OpenClaw agent", async () => {
+    const calls: string[][] = [];
+    const runtimeConfig = await configWithState({
+      openClawSetupOnStart: false,
+      openClawValidateOnStart: false,
+      openClawAgent: "burble"
+    });
+
+    await ensureOpenClawSetup(
+      runtimeConfig,
+      async (_command, args) => {
+        calls.push(args);
+        return { exitCode: 0, stdout: "", stderr: "" };
+      }
+    );
+
+    expect(calls).toContainEqual(burbleAgentIdentityArgs("burble"));
+  });
+
+  test("writes a schema-compatible generated LLM patch", async () => {
+    const runtimeConfig = await configWithState({
+      openClawSetupOnStart: false,
+      openClawValidateOnStart: false,
+      openClawAgent: "burble",
+      openClawFastMode: true
+    });
+
+    await ensureOpenClawSetup(runtimeConfig, async () => ({
+      exitCode: 0,
+      stdout: "",
+      stderr: ""
+    }));
+
+    const generatedPatch = JSON.parse(
+      await readFile(llmPatchPath(runtimeConfig), "utf8")
+    );
+
+    expect(generatedPatch.agents.defaults).toMatchObject({
+      skipBootstrap: true,
+      contextInjection: "never",
+      skills: [],
+      systemPromptOverride: expect.stringContaining("Burble's OpenClaw runtime")
+    });
+    expect(generatedPatch.agents.list).toEqual([
+      {
+        id: "burble",
+        fastModeDefault: true,
+        thinkingDefault: "minimal",
+        reasoningDefault: "off"
+      }
+    ]);
+    expect(JSON.stringify(generatedPatch.agents.list)).not.toContain(
+      "skipBootstrap"
+    );
+    expect(JSON.stringify(generatedPatch.agents.list)).not.toContain(
+      "contextInjection"
+    );
+    expect(JSON.stringify(generatedPatch.agents.list)).not.toContain(
+      "systemPromptOverride"
+    );
+    expect(JSON.stringify(generatedPatch.agents.list)).not.toContain("skills");
+    expect(JSON.stringify(generatedPatch.agents.list)).not.toContain("identity");
+    expect(JSON.stringify(generatedPatch.agents.list)).not.toContain("default");
+    expect(generatedPatch.memory.qmd.update.startup).toBe("off");
   });
 
   test("skips repeated setup when persisted state is already initialized", async () => {
@@ -337,10 +432,11 @@ describe("ensureOpenClawSetup", () => {
       return { exitCode: 0, stdout: "", stderr: "" };
     });
 
-    expect(calls).toHaveLength(3);
+    expect(calls).toHaveLength(4);
     expect(calls[0][0]).toBe("onboard");
     expect(calls[1]).toEqual(["config", "patch", "--file", llmPatchPath(runtimeConfig)]);
-    expect(calls[2]).toEqual(["config", "validate"]);
+    expect(calls[2]).toEqual(burbleAgentIdentityArgs());
+    expect(calls[3]).toEqual(["config", "validate"]);
   });
 
   test("reruns setup when the config patch changes", async () => {
@@ -449,7 +545,7 @@ describe("ensureOpenClawSetup", () => {
       ensureOpenClawSetup(
         await configWithState({ openClawSetupOnStart: false }),
         async () => ({
-          exitCode: ++callCount === 1 ? 0 : 1,
+          exitCode: ++callCount < 3 ? 0 : 1,
           stdout: "",
           stderr: "secret leaked"
         })
