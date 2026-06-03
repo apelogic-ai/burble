@@ -69,14 +69,18 @@ describe("buildHubSpotOAuthUrl", () => {
       "https://example.ngrok-free.app/oauth/hubspot/callback"
     );
     expect(url.searchParams.get("state")).toBe("state-123");
-    expect(url.searchParams.get("scope")).toContain("oauth");
-    expect(url.searchParams.get("scope")).toContain(
-      "crm.objects.contacts.read"
-    );
-    expect(url.searchParams.get("scope")).toContain(
-      "crm.objects.companies.read"
-    );
-    expect(url.searchParams.get("scope")).toContain("crm.objects.deals.read");
+    const scopes = url.searchParams.get("scope")?.split(" ") ?? [];
+    expect(scopes).toHaveLength(61);
+    expect(scopes).toContain("oauth");
+    expect(scopes).toContain("crm.objects.contacts.read");
+    expect(scopes).toContain("crm.objects.companies.read");
+    expect(scopes).toContain("crm.objects.deals.read");
+    expect(scopes).toContain("crm.objects.custom.read");
+    expect(scopes).toContain("settings.users.read");
+    expect(scopes).not.toContain("behavioral_events.event_definitions.read");
+    expect(scopes).not.toContain("crm.objects.feedback_submission.read");
+    expect(scopes).not.toContain("document.read");
+    expect(scopes).not.toContain("crm.dealsplits.read");
   });
 });
 
