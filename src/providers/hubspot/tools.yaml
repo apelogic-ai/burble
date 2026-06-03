@@ -1,0 +1,62 @@
+provider: hubspot
+tools:
+  - name: hubspot_get_authenticated_user
+    alias: hubspot.getAuthenticatedUser
+    implementation: getAuthenticatedUser
+    title: HubSpot authenticated account
+    description: Return the HubSpot account and user connected to this Slack user.
+    input: {}
+
+  - name: hubspot_search_contacts
+    alias: hubspot.searchContacts
+    implementation: searchContacts
+    title: HubSpot contact search
+    description: Search HubSpot CRM contacts visible to this Slack user's connected HubSpot account.
+    input:
+      query:
+        type: string
+        min: 1
+        max: 200
+        description: Contact search terms
+      limit:
+        type: number
+        int: true
+        positive: true
+        max: 20
+        optional: true
+
+  - name: hubspot_search_companies
+    alias: hubspot.searchCompanies
+    implementation: searchCompanies
+    title: HubSpot company search
+    description: Search HubSpot CRM companies visible to this Slack user's connected HubSpot account.
+    input:
+      query:
+        type: string
+        min: 1
+        max: 200
+        description: Company search terms
+      limit:
+        type: number
+        int: true
+        positive: true
+        max: 20
+        optional: true
+
+  - name: hubspot_search_deals
+    alias: hubspot.searchDeals
+    implementation: searchDeals
+    title: HubSpot deal search
+    description: Search HubSpot CRM deals visible to this Slack user's connected HubSpot account.
+    input:
+      query:
+        type: string
+        min: 1
+        max: 200
+        description: Deal search terms
+      limit:
+        type: number
+        int: true
+        positive: true
+        max: 20
+        optional: true

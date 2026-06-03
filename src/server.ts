@@ -2,6 +2,10 @@ import type { Config } from "./config";
 import type { TokenStore } from "./db";
 import { exchangeGitHubCode, getGitHubUser } from "./providers/github/client";
 import { exchangeGoogleCode, getGoogleUser } from "./providers/google/client";
+import {
+  exchangeHubSpotCode,
+  getHubSpotAccessTokenInfo
+} from "./providers/hubspot/client";
 import { exchangeJiraCode, getJiraUser } from "./providers/jira/client";
 import { formatLogError } from "./logging";
 import { handleProviderMcpRequest } from "./mcp/provider-server";
@@ -26,6 +30,11 @@ export type GoogleOAuthDeps = {
   getGoogleUser: typeof getGoogleUser;
 };
 
+export type HubSpotOAuthDeps = {
+  exchangeHubSpotCode: typeof exchangeHubSpotCode;
+  getHubSpotAccessTokenInfo: typeof getHubSpotAccessTokenInfo;
+};
+
 export type SlackOAuthDeps = {
   exchangeSlackCode: typeof exchangeSlackCode;
 };
@@ -43,6 +52,11 @@ const defaultJiraOAuthDeps: JiraOAuthDeps = {
 const defaultGoogleOAuthDeps: GoogleOAuthDeps = {
   exchangeGoogleCode,
   getGoogleUser
+};
+
+const defaultHubSpotOAuthDeps: HubSpotOAuthDeps = {
+  exchangeHubSpotCode,
+  getHubSpotAccessTokenInfo
 };
 
 const defaultSlackOAuthDeps: SlackOAuthDeps = {
@@ -70,7 +84,7 @@ export function startOAuthServer(
       }
 
       const providerMcpMatch = url.pathname.match(
-        /^\/mcp(?:\/(github|google|jira|slack|atlassian))?$/
+        /^\/mcp(?:\/(github|google|hubspot|jira|slack|atlassian))?$/
       );
       if (providerMcpMatch) {
         return handleProviderMcpRequest(
@@ -83,6 +97,7 @@ export function startOAuthServer(
             | "all"
             | "github"
             | "google"
+            | "hubspot"
             | "jira"
             | "slack"
             | "atlassian"
@@ -112,6 +127,10 @@ export function startOAuthServer(
 
       if (url.pathname === "/oauth/google/callback") {
         return handleGoogleCallback(config, store, slack, url);
+      }
+
+      if (url.pathname === "/oauth/hubspot/callback") {
+        return handleHubSpotCallback(config, store, slack, url);
       }
 
       if (url.pathname === "/oauth/slack/callback") {
@@ -275,6 +294,60 @@ export async function handleGoogleCallback(
       text: "Google connection failed. Run `/auth google` and try again."
     });
     return new Response("Google connection failed", { status: 400 });
+  }
+}
+
+export async function handleHubSpotCallback(
+  config: Config,
+  store: TokenStore,
+  slack: SlackRuntime,
+  url: URL,
+  deps: HubSpotOAuthDeps = defaultHubSpotOAuthDeps
+): Promise<Response> {
+  const code = url.searchParams.get("code");
+  const state = url.searchParams.get("state");
+
+  if (!code || !state) {
+    return new Response("Missing code or state", { status: 400 });
+  }
+
+  const stateRow = store.consumeOAuthState(state);
+  if (!stateRow) {
+    return new Response("Invalid or expired OAuth state", { status: 400 });
+  }
+
+  try {
+    const token = await deps.exchangeHubSpotCode(config, code);
+    const hubspotInfo = await deps.getHubSpotAccessTokenInfo(token.accessToken);
+    const email = await slack.getSlackEmail(stateRow.slackUserId);
+    const providerLogin =
+      hubspotInfo.user ??
+      hubspotInfo.hubDomain ??
+      (hubspotInfo.hubId !== null ? String(hubspotInfo.hubId) : "HubSpot");
+
+    store.upsertProviderConnection({
+      provider: "hubspot",
+      email,
+      slackUserId: stateRow.slackUserId,
+      providerLogin,
+      accessToken: token.accessToken,
+      refreshToken: token.refreshToken,
+      accessTokenExpiresAt: token.accessTokenExpiresAt
+    });
+
+    await slack.app.client.chat.postMessage({
+      channel: stateRow.slackUserId,
+      text: `Connected to HubSpot as \`${providerLogin}\` (${email}).`
+    });
+
+    return htmlResponse("Connected. You can close this tab.");
+  } catch (error) {
+    console.error(formatLogError(error));
+    await slack.app.client.chat.postMessage({
+      channel: stateRow.slackUserId,
+      text: "HubSpot connection failed. Run `/auth hubspot` and try again."
+    });
+    return new Response("HubSpot connection failed", { status: 400 });
   }
 }
 

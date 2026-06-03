@@ -3,6 +3,7 @@ export type RuntimeToolGroup =
   | "conversation"
   | "github"
   | "google"
+  | "hubspot"
   | "jira"
   | "scheduler"
   | "slack";
@@ -38,6 +39,7 @@ const groupKeywords: Record<Exclude<RuntimeToolGroup, "attachments" | "conversat
     "email",
     "calendar"
   ],
+  hubspot: ["hubspot", "crm", "contact", "contacts", "company", "companies", "deal", "deals"],
   jira: ["jira", "atlassian", "ticket", "sprint", "project"],
   scheduler: ["cron", "schedule", "scheduled", "recurring", "reminder", "every"],
   slack: ["slack", "channel", "dm", "message history"]

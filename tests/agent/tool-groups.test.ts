@@ -43,6 +43,24 @@ describe("selectRuntimeToolGroups", () => {
     });
   });
 
+  test("selects HubSpot from CRM language", () => {
+    expect(
+      selectRuntimeToolGroups({
+        text: "find deals and contacts in HubSpot for Acme"
+      })
+    ).toEqual({
+      groups: ["conversation", "hubspot"],
+      reasons: [
+        "default:conversation",
+        "keyword:hubspot:hubspot",
+        "keyword:hubspot:contact",
+        "keyword:hubspot:contacts",
+        "keyword:hubspot:deal",
+        "keyword:hubspot:deals"
+      ]
+    });
+  });
+
   test("selects attachment group when files are present", () => {
     expect(
       selectRuntimeToolGroups({

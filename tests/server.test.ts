@@ -4,6 +4,7 @@ import type { TokenStore } from "../src/db";
 import {
   handleGitHubCallback,
   handleGoogleCallback,
+  handleHubSpotCallback,
   handleJiraCallback,
   handleSlackCallback
 } from "../src/server";
@@ -21,6 +22,8 @@ const config: Config = {
   jiraClientSecret: "jira-client-secret",
   googleClientId: "google-client-id",
   googleClientSecret: "google-client-secret",
+  hubspotClientId: "hubspot-client-id",
+  hubspotClientSecret: "hubspot-client-secret",
   baseUrl: "https://example.ngrok-free.app",
   port: 3000,
   databasePath: ":memory:",
@@ -360,6 +363,61 @@ describe("handleGoogleCallback", () => {
       {
         channel: "U123",
         text: "Connected to Google as `google-user@example.com` (person@example.com)."
+      }
+    ]);
+  });
+});
+
+describe("handleHubSpotCallback", () => {
+  test("stores the HubSpot provider connection and DMs Slack on success", async () => {
+    const { store, providerConnections } = createFakeStore();
+    const { slack, messages } = createFakeSlack();
+
+    const response = await handleHubSpotCallback(
+      config,
+      store,
+      slack,
+      new URL(
+        "https://example.test/oauth/hubspot/callback?code=abc&state=valid-state"
+      ),
+      {
+        exchangeHubSpotCode: async (_config, code) => {
+          expect(code).toBe("abc");
+          return {
+            accessToken: "hubspot-token",
+            refreshToken: "hubspot-refresh-token",
+            accessTokenExpiresAt: "2026-05-23T06:00:00.000Z"
+          };
+        },
+        getHubSpotAccessTokenInfo: async (token) => {
+          expect(token).toBe("hubspot-token");
+          return {
+            hubId: 12345,
+            hubDomain: "example.hubspot.com",
+            user: "hubspot-user@example.com",
+            scopes: ["crm.objects.contacts.read"]
+          };
+        }
+      }
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.text()).toContain("Connected. You can close this tab.");
+    expect(providerConnections).toEqual([
+      {
+        provider: "hubspot",
+        email: "person@example.com",
+        slackUserId: "U123",
+        providerLogin: "hubspot-user@example.com",
+        accessToken: "hubspot-token",
+        refreshToken: "hubspot-refresh-token",
+        accessTokenExpiresAt: "2026-05-23T06:00:00.000Z"
+      }
+    ]);
+    expect(messages).toEqual([
+      {
+        channel: "U123",
+        text: "Connected to HubSpot as `hubspot-user@example.com` (person@example.com)."
       }
     ]);
   });

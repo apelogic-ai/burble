@@ -1175,12 +1175,14 @@ function sanitizeAgentInput(input: AgentInput): {
   connections: {
     github: ConnectionSummary;
     google: ConnectionSummary;
+    hubspot: ConnectionSummary;
     jira: ConnectionSummary;
     slack: ConnectionSummary;
   };
 } {
   const github = input.connections.github;
   const google = input.connections.google;
+  const hubspot = input.connections.hubspot;
   const jira = input.connections.jira;
   const slack = input.connections.slack;
 
@@ -1206,6 +1208,15 @@ function sanitizeAgentInput(input: AgentInput): {
             connected: true,
             email: google.email,
             providerLogin: google.providerLogin
+          }
+        : {
+            connected: false
+          },
+      hubspot: hubspot
+        ? {
+            connected: true,
+            email: hubspot.email,
+            providerLogin: hubspot.providerLogin
           }
         : {
             connected: false

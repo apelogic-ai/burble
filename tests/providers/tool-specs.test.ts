@@ -5,6 +5,7 @@ import {
 } from "../../src/providers/atlassian/tool-specs";
 import { githubProviderToolSpecs } from "../../src/providers/github/tool-specs";
 import { googleProviderToolSpecs } from "../../src/providers/google/tool-specs";
+import { hubspotProviderToolSpecs } from "../../src/providers/hubspot/tool-specs";
 import { jiraProviderToolSpecs } from "../../src/providers/jira/tool-specs";
 import { slackProviderToolSpecs } from "../../src/providers/slack/tool-specs";
 import { providerToolInputSchema } from "../../src/providers/tool-specs";
@@ -92,6 +93,35 @@ describe("provider tool specs", () => {
           tool.implementation.length > 0
       )
     ).toBe(true);
+  });
+
+  test("loads HubSpot MCP tool metadata from YAML", () => {
+    const names = hubspotProviderToolSpecs.map((tool) => tool.name);
+
+    expect(names).toEqual([
+      "hubspot_get_authenticated_user",
+      "hubspot_search_contacts",
+      "hubspot_search_companies",
+      "hubspot_search_deals"
+    ]);
+    expect(
+      hubspotProviderToolSpecs.every(
+        (tool) =>
+          tool.provider === "hubspot" &&
+          tool.alias.startsWith("hubspot.") &&
+          tool.implementation.length > 0
+      )
+    ).toBe(true);
+
+    const searchContacts = hubspotProviderToolSpecs.find(
+      (tool) => tool.name === "hubspot_search_contacts"
+    );
+    expect(searchContacts).toBeDefined();
+    const schema = providerToolInputSchema(searchContacts!);
+    expect(schema.query.safeParse("acme").success).toBe(true);
+    expect(schema.query.safeParse("").success).toBe(false);
+    expect(schema.limit.safeParse(20).success).toBe(true);
+    expect(schema.limit.safeParse(21).success).toBe(false);
   });
 
   test("validates nullable Jira fields from YAML", () => {

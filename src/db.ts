@@ -15,7 +15,7 @@ export type ConnectedUser = {
   connectedAt: string;
 };
 
-export type Provider = "github" | "jira" | "slack" | "google";
+export type Provider = "github" | "jira" | "slack" | "google" | "hubspot";
 
 export type ProviderConnection = {
   provider: Provider;

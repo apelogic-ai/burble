@@ -101,6 +101,22 @@ async function handleConversationInternal(
     };
   }
 
+  if (intent === "connect_hubspot") {
+    if (!deps.createHubSpotOAuthUrl) {
+      return {
+        visibility: "ephemeral",
+        classification: "user_private",
+        text: "HubSpot OAuth is not configured."
+      };
+    }
+
+    return {
+      visibility: "ephemeral",
+      classification: "user_private",
+      text: `<${deps.createHubSpotOAuthUrl(request.user.slackUserId)}|Connect your HubSpot account>`
+    };
+  }
+
   if (!forceAgent && fastTrackEnabled) {
     const fastPathResponse = await tryHandleLocalToolFastPath(request, deps);
     if (fastPathResponse) {
@@ -189,6 +205,7 @@ async function handleConversationInternal(
         connections: {
           github: deps.getConnection("github", request.user.email),
           google: deps.getConnection("google", request.user.email),
+          hubspot: deps.getConnection("hubspot", request.user.email),
           jira: deps.getConnection("jira", request.user.email),
           slack: deps.getConnection("slack", request.user.email)
         }
@@ -427,6 +444,7 @@ function buildConversationRootId(request: ConversationRequest): string {
 type DeterministicIntent =
   | "connect_github"
   | "connect_google"
+  | "connect_hubspot"
   | "connect_jira"
   | "connect_slack"
   | "github_identity"
@@ -444,6 +462,10 @@ export function classifyDeterministicIntent(text: string): DeterministicIntent {
 
   if (/\bconnect\s+google\b/.test(normalized)) {
     return "connect_google";
+  }
+
+  if (/\bconnect\s+hub\s?spot\b/.test(normalized)) {
+    return "connect_hubspot";
   }
 
   if (/\bconnect\s+(jira|atlassian)\b/.test(normalized)) {

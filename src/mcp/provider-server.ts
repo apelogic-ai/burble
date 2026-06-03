@@ -40,6 +40,13 @@ import {
   updateGoogleDriveTextFile
 } from "../providers/google/client";
 import {
+  getHubSpotAccessTokenInfo,
+  refreshHubSpotAccessToken,
+  searchHubSpotCompanies,
+  searchHubSpotContacts,
+  searchHubSpotDeals
+} from "../providers/hubspot/client";
+import {
   addJiraIssueComment,
   addJiraIssueLabels,
   createJiraSubtask,
@@ -79,6 +86,7 @@ import {
 } from "./provider-context";
 import { registerGitHubMcpTools } from "./provider-github";
 import { registerGoogleMcpTools } from "./provider-google";
+import { registerHubSpotMcpTools } from "./provider-hubspot";
 import { registerJiraMcpTools } from "./provider-jira";
 import { registerSlackMcpTools } from "./provider-slack";
 
@@ -117,6 +125,10 @@ const defaultDeps = {
   updateGoogleCalendarEvent,
   searchGoogleMailMessages,
   createGmailDraft,
+  getHubSpotAccessTokenInfo,
+  searchHubSpotContacts,
+  searchHubSpotCompanies,
+  searchHubSpotDeals,
   getJiraUser,
   listJiraAccessibleResources,
   listAssignedJiraIssues,
@@ -241,6 +253,10 @@ function createProviderMcpServer(
       refreshGoogleAccessToken(config, refreshToken),
     saveGoogleConnection: (connection: ProviderConnection) =>
       store.upsertProviderConnection(connection),
+    refreshHubSpotAccessToken: (refreshToken: string) =>
+      refreshHubSpotAccessToken(config, refreshToken),
+    saveHubSpotConnection: (connection: ProviderConnection) =>
+      store.upsertProviderConnection(connection),
     ...deps
   };
 
@@ -249,6 +265,9 @@ function createProviderMcpServer(
   }
   if (scope === "all" || scope === "google") {
     registerGoogleMcpTools({ server, store, runtime, deps: allDeps, policy });
+  }
+  if (scope === "all" || scope === "hubspot") {
+    registerHubSpotMcpTools({ server, store, runtime, deps: allDeps, policy });
   }
   if (scope === "all" || scope === "jira") {
     registerJiraMcpTools({ server, store, runtime, deps: allDeps, policy });

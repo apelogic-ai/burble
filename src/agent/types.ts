@@ -47,6 +47,7 @@ export type AgentInput = {
   connections: {
     github: ProviderConnection | null;
     google?: ProviderConnection | null;
+    hubspot?: ProviderConnection | null;
     jira?: ProviderConnection | null;
     slack?: ProviderConnection | null;
   };

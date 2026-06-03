@@ -53,6 +53,8 @@ const agentConfig: Config = {
   jiraClientSecret: "jira-client-secret",
   googleClientId: "google-client-id",
   googleClientSecret: "google-client-secret",
+  hubspotClientId: "hubspot-client-id",
+  hubspotClientSecret: "hubspot-client-secret",
   baseUrl: "https://example.test",
   port: 3000,
   databasePath: ":memory:",
@@ -369,6 +371,7 @@ describe("buildAuthResponse", () => {
     const response = buildAuthResponse({
       githubUrl: "https://example.test/github",
       googleUrl: "https://example.test/google",
+      hubspotUrl: "https://example.test/hubspot",
       jiraUrl: "https://example.test/jira",
       slackUrl: "https://example.test/slack",
       connections: {
@@ -381,7 +384,22 @@ describe("buildAuthResponse", () => {
           connectedAt: "2026-05-26T00:00:00.000Z"
         },
         google: null,
-        jira: null,
+        hubspot: {
+          provider: "hubspot",
+          email: "person@example.com",
+          slackUserId: "U123",
+          providerLogin: "hubspot-user@example.com",
+          accessToken: "hubspot-token",
+          connectedAt: "2026-05-26T00:00:00.000Z"
+        },
+        jira: {
+          provider: "jira",
+          email: "person@example.com",
+          slackUserId: "U123",
+          providerLogin: "person@example.com",
+          accessToken: "jira-token",
+          connectedAt: "2026-05-26T00:00:00.000Z"
+        },
         slack: {
           provider: "slack",
           email: "person@example.com",
@@ -396,13 +414,17 @@ describe("buildAuthResponse", () => {
     expect(response.text).toContain("connections");
     expect(JSON.stringify(response.blocks)).toContain("GitHub");
     expect(JSON.stringify(response.blocks)).toContain("Google Workspace");
+    expect(JSON.stringify(response.blocks)).toContain("HubSpot");
     expect(JSON.stringify(response.blocks)).toContain("Atlassian");
     expect(JSON.stringify(response.blocks)).toContain("Slack search");
     expect(JSON.stringify(response.blocks)).toContain("Connected as `octocat`");
+    expect(JSON.stringify(response.blocks)).toContain("Connected as `hubspot-user@example.com`");
+    expect(JSON.stringify(response.blocks)).toContain("Connected as `person@example.com`");
     expect(JSON.stringify(response.blocks)).toContain("Connected as <@U123>");
     expect(JSON.stringify(response.blocks)).toContain("Not connected");
     expect(JSON.stringify(response.blocks)).toContain("https://example.test/github");
     expect(JSON.stringify(response.blocks)).toContain("https://example.test/google");
+    expect(JSON.stringify(response.blocks)).toContain("https://example.test/hubspot");
     expect(JSON.stringify(response.blocks)).toContain("https://example.test/jira");
     expect(JSON.stringify(response.blocks)).toContain("https://example.test/slack");
   });
@@ -411,11 +433,13 @@ describe("buildAuthResponse", () => {
     const response = buildAuthResponse({
       githubUrl: "https://example.test/github",
       googleUrl: null,
+      hubspotUrl: null,
       jiraUrl: null,
       slackUrl: null
     });
 
     expect(JSON.stringify(response.blocks)).toContain("Google OAuth is not configured");
+    expect(JSON.stringify(response.blocks)).toContain("HubSpot OAuth is not configured");
     expect(JSON.stringify(response.blocks)).toContain("Jira OAuth is not configured");
     expect(JSON.stringify(response.blocks)).toContain("Slack OAuth is not configured");
   });
@@ -444,6 +468,7 @@ describe("buildAppHomeView", () => {
     const view = buildAppHomeView({
       githubUrl: "https://example.test/github",
       googleUrl: "https://example.test/google",
+      hubspotUrl: "https://example.test/hubspot",
       jiraUrl: "https://example.test/jira",
       slackUrl: "https://example.test/slack",
       connections: {
@@ -456,6 +481,14 @@ describe("buildAppHomeView", () => {
           connectedAt: "2026-05-26T00:00:00.000Z"
         },
         google: null,
+        hubspot: {
+          provider: "hubspot",
+          email: "person@example.com",
+          slackUserId: "U123",
+          providerLogin: "hubspot-user@example.com",
+          accessToken: "hubspot-token",
+          connectedAt: "2026-05-26T00:00:00.000Z"
+        },
         jira: {
           provider: "jira",
           email: "person@example.com",
@@ -473,10 +506,12 @@ describe("buildAppHomeView", () => {
     expect(view.type).toBe("home");
     expect(serialized).toContain("GitHub");
     expect(serialized).toContain("Google Workspace");
+    expect(serialized).toContain("HubSpot");
     expect(serialized).toContain("Atlassian Jira");
     expect(serialized).toContain("Slack search");
     expect(serialized).toContain("Connected as `octocat`");
     expect(serialized).toContain("Connected as `person@example.com`");
+    expect(serialized).toContain("Connected as `hubspot-user@example.com`");
     expect(serialized).toContain("Not connected");
     expect(serialized).toContain("https://example.test/google");
     expect(serialized).toContain("Agent runtime");
@@ -510,11 +545,13 @@ describe("buildAppHomeView", () => {
     const view = buildAppHomeView({
       githubUrl: "https://example.test/github",
       googleUrl: "https://example.test/google",
+      hubspotUrl: "https://example.test/hubspot",
       jiraUrl: "https://example.test/jira",
       slackUrl: "https://example.test/slack",
       connections: {
         github: null,
         google: null,
+        hubspot: null,
         jira: null,
         slack: null
       },
@@ -540,11 +577,13 @@ describe("buildAppHomeView", () => {
     const view = buildAppHomeView({
       githubUrl: "https://example.test/github",
       googleUrl: "https://example.test/google",
+      hubspotUrl: "https://example.test/hubspot",
       jiraUrl: "https://example.test/jira",
       slackUrl: "https://example.test/slack",
       connections: {
         github: null,
         google: null,
+        hubspot: null,
         jira: null,
         slack: null
       },

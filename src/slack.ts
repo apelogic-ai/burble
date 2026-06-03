@@ -28,6 +28,14 @@ import {
   searchGoogleMailMessages
 } from "./providers/google/client";
 import {
+  buildHubSpotOAuthUrl,
+  getHubSpotAccessTokenInfo,
+  refreshHubSpotAccessToken,
+  searchHubSpotCompanies,
+  searchHubSpotContacts,
+  searchHubSpotDeals
+} from "./providers/hubspot/client";
+import {
   buildJiraOAuthUrl,
   getJiraUser,
   listAssignedJiraIssues,
@@ -43,6 +51,7 @@ import type {
   AgentRuntimeRecord,
   AgentRuntimeEngine,
   AgentRuntimeStatus,
+  Provider,
   ProviderConnection,
   TokenStore
 } from "./db";
@@ -73,6 +82,7 @@ import type { RuntimeFactory } from "./agent/runtime-factory";
 import type { RuntimeToolGroupSelection } from "./agent/tool-groups";
 import { createGitHubTools } from "./tools/github";
 import { createGoogleTools } from "./tools/google";
+import { createHubSpotTools } from "./tools/hubspot";
 import { createJiraTools } from "./tools/jira";
 import { createSlackTools } from "./tools/slack";
 import {
@@ -227,6 +237,16 @@ export function createSlackRuntime(
       refreshGoogleAccessToken(config, refreshToken),
     saveGoogleConnection: (connection) => store.upsertProviderConnection(connection)
   });
+  const hubspotTools = createHubSpotTools({
+    getHubSpotAccessTokenInfo,
+    searchHubSpotContacts,
+    searchHubSpotCompanies,
+    searchHubSpotDeals,
+    refreshHubSpotAccessToken: (refreshToken) =>
+      refreshHubSpotAccessToken(config, refreshToken),
+    saveHubSpotConnection: (connection) =>
+      store.upsertProviderConnection(connection)
+  });
   const jiraTools = createJiraTools({
     getJiraUser,
     listAssignedJiraIssues,
@@ -251,6 +271,7 @@ export function createSlackRuntime(
           model: config.aiModel,
           githubTools,
           googleTools,
+          hubspotTools,
           slackTools,
           jiraTools,
           managedRuntimeUrl: config.managedRuntimeUrl,
@@ -288,6 +309,10 @@ export function createSlackRuntime(
         config,
         store.createOAuthState(input.slackUserId)
       ),
+      hubspotUrl: tryBuildHubSpotOAuthUrl(
+        config,
+        store.createOAuthState(input.slackUserId)
+      ),
       slackUrl: tryBuildSlackOAuthUrl(
         config,
         store.createOAuthState(input.slackUserId)
@@ -295,6 +320,7 @@ export function createSlackRuntime(
       connections: {
         github: store.getConnectionForSlackUser("github", input.slackUserId),
         google: store.getConnectionForSlackUser("google", input.slackUserId),
+        hubspot: store.getConnectionForSlackUser("hubspot", input.slackUserId),
         jira: store.getConnectionForSlackUser("jira", input.slackUserId),
         slack: store.getConnectionForSlackUser("slack", input.slackUserId)
       },
@@ -664,6 +690,15 @@ export function createSlackRuntime(
                   buildJiraOAuthUrl(config, store.createOAuthState(slackUserId))
               }
             : {}),
+          ...(config.hubspotClientId && config.hubspotClientSecret
+            ? {
+                createHubSpotOAuthUrl: (slackUserId: string) =>
+                  buildHubSpotOAuthUrl(
+                    config,
+                    store.createOAuthState(slackUserId)
+                  )
+              }
+            : {}),
           ...(config.slackClientId && config.slackClientSecret
             ? {
                 createSlackOAuthUrl: (slackUserId: string) =>
@@ -675,6 +710,7 @@ export function createSlackRuntime(
           tools: {
             github: githubTools,
             google: googleTools,
+            hubspot: hubspotTools,
             jira: jiraTools,
             slack: slackTools
           },
@@ -835,6 +871,15 @@ export function createSlackRuntime(
                   buildJiraOAuthUrl(config, store.createOAuthState(slackUserId))
               }
             : {}),
+          ...(config.hubspotClientId && config.hubspotClientSecret
+            ? {
+                createHubSpotOAuthUrl: (slackUserId: string) =>
+                  buildHubSpotOAuthUrl(
+                    config,
+                    store.createOAuthState(slackUserId)
+                  )
+              }
+            : {}),
           ...(config.slackClientId && config.slackClientSecret
             ? {
                 createSlackOAuthUrl: (slackUserId: string) =>
@@ -846,6 +891,7 @@ export function createSlackRuntime(
           tools: {
             github: githubTools,
             google: googleTools,
+            hubspot: hubspotTools,
             jira: jiraTools,
             slack: slackTools
           },
@@ -912,7 +958,7 @@ export function createSlackRuntime(
       if (action.kind === "unknown") {
         await ack({
           response_type: "ephemeral",
-          text: `Unknown auth target \`${action.value}\`. Try \`/auth\`, \`/auth github\`, \`/auth google\`, \`/auth jira\`, or \`/auth slack\`.`
+          text: `Unknown auth target \`${action.value}\`. Try \`/auth\`, \`/auth github\`, \`/auth google\`, \`/auth hubspot\`, \`/auth jira\`, or \`/auth slack\`.`
         });
         return;
       }
@@ -926,6 +972,10 @@ export function createSlackRuntime(
         store.createOAuthState(body.user_id)
       );
       const googleUrl = tryBuildGoogleOAuthUrl(
+        config,
+        store.createOAuthState(body.user_id)
+      );
+      const hubspotUrl = tryBuildHubSpotOAuthUrl(
         config,
         store.createOAuthState(body.user_id)
       );
@@ -960,6 +1010,16 @@ export function createSlackRuntime(
                     response_type: "ephemeral",
                     text: "Google OAuth is not configured."
                   }
+            : action.kind === "hubspot"
+              ? hubspotUrl
+                ? {
+                    response_type: "ephemeral",
+                    text: `<${hubspotUrl}|Connect your HubSpot account>`
+                  }
+                : {
+                    response_type: "ephemeral",
+                    text: "HubSpot OAuth is not configured."
+                  }
             : action.kind === "slack"
               ? slackUrl
                 ? {
@@ -973,6 +1033,7 @@ export function createSlackRuntime(
               : buildAuthResponse({
                   githubUrl,
                   googleUrl,
+                  hubspotUrl,
                   jiraUrl,
                   slackUrl,
                   connections: {
@@ -982,6 +1043,10 @@ export function createSlackRuntime(
                     ),
                     google: store.getConnectionForSlackUser(
                       "google",
+                      body.user_id
+                    ),
+                    hubspot: store.getConnectionForSlackUser(
+                      "hubspot",
                       body.user_id
                     ),
                     jira: store.getConnectionForSlackUser("jira", body.user_id),
@@ -1306,6 +1371,7 @@ export function createSlackRuntime(
               connections: {
                 github: store.getConnection("github", email),
                 google: store.getConnection("google", email),
+                hubspot: store.getConnection("hubspot", email),
                 jira: store.getConnection("jira", email),
                 slack: store.getConnection("slack", email)
               }
@@ -1745,6 +1811,7 @@ export type AuthCommand =
   | { kind: "connections" }
   | { kind: "github" }
   | { kind: "google" }
+  | { kind: "hubspot" }
   | { kind: "jira" }
   | { kind: "slack" }
   | { kind: "unknown"; value: string };
@@ -1766,6 +1833,15 @@ export function parseAuthCommand(text: string): AuthCommand {
 
   if (normalized === "google" || normalized === "connect google") {
     return { kind: "google" };
+  }
+
+  if (
+    normalized === "hubspot" ||
+    normalized === "hub spot" ||
+    normalized === "connect hubspot" ||
+    normalized === "connect hub spot"
+  ) {
+    return { kind: "hubspot" };
   }
 
   if (
@@ -1865,11 +1941,13 @@ export function parseAgentCommand(text: string): AgentCommand {
 type ProviderConnectionViewInput = {
   githubUrl: string;
   googleUrl: string | null;
+  hubspotUrl: string | null;
   jiraUrl: string | null;
   slackUrl: string | null;
   connections?: {
     github: ProviderConnection | null;
     google: ProviderConnection | null;
+    hubspot: ProviderConnection | null;
     jira: ProviderConnection | null;
     slack: ProviderConnection | null;
   };
@@ -1941,7 +2019,7 @@ export function buildAppHomeView(input: ProviderConnectionViewInput): View {
         type: "section",
         text: {
           type: "mrkdwn",
-          text: "Connect provider accounts so Burble can use your GitHub, Google Workspace, Jira, and Slack identity on your behalf."
+          text: "Connect provider accounts so Burble can use your GitHub, Google Workspace, HubSpot, Jira, and Slack identity on your behalf."
         }
       },
       ...buildProviderConnectionBlocks(input),
@@ -1968,7 +2046,7 @@ function buildAppHomeIntroText(input: ProviderConnectionViewInput): string {
 export function buildAuthResponse(input: ProviderConnectionViewInput) {
   return {
     response_type: "ephemeral" as const,
-    text: "Burble connections: GitHub, Google Workspace, Jira, and Slack search.",
+    text: "Burble connections: GitHub, Google Workspace, HubSpot, Jira, and Slack search.",
     blocks: [
       {
         type: "header",
@@ -1983,7 +2061,7 @@ export function buildAuthResponse(input: ProviderConnectionViewInput) {
         elements: [
           {
             type: "mrkdwn",
-            text: "Shortcuts: `/auth`, `/auth github`, `/auth google`, `/auth jira`, `/auth slack`, `/help`"
+            text: "Shortcuts: `/auth`, `/auth github`, `/auth google`, `/auth hubspot`, `/auth jira`, `/auth slack`, `/help`"
           }
         ]
       }
@@ -1994,6 +2072,7 @@ export function buildAuthResponse(input: ProviderConnectionViewInput) {
 function buildProviderConnectionBlocks(input: ProviderConnectionViewInput) {
   return [
     buildProviderConnectionBlock({
+      provider: "github",
       title: "GitHub",
       status: formatConnectionStatus(input.connections?.github, "github"),
       configured: true,
@@ -2003,6 +2082,7 @@ function buildProviderConnectionBlocks(input: ProviderConnectionViewInput) {
       usage: "Issues, pull requests, repository metadata and approved write actions"
     }),
     buildProviderConnectionBlock({
+      provider: "google",
       title: "Google Workspace",
       status: input.googleUrl
         ? formatConnectionStatus(input.connections?.google, "google")
@@ -2014,6 +2094,19 @@ function buildProviderConnectionBlocks(input: ProviderConnectionViewInput) {
       usage: "Drive files, Calendar events, Gmail search and drafts"
     }),
     buildProviderConnectionBlock({
+      provider: "hubspot",
+      title: "HubSpot",
+      status: input.hubspotUrl
+        ? formatConnectionStatus(input.connections?.hubspot, "hubspot")
+        : "HubSpot OAuth is not configured.",
+      configured: Boolean(input.hubspotUrl),
+      url: input.hubspotUrl,
+      connected: Boolean(input.connections?.hubspot),
+      actionId: "connect_hubspot",
+      usage: "CRM contacts, companies, deals and HubSpot account context"
+    }),
+    buildProviderConnectionBlock({
+      provider: "jira",
       title: "Atlassian Jira",
       status: input.jiraUrl
         ? formatConnectionStatus(input.connections?.jira, "jira")
@@ -2025,6 +2118,7 @@ function buildProviderConnectionBlocks(input: ProviderConnectionViewInput) {
       usage: "Jira issues, projects, users, comments and approved workflow actions"
     }),
     buildProviderConnectionBlock({
+      provider: "slack",
       title: "Slack search",
       status: input.slackUrl
         ? formatConnectionStatus(input.connections?.slack, "slack")
@@ -2501,6 +2595,7 @@ export async function applyAgentRuntimeControl(input: {
 }
 
 function buildProviderConnectionBlock(input: {
+  provider: Provider;
   title: string;
   status: string;
   configured: boolean;
@@ -2573,6 +2668,7 @@ export function buildHelpResponse() {
             "• `/auth` - view and connect accounts",
             "• `/auth github` - connect or reconnect GitHub",
             "• `/auth google` - connect or reconnect Google Workspace",
+            "• `/auth hubspot` - connect or reconnect HubSpot",
             "• `/auth jira` - connect or reconnect Jira",
             "• `/auth slack` - connect or reconnect Slack search",
             "• `/agent status` - show and power up your current agent runtime",
@@ -4202,7 +4298,7 @@ function truncateSlackCodeBlock(value: string, maxLength: number): string {
 
 function formatConnectionStatus(
   connection: ProviderConnection | null | undefined,
-  provider: "github" | "google" | "jira" | "slack"
+  provider: "github" | "google" | "hubspot" | "jira" | "slack"
 ): string {
   if (!connection) {
     return "Not connected.";
@@ -4809,6 +4905,10 @@ function formatAgentToolName(toolName: string): string {
     "github.searchIssues": "GitHub search",
     "github.listMyPullRequests": "GitHub pull requests",
     "jira.getAuthenticatedUser": "Jira identity",
+    "hubspot.getAuthenticatedUser": "HubSpot identity",
+    "hubspot.searchContacts": "HubSpot contact search",
+    "hubspot.searchCompanies": "HubSpot company search",
+    "hubspot.searchDeals": "HubSpot deal search",
     "jira.searchUsers": "Jira user search",
     "jira.createIssue": "Jira issue create",
     "jira.editIssue": "Jira issue edit",
@@ -4832,6 +4932,7 @@ function titleCaseProviderToolName(toolName: string): string {
     .replace(/\bmcp\b/gi, "MCP")
     .replace(/\bapi\b/gi, "API")
     .replace(/\bgithub\b/gi, "GitHub")
+    .replace(/\bhubspot\b/gi, "HubSpot")
     .replace(/\bjira\b/gi, "Jira")
     .replace(/\batlassian\b/gi, "Atlassian")
     .replace(/\s+/g, " ")
@@ -4855,6 +4956,18 @@ function tryBuildGoogleOAuthUrl(config: Config, state: string): string | null {
     return buildGoogleOAuthUrl(config, state);
   } catch (error) {
     if (error instanceof Error && error.message === "Google OAuth is not configured") {
+      return null;
+    }
+
+    throw error;
+  }
+}
+
+function tryBuildHubSpotOAuthUrl(config: Config, state: string): string | null {
+  try {
+    return buildHubSpotOAuthUrl(config, state);
+  } catch (error) {
+    if (error instanceof Error && error.message === "HubSpot OAuth is not configured") {
       return null;
     }
 
