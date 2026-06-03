@@ -12,7 +12,6 @@ filter:
 scopes:
   - account-info.security.read
   - automation.sequences.read
-  - behavioral_events.event_definitions.read
   - business_units_view.read
   - cms.domains.read
   - cms.functions.read
@@ -23,7 +22,6 @@ scopes:
   - communication_preferences.statuses.batch.read
   - conversations.custom_channels.read
   - conversations.read
-  - crm.dealsplits.read
   - crm.lists.read
   - crm.objects.appointments.read
   - crm.objects.carts.read
@@ -33,7 +31,6 @@ scopes:
   - crm.objects.courses.read
   - crm.objects.custom.read
   - crm.objects.deals.read
-  - crm.objects.feedback_submission.read
   - crm.objects.goals.read
   - crm.objects.invoices.read
   - crm.objects.leads.read
@@ -64,7 +61,6 @@ scopes:
   - crm.schemas.quotes.read
   - crm.schemas.services.read
   - crm.schemas.subscriptions.read
-  - document.read
   - files.ui_hidden.read
   - marketing.campaigns.read
   - marketing.campaigns.revenue.read
