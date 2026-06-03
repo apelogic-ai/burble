@@ -65,7 +65,8 @@ import { selectRuntimeToolGroups } from "./agent/tool-groups";
 import { createDockerRuntimeFactory } from "./agent/container-runtime-factory";
 import {
   buildRuntimeManifestForPrincipal,
-  resolveRuntimeEngineForPrincipal
+  resolveRuntimeEngineForPrincipal,
+  type RuntimeEngineSelection
 } from "./agent/runtime-policy";
 import { createStaticRuntimeFactory } from "./agent/runtime-factory";
 import type { RuntimeFactory } from "./agent/runtime-factory";
@@ -438,15 +439,6 @@ export function createSlackRuntime(
       return;
     }
 
-    const parsed = parseAgentConfigModalSubmission(body);
-    if (!parsed.ok) {
-      await ack({
-        response_action: "errors",
-        errors: parsed.errors
-      });
-      return;
-    }
-
     const principal = {
       workspaceId: context.workspaceId,
       slackUserId: context.slackUserId
@@ -456,6 +448,15 @@ export function createSlackRuntime(
       store,
       principal
     });
+    const parsed = parseAgentConfigModalSubmission(body, previousSelection);
+    if (!parsed.ok) {
+      await ack({
+        response_action: "errors",
+        errors: parsed.errors
+      });
+      return;
+    }
+
     const previousPolicyHash = buildRuntimeManifestForEffectiveEngine({
       config,
       store,
@@ -464,6 +465,7 @@ export function createSlackRuntime(
     applyAgentConfigModalValues({
       store,
       principal,
+      selection: previousSelection,
       values: parsed.values
     });
     const nextPolicyHash = buildRuntimeManifestForEffectiveEngine({
@@ -1628,11 +1630,13 @@ function createManagedRuntimeFactory(
   };
 }
 
-function runtimeImageForEngine(
+export function runtimeImageForEngine(
   config: Config,
   engine: AgentRuntimeEngine
 ): string {
-  return engine === config.agentRuntimeEngine
+  const configuredImageIsDefault =
+    config.agentRuntimeImage === defaultAgentRuntimeImage(config.agentRuntimeEngine);
+  return engine === config.agentRuntimeEngine || !configuredImageIsDefault
     ? config.agentRuntimeImage
     : defaultAgentRuntimeImage(engine);
 }
@@ -1843,6 +1847,12 @@ type AgentHomeSettingsView = {
     configuredEngine: string;
     preferredEngine: string | null;
     allowedEngines: string[];
+    selectableEngines: string[];
+    compatibility: Array<{
+      engine: string;
+      selectable: boolean;
+      reasons: string[];
+    }>;
     endpointUrl: string | null;
     createdAt: string | null;
     lastUsedAt: string | null;
@@ -2004,6 +2014,8 @@ export function buildAgentHomeSettings(input: {
           configuredEngine: selection.configuredEngine,
           preferredEngine: selection.preferredEngine,
           allowedEngines: selection.allowedEngines,
+          selectableEngines: selection.selectableEngines,
+          compatibility: selection.compatibility,
           endpointUrl: runtime.endpointUrl,
           createdAt: runtime.createdAt,
           lastUsedAt: runtime.lastUsedAt
@@ -2016,6 +2028,8 @@ export function buildAgentHomeSettings(input: {
           configuredEngine: selection.configuredEngine,
           preferredEngine: selection.preferredEngine,
           allowedEngines: selection.allowedEngines,
+          selectableEngines: selection.selectableEngines,
+          compatibility: selection.compatibility,
           endpointUrl: null,
           createdAt: null,
           lastUsedAt: null
@@ -2167,6 +2181,7 @@ function formatRuntimeHomeSummary(settings: AgentHomeSettingsView): string {
     `Factory: \`${settings.runtime.factory}\``,
     `Engine: \`${settings.runtime.engine}\``,
     `Preferred engine: \`${settings.runtime.preferredEngine ?? "not set"}\``,
+    `Selectable engines: \`${formatStringList(settings.runtime.selectableEngines)}\``,
     `Runtime: ${runtimeId}`,
     `Last used: ${lastUsed}`
   ].join("\n");
@@ -2242,6 +2257,7 @@ export function buildAgentRuntimeManageModalView(input: {
     `*Configured engine:* \`${settings.runtime.configuredEngine}\``,
     `*Preferred engine:* \`${settings.runtime.preferredEngine ?? "not set"}\``,
     `*Allowed engines:* \`${formatStringList(settings.runtime.allowedEngines)}\``,
+    `*Selectable engines:* \`${formatStringList(settings.runtime.selectableEngines)}\``,
     `*Endpoint:* ${
       settings.runtime.endpointUrl ? `\`${settings.runtime.endpointUrl}\`` : "`none`"
     }`,
@@ -2944,7 +2960,7 @@ export function buildAgentConfigModalView(input: {
           initial_option: agentConfigRuntimeEngineOption(
             settings.runtime.engine as AgentRuntimeEngine
           ),
-          options: settings.runtime.allowedEngines.map((engine) =>
+          options: runtimeEngineModalOptions(settings).map((engine) =>
             agentConfigRuntimeEngineOption(engine as AgentRuntimeEngine)
           )
         }
@@ -3028,6 +3044,12 @@ function agentConfigRuntimeEngineOption(value: AgentRuntimeEngine) {
   } as const;
 }
 
+function runtimeEngineModalOptions(settings: AgentHomeSettingsView): string[] {
+  return settings.runtime.selectableEngines.length > 0
+    ? settings.runtime.selectableEngines
+    : [settings.runtime.engine];
+}
+
 function isAgentRuntimeEngine(value: string): value is AgentRuntimeEngine {
   return agentRuntimeEngines.includes(value as AgentRuntimeEngine);
 }
@@ -3058,7 +3080,8 @@ export function buildAgentConfigSavedModalView(policyChanged: boolean): View {
 }
 
 function parseAgentConfigModalSubmission(
-  body: unknown
+  body: unknown,
+  selection: RuntimeEngineSelection
 ):
   | { ok: true; values: AgentConfigModalValues }
   | { ok: false; errors: Record<string, string> } {
@@ -3103,6 +3126,14 @@ function parseAgentConfigModalSubmission(
   }
   if (!isAgentRuntimeEngine(runtimeEngine)) {
     errors.agent_config_runtime_engine = "Choose a supported runtime engine.";
+  } else {
+    const validation = validateAgentRuntimeEngineSelection(
+      selection,
+      runtimeEngine
+    );
+    if (validation) {
+      errors.agent_config_runtime_engine = validation.modalError;
+    }
   }
 
   if (Object.keys(errors).length > 0) {
@@ -3125,8 +3156,17 @@ function parseAgentConfigModalSubmission(
 function applyAgentConfigModalValues(input: {
   store: TokenStore;
   principal: { workspaceId: string; slackUserId: string };
+  selection: RuntimeEngineSelection;
   values: AgentConfigModalValues;
 }): void {
+  const runtimeEngineValidation = validateAgentRuntimeEngineSelection(
+    input.selection,
+    input.values.runtimeEngine
+  );
+  if (runtimeEngineValidation) {
+    throw new Error(runtimeEngineValidation.modalError);
+  }
+
   input.store.upsertUserPreference({
     workspaceId: input.principal.workspaceId,
     slackUserId: input.principal.slackUserId,
@@ -3398,17 +3438,17 @@ export function applyAgentUserConfigSet(input: {
     store: input.store,
     principal
   });
-  if (
-    key === "runtime.engine" &&
-    !beforeSelection.allowedEngines.includes(parsed.value as AgentRuntimeEngine)
-  ) {
-    return {
-      response_type: "ephemeral",
-      text: [
-        `Runtime engine \`${parsed.value}\` is not allowed in this workspace.`,
-        `Allowed engines: \`${formatStringList(beforeSelection.allowedEngines)}\`.`
-      ].join("\n")
-    };
+  if (key === "runtime.engine") {
+    const validation = validateAgentRuntimeEngineSelection(
+      beforeSelection,
+      parsed.value as AgentRuntimeEngine
+    );
+    if (validation) {
+      return {
+        response_type: "ephemeral",
+        text: validation.text
+      };
+    }
   }
 
   input.store.upsertUserPreference({
@@ -3441,6 +3481,41 @@ export function applyAgentUserConfigSet(input: {
       })
     ].join("\n")
   };
+}
+
+export function validateAgentRuntimeEngineSelection(
+  selection: RuntimeEngineSelection,
+  engine: AgentRuntimeEngine
+): { text: string; modalError: string } | null {
+  if (!selection.allowedEngines.includes(engine)) {
+    const text = [
+      `Runtime engine \`${engine}\` is not allowed in this workspace.`,
+      `Allowed engines: \`${formatStringList(selection.allowedEngines)}\`.`
+    ].join("\n");
+    return {
+      text,
+      modalError: `Runtime engine ${engine} is no longer allowed in this workspace.`
+    };
+  }
+
+  if (!selection.selectableEngines.includes(engine)) {
+    const compatibility = selection.compatibility.find(
+      (entry) => entry.engine === engine
+    );
+    const reasons = compatibility?.reasons ?? ["unknown"];
+    const text = [
+      `Runtime engine \`${engine}\` is not selectable yet because it does not meet the required runtime contract.`,
+      `Reason: \`${formatStringList(reasons)}\`.`
+    ].join("\n");
+    return {
+      text,
+      modalError: `Runtime engine ${engine} is not selectable: ${formatStringList(
+        reasons
+      )}.`
+    };
+  }
+
+  return null;
 }
 
 export async function restartAgentRuntimeIfConfigChanged(input: {

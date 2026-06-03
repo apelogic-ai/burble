@@ -31,11 +31,14 @@ import {
   parseAgentCommand,
   parseAuthCommand,
   restartAgentRuntimeIfConfigChanged,
+  runtimeImageForEngine,
   shouldHandleDirectMessageEvent,
-  summarizeSlackPayload
+  summarizeSlackPayload,
+  validateAgentRuntimeEngineSelection
 } from "../src/slack";
 import type { Config } from "../src/config";
 import { createTokenStore } from "../src/db";
+import { resolveRuntimeEngineForPrincipal } from "../src/agent/runtime-policy";
 
 const agentConfig: Config = {
   slackBotToken: "xoxb-test",
@@ -510,6 +513,27 @@ describe("buildAppHomeView", () => {
     expect(serialized).toContain("\"value\":\"on\"");
   });
 
+  test("omits allowed but incompatible runtime engines from the settings modal", () => {
+    const store = createTokenStore(":memory:");
+    store.upsertWorkspacePolicy({
+      workspaceId: "T123",
+      key: "runtime.allowedEngines",
+      value: ["burble-direct", "deterministic"],
+      updatedBySlackUserId: "UADMIN"
+    });
+    const view = buildAgentConfigModalView({
+      config: agentConfig,
+      store,
+      workspaceId: "T123",
+      slackUserId: "U123"
+    });
+    const serialized = JSON.stringify(view);
+
+    expect(serialized).toContain("\"value\":\"burble-direct\"");
+    expect(serialized).not.toContain("\"value\":\"deterministic\"");
+    store.close();
+  });
+
   test("builds an agent runtime management modal", () => {
     const store = createTokenStore(":memory:");
     const runtime = store.getOrCreateAgentRuntime({
@@ -808,8 +832,13 @@ describe("buildAgentStatusResponse", () => {
     expect(settings.runtime.engine).toBe("hermes");
     expect(settings.runtime.preferredEngine).toBe("hermes");
     expect(settings.runtime.allowedEngines).toEqual(["burble-direct", "hermes"]);
+    expect(settings.runtime.selectableEngines).toEqual([
+      "burble-direct",
+      "hermes"
+    ]);
     expect(blocks).toContain("http://hermes-runtime:8080");
     expect(blocks).toContain("Preferred engine");
+    expect(blocks).toContain("Selectable engines");
     store.close();
   });
 });
@@ -977,6 +1006,23 @@ describe("agent user config commands", () => {
     store.close();
   });
 
+  test("selects runtime images without dropping pinned custom images", () => {
+    const customConfig = {
+      ...agentConfig,
+      agentRuntimeImage: "ghcr.io/acme/burble-runtime:prod"
+    };
+
+    expect(runtimeImageForEngine(customConfig, "burble-direct")).toBe(
+      "ghcr.io/acme/burble-runtime:prod"
+    );
+    expect(runtimeImageForEngine(customConfig, "hermes")).toBe(
+      "ghcr.io/acme/burble-runtime:prod"
+    );
+    expect(runtimeImageForEngine(agentConfig, "hermes")).toBe(
+      "burble-nemo-hermes:dev"
+    );
+  });
+
   test("rejects runtime engine preferences outside workspace policy", () => {
     const store = createTokenStore(":memory:");
 
@@ -992,6 +1038,64 @@ describe("agent user config commands", () => {
     expect(response.text).toContain("not allowed in this workspace");
     expect(
       store.getUserPreference("T123", "U123", "runtime.engine")
+    ).toBeNull();
+    store.close();
+  });
+
+  test("rejects allowed runtime engine preferences that fail compatibility", () => {
+    const store = createTokenStore(":memory:");
+    store.upsertWorkspacePolicy({
+      workspaceId: "T123",
+      key: "runtime.allowedEngines",
+      value: ["burble-direct", "deterministic"],
+      updatedBySlackUserId: "UADMIN"
+    });
+
+    const response = applyAgentUserConfigSet({
+      config: agentConfig,
+      store,
+      workspaceId: "T123",
+      slackUserId: "U123",
+      key: "runtime.engine",
+      value: "deterministic"
+    });
+
+    expect(response.text).toContain("is not selectable yet");
+    expect(response.text).toContain("missing usage reporting");
+    expect(
+      store.getUserPreference("T123", "U123", "runtime.engine")
+    ).toBeNull();
+    store.close();
+  });
+
+  test("validates modal runtime engine selections against current policy", () => {
+    const store = createTokenStore(":memory:");
+    store.upsertWorkspacePolicy({
+      workspaceId: "T123",
+      key: "runtime.allowedEngines",
+      value: ["burble-direct", "deterministic"],
+      updatedBySlackUserId: "UADMIN"
+    });
+    const selection = resolveRuntimeEngineForPrincipal({
+      config: agentConfig,
+      store,
+      principal: {
+        workspaceId: "T123",
+        slackUserId: "U123"
+      }
+    });
+
+    expect(validateAgentRuntimeEngineSelection(selection, "hermes")).toMatchObject({
+      modalError:
+        "Runtime engine hermes is no longer allowed in this workspace."
+    });
+    expect(
+      validateAgentRuntimeEngineSelection(selection, "deterministic")
+    ).toMatchObject({
+      modalError: "Runtime engine deterministic is not selectable: missing usage reporting."
+    });
+    expect(
+      validateAgentRuntimeEngineSelection(selection, "burble-direct")
     ).toBeNull();
     store.close();
   });

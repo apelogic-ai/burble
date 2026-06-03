@@ -4,6 +4,7 @@ import type { AgentRuntimeRecord, TokenStore, WorkspacePolicyRecord } from "../d
 import { providerToolCatalog } from "../providers/catalog";
 import { buildRuntimeManifest, type RuntimeManifest } from "./runtime-manifest";
 import type { PrincipalId } from "./runtime-factory";
+import type { RuntimeCapabilityManifest } from "./runtime-contract";
 
 export const defaultWorkspaceRuntimePolicy = {
   memory: {
@@ -27,7 +28,25 @@ export type RuntimeEngineSelection = {
   effectiveEngine: RuntimeManifest["runtime"]["engine"];
   preferredEngine: RuntimeManifest["runtime"]["engine"] | null;
   allowedEngines: RuntimeManifest["runtime"]["engine"][];
+  selectableEngines: RuntimeManifest["runtime"]["engine"][];
+  compatibility: RuntimeEngineCompatibility[];
 };
+
+export type RuntimeEngineCompatibility = {
+  engine: RuntimeManifest["runtime"]["engine"];
+  selectable: boolean;
+  reasons: string[];
+};
+
+export class RuntimeEngineSelectionError extends Error {
+  constructor(
+    message: string,
+    readonly selection: Omit<RuntimeEngineSelection, "effectiveEngine">
+  ) {
+    super(message);
+    this.name = "RuntimeEngineSelectionError";
+  }
+}
 
 export function resolveRuntimeEngineForPrincipal(input: {
   config: Config;
@@ -40,22 +59,138 @@ export function resolveRuntimeEngineForPrincipal(input: {
     store: input.store,
     workspaceId: input.principal.workspaceId
   });
+  const compatibility = allowedEngines.map((engine) =>
+    runtimeEngineCompatibility(engine)
+  );
+  const selectableEngines = compatibility
+    .filter((entry) => entry.selectable)
+    .map((entry) => entry.engine);
   const preferredEngine = readUserRuntimeEnginePreference({
     store: input.store,
     principal: input.principal
   });
+  const fallbackEngine = selectableEngines[0];
+  if (!fallbackEngine) {
+    throw new RuntimeEngineSelectionError(
+      [
+        "No selectable runtime engines are available for this workspace.",
+        ...compatibility.map((entry) => {
+          const reasons =
+            entry.reasons.length > 0 ? entry.reasons.join(", ") : "unknown";
+          return `${entry.engine}: ${reasons}`;
+        })
+      ].join(" "),
+      {
+        configuredEngine,
+        preferredEngine,
+        allowedEngines,
+        selectableEngines,
+        compatibility
+      }
+    );
+  }
   const effectiveEngine =
-    preferredEngine && allowedEngines.includes(preferredEngine)
+    preferredEngine && selectableEngines.includes(preferredEngine)
       ? preferredEngine
-      : allowedEngines.includes(configuredEngine)
+      : selectableEngines.includes(configuredEngine)
         ? configuredEngine
-        : (allowedEngines[0] ?? configuredEngine);
+        : fallbackEngine;
 
   return {
     configuredEngine,
     effectiveEngine,
     preferredEngine,
-    allowedEngines
+    allowedEngines,
+    selectableEngines,
+    compatibility
+  };
+}
+
+export function runtimeEngineCompatibility(
+  engine: RuntimeManifest["runtime"]["engine"]
+): RuntimeEngineCompatibility {
+  const manifest = knownRuntimeCapabilityManifest(engine);
+  const reasons: string[] = [];
+  if (!manifest.transports.includes("http")) {
+    reasons.push("missing HTTP transport");
+  }
+  if (!manifest.transports.includes("websocket")) {
+    reasons.push("missing WebSocket run events");
+  }
+  if (!manifest.toolCalls) {
+    reasons.push("missing tool calls");
+  }
+  if (!manifest.toolBridgeModes.includes("tool_gateway")) {
+    reasons.push("missing Burble tool gateway bridge");
+  }
+  if (!manifest.scheduledProviderCalls) {
+    reasons.push("missing scheduled provider calls");
+  }
+  if (!manifest.conversationSend) {
+    reasons.push("missing conversation delivery");
+  }
+  if (!manifest.jobScopedAuth) {
+    reasons.push("missing job-scoped auth");
+  }
+  if (manifest.usageReporting === "none") {
+    reasons.push("missing usage reporting");
+  }
+
+  return {
+    engine,
+    selectable: reasons.length === 0,
+    reasons
+  };
+}
+
+export function knownRuntimeCapabilityManifest(
+  engine: RuntimeManifest["runtime"]["engine"]
+): RuntimeCapabilityManifest {
+  const openClawFamily =
+    engine === "deterministic" ||
+    engine === "openclaw" ||
+    engine === "openclaw-gateway" ||
+    engine === "burble-direct";
+  if (openClawFamily) {
+    return {
+      runtimeType: engine,
+      version: "known",
+      transports: ["http", "sse", "ndjson", "websocket"],
+      streaming: true,
+      cancellation: false,
+      nativeScheduler: true,
+      scheduledProviderCalls: true,
+      toolCalls: true,
+      toolBridgeModes: ["tool_gateway", "mcp"],
+      usageReporting: engine === "deterministic" ? "none" : "exact",
+      multimodalInput: true,
+      multimodalOutput: false,
+      memory: true,
+      durableWorkflowState: true,
+      attachments: true,
+      conversationSend: true,
+      jobScopedAuth: true
+    };
+  }
+
+  return {
+    runtimeType: "hermes",
+    version: "known",
+    transports: ["http", "websocket"],
+    streaming: true,
+    cancellation: false,
+    nativeScheduler: true,
+    scheduledProviderCalls: true,
+    toolCalls: true,
+    toolBridgeModes: ["tool_gateway", "mcp"],
+    usageReporting: "exact",
+    multimodalInput: false,
+    multimodalOutput: false,
+    memory: false,
+    durableWorkflowState: true,
+    attachments: false,
+    conversationSend: true,
+    jobScopedAuth: true
   };
 }
 
