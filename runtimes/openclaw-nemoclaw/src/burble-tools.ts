@@ -428,6 +428,10 @@ function toMcpToolName(toolName: string): string {
     case "google_update_calendar_event":
     case "google_search_mail_messages":
     case "gmail_create_draft":
+    case "hubspot_get_authenticated_user":
+    case "hubspot_search_contacts":
+    case "hubspot_search_companies":
+    case "hubspot_search_deals":
     case "jira_get_authenticated_user":
     case "jira_list_accessible_resources":
     case "jira_list_visible_projects":
@@ -513,6 +517,14 @@ function toMcpToolName(toolName: string): string {
       return "google_search_mail_messages";
     case "gmail.createDraft":
       return "gmail_create_draft";
+    case "hubspot.getAuthenticatedUser":
+      return "hubspot_get_authenticated_user";
+    case "hubspot.searchContacts":
+      return "hubspot_search_contacts";
+    case "hubspot.searchCompanies":
+      return "hubspot_search_companies";
+    case "hubspot.searchDeals":
+      return "hubspot_search_deals";
     case "jira.getAuthenticatedUser":
       return "jira_get_authenticated_user";
     case "jira.listAccessibleResources":
@@ -906,6 +918,17 @@ function toMcpToolArgumentsWithoutScheduledJobIdentity(
       "body",
       "cc",
       "bcc"
+    ]);
+  }
+
+  if (
+    toolName === "hubspot.searchContacts" ||
+    toolName === "hubspot.searchCompanies" ||
+    toolName === "hubspot.searchDeals"
+  ) {
+    return compactToolInput(readRecordKey(body, "input"), [
+      "query",
+      "limit"
     ]);
   }
 

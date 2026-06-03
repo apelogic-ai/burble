@@ -1737,6 +1737,45 @@ async function buildToolCatalog(
     );
   }
 
+  const hubspot = request.input.connections.hubspot;
+  if (hubspot?.connected && hubspot.email) {
+    catalog.push(
+      {
+        name: "hubspot.getAuthenticatedUser",
+        description:
+          "Return the HubSpot identity connected to the requesting Slack user.",
+        inputSchema: {}
+      },
+      {
+        name: "hubspot.searchContacts",
+        description:
+          "Search HubSpot CRM contacts visible to the requesting Slack user's connected HubSpot account.",
+        inputSchema: {
+          query: "optional string contact name, email, company, or other search terms",
+          limit: "optional integer 1-20"
+        }
+      },
+      {
+        name: "hubspot.searchCompanies",
+        description:
+          "Search HubSpot CRM companies visible to the requesting Slack user's connected HubSpot account.",
+        inputSchema: {
+          query: "optional string company name, domain, or other search terms",
+          limit: "optional integer 1-20"
+        }
+      },
+      {
+        name: "hubspot.searchDeals",
+        description:
+          "Search HubSpot CRM deals visible to the requesting Slack user's connected HubSpot account.",
+        inputSchema: {
+          query: "optional string deal name, company, contact, or other search terms",
+          limit: "optional integer 1-20"
+        }
+      }
+    );
+  }
+
   const jira = request.input.connections.jira;
   if (jira?.connected && jira.email) {
     catalog.push(
@@ -1926,6 +1965,9 @@ function toolGroupsForToolName(toolName: string): RuntimeToolGroup[] {
     toolName.startsWith("gmail_")
   ) {
     return ["google"];
+  }
+  if (toolName.startsWith("hubspot.") || toolName.startsWith("hubspot_")) {
+    return ["hubspot"];
   }
   if (
     toolName.startsWith("jira.") ||
@@ -2118,6 +2160,14 @@ function mcpToolNameToBurbleToolName(name: string): string | null {
       return "google.searchMailMessages";
     case "gmail_create_draft":
       return "gmail.createDraft";
+    case "hubspot_get_authenticated_user":
+      return "hubspot.getAuthenticatedUser";
+    case "hubspot_search_contacts":
+      return "hubspot.searchContacts";
+    case "hubspot_search_companies":
+      return "hubspot.searchCompanies";
+    case "hubspot_search_deals":
+      return "hubspot.searchDeals";
     case "jira_get_authenticated_user":
       return "jira.getAuthenticatedUser";
     case "jira_list_accessible_resources":
@@ -2177,6 +2227,12 @@ function isDiscoveredProviderToolAvailable(
         request.input.connections.google.email
     );
   }
+  if (toolName.startsWith("hubspot.")) {
+    return Boolean(
+      request.input.connections.hubspot?.connected &&
+        request.input.connections.hubspot.email
+    );
+  }
   if (toolName.startsWith("jira.") || toolName.startsWith("atlassian.")) {
     return Boolean(
       request.input.connections.jira?.connected &&
@@ -2199,6 +2255,8 @@ function hasConnectedProvider(request: RunRequest): boolean {
       request.input.connections.github.email) ||
       (request.input.connections.google?.connected &&
         request.input.connections.google.email) ||
+      (request.input.connections.hubspot?.connected &&
+        request.input.connections.hubspot.email) ||
       (request.input.connections.jira?.connected &&
         request.input.connections.jira.email) ||
       (request.input.connections.slack?.connected &&
@@ -2690,6 +2748,7 @@ function buildBurbleDirectPrompt(
       "For Jira tickets assigned to a resolved person, call jira.searchIssues with that person's Jira accountId in JQL. If the user asks who they assigned to that person, state that the result reflects current visible assignee unless Jira changelog data is explicitly available.",
       "For Slack questions about what someone said, call slack.searchMessages. For 'what did I say about X', pass the requesting Slack user ID as fromUserId. For named Slack people, call slack.searchUsers first if you need their Slack user ID.",
       "For Google Drive, Calendar, or Gmail questions, call google.searchDriveFiles, google.createDriveTextFile, google.searchCalendarEvents, or google.searchMailMessages.",
+      "For HubSpot CRM questions about contacts, companies, or deals, call hubspot.searchContacts, hubspot.searchCompanies, or hubspot.searchDeals.",
       "For final answers, return concise Slack mrkdwn."
     ].join(" "),
     "",
@@ -3052,6 +3111,10 @@ function readToolEmail(toolName: string, request: RunRequest): string | null {
 
   if (toolName.startsWith("google.")) {
     return request.input.connections.google?.email ?? null;
+  }
+
+  if (toolName.startsWith("hubspot.")) {
+    return request.input.connections.hubspot?.email ?? null;
   }
 
   return null;
