@@ -112,17 +112,22 @@ cross-turn collision goes away), and prompt-threaded continuity is unchanged.
 
 ### 2. Slim the per-turn prompt — token hygiene (secondary)
 
-Even ephemeral, each turn ships an ~8–10k-char prompt dominated by the 56-tool
-catalog and static boilerplate.
+Even ephemeral, each turn ships a large static prompt/tool base. Warm prompt
+caching hides most of the billing impact, but the runtime still pays cold-start
+tokens and per-turn schema preparation latency.
 
-- Tools are already exposed to the agent via MCP (`tools/list count=56`).
-  Audit whether `formatToolCatalog(...)` pasted into the prompt is redundant
+- The prompt catalog is already filtered by the selected `toolGroups`, but the
+  runtime MCP registry is not: OpenClaw still sees the full `tools/list`
+  payload, including provider schemas that are irrelevant to a pure chat or
+  conversation-only turn. Carry the per-turn `toolGroups` into the local Burble
+  MCP `tools/list` path and filter schemas there too.
+- Audit whether `formatToolCatalog(...)` pasted into the prompt is redundant
   with the MCP tool registry; if so, drop or shrink it (names only, or rely on
   MCP). Move static skills/policy text to `systemPromptOverride`
-  (`llm-config.ts`) — system instructions are not re-billed as conversational
-  turns the way the `input` is.
+  (`llm-config.ts`) where possible.
 - Expected effect: smaller per-turn input regardless of session strategy; also
-  shrinks each step in multi-step tool turns.
+  lower cold first-turn cost, lower displayed total token volume, and less
+  per-turn schema serialization latency.
 
 ### 3. Right-size the compaction/context budget — defense in depth
 

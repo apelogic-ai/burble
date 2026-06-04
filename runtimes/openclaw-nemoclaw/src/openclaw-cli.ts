@@ -3697,7 +3697,7 @@ function readModelUsage(text: string): ModelUsage | null {
     (typeof inputTokens === "number" && typeof outputTokens === "number"
       ? inputTokens + outputTokens
       : undefined);
-  const cachedInputTokens = readNumberFieldTotal(text, [
+  const explicitCachedInputTokens = readNumberFieldTotal(text, [
     "cached_tokens",
     "cachedInputTokens",
     "cache_read_input_tokens"
@@ -3706,6 +3706,16 @@ function readModelUsage(text: string): ModelUsage | null {
     "reasoning_tokens",
     "reasoningTokens"
   ]);
+  const inferredCachedInputTokens =
+    explicitCachedInputTokens === undefined &&
+    typeof totalTokens === "number" &&
+    typeof inputTokens === "number" &&
+    typeof outputTokens === "number" &&
+    totalTokens > inputTokens + outputTokens
+      ? totalTokens - inputTokens - outputTokens
+      : undefined;
+  const cachedInputTokens =
+    explicitCachedInputTokens ?? inferredCachedInputTokens;
 
   if (
     inputTokens === undefined &&

@@ -747,6 +747,41 @@ describe("runOpenClawCliRequest", () => {
     });
   });
 
+  test("infers cached provider tokens when OpenClaw total includes cached input", async () => {
+    const response = await runOpenClawCliRequest(
+      {
+        runId: "run-inferred-cache",
+        input: {
+          text: "hey agent",
+          connections: {
+            github: { connected: false }
+          }
+        }
+      },
+      config,
+      async () => ({
+        classification: "user_private",
+        content: []
+      }),
+      async () => ({
+        exitCode: 0,
+        stdout: [
+          '[openai-transport] usage={"input_tokens":1701,"output_tokens":23,"total_tokens":22588}',
+          JSON.stringify({ response: { text: "Hey - how can I help?" } })
+        ].join("\n"),
+        stderr: ""
+      }),
+      () => undefined
+    );
+
+    expect(response.response.usage).toEqual({
+      inputTokens: 1701,
+      outputTokens: 23,
+      totalTokens: 22588,
+      cachedInputTokens: 20864
+    });
+  });
+
   test("logs OpenClaw internal model usage diagnostics when exact tokens are absent", async () => {
     const logs: string[] = [];
 
