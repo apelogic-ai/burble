@@ -69,18 +69,25 @@ describe("buildHubSpotOAuthUrl", () => {
       "https://example.ngrok-free.app/oauth/hubspot/callback"
     );
     expect(url.searchParams.get("state")).toBe("state-123");
-    const scopes = url.searchParams.get("scope")?.split(" ") ?? [];
-    expect(scopes).toHaveLength(61);
-    expect(scopes).toContain("oauth");
-    expect(scopes).toContain("crm.objects.contacts.read");
-    expect(scopes).toContain("crm.objects.companies.read");
-    expect(scopes).toContain("crm.objects.deals.read");
-    expect(scopes).toContain("crm.objects.custom.read");
-    expect(scopes).toContain("settings.users.read");
-    expect(scopes).not.toContain("behavioral_events.event_definitions.read");
-    expect(scopes).not.toContain("crm.objects.feedback_submission.read");
-    expect(scopes).not.toContain("document.read");
-    expect(scopes).not.toContain("crm.dealsplits.read");
+    const requiredScopes = url.searchParams.get("scope")?.split(" ") ?? [];
+    const optionalScopes =
+      url.searchParams.get("optional_scope")?.split(" ") ?? [];
+    expect(requiredScopes).toEqual([
+      "oauth",
+      "crm.objects.companies.read",
+      "crm.objects.contacts.read",
+      "crm.objects.deals.read"
+    ]);
+    expect(optionalScopes).toHaveLength(57);
+    expect(optionalScopes).toContain("crm.objects.custom.read");
+    expect(optionalScopes).toContain("settings.users.read");
+    expect(optionalScopes).not.toContain("crm.objects.contacts.read");
+    expect(optionalScopes).not.toContain("crm.objects.companies.read");
+    expect(optionalScopes).not.toContain("crm.objects.deals.read");
+    expect(optionalScopes).not.toContain("behavioral_events.event_definitions.read");
+    expect(optionalScopes).not.toContain("crm.objects.feedback_submission.read");
+    expect(optionalScopes).not.toContain("document.read");
+    expect(optionalScopes).not.toContain("crm.dealsplits.read");
   });
 });
 

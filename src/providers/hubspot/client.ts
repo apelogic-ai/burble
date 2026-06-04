@@ -34,8 +34,14 @@ export class HubSpotApiError extends Error {
   }
 }
 
-const hubSpotScopes = [
+const hubSpotRequiredScopes = [
   "oauth",
+  "crm.objects.companies.read",
+  "crm.objects.contacts.read",
+  "crm.objects.deals.read"
+];
+
+const hubSpotOptionalScopes = [
   "account-info.security.read",
   "automation.sequences.read",
   "business_units_view.read",
@@ -52,11 +58,8 @@ const hubSpotScopes = [
   "crm.objects.appointments.read",
   "crm.objects.carts.read",
   "crm.objects.commercepayments.read",
-  "crm.objects.companies.read",
-  "crm.objects.contacts.read",
   "crm.objects.courses.read",
   "crm.objects.custom.read",
-  "crm.objects.deals.read",
   "crm.objects.goals.read",
   "crm.objects.invoices.read",
   "crm.objects.leads.read",
@@ -133,7 +136,8 @@ export function buildHubSpotOAuthUrl(config: Config, state: string): string {
   const url = new URL("https://app.hubspot.com/oauth/authorize");
   url.searchParams.set("client_id", config.hubspotClientId);
   url.searchParams.set("redirect_uri", `${config.baseUrl}/oauth/hubspot/callback`);
-  url.searchParams.set("scope", hubSpotScopes.join(" "));
+  url.searchParams.set("scope", hubSpotRequiredScopes.join(" "));
+  url.searchParams.set("optional_scope", hubSpotOptionalScopes.join(" "));
   url.searchParams.set("state", state);
   return url.toString();
 }
