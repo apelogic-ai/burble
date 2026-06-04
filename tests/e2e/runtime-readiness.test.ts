@@ -60,6 +60,12 @@ runtimeReadinessDescribe("runtime readiness e2e", () => {
             fetch: runtimeFetch
           });
           runtimeId = report.runtimeId;
+          if (engine === "openclaw") {
+            await assertContainerLogsContain(
+              new URL(report.endpointUrl).hostname,
+              "OpenClaw gateway ready"
+            );
+          }
           expect(report.signals.map((signal) => signal.name)).toEqual([
             "runtime.created",
             "runtime.container_started",
@@ -80,7 +86,7 @@ runtimeReadinessDescribe("runtime readiness e2e", () => {
 });
 
 function e2eRuntimeEngines(): AgentRuntimeEngine[] {
-  const raw = Bun.env.BURBLE_E2E_RUNTIME_ENGINES ?? "openclaw-gateway,hermes";
+  const raw = Bun.env.BURBLE_E2E_RUNTIME_ENGINES ?? "openclaw,hermes";
   return raw.split(",").map((engine) => normalizeRuntimeEngine(engine.trim()));
 }
 
@@ -188,6 +194,26 @@ async function assertContainerAttachedToNetwork(
       `docker inspect did not find ${containerName} on ${network}: ${
         stderr.trim() || stdout.trim()
       }`
+    );
+  }
+}
+
+async function assertContainerLogsContain(
+  containerName: string,
+  expected: string
+): Promise<void> {
+  const { code, stdout, stderr } = await runCommand("docker", [
+    "logs",
+    containerName
+  ]);
+  if (code !== 0) {
+    throw new Error(
+      `docker logs failed for ${containerName}: ${stderr.trim() || stdout.trim()}`
+    );
+  }
+  if (!stdout.includes(expected) && !stderr.includes(expected)) {
+    throw new Error(
+      `docker logs for ${containerName} did not contain ${JSON.stringify(expected)}`
     );
   }
 }
