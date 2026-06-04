@@ -101,9 +101,10 @@ cross-turn collision goes away), and prompt-threaded continuity is unchanged.
   retries also use fresh session keys per attempt so failed attempts do not
   re-bloat the step history. Still confirm with the E2E in step 5.
 - Follow-up from live testing: fresh sessions exposed OpenClaw's quickstart
-  bootstrap file. Setup now removes `BOOTSTRAP.md` from the workspace after
-  onboard and on cache-hit startup, and the generated system prompt explicitly
-  tells the runtime not to run or mention bootstrap/onboarding flows.
+  bootstrap flow. The generated patch now puts `skipBootstrap` and
+  `contextInjection: "never"` on the concrete agent entry, not only
+  `agents.defaults`; setup also best-effort removes any stale `BOOTSTRAP.md`
+  left in the workspace after onboard or on cache-hit startup.
 - **Decision check:** confirm product intent — Burble owning conversation memory
   (via `recentMessages`) is the current de-facto behavior, so this formalizes
   it rather than changing it.

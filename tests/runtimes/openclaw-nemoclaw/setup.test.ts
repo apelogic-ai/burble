@@ -320,6 +320,33 @@ describe("ensureOpenClawSetup", () => {
     );
   });
 
+  test("logs and continues when bootstrap cleanup is not possible", async () => {
+    const workspaceDir = await mkdtemp(join(tmpdir(), "burble-openclaw-workspace-"));
+    const runtimeConfig = await configWithState({
+      openClawSetupOnStart: false,
+      openClawValidateOnStart: false,
+      openClawWorkspaceDir: workspaceDir
+    });
+    const bootstrapPath = join(workspaceDir, "BOOTSTRAP.md");
+    await mkdir(bootstrapPath);
+    const calls: string[][] = [];
+    const logs: string[] = [];
+
+    await ensureOpenClawSetup(
+      runtimeConfig,
+      async (_command, args) => {
+        calls.push(args);
+        return { exitCode: 0, stdout: "", stderr: "" };
+      },
+      (message) => logs.push(message)
+    );
+
+    expect(calls).toEqual([["config", "patch", "--file", llmPatchPath(runtimeConfig)]]);
+    expect(logs.some((line) => line.includes("OpenClaw bootstrap file removal skipped"))).toBe(
+      true
+    );
+  });
+
   test("applies an optional config patch before validation", async () => {
     const calls: string[][] = [];
     const patchPath = await writePatchFile("{ model: 'test' }\n");
@@ -419,6 +446,10 @@ describe("ensureOpenClawSetup", () => {
       expect.objectContaining({
         id: "burble",
         default: true,
+        skills: [],
+        contextInjection: "never",
+        skipBootstrap: true,
+        systemPromptOverride: generatedPatch.agents.defaults.systemPromptOverride,
         identity: {
           name: "Burble",
           theme: "Slack assistant",
@@ -458,6 +489,10 @@ describe("ensureOpenClawSetup", () => {
       {
         id: "burble",
         default: true,
+        skills: [],
+        contextInjection: "never",
+        skipBootstrap: true,
+        systemPromptOverride: generatedPatch.agents.defaults.systemPromptOverride,
         identity: {
           name: "Burble",
           theme: "Slack assistant",
@@ -465,16 +500,6 @@ describe("ensureOpenClawSetup", () => {
         }
       }
     ]);
-    expect(JSON.stringify(generatedPatch.agents.list)).not.toContain(
-      "skipBootstrap"
-    );
-    expect(JSON.stringify(generatedPatch.agents.list)).not.toContain(
-      "contextInjection"
-    );
-    expect(JSON.stringify(generatedPatch.agents.list)).not.toContain(
-      "systemPromptOverride"
-    );
-    expect(JSON.stringify(generatedPatch.agents.list)).not.toContain("skills");
     expect(JSON.stringify(generatedPatch.agents.list)).not.toContain("nature");
     expect(JSON.stringify(generatedPatch.agents.list)).not.toContain("vibe");
     expect(generatedPatch.memory.qmd.update.startup).toBe("off");

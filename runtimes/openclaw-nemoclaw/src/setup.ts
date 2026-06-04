@@ -91,7 +91,9 @@ async function removeOpenClawBootstrapFile(
     if (isMissingFileError(error)) {
       return;
     }
-    throw error;
+    logInfo(
+      `OpenClaw bootstrap file removal skipped path=${bootstrapPath} error=${error instanceof Error ? error.message : String(error)}`
+    );
   }
 }
 
@@ -180,6 +182,10 @@ function buildOpenClawNemoClawAgentConfig(
     {
       id: config.openClawAgent,
       default: true,
+      skills: [],
+      contextInjection: "never",
+      skipBootstrap: true,
+      systemPromptOverride: defaults.systemPromptOverride,
       identity: {
         name: "Burble",
         theme: "Slack assistant",
