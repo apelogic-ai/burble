@@ -2971,7 +2971,7 @@ describe("runOpenClawCliRequest", () => {
           headers: new Headers(init?.headers),
           body: JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>
         });
-        if (requests.length === 1) {
+        if (requests.length <= 2) {
           return new Response(
             JSON.stringify({
               status: "failed",
@@ -3019,8 +3019,15 @@ describe("runOpenClawCliRequest", () => {
     );
 
     expect(response.response.text).toBe("Gateway answer.");
-    expect(requests).toHaveLength(2);
+    expect(requests).toHaveLength(3);
     expect(requests[0].body.input).toBe(requests[1].body.input);
+    expect(requests[1].body.input).toBe(requests[2].body.input);
+    expect(requests[0].headers.get("x-openclaw-session-key")).not.toBe(
+      requests[1].headers.get("x-openclaw-session-key")
+    );
+    expect(requests[1].headers.get("x-openclaw-session-key")).not.toBe(
+      requests[2].headers.get("x-openclaw-session-key")
+    );
     expect(
       logs.some((line) =>
         line.includes(
@@ -3028,14 +3035,27 @@ describe("runOpenClawCliRequest", () => {
         )
       )
     ).toBe(true);
+    expect(
+      logs.some((line) =>
+        line.includes(
+          "OpenClaw gateway http retry runId=run-openclaw-retry step=1 attempt=2 status=408 reason=upstream_provider_timeout"
+        )
+      )
+    ).toBe(true);
   });
 
   test("retries retryable OpenClaw Gateway transport timeouts", async () => {
-    const requests: Array<Record<string, unknown>> = [];
+    const requests: Array<{
+      headers: Headers;
+      body: Record<string, unknown>;
+    }> = [];
     const logs: string[] = [];
     const response = await withMockFetch(
       (async (_input, init) => {
-        requests.push(JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>);
+        requests.push({
+          headers: new Headers(init?.headers),
+          body: JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>
+        });
         if (requests.length === 1) {
           const error = new Error("The operation timed out");
           error.name = "AbortError";
@@ -3070,6 +3090,10 @@ describe("runOpenClawCliRequest", () => {
 
     expect(response.response.text).toBe("Gateway answer.");
     expect(requests).toHaveLength(2);
+    expect(requests[0].body.input).toBe(requests[1].body.input);
+    expect(requests[0].headers.get("x-openclaw-session-key")).not.toBe(
+      requests[1].headers.get("x-openclaw-session-key")
+    );
     expect(
       logs.some((line) =>
         line.includes(
@@ -3079,7 +3103,7 @@ describe("runOpenClawCliRequest", () => {
     ).toBe(true);
   });
 
-  test("uses route-scoped Burble sessions for ordinary native conversation turns", async () => {
+  test("uses turn-scoped OpenClaw sessions with Burble channel routing", async () => {
     const requests: Array<{
       headers: Headers;
       body: Record<string, unknown>;
@@ -3150,10 +3174,13 @@ describe("runOpenClawCliRequest", () => {
     expect(requests).toHaveLength(2);
     expect(requests[0].headers.get("x-openclaw-message-channel")).toBe("burble");
     expect(requests[1].headers.get("x-openclaw-message-channel")).toBe("burble");
-    expect(requests[0].headers.get("x-openclaw-session-key")).toBe(
+    expect(requests[0].headers.get("x-openclaw-session-key")).not.toBe(
       requests[1].headers.get("x-openclaw-session-key")
     );
     expect(requests[0].headers.get("x-openclaw-session-key")).toStartWith(
+      "agent:main:explicit:burble-step-"
+    );
+    expect(requests[1].headers.get("x-openclaw-session-key")).toStartWith(
       "agent:main:explicit:burble-step-"
     );
     expect(String(requests[0].body.input)).toContain(

@@ -355,10 +355,10 @@ async function runOpenClawGatewayHttpRequest(
   step: number
 ): Promise<CliCommandResult> {
   const startedAt = Date.now();
-  const sessionKey = buildGatewayHttpSessionKey(config, sessionId);
+  const baseSessionKey = buildGatewayHttpSessionKey(config, sessionId);
   const endpoint = buildGatewayHttpResponsesUrl(config);
   logInfo(
-    `OpenClaw gateway http start runId=${request.runId ?? "unknown"} step=${step} agent=${config.openClawAgent} endpoint=/v1/responses timeoutMs=${config.openClawTimeoutMs}${summarizePromptForLog(prompt)} sessionKey=${sessionKey}`
+    `OpenClaw gateway http start runId=${request.runId ?? "unknown"} step=${step} agent=${config.openClawAgent} endpoint=/v1/responses timeoutMs=${config.openClawTimeoutMs}${summarizePromptForLog(prompt)} sessionKey=${baseSessionKey}`
   );
   logStreamDebug(config, logInfo, "prompt preview", {
     runId: request.runId ?? "unknown",
@@ -372,12 +372,20 @@ async function runOpenClawGatewayHttpRequest(
   const maxAttempts = 3;
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     const attemptStartedAt = Date.now();
+    const attemptSessionId = buildGatewayHttpAttemptSessionId(
+      sessionId,
+      attempt
+    );
+    const attemptSessionKey = buildGatewayHttpSessionKey(
+      config,
+      attemptSessionId
+    );
     try {
       const response = await fetchGatewayHttpResponse(
         endpoint,
         config,
         request,
-        sessionKey,
+        attemptSessionKey,
         prompt
       );
       const responseText = await response.text();
@@ -390,8 +398,12 @@ async function runOpenClawGatewayHttpRequest(
           attempt < maxAttempts &&
           isRetryableOpenClawGatewayProviderError(response.status, responseText)
         ) {
+          const nextSessionKey = buildGatewayHttpSessionKey(
+            config,
+            buildGatewayHttpAttemptSessionId(sessionId, attempt + 1)
+          );
           logInfo(
-            `OpenClaw gateway http retry runId=${request.runId ?? "unknown"} step=${step} attempt=${attempt} status=${response.status} reason=upstream_provider_timeout elapsedMs=${Date.now() - attemptStartedAt}`
+            `OpenClaw gateway http retry runId=${request.runId ?? "unknown"} step=${step} attempt=${attempt} status=${response.status} reason=upstream_provider_timeout elapsedMs=${Date.now() - attemptStartedAt} nextSessionKey=${nextSessionKey}`
           );
           continue;
         }
@@ -435,8 +447,12 @@ async function runOpenClawGatewayHttpRequest(
         attempt < maxAttempts &&
         isRetryableOpenClawGatewayTransportError(error)
       ) {
+        const nextSessionKey = buildGatewayHttpSessionKey(
+          config,
+          buildGatewayHttpAttemptSessionId(sessionId, attempt + 1)
+        );
         logInfo(
-          `OpenClaw gateway http retry runId=${request.runId ?? "unknown"} step=${step} attempt=${attempt} reason=transport_error elapsedMs=${Date.now() - attemptStartedAt}${summarizeLogObject("error", stderr)}`
+          `OpenClaw gateway http retry runId=${request.runId ?? "unknown"} step=${step} attempt=${attempt} reason=transport_error elapsedMs=${Date.now() - attemptStartedAt} nextSessionKey=${nextSessionKey}${summarizeLogObject("error", stderr)}`
         );
         continue;
       }
@@ -899,6 +915,17 @@ function buildGatewayHttpSessionKey(
   sessionId: string
 ): string {
   return `agent:${config.openClawAgent}:explicit:${sessionId}`;
+}
+
+function buildGatewayHttpAttemptSessionId(
+  sessionId: string,
+  attempt: number
+): string {
+  if (attempt <= 1) {
+    return sessionId;
+  }
+
+  return `${sessionId}-attempt-${attempt}`;
 }
 
 function buildGatewayHttpResponsesUrl(config: RuntimeConfig): string {
@@ -3959,7 +3986,9 @@ async function readRawStreamForUsage(
 function buildRunSessionId(request: RunRequest): string {
   const channelSessionKey = buildBurbleChannelSessionKey(request);
   if (channelSessionKey) {
-    return `burble-channel-${hashSessionKey(channelSessionKey)}`;
+    return `burble-turn-${hashSessionKey(
+      `${channelSessionKey}:${buildRunSessionKey(request)}`
+    )}`;
   }
 
   return `burble-run-${hashSessionKey(
@@ -3967,8 +3996,8 @@ function buildRunSessionId(request: RunRequest): string {
   )}`;
 }
 
-function buildRunSessionScope(request: RunRequest): "run" | "channel" {
-  return buildBurbleChannelSessionKey(request) ? "channel" : "run";
+function buildRunSessionScope(request: RunRequest): "run" | "turn" {
+  return buildBurbleChannelSessionKey(request) ? "turn" : "run";
 }
 
 function buildStepSessionId(runSessionId: string, step: number): string {
