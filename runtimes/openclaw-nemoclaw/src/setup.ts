@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, unlink, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import type { RuntimeConfig } from "./config";
 import { buildOpenClawLlmPatch } from "./llm-config";
@@ -21,6 +21,7 @@ export async function ensureOpenClawSetup(
     }
     if (isOpenClawBackedEngine(config)) {
       logInfo("OpenClaw onboard skipped setupOnStart=false");
+      await removeOpenClawBootstrapFile(config, logInfo);
     }
     await ensureOpenClawConfig(config, runCommand, logInfo);
     return;
@@ -28,6 +29,7 @@ export async function ensureOpenClawSetup(
 
   const setupCacheKey = await buildSetupCacheKey(config);
   if (await isSetupCacheValid(config, setupCacheKey)) {
+    await removeOpenClawBootstrapFile(config, logInfo);
     logInfo("OpenClaw setup cached");
     logInfo(
       `OpenClaw setup cache hit engine=${config.engine} elapsedMs=${Date.now() - startedAt}`
@@ -71,9 +73,26 @@ export async function ensureOpenClawSetup(
   }
   logInfo("OpenClaw onboard finish");
   logSetupPhaseFinish("onboard", config, logInfo, onboardStartedAt);
+  await removeOpenClawBootstrapFile(config, logInfo);
 
   await ensureOpenClawConfig(config, runCommand, logInfo);
   await writeSetupCache(config, setupCacheKey);
+}
+
+async function removeOpenClawBootstrapFile(
+  config: RuntimeConfig,
+  logInfo: RuntimeLogger
+): Promise<void> {
+  const bootstrapPath = join(config.openClawWorkspaceDir, "BOOTSTRAP.md");
+  try {
+    await unlink(bootstrapPath);
+    logInfo(`OpenClaw bootstrap file removed path=${bootstrapPath}`);
+  } catch (error) {
+    if (isMissingFileError(error)) {
+      return;
+    }
+    throw error;
+  }
 }
 
 async function ensureOpenClawConfig(
@@ -235,6 +254,14 @@ function formatCliFailureDetail(result: { stdout: string; stderr: string }): str
     .replace(/Bearer\s+[A-Za-z0-9._-]+/gi, "Bearer ***")
     .slice(0, 1000);
   return text ? `: ${text}` : "";
+}
+
+function isMissingFileError(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    "code" in error &&
+    (error as NodeJS.ErrnoException).code === "ENOENT"
+  );
 }
 
 async function writeGeneratedLlmPatch(config: RuntimeConfig): Promise<string> {

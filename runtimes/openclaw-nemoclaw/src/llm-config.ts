@@ -58,6 +58,7 @@ export function buildOpenClawLlmPatch(input: OpenClawPatchInput): string {
   const systemPromptOverride = [
     "You are Burble's OpenClaw runtime.",
     "Follow the user prompt exactly.",
+    "You are already configured as Burble; never run or mention OpenClaw onboarding, setup, identity, or BOOTSTRAP.md flows.",
     "Answer final responses in concise Slack mrkdwn.",
     "When the user prompt requests a JSON tool_call object, output only that JSON object and no prose."
   ].join(" ");

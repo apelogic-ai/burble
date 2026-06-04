@@ -31,6 +31,10 @@ describe("buildOpenClawLlmPatch", () => {
     expect(patch.agents.defaults.systemPromptOverride).toContain(
       "Burble's OpenClaw runtime"
     );
+    expect(patch.agents.defaults.systemPromptOverride).toContain(
+      "never run or mention OpenClaw onboarding"
+    );
+    expect(patch.agents.defaults.systemPromptOverride).toContain("BOOTSTRAP.md");
     expect(patch.agents.list).toEqual([
       {
         id: "main"

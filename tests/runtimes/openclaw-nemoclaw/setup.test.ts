@@ -253,6 +253,73 @@ describe("ensureOpenClawSetup", () => {
     ]);
   });
 
+  test("removes quickstart BOOTSTRAP.md after onboarding", async () => {
+    const workspaceDir = await mkdtemp(join(tmpdir(), "burble-openclaw-workspace-"));
+    const runtimeConfig = await configWithState({ openClawWorkspaceDir: workspaceDir });
+    const logs: string[] = [];
+
+    await ensureOpenClawSetup(
+      runtimeConfig,
+      async (_command, args) => {
+        if (args[0] === "onboard") {
+          await writeFile(
+            join(workspaceDir, "BOOTSTRAP.md"),
+            "Who am I? Who are you?\n"
+          );
+        }
+        return { exitCode: 0, stdout: "", stderr: "" };
+      },
+      (message) => logs.push(message)
+    );
+
+    await expect(readFile(join(workspaceDir, "BOOTSTRAP.md"), "utf8")).rejects.toThrow(
+      "ENOENT"
+    );
+    expect(logs).toContain(
+      `OpenClaw bootstrap file removed path=${join(workspaceDir, "BOOTSTRAP.md")}`
+    );
+  });
+
+  test("removes persisted BOOTSTRAP.md even when setup cache is valid", async () => {
+    const stateDir = await mkdtemp(join(tmpdir(), "burble-openclaw-state-"));
+    const workspaceDir = await mkdtemp(join(tmpdir(), "burble-openclaw-workspace-"));
+    const calls: string[][] = [];
+    const logs: string[] = [];
+    const runtimeConfig = {
+      ...config,
+      openClawStateDir: stateDir,
+      openClawWorkspaceDir: workspaceDir
+    };
+
+    await ensureOpenClawSetup(
+      runtimeConfig,
+      async (_command, args) => {
+        calls.push(args);
+        return { exitCode: 0, stdout: "", stderr: "" };
+      },
+      (message) => logs.push(message)
+    );
+    await writeFile(join(workspaceDir, "BOOTSTRAP.md"), "stale bootstrap\n");
+
+    await ensureOpenClawSetup(
+      runtimeConfig,
+      async (_command, args) => {
+        calls.push(args);
+        return { exitCode: 0, stdout: "", stderr: "" };
+      },
+      (message) => logs.push(message)
+    );
+
+    expect(calls).toHaveLength(3);
+    await expect(readFile(join(workspaceDir, "BOOTSTRAP.md"), "utf8")).rejects.toThrow(
+      "ENOENT"
+    );
+    expect(logs).toContain("OpenClaw setup cached");
+    expect(logs).toContain(
+      `OpenClaw bootstrap file removed path=${join(workspaceDir, "BOOTSTRAP.md")}`
+    );
+  });
+
   test("applies an optional config patch before validation", async () => {
     const calls: string[][] = [];
     const patchPath = await writePatchFile("{ model: 'test' }\n");
