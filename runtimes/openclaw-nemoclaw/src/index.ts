@@ -21,9 +21,12 @@ await ensureOpenClawSetup(config);
 const gateway = startOpenClawGatewayIfNeeded(config);
 const heartbeat = startRuntimeHeartbeat(config);
 await gateway?.ready;
-let nativeGateway = config.engine === "openclaw-gateway" ? gateway : null;
+let nativeGateway =
+  config.engine === "openclaw" || config.engine === "openclaw-gateway"
+    ? gateway
+    : null;
 let nativeOpenClawReady: Promise<void> | null =
-  config.engine === "openclaw-gateway" && gateway
+  (config.engine === "openclaw" || config.engine === "openclaw-gateway") && gateway
     ? gateway.ready
     : null;
 
