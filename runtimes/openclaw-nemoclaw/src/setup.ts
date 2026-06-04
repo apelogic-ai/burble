@@ -14,6 +14,7 @@ export async function ensureOpenClawSetup(
   runCommand: CliCommandRunner = runCliCommand,
   logInfo: RuntimeLogger = info
 ): Promise<void> {
+  const startedAt = Date.now();
   if (!isOpenClawBackedEngine(config) || !config.openClawSetupOnStart) {
     if (!isOpenClawBackedEngine(config)) {
       await writeSelectedAgentConfig(config);
@@ -28,12 +29,16 @@ export async function ensureOpenClawSetup(
   const setupCacheKey = await buildSetupCacheKey(config);
   if (await isSetupCacheValid(config, setupCacheKey)) {
     logInfo("OpenClaw setup cached");
+    logInfo(
+      `OpenClaw setup cache hit engine=${config.engine} elapsedMs=${Date.now() - startedAt}`
+    );
     return;
   }
 
   logInfo(
     `OpenClaw onboard start workspace=${config.openClawWorkspaceDir} hasPatch=${Boolean(config.openClawConfigPatchPath)}`
   );
+  const onboardStartedAt = Date.now();
   const result = await runCommand(
     config.openClawCommand,
     [
@@ -65,6 +70,7 @@ export async function ensureOpenClawSetup(
     throw new Error(`OpenClaw onboard exited with code ${result.exitCode}`);
   }
   logInfo("OpenClaw onboard finish");
+  logSetupPhaseFinish("onboard", config, logInfo, onboardStartedAt);
 
   await ensureOpenClawConfig(config, runCommand, logInfo);
   await writeSetupCache(config, setupCacheKey);
@@ -84,7 +90,8 @@ async function ensureOpenClawConfig(
       config.openClawConfigPatchPath,
       config,
       runCommand,
-      logInfo
+      logInfo,
+      "config_patch_static"
     );
   }
 
@@ -92,7 +99,13 @@ async function ensureOpenClawConfig(
   logInfo(
     `OpenClaw LLM config selected model=${config.llmModel} ollamaBaseUrl=${config.ollamaBaseUrl}`
   );
-  await applyOpenClawConfigPatch(llmPatchPath, config, runCommand, logInfo);
+  await applyOpenClawConfigPatch(
+    llmPatchPath,
+    config,
+    runCommand,
+    logInfo,
+    "config_patch_generated"
+  );
 
   if (!config.openClawValidateOnStart) {
     logInfo("OpenClaw config validate skipped validateOnStart=false");
@@ -100,6 +113,7 @@ async function ensureOpenClawConfig(
   }
 
   logInfo("OpenClaw config validate start");
+  const validateStartedAt = Date.now();
   const result = await runCommand(
     config.openClawCommand,
     ["config", "validate"],
@@ -113,6 +127,7 @@ async function ensureOpenClawConfig(
     throw new Error(`OpenClaw config validate exited with code ${result.exitCode}`);
   }
   logInfo("OpenClaw config validate finish");
+  logSetupPhaseFinish("config_validate", config, logInfo, validateStartedAt);
 }
 
 async function writeSelectedAgentConfig(config: RuntimeConfig): Promise<void> {
@@ -175,9 +190,11 @@ async function applyOpenClawConfigPatch(
   path: string,
   config: RuntimeConfig,
   runCommand: CliCommandRunner,
-  logInfo: RuntimeLogger
+  logInfo: RuntimeLogger,
+  phase: "config_patch_static" | "config_patch_generated"
 ): Promise<void> {
   logInfo(`OpenClaw config patch start path=${path}`);
+  const patchStartedAt = Date.now();
   const result = await runCommand(
     config.openClawCommand,
     ["config", "patch", "--file", path],
@@ -195,6 +212,18 @@ async function applyOpenClawConfigPatch(
     );
   }
   logInfo("OpenClaw config patch finish");
+  logSetupPhaseFinish(phase, config, logInfo, patchStartedAt);
+}
+
+function logSetupPhaseFinish(
+  phase: string,
+  config: RuntimeConfig,
+  logInfo: RuntimeLogger,
+  startedAt: number
+): void {
+  logInfo(
+    `OpenClaw setup phase finish phase=${phase} engine=${config.engine} elapsedMs=${Date.now() - startedAt}`
+  );
 }
 
 function formatCliFailureDetail(result: { stdout: string; stderr: string }): string {
