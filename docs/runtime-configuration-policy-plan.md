@@ -811,6 +811,16 @@ All deployment backends must preserve the same security rules:
 - Runtime manifest changes are detectable by hash.
 - Reaper and liveness semantics are enforced by Burble, even if the backend
   performs the actual stop/delete operation.
+- Runtime image rollout is non-disruptive by default. Runtime records should
+  include the image reference or digest they were created with; publishing a new
+  image should affect new runtimes first, then restart existing runtimes only by
+  explicit rollout policy such as `restart-idle` or `force-recreate`.
+- Dev deployments should model the production rollout semantics. A fast
+  force-recreate path is useful for local testing, but it should be explicit
+  rather than the only available way to consume a rebuilt runtime image. In dev,
+  rebuilding/restarting Burble should leave personal runtime containers running
+  when the selected runtime image ID is unchanged; if the image ID changes, only
+  containers created from the previous selected image should be recycled.
 
 ## Scheduled Jobs
 

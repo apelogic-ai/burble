@@ -231,13 +231,25 @@ describe("ensureOpenClawSetup", () => {
     expect(logs).toEqual([
       "OpenClaw onboard start workspace=/data/openclaw/workspace hasPatch=true",
       "OpenClaw onboard finish",
+      expect.stringMatching(
+        /^OpenClaw setup phase finish phase=onboard engine=openclaw elapsedMs=\d+$/
+      ),
       `OpenClaw config patch start path=${patchPath}`,
       "OpenClaw config patch finish",
+      expect.stringMatching(
+        /^OpenClaw setup phase finish phase=config_patch_static engine=openclaw elapsedMs=\d+$/
+      ),
       "OpenClaw LLM config selected model=openai:gpt-5.4 ollamaBaseUrl=https://ollama.com",
       expect.stringContaining("OpenClaw config patch start path="),
       "OpenClaw config patch finish",
+      expect.stringMatching(
+        /^OpenClaw setup phase finish phase=config_patch_generated engine=openclaw elapsedMs=\d+$/
+      ),
       "OpenClaw config validate start",
-      "OpenClaw config validate finish"
+      "OpenClaw config validate finish",
+      expect.stringMatching(
+        /^OpenClaw setup phase finish phase=config_validate engine=openclaw elapsedMs=\d+$/
+      )
     ]);
   });
 
@@ -422,24 +434,39 @@ describe("ensureOpenClawSetup", () => {
   test("skips repeated setup when persisted state is already initialized", async () => {
     const stateDir = await mkdtemp(join(tmpdir(), "burble-openclaw-state-"));
     const calls: string[][] = [];
+    const logs: string[] = [];
     const runtimeConfig = {
       ...config,
       openClawStateDir: stateDir
     };
 
-    await ensureOpenClawSetup(runtimeConfig, async (_command, args) => {
-      calls.push(args);
-      return { exitCode: 0, stdout: "", stderr: "" };
-    });
-    await ensureOpenClawSetup(runtimeConfig, async (_command, args) => {
-      calls.push(args);
-      return { exitCode: 0, stdout: "", stderr: "" };
-    });
+    await ensureOpenClawSetup(
+      runtimeConfig,
+      async (_command, args) => {
+        calls.push(args);
+        return { exitCode: 0, stdout: "", stderr: "" };
+      },
+      (message) => logs.push(message)
+    );
+    await ensureOpenClawSetup(
+      runtimeConfig,
+      async (_command, args) => {
+        calls.push(args);
+        return { exitCode: 0, stdout: "", stderr: "" };
+      },
+      (message) => logs.push(message)
+    );
 
     expect(calls).toHaveLength(3);
     expect(calls[0][0]).toBe("onboard");
     expect(calls[1]).toEqual(["config", "patch", "--file", llmPatchPath(runtimeConfig)]);
     expect(calls[2]).toEqual(["config", "validate"]);
+    expect(logs).toContain("OpenClaw setup cached");
+    expect(logs).toContainEqual(
+      expect.stringMatching(
+        /^OpenClaw setup cache hit engine=openclaw elapsedMs=\d+$/
+      )
+    );
   });
 
   test("reruns setup when the config patch changes", async () => {

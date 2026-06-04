@@ -31,7 +31,7 @@ export function startOpenClawGatewayIfNeeded(
   spawnGateway: GatewaySpawner = spawnOpenClawGateway,
   logInfo: RuntimeLogger = info
 ): GatewayHandle | null {
-  if (config.engine !== "openclaw-gateway") {
+  if (config.engine !== "openclaw" && config.engine !== "openclaw-gateway") {
     return null;
   }
 

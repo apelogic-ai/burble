@@ -33,11 +33,36 @@ const config: RuntimeConfig = {
 };
 
 describe("startOpenClawGatewayIfNeeded", () => {
-  test("does not start a gateway for non-gateway engines", () => {
-    let called = false;
+  test("starts a gateway for the openclaw engine so native turns are warm", () => {
+    const calls: string[][] = [];
 
     const handle = startOpenClawGatewayIfNeeded(
       { ...config, engine: "openclaw" },
+      (_command, args): GatewayProcess => {
+        calls.push(args);
+        return {
+          pid: 123,
+          exited: new Promise(() => {}),
+          kill() {}
+        };
+      }
+    );
+
+    expect(handle).not.toBeNull();
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.slice(0, 4)).toEqual([
+      "gateway",
+      "run",
+      "--bind",
+      "loopback"
+    ]);
+  });
+
+  test("does not start a gateway for deterministic engine", () => {
+    let called = false;
+
+    const handle = startOpenClawGatewayIfNeeded(
+      { ...config, engine: "deterministic" },
       () => {
         called = true;
         throw new Error("unexpected gateway spawn");
