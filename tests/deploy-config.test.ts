@@ -397,7 +397,17 @@ describe("dev deploy config", () => {
     expect(personalRuntimeDeployScript).toContain(
       "up -d --force-recreate --no-deps agentgateway"
     );
+    expect(personalRuntimeDeployScript).toContain("image_id()");
+    expect(personalRuntimeDeployScript).toContain("previous_runtime_image_id");
+    expect(personalRuntimeDeployScript).toContain("current_runtime_image_id");
+    expect(personalRuntimeDeployScript).toContain(
+      "Runtime image unchanged; keeping existing burble-rt-* containers."
+    );
+    expect(personalRuntimeDeployScript).toContain(
+      "Runtime image changed; recycling"
+    );
     expect(personalRuntimeDeployScript).toContain("docker ps -aq --filter \"name=burble-rt-\"");
+    expect(personalRuntimeDeployScript).toContain("docker inspect --format '{{.Image}}'");
     expect(personalRuntimeDeployScript).toContain("docker stop");
     expect(personalRuntimeDeployScript).toContain("docker rm");
     expect(personalRuntimeDeployScript).toContain("--keep-runtimes");
