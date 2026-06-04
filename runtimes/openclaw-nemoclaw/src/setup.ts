@@ -182,9 +182,6 @@ function buildOpenClawNemoClawAgentConfig(
     {
       id: config.openClawAgent,
       default: true,
-      skills: [],
-      contextInjection: "never",
-      skipBootstrap: true,
       systemPromptOverride: defaults.systemPromptOverride,
       identity: {
         name: "Burble",
@@ -299,24 +296,14 @@ async function buildSetupCacheKey(config: RuntimeConfig): Promise<string> {
   const patchHash = config.openClawConfigPatchPath
     ? await hashFile(config.openClawConfigPatchPath)
     : "none";
-  const generatedLlmPatchHash = createHash("sha256")
-    .update(
-      buildOpenClawLlmPatch({
-        modelId: config.llmModel,
-        ollamaBaseUrl: config.ollamaBaseUrl,
-        agentId: config.openClawAgent,
-        codeModeEnabled: config.openClawCodeMode,
-        fastModeEnabled: config.openClawFastMode,
-        burbleChannelBaseUrl: buildLocalBurbleChannelBaseUrl(config),
-        burbleMcpBaseUrl: buildLocalBurbleMcpBaseUrl(config)
-      })
-    )
+  const generatedAgentConfigHash = createHash("sha256")
+    .update(JSON.stringify(buildOpenClawNemoClawAgentConfig(config)))
     .digest("hex");
 
   return createHash("sha256")
     .update(
       JSON.stringify({
-        version: 2,
+        version: 3,
         engine: config.engine,
         command: config.openClawCommand,
         agent: config.openClawAgent,
@@ -325,7 +312,7 @@ async function buildSetupCacheKey(config: RuntimeConfig): Promise<string> {
         workspaceDir: config.openClawWorkspaceDir,
         configPatchPath: config.openClawConfigPatchPath,
         patchHash,
-        generatedLlmPatchHash,
+        generatedAgentConfigHash,
         validateOnStart: config.openClawValidateOnStart,
         llmModel: config.llmModel,
         ollamaBaseUrl: config.ollamaBaseUrl,

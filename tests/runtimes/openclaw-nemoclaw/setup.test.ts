@@ -446,9 +446,6 @@ describe("ensureOpenClawSetup", () => {
       expect.objectContaining({
         id: "burble",
         default: true,
-        skills: [],
-        contextInjection: "never",
-        skipBootstrap: true,
         systemPromptOverride: generatedPatch.agents.defaults.systemPromptOverride,
         identity: {
           name: "Burble",
@@ -489,9 +486,6 @@ describe("ensureOpenClawSetup", () => {
       {
         id: "burble",
         default: true,
-        skills: [],
-        contextInjection: "never",
-        skipBootstrap: true,
         systemPromptOverride: generatedPatch.agents.defaults.systemPromptOverride,
         identity: {
           name: "Burble",

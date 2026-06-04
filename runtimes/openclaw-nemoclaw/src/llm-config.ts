@@ -86,9 +86,6 @@ export function buildOpenClawLlmPatch(input: OpenClawPatchInput): string {
   };
   const concreteAgentRuntimeConfig = {
     id: agentId,
-    skills: [],
-    contextInjection: "never",
-    skipBootstrap: true,
     systemPromptOverride,
     ...(input.fastModeEnabled
       ? {

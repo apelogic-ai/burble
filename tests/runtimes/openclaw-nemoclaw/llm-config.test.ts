@@ -37,9 +37,6 @@ describe("buildOpenClawLlmPatch", () => {
     expect(patch.agents.list).toEqual([
       {
         id: "main",
-        skills: [],
-        contextInjection: "never",
-        skipBootstrap: true,
         systemPromptOverride: patch.agents.defaults.systemPromptOverride
       }
     ]);
@@ -90,9 +87,6 @@ describe("buildOpenClawLlmPatch", () => {
     expect(patch.agents.list).toEqual([
       {
         id: "burble",
-        skills: [],
-        contextInjection: "never",
-        skipBootstrap: true,
         systemPromptOverride: patch.agents.defaults.systemPromptOverride,
         fastModeDefault: true,
         thinkingDefault: "minimal",
