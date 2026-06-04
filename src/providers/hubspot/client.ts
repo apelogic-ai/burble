@@ -14,7 +14,30 @@ export type HubSpotAccessTokenInfo = {
   scopes: string[];
 };
 
-export type HubSpotObjectType = "contacts" | "companies" | "deals";
+export const hubSpotReadableCrmObjectTypes = [
+  "appointments",
+  "carts",
+  "commercepayments",
+  "companies",
+  "contacts",
+  "courses",
+  "deals",
+  "goals",
+  "invoices",
+  "leads",
+  "line_items",
+  "listings",
+  "marketing_events",
+  "orders",
+  "partner-clients",
+  "partner-services",
+  "quotes",
+  "services",
+  "subscriptions",
+  "users"
+] as const;
+
+export type HubSpotObjectType = (typeof hubSpotReadableCrmObjectTypes)[number];
 
 export type HubSpotCrmObject = {
   id: string;
@@ -22,6 +45,39 @@ export type HubSpotCrmObject = {
   createdAt?: string;
   updatedAt?: string;
   archived?: boolean;
+};
+
+export type HubSpotOwner = {
+  id: string;
+  email?: string;
+  firstName?: string;
+  lastName?: string;
+  userId?: number;
+  userIdIncludingInactive?: number;
+  archived?: boolean;
+  createdAt?: string;
+  updatedAt?: string;
+};
+
+export type HubSpotUser = {
+  id: string;
+  email?: string;
+  firstName?: string;
+  lastName?: string;
+  roleIds?: string[];
+  primaryTeamId?: string;
+  secondaryTeamIds?: string[];
+};
+
+export type HubSpotApiReadInput = {
+  path: string;
+  query?: Record<string, string | number | boolean | Array<string | number | boolean>>;
+};
+
+export type HubSpotApiResource = {
+  path: string;
+  query: Record<string, string | string[]>;
+  content: unknown;
 };
 
 export class HubSpotApiError extends Error {
@@ -101,7 +157,7 @@ const hubSpotOptionalScopes = [
   "tax_rates.read"
 ];
 
-const hubSpotObjectProperties: Record<HubSpotObjectType, string[]> = {
+const hubSpotObjectProperties: Partial<Record<HubSpotObjectType, string[]>> = {
   contacts: [
     "firstname",
     "lastname",
@@ -236,8 +292,33 @@ export async function searchHubSpotCrmObjects(
   objectType: HubSpotObjectType,
   input: { query: string; limit?: number }
 ): Promise<HubSpotCrmObject[]> {
+  return searchHubSpotReadableCrmObjects(token, {
+    objectType,
+    query: input.query,
+    limit: input.limit
+  });
+}
+
+export async function searchHubSpotReadableCrmObjects(
+  token: string,
+  input: {
+    objectType: HubSpotObjectType;
+    query?: string;
+    limit?: number;
+    properties?: string[];
+  }
+): Promise<HubSpotCrmObject[]> {
+  if (!isHubSpotReadableCrmObjectType(input.objectType)) {
+    throw new HubSpotApiError(`Unsupported HubSpot CRM object type: ${input.objectType}`, 400);
+  }
+
+  const query = typeof input.query === "string" ? input.query.trim() : "";
+  const properties = sanitizeRequestedProperties(
+    input.properties,
+    hubSpotObjectProperties[input.objectType] ?? ["createdate", "lastmodifieddate"]
+  );
   const response = await fetch(
-    `https://api.hubapi.com/crm/v3/objects/${objectType}/search`,
+    `https://api.hubapi.com/crm/v3/objects/${input.objectType}/search`,
     {
       method: "POST",
       headers: {
@@ -245,9 +326,10 @@ export async function searchHubSpotCrmObjects(
         "Content-Type": "application/json"
       },
       body: JSON.stringify({
-        query: input.query.trim(),
+        ...(query ? { query } : {}),
         limit: clampLimit(input.limit, 10, 20),
-        properties: hubSpotObjectProperties[objectType]
+        properties,
+        sorts: [{ propertyName: "createdate", direction: "DESCENDING" }]
       })
     }
   );
@@ -256,7 +338,11 @@ export async function searchHubSpotCrmObjects(
     message?: string;
   };
   if (!response.ok) {
-    throw hubSpotError(response, `HubSpot ${objectType} search failed`, body.message);
+    throw hubSpotError(
+      response,
+      `HubSpot ${input.objectType} search failed`,
+      body.message
+    );
   }
 
   return (body.results ?? []).map(sanitizeHubSpotCrmObject);
@@ -276,6 +362,96 @@ export const searchHubSpotDeals = (
   token: string,
   input: { query: string; limit?: number }
 ) => searchHubSpotCrmObjects(token, "deals", input);
+
+export async function listHubSpotOwners(
+  token: string,
+  input: { limit?: number; after?: string } = {}
+): Promise<HubSpotOwner[]> {
+  const url = new URL("https://api.hubapi.com/crm/v3/owners/");
+  url.searchParams.set("limit", String(clampLimit(input.limit, 20, 100)));
+  url.searchParams.set("archived", "false");
+  if (input.after) {
+    url.searchParams.set("after", input.after);
+  }
+
+  const response = await fetch(url, { headers: hubSpotHeaders(token) });
+  const body = (await response.json()) as {
+    results?: HubSpotOwnerResponse[];
+    message?: string;
+  };
+  if (!response.ok) {
+    throw hubSpotError(response, "HubSpot owners lookup failed", body.message);
+  }
+
+  return (body.results ?? []).map(sanitizeHubSpotOwner);
+}
+
+export async function listHubSpotUsers(
+  token: string,
+  input: { limit?: number; after?: string } = {}
+): Promise<HubSpotUser[]> {
+  const url = new URL("https://api.hubapi.com/settings/v3/users");
+  url.searchParams.set("limit", String(clampLimit(input.limit, 20, 100)));
+  if (input.after) {
+    url.searchParams.set("after", input.after);
+  }
+
+  const response = await fetch(url, { headers: hubSpotHeaders(token) });
+  const body = (await response.json()) as {
+    results?: HubSpotUserResponse[];
+    message?: string;
+  };
+  if (!response.ok) {
+    throw hubSpotError(response, "HubSpot users lookup failed", body.message);
+  }
+
+  return (body.results ?? []).map(sanitizeHubSpotUser);
+}
+
+export async function readHubSpotApiResource(
+  token: string,
+  input: HubSpotApiReadInput
+): Promise<HubSpotApiResource> {
+  const path = validateHubSpotApiReadPath(input.path);
+  const query = sanitizeHubSpotApiReadQuery(input.query);
+  const url = new URL(`https://api.hubapi.com${path}`);
+  for (const [key, value] of Object.entries(query)) {
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        url.searchParams.append(key, item);
+      }
+    } else {
+      url.searchParams.set(key, value);
+    }
+  }
+
+  const response = await fetch(url, { headers: hubSpotHeaders(token) });
+  const content = await response.json();
+  if (!response.ok) {
+    const message =
+      typeof content === "object" &&
+      content !== null &&
+      typeof (content as { message?: unknown }).message === "string"
+        ? (content as { message: string }).message
+        : undefined;
+    throw hubSpotError(response, "HubSpot API resource read failed", message);
+  }
+
+  return {
+    path,
+    query,
+    content: sanitizeHubSpotApiResource(content)
+  };
+}
+
+export function isHubSpotReadableCrmObjectType(
+  value: unknown
+): value is HubSpotObjectType {
+  return (
+    typeof value === "string" &&
+    (hubSpotReadableCrmObjectTypes as readonly string[]).includes(value)
+  );
+}
 
 export function isHubSpotAuthorizationError(error: unknown): boolean {
   return error instanceof HubSpotApiError && error.status === 401;
@@ -362,6 +538,125 @@ function sanitizeProperties(
   );
 }
 
+function sanitizeRequestedProperties(
+  properties: string[] | undefined,
+  fallback: string[]
+): string[] {
+  if (!properties?.length) {
+    return fallback;
+  }
+
+  return properties
+    .map((property) => property.trim())
+    .filter((property) => /^[A-Za-z0-9_./-]{1,100}$/.test(property))
+    .slice(0, 20);
+}
+
+function sanitizeHubSpotOwner(owner: HubSpotOwnerResponse): HubSpotOwner {
+  return {
+    id: String(owner.id),
+    ...(typeof owner.email === "string" ? { email: owner.email } : {}),
+    ...(typeof owner.firstName === "string" ? { firstName: owner.firstName } : {}),
+    ...(typeof owner.lastName === "string" ? { lastName: owner.lastName } : {}),
+    ...(typeof owner.userId === "number" ? { userId: owner.userId } : {}),
+    ...(typeof owner.userIdIncludingInactive === "number"
+      ? { userIdIncludingInactive: owner.userIdIncludingInactive }
+      : {}),
+    ...(typeof owner.archived === "boolean" ? { archived: owner.archived } : {}),
+    ...(typeof owner.createdAt === "string" ? { createdAt: owner.createdAt } : {}),
+    ...(typeof owner.updatedAt === "string" ? { updatedAt: owner.updatedAt } : {})
+  };
+}
+
+function sanitizeHubSpotUser(user: HubSpotUserResponse): HubSpotUser {
+  return {
+    id: String(user.id),
+    ...(typeof user.email === "string" ? { email: user.email } : {}),
+    ...(typeof user.firstName === "string" ? { firstName: user.firstName } : {}),
+    ...(typeof user.lastName === "string" ? { lastName: user.lastName } : {}),
+    ...(Array.isArray(user.roleIds)
+      ? { roleIds: user.roleIds.filter((id): id is string => typeof id === "string") }
+      : {}),
+    ...(typeof user.primaryTeamId === "string"
+      ? { primaryTeamId: user.primaryTeamId }
+      : {}),
+    ...(Array.isArray(user.secondaryTeamIds)
+      ? {
+          secondaryTeamIds: user.secondaryTeamIds.filter(
+            (id): id is string => typeof id === "string"
+          )
+        }
+      : {})
+  };
+}
+
+function validateHubSpotApiReadPath(path: string): string {
+  const trimmed = path.trim();
+  if (
+    !trimmed.startsWith("/") ||
+    trimmed.startsWith("//") ||
+    trimmed.includes("..") ||
+    trimmed.includes("\\") ||
+    trimmed.length > 300 ||
+    !/^\/[A-Za-z0-9._~!$&'()*+,;=:@/-]+$/.test(trimmed)
+  ) {
+    throw new HubSpotApiError("Invalid HubSpot API read path", 400);
+  }
+
+  const allowedPrefixes = [
+    "/account-info/",
+    "/automation/",
+    "/business-units/",
+    "/cms/",
+    "/collector/",
+    "/communication-preferences/",
+    "/conversations/",
+    "/crm/",
+    "/files/",
+    "/marketing/",
+    "/media-bridge/",
+    "/scheduler/",
+    "/settings/",
+    "/tax-rates/"
+  ];
+  if (!allowedPrefixes.some((prefix) => trimmed.startsWith(prefix))) {
+    throw new HubSpotApiError("Unsupported HubSpot API read path", 400);
+  }
+
+  return trimmed;
+}
+
+function sanitizeHubSpotApiReadQuery(
+  query: HubSpotApiReadInput["query"] = {}
+): Record<string, string | string[]> {
+  return Object.fromEntries(
+    Object.entries(query)
+      .filter(([key]) => /^[A-Za-z0-9_.-]{1,100}$/.test(key))
+      .slice(0, 30)
+      .map(([key, value]) => [
+        key,
+        Array.isArray(value)
+          ? value.slice(0, 20).map((item) => String(item)).filter((item) => item.length <= 500)
+          : String(value).slice(0, 500)
+      ])
+  );
+}
+
+function sanitizeHubSpotApiResource(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.slice(0, 200).map(sanitizeHubSpotApiResource);
+  }
+  if (typeof value !== "object" || value === null) {
+    return value;
+  }
+
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>)
+      .slice(0, 200)
+      .map(([key, item]) => [key, sanitizeHubSpotApiResource(item)])
+  );
+}
+
 function clampLimit(value: number | undefined, fallback: number, max: number): number {
   if (!value || !Number.isFinite(value)) {
     return fallback;
@@ -384,4 +679,26 @@ type HubSpotAccessTokenInfoResponse = {
   user_id?: number;
   scopes?: string[];
   message?: string;
+};
+
+type HubSpotOwnerResponse = {
+  id: string | number;
+  email?: string;
+  firstName?: string;
+  lastName?: string;
+  userId?: number;
+  userIdIncludingInactive?: number;
+  archived?: boolean;
+  createdAt?: string;
+  updatedAt?: string;
+};
+
+type HubSpotUserResponse = {
+  id: string | number;
+  email?: string;
+  firstName?: string;
+  lastName?: string;
+  roleIds?: unknown[];
+  primaryTeamId?: string;
+  secondaryTeamIds?: unknown[];
 };

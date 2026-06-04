@@ -1,5 +1,6 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { AgentRuntimeRecord, ProviderConnection, TokenStore } from "../db";
+import { isHubSpotReadableCrmObjectType } from "../providers/hubspot/client";
 import { hubspotProviderToolSpecs } from "../providers/hubspot/tool-specs";
 import { providerToolInputSchema } from "../providers/tool-specs";
 import { createHubSpotTools } from "../tools/hubspot";
@@ -76,6 +77,30 @@ function createHubSpotMcpHandlers(
       hubspotTools.searchDeals.execute({
         connection,
         input: searchInput(args)
+      }),
+
+    searchCrmObjects: (connection, args) =>
+      hubspotTools.searchCrmObjects.execute({
+        connection,
+        input: crmObjectSearchInput(args)
+      }),
+
+    listOwners: (connection, args) =>
+      hubspotTools.listOwners.execute({
+        connection,
+        input: listInput(args)
+      }),
+
+    listUsers: (connection, args) =>
+      hubspotTools.listUsers.execute({
+        connection,
+        input: listInput(args)
+      }),
+
+    readApiResource: (connection, args) =>
+      hubspotTools.readApiResource.execute({
+        connection,
+        input: apiReadInput(args)
       })
   };
 }
@@ -84,6 +109,34 @@ function searchInput(args: HubSpotToolArgs): { query: string; limit?: number } {
   return {
     query: stringArg(args, "query"),
     ...optionalTruthyNumberField(args, "limit")
+  };
+}
+
+function crmObjectSearchInput(args: HubSpotToolArgs) {
+  const objectType = stringArg(args, "objectType");
+  if (!isHubSpotReadableCrmObjectType(objectType)) {
+    throw new Error(`Unsupported HubSpot CRM object type ${objectType}`);
+  }
+
+  return {
+    objectType,
+    ...optionalStringField(args, "query"),
+    ...optionalTruthyNumberField(args, "limit"),
+    ...optionalStringArrayField(args, "properties")
+  };
+}
+
+function listInput(args: HubSpotToolArgs): { limit?: number; after?: string } {
+  return {
+    ...optionalTruthyNumberField(args, "limit"),
+    ...optionalStringField(args, "after")
+  };
+}
+
+function apiReadInput(args: HubSpotToolArgs) {
+  return {
+    path: stringArg(args, "path"),
+    ...(isRecord(args.query) ? { query: args.query } : {})
   };
 }
 
@@ -103,4 +156,29 @@ function optionalTruthyNumberField(
   return typeof value === "number" && Number.isFinite(value) && value > 0
     ? { [name]: value }
     : {};
+}
+
+function optionalStringField(
+  args: HubSpotToolArgs,
+  name: string
+): { [key: string]: string } {
+  const value = args[name];
+  return typeof value === "string" && value.trim()
+    ? { [name]: value.trim() }
+    : {};
+}
+
+function optionalStringArrayField(
+  args: HubSpotToolArgs,
+  name: string
+): { [key: string]: string[] } {
+  const value = args[name];
+  return Array.isArray(value) &&
+    value.every((item) => typeof item === "string" && item.trim())
+    ? { [name]: value.map((item) => item.trim()) }
+    : {};
+}
+
+function isRecord(value: unknown): value is Record<string, string | number | boolean> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }

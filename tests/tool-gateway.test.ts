@@ -661,6 +661,113 @@ describe("handleToolGatewayRequest", () => {
     });
   });
 
+  test("executes expanded HubSpot read tools with the stored caller token", async () => {
+    const crmResponse = await handleToolGatewayRequest(
+      config,
+      createStore(hubspotConnection),
+      "hubspot.searchCrmObjects",
+      request("hubspot.searchCrmObjects", {
+        user: { email: "person@example.com" },
+        input: {
+          objectType: "users",
+          limit: 3,
+          properties: ["hs_email"]
+        }
+      }),
+      {
+        searchHubSpotReadableCrmObjects: async (token, input) => {
+          expect(token).toBe("hubspot-token");
+          expect(input).toEqual({
+            objectType: "users",
+            limit: 3,
+            properties: ["hs_email"]
+          });
+          return [
+            {
+              id: "user-object-1",
+              properties: {
+                hs_email: "user@example.com"
+              }
+            }
+          ];
+        }
+      }
+    );
+
+    expect(crmResponse.status).toBe(200);
+    expect(await crmResponse.json()).toEqual({
+      classification: "user_private",
+      content: [
+        {
+          id: "user-object-1",
+          properties: {
+            hs_email: "user@example.com"
+          }
+        }
+      ]
+    });
+
+    const usersResponse = await handleToolGatewayRequest(
+      config,
+      createStore(hubspotConnection),
+      "hubspot.listUsers",
+      request("hubspot.listUsers", {
+        user: { email: "person@example.com" },
+        input: { limit: 2 }
+      }),
+      {
+        listHubSpotUsers: async (token, input) => {
+          expect(token).toBe("hubspot-token");
+          expect(input).toEqual({ limit: 2 });
+          return [{ id: "7", email: "user@example.com" }];
+        }
+      }
+    );
+
+    expect(usersResponse.status).toBe(200);
+    expect(await usersResponse.json()).toEqual({
+      classification: "user_private",
+      content: [{ id: "7", email: "user@example.com" }]
+    });
+
+    const readResponse = await handleToolGatewayRequest(
+      config,
+      createStore(hubspotConnection),
+      "hubspot.readApiResource",
+      request("hubspot.readApiResource", {
+        user: { email: "person@example.com" },
+        input: {
+          path: "/crm/v3/schemas/deals",
+          query: { archived: false }
+        }
+      }),
+      {
+        readHubSpotApiResource: async (token, input) => {
+          expect(token).toBe("hubspot-token");
+          expect(input).toEqual({
+            path: "/crm/v3/schemas/deals",
+            query: { archived: false }
+          });
+          return {
+            path: "/crm/v3/schemas/deals",
+            query: { archived: "false" },
+            content: { name: "deals" }
+          };
+        }
+      }
+    );
+
+    expect(readResponse.status).toBe(200);
+    expect(await readResponse.json()).toEqual({
+      classification: "user_private",
+      content: {
+        path: "/crm/v3/schemas/deals",
+        query: { archived: "false" },
+        content: { name: "deals" }
+      }
+    });
+  });
+
   test("lets a runtime register a scheduled job provider capability", async () => {
     const route: ConversationRouteRecord = {
       id: "convrt_abc123",

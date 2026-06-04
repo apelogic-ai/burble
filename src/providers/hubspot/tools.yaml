@@ -60,3 +60,108 @@ tools:
         positive: true
         max: 20
         optional: true
+
+  - name: hubspot_search_crm_objects
+    alias: hubspot.searchCrmObjects
+    implementation: searchCrmObjects
+    title: HubSpot CRM object search
+    description: Search or list HubSpot CRM objects covered by the connected account's read scopes. Use this for HubSpot object types beyond contacts, companies and deals, and for recent CRM object requests without a keyword query.
+    input:
+      objectType:
+        type: enum
+        values:
+          - appointments
+          - carts
+          - commercepayments
+          - companies
+          - contacts
+          - courses
+          - deals
+          - goals
+          - invoices
+          - leads
+          - line_items
+          - listings
+          - marketing_events
+          - orders
+          - partner-clients
+          - partner-services
+          - quotes
+          - services
+          - subscriptions
+          - users
+        description: HubSpot CRM object type to read
+      query:
+        type: string
+        min: 1
+        max: 200
+        optional: true
+        description: Optional search terms. Omit for most-recent records.
+      limit:
+        type: number
+        int: true
+        positive: true
+        max: 20
+        optional: true
+      properties:
+        type: array
+        items: string
+        max: 20
+        itemMin: 1
+        itemMax: 100
+        optional: true
+        description: Optional HubSpot property names to include
+
+  - name: hubspot_list_owners
+    alias: hubspot.listOwners
+    implementation: listOwners
+    title: HubSpot owner list
+    description: List HubSpot CRM owners/users assignable to CRM records.
+    input:
+      limit:
+        type: number
+        int: true
+        positive: true
+        max: 100
+        optional: true
+      after:
+        type: string
+        min: 1
+        max: 500
+        optional: true
+        description: Optional HubSpot paging cursor
+
+  - name: hubspot_list_users
+    alias: hubspot.listUsers
+    implementation: listUsers
+    title: HubSpot user list
+    description: List users in the connected HubSpot account when the account granted the settings.users.read scope.
+    input:
+      limit:
+        type: number
+        int: true
+        positive: true
+        max: 100
+        optional: true
+      after:
+        type: string
+        min: 1
+        max: 500
+        optional: true
+        description: Optional HubSpot paging cursor
+
+  - name: hubspot_read_api_resource
+    alias: hubspot.readApiResource
+    implementation: readApiResource
+    title: HubSpot scoped API read
+    description: Read a HubSpot API resource with GET for less common read-only scopes when no first-class HubSpot tool exists. The path must be a HubSpot API path, for example /crm/v3/schemas/deals or /marketing/v3/campaigns.
+    input:
+      path:
+        type: string
+        min: 1
+        max: 300
+        description: HubSpot API path starting with /
+      query:
+        type: object
+        optional: true
+        description: Optional query string parameters

@@ -955,6 +955,29 @@ describe("createBurbleToolExecutor", () => {
         user: { email: "person@example.com" },
         input: { query: "renewal", limit: 3 }
       });
+      await executor("hubspot.searchCrmObjects", {
+        user: { email: "person@example.com" },
+        input: {
+          objectType: "users",
+          limit: 3,
+          properties: ["hs_email"]
+        }
+      });
+      await executor("hubspot.listOwners", {
+        user: { email: "person@example.com" },
+        input: { limit: 10 }
+      });
+      await executor("hubspot.listUsers", {
+        user: { email: "person@example.com" },
+        input: { limit: 10 }
+      });
+      await executor("hubspot.readApiResource", {
+        user: { email: "person@example.com" },
+        input: {
+          path: "/crm/v3/schemas/deals",
+          query: { archived: false }
+        }
+      });
       await executor("jira.createIssue", {
         user: { email: "person@example.com" },
         input: {
@@ -1108,6 +1131,41 @@ describe("createBurbleToolExecutor", () => {
           params: {
             name: "hubspot_search_deals",
             arguments: { query: "renewal", limit: 3 }
+          }
+        },
+        {
+          method: "tools/call",
+          params: {
+            name: "hubspot_search_crm_objects",
+            arguments: {
+              objectType: "users",
+              limit: 3,
+              properties: ["hs_email"]
+            }
+          }
+        },
+        {
+          method: "tools/call",
+          params: {
+            name: "hubspot_list_owners",
+            arguments: { limit: 10 }
+          }
+        },
+        {
+          method: "tools/call",
+          params: {
+            name: "hubspot_list_users",
+            arguments: { limit: 10 }
+          }
+        },
+        {
+          method: "tools/call",
+          params: {
+            name: "hubspot_read_api_resource",
+            arguments: {
+              path: "/crm/v3/schemas/deals",
+              query: { archived: false }
+            }
           }
         },
         {

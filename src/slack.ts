@@ -30,10 +30,14 @@ import {
 import {
   buildHubSpotOAuthUrl,
   getHubSpotAccessTokenInfo,
+  listHubSpotOwners,
+  listHubSpotUsers,
+  readHubSpotApiResource,
   refreshHubSpotAccessToken,
   searchHubSpotCompanies,
   searchHubSpotContacts,
-  searchHubSpotDeals
+  searchHubSpotDeals,
+  searchHubSpotReadableCrmObjects
 } from "./providers/hubspot/client";
 import {
   buildJiraOAuthUrl,
@@ -242,6 +246,10 @@ export function createSlackRuntime(
     searchHubSpotContacts,
     searchHubSpotCompanies,
     searchHubSpotDeals,
+    searchHubSpotReadableCrmObjects,
+    listHubSpotOwners,
+    listHubSpotUsers,
+    readHubSpotApiResource,
     refreshHubSpotAccessToken: (refreshToken) =>
       refreshHubSpotAccessToken(config, refreshToken),
     saveHubSpotConnection: (connection) =>
@@ -2131,7 +2139,7 @@ function buildProviderConnectionBlocks(input: ProviderConnectionViewInput) {
       url: input.hubspotUrl,
       connected: Boolean(input.connections?.hubspot),
       actionId: "connect_hubspot",
-      usage: "CRM contacts, companies, deals and HubSpot account context"
+      usage: "CRM users, owners, contacts, companies, deals and scoped CRM records"
     }),
     buildProviderConnectionBlock({
       provider: "jira",
@@ -4997,6 +5005,10 @@ function formatAgentToolName(toolName: string): string {
     "hubspot.searchContacts": "HubSpot contact search",
     "hubspot.searchCompanies": "HubSpot company search",
     "hubspot.searchDeals": "HubSpot deal search",
+    "hubspot.searchCrmObjects": "HubSpot CRM object search",
+    "hubspot.listOwners": "HubSpot owner list",
+    "hubspot.listUsers": "HubSpot user list",
+    "hubspot.readApiResource": "HubSpot API read",
     "jira.searchUsers": "Jira user search",
     "jira.createIssue": "Jira issue create",
     "jira.editIssue": "Jira issue edit",

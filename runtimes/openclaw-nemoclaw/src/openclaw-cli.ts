@@ -1772,6 +1772,44 @@ async function buildToolCatalog(
           query: "optional string deal name, company, contact, or other search terms",
           limit: "optional integer 1-20"
         }
+      },
+      {
+        name: "hubspot.searchCrmObjects",
+        description:
+          "Search or list HubSpot CRM objects covered by the connected account's read scopes. Omit query for most-recent records.",
+        inputSchema: {
+          objectType:
+            "appointments | carts | commercepayments | companies | contacts | courses | deals | goals | invoices | leads | line_items | listings | marketing_events | orders | partner-clients | partner-services | quotes | services | subscriptions | users",
+          query: "optional string search terms",
+          limit: "optional integer 1-20",
+          properties: "optional array of property names"
+        }
+      },
+      {
+        name: "hubspot.listOwners",
+        description: "List HubSpot CRM owners/users assignable to CRM records.",
+        inputSchema: {
+          limit: "optional integer 1-100",
+          after: "optional paging cursor"
+        }
+      },
+      {
+        name: "hubspot.listUsers",
+        description:
+          "List users in the connected HubSpot account when settings.users.read was granted.",
+        inputSchema: {
+          limit: "optional integer 1-100",
+          after: "optional paging cursor"
+        }
+      },
+      {
+        name: "hubspot.readApiResource",
+        description:
+          "Read a HubSpot API resource with GET for less common read-only HubSpot scopes when no first-class HubSpot tool exists.",
+        inputSchema: {
+          path: "HubSpot API path starting with /, for example /crm/v3/schemas/deals",
+          query: "optional query string parameter object"
+        }
       }
     );
   }
@@ -2168,6 +2206,14 @@ function mcpToolNameToBurbleToolName(name: string): string | null {
       return "hubspot.searchCompanies";
     case "hubspot_search_deals":
       return "hubspot.searchDeals";
+    case "hubspot_search_crm_objects":
+      return "hubspot.searchCrmObjects";
+    case "hubspot_list_owners":
+      return "hubspot.listOwners";
+    case "hubspot_list_users":
+      return "hubspot.listUsers";
+    case "hubspot_read_api_resource":
+      return "hubspot.readApiResource";
     case "jira_get_authenticated_user":
       return "jira.getAuthenticatedUser";
     case "jira_list_accessible_resources":
@@ -2748,7 +2794,7 @@ function buildBurbleDirectPrompt(
       "For Jira tickets assigned to a resolved person, call jira.searchIssues with that person's Jira accountId in JQL. If the user asks who they assigned to that person, state that the result reflects current visible assignee unless Jira changelog data is explicitly available.",
       "For Slack questions about what someone said, call slack.searchMessages. For 'what did I say about X', pass the requesting Slack user ID as fromUserId. For named Slack people, call slack.searchUsers first if you need their Slack user ID.",
       "For Google Drive, Calendar, or Gmail questions, call google.searchDriveFiles, google.createDriveTextFile, google.searchCalendarEvents, or google.searchMailMessages.",
-      "For HubSpot CRM questions about contacts, companies, or deals, call hubspot.searchContacts, hubspot.searchCompanies, or hubspot.searchDeals.",
+      "For HubSpot CRM questions about users, owners, contacts, companies, deals, or other scoped CRM objects, call the matching HubSpot tool. Use hubspot.listUsers for account users, hubspot.listOwners for assignable CRM owners, hubspot.searchCrmObjects for other CRM object types, and hubspot.readApiResource only for less common read-only HubSpot API resources with no first-class tool.",
       "For final answers, return concise Slack mrkdwn."
     ].join(" "),
     "",

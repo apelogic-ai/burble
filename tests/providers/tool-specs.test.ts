@@ -102,7 +102,11 @@ describe("provider tool specs", () => {
       "hubspot_get_authenticated_user",
       "hubspot_search_contacts",
       "hubspot_search_companies",
-      "hubspot_search_deals"
+      "hubspot_search_deals",
+      "hubspot_search_crm_objects",
+      "hubspot_list_owners",
+      "hubspot_list_users",
+      "hubspot_read_api_resource"
     ]);
     expect(
       hubspotProviderToolSpecs.every(
@@ -122,6 +126,22 @@ describe("provider tool specs", () => {
     expect(schema.query.safeParse("").success).toBe(false);
     expect(schema.limit.safeParse(20).success).toBe(true);
     expect(schema.limit.safeParse(21).success).toBe(false);
+
+    const searchCrmObjects = hubspotProviderToolSpecs.find(
+      (tool) => tool.name === "hubspot_search_crm_objects"
+    );
+    expect(searchCrmObjects).toBeDefined();
+    const crmObjectSchema = providerToolInputSchema(searchCrmObjects!);
+    expect(crmObjectSchema.objectType.safeParse("users").success).toBe(true);
+    expect(crmObjectSchema.objectType.safeParse("tickets").success).toBe(false);
+
+    const readApiResource = hubspotProviderToolSpecs.find(
+      (tool) => tool.name === "hubspot_read_api_resource"
+    );
+    expect(readApiResource).toBeDefined();
+    const readSchema = providerToolInputSchema(readApiResource!);
+    expect(readSchema.path.safeParse("/crm/v3/schemas/deals").success).toBe(true);
+    expect(readSchema.query.safeParse({ archived: false }).success).toBe(true);
   });
 
   test("validates nullable Jira fields from YAML", () => {
