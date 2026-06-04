@@ -49,12 +49,20 @@ const groupKeywords: Record<Exclude<RuntimeToolGroup, "attachments" | "conversat
     "hubspot companies",
     "hubspot deal",
     "hubspot deals",
+    "hubspot user",
+    "hubspot users",
+    "hubspot owner",
+    "hubspot owners",
     "crm contact",
     "crm contacts",
     "crm company",
     "crm companies",
     "crm deal",
-    "crm deals"
+    "crm deals",
+    "crm user",
+    "crm users",
+    "crm owner",
+    "crm owners"
   ],
   jira: ["jira", "atlassian", "ticket", "sprint", "project"],
   scheduler: ["cron", "schedule", "scheduled", "recurring", "reminder", "every"],
@@ -105,7 +113,11 @@ const followUpKeywords: Partial<
     "company",
     "companies",
     "deal",
-    "deals"
+    "deals",
+    "user",
+    "users",
+    "owner",
+    "owners"
   ]
 };
 

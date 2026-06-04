@@ -172,6 +172,10 @@ print(json.dumps({"text": mod.build_hermes_turn_text(payload)}))
     expect(text).toContain("hubspot_search_contacts");
     expect(text).toContain("hubspot_search_companies");
     expect(text).toContain("hubspot_search_deals");
+    expect(text).toContain("hubspot_search_crm_objects");
+    expect(text).toContain("hubspot_list_owners");
+    expect(text).toContain("hubspot_list_users");
+    expect(text).toContain("hubspot_read_api_resource");
     expect(text).not.toContain("google_search_drive_files");
   });
 
@@ -357,7 +361,7 @@ print(json.dumps({
 print(json.dumps({
     "github": mod.normalize_burble_tool_name("github_list_my_pull_requests"),
     "google": mod.normalize_burble_tool_name("google_append_to_drive_text_file"),
-    "hubspot": mod.normalize_burble_tool_name("hubspot_search_contacts"),
+    "hubspot": mod.normalize_burble_tool_name("hubspot_read_api_resource"),
     "jira": mod.normalize_burble_tool_name("jira_list_assigned_issues"),
     "job": mod.normalize_burble_tool_name("scheduled_job_register_capability"),
     "dotted": mod.normalize_burble_tool_name("google.searchDriveFiles"),
@@ -367,7 +371,7 @@ print(json.dumps({
     expect(result).toEqual({
       github: "github.listMyPullRequests",
       google: "google.appendToDriveTextFile",
-      hubspot: "hubspot.searchContacts",
+      hubspot: "hubspot.readApiResource",
       jira: "jira.listAssignedIssues",
       job: "scheduledJob.registerCapability",
       dotted: "google.searchDriveFiles"

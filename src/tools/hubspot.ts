@@ -2,9 +2,14 @@ import type { ProviderConnection } from "../db";
 import {
   HubSpotApiError,
   isHubSpotAuthorizationError,
+  type HubSpotApiReadInput,
+  type HubSpotApiResource,
   type HubSpotAccessTokenInfo,
   type HubSpotCrmObject,
-  type HubSpotTokenSet
+  type HubSpotObjectType,
+  type HubSpotOwner,
+  type HubSpotTokenSet,
+  type HubSpotUser
 } from "../providers/hubspot/client";
 import type { ToolResult } from "./types";
 
@@ -22,6 +27,27 @@ export type HubSpotToolDeps = {
     token: string,
     input: { query: string; limit?: number }
   ) => Promise<HubSpotCrmObject[]>;
+  searchHubSpotReadableCrmObjects: (
+    token: string,
+    input: {
+      objectType: HubSpotObjectType;
+      query?: string;
+      limit?: number;
+      properties?: string[];
+    }
+  ) => Promise<HubSpotCrmObject[]>;
+  listHubSpotOwners: (
+    token: string,
+    input?: { limit?: number; after?: string }
+  ) => Promise<HubSpotOwner[]>;
+  listHubSpotUsers: (
+    token: string,
+    input?: { limit?: number; after?: string }
+  ) => Promise<HubSpotUser[]>;
+  readHubSpotApiResource: (
+    token: string,
+    input: HubSpotApiReadInput
+  ) => Promise<HubSpotApiResource>;
   refreshHubSpotAccessToken?: (refreshToken: string) => Promise<HubSpotTokenSet>;
   saveHubSpotConnection?: (connection: ProviderConnection) => void;
   now?: () => Date;
@@ -89,6 +115,67 @@ export function createHubSpotTools(deps: HubSpotToolDeps) {
             deps.searchHubSpotDeals(accessToken, context.input)
           )
         );
+      }
+    },
+
+    searchCrmObjects: {
+      async execute(
+        context: HubSpotToolContext & {
+          input: {
+            objectType: HubSpotObjectType;
+            query?: string;
+            limit?: number;
+            properties?: string[];
+          };
+        }
+      ): Promise<ToolResult<HubSpotCrmObject[] | HubSpotAuthErrorContent>> {
+        return hubSpotListResult(
+          await withHubSpotToken(deps, context.connection, (accessToken) =>
+            deps.searchHubSpotReadableCrmObjects(accessToken, context.input)
+          )
+        );
+      }
+    },
+
+    listOwners: {
+      async execute(
+        context: HubSpotToolContext & { input?: { limit?: number; after?: string } }
+      ): Promise<ToolResult<HubSpotOwner[] | HubSpotAuthErrorContent>> {
+        return hubSpotListResult(
+          await withHubSpotToken(deps, context.connection, (accessToken) =>
+            deps.listHubSpotOwners(accessToken, context.input)
+          )
+        );
+      }
+    },
+
+    listUsers: {
+      async execute(
+        context: HubSpotToolContext & { input?: { limit?: number; after?: string } }
+      ): Promise<ToolResult<HubSpotUser[] | HubSpotAuthErrorContent>> {
+        return hubSpotListResult(
+          await withHubSpotToken(deps, context.connection, (accessToken) =>
+            deps.listHubSpotUsers(accessToken, context.input)
+          )
+        );
+      }
+    },
+
+    readApiResource: {
+      async execute(
+        context: HubSpotToolContext & { input: HubSpotApiReadInput }
+      ): Promise<ToolResult<HubSpotApiResource | HubSpotAuthErrorContent>> {
+        const result = await withHubSpotToken(deps, context.connection, (accessToken) =>
+          deps.readHubSpotApiResource(accessToken, context.input)
+        );
+        if (isHubSpotAuthErrorResult(result)) {
+          return result;
+        }
+
+        return {
+          classification: "user_private",
+          content: result
+        };
       }
     }
   };
@@ -179,6 +266,19 @@ function hubSpotSearchResult(
   return {
     classification: "user_private",
     content: result.slice(0, 20)
+  };
+}
+
+function hubSpotListResult<T>(
+  result: T[] | HubSpotAuthErrorResult
+): ToolResult<T[] | HubSpotAuthErrorContent> {
+  if (isHubSpotAuthErrorResult(result)) {
+    return result;
+  }
+
+  return {
+    classification: "user_private",
+    content: result.slice(0, 100)
   };
 }
 

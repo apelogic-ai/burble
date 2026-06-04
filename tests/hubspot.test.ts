@@ -5,9 +5,14 @@ import {
   exchangeHubSpotCode,
   getHubSpotAccessTokenInfo,
   HubSpotApiError,
+  listHubSpotOwners,
+  listHubSpotUsers,
+  readHubSpotApiResource,
+  searchHubSpotReadableCrmObjects,
   searchHubSpotContacts
 } from "../src/providers/hubspot/client";
 import { createHubSpotTools } from "../src/tools/hubspot";
+import type { HubSpotToolDeps } from "../src/tools/hubspot";
 import type { ProviderConnection } from "../src/db";
 
 const config: Config = {
@@ -219,6 +224,186 @@ describe("HubSpot OAuth and API helpers", () => {
       globalThis.fetch = originalFetch;
     }
   });
+
+  test("searches scoped CRM object types without requiring a query", async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input, init) => {
+      expect(String(input)).toBe(
+        "https://api.hubapi.com/crm/v3/objects/users/search"
+      );
+      expect(init?.method).toBe("POST");
+      expect(JSON.parse(String(init?.body))).toMatchObject({
+        limit: 3,
+        properties: ["hs_email"],
+        sorts: [{ propertyName: "createdate", direction: "DESCENDING" }]
+      });
+      expect(JSON.parse(String(init?.body))).not.toHaveProperty("query");
+      return Response.json({
+        results: [
+          {
+            id: "user-1",
+            properties: {
+              hs_email: "person@example.com",
+              unsafe: ["ignored"]
+            },
+            archived: false
+          }
+        ]
+      });
+    }) as typeof fetch;
+
+    try {
+      await expect(
+        searchHubSpotReadableCrmObjects("hubspot-token", {
+          objectType: "users",
+          limit: 3,
+          properties: ["hs_email"]
+        })
+      ).resolves.toEqual([
+        {
+          id: "user-1",
+          properties: { hs_email: "person@example.com" },
+          archived: false
+        }
+      ]);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  test("lists CRM owners", async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input, init) => {
+      const url = new URL(String(input));
+      expect(url.origin + url.pathname).toBe("https://api.hubapi.com/crm/v3/owners/");
+      expect(url.searchParams.get("limit")).toBe("2");
+      expect(url.searchParams.get("archived")).toBe("false");
+      expect(new Headers(init?.headers).get("authorization")).toBe(
+        "Bearer hubspot-token"
+      );
+      return Response.json({
+        results: [
+          {
+            id: "42",
+            email: "owner@example.com",
+            firstName: "Owner",
+            lastName: "One",
+            userId: 77,
+            archived: false
+          }
+        ]
+      });
+    }) as typeof fetch;
+
+    try {
+      await expect(listHubSpotOwners("hubspot-token", { limit: 2 })).resolves.toEqual([
+        {
+          id: "42",
+          email: "owner@example.com",
+          firstName: "Owner",
+          lastName: "One",
+          userId: 77,
+          archived: false
+        }
+      ]);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  test("lists HubSpot users", async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input, init) => {
+      const url = new URL(String(input));
+      expect(url.origin + url.pathname).toBe("https://api.hubapi.com/settings/v3/users");
+      expect(url.searchParams.get("limit")).toBe("2");
+      expect(new Headers(init?.headers).get("authorization")).toBe(
+        "Bearer hubspot-token"
+      );
+      return Response.json({
+        results: [
+          {
+            id: "7",
+            email: "user@example.com",
+            firstName: "User",
+            lastName: "One",
+            roleIds: ["role-1", 123],
+            primaryTeamId: "team-1"
+          }
+        ]
+      });
+    }) as typeof fetch;
+
+    try {
+      await expect(listHubSpotUsers("hubspot-token", { limit: 2 })).resolves.toEqual([
+        {
+          id: "7",
+          email: "user@example.com",
+          firstName: "User",
+          lastName: "One",
+          roleIds: ["role-1"],
+          primaryTeamId: "team-1"
+        }
+      ]);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  test("reads scoped HubSpot API resources with sanitized query params", async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input, init) => {
+      const url = new URL(String(input));
+      expect(url.origin + url.pathname).toBe(
+        "https://api.hubapi.com/crm/v3/schemas/deals"
+      );
+      expect(url.searchParams.get("archived")).toBe("false");
+      expect(url.searchParams.getAll("property")).toEqual(["dealname", "amount"]);
+      expect(new Headers(init?.headers).get("authorization")).toBe(
+        "Bearer hubspot-token"
+      );
+      return Response.json({
+        name: "deals",
+        labels: {
+          singular: "Deal"
+        }
+      });
+    }) as typeof fetch;
+
+    try {
+      await expect(
+        readHubSpotApiResource("hubspot-token", {
+          path: "/crm/v3/schemas/deals",
+          query: {
+            archived: false,
+            property: ["dealname", "amount"]
+          }
+        })
+      ).resolves.toEqual({
+        path: "/crm/v3/schemas/deals",
+        query: {
+          archived: "false",
+          property: ["dealname", "amount"]
+        },
+        content: {
+          name: "deals",
+          labels: {
+            singular: "Deal"
+          }
+        }
+      });
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  test("rejects unsupported HubSpot API read paths", async () => {
+    await expect(
+      readHubSpotApiResource("hubspot-token", {
+        path: "//evil.example/path"
+      })
+    ).rejects.toThrow("Invalid HubSpot API read path");
+  });
 });
 
 describe("HubSpot tools", () => {
@@ -226,12 +411,11 @@ describe("HubSpot tools", () => {
     const saved: ProviderConnection[] = [];
     const searchedWith: string[] = [];
     const tools = createHubSpotTools({
+      ...hubSpotToolDeps(),
       searchHubSpotContacts: async (token) => {
         searchedWith.push(token);
         return [];
       },
-      searchHubSpotCompanies: async () => [],
-      searchHubSpotDeals: async () => [],
       getHubSpotAccessTokenInfo: async () => ({
         hubId: 123,
         scopes: []
@@ -270,6 +454,7 @@ describe("HubSpot tools", () => {
   test("refreshes once and retries when HubSpot returns 401", async () => {
     const searchedWith: string[] = [];
     const tools = createHubSpotTools({
+      ...hubSpotToolDeps(),
       searchHubSpotContacts: async (token) => {
         searchedWith.push(token);
         if (token === "expired-token") {
@@ -277,8 +462,6 @@ describe("HubSpot tools", () => {
         }
         return [];
       },
-      searchHubSpotCompanies: async () => [],
-      searchHubSpotDeals: async () => [],
       getHubSpotAccessTokenInfo: async () => ({
         hubId: 123,
         scopes: []
@@ -310,11 +493,10 @@ describe("HubSpot tools", () => {
   test("does not refresh or ask users to reconnect when HubSpot returns 403", async () => {
     let refreshCalls = 0;
     const tools = createHubSpotTools({
+      ...hubSpotToolDeps(),
       searchHubSpotContacts: async () => {
         throw new HubSpotApiError("missing scope", 403);
       },
-      searchHubSpotCompanies: async () => [],
-      searchHubSpotDeals: async () => [],
       getHubSpotAccessTokenInfo: async () => ({
         hubId: 123,
         scopes: []
@@ -347,6 +529,27 @@ describe("HubSpot tools", () => {
     });
     expect(refreshCalls).toBe(0);
   });
+
+  test("executes HubSpot user lists through the tool wrapper", async () => {
+    const tools = createHubSpotTools({
+      ...hubSpotToolDeps(),
+      listHubSpotUsers: async (token, input) => {
+        expect(token).toBe("hubspot-token");
+        expect(input).toEqual({ limit: 2 });
+        return [{ id: "7", email: "user@example.com" }];
+      }
+    });
+
+    await expect(
+      tools.listUsers.execute({
+        connection: hubSpotConnection(),
+        input: { limit: 2 }
+      })
+    ).resolves.toEqual({
+      classification: "user_private",
+      content: [{ id: "7", email: "user@example.com" }]
+    });
+  });
 });
 
 function hubSpotConnection(
@@ -359,6 +562,27 @@ function hubSpotConnection(
     providerLogin: "hubspot-user@example.com",
     accessToken: "hubspot-token",
     connectedAt: "2026-06-03T12:00:00.000Z",
+    ...overrides
+  };
+}
+
+function hubSpotToolDeps(overrides: Partial<HubSpotToolDeps> = {}): HubSpotToolDeps {
+  return {
+    getHubSpotAccessTokenInfo: async () => ({
+      hubId: 123,
+      scopes: []
+    }),
+    searchHubSpotContacts: async () => [],
+    searchHubSpotCompanies: async () => [],
+    searchHubSpotDeals: async () => [],
+    searchHubSpotReadableCrmObjects: async () => [],
+    listHubSpotOwners: async () => [],
+    listHubSpotUsers: async () => [],
+    readHubSpotApiResource: async () => ({
+      path: "/crm/v3/schemas/deals",
+      query: {},
+      content: {}
+    }),
     ...overrides
   };
 }

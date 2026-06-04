@@ -432,6 +432,10 @@ function toMcpToolName(toolName: string): string {
     case "hubspot_search_contacts":
     case "hubspot_search_companies":
     case "hubspot_search_deals":
+    case "hubspot_search_crm_objects":
+    case "hubspot_list_owners":
+    case "hubspot_list_users":
+    case "hubspot_read_api_resource":
     case "jira_get_authenticated_user":
     case "jira_list_accessible_resources":
     case "jira_list_visible_projects":
@@ -525,6 +529,14 @@ function toMcpToolName(toolName: string): string {
       return "hubspot_search_companies";
     case "hubspot.searchDeals":
       return "hubspot_search_deals";
+    case "hubspot.searchCrmObjects":
+      return "hubspot_search_crm_objects";
+    case "hubspot.listOwners":
+      return "hubspot_list_owners";
+    case "hubspot.listUsers":
+      return "hubspot_list_users";
+    case "hubspot.readApiResource":
+      return "hubspot_read_api_resource";
     case "jira.getAuthenticatedUser":
       return "jira_get_authenticated_user";
     case "jira.listAccessibleResources":
@@ -932,6 +944,30 @@ function toMcpToolArgumentsWithoutScheduledJobIdentity(
     ]);
   }
 
+  if (toolName === "hubspot.searchCrmObjects") {
+    return compactToolInput(readRecordKey(body, "input"), [
+      "objectType",
+      "query",
+      "limit",
+      "properties"
+    ]);
+  }
+
+  if (toolName === "hubspot.listOwners" || toolName === "hubspot.listUsers") {
+    return compactToolInput(readRecordKey(body, "input"), [
+      "limit",
+      "after"
+    ]);
+  }
+
+  if (toolName === "hubspot.readApiResource") {
+    const input = readRecordKey(body, "input");
+    return {
+      ...compactToolInput(input, ["path"]),
+      ...(input ? compactRecordField(input, "query") : {})
+    };
+  }
+
   if (toolName === "jira.listVisibleProjects") {
     const input = readNestedRecord(body, "input", "input") ??
       readNestedRecord(body, "input", "arguments") ??
@@ -1246,6 +1282,16 @@ function compactToolInput(
     }
   }
   return output;
+}
+
+function compactRecordField(
+  input: Record<string, unknown>,
+  key: string
+): Record<string, unknown> {
+  const value = input[key];
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? { [key]: value }
+    : {};
 }
 
 async function readMcpToolResult(response: Response): Promise<ToolResult> {

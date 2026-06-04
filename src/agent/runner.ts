@@ -12,6 +12,7 @@ import type { createHubSpotTools } from "../tools/hubspot";
 import type { createJiraTools } from "../tools/jira";
 import type { createSlackTools } from "../tools/slack";
 import type { ToolClassification } from "../conversation/types";
+import { hubSpotReadableCrmObjectTypes } from "../providers/hubspot/client";
 import { createDirectModelResolver } from "./providers";
 import type { DirectLanguageModel, ModelResolver } from "./providers";
 import type {
@@ -65,7 +66,7 @@ const systemPrompt = [
   "Answer in concise Slack mrkdwn.",
   "Use provider tools for GitHub, Jira, Slack, and Google facts. Do not invent provider data.",
   "Use Google tools for Drive, Calendar, and Gmail facts when Google is connected.",
-  "Use HubSpot tools for CRM contacts, companies, and deals when HubSpot is connected.",
+  "Use HubSpot tools for CRM users, owners, contacts, companies, deals, and other scoped CRM objects when HubSpot is connected.",
   "Never ask for, print, or expose access tokens.",
   "When a provider tool returns an error object with a message, explain that message in normal Slack text; do not print raw JSON.",
   "When a tool says GitHub is not connected, tell the user to run `@Burble connect github`.",
@@ -1295,6 +1296,105 @@ async function runAiSdkAgent(
 
             return record(
               await deps.hubspotTools!.searchDeals.execute({
+                connection,
+                input: toolInput
+              })
+            );
+          })
+      });
+      tools.hubspot_search_crm_objects = tool({
+        description:
+          "Search or list HubSpot CRM objects covered by the connected account's read scopes. Use objectType users for HubSpot CRM user objects, and omit query for most-recent records.",
+        inputSchema: z.object({
+          objectType: z.enum(hubSpotReadableCrmObjectTypes),
+          query: z.string().min(1).max(200).optional(),
+          limit: z.number().int().positive().max(20).optional(),
+          properties: z.array(z.string().min(1).max(100)).max(20).optional()
+        }),
+        execute: async (toolInput) =>
+          executeTool("hubspot_search_crm_objects", async () => {
+            const connection = input.connections.hubspot;
+            if (!connection) {
+              return missingHubSpotConnection();
+            }
+
+            return record(
+              await deps.hubspotTools!.searchCrmObjects.execute({
+                connection,
+                input: toolInput
+              })
+            );
+          })
+      });
+      tools.hubspot_list_owners = tool({
+        description: "List HubSpot CRM owners/users assignable to CRM records.",
+        inputSchema: z.object({
+          limit: z.number().int().positive().max(100).optional(),
+          after: z.string().min(1).max(500).optional()
+        }),
+        execute: async (toolInput) =>
+          executeTool("hubspot_list_owners", async () => {
+            const connection = input.connections.hubspot;
+            if (!connection) {
+              return missingHubSpotConnection();
+            }
+
+            return record(
+              await deps.hubspotTools!.listOwners.execute({
+                connection,
+                input: toolInput
+              })
+            );
+          })
+      });
+      tools.hubspot_list_users = tool({
+        description:
+          "List users in the connected HubSpot account when settings.users.read was granted.",
+        inputSchema: z.object({
+          limit: z.number().int().positive().max(100).optional(),
+          after: z.string().min(1).max(500).optional()
+        }),
+        execute: async (toolInput) =>
+          executeTool("hubspot_list_users", async () => {
+            const connection = input.connections.hubspot;
+            if (!connection) {
+              return missingHubSpotConnection();
+            }
+
+            return record(
+              await deps.hubspotTools!.listUsers.execute({
+                connection,
+                input: toolInput
+              })
+            );
+          })
+      });
+      tools.hubspot_read_api_resource = tool({
+        description:
+          "Read a HubSpot API resource with GET for less common read-only HubSpot scopes when no first-class HubSpot tool exists. Use HubSpot API paths such as /crm/v3/schemas/deals or /marketing/v3/campaigns; never include secrets in the path or query.",
+        inputSchema: z.object({
+          path: z.string().min(1).max(300).startsWith("/"),
+          query: z
+            .record(
+              z.string(),
+              z.union([
+                z.string(),
+                z.number(),
+                z.boolean(),
+                z.array(z.union([z.string(), z.number(), z.boolean()]))
+              ])
+            )
+            .optional()
+        }),
+        execute: async (toolInput) =>
+          executeTool("hubspot_read_api_resource", async () => {
+            const connection = input.connections.hubspot;
+            if (!connection) {
+              return missingHubSpotConnection();
+            }
+
+            return record(
+              await deps.hubspotTools!.readApiResource.execute({
                 connection,
                 input: toolInput
               })

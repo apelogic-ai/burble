@@ -41,10 +41,14 @@ import {
 } from "../providers/google/client";
 import {
   getHubSpotAccessTokenInfo,
+  listHubSpotOwners,
+  listHubSpotUsers,
+  readHubSpotApiResource,
   refreshHubSpotAccessToken,
   searchHubSpotCompanies,
   searchHubSpotContacts,
-  searchHubSpotDeals
+  searchHubSpotDeals,
+  searchHubSpotReadableCrmObjects
 } from "../providers/hubspot/client";
 import {
   addJiraIssueComment,
@@ -129,6 +133,10 @@ const defaultDeps = {
   searchHubSpotContacts,
   searchHubSpotCompanies,
   searchHubSpotDeals,
+  searchHubSpotReadableCrmObjects,
+  listHubSpotOwners,
+  listHubSpotUsers,
+  readHubSpotApiResource,
   getJiraUser,
   listJiraAccessibleResources,
   listAssignedJiraIssues,

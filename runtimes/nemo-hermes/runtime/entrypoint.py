@@ -106,6 +106,26 @@ HERMES_PROVIDER_TOOL_HINTS: dict[str, list[dict[str, str]]] = {
             "alias": "hubspot.searchDeals",
             "args": "query?, limit?",
         },
+        {
+            "name": "hubspot_search_crm_objects",
+            "alias": "hubspot.searchCrmObjects",
+            "args": "objectType, query?, limit?, properties?",
+        },
+        {
+            "name": "hubspot_list_owners",
+            "alias": "hubspot.listOwners",
+            "args": "limit?, after?",
+        },
+        {
+            "name": "hubspot_list_users",
+            "alias": "hubspot.listUsers",
+            "args": "limit?, after?",
+        },
+        {
+            "name": "hubspot_read_api_resource",
+            "alias": "hubspot.readApiResource",
+            "args": "path, query?",
+        },
     ],
     "jira": [
         {

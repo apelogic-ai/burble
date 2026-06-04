@@ -396,6 +396,10 @@ describe("runOpenClawCliRequest", () => {
     expect(fallbackCatalogText).toContain("hubspot.getAuthenticatedUser");
     expect(fallbackCatalogText).toContain("hubspot.searchCompanies");
     expect(fallbackCatalogText).toContain("hubspot.searchDeals");
+    expect(fallbackCatalogText).toContain("hubspot.searchCrmObjects");
+    expect(fallbackCatalogText).toContain("hubspot.listOwners");
+    expect(fallbackCatalogText).toContain("hubspot.listUsers");
+    expect(fallbackCatalogText).toContain("hubspot.readApiResource");
     expect(fallbackCatalogText).not.toContain("google.searchDriveFiles");
   });
 

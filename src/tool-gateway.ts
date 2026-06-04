@@ -41,10 +41,16 @@ import {
 } from "./providers/google/client";
 import {
   getHubSpotAccessTokenInfo,
+  isHubSpotReadableCrmObjectType,
+  listHubSpotOwners,
+  listHubSpotUsers,
+  readHubSpotApiResource,
   refreshHubSpotAccessToken,
   searchHubSpotCompanies,
   searchHubSpotContacts,
-  searchHubSpotDeals
+  searchHubSpotDeals,
+  searchHubSpotReadableCrmObjects,
+  type HubSpotObjectType
 } from "./providers/hubspot/client";
 import {
   addJiraIssueComment,
@@ -189,6 +195,10 @@ const defaultDeps = {
   searchHubSpotContacts,
   searchHubSpotCompanies,
   searchHubSpotDeals,
+  searchHubSpotReadableCrmObjects,
+  listHubSpotOwners,
+  listHubSpotUsers,
+  readHubSpotApiResource,
   getJiraUser,
   listJiraAccessibleResources,
   listAssignedJiraIssues,
@@ -1101,6 +1111,58 @@ export async function handleToolGatewayRequest(
       );
     }
 
+    case "hubspot.searchCrmObjects": {
+      if (!isHubSpotCrmObjectSearchInput(body.input)) {
+        return new Response("Invalid tool input", { status: 400 });
+      }
+
+      return respondWithAudit(
+        await hubspotTools.searchCrmObjects.execute({
+          connection,
+          input: body.input
+        })
+      );
+    }
+
+    case "hubspot.listOwners": {
+      if (!isHubSpotListInput(body.input)) {
+        return new Response("Invalid tool input", { status: 400 });
+      }
+
+      return respondWithAudit(
+        await hubspotTools.listOwners.execute({
+          connection,
+          input: body.input
+        })
+      );
+    }
+
+    case "hubspot.listUsers": {
+      if (!isHubSpotListInput(body.input)) {
+        return new Response("Invalid tool input", { status: 400 });
+      }
+
+      return respondWithAudit(
+        await hubspotTools.listUsers.execute({
+          connection,
+          input: body.input
+        })
+      );
+    }
+
+    case "hubspot.readApiResource": {
+      if (!isHubSpotApiReadInput(body.input)) {
+        return new Response("Invalid tool input", { status: 400 });
+      }
+
+      return respondWithAudit(
+        await hubspotTools.readApiResource.execute({
+          connection,
+          input: body.input
+        })
+      );
+    }
+
     case "gmail.createDraft": {
       if (!isCreateGmailDraftInput(body.input)) {
         return new Response("Invalid tool input", { status: 400 });
@@ -1320,6 +1382,10 @@ function isKnownTool(toolName: string): boolean {
     toolName === "hubspot.searchContacts" ||
     toolName === "hubspot.searchCompanies" ||
     toolName === "hubspot.searchDeals" ||
+    toolName === "hubspot.searchCrmObjects" ||
+    toolName === "hubspot.listOwners" ||
+    toolName === "hubspot.listUsers" ||
+    toolName === "hubspot.readApiResource" ||
     toolName === "jira.getAuthenticatedUser" ||
     toolName === "jira.listAccessibleResources" ||
     toolName === "jira.listVisibleProjects" ||
@@ -2328,6 +2394,80 @@ function isHubSpotSearchInput(input: unknown): input is {
     input.query.length <= 200 &&
     (input.limit === undefined ||
       (isPositiveInteger(input.limit) && input.limit <= 20))
+  );
+}
+
+function isHubSpotCrmObjectSearchInput(input: unknown): input is {
+  objectType: HubSpotObjectType;
+  query?: string;
+  limit?: number;
+  properties?: string[];
+} {
+  return (
+    isOptionalObject(input) &&
+    isHubSpotReadableCrmObjectType(input.objectType) &&
+    (input.query === undefined ||
+      (typeof input.query === "string" && input.query.length <= 200)) &&
+    (input.limit === undefined ||
+      (isPositiveInteger(input.limit) && input.limit <= 20)) &&
+    (input.properties === undefined || stringArray(input.properties, 20))
+  );
+}
+
+function isHubSpotListInput(input: unknown): input is {
+  limit?: number;
+  after?: string;
+} {
+  return (
+    input === undefined ||
+    (isOptionalObject(input) &&
+      (input.limit === undefined ||
+        (isPositiveInteger(input.limit) && input.limit <= 100)) &&
+      (input.after === undefined ||
+        (typeof input.after === "string" && input.after.length <= 500)))
+  );
+}
+
+function isHubSpotApiReadInput(input: unknown): input is {
+  path: string;
+  query?: Record<string, string | number | boolean | Array<string | number | boolean>>;
+} {
+  return (
+    isOptionalObject(input) &&
+    typeof input.path === "string" &&
+    input.path.length > 0 &&
+    input.path.length <= 300 &&
+    (input.query === undefined || isHubSpotApiReadQuery(input.query))
+  );
+}
+
+function isHubSpotApiReadQuery(input: unknown): input is Record<string, unknown> {
+  return (
+    isOptionalObject(input) &&
+    Object.keys(input).length <= 30 &&
+    Object.entries(input).every(([key, value]) => {
+      if (!/^[A-Za-z0-9_.-]{1,100}$/.test(key)) {
+        return false;
+      }
+      if (
+        typeof value === "string" ||
+        typeof value === "number" ||
+        typeof value === "boolean"
+      ) {
+        return String(value).length <= 500;
+      }
+      return (
+        Array.isArray(value) &&
+        value.length <= 20 &&
+        value.every(
+          (item) =>
+            (typeof item === "string" ||
+              typeof item === "number" ||
+              typeof item === "boolean") &&
+            String(item).length <= 500
+        )
+      );
+    })
   );
 }
 

@@ -61,6 +61,24 @@ describe("selectRuntimeToolGroups", () => {
     });
   });
 
+  test("selects HubSpot for HubSpot user and owner language", () => {
+    expect(
+      selectRuntimeToolGroups({
+        text: "list all HubSpot users and HubSpot owners"
+      })
+    ).toEqual({
+      groups: ["conversation", "hubspot"],
+      reasons: [
+        "default:conversation",
+        "keyword:hubspot:hubspot",
+        "keyword:hubspot:hubspot user",
+        "keyword:hubspot:hubspot users",
+        "keyword:hubspot:hubspot owner",
+        "keyword:hubspot:hubspot owners"
+      ]
+    });
+  });
+
   test("does not select HubSpot for generic contact, company, or deal language", () => {
     expect(
       selectRuntimeToolGroups({
