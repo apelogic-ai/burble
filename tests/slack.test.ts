@@ -19,6 +19,7 @@ import {
   buildAuthResponse,
   buildHelpResponse,
   formatAgentProgressEvent,
+  formatAgentProgressMessage,
   readAgentConfigFile,
   buildReplyThreadTs,
   formatFinalProgressLine,
@@ -195,7 +196,59 @@ describe("formatAgentProgressEvent", () => {
         },
         ""
       )
-    ).toBe("Agent is responding...");
+    ).toBe("world");
+
+    expect(
+      formatAgentProgressEvent(
+        {
+          type: "message_delta",
+          text: " world"
+        },
+        "Hello"
+      )
+    ).toBe("Hello world");
+  });
+
+  test("accumulates runtime message deltas in Slack progress messages", () => {
+    const progressMessage = {
+      channel: "D123",
+      ts: "123.456",
+      text: "Starting agent runtime...",
+      startedAtMs: 0,
+      toolStartedAtMs: {},
+      toolLinesByCallId: {},
+      toolCallOrder: []
+    };
+
+    expect(
+      formatAgentProgressMessage(
+        {
+          type: "message_delta",
+          text: "Hello"
+        },
+        progressMessage
+      )
+    ).toBe("Hello");
+
+    expect(
+      formatAgentProgressMessage(
+        {
+          type: "message_delta",
+          text: " world"
+        },
+        progressMessage
+      )
+    ).toBe("Hello world");
+
+    expect(
+      formatAgentProgressMessage(
+        {
+          type: "status",
+          text: "Agent has thought for 8s"
+        },
+        progressMessage
+      )
+    ).toBe("Hello world");
   });
 });
 

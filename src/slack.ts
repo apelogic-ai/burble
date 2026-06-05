@@ -166,6 +166,7 @@ type SlackProgressMessage = {
   channel: string;
   ts: string;
   text: string;
+  streamedText?: string;
   startedAtMs: number;
   toolStartedAtMs: Record<string, number>;
   toolLinesByCallId: Record<string, string>;
@@ -4791,9 +4792,10 @@ export function formatAgentProgressEvent(
         `${formatAgentToolName(event.toolName)} completed (${formatToolClassification(event.classification)} result).`
       );
     case "message_delta": {
-      return event.text.trim() && !currentText.trim()
-        ? "Agent is responding..."
-        : undefined;
+      return appendSlackStreamedText(
+        isAgentProgressPlaceholder(currentText) ? "" : currentText,
+        event.text
+      ) || undefined;
     }
     case "final":
     case "error":
@@ -4856,7 +4858,7 @@ function isRuntimeMcpAuthFailure(message: string): boolean {
   );
 }
 
-function formatAgentProgressMessage(
+export function formatAgentProgressMessage(
   event: AgentRunEvent,
   progressMessage: SlackProgressMessage
 ): string | undefined {
@@ -4884,18 +4886,44 @@ function formatAgentProgressMessage(
   }
 
   if (event.type === "status") {
+    if (progressMessage.streamedText?.trim()) {
+      return renderProgressLines(progressMessage, [progressMessage.streamedText]);
+    }
     return renderProgressLines(progressMessage, [
       normalizeAgentStatus(event.text)
     ]);
   }
 
   if (event.type === "message_delta") {
-    return event.text.trim()
-      ? renderProgressLines(progressMessage, ["Agent is responding..."])
+    progressMessage.streamedText = appendSlackStreamedText(
+      progressMessage.streamedText ?? "",
+      event.text
+    );
+    return progressMessage.streamedText.trim()
+      ? renderProgressLines(progressMessage, [progressMessage.streamedText])
       : undefined;
   }
 
   return undefined;
+}
+
+function appendSlackStreamedText(currentText: string, delta: string): string {
+  if (!delta.trim()) {
+    return currentText;
+  }
+
+  return currentText ? `${currentText}${delta}` : delta.trimStart();
+}
+
+function isAgentProgressPlaceholder(text: string): boolean {
+  const trimmed = text.trim();
+  return (
+    !trimmed ||
+    trimmed === "Starting agent runtime..." ||
+    trimmed === "Agent is responding..." ||
+    trimmed === "Agent is thinking..." ||
+    /^Agent has thought for \d+s\.{0,3}$/.test(trimmed)
+  );
 }
 
 function normalizeAgentStatus(text: string): string {
