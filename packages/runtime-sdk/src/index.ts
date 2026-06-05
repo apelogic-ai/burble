@@ -2,20 +2,20 @@ export type {
   RuntimeCapabilityManifest,
   RuntimeRunEvent,
   RuntimeRunRequest
-} from "../agent/runtime-contract";
+} from "./runtime-contract";
 export {
   parseRuntimeCapabilityManifest,
   parseRuntimeRunEvent,
   parseRuntimeRunRequest
-} from "../agent/runtime-contract";
-export type { RuntimeContractClient } from "../agent/runtime-contract-harness";
+} from "./runtime-contract";
+export type { RuntimeContractClient } from "./runtime-contract-harness";
 export {
   createRuntimeContractHttpClient,
   RuntimeCapabilityDiscoveryError,
   type RuntimeContractFetch,
   type RuntimeContractWebSocket,
   type RuntimeContractWebSocketFactory
-} from "../agent/runtime-contract-http-client";
+} from "./runtime-contract-http-client";
 export {
   buildRuntimeBearerHeaders,
   createRuntimeToolGatewayClient,

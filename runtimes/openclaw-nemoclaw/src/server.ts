@@ -6,7 +6,7 @@ import { createRuntimeRunner } from "./runtime";
 import {
   createRuntimeContractServer,
   type RuntimeEventWebSocket
-} from "../../../src/runtime-sdk/server";
+} from "@burble/runtime-sdk/server";
 import type {
   ConversationAttachment,
   RunEvent,

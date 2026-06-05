@@ -460,7 +460,7 @@ describe("dev deploy config", () => {
     expect(dockerfile).toContain("command -v openclaw");
     expect(dockerfile).toContain("COPY runtimes/openclaw-nemoclaw/skills ./skills");
     expect(dockerfile).toContain(
-      "COPY src/runtime-sdk/server.ts /src/runtime-sdk/server.ts"
+      "COPY packages/runtime-sdk /runtime/node_modules/@burble/runtime-sdk"
     );
     expect(ciWorkflow).toContain(
       "-f runtimes/openclaw-nemoclaw/Dockerfile.openclaw-cli"

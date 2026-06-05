@@ -15,7 +15,7 @@ COPY runtimes/openclaw-nemoclaw/package.json runtimes/openclaw-nemoclaw/tsconfig
 COPY runtimes/openclaw-nemoclaw/src ./src
 COPY runtimes/openclaw-nemoclaw/skills ./skills
 COPY runtimes/openclaw-nemoclaw/openclaw-plugins ./openclaw-plugins
-COPY src/runtime-sdk/server.ts /src/runtime-sdk/server.ts
+COPY packages/runtime-sdk /runtime/node_modules/@burble/runtime-sdk
 RUN mkdir -p /runtime/openclaw-plugins/burble-channel/node_modules \
   && ln -s /usr/local/lib/node_modules/openclaw /runtime/openclaw-plugins/burble-channel/node_modules/openclaw
 EXPOSE 8080

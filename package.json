@@ -3,6 +3,9 @@
   "version": "0.1.0",
   "license": "MIT",
   "type": "module",
+  "workspaces": [
+    "packages/*"
+  ],
   "scripts": {
     "dev": "bun --watch src/index.ts",
     "start": "bun src/index.ts",
@@ -11,6 +14,7 @@
     "test:e2e:runtime-readiness": "BURBLE_E2E_RUNTIMES=1 bun test tests/e2e/runtime-readiness.test.ts"
   },
   "dependencies": {
+    "@burble/runtime-sdk": "workspace:*",
     "@ai-sdk/anthropic": "^3.0.78",
     "@ai-sdk/openai": "^3.0.64",
     "@ai-sdk/openai-compatible": "^2.0.48",

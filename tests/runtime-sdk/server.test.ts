@@ -4,7 +4,7 @@ import {
   createRuntimeContractServer,
   createRuntimeToolGatewayClient,
   type RuntimeEventWebSocket
-} from "../../src/runtime-sdk";
+} from "@burble/runtime-sdk";
 
 type TestRunRequest = {
   runId: string;
