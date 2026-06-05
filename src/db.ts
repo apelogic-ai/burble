@@ -1,6 +1,9 @@
 import { Database } from "bun:sqlite";
 import { createHash } from "node:crypto";
-import { isAgentRuntimeEngine } from "./runtime-engines";
+import {
+  isAgentRuntimeEngine,
+  type AgentRuntimeEngine
+} from "./runtime-engines";
 export type { AgentRuntimeEngine } from "./runtime-engines";
 
 export type OAuthState = {
