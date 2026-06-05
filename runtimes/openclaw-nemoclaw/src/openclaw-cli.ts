@@ -1333,7 +1333,7 @@ export async function* runOpenClawCliRequestStream(
 }
 
 function runtimeMessageDeltasEnabled(request: RunRequest): boolean {
-  return request.runtime?.manifest?.streaming.messageDeltasEnabled !== false;
+  return request.runtime?.manifest?.streaming?.messageDeltasEnabled !== false;
 }
 
 async function* collectOpenClawStream(

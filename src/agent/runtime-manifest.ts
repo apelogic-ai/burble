@@ -125,12 +125,12 @@ export function buildRuntimeManifest(input: {
     : defaultRuntimeSkills;
 
   const memory = {
-    userMemoryEnabled: memoryEnabled(userPreferences.get("memory.user")),
-    workspaceMemoryEnabled: memoryEnabled(workspacePolicy.get("memory.workspace")),
-    jobMemoryEnabled: memoryEnabled(workspacePolicy.get("memory.jobs"), true)
+    userMemoryEnabled: flagEnabled(userPreferences.get("memory.user")),
+    workspaceMemoryEnabled: flagEnabled(workspacePolicy.get("memory.workspace")),
+    jobMemoryEnabled: flagEnabled(workspacePolicy.get("memory.jobs"), true)
   };
   const streaming = {
-    messageDeltasEnabled: memoryEnabled(
+    messageDeltasEnabled: flagEnabled(
       userPreferences.get("runtime.streaming"),
       input.defaultStreaming
     )
@@ -343,7 +343,7 @@ function skillVersionRecords(value: unknown): SkillVersionRecord[] {
   });
 }
 
-function memoryEnabled(value: unknown, fallback = false): boolean {
+function flagEnabled(value: unknown, fallback = false): boolean {
   if (typeof value === "boolean") {
     return value;
   }

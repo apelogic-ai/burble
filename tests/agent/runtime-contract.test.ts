@@ -130,6 +130,21 @@ describe("runtime contract schemas", () => {
     ]);
   });
 
+  test("defaults legacy runtime run manifests to streaming enabled", () => {
+    const { streaming: _streaming, ...legacyManifest } =
+      baseRunRequest.runtime.manifest;
+
+    expect(
+      parseRuntimeRunRequest({
+        ...baseRunRequest,
+        runtime: {
+          ...baseRunRequest.runtime,
+          manifest: legacyManifest
+        }
+      }).runtime.manifest?.streaming.messageDeltasEnabled
+    ).toBe(true);
+  });
+
   test("rejects runtime run requests without a non-empty user request", () => {
     expect(() =>
       parseRuntimeRunRequest({

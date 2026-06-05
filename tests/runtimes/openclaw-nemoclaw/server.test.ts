@@ -1342,6 +1342,51 @@ describe("handleRuntimeRequest", () => {
     });
   });
 
+  test("accepts legacy run manifests without streaming preferences", async () => {
+    const response = await handleRuntimeRequest(
+      new Request("http://runtime/runs", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          runtime: {
+            id: "rt_legacy_manifest",
+            manifest: {
+              version: "1",
+              policyHash: "policy",
+              skills: [],
+              memory: {
+                userMemoryEnabled: true,
+                workspaceMemoryEnabled: false,
+                jobMemoryEnabled: true
+              }
+            }
+          },
+          input: {
+            text: "hello from an older Burble app",
+            connections: {
+              github: {
+                connected: false
+              }
+            }
+          }
+        })
+      }),
+      config,
+      async () => ({
+        classification: "user_private",
+        content: "Legacy manifest accepted."
+      })
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      response: {
+        classification: "user_private",
+        text: "No Burble tool context is needed for this request."
+      }
+    });
+  });
+
   test("rejects malformed run requests", async () => {
     const response = await handleRuntimeRequest(
       new Request("http://runtime/runs", {

@@ -34,7 +34,7 @@ export type RunRequest = {
         workspaceMemoryEnabled: boolean;
         jobMemoryEnabled: boolean;
       };
-      streaming: {
+      streaming?: {
         messageDeltasEnabled: boolean;
       };
       memoryContext?: Array<{

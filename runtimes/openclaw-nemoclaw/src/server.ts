@@ -1584,22 +1584,24 @@ function isRuntimeManifestSummary(
     !Array.isArray(manifest.skills) ||
     !("memory" in manifest) ||
     typeof manifest.memory !== "object" ||
-    manifest.memory === null ||
-    !("streaming" in manifest) ||
-    typeof manifest.streaming !== "object" ||
-    manifest.streaming === null
+    manifest.memory === null
   ) {
     return false;
   }
 
   const memory = manifest.memory as Record<string, unknown>;
-  const streaming = manifest.streaming as Record<string, unknown>;
+  const streaming =
+    "streaming" in manifest ? manifest.streaming : undefined;
   return (
     manifest.skills.every(isRuntimeManifestSkillSummary) &&
     typeof memory.userMemoryEnabled === "boolean" &&
     typeof memory.workspaceMemoryEnabled === "boolean" &&
     typeof memory.jobMemoryEnabled === "boolean" &&
-    typeof streaming.messageDeltasEnabled === "boolean" &&
+    (streaming === undefined ||
+      (typeof streaming === "object" &&
+        streaming !== null &&
+        typeof (streaming as Record<string, unknown>).messageDeltasEnabled ===
+          "boolean")) &&
     (!("memoryContext" in manifest) ||
       manifest.memoryContext === undefined ||
       (Array.isArray(manifest.memoryContext) &&

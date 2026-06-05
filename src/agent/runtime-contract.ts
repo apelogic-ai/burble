@@ -90,7 +90,9 @@ export const runtimeRequestManifestSchema = z
     policyHash: z.string().min(1),
     skills: z.array(runtimeManifestSkillSchema),
     memory: runtimeManifestMemorySchema,
-    streaming: runtimeManifestStreamingSchema,
+    streaming: runtimeManifestStreamingSchema.default({
+      messageDeltasEnabled: true
+    }),
     memoryContext: z.array(runtimeMemoryContextEntrySchema).optional()
   })
   .strict();
