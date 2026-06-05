@@ -61,6 +61,96 @@ mod = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(mod)
 `;
 
+const importBurblePlatformAdapter = String.raw`
+import importlib.util
+import json
+import sys
+import types
+
+class SendResult:
+    def __init__(self, success, message_id=None, error=None, retryable=False, **kwargs):
+        self.success = success
+        self.message_id = message_id
+        self.error = error
+        self.retryable = retryable
+
+class BasePlatformAdapter:
+    def __init__(self, config=None, platform=None):
+        self.config = config
+        self.platform = platform
+        self.message_len_fn = len
+    def _mark_connected(self):
+        pass
+    def _mark_disconnected(self):
+        pass
+
+class MessageEvent:
+    def __init__(self, **kwargs):
+        self.__dict__.update(kwargs)
+
+class MessageType:
+    TEXT = "text"
+
+class Platform(str):
+    pass
+
+posted_payloads = []
+
+class FakeResponse:
+    status = 200
+    async def __aenter__(self):
+        return self
+    async def __aexit__(self, exc_type, exc, tb):
+        return False
+    async def text(self):
+        return ""
+
+class FakeSession:
+    def __init__(self, *args, **kwargs):
+        pass
+    async def __aenter__(self):
+        return self
+    async def __aexit__(self, exc_type, exc, tb):
+        return False
+    def post(self, url, json):
+        posted_payloads.append({"url": url, "json": json})
+        return FakeResponse()
+
+class FakeTimeout:
+    def __init__(self, *args, **kwargs):
+        pass
+
+gateway = types.ModuleType("gateway")
+gateway_config = types.ModuleType("gateway.config")
+gateway_config.Platform = Platform
+gateway_platforms = types.ModuleType("gateway.platforms")
+gateway_platforms_base = types.ModuleType("gateway.platforms.base")
+gateway_platforms_base.BasePlatformAdapter = BasePlatformAdapter
+gateway_platforms_base.MessageEvent = MessageEvent
+gateway_platforms_base.MessageType = MessageType
+gateway_platforms_base.SendResult = SendResult
+gateway_session = types.ModuleType("gateway.session")
+gateway_session.build_session_key = lambda *args, **kwargs: "session-key"
+sys.modules["gateway"] = gateway
+sys.modules["gateway.config"] = gateway_config
+sys.modules["gateway.platforms"] = gateway_platforms
+sys.modules["gateway.platforms.base"] = gateway_platforms_base
+sys.modules["gateway.session"] = gateway_session
+
+aiohttp = types.ModuleType("aiohttp")
+aiohttp.ClientSession = FakeSession
+aiohttp.ClientTimeout = FakeTimeout
+aiohttp.web = types.SimpleNamespace(json_response=lambda body, **kwargs: body)
+sys.modules["aiohttp"] = aiohttp
+
+spec = importlib.util.spec_from_file_location(
+    "burble_platform_adapter",
+    "runtimes/nemo-hermes/hermes-plugins/burble-platform/adapter.py",
+)
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+`;
+
 describe("nemo-hermes entrypoint", () => {
   test("builds a runtime capability manifest", () => {
     const result = runHermesEntrypointProbe(`${importEntrypoint}
@@ -359,7 +449,74 @@ print(json.dumps({
     const config = (result as { config: string }).config;
     expect(config).toContain("burble-platform");
     expect(config).toContain("burble-provider-tool");
+    expect(config).toContain(
+      'streaming:\n  enabled: true\n  transport: edit\n  cursor: " ▉"'
+    );
     expect(config).not.toContain("mcp_servers:");
+  });
+
+  test("streams Hermes platform edits as Burble runtime message deltas", () => {
+    const result = runHermesEntrypointProbe(`${importBurblePlatformAdapter}
+import asyncio
+import os
+
+os.environ["BURBLE_TOOL_GATEWAY_URL"] = "http://burble-app:3000/internal/tools"
+os.environ["BURBLE_INTERNAL_TOKEN"] = "token"
+os.environ["BURBLE_RUNTIME_ID"] = "rt_123"
+
+async def main():
+    adapter = mod.BurbleAdapter(
+        types.SimpleNamespace(
+            extra={
+                "runtime_callback_url": "http://runtime/internal/hermes/runs",
+            }
+        )
+    )
+    adapter._pending_runs["route-1"] = "run-1"
+
+    sent = await adapter.send("route-1", "Hello ▉")
+    await adapter.edit_message("route-1", sent.message_id, "Hello world ▉")
+    await adapter.edit_message("route-1", sent.message_id, "Hello world", finalize=True)
+
+    print(json.dumps({
+        "messageId": sent.message_id,
+        "payloads": posted_payloads,
+    }))
+
+asyncio.run(main())
+`);
+
+    expect(result).toEqual({
+      messageId: "burble-stream:run-1:1",
+      payloads: [
+        {
+          url: "http://runtime/internal/hermes/runs/run-1/messages",
+          json: {
+            type: "message_delta",
+            routeId: "route-1",
+            text: "Hello",
+            classification: "user_private"
+          }
+        },
+        {
+          url: "http://runtime/internal/hermes/runs/run-1/messages",
+          json: {
+            type: "message_delta",
+            routeId: "route-1",
+            text: " world",
+            classification: "user_private"
+          }
+        },
+        {
+          url: "http://runtime/internal/hermes/runs/run-1/messages",
+          json: {
+            routeId: "route-1",
+            text: "Hello world",
+            classification: "user_private"
+          }
+        }
+      ]
+    });
   });
 
   test("restricts Hermes Burble platform to the minimal native tool surface", () => {

@@ -896,6 +896,10 @@ class BurbleHermesRuntime:
                 "memory:",
                 f"  memory_enabled: {str(native_memory_enabled).lower()}",
                 f"  user_profile_enabled: {str(native_memory_enabled).lower()}",
+                "streaming:",
+                "  enabled: true",
+                "  transport: edit",
+                '  cursor: " ▉"',
             ]
         )
         disabled_toolsets = env_list(
