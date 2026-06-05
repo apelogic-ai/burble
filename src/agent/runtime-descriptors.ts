@@ -1,13 +1,11 @@
-import type { AgentRuntimeEngine } from "../db";
+import {
+  isAgentRuntimeEngine,
+  runtimeEngines,
+  type AgentRuntimeEngine
+} from "../runtime-engines";
 import type { RuntimeCapabilityManifest } from "./runtime-contract";
 
-export const runtimeEngines = [
-  "deterministic",
-  "openclaw",
-  "openclaw-gateway",
-  "burble-direct",
-  "hermes"
-] as const satisfies readonly AgentRuntimeEngine[];
+export { runtimeEngines };
 
 export type RuntimeContainerProfile = {
   dataRootTarget: string;
@@ -181,5 +179,5 @@ export function runtimeCompatibilityFamily(engine: string): string {
 export function isKnownRuntimeEngine(
   value: string
 ): value is AgentRuntimeEngine {
-  return (runtimeEngines as readonly string[]).includes(value);
+  return isAgentRuntimeEngine(value);
 }

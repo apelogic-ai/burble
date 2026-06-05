@@ -1,5 +1,7 @@
 import { Database } from "bun:sqlite";
 import { createHash } from "node:crypto";
+import { isAgentRuntimeEngine } from "./runtime-engines";
+export type { AgentRuntimeEngine } from "./runtime-engines";
 
 export type OAuthState = {
   state: string;
@@ -27,13 +29,6 @@ export type ProviderConnection = {
   accessTokenExpiresAt?: string | null;
   connectedAt: string;
 };
-
-export type AgentRuntimeEngine =
-  | "deterministic"
-  | "openclaw"
-  | "openclaw-gateway"
-  | "burble-direct"
-  | "hermes";
 
 export type AgentRuntimeStatus =
   | "provisioning"
@@ -1850,13 +1845,7 @@ function normalizeCapabilityProfile(value: string | null | undefined): string {
 function normalizeAgentRuntimeEngine(
   value: string | null | undefined
 ): AgentRuntimeEngine | null {
-  return value === "deterministic" ||
-    value === "openclaw" ||
-    value === "openclaw-gateway" ||
-    value === "burble-direct" ||
-    value === "hermes"
-    ? value
-    : null;
+  return isAgentRuntimeEngine(value) ? value : null;
 }
 
 function normalizeStateRefs(value: unknown[] | null | undefined): unknown[] {
