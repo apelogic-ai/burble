@@ -4,6 +4,7 @@ import {
   type RuntimeContractFetch
 } from "./runtime-contract-http-client";
 import type { PrincipalId, RuntimeFactory } from "./runtime-factory";
+import { runtimeCompatibilityFamily } from "./runtime-descriptors";
 import { runtimeCapabilityManifestCompatibility } from "./runtime-policy";
 
 export type RuntimeReadinessSignalName =
@@ -71,8 +72,8 @@ export async function runRuntimeReadinessCheck(input: {
 
   const manifest = await client.getCapabilityManifest();
   if (
-    runtimeEngineCompatibilityFamily(manifest.runtimeType) !==
-    runtimeEngineCompatibilityFamily(input.engine)
+    runtimeCompatibilityFamily(manifest.runtimeType) !==
+    runtimeCompatibilityFamily(input.engine)
   ) {
     failSignal(
       "runtime.capabilities_ok",
@@ -106,12 +107,6 @@ export async function runRuntimeReadinessCheck(input: {
     endpointUrl: runtime.endpointUrl,
     signals
   };
-}
-
-function runtimeEngineCompatibilityFamily(engine: string): string {
-  return engine === "openclaw" || engine === "openclaw-gateway"
-    ? "openclaw"
-    : engine;
 }
 
 function failSignal(name: RuntimeReadinessSignalName, detail?: string): never {

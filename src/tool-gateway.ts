@@ -1,6 +1,7 @@
 import type { Config } from "./config";
 import type { AgentRuntimeEngine, AgentRuntimeRecord, TokenStore } from "./db";
 import type { ConversationAttachment } from "./conversation/types";
+import { isKnownRuntimeEngine } from "./agent/runtime-descriptors";
 import { createHash, timingSafeEqual } from "node:crypto";
 import {
   addGitHubIssueLabels,
@@ -1896,13 +1897,7 @@ function readObjectAlias(
 }
 
 function isAgentRuntimeEngine(value: unknown): value is AgentRuntimeEngine {
-  return (
-    value === "deterministic" ||
-    value === "openclaw" ||
-    value === "openclaw-gateway" ||
-    value === "burble-direct" ||
-    value === "hermes"
-  );
+  return typeof value === "string" && isKnownRuntimeEngine(value);
 }
 
 function buildScheduledJobPromptInstruction(

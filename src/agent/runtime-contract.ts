@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { runtimeEngines } from "./runtime-descriptors";
 
 export const toolClassificationSchema = z.enum([
   "public",
@@ -6,13 +7,7 @@ export const toolClassificationSchema = z.enum([
   "restricted"
 ]);
 
-export const agentRuntimeEngineSchema = z.enum([
-  "deterministic",
-  "openclaw",
-  "openclaw-gateway",
-  "burble-direct",
-  "hermes"
-]);
+export const agentRuntimeEngineSchema = z.enum(runtimeEngines);
 
 export const runtimeToolGroupSchema = z.enum([
   "attachments",
