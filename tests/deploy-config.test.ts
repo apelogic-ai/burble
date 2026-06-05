@@ -462,6 +462,9 @@ describe("dev deploy config", () => {
     expect(dockerfile).toContain(
       "COPY packages/runtime-sdk /runtime/node_modules/@burble/runtime-sdk"
     );
+    expect(dockerfile).toContain(
+      "RUN cd /runtime/node_modules/@burble/runtime-sdk && bun install --production"
+    );
     expect(ciWorkflow).toContain(
       "-f runtimes/openclaw-nemoclaw/Dockerfile.openclaw-cli"
     );

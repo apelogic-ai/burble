@@ -5,5 +5,6 @@ COPY runtimes/openclaw-nemoclaw/package.json runtimes/openclaw-nemoclaw/tsconfig
 COPY runtimes/openclaw-nemoclaw/src ./src
 COPY runtimes/openclaw-nemoclaw/skills ./skills
 COPY packages/runtime-sdk /runtime/node_modules/@burble/runtime-sdk
+RUN cd /runtime/node_modules/@burble/runtime-sdk && bun install --production
 EXPOSE 8080
 CMD ["bun", "src/index.ts"]
