@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, unlink, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import type { RuntimeConfig } from "./config";
 import { buildOpenClawLlmPatch } from "./llm-config";
@@ -21,6 +21,7 @@ export async function ensureOpenClawSetup(
     }
     if (isOpenClawBackedEngine(config)) {
       logInfo("OpenClaw onboard skipped setupOnStart=false");
+      await removeOpenClawBootstrapFile(config, logInfo);
     }
     await ensureOpenClawConfig(config, runCommand, logInfo);
     return;
@@ -28,6 +29,7 @@ export async function ensureOpenClawSetup(
 
   const setupCacheKey = await buildSetupCacheKey(config);
   if (await isSetupCacheValid(config, setupCacheKey)) {
+    await removeOpenClawBootstrapFile(config, logInfo);
     logInfo("OpenClaw setup cached");
     logInfo(
       `OpenClaw setup cache hit engine=${config.engine} elapsedMs=${Date.now() - startedAt}`
@@ -71,9 +73,28 @@ export async function ensureOpenClawSetup(
   }
   logInfo("OpenClaw onboard finish");
   logSetupPhaseFinish("onboard", config, logInfo, onboardStartedAt);
+  await removeOpenClawBootstrapFile(config, logInfo);
 
   await ensureOpenClawConfig(config, runCommand, logInfo);
   await writeSetupCache(config, setupCacheKey);
+}
+
+async function removeOpenClawBootstrapFile(
+  config: RuntimeConfig,
+  logInfo: RuntimeLogger
+): Promise<void> {
+  const bootstrapPath = join(config.openClawWorkspaceDir, "BOOTSTRAP.md");
+  try {
+    await unlink(bootstrapPath);
+    logInfo(`OpenClaw bootstrap file removed path=${bootstrapPath}`);
+  } catch (error) {
+    if (isMissingFileError(error)) {
+      return;
+    }
+    logInfo(
+      `OpenClaw bootstrap file removal skipped path=${bootstrapPath} error=${error instanceof Error ? error.message : String(error)}`
+    );
+  }
 }
 
 async function ensureOpenClawConfig(
@@ -161,6 +182,7 @@ function buildOpenClawNemoClawAgentConfig(
     {
       id: config.openClawAgent,
       default: true,
+      systemPromptOverride: defaults.systemPromptOverride,
       identity: {
         name: "Burble",
         theme: "Slack assistant",
@@ -237,6 +259,14 @@ function formatCliFailureDetail(result: { stdout: string; stderr: string }): str
   return text ? `: ${text}` : "";
 }
 
+function isMissingFileError(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    "code" in error &&
+    (error as NodeJS.ErrnoException).code === "ENOENT"
+  );
+}
+
 async function writeGeneratedLlmPatch(config: RuntimeConfig): Promise<string> {
   await mkdir(config.openClawStateDir, { recursive: true });
   const path = join(config.openClawStateDir, generatedLlmPatchFile);
@@ -266,24 +296,14 @@ async function buildSetupCacheKey(config: RuntimeConfig): Promise<string> {
   const patchHash = config.openClawConfigPatchPath
     ? await hashFile(config.openClawConfigPatchPath)
     : "none";
-  const generatedLlmPatchHash = createHash("sha256")
-    .update(
-      buildOpenClawLlmPatch({
-        modelId: config.llmModel,
-        ollamaBaseUrl: config.ollamaBaseUrl,
-        agentId: config.openClawAgent,
-        codeModeEnabled: config.openClawCodeMode,
-        fastModeEnabled: config.openClawFastMode,
-        burbleChannelBaseUrl: buildLocalBurbleChannelBaseUrl(config),
-        burbleMcpBaseUrl: buildLocalBurbleMcpBaseUrl(config)
-      })
-    )
+  const generatedAgentConfigHash = createHash("sha256")
+    .update(JSON.stringify(buildOpenClawNemoClawAgentConfig(config)))
     .digest("hex");
 
   return createHash("sha256")
     .update(
       JSON.stringify({
-        version: 2,
+        version: 3,
         engine: config.engine,
         command: config.openClawCommand,
         agent: config.openClawAgent,
@@ -292,7 +312,7 @@ async function buildSetupCacheKey(config: RuntimeConfig): Promise<string> {
         workspaceDir: config.openClawWorkspaceDir,
         configPatchPath: config.openClawConfigPatchPath,
         patchHash,
-        generatedLlmPatchHash,
+        generatedAgentConfigHash,
         validateOnStart: config.openClawValidateOnStart,
         llmModel: config.llmModel,
         ollamaBaseUrl: config.ollamaBaseUrl,

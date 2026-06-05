@@ -6,7 +6,7 @@ import {
 import type { RuntimeConfig } from "../../../runtimes/openclaw-nemoclaw/src/config";
 import type { RunEvent } from "../../../runtimes/openclaw-nemoclaw/src/types";
 import { clearGatewayDiagnosticText } from "../../../runtimes/openclaw-nemoclaw/src/gateway-diagnostics";
-import { mkdtemp, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -745,6 +745,181 @@ describe("runOpenClawCliRequest", () => {
         }
       ]
     });
+  });
+
+  test("does not infer cached provider tokens from an unspecified total-token remainder", async () => {
+    const response = await runOpenClawCliRequest(
+      {
+        runId: "run-unspecified-remainder",
+        input: {
+          text: "hey agent",
+          connections: {
+            github: { connected: false }
+          }
+        }
+      },
+      config,
+      async () => ({
+        classification: "user_private",
+        content: []
+      }),
+      async () => ({
+        exitCode: 0,
+        stdout: [
+          '[openai-transport] usage={"input_tokens":1701,"output_tokens":23,"total_tokens":22588}',
+          JSON.stringify({ response: { text: "Hey - how can I help?" } })
+        ].join("\n"),
+        stderr: ""
+      }),
+      () => undefined
+    );
+
+    expect(response.response.usage).toEqual({
+      inputTokens: 1701,
+      outputTokens: 23,
+      totalTokens: 22588
+    });
+  });
+
+  test("reads cached and reasoning provider token details when OpenClaw preserves them", async () => {
+    const response = await runOpenClawCliRequest(
+      {
+        runId: "run-provider-details",
+        input: {
+          text: "hey agent",
+          connections: {
+            github: { connected: false }
+          }
+        }
+      },
+      config,
+      async () => ({
+        classification: "user_private",
+        content: []
+      }),
+      async () => ({
+        exitCode: 0,
+        stdout: [
+          '[openai-transport] usage={"input_tokens":1701,"output_tokens":23,"total_tokens":22588,"input_tokens_details":{"cached_tokens":20864},"output_tokens_details":{"reasoning_tokens":0}}',
+          JSON.stringify({ response: { text: "Hey - how can I help?" } })
+        ].join("\n"),
+        stderr: ""
+      }),
+      () => undefined
+    );
+
+    expect(response.response.usage).toEqual({
+      inputTokens: 1701,
+      outputTokens: 23,
+      totalTokens: 22588,
+      cachedInputTokens: 20864,
+      reasoningTokens: 0
+    });
+  });
+
+  test("does not mislabel reasoning-token remainder as cached input", async () => {
+    const response = await runOpenClawCliRequest(
+      {
+        runId: "run-reasoning-remainder",
+        input: {
+          text: "think through this",
+          connections: {
+            github: { connected: false }
+          }
+        }
+      },
+      config,
+      async () => ({
+        classification: "user_private",
+        content: []
+      }),
+      async () => ({
+        exitCode: 0,
+        stdout: [
+          '[openai-transport] usage={"input_tokens":18812,"output_tokens":34,"total_tokens":22686,"output_tokens_details":{"reasoning_tokens":3840}}',
+          JSON.stringify({ response: { text: "Done." } })
+        ].join("\n"),
+        stderr: ""
+      }),
+      () => undefined
+    );
+
+    expect(response.response.usage).toEqual({
+      inputTokens: 18812,
+      outputTokens: 34,
+      totalTokens: 22686,
+      reasoningTokens: 3840
+    });
+  });
+
+  test("captures exact cached usage from a transient raw stream by default", async () => {
+    const logs: string[] = [];
+    const stateDir = await mkdtemp(join(tmpdir(), "burble-openclaw-raw-"));
+    let rawPath: string | undefined;
+
+    const response = await runOpenClawCliRequest(
+      {
+        runId: "run-transient-raw-usage",
+        input: {
+          text: "hey agent",
+          connections: {
+            github: { connected: false }
+          }
+        }
+      },
+      {
+        ...config,
+        openClawStateDir: stateDir,
+        openClawRawStreamDebug: false
+      },
+      async () => ({
+        classification: "user_private",
+        content: []
+      }),
+      async (_command, args) => {
+        rawPath = args[args.indexOf("--raw-stream-path") + 1];
+        expect(args).toContain("--raw-stream");
+        expect(rawPath).toBeTruthy();
+        await writeFile(
+          rawPath,
+          `${JSON.stringify({
+            type: "response.completed",
+            response: {
+              usage: {
+                input_tokens: 1701,
+                output_tokens: 23,
+                total_tokens: 22588,
+                input_tokens_details: {
+                  cached_tokens: 20864
+                }
+              }
+            }
+          })}\n`
+        );
+        return {
+          exitCode: 0,
+          stdout: JSON.stringify({ response: { text: "Hey - how can I help?" } }),
+          stderr: ""
+        };
+      },
+      (message) => logs.push(message)
+    );
+
+    expect(response.response.usage).toEqual({
+      inputTokens: 1701,
+      outputTokens: 23,
+      totalTokens: 22588,
+      cachedInputTokens: 20864
+    });
+    expect(
+      logs.some(
+        (line) =>
+          line.startsWith(
+            "OpenClaw raw stream captured runId=run-transient-raw-usage step=1"
+          ) && line.includes("retained=false")
+      )
+    ).toBe(true);
+    await expect(readFile(rawPath ?? "", "utf8")).rejects.toThrow();
   });
 
   test("logs OpenClaw internal model usage diagnostics when exact tokens are absent", async () => {
@@ -2971,7 +3146,7 @@ describe("runOpenClawCliRequest", () => {
           headers: new Headers(init?.headers),
           body: JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>
         });
-        if (requests.length === 1) {
+        if (requests.length <= 2) {
           return new Response(
             JSON.stringify({
               status: "failed",
@@ -3019,8 +3194,15 @@ describe("runOpenClawCliRequest", () => {
     );
 
     expect(response.response.text).toBe("Gateway answer.");
-    expect(requests).toHaveLength(2);
+    expect(requests).toHaveLength(3);
     expect(requests[0].body.input).toBe(requests[1].body.input);
+    expect(requests[1].body.input).toBe(requests[2].body.input);
+    expect(requests[0].headers.get("x-openclaw-session-key")).not.toBe(
+      requests[1].headers.get("x-openclaw-session-key")
+    );
+    expect(requests[1].headers.get("x-openclaw-session-key")).not.toBe(
+      requests[2].headers.get("x-openclaw-session-key")
+    );
     expect(
       logs.some((line) =>
         line.includes(
@@ -3028,14 +3210,27 @@ describe("runOpenClawCliRequest", () => {
         )
       )
     ).toBe(true);
+    expect(
+      logs.some((line) =>
+        line.includes(
+          "OpenClaw gateway http retry runId=run-openclaw-retry step=1 attempt=2 status=408 reason=upstream_provider_timeout"
+        )
+      )
+    ).toBe(true);
   });
 
   test("retries retryable OpenClaw Gateway transport timeouts", async () => {
-    const requests: Array<Record<string, unknown>> = [];
+    const requests: Array<{
+      headers: Headers;
+      body: Record<string, unknown>;
+    }> = [];
     const logs: string[] = [];
     const response = await withMockFetch(
       (async (_input, init) => {
-        requests.push(JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>);
+        requests.push({
+          headers: new Headers(init?.headers),
+          body: JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>
+        });
         if (requests.length === 1) {
           const error = new Error("The operation timed out");
           error.name = "AbortError";
@@ -3070,6 +3265,10 @@ describe("runOpenClawCliRequest", () => {
 
     expect(response.response.text).toBe("Gateway answer.");
     expect(requests).toHaveLength(2);
+    expect(requests[0].body.input).toBe(requests[1].body.input);
+    expect(requests[0].headers.get("x-openclaw-session-key")).not.toBe(
+      requests[1].headers.get("x-openclaw-session-key")
+    );
     expect(
       logs.some((line) =>
         line.includes(
@@ -3079,7 +3278,7 @@ describe("runOpenClawCliRequest", () => {
     ).toBe(true);
   });
 
-  test("uses route-scoped Burble sessions for ordinary native conversation turns", async () => {
+  test("uses turn-scoped OpenClaw sessions with Burble channel routing", async () => {
     const requests: Array<{
       headers: Headers;
       body: Record<string, unknown>;
@@ -3150,10 +3349,13 @@ describe("runOpenClawCliRequest", () => {
     expect(requests).toHaveLength(2);
     expect(requests[0].headers.get("x-openclaw-message-channel")).toBe("burble");
     expect(requests[1].headers.get("x-openclaw-message-channel")).toBe("burble");
-    expect(requests[0].headers.get("x-openclaw-session-key")).toBe(
+    expect(requests[0].headers.get("x-openclaw-session-key")).not.toBe(
       requests[1].headers.get("x-openclaw-session-key")
     );
     expect(requests[0].headers.get("x-openclaw-session-key")).toStartWith(
+      "agent:main:explicit:burble-step-"
+    );
+    expect(requests[1].headers.get("x-openclaw-session-key")).toStartWith(
       "agent:main:explicit:burble-step-"
     );
     expect(String(requests[0].body.input)).toContain(

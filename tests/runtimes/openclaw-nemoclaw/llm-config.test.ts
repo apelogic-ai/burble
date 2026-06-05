@@ -31,9 +31,13 @@ describe("buildOpenClawLlmPatch", () => {
     expect(patch.agents.defaults.systemPromptOverride).toContain(
       "Burble's OpenClaw runtime"
     );
+    expect(patch.agents.defaults.systemPromptOverride).not.toContain(
+      "BOOTSTRAP.md"
+    );
     expect(patch.agents.list).toEqual([
       {
-        id: "main"
+        id: "main",
+        systemPromptOverride: patch.agents.defaults.systemPromptOverride
       }
     ]);
     expect(patch.memory.qmd.update.startup).toBe("off");
@@ -83,15 +87,12 @@ describe("buildOpenClawLlmPatch", () => {
     expect(patch.agents.list).toEqual([
       {
         id: "burble",
+        systemPromptOverride: patch.agents.defaults.systemPromptOverride,
         fastModeDefault: true,
         thinkingDefault: "minimal",
         reasoningDefault: "off"
       }
     ]);
-    expect(JSON.stringify(patch.agents.list)).not.toContain("skipBootstrap");
-    expect(JSON.stringify(patch.agents.list)).not.toContain("contextInjection");
-    expect(JSON.stringify(patch.agents.list)).not.toContain("systemPromptOverride");
-    expect(JSON.stringify(patch.agents.list)).not.toContain("skills");
     expect(JSON.stringify(patch.agents.list)).not.toContain("identity");
     expect(JSON.stringify(patch.agents.list)).not.toContain("default");
     expect(patch.models.pricing.enabled).toBe(false);

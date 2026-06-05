@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
-import { mkdir, readFile } from "node:fs/promises";
+import { mkdir, readFile, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import type { RuntimeConfig } from "./config";
 import { readGatewayDiagnosticTextSince } from "./gateway-diagnostics";
@@ -293,7 +293,7 @@ async function runOpenClawCommand(
   }
 
   const startedAt = Date.now();
-  const rawStreamPath = await prepareRawStreamPath(config, request, step);
+  const rawStreamPath = await prepareRawStreamPath(config, request, step, logInfo);
   const args = buildOpenClawArgs(config, prompt, sessionId, rawStreamPath);
   const env = openClawEnv(config);
   logInfo(
@@ -309,7 +309,13 @@ async function runOpenClawCommand(
   );
 
   if (result.exitCode !== 0) {
-    const rawStream = await readRawStreamForUsage(rawStreamPath, logInfo, request, step);
+    const rawStream = await readRawStreamForUsage(
+      config,
+      rawStreamPath,
+      logInfo,
+      request,
+      step
+    );
     const gatewayDiagnostics = readGatewayDiagnosticTextSince(startedAt);
     logOpenClawUsageFromOutput(
       request,
@@ -327,7 +333,13 @@ async function runOpenClawCommand(
     );
     throw new Error(`OpenClaw CLI exited with code ${result.exitCode}`);
   }
-  const rawStream = await readRawStreamForUsage(rawStreamPath, logInfo, request, step);
+  const rawStream = await readRawStreamForUsage(
+    config,
+    rawStreamPath,
+    logInfo,
+    request,
+    step
+  );
   const gatewayDiagnostics = readGatewayDiagnosticTextSince(startedAt);
   const usageTelemetry = logOpenClawUsageFromOutput(
     request,
@@ -355,10 +367,10 @@ async function runOpenClawGatewayHttpRequest(
   step: number
 ): Promise<CliCommandResult> {
   const startedAt = Date.now();
-  const sessionKey = buildGatewayHttpSessionKey(config, sessionId);
+  const baseSessionKey = buildGatewayHttpSessionKey(config, sessionId);
   const endpoint = buildGatewayHttpResponsesUrl(config);
   logInfo(
-    `OpenClaw gateway http start runId=${request.runId ?? "unknown"} step=${step} agent=${config.openClawAgent} endpoint=/v1/responses timeoutMs=${config.openClawTimeoutMs}${summarizePromptForLog(prompt)} sessionKey=${sessionKey}`
+    `OpenClaw gateway http start runId=${request.runId ?? "unknown"} step=${step} agent=${config.openClawAgent} endpoint=/v1/responses timeoutMs=${config.openClawTimeoutMs}${summarizePromptForLog(prompt)} sessionKey=${baseSessionKey}`
   );
   logStreamDebug(config, logInfo, "prompt preview", {
     runId: request.runId ?? "unknown",
@@ -372,12 +384,20 @@ async function runOpenClawGatewayHttpRequest(
   const maxAttempts = 3;
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     const attemptStartedAt = Date.now();
+    const attemptSessionId = buildGatewayHttpAttemptSessionId(
+      sessionId,
+      attempt
+    );
+    const attemptSessionKey = buildGatewayHttpSessionKey(
+      config,
+      attemptSessionId
+    );
     try {
       const response = await fetchGatewayHttpResponse(
         endpoint,
         config,
         request,
-        sessionKey,
+        attemptSessionKey,
         prompt
       );
       const responseText = await response.text();
@@ -390,8 +410,12 @@ async function runOpenClawGatewayHttpRequest(
           attempt < maxAttempts &&
           isRetryableOpenClawGatewayProviderError(response.status, responseText)
         ) {
+          const nextSessionKey = buildGatewayHttpSessionKey(
+            config,
+            buildGatewayHttpAttemptSessionId(sessionId, attempt + 1)
+          );
           logInfo(
-            `OpenClaw gateway http retry runId=${request.runId ?? "unknown"} step=${step} attempt=${attempt} status=${response.status} reason=upstream_provider_timeout elapsedMs=${Date.now() - attemptStartedAt}`
+            `OpenClaw gateway http retry runId=${request.runId ?? "unknown"} step=${step} attempt=${attempt} status=${response.status} reason=upstream_provider_timeout elapsedMs=${Date.now() - attemptStartedAt} nextSessionKey=${nextSessionKey}`
           );
           continue;
         }
@@ -435,8 +459,12 @@ async function runOpenClawGatewayHttpRequest(
         attempt < maxAttempts &&
         isRetryableOpenClawGatewayTransportError(error)
       ) {
+        const nextSessionKey = buildGatewayHttpSessionKey(
+          config,
+          buildGatewayHttpAttemptSessionId(sessionId, attempt + 1)
+        );
         logInfo(
-          `OpenClaw gateway http retry runId=${request.runId ?? "unknown"} step=${step} attempt=${attempt} reason=transport_error elapsedMs=${Date.now() - attemptStartedAt}${summarizeLogObject("error", stderr)}`
+          `OpenClaw gateway http retry runId=${request.runId ?? "unknown"} step=${step} attempt=${attempt} reason=transport_error elapsedMs=${Date.now() - attemptStartedAt} nextSessionKey=${nextSessionKey}${summarizeLogObject("error", stderr)}`
         );
         continue;
       }
@@ -901,6 +929,17 @@ function buildGatewayHttpSessionKey(
   return `agent:${config.openClawAgent}:explicit:${sessionId}`;
 }
 
+function buildGatewayHttpAttemptSessionId(
+  sessionId: string,
+  attempt: number
+): string {
+  if (attempt <= 1) {
+    return sessionId;
+  }
+
+  return `${sessionId}-attempt-${attempt}`;
+}
+
 function buildGatewayHttpResponsesUrl(config: RuntimeConfig): string {
   return `http://127.0.0.1:${config.openClawGatewayPort}/v1/responses`;
 }
@@ -1114,7 +1153,7 @@ async function* collectOpenClawStream(
   let firstStdoutLogged = false;
   let firstStderrLogged = false;
   const startedAt = Date.now();
-  const rawStreamPath = await prepareRawStreamPath(config, request, step);
+  const rawStreamPath = await prepareRawStreamPath(config, request, step, logInfo);
   const args = buildOpenClawArgs(config, prompt, sessionId, rawStreamPath);
   const env = openClawEnv(config);
   logInfo(
@@ -1224,7 +1263,13 @@ async function* collectOpenClawStream(
   logInfo(
     `OpenClaw command stream finish runId=${request.runId ?? "unknown"} elapsedMs=${Date.now() - startedAt} exitCode=${exitCode ?? "unknown"} stdoutChunks=${chunkCount} stderrChunks=${stderrChunkCount} deltaCount=${deltaCount} stdoutChars=${stdout.length} stderrChars=${stderr.length}${summarizeLogObject("stderrPreview", stderr)}`
   );
-  const rawStream = await readRawStreamForUsage(rawStreamPath, logInfo, request, step);
+  const rawStream = await readRawStreamForUsage(
+    config,
+    rawStreamPath,
+    logInfo,
+    request,
+    step
+  );
   const gatewayDiagnostics = readGatewayDiagnosticTextSince(startedAt);
   const usageTelemetry = logOpenClawUsageFromOutput(
     request,
@@ -3670,7 +3715,7 @@ function readModelUsage(text: string): ModelUsage | null {
     (typeof inputTokens === "number" && typeof outputTokens === "number"
       ? inputTokens + outputTokens
       : undefined);
-  const cachedInputTokens = readNumberFieldTotal(text, [
+  const explicitCachedInputTokens = readNumberFieldTotal(text, [
     "cached_tokens",
     "cachedInputTokens",
     "cache_read_input_tokens"
@@ -3679,6 +3724,7 @@ function readModelUsage(text: string): ModelUsage | null {
     "reasoning_tokens",
     "reasoningTokens"
   ]);
+  const cachedInputTokens = explicitCachedInputTokens;
 
   if (
     inputTokens === undefined &&
@@ -3920,19 +3966,24 @@ function buildOpenClawArgs(
 async function prepareRawStreamPath(
   config: RuntimeConfig,
   request: RunRequest,
-  step: number
+  step: number,
+  logInfo: RuntimeLogger
 ): Promise<string | null> {
-  if (!config.openClawRawStreamDebug) {
+  const dir = join(config.openClawStateDir, "raw-streams");
+  try {
+    await mkdir(dir, { recursive: true });
+    const runKey = hashSessionKey(request.runId ?? randomUUID());
+    return join(dir, `${runKey}-step-${step}-${Date.now()}.jsonl`);
+  } catch (error) {
+    logInfo(
+      `OpenClaw raw stream capture unavailable runId=${request.runId ?? "unknown"} step=${step} dir=${dir} error=${error instanceof Error ? error.message : String(error)}`
+    );
     return null;
   }
-
-  const dir = join(config.openClawStateDir, "raw-streams");
-  await mkdir(dir, { recursive: true });
-  const runKey = hashSessionKey(request.runId ?? randomUUID());
-  return join(dir, `${runKey}-step-${step}-${Date.now()}.jsonl`);
 }
 
 async function readRawStreamForUsage(
+  config: RuntimeConfig,
   rawStreamPath: string | null,
   logInfo: RuntimeLogger,
   request: RunRequest,
@@ -3945,8 +3996,17 @@ async function readRawStreamForUsage(
   try {
     const content = await readFile(rawStreamPath, "utf8");
     logInfo(
-      `OpenClaw raw stream captured runId=${request.runId ?? "unknown"} step=${step} path=${rawStreamPath} bytes=${new TextEncoder().encode(content).length}`
+      `OpenClaw raw stream captured runId=${request.runId ?? "unknown"} step=${step} path=${rawStreamPath} bytes=${new TextEncoder().encode(content).length} retained=${config.openClawRawStreamDebug ? "true" : "false"}`
     );
+    if (!config.openClawRawStreamDebug) {
+      try {
+        await unlink(rawStreamPath);
+      } catch (error) {
+        logInfo(
+          `OpenClaw raw stream cleanup skipped runId=${request.runId ?? "unknown"} step=${step} path=${rawStreamPath} error=${error instanceof Error ? error.message : String(error)}`
+        );
+      }
+    }
     return content;
   } catch (error) {
     logInfo(
@@ -3959,7 +4019,9 @@ async function readRawStreamForUsage(
 function buildRunSessionId(request: RunRequest): string {
   const channelSessionKey = buildBurbleChannelSessionKey(request);
   if (channelSessionKey) {
-    return `burble-channel-${hashSessionKey(channelSessionKey)}`;
+    return `burble-turn-${hashSessionKey(
+      `${channelSessionKey}:${buildRunSessionKey(request)}`
+    )}`;
   }
 
   return `burble-run-${hashSessionKey(
@@ -3967,8 +4029,8 @@ function buildRunSessionId(request: RunRequest): string {
   )}`;
 }
 
-function buildRunSessionScope(request: RunRequest): "run" | "channel" {
-  return buildBurbleChannelSessionKey(request) ? "channel" : "run";
+function buildRunSessionScope(request: RunRequest): "run" | "turn" {
+  return buildBurbleChannelSessionKey(request) ? "turn" : "run";
 }
 
 function buildStepSessionId(runSessionId: string, step: number): string {
