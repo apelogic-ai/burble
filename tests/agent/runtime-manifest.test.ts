@@ -193,10 +193,24 @@ describe("buildRuntimeManifest", () => {
         }
       ]
     });
+    const basicManifest = buildRuntimeManifest({
+      ...baseInput,
+      userPreferences: [
+        {
+          workspaceId: "T123",
+          slackUserId: "U123",
+          key: "runtime.streaming",
+          value: "basic",
+          updatedAt: "2026-05-28T00:02:00.000Z"
+        }
+      ]
+    });
 
     expect(defaultManifest.streaming.messageDeltasEnabled).toBe(true);
     expect(disabledManifest.streaming.messageDeltasEnabled).toBe(false);
+    expect(basicManifest.streaming.messageDeltasEnabled).toBe(true);
     expect(disabledManifest.policyHash).not.toBe(defaultManifest.policyHash);
+    expect(basicManifest.policyHash).toBe(defaultManifest.policyHash);
   });
 
   test("falls back to an allowed model when user preference is outside policy", () => {

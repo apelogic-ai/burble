@@ -225,7 +225,7 @@ export function buildRuntimeManifestForPrincipal(input: {
       reaperEnabled: input.config.agentRuntimeReaperEnabled
     },
     defaultModel: input.config.aiModel,
-    defaultStreaming: input.config.agentRuntimeStreaming ?? true,
+    defaultStreaming: input.config.agentRuntimeStreaming !== "off",
     workspacePolicy: [
       ...defaultWorkspacePolicyRecords(input.principal.workspaceId),
       ...input.store.listWorkspacePolicy(input.principal.workspaceId),

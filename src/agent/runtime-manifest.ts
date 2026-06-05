@@ -347,6 +347,21 @@ function flagEnabled(value: unknown, fallback = false): boolean {
   if (typeof value === "boolean") {
     return value;
   }
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase();
+    if (normalized === "off" || normalized === "false" || normalized === "no") {
+      return false;
+    }
+    if (
+      normalized === "basic" ||
+      normalized === "native" ||
+      normalized === "on" ||
+      normalized === "true" ||
+      normalized === "yes"
+    ) {
+      return true;
+    }
+  }
   if (isRecord(value) && typeof value.enabled === "boolean") {
     return value.enabled;
   }

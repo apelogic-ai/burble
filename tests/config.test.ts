@@ -51,7 +51,7 @@ describe("readConfig", () => {
       agentRuntimeToolGatewayUrl: "http://burble-app:3000/internal/tools",
       agentRuntimeMcpGatewayUrl: null,
       agentRuntimeMcpAudience: null,
-      agentRuntimeStreaming: true,
+      agentRuntimeStreaming: "native",
       atlassianMcpUrl: "https://mcp.atlassian.com/v1/mcp",
       runtimeJwtIssuer: "https://example.ngrok-free.app",
       runtimeJwtPrivateKeyPath: null,
@@ -224,14 +224,20 @@ describe("readConfig", () => {
     );
   });
 
-  test("enables runtime streaming by default and allows env opt-out", () => {
-    expect(readConfig(validEnv).agentRuntimeStreaming).toBe(true);
+  test("enables native runtime streaming by default and allows env mode overrides", () => {
+    expect(readConfig(validEnv).agentRuntimeStreaming).toBe("native");
+    expect(
+      readConfig({
+        ...validEnv,
+        AGENT_RUNTIME_STREAMING: "basic"
+      }).agentRuntimeStreaming
+    ).toBe("basic");
     expect(
       readConfig({
         ...validEnv,
         AGENT_RUNTIME_STREAMING: "off"
       }).agentRuntimeStreaming
-    ).toBe(false);
+    ).toBe("off");
   });
 
   test("ignores a blank runtime image override", () => {

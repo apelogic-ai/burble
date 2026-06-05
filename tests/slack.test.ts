@@ -24,6 +24,7 @@ import {
   updateAgentProgressMessage,
   readAgentConfigFile,
   buildReplyThreadTs,
+  failAgentProgressMessage,
   formatFinalProgressLine,
   formatConnectGitHubMessage,
   formatConversationFailureMessage,
@@ -82,7 +83,7 @@ const agentConfig: Config = {
   agentRuntimeToolGatewayUrl: "http://burble-app:3000/internal/tools",
   agentRuntimeMcpGatewayUrl: "http://burble-app:3000/mcp",
   agentRuntimeMcpAudience: "http://burble-app:3000/mcp",
-  agentRuntimeStreaming: true,
+  agentRuntimeStreaming: "native",
   atlassianMcpUrl: "https://mcp.atlassian.com/v1/mcp",
   runtimeJwtIssuer: "http://burble-app:3000",
   runtimeJwtPrivateKeyPath: "/data/runtime-jwt-private.pem",
@@ -358,6 +359,186 @@ describe("formatAgentProgressEvent", () => {
     } finally {
       Date.now = originalNow;
     }
+  });
+
+  test("uses Slack native stream methods for native streaming progress", async () => {
+    const calls: string[] = [];
+    const originalNow = Date.now;
+    let now = 1_000;
+    Date.now = () => now;
+    try {
+      const progressMessage = {
+        channel: "D123",
+        ts: "123.456",
+        text: "Starting agent runtime...",
+        startedAtMs: 1_000,
+        threadTs: "111.222",
+        streamingMode: "native" as const,
+        toolStartedAtMs: {},
+        toolLinesByCallId: {},
+        toolCallOrder: []
+      };
+      const client = {
+        chat: {
+          startStream: async (input: {
+            channel: string;
+            thread_ts: string;
+            markdown_text?: string;
+          }) => {
+            calls.push(`start:${input.channel}:${input.thread_ts}:${input.markdown_text}`);
+            return { ts: "stream.123" };
+          },
+          appendStream: async (input: { ts: string; markdown_text: string }) => {
+            calls.push(`append:${input.ts}:${input.markdown_text}`);
+            return {};
+          },
+          stopStream: async (input: {
+            ts: string;
+            markdown_text?: string;
+            blocks?: unknown[];
+          }) => {
+            calls.push(`stop:${input.ts}:${input.markdown_text ?? ""}`);
+            return {};
+          },
+          update: async (input: { text: string }) => {
+            calls.push(`update:${input.text}`);
+            return {};
+          }
+        }
+      };
+
+      await updateAgentProgressMessage(client as never, progressMessage, {
+        type: "message_delta",
+        text: "Hello"
+      });
+      now += 100;
+      await updateAgentProgressMessage(client as never, progressMessage, {
+        type: "message_delta",
+        text: " world"
+      });
+      now += 600;
+      await updateAgentProgressMessage(client as never, progressMessage, {
+        type: "message_delta",
+        text: " again"
+      });
+      await postConversationResponse(client as never, {
+        response: {
+          visibility: "dm",
+          classification: "user_private",
+          text: "Hello world again",
+          usage: {
+            inputTokens: 2,
+            outputTokens: 1,
+            totalTokens: 3,
+            usageSource: "provider-output"
+          }
+        },
+        channel: "D123",
+        user: "U123",
+        progressMessage
+      });
+
+      expect(calls).toEqual([
+        "start:D123:111.222:Hello",
+        "append:stream.123: world again",
+        "stop:stream.123:\n\nFinal result in 700ms (3 tokens).",
+        "update:Final result in 700ms (3 tokens)."
+      ]);
+    } finally {
+      Date.now = originalNow;
+    }
+  });
+
+  test("falls back to chat.update when Slack native stream start fails", async () => {
+    const updates: string[] = [];
+    const originalNow = Date.now;
+    let now = 1_000;
+    Date.now = () => now;
+    try {
+      const progressMessage = {
+        channel: "D123",
+        ts: "123.456",
+        text: "Starting agent runtime...",
+        startedAtMs: 0,
+        threadTs: "111.222",
+        streamingMode: "native" as const,
+        toolStartedAtMs: {},
+        toolLinesByCallId: {},
+        toolCallOrder: []
+      };
+      const client = {
+        chat: {
+          startStream: async () => {
+            throw new Error("missing_scope");
+          },
+          update: async (input: { text: string }) => {
+            updates.push(input.text);
+            return {};
+          }
+        }
+      };
+
+      await updateAgentProgressMessage(client as never, progressMessage, {
+        type: "message_delta",
+        text: "Hello"
+      });
+      now += 1_000;
+      await updateAgentProgressMessage(client as never, progressMessage, {
+        type: "message_delta",
+        text: " world"
+      });
+
+      expect(updates).toEqual(["Hello", "Hello world"]);
+      expect((progressMessage as { streamingMode?: string }).streamingMode).toBe(
+        "basic"
+      );
+      expect(
+        (progressMessage as { nativeStreamFallbackReason?: string })
+          .nativeStreamFallbackReason
+      ).toBe("missing_scope");
+    } finally {
+      Date.now = originalNow;
+    }
+  });
+
+  test("stops an active Slack native stream when a conversation fails", async () => {
+    const calls: string[] = [];
+    const progressMessage = {
+      channel: "D123",
+      ts: "123.456",
+      text: "Starting agent runtime...",
+      startedAtMs: 0,
+      threadTs: "111.222",
+      streamingMode: "native" as const,
+      nativeStreamTs: "stream.123",
+      streamedText: "Partial answer",
+      toolStartedAtMs: {},
+      toolLinesByCallId: {},
+      toolCallOrder: []
+    };
+    const client = {
+      chat: {
+        stopStream: async (input: { ts: string; markdown_text?: string }) => {
+          calls.push(`stop:${input.ts}:${input.markdown_text ?? ""}`);
+          return {};
+        },
+        update: async (input: { text: string }) => {
+          calls.push(`update:${input.text}`);
+          return {};
+        }
+      }
+    };
+
+    await failAgentProgressMessage(
+      client as never,
+      progressMessage,
+      "I could not handle that message."
+    );
+
+    expect(calls).toEqual([
+      "stop:stream.123:\n\nI could not handle that message.",
+      "update:I could not handle that message."
+    ]);
   });
 });
 
@@ -789,7 +970,9 @@ describe("buildAppHomeView", () => {
     expect(serialized).toContain("openai:gpt-5.4");
     expect(serialized).toContain("agent_config_memory");
     expect(serialized).toContain("agent_config_streaming");
-    expect(serialized).toContain("\"value\":\"on\"");
+    expect(serialized).toContain("\"value\":\"native\"");
+    expect(serialized).toContain("\"value\":\"basic\"");
+    expect(serialized).toContain("\"value\":\"off\"");
   });
 
   test("omits allowed but incompatible runtime engines from the settings modal", () => {
@@ -1340,12 +1523,12 @@ describe("agent user config commands", () => {
       workspaceId: "T123",
       slackUserId: "U123",
       key: "streaming",
-      value: "off"
+      value: "basic"
     });
     expect(streamingResponse.text).toContain("Updated `streaming`");
     expect(
       store.getUserPreference("T123", "U123", "runtime.streaming")?.value
-    ).toEqual({ enabled: false });
+    ).toBe("basic");
 
     const getResponse = buildAgentUserConfigGetResponse({
       config: agentConfig,
@@ -1355,7 +1538,7 @@ describe("agent user config commands", () => {
     });
     expect(getResponse.text).toContain("openai:gpt-5.4-mini");
     expect(getResponse.text).toContain("User memory: `on`");
-    expect(getResponse.text).toContain("Streaming: `off`");
+    expect(getResponse.text).toContain("Streaming: `basic`");
   });
 
   test("sets and reads the user runtime engine preference", () => {
