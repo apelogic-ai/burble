@@ -79,7 +79,7 @@ async function withEnv<T>(
   }
 }
 
-function openResponsesText(text: string, usage = {
+function openResponsesText(text: string, usage: Record<string, unknown> = {
   input_tokens: 100,
   output_tokens: 20,
   total_tokens: 120
