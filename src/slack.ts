@@ -4717,7 +4717,7 @@ function isProgressOnlyMessage(text: string): boolean {
   );
 }
 
-async function postConversationResponse(
+export async function postConversationResponse(
   client: App["client"],
   input: {
     response: ConversationResponse;
@@ -4728,11 +4728,27 @@ async function postConversationResponse(
   }
 ): Promise<void> {
   if (input.progressMessage && input.response.visibility !== "ephemeral") {
+    const finalProgressLine = formatFinalProgressLine(
+      Date.now() - input.progressMessage.startedAtMs,
+      input.response.usage
+    );
+    if (input.progressMessage.streamedText?.trim()) {
+      const responseText =
+        renderConversationResponseText(input.response).trim() ||
+        input.progressMessage.streamedText.trim();
+      const finishedText = [responseText, "", finalProgressLine].join("\n");
+      input.progressMessage.text = finishedText;
+      await client.chat.update({
+        channel: input.progressMessage.channel,
+        ts: input.progressMessage.ts,
+        text: finishedText,
+        ...(input.response.blocks ? { blocks: input.response.blocks } : {})
+      });
+      return;
+    }
+
     const finishedText = renderProgressLines(input.progressMessage, [
-      formatFinalProgressLine(
-        Date.now() - input.progressMessage.startedAtMs,
-        input.response.usage
-      )
+      finalProgressLine
     ]);
     input.progressMessage.text = finishedText;
     await client.chat.update({

@@ -20,6 +20,7 @@ import {
   buildHelpResponse,
   formatAgentProgressEvent,
   formatAgentProgressMessage,
+  postConversationResponse,
   updateAgentProgressMessage,
   readAgentConfigFile,
   buildReplyThreadTs,
@@ -295,6 +296,64 @@ describe("formatAgentProgressEvent", () => {
       expect(updates).toEqual(["Hello", "Hello world again"]);
       expect((progressMessage as { streamedText?: string }).streamedText).toBe(
         "Hello world again"
+      );
+    } finally {
+      Date.now = originalNow;
+    }
+  });
+
+  test("finalizes streamed progress in place without a blank summary handoff", async () => {
+    const updates: Array<{ text: string; blocks?: unknown[] }> = [];
+    const posts: Array<{ text: string }> = [];
+    const originalNow = Date.now;
+    Date.now = () => 2_500;
+    try {
+      const progressMessage = {
+        channel: "D123",
+        ts: "123.456",
+        text: "Hello wor",
+        streamedText: "Hello world",
+        startedAtMs: 1_000,
+        toolStartedAtMs: {},
+        toolLinesByCallId: {},
+        toolCallOrder: []
+      };
+      const client = {
+        chat: {
+          update: async (input: { text: string; blocks?: unknown[] }) => {
+            updates.push(input);
+            return {};
+          },
+          postMessage: async (input: { text: string }) => {
+            posts.push(input);
+            return {};
+          }
+        }
+      };
+
+      await postConversationResponse(client as never, {
+        response: {
+          visibility: "dm",
+          classification: "user_private",
+          text: "Hello world",
+          usage: {
+            inputTokens: 2,
+            outputTokens: 1,
+            totalTokens: 3,
+            usageSource: "provider-output"
+          }
+        },
+        channel: "D123",
+        user: "U123",
+        progressMessage
+      });
+
+      expect(updates.map((update) => update.text)).toEqual([
+        "Hello world\n\nFinal result in 1.5s (3 tokens)."
+      ]);
+      expect(posts).toEqual([]);
+      expect(progressMessage.text).toBe(
+        "Hello world\n\nFinal result in 1.5s (3 tokens)."
       );
     } finally {
       Date.now = originalNow;
