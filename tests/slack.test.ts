@@ -350,11 +350,11 @@ describe("formatAgentProgressEvent", () => {
       });
 
       expect(updates.map((update) => update.text)).toEqual([
-        "Hello world\n\nFinal result in 1.5s (3 tokens)."
+        "Hello world\n\n_Final result in 1.5s (3 tokens)._"
       ]);
       expect(posts).toEqual([]);
       expect(progressMessage.text).toBe(
-        "Hello world\n\nFinal result in 1.5s (3 tokens)."
+        "Hello world\n\n_Final result in 1.5s (3 tokens)._"
       );
     } finally {
       Date.now = originalNow;
@@ -441,8 +441,8 @@ describe("formatAgentProgressEvent", () => {
       expect(calls).toEqual([
         "start:D123:111.222:Hello",
         "append:stream.123: world again",
-        "stop:stream.123:\n\nFinal result in 700ms (3 tokens).",
-        "update:Final result in 700ms (3 tokens)."
+        "stop:stream.123:\n\n_Final result in 700ms (3 tokens)._",
+        "update:_Final result in 700ms (3 tokens)._"
       ]);
     } finally {
       Date.now = originalNow;
@@ -499,6 +499,46 @@ describe("formatAgentProgressEvent", () => {
     } finally {
       Date.now = originalNow;
     }
+  });
+
+  test("uses in-place chat.update for native mode when there is no existing Slack thread", async () => {
+    const calls: string[] = [];
+    const progressMessage = {
+      channel: "D123",
+      ts: "123.456",
+      text: "Starting agent runtime...",
+      startedAtMs: 0,
+      streamingMode: "native" as const,
+      toolStartedAtMs: {},
+      toolLinesByCallId: {},
+      toolCallOrder: []
+    };
+    const client = {
+      chat: {
+        startStream: async () => {
+          calls.push("start");
+          return { ts: "stream.123" };
+        },
+        update: async (input: { text: string }) => {
+          calls.push(`update:${input.text}`);
+          return {};
+        }
+      }
+    };
+
+    await updateAgentProgressMessage(client as never, progressMessage, {
+      type: "message_delta",
+      text: "Hello in the DM"
+    });
+
+    expect(calls).toEqual(["update:Hello in the DM"]);
+    expect((progressMessage as { streamingMode?: string }).streamingMode).toBe(
+      "basic"
+    );
+    expect(
+      (progressMessage as { nativeStreamFallbackReason?: string })
+        .nativeStreamFallbackReason
+    ).toBe("slack_native_stream_unthreaded");
   });
 
   test("stops an active Slack native stream when a conversation fails", async () => {

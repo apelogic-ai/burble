@@ -688,7 +688,7 @@ export function createSlackRuntime(
             messageTs: mention.ts,
             threadTs: mention.thread_ts
           }),
-          streamThreadTs: mention.ts,
+          streamThreadTs: mention.thread_ts,
           streamingMode
         });
       }
@@ -876,7 +876,7 @@ export function createSlackRuntime(
             messageTs: directMessage.ts,
             threadTs: directMessage.thread_ts
           }),
-          streamThreadTs: directMessage.ts,
+          streamThreadTs: directMessage.thread_ts,
           streamingMode
         });
       }
@@ -1482,7 +1482,7 @@ export function createSlackRuntime(
           if (execTask.status === "stopped") {
             return;
           }
-          const finalStatusText = formatFinalProgressLine(
+          const finalStatusText = formatSlackFinalProgressLine(
             Date.now() - startedAtMs,
             result.usage
           );
@@ -4858,7 +4858,7 @@ function isProgressOnlyMessage(text: string): boolean {
     /^Starting agent runtime/i.test(text) ||
     /^Agent is /i.test(text) ||
     /^Calling /i.test(text) ||
-    /^Final result in /i.test(text) ||
+    /^_?Final result in /i.test(text) ||
     /completed in \d+(?:ms|s).*\bresult\)/i.test(text)
   );
 }
@@ -4874,7 +4874,7 @@ export async function postConversationResponse(
   }
 ): Promise<void> {
   if (input.progressMessage && input.response.visibility !== "ephemeral") {
-    const finalProgressLine = formatFinalProgressLine(
+    const finalProgressLine = formatSlackFinalProgressLine(
       Date.now() - input.progressMessage.startedAtMs,
       input.response.usage
     );
@@ -5122,7 +5122,10 @@ async function updateSlackNativeStream(
 
   const chat = client.chat as App["client"]["chat"] & SlackNativeStreamChatClient;
   if (!progressMessage.nativeStreamTs) {
-    if (!progressMessage.threadTs || !chat.startStream) {
+    if (!progressMessage.threadTs) {
+      throw new Error("slack_native_stream_unthreaded");
+    }
+    if (!chat.startStream) {
       throw new Error("slack_native_stream_unavailable");
     }
     const result = await chat.startStream({
@@ -5470,6 +5473,13 @@ function formatToolClassification(classification: ToolClassification): string {
 export function formatFinalProgressLine(elapsedMs: number, usage?: AgentUsage): string {
   const usageText = formatUsageSummary(usage);
   return `Final result in ${formatElapsedMs(elapsedMs)}${usageText ? ` (${usageText})` : ""}.`;
+}
+
+function formatSlackFinalProgressLine(
+  elapsedMs: number,
+  usage?: AgentUsage
+): string {
+  return `_${formatFinalProgressLine(elapsedMs, usage)}_`;
 }
 
 function formatUsageSummary(usage?: AgentUsage): string | null {
