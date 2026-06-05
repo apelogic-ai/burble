@@ -37,6 +37,27 @@ image_id() {
   docker image inspect --format '{{.Id}}' "$1" 2>/dev/null || true
 }
 
+is_known_default_runtime_image() {
+  case "$1" in
+    burble-openclaw-nemoclaw:dev|burble-openclaw-nemoclaw-openclaw-cli:dev|burble-nemo-hermes:dev)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+select_runtime_image() {
+  local default_image="$1"
+  local configured_image="${AGENT_RUNTIME_IMAGE:-}"
+  if [[ -z "${configured_image}" ]] || is_known_default_runtime_image "${configured_image}"; then
+    export AGENT_RUNTIME_IMAGE="${default_image}"
+  else
+    export AGENT_RUNTIME_IMAGE="${configured_image}"
+  fi
+}
+
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --no-pull)
@@ -81,11 +102,11 @@ runtime_engine="${AGENT_RUNTIME_ENGINE:-openclaw}"
 case "${runtime_engine}" in
   hermes|nemo-hermes)
     export AGENT_RUNTIME_ENGINE=hermes
-    export AGENT_RUNTIME_IMAGE="${AGENT_RUNTIME_IMAGE:-burble-nemo-hermes:dev}"
+    select_runtime_image "burble-nemo-hermes:dev"
     runtime_image_service="nemo-hermes-image"
     ;;
   ""|openclaw|openclaw-gateway|deterministic|burble-direct|direct-provider)
-    export AGENT_RUNTIME_IMAGE="${AGENT_RUNTIME_IMAGE:-burble-openclaw-nemoclaw-openclaw-cli:dev}"
+    select_runtime_image "burble-openclaw-nemoclaw-openclaw-cli:dev"
     runtime_image_service="openclaw-nemoclaw-image"
     ;;
   *)

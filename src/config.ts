@@ -68,6 +68,26 @@ export const agentRuntimeEngines = [
   "hermes"
 ] as const;
 
+const defaultAgentRuntimeImages: Record<AgentRuntimeEngine, readonly string[]> = {
+  deterministic: [
+    "burble-openclaw-nemoclaw:dev",
+    "burble-openclaw-nemoclaw-openclaw-cli:dev"
+  ],
+  openclaw: [
+    "burble-openclaw-nemoclaw:dev",
+    "burble-openclaw-nemoclaw-openclaw-cli:dev"
+  ],
+  "openclaw-gateway": [
+    "burble-openclaw-nemoclaw:dev",
+    "burble-openclaw-nemoclaw-openclaw-cli:dev"
+  ],
+  "burble-direct": [
+    "burble-openclaw-nemoclaw:dev",
+    "burble-openclaw-nemoclaw-openclaw-cli:dev"
+  ],
+  hermes: ["burble-nemo-hermes:dev"]
+};
+
 function requiredEnv(env: Env, name: string): string {
   const value = env[name];
   if (!value) {
@@ -331,9 +351,14 @@ export function readConfig(env: Env): Config {
 }
 
 export function defaultAgentRuntimeImage(engine: AgentRuntimeEngine): string {
-  return engine === "hermes"
-    ? "burble-nemo-hermes:dev"
-    : "burble-openclaw-nemoclaw:dev";
+  return defaultAgentRuntimeImages[engine][0];
+}
+
+export function isDefaultAgentRuntimeImage(
+  engine: AgentRuntimeEngine,
+  image: string
+): boolean {
+  return defaultAgentRuntimeImages[engine].includes(image);
 }
 
 function optionalSecretEnv(env: Env, name: string): string | null {
