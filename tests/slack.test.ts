@@ -625,6 +625,68 @@ describe("formatAgentProgressEvent", () => {
     ).toBe("slack_native_stream_replace_unsupported");
   });
 
+  test("finalizes native streams that fell back after replacement through the basic path", async () => {
+    const calls: string[] = [];
+    const originalNow = Date.now;
+    Date.now = () => 2_500;
+    try {
+      const progressMessage = {
+        channel: "D123",
+        ts: "123.456",
+        text: "Rewritten answer and tail",
+        startedAtMs: 1_000,
+        threadTs: "111.222",
+        streamingMode: "basic" as const,
+        nativeStreamTs: "stream.123",
+        nativeStreamStopped: true,
+        nativeStreamFallbackReason: "slack_native_stream_replace_unsupported",
+        streamedText: "Rewritten answer and tail",
+        toolStartedAtMs: {},
+        toolLinesByCallId: {},
+        toolCallOrder: []
+      };
+      const client = {
+        chat: {
+          stopStream: async (input: { ts: string; markdown_text?: string }) => {
+            calls.push(`stop:${input.ts}:${input.markdown_text ?? ""}`);
+            return {};
+          },
+          update: async (input: { text: string }) => {
+            calls.push(`update:${input.text}`);
+            return {};
+          },
+          postMessage: async (input: { text: string }) => {
+            calls.push(`post:${input.text}`);
+            return {};
+          }
+        }
+      };
+
+      await postConversationResponse(client as never, {
+        response: {
+          visibility: "dm",
+          classification: "user_private",
+          text: "Rewritten answer and tail",
+          usage: {
+            inputTokens: 2,
+            outputTokens: 1,
+            totalTokens: 3,
+            usageSource: "provider-output"
+          }
+        },
+        channel: "D123",
+        user: "U123",
+        progressMessage
+      });
+
+      expect(calls).toEqual([
+        "update:Rewritten answer and tail\n\n_Final result in 1.5s (3 tokens)._"
+      ]);
+    } finally {
+      Date.now = originalNow;
+    }
+  });
+
   test("stops an active Slack native stream when a conversation fails", async () => {
     const calls: string[] = [];
     const progressMessage = {

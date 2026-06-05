@@ -4878,7 +4878,10 @@ export async function postConversationResponse(
       Date.now() - input.progressMessage.startedAtMs,
       input.response.usage
     );
-    if (input.progressMessage.nativeStreamTs) {
+    if (
+      input.progressMessage.nativeStreamTs &&
+      !input.progressMessage.nativeStreamFallbackReason
+    ) {
       const pendingText = input.progressMessage.nativeStreamPendingText ?? "";
       const finalStreamText = [pendingText, "", finalProgressLine].join("\n");
       try {
