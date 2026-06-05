@@ -6,6 +6,7 @@ import type {
   AgentRuntimeRecord,
   TokenStore
 } from "../db";
+import { runtimeConfigFileName } from "./runtime-descriptors";
 import type { RuntimeManifest } from "./runtime-manifest";
 
 export type PrincipalId = {
@@ -127,7 +128,7 @@ export async function readRuntimeConfigFromLocalFile(
 }
 
 export function nativeAgentConfigFileName(engine: AgentRuntimeEngine): string {
-  return engine === "hermes" ? "hermes.json" : "openclaw.json";
+  return runtimeConfigFileName(engine);
 }
 
 function toHandleStatus(status: string): RuntimeHandle["status"] {

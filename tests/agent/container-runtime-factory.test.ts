@@ -302,6 +302,14 @@ describe("toRuntimeContainerPath", () => {
         runtimeRoot: "/opt/burble/runtimes/u123"
       })
     ).toBe("/shared/runtime.json");
+
+    expect(
+      toRuntimeContainerPath({
+        hostPath: "/opt/burble/runtimes/u123/config/runtime.json",
+        runtimeRoot: "/opt/burble/runtimes/u123",
+        containerRoot: "/runtime"
+      })
+    ).toBe("/runtime/config/runtime.json");
   });
 });
 
