@@ -581,6 +581,46 @@ asyncio.run(main())
     });
   });
 
+  test("normalizes nested OpenAI token detail usage in Hermes runtime callbacks", () => {
+    const result = runHermesEntrypointProbe(`${importEntrypoint}
+print(json.dumps(mod.normalize_usage({
+    "input_tokens": 1701,
+    "output_tokens": 23,
+    "total_tokens": 22588,
+    "input_tokens_details": {"cached_tokens": 20864},
+    "output_tokens_details": {"reasoning_tokens": 85},
+})))
+`);
+
+    expect(result).toEqual({
+      inputTokens: 1701,
+      outputTokens: 23,
+      totalTokens: 22588,
+      cachedInputTokens: 20864,
+      reasoningTokens: 85
+    });
+  });
+
+  test("normalizes nested OpenAI token detail usage in Hermes platform callbacks", () => {
+    const result = runHermesEntrypointProbe(`${importBurblePlatformAdapter}
+print(json.dumps(mod._normalize_usage({
+    "input_tokens": 1701,
+    "output_tokens": 23,
+    "total_tokens": 22588,
+    "input_tokens_details": {"cached_tokens": 20864},
+    "output_tokens_details": {"reasoning_tokens": 85},
+})))
+`);
+
+    expect(result).toEqual({
+      inputTokens: 1701,
+      outputTokens: 23,
+      totalTokens: 22588,
+      cachedInputTokens: 20864,
+      reasoningTokens: 85
+    });
+  });
+
   test("restricts Hermes Burble platform to the minimal native tool surface", () => {
     const result = runHermesEntrypointProbe(`${importEntrypoint}
 import os

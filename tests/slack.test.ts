@@ -399,6 +399,69 @@ describe("formatAgentProgressEvent", () => {
     }
   });
 
+  test("finalizes tool progress with the summary below the streamed answer", async () => {
+    const updates: string[] = [];
+    const originalNow = Date.now;
+    Date.now = () => 1_500;
+    try {
+      const progressMessage = {
+        channel: "D123",
+        ts: "123.456",
+        text: "Starting agent runtime...",
+        startedAtMs: 0,
+        toolStartedAtMs: {},
+        toolLinesByCallId: {},
+        toolCallOrder: []
+      };
+      const client = {
+        chat: {
+          update: async (input: { text: string }) => {
+            updates.push(input.text);
+            return {};
+          }
+        }
+      };
+
+      await updateAgentProgressMessage(client as never, progressMessage, {
+        type: "tool_call",
+        toolName: "github.listPullRequests",
+        callId: "call-1"
+      });
+      await updateAgentProgressMessage(client as never, progressMessage, {
+        type: "message_delta",
+        text: "Here are the PRs."
+      });
+      await postConversationResponse(client as never, {
+        response: {
+          visibility: "dm",
+          classification: "user_private",
+          text: "Here are the PRs.",
+          usage: {
+            inputTokens: 2,
+            outputTokens: 1,
+            totalTokens: 3,
+            usageSource: "provider-output"
+          }
+        },
+        channel: "D123",
+        user: "U123",
+        progressMessage
+      });
+
+      expect(updates.at(-1)).toBe(
+        [
+          "Calling GitHub list Pull Requests...",
+          "",
+          "Here are the PRs.",
+          "",
+          "_Final result in 1.5s (3 tokens)._"
+        ].join("\n")
+      );
+    } finally {
+      Date.now = originalNow;
+    }
+  });
+
   test("uses Slack native stream methods for native streaming progress", async () => {
     const calls: string[] = [];
     const originalNow = Date.now;
@@ -481,6 +544,80 @@ describe("formatAgentProgressEvent", () => {
         "append:stream.123: world again",
         "stop:stream.123:\n\n_Final result in 700ms (3 tokens)._",
         "update:_Final result in 700ms (3 tokens)._"
+      ]);
+    } finally {
+      Date.now = originalNow;
+    }
+  });
+
+  test("keeps native stream final summaries out of the working tool message", async () => {
+    const calls: string[] = [];
+    const originalNow = Date.now;
+    Date.now = () => 1_500;
+    try {
+      const progressMessage = {
+        channel: "C123",
+        ts: "123.456",
+        threadTs: "123.456",
+        text: "Starting agent runtime...",
+        streamingMode: "native" as const,
+        startedAtMs: 0,
+        toolStartedAtMs: {},
+        toolLinesByCallId: {},
+        toolCallOrder: []
+      };
+      const client = {
+        chat: {
+          startStream: async () => {
+            calls.push("start");
+            return { ts: "stream.123" };
+          },
+          appendStream: async () => {
+            calls.push("append");
+            return {};
+          },
+          stopStream: async (input: { markdown_text?: string }) => {
+            calls.push(`stop:${input.markdown_text ?? ""}`);
+            return {};
+          },
+          update: async (input: { text: string }) => {
+            calls.push(`update:${input.text}`);
+            return {};
+          }
+        }
+      };
+
+      await updateAgentProgressMessage(client as never, progressMessage, {
+        type: "tool_call",
+        toolName: "github.listPullRequests",
+        callId: "call-1"
+      });
+      await updateAgentProgressMessage(client as never, progressMessage, {
+        type: "message_delta",
+        text: "Here are the PRs."
+      });
+      await postConversationResponse(client as never, {
+        response: {
+          visibility: "public",
+          classification: "user_private",
+          text: "Here are the PRs.",
+          usage: {
+            inputTokens: 2,
+            outputTokens: 1,
+            totalTokens: 3,
+            usageSource: "provider-output"
+          }
+        },
+        channel: "C123",
+        user: "U123",
+        progressMessage
+      });
+
+      expect(calls).toEqual([
+        "update:Calling GitHub list Pull Requests...",
+        "start",
+        "stop:\n\n_Final result in 1.5s (3 tokens)._",
+        "update:Calling GitHub list Pull Requests..."
       ]);
     } finally {
       Date.now = originalNow;
@@ -768,7 +905,9 @@ describe("formatFinalProgressLine", () => {
         reasoningTokens: 10,
         usageSource: "provider-output"
       })
-    ).toBe("Final result in 1.2s (120 tokens, 50 cached, 10 reasoning).");
+    ).toBe(
+      "Final result in 1.2s (120 tokens: 70 fresh, 50 cached, 10 reasoning)."
+    );
   });
 });
 

@@ -4891,9 +4891,12 @@ export async function postConversationResponse(
           markdownText: finalStreamText,
           blocks: input.response.blocks
         });
-        const finishedProgressText = renderProgressLines(input.progressMessage, [
-          finalProgressLine
-        ]);
+        const hasToolProgress = input.progressMessage.toolCallOrder.some((callId) =>
+          Boolean(input.progressMessage?.toolLinesByCallId[callId]?.trim())
+        );
+        const finishedProgressText = hasToolProgress
+          ? renderProgressLines(input.progressMessage)
+          : renderProgressLines(input.progressMessage, [finalProgressLine]);
         input.progressMessage.text = finishedProgressText;
         await client.chat.update({
           channel: input.progressMessage.channel,
@@ -4909,7 +4912,11 @@ export async function postConversationResponse(
       const responseText =
         renderConversationResponseText(input.response).trim() ||
         input.progressMessage.streamedText.trim();
-      const finishedText = [responseText, "", finalProgressLine].join("\n");
+      const finishedText = renderFinalProgressMessage(
+        input.progressMessage,
+        responseText,
+        finalProgressLine
+      );
       input.progressMessage.text = finishedText;
       await client.chat.update({
         channel: input.progressMessage.channel,
@@ -5472,6 +5479,23 @@ function renderProgressLines(
   return rendered || progressMessage.text;
 }
 
+function renderFinalProgressMessage(
+  progressMessage: SlackProgressMessage,
+  responseText: string,
+  finalProgressLine: string
+): string {
+  const toolLines = progressMessage.toolCallOrder
+    .map((callId) => progressMessage.toolLinesByCallId[callId])
+    .filter((line): line is string => Boolean(line?.trim()));
+  return [
+    ...(toolLines.length ? [toolLines.map((line) => line.trim()).join("\n")] : []),
+    responseText.trim(),
+    finalProgressLine.trim()
+  ]
+    .filter(Boolean)
+    .join("\n\n");
+}
+
 function replaceOrAppendProgressLine(
   currentText: string,
   previousLine: string,
@@ -5534,9 +5558,15 @@ function formatUsageSummary(usage?: AgentUsage): string | null {
     return null;
   }
 
-  const parts = [`${totalTokens} tokens`];
+  const parts: string[] = [];
   if (typeof usage.cachedInputTokens === "number" && usage.cachedInputTokens > 0) {
-    parts.push(`${usage.cachedInputTokens} cached`);
+    const freshTokens = Math.max(0, totalTokens - usage.cachedInputTokens);
+    parts.push(
+      `${totalTokens} tokens: ${freshTokens} fresh`,
+      `${usage.cachedInputTokens} cached`
+    );
+  } else {
+    parts.push(`${totalTokens} tokens`);
   }
   if (typeof usage.reasoningTokens === "number" && usage.reasoningTokens > 0) {
     parts.push(`${usage.reasoningTokens} reasoning`);

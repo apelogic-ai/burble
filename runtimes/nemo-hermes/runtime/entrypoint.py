@@ -250,6 +250,16 @@ def _pick_int(source: dict[str, Any], *keys: str) -> int | None:
     return None
 
 
+def _pick_nested_int(source: dict[str, Any], *paths: tuple[str, str]) -> int | None:
+    for outer_key, inner_key in paths:
+        nested = source.get(outer_key)
+        if isinstance(nested, dict):
+            value = _to_non_negative_int(nested.get(inner_key))
+            if value is not None:
+                return value
+    return None
+
+
 def normalize_usage(value: Any) -> dict[str, Any] | None:
     if not isinstance(value, dict):
         return None
@@ -277,11 +287,28 @@ def normalize_usage(value: Any) -> dict[str, Any] | None:
         "cacheReadTokens",
         "cache_read_tokens",
     )
+    if cached_tokens is None:
+        cached_tokens = _pick_nested_int(
+            value,
+            ("inputTokenDetails", "cacheReadTokens"),
+            ("inputTokenDetails", "cachedTokens"),
+            ("input_token_details", "cache_read_tokens"),
+            ("input_token_details", "cached_tokens"),
+            ("input_tokens_details", "cache_read_tokens"),
+            ("input_tokens_details", "cached_tokens"),
+        )
     reasoning_tokens = _pick_int(
         value,
         "reasoningTokens",
         "reasoning_tokens",
     )
+    if reasoning_tokens is None:
+        reasoning_tokens = _pick_nested_int(
+            value,
+            ("outputTokenDetails", "reasoningTokens"),
+            ("output_token_details", "reasoning_tokens"),
+            ("output_tokens_details", "reasoning_tokens"),
+        )
 
     if total_tokens is None and input_tokens is not None and output_tokens is not None:
         total_tokens = input_tokens + output_tokens
