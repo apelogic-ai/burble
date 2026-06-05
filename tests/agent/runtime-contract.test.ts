@@ -158,6 +158,7 @@ describe("runtime contract schemas", () => {
     const events = [
       { type: "status", text: "Agent is thinking..." },
       { type: "message_delta", text: "Hello" },
+      { type: "message_replace", text: "Hello again" },
       {
         type: "tool_call",
         toolName: "github_list_my_pull_requests",
@@ -197,6 +198,7 @@ describe("runtime contract schemas", () => {
     expect(events.map(parseRuntimeRunEvent).map((event) => event.type)).toEqual([
       "status",
       "message_delta",
+      "message_replace",
       "tool_call",
       "tool_result",
       "usage",

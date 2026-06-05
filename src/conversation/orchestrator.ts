@@ -388,10 +388,13 @@ function emitAgentEvent(
     return;
   }
 
-  if (event.type === "message_delta") {
+  if (event.type === "message_delta" || event.type === "message_replace") {
     deps.observability?.emit({
       ...common,
-      name: "agent.message.delta",
+      name:
+        event.type === "message_replace"
+          ? "agent.message.replace"
+          : "agent.message.delta",
       attributes: {
         textLength: event.text.length
       },

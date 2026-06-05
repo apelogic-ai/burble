@@ -26,6 +26,7 @@ from gateway.platforms.base import (
 from gateway.session import build_session_key
 
 logger = logging.getLogger(__name__)
+HERMES_STREAM_CURSOR = " ▉"
 
 
 def _env(name: str, default: str = "") -> str:
@@ -455,18 +456,26 @@ class BurbleAdapter(BasePlatformAdapter):
             await self._post_runtime_callback(run_id, payload)
             return SendResult(success=True, message_id=message_id)
 
+        stream["lastText"] = clean_text
         if clean_text.startswith(previous_text):
             delta = clean_text[len(previous_text):]
-        else:
-            delta = clean_text
-        stream["lastText"] = clean_text
-        if delta:
+            if delta:
+                await self._post_runtime_callback(
+                    run_id,
+                    {
+                        "type": "message_delta",
+                        "routeId": route_id,
+                        "text": delta,
+                        "classification": "user_private",
+                    },
+                )
+        elif clean_text:
             await self._post_runtime_callback(
                 run_id,
                 {
-                    "type": "message_delta",
+                    "type": "message_replace",
                     "routeId": route_id,
-                    "text": delta,
+                    "text": clean_text,
                     "classification": "user_private",
                 },
             )
@@ -492,11 +501,14 @@ class BurbleAdapter(BasePlatformAdapter):
 
     @staticmethod
     def _clean_stream_preview(text: str) -> str:
-        return str(text or "").replace(" ▉", "").rstrip()
+        value = str(text or "")
+        if value.endswith(HERMES_STREAM_CURSOR):
+            value = value[: -len(HERMES_STREAM_CURSOR)]
+        return value.rstrip()
 
     @staticmethod
     def _is_stream_preview(text: str) -> bool:
-        return str(text or "").endswith(" ▉")
+        return str(text or "").endswith(HERMES_STREAM_CURSOR)
 
     async def _post_runtime_callback(self, run_id: str, payload: dict[str, Any]) -> bool:
         callback = f"{self.runtime_callback_url}/{quote(run_id, safe='')}/messages"

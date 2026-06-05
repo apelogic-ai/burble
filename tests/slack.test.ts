@@ -37,6 +37,7 @@ import {
   parseAuthCommand,
   restartAgentRuntimeIfConfigChanged,
   runtimeImageForEngine,
+  resolveSlackProgressStreamingMode,
   shouldHandleDirectMessageEvent,
   summarizeSlackPayload,
   validateAgentRuntimeEngineSelection
@@ -148,6 +149,23 @@ describe("formatMentionWorkingMessage", () => {
   });
 });
 
+describe("resolveSlackProgressStreamingMode", () => {
+  test("uses the basic in-place renderer when native streaming has no thread target", () => {
+    expect(
+      resolveSlackProgressStreamingMode({
+        streamingMode: "native"
+      })
+    ).toBe("basic");
+
+    expect(
+      resolveSlackProgressStreamingMode({
+        streamingMode: "native",
+        streamThreadTs: "111.222"
+      })
+    ).toBe("native");
+  });
+});
+
 describe("formatAgentProgressEvent", () => {
   test("formats status and tool lifecycle updates", () => {
     expect(
@@ -211,6 +229,16 @@ describe("formatAgentProgressEvent", () => {
         "Hello"
       )
     ).toBe("Hello world");
+
+    expect(
+      formatAgentProgressEvent(
+        {
+          type: "message_replace",
+          text: "Rewritten answer"
+        },
+        "Hello world"
+      )
+    ).toBe("Rewritten answer");
   });
 
   test("accumulates runtime message deltas in Slack progress messages", () => {
@@ -247,12 +275,22 @@ describe("formatAgentProgressEvent", () => {
     expect(
       formatAgentProgressMessage(
         {
+          type: "message_replace",
+          text: "Rewritten answer"
+        },
+        progressMessage
+      )
+    ).toBe("Rewritten answer");
+
+    expect(
+      formatAgentProgressMessage(
+        {
           type: "status",
           text: "Agent has thought for 8s"
         },
         progressMessage
       )
-    ).toBe("Hello world");
+    ).toBe("Rewritten answer");
   });
 
   test("throttles Slack chat updates for high-frequency runtime deltas", async () => {
@@ -539,6 +577,52 @@ describe("formatAgentProgressEvent", () => {
       (progressMessage as { nativeStreamFallbackReason?: string })
         .nativeStreamFallbackReason
     ).toBe("slack_native_stream_unthreaded");
+  });
+
+  test("falls back to in-place updates when an active native stream receives replacement text", async () => {
+    const calls: string[] = [];
+    const progressMessage = {
+      channel: "D123",
+      ts: "123.456",
+      text: "Starting agent runtime...",
+      startedAtMs: 0,
+      threadTs: "111.222",
+      streamingMode: "native" as const,
+      nativeStreamTs: "stream.123",
+      streamedText: "Hello world",
+      toolStartedAtMs: {},
+      toolLinesByCallId: {},
+      toolCallOrder: []
+    };
+    const client = {
+      chat: {
+        stopStream: async (input: { ts: string; markdown_text?: string }) => {
+          calls.push(`stop:${input.ts}:${input.markdown_text ?? ""}`);
+          return {};
+        },
+        update: async (input: { text: string }) => {
+          calls.push(`update:${input.text}`);
+          return {};
+        }
+      }
+    };
+
+    await updateAgentProgressMessage(client as never, progressMessage, {
+      type: "message_replace",
+      text: "Rewritten answer"
+    });
+
+    expect(calls).toEqual([
+      "stop:stream.123:Rewritten answer",
+      "update:Rewritten answer"
+    ]);
+    expect((progressMessage as { streamingMode?: string }).streamingMode).toBe(
+      "basic"
+    );
+    expect(
+      (progressMessage as { nativeStreamFallbackReason?: string })
+        .nativeStreamFallbackReason
+    ).toBe("slack_native_stream_replace_unsupported");
   });
 
   test("stops an active Slack native stream when a conversation fails", async () => {

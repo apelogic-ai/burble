@@ -519,6 +519,68 @@ asyncio.run(main())
     });
   });
 
+  test("uses replacement events when Hermes rewrites cumulative stream text", () => {
+    const result = runHermesEntrypointProbe(`${importBurblePlatformAdapter}
+import asyncio
+import os
+
+os.environ["BURBLE_TOOL_GATEWAY_URL"] = "http://burble-app:3000/internal/tools"
+os.environ["BURBLE_INTERNAL_TOKEN"] = "token"
+os.environ["BURBLE_RUNTIME_ID"] = "rt_123"
+
+async def main():
+    adapter = mod.BurbleAdapter(
+        types.SimpleNamespace(
+            extra={
+                "runtime_callback_url": "http://runtime/internal/hermes/runs",
+            }
+        )
+    )
+    adapter._pending_runs["route-1"] = "run-1"
+
+    sent = await adapter.send("route-1", "Hello wrld ▉")
+    await adapter.edit_message("route-1", sent.message_id, "Hello world ▉")
+    await adapter.edit_message("route-1", sent.message_id, "Hello world", finalize=True)
+
+    print(json.dumps({
+        "payloads": posted_payloads,
+    }))
+
+asyncio.run(main())
+`);
+
+    expect(result).toEqual({
+      payloads: [
+        {
+          url: "http://runtime/internal/hermes/runs/run-1/messages",
+          json: {
+            type: "message_delta",
+            routeId: "route-1",
+            text: "Hello wrld",
+            classification: "user_private"
+          }
+        },
+        {
+          url: "http://runtime/internal/hermes/runs/run-1/messages",
+          json: {
+            type: "message_replace",
+            routeId: "route-1",
+            text: "Hello world",
+            classification: "user_private"
+          }
+        },
+        {
+          url: "http://runtime/internal/hermes/runs/run-1/messages",
+          json: {
+            routeId: "route-1",
+            text: "Hello world",
+            classification: "user_private"
+          }
+        }
+      ]
+    });
+  });
+
   test("restricts Hermes Burble platform to the minimal native tool surface", () => {
     const result = runHermesEntrypointProbe(`${importEntrypoint}
 import os

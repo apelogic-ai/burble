@@ -87,6 +87,7 @@ export type AgentRunEvent =
       classification: ToolClassification;
     }
   | { type: "message_delta"; text: string }
+  | { type: "message_replace"; text: string }
   | { type: "final"; response: AgentOutput }
   | { type: "error"; message: string };
 

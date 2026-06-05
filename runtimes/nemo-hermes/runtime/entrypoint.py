@@ -169,6 +169,7 @@ HERMES_PROVIDER_TOOL_HINTS: dict[str, list[dict[str, str]]] = {
 }
 
 DEFAULT_HERMES_PLATFORM_TOOLSETS = ["burble", "cronjob", "web"]
+HERMES_STREAM_CURSOR = " ▉"
 DEFAULT_HERMES_DISABLED_TOOLSETS = [
     "browser",
     "clarify",
@@ -217,7 +218,7 @@ def truthy_env(name: str) -> bool:
 
 
 def yaml_string(value: str) -> str:
-    return json.dumps(value)
+    return json.dumps(value, ensure_ascii=False)
 
 
 def env_list(name: str, default: list[str]) -> list[str]:
@@ -729,9 +730,9 @@ class BurbleHermesRuntime:
             flush=True,
         )
         event_type = str(body.get("type") or "")
-        if event_type == "message_delta":
+        if event_type in {"message_delta", "message_replace"}:
             if text:
-                await waiter.emit({"type": "message_delta", "text": text})
+                await waiter.emit({"type": event_type, "text": text})
             return web.json_response({"ok": True})
         if not waiter.future.done():
             waiter.future.set_result(body)
@@ -899,7 +900,7 @@ class BurbleHermesRuntime:
                 "streaming:",
                 "  enabled: true",
                 "  transport: edit",
-                '  cursor: " ▉"',
+                f"  cursor: {yaml_string(HERMES_STREAM_CURSOR)}",
             ]
         )
         disabled_toolsets = env_list(

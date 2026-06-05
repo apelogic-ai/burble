@@ -202,6 +202,7 @@ export type RunEvent =
       classification: ToolClassification;
     }
   | { type: "message_delta"; text: string }
+  | { type: "message_replace"; text: string }
   | { type: "final"; response: RunResponse["response"] }
   | { type: "error"; message: string };
 

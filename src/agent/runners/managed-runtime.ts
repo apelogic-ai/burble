@@ -58,6 +58,7 @@ type RemoteRunEvent =
       classification: ToolClassification;
     }
   | { type: "message_delta"; text: string }
+  | { type: "message_replace"; text: string }
   | { type: "final"; response: AgentOutput }
   | { type: "error"; message: string };
 
@@ -581,10 +582,13 @@ function observeRuntimeStreamEvent(
     return;
   }
 
-  if (event.type === "message_delta") {
+  if (event.type === "message_delta" || event.type === "message_replace") {
     input.observability?.emit({
       ...common,
-      name: "runtime.message.delta",
+      name:
+        event.type === "message_replace"
+          ? "runtime.message.replace"
+          : "runtime.message.delta",
       attributes: {
         textLength: event.text.length
       },
@@ -809,7 +813,11 @@ async function* readWebSocketRunResponse(
           return event.response;
         }
 
-        if (event.type === "message_delta" && !emitMessageDeltas) {
+        if (
+          (event.type === "message_delta" ||
+            event.type === "message_replace") &&
+          !emitMessageDeltas
+        ) {
           continue;
         }
 
@@ -862,6 +870,8 @@ async function* readStreamingRunResponse(
 
       if (event.type === "message_delta") {
         streamedText = appendStreamedText(streamedText, event.text);
+      } else if (event.type === "message_replace") {
+        streamedText = event.text;
       }
 
       yield event;
@@ -1146,6 +1156,7 @@ function validateRemoteRunEvent(payload: unknown): RemoteRunEvent | null {
   switch (event.type) {
     case "status":
     case "message_delta":
+    case "message_replace":
       return typeof event.text === "string" ? event : null;
     case "tool_call":
       return typeof event.toolName === "string" &&

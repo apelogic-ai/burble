@@ -4991,6 +4991,10 @@ async function postMentionWorkingState(
   const text = formatMentionWorkingMessage();
 
   if (input.isDirectMessage) {
+    const progressStreamingMode = resolveSlackProgressStreamingMode({
+      streamingMode: input.streamingMode,
+      streamThreadTs: input.streamThreadTs
+    });
     const result = await client.chat.postMessage({
       channel: input.channel,
       ...(input.threadTs ? { thread_ts: input.threadTs } : {}),
@@ -5002,7 +5006,7 @@ async function postMentionWorkingState(
           ts: result.ts,
           text,
           ...(input.streamThreadTs ? { threadTs: input.streamThreadTs } : {}),
-          streamingMode: input.streamingMode,
+          streamingMode: progressStreamingMode,
           startedAtMs: Date.now(),
           toolStartedAtMs: {},
           toolLinesByCallId: {},
@@ -5020,25 +5024,39 @@ async function postMentionWorkingState(
   return undefined;
 }
 
+export function resolveSlackProgressStreamingMode(input: {
+  streamingMode: AgentRuntimeStreamingMode;
+  streamThreadTs?: string;
+}): AgentRuntimeStreamingMode {
+  if (input.streamingMode === "native" && !input.streamThreadTs) {
+    return "basic";
+  }
+
+  return input.streamingMode;
+}
+
 export async function updateAgentProgressMessage(
   client: App["client"],
   progressMessage: SlackProgressMessage,
   event: AgentRunEvent
 ): Promise<void> {
   if (
-    event.type === "message_delta" &&
+    (event.type === "message_delta" || event.type === "message_replace") &&
     progressMessage.streamingMode === "native" &&
     !progressMessage.nativeStreamFallbackReason
   ) {
-    progressMessage.streamedText = appendSlackStreamedText(
-      progressMessage.streamedText ?? "",
-      event.text
-    );
+    progressMessage.streamedText =
+      event.type === "message_replace"
+        ? event.text
+        : appendSlackStreamedText(progressMessage.streamedText ?? "", event.text);
     if (!progressMessage.streamedText.trim()) {
       return;
     }
     try {
-      await updateSlackNativeStream(client, progressMessage, event.text);
+      await updateSlackNativeStream(client, progressMessage, {
+        text: event.text,
+        replace: event.type === "message_replace"
+      });
       return;
     } catch (error) {
       progressMessage.streamingMode = "basic";
@@ -5114,13 +5132,23 @@ export async function failAgentProgressMessage(
 async function updateSlackNativeStream(
   client: App["client"],
   progressMessage: SlackProgressMessage,
-  deltaText: string
+  input: {
+    text: string;
+    replace: boolean;
+  }
 ): Promise<void> {
-  if (!deltaText.trim() || progressMessage.nativeStreamStopped) {
+  if (!input.text.trim() || progressMessage.nativeStreamStopped) {
     return;
   }
 
   const chat = client.chat as App["client"]["chat"] & SlackNativeStreamChatClient;
+  if (input.replace && progressMessage.nativeStreamTs) {
+    await stopSlackNativeStream(client, progressMessage, {
+      markdownText: progressMessage.streamedText ?? input.text
+    });
+    throw new Error("slack_native_stream_replace_unsupported");
+  }
+
   if (!progressMessage.nativeStreamTs) {
     if (!progressMessage.threadTs) {
       throw new Error("slack_native_stream_unthreaded");
@@ -5131,7 +5159,7 @@ async function updateSlackNativeStream(
     const result = await chat.startStream({
       channel: progressMessage.channel,
       thread_ts: progressMessage.threadTs,
-      markdown_text: deltaText.trimStart()
+      markdown_text: input.text.trimStart()
     });
     if (!result.ts) {
       throw new Error("slack_native_stream_missing_ts");
@@ -5144,7 +5172,7 @@ async function updateSlackNativeStream(
 
   progressMessage.nativeStreamPendingText = `${
     progressMessage.nativeStreamPendingText ?? ""
-  }${deltaText}`;
+  }${input.text}`;
   const now = Date.now();
   if (
     typeof progressMessage.nativeStreamUpdatedAtMs === "number" &&
@@ -5229,7 +5257,10 @@ function shouldThrottleSlackProgressUpdate(input: {
   progressMessage: SlackProgressMessage;
   now: number;
 }): boolean {
-  if (input.event.type !== "message_delta") {
+  if (
+    input.event.type !== "message_delta" &&
+    input.event.type !== "message_replace"
+  ) {
     return false;
   }
   if (!input.hadStreamedText) {
@@ -5270,6 +5301,8 @@ export function formatAgentProgressEvent(
         event.text
       ) || undefined;
     }
+    case "message_replace":
+      return event.text.trim() || undefined;
     case "final":
     case "error":
       return undefined;
@@ -5367,11 +5400,11 @@ export function formatAgentProgressMessage(
     ]);
   }
 
-  if (event.type === "message_delta") {
-    progressMessage.streamedText = appendSlackStreamedText(
-      progressMessage.streamedText ?? "",
-      event.text
-    );
+  if (event.type === "message_delta" || event.type === "message_replace") {
+    progressMessage.streamedText =
+      event.type === "message_replace"
+        ? event.text
+        : appendSlackStreamedText(progressMessage.streamedText ?? "", event.text);
     return progressMessage.streamedText.trim()
       ? renderProgressLines(progressMessage, [progressMessage.streamedText])
       : undefined;

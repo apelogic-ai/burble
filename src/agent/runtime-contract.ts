@@ -238,6 +238,12 @@ export const runtimeRunEventSchema = z.discriminatedUnion("type", [
     .strict(),
   z
     .object({
+      type: z.literal("message_replace"),
+      text: z.string()
+    })
+    .strict(),
+  z
+    .object({
       type: z.literal("tool_call"),
       toolName: z.string().min(1),
       callId: z.string().min(1),
