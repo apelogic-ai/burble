@@ -47,6 +47,7 @@ describe("buildRuntimeManifest", () => {
         ttlMs: 86_400_000,
         reaperEnabled: true
       },
+      defaultStreaming: true,
       defaultModel: "openai:gpt-5.4",
       toolCatalog,
       workspacePolicy: [
@@ -157,7 +158,59 @@ describe("buildRuntimeManifest", () => {
     ]);
     expect(manifest.memoryContext).toEqual([]);
     expect(manifest.memory.jobMemoryEnabled).toBe(true);
+    expect(manifest.streaming.messageDeltasEnabled).toBe(true);
     expect(manifest.policyHash).toMatch(/^[0-9a-f]{64}$/);
+  });
+
+  test("includes user runtime streaming preference in the policy hash", () => {
+    const baseInput = {
+      principal: {
+        workspaceId: "T123",
+        slackUserId: "U123"
+      },
+      runtime: {
+        engine: "openclaw" as const,
+        factory: "static" as const,
+        ttlMs: 60_000,
+        reaperEnabled: true
+      },
+      defaultStreaming: true,
+      defaultModel: "openai:gpt-5.4",
+      toolCatalog,
+      workspacePolicy: [],
+      userPreferences: []
+    };
+    const defaultManifest = buildRuntimeManifest(baseInput);
+    const disabledManifest = buildRuntimeManifest({
+      ...baseInput,
+      userPreferences: [
+        {
+          workspaceId: "T123",
+          slackUserId: "U123",
+          key: "runtime.streaming",
+          value: { enabled: false },
+          updatedAt: "2026-05-28T00:01:00.000Z"
+        }
+      ]
+    });
+    const basicManifest = buildRuntimeManifest({
+      ...baseInput,
+      userPreferences: [
+        {
+          workspaceId: "T123",
+          slackUserId: "U123",
+          key: "runtime.streaming",
+          value: "basic",
+          updatedAt: "2026-05-28T00:02:00.000Z"
+        }
+      ]
+    });
+
+    expect(defaultManifest.streaming.messageDeltasEnabled).toBe(true);
+    expect(disabledManifest.streaming.messageDeltasEnabled).toBe(false);
+    expect(basicManifest.streaming.messageDeltasEnabled).toBe(true);
+    expect(disabledManifest.policyHash).not.toBe(defaultManifest.policyHash);
+    expect(basicManifest.policyHash).toBe(defaultManifest.policyHash);
   });
 
   test("falls back to an allowed model when user preference is outside policy", () => {
@@ -172,6 +225,7 @@ describe("buildRuntimeManifest", () => {
         ttlMs: 60_000,
         reaperEnabled: true
       },
+      defaultStreaming: true,
       defaultModel: "openai:gpt-5.4",
       toolCatalog: [],
       workspacePolicy: [
@@ -222,6 +276,7 @@ describe("buildRuntimeManifest", () => {
         ttlMs: 60_000,
         reaperEnabled: true
       },
+      defaultStreaming: true,
       defaultModel: "openai:gpt-5.4",
       toolCatalog,
       workspacePolicy: [],
@@ -248,6 +303,7 @@ describe("buildRuntimeManifest", () => {
         ttlMs: 60_000,
         reaperEnabled: true
       },
+      defaultStreaming: true,
       defaultModel: "openai:gpt-5.4",
       toolCatalog: [],
       workspacePolicy: [

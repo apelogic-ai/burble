@@ -60,6 +60,9 @@ export type RuntimeManifest = {
     workspaceMemoryEnabled: boolean;
     jobMemoryEnabled: boolean;
   };
+  streaming: {
+    messageDeltasEnabled: boolean;
+  };
   memoryContext: RuntimeMemoryContextEntry[];
   disabledTools: string[];
   policyHash: string;
@@ -96,6 +99,7 @@ export function buildRuntimeManifest(input: {
   principal: PrincipalId;
   runtime: RuntimeManifest["runtime"];
   defaultModel: string;
+  defaultStreaming: boolean;
   workspacePolicy: WorkspacePolicyRecord[];
   userPreferences: UserPreferenceRecord[];
   memoryRecords?: AgentMemoryRecord[];
@@ -121,9 +125,15 @@ export function buildRuntimeManifest(input: {
     : defaultRuntimeSkills;
 
   const memory = {
-    userMemoryEnabled: memoryEnabled(userPreferences.get("memory.user")),
-    workspaceMemoryEnabled: memoryEnabled(workspacePolicy.get("memory.workspace")),
-    jobMemoryEnabled: memoryEnabled(workspacePolicy.get("memory.jobs"), true)
+    userMemoryEnabled: flagEnabled(userPreferences.get("memory.user")),
+    workspaceMemoryEnabled: flagEnabled(workspacePolicy.get("memory.workspace")),
+    jobMemoryEnabled: flagEnabled(workspacePolicy.get("memory.jobs"), true)
+  };
+  const streaming = {
+    messageDeltasEnabled: flagEnabled(
+      userPreferences.get("runtime.streaming"),
+      input.defaultStreaming
+    )
   };
   const manifest: Omit<RuntimeManifest, "policyHash" | "memoryContext"> = {
     version: input.version ?? "1",
@@ -142,6 +152,7 @@ export function buildRuntimeManifest(input: {
       .sort((left, right) => left.name.localeCompare(right.name)),
     skills: effectiveSkills(allowedSkills, enabledSkills),
     memory,
+    streaming,
     disabledTools: [...disabledTools].sort()
   };
 
@@ -332,9 +343,24 @@ function skillVersionRecords(value: unknown): SkillVersionRecord[] {
   });
 }
 
-function memoryEnabled(value: unknown, fallback = false): boolean {
+function flagEnabled(value: unknown, fallback = false): boolean {
   if (typeof value === "boolean") {
     return value;
+  }
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase();
+    if (normalized === "off" || normalized === "false" || normalized === "no") {
+      return false;
+    }
+    if (
+      normalized === "basic" ||
+      normalized === "native" ||
+      normalized === "on" ||
+      normalized === "true" ||
+      normalized === "yes"
+    ) {
+      return true;
+    }
   }
   if (isRecord(value) && typeof value.enabled === "boolean") {
     return value.enabled;

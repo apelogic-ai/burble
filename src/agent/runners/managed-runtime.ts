@@ -58,6 +58,7 @@ type RemoteRunEvent =
       classification: ToolClassification;
     }
   | { type: "message_delta"; text: string }
+  | { type: "message_replace"; text: string }
   | { type: "final"; response: AgentOutput }
   | { type: "error"; message: string };
 
@@ -279,6 +280,7 @@ export function createManagedRuntimeAdapter(
           try {
             agentResponse = yield* readWebSocketRunResponse(
               createWebSocket(eventsUrl),
+              runtimeMessageDeltasEnabled(runtime),
               (event) => {
                 logInfo(
                   [
@@ -580,10 +582,13 @@ function observeRuntimeStreamEvent(
     return;
   }
 
-  if (event.type === "message_delta") {
+  if (event.type === "message_delta" || event.type === "message_replace") {
     input.observability?.emit({
       ...common,
-      name: "runtime.message.delta",
+      name:
+        event.type === "message_replace"
+          ? "runtime.message.replace"
+          : "runtime.message.delta",
       attributes: {
         textLength: event.text.length
       },
@@ -760,6 +765,7 @@ async function readJsonRunResponse(
 
 async function* readWebSocketRunResponse(
   socket: AgentRuntimeWebSocket,
+  emitMessageDeltas: boolean,
   onEvent?: (event: AgentRunEvent) => void
 ): AsyncIterable<AgentRunEvent, AgentOutput | null> {
   const queue: unknown[] = [];
@@ -807,6 +813,14 @@ async function* readWebSocketRunResponse(
           return event.response;
         }
 
+        if (
+          (event.type === "message_delta" ||
+            event.type === "message_replace") &&
+          !emitMessageDeltas
+        ) {
+          continue;
+        }
+
         onEvent?.(event);
         yield event;
       }
@@ -825,6 +839,10 @@ async function* readWebSocketRunResponse(
   } finally {
     socket.close();
   }
+}
+
+function runtimeMessageDeltasEnabled(runtime: RuntimeHandle | null): boolean {
+  return runtime?.manifest?.streaming.messageDeltasEnabled !== false;
 }
 
 async function* readStreamingRunResponse(
@@ -852,6 +870,8 @@ async function* readStreamingRunResponse(
 
       if (event.type === "message_delta") {
         streamedText = appendStreamedText(streamedText, event.text);
+      } else if (event.type === "message_replace") {
+        streamedText = event.text;
       }
 
       yield event;
@@ -1060,6 +1080,9 @@ function sanitizeRuntimeHandle(runtime: RuntimeHandle): {
       workspaceMemoryEnabled: boolean;
       jobMemoryEnabled: boolean;
     };
+    streaming: {
+      messageDeltasEnabled: boolean;
+    };
     memoryContext: Array<{
       scope: "user" | "workspace" | "job";
       ownerId: string;
@@ -1081,6 +1104,7 @@ function sanitizeRuntimeHandle(runtime: RuntimeHandle): {
             policyHash: runtime.manifest.policyHash,
             skills: runtime.manifest.skills,
             memory: runtime.manifest.memory,
+            streaming: runtime.manifest.streaming,
             memoryContext: runtime.manifest.memoryContext
           }
         }
@@ -1132,6 +1156,7 @@ function validateRemoteRunEvent(payload: unknown): RemoteRunEvent | null {
   switch (event.type) {
     case "status":
     case "message_delta":
+    case "message_replace":
       return typeof event.text === "string" ? event : null;
     case "tool_call":
       return typeof event.toolName === "string" &&

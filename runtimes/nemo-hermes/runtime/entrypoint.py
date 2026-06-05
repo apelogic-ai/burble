@@ -169,6 +169,7 @@ HERMES_PROVIDER_TOOL_HINTS: dict[str, list[dict[str, str]]] = {
 }
 
 DEFAULT_HERMES_PLATFORM_TOOLSETS = ["burble", "cronjob", "web"]
+HERMES_STREAM_CURSOR = " ▉"
 DEFAULT_HERMES_DISABLED_TOOLSETS = [
     "browser",
     "clarify",
@@ -217,7 +218,7 @@ def truthy_env(name: str) -> bool:
 
 
 def yaml_string(value: str) -> str:
-    return json.dumps(value)
+    return json.dumps(value, ensure_ascii=False)
 
 
 def env_list(name: str, default: list[str]) -> list[str]:
@@ -244,6 +245,16 @@ def _pick_int(source: dict[str, Any], *keys: str) -> int | None:
     for key in keys:
         if key in source:
             value = _to_non_negative_int(source.get(key))
+            if value is not None:
+                return value
+    return None
+
+
+def _pick_nested_int(source: dict[str, Any], *paths: tuple[str, str]) -> int | None:
+    for outer_key, inner_key in paths:
+        nested = source.get(outer_key)
+        if isinstance(nested, dict):
+            value = _to_non_negative_int(nested.get(inner_key))
             if value is not None:
                 return value
     return None
@@ -276,11 +287,28 @@ def normalize_usage(value: Any) -> dict[str, Any] | None:
         "cacheReadTokens",
         "cache_read_tokens",
     )
+    if cached_tokens is None:
+        cached_tokens = _pick_nested_int(
+            value,
+            ("inputTokenDetails", "cacheReadTokens"),
+            ("inputTokenDetails", "cachedTokens"),
+            ("input_token_details", "cache_read_tokens"),
+            ("input_token_details", "cached_tokens"),
+            ("input_tokens_details", "cache_read_tokens"),
+            ("input_tokens_details", "cached_tokens"),
+        )
     reasoning_tokens = _pick_int(
         value,
         "reasoningTokens",
         "reasoning_tokens",
     )
+    if reasoning_tokens is None:
+        reasoning_tokens = _pick_nested_int(
+            value,
+            ("outputTokenDetails", "reasoningTokens"),
+            ("output_token_details", "reasoning_tokens"),
+            ("output_tokens_details", "reasoning_tokens"),
+        )
 
     if total_tokens is None and input_tokens is not None and output_tokens is not None:
         total_tokens = input_tokens + output_tokens
@@ -728,6 +756,11 @@ class BurbleHermesRuntime:
             f"[INFO] {timestamp()} Nemo Hermes run callback runId={run_id} textChars={len(text)}",
             flush=True,
         )
+        event_type = str(body.get("type") or "")
+        if event_type in {"message_delta", "message_replace"}:
+            if text:
+                await waiter.emit({"type": event_type, "text": text})
+            return web.json_response({"ok": True})
         if not waiter.future.done():
             waiter.future.set_result(body)
         return web.json_response({"ok": True})
@@ -891,6 +924,10 @@ class BurbleHermesRuntime:
                 "memory:",
                 f"  memory_enabled: {str(native_memory_enabled).lower()}",
                 f"  user_profile_enabled: {str(native_memory_enabled).lower()}",
+                "streaming:",
+                "  enabled: true",
+                "  transport: edit",
+                f"  cursor: {yaml_string(HERMES_STREAM_CURSOR)}",
             ]
         )
         disabled_toolsets = env_list(

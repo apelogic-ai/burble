@@ -25,6 +25,9 @@ const baseRunRequest = {
         userMemoryEnabled: true,
         workspaceMemoryEnabled: false,
         jobMemoryEnabled: true
+      },
+      streaming: {
+        messageDeltasEnabled: true
       }
     }
   },
@@ -120,10 +123,26 @@ describe("runtime contract schemas", () => {
     const request = parseRuntimeRunRequest(baseRunRequest);
 
     expect(request.runtime.engine).toBe("hermes");
+    expect(request.runtime.manifest?.streaming.messageDeltasEnabled).toBe(true);
     expect(request.input.toolGroups?.groups).toEqual(["github", "conversation"]);
     expect(request.input.scheduledJob?.allowedTools).toEqual([
       "github_list_my_pull_requests"
     ]);
+  });
+
+  test("defaults legacy runtime run manifests to streaming enabled", () => {
+    const { streaming: _streaming, ...legacyManifest } =
+      baseRunRequest.runtime.manifest;
+
+    expect(
+      parseRuntimeRunRequest({
+        ...baseRunRequest,
+        runtime: {
+          ...baseRunRequest.runtime,
+          manifest: legacyManifest
+        }
+      }).runtime.manifest?.streaming.messageDeltasEnabled
+    ).toBe(true);
   });
 
   test("rejects runtime run requests without a non-empty user request", () => {
@@ -139,6 +158,7 @@ describe("runtime contract schemas", () => {
     const events = [
       { type: "status", text: "Agent is thinking..." },
       { type: "message_delta", text: "Hello" },
+      { type: "message_replace", text: "Hello again" },
       {
         type: "tool_call",
         toolName: "github_list_my_pull_requests",
@@ -178,6 +198,7 @@ describe("runtime contract schemas", () => {
     expect(events.map(parseRuntimeRunEvent).map((event) => event.type)).toEqual([
       "status",
       "message_delta",
+      "message_replace",
       "tool_call",
       "tool_result",
       "usage",

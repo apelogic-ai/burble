@@ -385,9 +385,21 @@ describe("dev deploy config", () => {
 
   test("provides a personal runtime deployment helper", () => {
     expect(personalRuntimeDeployScript).toContain("git pull --ff-only");
-    expect(personalRuntimeDeployScript).toContain("runtime_image_service=\"openclaw-nemoclaw-image\"");
-    expect(personalRuntimeDeployScript).toContain("runtime_image_service=\"nemo-hermes-image\"");
-    expect(personalRuntimeDeployScript).toContain("--profile runtime-image build \"${runtime_image_service}\"");
+    expect(personalRuntimeDeployScript).toContain("runtime_build_images=()");
+    expect(personalRuntimeDeployScript).toContain("runtime_build_services=()");
+    expect(personalRuntimeDeployScript).toContain("selected_runtime_image_service=\"openclaw-nemoclaw-image\"");
+    expect(personalRuntimeDeployScript).toContain("selected_runtime_image_service=\"nemo-hermes-image\"");
+    expect(personalRuntimeDeployScript).toContain("custom_runtime_image=true");
+    expect(personalRuntimeDeployScript).toContain(
+      "add_runtime_image_build \"openclaw\" \"burble-openclaw-nemoclaw-openclaw-cli:dev\" \"openclaw-nemoclaw-image\""
+    );
+    expect(personalRuntimeDeployScript).toContain(
+      "add_runtime_image_build \"hermes\" \"burble-nemo-hermes:dev\" \"nemo-hermes-image\""
+    );
+    expect(personalRuntimeDeployScript).toContain(
+      "AGENT_RUNTIME_IMAGE=\"${runtime_build_images[$i]}\" docker compose"
+    );
+    expect(personalRuntimeDeployScript).toContain("--profile runtime-image build \"${runtime_build_services[$i]}\"");
     expect(personalRuntimeDeployScript).toContain("AGENT_RUNTIME_ENGINE=hermes");
     expect(personalRuntimeDeployScript).toContain("burble-nemo-hermes:dev");
     expect(personalRuntimeDeployScript).toContain("docker-compose.personal-runtimes.yml");
@@ -407,11 +419,12 @@ describe("dev deploy config", () => {
       "select_runtime_image \"burble-nemo-hermes:dev\""
     );
     expect(personalRuntimeDeployScript).toContain(
-      "Runtime image unchanged; keeping existing burble-rt-* containers."
+      "Runtime images unchanged; keeping existing burble-rt-* containers."
     );
     expect(personalRuntimeDeployScript).toContain(
-      "Runtime image changed; recycling"
+      "Runtime image changed for ${runtime_build_images[$i]}; recycling"
     );
+    expect(personalRuntimeDeployScript).toContain("Finished recycling changed runtime images.");
     expect(personalRuntimeDeployScript).toContain("docker ps -aq --filter \"name=burble-rt-\"");
     expect(personalRuntimeDeployScript).toContain("docker inspect --format '{{.Image}}'");
     expect(personalRuntimeDeployScript).toContain("docker stop");

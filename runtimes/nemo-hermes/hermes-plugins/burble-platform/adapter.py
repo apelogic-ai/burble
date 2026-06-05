@@ -26,6 +26,7 @@ from gateway.platforms.base import (
 from gateway.session import build_session_key
 
 logger = logging.getLogger(__name__)
+HERMES_STREAM_CURSOR = " ▉"
 
 
 def _env(name: str, default: str = "") -> str:
@@ -122,6 +123,18 @@ def _pick_int(source: Any, *keys: str) -> Optional[int]:
     return None
 
 
+def _pick_nested_int(source: Any, *paths: tuple[str, str]) -> Optional[int]:
+    for outer_key, inner_key in paths:
+        nested = _get_key(source, outer_key)
+        if _keyed(nested):
+            value = _get_key(nested, inner_key)
+            if value is not _MISSING:
+                value = _to_non_negative_int(value)
+                if value is not None:
+                    return value
+    return None
+
+
 def _normalize_usage(value: Any) -> Optional[dict[str, Any]]:
     if not _keyed(value):
         return None
@@ -149,11 +162,28 @@ def _normalize_usage(value: Any) -> Optional[dict[str, Any]]:
         "cacheReadTokens",
         "cache_read_tokens",
     )
+    if cached_tokens is None:
+        cached_tokens = _pick_nested_int(
+            value,
+            ("inputTokenDetails", "cacheReadTokens"),
+            ("inputTokenDetails", "cachedTokens"),
+            ("input_token_details", "cache_read_tokens"),
+            ("input_token_details", "cached_tokens"),
+            ("input_tokens_details", "cache_read_tokens"),
+            ("input_tokens_details", "cached_tokens"),
+        )
     reasoning_tokens = _pick_int(
         value,
         "reasoningTokens",
         "reasoning_tokens",
     )
+    if reasoning_tokens is None:
+        reasoning_tokens = _pick_nested_int(
+            value,
+            ("outputTokenDetails", "reasoningTokens"),
+            ("output_token_details", "reasoning_tokens"),
+            ("output_tokens_details", "reasoning_tokens"),
+        )
 
     if total_tokens is None and input_tokens is not None and output_tokens is not None:
         total_tokens = input_tokens + output_tokens
@@ -276,6 +306,9 @@ def _usage_delta(
 
 
 class BurbleAdapter(BasePlatformAdapter):
+    SUPPORTS_MESSAGE_EDITING = True
+    MAX_MESSAGE_LENGTH = 200_000
+
     def __init__(self, config: Any):
         super().__init__(config=config, platform=Platform("burble"))
         extra = getattr(config, "extra", {}) or {}
@@ -295,6 +328,8 @@ class BurbleAdapter(BasePlatformAdapter):
         self._pending_runs: dict[str, str] = {}
         self._pending_run_sources: dict[str, Any] = {}
         self._pending_usage_snapshots: dict[str, dict[str, int] | None] = {}
+        self._stream_messages: dict[str, dict[str, Any]] = {}
+        self._stream_message_counter = 0
 
     async def connect(self) -> bool:
         if not _requirements():
@@ -350,6 +385,27 @@ class BurbleAdapter(BasePlatformAdapter):
             flush=True,
         )
         if pending_run_id:
+            if self._is_stream_preview(text):
+                message_id = self._next_stream_message_id(pending_run_id)
+                clean_text = self._clean_stream_preview(text)
+                self._stream_messages[message_id] = {
+                    "runId": pending_run_id,
+                    "routeId": route_id,
+                    "lastText": clean_text,
+                    "usage": None,
+                }
+                if clean_text:
+                    await self._post_runtime_callback(
+                        pending_run_id,
+                        {
+                            "type": "message_delta",
+                            "routeId": route_id,
+                            "text": clean_text,
+                            "classification": "user_private",
+                        },
+                    )
+                return SendResult(success=True, message_id=message_id)
+
             callback = f"{self.runtime_callback_url}/{quote(pending_run_id, safe='')}/messages"
             payload: dict[str, Any] = {
                 "routeId": route_id,
@@ -393,6 +449,67 @@ class BurbleAdapter(BasePlatformAdapter):
         )
         return await self._send_to_burble_route(route_id, text)
 
+    async def edit_message(
+        self,
+        chat_id: str,
+        message_id: str,
+        content: str,
+        finalize: bool = False,
+        metadata: Optional[Dict[str, Any]] = None,
+        **_kwargs: Any,
+    ) -> SendResult:
+        stream = self._stream_messages.get(str(message_id))
+        if not stream:
+            return SendResult(success=False, error="Burble stream message not found")
+
+        run_id = str(stream["runId"])
+        route_id = str(stream["routeId"] or chat_id)
+        clean_text = self._clean_stream_preview(content)
+        previous_text = str(stream.get("lastText") or "")
+        usage = _usage_from_metadata(metadata) or self._usage_delta_for_run(run_id)
+        if usage:
+            stream["usage"] = usage
+
+        if finalize:
+            payload: dict[str, Any] = {
+                "routeId": route_id,
+                "text": clean_text,
+                "classification": "user_private",
+            }
+            final_usage = stream.get("usage") or usage
+            if final_usage:
+                payload["usage"] = final_usage
+            self._stream_messages.pop(str(message_id), None)
+            self._pending_run_sources.pop(run_id, None)
+            self._pending_usage_snapshots.pop(run_id, None)
+            await self._post_runtime_callback(run_id, payload)
+            return SendResult(success=True, message_id=message_id)
+
+        stream["lastText"] = clean_text
+        if clean_text.startswith(previous_text):
+            delta = clean_text[len(previous_text):]
+            if delta:
+                await self._post_runtime_callback(
+                    run_id,
+                    {
+                        "type": "message_delta",
+                        "routeId": route_id,
+                        "text": delta,
+                        "classification": "user_private",
+                    },
+                )
+        elif clean_text:
+            await self._post_runtime_callback(
+                run_id,
+                {
+                    "type": "message_replace",
+                    "routeId": route_id,
+                    "text": clean_text,
+                    "classification": "user_private",
+                },
+            )
+        return SendResult(success=True, message_id=message_id)
+
     async def send_typing(self, chat_id: str) -> bool:
         return True
 
@@ -406,6 +523,32 @@ class BurbleAdapter(BasePlatformAdapter):
 
     async def _handle_health(self, _request: Any) -> Any:
         return web.json_response({"ok": True})
+
+    def _next_stream_message_id(self, run_id: str) -> str:
+        self._stream_message_counter += 1
+        return f"burble-stream:{run_id}:{self._stream_message_counter}"
+
+    @staticmethod
+    def _clean_stream_preview(text: str) -> str:
+        value = str(text or "")
+        if value.endswith(HERMES_STREAM_CURSOR):
+            value = value[: -len(HERMES_STREAM_CURSOR)]
+        return value.rstrip()
+
+    @staticmethod
+    def _is_stream_preview(text: str) -> bool:
+        return str(text or "").endswith(HERMES_STREAM_CURSOR)
+
+    async def _post_runtime_callback(self, run_id: str, payload: dict[str, Any]) -> bool:
+        callback = f"{self.runtime_callback_url}/{quote(run_id, safe='')}/messages"
+        async with ClientSession(timeout=ClientTimeout(total=30)) as session:
+            async with session.post(callback, json=payload) as response:
+                if response.status >= 400:
+                    body = await response.text()
+                    raise RuntimeError(
+                        f"Burble runtime callback failed: {response.status} {body[:200]}"
+                    )
+        return True
 
     async def _handle_message_request(self, request: Any) -> Any:
         body = await request.json()

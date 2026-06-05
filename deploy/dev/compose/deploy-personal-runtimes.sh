@@ -11,19 +11,27 @@ compose_files=(
 pull_latest=true
 recycle_runtimes=true
 use_agentgateway=false
+runtime_build_images=()
+runtime_build_services=()
+runtime_build_labels=()
+previous_runtime_image_ids=()
+current_runtime_image_ids=()
 
 usage() {
   cat <<'USAGE'
 Usage: ./deploy-personal-runtimes.sh [--no-pull] [--keep-runtimes] [--agentgateway]
 
-Pulls the latest repo state, rebuilds Burble plus the selected personal runtime
-image, and restarts Docker Compose. Runtime containers are recycled only when
-the selected runtime image ID changes, and only for burble-rt-* containers that
-were created from the previous image ID.
+Pulls the latest repo state, rebuilds Burble plus the default personal runtime
+images, and restarts Docker Compose. Runtime containers are recycled only when
+their image ID changes, and only for burble-rt-* containers that were created
+from the previous image ID.
 
 Select a runtime with AGENT_RUNTIME_ENGINE. Supported image build defaults:
   AGENT_RUNTIME_ENGINE=openclaw  -> burble-openclaw-nemoclaw-openclaw-cli:dev
   AGENT_RUNTIME_ENGINE=hermes    -> burble-nemo-hermes:dev
+
+If AGENT_RUNTIME_IMAGE is set to a non-default custom image, only the selected
+runtime engine image is rebuilt and recycled.
 
 Options:
   --no-pull         Skip git pull --ff-only
@@ -56,6 +64,12 @@ select_runtime_image() {
   else
     export AGENT_RUNTIME_IMAGE="${configured_image}"
   fi
+}
+
+add_runtime_image_build() {
+  runtime_build_labels+=("$1")
+  runtime_build_images+=("$2")
+  runtime_build_services+=("$3")
 }
 
 while [[ $# -gt 0 ]]; do
@@ -99,15 +113,23 @@ if [[ "${use_agentgateway}" == "true" ]]; then
 fi
 
 runtime_engine="${AGENT_RUNTIME_ENGINE:-openclaw}"
+configured_runtime_image="${AGENT_RUNTIME_IMAGE:-}"
+custom_runtime_image=false
+if [[ -n "${configured_runtime_image}" ]] && ! is_known_default_runtime_image "${configured_runtime_image}"; then
+  custom_runtime_image=true
+fi
+
 case "${runtime_engine}" in
   hermes|nemo-hermes)
     export AGENT_RUNTIME_ENGINE=hermes
     select_runtime_image "burble-nemo-hermes:dev"
-    runtime_image_service="nemo-hermes-image"
+    selected_runtime_image_service="nemo-hermes-image"
+    selected_runtime_image_label="hermes"
     ;;
   ""|openclaw|openclaw-gateway|deterministic|burble-direct|direct-provider)
     select_runtime_image "burble-openclaw-nemoclaw-openclaw-cli:dev"
-    runtime_image_service="openclaw-nemoclaw-image"
+    selected_runtime_image_service="openclaw-nemoclaw-image"
+    selected_runtime_image_label="${AGENT_RUNTIME_ENGINE:-openclaw}"
     ;;
   *)
     echo "Unsupported AGENT_RUNTIME_ENGINE: ${runtime_engine}" >&2
@@ -116,10 +138,23 @@ case "${runtime_engine}" in
     ;;
 esac
 
-previous_runtime_image_id="$(image_id "${AGENT_RUNTIME_IMAGE}")"
-echo "Building personal runtime image: ${AGENT_RUNTIME_IMAGE} (${AGENT_RUNTIME_ENGINE:-openclaw}; ${runtime_image_service})"
-docker compose "${compose_files[@]}" --profile runtime-image build "${runtime_image_service}"
-current_runtime_image_id="$(image_id "${AGENT_RUNTIME_IMAGE}")"
+if [[ "${custom_runtime_image}" == "true" ]]; then
+  add_runtime_image_build "${selected_runtime_image_label}" "${AGENT_RUNTIME_IMAGE}" "${selected_runtime_image_service}"
+else
+  add_runtime_image_build "openclaw" "burble-openclaw-nemoclaw-openclaw-cli:dev" "openclaw-nemoclaw-image"
+  add_runtime_image_build "hermes" "burble-nemo-hermes:dev" "nemo-hermes-image"
+fi
+
+for i in "${!runtime_build_images[@]}"; do
+  previous_runtime_image_ids+=("$(image_id "${runtime_build_images[$i]}")")
+done
+
+for i in "${!runtime_build_images[@]}"; do
+  echo "Building personal runtime image: ${runtime_build_images[$i]} (${runtime_build_labels[$i]}; ${runtime_build_services[$i]})"
+  AGENT_RUNTIME_IMAGE="${runtime_build_images[$i]}" docker compose "${compose_files[@]}" --profile runtime-image build "${runtime_build_services[$i]}"
+  current_runtime_image_ids+=("$(image_id "${runtime_build_images[$i]}")")
+done
+
 docker compose "${compose_files[@]}" up -d --build
 
 if [[ "${use_agentgateway}" == "true" ]]; then
@@ -127,7 +162,15 @@ if [[ "${use_agentgateway}" == "true" ]]; then
 fi
 
 if [[ "${recycle_runtimes}" == "true" ]]; then
-  if [[ -n "${previous_runtime_image_id}" && "${previous_runtime_image_id}" != "${current_runtime_image_id}" ]]; then
+  runtime_images_changed=false
+  for i in "${!runtime_build_images[@]}"; do
+    previous_runtime_image_id="${previous_runtime_image_ids[$i]}"
+    current_runtime_image_id="${current_runtime_image_ids[$i]}"
+    if [[ -z "${previous_runtime_image_id}" || "${previous_runtime_image_id}" == "${current_runtime_image_id}" ]]; then
+      continue
+    fi
+
+    runtime_images_changed=true
     mapfile -t runtime_containers < <(
       docker ps -aq --filter "name=burble-rt-" |
         while IFS= read -r container_id; do
@@ -137,14 +180,18 @@ if [[ "${recycle_runtimes}" == "true" ]]; then
         done
     )
     if [[ "${#runtime_containers[@]}" -gt 0 ]]; then
-      echo "Runtime image changed; recycling ${#runtime_containers[@]} runtime container(s) from previous image."
+      echo "Runtime image changed for ${runtime_build_images[$i]}; recycling ${#runtime_containers[@]} runtime container(s) from previous image."
       docker stop "${runtime_containers[@]}" >/dev/null || true
       docker rm "${runtime_containers[@]}" >/dev/null || true
     else
-      echo "Runtime image changed, but no burble-rt-* containers use the previous image."
+      echo "Runtime image changed for ${runtime_build_images[$i]}, but no burble-rt-* containers use the previous image."
     fi
+  done
+
+  if [[ "${runtime_images_changed}" == "false" ]]; then
+    echo "Runtime images unchanged; keeping existing burble-rt-* containers."
   else
-    echo "Runtime image unchanged; keeping existing burble-rt-* containers."
+    echo "Finished recycling changed runtime images."
   fi
 else
   echo "Keeping existing burble-rt-* containers because --keep-runtimes was set."

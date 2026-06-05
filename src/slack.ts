@@ -6,6 +6,7 @@ import {
   agentRuntimeEngines,
   defaultAgentRuntimeImage,
   isDefaultAgentRuntimeImage,
+  type AgentRuntimeStreamingMode,
   type Config
 } from "./config";
 import type { SlackLogLevel } from "./config";
@@ -166,10 +167,43 @@ type SlackProgressMessage = {
   channel: string;
   ts: string;
   text: string;
+  threadTs?: string;
+  streamingMode?: AgentRuntimeStreamingMode;
+  streamedText?: string;
+  nativeStreamTs?: string;
+  nativeStreamPendingText?: string;
+  nativeStreamUpdatedAtMs?: number;
+  nativeStreamStopped?: boolean;
+  nativeStreamFallbackReason?: string;
   startedAtMs: number;
+  updatedAtMs?: number;
   toolStartedAtMs: Record<string, number>;
   toolLinesByCallId: Record<string, string>;
   toolCallOrder: string[];
+};
+
+const minSlackProgressStreamUpdateIntervalMs = 1_000;
+const minSlackNativeStreamAppendIntervalMs = 500;
+const slackNativeStreamReplacementFallbackText =
+  "_Response continued in the main message._";
+
+type SlackNativeStreamChatClient = {
+  startStream?: (input: {
+    channel: string;
+    thread_ts: string;
+    markdown_text?: string;
+  }) => Promise<{ ts?: string }>;
+  appendStream?: (input: {
+    channel: string;
+    ts: string;
+    markdown_text: string;
+  }) => Promise<unknown>;
+  stopStream?: (input: {
+    channel: string;
+    ts: string;
+    markdown_text?: string;
+    blocks?: unknown[];
+  }) => Promise<unknown>;
 };
 
 type AgentExecTaskStatus = "running" | "stopping" | "stopped" | "finished" | "failed";
@@ -638,6 +672,13 @@ export function createSlackRuntime(
     let progressMessage: SlackProgressMessage | undefined;
     try {
       if (config.agentMode === "llm") {
+        const workspaceId = body.team_id ?? "";
+        const streamingMode = resolveSlackStreamingMode({
+          config,
+          store,
+          workspaceId,
+          slackUserId: mention.user
+        });
         progressMessage = await postMentionWorkingState(client, {
           channel: mention.channel,
           user: mention.user,
@@ -648,7 +689,9 @@ export function createSlackRuntime(
               mention.channel_type === "im" || mention.channel.startsWith("D"),
             messageTs: mention.ts,
             threadTs: mention.thread_ts
-          })
+          }),
+          streamThreadTs: mention.thread_ts,
+          streamingMode
         });
       }
       logger.info(withUtcTimestamp("app_mention stage=profile_lookup"));
@@ -793,11 +836,7 @@ export function createSlackRuntime(
       logger.error(formatLogError(error));
       const text = formatConversationFailureMessage(error, "mention");
       if (progressMessage) {
-        await client.chat.update({
-          channel: progressMessage.channel,
-          ts: progressMessage.ts,
-          text
-        });
+        await failAgentProgressMessage(client, progressMessage, text);
         return;
       }
 
@@ -823,6 +862,13 @@ export function createSlackRuntime(
     let progressMessage: SlackProgressMessage | undefined;
     try {
       if (config.agentMode === "llm") {
+        const workspaceId = body.team_id ?? "";
+        const streamingMode = resolveSlackStreamingMode({
+          config,
+          store,
+          workspaceId,
+          slackUserId: directMessage.user
+        });
         progressMessage = await postMentionWorkingState(client, {
           channel: directMessage.channel,
           user: directMessage.user,
@@ -831,7 +877,9 @@ export function createSlackRuntime(
             isDirectMessage: true,
             messageTs: directMessage.ts,
             threadTs: directMessage.thread_ts
-          })
+          }),
+          streamThreadTs: directMessage.thread_ts,
+          streamingMode
         });
       }
       logger.info(withUtcTimestamp("message.im stage=profile_lookup"));
@@ -974,11 +1022,7 @@ export function createSlackRuntime(
       logger.error(formatLogError(error));
       const text = formatConversationFailureMessage(error, "message");
       if (progressMessage) {
-        await client.chat.update({
-          channel: progressMessage.channel,
-          ts: progressMessage.ts,
-          text
-        });
+        await failAgentProgressMessage(client, progressMessage, text);
         return;
       }
 
@@ -1440,7 +1484,7 @@ export function createSlackRuntime(
           if (execTask.status === "stopped") {
             return;
           }
-          const finalStatusText = formatFinalProgressLine(
+          const finalStatusText = formatSlackFinalProgressLine(
             Date.now() - startedAtMs,
             result.usage
           );
@@ -2006,6 +2050,7 @@ type SlackViewsPublishClient = {
 type AgentHomeSettingsView = {
   model: string;
   userMemory: "on" | "off";
+  streaming: AgentRuntimeStreamingMode;
   disabledTools: string[];
   enabledSkills: string[];
   policyHash: string;
@@ -2205,6 +2250,12 @@ export function buildAgentHomeSettings(input: {
   return {
     model: `${manifest.model.provider}:${manifest.model.model}`,
     userMemory: manifest.memory.userMemoryEnabled ? "on" : "off",
+    streaming: resolveSlackStreamingMode({
+      config: input.config,
+      store: input.store,
+      workspaceId: input.workspaceId,
+      slackUserId: input.slackUserId
+    }),
     disabledTools: manifest.disabledTools,
     enabledSkills: manifest.skills.map((skill) => `${skill.id}@${skill.version}`),
     policyHash: manifest.policyHash,
@@ -2238,6 +2289,50 @@ export function buildAgentHomeSettings(input: {
           lastUsedAt: null
       }
   };
+}
+
+function resolveSlackStreamingMode(input: {
+  config: Config;
+  store: TokenStore;
+  workspaceId: string;
+  slackUserId: string;
+}): AgentRuntimeStreamingMode {
+  return parseSlackStreamingModePreference(
+    input.store.getUserPreference(
+      input.workspaceId,
+      input.slackUserId,
+      "runtime.streaming"
+    )?.value,
+    input.config.agentRuntimeStreaming ?? "native"
+  );
+}
+
+function parseSlackStreamingModePreference(
+  value: unknown,
+  fallback: AgentRuntimeStreamingMode
+): AgentRuntimeStreamingMode {
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase();
+    if (normalized === "basic" || normalized === "native" || normalized === "off") {
+      return normalized;
+    }
+    if (normalized === "on" || normalized === "true" || normalized === "yes") {
+      return "native";
+    }
+    if (normalized === "false" || normalized === "no") {
+      return "off";
+    }
+  }
+  if (typeof value === "boolean") {
+    return value ? "native" : "off";
+  }
+  if (value && typeof value === "object" && "enabled" in value) {
+    const enabled = (value as { enabled?: unknown }).enabled;
+    if (typeof enabled === "boolean") {
+      return enabled ? "native" : "off";
+    }
+  }
+  return fallback;
 }
 
 async function buildSyncedAgentHomeSettings(input: {
@@ -2452,6 +2547,10 @@ function buildAgentSettingsHomeBlocks(settings?: AgentHomeSettingsView) {
         },
         {
           type: "mrkdwn",
+          text: `*Streaming*\n\`${settings.streaming}\``
+        },
+        {
+          type: "mrkdwn",
           text: `*Runtime*\n\`${settings.runtime.status}\``
         },
         {
@@ -2548,6 +2647,10 @@ export function buildAgentRuntimeManageModalView(input: {
           {
             type: "mrkdwn",
             text: `*User memory*\n\`${settings.userMemory}\``
+          },
+          {
+            type: "mrkdwn",
+            text: `*Streaming*\n\`${settings.streaming}\``
           },
           {
             type: "mrkdwn",
@@ -3155,6 +3258,7 @@ export function buildAgentConfigLoadingResponse() {
 type AgentUserConfigKey =
   | "runtime.engine"
   | "runtime.model"
+  | "runtime.streaming"
   | "memory.user"
   | "tools.disabled"
   | "skills.enabled";
@@ -3194,6 +3298,7 @@ type AgentConfigModalValues = {
   model: string;
   runtimeEngine: AgentRuntimeEngine;
   memory: "on" | "off";
+  streaming: AgentRuntimeStreamingMode;
   disabledTools: string[];
   enabledSkills: string[];
 };
@@ -3267,10 +3372,28 @@ export function buildAgentConfigModalView(input: {
         element: {
           type: "static_select",
           action_id: "value",
-          initial_option: agentConfigMemoryOption(settings.userMemory),
+          initial_option: agentConfigOnOffOption(settings.userMemory),
           options: [
-            agentConfigMemoryOption("on"),
-            agentConfigMemoryOption("off")
+            agentConfigOnOffOption("on"),
+            agentConfigOnOffOption("off")
+          ]
+        }
+      },
+      {
+        type: "input",
+        block_id: "agent_config_streaming",
+        label: {
+          type: "plain_text",
+          text: "Streaming"
+        },
+        element: {
+          type: "static_select",
+          action_id: "value",
+          initial_option: agentConfigStreamingOption(settings.streaming),
+          options: [
+            agentConfigStreamingOption("native"),
+            agentConfigStreamingOption("basic"),
+            agentConfigStreamingOption("off")
           ]
         }
       },
@@ -3316,11 +3439,23 @@ export function buildAgentConfigModalView(input: {
   };
 }
 
-function agentConfigMemoryOption(value: "on" | "off") {
+function agentConfigOnOffOption(value: "on" | "off") {
   return {
     text: {
       type: "plain_text",
       text: value === "on" ? "On" : "Off"
+    },
+    value
+  } as const;
+}
+
+function agentConfigStreamingOption(value: AgentRuntimeStreamingMode) {
+  const label =
+    value === "native" ? "Native" : value === "basic" ? "Basic" : "Off";
+  return {
+    text: {
+      type: "plain_text",
+      text: label
     },
     value
   } as const;
@@ -3344,6 +3479,12 @@ function runtimeEngineModalOptions(settings: AgentHomeSettingsView): string[] {
 
 function isAgentRuntimeEngine(value: string): value is AgentRuntimeEngine {
   return agentRuntimeEngines.includes(value as AgentRuntimeEngine);
+}
+
+function isAgentRuntimeStreamingMode(
+  value: string
+): value is AgentRuntimeStreamingMode {
+  return value === "off" || value === "basic" || value === "native";
 }
 
 export function buildAgentConfigSavedModalView(policyChanged: boolean): View {
@@ -3387,6 +3528,11 @@ function parseAgentConfigModalSubmission(
     "agent_config_memory",
     "value"
   );
+  const streaming = readSlackModalSelectedValue(
+    body,
+    "agent_config_streaming",
+    "value"
+  );
   const runtimeEngine = readSlackModalSelectedValue(
     body,
     "agent_config_runtime_engine",
@@ -3416,6 +3562,9 @@ function parseAgentConfigModalSubmission(
   if (memory !== "on" && memory !== "off") {
     errors.agent_config_memory = "Choose whether user memory is on or off.";
   }
+  if (!isAgentRuntimeStreamingMode(streaming)) {
+    errors.agent_config_streaming = "Choose a supported streaming mode.";
+  }
   if (!isAgentRuntimeEngine(runtimeEngine)) {
     errors.agent_config_runtime_engine = "Choose a supported runtime engine.";
   } else {
@@ -3432,6 +3581,7 @@ function parseAgentConfigModalSubmission(
     return { ok: false, errors };
   }
   const memoryValue = memory === "on" ? "on" : "off";
+  const streamingValue = streaming as AgentRuntimeStreamingMode;
 
   return {
     ok: true,
@@ -3439,6 +3589,7 @@ function parseAgentConfigModalSubmission(
       model: modelId,
       runtimeEngine: runtimeEngine as AgentRuntimeEngine,
       memory: memoryValue,
+      streaming: streamingValue,
       disabledTools: parseStringListConfigValue(disabledTools),
       enabledSkills: parseStringListConfigValue(enabledSkills)
     }
@@ -3476,6 +3627,12 @@ function applyAgentConfigModalValues(input: {
     slackUserId: input.principal.slackUserId,
     key: "memory.user",
     value: { enabled: input.values.memory === "on" }
+  });
+  input.store.upsertUserPreference({
+    workspaceId: input.principal.workspaceId,
+    slackUserId: input.principal.slackUserId,
+    key: "runtime.streaming",
+    value: input.values.streaming
   });
   input.store.upsertUserPreference({
     workspaceId: input.principal.workspaceId,
@@ -3680,6 +3837,12 @@ export function buildAgentUserConfigGetResponse(input: {
     principal,
     engine: selection.effectiveEngine
   });
+  const streamingMode = resolveSlackStreamingMode({
+    config: input.config,
+    store: input.store,
+    workspaceId: input.workspaceId,
+    slackUserId: input.slackUserId
+  });
   const key = input.key ? normalizeAgentUserConfigKey(input.key) : null;
 
   if (input.key && !key) {
@@ -3690,12 +3853,19 @@ export function buildAgentUserConfigGetResponse(input: {
   }
 
   const lines = key
-    ? formatAgentUserConfigKeyLines({ store: input.store, principal, manifest, key })
+    ? formatAgentUserConfigKeyLines({
+        store: input.store,
+        principal,
+        manifest,
+        streamingMode,
+        key
+      })
     : [
         "*Agent user config*",
         `• Runtime engine: \`${selection.effectiveEngine}\``,
         `• Model: \`${manifest.model.provider}:${manifest.model.model}\``,
         `• User memory: \`${manifest.memory.userMemoryEnabled ? "on" : "off"}\``,
+        `• Streaming: \`${streamingMode}\``,
         `• Disabled tools: \`${formatStringList(manifest.disabledTools)}\``,
         `• Enabled skills: \`${formatStringList(manifest.skills.map((skill) => `${skill.id}@${skill.version}`))}\``,
         `• Policy hash: \`${manifest.policyHash}\``,
@@ -3703,6 +3873,7 @@ export function buildAgentUserConfigGetResponse(input: {
         "*Settable keys*",
         "• `runtime.engine`",
         "• `model`",
+        "• `streaming`",
         "• `memory`",
         "• `tools.disabled`",
         "• `skills.enabled`"
@@ -3789,6 +3960,12 @@ export function applyAgentUserConfigSet(input: {
           store: input.store,
           principal,
           engine: selection.effectiveEngine
+        }),
+        streamingMode: resolveSlackStreamingMode({
+          config: input.config,
+          store: input.store,
+          workspaceId: input.workspaceId,
+          slackUserId: input.slackUserId
         }),
         key
       })
@@ -4044,6 +4221,12 @@ function applyAgentUserConfigSpecialSet(input: {
         store: input.store,
         principal: input.principal,
         manifest,
+        streamingMode: resolveSlackStreamingMode({
+          config: input.config,
+          store: input.store,
+          workspaceId: input.principal.workspaceId,
+          slackUserId: input.principal.slackUserId
+        }),
         key: "tools.disabled"
       })
     ].join("\n")
@@ -4097,6 +4280,17 @@ function parseAgentUserConfigValue(
     return { ok: true, value: { enabled } };
   }
 
+  if (key === "runtime.streaming") {
+    const mode = parseAgentRuntimeStreamingModeConfigValue(trimmed);
+    if (!mode) {
+      return {
+        ok: false,
+        error: "Streaming must be `native`, `basic`, `off`, `on`, `true`, or `false`."
+      };
+    }
+    return { ok: true, value: mode };
+  }
+
   const values = parseStringListConfigValue(trimmed);
   if (key === "skills.enabled") {
     return {
@@ -4117,6 +4311,9 @@ function normalizeAgentUserConfigKey(key: string): AgentUserConfigKey | null {
     case "model":
     case "runtime.model":
       return "runtime.model";
+    case "streaming":
+    case "runtime.streaming":
+      return "runtime.streaming";
     case "memory":
     case "user.memory":
     case "memory.user":
@@ -4140,6 +4337,8 @@ function displayAgentUserConfigKey(key: AgentUserConfigKey): string {
       return "runtime.engine";
     case "runtime.model":
       return "model";
+    case "runtime.streaming":
+      return "streaming";
     case "memory.user":
       return "memory";
     default:
@@ -4150,7 +4349,7 @@ function displayAgentUserConfigKey(key: AgentUserConfigKey): string {
 function formatUnknownAgentUserConfigKey(key: string): string {
   return [
     `Unknown user config key: \`${truncateSlackConfigValue(key, 80)}\`.`,
-    "Allowed keys: `runtime.engine`, `model`, `memory`, `tools.disabled`, `skills.enabled`.",
+    "Allowed keys: `runtime.engine`, `model`, `streaming`, `memory`, `tools.disabled`, `skills.enabled`.",
     "Shortcuts: `disable-tool <tool_name>`, `enable-tool <tool_name>`."
   ].join("\n");
 }
@@ -4159,6 +4358,7 @@ function formatAgentUserConfigKeyLines(input: {
   store: TokenStore;
   principal: { workspaceId: string; slackUserId: string };
   manifest: ReturnType<typeof buildRuntimeManifestForPrincipal>;
+  streamingMode: AgentRuntimeStreamingMode;
   key: AgentUserConfigKey;
 }): string[] {
   switch (input.key) {
@@ -4196,6 +4396,19 @@ function formatAgentUserConfigKeyLines(input: {
             input.principal.workspaceId,
             input.principal.slackUserId,
             "memory.user"
+          )?.value
+        )}\``
+      ];
+    case "runtime.streaming":
+      return [
+        "*Streaming*",
+        `• Effective: \`${input.streamingMode}\``,
+        `• Runtime deltas: \`${input.manifest.streaming.messageDeltasEnabled ? "on" : "off"}\``,
+        `• Stored preference: \`${formatPreferenceValue(
+          input.store.getUserPreference(
+            input.principal.workspaceId,
+            input.principal.slackUserId,
+            "runtime.streaming"
           )?.value
         )}\``
       ];
@@ -4238,6 +4451,20 @@ function parseBooleanConfigValue(value: string): boolean | null {
     return false;
   }
   return null;
+}
+
+function parseAgentRuntimeStreamingModeConfigValue(
+  value: string
+): AgentRuntimeStreamingMode | null {
+  const normalized = value.trim().toLowerCase();
+  if (isAgentRuntimeStreamingMode(normalized)) {
+    return normalized;
+  }
+  const enabled = parseBooleanConfigValue(normalized);
+  if (enabled === null) {
+    return null;
+  }
+  return enabled ? "native" : "off";
 }
 
 function parseStringListConfigValue(value: string): string[] {
@@ -4633,12 +4860,12 @@ function isProgressOnlyMessage(text: string): boolean {
     /^Starting agent runtime/i.test(text) ||
     /^Agent is /i.test(text) ||
     /^Calling /i.test(text) ||
-    /^Final result in /i.test(text) ||
+    /^_?Final result in /i.test(text) ||
     /completed in \d+(?:ms|s).*\bresult\)/i.test(text)
   );
 }
 
-async function postConversationResponse(
+export async function postConversationResponse(
   client: App["client"],
   input: {
     response: ConversationResponse;
@@ -4649,11 +4876,59 @@ async function postConversationResponse(
   }
 ): Promise<void> {
   if (input.progressMessage && input.response.visibility !== "ephemeral") {
+    const finalProgressLine = formatSlackFinalProgressLine(
+      Date.now() - input.progressMessage.startedAtMs,
+      input.response.usage
+    );
+    if (
+      input.progressMessage.nativeStreamTs &&
+      !input.progressMessage.nativeStreamFallbackReason
+    ) {
+      const pendingText = input.progressMessage.nativeStreamPendingText ?? "";
+      const finalStreamText = [pendingText, "", finalProgressLine].join("\n");
+      try {
+        await stopSlackNativeStream(client, input.progressMessage, {
+          markdownText: finalStreamText,
+          blocks: input.response.blocks
+        });
+        const hasToolProgress = input.progressMessage.toolCallOrder.some((callId) =>
+          Boolean(input.progressMessage?.toolLinesByCallId[callId]?.trim())
+        );
+        const finishedProgressText = hasToolProgress
+          ? renderProgressLines(input.progressMessage)
+          : renderProgressLines(input.progressMessage, [finalProgressLine]);
+        input.progressMessage.text = finishedProgressText;
+        await client.chat.update({
+          channel: input.progressMessage.channel,
+          ts: input.progressMessage.ts,
+          text: finishedProgressText
+        });
+        return;
+      } catch {
+        input.progressMessage.streamingMode = "basic";
+      }
+    }
+    if (input.progressMessage.streamedText?.trim()) {
+      const responseText =
+        renderConversationResponseText(input.response).trim() ||
+        input.progressMessage.streamedText.trim();
+      const finishedText = renderFinalProgressMessage(
+        input.progressMessage,
+        responseText,
+        finalProgressLine
+      );
+      input.progressMessage.text = finishedText;
+      await client.chat.update({
+        channel: input.progressMessage.channel,
+        ts: input.progressMessage.ts,
+        text: finishedText,
+        ...(input.response.blocks ? { blocks: input.response.blocks } : {})
+      });
+      return;
+    }
+
     const finishedText = renderProgressLines(input.progressMessage, [
-      formatFinalProgressLine(
-        Date.now() - input.progressMessage.startedAtMs,
-        input.response.usage
-      )
+      finalProgressLine
     ]);
     input.progressMessage.text = finishedText;
     await client.chat.update({
@@ -4721,11 +4996,17 @@ async function postMentionWorkingState(
     user: string;
     isDirectMessage: boolean;
     threadTs?: string;
+    streamThreadTs?: string;
+    streamingMode: AgentRuntimeStreamingMode;
   }
 ): Promise<SlackProgressMessage | undefined> {
   const text = formatMentionWorkingMessage();
 
   if (input.isDirectMessage) {
+    const progressStreamingMode = resolveSlackProgressStreamingMode({
+      streamingMode: input.streamingMode,
+      streamThreadTs: input.streamThreadTs
+    });
     const result = await client.chat.postMessage({
       channel: input.channel,
       ...(input.threadTs ? { thread_ts: input.threadTs } : {}),
@@ -4736,6 +5017,8 @@ async function postMentionWorkingState(
           channel: input.channel,
           ts: result.ts,
           text,
+          ...(input.streamThreadTs ? { threadTs: input.streamThreadTs } : {}),
+          streamingMode: progressStreamingMode,
           startedAtMs: Date.now(),
           toolStartedAtMs: {},
           toolLinesByCallId: {},
@@ -4753,22 +5036,256 @@ async function postMentionWorkingState(
   return undefined;
 }
 
-async function updateAgentProgressMessage(
+export function resolveSlackProgressStreamingMode(input: {
+  streamingMode: AgentRuntimeStreamingMode;
+  streamThreadTs?: string;
+}): AgentRuntimeStreamingMode {
+  if (input.streamingMode === "native" && !input.streamThreadTs) {
+    return "basic";
+  }
+
+  return input.streamingMode;
+}
+
+export async function updateAgentProgressMessage(
   client: App["client"],
   progressMessage: SlackProgressMessage,
   event: AgentRunEvent
 ): Promise<void> {
+  if (
+    (event.type === "message_delta" || event.type === "message_replace") &&
+    progressMessage.streamingMode === "native" &&
+    !progressMessage.nativeStreamFallbackReason
+  ) {
+    progressMessage.streamedText =
+      event.type === "message_replace"
+        ? event.text
+        : appendSlackStreamedText(progressMessage.streamedText ?? "", event.text);
+    if (!progressMessage.streamedText.trim()) {
+      return;
+    }
+    try {
+      await updateSlackNativeStream(client, progressMessage, {
+        text: event.text,
+        replace: event.type === "message_replace"
+      });
+      return;
+    } catch (error) {
+      progressMessage.streamingMode = "basic";
+      progressMessage.nativeStreamFallbackReason = summarizeSlackStreamError(error);
+      progressMessage.nativeStreamPendingText = undefined;
+      progressMessage.nativeStreamTs = undefined;
+      const text = progressMessage.streamedText.trim()
+        ? renderProgressLines(progressMessage, [progressMessage.streamedText])
+        : undefined;
+      if (!text || text === progressMessage.text) {
+        return;
+      }
+      progressMessage.text = text;
+      progressMessage.updatedAtMs = Date.now();
+      await client.chat.update({
+        channel: progressMessage.channel,
+        ts: progressMessage.ts,
+        text
+      });
+      return;
+    }
+  }
+
+  const hadStreamedText = Boolean(progressMessage.streamedText?.trim());
   const text = formatAgentProgressMessage(event, progressMessage);
   if (!text || text === progressMessage.text) {
     return;
   }
 
+  const now = Date.now();
+  if (
+    shouldThrottleSlackProgressUpdate({
+      event,
+      hadStreamedText,
+      progressMessage,
+      now
+    })
+  ) {
+    return;
+  }
+
+  progressMessage.text = text;
+  progressMessage.updatedAtMs = now;
+  await client.chat.update({
+    channel: progressMessage.channel,
+    ts: progressMessage.ts,
+    text
+  });
+}
+
+export async function failAgentProgressMessage(
+  client: App["client"],
+  progressMessage: SlackProgressMessage,
+  text: string
+): Promise<void> {
+  if (progressMessage.nativeStreamTs) {
+    try {
+      await stopSlackNativeStream(client, progressMessage, {
+        markdownText: ["", "", text].join("\n")
+      });
+    } catch {
+      progressMessage.streamingMode = "basic";
+    }
+  }
   progressMessage.text = text;
   await client.chat.update({
     channel: progressMessage.channel,
     ts: progressMessage.ts,
     text
   });
+}
+
+async function updateSlackNativeStream(
+  client: App["client"],
+  progressMessage: SlackProgressMessage,
+  input: {
+    text: string;
+    replace: boolean;
+  }
+): Promise<void> {
+  if (!input.text.trim() || progressMessage.nativeStreamStopped) {
+    return;
+  }
+
+  const chat = client.chat as App["client"]["chat"] & SlackNativeStreamChatClient;
+  if (input.replace && progressMessage.nativeStreamTs) {
+    await stopSlackNativeStream(client, progressMessage, {
+      markdownText: slackNativeStreamReplacementFallbackText
+    });
+    throw new Error("slack_native_stream_replace_unsupported");
+  }
+
+  if (!progressMessage.nativeStreamTs) {
+    if (!progressMessage.threadTs) {
+      throw new Error("slack_native_stream_unthreaded");
+    }
+    if (!chat.startStream) {
+      throw new Error("slack_native_stream_unavailable");
+    }
+    const result = await chat.startStream({
+      channel: progressMessage.channel,
+      thread_ts: progressMessage.threadTs,
+      markdown_text: input.text.trimStart()
+    });
+    if (!result.ts) {
+      throw new Error("slack_native_stream_missing_ts");
+    }
+    progressMessage.nativeStreamTs = result.ts;
+    progressMessage.nativeStreamUpdatedAtMs = Date.now();
+    progressMessage.nativeStreamPendingText = "";
+    return;
+  }
+
+  progressMessage.nativeStreamPendingText = `${
+    progressMessage.nativeStreamPendingText ?? ""
+  }${input.text}`;
+  const now = Date.now();
+  if (
+    typeof progressMessage.nativeStreamUpdatedAtMs === "number" &&
+    now - progressMessage.nativeStreamUpdatedAtMs <
+      minSlackNativeStreamAppendIntervalMs
+  ) {
+    return;
+  }
+
+  await flushSlackNativeStreamPendingText(client, progressMessage, now);
+}
+
+async function flushSlackNativeStreamPendingText(
+  client: App["client"],
+  progressMessage: SlackProgressMessage,
+  now = Date.now()
+): Promise<void> {
+  const pendingText = progressMessage.nativeStreamPendingText;
+  if (
+    !pendingText ||
+    !progressMessage.nativeStreamTs ||
+    progressMessage.nativeStreamStopped
+  ) {
+    return;
+  }
+
+  const chat = client.chat as App["client"]["chat"] & SlackNativeStreamChatClient;
+  if (!chat.appendStream) {
+    throw new Error("slack_native_stream_append_unavailable");
+  }
+  progressMessage.nativeStreamPendingText = "";
+  await chat.appendStream({
+    channel: progressMessage.channel,
+    ts: progressMessage.nativeStreamTs,
+    markdown_text: pendingText
+  });
+  progressMessage.nativeStreamUpdatedAtMs = now;
+}
+
+async function stopSlackNativeStream(
+  client: App["client"],
+  progressMessage: SlackProgressMessage,
+  input: {
+    markdownText: string;
+    blocks?: unknown[];
+  }
+): Promise<void> {
+  if (!progressMessage.nativeStreamTs || progressMessage.nativeStreamStopped) {
+    return;
+  }
+
+  const chat = client.chat as App["client"]["chat"] & SlackNativeStreamChatClient;
+  if (!chat.stopStream) {
+    throw new Error("slack_native_stream_stop_unavailable");
+  }
+  await chat.stopStream({
+    channel: progressMessage.channel,
+    ts: progressMessage.nativeStreamTs,
+    markdown_text: input.markdownText,
+    ...(input.blocks ? { blocks: input.blocks } : {})
+  });
+  progressMessage.nativeStreamStopped = true;
+  progressMessage.nativeStreamPendingText = "";
+}
+
+function summarizeSlackStreamError(error: unknown): string {
+  if (error && typeof error === "object" && "data" in error) {
+    const data = (error as { data?: { error?: unknown } }).data;
+    if (typeof data?.error === "string") {
+      return data.error;
+    }
+  }
+  if (error instanceof Error && error.message) {
+    return error.message;
+  }
+  return "unknown_error";
+}
+
+function shouldThrottleSlackProgressUpdate(input: {
+  event: AgentRunEvent;
+  hadStreamedText: boolean;
+  progressMessage: SlackProgressMessage;
+  now: number;
+}): boolean {
+  if (
+    input.event.type !== "message_delta" &&
+    input.event.type !== "message_replace"
+  ) {
+    return false;
+  }
+  if (!input.hadStreamedText) {
+    return false;
+  }
+  if (typeof input.progressMessage.updatedAtMs !== "number") {
+    return false;
+  }
+
+  return (
+    input.now - input.progressMessage.updatedAtMs <
+    minSlackProgressStreamUpdateIntervalMs
+  );
 }
 
 export function formatAgentProgressEvent(
@@ -4791,10 +5308,13 @@ export function formatAgentProgressEvent(
         `${formatAgentToolName(event.toolName)} completed (${formatToolClassification(event.classification)} result).`
       );
     case "message_delta": {
-      return event.text.trim() && !currentText.trim()
-        ? "Agent is responding..."
-        : undefined;
+      return appendSlackStreamedText(
+        isAgentProgressPlaceholder(currentText) ? "" : currentText,
+        event.text
+      ) || undefined;
     }
+    case "message_replace":
+      return event.text.trim() || undefined;
     case "final":
     case "error":
       return undefined;
@@ -4856,7 +5376,7 @@ function isRuntimeMcpAuthFailure(message: string): boolean {
   );
 }
 
-function formatAgentProgressMessage(
+export function formatAgentProgressMessage(
   event: AgentRunEvent,
   progressMessage: SlackProgressMessage
 ): string | undefined {
@@ -4884,18 +5404,44 @@ function formatAgentProgressMessage(
   }
 
   if (event.type === "status") {
+    if (progressMessage.streamedText?.trim()) {
+      return renderProgressLines(progressMessage, [progressMessage.streamedText]);
+    }
     return renderProgressLines(progressMessage, [
       normalizeAgentStatus(event.text)
     ]);
   }
 
-  if (event.type === "message_delta") {
-    return event.text.trim()
-      ? renderProgressLines(progressMessage, ["Agent is responding..."])
+  if (event.type === "message_delta" || event.type === "message_replace") {
+    progressMessage.streamedText =
+      event.type === "message_replace"
+        ? event.text
+        : appendSlackStreamedText(progressMessage.streamedText ?? "", event.text);
+    return progressMessage.streamedText.trim()
+      ? renderProgressLines(progressMessage, [progressMessage.streamedText])
       : undefined;
   }
 
   return undefined;
+}
+
+function appendSlackStreamedText(currentText: string, delta: string): string {
+  if (!delta.trim()) {
+    return currentText;
+  }
+
+  return currentText ? `${currentText}${delta}` : delta.trimStart();
+}
+
+function isAgentProgressPlaceholder(text: string): boolean {
+  const trimmed = text.trim();
+  return (
+    !trimmed ||
+    trimmed === "Starting agent runtime..." ||
+    trimmed === "Agent is responding..." ||
+    trimmed === "Agent is thinking..." ||
+    /^Agent has thought for \d+s\.{0,3}$/.test(trimmed)
+  );
 }
 
 function normalizeAgentStatus(text: string): string {
@@ -4931,6 +5477,23 @@ function renderProgressLines(
     .filter(Boolean)
     .join("\n");
   return rendered || progressMessage.text;
+}
+
+function renderFinalProgressMessage(
+  progressMessage: SlackProgressMessage,
+  responseText: string,
+  finalProgressLine: string
+): string {
+  const toolLines = progressMessage.toolCallOrder
+    .map((callId) => progressMessage.toolLinesByCallId[callId])
+    .filter((line): line is string => Boolean(line?.trim()));
+  return [
+    ...(toolLines.length ? [toolLines.map((line) => line.trim()).join("\n")] : []),
+    responseText.trim(),
+    finalProgressLine.trim()
+  ]
+    .filter(Boolean)
+    .join("\n\n");
 }
 
 function replaceOrAppendProgressLine(
@@ -4974,6 +5537,13 @@ export function formatFinalProgressLine(elapsedMs: number, usage?: AgentUsage): 
   return `Final result in ${formatElapsedMs(elapsedMs)}${usageText ? ` (${usageText})` : ""}.`;
 }
 
+function formatSlackFinalProgressLine(
+  elapsedMs: number,
+  usage?: AgentUsage
+): string {
+  return `_${formatFinalProgressLine(elapsedMs, usage)}_`;
+}
+
 function formatUsageSummary(usage?: AgentUsage): string | null {
   if (!usage) {
     return null;
@@ -4988,9 +5558,15 @@ function formatUsageSummary(usage?: AgentUsage): string | null {
     return null;
   }
 
-  const parts = [`${totalTokens} tokens`];
+  const parts: string[] = [];
   if (typeof usage.cachedInputTokens === "number" && usage.cachedInputTokens > 0) {
-    parts.push(`${usage.cachedInputTokens} cached`);
+    const freshTokens = Math.max(0, totalTokens - usage.cachedInputTokens);
+    parts.push(
+      `${totalTokens} tokens: ${freshTokens} fresh`,
+      `${usage.cachedInputTokens} cached`
+    );
+  } else {
+    parts.push(`${totalTokens} tokens`);
   }
   if (typeof usage.reasoningTokens === "number" && usage.reasoningTokens > 0) {
     parts.push(`${usage.reasoningTokens} reasoning`);

@@ -34,6 +34,9 @@ export type RunRequest = {
         workspaceMemoryEnabled: boolean;
         jobMemoryEnabled: boolean;
       };
+      streaming?: {
+        messageDeltasEnabled: boolean;
+      };
       memoryContext?: Array<{
         scope: "user" | "workspace" | "job";
         ownerId: string;
@@ -199,6 +202,7 @@ export type RunEvent =
       classification: ToolClassification;
     }
   | { type: "message_delta"; text: string }
+  | { type: "message_replace"; text: string }
   | { type: "final"; response: RunResponse["response"] }
   | { type: "error"; message: string };
 

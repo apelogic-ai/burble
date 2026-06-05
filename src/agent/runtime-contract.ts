@@ -78,12 +78,21 @@ export const runtimeManifestMemorySchema = z
   })
   .strict();
 
+export const runtimeManifestStreamingSchema = z
+  .object({
+    messageDeltasEnabled: z.boolean()
+  })
+  .strict();
+
 export const runtimeRequestManifestSchema = z
   .object({
     version: z.string().min(1),
     policyHash: z.string().min(1),
     skills: z.array(runtimeManifestSkillSchema),
     memory: runtimeManifestMemorySchema,
+    streaming: runtimeManifestStreamingSchema.default({
+      messageDeltasEnabled: true
+    }),
     memoryContext: z.array(runtimeMemoryContextEntrySchema).optional()
   })
   .strict();
@@ -224,6 +233,12 @@ export const runtimeRunEventSchema = z.discriminatedUnion("type", [
   z
     .object({
       type: z.literal("message_delta"),
+      text: z.string()
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal("message_replace"),
       text: z.string()
     })
     .strict(),

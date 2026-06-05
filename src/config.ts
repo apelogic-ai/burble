@@ -40,6 +40,7 @@ export type Config = {
   agentRuntimeToolGatewayUrl: string;
   agentRuntimeMcpGatewayUrl: string | null;
   agentRuntimeMcpAudience: string | null;
+  agentRuntimeStreaming?: AgentRuntimeStreamingMode;
   atlassianMcpUrl: string;
   runtimeJwtIssuer: string;
   runtimeJwtPrivateKeyPath: string | null;
@@ -56,10 +57,12 @@ export type AgentMode = "deterministic" | "llm";
 export type AgentRuntime = "ai-sdk" | "burble-runtime";
 export type AgentRuntimeFactory = "static" | "docker";
 export type OpenClawNemoClawEngine = AgentRuntimeEngine;
+export type AgentRuntimeStreamingMode = "off" | "basic" | "native";
 const slackLogLevels = ["debug", "info", "warn", "error"] as const;
 const agentModes = ["deterministic", "llm"] as const;
 const agentRuntimes = ["ai-sdk", "burble-runtime"] as const;
 const agentRuntimeFactories = ["static", "docker"] as const;
+const agentRuntimeStreamingModes = ["off", "basic", "native"] as const;
 export const agentRuntimeEngines = [
   "deterministic",
   "openclaw",
@@ -233,6 +236,35 @@ function optionalAgentRuntimeEngineEnv(
   return normalized as AgentRuntimeEngine;
 }
 
+function optionalAgentRuntimeStreamingModeEnv(
+  env: Env,
+  name: string,
+  fallback: AgentRuntimeStreamingMode
+): AgentRuntimeStreamingMode {
+  const value = env[name]?.trim().toLowerCase();
+  if (!value) {
+    return fallback;
+  }
+
+  const normalized =
+    value === "true" || value === "on" || value === "yes"
+      ? "native"
+      : value === "false" || value === "no"
+        ? "off"
+        : value;
+  if (
+    !agentRuntimeStreamingModes.includes(
+      normalized as AgentRuntimeStreamingMode
+    )
+  ) {
+    throw new Error(
+      `Environment variable ${name} must be one of ${agentRuntimeStreamingModes.join(", ")}, on, off, true, or false`
+    );
+  }
+
+  return normalized as AgentRuntimeStreamingMode;
+}
+
 function optionalUrlEnv(env: Env, name: string): string | null {
   const value = env[name]?.trim();
   return value ? value.replace(/\/+$/, "") : null;
@@ -327,6 +359,11 @@ export function readConfig(env: Env): Config {
     agentRuntimeMcpAudience:
       optionalUrlEnv(env, "AGENT_RUNTIME_MCP_AUDIENCE") ??
       agentRuntimeMcpGatewayUrl,
+    agentRuntimeStreaming: optionalAgentRuntimeStreamingModeEnv(
+      env,
+      "AGENT_RUNTIME_STREAMING",
+      "native"
+    ),
     atlassianMcpUrl:
       optionalUrlEnv(env, "ATLASSIAN_MCP_URL") ??
       "https://mcp.atlassian.com/v1/mcp",

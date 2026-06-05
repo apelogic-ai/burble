@@ -51,6 +51,7 @@ describe("readConfig", () => {
       agentRuntimeToolGatewayUrl: "http://burble-app:3000/internal/tools",
       agentRuntimeMcpGatewayUrl: null,
       agentRuntimeMcpAudience: null,
+      agentRuntimeStreaming: "native",
       atlassianMcpUrl: "https://mcp.atlassian.com/v1/mcp",
       runtimeJwtIssuer: "https://example.ngrok-free.app",
       runtimeJwtPrivateKeyPath: null,
@@ -221,6 +222,22 @@ describe("readConfig", () => {
     expect(defaultAgentRuntimeImage("openclaw-gateway")).toBe(
       "burble-openclaw-nemoclaw-openclaw-cli:dev"
     );
+  });
+
+  test("enables native runtime streaming by default and allows env mode overrides", () => {
+    expect(readConfig(validEnv).agentRuntimeStreaming).toBe("native");
+    expect(
+      readConfig({
+        ...validEnv,
+        AGENT_RUNTIME_STREAMING: "basic"
+      }).agentRuntimeStreaming
+    ).toBe("basic");
+    expect(
+      readConfig({
+        ...validEnv,
+        AGENT_RUNTIME_STREAMING: "off"
+      }).agentRuntimeStreaming
+    ).toBe("off");
   });
 
   test("ignores a blank runtime image override", () => {
