@@ -2609,9 +2609,10 @@ describe("runOpenClawCliRequest", () => {
             }
           },
           { ...config, engine: "openclaw-gateway" },
-          async () => {
-            throw new Error("unexpected tool call");
-          },
+          async () => ({
+            classification: "user_private",
+            content: []
+          }),
           async function* () {
             throw new Error("unexpected cli call");
           },
@@ -2630,6 +2631,241 @@ describe("runOpenClawCliRequest", () => {
         text: "No Burble tool context is needed for this request."
       }
     });
+  });
+
+  test("streams OpenClaw gateway HTTP response deltas before the final response", async () => {
+    const requests: Array<Record<string, unknown>> = [];
+    const events: Array<RunEvent> = [];
+
+    await withMockFetch(
+      (async (_input, init) => {
+        requests.push(
+          JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>
+        );
+        const stream = new ReadableStream({
+          start(controller) {
+            const encoder = new TextEncoder();
+            for (const event of [
+              {
+                type: "response.output_text.delta",
+                delta: "Security first."
+              },
+              {
+                type: "response.output_text.delta",
+                delta: " Then fix CI."
+              },
+              {
+                type: "response.completed",
+                response: openResponsesText("Security first. Then fix CI.", {
+                  input_tokens: 1701,
+                  output_tokens: 6,
+                  total_tokens: 22571,
+                  input_tokens_details: {
+                    cached_tokens: 20864
+                  }
+                })
+              }
+            ]) {
+              controller.enqueue(
+                encoder.encode(`data: ${JSON.stringify(event)}\n\n`)
+              );
+            }
+            controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+            controller.close();
+          }
+        });
+        return new Response(stream, {
+          status: 200,
+          headers: { "content-type": "text/event-stream" }
+        });
+      }) as typeof fetch,
+      async () => {
+        for await (const event of runOpenClawCliRequestStream(
+          {
+            runId: "run-gateway-stream",
+            executionMode: "openclaw-native",
+            input: {
+              text: "prioritize my GitHub work",
+              connections: {
+                github: {
+                  connected: true,
+                  email: "person@example.com",
+                  providerLogin: "octocat"
+                }
+              }
+            }
+          },
+          { ...config, engine: "openclaw-gateway" },
+          async () => ({
+            classification: "user_private",
+            content: []
+          }),
+          async function* () {
+            throw new Error("unexpected cli call");
+          },
+          () => undefined
+        )) {
+          events.push(event);
+        }
+      }
+    );
+
+    expect(requests).toHaveLength(1);
+    expect(requests[0].stream).toBe(true);
+    expect(events).toContainEqual({
+      type: "message_delta",
+      text: "Security first."
+    });
+    expect(events).toContainEqual({
+      type: "message_delta",
+      text: " Then fix CI."
+    });
+    expect(events.at(-1)).toMatchObject({
+      type: "final",
+      response: {
+        classification: "user_private",
+        text: "Security first. Then fix CI.",
+        usage: {
+          inputTokens: 1701,
+          outputTokens: 6,
+          totalTokens: 22571,
+          cachedInputTokens: 20864
+        }
+      }
+    });
+  });
+
+  test("buffers streamed OpenClaw gateway HTTP tool-call JSON instead of showing it", async () => {
+    const events: Array<RunEvent> = [];
+    const providerTexts = [
+      JSON.stringify({
+        tool_call: {
+          name: "jira.searchIssues",
+          arguments: { jql: 'text ~ "blocked"' }
+        }
+      }),
+      "ENG-7 is blocked."
+    ];
+
+    await withMockFetch(
+      (async (_input, init) => {
+        const requestBody = JSON.parse(String(init?.body ?? "{}")) as Record<
+          string,
+          unknown
+        >;
+        expect(requestBody.stream).toBe(true);
+        const text = providerTexts.shift();
+        if (!text) {
+          throw new Error("unexpected gateway call");
+        }
+        const stream = new ReadableStream({
+          start(controller) {
+            const encoder = new TextEncoder();
+            controller.enqueue(
+              encoder.encode(
+                `data: ${JSON.stringify({
+                  type: "response.output_text.delta",
+                  delta: text.slice(0, Math.ceil(text.length / 2))
+                })}\n\n`
+              )
+            );
+            controller.enqueue(
+              encoder.encode(
+                `data: ${JSON.stringify({
+                  type: "response.output_text.delta",
+                  delta: text.slice(Math.ceil(text.length / 2))
+                })}\n\n`
+              )
+            );
+            controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+            controller.close();
+          }
+        });
+        return new Response(stream, {
+          status: 200,
+          headers: { "content-type": "text/event-stream" }
+        });
+      }) as typeof fetch,
+      async () => {
+        for await (const event of runOpenClawCliRequestStream(
+          {
+            runId: "run-gateway-tool-stream",
+            executionMode: "openclaw-native",
+            input: {
+              text: "which Jira tickets are blocked?",
+              connections: {
+                github: { connected: false },
+                jira: {
+                  connected: true,
+                  email: "person@example.com",
+                  providerLogin: "person@atlassian.example"
+                }
+              }
+            }
+          },
+          { ...config, engine: "openclaw-gateway" },
+          async (toolName) =>
+            toolName === "jira.searchIssues"
+              ? {
+                  classification: "user_private",
+                  content: [
+                    {
+                      key: "ENG-7",
+                      title: "Deploy is blocked",
+                      url: "https://example.atlassian.net/browse/ENG-7"
+                    }
+                  ]
+                }
+              : {
+                  classification: "user_private",
+                  content: []
+                },
+          async function* () {
+            throw new Error("unexpected cli call");
+          },
+          () => undefined
+        )) {
+          events.push(event);
+        }
+      }
+    );
+
+    expect(events.slice(0, 4)).toMatchObject([
+      { type: "status", text: "Loading Burble context..." },
+      { type: "status", text: "Agent is thinking..." },
+      {
+        type: "tool_call",
+        toolName: "jira.searchIssues",
+        callId: expect.any(String)
+      },
+      {
+        type: "tool_result",
+        toolName: "jira.searchIssues",
+        callId: expect.any(String),
+        classification: "user_private"
+      }
+    ]);
+    expect(
+      events
+        .filter((event): event is Extract<RunEvent, { type: "message_delta" }> =>
+          event.type === "message_delta"
+        )
+        .map((event) => event.text)
+        .join("")
+    ).toBe("ENG-7 is blocked.");
+    expect(events.at(-1)).toMatchObject({
+      type: "final",
+      response: {
+        classification: "user_private",
+        text: "ENG-7 is blocked."
+      }
+    });
+    expect(
+      events.some(
+        (event) =>
+          event.type === "message_delta" && event.text.includes("tool_call")
+      )
+    ).toBe(false);
   });
 
   test("streams a planned tool call without showing the JSON protocol to Slack", async () => {

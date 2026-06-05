@@ -26,6 +26,7 @@ export type CliCommandResult = {
   exitCode: number;
   stdout: string;
   stderr: string;
+  deltaCount?: number;
   usage?: RunUsage;
   telemetry?: RunTelemetry;
 };
@@ -87,6 +88,12 @@ type ExecutedToolCall = {
 type RunUsageTelemetryResult = {
   usage?: RunUsage;
   telemetry: RunTelemetry;
+};
+
+type GatewayHttpResponseResult = {
+  stdout: string;
+  responseText: string;
+  deltaCount: number;
 };
 
 type BurbleToolContext = {
@@ -364,7 +371,8 @@ async function runOpenClawGatewayHttpRequest(
   prompt: string,
   sessionId: string,
   logInfo: RuntimeLogger,
-  step: number
+  step: number,
+  onDelta?: (delta: string) => void
 ): Promise<CliCommandResult> {
   const startedAt = Date.now();
   const baseSessionKey = buildGatewayHttpSessionKey(config, sessionId);
@@ -398,10 +406,11 @@ async function runOpenClawGatewayHttpRequest(
         config,
         request,
         attemptSessionKey,
-        prompt
+        prompt,
+        Boolean(onDelta)
       );
-      const responseText = await response.text();
       if (!response.ok) {
+        const responseText = await response.text();
         stderr = responseText;
         logInfo(
           `OpenClaw gateway http error runId=${request.runId ?? "unknown"} step=${step} status=${response.status}${summarizeLogObject("bodyPreview", responseText)}`
@@ -435,7 +444,18 @@ async function runOpenClawGatewayHttpRequest(
         return { exitCode: 1, stdout, stderr, ...usageTelemetry };
       }
 
-      stdout = extractOpenResponsesText(responseText) ?? responseText;
+      const responseResult = onDelta && isGatewayHttpStreamingResponse(response)
+        ? await readGatewayHttpStreamingResponse(response, onDelta)
+        : {
+            responseText: await response.text(),
+            stdout: "",
+            deltaCount: 0
+          };
+      const responseText = responseResult.responseText;
+      stdout =
+        responseResult.stdout ||
+        extractOpenResponsesText(responseText) ||
+        responseText;
       const gatewayDiagnostics = readGatewayDiagnosticTextSince(startedAt);
       const usageTelemetry = logOpenClawUsageFromOutput(
         request,
@@ -450,9 +470,15 @@ async function runOpenClawGatewayHttpRequest(
         startedAt
       );
       logInfo(
-        `OpenClaw gateway http finish runId=${request.runId ?? "unknown"} step=${step} elapsedMs=${Date.now() - startedAt} status=${response.status} stdoutChars=${stdout.length} responseChars=${responseText.length}`
+        `OpenClaw gateway http finish runId=${request.runId ?? "unknown"} step=${step} elapsedMs=${Date.now() - startedAt} status=${response.status} stdoutChars=${stdout.length} responseChars=${responseText.length} deltaCount=${responseResult.deltaCount}`
       );
-      return { exitCode: 0, stdout, stderr, ...usageTelemetry };
+      return {
+        exitCode: 0,
+        stdout,
+        stderr,
+        deltaCount: responseResult.deltaCount,
+        ...usageTelemetry
+      };
     } catch (error) {
       stderr = error instanceof Error ? error.message : String(error);
       if (
@@ -626,6 +652,13 @@ async function* collectOpenClawGatewayHttpResponse(
   void
 > {
   const startedAt = Date.now();
+  const deltas: string[] = [];
+  let wakeDeltas: (() => void) | null = null;
+  const pushDelta = (delta: string) => {
+    deltas.push(delta);
+    wakeDeltas?.();
+    wakeDeltas = null;
+  };
   const resultPromise =
     config.engine === "burble-direct"
       ? runBurbleDirectProviderRequest(
@@ -642,15 +675,30 @@ async function* collectOpenClawGatewayHttpResponse(
           prompt,
           sessionId,
           logInfo,
-          step
+          step,
+          emitDeltas ? pushDelta : undefined
         );
   let result: CliCommandResult | null = null;
 
   while (!result) {
     const raced = await Promise.race([
       resultPromise.then((value) => ({ type: "result" as const, value })),
+      new Promise<{ type: "delta" }>((resolve) => {
+        wakeDeltas = () => resolve({ type: "delta" });
+      }),
       sleep(heartbeatMs).then(() => ({ type: "heartbeat" as const }))
     ]);
+
+    if (raced.type === "delta") {
+      while (deltas.length > 0) {
+        const delta = deltas.shift();
+        if (!delta) {
+          continue;
+        }
+        yield { type: "message_delta", text: delta };
+      }
+      continue;
+    }
 
     if (raced.type === "heartbeat") {
       yield {
@@ -672,6 +720,12 @@ async function* collectOpenClawGatewayHttpResponse(
 
     result = raced.value;
   }
+  while (deltas.length > 0) {
+    const delta = deltas.shift();
+    if (delta) {
+      yield { type: "message_delta", text: delta };
+    }
+  }
 
   logStreamDebug(config, logInfo, "stdout complete", {
     runId: request.runId ?? "unknown",
@@ -690,7 +744,11 @@ async function* collectOpenClawGatewayHttpResponse(
     );
   }
 
-  if (emitDeltas && shouldEmitGatewayHttpDelta(result.stdout)) {
+  if (
+    emitDeltas &&
+    (result.deltaCount ?? 0) === 0 &&
+    shouldEmitGatewayHttpDelta(result.stdout)
+  ) {
     logStreamDebug(config, logInfo, "delta parsed", {
       runId: request.runId ?? "unknown",
       elapsedMs: Date.now() - startedAt,
@@ -706,6 +764,11 @@ async function* collectOpenClawGatewayHttpResponse(
     ...(result.usage ? { usage: result.usage } : {}),
     ...(result.telemetry ? { telemetry: result.telemetry } : {})
   };
+}
+
+function isGatewayHttpStreamingResponse(response: Response): boolean {
+  const contentType = response.headers.get("content-type")?.toLowerCase() ?? "";
+  return contentType.includes("text/event-stream");
 }
 
 function shouldEmitGatewayHttpDelta(stdout: string): boolean {
@@ -738,7 +801,8 @@ async function fetchGatewayHttpResponse(
   config: RuntimeConfig,
   request: RunRequest,
   sessionKey: string,
-  prompt: string
+  prompt: string,
+  stream: boolean
 ): Promise<Response> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), config.openClawTimeoutMs);
@@ -755,13 +819,165 @@ async function fetchGatewayHttpResponse(
       body: JSON.stringify({
         model: `openclaw/${config.openClawAgent}`,
         input: prompt,
-        stream: false
+        stream
       }),
       signal: controller.signal
     });
   } finally {
     clearTimeout(timeout);
   }
+}
+
+async function readGatewayHttpStreamingResponse(
+  response: Response,
+  onDelta: (delta: string) => void
+): Promise<GatewayHttpResponseResult> {
+  if (!response.body) {
+    const responseText = await response.text();
+    return {
+      responseText,
+      stdout: extractOpenResponsesText(responseText) ?? responseText,
+      deltaCount: 0
+    };
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  const gate = createGatewayHttpDeltaGate(onDelta);
+  let buffer = "";
+  let responseText = "";
+  let stdout = "";
+  let deltaCount = 0;
+
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) {
+      break;
+    }
+    buffer += decoder.decode(value, { stream: true });
+    const parsed = readCompleteSsePayloads(buffer);
+    buffer = parsed.remainder;
+    for (const payload of parsed.payloads) {
+      if (payload === "[DONE]") {
+        continue;
+      }
+      responseText = appendStreamRecord(responseText, payload);
+      const event = parseJsonObject(payload);
+      if (!event) {
+        continue;
+      }
+      const completedText = extractOpenResponsesText(payload);
+      if (completedText?.trim()) {
+        stdout = completedText;
+      }
+      const delta = extractOpenResponsesStreamDelta(event);
+      if (!delta) {
+        continue;
+      }
+      stdout += delta;
+      deltaCount += 1;
+      gate(delta);
+    }
+  }
+
+  const tail = decoder.decode();
+  if (tail) {
+    buffer += tail;
+  }
+  const parsed = readCompleteSsePayloads(`${buffer}\n\n`);
+  for (const payload of parsed.payloads) {
+    if (payload === "[DONE]") {
+      continue;
+    }
+    responseText = appendStreamRecord(responseText, payload);
+    const event = parseJsonObject(payload);
+    if (!event) {
+      continue;
+    }
+    const completedText = extractOpenResponsesText(payload);
+    if (completedText?.trim()) {
+      stdout = completedText;
+    }
+    const delta = extractOpenResponsesStreamDelta(event);
+    if (!delta) {
+      continue;
+    }
+    stdout += delta;
+    deltaCount += 1;
+    gate(delta);
+  }
+
+  return {
+    responseText,
+    stdout: stdout || extractOpenResponsesText(responseText) || responseText,
+    deltaCount
+  };
+}
+
+function createGatewayHttpDeltaGate(
+  onDelta: (delta: string) => void
+): (delta: string) => void {
+  let mode: "pending" | "emit" | "suppress" = "pending";
+  let buffered = "";
+
+  return (delta: string) => {
+    if (mode === "suppress") {
+      return;
+    }
+    if (mode === "emit") {
+      onDelta(delta);
+      return;
+    }
+
+    buffered += delta;
+    const trimmed = buffered.trimStart();
+    if (!trimmed) {
+      return;
+    }
+
+    if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
+      mode = "suppress";
+      return;
+    }
+
+    mode = "emit";
+    onDelta(buffered);
+    buffered = "";
+  };
+}
+
+function readCompleteSsePayloads(input: string): {
+  payloads: string[];
+  remainder: string;
+} {
+  const payloads: string[] = [];
+  let offset = 0;
+  while (true) {
+    const separator = input.indexOf("\n\n", offset);
+    if (separator === -1) {
+      break;
+    }
+    const block = input.slice(offset, separator);
+    offset = separator + 2;
+    const payload = readSseBlockPayload(block);
+    if (payload) {
+      payloads.push(payload);
+    }
+  }
+  return { payloads, remainder: input.slice(offset) };
+}
+
+function readSseBlockPayload(block: string): string | null {
+  const lines = block.split(/\r?\n/);
+  const dataLines = lines
+    .map((line) => line.trimEnd())
+    .filter((line) => line.startsWith("data:"))
+    .map((line) => line.slice("data:".length).trimStart());
+  return dataLines.length > 0 ? dataLines.join("\n") : null;
+}
+
+function appendStreamRecord(current: string, payload: string): string {
+  return current ? `${current}\n${payload}` : payload;
 }
 
 type DirectModelRequest = {
@@ -4217,6 +4433,26 @@ function extractOpenClawStreamDelta(chunk: string): string | null {
     .filter((value): value is string => Boolean(value));
 
   return deltas.length > 0 ? deltas.join("\n") : null;
+}
+
+function extractOpenResponsesStreamDelta(
+  event: Record<string, unknown>
+): string | null {
+  const type = typeof event.type === "string" ? event.type : "";
+  if (
+    type === "response.output_text.delta" ||
+    type === "response.refusal.delta"
+  ) {
+    const delta = readNestedText(event, ["delta"]);
+    return delta?.length ? delta : null;
+  }
+
+  return (
+    readNestedText(event, ["delta"]) ??
+    readNestedText(event, ["response", "delta"]) ??
+    readNestedText(event, ["message_delta", "text"]) ??
+    null
+  );
 }
 
 function readStreamLineText(line: string): string | null {
