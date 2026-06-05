@@ -16,6 +16,7 @@ export type RuntimeContainerProfile = {
   workspaceDir: string;
   openClawCompatEnv: boolean;
   openClawConfigPatch: boolean;
+  modelEnv: "generic" | "hermes";
   hermesHome?: string;
 };
 
@@ -44,7 +45,8 @@ const openClawContainerProfile: RuntimeContainerProfile = {
   stateDir: "/data/openclaw/state",
   workspaceDir: "/data/openclaw/workspace",
   openClawCompatEnv: true,
-  openClawConfigPatch: true
+  openClawConfigPatch: true,
+  modelEnv: "generic"
 };
 
 const hermesContainerProfile: RuntimeContainerProfile = {
@@ -54,6 +56,7 @@ const hermesContainerProfile: RuntimeContainerProfile = {
   workspaceDir: "/data/openclaw/workspace",
   openClawCompatEnv: false,
   openClawConfigPatch: false,
+  modelEnv: "hermes",
   hermesHome: "/data/openclaw/hermes"
 };
 
