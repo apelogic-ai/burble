@@ -154,6 +154,61 @@ print(json.dumps({"text": mod.build_hermes_turn_text(payload)}))
     expect(text).not.toContain("x".repeat(350));
   });
 
+  test("accepts Hermes message deltas without completing the run", () => {
+    const result = runHermesEntrypointProbe(`${importEntrypoint}
+import asyncio
+
+mod.web.json_response = lambda body, **kwargs: body
+
+class FakeRequest:
+    def __init__(self, run_id, body):
+        self.match_info = {"run_id": run_id}
+        self._body = body
+
+    async def json(self):
+        return self._body
+
+async def main():
+    runtime = mod.BurbleHermesRuntime()
+    waiter = mod.RunWaiter()
+    queue = asyncio.Queue()
+    waiter.queues.append(queue)
+    runtime.runs["run-stream"] = waiter
+
+    delta_response = await runtime.handle_run_message(
+        FakeRequest("run-stream", {"type": "message_delta", "text": "Hello "})
+    )
+    delta_event = await asyncio.wait_for(queue.get(), timeout=1)
+    completed_after_delta = waiter.future.done()
+
+    final_response = await runtime.handle_run_message(
+        FakeRequest("run-stream", {"text": "Hello world", "classification": "user_private"})
+    )
+    final_body = waiter.future.result()
+
+    print(json.dumps({
+        "deltaResponse": delta_response,
+        "deltaEvent": delta_event,
+        "completedAfterDelta": completed_after_delta,
+        "finalResponse": final_response,
+        "finalBody": final_body,
+    }))
+
+asyncio.run(main())
+`);
+
+    expect(result).toEqual({
+      deltaResponse: { ok: true },
+      deltaEvent: { type: "message_delta", text: "Hello " },
+      completedAfterDelta: false,
+      finalResponse: { ok: true },
+      finalBody: {
+        text: "Hello world",
+        classification: "user_private"
+      }
+    });
+  });
+
   test("adds HubSpot provider tool hints to Hermes turns", () => {
     const result = runHermesEntrypointProbe(`${importEntrypoint}
 payload = {

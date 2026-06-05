@@ -728,6 +728,11 @@ class BurbleHermesRuntime:
             f"[INFO] {timestamp()} Nemo Hermes run callback runId={run_id} textChars={len(text)}",
             flush=True,
         )
+        event_type = str(body.get("type") or "")
+        if event_type == "message_delta":
+            if text:
+                await waiter.emit({"type": "message_delta", "text": text})
+            return web.json_response({"ok": True})
         if not waiter.future.done():
             waiter.future.set_result(body)
         return web.json_response({"ok": True})
