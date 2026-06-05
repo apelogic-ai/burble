@@ -74,12 +74,12 @@ const defaultAgentRuntimeImages: Record<AgentRuntimeEngine, readonly string[]> =
     "burble-openclaw-nemoclaw-openclaw-cli:dev"
   ],
   openclaw: [
-    "burble-openclaw-nemoclaw:dev",
-    "burble-openclaw-nemoclaw-openclaw-cli:dev"
+    "burble-openclaw-nemoclaw-openclaw-cli:dev",
+    "burble-openclaw-nemoclaw:dev"
   ],
   "openclaw-gateway": [
-    "burble-openclaw-nemoclaw:dev",
-    "burble-openclaw-nemoclaw-openclaw-cli:dev"
+    "burble-openclaw-nemoclaw-openclaw-cli:dev",
+    "burble-openclaw-nemoclaw:dev"
   ],
   "burble-direct": [
     "burble-openclaw-nemoclaw:dev",
