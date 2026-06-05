@@ -184,6 +184,8 @@ type SlackProgressMessage = {
 
 const minSlackProgressStreamUpdateIntervalMs = 1_000;
 const minSlackNativeStreamAppendIntervalMs = 500;
+const slackNativeStreamReplacementFallbackText =
+  "_Response continued in the main message._";
 
 type SlackNativeStreamChatClient = {
   startStream?: (input: {
@@ -5147,7 +5149,7 @@ async function updateSlackNativeStream(
   const chat = client.chat as App["client"]["chat"] & SlackNativeStreamChatClient;
   if (input.replace && progressMessage.nativeStreamTs) {
     await stopSlackNativeStream(client, progressMessage, {
-      markdownText: progressMessage.streamedText ?? input.text
+      markdownText: slackNativeStreamReplacementFallbackText
     });
     throw new Error("slack_native_stream_replace_unsupported");
   }

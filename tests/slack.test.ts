@@ -613,7 +613,7 @@ describe("formatAgentProgressEvent", () => {
     });
 
     expect(calls).toEqual([
-      "stop:stream.123:Rewritten answer",
+      "stop:stream.123:_Response continued in the main message._",
       "update:Rewritten answer"
     ]);
     expect((progressMessage as { streamingMode?: string }).streamingMode).toBe(
