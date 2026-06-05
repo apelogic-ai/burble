@@ -160,8 +160,10 @@ describe("dev deploy config", () => {
     expect(openClawCompose).toContain(
       "AGENT_RUNTIME_ENGINE=${AGENT_RUNTIME_ENGINE:-}"
     );
-    expect(openClawCompose).toContain("context: ../../../runtimes/openclaw-nemoclaw");
-    expect(openClawCompose).toContain("dockerfile: Dockerfile");
+    expect(openClawCompose).toContain("context: ../../..");
+    expect(openClawCompose).toContain(
+      "dockerfile: runtimes/openclaw-nemoclaw/Dockerfile"
+    );
     expect(openClawCompose).toContain(
       "OPENCLAW_NEMOCLAW_IMAGE:-burble-openclaw-nemoclaw:dev"
     );
@@ -307,7 +309,9 @@ describe("dev deploy config", () => {
     expect(personalRuntimesCompose).toContain("openclaw-nemoclaw-image:");
     expect(personalRuntimesCompose).toContain("nemo-hermes-image:");
     expect(personalRuntimesCompose).toContain("profiles:");
-    expect(personalRuntimesCompose).toContain("dockerfile: Dockerfile.openclaw-cli");
+    expect(personalRuntimesCompose).toContain(
+      "dockerfile: runtimes/openclaw-nemoclaw/Dockerfile.openclaw-cli"
+    );
     expect(personalRuntimesCompose).toContain("context: ../../../runtimes/nemo-hermes");
     expect(personalRuntimesCompose).toContain("burble-nemo-hermes:dev");
     expect(personalRuntimesCompose).toContain(
@@ -437,7 +441,9 @@ describe("dev deploy config", () => {
       "runtimes/openclaw-nemoclaw/Dockerfile.openclaw-cli"
     ).text();
 
-    expect(openClawCliCompose).toContain("dockerfile: Dockerfile.openclaw-cli");
+    expect(openClawCliCompose).toContain(
+      "dockerfile: runtimes/openclaw-nemoclaw/Dockerfile.openclaw-cli"
+    );
     expect(openClawCliCompose).toContain("OPENCLAW_VERSION");
     expect(openClawCliCompose).toContain(
       "OPENCLAW_NEMOCLAW_ENGINE=${OPENCLAW_NEMOCLAW_ENGINE:-openclaw}"
@@ -451,6 +457,9 @@ describe("dev deploy config", () => {
     expect(dockerfile).toContain("npm install -g \"openclaw@${OPENCLAW_VERSION}\"");
     expect(dockerfile).toContain("command -v bun");
     expect(dockerfile).toContain("command -v openclaw");
-    expect(dockerfile).toContain("COPY skills ./skills");
+    expect(dockerfile).toContain("COPY runtimes/openclaw-nemoclaw/skills ./skills");
+    expect(dockerfile).toContain(
+      "COPY src/runtime-sdk/server.ts /src/runtime-sdk/server.ts"
+    );
   });
 });
