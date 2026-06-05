@@ -59,7 +59,7 @@ jobs:
           docker build \
             -t burble-openclaw-nemoclaw-openclaw-cli:dev \
             -f runtimes/openclaw-nemoclaw/Dockerfile.openclaw-cli \
-            runtimes/openclaw-nemoclaw
+            .
 
       - name: Build Hermes runtime image
         run: |

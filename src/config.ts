@@ -1,4 +1,9 @@
 import { validateAgentModelId } from "./agent/providers";
+import {
+  defaultRuntimeImageForEngine,
+  isKnownDefaultRuntimeImage,
+  runtimeEngines
+} from "./agent/runtime-descriptors";
 import type { AgentRuntimeEngine } from "./db";
 
 export type Config = {
@@ -63,33 +68,7 @@ const agentModes = ["deterministic", "llm"] as const;
 const agentRuntimes = ["ai-sdk", "burble-runtime"] as const;
 const agentRuntimeFactories = ["static", "docker"] as const;
 const agentRuntimeStreamingModes = ["off", "basic", "native"] as const;
-export const agentRuntimeEngines = [
-  "deterministic",
-  "openclaw",
-  "openclaw-gateway",
-  "burble-direct",
-  "hermes"
-] as const;
-
-const defaultAgentRuntimeImages: Record<AgentRuntimeEngine, readonly string[]> = {
-  deterministic: [
-    "burble-openclaw-nemoclaw:dev",
-    "burble-openclaw-nemoclaw-openclaw-cli:dev"
-  ],
-  openclaw: [
-    "burble-openclaw-nemoclaw-openclaw-cli:dev",
-    "burble-openclaw-nemoclaw:dev"
-  ],
-  "openclaw-gateway": [
-    "burble-openclaw-nemoclaw-openclaw-cli:dev",
-    "burble-openclaw-nemoclaw:dev"
-  ],
-  "burble-direct": [
-    "burble-openclaw-nemoclaw:dev",
-    "burble-openclaw-nemoclaw-openclaw-cli:dev"
-  ],
-  hermes: ["burble-nemo-hermes:dev"]
-};
+export const agentRuntimeEngines = runtimeEngines;
 
 function requiredEnv(env: Env, name: string): string {
   const value = env[name];
@@ -388,14 +367,14 @@ export function readConfig(env: Env): Config {
 }
 
 export function defaultAgentRuntimeImage(engine: AgentRuntimeEngine): string {
-  return defaultAgentRuntimeImages[engine][0];
+  return defaultRuntimeImageForEngine(engine);
 }
 
 export function isDefaultAgentRuntimeImage(
   engine: AgentRuntimeEngine,
   image: string
 ): boolean {
-  return defaultAgentRuntimeImages[engine].includes(image);
+  return isKnownDefaultRuntimeImage(engine, image);
 }
 
 function optionalSecretEnv(env: Env, name: string): string | null {

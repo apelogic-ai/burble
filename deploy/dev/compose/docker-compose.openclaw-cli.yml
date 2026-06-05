@@ -11,8 +11,8 @@ services:
   openclaw-nemoclaw:
     image: ${OPENCLAW_NEMOCLAW_IMAGE:-burble-openclaw-nemoclaw-openclaw-cli:dev}
     build:
-      context: ../../../runtimes/openclaw-nemoclaw
-      dockerfile: Dockerfile.openclaw-cli
+      context: ../../..
+      dockerfile: runtimes/openclaw-nemoclaw/Dockerfile.openclaw-cli
       args:
         OPENCLAW_VERSION: ${OPENCLAW_VERSION:-2026.5.19}
     environment:

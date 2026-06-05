@@ -11,6 +11,10 @@ import {
   type RuntimeHandle,
   type RuntimeManifestBuilder
 } from "./runtime-factory";
+import {
+  runtimeDescriptor,
+  runtimeHealthCheckAttempts
+} from "./runtime-descriptors";
 import type { RuntimeManifest } from "./runtime-manifest";
 
 export type RuntimeCommandResult = {
@@ -210,7 +214,7 @@ export function createDockerRuntimeFactory(input: {
           fetch: requestFetch,
           attempts:
             input.healthCheckAttempts ??
-            defaultRuntimeHealthCheckAttempts(input.engine),
+            runtimeHealthCheckAttempts(input.engine),
           intervalMs: input.healthCheckIntervalMs ?? 1000
         });
         input.store.updateAgentRuntimeStatus(runtime.id, { status: "ready" });
@@ -333,7 +337,8 @@ export function createDockerRuntimeFactory(input: {
         "cat",
         toRuntimeContainerPath({
           hostPath: runtime.configPath,
-          runtimeRoot: `${input.dataRoot}/${runtimeDataId}`
+          runtimeRoot: `${input.dataRoot}/${runtimeDataId}`,
+          containerRoot: runtimeDescriptor(runtime.engine).container.dataRootTarget
         })
       ]);
       if (result.code !== 0) {
@@ -425,14 +430,16 @@ async function inspectContainerState(
 export function toRuntimeContainerPath(input: {
   hostPath: string;
   runtimeRoot: string;
+  containerRoot?: string;
 }): string {
   const normalizedRoot = input.runtimeRoot.replace(/\/+$/, "");
+  const containerRoot = input.containerRoot ?? "/data/openclaw";
   if (input.hostPath === normalizedRoot) {
-    return "/data/openclaw";
+    return containerRoot;
   }
 
   if (input.hostPath.startsWith(`${normalizedRoot}/`)) {
-    return `/data/openclaw/${input.hostPath.slice(normalizedRoot.length + 1)}`;
+    return `${containerRoot}/${input.hostPath.slice(normalizedRoot.length + 1)}`;
   }
 
   return input.hostPath;
@@ -454,32 +461,32 @@ export function buildContainerRuntimeSpec(input: {
   openClawConfigPatchPath?: string | null;
   env?: Record<string, string | undefined>;
 }): ContainerRuntimeSpec {
+  const descriptor = runtimeDescriptor(input.engine);
+  const container = descriptor.container;
   const name = buildContainerName(input.runtimeDataId);
   const runtimeRoot = `${input.dataRoot}/${input.runtimeDataId}`;
-  const runtimeConfigPath = `/data/openclaw/config/${nativeAgentConfigFileName(
-    input.engine
-  )}`;
+  const runtimeConfigPath = `${container.dataRootTarget}/config/${container.configFileName}`;
   const env: Record<string, string> = {
     BURBLE_TOOL_GATEWAY_URL: input.toolGatewayUrl,
     BURBLE_INTERNAL_TOKEN: input.runtimeToken,
     AGENT_RUNTIME_ENGINE: input.engine,
-    AGENT_RUNTIME_STATE_DIR: "/data/openclaw/state",
+    AGENT_RUNTIME_STATE_DIR: container.stateDir,
     AGENT_RUNTIME_CONFIG_PATH: runtimeConfigPath,
-    AGENT_RUNTIME_WORKSPACE_DIR: "/data/openclaw/workspace"
+    AGENT_RUNTIME_WORKSPACE_DIR: container.workspaceDir
   };
 
-  if (input.engine !== "hermes") {
+  if (container.openClawCompatEnv) {
     Object.assign(env, {
       OPENCLAW_NEMOCLAW_ENGINE: input.engine,
-      OPENCLAW_STATE_DIR: "/data/openclaw/state",
+      OPENCLAW_STATE_DIR: container.stateDir,
       OPENCLAW_CONFIG_PATH: runtimeConfigPath,
-      OPENCLAW_WORKSPACE_DIR: "/data/openclaw/workspace"
+      OPENCLAW_WORKSPACE_DIR: container.workspaceDir
     });
   }
 
-  if (input.engine === "hermes") {
+  if (container.hermesHome) {
     Object.assign(env, {
-      HERMES_HOME: "/data/openclaw/hermes"
+      HERMES_HOME: container.hermesHome
     });
   }
 
@@ -501,14 +508,14 @@ export function buildContainerRuntimeSpec(input: {
   if (input.manifest?.model) {
     const modelId = `${input.manifest.model.provider}:${input.manifest.model.model}`;
     env.AI_MODEL = modelId;
-    if (input.engine === "hermes") {
+    if (container.modelEnv === "hermes") {
       env.HERMES_INFERENCE_MODEL = modelId;
       env.HERMES_INFERENCE_PROVIDER = input.manifest.model.provider;
     }
   }
 
   const openClawConfigPatchHostPath =
-    input.engine !== "hermes" ? input.openClawConfigPatchPath : null;
+    container.openClawConfigPatch ? input.openClawConfigPatchPath : null;
 
   if (openClawConfigPatchHostPath) {
     env.OPENCLAW_CONFIG_PATCH_PATH = "/etc/openclaw/patches/openai.json5";
@@ -521,7 +528,7 @@ export function buildContainerRuntimeSpec(input: {
     endpointUrl: `http://${name}:8080`,
     env,
     volumes: [
-      { source: runtimeRoot, target: "/data/openclaw" },
+      { source: runtimeRoot, target: container.dataRootTarget },
       ...(openClawConfigPatchHostPath
         ? [
             {
@@ -589,10 +596,6 @@ async function ensureContainerRunning(
   }
 
   await runContainer(spec, execute);
-}
-
-function defaultRuntimeHealthCheckAttempts(engine: AgentRuntimeEngine): number {
-  return engine === "openclaw" || engine === "openclaw-gateway" ? 90 : 30;
 }
 
 async function runContainer(

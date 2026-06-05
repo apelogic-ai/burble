@@ -54,7 +54,7 @@ type RuntimeWebSocketData = {
   runId: string;
 };
 
-let server: Bun.Server;
+let server: Bun.Server<RuntimeWebSocketData>;
 server = Bun.serve<RuntimeWebSocketData>({
   port: config.port,
   fetch: (request) =>

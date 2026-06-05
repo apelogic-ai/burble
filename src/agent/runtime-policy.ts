@@ -1,7 +1,10 @@
 import type { Config } from "../config";
-import { agentRuntimeEngines } from "../config";
 import type { AgentRuntimeRecord, TokenStore, WorkspacePolicyRecord } from "../db";
 import { providerToolCatalog } from "../providers/catalog";
+import {
+  isKnownRuntimeEngine,
+  runtimeDescriptor
+} from "./runtime-descriptors";
 import { buildRuntimeManifest, type RuntimeManifest } from "./runtime-manifest";
 import type { PrincipalId } from "./runtime-factory";
 import type { RuntimeCapabilityManifest } from "./runtime-contract";
@@ -20,8 +23,6 @@ export const defaultWorkspaceRuntimePolicy = {
     ]
   }
 } as const;
-
-const agentRuntimeEngineSet = new Set<string>(agentRuntimeEngines);
 
 export type RuntimeEngineSelection = {
   configuredEngine: RuntimeManifest["runtime"]["engine"];
@@ -155,52 +156,7 @@ export function runtimeCapabilityManifestCompatibility(
 export function knownRuntimeCapabilityManifest(
   engine: RuntimeManifest["runtime"]["engine"]
 ): RuntimeCapabilityManifest {
-  const openClawFamily =
-    engine === "deterministic" ||
-    engine === "openclaw" ||
-    engine === "openclaw-gateway" ||
-    engine === "burble-direct";
-  if (openClawFamily) {
-    return {
-      runtimeType: engine,
-      version: "known",
-      transports: ["http", "sse", "ndjson", "websocket"],
-      streaming: true,
-      cancellation: false,
-      nativeScheduler: true,
-      scheduledProviderCalls: true,
-      toolCalls: true,
-      toolBridgeModes: ["tool_gateway", "mcp"],
-      usageReporting: engine === "deterministic" ? "none" : "exact",
-      multimodalInput: true,
-      multimodalOutput: false,
-      memory: true,
-      durableWorkflowState: true,
-      attachments: true,
-      conversationSend: true,
-      jobScopedAuth: true
-    };
-  }
-
-  return {
-    runtimeType: "hermes",
-    version: "known",
-    transports: ["http", "websocket"],
-    streaming: true,
-    cancellation: false,
-    nativeScheduler: true,
-    scheduledProviderCalls: true,
-    toolCalls: true,
-    toolBridgeModes: ["tool_gateway", "mcp"],
-    usageReporting: "exact",
-    multimodalInput: false,
-    multimodalOutput: false,
-    memory: false,
-    durableWorkflowState: true,
-    attachments: false,
-    conversationSend: true,
-    jobScopedAuth: true
-  };
+  return runtimeDescriptor(engine).capabilities;
 }
 
 export function buildRuntimeManifestForPrincipal(input: {
@@ -379,7 +335,7 @@ function normalizeRuntimeEngine(
     return null;
   }
   const normalized = value.trim().toLowerCase();
-  return agentRuntimeEngineSet.has(normalized)
+  return isKnownRuntimeEngine(normalized)
     ? (normalized as RuntimeManifest["runtime"]["engine"])
     : null;
 }

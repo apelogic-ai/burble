@@ -12,6 +12,7 @@ import {
   createRuntimeContractHttpClient,
   RuntimeCapabilityDiscoveryError
 } from "../runtime-contract-http-client";
+import { runtimeCompatibilityFamily } from "../runtime-descriptors";
 
 export type AgentRuntimeFetch = (
   input: string,
@@ -498,20 +499,13 @@ function assertRuntimeCapabilityManifestMatchesRuntime(
   runtime: RuntimeHandle
 ): void {
   if (
-    runtimeEngineCompatibilityFamily(manifest.runtimeType) !==
-    runtimeEngineCompatibilityFamily(runtime.engine)
+    runtimeCompatibilityFamily(manifest.runtimeType) !==
+    runtimeCompatibilityFamily(runtime.engine)
   ) {
     throw new Error(
       `Runtime capability manifest type ${manifest.runtimeType} does not match runtime engine ${runtime.engine}`
     );
   }
-}
-
-function runtimeEngineCompatibilityFamily(engine: string): string {
-  if (engine === "openclaw" || engine === "openclaw-gateway") {
-    return "openclaw";
-  }
-  return engine;
 }
 
 function recordRuntimeCapabilitiesUnavailable(

@@ -7,6 +7,7 @@
         "@ai-sdk/anthropic": "^3.0.78",
         "@ai-sdk/openai": "^3.0.64",
         "@ai-sdk/openai-compatible": "^2.0.48",
+        "@burble/runtime-sdk": "workspace:*",
         "@modelcontextprotocol/sdk": "^1.29.0",
         "@slack/bolt": "^4.4.0",
         "ai": "^6.0.185",
@@ -17,6 +18,13 @@
       "devDependencies": {
         "@types/bun": "^1.2.21",
         "typescript": "^5.9.3",
+      },
+    },
+    "packages/runtime-sdk": {
+      "name": "@burble/runtime-sdk",
+      "version": "0.1.0",
+      "dependencies": {
+        "zod": "^4.4.3",
       },
     },
   },
@@ -32,6 +40,8 @@
     "@ai-sdk/provider": ["@ai-sdk/provider@3.0.10", "", { "dependencies": { "json-schema": "^0.4.0" } }, "sha512-Q3BZ27qfpYqnCYGvE3vt+Qi6LGOF9R5Nmzn+9JoM1lCRsD9mYaIhfJLkSunN48nfGXJ6n+XNV0J/XVpqGQl7Dw=="],
 
     "@ai-sdk/provider-utils": ["@ai-sdk/provider-utils@4.0.27", "", { "dependencies": { "@ai-sdk/provider": "3.0.10", "@standard-schema/spec": "^1.1.0", "eventsource-parser": "^3.0.8" }, "peerDependencies": { "zod": "^3.25.76 || ^4.1.8" } }, "sha512-ubkAJ+xODouwtmN1tYlvTPphH1hPOBfZaEQe8U7skGvFAnIRs9PPpsq57bC2+Ky/MB4yzhd6YOsxTAx9sGpazw=="],
+
+    "@burble/runtime-sdk": ["@burble/runtime-sdk@workspace:packages/runtime-sdk"],
 
     "@hono/node-server": ["@hono/node-server@1.19.14", "", { "peerDependencies": { "hono": "^4" } }, "sha512-GwtvgtXxnWsucXvbQXkRgqksiH2Qed37H9xHZocE5sA3N8O8O8/8FA3uclQXxXVzc9XBZuEOMK7+r02FmSpHtw=="],
 
