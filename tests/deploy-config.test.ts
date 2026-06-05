@@ -37,6 +37,10 @@ describe("dev deploy config", () => {
     expect(compose).toContain('"3000"');
     expect(compose).toContain("http://localhost:3000/healthz");
     expect(appDockerfile).toContain("apk add --no-cache docker-cli");
+    expect(appDockerfile).toContain(
+      "COPY packages/runtime-sdk/package.json ./packages/runtime-sdk/package.json"
+    );
+    expect(appDockerfile).toContain("COPY packages/runtime-sdk ./packages/runtime-sdk");
     expect(caddyfile).toContain("reverse_proxy burble-app:3000");
   });
 
