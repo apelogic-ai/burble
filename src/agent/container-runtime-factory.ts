@@ -560,11 +560,21 @@ async function ensureContainerRunning(
   const inspected = await execute("docker", [
     "inspect",
     "--format",
-    "{{.State.Running}}",
+    "{{.State.Running}} {{.Config.Image}}",
     spec.name
   ]);
 
-  if (inspected.code === 0 && inspected.stdout.trim() === "true") {
+  const [runningState, containerImage] = inspected.stdout.trim().split(/\s+/, 2);
+
+  if (inspected.code === 0 && runningState === "true") {
+    if (containerImage && containerImage !== spec.image) {
+      await assertCommandOk(
+        execute("docker", ["rm", "--force", spec.name]),
+        "docker rm --force"
+      );
+      await runContainer(spec, execute);
+      return;
+    }
     return;
   }
 

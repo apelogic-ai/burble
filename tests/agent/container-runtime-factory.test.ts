@@ -488,6 +488,51 @@ describe("createDockerRuntimeFactory", () => {
     store.close();
   });
 
+  test("recreates a running runtime container when the image no longer matches", async () => {
+    const store = createTokenStore(":memory:");
+    const commands: Array<{ command: string; args: string[] }> = [];
+    const factory = createDockerRuntimeFactory({
+      store,
+      engine: "hermes",
+      image: "burble-nemo-hermes:dev",
+      dataRoot: "/data/runtimes",
+      dockerNetwork: "compose_default",
+      toolGatewayUrl: "http://burble-app:3000/internal/tools",
+      runtimeTokenSecret: "runtime-secret",
+      healthCheckAttempts: 1,
+      healthCheckIntervalMs: 0,
+      execute: async (command, args) => {
+        commands.push({ command, args });
+        if (args[0] === "inspect") {
+          return {
+            code: 0,
+            stdout: "true burble-openclaw-nemoclaw-openclaw-cli:dev\n",
+            stderr: ""
+          };
+        }
+        return { code: 0, stdout: "ok\n", stderr: "" };
+      },
+      fetch: async () => new Response("ok")
+    });
+
+    await factory.getOrCreateRuntime(principal);
+
+    expect(commands.map((command) => command.args[0])).toEqual([
+      "inspect",
+      "rm",
+      "run"
+    ]);
+    expect(commands[1].args).toEqual([
+      "rm",
+      "--force",
+      `burble-rt-${buildRuntimeDataId(principal, "hermes")}`
+    ]);
+    expect(commands[2].args).toContain("AGENT_RUNTIME_ENGINE=hermes");
+    expect(commands[2].args.at(-1)).toBe("burble-nemo-hermes:dev");
+
+    store.close();
+  });
+
   test("marks runtime failed when health checks fail", async () => {
     const store = createTokenStore(":memory:");
     const factory = createDockerRuntimeFactory({

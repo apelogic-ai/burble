@@ -401,6 +401,12 @@ describe("dev deploy config", () => {
     expect(personalRuntimeDeployScript).toContain("previous_runtime_image_id");
     expect(personalRuntimeDeployScript).toContain("current_runtime_image_id");
     expect(personalRuntimeDeployScript).toContain(
+      "is_known_default_runtime_image()"
+    );
+    expect(personalRuntimeDeployScript).toContain(
+      "select_runtime_image \"burble-nemo-hermes:dev\""
+    );
+    expect(personalRuntimeDeployScript).toContain(
       "Runtime image unchanged; keeping existing burble-rt-* containers."
     );
     expect(personalRuntimeDeployScript).toContain(

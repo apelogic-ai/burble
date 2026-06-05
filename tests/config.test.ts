@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { readConfig } from "../src/config";
+import { defaultAgentRuntimeImage, readConfig } from "../src/config";
 
 const validEnv = {
   SLACK_BOT_TOKEN: "xoxb-test",
@@ -42,7 +42,7 @@ describe("readConfig", () => {
       openClawNemoClawEngine: "openclaw",
       agentRuntimeDataRoot: "/data/runtimes",
       agentRuntimeDockerNetwork: "compose_default",
-      agentRuntimeImage: "burble-openclaw-nemoclaw:dev",
+      agentRuntimeImage: "burble-openclaw-nemoclaw-openclaw-cli:dev",
       agentRuntimeIdleTtlMs: 86400000,
       agentRuntimeReaperEnabled: true,
       agentRuntimeReaperIntervalMs: 60000,
@@ -212,6 +212,15 @@ describe("readConfig", () => {
     });
 
     expect(config.agentRuntimeImage).toBe("burble-nemo-hermes:dev");
+  });
+
+  test("defaults OpenClaw engines to the CLI-capable runtime image", () => {
+    expect(defaultAgentRuntimeImage("openclaw")).toBe(
+      "burble-openclaw-nemoclaw-openclaw-cli:dev"
+    );
+    expect(defaultAgentRuntimeImage("openclaw-gateway")).toBe(
+      "burble-openclaw-nemoclaw-openclaw-cli:dev"
+    );
   });
 
   test("ignores a blank runtime image override", () => {

@@ -2,7 +2,12 @@ import { App, LogLevel } from "@slack/bolt";
 import type { View } from "@slack/types";
 import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
-import { agentRuntimeEngines, defaultAgentRuntimeImage, type Config } from "./config";
+import {
+  agentRuntimeEngines,
+  defaultAgentRuntimeImage,
+  isDefaultAgentRuntimeImage,
+  type Config
+} from "./config";
 import type { SlackLogLevel } from "./config";
 import {
   addGitHubIssueLabels,
@@ -1785,8 +1790,10 @@ export function runtimeImageForEngine(
   config: Config,
   engine: AgentRuntimeEngine
 ): string {
-  const configuredImageIsDefault =
-    config.agentRuntimeImage === defaultAgentRuntimeImage(config.agentRuntimeEngine);
+  const configuredImageIsDefault = isDefaultAgentRuntimeImage(
+    config.agentRuntimeEngine,
+    config.agentRuntimeImage
+  );
   return engine === config.agentRuntimeEngine || !configuredImageIsDefault
     ? config.agentRuntimeImage
     : defaultAgentRuntimeImage(engine);

@@ -1220,12 +1220,19 @@ describe("agent user config commands", () => {
       ...agentConfig,
       agentRuntimeImage: "ghcr.io/acme/burble-runtime:prod"
     };
+    const openClawCliDefaultConfig = {
+      ...agentConfig,
+      agentRuntimeImage: "burble-openclaw-nemoclaw-openclaw-cli:dev"
+    };
 
     expect(runtimeImageForEngine(customConfig, "burble-direct")).toBe(
       "ghcr.io/acme/burble-runtime:prod"
     );
     expect(runtimeImageForEngine(customConfig, "hermes")).toBe(
       "ghcr.io/acme/burble-runtime:prod"
+    );
+    expect(runtimeImageForEngine(openClawCliDefaultConfig, "hermes")).toBe(
+      "burble-nemo-hermes:dev"
     );
     expect(runtimeImageForEngine(agentConfig, "hermes")).toBe(
       "burble-nemo-hermes:dev"
