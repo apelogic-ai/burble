@@ -3706,16 +3706,7 @@ function readModelUsage(text: string): ModelUsage | null {
     "reasoning_tokens",
     "reasoningTokens"
   ]);
-  const inferredCachedInputTokens =
-    explicitCachedInputTokens === undefined &&
-    typeof totalTokens === "number" &&
-    typeof inputTokens === "number" &&
-    typeof outputTokens === "number" &&
-    totalTokens > inputTokens + outputTokens
-      ? totalTokens - inputTokens - outputTokens
-      : undefined;
-  const cachedInputTokens =
-    explicitCachedInputTokens ?? inferredCachedInputTokens;
+  const cachedInputTokens = explicitCachedInputTokens;
 
   if (
     inputTokens === undefined &&

@@ -747,10 +747,10 @@ describe("runOpenClawCliRequest", () => {
     });
   });
 
-  test("infers cached provider tokens when OpenClaw total includes cached input", async () => {
+  test("does not infer cached provider tokens from an unspecified total-token remainder", async () => {
     const response = await runOpenClawCliRequest(
       {
-        runId: "run-inferred-cache",
+        runId: "run-unspecified-remainder",
         input: {
           text: "hey agent",
           connections: {
@@ -777,8 +777,78 @@ describe("runOpenClawCliRequest", () => {
     expect(response.response.usage).toEqual({
       inputTokens: 1701,
       outputTokens: 23,
+      totalTokens: 22588
+    });
+  });
+
+  test("reads cached and reasoning provider token details when OpenClaw preserves them", async () => {
+    const response = await runOpenClawCliRequest(
+      {
+        runId: "run-provider-details",
+        input: {
+          text: "hey agent",
+          connections: {
+            github: { connected: false }
+          }
+        }
+      },
+      config,
+      async () => ({
+        classification: "user_private",
+        content: []
+      }),
+      async () => ({
+        exitCode: 0,
+        stdout: [
+          '[openai-transport] usage={"input_tokens":1701,"output_tokens":23,"total_tokens":22588,"input_tokens_details":{"cached_tokens":20864},"output_tokens_details":{"reasoning_tokens":0}}',
+          JSON.stringify({ response: { text: "Hey - how can I help?" } })
+        ].join("\n"),
+        stderr: ""
+      }),
+      () => undefined
+    );
+
+    expect(response.response.usage).toEqual({
+      inputTokens: 1701,
+      outputTokens: 23,
       totalTokens: 22588,
-      cachedInputTokens: 20864
+      cachedInputTokens: 20864,
+      reasoningTokens: 0
+    });
+  });
+
+  test("does not mislabel reasoning-token remainder as cached input", async () => {
+    const response = await runOpenClawCliRequest(
+      {
+        runId: "run-reasoning-remainder",
+        input: {
+          text: "think through this",
+          connections: {
+            github: { connected: false }
+          }
+        }
+      },
+      config,
+      async () => ({
+        classification: "user_private",
+        content: []
+      }),
+      async () => ({
+        exitCode: 0,
+        stdout: [
+          '[openai-transport] usage={"input_tokens":18812,"output_tokens":34,"total_tokens":22686,"output_tokens_details":{"reasoning_tokens":3840}}',
+          JSON.stringify({ response: { text: "Done." } })
+        ].join("\n"),
+        stderr: ""
+      }),
+      () => undefined
+    );
+
+    expect(response.response.usage).toEqual({
+      inputTokens: 18812,
+      outputTokens: 34,
+      totalTokens: 22686,
+      reasoningTokens: 3840
     });
   });
 
