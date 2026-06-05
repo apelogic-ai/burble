@@ -28,6 +28,7 @@ const ansibleEnvTemplate = await Bun.file(
 ).text();
 const appDockerfile = await Bun.file("Dockerfile").text();
 const slackAppManifest = await Bun.file("deploy/dev/slack-app-manifest.yaml").text();
+const ciWorkflow = await Bun.file(".github/workflows/ci.yml").text();
 
 describe("dev deploy config", () => {
   test("runs the Burble Bun app behind Caddy", () => {
@@ -460,6 +461,17 @@ describe("dev deploy config", () => {
     expect(dockerfile).toContain("COPY runtimes/openclaw-nemoclaw/skills ./skills");
     expect(dockerfile).toContain(
       "COPY src/runtime-sdk/server.ts /src/runtime-sdk/server.ts"
+    );
+    expect(ciWorkflow).toContain(
+      "-f runtimes/openclaw-nemoclaw/Dockerfile.openclaw-cli"
+    );
+    expect(ciWorkflow).toContain(
+      [
+        "docker build \\",
+        "            -t burble-openclaw-nemoclaw-openclaw-cli:dev \\",
+        "            -f runtimes/openclaw-nemoclaw/Dockerfile.openclaw-cli \\",
+        "            ."
+      ].join("\n")
     );
   });
 });
