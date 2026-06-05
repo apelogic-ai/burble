@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
-import { mkdir, readFile } from "node:fs/promises";
+import { mkdir, readFile, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import type { RuntimeConfig } from "./config";
 import { readGatewayDiagnosticTextSince } from "./gateway-diagnostics";
@@ -293,7 +293,7 @@ async function runOpenClawCommand(
   }
 
   const startedAt = Date.now();
-  const rawStreamPath = await prepareRawStreamPath(config, request, step);
+  const rawStreamPath = await prepareRawStreamPath(config, request, step, logInfo);
   const args = buildOpenClawArgs(config, prompt, sessionId, rawStreamPath);
   const env = openClawEnv(config);
   logInfo(
@@ -309,7 +309,13 @@ async function runOpenClawCommand(
   );
 
   if (result.exitCode !== 0) {
-    const rawStream = await readRawStreamForUsage(rawStreamPath, logInfo, request, step);
+    const rawStream = await readRawStreamForUsage(
+      config,
+      rawStreamPath,
+      logInfo,
+      request,
+      step
+    );
     const gatewayDiagnostics = readGatewayDiagnosticTextSince(startedAt);
     logOpenClawUsageFromOutput(
       request,
@@ -327,7 +333,13 @@ async function runOpenClawCommand(
     );
     throw new Error(`OpenClaw CLI exited with code ${result.exitCode}`);
   }
-  const rawStream = await readRawStreamForUsage(rawStreamPath, logInfo, request, step);
+  const rawStream = await readRawStreamForUsage(
+    config,
+    rawStreamPath,
+    logInfo,
+    request,
+    step
+  );
   const gatewayDiagnostics = readGatewayDiagnosticTextSince(startedAt);
   const usageTelemetry = logOpenClawUsageFromOutput(
     request,
@@ -1141,7 +1153,7 @@ async function* collectOpenClawStream(
   let firstStdoutLogged = false;
   let firstStderrLogged = false;
   const startedAt = Date.now();
-  const rawStreamPath = await prepareRawStreamPath(config, request, step);
+  const rawStreamPath = await prepareRawStreamPath(config, request, step, logInfo);
   const args = buildOpenClawArgs(config, prompt, sessionId, rawStreamPath);
   const env = openClawEnv(config);
   logInfo(
@@ -1251,7 +1263,13 @@ async function* collectOpenClawStream(
   logInfo(
     `OpenClaw command stream finish runId=${request.runId ?? "unknown"} elapsedMs=${Date.now() - startedAt} exitCode=${exitCode ?? "unknown"} stdoutChunks=${chunkCount} stderrChunks=${stderrChunkCount} deltaCount=${deltaCount} stdoutChars=${stdout.length} stderrChars=${stderr.length}${summarizeLogObject("stderrPreview", stderr)}`
   );
-  const rawStream = await readRawStreamForUsage(rawStreamPath, logInfo, request, step);
+  const rawStream = await readRawStreamForUsage(
+    config,
+    rawStreamPath,
+    logInfo,
+    request,
+    step
+  );
   const gatewayDiagnostics = readGatewayDiagnosticTextSince(startedAt);
   const usageTelemetry = logOpenClawUsageFromOutput(
     request,
@@ -3948,19 +3966,24 @@ function buildOpenClawArgs(
 async function prepareRawStreamPath(
   config: RuntimeConfig,
   request: RunRequest,
-  step: number
+  step: number,
+  logInfo: RuntimeLogger
 ): Promise<string | null> {
-  if (!config.openClawRawStreamDebug) {
+  const dir = join(config.openClawStateDir, "raw-streams");
+  try {
+    await mkdir(dir, { recursive: true });
+    const runKey = hashSessionKey(request.runId ?? randomUUID());
+    return join(dir, `${runKey}-step-${step}-${Date.now()}.jsonl`);
+  } catch (error) {
+    logInfo(
+      `OpenClaw raw stream capture unavailable runId=${request.runId ?? "unknown"} step=${step} dir=${dir} error=${error instanceof Error ? error.message : String(error)}`
+    );
     return null;
   }
-
-  const dir = join(config.openClawStateDir, "raw-streams");
-  await mkdir(dir, { recursive: true });
-  const runKey = hashSessionKey(request.runId ?? randomUUID());
-  return join(dir, `${runKey}-step-${step}-${Date.now()}.jsonl`);
 }
 
 async function readRawStreamForUsage(
+  config: RuntimeConfig,
   rawStreamPath: string | null,
   logInfo: RuntimeLogger,
   request: RunRequest,
@@ -3973,8 +3996,17 @@ async function readRawStreamForUsage(
   try {
     const content = await readFile(rawStreamPath, "utf8");
     logInfo(
-      `OpenClaw raw stream captured runId=${request.runId ?? "unknown"} step=${step} path=${rawStreamPath} bytes=${new TextEncoder().encode(content).length}`
+      `OpenClaw raw stream captured runId=${request.runId ?? "unknown"} step=${step} path=${rawStreamPath} bytes=${new TextEncoder().encode(content).length} retained=${config.openClawRawStreamDebug ? "true" : "false"}`
     );
+    if (!config.openClawRawStreamDebug) {
+      try {
+        await unlink(rawStreamPath);
+      } catch (error) {
+        logInfo(
+          `OpenClaw raw stream cleanup skipped runId=${request.runId ?? "unknown"} step=${step} path=${rawStreamPath} error=${error instanceof Error ? error.message : String(error)}`
+        );
+      }
+    }
     return content;
   } catch (error) {
     logInfo(

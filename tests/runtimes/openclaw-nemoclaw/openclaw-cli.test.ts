@@ -6,7 +6,7 @@ import {
 import type { RuntimeConfig } from "../../../runtimes/openclaw-nemoclaw/src/config";
 import type { RunEvent } from "../../../runtimes/openclaw-nemoclaw/src/types";
 import { clearGatewayDiagnosticText } from "../../../runtimes/openclaw-nemoclaw/src/gateway-diagnostics";
-import { mkdtemp, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -850,6 +850,76 @@ describe("runOpenClawCliRequest", () => {
       totalTokens: 22686,
       reasoningTokens: 3840
     });
+  });
+
+  test("captures exact cached usage from a transient raw stream by default", async () => {
+    const logs: string[] = [];
+    const stateDir = await mkdtemp(join(tmpdir(), "burble-openclaw-raw-"));
+    let rawPath: string | undefined;
+
+    const response = await runOpenClawCliRequest(
+      {
+        runId: "run-transient-raw-usage",
+        input: {
+          text: "hey agent",
+          connections: {
+            github: { connected: false }
+          }
+        }
+      },
+      {
+        ...config,
+        openClawStateDir: stateDir,
+        openClawRawStreamDebug: false
+      },
+      async () => ({
+        classification: "user_private",
+        content: []
+      }),
+      async (_command, args) => {
+        rawPath = args[args.indexOf("--raw-stream-path") + 1];
+        expect(args).toContain("--raw-stream");
+        expect(rawPath).toBeTruthy();
+        await writeFile(
+          rawPath,
+          `${JSON.stringify({
+            type: "response.completed",
+            response: {
+              usage: {
+                input_tokens: 1701,
+                output_tokens: 23,
+                total_tokens: 22588,
+                input_tokens_details: {
+                  cached_tokens: 20864
+                }
+              }
+            }
+          })}\n`
+        );
+        return {
+          exitCode: 0,
+          stdout: JSON.stringify({ response: { text: "Hey - how can I help?" } }),
+          stderr: ""
+        };
+      },
+      (message) => logs.push(message)
+    );
+
+    expect(response.response.usage).toEqual({
+      inputTokens: 1701,
+      outputTokens: 23,
+      totalTokens: 22588,
+      cachedInputTokens: 20864
+    });
+    expect(
+      logs.some(
+        (line) =>
+          line.startsWith(
+            "OpenClaw raw stream captured runId=run-transient-raw-usage step=1"
+          ) && line.includes("retained=false")
+      )
+    ).toBe(true);
+    await expect(readFile(rawPath ?? "", "utf8")).rejects.toThrow();
   });
 
   test("logs OpenClaw internal model usage diagnostics when exact tokens are absent", async () => {
