@@ -25,6 +25,9 @@ const baseRunRequest = {
         userMemoryEnabled: true,
         workspaceMemoryEnabled: false,
         jobMemoryEnabled: true
+      },
+      streaming: {
+        messageDeltasEnabled: true
       }
     }
   },
@@ -120,6 +123,7 @@ describe("runtime contract schemas", () => {
     const request = parseRuntimeRunRequest(baseRunRequest);
 
     expect(request.runtime.engine).toBe("hermes");
+    expect(request.runtime.manifest?.streaming.messageDeltasEnabled).toBe(true);
     expect(request.input.toolGroups?.groups).toEqual(["github", "conversation"]);
     expect(request.input.scheduledJob?.allowedTools).toEqual([
       "github_list_my_pull_requests"

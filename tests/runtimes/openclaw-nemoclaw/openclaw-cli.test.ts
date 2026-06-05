@@ -440,6 +440,9 @@ describe("runOpenClawCliRequest", () => {
               userMemoryEnabled: true,
               workspaceMemoryEnabled: true,
               jobMemoryEnabled: true
+            },
+            streaming: {
+              messageDeltasEnabled: true
             }
           }
         }
@@ -494,6 +497,9 @@ describe("runOpenClawCliRequest", () => {
               userMemoryEnabled: false,
               workspaceMemoryEnabled: true,
               jobMemoryEnabled: true
+            },
+            streaming: {
+              messageDeltasEnabled: true
             },
             memoryContext: [
               {
@@ -2731,6 +2737,82 @@ describe("runOpenClawCliRequest", () => {
           totalTokens: 22571,
           cachedInputTokens: 20864
         }
+      }
+    });
+  });
+
+  test("keeps OpenClaw gateway HTTP buffered when runtime streaming is disabled", async () => {
+    const requests: Array<Record<string, unknown>> = [];
+    const events: Array<RunEvent> = [];
+
+    await withMockFetch(
+      (async (_input, init) => {
+        requests.push(
+          JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>
+        );
+        return new Response(
+          JSON.stringify(openResponsesText("Buffered answer.")),
+          {
+            status: 200,
+            headers: { "content-type": "application/json" }
+          }
+        );
+      }) as typeof fetch,
+      async () => {
+        for await (const event of runOpenClawCliRequestStream(
+          {
+            runId: "run-gateway-stream-disabled",
+            executionMode: "openclaw-native",
+            runtime: {
+              id: "rt_123",
+              manifest: {
+                version: "1",
+                policyHash: "policy",
+                skills: [],
+                memory: {
+                  userMemoryEnabled: false,
+                  workspaceMemoryEnabled: false,
+                  jobMemoryEnabled: true
+                },
+                streaming: {
+                  messageDeltasEnabled: false
+                }
+              }
+            },
+            input: {
+              text: "prioritize my GitHub work",
+              connections: {
+                github: {
+                  connected: true,
+                  email: "person@example.com",
+                  providerLogin: "octocat"
+                }
+              }
+            }
+          },
+          { ...config, engine: "openclaw-gateway" },
+          async () => ({
+            classification: "user_private",
+            content: []
+          }),
+          async function* () {
+            throw new Error("unexpected cli call");
+          },
+          () => undefined
+        )) {
+          events.push(event);
+        }
+      }
+    );
+
+    expect(requests).toHaveLength(1);
+    expect(requests[0].stream).toBe(false);
+    expect(events.filter((event) => event.type === "message_delta")).toHaveLength(0);
+    expect(events.at(-1)).toMatchObject({
+      type: "final",
+      response: {
+        classification: "user_private",
+        text: "Buffered answer."
       }
     });
   });

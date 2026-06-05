@@ -78,12 +78,19 @@ export const runtimeManifestMemorySchema = z
   })
   .strict();
 
+export const runtimeManifestStreamingSchema = z
+  .object({
+    messageDeltasEnabled: z.boolean()
+  })
+  .strict();
+
 export const runtimeRequestManifestSchema = z
   .object({
     version: z.string().min(1),
     policyHash: z.string().min(1),
     skills: z.array(runtimeManifestSkillSchema),
     memory: runtimeManifestMemorySchema,
+    streaming: runtimeManifestStreamingSchema,
     memoryContext: z.array(runtimeMemoryContextEntrySchema).optional()
   })
   .strict();

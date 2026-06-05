@@ -60,6 +60,9 @@ export type RuntimeManifest = {
     workspaceMemoryEnabled: boolean;
     jobMemoryEnabled: boolean;
   };
+  streaming: {
+    messageDeltasEnabled: boolean;
+  };
   memoryContext: RuntimeMemoryContextEntry[];
   disabledTools: string[];
   policyHash: string;
@@ -96,6 +99,7 @@ export function buildRuntimeManifest(input: {
   principal: PrincipalId;
   runtime: RuntimeManifest["runtime"];
   defaultModel: string;
+  defaultStreaming: boolean;
   workspacePolicy: WorkspacePolicyRecord[];
   userPreferences: UserPreferenceRecord[];
   memoryRecords?: AgentMemoryRecord[];
@@ -125,6 +129,12 @@ export function buildRuntimeManifest(input: {
     workspaceMemoryEnabled: memoryEnabled(workspacePolicy.get("memory.workspace")),
     jobMemoryEnabled: memoryEnabled(workspacePolicy.get("memory.jobs"), true)
   };
+  const streaming = {
+    messageDeltasEnabled: memoryEnabled(
+      userPreferences.get("runtime.streaming"),
+      input.defaultStreaming
+    )
+  };
   const manifest: Omit<RuntimeManifest, "policyHash" | "memoryContext"> = {
     version: input.version ?? "1",
     principal: input.principal,
@@ -142,6 +152,7 @@ export function buildRuntimeManifest(input: {
       .sort((left, right) => left.name.localeCompare(right.name)),
     skills: effectiveSkills(allowedSkills, enabledSkills),
     memory,
+    streaming,
     disabledTools: [...disabledTools].sort()
   };
 

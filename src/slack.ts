@@ -168,10 +168,13 @@ type SlackProgressMessage = {
   text: string;
   streamedText?: string;
   startedAtMs: number;
+  updatedAtMs?: number;
   toolStartedAtMs: Record<string, number>;
   toolLinesByCallId: Record<string, string>;
   toolCallOrder: string[];
 };
+
+const minSlackProgressStreamUpdateIntervalMs = 1_000;
 
 type AgentExecTaskStatus = "running" | "stopping" | "stopped" | "finished" | "failed";
 
@@ -2007,6 +2010,7 @@ type SlackViewsPublishClient = {
 type AgentHomeSettingsView = {
   model: string;
   userMemory: "on" | "off";
+  streaming: "on" | "off";
   disabledTools: string[];
   enabledSkills: string[];
   policyHash: string;
@@ -2206,6 +2210,7 @@ export function buildAgentHomeSettings(input: {
   return {
     model: `${manifest.model.provider}:${manifest.model.model}`,
     userMemory: manifest.memory.userMemoryEnabled ? "on" : "off",
+    streaming: manifest.streaming.messageDeltasEnabled ? "on" : "off",
     disabledTools: manifest.disabledTools,
     enabledSkills: manifest.skills.map((skill) => `${skill.id}@${skill.version}`),
     policyHash: manifest.policyHash,
@@ -2453,6 +2458,10 @@ function buildAgentSettingsHomeBlocks(settings?: AgentHomeSettingsView) {
         },
         {
           type: "mrkdwn",
+          text: `*Streaming*\n\`${settings.streaming}\``
+        },
+        {
+          type: "mrkdwn",
           text: `*Runtime*\n\`${settings.runtime.status}\``
         },
         {
@@ -2549,6 +2558,10 @@ export function buildAgentRuntimeManageModalView(input: {
           {
             type: "mrkdwn",
             text: `*User memory*\n\`${settings.userMemory}\``
+          },
+          {
+            type: "mrkdwn",
+            text: `*Streaming*\n\`${settings.streaming}\``
           },
           {
             type: "mrkdwn",
@@ -3156,6 +3169,7 @@ export function buildAgentConfigLoadingResponse() {
 type AgentUserConfigKey =
   | "runtime.engine"
   | "runtime.model"
+  | "runtime.streaming"
   | "memory.user"
   | "tools.disabled"
   | "skills.enabled";
@@ -3195,6 +3209,7 @@ type AgentConfigModalValues = {
   model: string;
   runtimeEngine: AgentRuntimeEngine;
   memory: "on" | "off";
+  streaming: "on" | "off";
   disabledTools: string[];
   enabledSkills: string[];
 };
@@ -3268,10 +3283,27 @@ export function buildAgentConfigModalView(input: {
         element: {
           type: "static_select",
           action_id: "value",
-          initial_option: agentConfigMemoryOption(settings.userMemory),
+          initial_option: agentConfigOnOffOption(settings.userMemory),
           options: [
-            agentConfigMemoryOption("on"),
-            agentConfigMemoryOption("off")
+            agentConfigOnOffOption("on"),
+            agentConfigOnOffOption("off")
+          ]
+        }
+      },
+      {
+        type: "input",
+        block_id: "agent_config_streaming",
+        label: {
+          type: "plain_text",
+          text: "Streaming"
+        },
+        element: {
+          type: "static_select",
+          action_id: "value",
+          initial_option: agentConfigOnOffOption(settings.streaming),
+          options: [
+            agentConfigOnOffOption("on"),
+            agentConfigOnOffOption("off")
           ]
         }
       },
@@ -3317,7 +3349,7 @@ export function buildAgentConfigModalView(input: {
   };
 }
 
-function agentConfigMemoryOption(value: "on" | "off") {
+function agentConfigOnOffOption(value: "on" | "off") {
   return {
     text: {
       type: "plain_text",
@@ -3388,6 +3420,11 @@ function parseAgentConfigModalSubmission(
     "agent_config_memory",
     "value"
   );
+  const streaming = readSlackModalSelectedValue(
+    body,
+    "agent_config_streaming",
+    "value"
+  );
   const runtimeEngine = readSlackModalSelectedValue(
     body,
     "agent_config_runtime_engine",
@@ -3417,6 +3454,9 @@ function parseAgentConfigModalSubmission(
   if (memory !== "on" && memory !== "off") {
     errors.agent_config_memory = "Choose whether user memory is on or off.";
   }
+  if (streaming !== "on" && streaming !== "off") {
+    errors.agent_config_streaming = "Choose whether streaming is on or off.";
+  }
   if (!isAgentRuntimeEngine(runtimeEngine)) {
     errors.agent_config_runtime_engine = "Choose a supported runtime engine.";
   } else {
@@ -3433,6 +3473,7 @@ function parseAgentConfigModalSubmission(
     return { ok: false, errors };
   }
   const memoryValue = memory === "on" ? "on" : "off";
+  const streamingValue = streaming === "on" ? "on" : "off";
 
   return {
     ok: true,
@@ -3440,6 +3481,7 @@ function parseAgentConfigModalSubmission(
       model: modelId,
       runtimeEngine: runtimeEngine as AgentRuntimeEngine,
       memory: memoryValue,
+      streaming: streamingValue,
       disabledTools: parseStringListConfigValue(disabledTools),
       enabledSkills: parseStringListConfigValue(enabledSkills)
     }
@@ -3477,6 +3519,12 @@ function applyAgentConfigModalValues(input: {
     slackUserId: input.principal.slackUserId,
     key: "memory.user",
     value: { enabled: input.values.memory === "on" }
+  });
+  input.store.upsertUserPreference({
+    workspaceId: input.principal.workspaceId,
+    slackUserId: input.principal.slackUserId,
+    key: "runtime.streaming",
+    value: { enabled: input.values.streaming === "on" }
   });
   input.store.upsertUserPreference({
     workspaceId: input.principal.workspaceId,
@@ -3697,6 +3745,7 @@ export function buildAgentUserConfigGetResponse(input: {
         `• Runtime engine: \`${selection.effectiveEngine}\``,
         `• Model: \`${manifest.model.provider}:${manifest.model.model}\``,
         `• User memory: \`${manifest.memory.userMemoryEnabled ? "on" : "off"}\``,
+        `• Streaming: \`${manifest.streaming.messageDeltasEnabled ? "on" : "off"}\``,
         `• Disabled tools: \`${formatStringList(manifest.disabledTools)}\``,
         `• Enabled skills: \`${formatStringList(manifest.skills.map((skill) => `${skill.id}@${skill.version}`))}\``,
         `• Policy hash: \`${manifest.policyHash}\``,
@@ -3704,6 +3753,7 @@ export function buildAgentUserConfigGetResponse(input: {
         "*Settable keys*",
         "• `runtime.engine`",
         "• `model`",
+        "• `streaming`",
         "• `memory`",
         "• `tools.disabled`",
         "• `skills.enabled`"
@@ -4098,6 +4148,17 @@ function parseAgentUserConfigValue(
     return { ok: true, value: { enabled } };
   }
 
+  if (key === "runtime.streaming") {
+    const enabled = parseBooleanConfigValue(trimmed);
+    if (enabled === null) {
+      return {
+        ok: false,
+        error: "Streaming must be `on`, `off`, `true`, or `false`."
+      };
+    }
+    return { ok: true, value: { enabled } };
+  }
+
   const values = parseStringListConfigValue(trimmed);
   if (key === "skills.enabled") {
     return {
@@ -4118,6 +4179,9 @@ function normalizeAgentUserConfigKey(key: string): AgentUserConfigKey | null {
     case "model":
     case "runtime.model":
       return "runtime.model";
+    case "streaming":
+    case "runtime.streaming":
+      return "runtime.streaming";
     case "memory":
     case "user.memory":
     case "memory.user":
@@ -4141,6 +4205,8 @@ function displayAgentUserConfigKey(key: AgentUserConfigKey): string {
       return "runtime.engine";
     case "runtime.model":
       return "model";
+    case "runtime.streaming":
+      return "streaming";
     case "memory.user":
       return "memory";
     default:
@@ -4151,7 +4217,7 @@ function displayAgentUserConfigKey(key: AgentUserConfigKey): string {
 function formatUnknownAgentUserConfigKey(key: string): string {
   return [
     `Unknown user config key: \`${truncateSlackConfigValue(key, 80)}\`.`,
-    "Allowed keys: `runtime.engine`, `model`, `memory`, `tools.disabled`, `skills.enabled`.",
+    "Allowed keys: `runtime.engine`, `model`, `streaming`, `memory`, `tools.disabled`, `skills.enabled`.",
     "Shortcuts: `disable-tool <tool_name>`, `enable-tool <tool_name>`."
   ].join("\n");
 }
@@ -4197,6 +4263,18 @@ function formatAgentUserConfigKeyLines(input: {
             input.principal.workspaceId,
             input.principal.slackUserId,
             "memory.user"
+          )?.value
+        )}\``
+      ];
+    case "runtime.streaming":
+      return [
+        "*Streaming*",
+        `• Effective: \`${input.manifest.streaming.messageDeltasEnabled ? "on" : "off"}\``,
+        `• Stored preference: \`${formatPreferenceValue(
+          input.store.getUserPreference(
+            input.principal.workspaceId,
+            input.principal.slackUserId,
+            "runtime.streaming"
           )?.value
         )}\``
       ];
@@ -4754,22 +4832,58 @@ async function postMentionWorkingState(
   return undefined;
 }
 
-async function updateAgentProgressMessage(
+export async function updateAgentProgressMessage(
   client: App["client"],
   progressMessage: SlackProgressMessage,
   event: AgentRunEvent
 ): Promise<void> {
+  const hadStreamedText = Boolean(progressMessage.streamedText?.trim());
   const text = formatAgentProgressMessage(event, progressMessage);
   if (!text || text === progressMessage.text) {
     return;
   }
 
+  const now = Date.now();
+  if (
+    shouldThrottleSlackProgressUpdate({
+      event,
+      hadStreamedText,
+      progressMessage,
+      now
+    })
+  ) {
+    return;
+  }
+
   progressMessage.text = text;
+  progressMessage.updatedAtMs = now;
   await client.chat.update({
     channel: progressMessage.channel,
     ts: progressMessage.ts,
     text
   });
+}
+
+function shouldThrottleSlackProgressUpdate(input: {
+  event: AgentRunEvent;
+  hadStreamedText: boolean;
+  progressMessage: SlackProgressMessage;
+  now: number;
+}): boolean {
+  if (input.event.type !== "message_delta") {
+    return false;
+  }
+  if (!input.hadStreamedText) {
+    return false;
+  }
+  if (typeof input.progressMessage.updatedAtMs !== "number") {
+    return false;
+  }
+
+  return (
+    input.now - input.progressMessage.updatedAtMs <
+    minSlackProgressStreamUpdateIntervalMs
+  );
 }
 
 export function formatAgentProgressEvent(

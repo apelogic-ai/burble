@@ -279,6 +279,7 @@ export function createManagedRuntimeAdapter(
           try {
             agentResponse = yield* readWebSocketRunResponse(
               createWebSocket(eventsUrl),
+              runtimeMessageDeltasEnabled(runtime),
               (event) => {
                 logInfo(
                   [
@@ -760,6 +761,7 @@ async function readJsonRunResponse(
 
 async function* readWebSocketRunResponse(
   socket: AgentRuntimeWebSocket,
+  emitMessageDeltas: boolean,
   onEvent?: (event: AgentRunEvent) => void
 ): AsyncIterable<AgentRunEvent, AgentOutput | null> {
   const queue: unknown[] = [];
@@ -807,6 +809,10 @@ async function* readWebSocketRunResponse(
           return event.response;
         }
 
+        if (event.type === "message_delta" && !emitMessageDeltas) {
+          continue;
+        }
+
         onEvent?.(event);
         yield event;
       }
@@ -825,6 +831,10 @@ async function* readWebSocketRunResponse(
   } finally {
     socket.close();
   }
+}
+
+function runtimeMessageDeltasEnabled(runtime: RuntimeHandle | null): boolean {
+  return runtime?.manifest?.streaming.messageDeltasEnabled !== false;
 }
 
 async function* readStreamingRunResponse(
@@ -1060,6 +1070,9 @@ function sanitizeRuntimeHandle(runtime: RuntimeHandle): {
       workspaceMemoryEnabled: boolean;
       jobMemoryEnabled: boolean;
     };
+    streaming: {
+      messageDeltasEnabled: boolean;
+    };
     memoryContext: Array<{
       scope: "user" | "workspace" | "job";
       ownerId: string;
@@ -1081,6 +1094,7 @@ function sanitizeRuntimeHandle(runtime: RuntimeHandle): {
             policyHash: runtime.manifest.policyHash,
             skills: runtime.manifest.skills,
             memory: runtime.manifest.memory,
+            streaming: runtime.manifest.streaming,
             memoryContext: runtime.manifest.memoryContext
           }
         }

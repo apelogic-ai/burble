@@ -20,6 +20,7 @@ import {
   buildHelpResponse,
   formatAgentProgressEvent,
   formatAgentProgressMessage,
+  updateAgentProgressMessage,
   readAgentConfigFile,
   buildReplyThreadTs,
   formatFinalProgressLine,
@@ -80,6 +81,7 @@ const agentConfig: Config = {
   agentRuntimeToolGatewayUrl: "http://burble-app:3000/internal/tools",
   agentRuntimeMcpGatewayUrl: "http://burble-app:3000/mcp",
   agentRuntimeMcpAudience: "http://burble-app:3000/mcp",
+  agentRuntimeStreaming: true,
   atlassianMcpUrl: "https://mcp.atlassian.com/v1/mcp",
   runtimeJwtIssuer: "http://burble-app:3000",
   runtimeJwtPrivateKeyPath: "/data/runtime-jwt-private.pem",
@@ -249,6 +251,54 @@ describe("formatAgentProgressEvent", () => {
         progressMessage
       )
     ).toBe("Hello world");
+  });
+
+  test("throttles Slack chat updates for high-frequency runtime deltas", async () => {
+    const updates: string[] = [];
+    const originalNow = Date.now;
+    let now = 1_000;
+    Date.now = () => now;
+    try {
+      const progressMessage = {
+        channel: "D123",
+        ts: "123.456",
+        text: "Starting agent runtime...",
+        startedAtMs: 0,
+        toolStartedAtMs: {},
+        toolLinesByCallId: {},
+        toolCallOrder: []
+      };
+      const client = {
+        chat: {
+          update: async (input: { text: string }) => {
+            updates.push(input.text);
+            return {};
+          }
+        }
+      };
+
+      await updateAgentProgressMessage(client as never, progressMessage, {
+        type: "message_delta",
+        text: "Hello"
+      });
+      now += 100;
+      await updateAgentProgressMessage(client as never, progressMessage, {
+        type: "message_delta",
+        text: " world"
+      });
+      now += 1_000;
+      await updateAgentProgressMessage(client as never, progressMessage, {
+        type: "message_delta",
+        text: " again"
+      });
+
+      expect(updates).toEqual(["Hello", "Hello world again"]);
+      expect((progressMessage as { streamedText?: string }).streamedText).toBe(
+        "Hello world again"
+      );
+    } finally {
+      Date.now = originalNow;
+    }
   });
 });
 
@@ -679,6 +729,7 @@ describe("buildAppHomeView", () => {
     expect(serialized).toContain("agent_config_model");
     expect(serialized).toContain("openai:gpt-5.4");
     expect(serialized).toContain("agent_config_memory");
+    expect(serialized).toContain("agent_config_streaming");
     expect(serialized).toContain("\"value\":\"on\"");
   });
 
@@ -1224,6 +1275,19 @@ describe("agent user config commands", () => {
       store.getUserPreference("T123", "U123", "memory.user")?.value
     ).toEqual({ enabled: true });
 
+    const streamingResponse = applyAgentUserConfigSet({
+      config: agentConfig,
+      store,
+      workspaceId: "T123",
+      slackUserId: "U123",
+      key: "streaming",
+      value: "off"
+    });
+    expect(streamingResponse.text).toContain("Updated `streaming`");
+    expect(
+      store.getUserPreference("T123", "U123", "runtime.streaming")?.value
+    ).toEqual({ enabled: false });
+
     const getResponse = buildAgentUserConfigGetResponse({
       config: agentConfig,
       store,
@@ -1232,6 +1296,7 @@ describe("agent user config commands", () => {
     });
     expect(getResponse.text).toContain("openai:gpt-5.4-mini");
     expect(getResponse.text).toContain("User memory: `on`");
+    expect(getResponse.text).toContain("Streaming: `off`");
   });
 
   test("sets and reads the user runtime engine preference", () => {

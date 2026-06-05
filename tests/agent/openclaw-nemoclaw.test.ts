@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { createOpenClawNemoClawAgentRunner } from "../../src/agent/runners/openclaw-nemoclaw";
 import type { RuntimeCapabilityManifest } from "../../src/agent/runtime-contract";
+import type { RuntimeManifest } from "../../src/agent/runtime-manifest";
 import { collectAgentRun } from "../../src/agent/types";
 import type { ProviderConnection } from "../../src/db";
 import type { ObservabilityEventInput } from "../../src/observability";
@@ -46,6 +47,40 @@ const openClawCapabilityManifest: RuntimeCapabilityManifest = {
   conversationSend: true,
   jobScopedAuth: true
 };
+
+function runtimeManifest(input?: {
+  streaming?: RuntimeManifest["streaming"];
+}): RuntimeManifest {
+  return {
+    version: "1",
+    principal,
+    runtime: {
+      engine: "openclaw",
+      factory: "docker",
+      ttlMs: 86_400_000,
+      reaperEnabled: true
+    },
+    model: {
+      provider: "openai",
+      model: "gpt-5.4"
+    },
+    tools: [],
+    skills: [],
+    memory: {
+      userMemoryEnabled: false,
+      workspaceMemoryEnabled: false,
+      jobMemoryEnabled: true
+    },
+    streaming: input?.streaming ?? {
+      messageDeltasEnabled: true
+    },
+    memoryContext: [],
+    disabledTools: [],
+    policyHash: input?.streaming?.messageDeltasEnabled === false
+      ? "policy-streaming-off"
+      : "policy-streaming-on"
+  };
+}
 
 function sseEvent(event: unknown): string {
   const type =
@@ -930,6 +965,82 @@ describe("createOpenClawNemoClawAgentRunner", () => {
       classification: "user_private",
       text: "Final answer"
     });
+  });
+
+  test("suppresses WebSocket message deltas when runtime streaming is disabled", async () => {
+    const sockets: FakeRuntimeWebSocket[] = [];
+    const runner = createOpenClawNemoClawAgentRunner({
+      runtimeFactory: {
+        async getOrCreateRuntime() {
+          return {
+            id: "rt_streaming_disabled",
+            engine: "openclaw",
+            endpointUrl: "http://runtime-streaming-disabled:8080",
+            authToken: "runtime-token",
+            status: "ready",
+            statePath: "/data/runtimes/rt_streaming_disabled/state",
+            configPath: "/data/runtimes/rt_streaming_disabled/config/openclaw.json",
+            workspacePath: "/data/runtimes/rt_streaming_disabled/workspace",
+            manifest: runtimeManifest({
+              streaming: {
+                messageDeltasEnabled: false
+              }
+            })
+          };
+        },
+        async stopRuntime() {},
+        async reapIdleRuntimes() {}
+      },
+      fetch: async (url) => {
+        if (String(url).endsWith("/capabilities")) {
+          return Response.json(openClawCapabilityManifest);
+        }
+        return Response.json({
+          runId: "run-streaming-disabled",
+          eventsUrl: "/runs/run-streaming-disabled/events"
+        });
+      },
+      webSocketFactory: (url) => {
+        const socket = new FakeRuntimeWebSocket(url);
+        sockets.push(socket);
+        return socket;
+      }
+    });
+    const events: string[] = [];
+
+    const resultPromise = collectAgentRun(
+      runner,
+      {
+        principal,
+        conversation,
+        text: "summarize my GitHub work",
+        connections: { github: connection }
+      },
+      (event) => {
+        events.push(`${event.type}:${"text" in event ? event.text : ""}`);
+      }
+    );
+    const socket = await waitForSocket(sockets);
+
+    socket.sendEvent({ type: "status", text: "Loading context..." });
+    socket.sendEvent({ type: "message_delta", text: "Hidden partial answer" });
+    socket.sendEvent({
+      type: "final",
+      response: {
+        classification: "user_private",
+        text: "Final answer"
+      }
+    });
+
+    await expect(resultPromise).resolves.toEqual({
+      classification: "user_private",
+      text: "Final answer"
+    });
+    expect(events).toEqual([
+      "status:Starting agent runtime...",
+      "status:Agent is thinking...",
+      "status:Loading context..."
+    ]);
   });
 
   test("emits runtime-scoped observability for streamed tool and message events", async () => {

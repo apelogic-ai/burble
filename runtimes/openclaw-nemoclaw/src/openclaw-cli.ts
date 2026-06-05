@@ -1226,7 +1226,7 @@ export async function* runOpenClawCliRequestStream(
       runCommandStream,
       logInfo,
       heartbeatMs,
-      true,
+      runtimeMessageDeltasEnabled(request),
       step + 1
     );
     const plannedToolCall = normalizePlannedToolCall(
@@ -1330,6 +1330,10 @@ export async function* runOpenClawCliRequestStream(
     }
     executedTools.push({ toolCall: plannedToolCall, toolResult });
   }
+}
+
+function runtimeMessageDeltasEnabled(request: RunRequest): boolean {
+  return request.runtime?.manifest?.streaming.messageDeltasEnabled !== false;
 }
 
 async function* collectOpenClawStream(

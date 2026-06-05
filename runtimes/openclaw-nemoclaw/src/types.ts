@@ -34,6 +34,9 @@ export type RunRequest = {
         workspaceMemoryEnabled: boolean;
         jobMemoryEnabled: boolean;
       };
+      streaming: {
+        messageDeltasEnabled: boolean;
+      };
       memoryContext?: Array<{
         scope: "user" | "workspace" | "job";
         ownerId: string;

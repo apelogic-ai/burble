@@ -45,6 +45,9 @@ describe("buildContainerRuntimeSpec", () => {
           workspaceMemoryEnabled: false,
           jobMemoryEnabled: true
         },
+        streaming: {
+          messageDeltasEnabled: true
+        },
         memoryContext: [],
         disabledTools: [],
         policyHash: "policy"
@@ -238,6 +241,9 @@ describe("buildContainerRuntimeSpec", () => {
           userMemoryEnabled: false,
           workspaceMemoryEnabled: false,
           jobMemoryEnabled: true
+        },
+        streaming: {
+          messageDeltasEnabled: true
         },
         disabledTools: [],
         policyHash: "policy"

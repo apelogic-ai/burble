@@ -40,6 +40,7 @@ export type Config = {
   agentRuntimeToolGatewayUrl: string;
   agentRuntimeMcpGatewayUrl: string | null;
   agentRuntimeMcpAudience: string | null;
+  agentRuntimeStreaming?: boolean;
   atlassianMcpUrl: string;
   runtimeJwtIssuer: string;
   runtimeJwtPrivateKeyPath: string | null;
@@ -327,6 +328,11 @@ export function readConfig(env: Env): Config {
     agentRuntimeMcpAudience:
       optionalUrlEnv(env, "AGENT_RUNTIME_MCP_AUDIENCE") ??
       agentRuntimeMcpGatewayUrl,
+    agentRuntimeStreaming: optionalBoolEnv(
+      env,
+      "AGENT_RUNTIME_STREAMING",
+      true
+    ),
     atlassianMcpUrl:
       optionalUrlEnv(env, "ATLASSIAN_MCP_URL") ??
       "https://mcp.atlassian.com/v1/mcp",
