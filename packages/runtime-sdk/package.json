@@ -5,12 +5,16 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
+    "./json-schema": "./src/json-schema.ts",
     "./runtime-contract": "./src/runtime-contract.ts",
     "./runtime-contract-http-client": "./src/runtime-contract-http-client.ts",
     "./runtime-contract-harness": "./src/runtime-contract-harness.ts",
     "./runtime-engines": "./src/runtime-engines.ts",
     "./server": "./src/server.ts",
     "./tool-gateway": "./src/tool-gateway.ts"
+  },
+  "scripts": {
+    "generate:json-schema": "bun scripts/generate-json-schema.ts"
   },
   "dependencies": {
     "zod": "^4.4.3"
