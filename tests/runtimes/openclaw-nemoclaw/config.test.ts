@@ -34,11 +34,13 @@ describe("readRuntimeConfig", () => {
         OPENCLAW_GATEWAY_BIND: "loopback",
         OPENCLAW_GATEWAY_TOKEN: "configured-gateway-token",
         BURBLE_RUNTIME_HEARTBEAT_INTERVAL_MS: "120000",
+        BURBLE_RUNTIME_CONTRACT_PROBE: "true",
         AI_MODEL: "ollama:qwen3-coder:30b-cloud",
         OLLAMA_BASE_URL: "https://ollama.com/"
       })
     ).toEqual({
       port: 9090,
+      contractProbeMode: true,
       toolGatewayUrl: "http://burble-app:3000/internal/tools",
       internalToken: "secret",
       mcpGatewayUrl: "http://agentgateway:3000/mcp",

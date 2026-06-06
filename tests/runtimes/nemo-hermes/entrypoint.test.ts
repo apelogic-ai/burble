@@ -383,6 +383,67 @@ asyncio.run(main())
     });
   });
 
+  test("streams deterministic contract probe events without invoking Hermes gateway", () => {
+    const result = runHermesEntrypointProbe(`${importEntrypoint}
+import asyncio
+import os
+
+os.environ["BURBLE_RUNTIME_CONTRACT_PROBE"] = "1"
+
+async def main():
+    waiter = mod.RunWaiter()
+    queue = asyncio.Queue()
+    waiter.queues.append(queue)
+    runtime = mod.BurbleHermesRuntime()
+
+    response = await runtime._execute_run(
+        "run-contract-probe",
+        waiter,
+        {"text": "contract probe"},
+    )
+
+    events = []
+    while not queue.empty():
+        event = await queue.get()
+        if event is not None:
+            events.append(event)
+
+    print(json.dumps({"response": response, "events": events}))
+
+asyncio.run(main())
+`);
+
+    expect(result).toEqual({
+      response: {
+        classification: "user_private",
+        text: "Runtime contract probe response.",
+        usage: {
+          inputTokens: 1,
+          outputTokens: 1,
+          totalTokens: 2,
+          usageSource: "contract-probe"
+        }
+      },
+      events: [
+        { type: "status", text: "Runtime contract probe accepted." },
+        { type: "message_delta", text: "Runtime contract probe response." },
+        {
+          type: "final",
+          response: {
+            classification: "user_private",
+            text: "Runtime contract probe response.",
+            usage: {
+              inputTokens: 1,
+              outputTokens: 1,
+              totalTokens: 2,
+              usageSource: "contract-probe"
+            }
+          }
+        }
+      ]
+    });
+  });
+
   test("adds HubSpot provider tool hints to Hermes turns", () => {
     const result = runHermesEntrypointProbe(`${importEntrypoint}
 payload = {

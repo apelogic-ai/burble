@@ -786,6 +786,22 @@ class BurbleHermesRuntime:
     ) -> dict[str, Any]:
         progress_task: asyncio.Task[None] | None = None
         try:
+            if truthy_env("BURBLE_RUNTIME_CONTRACT_PROBE"):
+                response = {
+                    "classification": "user_private",
+                    "text": "Runtime contract probe response.",
+                    "usage": {
+                        "inputTokens": 1,
+                        "outputTokens": 1,
+                        "totalTokens": 2,
+                        "usageSource": "contract-probe",
+                    },
+                }
+                await waiter.emit({"type": "status", "text": "Runtime contract probe accepted."})
+                await waiter.emit({"type": "message_delta", "text": response["text"]})
+                await waiter.finish(response)
+                return response
+
             await waiter.emit({"type": "status", "text": "Burble accepted the turn."})
             progress_task = asyncio.create_task(
                 self._emit_progress_until_finished(run_id, waiter)

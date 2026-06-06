@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 
 export type RuntimeConfig = {
   port: number;
+  contractProbeMode?: boolean;
   runtimeId?: string | null;
   runtimeHeartbeatIntervalMs?: number;
   toolGatewayUrl: string;
@@ -53,6 +54,10 @@ export function readRuntimeConfig(env: Env): RuntimeConfig {
   const runtimeId = readOptionalEnv(env.BURBLE_RUNTIME_ID);
   return {
     port: readPort(env.PORT ?? "8080"),
+    contractProbeMode: readBooleanEnv(
+      env.BURBLE_RUNTIME_CONTRACT_PROBE ?? "false",
+      "BURBLE_RUNTIME_CONTRACT_PROBE"
+    ),
     ...(runtimeId ? { runtimeId } : {}),
     runtimeHeartbeatIntervalMs: readPositiveInt(
       env.BURBLE_RUNTIME_HEARTBEAT_INTERVAL_MS ?? "300000",

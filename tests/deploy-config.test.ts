@@ -337,6 +337,7 @@ describe("dev deploy config", () => {
         "            ."
       ].join("\n")
     );
+    expect(ciWorkflow).toContain('BURBLE_E2E_CONFORMANCE: "1"');
     expect(personalRuntimesCompose).toContain(
       "AGENT_RUNTIME_DATA_ROOT:-/opt/burble/runtimes"
     );
