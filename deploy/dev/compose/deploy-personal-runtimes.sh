@@ -23,8 +23,8 @@ Usage: ./deploy-personal-runtimes.sh [--no-pull] [--keep-runtimes] [--agentgatew
 
 Pulls the latest repo state, rebuilds Burble plus the default personal runtime
 images, and restarts Docker Compose. Runtime containers are recycled only when
-their image ID changes, and only for burble-rt-* containers that were created
-from the previous image ID.
+their image ID changes, and only for burble-rt-* containers from the matching
+runtime image family whose running image ID differs from the current image ID.
 
 Select a runtime with AGENT_RUNTIME_ENGINE. Supported image build defaults:
   AGENT_RUNTIME_ENGINE=openclaw  -> burble-openclaw-nemoclaw-openclaw-cli:dev
@@ -70,6 +70,25 @@ add_runtime_image_build() {
   runtime_build_labels+=("$1")
   runtime_build_images+=("$2")
   runtime_build_services+=("$3")
+}
+
+runtime_image_family() {
+  case "$1" in
+    hermes|nemo-hermes)
+      echo "hermes"
+      ;;
+    ""|openclaw|openclaw-gateway|deterministic|burble-direct|direct-provider)
+      echo "openclaw"
+      ;;
+    *)
+      echo "$1"
+      ;;
+  esac
+}
+
+container_runtime_engine() {
+  docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$1" 2>/dev/null |
+    awk -F= '$1 == "AGENT_RUNTIME_ENGINE" { print $2; exit }'
 }
 
 while [[ $# -gt 0 ]]; do
@@ -124,12 +143,12 @@ case "${runtime_engine}" in
     export AGENT_RUNTIME_ENGINE=hermes
     select_runtime_image "burble-nemo-hermes:dev"
     selected_runtime_image_service="nemo-hermes-image"
-    selected_runtime_image_label="hermes"
+    selected_runtime_image_label="$(runtime_image_family "${AGENT_RUNTIME_ENGINE}")"
     ;;
   ""|openclaw|openclaw-gateway|deterministic|burble-direct|direct-provider)
     select_runtime_image "burble-openclaw-nemoclaw-openclaw-cli:dev"
     selected_runtime_image_service="openclaw-nemoclaw-image"
-    selected_runtime_image_label="${AGENT_RUNTIME_ENGINE:-openclaw}"
+    selected_runtime_image_label="$(runtime_image_family "${AGENT_RUNTIME_ENGINE:-openclaw}")"
     ;;
   *)
     echo "Unsupported AGENT_RUNTIME_ENGINE: ${runtime_engine}" >&2
@@ -171,10 +190,20 @@ if [[ "${recycle_runtimes}" == "true" ]]; then
     fi
 
     runtime_images_changed=true
+    runtime_image_family_label="$(runtime_image_family "${runtime_build_labels[$i]}")"
     mapfile -t runtime_containers < <(
       docker ps -aq --filter "name=burble-rt-" |
         while IFS= read -r container_id; do
-          if [[ "$(docker inspect --format '{{.Image}}' "${container_id}" 2>/dev/null || true)" == "${previous_runtime_image_id}" ]]; then
+          container_image_id="$(docker inspect --format '{{.Image}}' "${container_id}" 2>/dev/null || true)"
+          container_engine="$(container_runtime_engine "${container_id}")"
+          container_image_family="$(runtime_image_family "${container_engine}")"
+
+          if [[ -n "${container_engine}" && "${container_image_family}" == "${runtime_image_family_label}" && "${container_image_id}" != "${current_runtime_image_id}" ]]; then
+            echo "${container_id}"
+            continue
+          fi
+
+          if [[ -z "${container_engine}" && -n "${previous_runtime_image_id}" && "${container_image_id}" == "${previous_runtime_image_id}" ]]; then
             echo "${container_id}"
           fi
         done
