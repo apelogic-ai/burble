@@ -421,6 +421,17 @@ describe("dev deploy config", () => {
     expect(personalRuntimeDeployScript).toContain("image_id()");
     expect(personalRuntimeDeployScript).toContain("previous_runtime_image_id");
     expect(personalRuntimeDeployScript).toContain("current_runtime_image_id");
+    expect(personalRuntimeDeployScript).toContain("runtime_image_family()");
+    expect(personalRuntimeDeployScript).toContain("container_runtime_engine()");
+    expect(personalRuntimeDeployScript).toContain(
+      "AGENT_RUNTIME_ENGINE\" { print $2; exit }"
+    );
+    expect(personalRuntimeDeployScript).toContain(
+      "container_image_family=\"$(runtime_image_family \"${container_engine}\")\""
+    );
+    expect(personalRuntimeDeployScript).toContain(
+      '-n "${container_engine}" && "${container_image_family}" == "${runtime_image_family_label}" && "${container_image_id}" != "${current_runtime_image_id}"'
+    );
     expect(personalRuntimeDeployScript).toContain(
       "is_known_default_runtime_image()"
     );
