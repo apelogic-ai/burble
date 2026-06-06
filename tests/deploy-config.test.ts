@@ -463,6 +463,21 @@ describe("dev deploy config", () => {
     expect(personalRuntimeDeployScript).toContain("--keep-runtimes");
   });
 
+  test("runs all first-class runtime images in CI readiness", () => {
+    expect(ciWorkflow).toContain("Build OpenClaw/NemoClaw CLI runtime image");
+    expect(ciWorkflow).toContain("Build Hermes runtime image");
+    expect(ciWorkflow).toContain("Build Burble Native runtime image");
+    expect(ciWorkflow).toContain(
+      "docker build \\\n            -t burble-native-runtime:dev \\\n            -f runtimes/burble-native/Dockerfile \\\n            ."
+    );
+    expect(ciWorkflow).toContain(
+      "BURBLE_E2E_RUNTIME_ENGINES: openclaw,hermes,burble-native"
+    );
+    expect(ciWorkflow).toContain(
+      "BURBLE_E2E_BURBLE_NATIVE_IMAGE: burble-native-runtime:dev"
+    );
+  });
+
   test("provides an optional OpenClaw CLI runtime build override", async () => {
     const dockerfile = await Bun.file(
       "runtimes/openclaw-nemoclaw/Dockerfile.openclaw-cli"

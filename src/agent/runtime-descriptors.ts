@@ -115,7 +115,7 @@ const hermesCapabilityManifest: RuntimeCapabilityManifest = {
 const burbleNativeCapabilityManifest: RuntimeCapabilityManifest = {
   runtimeType: "burble-native",
   version: "known",
-  transports: ["http", "websocket"],
+  transports: ["http", "sse", "ndjson", "websocket"],
   streaming: true,
   cancellation: false,
   nativeScheduler: true,
