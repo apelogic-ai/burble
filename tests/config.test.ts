@@ -215,6 +215,17 @@ describe("readConfig", () => {
     expect(config.agentRuntimeImage).toBe("burble-nemo-hermes:dev");
   });
 
+  test("defaults to the Burble Native runtime image for Burble Native engine", () => {
+    const config = readConfig({
+      ...validEnv,
+      AGENT_RUNTIME: "burble-runtime",
+      AGENT_RUNTIME_FACTORY: "docker",
+      AGENT_RUNTIME_ENGINE: "burble-native"
+    });
+
+    expect(config.agentRuntimeImage).toBe("burble-native-runtime:dev");
+  });
+
   test("defaults OpenClaw engines to the CLI-capable runtime image", () => {
     expect(defaultAgentRuntimeImage("openclaw")).toBe(
       "burble-openclaw-nemoclaw-openclaw-cli:dev"
@@ -337,7 +348,7 @@ describe("readConfig", () => {
     expect(() =>
       readConfig({ ...validEnv, OPENCLAW_NEMOCLAW_ENGINE: "magic" })
     ).toThrow(
-      "Environment variable OPENCLAW_NEMOCLAW_ENGINE must be one of deterministic, openclaw, openclaw-gateway, burble-direct, hermes"
+      "Environment variable OPENCLAW_NEMOCLAW_ENGINE must be one of deterministic, openclaw, openclaw-gateway, burble-direct, burble-native, hermes"
     );
   });
 
@@ -345,7 +356,7 @@ describe("readConfig", () => {
     expect(() =>
       readConfig({ ...validEnv, AGENT_RUNTIME_ENGINE: "magic" })
     ).toThrow(
-      "Environment variable AGENT_RUNTIME_ENGINE must be one of deterministic, openclaw, openclaw-gateway, burble-direct, hermes"
+      "Environment variable AGENT_RUNTIME_ENGINE must be one of deterministic, openclaw, openclaw-gateway, burble-direct, burble-native, hermes"
     );
   });
 

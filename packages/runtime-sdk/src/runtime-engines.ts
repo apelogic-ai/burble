@@ -3,6 +3,7 @@ export const runtimeEngines = [
   "openclaw",
   "openclaw-gateway",
   "burble-direct",
+  "burble-native",
   "hermes"
 ] as const;
 
