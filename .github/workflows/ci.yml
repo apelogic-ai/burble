@@ -78,15 +78,26 @@ jobs:
       - name: Run runtime readiness E2E
         env:
           BURBLE_E2E_RUNTIMES: "1"
-          BURBLE_E2E_RUNTIME_ENGINES: openclaw,hermes,burble-native
+          BURBLE_E2E_RUNTIME_ENGINES: openclaw,hermes
           BURBLE_E2E_OPENCLAW_IMAGE: burble-openclaw-nemoclaw-openclaw-cli:dev
-          BURBLE_E2E_BURBLE_NATIVE_IMAGE: burble-native-runtime:dev
           BURBLE_E2E_DOCKER_NETWORK: burble-runtime-e2e
           BURBLE_E2E_RUNTIME_DATA_ROOT: /tmp/burble-runtime-e2e
           BURBLE_E2E_HEALTH_ATTEMPTS: "180"
           BURBLE_E2E_HEALTH_INTERVAL_MS: "1000"
           BURBLE_E2E_TIMEOUT_MS: "240000"
           HERMES_GATEWAY_COMMAND: "python -m http.server 8766"
+        run: bun test tests/e2e/runtime-readiness.test.ts
+
+      - name: Run Burble Native runtime boot smoke E2E
+        env:
+          BURBLE_E2E_RUNTIME_BOOT_SMOKE: "1"
+          BURBLE_E2E_RUNTIME_ENGINES: burble-native
+          BURBLE_E2E_BURBLE_NATIVE_IMAGE: burble-native-runtime:dev
+          BURBLE_E2E_DOCKER_NETWORK: burble-runtime-e2e
+          BURBLE_E2E_RUNTIME_DATA_ROOT: /tmp/burble-runtime-e2e
+          BURBLE_E2E_HEALTH_ATTEMPTS: "60"
+          BURBLE_E2E_HEALTH_INTERVAL_MS: "1000"
+          BURBLE_E2E_TIMEOUT_MS: "120000"
         run: bun test tests/e2e/runtime-readiness.test.ts
 
       - name: Clean up runtime containers

@@ -75,7 +75,12 @@ describe("runtime descriptors", () => {
       runtimeType: "burble-native",
       toolBridgeModes: ["tool_gateway"],
       usageReporting: "exact",
-      multimodalInput: true
+      nativeScheduler: false,
+      scheduledProviderCalls: false,
+      multimodalInput: false,
+      memory: false,
+      durableWorkflowState: false,
+      attachments: false
     });
   });
 

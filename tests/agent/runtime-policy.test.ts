@@ -231,6 +231,42 @@ describe("resolveRuntimeEngineForPrincipal", () => {
     store.close();
   });
 
+  test("does not select the minimal Burble Native runtime for full agent workloads yet", () => {
+    const store = createTokenStore(":memory:");
+    store.upsertWorkspacePolicy({
+      workspaceId: "T123",
+      key: "runtime.allowedEngines",
+      value: ["openclaw", "burble-native"],
+      updatedBySlackUserId: "UADMIN"
+    });
+    store.upsertUserPreference({
+      workspaceId: "T123",
+      slackUserId: "U123",
+      key: "runtime.engine",
+      value: "burble-native"
+    });
+
+    const selection = resolveRuntimeEngineForPrincipal({
+      config,
+      store,
+      principal: {
+        workspaceId: "T123",
+        slackUserId: "U123"
+      }
+    });
+
+    expect(selection.effectiveEngine).toBe("openclaw");
+    expect(selection.preferredEngine).toBe("burble-native");
+    expect(selection.allowedEngines).toEqual(["openclaw", "burble-native"]);
+    expect(selection.selectableEngines).toEqual(["openclaw"]);
+    expect(selection.compatibility).toContainEqual({
+      engine: "burble-native",
+      selectable: false,
+      reasons: ["missing scheduled provider calls"]
+    });
+    store.close();
+  });
+
   test("fails explicitly when policy leaves no selectable runtime engine", () => {
     const store = createTokenStore(":memory:");
     store.upsertWorkspacePolicy({

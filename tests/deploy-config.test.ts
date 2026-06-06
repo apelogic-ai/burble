@@ -471,8 +471,11 @@ describe("dev deploy config", () => {
       "docker build \\\n            -t burble-native-runtime:dev \\\n            -f runtimes/burble-native/Dockerfile \\\n            ."
     );
     expect(ciWorkflow).toContain(
-      "BURBLE_E2E_RUNTIME_ENGINES: openclaw,hermes,burble-native"
+      "BURBLE_E2E_RUNTIME_ENGINES: openclaw,hermes"
     );
+    expect(ciWorkflow).toContain("Run Burble Native runtime boot smoke E2E");
+    expect(ciWorkflow).toContain('BURBLE_E2E_RUNTIME_BOOT_SMOKE: "1"');
+    expect(ciWorkflow).toContain("BURBLE_E2E_RUNTIME_ENGINES: burble-native");
     expect(ciWorkflow).toContain(
       "BURBLE_E2E_BURBLE_NATIVE_IMAGE: burble-native-runtime:dev"
     );
