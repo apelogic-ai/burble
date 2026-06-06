@@ -66,7 +66,7 @@ jobs:
           docker build \
             -t burble-nemo-hermes:dev \
             -f runtimes/nemo-hermes/Dockerfile \
-            runtimes/nemo-hermes
+            .
 
       - name: Run runtime readiness E2E
         env:

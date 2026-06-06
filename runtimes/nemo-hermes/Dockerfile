@@ -33,8 +33,10 @@ RUN npm install -g --silent --ignore-scripts \
 
 WORKDIR /runtime
 
-COPY hermes-plugins /runtime/hermes-plugins
-COPY runtime/entrypoint.py /runtime/entrypoint.py
+COPY runtimes/nemo-hermes/hermes-plugins /runtime/hermes-plugins
+COPY runtimes/nemo-hermes/runtime/entrypoint.py /runtime/entrypoint.py
+COPY runtimes/nemo-hermes/runtime/burble_runtime_contract.py /runtime/burble_runtime_contract.py
+COPY packages/runtime-sdk/schema/runtime-contract.schema.json /runtime/runtime-contract.schema.json
 
 EXPOSE 8080 8766
 
