@@ -62,6 +62,20 @@ workload. Never flip a field ahead of the implementation.
   tool_call-vs-prose gate — reuse, don't reinvent. Slack-side throttle/render stays
   in the app, not the runtime.
 
+## SDK publish mode
+
+`@burble/runtime-sdk` is intentionally **monorepo-only** for now:
+
+- runtimes in this repo consume it through the Bun workspace package;
+- Docker images copy the package from the repo build context;
+- the generated JSON Schema remains the stable cross-language artifact for
+  Hermes and the conformance runner.
+
+Do **not** add npm publishing, a `dist/` build, or separate-repo compatibility
+until the first runtime outside this monorepo needs it. When that happens, the
+publishable package must expose built JavaScript/types and keep the JSON Schema
+artifact versioned with the SDK.
+
 ## Lessons baked in as constraints (don't re-debug OpenClaw)
 
 - **Per-turn ephemeral session.** Hold no cross-turn state; Burble injects context
