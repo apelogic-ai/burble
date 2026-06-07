@@ -161,7 +161,7 @@ describe("createOpenClawNemoClawAgentRunner", () => {
 
     const result = await collectAgentRun(runner, {
       principal,
-      executionMode: "openclaw-native",
+      executionMode: "native-runtime",
       conversation,
       text: "summarize my GitHub work",
       toolGroups: {
@@ -209,7 +209,7 @@ describe("createOpenClawNemoClawAgentRunner", () => {
     const body = JSON.parse(String(requests[0].init.body));
     expect(body).toMatchObject({
       principal,
-      executionMode: "openclaw-native",
+      executionMode: "native-runtime",
       input: {
         text: "summarize my GitHub work",
         toolGroups: {

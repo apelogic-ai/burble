@@ -4302,10 +4302,7 @@ function buildBurbleChannelSessionKey(request: RunRequest): string | null {
 }
 
 function isNativeRuntimeExecutionMode(request: RunRequest): boolean {
-  return (
-    request.executionMode === "native-runtime" ||
-    request.executionMode === "openclaw-native"
-  );
+  return request.executionMode === "native-runtime";
 }
 
 function resolveGatewayHttpMessageChannel(request: RunRequest): "webchat" | "burble" {

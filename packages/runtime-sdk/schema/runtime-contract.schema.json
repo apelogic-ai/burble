@@ -14,8 +14,7 @@
           "type": "string",
           "enum": [
             "default",
-            "native-runtime",
-            "openclaw-native"
+            "native-runtime"
           ]
         },
         "principal": {

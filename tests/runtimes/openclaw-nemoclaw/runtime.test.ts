@@ -48,17 +48,4 @@ describe("resolveRuntimeConfigForRequest", () => {
     });
   });
 
-  test("keeps openclaw-native as a legacy native execution alias", () => {
-    const resolved = resolveRuntimeConfigForRequest(config, {
-      executionMode: "openclaw-native"
-    });
-
-    expect(resolved).toMatchObject({
-      engine: "openclaw-gateway",
-      openClawSetupOnStart: true,
-      openClawTimeoutMs: 600000,
-      openClawConfigPath: "/data/openclaw/config/openclaw.json",
-      openClawWorkspaceDir: "/data/openclaw/workspace"
-    });
-  });
 });

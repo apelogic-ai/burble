@@ -109,15 +109,6 @@ test("parses the canonical native runtime execution mode", () => {
   ).toBe("native-runtime");
 });
 
-test("parses the legacy OpenClaw native execution mode alias", () => {
-  expect(
-    parseRuntimeRunRequest({
-      ...baseRunRequest,
-      executionMode: "openclaw-native"
-    }).executionMode
-  ).toBe("openclaw-native");
-});
-
 describe("runtime contract schemas", () => {
   test("parses a portable runtime run request", () => {
     const request = parseRuntimeRunRequest(baseRunRequest);

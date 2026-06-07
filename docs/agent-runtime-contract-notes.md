@@ -538,8 +538,7 @@ terms:
 - `AGENT_RUNTIME_URL` / `managedRuntimeUrl` is the canonical static runtime
   endpoint, while `OPENCLAW_NEMOCLAW_URL` remains an alias;
 - `native-runtime` is the canonical execution mode for native agent runtime
-  turns, while `openclaw-native` remains an accepted wire alias for existing
-  OpenClaw/NemoClaw code and tests.
+  turns.
 
 ## Implementation Roadmap
 

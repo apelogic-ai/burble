@@ -160,10 +160,7 @@ async function prepareNativeOpenClawIfNeeded(
 function isNativeRuntimeExecutionMode(
   request: Pick<RunRequest, "executionMode">
 ): boolean {
-  return (
-    request.executionMode === "native-runtime" ||
-    request.executionMode === "openclaw-native"
-  );
+  return request.executionMode === "native-runtime";
 }
 
 export function createRuntimeAgentAdapter(

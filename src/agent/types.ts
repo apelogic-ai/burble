@@ -7,7 +7,7 @@ import type { RuntimeToolGroupSelection } from "./tool-groups";
 import type { PrincipalId } from "./runtime-factory";
 import type { ScheduledJobContext } from "./scheduled-job-context";
 
-export type AgentExecutionMode = "default" | "native-runtime" | "openclaw-native";
+export type AgentExecutionMode = "default" | "native-runtime";
 
 export type AgentRunnerCapabilities = {
   streaming: boolean;
