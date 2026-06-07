@@ -8,6 +8,10 @@ import {
   type RuntimeFetch
 } from "../../src/agent/container-runtime-factory";
 import { createRuntimeContractHttpClient } from "../../src/agent/runtime-contract-http-client";
+import {
+  parseRuntimeRunEvent,
+  type RuntimeRunEvent
+} from "../../src/agent/runtime-contract";
 import { runRuntimeReadinessCheck } from "../../src/agent/runtime-readiness-harness";
 
 const runtimeReadinessDescribe =
@@ -142,6 +146,14 @@ runtimeBootSmokeDescribe("runtime boot smoke e2e", () => {
             runtimeType: engine
           });
           expect(store.getAgentRuntime(runtime.id)?.status).toBe("ready");
+          if (engine === "burble-native") {
+            await assertBurbleNativeRunContract({
+              runtimeId: runtime.id,
+              endpointUrl: runtime.endpointUrl,
+              principal,
+              fetch: runtimeFetch
+            });
+          }
         } finally {
           if (runtimeId) {
             await factory.stopRuntime(runtimeId);
@@ -153,6 +165,70 @@ runtimeBootSmokeDescribe("runtime boot smoke e2e", () => {
     );
   }
 });
+
+async function assertBurbleNativeRunContract(input: {
+  runtimeId: string;
+  endpointUrl: string;
+  principal: { workspaceId: string; slackUserId: string };
+  fetch: RuntimeFetch;
+}): Promise<void> {
+  const response = await input.fetch(`${input.endpointUrl}/runs`, {
+    method: "POST",
+    headers: {
+      accept: "application/x-ndjson",
+      "content-type": "application/json",
+      "x-burble-runtime-id": input.runtimeId
+    },
+    body: JSON.stringify({
+      runId: `boot-smoke-${crypto.randomUUID()}`,
+      principal: input.principal,
+      runtime: {
+        id: input.runtimeId,
+        engine: "burble-native"
+      },
+      input: {
+        text: "hello native runtime",
+        conversation: {
+          source: "slack",
+          workspaceId: input.principal.workspaceId,
+          channelId: "D_BOOT_SMOKE",
+          rootId: "dm:D_BOOT_SMOKE",
+          isDirectMessage: true
+        },
+        connections: {}
+      }
+    })
+  });
+  expect(response.status).toBe(200);
+
+  const events = (await response.text())
+    .trim()
+    .split("\n")
+    .filter(Boolean)
+    .map((line) => parseRuntimeRunEvent(JSON.parse(line)));
+  expect(events.some((event) => event.type === "message_delta")).toBe(true);
+  expect(readFinalEvent(events)?.response).toEqual({
+    classification: "user_private",
+    text: "Burble Native is ready.",
+    usage: {
+      inputTokens: 0,
+      outputTokens: 0,
+      totalTokens: 0,
+      usageSource: "burble-native"
+    }
+  });
+}
+
+function readFinalEvent(
+  events: RuntimeRunEvent[]
+): Extract<RuntimeRunEvent, { type: "final" }> | null {
+  return (
+    events.find(
+      (event): event is Extract<RuntimeRunEvent, { type: "final" }> =>
+        event.type === "final"
+    ) ?? null
+  );
+}
 
 function e2eRuntimeEngines(): AgentRuntimeEngine[] {
   const raw = Bun.env.BURBLE_E2E_RUNTIME_ENGINES ?? "openclaw,hermes";
