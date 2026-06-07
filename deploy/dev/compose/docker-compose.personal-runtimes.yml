@@ -72,8 +72,8 @@ services:
       - runtime-image
     image: ${AGENT_RUNTIME_IMAGE:-burble-nemo-hermes:dev}
     build:
-      context: ../../../runtimes/nemo-hermes
-      dockerfile: Dockerfile
+      context: ../../..
+      dockerfile: runtimes/nemo-hermes/Dockerfile
     command: ["bun", "--version"]
 
   burble-native-image:

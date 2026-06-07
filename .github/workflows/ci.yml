@@ -66,7 +66,7 @@ jobs:
           docker build \
             -t burble-nemo-hermes:dev \
             -f runtimes/nemo-hermes/Dockerfile \
-            runtimes/nemo-hermes
+            .
 
       - name: Build Burble Native runtime image
         run: |
@@ -78,6 +78,7 @@ jobs:
       - name: Run runtime readiness E2E
         env:
           BURBLE_E2E_RUNTIMES: "1"
+          BURBLE_E2E_CONFORMANCE: "1"
           BURBLE_E2E_RUNTIME_ENGINES: openclaw,hermes
           BURBLE_E2E_OPENCLAW_IMAGE: burble-openclaw-nemoclaw-openclaw-cli:dev
           BURBLE_E2E_DOCKER_NETWORK: burble-runtime-e2e

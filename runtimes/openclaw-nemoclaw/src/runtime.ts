@@ -37,6 +37,9 @@ export function createRuntimeRunner(
       request,
       executeTool = createBurbleToolExecutor(config, request.runtime?.id, request)
     ) {
+      if (config.contractProbeMode) {
+        return { response: runtimeContractProbeResponse() };
+      }
       const effectiveConfig = resolveRuntimeConfigForRequest(config, request);
       await prepareNativeOpenClawIfNeeded(effectiveConfig, request, options);
       return createRuntimeAgentAdapter(effectiveConfig).run(request, executeTool);
@@ -45,11 +48,34 @@ export function createRuntimeRunner(
       request,
       executeTool = createBurbleToolExecutor(config, request.runtime?.id, request)
     ) {
+      if (config.contractProbeMode) {
+        yield* streamRuntimeContractProbe();
+        return;
+      }
       const effectiveConfig = resolveRuntimeConfigForRequest(config, request);
       yield* prepareRuntimeConfigForRequest(effectiveConfig, request, options);
       yield* createRuntimeAgentAdapter(effectiveConfig).stream(request, executeTool);
     }
   };
+}
+
+function runtimeContractProbeResponse(): RunResponse["response"] {
+  return {
+    classification: "user_private",
+    text: "Runtime contract probe response.",
+    usage: {
+      inputTokens: 1,
+      outputTokens: 1,
+      totalTokens: 2,
+      usageSource: "contract-probe"
+    }
+  };
+}
+
+async function* streamRuntimeContractProbe(): AsyncIterable<RunEvent> {
+  yield { type: "status", text: "Runtime contract probe accepted." };
+  yield { type: "message_delta", text: "Runtime contract probe response." };
+  yield { type: "final", response: runtimeContractProbeResponse() };
 }
 
 export function resolveRuntimeConfigForRequest(

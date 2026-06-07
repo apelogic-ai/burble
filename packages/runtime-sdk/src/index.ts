@@ -17,6 +17,10 @@ export {
   type RuntimeContractWebSocketFactory
 } from "./runtime-contract-http-client";
 export {
+  buildRuntimeContractJsonSchema,
+  runtimeContractJsonSchemaVersion
+} from "./json-schema";
+export {
   buildRuntimeBearerHeaders,
   createRuntimeToolGatewayClient,
   type RuntimeToolGatewayClient,

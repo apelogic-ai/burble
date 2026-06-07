@@ -16,6 +16,13 @@ from typing import Any
 
 from aiohttp import ClientSession, ClientTimeout, web
 
+from burble_runtime_contract import (
+    ContractValidationError,
+    validate_runtime_capability_manifest,
+    validate_runtime_run_event,
+    validate_runtime_run_request,
+)
+
 
 HERMES_PLUGIN_SOURCE = Path("/runtime/hermes-plugins")
 MAX_HERMES_CONTEXT_MESSAGES = 12
@@ -572,6 +579,7 @@ class RunWaiter:
         self.queues: list[asyncio.Queue[dict[str, Any] | None]] = []
 
     async def emit(self, event: dict[str, Any]) -> None:
+        validate_runtime_run_event(event)
         for queue in list(self.queues):
             await queue.put(event)
 
@@ -635,12 +643,15 @@ class BurbleHermesRuntime:
 
     async def handle_capabilities(self, _request: web.Request) -> web.Response:
         return web.json_response(
-            build_runtime_capability_manifest(),
+            validate_runtime_capability_manifest(build_runtime_capability_manifest()),
             headers={"cache-control": "no-store"},
         )
 
     async def handle_run(self, request: web.Request) -> web.Response:
-        body = await request.json()
+        try:
+            body = validate_runtime_run_request(await request.json())
+        except ContractValidationError as error:
+            return web.Response(text=f"Invalid Hermes runtime run request: {error}", status=400)
         run_id = str(body.get("runId") or uuid.uuid4())
         input_body = body.get("input") or {}
         text = str(input_body.get("text") or "")
@@ -758,6 +769,8 @@ class BurbleHermesRuntime:
         )
         event_type = str(body.get("type") or "")
         if event_type in {"message_delta", "message_replace"}:
+            if "text" not in body:
+                return web.Response(text=f"Hermes runtime event {event_type} requires text", status=400)
             if text:
                 await waiter.emit({"type": event_type, "text": text})
             return web.json_response({"ok": True})
@@ -773,6 +786,22 @@ class BurbleHermesRuntime:
     ) -> dict[str, Any]:
         progress_task: asyncio.Task[None] | None = None
         try:
+            if truthy_env("BURBLE_RUNTIME_CONTRACT_PROBE"):
+                response = {
+                    "classification": "user_private",
+                    "text": "Runtime contract probe response.",
+                    "usage": {
+                        "inputTokens": 1,
+                        "outputTokens": 1,
+                        "totalTokens": 2,
+                        "usageSource": "contract-probe",
+                    },
+                }
+                await waiter.emit({"type": "status", "text": "Runtime contract probe accepted."})
+                await waiter.emit({"type": "message_delta", "text": response["text"]})
+                await waiter.finish(response)
+                return response
+
             await waiter.emit({"type": "status", "text": "Burble accepted the turn."})
             progress_task = asyncio.create_task(
                 self._emit_progress_until_finished(run_id, waiter)
