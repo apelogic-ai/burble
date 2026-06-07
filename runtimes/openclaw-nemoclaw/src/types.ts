@@ -152,6 +152,7 @@ export type RunUsage = {
   totalTokens?: number;
   cachedInputTokens?: number;
   reasoningTokens?: number;
+  usageSource?: string;
 };
 
 export type RunTelemetry = {

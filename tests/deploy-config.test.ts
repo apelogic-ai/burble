@@ -27,6 +27,7 @@ const ansibleEnvTemplate = await Bun.file(
   "deploy/dev/ansible/roles/burble-app/templates/env.j2"
 ).text();
 const appDockerfile = await Bun.file("Dockerfile").text();
+const hermesDockerfile = await Bun.file("runtimes/nemo-hermes/Dockerfile").text();
 const slackAppManifest = await Bun.file("deploy/dev/slack-app-manifest.yaml").text();
 const ciWorkflow = await Bun.file(".github/workflows/ci.yml").text();
 
@@ -317,8 +318,26 @@ describe("dev deploy config", () => {
     expect(personalRuntimesCompose).toContain(
       "dockerfile: runtimes/openclaw-nemoclaw/Dockerfile.openclaw-cli"
     );
-    expect(personalRuntimesCompose).toContain("context: ../../../runtimes/nemo-hermes");
+    expect(personalRuntimesCompose).toContain("context: ../../..");
+    expect(personalRuntimesCompose).toContain(
+      "dockerfile: runtimes/nemo-hermes/Dockerfile"
+    );
     expect(personalRuntimesCompose).toContain("burble-nemo-hermes:dev");
+    expect(hermesDockerfile).toContain(
+      "COPY runtimes/nemo-hermes/runtime/burble_runtime_contract.py /runtime/burble_runtime_contract.py"
+    );
+    expect(hermesDockerfile).toContain(
+      "COPY packages/runtime-sdk/schema/runtime-contract.schema.json /runtime/runtime-contract.schema.json"
+    );
+    expect(ciWorkflow).toContain(
+      [
+        "docker build \\",
+        "            -t burble-nemo-hermes:dev \\",
+        "            -f runtimes/nemo-hermes/Dockerfile \\",
+        "            ."
+      ].join("\n")
+    );
+    expect(ciWorkflow).toContain('BURBLE_E2E_CONFORMANCE: "1"');
     expect(personalRuntimesCompose).toContain(
       "AGENT_RUNTIME_DATA_ROOT:-/opt/burble/runtimes"
     );

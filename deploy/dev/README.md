@@ -201,7 +201,7 @@ Build that image locally with:
 ```bash
 docker build -f ../../runtimes/nemo-hermes/Dockerfile \
   -t burble-nemo-hermes:dev \
-  ../../runtimes/nemo-hermes
+  ../..
 ```
 
 This is not a `hermes chat -q` wrapper. The image starts Hermes gateway with a

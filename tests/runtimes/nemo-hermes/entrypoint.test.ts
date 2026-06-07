@@ -28,6 +28,8 @@ import json
 import sys
 import types
 
+sys.path.insert(0, "runtimes/nemo-hermes/runtime")
+
 aiohttp = types.ModuleType("aiohttp")
 aiohttp.ClientSession = object
 aiohttp.ClientTimeout = object
@@ -152,6 +154,88 @@ spec.loader.exec_module(mod)
 `;
 
 describe("nemo-hermes entrypoint", () => {
+  test("validates Hermes contract payloads with the generated runtime schema", () => {
+    const result = runHermesEntrypointProbe(`${importEntrypoint}
+valid_manifest = mod.validate_runtime_capability_manifest(mod.build_runtime_capability_manifest())
+valid_event = mod.validate_runtime_run_event({"type": "message_delta", "text": "Hello"})
+try:
+    mod.validate_runtime_run_event({"type": "message_delta", "text": "Hello", "extra": True})
+except mod.ContractValidationError as error:
+    invalid_event = str(error)
+else:
+    invalid_event = ""
+print(json.dumps({
+    "manifestType": valid_manifest["runtimeType"],
+    "eventType": valid_event["type"],
+    "invalidEvent": invalid_event,
+}))
+`);
+
+    expect(result).toEqual({
+      manifestType: "hermes",
+      eventType: "message_delta",
+      invalidEvent: expect.stringContaining("additional property extra")
+    });
+  });
+
+  test("rejects invalid Hermes run requests through the generated schema shim", () => {
+    const result = runHermesEntrypointProbe(`${importEntrypoint}
+try:
+    mod.validate_runtime_run_request({
+        "runId": "run-invalid",
+        "principal": {"workspaceId": "T123", "slackUserId": "U123"},
+        "runtime": {"id": "rt_123", "engine": "hermes"},
+        "input": {"text": "hello"}
+    })
+except mod.ContractValidationError as error:
+    invalid_request = str(error)
+else:
+    invalid_request = ""
+print(json.dumps({"invalidRequest": invalid_request}))
+`);
+
+    expect(result).toEqual({
+      invalidRequest: expect.stringContaining("input.connections")
+    });
+  });
+
+  test("defaults legacy Hermes request manifests through the generated schema shim", () => {
+    const result = runHermesEntrypointProbe(`${importEntrypoint}
+request = mod.validate_runtime_run_request({
+    "runId": "run-legacy-manifest",
+    "principal": {"workspaceId": "T123", "slackUserId": "U123"},
+    "runtime": {
+        "id": "rt_123",
+        "engine": "hermes",
+        "manifest": {
+            "version": "1",
+            "policyHash": "policy-123",
+            "skills": [],
+            "memory": {
+                "userMemoryEnabled": True,
+                "workspaceMemoryEnabled": False,
+                "jobMemoryEnabled": False,
+            },
+        },
+    },
+    "input": {
+        "text": "hello",
+        "conversation": {
+            "source": "slack",
+            "workspaceId": "T123",
+            "channelId": "D123",
+            "rootId": "dm:D123",
+            "isDirectMessage": True,
+        },
+        "connections": {},
+    },
+})
+print(json.dumps(request["runtime"]["manifest"]["streaming"]))
+`);
+
+    expect(result).toEqual({ messageDeltasEnabled: true });
+  });
+
   test("builds a runtime capability manifest", () => {
     const result = runHermesEntrypointProbe(`${importEntrypoint}
 print(json.dumps(mod.build_runtime_capability_manifest()))
@@ -296,6 +380,67 @@ asyncio.run(main())
         text: "Hello world",
         classification: "user_private"
       }
+    });
+  });
+
+  test("streams deterministic contract probe events without invoking Hermes gateway", () => {
+    const result = runHermesEntrypointProbe(`${importEntrypoint}
+import asyncio
+import os
+
+os.environ["BURBLE_RUNTIME_CONTRACT_PROBE"] = "1"
+
+async def main():
+    waiter = mod.RunWaiter()
+    queue = asyncio.Queue()
+    waiter.queues.append(queue)
+    runtime = mod.BurbleHermesRuntime()
+
+    response = await runtime._execute_run(
+        "run-contract-probe",
+        waiter,
+        {"text": "contract probe"},
+    )
+
+    events = []
+    while not queue.empty():
+        event = await queue.get()
+        if event is not None:
+            events.append(event)
+
+    print(json.dumps({"response": response, "events": events}))
+
+asyncio.run(main())
+`);
+
+    expect(result).toEqual({
+      response: {
+        classification: "user_private",
+        text: "Runtime contract probe response.",
+        usage: {
+          inputTokens: 1,
+          outputTokens: 1,
+          totalTokens: 2,
+          usageSource: "contract-probe"
+        }
+      },
+      events: [
+        { type: "status", text: "Runtime contract probe accepted." },
+        { type: "message_delta", text: "Runtime contract probe response." },
+        {
+          type: "final",
+          response: {
+            classification: "user_private",
+            text: "Runtime contract probe response.",
+            usage: {
+              inputTokens: 1,
+              outputTokens: 1,
+              totalTokens: 2,
+              usageSource: "contract-probe"
+            }
+          }
+        }
+      ]
     });
   });
 

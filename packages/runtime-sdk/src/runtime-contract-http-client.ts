@@ -140,6 +140,13 @@ async function* readWebSocketEvents(
         throw failed;
       }
       if (closed) {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        while (queue.length > 0) {
+          yield queue.shift();
+        }
+        if (failed) {
+          throw failed;
+        }
         return;
       }
       await new Promise<void>((resolve) => {

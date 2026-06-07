@@ -150,6 +150,44 @@ describe("runtime contract HTTP client", () => {
     ]);
   });
 
+  test("drains trailing websocket messages that arrive around close", async () => {
+    const client = createRuntimeContractHttpClient({
+      baseUrl: "http://runtime.local",
+      manifest,
+      fetch: async (url) => {
+        if (url === "http://runtime.local/healthz") {
+          return new Response("ok");
+        }
+        if (url === "http://runtime.local/runs") {
+          return Response.json({ runId: "run-http-contract" });
+        }
+        throw new Error(`Unexpected fetch ${url}`);
+      },
+      webSocketFactory: (url) =>
+        new CloseBeforeFinalWebSocket(url, [
+          { type: "status", text: "Working..." },
+          {
+            type: "final",
+            response: {
+              classification: "user_private",
+              text: "Hello.",
+              usage: {
+                totalTokens: 6,
+                usageSource: "provider-output"
+              }
+            }
+          }
+        ])
+    });
+
+    await expect(
+      runRuntimeContractSmokeTest({ client, request })
+    ).resolves.toMatchObject({
+      runtimeType: "openclaw-gateway",
+      runId: "run-http-contract"
+    });
+  });
+
   test("reports typed capability discovery errors", async () => {
     const client = createRuntimeContractHttpClient({
       baseUrl: "http://runtime.local",
@@ -189,7 +227,7 @@ class FakeWebSocket {
     this.events = events;
     queueMicrotask(() => {
       for (const event of this.events) {
-        this.emit("message", { data: JSON.stringify(event) });
+        this.emitForTest("message", { data: JSON.stringify(event) });
       }
     });
   }
@@ -204,12 +242,25 @@ class FakeWebSocket {
   }
 
   close() {
-    this.emit("close", {});
+    this.emitForTest("close", {});
   }
 
-  private emit(type: string, event: { data?: string }) {
+  protected emitForTest(type: string, event: { data?: string }) {
     for (const listener of this.listeners.get(type) ?? []) {
       listener(event);
     }
+  }
+}
+
+class CloseBeforeFinalWebSocket extends FakeWebSocket {
+  constructor(url: string, events: unknown[]) {
+    super(url, []);
+    queueMicrotask(() => {
+      this.emitForTest("message", { data: JSON.stringify(events[0]) });
+      this.emitForTest("close", {});
+      setTimeout(() => {
+        this.emitForTest("message", { data: JSON.stringify(events[1]) });
+      }, 0);
+    });
   }
 }

@@ -23,6 +23,7 @@ class FakeRuntimeWebSocket {
 
 const config: RuntimeConfig = {
   port: 8080,
+  contractProbeMode: false,
   toolGatewayUrl: "http://burble-app:3000/internal/tools",
   internalToken: "secret",
   mcpGatewayUrl: null,
@@ -138,6 +139,61 @@ describe("handleRuntimeRequest", () => {
         text: "Authenticated to GitHub as `octocat`."
       }
     });
+  });
+
+  test("streams deterministic contract probe events without invoking an agent", async () => {
+    const response = await handleRuntimeRequest(
+      new Request("http://runtime/runs", {
+        method: "POST",
+        headers: {
+          accept: "application/x-ndjson",
+          "content-type": "application/json"
+        },
+        body: JSON.stringify({
+          runId: "run-contract-probe",
+          principal: { workspaceId: "T123", slackUserId: "U123" },
+          runtime: { id: "rt_probe", engine: "openclaw" },
+          input: {
+            text: "contract probe",
+            conversation: {
+              source: "slack",
+              workspaceId: "T123",
+              channelId: "D123",
+              rootId: "dm:D123",
+              isDirectMessage: true
+            },
+            connections: {
+              github: { connected: false }
+            }
+          }
+        })
+      }),
+      { ...config, engine: "openclaw", contractProbeMode: true }
+    );
+
+    expect(response.status).toBe(200);
+    const events = (await response.text())
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+
+    expect(events).toEqual([
+      { type: "status", text: "Runtime contract probe accepted." },
+      { type: "message_delta", text: "Runtime contract probe response." },
+      {
+        type: "final",
+        response: {
+          classification: "user_private",
+          text: "Runtime contract probe response.",
+          usage: {
+            inputTokens: 1,
+            outputTokens: 1,
+            totalTokens: 2,
+            usageSource: "contract-probe"
+          }
+        }
+      }
+    ]);
   });
 
   test("accepts HubSpot runtime tool groups and connection summaries", async () => {
