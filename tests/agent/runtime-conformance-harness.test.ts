@@ -95,6 +95,7 @@ describe("runtime conformance harness", () => {
       principal: { workspaceId: "T123", slackUserId: "U123" },
       runtimeFactory,
       fetch: runtimeFetch,
+      assertClaimedCapabilities: false,
       webSocketFactory: () =>
         new FakeRuntimeWebSocket([
           { type: "status", text: "accepted" },
@@ -133,4 +134,211 @@ describe("runtime conformance harness", () => {
 
     store.close();
   });
+
+  test("asserts claimed tool-call and scheduled-provider capabilities", async () => {
+    const store = createTokenStore(":memory:");
+    const runtimeFactory = createStaticRuntimeFactory({
+      store,
+      engine: "hermes",
+      endpointUrl: "http://runtime.local",
+      authToken: "runtime-token",
+      dataRoot: "/tmp/runtime-conformance-test"
+    });
+    const runRequests: Array<{ runId?: string; text?: string; scheduled?: boolean }> =
+      [];
+    const runtimeFetch: RuntimeContractFetch = async (url, init) => {
+      const parsed = new URL(url);
+      if (parsed.pathname === "/healthz") {
+        return new Response("ok");
+      }
+      if (parsed.pathname === "/capabilities") {
+        return Response.json(capabilityManifest());
+      }
+      if (parsed.pathname === "/runs") {
+        const request = JSON.parse(String(init?.body ?? "{}")) as {
+          runId?: string;
+          input?: { text?: string; scheduledJob?: unknown };
+        };
+        runRequests.push({
+          runId: request.runId,
+          text: request.input?.text,
+          scheduled: Boolean(request.input?.scheduledJob)
+        });
+        return Response.json({ runId: request.runId });
+      }
+      return new Response("not found", { status: 404 });
+    };
+
+    const report = await runRuntimeConformanceCheck({
+      engine: "hermes",
+      principal: { workspaceId: "T123", slackUserId: "U123" },
+      runtimeFactory,
+      fetch: runtimeFetch,
+      webSocketFactory: (url) => {
+        if (url.includes("tool-capability")) {
+          return new FakeRuntimeWebSocket([
+            {
+              type: "tool_call",
+              toolName: "runtime.conformance.echo",
+              callId: "tool-probe-1",
+              input: { text: "tool capability probe" }
+            },
+            {
+              type: "tool_result",
+              toolName: "runtime.conformance.echo",
+              callId: "tool-probe-1",
+              classification: "user_private",
+              content: { ok: true }
+            },
+            finalEvent()
+          ]);
+        }
+        if (url.includes("scheduled-provider")) {
+          return new FakeRuntimeWebSocket([
+            {
+              type: "tool_call",
+              toolName: "scheduledJob.registerCapability",
+              callId: "scheduled-probe-1",
+              input: {
+                jobId: "contract-scheduled-job",
+                requiredTools: ["runtime.conformance.echo"]
+              }
+            },
+            {
+              type: "tool_result",
+              toolName: "scheduledJob.registerCapability",
+              callId: "scheduled-probe-1",
+              classification: "user_private",
+              content: { ok: true }
+            },
+            finalEvent()
+          ]);
+        }
+        return new FakeRuntimeWebSocket([
+          { type: "status", text: "accepted" },
+          finalEvent()
+        ]);
+      }
+    });
+
+    expect(report.checks.map((check) => check.name)).toEqual([
+      "manifest",
+      "health",
+      "run_accepted",
+      "events_stream",
+      "final_response",
+      "usage",
+      "tool_calls",
+      "scheduled_provider_calls"
+    ]);
+    expect(runRequests).toHaveLength(3);
+    expect(runRequests[0].runId).toContain("contract-rt_");
+    expect(runRequests[1].runId).toContain("tool-capability");
+    expect(runRequests[2].runId).toContain("scheduled-provider");
+    expect(runRequests[1]).toMatchObject({
+      text: "runtime contract tool capability probe",
+      scheduled: false
+    });
+    expect(runRequests[2]).toMatchObject({
+      text: "runtime contract scheduled provider capability probe",
+      scheduled: true
+    });
+
+    store.close();
+  });
+
+  test("skips capability assertions when the manifest does not claim them", async () => {
+    const store = createTokenStore(":memory:");
+    const runtimeFactory = createStaticRuntimeFactory({
+      store,
+      engine: "burble-native",
+      endpointUrl: "http://runtime.local",
+      authToken: "runtime-token",
+      dataRoot: "/tmp/runtime-conformance-test"
+    });
+    let runs = 0;
+    const runtimeFetch: RuntimeContractFetch = async (url, init) => {
+      const parsed = new URL(url);
+      if (parsed.pathname === "/healthz") {
+        return new Response("ok");
+      }
+      if (parsed.pathname === "/capabilities") {
+        return Response.json({
+          ...capabilityManifest(),
+          runtimeType: "burble-native",
+          toolCalls: false,
+          scheduledProviderCalls: false
+        });
+      }
+      if (parsed.pathname === "/runs") {
+        runs += 1;
+        const request = JSON.parse(String(init?.body ?? "{}")) as {
+          runId?: string;
+        };
+        return Response.json({ runId: request.runId });
+      }
+      return new Response("not found", { status: 404 });
+    };
+
+    const report = await runRuntimeConformanceCheck({
+      engine: "burble-native",
+      principal: { workspaceId: "T123", slackUserId: "U123" },
+      runtimeFactory,
+      fetch: runtimeFetch,
+      webSocketFactory: () =>
+        new FakeRuntimeWebSocket([
+          { type: "status", text: "accepted" },
+          finalEvent()
+        ])
+    });
+
+    expect(report.checks.map((check) => check.name)).toEqual([
+      "manifest",
+      "health",
+      "run_accepted",
+      "events_stream",
+      "final_response",
+      "usage"
+    ]);
+    expect(runs).toBe(1);
+
+    store.close();
+  });
 });
+
+function capabilityManifest() {
+  return {
+    runtimeType: "hermes",
+    version: "1",
+    transports: ["http", "websocket"],
+    streaming: true,
+    cancellation: false,
+    nativeScheduler: true,
+    scheduledProviderCalls: true,
+    toolCalls: true,
+    toolBridgeModes: ["tool_gateway"],
+    usageReporting: "exact",
+    multimodalInput: false,
+    multimodalOutput: false,
+    memory: false,
+    durableWorkflowState: true,
+    attachments: false,
+    conversationSend: true,
+    jobScopedAuth: true
+  };
+}
+
+function finalEvent() {
+  return {
+    type: "final",
+    response: {
+      classification: "user_private",
+      text: "ok",
+      usage: {
+        inputTokens: 1,
+        outputTokens: 1,
+        totalTokens: 2
+      }
+    }
+  };
+}

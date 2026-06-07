@@ -677,6 +677,8 @@ class BurbleHermesRuntime:
                 {
                     "runId": run_id,
                     "routeId": route_id,
+                    "originalText": text,
+                    "scheduledJob": input_body.get("scheduledJob"),
                     "text": build_hermes_turn_text(input_body),
                     "threadId": build_hermes_thread_id(run_id, conversation),
                     "actorId": principal.get("slackUserId"),
@@ -787,6 +789,58 @@ class BurbleHermesRuntime:
         progress_task: asyncio.Task[None] | None = None
         try:
             if truthy_env("BURBLE_RUNTIME_CONTRACT_PROBE"):
+                if message.get("scheduledJob"):
+                    await waiter.emit({"type": "status", "text": "Runtime contract probe accepted."})
+                    await waiter.emit({
+                        "type": "tool_call",
+                        "toolName": "scheduledJob.registerCapability",
+                        "callId": "contract-scheduled-provider-probe",
+                    })
+                    await waiter.emit({
+                        "type": "tool_result",
+                        "toolName": "scheduledJob.registerCapability",
+                        "callId": "contract-scheduled-provider-probe",
+                        "classification": "user_private",
+                    })
+                    response = {
+                        "classification": "user_private",
+                        "text": "Runtime contract scheduled provider capability response.",
+                        "usage": {
+                            "inputTokens": 1,
+                            "outputTokens": 1,
+                            "totalTokens": 2,
+                            "usageSource": "contract-probe",
+                        },
+                    }
+                    await waiter.emit({"type": "message_delta", "text": response["text"]})
+                    await waiter.finish(response)
+                    return response
+                if message.get("originalText") == "runtime contract tool capability probe":
+                    await waiter.emit({"type": "status", "text": "Runtime contract probe accepted."})
+                    await waiter.emit({
+                        "type": "tool_call",
+                        "toolName": "runtime.conformance.echo",
+                        "callId": "contract-tool-probe",
+                    })
+                    await waiter.emit({
+                        "type": "tool_result",
+                        "toolName": "runtime.conformance.echo",
+                        "callId": "contract-tool-probe",
+                        "classification": "user_private",
+                    })
+                    response = {
+                        "classification": "user_private",
+                        "text": "Runtime contract tool capability response.",
+                        "usage": {
+                            "inputTokens": 1,
+                            "outputTokens": 1,
+                            "totalTokens": 2,
+                            "usageSource": "contract-probe",
+                        },
+                    }
+                    await waiter.emit({"type": "message_delta", "text": response["text"]})
+                    await waiter.finish(response)
+                    return response
                 response = {
                     "classification": "user_private",
                     "text": "Runtime contract probe response.",
