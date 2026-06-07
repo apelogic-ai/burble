@@ -11,17 +11,16 @@ import type {
   RunEvent,
   RunRequest,
   RunResponse,
-  RunUsage,
-  ToolClassification,
-  ToolExecutor,
-  ToolResult
+  RunUsage
 } from "./types";
 
 type RuntimeServerContext = {
-  executeTool?: ToolExecutor;
+  env?: Record<string, string | undefined>;
+  fetch?: RuntimeFetch;
 };
 
 type RuntimeRequestOptions = RuntimeServerContext;
+type RuntimeFetch = (url: string, init?: RequestInit) => Promise<Response>;
 
 const runtimeContractServer = createRuntimeContractServer<
   RuntimeServerContext,
@@ -80,7 +79,7 @@ export function buildRuntimeCapabilityManifest(): CapabilityManifest {
     cancellation: false,
     nativeScheduler: false,
     scheduledProviderCalls: false,
-    toolCalls: true,
+    toolCalls: false,
     toolBridgeModes: ["tool_gateway"],
     usageReporting: "exact",
     multimodalInput: false,
@@ -98,64 +97,61 @@ async function* streamNativeRun(
   context: RuntimeServerContext
 ): AsyncIterable<RunEvent> {
   yield { type: "status", text: "Burble Native accepted the turn." };
-  const response = await runNativeTurn(request, context.executeTool);
-  if (response.text) {
-    yield { type: "message_delta", text: response.text };
+  let finalResponse: RuntimeFinalResponse | null = null;
+  let emittedMessageDelta = false;
+  for await (const event of runNativeTurn(request, context)) {
+    if (event.type === "message_delta") {
+      emittedMessageDelta = true;
+      yield event;
+      continue;
+    }
+    finalResponse = event.response;
   }
-  yield { type: "final", response };
+  if (!finalResponse) {
+    throw new Error("Burble Native turn did not produce a final response");
+  }
+  if (!emittedMessageDelta && finalResponse.text) {
+    yield { type: "message_delta", text: finalResponse.text };
+  }
+  yield { type: "final", response: finalResponse };
 }
 
-async function runNativeTurn(
+async function* runNativeTurn(
   request: RunRequest,
-  executeTool?: ToolExecutor
-): Promise<RuntimeFinalResponse> {
-  const text = request.input.text.trim();
-  if (isGitHubIdentityRequest(text)) {
-    return runGitHubIdentityTurn(request, executeTool);
-  }
-
-  return {
-    classification: "user_private",
-    text: Bun.env.BURBLE_RUNTIME_CONTRACT_PROBE === "1"
-      ? "Runtime contract probe response."
-      : "Burble Native is ready.",
-    usage: nativeUsage()
-  };
-}
-
-async function runGitHubIdentityTurn(
-  request: RunRequest,
-  executeTool?: ToolExecutor
-): Promise<RuntimeFinalResponse> {
-  const github = request.input.connections.github;
-  if (!github?.connected || !github.email) {
-    return {
-      classification: "user_private",
-      text: "Connect GitHub before asking Burble Native to use GitHub.",
-      usage: nativeUsage()
+  context: RuntimeServerContext
+): AsyncIterable<
+  | Extract<RunEvent, { type: "message_delta" }>
+  | Extract<RunEvent, { type: "final" }>
+> {
+  if (readEnv(context.env, "BURBLE_RUNTIME_CONTRACT_PROBE") === "1") {
+    yield {
+      type: "final",
+      response: {
+        classification: "user_private",
+        text: "Runtime contract probe response.",
+        usage: nativeUsage()
+      }
     };
+    return;
   }
-  if (!executeTool) {
-    return {
+  let responseText = "";
+  let usage: RunUsage | undefined;
+  for await (const event of streamOpenAiTurn(request, context)) {
+    if (event.type === "message_delta") {
+      responseText += event.text;
+      yield event;
+      continue;
+    }
+    responseText = event.text || responseText;
+    usage = event.usage;
+  }
+  yield {
+    type: "final",
+    response: {
       classification: "user_private",
-      text: "Burble Native cannot reach the tool gateway for this turn.",
-      usage: nativeUsage()
-    };
-  }
-
-  const result = await executeTool("github.getAuthenticatedUser", {
-    user: { email: github.email }
-  });
-  const toolResult = readToolResult(result);
-  const login = readLogin(toolResult.content);
-  const classification = toolResult.classification ?? "user_private";
-
-  return {
-    classification,
-    text: login
-      ? `Authenticated to GitHub as \`${login}\`.`
-      : "GitHub is connected, but Burble Native could not read the authenticated user.",
-    usage: nativeUsage()
+      text: responseText,
+      usage
+    }
   };
 }
 
@@ -168,27 +164,225 @@ function nativeUsage(): RunUsage {
   };
 }
 
-function isGitHubIdentityRequest(text: string): boolean {
-  const normalized = text.toLowerCase();
-  return (
-    normalized.includes("github") &&
-    (normalized.includes("who am i") ||
-      normalized.includes("who am i?") ||
-      normalized.includes("authenticated") ||
-      normalized.includes("identity"))
-  );
+async function* streamOpenAiTurn(
+  request: RunRequest,
+  context: RuntimeServerContext
+): AsyncIterable<
+  | Extract<RunEvent, { type: "message_delta" }>
+  | { type: "completed"; text: string; usage: RunUsage | undefined }
+> {
+  const model = readOpenAiModel(context.env);
+  const apiKey = readEnv(context.env, "OPENAI_API_KEY");
+  if (!apiKey) {
+    throw new Error("OPENAI_API_KEY is required for Burble Native model calls");
+  }
+  const requestFetch = context.fetch ?? fetch;
+  const response = await requestFetch("https://api.openai.com/v1/responses", {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${apiKey}`,
+      "content-type": "application/json"
+    },
+    body: JSON.stringify({
+      model,
+      input: buildOpenAiInput(request),
+      stream: true
+    })
+  });
+  if (!response.ok || !response.body) {
+    throw new Error(`OpenAI Responses API returned HTTP ${response.status}`);
+  }
+
+  let completedText = "";
+  let completedUsage: RunUsage | undefined;
+  for await (const payload of readSseJsonPayloads(response.body)) {
+    const type = readString(payload, "type");
+    if (type === "response.output_text.delta") {
+      const delta = readString(payload, "delta");
+      if (delta) {
+        yield { type: "message_delta", text: delta };
+      }
+      continue;
+    }
+    if (type === "response.completed") {
+      const responsePayload = readRecord(payload, "response");
+      completedText = extractOpenAiText(responsePayload) ?? completedText;
+      completedUsage = normalizeOpenAiUsage(readRecord(responsePayload, "usage"));
+    }
+  }
+
+  yield {
+    type: "completed",
+    text: completedText,
+    usage: completedUsage
+  };
 }
 
-function readToolResult(value: unknown): ToolResult {
-  return isRecord(value) ? value : {};
+function readOpenAiModel(env: Record<string, string | undefined> | undefined): string {
+  const raw = readEnv(env, "AI_MODEL") ?? "openai:gpt-5.4";
+  const separator = raw.indexOf(":");
+  if (separator <= 0) {
+    throw new Error("AI_MODEL must use provider:model format");
+  }
+  const provider = raw.slice(0, separator);
+  const model = raw.slice(separator + 1).trim();
+  if (provider !== "openai" || !model) {
+    throw new Error("Burble Native Increment 1 supports AI_MODEL=openai:<model>");
+  }
+  return model;
 }
 
-function readLogin(value: unknown): string | null {
+function buildOpenAiInput(request: RunRequest): string {
+  const recentMessages = request.input.context?.recentMessages ?? [];
+  const history = recentMessages
+    .map((message) => `${message.author}: ${message.text}`)
+    .join("\n");
+  return [
+    "You are Burble, a concise Slack-native work assistant.",
+    "Answer the user directly. Do not claim to have tools in this runtime.",
+    history ? `Recent conversation:\n${history}` : "",
+    `User: ${request.input.text.trim()}`
+  ]
+    .filter(Boolean)
+    .join("\n\n");
+}
+
+async function* readSseJsonPayloads(
+  body: ReadableStream<Uint8Array>
+): AsyncIterable<Record<string, unknown>> {
+  const reader = body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) {
+      break;
+    }
+    buffer += decoder.decode(value, { stream: true });
+    const parts = buffer.split(/\r?\n\r?\n/);
+    buffer = parts.pop() ?? "";
+    for (const part of parts) {
+      const payload = parseSseJsonPayload(part);
+      if (payload) {
+        yield payload;
+      }
+    }
+  }
+  buffer += decoder.decode();
+  const payload = parseSseJsonPayload(buffer);
+  if (payload) {
+    yield payload;
+  }
+}
+
+function parseSseJsonPayload(chunk: string): Record<string, unknown> | null {
+  const data = chunk
+    .split(/\r?\n/)
+    .filter((line) => line.startsWith("data:"))
+    .map((line) => line.slice("data:".length).trim())
+    .join("\n")
+    .trim();
+  if (!data || data === "[DONE]") {
+    return null;
+  }
+  try {
+    const payload = JSON.parse(data) as unknown;
+    return isRecord(payload) ? payload : null;
+  } catch {
+    return null;
+  }
+}
+
+function extractOpenAiText(value: unknown): string | null {
   if (!isRecord(value)) {
     return null;
   }
-  const login = value.login ?? value.username ?? value.name;
-  return typeof login === "string" && login.trim() ? login.trim() : null;
+  const outputText = value.output_text;
+  if (typeof outputText === "string") {
+    return outputText;
+  }
+  const output = value.output;
+  if (!Array.isArray(output)) {
+    return null;
+  }
+  const texts: string[] = [];
+  for (const item of output) {
+    if (!isRecord(item) || !Array.isArray(item.content)) {
+      continue;
+    }
+    for (const content of item.content) {
+      if (!isRecord(content)) {
+        continue;
+      }
+      const text = content.text;
+      if (typeof text === "string") {
+        texts.push(text);
+      }
+    }
+  }
+  return texts.length > 0 ? texts.join("") : null;
+}
+
+function normalizeOpenAiUsage(value: unknown): RunUsage | undefined {
+  if (!isRecord(value)) {
+    return undefined;
+  }
+  const usage: RunUsage = {
+    usageSource: "provider-output"
+  };
+  setOptionalInt(usage, "inputTokens", readInt(value, "input_tokens"));
+  setOptionalInt(usage, "outputTokens", readInt(value, "output_tokens"));
+  setOptionalInt(usage, "totalTokens", readInt(value, "total_tokens"));
+  setOptionalInt(
+    usage,
+    "cachedInputTokens",
+    readNestedInt(value, "input_tokens_details", "cached_tokens")
+  );
+  setOptionalInt(
+    usage,
+    "reasoningTokens",
+    readNestedInt(value, "output_tokens_details", "reasoning_tokens")
+  );
+  return usage;
+}
+
+function setOptionalInt<K extends keyof RunUsage>(
+  target: RunUsage,
+  key: K,
+  value: number | undefined
+): void {
+  if (typeof value === "number") {
+    target[key] = value as RunUsage[K];
+  }
+}
+
+function readInt(value: Record<string, unknown>, key: string): number | undefined {
+  const raw = value[key];
+  return Number.isInteger(raw) && Number(raw) >= 0 ? Number(raw) : undefined;
+}
+
+function readNestedInt(
+  value: Record<string, unknown>,
+  objectKey: string,
+  key: string
+): number | undefined {
+  const nested = value[objectKey];
+  return isRecord(nested) ? readInt(nested, key) : undefined;
+}
+
+function readString(value: unknown, key: string): string | null {
+  return isRecord(value) && typeof value[key] === "string" ? value[key] : null;
+}
+
+function readRecord(value: unknown, key: string): Record<string, unknown> | null {
+  return isRecord(value) && isRecord(value[key]) ? value[key] : null;
+}
+
+function readEnv(
+  env: Record<string, string | undefined> | undefined,
+  name: string
+): string | undefined {
+  return (env?.[name] ?? Bun.env[name])?.trim() || undefined;
 }
 
 function addRunId(rawBody: unknown, runId: string): unknown {

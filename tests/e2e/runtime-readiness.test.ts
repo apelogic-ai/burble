@@ -289,7 +289,7 @@ async function assertBurbleNativeRunContract(input: {
   expect(events.some((event) => event.type === "message_delta")).toBe(true);
   expect(readFinalEvent(events)?.response).toEqual({
     classification: "user_private",
-    text: "Burble Native is ready.",
+    text: "Runtime contract probe response.",
     usage: {
       inputTokens: 0,
       outputTokens: 0,

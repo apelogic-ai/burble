@@ -495,6 +495,7 @@ describe("dev deploy config", () => {
     expect(ciWorkflow).toContain("Run Burble Native runtime boot smoke E2E");
     expect(ciWorkflow).toContain('BURBLE_E2E_RUNTIME_BOOT_SMOKE: "1"');
     expect(ciWorkflow).toContain("BURBLE_E2E_RUNTIME_ENGINES: burble-native");
+    expect(ciWorkflow).toContain('BURBLE_RUNTIME_CONTRACT_PROBE: "1"');
     expect(ciWorkflow).toContain(
       "BURBLE_E2E_BURBLE_NATIVE_IMAGE: burble-native-runtime:dev"
     );
