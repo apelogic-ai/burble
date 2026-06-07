@@ -262,7 +262,7 @@ describe("resolveRuntimeEngineForPrincipal", () => {
     expect(selection.compatibility).toContainEqual({
       engine: "burble-native",
       selectable: false,
-      reasons: ["missing scheduled provider calls"]
+      reasons: ["missing tool calls", "missing scheduled provider calls"]
     });
     store.close();
   });

@@ -2,7 +2,6 @@ import { describe, expect, test } from "bun:test";
 import { parseRuntimeCapabilityManifest } from "../../../src/agent/runtime-contract";
 import { handleRuntimeRequest } from "../../../runtimes/burble-native/src/server";
 import { createBurbleNativeToolExecutor } from "../../../runtimes/burble-native/src/tools";
-import type { ToolExecutor } from "../../../runtimes/burble-native/src/types";
 
 describe("Burble Native runtime server", () => {
   test("serves a runtime capability manifest", async () => {
@@ -17,7 +16,7 @@ describe("Burble Native runtime server", () => {
       cancellation: false,
       nativeScheduler: false,
       scheduledProviderCalls: false,
-      toolCalls: true,
+      toolCalls: false,
       toolBridgeModes: ["tool_gateway"],
       usageReporting: "exact",
       multimodalInput: false,
@@ -36,28 +35,26 @@ describe("Burble Native runtime server", () => {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify(nativeRunRequest("hello native runtime"))
-      })
+      }),
+      {
+        env: {
+          BURBLE_RUNTIME_CONTRACT_PROBE: "1"
+        }
+      }
     );
 
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({
       response: {
         classification: "user_private",
-        text: "Burble Native is ready.",
+        text: "Runtime contract probe response.",
         usage: nativeUsage()
       }
     });
   });
 
-  test("streams native provider-backed turns as runtime events", async () => {
-    const toolCalls: Array<{ toolName: string; body: unknown }> = [];
-    const executeTool: ToolExecutor = async (toolName, body) => {
-      toolCalls.push({ toolName, body });
-      return {
-        classification: "user_private",
-        content: { login: "octocat" }
-      };
-    };
+  test("streams OpenAI response deltas and exact usage for no-tool turns", async () => {
+    const requests: Array<{ url: string; init?: RequestInit }> = [];
     const response = await handleRuntimeRequest(
       new Request("http://runtime/runs", {
         method: "POST",
@@ -65,16 +62,50 @@ describe("Burble Native runtime server", () => {
           accept: "application/x-ndjson",
           "content-type": "application/json"
         },
-        body: JSON.stringify(
-          nativeRunRequest("who am I on GitHub?", {
-            github: {
-              connected: true,
-              email: "person@example.com"
-            }
-          })
-        )
+        body: JSON.stringify(nativeRunRequest("describe Burble"))
       }),
-      { executeTool }
+      {
+        env: {
+          AI_MODEL: "openai:gpt-5.4",
+          OPENAI_API_KEY: "test-openai-key",
+          OPENAI_BASE_URL: "https://openai-compatible.example/v1"
+        },
+        fetch: async (url: string, init?: RequestInit) => {
+          requests.push({ url, init });
+          return new Response(
+            [
+              sseEvent({
+                type: "response.output_text.delta",
+                delta: "Burble "
+              }),
+              sseEvent({
+                type: "response.output_text.delta",
+                delta: "executes."
+              }),
+              sseEvent({
+                type: "response.completed",
+                response: {
+                  output_text: "Burble executes.",
+                  usage: {
+                    input_tokens: 120,
+                    output_tokens: 8,
+                    total_tokens: 512,
+                    input_tokens_details: {
+                      cached_tokens: 384
+                    },
+                    output_tokens_details: {
+                      reasoning_tokens: 0
+                    }
+                  }
+                }
+              })
+            ].join(""),
+            {
+              headers: { "content-type": "text/event-stream" }
+            }
+          );
+        }
+      }
     );
 
     expect(response.status).toBe(200);
@@ -85,22 +116,114 @@ describe("Burble Native runtime server", () => {
         .map((line) => JSON.parse(line))
     ).toEqual([
       { type: "status", text: "Burble Native accepted the turn." },
-      { type: "message_delta", text: "Authenticated to GitHub as `octocat`." },
+      { type: "message_delta", text: "Burble " },
+      { type: "message_delta", text: "executes." },
       {
         type: "final",
         response: {
           classification: "user_private",
-          text: "Authenticated to GitHub as `octocat`.",
-          usage: nativeUsage()
+          text: "Burble executes.",
+          usage: {
+            inputTokens: 120,
+            outputTokens: 8,
+            totalTokens: 512,
+            cachedInputTokens: 384,
+            reasoningTokens: 0,
+            usageSource: "provider-output"
+          }
         }
       }
     ]);
-    expect(toolCalls).toEqual([
+    expect(requests[0].url).toBe(
+      "https://openai-compatible.example/v1/responses"
+    );
+    expect(requests[0].init?.headers).toMatchObject({
+      authorization: "Bearer test-openai-key",
+      "content-type": "application/json"
+    });
+    expect(JSON.parse(String(requests[0].init?.body))).toMatchObject({
+      model: "gpt-5.4",
+      stream: true,
+      input: expect.stringContaining("describe Burble")
+    });
+  });
+
+  test("bounds hung OpenAI streams with a provider timeout", async () => {
+    const response = await handleRuntimeRequest(
+      new Request("http://runtime/runs", {
+        method: "POST",
+        headers: {
+          accept: "application/x-ndjson",
+          "content-type": "application/json"
+        },
+        body: JSON.stringify(nativeRunRequest("hello"))
+      }),
       {
-        toolName: "github.getAuthenticatedUser",
-        body: {
-          user: { email: "person@example.com" }
-        }
+        env: {
+          AI_MODEL: "openai:gpt-5.4",
+          OPENAI_API_KEY: "test-openai-key",
+          BURBLE_NATIVE_PROVIDER_TIMEOUT_MS: "5"
+        },
+        fetch: async (_url: string, init?: RequestInit) =>
+          new Promise<Response>((_resolve, reject) => {
+            init?.signal?.addEventListener("abort", () => {
+              reject(init.signal?.reason ?? new Error("aborted"));
+            });
+          })
+      }
+    );
+
+    expect(response.status).toBe(200);
+    expect(
+      (await response.text())
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line))
+    ).toEqual([
+      { type: "status", text: "Burble Native accepted the turn." },
+      {
+        type: "error",
+        message:
+          "Runtime run failed: OpenAI Responses API timed out after 5ms"
+      }
+    ]);
+  });
+
+  test("bounds stalled OpenAI SSE bodies with the same provider timeout", async () => {
+    const response = await handleRuntimeRequest(
+      new Request("http://runtime/runs", {
+        method: "POST",
+        headers: {
+          accept: "application/x-ndjson",
+          "content-type": "application/json"
+        },
+        body: JSON.stringify(nativeRunRequest("hello"))
+      }),
+      {
+        env: {
+          AI_MODEL: "openai:gpt-5.4",
+          OPENAI_API_KEY: "test-openai-key",
+          BURBLE_NATIVE_PROVIDER_TIMEOUT_MS: "5"
+        },
+        fetch: async () =>
+          new Response(new ReadableStream<Uint8Array>({ start() {} }), {
+            headers: { "content-type": "text/event-stream" }
+          })
+      }
+    );
+
+    expect(response.status).toBe(200);
+    expect(
+      (await response.text())
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line))
+    ).toEqual([
+      { type: "status", text: "Burble Native accepted the turn." },
+      {
+        type: "error",
+        message:
+          "Runtime run failed: OpenAI Responses API timed out after 5ms"
       }
     ]);
   });
@@ -176,4 +299,8 @@ function nativeUsage() {
     totalTokens: 0,
     usageSource: "burble-native"
   };
+}
+
+function sseEvent(payload: unknown): string {
+  return `data: ${JSON.stringify(payload)}\n\n`;
 }
