@@ -1,0 +1,12 @@
+{
+  "name": "@burble/burble-native-runtime",
+  "version": "0.1.0",
+  "license": "MIT",
+  "type": "module",
+  "dependencies": {
+    "@burble/runtime-sdk": "workspace:*"
+  },
+  "scripts": {
+    "start": "bun src/index.ts"
+  }
+}

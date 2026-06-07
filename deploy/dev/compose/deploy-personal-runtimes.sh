@@ -29,6 +29,7 @@ runtime image family whose running image ID differs from the current image ID.
 Select a runtime with AGENT_RUNTIME_ENGINE. Supported image build defaults:
   AGENT_RUNTIME_ENGINE=openclaw  -> burble-openclaw-nemoclaw-openclaw-cli:dev
   AGENT_RUNTIME_ENGINE=hermes    -> burble-nemo-hermes:dev
+  AGENT_RUNTIME_ENGINE=burble-native -> burble-native-runtime:dev
 
 If AGENT_RUNTIME_IMAGE is set to a non-default custom image, only the selected
 runtime engine image is rebuilt and recycled.
@@ -47,7 +48,7 @@ image_id() {
 
 is_known_default_runtime_image() {
   case "$1" in
-    burble-openclaw-nemoclaw:dev|burble-openclaw-nemoclaw-openclaw-cli:dev|burble-nemo-hermes:dev)
+    burble-openclaw-nemoclaw:dev|burble-openclaw-nemoclaw-openclaw-cli:dev|burble-nemo-hermes:dev|burble-native-runtime:dev)
       return 0
       ;;
     *)
@@ -76,6 +77,9 @@ runtime_image_family() {
   case "$1" in
     hermes|nemo-hermes)
       echo "hermes"
+      ;;
+    burble-native)
+      echo "burble-native"
       ;;
     ""|openclaw|openclaw-gateway|deterministic|burble-direct|direct-provider)
       echo "openclaw"
@@ -145,6 +149,12 @@ case "${runtime_engine}" in
     selected_runtime_image_service="nemo-hermes-image"
     selected_runtime_image_label="$(runtime_image_family "${AGENT_RUNTIME_ENGINE}")"
     ;;
+  burble-native)
+    export AGENT_RUNTIME_ENGINE=burble-native
+    select_runtime_image "burble-native-runtime:dev"
+    selected_runtime_image_service="burble-native-image"
+    selected_runtime_image_label="$(runtime_image_family "${AGENT_RUNTIME_ENGINE}")"
+    ;;
   ""|openclaw|openclaw-gateway|deterministic|burble-direct|direct-provider)
     select_runtime_image "burble-openclaw-nemoclaw-openclaw-cli:dev"
     selected_runtime_image_service="openclaw-nemoclaw-image"
@@ -152,7 +162,7 @@ case "${runtime_engine}" in
     ;;
   *)
     echo "Unsupported AGENT_RUNTIME_ENGINE: ${runtime_engine}" >&2
-    echo "Expected openclaw, hermes, deterministic, or burble-direct." >&2
+    echo "Expected openclaw, hermes, burble-native, deterministic, or burble-direct." >&2
     exit 2
     ;;
 esac
@@ -162,6 +172,7 @@ if [[ "${custom_runtime_image}" == "true" ]]; then
 else
   add_runtime_image_build "openclaw" "burble-openclaw-nemoclaw-openclaw-cli:dev" "openclaw-nemoclaw-image"
   add_runtime_image_build "hermes" "burble-nemo-hermes:dev" "nemo-hermes-image"
+  add_runtime_image_build "burble-native" "burble-native-runtime:dev" "burble-native-image"
 fi
 
 for i in "${!runtime_build_images[@]}"; do

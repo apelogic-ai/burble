@@ -314,6 +314,7 @@ describe("dev deploy config", () => {
     );
     expect(personalRuntimesCompose).toContain("openclaw-nemoclaw-image:");
     expect(personalRuntimesCompose).toContain("nemo-hermes-image:");
+    expect(personalRuntimesCompose).toContain("burble-native-image:");
     expect(personalRuntimesCompose).toContain("profiles:");
     expect(personalRuntimesCompose).toContain(
       "dockerfile: runtimes/openclaw-nemoclaw/Dockerfile.openclaw-cli"
@@ -338,6 +339,10 @@ describe("dev deploy config", () => {
       ].join("\n")
     );
     expect(ciWorkflow).toContain('BURBLE_E2E_CONFORMANCE: "1"');
+    expect(personalRuntimesCompose).toContain("burble-native-runtime:dev");
+    expect(personalRuntimesCompose).toContain(
+      "dockerfile: runtimes/burble-native/Dockerfile"
+    );
     expect(personalRuntimesCompose).toContain(
       "AGENT_RUNTIME_DATA_ROOT:-/opt/burble/runtimes"
     );
@@ -417,6 +422,7 @@ describe("dev deploy config", () => {
     expect(personalRuntimeDeployScript).toContain("runtime_build_services=()");
     expect(personalRuntimeDeployScript).toContain("selected_runtime_image_service=\"openclaw-nemoclaw-image\"");
     expect(personalRuntimeDeployScript).toContain("selected_runtime_image_service=\"nemo-hermes-image\"");
+    expect(personalRuntimeDeployScript).toContain("selected_runtime_image_service=\"burble-native-image\"");
     expect(personalRuntimeDeployScript).toContain("custom_runtime_image=true");
     expect(personalRuntimeDeployScript).toContain(
       "add_runtime_image_build \"openclaw\" \"burble-openclaw-nemoclaw-openclaw-cli:dev\" \"openclaw-nemoclaw-image\""
@@ -425,11 +431,16 @@ describe("dev deploy config", () => {
       "add_runtime_image_build \"hermes\" \"burble-nemo-hermes:dev\" \"nemo-hermes-image\""
     );
     expect(personalRuntimeDeployScript).toContain(
+      "add_runtime_image_build \"burble-native\" \"burble-native-runtime:dev\" \"burble-native-image\""
+    );
+    expect(personalRuntimeDeployScript).toContain(
       "AGENT_RUNTIME_IMAGE=\"${runtime_build_images[$i]}\" docker compose"
     );
     expect(personalRuntimeDeployScript).toContain("--profile runtime-image build \"${runtime_build_services[$i]}\"");
     expect(personalRuntimeDeployScript).toContain("AGENT_RUNTIME_ENGINE=hermes");
     expect(personalRuntimeDeployScript).toContain("burble-nemo-hermes:dev");
+    expect(personalRuntimeDeployScript).toContain("AGENT_RUNTIME_ENGINE=burble-native");
+    expect(personalRuntimeDeployScript).toContain("burble-native-runtime:dev");
     expect(personalRuntimeDeployScript).toContain("docker-compose.personal-runtimes.yml");
     expect(personalRuntimeDeployScript).toContain("--agentgateway");
     expect(personalRuntimeDeployScript).toContain("docker-compose.agentgateway.yml");
@@ -469,6 +480,24 @@ describe("dev deploy config", () => {
     expect(personalRuntimeDeployScript).toContain("docker stop");
     expect(personalRuntimeDeployScript).toContain("docker rm");
     expect(personalRuntimeDeployScript).toContain("--keep-runtimes");
+  });
+
+  test("runs selectable runtime images in CI readiness and boots Burble Native", () => {
+    expect(ciWorkflow).toContain("Build OpenClaw/NemoClaw CLI runtime image");
+    expect(ciWorkflow).toContain("Build Hermes runtime image");
+    expect(ciWorkflow).toContain("Build Burble Native runtime image");
+    expect(ciWorkflow).toContain(
+      "docker build \\\n            -t burble-native-runtime:dev \\\n            -f runtimes/burble-native/Dockerfile \\\n            ."
+    );
+    expect(ciWorkflow).toContain(
+      "BURBLE_E2E_RUNTIME_ENGINES: openclaw,hermes"
+    );
+    expect(ciWorkflow).toContain("Run Burble Native runtime boot smoke E2E");
+    expect(ciWorkflow).toContain('BURBLE_E2E_RUNTIME_BOOT_SMOKE: "1"');
+    expect(ciWorkflow).toContain("BURBLE_E2E_RUNTIME_ENGINES: burble-native");
+    expect(ciWorkflow).toContain(
+      "BURBLE_E2E_BURBLE_NATIVE_IMAGE: burble-native-runtime:dev"
+    );
   });
 
   test("provides an optional OpenClaw CLI runtime build override", async () => {

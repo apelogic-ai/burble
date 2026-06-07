@@ -16,6 +16,7 @@ describe("runtime descriptors", () => {
       "openclaw",
       "openclaw-gateway",
       "burble-direct",
+      "burble-native",
       "hermes"
     ]);
   });
@@ -30,6 +31,9 @@ describe("runtime descriptors", () => {
     expect(defaultRuntimeImageForEngine("hermes")).toBe(
       "burble-nemo-hermes:dev"
     );
+    expect(defaultRuntimeImageForEngine("burble-native")).toBe(
+      "burble-native-runtime:dev"
+    );
     expect(
       isKnownDefaultRuntimeImage(
         "openclaw",
@@ -43,6 +47,7 @@ describe("runtime descriptors", () => {
 
   test("exposes runtime config shape and readiness policy", () => {
     expect(runtimeConfigFileName("burble-direct")).toBe("openclaw.json");
+    expect(runtimeConfigFileName("burble-native")).toBe("burble-native.json");
     expect(runtimeConfigFileName("hermes")).toBe("hermes.json");
     expect(runtimeHealthCheckAttempts("openclaw")).toBe(90);
     expect(runtimeHealthCheckAttempts("openclaw-gateway")).toBe(90);
@@ -66,12 +71,24 @@ describe("runtime descriptors", () => {
       usageReporting: "exact",
       multimodalInput: false
     });
+    expect(runtimeDescriptor("burble-native").capabilities).toMatchObject({
+      runtimeType: "burble-native",
+      toolBridgeModes: ["tool_gateway"],
+      usageReporting: "exact",
+      nativeScheduler: false,
+      scheduledProviderCalls: false,
+      multimodalInput: false,
+      memory: false,
+      durableWorkflowState: false,
+      attachments: false
+    });
   });
 
   test("centralizes runtime compatibility families", () => {
     expect(runtimeCompatibilityFamily("openclaw")).toBe("openclaw");
     expect(runtimeCompatibilityFamily("openclaw-gateway")).toBe("openclaw");
     expect(runtimeCompatibilityFamily("burble-direct")).toBe("burble-direct");
+    expect(runtimeCompatibilityFamily("burble-native")).toBe("burble-native");
     expect(runtimeCompatibilityFamily("hermes")).toBe("hermes");
     expect(runtimeCompatibilityFamily("future-engine")).toBe("future-engine");
   });

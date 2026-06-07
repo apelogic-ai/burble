@@ -58,6 +58,16 @@ const hermesContainerProfile: RuntimeContainerProfile = {
   hermesHome: "/data/openclaw/hermes"
 };
 
+const burbleNativeContainerProfile: RuntimeContainerProfile = {
+  dataRootTarget: "/data/burble-native",
+  configFileName: "burble-native.json",
+  stateDir: "/data/burble-native/state",
+  workspaceDir: "/data/burble-native/workspace",
+  openClawCompatEnv: false,
+  openClawConfigPatch: false,
+  modelEnv: "generic"
+};
+
 function openClawCapabilityManifest(
   engine: AgentRuntimeEngine
 ): RuntimeCapabilityManifest {
@@ -102,6 +112,26 @@ const hermesCapabilityManifest: RuntimeCapabilityManifest = {
   jobScopedAuth: true
 };
 
+const burbleNativeCapabilityManifest: RuntimeCapabilityManifest = {
+  runtimeType: "burble-native",
+  version: "known",
+  transports: ["http", "sse", "ndjson", "websocket"],
+  streaming: true,
+  cancellation: false,
+  nativeScheduler: false,
+  scheduledProviderCalls: false,
+  toolCalls: true,
+  toolBridgeModes: ["tool_gateway"],
+  usageReporting: "exact",
+  multimodalInput: false,
+  multimodalOutput: false,
+  memory: false,
+  durableWorkflowState: false,
+  attachments: false,
+  conversationSend: true,
+  jobScopedAuth: true
+};
+
 const runtimeDescriptors = {
   deterministic: {
     engine: "deterministic",
@@ -134,6 +164,14 @@ const runtimeDescriptors = {
     healthCheckAttempts: 30,
     capabilities: openClawCapabilityManifest("burble-direct"),
     container: openClawContainerProfile
+  },
+  "burble-native": {
+    engine: "burble-native",
+    family: "burble-native",
+    defaultImages: ["burble-native-runtime:dev"],
+    healthCheckAttempts: 30,
+    capabilities: burbleNativeCapabilityManifest,
+    container: burbleNativeContainerProfile
   },
   hermes: {
     engine: "hermes",

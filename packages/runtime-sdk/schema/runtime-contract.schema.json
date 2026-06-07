@@ -50,6 +50,7 @@
                 "openclaw",
                 "openclaw-gateway",
                 "burble-direct",
+                "burble-native",
                 "hermes"
               ]
             },
@@ -252,6 +253,7 @@
                     "openclaw",
                     "openclaw-gateway",
                     "burble-direct",
+                    "burble-native",
                     "hermes"
                   ]
                 },
@@ -850,6 +852,7 @@
             "openclaw",
             "openclaw-gateway",
             "burble-direct",
+            "burble-native",
             "hermes"
           ]
         },
