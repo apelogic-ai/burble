@@ -21,6 +21,13 @@ type RuntimeServerContext = {
 
 type RuntimeRequestOptions = RuntimeServerContext;
 type RuntimeFetch = (url: string, init?: RequestInit) => Promise<Response>;
+type StreamReadResult = Awaited<
+  ReturnType<ReadableStreamDefaultReader<Uint8Array>["read"]>
+>;
+
+const DEFAULT_PROVIDER_TIMEOUT_MS = 120_000;
+const MIN_PROVIDER_TIMEOUT_MS = 1;
+const MAX_PROVIDER_TIMEOUT_MS = 10 * 60_000;
 
 const runtimeContractServer = createRuntimeContractServer<
   RuntimeServerContext,
@@ -177,45 +184,70 @@ async function* streamOpenAiTurn(
     throw new Error("OPENAI_API_KEY is required for Burble Native model calls");
   }
   const requestFetch = context.fetch ?? fetch;
-  const response = await requestFetch("https://api.openai.com/v1/responses", {
-    method: "POST",
-    headers: {
-      authorization: `Bearer ${apiKey}`,
-      "content-type": "application/json"
-    },
-    body: JSON.stringify({
-      model,
-      input: buildOpenAiInput(request),
-      stream: true
-    })
-  });
-  if (!response.ok || !response.body) {
-    throw new Error(`OpenAI Responses API returned HTTP ${response.status}`);
-  }
+  const timeoutMs = readProviderTimeoutMs(context.env);
+  const responsesUrl = readOpenAiResponsesUrl(context.env);
+  const abortController = new AbortController();
+  const timeout = setTimeout(() => {
+    abortController.abort(new ProviderTimeoutError(timeoutMs));
+  }, timeoutMs);
 
-  let completedText = "";
-  let completedUsage: RunUsage | undefined;
-  for await (const payload of readSseJsonPayloads(response.body)) {
-    const type = readString(payload, "type");
-    if (type === "response.output_text.delta") {
-      const delta = readString(payload, "delta");
-      if (delta) {
-        yield { type: "message_delta", text: delta };
+  try {
+    const response = await requestFetch(responsesUrl, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${apiKey}`,
+        "content-type": "application/json"
+      },
+      signal: abortController.signal,
+      body: JSON.stringify({
+        model,
+        input: buildOpenAiInput(request),
+        stream: true
+      })
+    });
+    if (!response.ok || !response.body) {
+      throw new Error(`OpenAI Responses API returned HTTP ${response.status}`);
+    }
+
+    let completedText = "";
+    let completedUsage: RunUsage | undefined;
+    for await (const payload of readSseJsonPayloads(
+      response.body,
+      abortController.signal
+    )) {
+      throwIfProviderTimedOut(abortController.signal);
+      const type = readString(payload, "type");
+      if (type === "response.output_text.delta") {
+        const delta = readString(payload, "delta");
+        if (delta) {
+          yield { type: "message_delta", text: delta };
+        }
+        continue;
       }
-      continue;
+      if (type === "response.completed") {
+        const responsePayload = readRecord(payload, "response");
+        completedText = extractOpenAiText(responsePayload) ?? completedText;
+        completedUsage = normalizeOpenAiUsage(readRecord(responsePayload, "usage"));
+      }
     }
-    if (type === "response.completed") {
-      const responsePayload = readRecord(payload, "response");
-      completedText = extractOpenAiText(responsePayload) ?? completedText;
-      completedUsage = normalizeOpenAiUsage(readRecord(responsePayload, "usage"));
+
+    throwIfProviderTimedOut(abortController.signal);
+    yield {
+      type: "completed",
+      text: completedText,
+      usage: completedUsage
+    };
+  } catch (error) {
+    throwIfProviderTimedOut(abortController.signal, error);
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+    try {
+      abortController.abort();
+    } catch {
+      // Ignore abort failures after the provider stream has already completed.
     }
   }
-
-  yield {
-    type: "completed",
-    text: completedText,
-    usage: completedUsage
-  };
 }
 
 function readOpenAiModel(env: Record<string, string | undefined> | undefined): string {
@@ -230,6 +262,51 @@ function readOpenAiModel(env: Record<string, string | undefined> | undefined): s
     throw new Error("Burble Native Increment 1 supports AI_MODEL=openai:<model>");
   }
   return model;
+}
+
+function readOpenAiResponsesUrl(
+  env: Record<string, string | undefined> | undefined
+): string {
+  const baseUrl = readEnv(env, "OPENAI_BASE_URL") ?? "https://api.openai.com/v1";
+  try {
+    return new URL("responses", withTrailingSlash(baseUrl)).toString();
+  } catch {
+    throw new Error("OPENAI_BASE_URL must be a valid URL");
+  }
+}
+
+function withTrailingSlash(value: string): string {
+  return value.endsWith("/") ? value : `${value}/`;
+}
+
+function readProviderTimeoutMs(
+  env: Record<string, string | undefined> | undefined
+): number {
+  const raw = readEnv(env, "BURBLE_NATIVE_PROVIDER_TIMEOUT_MS");
+  if (!raw) {
+    return DEFAULT_PROVIDER_TIMEOUT_MS;
+  }
+  const parsed = Number.parseInt(raw, 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return DEFAULT_PROVIDER_TIMEOUT_MS;
+  }
+  return Math.min(Math.max(parsed, MIN_PROVIDER_TIMEOUT_MS), MAX_PROVIDER_TIMEOUT_MS);
+}
+
+class ProviderTimeoutError extends Error {
+  constructor(readonly timeoutMs: number) {
+    super(`OpenAI Responses API timed out after ${timeoutMs}ms`);
+  }
+}
+
+function throwIfProviderTimedOut(signal: AbortSignal, error?: unknown): void {
+  const reason = signal.reason;
+  if (signal.aborted && reason instanceof ProviderTimeoutError) {
+    throw reason;
+  }
+  if (error instanceof ProviderTimeoutError) {
+    throw error;
+  }
 }
 
 function buildOpenAiInput(request: RunRequest): string {
@@ -248,13 +325,14 @@ function buildOpenAiInput(request: RunRequest): string {
 }
 
 async function* readSseJsonPayloads(
-  body: ReadableStream<Uint8Array>
+  body: ReadableStream<Uint8Array>,
+  signal: AbortSignal
 ): AsyncIterable<Record<string, unknown>> {
   const reader = body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
   while (true) {
-    const { value, done } = await reader.read();
+    const { value, done } = await readStreamChunkWithAbort(reader, signal);
     if (done) {
       break;
     }
@@ -273,6 +351,38 @@ async function* readSseJsonPayloads(
   if (payload) {
     yield payload;
   }
+}
+
+async function readStreamChunkWithAbort(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+  signal: AbortSignal
+): Promise<StreamReadResult> {
+  throwIfProviderTimedOut(signal);
+  if (!signal.aborted) {
+    return new Promise((resolve, reject) => {
+      const abort = () => {
+        signal.removeEventListener("abort", abort);
+        try {
+          reader.cancel(signal.reason).catch(() => {});
+        } catch {
+          // Ignore reader cancellation failures; the timeout error is enough.
+        }
+        reject(signal.reason ?? new Error("Provider stream aborted"));
+      };
+      signal.addEventListener("abort", abort, { once: true });
+      reader.read().then(
+        (result) => {
+          signal.removeEventListener("abort", abort);
+          resolve(result);
+        },
+        (error) => {
+          signal.removeEventListener("abort", abort);
+          reject(error);
+        }
+      );
+    });
+  }
+  throw signal.reason ?? new Error("Provider stream aborted");
 }
 
 function parseSseJsonPayload(chunk: string): Record<string, unknown> | null {

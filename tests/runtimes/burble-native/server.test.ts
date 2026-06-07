@@ -67,7 +67,8 @@ describe("Burble Native runtime server", () => {
       {
         env: {
           AI_MODEL: "openai:gpt-5.4",
-          OPENAI_API_KEY: "test-openai-key"
+          OPENAI_API_KEY: "test-openai-key",
+          OPENAI_BASE_URL: "https://openai-compatible.example/v1"
         },
         fetch: async (url: string, init?: RequestInit) => {
           requests.push({ url, init });
@@ -133,7 +134,9 @@ describe("Burble Native runtime server", () => {
         }
       }
     ]);
-    expect(requests[0].url).toBe("https://api.openai.com/v1/responses");
+    expect(requests[0].url).toBe(
+      "https://openai-compatible.example/v1/responses"
+    );
     expect(requests[0].init?.headers).toMatchObject({
       authorization: "Bearer test-openai-key",
       "content-type": "application/json"
@@ -143,6 +146,86 @@ describe("Burble Native runtime server", () => {
       stream: true,
       input: expect.stringContaining("describe Burble")
     });
+  });
+
+  test("bounds hung OpenAI streams with a provider timeout", async () => {
+    const response = await handleRuntimeRequest(
+      new Request("http://runtime/runs", {
+        method: "POST",
+        headers: {
+          accept: "application/x-ndjson",
+          "content-type": "application/json"
+        },
+        body: JSON.stringify(nativeRunRequest("hello"))
+      }),
+      {
+        env: {
+          AI_MODEL: "openai:gpt-5.4",
+          OPENAI_API_KEY: "test-openai-key",
+          BURBLE_NATIVE_PROVIDER_TIMEOUT_MS: "5"
+        },
+        fetch: async (_url: string, init?: RequestInit) =>
+          new Promise<Response>((_resolve, reject) => {
+            init?.signal?.addEventListener("abort", () => {
+              reject(init.signal?.reason ?? new Error("aborted"));
+            });
+          })
+      }
+    );
+
+    expect(response.status).toBe(200);
+    expect(
+      (await response.text())
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line))
+    ).toEqual([
+      { type: "status", text: "Burble Native accepted the turn." },
+      {
+        type: "error",
+        message:
+          "Runtime run failed: OpenAI Responses API timed out after 5ms"
+      }
+    ]);
+  });
+
+  test("bounds stalled OpenAI SSE bodies with the same provider timeout", async () => {
+    const response = await handleRuntimeRequest(
+      new Request("http://runtime/runs", {
+        method: "POST",
+        headers: {
+          accept: "application/x-ndjson",
+          "content-type": "application/json"
+        },
+        body: JSON.stringify(nativeRunRequest("hello"))
+      }),
+      {
+        env: {
+          AI_MODEL: "openai:gpt-5.4",
+          OPENAI_API_KEY: "test-openai-key",
+          BURBLE_NATIVE_PROVIDER_TIMEOUT_MS: "5"
+        },
+        fetch: async () =>
+          new Response(new ReadableStream<Uint8Array>({ start() {} }), {
+            headers: { "content-type": "text/event-stream" }
+          })
+      }
+    );
+
+    expect(response.status).toBe(200);
+    expect(
+      (await response.text())
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line))
+    ).toEqual([
+      { type: "status", text: "Burble Native accepted the turn." },
+      {
+        type: "error",
+        message:
+          "Runtime run failed: OpenAI Responses API timed out after 5ms"
+      }
+    ]);
   });
 
   test("executes tools through the Burble tool gateway with runtime auth", async () => {
