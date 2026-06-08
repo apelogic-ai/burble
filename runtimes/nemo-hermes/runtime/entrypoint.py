@@ -576,12 +576,20 @@ class RunWaiter:
         self.future: asyncio.Future[dict[str, Any]] = loop.create_future()
         self.final_response: dict[str, Any] | None = None
         self.completed = False
+        self.events: list[dict[str, Any]] = []
         self.queues: list[asyncio.Queue[dict[str, Any] | None]] = []
 
     async def emit(self, event: dict[str, Any]) -> None:
         validate_runtime_run_event(event)
+        self.events.append(event)
         for queue in list(self.queues):
             await queue.put(event)
+
+    async def replay_to(self, queue: asyncio.Queue[dict[str, Any] | None]) -> None:
+        for event in list(self.events):
+            await queue.put(event)
+        if self.completed:
+            await queue.put(None)
 
     async def finish(self, response: dict[str, Any]) -> None:
         self.final_response = response
@@ -735,14 +743,12 @@ class BurbleHermesRuntime:
         await ws.prepare(request)
         queue: asyncio.Queue[dict[str, Any] | None] = asyncio.Queue()
         waiter.queues.append(queue)
+        await waiter.replay_to(queue)
         print(
             f"[INFO] {timestamp()} Nemo Hermes run events attached runId={run_id}",
             flush=True,
         )
         try:
-            if waiter.final_response:
-                await ws.send_json({"type": "final", "response": waiter.final_response})
-                return ws
             while True:
                 event = await queue.get()
                 if event is None:

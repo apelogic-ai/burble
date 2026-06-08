@@ -508,6 +508,54 @@ asyncio.run(main())
     });
   });
 
+  test("replays completed contract probe events to late subscribers", () => {
+    const result = runHermesEntrypointProbe(`${importEntrypoint}
+import asyncio
+import os
+
+os.environ["BURBLE_RUNTIME_CONTRACT_PROBE"] = "1"
+
+async def main():
+    waiter = mod.RunWaiter()
+    runtime = mod.BurbleHermesRuntime()
+    await runtime._execute_run("run-contract-probe", waiter, {
+        "text": "runtime contract tool capability probe",
+    })
+
+    queue = asyncio.Queue()
+    await waiter.replay_to(queue)
+
+    events = []
+    while True:
+        event = await queue.get()
+        if event is None:
+            break
+        events.append(event)
+    print(json.dumps(events))
+
+asyncio.run(main())
+`);
+
+    const events = result as unknown[];
+    expect(events).toContainEqual({
+      type: "tool_call",
+      toolName: "runtime.conformance.echo",
+      callId: "contract-tool-probe"
+    });
+    expect(events).toContainEqual({
+      type: "tool_result",
+      toolName: "runtime.conformance.echo",
+      callId: "contract-tool-probe",
+      classification: "user_private"
+    });
+    expect(events.at(-1)).toMatchObject({
+      type: "final",
+      response: {
+        text: "Runtime contract tool capability response."
+      }
+    });
+  });
+
   test("adds HubSpot provider tool hints to Hermes turns", () => {
     const result = runHermesEntrypointProbe(`${importEntrypoint}
 payload = {
