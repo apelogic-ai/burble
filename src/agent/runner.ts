@@ -1188,6 +1188,79 @@ async function runAiSdkAgent(
                   query,
                   ...(limit ? { limit } : {})
                 }
+            })
+          );
+        })
+      });
+      tools.google_analytics_list_properties = tool({
+        description:
+          "List Google Analytics accounts/properties visible to the authenticated Slack user's connected Google account.",
+        inputSchema: z.object({
+          limit: z.number().int().positive().max(50).optional()
+        }),
+        execute: async ({ limit }) =>
+          executeTool("google_analytics_list_properties", async () => {
+            const connection = input.connections.google;
+            if (!connection) {
+              return missingGoogleConnection();
+            }
+
+            return record(
+              await deps.googleTools!.listAnalyticsProperties.execute({
+                connection,
+                input: {
+                  ...(limit ? { limit } : {})
+                }
+              })
+            );
+          })
+      });
+      tools.google_analytics_get_metadata = tool({
+        description:
+          "List available Google Analytics dimensions and metrics for a GA4 property.",
+        inputSchema: z.object({
+          propertyId: z.string().min(1),
+          dimensionQuery: z.string().optional(),
+          metricQuery: z.string().optional(),
+          limit: z.number().int().positive().max(100).optional()
+        }),
+        execute: async (toolInput) =>
+          executeTool("google_analytics_get_metadata", async () => {
+            const connection = input.connections.google;
+            if (!connection) {
+              return missingGoogleConnection();
+            }
+
+            return record(
+              await deps.googleTools!.getAnalyticsMetadata.execute({
+                connection,
+                input: toolInput
+              })
+            );
+          })
+      });
+      tools.google_analytics_run_report = tool({
+        description:
+          "Run a read-only Google Analytics GA4 report for a property using selected dimensions and metrics.",
+        inputSchema: z.object({
+          propertyId: z.string().min(1),
+          startDate: z.string().min(1),
+          endDate: z.string().min(1),
+          metrics: z.array(z.string().min(1)).min(1).max(10),
+          dimensions: z.array(z.string().min(1)).max(10).optional(),
+          limit: z.number().int().positive().max(100).optional()
+        }),
+        execute: async (toolInput) =>
+          executeTool("google_analytics_run_report", async () => {
+            const connection = input.connections.google;
+            if (!connection) {
+              return missingGoogleConnection();
+            }
+
+            return record(
+              await deps.googleTools!.runAnalyticsReport.execute({
+                connection,
+                input: toolInput
               })
             );
           })

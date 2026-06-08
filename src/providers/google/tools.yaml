@@ -278,6 +278,83 @@ tools:
         max: 10
         optional: true
 
+  - name: google_analytics_list_properties
+    alias: google.analyticsListProperties
+    implementation: listAnalyticsProperties
+    title: Google Analytics property list
+    description: List Google Analytics accounts and GA4 properties visible to this Slack user's connected Google account.
+    input:
+      limit:
+        type: number
+        int: true
+        positive: true
+        max: 50
+        optional: true
+
+  - name: google_analytics_get_metadata
+    alias: google.analyticsGetMetadata
+    implementation: getAnalyticsMetadata
+    title: Google Analytics metadata
+    description: List available Google Analytics dimensions and metrics for a GA4 property, optionally filtered by search terms.
+    input:
+      propertyId:
+        type: string
+        min: 1
+        description: GA4 property ID, either numeric or properties/{id}.
+      dimensionQuery:
+        type: string
+        optional: true
+        description: Optional case-insensitive filter for dimensions.
+      metricQuery:
+        type: string
+        optional: true
+        description: Optional case-insensitive filter for metrics.
+      limit:
+        type: number
+        int: true
+        positive: true
+        max: 100
+        optional: true
+
+  - name: google_analytics_run_report
+    alias: google.analyticsRunReport
+    implementation: runAnalyticsReport
+    title: Google Analytics run report
+    description: Run a read-only GA4 report for a Google Analytics property using selected dimensions, metrics, and date range.
+    input:
+      propertyId:
+        type: string
+        min: 1
+        description: GA4 property ID, either numeric or properties/{id}.
+      startDate:
+        type: string
+        min: 1
+        description: Report start date, e.g. 2026-06-01 or 30daysAgo.
+      endDate:
+        type: string
+        min: 1
+        description: Report end date, e.g. today.
+      metrics:
+        type: array
+        items: string
+        itemMin: 1
+        min: 1
+        max: 10
+        description: GA4 metric API names, such as activeUsers or sessions.
+      dimensions:
+        type: array
+        items: string
+        itemMin: 1
+        max: 10
+        optional: true
+        description: Optional GA4 dimension API names, such as country or date.
+      limit:
+        type: number
+        int: true
+        positive: true
+        max: 100
+        optional: true
+
   - name: gmail_create_draft
     alias: gmail.createDraft
     implementation: createMailDraft

@@ -177,6 +177,38 @@ function createGoogleMcpHandlers(
         }
       }),
 
+    listAnalyticsProperties: (connection, args) =>
+      googleTools.listAnalyticsProperties.execute({
+        connection,
+        input: {
+          ...optionalTruthyNumberField(args, "limit")
+        }
+      }),
+
+    getAnalyticsMetadata: (connection, args) =>
+      googleTools.getAnalyticsMetadata.execute({
+        connection,
+        input: {
+          propertyId: stringArg(args, "propertyId"),
+          ...optionalTruthyStringField(args, "dimensionQuery"),
+          ...optionalTruthyStringField(args, "metricQuery"),
+          ...optionalTruthyNumberField(args, "limit")
+        }
+      }),
+
+    runAnalyticsReport: (connection, args) =>
+      googleTools.runAnalyticsReport.execute({
+        connection,
+        input: {
+          propertyId: stringArg(args, "propertyId"),
+          startDate: stringArg(args, "startDate"),
+          endDate: stringArg(args, "endDate"),
+          metrics: stringArrayArg(args, "metrics"),
+          ...optionalStringArrayField(args, "dimensions"),
+          ...optionalTruthyNumberField(args, "limit")
+        }
+      }),
+
     createMailDraft: (connection, args) =>
       googleTools.createMailDraft.execute({
         connection,

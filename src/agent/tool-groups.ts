@@ -38,7 +38,9 @@ const groupKeywords: Record<Exclude<RuntimeToolGroup, "attachments" | "conversat
     "doc",
     "gmail",
     "email",
-    "calendar"
+    "calendar",
+    "analytics",
+    "ga4"
   ],
   hubspot: [
     "hubspot",
@@ -73,7 +75,7 @@ const contextAnchorKeywords: Partial<
   Record<Exclude<RuntimeToolGroup, "attachments" | "conversation">, string[]>
 > = {
   github: ["github"],
-  google: ["google", "drive", "gmail", "calendar"],
+  google: ["google", "drive", "gmail", "calendar", "analytics", "ga4"],
   hubspot: ["hubspot", "crm"],
   jira: ["jira", "atlassian"],
   slack: ["slack"]
@@ -103,7 +105,17 @@ const followUpKeywords: Partial<
     "emails",
     "mail",
     "draft",
-    "drafts"
+    "drafts",
+    "analytics",
+    "ga4",
+    "property",
+    "properties",
+    "metric",
+    "metrics",
+    "dimension",
+    "dimensions",
+    "report",
+    "reports"
   ],
   hubspot: [
     "client",

@@ -27,8 +27,11 @@ import {
 import {
   buildGoogleOAuthUrl,
   createGoogleDriveTextFile,
+  getGoogleAnalyticsMetadata,
   getGoogleUser,
+  listGoogleAnalyticsProperties,
   refreshGoogleAccessToken,
+  runGoogleAnalyticsReport,
   searchGoogleCalendarEvents,
   searchGoogleDriveFiles,
   searchGoogleMailMessages
@@ -276,6 +279,9 @@ export function createSlackRuntime(
     createGoogleDriveTextFile,
     searchGoogleCalendarEvents,
     searchGoogleMailMessages,
+    listGoogleAnalyticsProperties,
+    getGoogleAnalyticsMetadata,
+    runGoogleAnalyticsReport,
     refreshGoogleAccessToken: (refreshToken) =>
       refreshGoogleAccessToken(config, refreshToken),
     saveGoogleConnection: (connection) => store.upsertProviderConnection(connection)

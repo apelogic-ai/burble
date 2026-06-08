@@ -4,8 +4,11 @@ import {
   buildGoogleOAuthUrl,
   exchangeGoogleCode,
   getGoogleUser,
+  getGoogleAnalyticsMetadata,
+  listGoogleAnalyticsProperties,
   refreshGoogleAccessToken,
   createGoogleDriveTextFile,
+  runGoogleAnalyticsReport,
   searchGoogleDriveFiles
 } from "../src/providers/google/client";
 
@@ -81,6 +84,9 @@ describe("buildGoogleOAuthUrl", () => {
     );
     expect(url.searchParams.get("scope")).toContain(
       "https://www.googleapis.com/auth/gmail.readonly"
+    );
+    expect(url.searchParams.get("scope")).toContain(
+      "https://www.googleapis.com/auth/analytics.readonly"
     );
   });
 
@@ -219,6 +225,153 @@ describe("Google OAuth and API helpers", () => {
       expect(url.searchParams.get("q")).toBe(
         "trashed = false and name contains 'roadmap'"
       );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  test("lists Google Analytics properties through the Admin API", async () => {
+    const originalFetch = globalThis.fetch;
+    let requestedUrl = "";
+    globalThis.fetch = (async (input, init) => {
+      requestedUrl = String(input);
+      expect(new Headers(init?.headers).get("authorization")).toBe(
+        "Bearer google-token"
+      );
+      return Response.json({
+        accountSummaries: [
+          {
+            account: "accounts/123",
+            displayName: "ApeLogic",
+            propertySummaries: [
+              {
+                property: "properties/456",
+                displayName: "Website",
+                parent: "accounts/123",
+                currentPropertyType: "PROPERTY_TYPE_ORDINARY"
+              }
+            ]
+          }
+        ]
+      });
+    }) as typeof fetch;
+
+    try {
+      const properties = await listGoogleAnalyticsProperties("google-token", {
+        limit: 5
+      });
+      expect(properties).toEqual([
+        {
+          account: "accounts/123",
+          accountDisplayName: "ApeLogic",
+          property: "properties/456",
+          propertyId: "456",
+          displayName: "Website",
+          parent: "accounts/123",
+          propertyType: "PROPERTY_TYPE_ORDINARY"
+        }
+      ]);
+      const url = new URL(requestedUrl);
+      expect(url.origin + url.pathname).toBe(
+        "https://analyticsadmin.googleapis.com/v1beta/accountSummaries"
+      );
+      expect(url.searchParams.get("pageSize")).toBe("5");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  test("reads and filters Google Analytics metadata", async () => {
+    const originalFetch = globalThis.fetch;
+    let requestedUrl = "";
+    globalThis.fetch = (async (input) => {
+      requestedUrl = String(input);
+      return Response.json({
+        dimensions: [
+          { apiName: "country", uiName: "Country", category: "Geo" },
+          { apiName: "browser", uiName: "Browser", category: "Platform" }
+        ],
+        metrics: [
+          { apiName: "activeUsers", uiName: "Active users", category: "User" },
+          { apiName: "sessions", uiName: "Sessions", category: "Session" }
+        ]
+      });
+    }) as typeof fetch;
+
+    try {
+      const metadata = await getGoogleAnalyticsMetadata("google-token", {
+        propertyId: "properties/456",
+        dimensionQuery: "geo",
+        metricQuery: "session",
+        limit: 10
+      });
+      expect(metadata).toEqual({
+        dimensions: [{ apiName: "country", uiName: "Country", category: "Geo" }],
+        metrics: [{ apiName: "sessions", uiName: "Sessions", category: "Session" }]
+      });
+      const url = new URL(requestedUrl);
+      expect(url.origin + url.pathname).toBe(
+        "https://analyticsdata.googleapis.com/v1beta/properties/456/metadata"
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  test("runs a Google Analytics report through the Data API", async () => {
+    const originalFetch = globalThis.fetch;
+    let requestedUrl = "";
+    let requestedBody: unknown = null;
+    globalThis.fetch = (async (input, init) => {
+      requestedUrl = String(input);
+      requestedBody = JSON.parse(String(init?.body));
+      expect(init?.method).toBe("POST");
+      expect(new Headers(init?.headers).get("authorization")).toBe(
+        "Bearer google-token"
+      );
+      return Response.json({
+        dimensionHeaders: [{ name: "country" }],
+        metricHeaders: [{ name: "activeUsers" }],
+        rows: [
+          {
+            dimensionValues: [{ value: "US" }],
+            metricValues: [{ value: "42" }]
+          }
+        ],
+        rowCount: 1
+      });
+    }) as typeof fetch;
+
+    try {
+      const report = await runGoogleAnalyticsReport("google-token", {
+        propertyId: "456",
+        startDate: "7daysAgo",
+        endDate: "today",
+        dimensions: ["country"],
+        metrics: ["activeUsers"],
+        limit: 3
+      });
+      expect(report).toEqual({
+        propertyId: "456",
+        dimensionHeaders: ["country"],
+        metricHeaders: ["activeUsers"],
+        rows: [
+          {
+            dimensions: { country: "US" },
+            metrics: { activeUsers: "42" }
+          }
+        ],
+        rowCount: 1
+      });
+      expect(requestedUrl).toBe(
+        "https://analyticsdata.googleapis.com/v1beta/properties/456:runReport"
+      );
+      expect(requestedBody).toEqual({
+        dateRanges: [{ startDate: "7daysAgo", endDate: "today" }],
+        metrics: [{ name: "activeUsers" }],
+        dimensions: [{ name: "country" }],
+        limit: "3"
+      });
     } finally {
       globalThis.fetch = originalFetch;
     }

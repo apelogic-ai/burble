@@ -30,10 +30,13 @@ import {
   createGoogleCalendarEvent,
   createGoogleDriveFolder,
   createGoogleDriveTextFile,
+  getGoogleAnalyticsMetadata,
   getGoogleDriveFile,
   getGoogleUser,
+  listGoogleAnalyticsProperties,
   moveGoogleDriveFile,
   refreshGoogleAccessToken,
+  runGoogleAnalyticsReport,
   searchGoogleCalendarEvents,
   searchGoogleDriveFiles,
   searchGoogleMailMessages,
@@ -192,6 +195,9 @@ const defaultDeps = {
   updateGoogleCalendarEvent,
   searchGoogleMailMessages,
   createGmailDraft,
+  listGoogleAnalyticsProperties,
+  getGoogleAnalyticsMetadata,
+  runGoogleAnalyticsReport,
   getHubSpotAccessTokenInfo,
   searchHubSpotContacts,
   searchHubSpotCompanies,
@@ -1068,6 +1074,45 @@ export async function handleToolGatewayRequest(
       );
     }
 
+    case "google.analyticsListProperties": {
+      if (!isGoogleAnalyticsListPropertiesInput(body.input)) {
+        return new Response("Invalid tool input", { status: 400 });
+      }
+
+      return respondWithAudit(
+        await googleTools.listAnalyticsProperties.execute({
+          connection,
+          input: body.input
+        })
+      );
+    }
+
+    case "google.analyticsGetMetadata": {
+      if (!isGoogleAnalyticsMetadataInput(body.input)) {
+        return new Response("Invalid tool input", { status: 400 });
+      }
+
+      return respondWithAudit(
+        await googleTools.getAnalyticsMetadata.execute({
+          connection,
+          input: body.input
+        })
+      );
+    }
+
+    case "google.analyticsRunReport": {
+      if (!isGoogleAnalyticsRunReportInput(body.input)) {
+        return new Response("Invalid tool input", { status: 400 });
+      }
+
+      return respondWithAudit(
+        await googleTools.runAnalyticsReport.execute({
+          connection,
+          input: body.input
+        })
+      );
+    }
+
     case "hubspot.getAuthenticatedUser":
       return respondWithAudit(
         await hubspotTools.getAuthenticatedUser.execute({ connection })
@@ -1378,6 +1423,9 @@ function isKnownTool(toolName: string): boolean {
     toolName === "google.createCalendarEvent" ||
     toolName === "google.updateCalendarEvent" ||
     toolName === "google.searchMailMessages" ||
+    toolName === "google.analyticsListProperties" ||
+    toolName === "google.analyticsGetMetadata" ||
+    toolName === "google.analyticsRunReport" ||
     toolName === "gmail.createDraft" ||
     toolName === "hubspot.getAuthenticatedUser" ||
     toolName === "hubspot.searchContacts" ||
@@ -2358,6 +2406,46 @@ function isSearchGoogleMailMessagesInput(input: unknown): input is {
     typeof input.query === "string" &&
     input.query.trim().length > 0 &&
     optionalLimit(input.limit, 10)
+  );
+}
+
+function isGoogleAnalyticsListPropertiesInput(input: unknown): input is {
+  limit?: number;
+} {
+  return isOptionalObject(input) && optionalLimit(input.limit, 50);
+}
+
+function isGoogleAnalyticsMetadataInput(input: unknown): input is {
+  propertyId: string;
+  dimensionQuery?: string;
+  metricQuery?: string;
+  limit?: number;
+} {
+  return (
+    isOptionalObject(input) &&
+    isNonEmptyString(input.propertyId) &&
+    optionalString(input.dimensionQuery) &&
+    optionalString(input.metricQuery) &&
+    optionalLimit(input.limit, 100)
+  );
+}
+
+function isGoogleAnalyticsRunReportInput(input: unknown): input is {
+  propertyId: string;
+  startDate: string;
+  endDate: string;
+  metrics: string[];
+  dimensions?: string[];
+  limit?: number;
+} {
+  return (
+    isOptionalObject(input) &&
+    isNonEmptyString(input.propertyId) &&
+    isNonEmptyString(input.startDate) &&
+    isNonEmptyString(input.endDate) &&
+    stringArray(input.metrics, 10) &&
+    optionalStringArray(input.dimensions, 10) &&
+    optionalLimit(input.limit, 100)
   );
 }
 

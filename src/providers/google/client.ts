@@ -52,6 +52,48 @@ export type GoogleCreatedDraft = {
   messageId?: string;
 };
 
+export type GoogleAnalyticsPropertySummary = {
+  account: string;
+  accountDisplayName?: string;
+  property: string;
+  propertyId: string;
+  displayName?: string;
+  parent?: string;
+  propertyType?: string;
+};
+
+export type GoogleAnalyticsMetadataField = {
+  apiName: string;
+  uiName?: string;
+  description?: string;
+  category?: string;
+};
+
+export type GoogleAnalyticsMetadata = {
+  dimensions: GoogleAnalyticsMetadataField[];
+  metrics: GoogleAnalyticsMetadataField[];
+};
+
+export type GoogleAnalyticsReportInput = {
+  propertyId: string;
+  startDate: string;
+  endDate: string;
+  metrics: string[];
+  dimensions?: string[];
+  limit?: number;
+};
+
+export type GoogleAnalyticsReport = {
+  propertyId: string;
+  dimensionHeaders: string[];
+  metricHeaders: string[];
+  rows: Array<{
+    dimensions: Record<string, string>;
+    metrics: Record<string, string>;
+  }>;
+  rowCount?: number;
+};
+
 export type GoogleCalendarEventInput = {
   calendarId?: string;
   summary: string;
@@ -92,7 +134,8 @@ const googleScopes = [
   "https://www.googleapis.com/auth/calendar.readonly",
   "https://www.googleapis.com/auth/calendar.events",
   "https://www.googleapis.com/auth/gmail.readonly",
-  "https://www.googleapis.com/auth/gmail.compose"
+  "https://www.googleapis.com/auth/gmail.compose",
+  "https://www.googleapis.com/auth/analytics.readonly"
 ];
 
 export function buildGoogleOAuthUrl(config: Config, state: string): string {
@@ -557,6 +600,168 @@ export async function searchGoogleMailMessages(
   return details;
 }
 
+export async function listGoogleAnalyticsProperties(
+  token: string,
+  input: { limit?: number }
+): Promise<GoogleAnalyticsPropertySummary[]> {
+  const limit = clampLimit(input.limit, 20, 50);
+  const url = new URL("https://analyticsadmin.googleapis.com/v1beta/accountSummaries");
+  url.searchParams.set("pageSize", String(Math.max(limit, 1)));
+  url.searchParams.set(
+    "fields",
+    "accountSummaries(account,displayName,propertySummaries(property,displayName,parent,currentPropertyType))"
+  );
+
+  const response = await fetch(url, { headers: googleHeaders(token) });
+  const body = (await response.json()) as {
+    accountSummaries?: Array<{
+      account?: string;
+      displayName?: string;
+      propertySummaries?: Array<{
+        property?: string;
+        displayName?: string;
+        parent?: string;
+        currentPropertyType?: string;
+      }>;
+    }>;
+    error?: { message?: string };
+  };
+  if (!response.ok) {
+    throw googleError(
+      response,
+      "Google Analytics property lookup failed",
+      body.error?.message
+    );
+  }
+
+  return (body.accountSummaries ?? [])
+    .flatMap((account) =>
+      (account.propertySummaries ?? []).flatMap((property) => {
+        if (!account.account || !property.property) {
+          return [];
+        }
+        return [
+          {
+            account: account.account,
+            ...(account.displayName
+              ? { accountDisplayName: account.displayName }
+              : {}),
+            property: property.property,
+            propertyId: normalizeGoogleAnalyticsPropertyId(property.property),
+            ...(property.displayName ? { displayName: property.displayName } : {}),
+            ...(property.parent ? { parent: property.parent } : {}),
+            ...(property.currentPropertyType
+              ? { propertyType: property.currentPropertyType }
+              : {})
+          }
+        ];
+      })
+    )
+    .slice(0, limit);
+}
+
+export async function getGoogleAnalyticsMetadata(
+  token: string,
+  input: {
+    propertyId: string;
+    dimensionQuery?: string;
+    metricQuery?: string;
+    limit?: number;
+  }
+): Promise<GoogleAnalyticsMetadata> {
+  const propertyName = googleAnalyticsPropertyName(input.propertyId);
+  const url = new URL(
+    `https://analyticsdata.googleapis.com/v1beta/${propertyName}/metadata`
+  );
+  url.searchParams.set(
+    "fields",
+    "dimensions(apiName,uiName,description,category),metrics(apiName,uiName,description,category)"
+  );
+  const response = await fetch(url, { headers: googleHeaders(token) });
+  const body = (await response.json()) as {
+    dimensions?: GoogleAnalyticsMetadataField[];
+    metrics?: GoogleAnalyticsMetadataField[];
+    error?: { message?: string };
+  };
+  if (!response.ok) {
+    throw googleError(
+      response,
+      "Google Analytics metadata lookup failed",
+      body.error?.message
+    );
+  }
+
+  const limit = clampLimit(input.limit, 25, 100);
+  return {
+    dimensions: filterAnalyticsMetadataFields(
+      body.dimensions ?? [],
+      input.dimensionQuery
+    ).slice(0, limit),
+    metrics: filterAnalyticsMetadataFields(body.metrics ?? [], input.metricQuery).slice(
+      0,
+      limit
+    )
+  };
+}
+
+export async function runGoogleAnalyticsReport(
+  token: string,
+  input: GoogleAnalyticsReportInput
+): Promise<GoogleAnalyticsReport> {
+  const propertyName = googleAnalyticsPropertyName(input.propertyId);
+  const response = await fetch(
+    `https://analyticsdata.googleapis.com/v1beta/${propertyName}:runReport`,
+    {
+      method: "POST",
+      headers: {
+        ...googleHeaders(token),
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        dateRanges: [{ startDate: input.startDate, endDate: input.endDate }],
+        metrics: input.metrics.slice(0, 10).map((name) => ({ name })),
+        dimensions: (input.dimensions ?? []).slice(0, 10).map((name) => ({ name })),
+        limit: String(clampLimit(input.limit, 10, 100))
+      })
+    }
+  );
+  const body = (await response.json()) as {
+    dimensionHeaders?: Array<{ name?: string }>;
+    metricHeaders?: Array<{ name?: string }>;
+    rows?: Array<{
+      dimensionValues?: Array<{ value?: string }>;
+      metricValues?: Array<{ value?: string }>;
+    }>;
+    rowCount?: number;
+    error?: { message?: string };
+  };
+  if (!response.ok) {
+    throw googleError(
+      response,
+      "Google Analytics report failed",
+      body.error?.message
+    );
+  }
+
+  const dimensionHeaders = (body.dimensionHeaders ?? [])
+    .map((header) => header.name)
+    .filter((name): name is string => Boolean(name));
+  const metricHeaders = (body.metricHeaders ?? [])
+    .map((header) => header.name)
+    .filter((name): name is string => Boolean(name));
+
+  return {
+    propertyId: normalizeGoogleAnalyticsPropertyId(input.propertyId),
+    dimensionHeaders,
+    metricHeaders,
+    rows: (body.rows ?? []).map((row) => ({
+      dimensions: valuesByHeader(dimensionHeaders, row.dimensionValues),
+      metrics: valuesByHeader(metricHeaders, row.metricValues)
+    })),
+    ...(typeof body.rowCount === "number" ? { rowCount: body.rowCount } : {})
+  };
+}
+
 export async function createGmailDraft(
   token: string,
   input: {
@@ -761,6 +966,43 @@ function googleExportMimeType(mimeType: string): string {
   return mimeType === "application/vnd.google-apps.spreadsheet"
     ? "text/csv"
     : "text/plain";
+}
+
+function googleAnalyticsPropertyName(propertyId: string): string {
+  const trimmed = propertyId.trim();
+  return trimmed.startsWith("properties/")
+    ? trimmed
+    : `properties/${encodeURIComponent(trimmed)}`;
+}
+
+function normalizeGoogleAnalyticsPropertyId(property: string): string {
+  return property.replace(/^properties\//, "");
+}
+
+function filterAnalyticsMetadataFields(
+  fields: GoogleAnalyticsMetadataField[],
+  query: string | undefined
+): GoogleAnalyticsMetadataField[] {
+  const normalizedQuery = query?.trim().toLocaleLowerCase();
+  if (!normalizedQuery) {
+    return fields;
+  }
+  return fields.filter((field) =>
+    [field.apiName, field.uiName, field.description, field.category]
+      .filter(Boolean)
+      .some((value) => value!.toLocaleLowerCase().includes(normalizedQuery))
+  );
+}
+
+function valuesByHeader(
+  headers: string[],
+  values: Array<{ value?: string }> | undefined
+): Record<string, string> {
+  const result: Record<string, string> = {};
+  headers.forEach((header, index) => {
+    result[header] = values?.[index]?.value ?? "";
+  });
+  return result;
 }
 
 async function readGoogleErrorText(response: Response): Promise<string | undefined> {
