@@ -39,6 +39,7 @@ const DEFAULT_PROVIDER_MAX_ATTEMPTS = 3;
 const DEFAULT_PROVIDER_RETRY_BASE_DELAY_MS = 250;
 const MAX_TOOL_LOOP_STEPS = 4;
 const MAX_PROMPT_TOOLS = 24;
+const MAX_MODEL_TOOL_OUTPUT_CHARS = 12_000;
 const BURBLE_PROVIDER_TOOL_NAME = "burble_provider_call";
 
 const runtimeContractServer = createRuntimeContractServer<
@@ -212,7 +213,7 @@ async function* runNativeTurn(
       toolOutputs.push({
         type: "function_call_output",
         call_id: toolCall.callId,
-        output: JSON.stringify(toolResult)
+        output: serializeToolOutputForModel(toolResult)
       });
     }
 
@@ -411,6 +412,22 @@ function sanitizeToolErrorMessage(error: unknown): string {
     .replace(/Bearer\s+[A-Za-z0-9._~+/=-]+/gi, "Bearer [redacted]")
     .replace(/sk-[A-Za-z0-9_-]+/g, "[redacted-openai-key]")
     .trim();
+}
+
+function serializeToolOutputForModel(toolResult: unknown): string {
+  const serialized = JSON.stringify(toolResult);
+  if (serialized.length <= MAX_MODEL_TOOL_OUTPUT_CHARS) {
+    return serialized;
+  }
+
+  return JSON.stringify({
+    classification: readToolResultClassification(toolResult),
+    content: {
+      truncated: true,
+      originalChars: serialized.length,
+      preview: serialized.slice(0, Math.max(0, MAX_MODEL_TOOL_OUTPUT_CHARS - 1000))
+    }
+  });
 }
 
 function readOpenAiModel(env: Record<string, string | undefined> | undefined): string {
