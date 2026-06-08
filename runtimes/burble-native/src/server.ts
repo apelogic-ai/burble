@@ -35,6 +35,8 @@ type OpenAiFunctionToolCall = {
 const DEFAULT_PROVIDER_TIMEOUT_MS = 120_000;
 const MIN_PROVIDER_TIMEOUT_MS = 1;
 const MAX_PROVIDER_TIMEOUT_MS = 10 * 60_000;
+const DEFAULT_PROVIDER_MAX_ATTEMPTS = 3;
+const DEFAULT_PROVIDER_RETRY_BASE_DELAY_MS = 250;
 const MAX_TOOL_LOOP_STEPS = 4;
 const MAX_PROMPT_TOOLS = 24;
 const BURBLE_PROVIDER_TOOL_NAME = "burble_provider_call";
@@ -251,6 +253,36 @@ async function collectOpenAiTurn(
   outputItems: OpenAiInputItem[];
   toolCalls: OpenAiFunctionToolCall[];
 }> {
+  const maxAttempts = readProviderMaxAttempts(context.env);
+  const retryBaseDelayMs = readProviderRetryBaseDelayMs(context.env);
+  let lastError: unknown;
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    try {
+      return await collectOpenAiTurnAttempt(input, request, context);
+    } catch (error) {
+      if (!shouldRetryProviderError(error) || attempt === maxAttempts - 1) {
+        throw error;
+      }
+      lastError = error;
+      await sleep(retryDelayMs(attempt, retryBaseDelayMs));
+    }
+  }
+  throw lastError instanceof Error
+    ? lastError
+    : new Error("OpenAI Responses API request failed");
+}
+
+async function collectOpenAiTurnAttempt(
+  input: string | OpenAiInputItem[],
+  request: RunRequest,
+  context: RuntimeServerContext
+): Promise<{
+  deltas: string[];
+  text: string;
+  usage: RunUsage | undefined;
+  outputItems: OpenAiInputItem[];
+  toolCalls: OpenAiFunctionToolCall[];
+}> {
   const model = readOpenAiModel(context.env);
   const apiKey = readEnv(context.env, "OPENAI_API_KEY");
   if (!apiKey) {
@@ -280,7 +312,7 @@ async function collectOpenAiTurn(
       })
     });
     if (!response.ok || !response.body) {
-      throw new Error(`OpenAI Responses API returned HTTP ${response.status}`);
+      throw new ProviderHttpError(response.status);
     }
 
     const deltas: string[] = [];
@@ -366,6 +398,8 @@ async function executeBurbleProviderTool(
     toolGatewayUrl,
     runtimeToken,
     runtimeId: request.runtime.id,
+    maxAttempts: readToolGatewayMaxAttempts(context.env),
+    retryBaseDelayMs: readToolGatewayRetryBaseDelayMs(context.env),
     ...(context.fetch ? { fetch: context.fetch } : {})
   });
   return executeTool(toolCall.toolName, toolCall.input);
@@ -422,10 +456,91 @@ function readProviderTimeoutMs(
   return Math.min(Math.max(parsed, MIN_PROVIDER_TIMEOUT_MS), MAX_PROVIDER_TIMEOUT_MS);
 }
 
+function readProviderMaxAttempts(
+  env: Record<string, string | undefined> | undefined
+): number {
+  const raw = readEnv(env, "BURBLE_NATIVE_PROVIDER_MAX_ATTEMPTS");
+  if (!raw) {
+    return DEFAULT_PROVIDER_MAX_ATTEMPTS;
+  }
+  const parsed = Number.parseInt(raw, 10);
+  return Number.isFinite(parsed) && parsed > 0
+    ? Math.max(1, Math.floor(parsed))
+    : DEFAULT_PROVIDER_MAX_ATTEMPTS;
+}
+
+function readProviderRetryBaseDelayMs(
+  env: Record<string, string | undefined> | undefined
+): number {
+  const raw = readEnv(env, "BURBLE_NATIVE_PROVIDER_RETRY_BASE_MS");
+  if (!raw) {
+    return DEFAULT_PROVIDER_RETRY_BASE_DELAY_MS;
+  }
+  const parsed = Number.parseInt(raw, 10);
+  return Number.isFinite(parsed) && parsed >= 0
+    ? Math.floor(parsed)
+    : DEFAULT_PROVIDER_RETRY_BASE_DELAY_MS;
+}
+
+function readToolGatewayMaxAttempts(
+  env: Record<string, string | undefined> | undefined
+): number | undefined {
+  const raw = readEnv(env, "BURBLE_NATIVE_TOOL_GATEWAY_MAX_ATTEMPTS");
+  if (!raw) {
+    return undefined;
+  }
+  const parsed = Number.parseInt(raw, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
+}
+
+function readToolGatewayRetryBaseDelayMs(
+  env: Record<string, string | undefined> | undefined
+): number | undefined {
+  const raw = readEnv(env, "BURBLE_NATIVE_TOOL_GATEWAY_RETRY_BASE_MS");
+  if (!raw) {
+    return undefined;
+  }
+  const parsed = Number.parseInt(raw, 10);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : undefined;
+}
+
 class ProviderTimeoutError extends Error {
   constructor(readonly timeoutMs: number) {
     super(`OpenAI Responses API timed out after ${timeoutMs}ms`);
   }
+}
+
+class ProviderHttpError extends Error {
+  constructor(readonly status: number) {
+    super(`OpenAI Responses API returned HTTP ${status}`);
+  }
+}
+
+function shouldRetryProviderError(error: unknown): boolean {
+  if (error instanceof ProviderTimeoutError) {
+    return true;
+  }
+  const status =
+    error instanceof ProviderHttpError
+      ? error.status
+      : typeof (error as { status?: unknown })?.status === "number"
+        ? (error as { status: number }).status
+        : null;
+  if (status !== null) {
+    return status === 408 || status === 429 || status >= 500;
+  }
+  return error instanceof TypeError;
+}
+
+function retryDelayMs(attempt: number, baseDelayMs: number): number {
+  return baseDelayMs * 2 ** attempt;
+}
+
+async function sleep(ms: number): Promise<void> {
+  if (ms <= 0) {
+    return;
+  }
+  await new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function throwIfProviderTimedOut(signal: AbortSignal, error?: unknown): void {

@@ -263,6 +263,28 @@ describe("runtime SDK tool gateway client", () => {
       input: { query: "repo:burble" }
     });
   });
+
+  test("retries transient Burble internal tool gateway failures", async () => {
+    const statuses = [503, 200];
+    const client = createRuntimeToolGatewayClient({
+      baseUrl: "http://burble-app:3000/internal/tools/",
+      runtimeToken: "runtime-token",
+      runtimeId: "rt_u123",
+      retryBaseDelayMs: 0,
+      fetch: async () => {
+        const status = statuses.shift() ?? 200;
+        return status === 200
+          ? Response.json({ classification: "user_private", content: { ok: true } })
+          : new Response("temporarily unavailable", { status });
+      }
+    });
+
+    await expect(client.execute("github.searchIssues", {})).resolves.toEqual({
+      classification: "user_private",
+      content: { ok: true }
+    });
+    expect(statuses).toEqual([]);
+  });
 });
 
 async function waitFor(predicate: () => boolean): Promise<void> {

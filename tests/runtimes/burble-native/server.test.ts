@@ -154,6 +154,65 @@ describe("Burble Native runtime server", () => {
     });
   });
 
+  test("retries transient OpenAI response failures", async () => {
+    const requests: Array<{ url: string; init?: RequestInit }> = [];
+    const response = await handleRuntimeRequest(
+      new Request("http://runtime/runs", {
+        method: "POST",
+        headers: {
+          accept: "application/x-ndjson",
+          "content-type": "application/json"
+        },
+        body: JSON.stringify(nativeRunRequest("describe Burble"))
+      }),
+      {
+        env: {
+          AI_MODEL: "openai:gpt-5.4",
+          OPENAI_API_KEY: "test-openai-key",
+          OPENAI_BASE_URL: "https://openai-compatible.example/v1",
+          BURBLE_NATIVE_PROVIDER_RETRY_BASE_MS: "0"
+        },
+        fetch: async (url: string, init?: RequestInit) => {
+          requests.push({ url, init });
+          if (requests.length === 1) {
+            return new Response("server error", { status: 500 });
+          }
+          return new Response(
+            [
+              sseEvent({
+                type: "response.output_text.delta",
+                delta: "Recovered."
+              }),
+              sseEvent({
+                type: "response.completed",
+                response: {
+                  output_text: "Recovered.",
+                  usage: {
+                    input_tokens: 20,
+                    output_tokens: 3,
+                    total_tokens: 23
+                  }
+                }
+              })
+            ].join(""),
+            { headers: { "content-type": "text/event-stream" } }
+          );
+        }
+      }
+    );
+
+    expect(response.status).toBe(200);
+    const events = (await response.text())
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+    expect(requests).toHaveLength(2);
+    expect(events).toContainEqual({
+      type: "message_delta",
+      text: "Recovered."
+    });
+  });
+
   test("executes model-requested Burble tools and feeds results back to the model", async () => {
     const requests: Array<{ url: string; init?: RequestInit }> = [];
     const response = await handleRuntimeRequest(
@@ -258,7 +317,8 @@ describe("Burble Native runtime server", () => {
           OPENAI_API_KEY: "test-openai-key",
           OPENAI_BASE_URL: "https://openai-compatible.example/v1",
           BURBLE_TOOL_GATEWAY_URL: "http://burble-app:3000/internal/tools",
-          BURBLE_INTERNAL_TOKEN: "runtime-token"
+          BURBLE_INTERNAL_TOKEN: "runtime-token",
+          BURBLE_NATIVE_TOOL_GATEWAY_RETRY_BASE_MS: "0"
         },
         fetch: async (url: string, init?: RequestInit) => {
           requests.push({ url, init });
@@ -451,7 +511,8 @@ describe("Burble Native runtime server", () => {
           OPENAI_API_KEY: "test-openai-key",
           OPENAI_BASE_URL: "https://openai-compatible.example/v1",
           BURBLE_TOOL_GATEWAY_URL: "http://burble-app:3000/internal/tools",
-          BURBLE_INTERNAL_TOKEN: "runtime-token"
+          BURBLE_INTERNAL_TOKEN: "runtime-token",
+          BURBLE_NATIVE_TOOL_GATEWAY_RETRY_BASE_MS: "0"
         },
         fetch: async (url: string, init?: RequestInit) => {
           requests.push({ url, init });
@@ -648,7 +709,8 @@ describe("Burble Native runtime server", () => {
         env: {
           AI_MODEL: "openai:gpt-5.4",
           OPENAI_API_KEY: "test-openai-key",
-          BURBLE_NATIVE_PROVIDER_TIMEOUT_MS: "5"
+          BURBLE_NATIVE_PROVIDER_TIMEOUT_MS: "5",
+          BURBLE_NATIVE_PROVIDER_MAX_ATTEMPTS: "1"
         },
         fetch: async (_url: string, init?: RequestInit) =>
           new Promise<Response>((_resolve, reject) => {
@@ -689,7 +751,8 @@ describe("Burble Native runtime server", () => {
         env: {
           AI_MODEL: "openai:gpt-5.4",
           OPENAI_API_KEY: "test-openai-key",
-          BURBLE_NATIVE_PROVIDER_TIMEOUT_MS: "5"
+          BURBLE_NATIVE_PROVIDER_TIMEOUT_MS: "5",
+          BURBLE_NATIVE_PROVIDER_MAX_ATTEMPTS: "1"
         },
         fetch: async () =>
           new Response(new ReadableStream<Uint8Array>({ start() {} }), {
