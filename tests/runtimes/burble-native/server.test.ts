@@ -865,6 +865,94 @@ describe("Burble Native runtime server", () => {
     ]);
   });
 
+  test("does not retry non-transient OpenAI response failures", async () => {
+    let requests = 0;
+    const response = await handleRuntimeRequest(
+      new Request("http://runtime/runs", {
+        method: "POST",
+        headers: {
+          accept: "application/x-ndjson",
+          "content-type": "application/json"
+        },
+        body: JSON.stringify(nativeRunRequest("hello"))
+      }),
+      {
+        env: {
+          AI_MODEL: "openai:gpt-5.4",
+          OPENAI_API_KEY: "test-openai-key",
+          BURBLE_NATIVE_PROVIDER_MAX_ATTEMPTS: "3",
+          BURBLE_NATIVE_PROVIDER_RETRY_BASE_MS: "0"
+        },
+        fetch: async () => {
+          requests += 1;
+          return new Response("context too large", { status: 400 });
+        }
+      }
+    );
+
+    expect(response.status).toBe(200);
+    expect(requests).toBe(1);
+    expect(
+      (await response.text())
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line))
+    ).toEqual([
+      { type: "status", text: "Burble Native accepted the turn." },
+      {
+        type: "error",
+        message: "Runtime run failed: OpenAI Responses API returned HTTP 400"
+      }
+    ]);
+  });
+
+  test("bounds stacked OpenAI retries with a turn timeout", async () => {
+    let requests = 0;
+    const response = await handleRuntimeRequest(
+      new Request("http://runtime/runs", {
+        method: "POST",
+        headers: {
+          accept: "application/x-ndjson",
+          "content-type": "application/json"
+        },
+        body: JSON.stringify(nativeRunRequest("hello"))
+      }),
+      {
+        env: {
+          AI_MODEL: "openai:gpt-5.4",
+          OPENAI_API_KEY: "test-openai-key",
+          BURBLE_NATIVE_PROVIDER_TIMEOUT_MS: "1000",
+          BURBLE_NATIVE_PROVIDER_MAX_ATTEMPTS: "3",
+          BURBLE_NATIVE_PROVIDER_RETRY_BASE_MS: "0",
+          BURBLE_NATIVE_TURN_TIMEOUT_MS: "5"
+        },
+        fetch: async (_url: string, init?: RequestInit) => {
+          requests += 1;
+          return new Promise<Response>((_resolve, reject) => {
+            init?.signal?.addEventListener("abort", () => {
+              reject(init.signal?.reason ?? new Error("aborted"));
+            });
+          });
+        }
+      }
+    );
+
+    expect(response.status).toBe(200);
+    expect(requests).toBe(1);
+    expect(
+      (await response.text())
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line))
+    ).toEqual([
+      { type: "status", text: "Burble Native accepted the turn." },
+      {
+        type: "error",
+        message: "Runtime run failed: Burble Native turn timed out after 5ms"
+      }
+    ]);
+  });
+
   test("bounds stalled OpenAI SSE bodies with the same provider timeout", async () => {
     const response = await handleRuntimeRequest(
       new Request("http://runtime/runs", {

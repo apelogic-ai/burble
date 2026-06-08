@@ -35,6 +35,9 @@ type OpenAiFunctionToolCall = {
 const DEFAULT_PROVIDER_TIMEOUT_MS = 120_000;
 const MIN_PROVIDER_TIMEOUT_MS = 1;
 const MAX_PROVIDER_TIMEOUT_MS = 10 * 60_000;
+const DEFAULT_TURN_TIMEOUT_MS = 180_000;
+const MIN_TURN_TIMEOUT_MS = 1;
+const MAX_TURN_TIMEOUT_MS = 30 * 60_000;
 const DEFAULT_PROVIDER_MAX_ATTEMPTS = 3;
 const DEFAULT_PROVIDER_RETRY_BASE_DELAY_MS = 250;
 const MAX_TOOL_LOOP_STEPS = 4;
@@ -180,8 +183,9 @@ async function* runNativeTurn(
   let responseText = "";
   let usage: RunUsage | undefined;
   let input = buildOpenAiInput(request);
+  const turnDeadline = createTurnDeadline(context.env);
   for (let step = 0; step < MAX_TOOL_LOOP_STEPS; step += 1) {
-    const result = await collectOpenAiTurn(input, request, context);
+    const result = await collectOpenAiTurn(input, request, context, turnDeadline);
     usage = mergeUsage(usage, result.usage);
     if (result.toolCalls.length === 0) {
       for (const delta of result.deltas) {
@@ -243,10 +247,16 @@ function nativeUsage(): RunUsage {
   };
 }
 
+type TurnDeadline = {
+  expiresAtMs: number;
+  timeoutMs: number;
+};
+
 async function collectOpenAiTurn(
   input: string | OpenAiInputItem[],
   request: RunRequest,
-  context: RuntimeServerContext
+  context: RuntimeServerContext,
+  turnDeadline: TurnDeadline
 ): Promise<{
   deltas: string[];
   text: string;
@@ -258,14 +268,20 @@ async function collectOpenAiTurn(
   const retryBaseDelayMs = readProviderRetryBaseDelayMs(context.env);
   let lastError: unknown;
   for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    throwIfTurnTimedOut(turnDeadline);
     try {
-      return await collectOpenAiTurnAttempt(input, request, context);
+      return await collectOpenAiTurnAttempt(
+        input,
+        request,
+        context,
+        turnDeadline
+      );
     } catch (error) {
       if (!shouldRetryProviderError(error) || attempt === maxAttempts - 1) {
         throw error;
       }
       lastError = error;
-      await sleep(retryDelayMs(attempt, retryBaseDelayMs));
+      await sleep(Math.min(retryDelayMs(attempt, retryBaseDelayMs), remainingTurnMs(turnDeadline)));
     }
   }
   throw lastError instanceof Error
@@ -276,7 +292,8 @@ async function collectOpenAiTurn(
 async function collectOpenAiTurnAttempt(
   input: string | OpenAiInputItem[],
   request: RunRequest,
-  context: RuntimeServerContext
+  context: RuntimeServerContext,
+  turnDeadline: TurnDeadline
 ): Promise<{
   deltas: string[];
   text: string;
@@ -290,11 +307,20 @@ async function collectOpenAiTurnAttempt(
     throw new Error("OPENAI_API_KEY is required for Burble Native model calls");
   }
   const requestFetch = context.fetch ?? fetch;
-  const timeoutMs = readProviderTimeoutMs(context.env);
+  const providerTimeoutMs = readProviderTimeoutMs(context.env);
+  const turnRemainingMs = remainingTurnMs(turnDeadline);
+  if (turnRemainingMs <= 0) {
+    throw new TurnTimeoutError(turnDeadline.timeoutMs);
+  }
+  const timeoutMs = Math.min(providerTimeoutMs, turnRemainingMs);
+  const timeoutError =
+    timeoutMs < providerTimeoutMs
+      ? new TurnTimeoutError(turnDeadline.timeoutMs)
+      : new ProviderTimeoutError(providerTimeoutMs);
   const responsesUrl = readOpenAiResponsesUrl(context.env);
   const abortController = new AbortController();
   const timeout = setTimeout(() => {
-    abortController.abort(new ProviderTimeoutError(timeoutMs));
+    abortController.abort(timeoutError);
   }, timeoutMs);
 
   try {
@@ -326,6 +352,7 @@ async function collectOpenAiTurnAttempt(
       abortController.signal
     )) {
       throwIfProviderTimedOut(abortController.signal);
+      throwIfTurnTimedOut(turnDeadline);
       const type = readString(payload, "type");
       if (type === "response.output_text.delta") {
         const delta = readString(payload, "delta");
@@ -344,6 +371,7 @@ async function collectOpenAiTurnAttempt(
     }
 
     throwIfProviderTimedOut(abortController.signal);
+    throwIfTurnTimedOut(turnDeadline);
     return {
       deltas,
       text: completedText,
@@ -499,6 +527,20 @@ function readProviderRetryBaseDelayMs(
     : DEFAULT_PROVIDER_RETRY_BASE_DELAY_MS;
 }
 
+function readTurnTimeoutMs(
+  env: Record<string, string | undefined> | undefined
+): number {
+  const raw = readEnv(env, "BURBLE_NATIVE_TURN_TIMEOUT_MS");
+  if (!raw) {
+    return DEFAULT_TURN_TIMEOUT_MS;
+  }
+  const parsed = Number.parseInt(raw, 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return DEFAULT_TURN_TIMEOUT_MS;
+  }
+  return Math.min(Math.max(parsed, MIN_TURN_TIMEOUT_MS), MAX_TURN_TIMEOUT_MS);
+}
+
 function readToolGatewayMaxAttempts(
   env: Record<string, string | undefined> | undefined
 ): number | undefined {
@@ -527,6 +569,12 @@ class ProviderTimeoutError extends Error {
   }
 }
 
+class TurnTimeoutError extends Error {
+  constructor(readonly timeoutMs: number) {
+    super(`Burble Native turn timed out after ${timeoutMs}ms`);
+  }
+}
+
 class ProviderHttpError extends Error {
   constructor(readonly status: number) {
     super(`OpenAI Responses API returned HTTP ${status}`);
@@ -534,6 +582,9 @@ class ProviderHttpError extends Error {
 }
 
 function shouldRetryProviderError(error: unknown): boolean {
+  if (error instanceof TurnTimeoutError) {
+    return false;
+  }
   if (error instanceof ProviderTimeoutError) {
     return true;
   }
@@ -565,8 +616,31 @@ function throwIfProviderTimedOut(signal: AbortSignal, error?: unknown): void {
   if (signal.aborted && reason instanceof ProviderTimeoutError) {
     throw reason;
   }
+  if (signal.aborted && reason instanceof TurnTimeoutError) {
+    throw reason;
+  }
   if (error instanceof ProviderTimeoutError) {
     throw error;
+  }
+  if (error instanceof TurnTimeoutError) {
+    throw error;
+  }
+}
+
+function createTurnDeadline(
+  env: Record<string, string | undefined> | undefined
+): TurnDeadline {
+  const timeoutMs = readTurnTimeoutMs(env);
+  return { expiresAtMs: Date.now() + timeoutMs, timeoutMs };
+}
+
+function remainingTurnMs(deadline: TurnDeadline): number {
+  return Math.max(0, deadline.expiresAtMs - Date.now());
+}
+
+function throwIfTurnTimedOut(deadline: TurnDeadline): void {
+  if (remainingTurnMs(deadline) <= 0) {
+    throw new TurnTimeoutError(deadline.timeoutMs);
   }
 }
 
