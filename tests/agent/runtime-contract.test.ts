@@ -109,6 +109,19 @@ test("parses the canonical native runtime execution mode", () => {
   ).toBe("native-runtime");
 });
 
+test("parses managed runtime handles with status", () => {
+  expect(
+    parseRuntimeRunRequest({
+      ...baseRunRequest,
+      runtime: {
+        ...baseRunRequest.runtime,
+        engine: "burble-native",
+        status: "ready"
+      }
+    }).runtime.status
+  ).toBe("ready");
+});
+
 test("normalizes the legacy OpenClaw native execution mode alias", () => {
   expect(
     parseRuntimeRunRequest({
