@@ -790,8 +790,12 @@ function addRunId(body: unknown, runId: string): unknown {
     return body;
   }
 
+  const record = body as Record<string, unknown>;
   return {
-    ...body,
+    ...record,
+    ...(record.executionMode === "openclaw-native"
+      ? { executionMode: "native-runtime" }
+      : {}),
     runId
   };
 }

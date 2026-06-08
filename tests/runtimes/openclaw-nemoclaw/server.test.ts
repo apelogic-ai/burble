@@ -196,6 +196,43 @@ describe("handleRuntimeRequest", () => {
     ]);
   });
 
+  test("accepts the legacy OpenClaw native execution mode alias at the request boundary", async () => {
+    const response = await handleRuntimeRequest(
+      new Request("http://runtime/runs", {
+        method: "POST",
+        headers: {
+          accept: "application/x-ndjson",
+          "content-type": "application/json"
+        },
+        body: JSON.stringify({
+          runId: "run-legacy-native-mode",
+          executionMode: "openclaw-native",
+          principal: { workspaceId: "T123", slackUserId: "U123" },
+          runtime: { id: "rt_probe", engine: "openclaw" },
+          input: {
+            text: "contract probe",
+            connections: {
+              github: { connected: false }
+            }
+          }
+        })
+      }),
+      { ...config, engine: "openclaw", contractProbeMode: true }
+    );
+
+    expect(response.status).toBe(200);
+    const events = (await response.text())
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+    expect(events.at(-1)).toMatchObject({
+      type: "final",
+      response: {
+        text: "Runtime contract probe response."
+      }
+    });
+  });
+
   test("streams deterministic capability assertion probe events", async () => {
     const toolResponse = await handleRuntimeRequest(
       new Request("http://runtime/runs", {
