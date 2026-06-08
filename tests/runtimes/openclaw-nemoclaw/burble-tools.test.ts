@@ -940,6 +940,42 @@ describe("createBurbleToolExecutor", () => {
         user: { email: "person@example.com" },
         input: { query: "from:alex", limit: 2 }
       });
+      await executor("google.slidesSearchPresentations", {
+        user: { email: "person@example.com" },
+        input: { query: "roadmap", limit: 4 }
+      });
+      await executor("google.slidesGetPresentation", {
+        user: { email: "person@example.com" },
+        input: { presentationId: "deck-123", includeSlides: false }
+      });
+      await executor("google.slidesProbeTemplate", {
+        user: { email: "person@example.com" },
+        input: { presentationId: "template-123" }
+      });
+      await executor("google.analyticsListProperties", {
+        user: { email: "person@example.com" },
+        input: { limit: 6 }
+      });
+      await executor("google.analyticsGetMetadata", {
+        user: { email: "person@example.com" },
+        input: {
+          propertyId: "properties/1234",
+          dimensionQuery: "page",
+          metricQuery: "views",
+          limit: 8
+        }
+      });
+      await executor("google.analyticsRunReport", {
+        user: { email: "person@example.com" },
+        input: {
+          propertyId: "properties/1234",
+          startDate: "7daysAgo",
+          endDate: "yesterday",
+          metrics: ["activeUsers"],
+          dimensions: ["country"],
+          limit: 10
+        }
+      });
       await executor("hubspot.getAuthenticatedUser", {
         user: { email: "person@example.com" }
       });
@@ -1103,6 +1139,60 @@ describe("createBurbleToolExecutor", () => {
           params: {
             name: "google_search_mail_messages",
             arguments: { query: "from:alex", limit: 2 }
+          }
+        },
+        {
+          method: "tools/call",
+          params: {
+            name: "google_slides_search_presentations",
+            arguments: { query: "roadmap", limit: 4 }
+          }
+        },
+        {
+          method: "tools/call",
+          params: {
+            name: "google_slides_get_presentation",
+            arguments: { presentationId: "deck-123", includeSlides: false }
+          }
+        },
+        {
+          method: "tools/call",
+          params: {
+            name: "google_slides_probe_template",
+            arguments: { presentationId: "template-123" }
+          }
+        },
+        {
+          method: "tools/call",
+          params: {
+            name: "google_analytics_list_properties",
+            arguments: { limit: 6 }
+          }
+        },
+        {
+          method: "tools/call",
+          params: {
+            name: "google_analytics_get_metadata",
+            arguments: {
+              propertyId: "properties/1234",
+              dimensionQuery: "page",
+              metricQuery: "views",
+              limit: 8
+            }
+          }
+        },
+        {
+          method: "tools/call",
+          params: {
+            name: "google_analytics_run_report",
+            arguments: {
+              propertyId: "properties/1234",
+              startDate: "7daysAgo",
+              endDate: "yesterday",
+              metrics: ["activeUsers"],
+              dimensions: ["country"],
+              limit: 10
+            }
           }
         },
         {

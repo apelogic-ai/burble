@@ -1998,6 +1998,64 @@ async function buildToolCatalog(
           query: "string Gmail search query",
           limit: "optional integer 1-10"
         }
+      },
+      {
+        name: "google.slidesSearchPresentations",
+        description:
+          "Search Google Slides presentations visible to the requesting Slack user's connected Google account.",
+        inputSchema: {
+          query: "optional string presentation title search terms",
+          limit: "optional integer 1-20"
+        }
+      },
+      {
+        name: "google.slidesGetPresentation",
+        description:
+          "Read Google Slides presentation structure, slide text, speaker notes, and layout hints.",
+        inputSchema: {
+          presentationId: "string Google Slides presentation ID",
+          includeSlides: "optional boolean; defaults to true"
+        }
+      },
+      {
+        name: "google.slidesProbeTemplate",
+        description:
+          "Inspect a Google Slides presentation as a reusable template: layouts, placeholders, masters, and theme metadata.",
+        inputSchema: {
+          presentationId: "string Google Slides presentation ID"
+        }
+      },
+      {
+        name: "google.analyticsListProperties",
+        description:
+          "List Google Analytics GA4 properties available to the requesting Slack user's connected Google account.",
+        inputSchema: {
+          limit: "optional integer 1-20"
+        }
+      },
+      {
+        name: "google.analyticsGetMetadata",
+        description:
+          "List available Google Analytics dimensions and metrics for a GA4 property.",
+        inputSchema: {
+          propertyId: "string GA4 property id",
+          dimensionQuery: "optional string filter for dimension API names or display names",
+          metricQuery: "optional string filter for metric API names or display names",
+          limit: "optional integer 1-20"
+        }
+      },
+      {
+        name: "google.analyticsRunReport",
+        description:
+          "Run a bounded read-only Google Analytics GA4 report for a property.",
+        inputSchema: {
+          propertyId: "string GA4 property id",
+          startDate: "string date YYYY-MM-DD, today, yesterday, or NdaysAgo",
+          endDate: "string date YYYY-MM-DD, today, yesterday, or NdaysAgo",
+          metrics: "string[] metric API names",
+          dimensions: "optional string[] dimension API names",
+          limit: "optional integer 1-100"
+        }
       }
     );
   }
@@ -2461,6 +2519,18 @@ function mcpToolNameToBurbleToolName(name: string): string | null {
       return "google.updateCalendarEvent";
     case "google_search_mail_messages":
       return "google.searchMailMessages";
+    case "google_slides_search_presentations":
+      return "google.slidesSearchPresentations";
+    case "google_slides_get_presentation":
+      return "google.slidesGetPresentation";
+    case "google_slides_probe_template":
+      return "google.slidesProbeTemplate";
+    case "google_analytics_list_properties":
+      return "google.analyticsListProperties";
+    case "google_analytics_get_metadata":
+      return "google.analyticsGetMetadata";
+    case "google_analytics_run_report":
+      return "google.analyticsRunReport";
     case "gmail_create_draft":
       return "gmail.createDraft";
     case "hubspot_get_authenticated_user":
@@ -3058,7 +3128,7 @@ function buildBurbleDirectPrompt(
       "For Jira questions involving a named person, call jira.searchUsers with the exact name or email before asking who they are. If the current request uses him/her/them, use the most recent named person in Recent Slack context.",
       "For Jira tickets assigned to a resolved person, call jira.searchIssues with that person's Jira accountId in JQL. If the user asks who they assigned to that person, state that the result reflects current visible assignee unless Jira changelog data is explicitly available.",
       "For Slack questions about what someone said, call slack.searchMessages. For 'what did I say about X', pass the requesting Slack user ID as fromUserId. For named Slack people, call slack.searchUsers first if you need their Slack user ID.",
-      "For Google Drive, Calendar, or Gmail questions, call google.searchDriveFiles, google.createDriveTextFile, google.searchCalendarEvents, or google.searchMailMessages.",
+      "For Google Drive, Calendar, Gmail, Slides, or Analytics questions, call the matching google.* Burble provider tool listed in Available Burble tools.",
       "For HubSpot CRM questions about users, owners, contacts, companies, deals, or other scoped CRM objects, call the matching HubSpot tool. Use hubspot.listUsers for account users, hubspot.listOwners for assignable CRM owners, hubspot.searchCrmObjects for other CRM object types, and hubspot.readApiResource only for less common read-only HubSpot API resources with no first-class tool.",
       "For final answers, return concise Slack mrkdwn."
     ].join(" "),

@@ -581,6 +581,32 @@ print(json.dumps({"text": mod.build_hermes_turn_text(payload)}))
     expect(text).not.toContain("google_search_drive_files");
   });
 
+  test("adds Analytics and Slides provider tool hints to Hermes Google turns", () => {
+    const result = runHermesEntrypointProbe(`${importEntrypoint}
+payload = {
+    "text": "list my Google Analytics properties and inspect this Slides template",
+    "toolGroups": {
+        "groups": ["conversation", "google"],
+        "reasons": ["default:conversation", "keyword:google:analytics"],
+    },
+}
+print(json.dumps({"text": mod.build_hermes_turn_text(payload)}))
+`);
+
+    const text = (result as { text: string }).text;
+    expect(text).toContain("Selected Burble tool groups: conversation, google");
+    expect(text).toContain("google_search_drive_files");
+    expect(text).toContain("google_search_calendar_events");
+    expect(text).toContain("google_search_mail_messages");
+    expect(text).toContain("google_slides_search_presentations");
+    expect(text).toContain("google_slides_get_presentation");
+    expect(text).toContain("google_slides_probe_template");
+    expect(text).toContain("google_analytics_list_properties");
+    expect(text).toContain("google_analytics_get_metadata");
+    expect(text).toContain("google_analytics_run_report");
+    expect(text).not.toContain("hubspot_search_contacts");
+  });
+
 
   test("adds scheduled job context to Hermes turns", () => {
     const result = runHermesEntrypointProbe(`${importEntrypoint}
@@ -932,6 +958,8 @@ print(json.dumps({
 print(json.dumps({
     "github": mod.normalize_burble_tool_name("github_list_my_pull_requests"),
     "google": mod.normalize_burble_tool_name("google_append_to_drive_text_file"),
+    "analytics": mod.normalize_burble_tool_name("google_analytics_run_report"),
+    "slides": mod.normalize_burble_tool_name("google_slides_probe_template"),
     "hubspot": mod.normalize_burble_tool_name("hubspot_read_api_resource"),
     "jira": mod.normalize_burble_tool_name("jira_list_assigned_issues"),
     "job": mod.normalize_burble_tool_name("scheduled_job_register_capability"),
@@ -942,6 +970,8 @@ print(json.dumps({
     expect(result).toEqual({
       github: "github.listMyPullRequests",
       google: "google.appendToDriveTextFile",
+      analytics: "google.analyticsRunReport",
+      slides: "google.slidesProbeTemplate",
       hubspot: "hubspot.readApiResource",
       jira: "jira.listAssignedIssues",
       job: "scheduledJob.registerCapability",

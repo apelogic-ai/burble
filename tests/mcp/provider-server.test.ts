@@ -828,6 +828,100 @@ describe("handleProviderMcpRequest", () => {
     store.close();
   });
 
+  test("executes new Google MCP tools through default dependencies", async () => {
+    const issuer = createRuntimeJwtIssuer({ issuer: config.runtimeJwtIssuer });
+    const store = createTokenStore(":memory:");
+    const runtime = store.getOrCreateAgentRuntime({
+      workspaceId: "T123",
+      slackUserId: "U123",
+      engine: "openclaw",
+      endpointUrl: "http://runtime-u123:8080",
+      authTokenHash: "hash-u123",
+      statePath: "/data/runtimes/u123/state",
+      configPath: "/data/runtimes/u123/config/openclaw.json",
+      workspacePath: "/data/runtimes/u123/workspace"
+    });
+    store.upsertProviderConnection({
+      provider: "google",
+      email: "person@example.com",
+      slackUserId: "U123",
+      providerLogin: "google-user@example.com",
+      accessToken: "google-token",
+      refreshToken: null,
+      accessTokenExpiresAt: null
+    });
+    const token = issuer.issueRuntimeJwt({
+      audience: "http://agentgateway:3000/mcp",
+      runtimeId: runtime.id,
+      workspaceId: "T123",
+      slackUserId: "U123"
+    });
+    const originalFetch = globalThis.fetch;
+    let requestedUrl = "";
+    globalThis.fetch = (async (input, init) => {
+      requestedUrl = String(input);
+      expect(new Headers(init?.headers).get("authorization")).toBe(
+        "Bearer google-token"
+      );
+      return Response.json({
+        accountSummaries: [
+          {
+            account: "accounts/123",
+            displayName: "ApeLogic",
+            propertySummaries: [
+              {
+                property: "properties/456",
+                displayName: "Website",
+                parent: "accounts/123",
+                currentPropertyType: "PROPERTY_TYPE_ORDINARY"
+              }
+            ]
+          }
+        ]
+      });
+    }) as typeof fetch;
+
+    try {
+      const response = await handleProviderMcpRequest(
+        config,
+        store,
+        issuer,
+        mcpRequest(
+          {
+            method: "tools/call",
+            params: {
+              name: "google_analytics_list_properties",
+              arguments: { limit: 2 }
+            }
+          },
+          token
+        )
+      );
+      const body = readMcpBody(await response.text());
+      const toolResult = JSON.parse(body.result.content[0].text);
+
+      expect(response.status).toBe(200);
+      expect(new URL(requestedUrl).pathname).toBe("/v1beta/accountSummaries");
+      expect(toolResult).toEqual({
+        classification: "user_private",
+        content: [
+          {
+            account: "accounts/123",
+            accountDisplayName: "ApeLogic",
+            property: "properties/456",
+            propertyId: "456",
+            displayName: "Website",
+            parent: "accounts/123",
+            propertyType: "PROPERTY_TYPE_ORDINARY"
+          }
+        ]
+      });
+    } finally {
+      globalThis.fetch = originalFetch;
+      store.close();
+    }
+  });
+
   test("enforces scheduled job capabilities for principal-scoped MCP calls", async () => {
     const issuer = createRuntimeJwtIssuer({ issuer: config.runtimeJwtIssuer });
     const store = createTokenStore(":memory:");
