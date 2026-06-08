@@ -164,11 +164,91 @@ describe("Burble Native runtime server", () => {
           "content-type": "application/json"
         },
         body: JSON.stringify(
-          withToolGroups(
-            nativeRunRequest("who am I on GitHub?", {
-              github: { connected: true, email: "person@example.com" }
-            }),
-            ["github"]
+          withRuntimeManifestTools(
+            withToolGroups(
+              nativeRunRequest("who am I on GitHub?", {
+                github: { connected: true, email: "person@example.com" }
+              }),
+              ["github"]
+            ),
+            [
+              {
+                name: "github_get_authenticated_user",
+                alias: "github.getAuthenticatedUser",
+                provider: "github",
+                title: "GitHub authenticated user",
+                description: "Return the GitHub identity connected to this Slack user.",
+                enabled: true,
+                risk: "read",
+                routeRequired: true,
+                confirmation: "none",
+                input: []
+              },
+              {
+                name: "github_list_my_pull_requests",
+                alias: "github.listMyPullRequests",
+                provider: "github",
+                title: "GitHub pull requests authored by me",
+                description:
+                  "List GitHub pull requests authored by this Slack user's connected GitHub account.",
+                enabled: true,
+                risk: "read",
+                routeRequired: true,
+                confirmation: "none",
+                input: [
+                  {
+                    name: "state",
+                    type: "enum",
+                    required: false,
+                    description: "Pull request state to include.",
+                    values: ["open", "closed", "all"]
+                  },
+                  {
+                    name: "limit",
+                    type: "number",
+                    required: false,
+                    description: "Maximum number of pull requests to return."
+                  }
+                ]
+              },
+              {
+                name: "jira_search_issues",
+                alias: "jira.searchIssues",
+                provider: "jira",
+                title: "Jira issue search",
+                description: "Search Jira issues visible to the user.",
+                enabled: true,
+                risk: "read",
+                routeRequired: true,
+                confirmation: "none",
+                input: [
+                  {
+                    name: "query",
+                    type: "string",
+                    required: true,
+                    description: "Jira search query"
+                  }
+                ]
+              },
+              {
+                name: "github_create_issue",
+                alias: "github.createIssue",
+                provider: "github",
+                title: "GitHub create issue",
+                description: "Create a GitHub issue.",
+                enabled: false,
+                risk: "low_write",
+                routeRequired: true,
+                confirmation: "none",
+                input: [
+                  {
+                    name: "repo",
+                    type: "string",
+                    required: true
+                  }
+                ]
+              }
+            ]
           )
         )
       }),
@@ -282,7 +362,8 @@ describe("Burble Native runtime server", () => {
       request.url.endsWith("/responses")
     );
     expect(providerRequests).toHaveLength(2);
-    expect(JSON.parse(String(providerRequests[0].init?.body))).toMatchObject({
+    const firstProviderBody = JSON.parse(String(providerRequests[0].init?.body));
+    expect(firstProviderBody).toMatchObject({
       tools: [
         {
           type: "function",
@@ -290,6 +371,20 @@ describe("Burble Native runtime server", () => {
         }
       ]
     });
+    expect(firstProviderBody.input[0].content).toContain(
+      "Available Burble tools for this turn"
+    );
+    expect(firstProviderBody.input[0].content).toContain(
+      "github.getAuthenticatedUser"
+    );
+    expect(firstProviderBody.input[0].content).toContain(
+      "github.listMyPullRequests"
+    );
+    expect(firstProviderBody.input[0].content).toContain(
+      "state: enum(open|closed|all), optional"
+    );
+    expect(firstProviderBody.input[0].content).not.toContain("jira.searchIssues");
+    expect(firstProviderBody.input[0].content).not.toContain("github.createIssue");
     expect(JSON.parse(String(providerRequests[1].init?.body))).toMatchObject({
       input: [
         { role: "user", content: expect.stringContaining("who am I on GitHub?") },
@@ -311,6 +406,95 @@ describe("Burble Native runtime server", () => {
     expect(toolRequest?.init?.headers).toMatchObject({
       authorization: "Bearer runtime-token",
       "content-type": "application/json"
+    });
+  });
+
+  test("does not expose the generic tool function without a selected tool catalog", async () => {
+    const requests: Array<{ url: string; init?: RequestInit }> = [];
+    const response = await handleRuntimeRequest(
+      new Request("http://runtime/runs", {
+        method: "POST",
+        headers: {
+          accept: "application/x-ndjson",
+          "content-type": "application/json"
+        },
+        body: JSON.stringify(
+          withToolGroups(
+            nativeRunRequest("who am I on GitHub?", {
+              github: { connected: true, email: "person@example.com" }
+            }),
+            ["github"]
+          )
+        )
+      }),
+      {
+        env: {
+          AI_MODEL: "openai:gpt-5.4",
+          OPENAI_API_KEY: "test-openai-key",
+          OPENAI_BASE_URL: "https://openai-compatible.example/v1",
+          BURBLE_TOOL_GATEWAY_URL: "http://burble-app:3000/internal/tools",
+          BURBLE_INTERNAL_TOKEN: "runtime-token"
+        },
+        fetch: async (url: string, init?: RequestInit) => {
+          requests.push({ url, init });
+          return new Response(
+            [
+              sseEvent({
+                type: "response.output_text.delta",
+                delta: "I do not have provider tools available."
+              }),
+              sseEvent({
+                type: "response.completed",
+                response: {
+                  output_text: "I do not have provider tools available.",
+                  usage: {
+                    input_tokens: 80,
+                    output_tokens: 9,
+                    total_tokens: 89
+                  }
+                }
+              })
+            ].join(""),
+            { headers: { "content-type": "text/event-stream" } }
+          );
+        }
+      }
+    );
+
+    expect(response.status).toBe(200);
+    const events = (await response.text())
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+    expect(events).toEqual([
+      { type: "status", text: "Burble Native accepted the turn." },
+      { type: "message_delta", text: "I do not have provider tools available." },
+      {
+        type: "final",
+        response: {
+          classification: "user_private",
+          text: "I do not have provider tools available.",
+          usage: {
+            inputTokens: 80,
+            outputTokens: 9,
+            totalTokens: 89,
+            usageSource: "provider-output"
+          }
+        }
+      }
+    ]);
+
+    const providerBody = JSON.parse(String(requests[0].init?.body));
+    expect(providerBody).toMatchObject({
+      tools: [],
+      input: [
+        {
+          role: "user",
+          content: expect.stringContaining(
+            "No Burble provider tools are available"
+          )
+        }
+      ]
     });
   });
 
@@ -469,6 +653,32 @@ function withToolGroups<T extends ReturnType<typeof nativeRunRequest>>(
       toolGroups: {
         groups,
         reasons: groups.map((group) => `${group} test`)
+      }
+    }
+  };
+}
+
+function withRuntimeManifestTools<T extends ReturnType<typeof nativeRunRequest>>(
+  request: T,
+  tools: Array<Record<string, unknown>>
+): T {
+  return {
+    ...request,
+    runtime: {
+      ...request.runtime,
+      manifest: {
+        version: "1",
+        policyHash: "policy-native-tools",
+        skills: [],
+        tools,
+        memory: {
+          userMemoryEnabled: false,
+          workspaceMemoryEnabled: false,
+          jobMemoryEnabled: false
+        },
+        streaming: {
+          messageDeltasEnabled: true
+        }
       }
     }
   };

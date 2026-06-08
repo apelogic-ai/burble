@@ -6,7 +6,10 @@ import type {
   WorkspacePolicyRecord
 } from "../db";
 import type { AgentRuntimeFactory } from "../config";
-import type { ProviderToolSpec } from "../providers/tool-specs";
+import type {
+  ProviderToolInputSpec,
+  ProviderToolSpec
+} from "../providers/tool-specs";
 import type { PrincipalId } from "./runtime-factory";
 
 export type RuntimeToolRisk =
@@ -19,11 +22,23 @@ export type RuntimeToolConfirmation = "none" | "explicit" | "strong";
 
 export type RuntimeManifestTool = {
   name: string;
+  alias: string;
   provider: string;
+  title: string;
+  description: string;
   enabled: boolean;
   risk: RuntimeToolRisk;
   routeRequired: boolean;
   confirmation: RuntimeToolConfirmation;
+  input: RuntimeManifestToolInput[];
+};
+
+export type RuntimeManifestToolInput = {
+  name: string;
+  type: string;
+  required: boolean;
+  description?: string;
+  values?: string[];
 };
 
 export type RuntimeManifestSkill = {
@@ -181,13 +196,41 @@ function manifestTool(input: {
 
   return {
     name: input.tool.name,
+    alias: input.tool.alias,
     provider: input.tool.provider,
+    title: input.tool.title,
+    description: input.tool.description,
     enabled:
       providerAllowed && !denied && !input.disabledTools.has(input.tool.name),
     risk: lastPolicy?.risk ?? input.tool.risk ?? "read",
     routeRequired: lastPolicy?.routeRequired ?? true,
-    confirmation: lastPolicy?.confirmation ?? input.tool.confirmation ?? "none"
+    confirmation: lastPolicy?.confirmation ?? input.tool.confirmation ?? "none",
+    input: manifestToolInputs(input.tool.input)
   };
+}
+
+function manifestToolInputs(
+  input: Record<string, ProviderToolInputSpec>
+): RuntimeManifestToolInput[] {
+  return Object.entries(input)
+    .map(([name, spec]) => ({
+      name,
+      type: inputTypeName(spec),
+      required: spec.optional !== true,
+      ...(spec.description ? { description: spec.description } : {}),
+      ...("values" in spec ? { values: spec.values } : {})
+    }))
+    .sort((left, right) => left.name.localeCompare(right.name));
+}
+
+function inputTypeName(spec: ProviderToolInputSpec): string {
+  if (spec.type === "array") {
+    return "string[]";
+  }
+  if (spec.type === "enum") {
+    return "enum";
+  }
+  return spec.type;
 }
 
 function effectiveSkills(

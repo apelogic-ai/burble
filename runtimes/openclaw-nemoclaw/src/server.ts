@@ -1193,10 +1193,51 @@ function isRuntimeManifestSummary(
         streaming !== null &&
         typeof (streaming as Record<string, unknown>).messageDeltasEnabled ===
           "boolean")) &&
+    (!("tools" in manifest) ||
+      manifest.tools === undefined ||
+      (Array.isArray(manifest.tools) &&
+        manifest.tools.every(isRuntimeManifestToolSummary))) &&
     (!("memoryContext" in manifest) ||
       manifest.memoryContext === undefined ||
       (Array.isArray(manifest.memoryContext) &&
         manifest.memoryContext.every(isRuntimeMemoryContextEntry)))
+  );
+}
+
+function isRuntimeManifestToolSummary(tool: unknown): boolean {
+  if (typeof tool !== "object" || tool === null) {
+    return false;
+  }
+  const record = tool as Record<string, unknown>;
+  return (
+    typeof record.name === "string" &&
+    typeof record.alias === "string" &&
+    typeof record.provider === "string" &&
+    typeof record.title === "string" &&
+    typeof record.description === "string" &&
+    typeof record.enabled === "boolean" &&
+    typeof record.risk === "string" &&
+    typeof record.routeRequired === "boolean" &&
+    typeof record.confirmation === "string" &&
+    Array.isArray(record.input) &&
+    record.input.every(isRuntimeManifestToolInputSummary)
+  );
+}
+
+function isRuntimeManifestToolInputSummary(input: unknown): boolean {
+  if (typeof input !== "object" || input === null) {
+    return false;
+  }
+  const record = input as Record<string, unknown>;
+  return (
+    typeof record.name === "string" &&
+    typeof record.type === "string" &&
+    typeof record.required === "boolean" &&
+    optionalString(record.description) &&
+    (!("values" in record) ||
+      record.values === undefined ||
+      (Array.isArray(record.values) &&
+        record.values.every((value) => typeof value === "string")))
   );
 }
 

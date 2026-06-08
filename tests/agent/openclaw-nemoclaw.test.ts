@@ -50,12 +50,14 @@ const openClawCapabilityManifest: RuntimeCapabilityManifest = {
 
 function runtimeManifest(input?: {
   streaming?: RuntimeManifest["streaming"];
+  engine?: RuntimeManifest["runtime"]["engine"];
+  tools?: RuntimeManifest["tools"];
 }): RuntimeManifest {
   return {
     version: "1",
     principal,
     runtime: {
-      engine: "openclaw",
+      engine: input?.engine ?? "openclaw",
       factory: "docker",
       ttlMs: 86_400_000,
       reaperEnabled: true
@@ -64,7 +66,7 @@ function runtimeManifest(input?: {
       provider: "openai",
       model: "gpt-5.4"
     },
-    tools: [],
+    tools: input?.tools ?? [],
     skills: [],
     memory: {
       userMemoryEnabled: false,
@@ -250,6 +252,85 @@ describe("createOpenClawNemoClawAgentRunner", () => {
     });
     expect(body.runId).toBeString();
     expect(JSON.stringify(body)).not.toContain("secret-token");
+  });
+
+  test("sends the runtime tool catalog only to Burble Native runtimes", async () => {
+    const toolCatalog: RuntimeManifest["tools"] = [
+      {
+        name: "github_get_authenticated_user",
+        alias: "github.getAuthenticatedUser",
+        provider: "github",
+        title: "GitHub authenticated user",
+        description: "Return the connected GitHub identity.",
+        enabled: true,
+        risk: "read",
+        routeRequired: true,
+        confirmation: "none",
+        input: []
+      }
+    ];
+    const seenRunBodies: Record<string, unknown>[] = [];
+    const runner = createOpenClawNemoClawAgentRunner({
+      runtimeFactory: {
+        async getOrCreateRuntime() {
+          const runIndex = seenRunBodies.length;
+          const engine = runIndex === 0 ? "openclaw" : "burble-native";
+          return {
+            id: `rt_${engine}`,
+            engine,
+            endpointUrl: `http://${engine}-runtime:8080`,
+            authToken: "runtime-token",
+            status: "ready",
+            statePath: `/data/runtimes/rt_${engine}/state`,
+            configPath: `/data/runtimes/rt_${engine}/config/runtime.json`,
+            workspacePath: `/data/runtimes/rt_${engine}/workspace`,
+            manifest: runtimeManifest({ engine, tools: toolCatalog })
+          };
+        },
+        async stopRuntime() {},
+        async reapIdleRuntimes() {}
+      },
+      fetch: async (url, init) => {
+        if (String(url).endsWith("/capabilities")) {
+          const runtimeType = String(url).includes("burble-native")
+            ? "burble-native"
+            : "openclaw";
+          return Response.json({
+            ...openClawCapabilityManifest,
+            runtimeType
+          });
+        }
+        seenRunBodies.push(JSON.parse(String(init.body)));
+        return Response.json({
+          response: {
+            classification: "user_private",
+            text: "ok"
+          }
+        });
+      }
+    });
+
+    await collectAgentRun(runner, {
+      principal,
+      conversation,
+      text: "first",
+      connections: { github: connection }
+    });
+    await collectAgentRun(runner, {
+      principal,
+      conversation,
+      text: "second",
+      connections: { github: connection }
+    });
+
+    expect(
+      (seenRunBodies[0].runtime as { manifest?: { tools?: unknown } }).manifest
+        ?.tools
+    ).toBeUndefined();
+    expect(
+      (seenRunBodies[1].runtime as { manifest?: { tools?: unknown } }).manifest
+        ?.tools
+    ).toEqual(toolCatalog);
   });
 
   test("bounds Slack context before posting to any remote runtime", async () => {

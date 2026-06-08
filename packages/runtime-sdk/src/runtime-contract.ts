@@ -65,6 +65,31 @@ export const runtimeManifestSkillSchema = z
   })
   .strict();
 
+export const runtimeManifestToolInputSchema = z
+  .object({
+    name: z.string().min(1),
+    type: z.string().min(1),
+    required: z.boolean(),
+    description: z.string().optional(),
+    values: z.array(z.string()).optional()
+  })
+  .strict();
+
+export const runtimeManifestToolSchema = z
+  .object({
+    name: z.string().min(1),
+    alias: z.string().min(1),
+    provider: z.string().min(1),
+    title: z.string().min(1),
+    description: z.string().min(1),
+    enabled: z.boolean(),
+    risk: z.enum(["read", "low_write", "moderate_write", "high_write"]),
+    routeRequired: z.boolean(),
+    confirmation: z.enum(["none", "explicit", "strong"]),
+    input: z.array(runtimeManifestToolInputSchema)
+  })
+  .strict();
+
 export const runtimeManifestMemorySchema = z
   .object({
     userMemoryEnabled: z.boolean(),
@@ -84,6 +109,7 @@ export const runtimeRequestManifestSchema = z
     version: z.string().min(1),
     policyHash: z.string().min(1),
     skills: z.array(runtimeManifestSkillSchema),
+    tools: z.array(runtimeManifestToolSchema).optional(),
     memory: runtimeManifestMemorySchema,
     streaming: runtimeManifestStreamingSchema.default({
       messageDeltasEnabled: true

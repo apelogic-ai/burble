@@ -1069,6 +1069,24 @@ function sanitizeRuntimeHandle(runtime: RuntimeHandle): {
     version: string;
     policyHash: string;
     skills: Array<{ id: string; version: string; enabled: boolean }>;
+    tools?: Array<{
+      name: string;
+      alias: string;
+      provider: string;
+      title: string;
+      description: string;
+      enabled: boolean;
+      risk: "read" | "low_write" | "moderate_write" | "high_write";
+      routeRequired: boolean;
+      confirmation: "none" | "explicit" | "strong";
+      input: Array<{
+        name: string;
+        type: string;
+        required: boolean;
+        description?: string;
+        values?: string[];
+      }>;
+    }>;
     memory: {
       userMemoryEnabled: boolean;
       workspaceMemoryEnabled: boolean;
@@ -1097,6 +1115,9 @@ function sanitizeRuntimeHandle(runtime: RuntimeHandle): {
             version: runtime.manifest.version,
             policyHash: runtime.manifest.policyHash,
             skills: runtime.manifest.skills,
+            ...(runtime.engine === "burble-native"
+              ? { tools: runtime.manifest.tools }
+              : {}),
             memory: runtime.manifest.memory,
             streaming: runtime.manifest.streaming,
             memoryContext: runtime.manifest.memoryContext

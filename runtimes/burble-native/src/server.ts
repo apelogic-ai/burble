@@ -36,6 +36,7 @@ const DEFAULT_PROVIDER_TIMEOUT_MS = 120_000;
 const MIN_PROVIDER_TIMEOUT_MS = 1;
 const MAX_PROVIDER_TIMEOUT_MS = 10 * 60_000;
 const MAX_TOOL_LOOP_STEPS = 4;
+const MAX_PROMPT_TOOLS = 24;
 const BURBLE_PROVIDER_TOOL_NAME = "burble_provider_call";
 
 const runtimeContractServer = createRuntimeContractServer<
@@ -409,9 +410,16 @@ function buildOpenAiInput(request: RunRequest): OpenAiInputItem[] {
   const history = recentMessages
     .map((message) => `${message.author}: ${message.text}`)
     .join("\n");
+  const toolCatalog = formatSelectedToolCatalog(request);
   const text = [
     "You are Burble, a concise Slack-native work assistant.",
-    "Use the burble_provider_call tool when provider data or actions are needed. Pass the exact Burble tool name as toolName and its JSON input as input.",
+    toolCatalog
+      ? [
+          "Use burble_provider_call only when provider data or actions are needed.",
+          "When calling it, pass exactly one listed tool alias as toolName and a JSON object matching that tool's input hint as input.",
+          toolCatalog
+        ].join("\n")
+      : "No Burble provider tools are available for this turn.",
     history ? `Recent conversation:\n${history}` : "",
     `User: ${request.input.text.trim()}`
   ]
@@ -421,8 +429,8 @@ function buildOpenAiInput(request: RunRequest): OpenAiInputItem[] {
 }
 
 function buildOpenAiTools(request: RunRequest): OpenAiInputItem[] {
-  const groups = request.input.toolGroups?.groups ?? [];
-  if (groups.length === 0) {
+  const tools = selectedRuntimeTools(request);
+  if (tools.length === 0) {
     return [];
   }
   return [
@@ -438,7 +446,7 @@ function buildOpenAiTools(request: RunRequest): OpenAiInputItem[] {
           toolName: {
             type: "string",
             description:
-              "The exact Burble tool name to execute, for example github.getAuthenticatedUser or conversation.sendMessage."
+              "The exact Burble tool alias to execute. Use only aliases listed in the prompt's available Burble tools catalog."
           },
           input: {
             type: "object",
@@ -450,6 +458,118 @@ function buildOpenAiTools(request: RunRequest): OpenAiInputItem[] {
       }
     }
   ];
+}
+
+type RuntimeRequestManifestTool = NonNullable<
+  NonNullable<RunRequest["runtime"]["manifest"]>["tools"]
+>[number];
+
+function selectedRuntimeTools(request: RunRequest): RuntimeRequestManifestTool[] {
+  const groups = new Set(request.input.toolGroups?.groups ?? []);
+  if (groups.size === 0) {
+    return [];
+  }
+  return (request.runtime.manifest?.tools ?? [])
+    .filter((tool) => tool.enabled && toolMatchesSelectedGroups(tool, groups))
+    .sort(compareRuntimeTools)
+    .slice(0, MAX_PROMPT_TOOLS);
+}
+
+function toolMatchesSelectedGroups(
+  tool: RuntimeRequestManifestTool,
+  groups: Set<string>
+): boolean {
+  if (groups.has(tool.provider)) {
+    return true;
+  }
+  if (tool.provider === "atlassian" && groups.has("jira")) {
+    return true;
+  }
+  if (tool.alias.startsWith("gmail.") && groups.has("google")) {
+    return true;
+  }
+  return false;
+}
+
+function compareRuntimeTools(
+  left: RuntimeRequestManifestTool,
+  right: RuntimeRequestManifestTool
+): number {
+  const provider = left.provider.localeCompare(right.provider);
+  if (provider !== 0) {
+    return provider;
+  }
+  const risk = riskRank(left.risk) - riskRank(right.risk);
+  if (risk !== 0) {
+    return risk;
+  }
+  return left.alias.localeCompare(right.alias);
+}
+
+function riskRank(risk: RuntimeRequestManifestTool["risk"]): number {
+  switch (risk) {
+    case "read":
+      return 0;
+    case "low_write":
+      return 1;
+    case "moderate_write":
+      return 2;
+    case "high_write":
+      return 3;
+  }
+}
+
+function formatSelectedToolCatalog(request: RunRequest): string {
+  const tools = selectedRuntimeTools(request);
+  if (tools.length === 0) {
+    return "";
+  }
+  const omittedCount =
+    (request.runtime.manifest?.tools ?? []).filter(
+      (tool) =>
+        tool.enabled &&
+        toolMatchesSelectedGroups(
+          tool,
+          new Set(request.input.toolGroups?.groups ?? [])
+        )
+    ).length - tools.length;
+  return [
+    "Available Burble tools for this turn:",
+    ...tools.map(formatRuntimeTool),
+    omittedCount > 0 ? `- ${omittedCount} additional tools omitted; answer with available tools or ask for a narrower request.` : ""
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+function formatRuntimeTool(tool: RuntimeRequestManifestTool): string {
+  return `- ${tool.alias}: ${truncateForPrompt(tool.description, 180)} Input: ${formatToolInput(tool)}`;
+}
+
+function formatToolInput(tool: RuntimeRequestManifestTool): string {
+  if (tool.input.length === 0) {
+    return "{}";
+  }
+  return `{ ${tool.input.map(formatToolInputField).join("; ")} }`;
+}
+
+function formatToolInputField(
+  field: RuntimeRequestManifestTool["input"][number]
+): string {
+  const type =
+    field.values && field.values.length > 0
+      ? `${field.type}(${field.values.join("|")})`
+      : field.type;
+  const required = field.required ? "required" : "optional";
+  return `${field.name}: ${type}, ${required}${field.description ? `, ${truncateForPrompt(field.description, 80)}` : ""}`;
+}
+
+function truncateForPrompt(value: string, maxLength: number): string {
+  const trimmed = value.trim().replace(/\s+/g, " ");
+  if (trimmed.length <= maxLength) {
+    return trimmed;
+  }
+  return `${trimmed.slice(0, maxLength - 1).trimEnd()}…`;
 }
 
 async function* readSseJsonPayloads(
