@@ -444,6 +444,118 @@ asyncio.run(main())
     });
   });
 
+  test("streams deterministic capability assertion probe events", () => {
+    const result = runHermesEntrypointProbe(`${importEntrypoint}
+import asyncio
+import os
+
+os.environ["BURBLE_RUNTIME_CONTRACT_PROBE"] = "1"
+
+async def run_probe(message):
+    waiter = mod.RunWaiter()
+    queue = asyncio.Queue()
+    waiter.queues.append(queue)
+    runtime = mod.BurbleHermesRuntime()
+
+    await runtime._execute_run("run-contract-probe", waiter, message)
+
+    events = []
+    while not queue.empty():
+        event = await queue.get()
+        if event is not None:
+            events.append(event)
+    return events
+
+async def main():
+    tool_events = await run_probe({
+        "text": "runtime contract tool capability probe",
+    })
+    scheduled_events = await run_probe({
+        "originalText": "runtime contract scheduled provider capability probe",
+        "text": "runtime contract scheduled provider capability probe",
+        "scheduledJob": {"jobId": "contract-scheduled-job"},
+    })
+    print(json.dumps({"toolEvents": tool_events, "scheduledEvents": scheduled_events}))
+
+asyncio.run(main())
+`);
+
+    const typed = result as {
+      toolEvents: unknown[];
+      scheduledEvents: unknown[];
+    };
+    expect(typed.toolEvents).toContainEqual({
+      type: "tool_call",
+      toolName: "runtime.conformance.echo",
+      callId: "contract-tool-probe"
+    });
+    expect(typed.toolEvents).toContainEqual({
+      type: "tool_result",
+      toolName: "runtime.conformance.echo",
+      callId: "contract-tool-probe",
+      classification: "user_private"
+    });
+    expect(typed.scheduledEvents).toContainEqual({
+      type: "tool_call",
+      toolName: "scheduledJob.registerCapability",
+      callId: "contract-scheduled-provider-probe"
+    });
+    expect(typed.scheduledEvents).toContainEqual({
+      type: "tool_result",
+      toolName: "scheduledJob.registerCapability",
+      callId: "contract-scheduled-provider-probe",
+      classification: "user_private"
+    });
+  });
+
+  test("replays completed contract probe events to late subscribers", () => {
+    const result = runHermesEntrypointProbe(`${importEntrypoint}
+import asyncio
+import os
+
+os.environ["BURBLE_RUNTIME_CONTRACT_PROBE"] = "1"
+
+async def main():
+    waiter = mod.RunWaiter()
+    runtime = mod.BurbleHermesRuntime()
+    await runtime._execute_run("run-contract-probe", waiter, {
+        "text": "runtime contract tool capability probe",
+    })
+
+    queue = asyncio.Queue()
+    await waiter.replay_to(queue)
+
+    events = []
+    while True:
+        event = await queue.get()
+        if event is None:
+            break
+        events.append(event)
+    print(json.dumps(events))
+
+asyncio.run(main())
+`);
+
+    const events = result as unknown[];
+    expect(events).toContainEqual({
+      type: "tool_call",
+      toolName: "runtime.conformance.echo",
+      callId: "contract-tool-probe"
+    });
+    expect(events).toContainEqual({
+      type: "tool_result",
+      toolName: "runtime.conformance.echo",
+      callId: "contract-tool-probe",
+      classification: "user_private"
+    });
+    expect(events.at(-1)).toMatchObject({
+      type: "final",
+      response: {
+        text: "Runtime contract tool capability response."
+      }
+    });
+  });
+
   test("adds HubSpot provider tool hints to Hermes turns", () => {
     const result = runHermesEntrypointProbe(`${importEntrypoint}
 payload = {

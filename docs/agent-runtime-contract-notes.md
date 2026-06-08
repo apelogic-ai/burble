@@ -538,8 +538,9 @@ terms:
 - `AGENT_RUNTIME_URL` / `managedRuntimeUrl` is the canonical static runtime
   endpoint, while `OPENCLAW_NEMOCLAW_URL` remains an alias;
 - `native-runtime` is the canonical execution mode for native agent runtime
-  turns, while `openclaw-native` remains an accepted wire alias for existing
-  OpenClaw/NemoClaw code and tests.
+  turns. Runtime receivers temporarily accept the legacy `openclaw-native`
+  spelling and normalize it to `native-runtime` so runtime images can roll ahead
+  of the Burble app without rejecting old requests.
 
 ## Implementation Roadmap
 

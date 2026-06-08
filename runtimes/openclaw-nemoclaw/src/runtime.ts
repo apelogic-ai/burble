@@ -38,7 +38,7 @@ export function createRuntimeRunner(
       executeTool = createBurbleToolExecutor(config, request.runtime?.id, request)
     ) {
       if (config.contractProbeMode) {
-        return { response: runtimeContractProbeResponse() };
+        return { response: runtimeContractProbeResponse(request) };
       }
       const effectiveConfig = resolveRuntimeConfigForRequest(config, request);
       await prepareNativeOpenClawIfNeeded(effectiveConfig, request, options);
@@ -49,7 +49,7 @@ export function createRuntimeRunner(
       executeTool = createBurbleToolExecutor(config, request.runtime?.id, request)
     ) {
       if (config.contractProbeMode) {
-        yield* streamRuntimeContractProbe();
+        yield* streamRuntimeContractProbe(request);
         return;
       }
       const effectiveConfig = resolveRuntimeConfigForRequest(config, request);
@@ -59,10 +59,17 @@ export function createRuntimeRunner(
   };
 }
 
-function runtimeContractProbeResponse(): RunResponse["response"] {
+function runtimeContractProbeResponse(
+  request?: Pick<RunRequest, "input">
+): RunResponse["response"] {
+  const text = request?.input.scheduledJob
+    ? "Runtime contract scheduled provider capability response."
+    : request?.input.text === "runtime contract tool capability probe"
+      ? "Runtime contract tool capability response."
+      : "Runtime contract probe response.";
   return {
     classification: "user_private",
-    text: "Runtime contract probe response.",
+    text,
     usage: {
       inputTokens: 1,
       outputTokens: 1,
@@ -72,10 +79,38 @@ function runtimeContractProbeResponse(): RunResponse["response"] {
   };
 }
 
-async function* streamRuntimeContractProbe(): AsyncIterable<RunEvent> {
+async function* streamRuntimeContractProbe(
+  request: Pick<RunRequest, "input">
+): AsyncIterable<RunEvent> {
   yield { type: "status", text: "Runtime contract probe accepted." };
-  yield { type: "message_delta", text: "Runtime contract probe response." };
-  yield { type: "final", response: runtimeContractProbeResponse() };
+  if (request.input.scheduledJob) {
+    yield {
+      type: "tool_call",
+      toolName: "scheduledJob.registerCapability",
+      callId: "contract-scheduled-provider-probe"
+    };
+    yield {
+      type: "tool_result",
+      toolName: "scheduledJob.registerCapability",
+      callId: "contract-scheduled-provider-probe",
+      classification: "user_private"
+    };
+  } else if (request.input.text === "runtime contract tool capability probe") {
+    yield {
+      type: "tool_call",
+      toolName: "runtime.conformance.echo",
+      callId: "contract-tool-probe"
+    };
+    yield {
+      type: "tool_result",
+      toolName: "runtime.conformance.echo",
+      callId: "contract-tool-probe",
+      classification: "user_private"
+    };
+  }
+  const response = runtimeContractProbeResponse(request);
+  yield { type: "message_delta", text: response.text };
+  yield { type: "final", response };
 }
 
 export function resolveRuntimeConfigForRequest(
@@ -125,10 +160,7 @@ async function prepareNativeOpenClawIfNeeded(
 function isNativeRuntimeExecutionMode(
   request: Pick<RunRequest, "executionMode">
 ): boolean {
-  return (
-    request.executionMode === "native-runtime" ||
-    request.executionMode === "openclaw-native"
-  );
+  return request.executionMode === "native-runtime";
 }
 
 export function createRuntimeAgentAdapter(

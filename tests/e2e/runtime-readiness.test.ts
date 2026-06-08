@@ -14,6 +14,7 @@ import {
 import { runRuntimeConformanceCheck } from "../../src/agent/runtime-conformance-harness";
 import { createRuntimeContractHttpClient } from "../../src/agent/runtime-contract-http-client";
 import { runRuntimeReadinessCheck } from "../../src/agent/runtime-readiness-harness";
+import type { RuntimeContractCheckName } from "../../src/agent/runtime-contract-harness";
 
 const runtimeReadinessDescribe =
   Bun.env.BURBLE_E2E_RUNTIMES === "1" ? describe : describe.skip;
@@ -152,14 +153,23 @@ runtimeConformanceDescribe("runtime contract conformance e2e", () => {
           });
 
           expect(report.runtimeType).toBe(engine);
-          expect(report.checks.map((check) => check.name)).toEqual([
+          const expectedChecks: RuntimeContractCheckName[] = [
             "manifest",
             "health",
             "run_accepted",
             "events_stream",
             "final_response",
             "usage"
-          ]);
+          ];
+          if (report.manifest.toolCalls) {
+            expectedChecks.push("tool_calls");
+          }
+          if (report.manifest.scheduledProviderCalls) {
+            expectedChecks.push("scheduled_provider_calls");
+          }
+          expect(report.checks.map((check) => check.name)).toEqual(
+            expectedChecks
+          );
         } finally {
           if (runtimeId) {
             await factory.stopRuntime(runtimeId);

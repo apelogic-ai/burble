@@ -79,7 +79,7 @@ export type ConversationDeps = {
   agentMode?: AgentMode;
   agentFastTrack?: boolean;
   agentRunner?: AgentRunner;
-  agentExecutionMode?: "default" | "native-runtime" | "openclaw-native";
+  agentExecutionMode?: "default" | "native-runtime";
   onAgentEvent?: AgentRunEventHandler;
   observability?: ObservabilitySink;
   traceId?: string;

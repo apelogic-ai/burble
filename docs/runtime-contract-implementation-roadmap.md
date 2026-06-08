@@ -28,8 +28,9 @@ Already landed or in flight:
   OpenClaw/NemoClaw runner name retained as a compatibility export;
 - `AGENT_RUNTIME_URL` / `managedRuntimeUrl` as the canonical configured runtime
   endpoint, with `OPENCLAW_NEMOCLAW_URL` retained as a compatibility alias;
-- `native-runtime` as the canonical execution mode for native runtime turns,
-  with `openclaw-native` retained as a compatibility alias.
+- `native-runtime` as the canonical execution mode for native runtime turns, with
+  runtime receivers temporarily accepting and normalizing legacy
+  `openclaw-native` requests for rolling deploy tolerance.
 
 ## PR 1: Runtime Adapter Unification
 
@@ -54,7 +55,7 @@ Current PR slice:
 - Burble app config and Slack runtime setup use managed-runtime naming while
   preserving legacy env/config aliases;
 - the request contract accepts canonical `native-runtime` execution mode and
-  legacy `openclaw-native` for older callers.
+  normalizes legacy `openclaw-native` at receiver boundaries.
 
 Likely regression points:
 

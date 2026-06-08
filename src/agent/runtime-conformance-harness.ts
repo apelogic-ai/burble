@@ -23,6 +23,7 @@ export async function runRuntimeConformanceCheck(input: {
   resolveBaseUrl?: (runtime: RuntimeHandle) => string | Promise<string>;
   fetch?: RuntimeContractFetch;
   webSocketFactory?: RuntimeContractWebSocketFactory;
+  assertClaimedCapabilities?: boolean;
 }): Promise<RuntimeConformanceReport> {
   const runtime = await input.runtimeFactory.getOrCreateRuntime(input.principal);
   const baseUrl =
@@ -36,6 +37,7 @@ export async function runRuntimeConformanceCheck(input: {
         "x-burble-runtime-id": runtime.id
       }
     }),
+    assertClaimedCapabilities: input.assertClaimedCapabilities ?? true,
     request: {
       runId: `contract-${runtime.id}`,
       principal: input.principal,

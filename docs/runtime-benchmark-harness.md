@@ -18,7 +18,7 @@ Useful options:
 --iterations 5
 --warmup 1
 --stream true
---execution-mode openclaw-native
+--execution-mode native-runtime
 --route-id convrt_bench
 ```
 

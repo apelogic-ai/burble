@@ -576,12 +576,20 @@ class RunWaiter:
         self.future: asyncio.Future[dict[str, Any]] = loop.create_future()
         self.final_response: dict[str, Any] | None = None
         self.completed = False
+        self.events: list[dict[str, Any]] = []
         self.queues: list[asyncio.Queue[dict[str, Any] | None]] = []
 
     async def emit(self, event: dict[str, Any]) -> None:
         validate_runtime_run_event(event)
+        self.events.append(event)
         for queue in list(self.queues):
             await queue.put(event)
+
+    async def replay_to(self, queue: asyncio.Queue[dict[str, Any] | None]) -> None:
+        for event in list(self.events):
+            await queue.put(event)
+        if self.completed:
+            await queue.put(None)
 
     async def finish(self, response: dict[str, Any]) -> None:
         self.final_response = response
@@ -677,6 +685,8 @@ class BurbleHermesRuntime:
                 {
                     "runId": run_id,
                     "routeId": route_id,
+                    "originalText": text,
+                    "scheduledJob": input_body.get("scheduledJob"),
                     "text": build_hermes_turn_text(input_body),
                     "threadId": build_hermes_thread_id(run_id, conversation),
                     "actorId": principal.get("slackUserId"),
@@ -733,14 +743,12 @@ class BurbleHermesRuntime:
         await ws.prepare(request)
         queue: asyncio.Queue[dict[str, Any] | None] = asyncio.Queue()
         waiter.queues.append(queue)
+        await waiter.replay_to(queue)
         print(
             f"[INFO] {timestamp()} Nemo Hermes run events attached runId={run_id}",
             flush=True,
         )
         try:
-            if waiter.final_response:
-                await ws.send_json({"type": "final", "response": waiter.final_response})
-                return ws
             while True:
                 event = await queue.get()
                 if event is None:
@@ -787,6 +795,61 @@ class BurbleHermesRuntime:
         progress_task: asyncio.Task[None] | None = None
         try:
             if truthy_env("BURBLE_RUNTIME_CONTRACT_PROBE"):
+                if message.get("scheduledJob"):
+                    await waiter.emit({"type": "status", "text": "Runtime contract probe accepted."})
+                    await waiter.emit({
+                        "type": "tool_call",
+                        "toolName": "scheduledJob.registerCapability",
+                        "callId": "contract-scheduled-provider-probe",
+                    })
+                    await waiter.emit({
+                        "type": "tool_result",
+                        "toolName": "scheduledJob.registerCapability",
+                        "callId": "contract-scheduled-provider-probe",
+                        "classification": "user_private",
+                    })
+                    response = {
+                        "classification": "user_private",
+                        "text": "Runtime contract scheduled provider capability response.",
+                        "usage": {
+                            "inputTokens": 1,
+                            "outputTokens": 1,
+                            "totalTokens": 2,
+                            "usageSource": "contract-probe",
+                        },
+                    }
+                    await waiter.emit({"type": "message_delta", "text": response["text"]})
+                    await waiter.finish(response)
+                    return response
+                if (
+                    message.get("originalText") == "runtime contract tool capability probe"
+                    or message.get("text") == "runtime contract tool capability probe"
+                ):
+                    await waiter.emit({"type": "status", "text": "Runtime contract probe accepted."})
+                    await waiter.emit({
+                        "type": "tool_call",
+                        "toolName": "runtime.conformance.echo",
+                        "callId": "contract-tool-probe",
+                    })
+                    await waiter.emit({
+                        "type": "tool_result",
+                        "toolName": "runtime.conformance.echo",
+                        "callId": "contract-tool-probe",
+                        "classification": "user_private",
+                    })
+                    response = {
+                        "classification": "user_private",
+                        "text": "Runtime contract tool capability response.",
+                        "usage": {
+                            "inputTokens": 1,
+                            "outputTokens": 1,
+                            "totalTokens": 2,
+                            "usageSource": "contract-probe",
+                        },
+                    }
+                    await waiter.emit({"type": "message_delta", "text": response["text"]})
+                    await waiter.finish(response)
+                    return response
                 response = {
                     "classification": "user_private",
                     "text": "Runtime contract probe response.",

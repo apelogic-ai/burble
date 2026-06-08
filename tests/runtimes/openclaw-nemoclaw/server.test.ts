@@ -196,6 +196,90 @@ describe("handleRuntimeRequest", () => {
     ]);
   });
 
+  test("accepts the legacy OpenClaw native execution mode alias at the request boundary", async () => {
+    const response = await handleRuntimeRequest(
+      new Request("http://runtime/runs", {
+        method: "POST",
+        headers: {
+          accept: "application/x-ndjson",
+          "content-type": "application/json"
+        },
+        body: JSON.stringify({
+          runId: "run-legacy-native-mode",
+          executionMode: "openclaw-native",
+          principal: { workspaceId: "T123", slackUserId: "U123" },
+          runtime: { id: "rt_probe", engine: "openclaw" },
+          input: {
+            text: "contract probe",
+            connections: {
+              github: { connected: false }
+            }
+          }
+        })
+      }),
+      { ...config, engine: "openclaw", contractProbeMode: true }
+    );
+
+    expect(response.status).toBe(200);
+    const events = (await response.text())
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+    expect(events.at(-1)).toMatchObject({
+      type: "final",
+      response: {
+        text: "Runtime contract probe response."
+      }
+    });
+  });
+
+  test("streams deterministic capability assertion probe events", async () => {
+    const toolResponse = await handleRuntimeRequest(
+      new Request("http://runtime/runs", {
+        method: "POST",
+        headers: {
+          accept: "application/x-ndjson",
+          "content-type": "application/json"
+        },
+        body: JSON.stringify(
+          contractProbeRequest({
+            runId: "run-contract-tool-probe",
+            text: "runtime contract tool capability probe"
+          })
+        )
+      }),
+      { ...config, engine: "openclaw", contractProbeMode: true }
+    );
+    const scheduledResponse = await handleRuntimeRequest(
+      new Request("http://runtime/runs", {
+        method: "POST",
+        headers: {
+          accept: "application/x-ndjson",
+          "content-type": "application/json"
+        },
+        body: JSON.stringify(
+          contractProbeRequest({
+            runId: "run-contract-scheduled-probe",
+            text: "runtime contract scheduled provider capability probe",
+            scheduled: true
+          })
+        )
+      }),
+      { ...config, engine: "openclaw", contractProbeMode: true }
+    );
+
+    expect(readNdjsonEvents(await toolResponse.text())).toContainEqual({
+      type: "tool_call",
+      toolName: "runtime.conformance.echo",
+      callId: "contract-tool-probe"
+    });
+    expect(readNdjsonEvents(await scheduledResponse.text())).toContainEqual({
+      type: "tool_call",
+      toolName: "scheduledJob.registerCapability",
+      callId: "contract-scheduled-provider-probe"
+    });
+  });
+
   test("accepts HubSpot runtime tool groups and connection summaries", async () => {
     const response = await handleRuntimeRequest(
       new Request("http://runtime/runs", {
@@ -1501,6 +1585,54 @@ describe("handleRuntimeRequest", () => {
     expect(await response.text()).toBe("Invalid run request");
   });
 });
+
+function contractProbeRequest(input: {
+  runId: string;
+  text: string;
+  scheduled?: boolean;
+}) {
+  return {
+    runId: input.runId,
+    principal: { workspaceId: "T123", slackUserId: "U123" },
+    runtime: { id: "rt_probe", engine: "openclaw" },
+    input: {
+      text: input.text,
+      ...(input.scheduled
+        ? {
+            scheduledJob: {
+              jobId: "contract-scheduled-job",
+              capabilityProfile: "contract-probe",
+              allowedTools: ["runtime.conformance.echo"],
+              routeId: "convrt_contract_probe",
+              stateRefs: [],
+              visibilityPolicy: {
+                maxOutputVisibility: "user_private",
+                allowPrivateToolDeclassification: false
+              }
+            }
+          }
+        : {}),
+      conversation: {
+        source: "slack",
+        workspaceId: "T123",
+        channelId: "D123",
+        rootId: "dm:D123",
+        isDirectMessage: true
+      },
+      connections: {
+        github: { connected: false }
+      }
+    }
+  };
+}
+
+function readNdjsonEvents(text: string): unknown[] {
+  return text
+    .trim()
+    .split("\n")
+    .filter(Boolean)
+    .map((line) => JSON.parse(line));
+}
 
 function readMcpData(text: string): any {
   const dataLine = text

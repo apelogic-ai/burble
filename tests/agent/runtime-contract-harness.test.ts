@@ -86,6 +86,7 @@ describe("runtime contract harness", () => {
       runRuntimeContractSmokeTest({ client, request })
     ).resolves.toEqual({
       runtimeType: "hermes",
+      manifest,
       runId: "run-contract-1",
       checks: [
         { name: "manifest", status: "ok" },

@@ -1585,7 +1585,7 @@ describe("runOpenClawCliRequest", () => {
     const toolCalls: Array<{ toolName: string; body: unknown }> = [];
     const response = await runOpenClawCliRequest(
       {
-        executionMode: "openclaw-native",
+        executionMode: "native-runtime",
         input: {
           text: "send a progress update",
           conversation: {
@@ -1669,7 +1669,7 @@ describe("runOpenClawCliRequest", () => {
     const prompts: string[] = [];
     await runOpenClawCliRequest(
       {
-        executionMode: "openclaw-native",
+        executionMode: "native-runtime",
         input: {
           text: "run the scheduled provider job",
           conversation: {
@@ -1747,7 +1747,7 @@ describe("runOpenClawCliRequest", () => {
     const toolCalls: Array<{ toolName: string; body: unknown }> = [];
     const response = await runOpenClawCliRequest(
       {
-        executionMode: "openclaw-native",
+        executionMode: "native-runtime",
         input: {
           text: "describe this screenshot",
           attachments: [
@@ -2606,7 +2606,7 @@ describe("runOpenClawCliRequest", () => {
         for await (const event of runOpenClawCliRequestStream(
           {
             runId: "run-stream-bootstrap-repeat",
-            executionMode: "openclaw-native",
+            executionMode: "native-runtime",
             input: {
               text: "hey agent",
               connections: {
@@ -2689,7 +2689,7 @@ describe("runOpenClawCliRequest", () => {
         for await (const event of runOpenClawCliRequestStream(
           {
             runId: "run-gateway-stream",
-            executionMode: "openclaw-native",
+            executionMode: "native-runtime",
             input: {
               text: "prioritize my GitHub work",
               connections: {
@@ -2762,7 +2762,7 @@ describe("runOpenClawCliRequest", () => {
         for await (const event of runOpenClawCliRequestStream(
           {
             runId: "run-gateway-stream-disabled",
-            executionMode: "openclaw-native",
+            executionMode: "native-runtime",
             runtime: {
               id: "rt_123",
               manifest: {
@@ -2872,7 +2872,7 @@ describe("runOpenClawCliRequest", () => {
         for await (const event of runOpenClawCliRequestStream(
           {
             runId: "run-gateway-tool-stream",
-            executionMode: "openclaw-native",
+            executionMode: "native-runtime",
             input: {
               text: "which Jira tickets are blocked?",
               connections: {
@@ -3301,7 +3301,7 @@ describe("runOpenClawCliRequest", () => {
         runOpenClawCliRequest(
           {
             runId: "run-gateway-bootstrap",
-            executionMode: "openclaw-native",
+            executionMode: "native-runtime",
             input: {
               text: "ask agent who is jensen huang",
               connections: {
@@ -3364,7 +3364,7 @@ describe("runOpenClawCliRequest", () => {
         runOpenClawCliRequest(
           {
             runId: "run-gateway-bootstrap-repeat",
-            executionMode: "openclaw-native",
+            executionMode: "native-runtime",
             input: {
               text: "hey agent",
               connections: {
@@ -3603,7 +3603,7 @@ describe("runOpenClawCliRequest", () => {
     }> = [];
     const nativeRequest = (runId: string, text: string) => ({
       runId,
-      executionMode: "openclaw-native" as const,
+      executionMode: "native-runtime" as const,
       runtime: {
         id: "rt_123"
       },
@@ -3702,7 +3702,7 @@ describe("runOpenClawCliRequest", () => {
         await runOpenClawCliRequest(
           {
             runId: "run-scheduler",
-            executionMode: "openclaw-native",
+            executionMode: "native-runtime",
             runtime: {
               id: "rt_123"
             },
@@ -3818,7 +3818,7 @@ describe("runOpenClawCliRequest", () => {
         await runOpenClawCliRequest(
           {
             runId: "run-scheduler-missing-group",
-            executionMode: "openclaw-native",
+            executionMode: "native-runtime",
             runtime: {
               id: "rt_123"
             },
@@ -3882,7 +3882,7 @@ describe("runOpenClawCliRequest", () => {
     const response = await runOpenClawCliRequest(
       {
         runId: "run-register-scheduled-job",
-        executionMode: "openclaw-native",
+        executionMode: "native-runtime",
         input: {
           text: "create a cron job to read AI news every hour",
           toolGroups: {
@@ -3959,7 +3959,7 @@ describe("runOpenClawCliRequest", () => {
     const response = await runOpenClawCliRequest(
       {
         runId: "run-provider-bridge",
-        executionMode: "openclaw-native",
+        executionMode: "native-runtime",
         input: {
           text: "run scheduled provider bridge call",
           toolGroups: {
@@ -4042,7 +4042,7 @@ describe("runOpenClawCliRequest", () => {
       async () =>
         runOpenClawCliRequest(
           {
-            executionMode: "openclaw-native",
+            executionMode: "native-runtime",
             input: {
               text: "run a 30 second hash loop",
               connections: {

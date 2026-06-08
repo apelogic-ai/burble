@@ -121,12 +121,16 @@ export const scheduledJobContextSchema = z
   })
   .strict();
 
+const runtimeExecutionModeSchema = z.enum([
+  "default",
+  "native-runtime",
+  "openclaw-native"
+]);
+
 export const runtimeRunRequestSchema = z
   .object({
     runId: z.string().min(1).optional(),
-    executionMode: z
-      .enum(["default", "native-runtime", "openclaw-native"])
-      .optional(),
+    executionMode: runtimeExecutionModeSchema.optional(),
     principal: runtimePrincipalSchema,
     runtime: z
       .object({
@@ -318,7 +322,14 @@ export const runtimeCapabilityManifestSchema = z
   })
   .passthrough();
 
-export type RuntimeRunRequest = z.infer<typeof runtimeRunRequestSchema>;
+type ParsedRuntimeRunRequest = z.infer<typeof runtimeRunRequestSchema>;
+
+export type RuntimeRunRequest = Omit<
+  ParsedRuntimeRunRequest,
+  "executionMode"
+> & {
+  executionMode?: "default" | "native-runtime";
+};
 export type RuntimeRunEvent = z.infer<typeof runtimeRunEventSchema>;
 export type RuntimeFinalResponse = z.infer<typeof runtimeFinalResponseSchema>;
 export type RuntimeUsage = z.infer<typeof runtimeUsageSchema>;
@@ -327,7 +338,16 @@ export type RuntimeCapabilityManifest = z.infer<
 >;
 
 export function parseRuntimeRunRequest(input: unknown): RuntimeRunRequest {
-  return parseContract(runtimeRunRequestSchema, input, "Invalid runtime run request");
+  const request = parseContract(
+    runtimeRunRequestSchema,
+    input,
+    "Invalid runtime run request"
+  );
+  const executionMode =
+    request.executionMode === "openclaw-native"
+      ? "native-runtime"
+      : request.executionMode;
+  return { ...request, executionMode };
 }
 
 export function parseRuntimeRunEvent(input: unknown): RuntimeRunEvent {
