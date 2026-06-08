@@ -6,6 +6,7 @@ import {
   createRuntimeContractServer,
   type RuntimeEventWebSocket
 } from "@burble/runtime-sdk/server";
+import { createBurbleNativeToolExecutor } from "./tools";
 import type {
   CapabilityManifest,
   RunEvent,
@@ -24,10 +25,19 @@ type RuntimeFetch = (url: string, init?: RequestInit) => Promise<Response>;
 type StreamReadResult = Awaited<
   ReturnType<ReadableStreamDefaultReader<Uint8Array>["read"]>
 >;
+type OpenAiInputItem = Record<string, unknown>;
+type OpenAiFunctionToolCall = {
+  callId: string;
+  toolName: string;
+  input: unknown;
+};
 
 const DEFAULT_PROVIDER_TIMEOUT_MS = 120_000;
 const MIN_PROVIDER_TIMEOUT_MS = 1;
 const MAX_PROVIDER_TIMEOUT_MS = 10 * 60_000;
+const MAX_TOOL_LOOP_STEPS = 4;
+const MAX_PROMPT_TOOLS = 24;
+const BURBLE_PROVIDER_TOOL_NAME = "burble_provider_call";
 
 const runtimeContractServer = createRuntimeContractServer<
   RuntimeServerContext,
@@ -86,7 +96,7 @@ export function buildRuntimeCapabilityManifest(): CapabilityManifest {
     cancellation: false,
     nativeScheduler: false,
     scheduledProviderCalls: false,
-    toolCalls: false,
+    toolCalls: true,
     toolBridgeModes: ["tool_gateway"],
     usageReporting: "exact",
     multimodalInput: false,
@@ -107,12 +117,16 @@ async function* streamNativeRun(
   let finalResponse: RuntimeFinalResponse | null = null;
   let emittedMessageDelta = false;
   for await (const event of runNativeTurn(request, context)) {
+    if (event.type === "final") {
+      finalResponse = event.response;
+      continue;
+    }
     if (event.type === "message_delta") {
       emittedMessageDelta = true;
       yield event;
       continue;
     }
-    finalResponse = event.response;
+    yield event;
   }
   if (!finalResponse) {
     throw new Error("Burble Native turn did not produce a final response");
@@ -126,11 +140,30 @@ async function* streamNativeRun(
 async function* runNativeTurn(
   request: RunRequest,
   context: RuntimeServerContext
-): AsyncIterable<
-  | Extract<RunEvent, { type: "message_delta" }>
-  | Extract<RunEvent, { type: "final" }>
-> {
+): AsyncIterable<RunEvent> {
   if (readEnv(context.env, "BURBLE_RUNTIME_CONTRACT_PROBE") === "1") {
+    if (request.input.text === "runtime contract tool capability probe") {
+      yield {
+        type: "tool_call",
+        toolName: BURBLE_PROVIDER_TOOL_NAME,
+        callId: "contract-tool-probe"
+      };
+      yield {
+        type: "tool_result",
+        toolName: BURBLE_PROVIDER_TOOL_NAME,
+        callId: "contract-tool-probe",
+        classification: "user_private"
+      };
+      yield {
+        type: "final",
+        response: {
+          classification: "user_private",
+          text: "Runtime contract tool capability response.",
+          usage: nativeUsage()
+        }
+      };
+      return;
+    }
     yield {
       type: "final",
       response: {
@@ -143,14 +176,46 @@ async function* runNativeTurn(
   }
   let responseText = "";
   let usage: RunUsage | undefined;
-  for await (const event of streamOpenAiTurn(request, context)) {
-    if (event.type === "message_delta") {
-      responseText += event.text;
-      yield event;
-      continue;
+  let input = buildOpenAiInput(request);
+  for (let step = 0; step < MAX_TOOL_LOOP_STEPS; step += 1) {
+    const result = await collectOpenAiTurn(input, request, context);
+    usage = mergeUsage(usage, result.usage);
+    if (result.toolCalls.length === 0) {
+      for (const delta of result.deltas) {
+        responseText += delta;
+        yield { type: "message_delta", text: delta };
+      }
+      responseText = result.text || responseText;
+      break;
     }
-    responseText = event.text || responseText;
-    usage = event.usage;
+
+    const toolOutputs: OpenAiInputItem[] = [];
+    for (const toolCall of result.toolCalls) {
+      yield {
+        type: "tool_call",
+        toolName: toolCall.toolName,
+        callId: toolCall.callId
+      };
+      const toolResult = await executeBurbleProviderTool(toolCall, context);
+      yield {
+        type: "tool_result",
+        toolName: toolCall.toolName,
+        callId: toolCall.callId,
+        classification: readToolResultClassification(toolResult)
+      };
+      toolOutputs.push({
+        type: "function_call_output",
+        call_id: toolCall.callId,
+        output: JSON.stringify(toolResult)
+      });
+    }
+
+    input = [...asOpenAiInputItems(input), ...result.outputItems, ...toolOutputs];
+    if (step === MAX_TOOL_LOOP_STEPS - 1) {
+      throw new Error(
+        `Burble Native exceeded ${MAX_TOOL_LOOP_STEPS} tool-call steps`
+      );
+    }
   }
   yield {
     type: "final",
@@ -171,13 +236,17 @@ function nativeUsage(): RunUsage {
   };
 }
 
-async function* streamOpenAiTurn(
+async function collectOpenAiTurn(
+  input: string | OpenAiInputItem[],
   request: RunRequest,
   context: RuntimeServerContext
-): AsyncIterable<
-  | Extract<RunEvent, { type: "message_delta" }>
-  | { type: "completed"; text: string; usage: RunUsage | undefined }
-> {
+): Promise<{
+  deltas: string[];
+  text: string;
+  usage: RunUsage | undefined;
+  outputItems: OpenAiInputItem[];
+  toolCalls: OpenAiFunctionToolCall[];
+}> {
   const model = readOpenAiModel(context.env);
   const apiKey = readEnv(context.env, "OPENAI_API_KEY");
   if (!apiKey) {
@@ -201,7 +270,8 @@ async function* streamOpenAiTurn(
       signal: abortController.signal,
       body: JSON.stringify({
         model,
-        input: buildOpenAiInput(request),
+        input,
+        tools: buildOpenAiTools(request),
         stream: true
       })
     });
@@ -209,8 +279,11 @@ async function* streamOpenAiTurn(
       throw new Error(`OpenAI Responses API returned HTTP ${response.status}`);
     }
 
+    const deltas: string[] = [];
     let completedText = "";
     let completedUsage: RunUsage | undefined;
+    let outputItems: OpenAiInputItem[] = [];
+    let toolCalls: OpenAiFunctionToolCall[] = [];
     for await (const payload of readSseJsonPayloads(
       response.body,
       abortController.signal
@@ -220,7 +293,7 @@ async function* streamOpenAiTurn(
       if (type === "response.output_text.delta") {
         const delta = readString(payload, "delta");
         if (delta) {
-          yield { type: "message_delta", text: delta };
+          deltas.push(delta);
         }
         continue;
       }
@@ -228,14 +301,18 @@ async function* streamOpenAiTurn(
         const responsePayload = readRecord(payload, "response");
         completedText = extractOpenAiText(responsePayload) ?? completedText;
         completedUsage = normalizeOpenAiUsage(readRecord(responsePayload, "usage"));
+        outputItems = readOpenAiOutputItems(responsePayload);
+        toolCalls = outputItems.flatMap(readOpenAiFunctionToolCall);
       }
     }
 
     throwIfProviderTimedOut(abortController.signal);
-    yield {
-      type: "completed",
+    return {
+      deltas,
       text: completedText,
-      usage: completedUsage
+      usage: completedUsage,
+      outputItems,
+      toolCalls
     };
   } catch (error) {
     throwIfProviderTimedOut(abortController.signal, error);
@@ -248,6 +325,25 @@ async function* streamOpenAiTurn(
       // Ignore abort failures after the provider stream has already completed.
     }
   }
+}
+
+async function executeBurbleProviderTool(
+  toolCall: OpenAiFunctionToolCall,
+  context: RuntimeServerContext
+): Promise<unknown> {
+  const toolGatewayUrl = readEnv(context.env, "BURBLE_TOOL_GATEWAY_URL");
+  const runtimeToken = readEnv(context.env, "BURBLE_INTERNAL_TOKEN");
+  if (!toolGatewayUrl || !runtimeToken) {
+    throw new Error(
+      "BURBLE_TOOL_GATEWAY_URL and BURBLE_INTERNAL_TOKEN are required for Burble Native tool calls"
+    );
+  }
+  const executeTool = createBurbleNativeToolExecutor({
+    toolGatewayUrl,
+    runtimeToken,
+    ...(context.fetch ? { fetch: context.fetch } : {})
+  });
+  return executeTool(toolCall.toolName, toolCall.input);
 }
 
 function readOpenAiModel(env: Record<string, string | undefined> | undefined): string {
@@ -309,19 +405,171 @@ function throwIfProviderTimedOut(signal: AbortSignal, error?: unknown): void {
   }
 }
 
-function buildOpenAiInput(request: RunRequest): string {
+function buildOpenAiInput(request: RunRequest): OpenAiInputItem[] {
   const recentMessages = request.input.context?.recentMessages ?? [];
   const history = recentMessages
     .map((message) => `${message.author}: ${message.text}`)
     .join("\n");
-  return [
+  const toolCatalog = formatSelectedToolCatalog(request);
+  const text = [
     "You are Burble, a concise Slack-native work assistant.",
-    "Answer the user directly. Do not claim to have tools in this runtime.",
+    toolCatalog
+      ? [
+          "Use burble_provider_call only when provider data or actions are needed.",
+          "When calling it, pass exactly one listed tool alias as toolName and a JSON object matching that tool's input hint as input.",
+          toolCatalog
+        ].join("\n")
+      : "No Burble provider tools are available for this turn.",
     history ? `Recent conversation:\n${history}` : "",
     `User: ${request.input.text.trim()}`
   ]
     .filter(Boolean)
     .join("\n\n");
+  return [{ role: "user", content: text }];
+}
+
+function buildOpenAiTools(request: RunRequest): OpenAiInputItem[] {
+  const tools = selectedRuntimeTools(request);
+  if (tools.length === 0) {
+    return [];
+  }
+  return [
+    {
+      type: "function",
+      name: BURBLE_PROVIDER_TOOL_NAME,
+      description:
+        "Call a Burble provider or conversation tool through the Burble tool gateway.",
+      parameters: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          toolName: {
+            type: "string",
+            description:
+              "The exact Burble tool alias to execute. Use only aliases listed in the prompt's available Burble tools catalog."
+          },
+          input: {
+            type: "object",
+            description: "The JSON input to pass to the Burble tool.",
+            additionalProperties: true
+          }
+        },
+        required: ["toolName", "input"]
+      }
+    }
+  ];
+}
+
+type RuntimeRequestManifestTool = NonNullable<
+  NonNullable<RunRequest["runtime"]["manifest"]>["tools"]
+>[number];
+
+function selectedRuntimeTools(request: RunRequest): RuntimeRequestManifestTool[] {
+  const groups = new Set(request.input.toolGroups?.groups ?? []);
+  if (groups.size === 0) {
+    return [];
+  }
+  return (request.runtime.manifest?.tools ?? [])
+    .filter((tool) => tool.enabled && toolMatchesSelectedGroups(tool, groups))
+    .sort(compareRuntimeTools)
+    .slice(0, MAX_PROMPT_TOOLS);
+}
+
+function toolMatchesSelectedGroups(
+  tool: RuntimeRequestManifestTool,
+  groups: Set<string>
+): boolean {
+  if (groups.has(tool.provider)) {
+    return true;
+  }
+  if (tool.provider === "atlassian" && groups.has("jira")) {
+    return true;
+  }
+  if (tool.alias.startsWith("gmail.") && groups.has("google")) {
+    return true;
+  }
+  return false;
+}
+
+function compareRuntimeTools(
+  left: RuntimeRequestManifestTool,
+  right: RuntimeRequestManifestTool
+): number {
+  const provider = left.provider.localeCompare(right.provider);
+  if (provider !== 0) {
+    return provider;
+  }
+  const risk = riskRank(left.risk) - riskRank(right.risk);
+  if (risk !== 0) {
+    return risk;
+  }
+  return left.alias.localeCompare(right.alias);
+}
+
+function riskRank(risk: RuntimeRequestManifestTool["risk"]): number {
+  switch (risk) {
+    case "read":
+      return 0;
+    case "low_write":
+      return 1;
+    case "moderate_write":
+      return 2;
+    case "high_write":
+      return 3;
+  }
+}
+
+function formatSelectedToolCatalog(request: RunRequest): string {
+  const tools = selectedRuntimeTools(request);
+  if (tools.length === 0) {
+    return "";
+  }
+  const omittedCount =
+    (request.runtime.manifest?.tools ?? []).filter(
+      (tool) =>
+        tool.enabled &&
+        toolMatchesSelectedGroups(
+          tool,
+          new Set(request.input.toolGroups?.groups ?? [])
+        )
+    ).length - tools.length;
+  return [
+    "Available Burble tools for this turn:",
+    ...tools.map(formatRuntimeTool),
+    omittedCount > 0 ? `- ${omittedCount} additional tools omitted; answer with available tools or ask for a narrower request.` : ""
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+function formatRuntimeTool(tool: RuntimeRequestManifestTool): string {
+  return `- ${tool.alias}: ${truncateForPrompt(tool.description, 180)} Input: ${formatToolInput(tool)}`;
+}
+
+function formatToolInput(tool: RuntimeRequestManifestTool): string {
+  if (tool.input.length === 0) {
+    return "{}";
+  }
+  return `{ ${tool.input.map(formatToolInputField).join("; ")} }`;
+}
+
+function formatToolInputField(
+  field: RuntimeRequestManifestTool["input"][number]
+): string {
+  const type =
+    field.values && field.values.length > 0
+      ? `${field.type}(${field.values.join("|")})`
+      : field.type;
+  const required = field.required ? "required" : "optional";
+  return `${field.name}: ${type}, ${required}${field.description ? `, ${truncateForPrompt(field.description, 80)}` : ""}`;
+}
+
+function truncateForPrompt(value: string, maxLength: number): string {
+  const trimmed = value.trim().replace(/\s+/g, " ");
+  if (trimmed.length <= maxLength) {
+    return trimmed;
+  }
+  return `${trimmed.slice(0, maxLength - 1).trimEnd()}…`;
 }
 
 async function* readSseJsonPayloads(
@@ -431,6 +679,109 @@ function extractOpenAiText(value: unknown): string | null {
     }
   }
   return texts.length > 0 ? texts.join("") : null;
+}
+
+function readOpenAiOutputItems(value: unknown): OpenAiInputItem[] {
+  if (!isRecord(value) || !Array.isArray(value.output)) {
+    return [];
+  }
+  return value.output.filter(isRecord);
+}
+
+function readOpenAiFunctionToolCall(
+  item: OpenAiInputItem
+): OpenAiFunctionToolCall[] {
+  if (item.type !== "function_call") {
+    return [];
+  }
+  const name = typeof item.name === "string" ? item.name : "";
+  const callId = typeof item.call_id === "string" ? item.call_id : "";
+  if (name !== BURBLE_PROVIDER_TOOL_NAME || !callId) {
+    return [];
+  }
+  const parsed = parseFunctionArguments(item.arguments);
+  const toolName =
+    isRecord(parsed) && typeof parsed.toolName === "string"
+      ? parsed.toolName.trim()
+      : "";
+  if (!toolName) {
+    return [];
+  }
+  return [
+    {
+      callId,
+      toolName,
+      input: isRecord(parsed) && "input" in parsed ? parsed.input : {}
+    }
+  ];
+}
+
+function parseFunctionArguments(value: unknown): unknown {
+  if (isRecord(value)) {
+    return value;
+  }
+  if (typeof value !== "string") {
+    return {};
+  }
+  try {
+    return JSON.parse(value) as unknown;
+  } catch {
+    return {};
+  }
+}
+
+function asOpenAiInputItems(input: string | OpenAiInputItem[]): OpenAiInputItem[] {
+  return typeof input === "string" ? [{ role: "user", content: input }] : input;
+}
+
+function readToolResultClassification(
+  value: unknown
+): Extract<RunEvent, { type: "tool_result" }>["classification"] {
+  if (
+    isRecord(value) &&
+    (value.classification === "public" ||
+      value.classification === "user_private" ||
+      value.classification === "restricted")
+  ) {
+    return value.classification;
+  }
+  return "user_private";
+}
+
+function mergeUsage(
+  current: RunUsage | undefined,
+  next: RunUsage | undefined
+): RunUsage | undefined {
+  if (!current) {
+    return next;
+  }
+  if (!next) {
+    return current;
+  }
+  return {
+    inputTokens: addOptional(current.inputTokens, next.inputTokens),
+    outputTokens: addOptional(current.outputTokens, next.outputTokens),
+    totalTokens: addOptional(current.totalTokens, next.totalTokens),
+    cachedInputTokens: addOptional(
+      current.cachedInputTokens,
+      next.cachedInputTokens
+    ),
+    reasoningTokens: addOptional(current.reasoningTokens, next.reasoningTokens),
+    usageSource: next.usageSource || current.usageSource
+  };
+}
+
+function addOptional(
+  left: number | undefined,
+  right: number | undefined
+): number | undefined {
+  if (left === undefined) {
+    return right;
+  }
+  if (right === undefined) {
+    return left;
+  }
+  return left + right;
 }
 
 function normalizeOpenAiUsage(value: unknown): RunUsage | undefined {

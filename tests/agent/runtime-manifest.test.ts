@@ -30,7 +30,19 @@ const toolCatalog: ProviderToolSpec[] = [
     implementation: "searchIssues",
     title: "Jira search",
     description: "Search Jira issues",
-    input: {}
+    input: {
+      query: {
+        type: "string",
+        min: 1,
+        description: "Jira issue search query"
+      },
+      maxResults: {
+        type: "number",
+        int: true,
+        optional: true,
+        description: "Maximum number of results"
+      }
+    }
   }
 ];
 
@@ -130,27 +142,52 @@ describe("buildRuntimeManifest", () => {
     expect(manifest.tools).toEqual([
       {
         name: "github_create_pr",
+        alias: "github.createPullRequest",
         provider: "github",
+        title: "GitHub create PR",
+        description: "Create pull request",
         enabled: false,
         risk: "moderate_write",
         routeRequired: true,
-        confirmation: "explicit"
+        confirmation: "explicit",
+        input: []
       },
       {
         name: "github_list_my_pull_requests",
+        alias: "github.listMyPullRequests",
         provider: "github",
+        title: "GitHub PRs",
+        description: "List pull requests",
         enabled: true,
         risk: "read",
         routeRequired: true,
-        confirmation: "none"
+        confirmation: "none",
+        input: []
       },
       {
         name: "jira_search_issues",
+        alias: "jira.searchIssues",
         provider: "jira",
+        title: "Jira search",
+        description: "Search Jira issues",
         enabled: false,
         risk: "read",
         routeRequired: true,
-        confirmation: "none"
+        confirmation: "none",
+        input: [
+          {
+            name: "maxResults",
+            type: "number",
+            required: false,
+            description: "Maximum number of results"
+          },
+          {
+            name: "query",
+            type: "string",
+            required: true,
+            description: "Jira issue search query"
+          }
+        ]
       }
     ]);
     expect(manifest.skills).toEqual([

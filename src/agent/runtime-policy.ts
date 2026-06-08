@@ -39,6 +39,8 @@ export type RuntimeEngineCompatibility = {
   reasons: string[];
 };
 
+export type RuntimeEngineCompatibilityWorkload = "interactive" | "scheduled";
+
 export class RuntimeEngineSelectionError extends Error {
   constructor(
     message: string,
@@ -108,18 +110,22 @@ export function resolveRuntimeEngineForPrincipal(input: {
 }
 
 export function runtimeEngineCompatibility(
-  engine: RuntimeManifest["runtime"]["engine"]
+  engine: RuntimeManifest["runtime"]["engine"],
+  options: { workload?: RuntimeEngineCompatibilityWorkload } = {}
 ): RuntimeEngineCompatibility {
   return runtimeCapabilityManifestCompatibility(
     engine,
-    knownRuntimeCapabilityManifest(engine)
+    knownRuntimeCapabilityManifest(engine),
+    options
   );
 }
 
 export function runtimeCapabilityManifestCompatibility(
   engine: RuntimeManifest["runtime"]["engine"],
-  manifest: RuntimeCapabilityManifest
+  manifest: RuntimeCapabilityManifest,
+  options: { workload?: RuntimeEngineCompatibilityWorkload } = {}
 ): RuntimeEngineCompatibility {
+  const workload = options.workload ?? "interactive";
   const reasons: string[] = [];
   if (!manifest.transports.includes("http")) {
     reasons.push("missing HTTP transport");
@@ -133,7 +139,7 @@ export function runtimeCapabilityManifestCompatibility(
   if (!manifest.toolBridgeModes.includes("tool_gateway")) {
     reasons.push("missing Burble tool gateway bridge");
   }
-  if (!manifest.scheduledProviderCalls) {
+  if (workload === "scheduled" && !manifest.scheduledProviderCalls) {
     reasons.push("missing scheduled provider calls");
   }
   if (!manifest.conversationSend) {
