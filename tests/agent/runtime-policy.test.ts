@@ -231,7 +231,7 @@ describe("resolveRuntimeEngineForPrincipal", () => {
     store.close();
   });
 
-  test("does not select the minimal Burble Native runtime for full agent workloads yet", () => {
+  test("does not select Burble Native for scheduled workloads yet", () => {
     const store = createTokenStore(":memory:");
     store.upsertWorkspacePolicy({
       workspaceId: "T123",
@@ -262,7 +262,7 @@ describe("resolveRuntimeEngineForPrincipal", () => {
     expect(selection.compatibility).toContainEqual({
       engine: "burble-native",
       selectable: false,
-      reasons: ["missing tool calls", "missing scheduled provider calls"]
+      reasons: ["missing scheduled provider calls"]
     });
     store.close();
   });

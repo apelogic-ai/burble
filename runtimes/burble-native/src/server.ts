@@ -95,7 +95,7 @@ export function buildRuntimeCapabilityManifest(): CapabilityManifest {
     cancellation: false,
     nativeScheduler: false,
     scheduledProviderCalls: false,
-    toolCalls: false,
+    toolCalls: true,
     toolBridgeModes: ["tool_gateway"],
     usageReporting: "exact",
     multimodalInput: false,

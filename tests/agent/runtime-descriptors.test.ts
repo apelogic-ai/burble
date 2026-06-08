@@ -74,7 +74,7 @@ describe("runtime descriptors", () => {
     expect(runtimeDescriptor("burble-native").capabilities).toMatchObject({
       runtimeType: "burble-native",
       toolBridgeModes: ["tool_gateway"],
-      toolCalls: false,
+      toolCalls: true,
       usageReporting: "exact",
       nativeScheduler: false,
       scheduledProviderCalls: false,
