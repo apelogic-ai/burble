@@ -1215,6 +1215,74 @@ async function runAiSdkAgent(
             );
           })
       });
+      tools.google_slides_search_presentations = tool({
+        description:
+          "Search Google Slides presentations visible to the authenticated Slack user's connected Google account.",
+        inputSchema: z.object({
+          query: z.string().optional(),
+          limit: z.number().int().positive().max(20).optional()
+        }),
+        execute: async ({ query, limit }) =>
+          executeTool("google_slides_search_presentations", async () => {
+            const connection = input.connections.google;
+            if (!connection) {
+              return missingGoogleConnection();
+            }
+
+            return record(
+              await deps.googleTools!.searchSlidesPresentations.execute({
+                connection,
+                input: {
+                  ...(query ? { query } : {}),
+                  ...(limit ? { limit } : {})
+                }
+              })
+            );
+          })
+      });
+      tools.google_slides_get_presentation = tool({
+        description:
+          "Read sanitized Google Slides presentation structure, slide text, layout IDs, and placeholder metadata.",
+        inputSchema: z.object({
+          presentationId: z.string().min(1),
+          includeSlides: z.boolean().optional()
+        }),
+        execute: async (toolInput) =>
+          executeTool("google_slides_get_presentation", async () => {
+            const connection = input.connections.google;
+            if (!connection) {
+              return missingGoogleConnection();
+            }
+
+            return record(
+              await deps.googleTools!.getSlidesPresentation.execute({
+                connection,
+                input: toolInput
+              })
+            );
+          })
+      });
+      tools.google_slides_probe_template = tool({
+        description:
+          "Probe a Google Slides presentation's layouts and placeholders into a reusable template manifest.",
+        inputSchema: z.object({
+          presentationId: z.string().min(1)
+        }),
+        execute: async (toolInput) =>
+          executeTool("google_slides_probe_template", async () => {
+            const connection = input.connections.google;
+            if (!connection) {
+              return missingGoogleConnection();
+            }
+
+            return record(
+              await deps.googleTools!.probeSlidesTemplate.execute({
+                connection,
+                input: toolInput
+              })
+            );
+          })
+      });
       tools.google_analytics_get_metadata = tool({
         description:
           "List available Google Analytics dimensions and metrics for a GA4 property.",

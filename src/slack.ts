@@ -28,12 +28,15 @@ import {
   buildGoogleOAuthUrl,
   createGoogleDriveTextFile,
   getGoogleAnalyticsMetadata,
+  getGoogleSlidesPresentation,
   getGoogleUser,
   listGoogleAnalyticsProperties,
+  probeGoogleSlidesTemplate,
   refreshGoogleAccessToken,
   runGoogleAnalyticsReport,
   searchGoogleCalendarEvents,
   searchGoogleDriveFiles,
+  searchGoogleSlidesPresentations,
   searchGoogleMailMessages
 } from "./providers/google/client";
 import {
@@ -279,6 +282,9 @@ export function createSlackRuntime(
     createGoogleDriveTextFile,
     searchGoogleCalendarEvents,
     searchGoogleMailMessages,
+    searchGoogleSlidesPresentations,
+    getGoogleSlidesPresentation,
+    probeGoogleSlidesTemplate,
     listGoogleAnalyticsProperties,
     getGoogleAnalyticsMetadata,
     runGoogleAnalyticsReport,

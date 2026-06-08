@@ -35,10 +35,13 @@ import {
   getGoogleUser,
   listGoogleAnalyticsProperties,
   moveGoogleDriveFile,
+  getGoogleSlidesPresentation,
+  probeGoogleSlidesTemplate,
   refreshGoogleAccessToken,
   runGoogleAnalyticsReport,
   searchGoogleCalendarEvents,
   searchGoogleDriveFiles,
+  searchGoogleSlidesPresentations,
   searchGoogleMailMessages,
   updateGoogleCalendarEvent,
   updateGoogleDriveTextFile
@@ -190,6 +193,9 @@ const defaultDeps = {
   appendGoogleDriveTextFile,
   createGoogleDriveFolder,
   moveGoogleDriveFile,
+  searchGoogleSlidesPresentations,
+  getGoogleSlidesPresentation,
+  probeGoogleSlidesTemplate,
   searchGoogleCalendarEvents,
   createGoogleCalendarEvent,
   updateGoogleCalendarEvent,
@@ -1074,6 +1080,45 @@ export async function handleToolGatewayRequest(
       );
     }
 
+    case "google.slidesSearchPresentations": {
+      if (!isGoogleSlidesSearchPresentationsInput(body.input)) {
+        return new Response("Invalid tool input", { status: 400 });
+      }
+
+      return respondWithAudit(
+        await googleTools.searchSlidesPresentations.execute({
+          connection,
+          input: body.input
+        })
+      );
+    }
+
+    case "google.slidesGetPresentation": {
+      if (!isGoogleSlidesGetPresentationInput(body.input)) {
+        return new Response("Invalid tool input", { status: 400 });
+      }
+
+      return respondWithAudit(
+        await googleTools.getSlidesPresentation.execute({
+          connection,
+          input: body.input
+        })
+      );
+    }
+
+    case "google.slidesProbeTemplate": {
+      if (!isGoogleSlidesProbeTemplateInput(body.input)) {
+        return new Response("Invalid tool input", { status: 400 });
+      }
+
+      return respondWithAudit(
+        await googleTools.probeSlidesTemplate.execute({
+          connection,
+          input: body.input
+        })
+      );
+    }
+
     case "google.analyticsListProperties": {
       if (!isGoogleAnalyticsListPropertiesInput(body.input)) {
         return new Response("Invalid tool input", { status: 400 });
@@ -1423,6 +1468,9 @@ function isKnownTool(toolName: string): boolean {
     toolName === "google.createCalendarEvent" ||
     toolName === "google.updateCalendarEvent" ||
     toolName === "google.searchMailMessages" ||
+    toolName === "google.slidesSearchPresentations" ||
+    toolName === "google.slidesGetPresentation" ||
+    toolName === "google.slidesProbeTemplate" ||
     toolName === "google.analyticsListProperties" ||
     toolName === "google.analyticsGetMetadata" ||
     toolName === "google.analyticsRunReport" ||
@@ -2407,6 +2455,34 @@ function isSearchGoogleMailMessagesInput(input: unknown): input is {
     input.query.trim().length > 0 &&
     optionalLimit(input.limit, 10)
   );
+}
+
+function isGoogleSlidesSearchPresentationsInput(input: unknown): input is {
+  query?: string;
+  limit?: number;
+} {
+  return (
+    isOptionalObject(input) &&
+    optionalString(input.query) &&
+    optionalLimit(input.limit, 20)
+  );
+}
+
+function isGoogleSlidesGetPresentationInput(input: unknown): input is {
+  presentationId: string;
+  includeSlides?: boolean;
+} {
+  return (
+    isOptionalObject(input) &&
+    isNonEmptyString(input.presentationId) &&
+    optionalBoolean(input.includeSlides)
+  );
+}
+
+function isGoogleSlidesProbeTemplateInput(input: unknown): input is {
+  presentationId: string;
+} {
+  return isOptionalObject(input) && isNonEmptyString(input.presentationId);
 }
 
 function isGoogleAnalyticsListPropertiesInput(input: unknown): input is {

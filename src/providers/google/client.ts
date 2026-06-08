@@ -30,6 +30,59 @@ export type GoogleDriveFileContent = GoogleDriveFile & {
   content?: string;
 };
 
+export type GoogleSlidesPresentationSummary = GoogleDriveFile;
+
+export type GoogleSlidesPlaceholderRef = {
+  type: string;
+  index?: number;
+  parentObjectId?: string;
+};
+
+export type GoogleSlidesElement = {
+  objectId: string;
+  elementType: string;
+  shapeType?: string;
+  placeholder?: GoogleSlidesPlaceholderRef;
+  text?: string;
+  imageContentUrl?: string;
+};
+
+export type GoogleSlidesTemplateSlot = {
+  role: string;
+  objectId: string;
+  placeholder: GoogleSlidesPlaceholderRef;
+};
+
+export type GoogleSlidesSlide = {
+  objectId: string;
+  layoutObjectId?: string;
+  elements: GoogleSlidesElement[];
+};
+
+export type GoogleSlidesLayout = {
+  objectId: string;
+  name?: string;
+  slots: GoogleSlidesTemplateSlot[];
+  elements: GoogleSlidesElement[];
+};
+
+export type GoogleSlidesPresentation = {
+  presentationId: string;
+  title?: string;
+  layouts: GoogleSlidesLayout[];
+  slides: GoogleSlidesSlide[];
+};
+
+export type GoogleSlidesTemplateProbe = {
+  presentationId: string;
+  title?: string;
+  layouts: Array<{
+    layoutId: string;
+    name?: string;
+    slots: GoogleSlidesTemplateSlot[];
+  }>;
+};
+
 export type GoogleCalendarEvent = {
   id: string;
   summary?: string;
@@ -115,6 +168,55 @@ export type GoogleCalendarEventUpdateInput = {
   timeZone?: string;
 };
 
+type GoogleSlidesApiPresentation = {
+  presentationId: string;
+  title?: string;
+  layouts?: GoogleSlidesApiLayout[];
+  slides?: GoogleSlidesApiSlide[];
+};
+
+type GoogleSlidesApiLayout = {
+  objectId?: string;
+  layoutProperties?: {
+    displayName?: string;
+  };
+  pageElements?: GoogleSlidesApiPageElement[];
+};
+
+type GoogleSlidesApiSlide = {
+  objectId?: string;
+  slideProperties?: {
+    layoutObjectId?: string;
+  };
+  pageElements?: GoogleSlidesApiPageElement[];
+};
+
+type GoogleSlidesApiPageElement = {
+  objectId?: string;
+  shape?: {
+    shapeType?: string;
+    placeholder?: GoogleSlidesApiPlaceholder;
+    text?: GoogleSlidesApiText;
+  };
+  image?: {
+    contentUrl?: string;
+  };
+};
+
+type GoogleSlidesApiPlaceholder = {
+  type?: string;
+  index?: number;
+  parentObjectId?: string;
+};
+
+type GoogleSlidesApiText = {
+  textElements?: Array<{
+    textRun?: {
+      content?: string;
+    };
+  }>;
+};
+
 export class GoogleApiError extends Error {
   constructor(
     message: string,
@@ -135,7 +237,8 @@ const googleScopes = [
   "https://www.googleapis.com/auth/calendar.events",
   "https://www.googleapis.com/auth/gmail.readonly",
   "https://www.googleapis.com/auth/gmail.compose",
-  "https://www.googleapis.com/auth/analytics.readonly"
+  "https://www.googleapis.com/auth/analytics.readonly",
+  "https://www.googleapis.com/auth/presentations.readonly"
 ];
 
 export function buildGoogleOAuthUrl(config: Config, state: string): string {
@@ -263,6 +366,63 @@ export async function searchGoogleDriveFiles(
   }
 
   return body.files ?? [];
+}
+
+export async function searchGoogleSlidesPresentations(
+  token: string,
+  input: { query?: string; limit?: number }
+): Promise<GoogleSlidesPresentationSummary[]> {
+  const url = new URL("https://www.googleapis.com/drive/v3/files");
+  url.searchParams.set("pageSize", String(clampLimit(input.limit, 10, 20)));
+  url.searchParams.set(
+    "fields",
+    "files(id,name,mimeType,webViewLink,modifiedTime)"
+  );
+  url.searchParams.set("orderBy", "modifiedTime desc");
+  const predicates = [
+    "trashed = false",
+    "mimeType = 'application/vnd.google-apps.presentation'"
+  ];
+  if (input.query?.trim()) {
+    predicates.push(`name contains '${escapeDriveQueryString(input.query.trim())}'`);
+  }
+  url.searchParams.set("q", predicates.join(" and "));
+
+  const response = await fetch(url, { headers: googleHeaders(token) });
+  const body = (await response.json()) as {
+    files?: GoogleDriveFile[];
+    error?: { message?: string };
+  };
+  if (!response.ok) {
+    throw googleError(response, "Google Slides search failed", body.error?.message);
+  }
+
+  return (body.files ?? []).map(sanitizeDriveFile);
+}
+
+export async function getGoogleSlidesPresentation(
+  token: string,
+  input: { presentationId: string; includeSlides?: boolean }
+): Promise<GoogleSlidesPresentation> {
+  const presentation = await readGoogleSlidesPresentation(token, input.presentationId);
+  return sanitizeSlidesPresentation(presentation, input.includeSlides !== false);
+}
+
+export async function probeGoogleSlidesTemplate(
+  token: string,
+  input: { presentationId: string }
+): Promise<GoogleSlidesTemplateProbe> {
+  const presentation = await readGoogleSlidesPresentation(token, input.presentationId);
+  const sanitized = sanitizeSlidesPresentation(presentation, false);
+  return {
+    presentationId: sanitized.presentationId,
+    ...(sanitized.title ? { title: sanitized.title } : {}),
+    layouts: sanitized.layouts.map((layout) => ({
+      layoutId: layout.objectId,
+      ...(layout.name ? { name: layout.name } : {}),
+      slots: layout.slots
+    }))
+  };
 }
 
 export async function createGoogleDriveTextFile(
@@ -966,6 +1126,157 @@ function googleExportMimeType(mimeType: string): string {
   return mimeType === "application/vnd.google-apps.spreadsheet"
     ? "text/csv"
     : "text/plain";
+}
+
+async function readGoogleSlidesPresentation(
+  token: string,
+  presentationId: string
+): Promise<GoogleSlidesApiPresentation> {
+  const url = new URL(
+    `https://slides.googleapis.com/v1/presentations/${encodeURIComponent(presentationId)}`
+  );
+  url.searchParams.set(
+    "fields",
+    [
+      "presentationId",
+      "title",
+      "layouts(objectId,layoutProperties(displayName),pageElements(objectId,shape(shapeType,placeholder,text(textElements(textRun(content)))),image(contentUrl)))",
+      "slides(objectId,slideProperties(layoutObjectId),pageElements(objectId,shape(shapeType,placeholder,text(textElements(textRun(content)))),image(contentUrl)))"
+    ].join(",")
+  );
+  const response = await fetch(url, { headers: googleHeaders(token) });
+  const body = (await response.json()) as GoogleSlidesApiPresentation & {
+    error?: { message?: string };
+  };
+  if (!response.ok || !body.presentationId) {
+    throw googleError(
+      response,
+      "Google Slides presentation lookup failed",
+      body.error?.message
+    );
+  }
+  return body;
+}
+
+function sanitizeSlidesPresentation(
+  presentation: GoogleSlidesApiPresentation,
+  includeSlides: boolean
+): GoogleSlidesPresentation {
+  return {
+    presentationId: presentation.presentationId,
+    ...(presentation.title ? { title: presentation.title } : {}),
+    layouts: (presentation.layouts ?? []).flatMap((layout) => {
+      if (!layout.objectId) {
+        return [];
+      }
+      const elements = sanitizeSlidesElements(layout.pageElements);
+      return [
+        {
+          objectId: layout.objectId,
+          ...(layout.layoutProperties?.displayName
+            ? { name: layout.layoutProperties.displayName }
+            : {}),
+          slots: buildSlidesTemplateSlots(elements),
+          elements
+        }
+      ];
+    }),
+    slides: includeSlides
+      ? (presentation.slides ?? []).flatMap((slide) => {
+          if (!slide.objectId) {
+            return [];
+          }
+          return [
+            {
+              objectId: slide.objectId,
+              ...(slide.slideProperties?.layoutObjectId
+                ? { layoutObjectId: slide.slideProperties.layoutObjectId }
+                : {}),
+              elements: sanitizeSlidesElements(slide.pageElements)
+            }
+          ];
+        })
+      : []
+  };
+}
+
+function sanitizeSlidesElements(
+  elements: GoogleSlidesApiPageElement[] | undefined
+): GoogleSlidesElement[] {
+  return (elements ?? []).flatMap((element) => {
+    if (!element.objectId) {
+      return [];
+    }
+    const placeholder = sanitizeSlidesPlaceholder(element.shape?.placeholder);
+    const text = extractSlidesText(element.shape?.text);
+    return [
+      {
+        objectId: element.objectId,
+        elementType: element.shape ? "shape" : element.image ? "image" : "unknown",
+        ...(element.shape?.shapeType ? { shapeType: element.shape.shapeType } : {}),
+        ...(placeholder ? { placeholder } : {}),
+        ...(text ? { text } : {}),
+        ...(element.image?.contentUrl
+          ? { imageContentUrl: element.image.contentUrl }
+          : {})
+      }
+    ];
+  });
+}
+
+function sanitizeSlidesPlaceholder(
+  placeholder: GoogleSlidesApiPlaceholder | undefined
+): GoogleSlidesPlaceholderRef | undefined {
+  if (!placeholder?.type) {
+    return undefined;
+  }
+  return {
+    type: placeholder.type,
+    ...(typeof placeholder.index === "number" ? { index: placeholder.index } : {}),
+    ...(placeholder.parentObjectId
+      ? { parentObjectId: placeholder.parentObjectId }
+      : {})
+  };
+}
+
+function extractSlidesText(text: GoogleSlidesApiText | undefined): string | undefined {
+  const content = (text?.textElements ?? [])
+    .map((element) => element.textRun?.content ?? "")
+    .join("")
+    .trim();
+  return content || undefined;
+}
+
+function buildSlidesTemplateSlots(
+  elements: GoogleSlidesElement[]
+): GoogleSlidesTemplateSlot[] {
+  const roleCounts = new Map<string, number>();
+  return elements.flatMap((element) => {
+    if (!element.placeholder) {
+      return [];
+    }
+    const baseRole = slidesPlaceholderRole(element.placeholder);
+    const count = roleCounts.get(baseRole) ?? 0;
+    roleCounts.set(baseRole, count + 1);
+    const role = count === 0 ? baseRole : `${baseRole}_${count + 1}`;
+    return [
+      {
+        role,
+        objectId: element.objectId,
+        placeholder: element.placeholder
+      }
+    ];
+  });
+}
+
+function slidesPlaceholderRole(placeholder: GoogleSlidesPlaceholderRef): string {
+  const base = placeholder.type.toLocaleLowerCase().replace(/[^a-z0-9]+/g, "_");
+  if (!base) {
+    return typeof placeholder.index === "number"
+      ? `placeholder_${placeholder.index}`
+      : "placeholder";
+  }
+  return base;
 }
 
 function googleAnalyticsPropertyName(propertyId: string): string {

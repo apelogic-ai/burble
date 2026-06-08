@@ -14,6 +14,9 @@ import {
   type GoogleCalendarEvent,
   type GoogleDriveFile,
   type GoogleMailMessage,
+  type GoogleSlidesPresentation,
+  type GoogleSlidesPresentationSummary,
+  type GoogleSlidesTemplateProbe,
   type GoogleTokenSet,
   type GoogleUser
 } from "../providers/google/client";
@@ -33,6 +36,18 @@ export type GoogleToolDeps = {
     token: string,
     input: { query: string; limit?: number }
   ) => Promise<GoogleMailMessage[]>;
+  searchGoogleSlidesPresentations?: (
+    token: string,
+    input: { query?: string; limit?: number }
+  ) => Promise<GoogleSlidesPresentationSummary[]>;
+  getGoogleSlidesPresentation?: (
+    token: string,
+    input: { presentationId: string; includeSlides?: boolean }
+  ) => Promise<GoogleSlidesPresentation>;
+  probeGoogleSlidesTemplate?: (
+    token: string,
+    input: { presentationId: string }
+  ) => Promise<GoogleSlidesTemplateProbe>;
   listGoogleAnalyticsProperties?: (
     token: string,
     input: { limit?: number }
@@ -422,6 +437,88 @@ export function createGoogleTools(deps: GoogleToolDeps) {
             ...(message.subject ? { subject: message.subject } : {}),
             ...(message.snippet ? { snippet: message.snippet } : {})
           }))
+        };
+      }
+    },
+
+    searchSlidesPresentations: {
+      async execute(
+        context: GoogleToolContext & { input?: { query?: string; limit?: number } }
+      ): Promise<
+        ToolResult<GoogleSlidesPresentationSummary[] | GoogleAuthErrorContent>
+      > {
+        const presentations = await withGoogleToken(
+          deps,
+          context.connection,
+          (accessToken) => {
+            if (!deps.searchGoogleSlidesPresentations) {
+              throw new Error("Google Slides presentation search is not configured");
+            }
+            return deps.searchGoogleSlidesPresentations(
+              accessToken,
+              context.input ?? {}
+            );
+          }
+        );
+        if (isGoogleAuthErrorResult(presentations)) {
+          return presentations;
+        }
+
+        return {
+          classification: "user_private",
+          content: presentations
+        };
+      }
+    },
+
+    getSlidesPresentation: {
+      async execute(
+        context: GoogleToolContext & {
+          input: { presentationId: string; includeSlides?: boolean };
+        }
+      ): Promise<ToolResult<GoogleSlidesPresentation | GoogleAuthErrorContent>> {
+        const presentation = await withGoogleToken(
+          deps,
+          context.connection,
+          (accessToken) => {
+            if (!deps.getGoogleSlidesPresentation) {
+              throw new Error("Google Slides presentation lookup is not configured");
+            }
+            return deps.getGoogleSlidesPresentation(accessToken, context.input);
+          }
+        );
+        if (isGoogleAuthErrorResult(presentation)) {
+          return presentation;
+        }
+
+        return {
+          classification: "user_private",
+          content: presentation
+        };
+      }
+    },
+
+    probeSlidesTemplate: {
+      async execute(
+        context: GoogleToolContext & { input: { presentationId: string } }
+      ): Promise<ToolResult<GoogleSlidesTemplateProbe | GoogleAuthErrorContent>> {
+        const probe = await withGoogleToken(
+          deps,
+          context.connection,
+          (accessToken) => {
+            if (!deps.probeGoogleSlidesTemplate) {
+              throw new Error("Google Slides template probing is not configured");
+            }
+            return deps.probeGoogleSlidesTemplate(accessToken, context.input);
+          }
+        );
+        if (isGoogleAuthErrorResult(probe)) {
+          return probe;
+        }
+
+        return {
+          classification: "user_private",
+          content: probe
         };
       }
     },

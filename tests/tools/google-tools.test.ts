@@ -312,6 +312,66 @@ describe("createGoogleTools", () => {
     });
   });
 
+  test("probes Google Slides templates with the caller token", async () => {
+    const tools = createGoogleTools({
+      getGoogleUser: async () => ({
+        email: "person@google.example"
+      }),
+      searchGoogleDriveFiles: async () => [],
+      createGoogleDriveTextFile: async () => ({
+        id: "file-1",
+        name: "Test"
+      }),
+      searchGoogleCalendarEvents: async () => [],
+      searchGoogleMailMessages: async () => [],
+      probeGoogleSlidesTemplate: async (token, input) => {
+        expect(token).toBe("google-token");
+        expect(input).toEqual({ presentationId: "deck-1" });
+        return {
+          presentationId: "deck-1",
+          title: "Template",
+          layouts: [
+            {
+              layoutId: "layout-1",
+              slots: [
+                {
+                  role: "title",
+                  objectId: "slot-title",
+                  placeholder: { type: "TITLE", index: 0 }
+                }
+              ]
+            }
+          ]
+        };
+      }
+    });
+
+    const result = await tools.probeSlidesTemplate.execute({
+      connection,
+      input: { presentationId: "deck-1" }
+    });
+
+    expect(result).toEqual({
+      classification: "user_private",
+      content: {
+        presentationId: "deck-1",
+        title: "Template",
+        layouts: [
+          {
+            layoutId: "layout-1",
+            slots: [
+              {
+                role: "title",
+                objectId: "slot-title",
+                placeholder: { type: "TITLE", index: 0 }
+              }
+            ]
+          }
+        ]
+      }
+    });
+  });
+
   test("runs Google Analytics reports with the caller token", async () => {
     const tools = createGoogleTools({
       getGoogleUser: async () => ({

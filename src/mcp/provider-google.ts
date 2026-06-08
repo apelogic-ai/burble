@@ -177,6 +177,32 @@ function createGoogleMcpHandlers(
         }
       }),
 
+    searchSlidesPresentations: (connection, args) =>
+      googleTools.searchSlidesPresentations.execute({
+        connection,
+        input: {
+          ...optionalStringField(args, "query"),
+          ...optionalTruthyNumberField(args, "limit")
+        }
+      }),
+
+    getSlidesPresentation: (connection, args) =>
+      googleTools.getSlidesPresentation.execute({
+        connection,
+        input: {
+          presentationId: stringArg(args, "presentationId"),
+          ...optionalBooleanField(args, "includeSlides")
+        }
+      }),
+
+    probeSlidesTemplate: (connection, args) =>
+      googleTools.probeSlidesTemplate.execute({
+        connection,
+        input: {
+          presentationId: stringArg(args, "presentationId")
+        }
+      }),
+
     listAnalyticsProperties: (connection, args) =>
       googleTools.listAnalyticsProperties.execute({
         connection,

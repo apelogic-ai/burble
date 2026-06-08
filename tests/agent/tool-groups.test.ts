@@ -59,6 +59,22 @@ describe("selectRuntimeToolGroups", () => {
     });
   });
 
+  test("selects Google for Slides and presentation requests", () => {
+    expect(
+      selectRuntimeToolGroups({
+        text: "read the QBR Google Slides deck and list its layouts"
+      })
+    ).toEqual({
+      groups: ["conversation", "google"],
+      reasons: [
+        "default:conversation",
+        "keyword:google:google",
+        "keyword:google:slide",
+        "keyword:google:deck"
+      ]
+    });
+  });
+
   test("selects HubSpot from CRM language", () => {
     expect(
       selectRuntimeToolGroups({
