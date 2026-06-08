@@ -332,6 +332,120 @@ describe("handleToolGatewayRequest", () => {
     });
   });
 
+  test("passes Google Analytics report inputs to the provider tool", async () => {
+    const response = await handleToolGatewayRequest(
+      config,
+      createStore(googleConnection),
+      "google.analyticsRunReport",
+      request("google.analyticsRunReport", {
+        user: { email: "person@example.com" },
+        input: {
+          propertyId: "456",
+          startDate: "7daysAgo",
+          endDate: "today",
+          metrics: ["activeUsers"],
+          dimensions: ["country"],
+          limit: 3
+        }
+      }),
+      {
+        runGoogleAnalyticsReport: async (token, input) => {
+          expect(token).toBe("google-token");
+          expect(input).toEqual({
+            propertyId: "456",
+            startDate: "7daysAgo",
+            endDate: "today",
+            metrics: ["activeUsers"],
+            dimensions: ["country"],
+            limit: 3
+          });
+          return {
+            propertyId: "456",
+            dimensionHeaders: ["country"],
+            metricHeaders: ["activeUsers"],
+            rows: [
+              {
+                dimensions: { country: "US" },
+                metrics: { activeUsers: "42" }
+              }
+            ]
+          };
+        }
+      }
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      classification: "user_private",
+      content: {
+        propertyId: "456",
+        dimensionHeaders: ["country"],
+        metricHeaders: ["activeUsers"],
+        rows: [
+          {
+            dimensions: { country: "US" },
+            metrics: { activeUsers: "42" }
+          }
+        ]
+      }
+    });
+  });
+
+  test("passes Google Slides template probe inputs to the provider tool", async () => {
+    const response = await handleToolGatewayRequest(
+      config,
+      createStore(googleConnection),
+      "google.slidesProbeTemplate",
+      request("google.slidesProbeTemplate", {
+        user: { email: "person@example.com" },
+        input: {
+          presentationId: "deck-1"
+        }
+      }),
+      {
+        probeGoogleSlidesTemplate: async (token, input) => {
+          expect(token).toBe("google-token");
+          expect(input).toEqual({ presentationId: "deck-1" });
+          return {
+            presentationId: "deck-1",
+            layouts: [
+              {
+                layoutId: "layout-1",
+                slots: [
+                  {
+                    role: "title",
+                    objectId: "slot-title",
+                    placeholder: { type: "TITLE", index: 0 }
+                  }
+                ]
+              }
+            ]
+          };
+        }
+      }
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      classification: "user_private",
+      content: {
+        presentationId: "deck-1",
+        layouts: [
+          {
+            layoutId: "layout-1",
+            slots: [
+              {
+                role: "title",
+                objectId: "slot-title",
+                placeholder: { type: "TITLE", index: 0 }
+              }
+            ]
+          }
+        ]
+      }
+    });
+  });
+
   test("rejects invalid GitHub pull request list options", async () => {
     const response = await handleToolGatewayRequest(
       config,

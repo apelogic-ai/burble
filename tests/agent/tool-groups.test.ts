@@ -43,6 +43,38 @@ describe("selectRuntimeToolGroups", () => {
     });
   });
 
+  test("selects Google for Google Analytics and GA4 requests", () => {
+    expect(
+      selectRuntimeToolGroups({
+        text: "run a GA4 active users report from Google Analytics"
+      })
+    ).toEqual({
+      groups: ["conversation", "google"],
+      reasons: [
+        "default:conversation",
+        "keyword:google:google",
+        "keyword:google:analytics",
+        "keyword:google:ga4"
+      ]
+    });
+  });
+
+  test("selects Google for Slides and presentation requests", () => {
+    expect(
+      selectRuntimeToolGroups({
+        text: "read the QBR Google Slides deck and list its layouts"
+      })
+    ).toEqual({
+      groups: ["conversation", "google"],
+      reasons: [
+        "default:conversation",
+        "keyword:google:google",
+        "keyword:google:slide",
+        "keyword:google:deck"
+      ]
+    });
+  });
+
   test("selects HubSpot from CRM language", () => {
     expect(
       selectRuntimeToolGroups({
@@ -116,6 +148,18 @@ describe("selectRuntimeToolGroups", () => {
     ).toEqual({
       groups: ["conversation", "google"],
       reasons: ["default:conversation", "context:google:google:file"]
+    });
+  });
+
+  test("selects Google for Analytics follow-up language when recent context names GA4", () => {
+    expect(
+      selectRuntimeToolGroups({
+        text: "show the active users metric for that property",
+        contextTexts: ["I found two GA4 properties in Google Analytics."]
+      })
+    ).toEqual({
+      groups: ["conversation", "google"],
+      reasons: ["default:conversation", "context:google:google:property"]
     });
   });
 

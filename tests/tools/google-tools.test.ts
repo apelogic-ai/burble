@@ -267,4 +267,172 @@ describe("createGoogleTools", () => {
       }
     });
   });
+
+  test("lists Google Analytics properties with the caller token", async () => {
+    const tools = createGoogleTools({
+      getGoogleUser: async () => ({
+        email: "person@google.example"
+      }),
+      searchGoogleDriveFiles: async () => [],
+      createGoogleDriveTextFile: async () => ({
+        id: "file-1",
+        name: "Test"
+      }),
+      searchGoogleCalendarEvents: async () => [],
+      searchGoogleMailMessages: async () => [],
+      listGoogleAnalyticsProperties: async (token, input) => {
+        expect(token).toBe("google-token");
+        expect(input).toEqual({ limit: 2 });
+        return [
+          {
+            account: "accounts/123",
+            property: "properties/456",
+            propertyId: "456",
+            displayName: "Website"
+          }
+        ];
+      }
+    });
+
+    const result = await tools.listAnalyticsProperties.execute({
+      connection,
+      input: { limit: 2 }
+    });
+
+    expect(result).toEqual({
+      classification: "user_private",
+      content: [
+        {
+          account: "accounts/123",
+          property: "properties/456",
+          propertyId: "456",
+          displayName: "Website"
+        }
+      ]
+    });
+  });
+
+  test("probes Google Slides templates with the caller token", async () => {
+    const tools = createGoogleTools({
+      getGoogleUser: async () => ({
+        email: "person@google.example"
+      }),
+      searchGoogleDriveFiles: async () => [],
+      createGoogleDriveTextFile: async () => ({
+        id: "file-1",
+        name: "Test"
+      }),
+      searchGoogleCalendarEvents: async () => [],
+      searchGoogleMailMessages: async () => [],
+      probeGoogleSlidesTemplate: async (token, input) => {
+        expect(token).toBe("google-token");
+        expect(input).toEqual({ presentationId: "deck-1" });
+        return {
+          presentationId: "deck-1",
+          title: "Template",
+          layouts: [
+            {
+              layoutId: "layout-1",
+              slots: [
+                {
+                  role: "title",
+                  objectId: "slot-title",
+                  placeholder: { type: "TITLE", index: 0 }
+                }
+              ]
+            }
+          ]
+        };
+      }
+    });
+
+    const result = await tools.probeSlidesTemplate.execute({
+      connection,
+      input: { presentationId: "deck-1" }
+    });
+
+    expect(result).toEqual({
+      classification: "user_private",
+      content: {
+        presentationId: "deck-1",
+        title: "Template",
+        layouts: [
+          {
+            layoutId: "layout-1",
+            slots: [
+              {
+                role: "title",
+                objectId: "slot-title",
+                placeholder: { type: "TITLE", index: 0 }
+              }
+            ]
+          }
+        ]
+      }
+    });
+  });
+
+  test("runs Google Analytics reports with the caller token", async () => {
+    const tools = createGoogleTools({
+      getGoogleUser: async () => ({
+        email: "person@google.example"
+      }),
+      searchGoogleDriveFiles: async () => [],
+      createGoogleDriveTextFile: async () => ({
+        id: "file-1",
+        name: "Test"
+      }),
+      searchGoogleCalendarEvents: async () => [],
+      searchGoogleMailMessages: async () => [],
+      runGoogleAnalyticsReport: async (token, input) => {
+        expect(token).toBe("google-token");
+        expect(input).toEqual({
+          propertyId: "456",
+          startDate: "7daysAgo",
+          endDate: "today",
+          metrics: ["activeUsers"],
+          dimensions: ["country"],
+          limit: 3
+        });
+        return {
+          propertyId: "456",
+          dimensionHeaders: ["country"],
+          metricHeaders: ["activeUsers"],
+          rows: [
+            {
+              dimensions: { country: "US" },
+              metrics: { activeUsers: "42" }
+            }
+          ]
+        };
+      }
+    });
+
+    const result = await tools.runAnalyticsReport.execute({
+      connection,
+      input: {
+        propertyId: "456",
+        startDate: "7daysAgo",
+        endDate: "today",
+        metrics: ["activeUsers"],
+        dimensions: ["country"],
+        limit: 3
+      }
+    });
+
+    expect(result).toEqual({
+      classification: "user_private",
+      content: {
+        propertyId: "456",
+        dimensionHeaders: ["country"],
+        metricHeaders: ["activeUsers"],
+        rows: [
+          {
+            dimensions: { country: "US" },
+            metrics: { activeUsers: "42" }
+          }
+        ]
+      }
+    });
+  });
 });

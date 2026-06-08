@@ -1,5 +1,7 @@
 import type { Config } from "../../config";
 
+const maxGoogleAnalyticsReportDateRangeDays = 366;
+
 export type GoogleTokenSet = {
   accessToken: string;
   refreshToken: string | null;
@@ -30,6 +32,59 @@ export type GoogleDriveFileContent = GoogleDriveFile & {
   content?: string;
 };
 
+export type GoogleSlidesPresentationSummary = GoogleDriveFile;
+
+export type GoogleSlidesPlaceholderRef = {
+  type: string;
+  index?: number;
+  parentObjectId?: string;
+};
+
+export type GoogleSlidesElement = {
+  objectId: string;
+  elementType: string;
+  shapeType?: string;
+  placeholder?: GoogleSlidesPlaceholderRef;
+  text?: string;
+  imageContentUrl?: string;
+};
+
+export type GoogleSlidesTemplateSlot = {
+  role: string;
+  objectId: string;
+  placeholder: GoogleSlidesPlaceholderRef;
+};
+
+export type GoogleSlidesSlide = {
+  objectId: string;
+  layoutObjectId?: string;
+  elements: GoogleSlidesElement[];
+};
+
+export type GoogleSlidesLayout = {
+  objectId: string;
+  name?: string;
+  slots: GoogleSlidesTemplateSlot[];
+  elements: GoogleSlidesElement[];
+};
+
+export type GoogleSlidesPresentation = {
+  presentationId: string;
+  title?: string;
+  layouts: GoogleSlidesLayout[];
+  slides: GoogleSlidesSlide[];
+};
+
+export type GoogleSlidesTemplateProbe = {
+  presentationId: string;
+  title?: string;
+  layouts: Array<{
+    layoutId: string;
+    name?: string;
+    slots: GoogleSlidesTemplateSlot[];
+  }>;
+};
+
 export type GoogleCalendarEvent = {
   id: string;
   summary?: string;
@@ -50,6 +105,48 @@ export type GoogleMailMessage = {
 export type GoogleCreatedDraft = {
   id: string;
   messageId?: string;
+};
+
+export type GoogleAnalyticsPropertySummary = {
+  account: string;
+  accountDisplayName?: string;
+  property: string;
+  propertyId: string;
+  displayName?: string;
+  parent?: string;
+  propertyType?: string;
+};
+
+export type GoogleAnalyticsMetadataField = {
+  apiName: string;
+  uiName?: string;
+  description?: string;
+  category?: string;
+};
+
+export type GoogleAnalyticsMetadata = {
+  dimensions: GoogleAnalyticsMetadataField[];
+  metrics: GoogleAnalyticsMetadataField[];
+};
+
+export type GoogleAnalyticsReportInput = {
+  propertyId: string;
+  startDate: string;
+  endDate: string;
+  metrics: string[];
+  dimensions?: string[];
+  limit?: number;
+};
+
+export type GoogleAnalyticsReport = {
+  propertyId: string;
+  dimensionHeaders: string[];
+  metricHeaders: string[];
+  rows: Array<{
+    dimensions: Record<string, string>;
+    metrics: Record<string, string>;
+  }>;
+  rowCount?: number;
 };
 
 export type GoogleCalendarEventInput = {
@@ -73,6 +170,55 @@ export type GoogleCalendarEventUpdateInput = {
   timeZone?: string;
 };
 
+type GoogleSlidesApiPresentation = {
+  presentationId: string;
+  title?: string;
+  layouts?: GoogleSlidesApiLayout[];
+  slides?: GoogleSlidesApiSlide[];
+};
+
+type GoogleSlidesApiLayout = {
+  objectId?: string;
+  layoutProperties?: {
+    displayName?: string;
+  };
+  pageElements?: GoogleSlidesApiPageElement[];
+};
+
+type GoogleSlidesApiSlide = {
+  objectId?: string;
+  slideProperties?: {
+    layoutObjectId?: string;
+  };
+  pageElements?: GoogleSlidesApiPageElement[];
+};
+
+type GoogleSlidesApiPageElement = {
+  objectId?: string;
+  shape?: {
+    shapeType?: string;
+    placeholder?: GoogleSlidesApiPlaceholder;
+    text?: GoogleSlidesApiText;
+  };
+  image?: {
+    contentUrl?: string;
+  };
+};
+
+type GoogleSlidesApiPlaceholder = {
+  type?: string;
+  index?: number;
+  parentObjectId?: string;
+};
+
+type GoogleSlidesApiText = {
+  textElements?: Array<{
+    textRun?: {
+      content?: string;
+    };
+  }>;
+};
+
 export class GoogleApiError extends Error {
   constructor(
     message: string,
@@ -92,7 +238,9 @@ const googleScopes = [
   "https://www.googleapis.com/auth/calendar.readonly",
   "https://www.googleapis.com/auth/calendar.events",
   "https://www.googleapis.com/auth/gmail.readonly",
-  "https://www.googleapis.com/auth/gmail.compose"
+  "https://www.googleapis.com/auth/gmail.compose",
+  "https://www.googleapis.com/auth/analytics.readonly",
+  "https://www.googleapis.com/auth/presentations.readonly"
 ];
 
 export function buildGoogleOAuthUrl(config: Config, state: string): string {
@@ -220,6 +368,63 @@ export async function searchGoogleDriveFiles(
   }
 
   return body.files ?? [];
+}
+
+export async function searchGoogleSlidesPresentations(
+  token: string,
+  input: { query?: string; limit?: number }
+): Promise<GoogleSlidesPresentationSummary[]> {
+  const url = new URL("https://www.googleapis.com/drive/v3/files");
+  url.searchParams.set("pageSize", String(clampLimit(input.limit, 10, 20)));
+  url.searchParams.set(
+    "fields",
+    "files(id,name,mimeType,webViewLink,modifiedTime)"
+  );
+  url.searchParams.set("orderBy", "modifiedTime desc");
+  const predicates = [
+    "trashed = false",
+    "mimeType = 'application/vnd.google-apps.presentation'"
+  ];
+  if (input.query?.trim()) {
+    predicates.push(`name contains '${escapeDriveQueryString(input.query.trim())}'`);
+  }
+  url.searchParams.set("q", predicates.join(" and "));
+
+  const response = await fetch(url, { headers: googleHeaders(token) });
+  const body = (await response.json()) as {
+    files?: GoogleDriveFile[];
+    error?: { message?: string };
+  };
+  if (!response.ok) {
+    throw googleError(response, "Google Slides search failed", body.error?.message);
+  }
+
+  return (body.files ?? []).map(sanitizeDriveFile);
+}
+
+export async function getGoogleSlidesPresentation(
+  token: string,
+  input: { presentationId: string; includeSlides?: boolean }
+): Promise<GoogleSlidesPresentation> {
+  const presentation = await readGoogleSlidesPresentation(token, input.presentationId);
+  return sanitizeSlidesPresentation(presentation, input.includeSlides !== false);
+}
+
+export async function probeGoogleSlidesTemplate(
+  token: string,
+  input: { presentationId: string }
+): Promise<GoogleSlidesTemplateProbe> {
+  const presentation = await readGoogleSlidesPresentation(token, input.presentationId);
+  const sanitized = sanitizeSlidesPresentation(presentation, false);
+  return {
+    presentationId: sanitized.presentationId,
+    ...(sanitized.title ? { title: sanitized.title } : {}),
+    layouts: sanitized.layouts.map((layout) => ({
+      layoutId: layout.objectId,
+      ...(layout.name ? { name: layout.name } : {}),
+      slots: layout.slots
+    }))
+  };
 }
 
 export async function createGoogleDriveTextFile(
@@ -557,6 +762,169 @@ export async function searchGoogleMailMessages(
   return details;
 }
 
+export async function listGoogleAnalyticsProperties(
+  token: string,
+  input: { limit?: number }
+): Promise<GoogleAnalyticsPropertySummary[]> {
+  const limit = clampLimit(input.limit, 20, 50);
+  const url = new URL("https://analyticsadmin.googleapis.com/v1beta/accountSummaries");
+  url.searchParams.set("pageSize", String(Math.max(limit, 1)));
+  url.searchParams.set(
+    "fields",
+    "accountSummaries(account,displayName,propertySummaries(property,displayName,parent,currentPropertyType))"
+  );
+
+  const response = await fetch(url, { headers: googleHeaders(token) });
+  const body = (await response.json()) as {
+    accountSummaries?: Array<{
+      account?: string;
+      displayName?: string;
+      propertySummaries?: Array<{
+        property?: string;
+        displayName?: string;
+        parent?: string;
+        currentPropertyType?: string;
+      }>;
+    }>;
+    error?: { message?: string };
+  };
+  if (!response.ok) {
+    throw googleError(
+      response,
+      "Google Analytics property lookup failed",
+      body.error?.message
+    );
+  }
+
+  return (body.accountSummaries ?? [])
+    .flatMap((account) =>
+      (account.propertySummaries ?? []).flatMap((property) => {
+        if (!account.account || !property.property) {
+          return [];
+        }
+        return [
+          {
+            account: account.account,
+            ...(account.displayName
+              ? { accountDisplayName: account.displayName }
+              : {}),
+            property: property.property,
+            propertyId: normalizeGoogleAnalyticsPropertyId(property.property),
+            ...(property.displayName ? { displayName: property.displayName } : {}),
+            ...(property.parent ? { parent: property.parent } : {}),
+            ...(property.currentPropertyType
+              ? { propertyType: property.currentPropertyType }
+              : {})
+          }
+        ];
+      })
+    )
+    .slice(0, limit);
+}
+
+export async function getGoogleAnalyticsMetadata(
+  token: string,
+  input: {
+    propertyId: string;
+    dimensionQuery?: string;
+    metricQuery?: string;
+    limit?: number;
+  }
+): Promise<GoogleAnalyticsMetadata> {
+  const propertyName = googleAnalyticsPropertyName(input.propertyId);
+  const url = new URL(
+    `https://analyticsdata.googleapis.com/v1beta/${propertyName}/metadata`
+  );
+  url.searchParams.set(
+    "fields",
+    "dimensions(apiName,uiName,description,category),metrics(apiName,uiName,description,category)"
+  );
+  const response = await fetch(url, { headers: googleHeaders(token) });
+  const body = (await response.json()) as {
+    dimensions?: GoogleAnalyticsMetadataField[];
+    metrics?: GoogleAnalyticsMetadataField[];
+    error?: { message?: string };
+  };
+  if (!response.ok) {
+    throw googleError(
+      response,
+      "Google Analytics metadata lookup failed",
+      body.error?.message
+    );
+  }
+
+  const limit = clampLimit(input.limit, 25, 100);
+  return {
+    dimensions: filterAnalyticsMetadataFields(
+      body.dimensions ?? [],
+      input.dimensionQuery
+    ).slice(0, limit),
+    metrics: filterAnalyticsMetadataFields(body.metrics ?? [], input.metricQuery).slice(
+      0,
+      limit
+    )
+  };
+}
+
+export async function runGoogleAnalyticsReport(
+  token: string,
+  input: GoogleAnalyticsReportInput
+): Promise<GoogleAnalyticsReport> {
+  assertGoogleAnalyticsDateRange(input);
+  const propertyName = googleAnalyticsPropertyName(input.propertyId);
+  const response = await fetch(
+    `https://analyticsdata.googleapis.com/v1beta/${propertyName}:runReport`,
+    {
+      method: "POST",
+      headers: {
+        ...googleHeaders(token),
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        dateRanges: [{ startDate: input.startDate, endDate: input.endDate }],
+        metrics: input.metrics.slice(0, 10).map((name) => ({ name })),
+        dimensions: (input.dimensions ?? []).slice(0, 10).map((name) => ({ name })),
+        limit: String(clampLimit(input.limit, 10, 100))
+      })
+    }
+  );
+  const body = (await response.json()) as {
+    dimensionHeaders?: Array<{ name?: string }>;
+    metricHeaders?: Array<{ name?: string }>;
+    rows?: Array<{
+      dimensionValues?: Array<{ value?: string }>;
+      metricValues?: Array<{ value?: string }>;
+    }>;
+    rowCount?: number;
+    error?: { message?: string };
+  };
+  if (!response.ok) {
+    throw googleError(
+      response,
+      "Google Analytics report failed",
+      body.error?.message
+    );
+  }
+
+  const dimensionHeaders = (body.dimensionHeaders ?? [])
+    .map((header) => header.name)
+    .filter((name): name is string => Boolean(name));
+  const metricHeaders = (body.metricHeaders ?? [])
+    .map((header) => header.name)
+    .filter((name): name is string => Boolean(name));
+
+  return {
+    propertyId: normalizeGoogleAnalyticsPropertyId(input.propertyId),
+    dimensionHeaders,
+    metricHeaders,
+    rows: (body.rows ?? []).map((row) => ({
+      dimensions: valuesByHeader(dimensionHeaders, row.dimensionValues),
+      metrics: valuesByHeader(metricHeaders, row.metricValues)
+    })),
+    ...(typeof body.rowCount === "number" ? { rowCount: body.rowCount } : {})
+  };
+}
+
 export async function createGmailDraft(
   token: string,
   input: {
@@ -761,6 +1129,251 @@ function googleExportMimeType(mimeType: string): string {
   return mimeType === "application/vnd.google-apps.spreadsheet"
     ? "text/csv"
     : "text/plain";
+}
+
+async function readGoogleSlidesPresentation(
+  token: string,
+  presentationId: string
+): Promise<GoogleSlidesApiPresentation> {
+  const url = new URL(
+    `https://slides.googleapis.com/v1/presentations/${encodeURIComponent(presentationId)}`
+  );
+  url.searchParams.set(
+    "fields",
+    [
+      "presentationId",
+      "title",
+      "layouts(objectId,layoutProperties(displayName),pageElements(objectId,shape(shapeType,placeholder,text(textElements(textRun(content)))),image(contentUrl)))",
+      "slides(objectId,slideProperties(layoutObjectId),pageElements(objectId,shape(shapeType,placeholder,text(textElements(textRun(content)))),image(contentUrl)))"
+    ].join(",")
+  );
+  const response = await fetch(url, { headers: googleHeaders(token) });
+  const body = (await response.json()) as GoogleSlidesApiPresentation & {
+    error?: { message?: string };
+  };
+  if (!response.ok || !body.presentationId) {
+    throw googleError(
+      response,
+      "Google Slides presentation lookup failed",
+      body.error?.message
+    );
+  }
+  return body;
+}
+
+function sanitizeSlidesPresentation(
+  presentation: GoogleSlidesApiPresentation,
+  includeSlides: boolean
+): GoogleSlidesPresentation {
+  return {
+    presentationId: presentation.presentationId,
+    ...(presentation.title ? { title: presentation.title } : {}),
+    layouts: (presentation.layouts ?? []).flatMap((layout) => {
+      if (!layout.objectId) {
+        return [];
+      }
+      const elements = sanitizeSlidesElements(layout.pageElements);
+      return [
+        {
+          objectId: layout.objectId,
+          ...(layout.layoutProperties?.displayName
+            ? { name: layout.layoutProperties.displayName }
+            : {}),
+          slots: buildSlidesTemplateSlots(elements),
+          elements
+        }
+      ];
+    }),
+    slides: includeSlides
+      ? (presentation.slides ?? []).flatMap((slide) => {
+          if (!slide.objectId) {
+            return [];
+          }
+          return [
+            {
+              objectId: slide.objectId,
+              ...(slide.slideProperties?.layoutObjectId
+                ? { layoutObjectId: slide.slideProperties.layoutObjectId }
+                : {}),
+              elements: sanitizeSlidesElements(slide.pageElements)
+            }
+          ];
+        })
+      : []
+  };
+}
+
+function sanitizeSlidesElements(
+  elements: GoogleSlidesApiPageElement[] | undefined
+): GoogleSlidesElement[] {
+  return (elements ?? []).flatMap((element) => {
+    if (!element.objectId) {
+      return [];
+    }
+    const placeholder = sanitizeSlidesPlaceholder(element.shape?.placeholder);
+    const text = extractSlidesText(element.shape?.text);
+    return [
+      {
+        objectId: element.objectId,
+        elementType: element.shape ? "shape" : element.image ? "image" : "unknown",
+        ...(element.shape?.shapeType ? { shapeType: element.shape.shapeType } : {}),
+        ...(placeholder ? { placeholder } : {}),
+        ...(text ? { text } : {}),
+        ...(element.image?.contentUrl
+          ? { imageContentUrl: element.image.contentUrl }
+          : {})
+      }
+    ];
+  });
+}
+
+function sanitizeSlidesPlaceholder(
+  placeholder: GoogleSlidesApiPlaceholder | undefined
+): GoogleSlidesPlaceholderRef | undefined {
+  if (!placeholder?.type) {
+    return undefined;
+  }
+  return {
+    type: placeholder.type,
+    ...(typeof placeholder.index === "number" ? { index: placeholder.index } : {}),
+    ...(placeholder.parentObjectId
+      ? { parentObjectId: placeholder.parentObjectId }
+      : {})
+  };
+}
+
+function extractSlidesText(text: GoogleSlidesApiText | undefined): string | undefined {
+  const content = (text?.textElements ?? [])
+    .map((element) => element.textRun?.content ?? "")
+    .join("")
+    .trim();
+  return content || undefined;
+}
+
+function buildSlidesTemplateSlots(
+  elements: GoogleSlidesElement[]
+): GoogleSlidesTemplateSlot[] {
+  const roleCounts = new Map<string, number>();
+  return elements.flatMap((element) => {
+    if (!element.placeholder) {
+      return [];
+    }
+    const baseRole = slidesPlaceholderRole(element.placeholder);
+    const count = roleCounts.get(baseRole) ?? 0;
+    roleCounts.set(baseRole, count + 1);
+    const role = count === 0 ? baseRole : `${baseRole}_${count + 1}`;
+    return [
+      {
+        role,
+        objectId: element.objectId,
+        placeholder: element.placeholder
+      }
+    ];
+  });
+}
+
+function slidesPlaceholderRole(placeholder: GoogleSlidesPlaceholderRef): string {
+  const base = placeholder.type.toLocaleLowerCase().replace(/[^a-z0-9]+/g, "_");
+  if (!base) {
+    return typeof placeholder.index === "number"
+      ? `placeholder_${placeholder.index}`
+      : "placeholder";
+  }
+  return base;
+}
+
+function googleAnalyticsPropertyName(propertyId: string): string {
+  const trimmed = propertyId.trim();
+  return trimmed.startsWith("properties/")
+    ? trimmed
+    : `properties/${encodeURIComponent(trimmed)}`;
+}
+
+function assertGoogleAnalyticsDateRange(input: GoogleAnalyticsReportInput): void {
+  const startDate = parseGoogleAnalyticsDate(input.startDate);
+  const endDate = parseGoogleAnalyticsDate(input.endDate);
+  if (!startDate || !endDate || startDate.getTime() > endDate.getTime()) {
+    throw new GoogleApiError(
+      "Google Analytics report date range must use YYYY-MM-DD, today, yesterday, or NdaysAgo dates with startDate on or before endDate",
+      400
+    );
+  }
+
+  const daySpan =
+    Math.floor((endDate.getTime() - startDate.getTime()) / 86_400_000) + 1;
+  if (daySpan > maxGoogleAnalyticsReportDateRangeDays) {
+    throw new GoogleApiError(
+      `Google Analytics report date range is limited to ${maxGoogleAnalyticsReportDateRangeDays} days`,
+      400
+    );
+  }
+}
+
+function parseGoogleAnalyticsDate(value: string): Date | null {
+  const normalized = value.trim().toLocaleLowerCase();
+  const today = utcStartOfDay(new Date());
+  if (normalized === "today") {
+    return today;
+  }
+  if (normalized === "yesterday") {
+    return new Date(today.getTime() - 86_400_000);
+  }
+  const daysAgo = normalized.match(/^(\d+)daysago$/);
+  if (daysAgo) {
+    const days = Number(daysAgo[1]);
+    return Number.isSafeInteger(days)
+      ? new Date(today.getTime() - days * 86_400_000)
+      : null;
+  }
+  const isoDate = normalized.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (isoDate) {
+    const date = new Date(`${normalized}T00:00:00.000Z`);
+    if (Number.isNaN(date.getTime())) {
+      return null;
+    }
+    return date.getUTCFullYear() === Number(isoDate[1]) &&
+      date.getUTCMonth() === Number(isoDate[2]) - 1 &&
+      date.getUTCDate() === Number(isoDate[3])
+      ? date
+      : null;
+  }
+  return null;
+}
+
+function utcStartOfDay(date: Date): Date {
+  return new Date(
+    Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate())
+  );
+}
+
+function normalizeGoogleAnalyticsPropertyId(property: string): string {
+  return property.replace(/^properties\//, "");
+}
+
+function filterAnalyticsMetadataFields(
+  fields: GoogleAnalyticsMetadataField[],
+  query: string | undefined
+): GoogleAnalyticsMetadataField[] {
+  const normalizedQuery = query?.trim().toLocaleLowerCase();
+  if (!normalizedQuery) {
+    return fields;
+  }
+  return fields.filter((field) =>
+    [field.apiName, field.uiName, field.description, field.category]
+      .filter(Boolean)
+      .some((value) => value!.toLocaleLowerCase().includes(normalizedQuery))
+  );
+}
+
+function valuesByHeader(
+  headers: string[],
+  values: Array<{ value?: string }> | undefined
+): Record<string, string> {
+  const result: Record<string, string> = {};
+  headers.forEach((header, index) => {
+    result[header] = values?.[index]?.value ?? "";
+  });
+  return result;
 }
 
 async function readGoogleErrorText(response: Response): Promise<string | undefined> {

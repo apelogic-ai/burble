@@ -1,6 +1,10 @@
 import type { ProviderConnection } from "../db";
 import {
   GoogleApiError,
+  type GoogleAnalyticsMetadata,
+  type GoogleAnalyticsPropertySummary,
+  type GoogleAnalyticsReport,
+  type GoogleAnalyticsReportInput,
   type GoogleCalendarEventInput,
   type GoogleCalendarEventUpdateInput,
   type GoogleCreatedDraft,
@@ -10,6 +14,9 @@ import {
   type GoogleCalendarEvent,
   type GoogleDriveFile,
   type GoogleMailMessage,
+  type GoogleSlidesPresentation,
+  type GoogleSlidesPresentationSummary,
+  type GoogleSlidesTemplateProbe,
   type GoogleTokenSet,
   type GoogleUser
 } from "../providers/google/client";
@@ -29,6 +36,35 @@ export type GoogleToolDeps = {
     token: string,
     input: { query: string; limit?: number }
   ) => Promise<GoogleMailMessage[]>;
+  searchGoogleSlidesPresentations?: (
+    token: string,
+    input: { query?: string; limit?: number }
+  ) => Promise<GoogleSlidesPresentationSummary[]>;
+  getGoogleSlidesPresentation?: (
+    token: string,
+    input: { presentationId: string; includeSlides?: boolean }
+  ) => Promise<GoogleSlidesPresentation>;
+  probeGoogleSlidesTemplate?: (
+    token: string,
+    input: { presentationId: string }
+  ) => Promise<GoogleSlidesTemplateProbe>;
+  listGoogleAnalyticsProperties?: (
+    token: string,
+    input: { limit?: number }
+  ) => Promise<GoogleAnalyticsPropertySummary[]>;
+  getGoogleAnalyticsMetadata?: (
+    token: string,
+    input: {
+      propertyId: string;
+      dimensionQuery?: string;
+      metricQuery?: string;
+      limit?: number;
+    }
+  ) => Promise<GoogleAnalyticsMetadata>;
+  runGoogleAnalyticsReport?: (
+    token: string,
+    input: GoogleAnalyticsReportInput
+  ) => Promise<GoogleAnalyticsReport>;
   createGoogleDriveTextFile: (
     token: string,
     input: { name: string; text: string; mimeType?: string }
@@ -401,6 +437,172 @@ export function createGoogleTools(deps: GoogleToolDeps) {
             ...(message.subject ? { subject: message.subject } : {}),
             ...(message.snippet ? { snippet: message.snippet } : {})
           }))
+        };
+      }
+    },
+
+    searchSlidesPresentations: {
+      async execute(
+        context: GoogleToolContext & { input?: { query?: string; limit?: number } }
+      ): Promise<
+        ToolResult<GoogleSlidesPresentationSummary[] | GoogleAuthErrorContent>
+      > {
+        const presentations = await withGoogleToken(
+          deps,
+          context.connection,
+          (accessToken) => {
+            if (!deps.searchGoogleSlidesPresentations) {
+              throw new Error("Google Slides presentation search is not configured");
+            }
+            return deps.searchGoogleSlidesPresentations(
+              accessToken,
+              context.input ?? {}
+            );
+          }
+        );
+        if (isGoogleAuthErrorResult(presentations)) {
+          return presentations;
+        }
+
+        return {
+          classification: "user_private",
+          content: presentations
+        };
+      }
+    },
+
+    getSlidesPresentation: {
+      async execute(
+        context: GoogleToolContext & {
+          input: { presentationId: string; includeSlides?: boolean };
+        }
+      ): Promise<ToolResult<GoogleSlidesPresentation | GoogleAuthErrorContent>> {
+        const presentation = await withGoogleToken(
+          deps,
+          context.connection,
+          (accessToken) => {
+            if (!deps.getGoogleSlidesPresentation) {
+              throw new Error("Google Slides presentation lookup is not configured");
+            }
+            return deps.getGoogleSlidesPresentation(accessToken, context.input);
+          }
+        );
+        if (isGoogleAuthErrorResult(presentation)) {
+          return presentation;
+        }
+
+        return {
+          classification: "user_private",
+          content: presentation
+        };
+      }
+    },
+
+    probeSlidesTemplate: {
+      async execute(
+        context: GoogleToolContext & { input: { presentationId: string } }
+      ): Promise<ToolResult<GoogleSlidesTemplateProbe | GoogleAuthErrorContent>> {
+        const probe = await withGoogleToken(
+          deps,
+          context.connection,
+          (accessToken) => {
+            if (!deps.probeGoogleSlidesTemplate) {
+              throw new Error("Google Slides template probing is not configured");
+            }
+            return deps.probeGoogleSlidesTemplate(accessToken, context.input);
+          }
+        );
+        if (isGoogleAuthErrorResult(probe)) {
+          return probe;
+        }
+
+        return {
+          classification: "user_private",
+          content: probe
+        };
+      }
+    },
+
+    listAnalyticsProperties: {
+      async execute(
+        context: GoogleToolContext & { input?: { limit?: number } }
+      ): Promise<
+        ToolResult<GoogleAnalyticsPropertySummary[] | GoogleAuthErrorContent>
+      > {
+        const properties = await withGoogleToken(
+          deps,
+          context.connection,
+          (accessToken) => {
+            if (!deps.listGoogleAnalyticsProperties) {
+              throw new Error("Google Analytics property lookup is not configured");
+            }
+            return deps.listGoogleAnalyticsProperties(accessToken, context.input ?? {});
+          }
+        );
+        if (isGoogleAuthErrorResult(properties)) {
+          return properties;
+        }
+
+        return {
+          classification: "user_private",
+          content: properties
+        };
+      }
+    },
+
+    getAnalyticsMetadata: {
+      async execute(
+        context: GoogleToolContext & {
+          input: {
+            propertyId: string;
+            dimensionQuery?: string;
+            metricQuery?: string;
+            limit?: number;
+          };
+        }
+      ): Promise<ToolResult<GoogleAnalyticsMetadata | GoogleAuthErrorContent>> {
+        const metadata = await withGoogleToken(
+          deps,
+          context.connection,
+          (accessToken) => {
+            if (!deps.getGoogleAnalyticsMetadata) {
+              throw new Error("Google Analytics metadata lookup is not configured");
+            }
+            return deps.getGoogleAnalyticsMetadata(accessToken, context.input);
+          }
+        );
+        if (isGoogleAuthErrorResult(metadata)) {
+          return metadata;
+        }
+
+        return {
+          classification: "user_private",
+          content: metadata
+        };
+      }
+    },
+
+    runAnalyticsReport: {
+      async execute(
+        context: GoogleToolContext & { input: GoogleAnalyticsReportInput }
+      ): Promise<ToolResult<GoogleAnalyticsReport | GoogleAuthErrorContent>> {
+        const report = await withGoogleToken(
+          deps,
+          context.connection,
+          (accessToken) => {
+            if (!deps.runGoogleAnalyticsReport) {
+              throw new Error("Google Analytics report execution is not configured");
+            }
+            return deps.runGoogleAnalyticsReport(accessToken, context.input);
+          }
+        );
+        if (isGoogleAuthErrorResult(report)) {
+          return report;
+        }
+
+        return {
+          classification: "user_private",
+          content: report
         };
       }
     },

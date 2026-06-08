@@ -4,9 +4,15 @@ import {
   buildGoogleOAuthUrl,
   exchangeGoogleCode,
   getGoogleUser,
+  getGoogleAnalyticsMetadata,
+  getGoogleSlidesPresentation,
+  listGoogleAnalyticsProperties,
+  probeGoogleSlidesTemplate,
   refreshGoogleAccessToken,
   createGoogleDriveTextFile,
-  searchGoogleDriveFiles
+  runGoogleAnalyticsReport,
+  searchGoogleDriveFiles,
+  searchGoogleSlidesPresentations
 } from "../src/providers/google/client";
 
 const config: Config = {
@@ -81,6 +87,12 @@ describe("buildGoogleOAuthUrl", () => {
     );
     expect(url.searchParams.get("scope")).toContain(
       "https://www.googleapis.com/auth/gmail.readonly"
+    );
+    expect(url.searchParams.get("scope")).toContain(
+      "https://www.googleapis.com/auth/analytics.readonly"
+    );
+    expect(url.searchParams.get("scope")).toContain(
+      "https://www.googleapis.com/auth/presentations.readonly"
     );
   });
 
@@ -219,6 +231,415 @@ describe("Google OAuth and API helpers", () => {
       expect(url.searchParams.get("q")).toBe(
         "trashed = false and name contains 'roadmap'"
       );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  test("lists Google Analytics properties through the Admin API", async () => {
+    const originalFetch = globalThis.fetch;
+    let requestedUrl = "";
+    globalThis.fetch = (async (input, init) => {
+      requestedUrl = String(input);
+      expect(new Headers(init?.headers).get("authorization")).toBe(
+        "Bearer google-token"
+      );
+      return Response.json({
+        accountSummaries: [
+          {
+            account: "accounts/123",
+            displayName: "ApeLogic",
+            propertySummaries: [
+              {
+                property: "properties/456",
+                displayName: "Website",
+                parent: "accounts/123",
+                currentPropertyType: "PROPERTY_TYPE_ORDINARY"
+              }
+            ]
+          }
+        ]
+      });
+    }) as typeof fetch;
+
+    try {
+      const properties = await listGoogleAnalyticsProperties("google-token", {
+        limit: 5
+      });
+      expect(properties).toEqual([
+        {
+          account: "accounts/123",
+          accountDisplayName: "ApeLogic",
+          property: "properties/456",
+          propertyId: "456",
+          displayName: "Website",
+          parent: "accounts/123",
+          propertyType: "PROPERTY_TYPE_ORDINARY"
+        }
+      ]);
+      const url = new URL(requestedUrl);
+      expect(url.origin + url.pathname).toBe(
+        "https://analyticsadmin.googleapis.com/v1beta/accountSummaries"
+      );
+      expect(url.searchParams.get("pageSize")).toBe("5");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  test("reads and filters Google Analytics metadata", async () => {
+    const originalFetch = globalThis.fetch;
+    let requestedUrl = "";
+    globalThis.fetch = (async (input) => {
+      requestedUrl = String(input);
+      return Response.json({
+        dimensions: [
+          { apiName: "country", uiName: "Country", category: "Geo" },
+          { apiName: "browser", uiName: "Browser", category: "Platform" }
+        ],
+        metrics: [
+          { apiName: "activeUsers", uiName: "Active users", category: "User" },
+          { apiName: "sessions", uiName: "Sessions", category: "Session" }
+        ]
+      });
+    }) as typeof fetch;
+
+    try {
+      const metadata = await getGoogleAnalyticsMetadata("google-token", {
+        propertyId: "properties/456",
+        dimensionQuery: "geo",
+        metricQuery: "session",
+        limit: 10
+      });
+      expect(metadata).toEqual({
+        dimensions: [{ apiName: "country", uiName: "Country", category: "Geo" }],
+        metrics: [{ apiName: "sessions", uiName: "Sessions", category: "Session" }]
+      });
+      const url = new URL(requestedUrl);
+      expect(url.origin + url.pathname).toBe(
+        "https://analyticsdata.googleapis.com/v1beta/properties/456/metadata"
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  test("runs a Google Analytics report through the Data API", async () => {
+    const originalFetch = globalThis.fetch;
+    let requestedUrl = "";
+    let requestedBody: unknown = null;
+    globalThis.fetch = (async (input, init) => {
+      requestedUrl = String(input);
+      requestedBody = JSON.parse(String(init?.body));
+      expect(init?.method).toBe("POST");
+      expect(new Headers(init?.headers).get("authorization")).toBe(
+        "Bearer google-token"
+      );
+      return Response.json({
+        dimensionHeaders: [{ name: "country" }],
+        metricHeaders: [{ name: "activeUsers" }],
+        rows: [
+          {
+            dimensionValues: [{ value: "US" }],
+            metricValues: [{ value: "42" }]
+          }
+        ],
+        rowCount: 1
+      });
+    }) as typeof fetch;
+
+    try {
+      const report = await runGoogleAnalyticsReport("google-token", {
+        propertyId: "456",
+        startDate: "7daysAgo",
+        endDate: "today",
+        dimensions: ["country"],
+        metrics: ["activeUsers"],
+        limit: 3
+      });
+      expect(report).toEqual({
+        propertyId: "456",
+        dimensionHeaders: ["country"],
+        metricHeaders: ["activeUsers"],
+        rows: [
+          {
+            dimensions: { country: "US" },
+            metrics: { activeUsers: "42" }
+          }
+        ],
+        rowCount: 1
+      });
+      expect(requestedUrl).toBe(
+        "https://analyticsdata.googleapis.com/v1beta/properties/456:runReport"
+      );
+      expect(requestedBody).toEqual({
+        dateRanges: [{ startDate: "7daysAgo", endDate: "today" }],
+        metrics: [{ name: "activeUsers" }],
+        dimensions: [{ name: "country" }],
+        limit: "3"
+      });
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  test("rejects Google Analytics reports with too-wide date ranges before fetching", async () => {
+    const originalFetch = globalThis.fetch;
+    let didFetch = false;
+    globalThis.fetch = (async (_input, _init) => {
+      didFetch = true;
+      return Response.json({});
+    }) as typeof fetch;
+
+    try {
+      await expect(
+        runGoogleAnalyticsReport("google-token", {
+          propertyId: "456",
+          startDate: "2024-01-01",
+          endDate: "2026-01-01",
+          metrics: ["activeUsers"]
+        })
+      ).rejects.toThrow("Google Analytics report date range is limited to 366 days");
+      expect(didFetch).toBe(false);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  test("searches Google Slides presentations through Drive metadata", async () => {
+    const originalFetch = globalThis.fetch;
+    let requestedUrl = "";
+    globalThis.fetch = (async (input, init) => {
+      requestedUrl = String(input);
+      expect(new Headers(init?.headers).get("authorization")).toBe(
+        "Bearer google-token"
+      );
+      return Response.json({
+        files: [
+          {
+            id: "deck-1",
+            name: "QBR",
+            mimeType: "application/vnd.google-apps.presentation",
+            webViewLink: "https://docs.google.com/presentation/d/deck-1",
+            modifiedTime: "2026-06-01T00:00:00Z"
+          }
+        ]
+      });
+    }) as typeof fetch;
+
+    try {
+      const decks = await searchGoogleSlidesPresentations("google-token", {
+        query: "QBR",
+        limit: 4
+      });
+      expect(decks).toEqual([
+        {
+          id: "deck-1",
+          name: "QBR",
+          mimeType: "application/vnd.google-apps.presentation",
+          webViewLink: "https://docs.google.com/presentation/d/deck-1",
+          modifiedTime: "2026-06-01T00:00:00Z"
+        }
+      ]);
+      const url = new URL(requestedUrl);
+      expect(url.origin + url.pathname).toBe(
+        "https://www.googleapis.com/drive/v3/files"
+      );
+      expect(url.searchParams.get("q")).toBe(
+        "trashed = false and mimeType = 'application/vnd.google-apps.presentation' and name contains 'QBR'"
+      );
+      expect(url.searchParams.get("pageSize")).toBe("4");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  test("reads sanitized Google Slides presentation structure", async () => {
+    const originalFetch = globalThis.fetch;
+    let requestedUrl = "";
+    globalThis.fetch = (async (input, init) => {
+      requestedUrl = String(input);
+      expect(new Headers(init?.headers).get("authorization")).toBe(
+        "Bearer google-token"
+      );
+      return Response.json({
+        presentationId: "deck-1",
+        title: "QBR",
+        layouts: [
+          {
+            objectId: "layout-title-body",
+            layoutProperties: { displayName: "Title and Body" },
+            pageElements: [
+              {
+                objectId: "layout-title",
+                shape: {
+                  shapeType: "TEXT_BOX",
+                  placeholder: { type: "TITLE", index: 0 },
+                  text: {
+                    textElements: [{ textRun: { content: "Title\n" } }]
+                  }
+                }
+              },
+              {
+                objectId: "layout-body",
+                shape: {
+                  shapeType: "TEXT_BOX",
+                  placeholder: { type: "BODY", index: 0 }
+                }
+              }
+            ]
+          }
+        ],
+        slides: [
+          {
+            objectId: "slide-1",
+            slideProperties: { layoutObjectId: "layout-title-body" },
+            pageElements: [
+              {
+                objectId: "slide-title",
+                shape: {
+                  shapeType: "TEXT_BOX",
+                  text: {
+                    textElements: [{ textRun: { content: "Revenue update\n" } }]
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      });
+    }) as typeof fetch;
+
+    try {
+      const presentation = await getGoogleSlidesPresentation("google-token", {
+        presentationId: "deck-1"
+      });
+      expect(presentation).toEqual({
+        presentationId: "deck-1",
+        title: "QBR",
+        layouts: [
+          {
+            objectId: "layout-title-body",
+            name: "Title and Body",
+            slots: [
+              {
+                role: "title",
+                objectId: "layout-title",
+                placeholder: { type: "TITLE", index: 0 }
+              },
+              {
+                role: "body",
+                objectId: "layout-body",
+                placeholder: { type: "BODY", index: 0 }
+              }
+            ],
+            elements: [
+              {
+                objectId: "layout-title",
+                elementType: "shape",
+                shapeType: "TEXT_BOX",
+                placeholder: { type: "TITLE", index: 0 },
+                text: "Title"
+              },
+              {
+                objectId: "layout-body",
+                elementType: "shape",
+                shapeType: "TEXT_BOX",
+                placeholder: { type: "BODY", index: 0 }
+              }
+            ]
+          }
+        ],
+        slides: [
+          {
+            objectId: "slide-1",
+            layoutObjectId: "layout-title-body",
+            elements: [
+              {
+                objectId: "slide-title",
+                elementType: "shape",
+                shapeType: "TEXT_BOX",
+                text: "Revenue update"
+              }
+            ]
+          }
+        ]
+      });
+      const url = new URL(requestedUrl);
+      expect(url.origin + url.pathname).toBe(
+        "https://slides.googleapis.com/v1/presentations/deck-1"
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  test("probes Google Slides layout placeholders into a template manifest", async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (_input, _init) =>
+      Response.json({
+        presentationId: "deck-1",
+        title: "Template",
+        layouts: [
+          {
+            objectId: "layout-1",
+            layoutProperties: { displayName: "Two Column" },
+            pageElements: [
+              {
+                objectId: "slot-title",
+                shape: {
+                  placeholder: { type: "TITLE", index: 0 }
+                }
+              },
+              {
+                objectId: "slot-body-left",
+                shape: {
+                  placeholder: { type: "BODY", index: 0 }
+                }
+              },
+              {
+                objectId: "slot-body-right",
+                shape: {
+                  placeholder: { type: "BODY", index: 1 }
+                }
+              }
+            ]
+          }
+        ],
+        slides: [{ objectId: "slide-ignored" }]
+      })) as typeof fetch;
+
+    try {
+      const probe = await probeGoogleSlidesTemplate("google-token", {
+        presentationId: "deck-1"
+      });
+      expect(probe).toEqual({
+        presentationId: "deck-1",
+        title: "Template",
+        layouts: [
+          {
+            layoutId: "layout-1",
+            name: "Two Column",
+            slots: [
+              {
+                role: "title",
+                objectId: "slot-title",
+                placeholder: { type: "TITLE", index: 0 }
+              },
+              {
+                role: "body",
+                objectId: "slot-body-left",
+                placeholder: { type: "BODY", index: 0 }
+              },
+              {
+                role: "body_2",
+                objectId: "slot-body-right",
+                placeholder: { type: "BODY", index: 1 }
+              }
+            ]
+          }
+        ]
+      });
     } finally {
       globalThis.fetch = originalFetch;
     }

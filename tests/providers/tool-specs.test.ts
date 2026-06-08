@@ -51,6 +51,8 @@ describe("provider tool specs", () => {
     expect(names).toContain("google_search_drive_files");
     expect(names).toContain("google_create_calendar_event");
     expect(names).toContain("gmail_create_draft");
+    expect(names).toContain("google_analytics_run_report");
+    expect(names).toContain("google_slides_probe_template");
     expect(
       googleProviderToolSpecs.find(
         (tool) => tool.name === "google_append_to_drive_text_file"

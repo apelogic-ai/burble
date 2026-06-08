@@ -30,12 +30,18 @@ import {
   createGoogleCalendarEvent,
   createGoogleDriveFolder,
   createGoogleDriveTextFile,
+  getGoogleAnalyticsMetadata,
   getGoogleDriveFile,
   getGoogleUser,
+  listGoogleAnalyticsProperties,
   moveGoogleDriveFile,
+  getGoogleSlidesPresentation,
+  probeGoogleSlidesTemplate,
   refreshGoogleAccessToken,
+  runGoogleAnalyticsReport,
   searchGoogleCalendarEvents,
   searchGoogleDriveFiles,
+  searchGoogleSlidesPresentations,
   searchGoogleMailMessages,
   updateGoogleCalendarEvent,
   updateGoogleDriveTextFile
@@ -187,11 +193,17 @@ const defaultDeps = {
   appendGoogleDriveTextFile,
   createGoogleDriveFolder,
   moveGoogleDriveFile,
+  searchGoogleSlidesPresentations,
+  getGoogleSlidesPresentation,
+  probeGoogleSlidesTemplate,
   searchGoogleCalendarEvents,
   createGoogleCalendarEvent,
   updateGoogleCalendarEvent,
   searchGoogleMailMessages,
   createGmailDraft,
+  listGoogleAnalyticsProperties,
+  getGoogleAnalyticsMetadata,
+  runGoogleAnalyticsReport,
   getHubSpotAccessTokenInfo,
   searchHubSpotContacts,
   searchHubSpotCompanies,
@@ -1068,6 +1080,84 @@ export async function handleToolGatewayRequest(
       );
     }
 
+    case "google.slidesSearchPresentations": {
+      if (!isGoogleSlidesSearchPresentationsInput(body.input)) {
+        return new Response("Invalid tool input", { status: 400 });
+      }
+
+      return respondWithAudit(
+        await googleTools.searchSlidesPresentations.execute({
+          connection,
+          input: body.input
+        })
+      );
+    }
+
+    case "google.slidesGetPresentation": {
+      if (!isGoogleSlidesGetPresentationInput(body.input)) {
+        return new Response("Invalid tool input", { status: 400 });
+      }
+
+      return respondWithAudit(
+        await googleTools.getSlidesPresentation.execute({
+          connection,
+          input: body.input
+        })
+      );
+    }
+
+    case "google.slidesProbeTemplate": {
+      if (!isGoogleSlidesProbeTemplateInput(body.input)) {
+        return new Response("Invalid tool input", { status: 400 });
+      }
+
+      return respondWithAudit(
+        await googleTools.probeSlidesTemplate.execute({
+          connection,
+          input: body.input
+        })
+      );
+    }
+
+    case "google.analyticsListProperties": {
+      if (!isGoogleAnalyticsListPropertiesInput(body.input)) {
+        return new Response("Invalid tool input", { status: 400 });
+      }
+
+      return respondWithAudit(
+        await googleTools.listAnalyticsProperties.execute({
+          connection,
+          input: body.input
+        })
+      );
+    }
+
+    case "google.analyticsGetMetadata": {
+      if (!isGoogleAnalyticsMetadataInput(body.input)) {
+        return new Response("Invalid tool input", { status: 400 });
+      }
+
+      return respondWithAudit(
+        await googleTools.getAnalyticsMetadata.execute({
+          connection,
+          input: body.input
+        })
+      );
+    }
+
+    case "google.analyticsRunReport": {
+      if (!isGoogleAnalyticsRunReportInput(body.input)) {
+        return new Response("Invalid tool input", { status: 400 });
+      }
+
+      return respondWithAudit(
+        await googleTools.runAnalyticsReport.execute({
+          connection,
+          input: body.input
+        })
+      );
+    }
+
     case "hubspot.getAuthenticatedUser":
       return respondWithAudit(
         await hubspotTools.getAuthenticatedUser.execute({ connection })
@@ -1378,6 +1468,12 @@ function isKnownTool(toolName: string): boolean {
     toolName === "google.createCalendarEvent" ||
     toolName === "google.updateCalendarEvent" ||
     toolName === "google.searchMailMessages" ||
+    toolName === "google.slidesSearchPresentations" ||
+    toolName === "google.slidesGetPresentation" ||
+    toolName === "google.slidesProbeTemplate" ||
+    toolName === "google.analyticsListProperties" ||
+    toolName === "google.analyticsGetMetadata" ||
+    toolName === "google.analyticsRunReport" ||
     toolName === "gmail.createDraft" ||
     toolName === "hubspot.getAuthenticatedUser" ||
     toolName === "hubspot.searchContacts" ||
@@ -2358,6 +2454,74 @@ function isSearchGoogleMailMessagesInput(input: unknown): input is {
     typeof input.query === "string" &&
     input.query.trim().length > 0 &&
     optionalLimit(input.limit, 10)
+  );
+}
+
+function isGoogleSlidesSearchPresentationsInput(input: unknown): input is {
+  query?: string;
+  limit?: number;
+} {
+  return (
+    isOptionalObject(input) &&
+    optionalString(input.query) &&
+    optionalLimit(input.limit, 20)
+  );
+}
+
+function isGoogleSlidesGetPresentationInput(input: unknown): input is {
+  presentationId: string;
+  includeSlides?: boolean;
+} {
+  return (
+    isOptionalObject(input) &&
+    isNonEmptyString(input.presentationId) &&
+    optionalBoolean(input.includeSlides)
+  );
+}
+
+function isGoogleSlidesProbeTemplateInput(input: unknown): input is {
+  presentationId: string;
+} {
+  return isOptionalObject(input) && isNonEmptyString(input.presentationId);
+}
+
+function isGoogleAnalyticsListPropertiesInput(input: unknown): input is {
+  limit?: number;
+} {
+  return isOptionalObject(input) && optionalLimit(input.limit, 50);
+}
+
+function isGoogleAnalyticsMetadataInput(input: unknown): input is {
+  propertyId: string;
+  dimensionQuery?: string;
+  metricQuery?: string;
+  limit?: number;
+} {
+  return (
+    isOptionalObject(input) &&
+    isNonEmptyString(input.propertyId) &&
+    optionalString(input.dimensionQuery) &&
+    optionalString(input.metricQuery) &&
+    optionalLimit(input.limit, 100)
+  );
+}
+
+function isGoogleAnalyticsRunReportInput(input: unknown): input is {
+  propertyId: string;
+  startDate: string;
+  endDate: string;
+  metrics: string[];
+  dimensions?: string[];
+  limit?: number;
+} {
+  return (
+    isOptionalObject(input) &&
+    isNonEmptyString(input.propertyId) &&
+    isNonEmptyString(input.startDate) &&
+    isNonEmptyString(input.endDate) &&
+    stringArray(input.metrics, 10) &&
+    optionalStringArray(input.dimensions, 10) &&
+    optionalLimit(input.limit, 100)
   );
 }
 
