@@ -519,6 +519,18 @@ function toMcpToolName(toolName: string): string {
       return "google_update_calendar_event";
     case "google.searchMailMessages":
       return "google_search_mail_messages";
+    case "google.slidesSearchPresentations":
+      return "google_slides_search_presentations";
+    case "google.slidesGetPresentation":
+      return "google_slides_get_presentation";
+    case "google.slidesProbeTemplate":
+      return "google_slides_probe_template";
+    case "google.analyticsListProperties":
+      return "google_analytics_list_properties";
+    case "google.analyticsGetMetadata":
+      return "google_analytics_get_metadata";
+    case "google.analyticsRunReport":
+      return "google_analytics_run_report";
     case "gmail.createDraft":
       return "gmail_create_draft";
     case "hubspot.getAuthenticatedUser":
@@ -921,6 +933,48 @@ function toMcpToolArgumentsWithoutScheduledJobIdentity(
       query,
       ...compactToolInput(readRecordKey(body, "input"), ["limit"])
     };
+  }
+
+  if (toolName === "google.slidesSearchPresentations") {
+    return compactToolInput(readRecordKey(body, "input"), [
+      "query",
+      "limit"
+    ]);
+  }
+
+  if (toolName === "google.slidesGetPresentation") {
+    return compactToolInput(readRecordKey(body, "input"), [
+      "presentationId",
+      "includeSlides"
+    ]);
+  }
+
+  if (toolName === "google.slidesProbeTemplate") {
+    return compactToolInput(readRecordKey(body, "input"), ["presentationId"]);
+  }
+
+  if (toolName === "google.analyticsListProperties") {
+    return compactToolInput(readRecordKey(body, "input"), ["limit"]);
+  }
+
+  if (toolName === "google.analyticsGetMetadata") {
+    return compactToolInput(readRecordKey(body, "input"), [
+      "propertyId",
+      "dimensionQuery",
+      "metricQuery",
+      "limit"
+    ]);
+  }
+
+  if (toolName === "google.analyticsRunReport") {
+    return compactToolInput(readRecordKey(body, "input"), [
+      "propertyId",
+      "startDate",
+      "endDate",
+      "metrics",
+      "dimensions",
+      "limit"
+    ]);
   }
 
   if (toolName === "gmail.createDraft") {

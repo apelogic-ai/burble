@@ -91,6 +91,36 @@ HERMES_PROVIDER_TOOL_HINTS: dict[str, list[dict[str, str]]] = {
             "alias": "google.searchMailMessages",
             "args": "query, limit?",
         },
+        {
+            "name": "google_slides_search_presentations",
+            "alias": "google.slidesSearchPresentations",
+            "args": "query?, limit?",
+        },
+        {
+            "name": "google_slides_get_presentation",
+            "alias": "google.slidesGetPresentation",
+            "args": "presentationId, includeSlides?",
+        },
+        {
+            "name": "google_slides_probe_template",
+            "alias": "google.slidesProbeTemplate",
+            "args": "presentationId",
+        },
+        {
+            "name": "google_analytics_list_properties",
+            "alias": "google.analyticsListProperties",
+            "args": "limit?",
+        },
+        {
+            "name": "google_analytics_get_metadata",
+            "alias": "google.analyticsGetMetadata",
+            "args": "propertyId, dimensionQuery?, metricQuery?, limit?",
+        },
+        {
+            "name": "google_analytics_run_report",
+            "alias": "google.analyticsRunReport",
+            "args": "propertyId, startDate, endDate, metrics, dimensions?, limit?",
+        },
     ],
     "hubspot": [
         {
