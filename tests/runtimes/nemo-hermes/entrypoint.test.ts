@@ -468,7 +468,6 @@ async def run_probe(message):
 
 async def main():
     tool_events = await run_probe({
-        "originalText": "runtime contract tool capability probe",
         "text": "runtime contract tool capability probe",
     })
     scheduled_events = await run_probe({

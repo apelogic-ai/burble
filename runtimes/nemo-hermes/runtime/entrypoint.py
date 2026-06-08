@@ -815,7 +815,10 @@ class BurbleHermesRuntime:
                     await waiter.emit({"type": "message_delta", "text": response["text"]})
                     await waiter.finish(response)
                     return response
-                if message.get("originalText") == "runtime contract tool capability probe":
+                if (
+                    message.get("originalText") == "runtime contract tool capability probe"
+                    or message.get("text") == "runtime contract tool capability probe"
+                ):
                     await waiter.emit({"type": "status", "text": "Runtime contract probe accepted."})
                     await waiter.emit({
                         "type": "tool_call",
