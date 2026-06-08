@@ -104,6 +104,8 @@ export const runtimeManifestStreamingSchema = z
   })
   .strict();
 
+export const runtimeHandleStatusSchema = z.enum(["ready", "busy", "idle"]);
+
 export const runtimeRequestManifestSchema = z
   .object({
     version: z.string().min(1),
@@ -162,6 +164,7 @@ export const runtimeRunRequestSchema = z
       .object({
         id: z.string().min(1),
         engine: agentRuntimeEngineSchema,
+        status: runtimeHandleStatusSchema.optional(),
         policyHash: z.string().optional(),
         manifest: runtimeRequestManifestSchema.optional()
       })

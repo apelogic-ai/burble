@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { createOpenClawNemoClawAgentRunner } from "../../src/agent/runners/openclaw-nemoclaw";
+import { parseRuntimeRunRequest } from "../../src/agent/runtime-contract";
 import type { RuntimeCapabilityManifest } from "../../src/agent/runtime-contract";
 import type { RuntimeManifest } from "../../src/agent/runtime-manifest";
 import { collectAgentRun } from "../../src/agent/types";
@@ -331,6 +332,71 @@ describe("createOpenClawNemoClawAgentRunner", () => {
       (seenRunBodies[1].runtime as { manifest?: { tools?: unknown } }).manifest
         ?.tools
     ).toEqual(toolCatalog);
+  });
+
+  test("builds SDK-parseable run requests for Burble Native runtimes", async () => {
+    const requests: Array<{ body: unknown }> = [];
+    const runner = createOpenClawNemoClawAgentRunner({
+      runtimeFactory: {
+        async getOrCreateRuntime() {
+          return {
+            id: "rt_burble_native",
+            engine: "burble-native",
+            endpointUrl: "http://burble-native-runtime:8080",
+            authToken: "runtime-token",
+            status: "ready",
+            statePath: "/data/runtimes/rt_burble_native/state",
+            configPath: "/data/runtimes/rt_burble_native/config/runtime.json",
+            workspacePath: "/data/runtimes/rt_burble_native/workspace",
+            manifest: runtimeManifest({
+              engine: "burble-native",
+              tools: []
+            })
+          };
+        },
+        async stopRuntime() {},
+        async reapIdleRuntimes() {}
+      },
+      fetch: async (url, init) => {
+        if (String(url).endsWith("/capabilities")) {
+          return Response.json({
+            ...openClawCapabilityManifest,
+            runtimeType: "burble-native",
+            nativeScheduler: false,
+            scheduledProviderCalls: false,
+            multimodalInput: false,
+            memory: false,
+            durableWorkflowState: false,
+            attachments: false,
+            toolBridgeModes: ["tool_gateway"]
+          });
+        }
+        const body = JSON.parse(String(init.body));
+        requests.push({ body });
+        return Response.json({
+          response: {
+            classification: "user_private",
+            text: "ok"
+          }
+        });
+      }
+    });
+
+    await collectAgentRun(runner, {
+      principal,
+      conversation,
+      text: "hello agent",
+      toolGroups: {
+        groups: ["conversation"],
+        reasons: ["default:conversation"]
+      },
+      connections: { github: connection }
+    });
+
+    expect(requests).toHaveLength(1);
+    const request = parseRuntimeRunRequest(requests[0].body);
+    expect(request.runtime.engine).toBe("burble-native");
+    expect(request.runtime.status).toBe("ready");
   });
 
   test("bounds Slack context before posting to any remote runtime", async () => {

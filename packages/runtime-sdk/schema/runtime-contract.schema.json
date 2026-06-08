@@ -54,6 +54,14 @@
                 "hermes"
               ]
             },
+            "status": {
+              "type": "string",
+              "enum": [
+                "ready",
+                "busy",
+                "idle"
+              ]
+            },
             "policyHash": {
               "type": "string"
             },
