@@ -1,5 +1,7 @@
 import type { Config } from "../../config";
 
+const maxGoogleAnalyticsReportDateRangeDays = 366;
+
 export type GoogleTokenSet = {
   accessToken: string;
   refreshToken: string | null;
@@ -868,6 +870,7 @@ export async function runGoogleAnalyticsReport(
   token: string,
   input: GoogleAnalyticsReportInput
 ): Promise<GoogleAnalyticsReport> {
+  assertGoogleAnalyticsDateRange(input);
   const propertyName = googleAnalyticsPropertyName(input.propertyId);
   const response = await fetch(
     `https://analyticsdata.googleapis.com/v1beta/${propertyName}:runReport`,
@@ -1284,6 +1287,63 @@ function googleAnalyticsPropertyName(propertyId: string): string {
   return trimmed.startsWith("properties/")
     ? trimmed
     : `properties/${encodeURIComponent(trimmed)}`;
+}
+
+function assertGoogleAnalyticsDateRange(input: GoogleAnalyticsReportInput): void {
+  const startDate = parseGoogleAnalyticsDate(input.startDate);
+  const endDate = parseGoogleAnalyticsDate(input.endDate);
+  if (!startDate || !endDate || startDate.getTime() > endDate.getTime()) {
+    throw new GoogleApiError(
+      "Google Analytics report date range must use YYYY-MM-DD, today, yesterday, or NdaysAgo dates with startDate on or before endDate",
+      400
+    );
+  }
+
+  const daySpan =
+    Math.floor((endDate.getTime() - startDate.getTime()) / 86_400_000) + 1;
+  if (daySpan > maxGoogleAnalyticsReportDateRangeDays) {
+    throw new GoogleApiError(
+      `Google Analytics report date range is limited to ${maxGoogleAnalyticsReportDateRangeDays} days`,
+      400
+    );
+  }
+}
+
+function parseGoogleAnalyticsDate(value: string): Date | null {
+  const normalized = value.trim().toLocaleLowerCase();
+  const today = utcStartOfDay(new Date());
+  if (normalized === "today") {
+    return today;
+  }
+  if (normalized === "yesterday") {
+    return new Date(today.getTime() - 86_400_000);
+  }
+  const daysAgo = normalized.match(/^(\d+)daysago$/);
+  if (daysAgo) {
+    const days = Number(daysAgo[1]);
+    return Number.isSafeInteger(days)
+      ? new Date(today.getTime() - days * 86_400_000)
+      : null;
+  }
+  const isoDate = normalized.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (isoDate) {
+    const date = new Date(`${normalized}T00:00:00.000Z`);
+    if (Number.isNaN(date.getTime())) {
+      return null;
+    }
+    return date.getUTCFullYear() === Number(isoDate[1]) &&
+      date.getUTCMonth() === Number(isoDate[2]) - 1 &&
+      date.getUTCDate() === Number(isoDate[3])
+      ? date
+      : null;
+  }
+  return null;
+}
+
+function utcStartOfDay(date: Date): Date {
+  return new Date(
+    Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate())
+  );
 }
 
 function normalizeGoogleAnalyticsPropertyId(property: string): string {

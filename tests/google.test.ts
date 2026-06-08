@@ -383,6 +383,29 @@ describe("Google OAuth and API helpers", () => {
     }
   });
 
+  test("rejects Google Analytics reports with too-wide date ranges before fetching", async () => {
+    const originalFetch = globalThis.fetch;
+    let didFetch = false;
+    globalThis.fetch = (async (_input, _init) => {
+      didFetch = true;
+      return Response.json({});
+    }) as typeof fetch;
+
+    try {
+      await expect(
+        runGoogleAnalyticsReport("google-token", {
+          propertyId: "456",
+          startDate: "2024-01-01",
+          endDate: "2026-01-01",
+          metrics: ["activeUsers"]
+        })
+      ).rejects.toThrow("Google Analytics report date range is limited to 366 days");
+      expect(didFetch).toBe(false);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
   test("searches Google Slides presentations through Drive metadata", async () => {
     const originalFetch = globalThis.fetch;
     let requestedUrl = "";

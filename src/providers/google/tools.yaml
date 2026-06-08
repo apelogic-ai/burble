@@ -363,7 +363,7 @@ tools:
     alias: google.analyticsRunReport
     implementation: runAnalyticsReport
     title: Google Analytics run report
-    description: Run a read-only GA4 report for a Google Analytics property using selected dimensions, metrics, and date range.
+    description: Run a read-only GA4 report for a Google Analytics property using selected dimensions, metrics, and a date range of at most 366 days.
     input:
       propertyId:
         type: string
