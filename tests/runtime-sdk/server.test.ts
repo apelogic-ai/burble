@@ -212,11 +212,30 @@ describe("runtime SDK tool gateway client", () => {
     });
   });
 
+  test("builds runtime-scoped bearer headers", () => {
+    expect(
+      Object.fromEntries(
+        buildRuntimeBearerHeaders(
+          "runtime-token",
+          {
+            accept: "application/json"
+          },
+          "rt_u123"
+        ).entries()
+      )
+    ).toEqual({
+      accept: "application/json",
+      authorization: "Bearer runtime-token",
+      "x-burble-runtime-id": "rt_u123"
+    });
+  });
+
   test("executes tools through the Burble internal tool gateway", async () => {
     const calls: Array<{ url: string; init?: RequestInit }> = [];
     const client = createRuntimeToolGatewayClient({
       baseUrl: "http://burble-app:3000/internal/tools/",
       runtimeToken: "runtime-token",
+      runtimeId: "rt_u123",
       fetch: async (url, init) => {
         calls.push({ url, init });
         return Response.json({
@@ -237,7 +256,8 @@ describe("runtime SDK tool gateway client", () => {
     );
     expect(calls[0].init?.headers).toMatchObject({
       authorization: "Bearer runtime-token",
-      "content-type": "application/json"
+      "content-type": "application/json",
+      "x-burble-runtime-id": "rt_u123"
     });
     expect(JSON.parse(String(calls[0].init?.body))).toEqual({
       input: { query: "repo:burble" }

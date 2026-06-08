@@ -9,16 +9,21 @@ export type RuntimeToolGatewayClient = {
 
 export function buildRuntimeBearerHeaders(
   runtimeToken: string,
-  headers?: HeadersInit
+  headers?: HeadersInit,
+  runtimeId?: string
 ): Headers {
   const result = new Headers(headers);
   result.set("authorization", `Bearer ${runtimeToken}`);
+  if (runtimeId) {
+    result.set("x-burble-runtime-id", runtimeId);
+  }
   return result;
 }
 
 export function createRuntimeToolGatewayClient(input: {
   baseUrl: string;
   runtimeToken: string;
+  runtimeId?: string;
   fetch?: RuntimeToolGatewayFetch;
 }): RuntimeToolGatewayClient {
   const baseUrl = input.baseUrl.replace(/\/+$/, "");
@@ -30,10 +35,14 @@ export function createRuntimeToolGatewayClient(input: {
         {
           method: "POST",
           headers: Object.fromEntries(
-            buildRuntimeBearerHeaders(input.runtimeToken, {
-              accept: "application/json",
-              "content-type": "application/json"
-            }).entries()
+            buildRuntimeBearerHeaders(
+              input.runtimeToken,
+              {
+                accept: "application/json",
+                "content-type": "application/json"
+              },
+              input.runtimeId
+            ).entries()
           ),
           body: JSON.stringify(body)
         }

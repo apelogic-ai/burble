@@ -405,7 +405,8 @@ describe("Burble Native runtime server", () => {
     );
     expect(toolRequest?.init?.headers).toMatchObject({
       authorization: "Bearer runtime-token",
-      "content-type": "application/json"
+      "content-type": "application/json",
+      "x-burble-runtime-id": "rt_native"
     });
   });
 
@@ -583,6 +584,7 @@ describe("Burble Native runtime server", () => {
     const executeTool = createBurbleNativeToolExecutor({
       toolGatewayUrl: "http://burble-app:3000/internal/tools/",
       runtimeToken: "runtime-token",
+      runtimeId: "rt_u123",
       fetch: async (url, init) => {
         calls.push({ url, init });
         return Response.json({
@@ -605,7 +607,8 @@ describe("Burble Native runtime server", () => {
     );
     expect(calls[0].init?.headers).toMatchObject({
       authorization: "Bearer runtime-token",
-      "content-type": "application/json"
+      "content-type": "application/json",
+      "x-burble-runtime-id": "rt_u123"
     });
     expect(JSON.parse(String(calls[0].init?.body))).toEqual({
       user: { email: "person@example.com" }

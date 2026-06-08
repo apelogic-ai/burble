@@ -196,7 +196,11 @@ async function* runNativeTurn(
         toolName: toolCall.toolName,
         callId: toolCall.callId
       };
-      const toolResult = await executeBurbleProviderTool(toolCall, context);
+      const toolResult = await executeBurbleProviderTool(
+        toolCall,
+        request,
+        context
+      );
       yield {
         type: "tool_result",
         toolName: toolCall.toolName,
@@ -329,6 +333,7 @@ async function collectOpenAiTurn(
 
 async function executeBurbleProviderTool(
   toolCall: OpenAiFunctionToolCall,
+  request: RunRequest,
   context: RuntimeServerContext
 ): Promise<unknown> {
   const toolGatewayUrl = readEnv(context.env, "BURBLE_TOOL_GATEWAY_URL");
@@ -341,6 +346,7 @@ async function executeBurbleProviderTool(
   const executeTool = createBurbleNativeToolExecutor({
     toolGatewayUrl,
     runtimeToken,
+    runtimeId: request.runtime.id,
     ...(context.fetch ? { fetch: context.fetch } : {})
   });
   return executeTool(toolCall.toolName, toolCall.input);
