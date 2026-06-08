@@ -27,6 +27,7 @@ from gateway.session import build_session_key
 
 logger = logging.getLogger(__name__)
 HERMES_STREAM_CURSOR = " ▉"
+HERMES_STREAM_CURSOR_GLYPHS = ("▉", "■")
 
 
 def _env(name: str, default: str = "") -> str:
@@ -510,7 +511,7 @@ class BurbleAdapter(BasePlatformAdapter):
             )
         return SendResult(success=True, message_id=message_id)
 
-    async def send_typing(self, chat_id: str) -> bool:
+    async def send_typing(self, chat_id: str, **_kwargs: Any) -> bool:
         return True
 
     async def get_chat_info(self, chat_id: str) -> Dict[str, Any]:
@@ -531,8 +532,8 @@ class BurbleAdapter(BasePlatformAdapter):
     @staticmethod
     def _clean_stream_preview(text: str) -> str:
         value = str(text or "")
-        if value.endswith(HERMES_STREAM_CURSOR):
-            value = value[: -len(HERMES_STREAM_CURSOR)]
+        for glyph in HERMES_STREAM_CURSOR_GLYPHS:
+            value = value.replace(glyph, "")
         return value.rstrip()
 
     @staticmethod
