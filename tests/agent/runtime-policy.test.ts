@@ -4,7 +4,8 @@ import { createTokenStore } from "../../src/db";
 import {
   buildRuntimeManifestForPrincipal,
   RuntimeEngineSelectionError,
-  resolveRuntimeEngineForPrincipal
+  resolveRuntimeEngineForPrincipal,
+  runtimeEngineCompatibility
 } from "../../src/agent/runtime-policy";
 
 const config: Config = {
@@ -231,7 +232,7 @@ describe("resolveRuntimeEngineForPrincipal", () => {
     store.close();
   });
 
-  test("does not select Burble Native for scheduled workloads yet", () => {
+  test("selects Burble Native for interactive workloads when allowed", () => {
     const store = createTokenStore(":memory:");
     store.upsertWorkspacePolicy({
       workspaceId: "T123",
@@ -255,16 +256,26 @@ describe("resolveRuntimeEngineForPrincipal", () => {
       }
     });
 
-    expect(selection.effectiveEngine).toBe("openclaw");
+    expect(selection.effectiveEngine).toBe("burble-native");
     expect(selection.preferredEngine).toBe("burble-native");
     expect(selection.allowedEngines).toEqual(["openclaw", "burble-native"]);
-    expect(selection.selectableEngines).toEqual(["openclaw"]);
+    expect(selection.selectableEngines).toEqual(["openclaw", "burble-native"]);
     expect(selection.compatibility).toContainEqual({
+      engine: "burble-native",
+      selectable: true,
+      reasons: []
+    });
+    store.close();
+  });
+
+  test("does not treat Burble Native as scheduled-workload compatible yet", () => {
+    expect(
+      runtimeEngineCompatibility("burble-native", { workload: "scheduled" })
+    ).toEqual({
       engine: "burble-native",
       selectable: false,
       reasons: ["missing scheduled provider calls"]
     });
-    store.close();
   });
 
   test("fails explicitly when policy leaves no selectable runtime engine", () => {
