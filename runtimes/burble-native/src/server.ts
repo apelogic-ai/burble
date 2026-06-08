@@ -196,7 +196,7 @@ async function* runNativeTurn(
         toolName: toolCall.toolName,
         callId: toolCall.callId
       };
-      const toolResult = await executeBurbleProviderTool(
+      const toolResult = await executeBurbleProviderToolForModel(
         toolCall,
         request,
         context
@@ -331,6 +331,25 @@ async function collectOpenAiTurn(
   }
 }
 
+async function executeBurbleProviderToolForModel(
+  toolCall: OpenAiFunctionToolCall,
+  request: RunRequest,
+  context: RuntimeServerContext
+): Promise<unknown> {
+  try {
+    return await executeBurbleProviderTool(toolCall, request, context);
+  } catch (error) {
+    return {
+      classification: "user_private",
+      content: {
+        error: "tool_execution_failed",
+        toolName: toolCall.toolName,
+        message: sanitizeToolErrorMessage(error)
+      }
+    };
+  }
+}
+
 async function executeBurbleProviderTool(
   toolCall: OpenAiFunctionToolCall,
   request: RunRequest,
@@ -350,6 +369,14 @@ async function executeBurbleProviderTool(
     ...(context.fetch ? { fetch: context.fetch } : {})
   });
   return executeTool(toolCall.toolName, toolCall.input);
+}
+
+function sanitizeToolErrorMessage(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  return message
+    .replace(/Bearer\s+[A-Za-z0-9._~+/=-]+/gi, "Bearer [redacted]")
+    .replace(/sk-[A-Za-z0-9_-]+/g, "[redacted-openai-key]")
+    .trim();
 }
 
 function readOpenAiModel(env: Record<string, string | undefined> | undefined): string {

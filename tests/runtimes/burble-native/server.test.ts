@@ -410,6 +410,141 @@ describe("Burble Native runtime server", () => {
     });
   });
 
+  test("feeds tool gateway failures back to the model", async () => {
+    const requests: Array<{ url: string; init?: RequestInit }> = [];
+    const response = await handleRuntimeRequest(
+      new Request("http://runtime/runs", {
+        method: "POST",
+        headers: {
+          accept: "application/x-ndjson",
+          "content-type": "application/json"
+        },
+        body: JSON.stringify(
+          withRuntimeManifestTools(
+            withToolGroups(
+              nativeRunRequest("list my latest GitHub pull requests", {
+                github: { connected: true, email: "person@example.com" }
+              }),
+              ["github"]
+            ),
+            [
+              {
+                name: "github_list_my_pull_requests",
+                alias: "github.listMyPullRequests",
+                provider: "github",
+                title: "GitHub pull requests authored by me",
+                description:
+                  "List GitHub pull requests authored by this Slack user's connected GitHub account.",
+                enabled: true,
+                risk: "read",
+                routeRequired: true,
+                confirmation: "none",
+                input: []
+              }
+            ]
+          )
+        )
+      }),
+      {
+        env: {
+          AI_MODEL: "openai:gpt-5.4",
+          OPENAI_API_KEY: "test-openai-key",
+          OPENAI_BASE_URL: "https://openai-compatible.example/v1",
+          BURBLE_TOOL_GATEWAY_URL: "http://burble-app:3000/internal/tools",
+          BURBLE_INTERNAL_TOKEN: "runtime-token"
+        },
+        fetch: async (url: string, init?: RequestInit) => {
+          requests.push({ url, init });
+          if (url.includes("/github.listMyPullRequests/execute")) {
+            return new Response("Bearer runtime-token backend unavailable", {
+              status: 503
+            });
+          }
+          const providerRequestCount = requests.filter((request) =>
+            request.url.endsWith("/responses")
+          ).length;
+          if (providerRequestCount === 1) {
+            return new Response(
+              sseEvent({
+                type: "response.completed",
+                response: {
+                  output: [
+                    {
+                      type: "function_call",
+                      call_id: "call_123",
+                      name: "burble_provider_call",
+                      arguments: JSON.stringify({
+                        toolName: "github.listMyPullRequests",
+                        input: {}
+                      })
+                    }
+                  ],
+                  usage: {
+                    input_tokens: 100,
+                    output_tokens: 5,
+                    total_tokens: 105
+                  }
+                }
+              }),
+              { headers: { "content-type": "text/event-stream" } }
+            );
+          }
+          return new Response(
+            [
+              sseEvent({
+                type: "response.output_text.delta",
+                delta: "I could not reach GitHub right now."
+              }),
+              sseEvent({
+                type: "response.completed",
+                response: {
+                  output_text: "I could not reach GitHub right now.",
+                  usage: {
+                    input_tokens: 80,
+                    output_tokens: 8,
+                    total_tokens: 88
+                  }
+                }
+              })
+            ].join(""),
+            { headers: { "content-type": "text/event-stream" } }
+          );
+        }
+      }
+    );
+
+    expect(response.status).toBe(200);
+    const events = (await response.text())
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+    expect(events.map((event) => event.type)).toEqual([
+      "status",
+      "tool_call",
+      "tool_result",
+      "message_delta",
+      "final"
+    ]);
+    expect(events[2]).toMatchObject({
+      type: "tool_result",
+      toolName: "github.listMyPullRequests",
+      callId: "call_123",
+      classification: "user_private"
+    });
+    const secondProviderBody = JSON.parse(
+      String(
+        requests.filter((request) => request.url.endsWith("/responses"))[1].init
+          ?.body
+      )
+    );
+    const toolOutput = secondProviderBody.input.find(
+      (item: { type?: string }) => item.type === "function_call_output"
+    );
+    expect(toolOutput.output).toContain("tool_execution_failed");
+    expect(toolOutput.output).toContain("HTTP 503");
+    expect(toolOutput.output).not.toContain("runtime-token");
+  });
+
   test("does not expose the generic tool function without a selected tool catalog", async () => {
     const requests: Array<{ url: string; init?: RequestInit }> = [];
     const response = await handleRuntimeRequest(
