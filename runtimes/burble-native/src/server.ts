@@ -35,8 +35,14 @@ type OpenAiFunctionToolCall = {
 const DEFAULT_PROVIDER_TIMEOUT_MS = 120_000;
 const MIN_PROVIDER_TIMEOUT_MS = 1;
 const MAX_PROVIDER_TIMEOUT_MS = 10 * 60_000;
+const DEFAULT_TURN_TIMEOUT_MS = 180_000;
+const MIN_TURN_TIMEOUT_MS = 1;
+const MAX_TURN_TIMEOUT_MS = 30 * 60_000;
+const DEFAULT_PROVIDER_MAX_ATTEMPTS = 3;
+const DEFAULT_PROVIDER_RETRY_BASE_DELAY_MS = 250;
 const MAX_TOOL_LOOP_STEPS = 4;
 const MAX_PROMPT_TOOLS = 24;
+const MAX_MODEL_TOOL_OUTPUT_CHARS = 12_000;
 const BURBLE_PROVIDER_TOOL_NAME = "burble_provider_call";
 
 const runtimeContractServer = createRuntimeContractServer<
@@ -177,8 +183,9 @@ async function* runNativeTurn(
   let responseText = "";
   let usage: RunUsage | undefined;
   let input = buildOpenAiInput(request);
+  const turnDeadline = createTurnDeadline(context.env);
   for (let step = 0; step < MAX_TOOL_LOOP_STEPS; step += 1) {
-    const result = await collectOpenAiTurn(input, request, context);
+    const result = await collectOpenAiTurn(input, request, context, turnDeadline);
     usage = mergeUsage(usage, result.usage);
     if (result.toolCalls.length === 0) {
       for (const delta of result.deltas) {
@@ -196,7 +203,11 @@ async function* runNativeTurn(
         toolName: toolCall.toolName,
         callId: toolCall.callId
       };
-      const toolResult = await executeBurbleProviderTool(toolCall, context);
+      const toolResult = await executeBurbleProviderToolForModel(
+        toolCall,
+        request,
+        context
+      );
       yield {
         type: "tool_result",
         toolName: toolCall.toolName,
@@ -206,7 +217,7 @@ async function* runNativeTurn(
       toolOutputs.push({
         type: "function_call_output",
         call_id: toolCall.callId,
-        output: JSON.stringify(toolResult)
+        output: serializeToolOutputForModel(toolResult)
       });
     }
 
@@ -236,10 +247,53 @@ function nativeUsage(): RunUsage {
   };
 }
 
+type TurnDeadline = {
+  expiresAtMs: number;
+  timeoutMs: number;
+};
+
 async function collectOpenAiTurn(
   input: string | OpenAiInputItem[],
   request: RunRequest,
-  context: RuntimeServerContext
+  context: RuntimeServerContext,
+  turnDeadline: TurnDeadline
+): Promise<{
+  deltas: string[];
+  text: string;
+  usage: RunUsage | undefined;
+  outputItems: OpenAiInputItem[];
+  toolCalls: OpenAiFunctionToolCall[];
+}> {
+  const maxAttempts = readProviderMaxAttempts(context.env);
+  const retryBaseDelayMs = readProviderRetryBaseDelayMs(context.env);
+  let lastError: unknown;
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    throwIfTurnTimedOut(turnDeadline);
+    try {
+      return await collectOpenAiTurnAttempt(
+        input,
+        request,
+        context,
+        turnDeadline
+      );
+    } catch (error) {
+      if (!shouldRetryProviderError(error) || attempt === maxAttempts - 1) {
+        throw error;
+      }
+      lastError = error;
+      await sleep(Math.min(retryDelayMs(attempt, retryBaseDelayMs), remainingTurnMs(turnDeadline)));
+    }
+  }
+  throw lastError instanceof Error
+    ? lastError
+    : new Error("OpenAI Responses API request failed");
+}
+
+async function collectOpenAiTurnAttempt(
+  input: string | OpenAiInputItem[],
+  request: RunRequest,
+  context: RuntimeServerContext,
+  turnDeadline: TurnDeadline
 ): Promise<{
   deltas: string[];
   text: string;
@@ -253,11 +307,20 @@ async function collectOpenAiTurn(
     throw new Error("OPENAI_API_KEY is required for Burble Native model calls");
   }
   const requestFetch = context.fetch ?? fetch;
-  const timeoutMs = readProviderTimeoutMs(context.env);
+  const providerTimeoutMs = readProviderTimeoutMs(context.env);
+  const turnRemainingMs = remainingTurnMs(turnDeadline);
+  if (turnRemainingMs <= 0) {
+    throw new TurnTimeoutError(turnDeadline.timeoutMs);
+  }
+  const timeoutMs = Math.min(providerTimeoutMs, turnRemainingMs);
+  const timeoutError =
+    timeoutMs < providerTimeoutMs
+      ? new TurnTimeoutError(turnDeadline.timeoutMs)
+      : new ProviderTimeoutError(providerTimeoutMs);
   const responsesUrl = readOpenAiResponsesUrl(context.env);
   const abortController = new AbortController();
   const timeout = setTimeout(() => {
-    abortController.abort(new ProviderTimeoutError(timeoutMs));
+    abortController.abort(timeoutError);
   }, timeoutMs);
 
   try {
@@ -276,7 +339,7 @@ async function collectOpenAiTurn(
       })
     });
     if (!response.ok || !response.body) {
-      throw new Error(`OpenAI Responses API returned HTTP ${response.status}`);
+      throw new ProviderHttpError(response.status);
     }
 
     const deltas: string[] = [];
@@ -289,6 +352,7 @@ async function collectOpenAiTurn(
       abortController.signal
     )) {
       throwIfProviderTimedOut(abortController.signal);
+      throwIfTurnTimedOut(turnDeadline);
       const type = readString(payload, "type");
       if (type === "response.output_text.delta") {
         const delta = readString(payload, "delta");
@@ -307,6 +371,7 @@ async function collectOpenAiTurn(
     }
 
     throwIfProviderTimedOut(abortController.signal);
+    throwIfTurnTimedOut(turnDeadline);
     return {
       deltas,
       text: completedText,
@@ -327,8 +392,28 @@ async function collectOpenAiTurn(
   }
 }
 
+async function executeBurbleProviderToolForModel(
+  toolCall: OpenAiFunctionToolCall,
+  request: RunRequest,
+  context: RuntimeServerContext
+): Promise<unknown> {
+  try {
+    return await executeBurbleProviderTool(toolCall, request, context);
+  } catch (error) {
+    return {
+      classification: "user_private",
+      content: {
+        error: "tool_execution_failed",
+        toolName: toolCall.toolName,
+        message: sanitizeToolErrorMessage(error)
+      }
+    };
+  }
+}
+
 async function executeBurbleProviderTool(
   toolCall: OpenAiFunctionToolCall,
+  request: RunRequest,
   context: RuntimeServerContext
 ): Promise<unknown> {
   const toolGatewayUrl = readEnv(context.env, "BURBLE_TOOL_GATEWAY_URL");
@@ -341,9 +426,36 @@ async function executeBurbleProviderTool(
   const executeTool = createBurbleNativeToolExecutor({
     toolGatewayUrl,
     runtimeToken,
+    runtimeId: request.runtime.id,
+    maxAttempts: readToolGatewayMaxAttempts(context.env),
+    retryBaseDelayMs: readToolGatewayRetryBaseDelayMs(context.env),
     ...(context.fetch ? { fetch: context.fetch } : {})
   });
   return executeTool(toolCall.toolName, toolCall.input);
+}
+
+function sanitizeToolErrorMessage(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  return message
+    .replace(/Bearer\s+[A-Za-z0-9._~+/=-]+/gi, "Bearer [redacted]")
+    .replace(/sk-[A-Za-z0-9_-]+/g, "[redacted-openai-key]")
+    .trim();
+}
+
+function serializeToolOutputForModel(toolResult: unknown): string {
+  const serialized = JSON.stringify(toolResult);
+  if (serialized.length <= MAX_MODEL_TOOL_OUTPUT_CHARS) {
+    return serialized;
+  }
+
+  return JSON.stringify({
+    classification: readToolResultClassification(toolResult),
+    content: {
+      truncated: true,
+      originalChars: serialized.length,
+      preview: serialized.slice(0, Math.max(0, MAX_MODEL_TOOL_OUTPUT_CHARS - 1000))
+    }
+  });
 }
 
 function readOpenAiModel(env: Record<string, string | undefined> | undefined): string {
@@ -389,10 +501,114 @@ function readProviderTimeoutMs(
   return Math.min(Math.max(parsed, MIN_PROVIDER_TIMEOUT_MS), MAX_PROVIDER_TIMEOUT_MS);
 }
 
+function readProviderMaxAttempts(
+  env: Record<string, string | undefined> | undefined
+): number {
+  const raw = readEnv(env, "BURBLE_NATIVE_PROVIDER_MAX_ATTEMPTS");
+  if (!raw) {
+    return DEFAULT_PROVIDER_MAX_ATTEMPTS;
+  }
+  const parsed = Number.parseInt(raw, 10);
+  return Number.isFinite(parsed) && parsed > 0
+    ? Math.max(1, Math.floor(parsed))
+    : DEFAULT_PROVIDER_MAX_ATTEMPTS;
+}
+
+function readProviderRetryBaseDelayMs(
+  env: Record<string, string | undefined> | undefined
+): number {
+  const raw = readEnv(env, "BURBLE_NATIVE_PROVIDER_RETRY_BASE_MS");
+  if (!raw) {
+    return DEFAULT_PROVIDER_RETRY_BASE_DELAY_MS;
+  }
+  const parsed = Number.parseInt(raw, 10);
+  return Number.isFinite(parsed) && parsed >= 0
+    ? Math.floor(parsed)
+    : DEFAULT_PROVIDER_RETRY_BASE_DELAY_MS;
+}
+
+function readTurnTimeoutMs(
+  env: Record<string, string | undefined> | undefined
+): number {
+  const raw = readEnv(env, "BURBLE_NATIVE_TURN_TIMEOUT_MS");
+  if (!raw) {
+    return DEFAULT_TURN_TIMEOUT_MS;
+  }
+  const parsed = Number.parseInt(raw, 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return DEFAULT_TURN_TIMEOUT_MS;
+  }
+  return Math.min(Math.max(parsed, MIN_TURN_TIMEOUT_MS), MAX_TURN_TIMEOUT_MS);
+}
+
+function readToolGatewayMaxAttempts(
+  env: Record<string, string | undefined> | undefined
+): number | undefined {
+  const raw = readEnv(env, "BURBLE_NATIVE_TOOL_GATEWAY_MAX_ATTEMPTS");
+  if (!raw) {
+    return undefined;
+  }
+  const parsed = Number.parseInt(raw, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
+}
+
+function readToolGatewayRetryBaseDelayMs(
+  env: Record<string, string | undefined> | undefined
+): number | undefined {
+  const raw = readEnv(env, "BURBLE_NATIVE_TOOL_GATEWAY_RETRY_BASE_MS");
+  if (!raw) {
+    return undefined;
+  }
+  const parsed = Number.parseInt(raw, 10);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : undefined;
+}
+
 class ProviderTimeoutError extends Error {
   constructor(readonly timeoutMs: number) {
     super(`OpenAI Responses API timed out after ${timeoutMs}ms`);
   }
+}
+
+class TurnTimeoutError extends Error {
+  constructor(readonly timeoutMs: number) {
+    super(`Burble Native turn timed out after ${timeoutMs}ms`);
+  }
+}
+
+class ProviderHttpError extends Error {
+  constructor(readonly status: number) {
+    super(`OpenAI Responses API returned HTTP ${status}`);
+  }
+}
+
+function shouldRetryProviderError(error: unknown): boolean {
+  if (error instanceof TurnTimeoutError) {
+    return false;
+  }
+  if (error instanceof ProviderTimeoutError) {
+    return true;
+  }
+  const status =
+    error instanceof ProviderHttpError
+      ? error.status
+      : typeof (error as { status?: unknown })?.status === "number"
+        ? (error as { status: number }).status
+        : null;
+  if (status !== null) {
+    return status === 408 || status === 429 || status >= 500;
+  }
+  return error instanceof TypeError;
+}
+
+function retryDelayMs(attempt: number, baseDelayMs: number): number {
+  return baseDelayMs * 2 ** attempt;
+}
+
+async function sleep(ms: number): Promise<void> {
+  if (ms <= 0) {
+    return;
+  }
+  await new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function throwIfProviderTimedOut(signal: AbortSignal, error?: unknown): void {
@@ -400,8 +616,31 @@ function throwIfProviderTimedOut(signal: AbortSignal, error?: unknown): void {
   if (signal.aborted && reason instanceof ProviderTimeoutError) {
     throw reason;
   }
+  if (signal.aborted && reason instanceof TurnTimeoutError) {
+    throw reason;
+  }
   if (error instanceof ProviderTimeoutError) {
     throw error;
+  }
+  if (error instanceof TurnTimeoutError) {
+    throw error;
+  }
+}
+
+function createTurnDeadline(
+  env: Record<string, string | undefined> | undefined
+): TurnDeadline {
+  const timeoutMs = readTurnTimeoutMs(env);
+  return { expiresAtMs: Date.now() + timeoutMs, timeoutMs };
+}
+
+function remainingTurnMs(deadline: TurnDeadline): number {
+  return Math.max(0, deadline.expiresAtMs - Date.now());
+}
+
+function throwIfTurnTimedOut(deadline: TurnDeadline): void {
+  if (remainingTurnMs(deadline) <= 0) {
+    throw new TurnTimeoutError(deadline.timeoutMs);
   }
 }
 

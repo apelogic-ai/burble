@@ -661,6 +661,24 @@ describe("handleToolGatewayRequest", () => {
     });
   });
 
+  test("rejects runtime tokens without a runtime id header", async () => {
+    const response = await handleToolGatewayRequest(
+      config,
+      createStore(connection, runtime),
+      "github.getAuthenticatedUser",
+      request(
+        "github.getAuthenticatedUser",
+        {
+          input: {}
+        },
+        "runtime-token-u123"
+      )
+    );
+
+    expect(response.status).toBe(401);
+    expect(await response.text()).toBe("Unauthorized");
+  });
+
   test("executes expanded HubSpot read tools with the stored caller token", async () => {
     const crmResponse = await handleToolGatewayRequest(
       config,
