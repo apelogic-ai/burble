@@ -144,7 +144,173 @@ describe("Burble Native runtime server", () => {
     expect(JSON.parse(String(requests[0].init?.body))).toMatchObject({
       model: "gpt-5.4",
       stream: true,
-      input: expect.stringContaining("describe Burble")
+      tools: [],
+      input: [
+        {
+          role: "user",
+          content: expect.stringContaining("describe Burble")
+        }
+      ]
+    });
+  });
+
+  test("executes model-requested Burble tools and feeds results back to the model", async () => {
+    const requests: Array<{ url: string; init?: RequestInit }> = [];
+    const response = await handleRuntimeRequest(
+      new Request("http://runtime/runs", {
+        method: "POST",
+        headers: {
+          accept: "application/x-ndjson",
+          "content-type": "application/json"
+        },
+        body: JSON.stringify(
+          withToolGroups(
+            nativeRunRequest("who am I on GitHub?", {
+              github: { connected: true, email: "person@example.com" }
+            }),
+            ["github"]
+          )
+        )
+      }),
+      {
+        env: {
+          AI_MODEL: "openai:gpt-5.4",
+          OPENAI_API_KEY: "test-openai-key",
+          OPENAI_BASE_URL: "https://openai-compatible.example/v1",
+          BURBLE_TOOL_GATEWAY_URL: "http://burble-app:3000/internal/tools",
+          BURBLE_INTERNAL_TOKEN: "runtime-token"
+        },
+        fetch: async (url: string, init?: RequestInit) => {
+          requests.push({ url, init });
+          if (url.includes("/github.getAuthenticatedUser/execute")) {
+            return Response.json({
+              classification: "user_private",
+              content: { login: "octocat" }
+            });
+          }
+          const providerRequestCount = requests.filter((request) =>
+            request.url.endsWith("/responses")
+          ).length;
+          if (providerRequestCount === 1) {
+            return new Response(
+              sseEvent({
+                type: "response.completed",
+                response: {
+                  output: [
+                    {
+                      type: "function_call",
+                      call_id: "call_123",
+                      name: "burble_provider_call",
+                      arguments: JSON.stringify({
+                        toolName: "github.getAuthenticatedUser",
+                        input: {
+                          user: { email: "person@example.com" }
+                        }
+                      })
+                    }
+                  ],
+                  usage: {
+                    input_tokens: 100,
+                    output_tokens: 5,
+                    total_tokens: 105
+                  }
+                }
+              }),
+              { headers: { "content-type": "text/event-stream" } }
+            );
+          }
+          return new Response(
+            [
+              sseEvent({
+                type: "response.output_text.delta",
+                delta: "Authenticated as octocat."
+              }),
+              sseEvent({
+                type: "response.completed",
+                response: {
+                  output_text: "Authenticated as octocat.",
+                  usage: {
+                    input_tokens: 80,
+                    output_tokens: 7,
+                    total_tokens: 87
+                  }
+                }
+              })
+            ].join(""),
+            { headers: { "content-type": "text/event-stream" } }
+          );
+        }
+      }
+    );
+
+    expect(response.status).toBe(200);
+    expect(
+      (await response.text())
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line))
+    ).toEqual([
+      { type: "status", text: "Burble Native accepted the turn." },
+      {
+        type: "tool_call",
+        toolName: "github.getAuthenticatedUser",
+        callId: "call_123"
+      },
+      {
+        type: "tool_result",
+        toolName: "github.getAuthenticatedUser",
+        callId: "call_123",
+        classification: "user_private"
+      },
+      { type: "message_delta", text: "Authenticated as octocat." },
+      {
+        type: "final",
+        response: {
+          classification: "user_private",
+          text: "Authenticated as octocat.",
+          usage: {
+            inputTokens: 180,
+            outputTokens: 12,
+            totalTokens: 192,
+            usageSource: "provider-output"
+          }
+        }
+      }
+    ]);
+
+    const providerRequests = requests.filter((request) =>
+      request.url.endsWith("/responses")
+    );
+    expect(providerRequests).toHaveLength(2);
+    expect(JSON.parse(String(providerRequests[0].init?.body))).toMatchObject({
+      tools: [
+        {
+          type: "function",
+          name: "burble_provider_call"
+        }
+      ]
+    });
+    expect(JSON.parse(String(providerRequests[1].init?.body))).toMatchObject({
+      input: [
+        { role: "user", content: expect.stringContaining("who am I on GitHub?") },
+        {
+          type: "function_call",
+          call_id: "call_123",
+          name: "burble_provider_call"
+        },
+        {
+          type: "function_call_output",
+          call_id: "call_123",
+          output: expect.stringContaining("octocat")
+        }
+      ]
+    });
+    const toolRequest = requests.find((request) =>
+      request.url.includes("/github.getAuthenticatedUser/execute")
+    );
+    expect(toolRequest?.init?.headers).toMatchObject({
+      authorization: "Bearer runtime-token",
+      "content-type": "application/json"
     });
   });
 
@@ -288,6 +454,22 @@ function nativeRunRequest(
         isDirectMessage: true
       },
       connections
+    }
+  };
+}
+
+function withToolGroups<T extends ReturnType<typeof nativeRunRequest>>(
+  request: T,
+  groups: string[]
+): T {
+  return {
+    ...request,
+    input: {
+      ...request.input,
+      toolGroups: {
+        groups,
+        reasons: groups.map((group) => `${group} test`)
+      }
     }
   };
 }
