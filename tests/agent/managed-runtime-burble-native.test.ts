@@ -117,8 +117,7 @@ describe("managed runtime Burble Native integration", () => {
       email: "person@example.com",
       slackUserId: principal.slackUserId,
       providerLogin: "octocat",
-      accessToken: "github-token",
-      connectedAt: new Date("2026-06-08T00:00:00.000Z")
+      accessToken: "github-token"
     });
 
     const runtimeHandle: RuntimeHandle = {
