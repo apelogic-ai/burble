@@ -254,7 +254,7 @@ describe("Google OAuth and API helpers", () => {
                 property: "properties/456",
                 displayName: "Website",
                 parent: "accounts/123",
-                currentPropertyType: "PROPERTY_TYPE_ORDINARY"
+                propertyType: "PROPERTY_TYPE_ORDINARY"
               }
             ]
           }
@@ -282,6 +282,9 @@ describe("Google OAuth and API helpers", () => {
         "https://analyticsadmin.googleapis.com/v1beta/accountSummaries"
       );
       expect(url.searchParams.get("pageSize")).toBe("5");
+      expect(url.searchParams.get("fields")).toBe(
+        "accountSummaries(account,displayName,propertySummaries(property,displayName,parent,propertyType))"
+      );
     } finally {
       globalThis.fetch = originalFetch;
     }

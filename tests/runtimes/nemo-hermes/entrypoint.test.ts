@@ -802,6 +802,100 @@ asyncio.run(main())
     });
   });
 
+  test("accepts Hermes typing metadata without posting progress", () => {
+    const result = runHermesEntrypointProbe(`${importBurblePlatformAdapter}
+import asyncio
+import os
+
+os.environ["BURBLE_TOOL_GATEWAY_URL"] = "http://burble-app:3000/internal/tools"
+os.environ["BURBLE_INTERNAL_TOKEN"] = "token"
+os.environ["BURBLE_RUNTIME_ID"] = "rt_123"
+
+async def main():
+    adapter = mod.BurbleAdapter(types.SimpleNamespace(extra={}))
+    ok = await adapter.send_typing("route-1", metadata={"phase": "tool"})
+    print(json.dumps({"ok": ok, "payloads": posted_payloads}))
+
+asyncio.run(main())
+`);
+
+    expect(result).toEqual({
+      ok: true,
+      payloads: []
+    });
+  });
+
+  test("strips Hermes stream cursors even when embedded in cumulative text", () => {
+    const result = runHermesEntrypointProbe(`${importBurblePlatformAdapter}
+import asyncio
+import os
+
+os.environ["BURBLE_TOOL_GATEWAY_URL"] = "http://burble-app:3000/internal/tools"
+os.environ["BURBLE_INTERNAL_TOKEN"] = "token"
+os.environ["BURBLE_RUNTIME_ID"] = "rt_123"
+
+async def main():
+    adapter = mod.BurbleAdapter(
+        types.SimpleNamespace(
+            extra={
+                "runtime_callback_url": "http://runtime/internal/hermes/runs",
+            }
+        )
+    )
+    adapter._pending_runs["route-1"] = "run-1"
+
+    sent = await adapter.send("route-1", "I could ▉")
+    await adapter.edit_message(
+        "route-1",
+        sent.message_id,
+        "I couldn’t list your ▉\\n\\nGoogle Analytics properties right now. ■",
+    )
+    await adapter.edit_message(
+        "route-1",
+        sent.message_id,
+        "I couldn’t list your ▉\\n\\nGoogle Analytics properties right now.",
+        finalize=True,
+    )
+
+    print(json.dumps({
+        "payloads": posted_payloads,
+    }))
+
+asyncio.run(main())
+`);
+
+    expect(result).toEqual({
+      payloads: [
+        {
+          url: "http://runtime/internal/hermes/runs/run-1/messages",
+          json: {
+            type: "message_delta",
+            routeId: "route-1",
+            text: "I could",
+            classification: "user_private"
+          }
+        },
+        {
+          url: "http://runtime/internal/hermes/runs/run-1/messages",
+          json: {
+            type: "message_delta",
+            routeId: "route-1",
+            text: "n’t list your \n\nGoogle Analytics properties right now.",
+            classification: "user_private"
+          }
+        },
+        {
+          url: "http://runtime/internal/hermes/runs/run-1/messages",
+          json: {
+            routeId: "route-1",
+            text: "I couldn’t list your \n\nGoogle Analytics properties right now.",
+            classification: "user_private"
+          }
+        }
+      ]
+    });
+  });
+
   test("uses replacement events when Hermes rewrites cumulative stream text", () => {
     const result = runHermesEntrypointProbe(`${importBurblePlatformAdapter}
 import asyncio
