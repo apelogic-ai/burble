@@ -37,13 +37,11 @@ workload. Never flip a field ahead of the implementation.
 - **Increment 0 (done):** boots, conforms, honest minimal manifest, gated out of
   full workloads by policy
   (`reasons: ["missing tool calls", "missing scheduled provider calls"]`).
-- **Increment 1 — real single-turn provider call:** call the model directly,
-  stream real token deltas, report exact usage. → `streaming`/`usageReporting`
-  become genuinely backed. Still gated out of scheduled workloads. Now a real
-  (basic) chat runtime.
-- **Increment 2 — Burble tool loop:** on a tool call, hit the tool gateway
-  (`createRuntimeToolGatewayClient`, runtime JWT), feed the result back, loop to
-  final. → `toolCalls` becomes real.
+- **Increment 1 (done):** call the model directly, stream real token deltas,
+  report exact usage. → `streaming`/`usageReporting` are genuinely backed.
+- **Increment 2 (done):** on a model-requested `burble_provider_call`, hit the
+  tool gateway (`createRuntimeToolGatewayClient`, runtime auth), feed the result
+  back, loop to final. → `toolCalls` is real.
 - **Increment 3 — scheduled provider calls:** execute a Burble-fired scheduled
   turn (`scheduledJob` context, job-scoped auth). → flip
   `scheduledProviderCalls: true` → selectable for scheduled workloads. (Note:
