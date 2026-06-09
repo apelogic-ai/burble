@@ -575,6 +575,65 @@ describe("formatAgentProgressEvent", () => {
     }
   });
 
+  test("strips Hermes stream cursor glyphs from final response blocks", async () => {
+    const updates: Array<{ text: string; blocks?: unknown[] }> = [];
+    const originalNow = Date.now;
+    Date.now = () => 1_500;
+    try {
+      const progressMessage = {
+        channel: "D123",
+        ts: "123.456",
+        text: "Starting agent runtime...",
+        startedAtMs: 0,
+        streamedText: "I found 1 Google Slides file.",
+        toolStartedAtMs: {},
+        toolLinesByCallId: {},
+        toolCallOrder: []
+      };
+      const client = {
+        chat: {
+          update: async (input: { text: string; blocks?: unknown[] }) => {
+            updates.push(input);
+            return {};
+          }
+        }
+      };
+
+      await postConversationResponse(client as never, {
+        response: {
+          visibility: "dm",
+          classification: "user_private",
+          text: "I found 1 Google Slides file.",
+          blocks: [
+            {
+              type: "section",
+              text: {
+                type: "mrkdwn",
+                text: "I found *1 ▉\n* Google Slides file."
+              }
+            }
+          ],
+          usage: {
+            inputTokens: 2,
+            outputTokens: 1,
+            totalTokens: 3,
+            usageSource: "provider-output"
+          }
+        },
+        channel: "D123",
+        user: "U123",
+        progressMessage
+      });
+
+      expect(JSON.stringify(updates.at(-1)?.blocks)).not.toContain("▉");
+      expect(JSON.stringify(updates.at(-1)?.blocks)).toContain(
+        "I found *1\\n* Google Slides file."
+      );
+    } finally {
+      Date.now = originalNow;
+    }
+  });
+
   test("uses Slack native stream methods for native streaming progress", async () => {
     const calls: string[] = [];
     const originalNow = Date.now;
