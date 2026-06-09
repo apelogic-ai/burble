@@ -446,6 +446,114 @@ describe("handleToolGatewayRequest", () => {
     });
   });
 
+  test("passes Google Slides copy inputs to the provider tool", async () => {
+    const response = await handleToolGatewayRequest(
+      config,
+      createStore(googleConnection),
+      "google.slidesCopyPresentation",
+      request("google.slidesCopyPresentation", {
+        user: { email: "person@example.com" },
+        input: {
+          presentationId: "deck-template",
+          name: "ApeLogic Template Copy"
+        }
+      }),
+      {
+        copyGoogleSlidesPresentation: async (token, input) => {
+          expect(token).toBe("google-token");
+          expect(input).toEqual({
+            presentationId: "deck-template",
+            name: "ApeLogic Template Copy"
+          });
+          return {
+            id: "deck-copy",
+            name: "ApeLogic Template Copy",
+            mimeType: "application/vnd.google-apps.presentation",
+            webViewLink: "https://docs.google.com/presentation/d/deck-copy"
+          };
+        }
+      }
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      classification: "user_private",
+      content: {
+        id: "deck-copy",
+        name: "ApeLogic Template Copy",
+        mimeType: "application/vnd.google-apps.presentation",
+        webViewLink: "https://docs.google.com/presentation/d/deck-copy"
+      }
+    });
+  });
+
+  test("passes Google Slides placeholder fill inputs to the provider tool", async () => {
+    const response = await handleToolGatewayRequest(
+      config,
+      createStore(googleConnection),
+      "google.slidesFillPlaceholders",
+      request("google.slidesFillPlaceholders", {
+        user: { email: "person@example.com" },
+        input: {
+          presentationId: "deck-copy",
+          replacements: [
+            { placeholderType: "TITLE", text: "ApeLogic" },
+            {
+              placeholderType: "SUBTITLE",
+              text: "Test presentation from template"
+            }
+          ]
+        }
+      }),
+      {
+        fillGoogleSlidesPlaceholders: async (token, input) => {
+          expect(token).toBe("google-token");
+          expect(input).toEqual({
+            presentationId: "deck-copy",
+            replacements: [
+              { placeholderType: "TITLE", text: "ApeLogic" },
+              {
+                placeholderType: "SUBTITLE",
+                text: "Test presentation from template"
+              }
+            ]
+          });
+          return {
+            presentationId: "deck-copy",
+            slideObjectId: "slide-1",
+            updatedPlaceholders: [
+              {
+                placeholderType: "TITLE",
+                matchedPlaceholderType: "TITLE",
+                objectId: "title-shape",
+                text: "ApeLogic"
+              }
+            ],
+            skippedPlaceholders: []
+          };
+        }
+      }
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      classification: "user_private",
+      content: {
+        presentationId: "deck-copy",
+        slideObjectId: "slide-1",
+        updatedPlaceholders: [
+          {
+            placeholderType: "TITLE",
+            matchedPlaceholderType: "TITLE",
+            objectId: "title-shape",
+            text: "ApeLogic"
+          }
+        ],
+        skippedPlaceholders: []
+      }
+    });
+  });
+
   test("rejects invalid GitHub pull request list options", async () => {
     const response = await handleToolGatewayRequest(
       config,
@@ -658,6 +766,36 @@ describe("handleToolGatewayRequest", () => {
         name: "Blank"
       }
     });
+  });
+
+  test("rejects Google Workspace MIME types for Drive text file creation", async () => {
+    let didCallProvider = false;
+    const response = await handleToolGatewayRequest(
+      config,
+      createStore(googleConnection),
+      "google.createDriveTextFile",
+      request("google.createDriveTextFile", {
+        user: { email: "person@example.com" },
+        input: {
+          name: "Deck",
+          text: "",
+          mimeType: "application/vnd.google-apps.presentation"
+        }
+      }),
+      {
+        createGoogleDriveTextFile: async () => {
+          didCallProvider = true;
+          return {
+            id: "file-2",
+            name: "Deck"
+          };
+        }
+      }
+    );
+
+    expect(response.status).toBe(400);
+    expect(await response.text()).toBe("Invalid tool input");
+    expect(didCallProvider).toBe(false);
   });
 
   test("executes HubSpot CRM search tools with the stored caller token", async () => {

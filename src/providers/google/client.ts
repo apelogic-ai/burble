@@ -85,6 +85,37 @@ export type GoogleSlidesTemplateProbe = {
   }>;
 };
 
+export type GoogleSlidesCopiedPresentation = GoogleDriveCreatedFile;
+
+export type GoogleSlidesPlaceholderFillInput = {
+  presentationId: string;
+  slideObjectId?: string;
+  replacements: Array<{
+    placeholderType: string;
+    text: string;
+    index?: number;
+  }>;
+};
+
+export type GoogleSlidesPlaceholderFillResult = {
+  presentationId: string;
+  slideObjectId: string;
+  updatedPlaceholders: Array<{
+    placeholderType: string;
+    matchedPlaceholderType: string;
+    objectId: string;
+    text: string;
+    index?: number;
+  }>;
+  skippedPlaceholders: Array<{
+    placeholderType: string;
+    slideObjectId: string;
+    text: string;
+    reason: "placeholder_not_found";
+    index?: number;
+  }>;
+};
+
 export type GoogleCalendarEvent = {
   id: string;
   summary?: string;
@@ -233,8 +264,10 @@ const googleScopes = [
   "openid",
   "email",
   "profile",
+  "https://www.googleapis.com/auth/drive",
   "https://www.googleapis.com/auth/drive.metadata.readonly",
   "https://www.googleapis.com/auth/drive.file",
+  "https://www.googleapis.com/auth/presentations",
   "https://www.googleapis.com/auth/calendar.readonly",
   "https://www.googleapis.com/auth/calendar.events",
   "https://www.googleapis.com/auth/gmail.readonly",
@@ -242,6 +275,13 @@ const googleScopes = [
   "https://www.googleapis.com/auth/analytics.readonly",
   "https://www.googleapis.com/auth/presentations.readonly"
 ];
+
+export function isGoogleWorkspaceDocumentMimeType(mimeType: string): boolean {
+  return mimeType
+    .trim()
+    .toLowerCase()
+    .startsWith("application/vnd.google-apps.");
+}
 
 export function buildGoogleOAuthUrl(config: Config, state: string): string {
   if (!config.googleClientId || !config.googleClientSecret) {
@@ -427,10 +467,158 @@ export async function probeGoogleSlidesTemplate(
   };
 }
 
+export async function copyGoogleSlidesPresentation(
+  token: string,
+  input: { presentationId: string; name: string }
+): Promise<GoogleSlidesCopiedPresentation> {
+  const url = new URL(
+    `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(input.presentationId)}/copy`
+  );
+  url.searchParams.set("fields", "id,name,mimeType,webViewLink");
+  const response = await fetch(url, {
+    method: "POST",
+    headers: {
+      ...googleHeaders(token),
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({ name: input.name })
+  });
+  const body = (await response.json()) as GoogleDriveCreatedFile & {
+    error?: { message?: string };
+  };
+  if (!response.ok || !body.id || !body.name) {
+    throw googleError(
+      response,
+      "Google Slides presentation copy failed",
+      body.error?.message
+    );
+  }
+  return sanitizeCreatedDriveFile(body);
+}
+
+export async function fillGoogleSlidesPlaceholders(
+  token: string,
+  input: GoogleSlidesPlaceholderFillInput
+): Promise<GoogleSlidesPlaceholderFillResult> {
+  const presentation = await readGoogleSlidesPresentation(token, input.presentationId);
+  const slide = resolveSlidesTargetSlide(
+    presentation,
+    input.slideObjectId,
+    input.replacements
+  );
+  const slideObjectId = slide.objectId ?? input.slideObjectId ?? "";
+  const skippedPlaceholders: GoogleSlidesPlaceholderFillResult["skippedPlaceholders"] =
+    [];
+  const updates = input.replacements.flatMap((replacement) => {
+    const placeholderType = normalizeSlidesPlaceholderType(
+      replacement.placeholderType
+    );
+    const element = findSlidePlaceholderElement(
+      slide,
+      placeholderType,
+      replacement.index
+    );
+    if (!element.objectId) {
+      skippedPlaceholders.push({
+        placeholderType,
+        slideObjectId,
+        text: replacement.text,
+        reason: "placeholder_not_found",
+        ...(typeof replacement.index === "number" ? { index: replacement.index } : {})
+      });
+      return [];
+    }
+    return [
+      {
+        placeholderType,
+        matchedPlaceholderType: normalizeSlidesPlaceholderType(
+          element.shape?.placeholder?.type
+        ),
+        objectId: element.objectId,
+        text: replacement.text,
+        hasExistingText: hasSlidesElementText(element),
+        ...(typeof replacement.index === "number" ? { index: replacement.index } : {})
+      }
+    ];
+  });
+
+  if (updates.length === 0) {
+    return {
+      presentationId: presentation.presentationId ?? input.presentationId,
+      slideObjectId,
+      updatedPlaceholders: [],
+      skippedPlaceholders
+    };
+  }
+
+  const url = new URL(
+    `https://slides.googleapis.com/v1/presentations/${encodeURIComponent(
+      input.presentationId
+    )}:batchUpdate`
+  );
+  const response = await fetch(url, {
+    method: "POST",
+    headers: {
+      ...googleHeaders(token),
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      requests: updates.flatMap((update) =>
+        [
+          update.hasExistingText
+            ? {
+                deleteText: {
+                  objectId: update.objectId,
+                  textRange: { type: "ALL" }
+                }
+              }
+            : null,
+          {
+            insertText: {
+              objectId: update.objectId,
+              insertionIndex: 0,
+              text: update.text
+            }
+          }
+        ].filter((request): request is Exclude<typeof request, null> =>
+          Boolean(request)
+        )
+      )
+    })
+  });
+  const body = (await response.json()) as {
+    presentationId?: string;
+    error?: { message?: string };
+  };
+  if (!response.ok) {
+    throw googleError(
+      response,
+      "Google Slides placeholder fill failed",
+      body.error?.message
+    );
+  }
+
+  return {
+    presentationId: body.presentationId ?? input.presentationId,
+    slideObjectId,
+    updatedPlaceholders: updates.map(({ hasExistingText: _hasExistingText, ...update }) => update),
+    skippedPlaceholders
+  };
+}
+
 export async function createGoogleDriveTextFile(
   token: string,
   input: { name: string; text: string; mimeType?: string }
 ): Promise<GoogleDriveCreatedFile> {
+  if (
+    input.mimeType &&
+    isGoogleWorkspaceDocumentMimeType(input.mimeType)
+  ) {
+    throw new Error(
+      "Google Drive text files cannot use Google Workspace document MIME types. Use the dedicated Google Docs, Sheets, or Slides tools instead."
+    );
+  }
+
   const url = new URL("https://www.googleapis.com/upload/drive/v3/files");
   url.searchParams.set("uploadType", "multipart");
   url.searchParams.set("fields", "id,name,mimeType,webViewLink");
@@ -1201,6 +1389,107 @@ function sanitizeSlidesPresentation(
         })
       : []
   };
+}
+
+function resolveSlidesTargetSlide(
+  presentation: GoogleSlidesApiPresentation,
+  slideObjectId: string | undefined,
+  replacements: GoogleSlidesPlaceholderFillInput["replacements"]
+): GoogleSlidesApiSlide {
+  const slides = presentation.slides ?? [];
+  const slide = slideObjectId
+    ? slides.find((candidate) => candidate.objectId === slideObjectId)
+    : selectBestPlaceholderSlide(slides, replacements);
+  if (!slide?.objectId) {
+    throw new GoogleApiError(
+      slideObjectId
+        ? `Google Slides slide not found: ${slideObjectId}`
+        : "Google Slides presentation has no editable slides",
+      400
+    );
+  }
+  return slide;
+}
+
+function selectBestPlaceholderSlide(
+  slides: GoogleSlidesApiSlide[],
+  replacements: GoogleSlidesPlaceholderFillInput["replacements"]
+): GoogleSlidesApiSlide | undefined {
+  const scoredSlides = slides
+    .filter((slide) => slide.objectId)
+    .map((slide) => ({
+      slide,
+      score: replacements.reduce((score, replacement) => {
+        const placeholderType = normalizeSlidesPlaceholderType(
+          replacement.placeholderType
+        );
+        return findSlidePlaceholderElement(
+          slide,
+          placeholderType,
+          replacement.index
+        ).objectId
+          ? score + 1
+          : score;
+      }, 0)
+    }));
+  const bestSlide = scoredSlides.reduce<
+    { slide: GoogleSlidesApiSlide; score: number } | undefined
+  >((best, current) => {
+    if (!best || current.score > best.score) {
+      return current;
+    }
+    return best;
+  }, undefined);
+  return bestSlide && bestSlide.score > 0 ? bestSlide.slide : slides[0];
+}
+
+function findSlidePlaceholderElement(
+  slide: GoogleSlidesApiSlide,
+  placeholderType: string,
+  index: number | undefined
+): GoogleSlidesApiPageElement {
+  const element = (slide.pageElements ?? []).find((candidate) => {
+    const placeholder = candidate.shape?.placeholder;
+    if (!slidesPlaceholderTypeMatches(placeholder?.type, placeholderType)) {
+      return false;
+    }
+    return typeof index === "number" ? placeholder?.index === index : true;
+  });
+  return element ?? {};
+}
+
+function normalizeSlidesPlaceholderType(type: string | undefined): string {
+  return (type ?? "").trim().toUpperCase();
+}
+
+function slidesPlaceholderTypeMatches(
+  actualType: string | undefined,
+  requestedType: string
+): boolean {
+  const actual = normalizeSlidesPlaceholderType(actualType);
+  const requested = normalizeSlidesPlaceholderType(requestedType);
+  if (!actual || !requested) {
+    return false;
+  }
+  const aliases = slidesPlaceholderTypeAliases(requested);
+  return aliases.includes(actual);
+}
+
+function slidesPlaceholderTypeAliases(type: string): string[] {
+  switch (type) {
+    case "TITLE":
+    case "CENTERED_TITLE":
+      return ["TITLE", "CENTERED_TITLE"];
+    case "BODY":
+    case "CENTERED_BODY":
+      return ["BODY", "CENTERED_BODY"];
+    default:
+      return [type];
+  }
+}
+
+function hasSlidesElementText(element: GoogleSlidesApiPageElement): boolean {
+  return Boolean(extractSlidesText(element.shape?.text));
 }
 
 function sanitizeSlidesElements(

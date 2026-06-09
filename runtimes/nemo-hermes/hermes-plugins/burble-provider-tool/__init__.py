@@ -44,6 +44,8 @@ TOOL_NAME_ALIASES = {
     "google_slides_search_presentations": "google.slidesSearchPresentations",
     "google_slides_get_presentation": "google.slidesGetPresentation",
     "google_slides_probe_template": "google.slidesProbeTemplate",
+    "google_slides_copy_presentation": "google.slidesCopyPresentation",
+    "google_slides_fill_placeholders": "google.slidesFillPlaceholders",
     "google_analytics_list_properties": "google.analyticsListProperties",
     "google_analytics_get_metadata": "google.analyticsGetMetadata",
     "google_analytics_run_report": "google.analyticsRunReport",
@@ -80,10 +82,8 @@ TOOL_NAME_ALIASES = {
 }
 
 PROVIDER_BRIDGE_TOOLSETS = ["cronjob", "web"]
-WEB_TOOLSET_BRIDGE_TOOLS = [
-    "burble_provider_call",
-    *sorted(TOOL_NAME_ALIASES.keys()),
-]
+PROVIDER_ALIAS_TOOLSETS = ["cronjob"]
+WEB_TOOLSET_BRIDGE_TOOLS = ["burble_provider_call"]
 
 
 BURBLE_PROVIDER_CALL_SCHEMA = {
@@ -285,6 +285,7 @@ def register(ctx) -> None:
             description=BURBLE_PROVIDER_CALL_SCHEMA["description"],
             override=True,
         )
+    for toolset in PROVIDER_ALIAS_TOOLSETS:
         for alias, canonical_name in sorted(TOOL_NAME_ALIASES.items()):
             schema = _provider_alias_schema(alias, canonical_name)
             ctx.register_tool(

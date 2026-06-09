@@ -203,6 +203,33 @@ function createGoogleMcpHandlers(
         }
       }),
 
+    copySlidesPresentation: (connection, args) =>
+      googleTools.copySlidesPresentation.execute({
+        connection,
+        input: {
+          presentationId: stringArg(args, "presentationId"),
+          name: stringArg(args, "name")
+        }
+      }),
+
+    fillSlidesPlaceholders: (connection, args) =>
+      googleTools.fillSlidesPlaceholders.execute({
+        connection,
+        input: {
+          presentationId: stringArg(args, "presentationId"),
+          ...(optionalStringArg(args, "slideObjectId")
+            ? { slideObjectId: optionalStringArg(args, "slideObjectId") }
+            : {}),
+          replacements: arrayArg(args, "replacements").map((replacement) => ({
+            placeholderType: stringArg(replacement, "placeholderType"),
+            text: stringArg(replacement, "text"),
+            ...(optionalNumberArg(replacement, "index") !== undefined
+              ? { index: optionalNumberArg(replacement, "index") }
+              : {})
+          }))
+        }
+      }),
+
     listAnalyticsProperties: (connection, args) =>
       googleTools.listAnalyticsProperties.execute({
         connection,
@@ -257,8 +284,16 @@ function optionalStringArg(args: GoogleToolArgs, key: string): string | undefine
   return typeof args[key] === "string" ? (args[key] as string) : undefined;
 }
 
+function optionalNumberArg(args: GoogleToolArgs, key: string): number | undefined {
+  return typeof args[key] === "number" ? (args[key] as number) : undefined;
+}
+
 function stringArrayArg(args: GoogleToolArgs, key: string): string[] {
   return args[key] as string[];
+}
+
+function arrayArg(args: GoogleToolArgs, key: string): GoogleToolArgs[] {
+  return args[key] as GoogleToolArgs[];
 }
 
 function optionalStringField(

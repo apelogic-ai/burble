@@ -12,6 +12,7 @@ import type { createHubSpotTools } from "../tools/hubspot";
 import type { createJiraTools } from "../tools/jira";
 import type { createSlackTools } from "../tools/slack";
 import type { ToolClassification } from "../conversation/types";
+import { isGoogleWorkspaceDocumentMimeType } from "../providers/google/client";
 import { hubSpotReadableCrmObjectTypes } from "../providers/hubspot/client";
 import { createDirectModelResolver } from "./providers";
 import type { DirectLanguageModel, ModelResolver } from "./providers";
@@ -935,7 +936,7 @@ async function runAiSdkAgent(
       });
       tools.google_create_drive_text_file = tool({
         description:
-          "Create a new app-owned text file in Google Drive using the authenticated Slack user's connected Google account. If no text is supplied, create an empty text file.",
+          "Create a new app-owned plain/text-like file in Google Drive using the authenticated Slack user's connected Google account. If no text is supplied, create an empty text file. Do not use this to create Google Docs, Sheets, or Slides; use dedicated tools for those file types.",
         inputSchema: z.object({
           name: z.string().min(1).max(200).describe("Drive file name"),
           text: z
@@ -943,7 +944,16 @@ async function runAiSdkAgent(
             .max(200_000)
             .optional()
             .describe("Optional text body to write into the file"),
-          mimeType: z.string().optional().describe("Optional MIME type")
+          mimeType: z
+            .string()
+            .refine(
+              (mimeType) => !isGoogleWorkspaceDocumentMimeType(mimeType),
+              "Google Workspace document MIME types are not valid for text file creation"
+            )
+            .optional()
+            .describe(
+              "Optional non-Google-Workspace MIME type, such as text/plain or text/markdown"
+            )
         }),
         execute: async ({ name, text, mimeType }) =>
           executeTool("google_create_drive_text_file", async () => {
@@ -966,7 +976,7 @@ async function runAiSdkAgent(
       });
       tools.google_get_drive_file = tool({
         description:
-          "Get Google Drive file metadata and optionally text content for an app-accessible file. With the current drive.file permission, app-accessible means files Burble created or files explicitly opened for this app.",
+          "Get Google Drive file metadata and optionally text content for a file accessible to the connected Google account and granted Drive scopes.",
         inputSchema: z.object({
           fileId: z.string().min(1),
           includeContent: z.boolean().optional()
@@ -988,7 +998,7 @@ async function runAiSdkAgent(
       });
       tools.google_update_drive_text_file = tool({
         description:
-          "Replace the text contents of an app-accessible Google Drive text file. With the current drive.file permission, app-accessible means files Burble created or files explicitly opened for this app. Use only when clearly requested.",
+          "Replace the text contents of a Google Drive text file accessible to the connected Google account and granted Drive scopes. Use only when clearly requested.",
         inputSchema: z.object({
           fileId: z.string().min(1),
           text: z.string().max(200_000),
@@ -1011,7 +1021,7 @@ async function runAiSdkAgent(
       });
       tools.google_append_to_drive_text_file = tool({
         description:
-          "Append text to an app-accessible Google Drive text file. With the current drive.file permission, app-accessible means files Burble created or files explicitly opened for this app; reconnecting Google does not grant access to arbitrary existing Drive files. Use only when clearly requested.",
+          "Append text to a Google Drive text file accessible to the connected Google account and granted Drive scopes. Use only when clearly requested.",
         inputSchema: z.object({
           fileId: z.string().min(1),
           text: z.string().max(200_000),
@@ -1277,6 +1287,60 @@ async function runAiSdkAgent(
 
             return record(
               await deps.googleTools!.probeSlidesTemplate.execute({
+                connection,
+                input: toolInput
+              })
+            );
+          })
+      });
+      tools.google_slides_copy_presentation = tool({
+        description:
+          "Copy an existing Google Slides presentation into a new presentation. Use only for explicit user requests to create a new deck from a template; this does not edit slide contents.",
+        inputSchema: z.object({
+          presentationId: z.string().min(1),
+          name: z.string().min(1).max(200)
+        }),
+        execute: async (toolInput) =>
+          executeTool("google_slides_copy_presentation", async () => {
+            const connection = input.connections.google;
+            if (!connection) {
+              return missingGoogleConnection();
+            }
+
+            return record(
+              await deps.googleTools!.copySlidesPresentation.execute({
+                connection,
+                input: toolInput
+              })
+            );
+          })
+      });
+      tools.google_slides_fill_placeholders = tool({
+        description:
+          "Fill text placeholders on an existing Google Slides presentation slide. Defaults to slide 1 when slideObjectId is omitted. Use after copying or finding a deck when the user asks to set title, subtitle, body, or other placeholder text.",
+        inputSchema: z.object({
+          presentationId: z.string().min(1),
+          slideObjectId: z.string().min(1).optional(),
+          replacements: z
+            .array(
+              z.object({
+                placeholderType: z.string().min(1),
+                text: z.string().max(5_000),
+                index: z.number().int().nonnegative().optional()
+              })
+            )
+            .min(1)
+            .max(10)
+        }),
+        execute: async (toolInput) =>
+          executeTool("google_slides_fill_placeholders", async () => {
+            const connection = input.connections.google;
+            if (!connection) {
+              return missingGoogleConnection();
+            }
+
+            return record(
+              await deps.googleTools!.fillSlidesPlaceholders.execute({
                 connection,
                 input: toolInput
               })

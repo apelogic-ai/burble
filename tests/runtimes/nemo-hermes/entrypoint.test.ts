@@ -314,6 +314,7 @@ print(json.dumps({"text": mod.build_hermes_turn_text(payload)}))
     expect(text).toContain("what changed?");
     expect(text).toContain("Selected Burble tool groups: conversation, github");
     expect(text).toContain("Selected Burble provider tools");
+    expect(text).toContain("Do not call provider tools that are not listed here");
     expect(text).toContain("github_list_my_pull_requests");
     expect(text).not.toContain("google_search_drive_files");
     expect(text).toContain("scheduled_job_register_capability");
@@ -601,6 +602,8 @@ print(json.dumps({"text": mod.build_hermes_turn_text(payload)}))
     expect(text).toContain("google_slides_search_presentations");
     expect(text).toContain("google_slides_get_presentation");
     expect(text).toContain("google_slides_probe_template");
+    expect(text).toContain("google_slides_copy_presentation");
+    expect(text).toContain("google_slides_fill_placeholders");
     expect(text).toContain("google_analytics_list_properties");
     expect(text).toContain("google_analytics_get_metadata");
     expect(text).toContain("google_analytics_run_report");
@@ -1062,6 +1065,8 @@ print(json.dumps({
     "google": mod.normalize_burble_tool_name("google_append_to_drive_text_file"),
     "analytics": mod.normalize_burble_tool_name("google_analytics_run_report"),
     "slides": mod.normalize_burble_tool_name("google_slides_probe_template"),
+    "slides_copy": mod.normalize_burble_tool_name("google_slides_copy_presentation"),
+    "slides_fill": mod.normalize_burble_tool_name("google_slides_fill_placeholders"),
     "hubspot": mod.normalize_burble_tool_name("hubspot_read_api_resource"),
     "jira": mod.normalize_burble_tool_name("jira_list_assigned_issues"),
     "job": mod.normalize_burble_tool_name("scheduled_job_register_capability"),
@@ -1074,6 +1079,8 @@ print(json.dumps({
       google: "google.appendToDriveTextFile",
       analytics: "google.analyticsRunReport",
       slides: "google.slidesProbeTemplate",
+      slides_copy: "google.slidesCopyPresentation",
+      slides_fill: "google.slidesFillPlaceholders",
       hubspot: "hubspot.readApiResource",
       jira: "jira.listAssignedIssues",
       job: "scheduledJob.registerCapability",
@@ -1143,25 +1150,16 @@ print(json.dumps(ctx.tools))
         is_async: true
       })
     );
-    expect(result).toContainEqual(
+    expect(result).not.toContainEqual(
       expect.objectContaining({
         name: "google_get_drive_file",
-        toolset: "web",
-        is_async: true
+        toolset: "web"
       })
     );
-    expect(result).toContainEqual(
+    expect(result).not.toContainEqual(
       expect.objectContaining({
-        name: "google_append_to_drive_text_file",
-        toolset: "web",
-        is_async: true
-      })
-    );
-    expect(result).toContainEqual(
-      expect.objectContaining({
-        name: "hubspot_search_contacts",
-        toolset: "web",
-        is_async: true
+        name: "atlassian_list_mcp_tools",
+        toolset: "web"
       })
     );
     const tools = result as Array<{
@@ -1282,8 +1280,8 @@ print(json.dumps(toolsets.TOOLSETS["web"]["tools"]))
     expect(result).toContain("web_search");
     expect(result).toContain("web_extract");
     expect(result).toContain("burble_provider_call");
-    expect(result).toContain("google_get_drive_file");
-    expect(result).toContain("google_append_to_drive_text_file");
-    expect(result).toContain("scheduled_job_register_capability");
+    expect(result).not.toContain("google_get_drive_file");
+    expect(result).not.toContain("google_append_to_drive_text_file");
+    expect(result).not.toContain("scheduled_job_register_capability");
   });
 });

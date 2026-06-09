@@ -1972,11 +1972,12 @@ async function buildToolCatalog(
       {
         name: "google.createDriveTextFile",
         description:
-          "Create a new app-owned text file in Google Drive using the requesting Slack user's connected Google account.",
+          "Create a new app-owned plain/text-like file in Google Drive using the requesting Slack user's connected Google account. Do not use this to create Google Docs, Sheets, or Slides.",
         inputSchema: {
           name: "string Drive file name",
           text: "optional string text body to write into the file; defaults to an empty text file",
-          mimeType: "optional string MIME type; defaults to text/plain"
+          mimeType:
+            "optional non-Google-Workspace MIME type; defaults to text/plain"
         }
       },
       {
@@ -2023,6 +2024,26 @@ async function buildToolCatalog(
           "Inspect a Google Slides presentation as a reusable template: layouts, placeholders, masters, and theme metadata.",
         inputSchema: {
           presentationId: "string Google Slides presentation ID"
+        }
+      },
+      {
+        name: "google.slidesCopyPresentation",
+        description:
+          "Copy an existing Google Slides presentation into a new presentation. Use only when the user explicitly asks to create a new deck from a template.",
+        inputSchema: {
+          presentationId: "string source Google Slides presentation ID",
+          name: "string name for the copied presentation"
+        }
+      },
+      {
+        name: "google.slidesFillPlaceholders",
+        description:
+          "Fill text placeholders on an existing Google Slides presentation slide. Defaults to the first slide when slideObjectId is omitted. Use after copying a deck when the user asks to set title, subtitle, body, or similar placeholder text.",
+        inputSchema: {
+          presentationId: "string Google Slides presentation ID to edit",
+          slideObjectId: "optional string slide object ID; defaults to first slide",
+          replacements:
+            "array of {placeholderType:string,text:string,index?:number}; placeholderType examples include TITLE and SUBTITLE"
         }
       },
       {
@@ -2525,6 +2546,10 @@ function mcpToolNameToBurbleToolName(name: string): string | null {
       return "google.slidesGetPresentation";
     case "google_slides_probe_template":
       return "google.slidesProbeTemplate";
+    case "google_slides_copy_presentation":
+      return "google.slidesCopyPresentation";
+    case "google_slides_fill_placeholders":
+      return "google.slidesFillPlaceholders";
     case "google_analytics_list_properties":
       return "google.analyticsListProperties";
     case "google_analytics_get_metadata":

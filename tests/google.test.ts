@@ -6,9 +6,11 @@ import {
   getGoogleUser,
   getGoogleAnalyticsMetadata,
   getGoogleSlidesPresentation,
+  fillGoogleSlidesPlaceholders,
   listGoogleAnalyticsProperties,
   probeGoogleSlidesTemplate,
   refreshGoogleAccessToken,
+  copyGoogleSlidesPresentation,
   createGoogleDriveTextFile,
   runGoogleAnalyticsReport,
   searchGoogleDriveFiles,
@@ -76,22 +78,21 @@ describe("buildGoogleOAuthUrl", () => {
     expect(url.searchParams.get("access_type")).toBe("offline");
     expect(url.searchParams.get("prompt")).toBe("consent");
     expect(url.searchParams.get("state")).toBe("state-123");
-    expect(url.searchParams.get("scope")).toContain(
+    const scopes = url.searchParams.get("scope")?.split(" ") ?? [];
+    expect(scopes).toContain(
       "https://www.googleapis.com/auth/drive.metadata.readonly"
     );
-    expect(url.searchParams.get("scope")).toContain(
-      "https://www.googleapis.com/auth/drive.file"
-    );
-    expect(url.searchParams.get("scope")).toContain(
+    expect(scopes).toContain("https://www.googleapis.com/auth/drive");
+    expect(scopes).toContain("https://www.googleapis.com/auth/drive.file");
+    expect(scopes).toContain("https://www.googleapis.com/auth/presentations");
+    expect(scopes).toContain(
       "https://www.googleapis.com/auth/calendar.readonly"
     );
-    expect(url.searchParams.get("scope")).toContain(
-      "https://www.googleapis.com/auth/gmail.readonly"
-    );
-    expect(url.searchParams.get("scope")).toContain(
+    expect(scopes).toContain("https://www.googleapis.com/auth/gmail.readonly");
+    expect(scopes).toContain(
       "https://www.googleapis.com/auth/analytics.readonly"
     );
-    expect(url.searchParams.get("scope")).toContain(
+    expect(scopes).toContain(
       "https://www.googleapis.com/auth/presentations.readonly"
     );
   });
@@ -133,6 +134,30 @@ describe("buildGoogleOAuthUrl", () => {
       expect(url.searchParams.get("uploadType")).toBe("multipart");
       expect(requestedBody).toContain('"name":"Test"');
       expect(requestedBody).toContain("Test One");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  test("rejects Google Workspace MIME types for Drive text file creation", async () => {
+    const originalFetch = globalThis.fetch;
+    let didFetch = false;
+    globalThis.fetch = (async (_input, _init) => {
+      didFetch = true;
+      return Response.json({});
+    }) as typeof fetch;
+
+    try {
+      await expect(
+        createGoogleDriveTextFile("google-token", {
+          name: "Deck",
+          text: "",
+          mimeType: "application/vnd.google-apps.presentation"
+        })
+      ).rejects.toThrow(
+        "Google Drive text files cannot use Google Workspace document MIME types"
+      );
+      expect(didFetch).toBe(false);
     } finally {
       globalThis.fetch = originalFetch;
     }
@@ -452,6 +477,488 @@ describe("Google OAuth and API helpers", () => {
         "trashed = false and mimeType = 'application/vnd.google-apps.presentation' and name contains 'QBR'"
       );
       expect(url.searchParams.get("pageSize")).toBe("4");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  test("copies a Google Slides presentation through Drive copy", async () => {
+    const originalFetch = globalThis.fetch;
+    let requestedUrl = "";
+    let requestedBody: unknown = null;
+    globalThis.fetch = (async (input, init) => {
+      requestedUrl = String(input);
+      requestedBody = JSON.parse(String(init?.body));
+      expect(init?.method).toBe("POST");
+      expect(new Headers(init?.headers).get("authorization")).toBe(
+        "Bearer google-token"
+      );
+      return Response.json({
+        id: "deck-copy",
+        name: "ApeLogic Template Copy",
+        mimeType: "application/vnd.google-apps.presentation",
+        webViewLink: "https://docs.google.com/presentation/d/deck-copy"
+      });
+    }) as typeof fetch;
+
+    try {
+      const copied = await copyGoogleSlidesPresentation("google-token", {
+        presentationId: "deck-template",
+        name: "ApeLogic Template Copy"
+      });
+      expect(copied).toEqual({
+        id: "deck-copy",
+        name: "ApeLogic Template Copy",
+        mimeType: "application/vnd.google-apps.presentation",
+        webViewLink: "https://docs.google.com/presentation/d/deck-copy"
+      });
+      const url = new URL(requestedUrl);
+      expect(url.origin + url.pathname).toBe(
+        "https://www.googleapis.com/drive/v3/files/deck-template/copy"
+      );
+      expect(url.searchParams.get("fields")).toBe(
+        "id,name,mimeType,webViewLink"
+      );
+      expect(requestedBody).toEqual({
+        name: "ApeLogic Template Copy"
+      });
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  test("fills Google Slides placeholders through batchUpdate", async () => {
+    const originalFetch = globalThis.fetch;
+    const requests: Array<{ url: string; method?: string; body?: unknown }> = [];
+    globalThis.fetch = (async (input, init) => {
+      const url = String(input);
+      requests.push({
+        url,
+        method: init?.method,
+        ...(init?.body ? { body: JSON.parse(String(init.body)) } : {})
+      });
+      expect(new Headers(init?.headers).get("authorization")).toBe(
+        "Bearer google-token"
+      );
+      if (url.includes(":batchUpdate")) {
+        expect(init?.method).toBe("POST");
+        return Response.json({
+          presentationId: "deck-1",
+          replies: [{}, {}, {}, {}]
+        });
+      }
+      return Response.json({
+        presentationId: "deck-1",
+        title: "ApeLogic",
+        layouts: [],
+        slides: [
+          {
+            objectId: "slide-1",
+            pageElements: [
+              {
+                objectId: "title-shape",
+                shape: {
+                  shapeType: "TEXT_BOX",
+                  placeholder: { type: "TITLE", index: 0 },
+                  text: {
+                    textElements: [{ textRun: { content: "Click to add title\n" } }]
+                  }
+                }
+              },
+              {
+                objectId: "subtitle-shape",
+                shape: {
+                  shapeType: "TEXT_BOX",
+                  placeholder: { type: "SUBTITLE", index: 0 },
+                  text: {
+                    textElements: [
+                      { textRun: { content: "Click to add subtitle\n" } }
+                    ]
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      });
+    }) as typeof fetch;
+
+    try {
+      const result = await fillGoogleSlidesPlaceholders("google-token", {
+        presentationId: "deck-1",
+        replacements: [
+          { placeholderType: "TITLE", text: "ApeLogic" },
+          {
+            placeholderType: "SUBTITLE",
+            text: "Test presentation from template"
+          }
+        ]
+      });
+
+      expect(result).toEqual({
+        presentationId: "deck-1",
+        slideObjectId: "slide-1",
+        updatedPlaceholders: [
+          {
+            placeholderType: "TITLE",
+            matchedPlaceholderType: "TITLE",
+            objectId: "title-shape",
+            text: "ApeLogic"
+          },
+          {
+            placeholderType: "SUBTITLE",
+            matchedPlaceholderType: "SUBTITLE",
+            objectId: "subtitle-shape",
+            text: "Test presentation from template"
+          }
+        ],
+        skippedPlaceholders: []
+      });
+      expect(requests.map((request) => new URL(request.url).pathname)).toEqual([
+        "/v1/presentations/deck-1",
+        "/v1/presentations/deck-1:batchUpdate"
+      ]);
+      expect(requests[1]?.body).toEqual({
+        requests: [
+          {
+            deleteText: {
+              objectId: "title-shape",
+              textRange: { type: "ALL" }
+            }
+          },
+          {
+            insertText: {
+              objectId: "title-shape",
+              insertionIndex: 0,
+              text: "ApeLogic"
+            }
+          },
+          {
+            deleteText: {
+              objectId: "subtitle-shape",
+              textRange: { type: "ALL" }
+            }
+          },
+          {
+            insertText: {
+              objectId: "subtitle-shape",
+              insertionIndex: 0,
+              text: "Test presentation from template"
+            }
+          }
+        ]
+      });
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  test("fills title slide placeholders using logical placeholder roles", async () => {
+    const originalFetch = globalThis.fetch;
+    const requests: Array<{ url: string; method?: string; body?: unknown }> = [];
+    globalThis.fetch = (async (input, init) => {
+      const url = String(input);
+      requests.push({
+        url,
+        method: init?.method,
+        ...(init?.body ? { body: JSON.parse(String(init.body)) } : {})
+      });
+      if (url.includes(":batchUpdate")) {
+        expect(init?.method).toBe("POST");
+        return Response.json({
+          presentationId: "deck-title",
+          replies: [{}, {}, {}, {}]
+        });
+      }
+      return Response.json({
+        presentationId: "deck-title",
+        title: "ApeLogic",
+        layouts: [],
+        slides: [
+          {
+            objectId: "slide-body",
+            pageElements: [
+              {
+                objectId: "body-shape",
+                shape: {
+                  shapeType: "TEXT_BOX",
+                  placeholder: { type: "BODY", index: 0 },
+                  text: {
+                    textElements: [{ textRun: { content: "Click to add text\n" } }]
+                  }
+                }
+              }
+            ]
+          },
+          {
+            objectId: "slide-title",
+            pageElements: [
+              {
+                objectId: "centered-title-shape",
+                shape: {
+                  shapeType: "TEXT_BOX",
+                  placeholder: { type: "CENTERED_TITLE", index: 0 },
+                  text: {
+                    textElements: [{ textRun: { content: "Click to add title\n" } }]
+                  }
+                }
+              },
+              {
+                objectId: "subtitle-shape",
+                shape: {
+                  shapeType: "TEXT_BOX",
+                  placeholder: { type: "SUBTITLE", index: 0 },
+                  text: {
+                    textElements: [
+                      { textRun: { content: "Click to add subtitle\n" } }
+                    ]
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      });
+    }) as typeof fetch;
+
+    try {
+      const result = await fillGoogleSlidesPlaceholders("google-token", {
+        presentationId: "deck-title",
+        replacements: [
+          { placeholderType: "TITLE", text: "ApeLogic" },
+          {
+            placeholderType: "SUBTITLE",
+            text: "Test presentation from template"
+          }
+        ]
+      });
+
+      expect(result).toEqual({
+        presentationId: "deck-title",
+        slideObjectId: "slide-title",
+        updatedPlaceholders: [
+          {
+            placeholderType: "TITLE",
+            matchedPlaceholderType: "CENTERED_TITLE",
+            objectId: "centered-title-shape",
+            text: "ApeLogic"
+          },
+          {
+            placeholderType: "SUBTITLE",
+            matchedPlaceholderType: "SUBTITLE",
+            objectId: "subtitle-shape",
+            text: "Test presentation from template"
+          }
+        ],
+        skippedPlaceholders: []
+      });
+      expect(requests[1]?.body).toEqual({
+        requests: [
+          {
+            deleteText: {
+              objectId: "centered-title-shape",
+              textRange: { type: "ALL" }
+            }
+          },
+          {
+            insertText: {
+              objectId: "centered-title-shape",
+              insertionIndex: 0,
+              text: "ApeLogic"
+            }
+          },
+          {
+            deleteText: {
+              objectId: "subtitle-shape",
+              textRange: { type: "ALL" }
+            }
+          },
+          {
+            insertText: {
+              objectId: "subtitle-shape",
+              insertionIndex: 0,
+              text: "Test presentation from template"
+            }
+          }
+        ]
+      });
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  test("reports missing Google Slides placeholders while applying matches", async () => {
+    const originalFetch = globalThis.fetch;
+    const requests: Array<{ url: string; method?: string; body?: unknown }> = [];
+    globalThis.fetch = (async (input, init) => {
+      const url = String(input);
+      requests.push({
+        url,
+        method: init?.method,
+        ...(init?.body ? { body: JSON.parse(String(init.body)) } : {})
+      });
+      if (url.includes(":batchUpdate")) {
+        expect(init?.method).toBe("POST");
+        return Response.json({
+          presentationId: "deck-partial",
+          replies: [{}, {}]
+        });
+      }
+      return Response.json({
+        presentationId: "deck-partial",
+        title: "ApeLogic",
+        layouts: [],
+        slides: [
+          {
+            objectId: "slide-1",
+            pageElements: [
+              {
+                objectId: "title-shape",
+                shape: {
+                  shapeType: "TEXT_BOX",
+                  placeholder: { type: "CENTERED_TITLE", index: 0 },
+                  text: {
+                    textElements: [{ textRun: { content: "Click to add title\n" } }]
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      });
+    }) as typeof fetch;
+
+    try {
+      const result = await fillGoogleSlidesPlaceholders("google-token", {
+        presentationId: "deck-partial",
+        replacements: [
+          { placeholderType: "TITLE", text: "ApeLogic" },
+          { placeholderType: "SUBTITLE", text: "Test presentation from template" }
+        ]
+      });
+
+      expect(result).toEqual({
+        presentationId: "deck-partial",
+        slideObjectId: "slide-1",
+        updatedPlaceholders: [
+          {
+            placeholderType: "TITLE",
+            matchedPlaceholderType: "CENTERED_TITLE",
+            objectId: "title-shape",
+            text: "ApeLogic"
+          }
+        ],
+        skippedPlaceholders: [
+          {
+            placeholderType: "SUBTITLE",
+            slideObjectId: "slide-1",
+            text: "Test presentation from template",
+            reason: "placeholder_not_found"
+          }
+        ]
+      });
+      expect(requests.map((request) => new URL(request.url).pathname)).toEqual([
+        "/v1/presentations/deck-partial",
+        "/v1/presentations/deck-partial:batchUpdate"
+      ]);
+      expect(requests[1]?.body).toEqual({
+        requests: [
+          {
+            deleteText: {
+              objectId: "title-shape",
+              textRange: { type: "ALL" }
+            }
+          },
+          {
+            insertText: {
+              objectId: "title-shape",
+              insertionIndex: 0,
+              text: "ApeLogic"
+            }
+          }
+        ]
+      });
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  test("fills empty Google Slides placeholders without deleting empty text ranges", async () => {
+    const originalFetch = globalThis.fetch;
+    const requests: Array<{ url: string; method?: string; body?: unknown }> = [];
+    globalThis.fetch = (async (input, init) => {
+      const url = String(input);
+      requests.push({
+        url,
+        method: init?.method,
+        ...(init?.body ? { body: JSON.parse(String(init.body)) } : {})
+      });
+      if (url.includes(":batchUpdate")) {
+        expect(init?.method).toBe("POST");
+        return Response.json({
+          presentationId: "deck-empty",
+          replies: [{}, {}]
+        });
+      }
+      return Response.json({
+        presentationId: "deck-empty",
+        title: "ApeLogic",
+        layouts: [],
+        slides: [
+          {
+            objectId: "slide-1",
+            pageElements: [
+              {
+                objectId: "title-shape",
+                shape: {
+                  shapeType: "TEXT_BOX",
+                  placeholder: { type: "TITLE", index: 0 },
+                  text: { textElements: [] }
+                }
+              },
+              {
+                objectId: "subtitle-shape",
+                shape: {
+                  shapeType: "TEXT_BOX",
+                  placeholder: { type: "SUBTITLE", index: 0 }
+                }
+              }
+            ]
+          }
+        ]
+      });
+    }) as typeof fetch;
+
+    try {
+      await fillGoogleSlidesPlaceholders("google-token", {
+        presentationId: "deck-empty",
+        replacements: [
+          { placeholderType: "TITLE", text: "ApeLogic" },
+          {
+            placeholderType: "SUBTITLE",
+            text: "Test presentation from template"
+          }
+        ]
+      });
+
+      expect(requests[1]?.body).toEqual({
+        requests: [
+          {
+            insertText: {
+              objectId: "title-shape",
+              insertionIndex: 0,
+              text: "ApeLogic"
+            }
+          },
+          {
+            insertText: {
+              objectId: "subtitle-shape",
+              insertionIndex: 0,
+              text: "Test presentation from template"
+            }
+          }
+        ]
+      });
     } finally {
       globalThis.fetch = originalFetch;
     }

@@ -26,7 +26,9 @@ import {
 } from "./providers/github/client";
 import {
   buildGoogleOAuthUrl,
+  copyGoogleSlidesPresentation,
   createGoogleDriveTextFile,
+  fillGoogleSlidesPlaceholders,
   getGoogleAnalyticsMetadata,
   getGoogleSlidesPresentation,
   getGoogleUser,
@@ -285,6 +287,8 @@ export function createSlackRuntime(
     searchGoogleSlidesPresentations,
     getGoogleSlidesPresentation,
     probeGoogleSlidesTemplate,
+    copyGoogleSlidesPresentation,
+    fillGoogleSlidesPlaceholders,
     listGoogleAnalyticsProperties,
     getGoogleAnalyticsMetadata,
     runGoogleAnalyticsReport,
@@ -5480,14 +5484,25 @@ const hermesRuntimeStreamCursorPattern =
 
 function sanitizeRuntimeStreamText(text: string): string {
   hermesRuntimeStreamCursorPattern.lastIndex = 0;
-  if (!hermesRuntimeStreamCursorPattern.test(text)) {
-    return text;
+  const hasHermesCursor = hermesRuntimeStreamCursorPattern.test(text);
+  let sanitized = text;
+  if (hasHermesCursor) {
+    hermesRuntimeStreamCursorPattern.lastIndex = 0;
+    sanitized = sanitized
+      .replace(hermesRuntimeStreamCursorPattern, "")
+      .replace(/([^\n])\n+([,.;:!?])/g, "$1$2")
+      .replace(/(\d+\.)[ \t]*\n+(?=\S)/g, "$1 ");
   }
-  hermesRuntimeStreamCursorPattern.lastIndex = 0;
-  return text
-    .replace(hermesRuntimeStreamCursorPattern, "")
-    .replace(/([^\n])\n+([,.;:!?])/g, "$1$2")
-    .replace(/(\d+\.)[ \t]*\n+(?=\S)/g, "$1 ");
+
+  return normalizeSlackMrkdwnLinks(sanitized);
+}
+
+function normalizeSlackMrkdwnLinks(text: string): string {
+  return text.replace(
+    /<((?:https?:\/\/)[^>|]*)(\|[^>]*)?>/gi,
+    (_match, url: string, label: string | undefined) =>
+      `<${url.replace(/\s+/g, "")}${label ?? ""}>`
+  );
 }
 
 function isAgentProgressPlaceholder(text: string): boolean {

@@ -427,6 +427,14 @@ function toMcpToolName(toolName: string): string {
     case "google_create_calendar_event":
     case "google_update_calendar_event":
     case "google_search_mail_messages":
+    case "google_slides_search_presentations":
+    case "google_slides_get_presentation":
+    case "google_slides_probe_template":
+    case "google_slides_copy_presentation":
+    case "google_slides_fill_placeholders":
+    case "google_analytics_list_properties":
+    case "google_analytics_get_metadata":
+    case "google_analytics_run_report":
     case "gmail_create_draft":
     case "hubspot_get_authenticated_user":
     case "hubspot_search_contacts":
@@ -525,6 +533,10 @@ function toMcpToolName(toolName: string): string {
       return "google_slides_get_presentation";
     case "google.slidesProbeTemplate":
       return "google_slides_probe_template";
+    case "google.slidesCopyPresentation":
+      return "google_slides_copy_presentation";
+    case "google.slidesFillPlaceholders":
+      return "google_slides_fill_placeholders";
     case "google.analyticsListProperties":
       return "google_analytics_list_properties";
     case "google.analyticsGetMetadata":
@@ -951,6 +963,21 @@ function toMcpToolArgumentsWithoutScheduledJobIdentity(
 
   if (toolName === "google.slidesProbeTemplate") {
     return compactToolInput(readRecordKey(body, "input"), ["presentationId"]);
+  }
+
+  if (toolName === "google.slidesCopyPresentation") {
+    return compactToolInput(readRecordKey(body, "input"), [
+      "presentationId",
+      "name"
+    ]);
+  }
+
+  if (toolName === "google.slidesFillPlaceholders") {
+    return compactToolInput(readRecordKey(body, "input"), [
+      "presentationId",
+      "slideObjectId",
+      "replacements"
+    ]);
   }
 
   if (toolName === "google.analyticsListProperties") {

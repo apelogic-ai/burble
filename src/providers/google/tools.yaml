@@ -28,7 +28,7 @@ tools:
     alias: google.createDriveTextFile
     implementation: createDriveTextFile
     title: Google Drive create text file
-    description: Create a new app-owned text file in Google Drive using this Slack user's connected Google account.
+    description: Create a new app-owned plain/text-like file in Google Drive using this Slack user's connected Google account. Do not use this to create Google Docs, Sheets, or Slides; use dedicated tools for those file types.
     risk: low_write
     confirmation: none
     input:
@@ -45,13 +45,13 @@ tools:
       mimeType:
         type: string
         optional: true
-        description: Optional MIME type. Defaults to text/plain.
+        description: Optional non-Google-Workspace MIME type. Defaults to text/plain.
 
   - name: google_get_drive_file
     alias: google.getDriveFile
     implementation: getDriveFile
     title: Google Drive get file
-    description: Read Google Drive file metadata and, by default, text content for app-accessible files. With the current drive.file permission, app-accessible means files Burble created or files explicitly opened for this app; Drive metadata search may find files whose content cannot be read or edited.
+    description: Read Google Drive file metadata and, by default, text content for files accessible to the connected Google account and granted Drive scopes. Drive metadata search may find files whose content cannot be read or edited if the stored Google connection lacks the required Drive scope or the file is not shared with the connected account.
     input:
       fileId:
         type: string
@@ -66,7 +66,7 @@ tools:
     alias: google.updateDriveTextFile
     implementation: updateDriveTextFile
     title: Google Drive update text file
-    description: Replace the content of an app-accessible Google Drive text file. With the current drive.file permission, app-accessible means files Burble created or files explicitly opened for this app. Use google_get_drive_file first when preserving existing content matters.
+    description: Replace the content of a Google Drive text file accessible to the connected Google account and granted Drive scopes. Use google_get_drive_file first when preserving existing content matters.
     risk: moderate_write
     confirmation: none
     input:
@@ -89,7 +89,7 @@ tools:
       - google.appendToDriveTextFile
     implementation: appendDriveTextFile
     title: Google Drive append text file
-    description: Append text to an app-accessible Google Drive text file by reading existing content then replacing it. With the current drive.file permission, app-accessible means files Burble created or files explicitly opened for this app; reconnecting Google does not grant access to arbitrary existing Drive files.
+    description: Append text to a Google Drive text file accessible to the connected Google account and granted Drive scopes by reading existing content then replacing it.
     risk: moderate_write
     confirmation: none
     input:
@@ -134,7 +134,7 @@ tools:
     alias: google.moveDriveFile
     implementation: moveDriveFile
     title: Google Drive move file
-    description: Move an app-accessible Google Drive file into a folder. With the current drive.file permission, app-accessible means files Burble created or files explicitly opened for this app. Does not delete the file.
+    description: Move a Google Drive file accessible to the connected Google account and granted Drive scopes into a folder. Does not delete the file.
     risk: moderate_write
     confirmation: none
     input:
@@ -320,6 +320,63 @@ tools:
         type: string
         min: 1
         description: Google Slides presentation ID to inspect as a template.
+
+  - name: google_slides_copy_presentation
+    alias: google.slidesCopyPresentation
+    implementation: copySlidesPresentation
+    title: Google Slides copy presentation
+    description: Copy an existing Google Slides presentation into a new presentation using the connected Google account. Use this for explicit user requests to create a new deck from a template; it does not edit slide contents.
+    risk: low_write
+    confirmation: none
+    input:
+      presentationId:
+        type: string
+        min: 1
+        description: Source Google Slides presentation ID.
+      name:
+        type: string
+        min: 1
+        max: 200
+        description: Name for the copied presentation.
+
+  - name: google_slides_fill_placeholders
+    alias: google.slidesFillPlaceholders
+    implementation: fillSlidesPlaceholders
+    title: Google Slides fill placeholders
+    description: Fill text placeholders on an existing Google Slides presentation slide. When slideObjectId is omitted, Burble chooses the slide that best matches the requested placeholders. Use for explicit user requests to set title, subtitle, body, or similar placeholder text in a deck.
+    risk: low_write
+    confirmation: none
+    input:
+      presentationId:
+        type: string
+        min: 1
+        description: Google Slides presentation ID to edit.
+      slideObjectId:
+        type: string
+        optional: true
+        description: Optional slide object ID. If omitted, Burble chooses the slide that best matches the requested placeholders.
+      replacements:
+        type: array
+        min: 1
+        max: 10
+        description: Placeholder text replacements to apply.
+        items:
+          type: object
+          properties:
+            placeholderType:
+              type: string
+              min: 1
+              description: Google Slides placeholder type such as TITLE, SUBTITLE, BODY, CENTERED_TITLE, or SLIDE_NUMBER.
+            text:
+              type: string
+              max: 5000
+              description: Text to place into the placeholder.
+            index:
+              type: number
+              int: true
+              min: 0
+              optional: true
+              description: Optional placeholder index when a slide has multiple placeholders of the same type.
 
   - name: google_analytics_list_properties
     alias: google.analyticsListProperties

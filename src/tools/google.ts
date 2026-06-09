@@ -10,6 +10,9 @@ import {
   type GoogleCreatedDraft,
   type GoogleDriveCreatedFile,
   type GoogleDriveFileContent,
+  type GoogleSlidesCopiedPresentation,
+  type GoogleSlidesPlaceholderFillInput,
+  type GoogleSlidesPlaceholderFillResult,
   isGoogleAuthorizationError,
   type GoogleCalendarEvent,
   type GoogleDriveFile,
@@ -48,6 +51,14 @@ export type GoogleToolDeps = {
     token: string,
     input: { presentationId: string }
   ) => Promise<GoogleSlidesTemplateProbe>;
+  copyGoogleSlidesPresentation?: (
+    token: string,
+    input: { presentationId: string; name: string }
+  ) => Promise<GoogleSlidesCopiedPresentation>;
+  fillGoogleSlidesPlaceholders?: (
+    token: string,
+    input: GoogleSlidesPlaceholderFillInput
+  ) => Promise<GoogleSlidesPlaceholderFillResult>;
   listGoogleAnalyticsProperties?: (
     token: string,
     input: { limit?: number }
@@ -523,6 +534,64 @@ export function createGoogleTools(deps: GoogleToolDeps) {
       }
     },
 
+    copySlidesPresentation: {
+      async execute(
+        context: GoogleToolContext & {
+          input: { presentationId: string; name: string };
+        }
+      ): Promise<
+        ToolResult<GoogleSlidesCopiedPresentation | GoogleAuthErrorContent>
+      > {
+        const presentation = await withGoogleToken(
+          deps,
+          context.connection,
+          (accessToken) => {
+            if (!deps.copyGoogleSlidesPresentation) {
+              throw new Error("Google Slides presentation copy is not configured");
+            }
+            return deps.copyGoogleSlidesPresentation(accessToken, context.input);
+          }
+        );
+        if (isGoogleAuthErrorResult(presentation)) {
+          return presentation;
+        }
+
+        return {
+          classification: "user_private",
+          content: sanitizeCreatedDriveFile(presentation)
+        };
+      }
+    },
+
+    fillSlidesPlaceholders: {
+      async execute(
+        context: GoogleToolContext & {
+          input: GoogleSlidesPlaceholderFillInput;
+        }
+      ): Promise<
+        ToolResult<GoogleSlidesPlaceholderFillResult | GoogleAuthErrorContent>
+      > {
+        const result = await withGoogleToken(
+          deps,
+          context.connection,
+          (accessToken) => {
+            if (!deps.fillGoogleSlidesPlaceholders) {
+              throw new Error("Google Slides placeholder editing is not configured");
+            }
+            return deps.fillGoogleSlidesPlaceholders(accessToken, context.input);
+          }
+        );
+        if (isGoogleAuthErrorResult(result)) {
+          return result;
+        }
+
+        return {
+          classification: "user_private",
+          content: result
+        };
+      }
+    },
+
     listAnalyticsProperties: {
       async execute(
         context: GoogleToolContext & { input?: { limit?: number } }
@@ -733,7 +802,7 @@ function googleApiErrorResult(error: GoogleApiError): GoogleAuthErrorResult {
       content: {
         error: "google_drive_file_not_accessible",
         message:
-          "Google Drive blocked access to that file. Burble can search Drive metadata, but with the current `drive.file` permission it can only read or edit files it created, or files explicitly opened for this app. Reconnecting Google will not grant access to arbitrary existing files."
+          "Google Drive blocked access to that file. The connected Google account may not have access, or Burble's stored Google authorization may not include full Drive access yet. If Google scopes were just expanded, reconnect Google with `/auth google`; otherwise share the file with the connected Google account."
       }
     };
   }
