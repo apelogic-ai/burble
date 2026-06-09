@@ -7,6 +7,7 @@ import {
 } from "./runtime-descriptors";
 import { buildRuntimeManifest, type RuntimeManifest } from "./runtime-manifest";
 import type { PrincipalId } from "./runtime-factory";
+import type { RuntimeSelectionRequirements } from "./runtime-factory";
 import type { RuntimeCapabilityManifest } from "./runtime-contract";
 
 export const defaultWorkspaceRuntimePolicy = {
@@ -55,6 +56,7 @@ export function resolveRuntimeEngineForPrincipal(input: {
   config: Config;
   store: TokenStore;
   principal: PrincipalId;
+  requirements?: RuntimeSelectionRequirements;
 }): RuntimeEngineSelection {
   const configuredEngine = input.config.agentRuntimeEngine;
   const allowedEngines = readAllowedRuntimeEngines({
@@ -63,7 +65,9 @@ export function resolveRuntimeEngineForPrincipal(input: {
     workspaceId: input.principal.workspaceId
   });
   const compatibility = allowedEngines.map((engine) =>
-    runtimeEngineCompatibility(engine)
+    runtimeEngineCompatibility(engine, {
+      requirements: input.requirements
+    })
   );
   const selectableEngines = compatibility
     .filter((entry) => entry.selectable)
@@ -111,7 +115,10 @@ export function resolveRuntimeEngineForPrincipal(input: {
 
 export function runtimeEngineCompatibility(
   engine: RuntimeManifest["runtime"]["engine"],
-  options: { workload?: RuntimeEngineCompatibilityWorkload } = {}
+  options: {
+    workload?: RuntimeEngineCompatibilityWorkload;
+    requirements?: RuntimeSelectionRequirements;
+  } = {}
 ): RuntimeEngineCompatibility {
   return runtimeCapabilityManifestCompatibility(
     engine,
@@ -123,7 +130,10 @@ export function runtimeEngineCompatibility(
 export function runtimeCapabilityManifestCompatibility(
   engine: RuntimeManifest["runtime"]["engine"],
   manifest: RuntimeCapabilityManifest,
-  options: { workload?: RuntimeEngineCompatibilityWorkload } = {}
+  options: {
+    workload?: RuntimeEngineCompatibilityWorkload;
+    requirements?: RuntimeSelectionRequirements;
+  } = {}
 ): RuntimeEngineCompatibility {
   const workload = options.workload ?? "interactive";
   const reasons: string[] = [];
@@ -150,6 +160,9 @@ export function runtimeCapabilityManifestCompatibility(
   }
   if (manifest.usageReporting === "none") {
     reasons.push("missing usage reporting");
+  }
+  if (options.requirements?.attachments && !manifest.attachments) {
+    reasons.push("missing attachment support");
   }
 
   return {

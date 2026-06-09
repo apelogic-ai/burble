@@ -299,11 +299,13 @@ describe("managed runtime Burble Native integration", () => {
       manifest: runtimeManifest("rt_native")
     };
     let postedBody: unknown;
+    let runtimeRequirements: unknown;
 
     const runner = createManagedRuntimeAgentRunner({
       config: baseConfig,
       runtimeFactory: {
-        async getOrCreateRuntime() {
+        async getOrCreateRuntime(_principal, requirements) {
+          runtimeRequirements = requirements;
           return runtimeHandle;
         },
         async stopRuntime() {},
@@ -359,6 +361,7 @@ describe("managed runtime Burble Native integration", () => {
     });
 
     expect(result.text).toBe("ok");
+    expect(runtimeRequirements).toEqual({ attachments: true });
     expect(postedBody).toMatchObject({
       input: {
         attachments: [

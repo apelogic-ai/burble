@@ -129,7 +129,11 @@ export function createManagedRuntimeAdapter(
         text: "Starting agent runtime..."
       };
       const runtime = deps.runtimeFactory
-        ? await deps.runtimeFactory.getOrCreateRuntime(input.principal)
+        ? await deps.runtimeFactory.getOrCreateRuntime(input.principal, {
+            ...(input.attachments && input.attachments.length > 0
+              ? { attachments: true }
+              : {})
+          })
         : null;
       const baseUrl = runtime?.endpointUrl.replace(/\/+$/, "") ?? fallbackBaseUrl;
       if (!baseUrl) {

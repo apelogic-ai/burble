@@ -165,6 +165,80 @@ describe("resolveRuntimeEngineForPrincipal", () => {
     store.close();
   });
 
+  test("falls back from a preferred runtime that lacks attachment support", () => {
+    const store = createTokenStore(":memory:");
+    store.upsertWorkspacePolicy({
+      workspaceId: "T123",
+      key: "runtime.allowedEngines",
+      value: ["openclaw", "hermes"],
+      updatedBySlackUserId: "UADMIN"
+    });
+    store.upsertUserPreference({
+      workspaceId: "T123",
+      slackUserId: "U123",
+      key: "runtime.engine",
+      value: "hermes"
+    });
+
+    const selection = resolveRuntimeEngineForPrincipal({
+      config,
+      store,
+      principal: {
+        workspaceId: "T123",
+        slackUserId: "U123"
+      },
+      requirements: { attachments: true }
+    });
+
+    expect(selection.effectiveEngine).toBe("openclaw");
+    expect(selection.preferredEngine).toBe("hermes");
+    expect(selection.selectableEngines).toEqual(["openclaw"]);
+    expect(selection.compatibility).toContainEqual({
+      engine: "hermes",
+      selectable: false,
+      reasons: ["missing attachment support"]
+    });
+    store.close();
+  });
+
+  test("fails clearly when attachment turns have no capable runtime", () => {
+    const store = createTokenStore(":memory:");
+    store.upsertWorkspacePolicy({
+      workspaceId: "T123",
+      key: "runtime.allowedEngines",
+      value: ["hermes", "burble-native"],
+      updatedBySlackUserId: "UADMIN"
+    });
+
+    expect(() =>
+      resolveRuntimeEngineForPrincipal({
+        config,
+        store,
+        principal: {
+          workspaceId: "T123",
+          slackUserId: "U123"
+        },
+        requirements: { attachments: true }
+      })
+    ).toThrow(RuntimeEngineSelectionError);
+
+    try {
+      resolveRuntimeEngineForPrincipal({
+        config,
+        store,
+        principal: {
+          workspaceId: "T123",
+          slackUserId: "U123"
+        },
+        requirements: { attachments: true }
+      });
+    } catch (error) {
+      expect(error).toBeInstanceOf(RuntimeEngineSelectionError);
+      expect(String(error)).toContain("missing attachment support");
+    }
+    store.close();
+  });
+
   test("ignores a user runtime preference that is not allowed", () => {
     const store = createTokenStore(":memory:");
     store.upsertWorkspacePolicy({

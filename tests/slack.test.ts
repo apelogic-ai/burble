@@ -44,7 +44,10 @@ import {
 } from "../src/slack";
 import type { Config } from "../src/config";
 import { createTokenStore } from "../src/db";
-import { resolveRuntimeEngineForPrincipal } from "../src/agent/runtime-policy";
+import {
+  resolveRuntimeEngineForPrincipal,
+  RuntimeEngineSelectionError
+} from "../src/agent/runtime-policy";
 
 const agentConfig: Config = {
   slackBotToken: "xoxb-test",
@@ -1269,6 +1272,29 @@ describe("formatConversationFailureMessage", () => {
   test("keeps the generic fallback for unknown failures", () => {
     expect(formatConversationFailureMessage(new Error("boom"), "mention")).toBe(
       "I could not handle that mention."
+    );
+  });
+
+  test("explains when attachment turns have no capable runtime", () => {
+    const error = new RuntimeEngineSelectionError(
+      "No selectable runtime engines are available for this workspace. hermes: missing attachment support",
+      {
+        configuredEngine: "hermes",
+        preferredEngine: "hermes",
+        allowedEngines: ["hermes"],
+        selectableEngines: [],
+        compatibility: [
+          {
+            engine: "hermes",
+            selectable: false,
+            reasons: ["missing attachment support"]
+          }
+        ]
+      }
+    );
+
+    expect(formatConversationFailureMessage(error, "message")).toContain(
+      "No selectable runtime advertises attachment support"
     );
   });
 });

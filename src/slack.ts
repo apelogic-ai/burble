@@ -94,6 +94,7 @@ import { selectRuntimeToolGroups } from "./agent/tool-groups";
 import { createDockerRuntimeFactory } from "./agent/container-runtime-factory";
 import {
   buildRuntimeManifestForPrincipal,
+  RuntimeEngineSelectionError,
   resolveRuntimeEngineForPrincipal,
   type RuntimeEngineSelection
 } from "./agent/runtime-policy";
@@ -1795,13 +1796,22 @@ function createManagedRuntimeFactory(
     delegates.set(engine, delegate);
     return delegate;
   };
-  const resolveEngine = (principal: { workspaceId: string; slackUserId: string }) =>
-    resolveRuntimeEngineForPrincipal({ config, store, principal }).effectiveEngine;
+  const resolveEngine = (
+    principal: { workspaceId: string; slackUserId: string },
+    requirements?: Parameters<RuntimeFactory["getOrCreateRuntime"]>[1]
+  ) =>
+    resolveRuntimeEngineForPrincipal({
+      config,
+      store,
+      principal,
+      requirements
+    }).effectiveEngine;
 
   return {
-    async getOrCreateRuntime(principal) {
-      return delegateForEngine(resolveEngine(principal)).getOrCreateRuntime(
-        principal
+    async getOrCreateRuntime(principal, requirements) {
+      return delegateForEngine(resolveEngine(principal, requirements)).getOrCreateRuntime(
+        principal,
+        requirements
       );
     },
 
@@ -5380,6 +5390,16 @@ export function formatConversationFailureMessage(
       "Agent runtime auth failed before I could call tools.",
       "The runtime JWT expired or was rejected; this is not an expired GitHub/Jira token.",
       "Restart the runtime container or check `AGENT_RUNTIME_JWT_TTL_SECONDS` / MCP gateway routing."
+    ].join(" ");
+  }
+  if (
+    error instanceof RuntimeEngineSelectionError &&
+    message.includes("missing attachment support")
+  ) {
+    return [
+      "I could not use the attached file with the currently allowed runtimes.",
+      "No selectable runtime advertises attachment support for this workspace.",
+      "Enable an attachment-capable runtime, such as `openclaw`, or switch your runtime policy before retrying."
     ].join(" ");
   }
 
