@@ -271,6 +271,26 @@ describe("formatAgentProgressEvent", () => {
         "old text"
       )
     ).toBe("Google Analytics properties\n\n1. ApeLogic");
+
+    expect(
+      formatAgentProgressEvent(
+        {
+          type: "message_replace",
+          text: "I found 1 Google Slides file\u2063\n, sorted by most recently touched:"
+        },
+        "old text"
+      )
+    ).toBe("I found 1 Google Slides file, sorted by most recently touched:");
+
+    expect(
+      formatAgentProgressEvent(
+        {
+          type: "message_replace",
+          text: "1. [[BURBLE_STREAM_CURSOR]]\nApeLogic Presentation Template"
+        },
+        "old text"
+      )
+    ).toBe("1. ApeLogic Presentation Template");
   });
 
   test("accumulates runtime message deltas in Slack progress messages", () => {

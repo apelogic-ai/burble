@@ -5475,10 +5475,19 @@ function appendSlackStreamedText(currentText: string, delta: string): string {
   return currentText ? `${currentText}${cleanedDelta}` : cleanedDelta.trimStart();
 }
 
-const hermesRuntimeStreamCursorPattern = /[ \t]*[\u2063▉■]/g;
+const hermesRuntimeStreamCursorPattern =
+  /(?:[ \t]*\[\[BURBLE_STREAM_CURSOR\]\]|[ \t]*[\u2063▉■])/g;
 
 function sanitizeRuntimeStreamText(text: string): string {
-  return text.replace(hermesRuntimeStreamCursorPattern, "");
+  hermesRuntimeStreamCursorPattern.lastIndex = 0;
+  if (!hermesRuntimeStreamCursorPattern.test(text)) {
+    return text;
+  }
+  hermesRuntimeStreamCursorPattern.lastIndex = 0;
+  return text
+    .replace(hermesRuntimeStreamCursorPattern, "")
+    .replace(/([^\n])\n+([,.;:!?])/g, "$1$2")
+    .replace(/(\d+\.)[ \t]*\n+(?=\S)/g, "$1 ");
 }
 
 function isAgentProgressPlaceholder(text: string): boolean {

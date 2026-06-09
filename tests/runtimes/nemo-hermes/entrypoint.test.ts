@@ -733,10 +733,14 @@ print(json.dumps({
     expect(config).toContain("burble-platform");
     expect(config).toContain("burble-provider-tool");
     expect(config).toContain(
-      ["streaming:", "  enabled: true", "  transport: edit", `  cursor: "${"\u2063"}"`].join(
-        "\n"
-      )
+      [
+        "streaming:",
+        "  enabled: true",
+        "  transport: edit",
+        '  cursor: "[[BURBLE_STREAM_CURSOR]]"'
+      ].join("\n")
     );
+    expect(config).not.toContain("\u2063");
     expect(config).not.toContain("▉");
     expect(config).not.toContain("mcp_servers:");
   });
@@ -751,7 +755,7 @@ os.environ["BURBLE_INTERNAL_TOKEN"] = "token"
 os.environ["BURBLE_RUNTIME_ID"] = "rt_123"
 
 async def main():
-    cursor = "\\u2063"
+    cursor = "[[BURBLE_STREAM_CURSOR]]"
     adapter = mod.BurbleAdapter(
         types.SimpleNamespace(
             extra={

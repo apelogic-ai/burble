@@ -26,9 +26,9 @@ from gateway.platforms.base import (
 from gateway.session import build_session_key
 
 logger = logging.getLogger(__name__)
-HERMES_STREAM_CURSOR = "\u2063"
+HERMES_STREAM_CURSOR = "[[BURBLE_STREAM_CURSOR]]"
 HERMES_LEGACY_STREAM_CURSOR = " ▉"
-HERMES_STREAM_CURSOR_GLYPHS = ("\u2063", "▉", "■")
+HERMES_STREAM_CURSOR_GLYPHS = (HERMES_STREAM_CURSOR, "\u2063", "▉", "■")
 HERMES_STREAM_CURSORS = (HERMES_STREAM_CURSOR, HERMES_LEGACY_STREAM_CURSOR)
 
 
