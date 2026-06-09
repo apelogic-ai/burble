@@ -241,6 +241,38 @@ describe("formatAgentProgressEvent", () => {
     ).toBe("Rewritten answer");
   });
 
+  test("strips Hermes stream cursor glyphs from response progress", () => {
+    expect(
+      formatAgentProgressEvent(
+        {
+          type: "message_delta",
+          text: "Most recently ▉"
+        },
+        ""
+      )
+    ).toBe("Most recently");
+
+    expect(
+      formatAgentProgressEvent(
+        {
+          type: "message_delta",
+          text: " touched ■"
+        },
+        "Most recently"
+      )
+    ).toBe("Most recently touched");
+
+    expect(
+      formatAgentProgressEvent(
+        {
+          type: "message_replace",
+          text: "Google Analytics properties ▉\n\n1. ApeLogic"
+        },
+        "old text"
+      )
+    ).toBe("Google Analytics properties\n\n1. ApeLogic");
+  });
+
   test("accumulates runtime message deltas in Slack progress messages", () => {
     const progressMessage = {
       channel: "D123",
@@ -291,6 +323,38 @@ describe("formatAgentProgressEvent", () => {
         progressMessage
       )
     ).toBe("Rewritten answer");
+  });
+
+  test("strips Hermes stream cursor glyphs from accumulated progress messages", () => {
+    const progressMessage = {
+      channel: "D123",
+      ts: "123.456",
+      text: "Starting agent runtime...",
+      startedAtMs: 0,
+      toolStartedAtMs: {},
+      toolLinesByCallId: {},
+      toolCallOrder: []
+    };
+
+    expect(
+      formatAgentProgressMessage(
+        {
+          type: "message_delta",
+          text: "Breakdown by landing page ▉"
+        },
+        progressMessage
+      )
+    ).toBe("Breakdown by landing page");
+
+    expect(
+      formatAgentProgressMessage(
+        {
+          type: "message_replace",
+          text: "Most recently ■\n\ntouched Google Slides file"
+        },
+        progressMessage
+      )
+    ).toBe("Most recently\n\ntouched Google Slides file");
   });
 
   test("throttles Slack chat updates for high-frequency runtime deltas", async () => {
@@ -462,6 +526,55 @@ describe("formatAgentProgressEvent", () => {
     }
   });
 
+  test("strips Hermes stream cursor glyphs from final response text", async () => {
+    const updates: string[] = [];
+    const originalNow = Date.now;
+    Date.now = () => 1_500;
+    try {
+      const progressMessage = {
+        channel: "D123",
+        ts: "123.456",
+        text: "Starting agent runtime...",
+        startedAtMs: 0,
+        streamedText: "Most recently touched Google Slides file",
+        toolStartedAtMs: {},
+        toolLinesByCallId: {},
+        toolCallOrder: []
+      };
+      const client = {
+        chat: {
+          update: async (input: { text: string }) => {
+            updates.push(input.text);
+            return {};
+          }
+        }
+      };
+
+      await postConversationResponse(client as never, {
+        response: {
+          visibility: "dm",
+          classification: "user_private",
+          text: "Most recently ▉\n\ntouched Google Slides file",
+          usage: {
+            inputTokens: 2,
+            outputTokens: 1,
+            totalTokens: 3,
+            usageSource: "provider-output"
+          }
+        },
+        channel: "D123",
+        user: "U123",
+        progressMessage
+      });
+
+      expect(updates).toEqual([
+        "Most recently\n\ntouched Google Slides file\n\n_Final result in 1.5s (3 tokens)._"
+      ]);
+    } finally {
+      Date.now = originalNow;
+    }
+  });
+
   test("uses Slack native stream methods for native streaming progress", async () => {
     const calls: string[] = [];
     const originalNow = Date.now;
@@ -545,6 +658,55 @@ describe("formatAgentProgressEvent", () => {
         "stop:stream.123:\n\n_Final result in 700ms (3 tokens)._",
         "update:_Final result in 700ms (3 tokens)._"
       ]);
+    } finally {
+      Date.now = originalNow;
+    }
+  });
+
+  test("strips Hermes stream cursor glyphs from native stream calls", async () => {
+    const calls: string[] = [];
+    const originalNow = Date.now;
+    let now = 1_000;
+    Date.now = () => now;
+    try {
+      const progressMessage = {
+        channel: "D123",
+        ts: "123.456",
+        text: "Starting agent runtime...",
+        startedAtMs: 1_000,
+        threadTs: "111.222",
+        streamingMode: "native" as const,
+        toolStartedAtMs: {},
+        toolLinesByCallId: {},
+        toolCallOrder: []
+      };
+      const client = {
+        chat: {
+          startStream: async (input: { markdown_text?: string }) => {
+            calls.push(`start:${input.markdown_text}`);
+            return { ts: "stream.123" };
+          },
+          appendStream: async (input: { markdown_text: string }) => {
+            calls.push(`append:${input.markdown_text}`);
+            return {};
+          }
+        }
+      };
+
+      await updateAgentProgressMessage(client as never, progressMessage, {
+        type: "message_delta",
+        text: "Most recently ▉"
+      });
+      now += 600;
+      await updateAgentProgressMessage(client as never, progressMessage, {
+        type: "message_delta",
+        text: " touched ■"
+      });
+
+      expect(calls).toEqual(["start:Most recently", "append: touched"]);
+      expect((progressMessage as { streamedText?: string }).streamedText).toBe(
+        "Most recently touched"
+      );
     } finally {
       Date.now = originalNow;
     }
