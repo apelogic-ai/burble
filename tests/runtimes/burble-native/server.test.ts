@@ -1028,6 +1028,26 @@ describe("Burble Native runtime server", () => {
       user: { email: "person@example.com" }
     });
   });
+
+  test("does not blindly retry non-idempotent provider write tools", async () => {
+    let calls = 0;
+    const executeTool = createBurbleNativeToolExecutor({
+      toolGatewayUrl: "http://burble-app:3000/internal/tools/",
+      runtimeToken: "runtime-token",
+      retryBaseDelayMs: 0,
+      fetch: async () => {
+        calls += 1;
+        return new Response("temporarily unavailable", { status: 503 });
+      }
+    });
+
+    await expect(
+      executeTool("google.slidesCopyPresentation", {
+        input: { presentationId: "deck-1", name: "Copy" }
+      })
+    ).rejects.toThrow("Burble tool gateway returned HTTP 503");
+    expect(calls).toBe(1);
+  });
 });
 
 function nativeRunRequest(

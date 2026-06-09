@@ -29,6 +29,7 @@ export function createRuntimeToolGatewayClient(input: {
   runtimeId?: string;
   maxAttempts?: number;
   retryBaseDelayMs?: number;
+  shouldRetryTool?: (toolName: string) => boolean;
   fetch?: RuntimeToolGatewayFetch;
 }): RuntimeToolGatewayClient {
   const baseUrl = input.baseUrl.replace(/\/+$/, "");
@@ -44,6 +45,7 @@ export function createRuntimeToolGatewayClient(input: {
   return {
     async execute(toolName, body) {
       const url = `${baseUrl}/${encodeURIComponent(toolName)}/execute`;
+      const retryEnabled = input.shouldRetryTool?.(toolName) ?? true;
       let lastError: unknown;
       for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
         try {
@@ -72,12 +74,17 @@ export function createRuntimeToolGatewayClient(input: {
             response.status,
             await readErrorDetail(response)
           );
-          if (!shouldRetryToolGatewayError(error) || attempt === maxAttempts - 1) {
+          if (
+            !retryEnabled ||
+            !shouldRetryToolGatewayError(error) ||
+            attempt === maxAttempts - 1
+          ) {
             throw error;
           }
           lastError = error;
         } catch (error) {
           if (
+            !retryEnabled ||
             !shouldRetryToolGatewayError(error) ||
             attempt === maxAttempts - 1
           ) {

@@ -2681,7 +2681,7 @@ function normalizeGoogleSlidesCreateSlideInput(input: unknown): unknown {
     rawReplacements === undefined
       ? normalizeTopLevelSlidesPlaceholderReplacements(record)
       : normalizeSlidesPlaceholderReplacements(rawReplacements);
-  return {
+  const normalized = {
     ...(presentationId !== null ? { presentationId } : {}),
     ...(objectId !== null ? { objectId } : {}),
     ...(insertionIndex !== undefined ? { insertionIndex } : {}),
@@ -2691,6 +2691,20 @@ function normalizeGoogleSlidesCreateSlideInput(input: unknown): unknown {
       : {}),
     ...(replacements !== undefined ? { replacements } : {})
   };
+  if (objectId !== null || presentationId === null) {
+    return normalized;
+  }
+  return {
+    ...normalized,
+    objectId: deterministicGoogleSlidesObjectId(normalized)
+  };
+}
+
+function deterministicGoogleSlidesObjectId(input: unknown): string {
+  return `burble_slide_${createHash("sha256")
+    .update(stableJson(input))
+    .digest("hex")
+    .slice(0, 32)}`;
 }
 
 function normalizeGoogleSlidesFillPlaceholdersInput(input: unknown): unknown {
@@ -3891,6 +3905,24 @@ function toolGatewayIdentityFields(auth: ToolGatewayAuth): {
     runtimeId: auth.runtime.id,
     runtimeType: auth.runtime.engine
   };
+}
+
+function stableJson(value: unknown): string {
+  return JSON.stringify(sortJson(value));
+}
+
+function sortJson(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map(sortJson);
+  }
+  if (!isOptionalObject(value)) {
+    return value;
+  }
+  return Object.fromEntries(
+    Object.entries(value)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, entry]) => [key, sortJson(entry)])
+  );
 }
 
 function readToolProviderForTelemetry(toolName: string): string {

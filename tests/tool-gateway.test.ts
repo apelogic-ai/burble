@@ -508,10 +508,11 @@ describe("handleToolGatewayRequest", () => {
       {
         createGoogleSlidesSlide: async (token, input) => {
           expect(token).toBe("google-token");
-          expect(input).toEqual({
+          expect(input).toMatchObject({
             presentationId: "deck-copy",
             insertionIndex: 2,
             predefinedLayout: "TITLE_AND_TWO_COLUMNS",
+            objectId: expect.stringMatching(/^burble_slide_[0-9a-f]{32}$/),
             replacements: [
               { placeholderType: "TITLE", text: "Test slide 3" },
               { placeholderType: "BODY", index: 0, text: "Left text" },
