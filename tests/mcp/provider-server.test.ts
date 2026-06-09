@@ -873,7 +873,7 @@ describe("handleProviderMcpRequest", () => {
                 property: "properties/456",
                 displayName: "Website",
                 parent: "accounts/123",
-                currentPropertyType: "PROPERTY_TYPE_ORDINARY"
+                propertyType: "PROPERTY_TYPE_ORDINARY"
               }
             ]
           }

@@ -771,7 +771,7 @@ export async function listGoogleAnalyticsProperties(
   url.searchParams.set("pageSize", String(Math.max(limit, 1)));
   url.searchParams.set(
     "fields",
-    "accountSummaries(account,displayName,propertySummaries(property,displayName,parent,currentPropertyType))"
+    "accountSummaries(account,displayName,propertySummaries(property,displayName,parent,propertyType))"
   );
 
   const response = await fetch(url, { headers: googleHeaders(token) });
@@ -783,7 +783,7 @@ export async function listGoogleAnalyticsProperties(
         property?: string;
         displayName?: string;
         parent?: string;
-        currentPropertyType?: string;
+        propertyType?: string;
       }>;
     }>;
     error?: { message?: string };
@@ -812,8 +812,8 @@ export async function listGoogleAnalyticsProperties(
             propertyId: normalizeGoogleAnalyticsPropertyId(property.property),
             ...(property.displayName ? { displayName: property.displayName } : {}),
             ...(property.parent ? { parent: property.parent } : {}),
-            ...(property.currentPropertyType
-              ? { propertyType: property.currentPropertyType }
+            ...(property.propertyType
+              ? { propertyType: property.propertyType }
               : {})
           }
         ];
