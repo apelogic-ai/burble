@@ -514,6 +514,7 @@ export async function fillGoogleSlidesPlaceholders(
       placeholderType,
       objectId: element.objectId,
       text: replacement.text,
+      hasExistingText: hasSlidesElementText(element),
       ...(typeof replacement.index === "number" ? { index: replacement.index } : {})
     };
   });
@@ -530,21 +531,27 @@ export async function fillGoogleSlidesPlaceholders(
       "Content-Type": "application/json"
     },
     body: JSON.stringify({
-      requests: updates.flatMap((update) => [
-        {
-          deleteText: {
-            objectId: update.objectId,
-            textRange: { type: "ALL" }
+      requests: updates.flatMap((update) =>
+        [
+          update.hasExistingText
+            ? {
+                deleteText: {
+                  objectId: update.objectId,
+                  textRange: { type: "ALL" }
+                }
+              }
+            : null,
+          {
+            insertText: {
+              objectId: update.objectId,
+              insertionIndex: 0,
+              text: update.text
+            }
           }
-        },
-        {
-          insertText: {
-            objectId: update.objectId,
-            insertionIndex: 0,
-            text: update.text
-          }
-        }
-      ])
+        ].filter((request): request is Exclude<typeof request, null> =>
+          Boolean(request)
+        )
+      )
     })
   });
   const body = (await response.json()) as {
@@ -562,7 +569,7 @@ export async function fillGoogleSlidesPlaceholders(
   return {
     presentationId: body.presentationId ?? input.presentationId,
     slideObjectId,
-    updatedPlaceholders: updates
+    updatedPlaceholders: updates.map(({ hasExistingText: _hasExistingText, ...update }) => update)
   };
 }
 
@@ -1392,6 +1399,10 @@ function findSlidePlaceholderElement(
 
 function normalizeSlidesPlaceholderType(type: string | undefined): string {
   return (type ?? "").trim().toUpperCase();
+}
+
+function hasSlidesElementText(element: GoogleSlidesApiPageElement): boolean {
+  return Boolean(extractSlidesText(element.shape?.text));
 }
 
 function sanitizeSlidesElements(

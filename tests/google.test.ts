@@ -650,6 +650,87 @@ describe("Google OAuth and API helpers", () => {
     }
   });
 
+  test("fills empty Google Slides placeholders without deleting empty text ranges", async () => {
+    const originalFetch = globalThis.fetch;
+    const requests: Array<{ url: string; method?: string; body?: unknown }> = [];
+    globalThis.fetch = (async (input, init) => {
+      const url = String(input);
+      requests.push({
+        url,
+        method: init?.method,
+        ...(init?.body ? { body: JSON.parse(String(init.body)) } : {})
+      });
+      if (url.includes(":batchUpdate")) {
+        expect(init?.method).toBe("POST");
+        return Response.json({
+          presentationId: "deck-empty",
+          replies: [{}, {}]
+        });
+      }
+      return Response.json({
+        presentationId: "deck-empty",
+        title: "ApeLogic",
+        layouts: [],
+        slides: [
+          {
+            objectId: "slide-1",
+            pageElements: [
+              {
+                objectId: "title-shape",
+                shape: {
+                  shapeType: "TEXT_BOX",
+                  placeholder: { type: "TITLE", index: 0 },
+                  text: { textElements: [] }
+                }
+              },
+              {
+                objectId: "subtitle-shape",
+                shape: {
+                  shapeType: "TEXT_BOX",
+                  placeholder: { type: "SUBTITLE", index: 0 }
+                }
+              }
+            ]
+          }
+        ]
+      });
+    }) as typeof fetch;
+
+    try {
+      await fillGoogleSlidesPlaceholders("google-token", {
+        presentationId: "deck-empty",
+        replacements: [
+          { placeholderType: "TITLE", text: "ApeLogic" },
+          {
+            placeholderType: "SUBTITLE",
+            text: "Test presentation from template"
+          }
+        ]
+      });
+
+      expect(requests[1]?.body).toEqual({
+        requests: [
+          {
+            insertText: {
+              objectId: "title-shape",
+              insertionIndex: 0,
+              text: "ApeLogic"
+            }
+          },
+          {
+            insertText: {
+              objectId: "subtitle-shape",
+              insertionIndex: 0,
+              text: "Test presentation from template"
+            }
+          }
+        ]
+      });
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
   test("reads sanitized Google Slides presentation structure", async () => {
     const originalFetch = globalThis.fetch;
     let requestedUrl = "";

@@ -314,6 +314,7 @@ print(json.dumps({"text": mod.build_hermes_turn_text(payload)}))
     expect(text).toContain("what changed?");
     expect(text).toContain("Selected Burble tool groups: conversation, github");
     expect(text).toContain("Selected Burble provider tools");
+    expect(text).toContain("Do not call provider tools that are not listed here");
     expect(text).toContain("github_list_my_pull_requests");
     expect(text).not.toContain("google_search_drive_files");
     expect(text).toContain("scheduled_job_register_capability");
@@ -1149,25 +1150,16 @@ print(json.dumps(ctx.tools))
         is_async: true
       })
     );
-    expect(result).toContainEqual(
+    expect(result).not.toContainEqual(
       expect.objectContaining({
         name: "google_get_drive_file",
-        toolset: "web",
-        is_async: true
+        toolset: "web"
       })
     );
-    expect(result).toContainEqual(
+    expect(result).not.toContainEqual(
       expect.objectContaining({
-        name: "google_append_to_drive_text_file",
-        toolset: "web",
-        is_async: true
-      })
-    );
-    expect(result).toContainEqual(
-      expect.objectContaining({
-        name: "hubspot_search_contacts",
-        toolset: "web",
-        is_async: true
+        name: "atlassian_list_mcp_tools",
+        toolset: "web"
       })
     );
     const tools = result as Array<{
@@ -1288,8 +1280,8 @@ print(json.dumps(toolsets.TOOLSETS["web"]["tools"]))
     expect(result).toContain("web_search");
     expect(result).toContain("web_extract");
     expect(result).toContain("burble_provider_call");
-    expect(result).toContain("google_get_drive_file");
-    expect(result).toContain("google_append_to_drive_text_file");
-    expect(result).toContain("scheduled_job_register_capability");
+    expect(result).not.toContain("google_get_drive_file");
+    expect(result).not.toContain("google_append_to_drive_text_file");
+    expect(result).not.toContain("scheduled_job_register_capability");
   });
 });
