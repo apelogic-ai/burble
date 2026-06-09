@@ -203,6 +203,15 @@ function createGoogleMcpHandlers(
         }
       }),
 
+    copySlidesPresentation: (connection, args) =>
+      googleTools.copySlidesPresentation.execute({
+        connection,
+        input: {
+          presentationId: stringArg(args, "presentationId"),
+          name: stringArg(args, "name")
+        }
+      }),
+
     listAnalyticsProperties: (connection, args) =>
       googleTools.listAnalyticsProperties.execute({
         connection,
