@@ -167,6 +167,9 @@ runtimeConformanceDescribe("runtime contract conformance e2e", () => {
           if (report.manifest.scheduledProviderCalls) {
             expectedChecks.push("scheduled_provider_calls");
           }
+          if (report.manifest.attachments) {
+            expectedChecks.push("attachments");
+          }
           expect(report.checks.map((check) => check.name)).toEqual(
             expectedChecks
           );
