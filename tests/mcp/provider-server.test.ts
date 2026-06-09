@@ -1000,6 +1000,93 @@ describe("handleProviderMcpRequest", () => {
     store.close();
   });
 
+  test("executes Google Slides copy through provider MCP default dependencies", async () => {
+    const issuer = createRuntimeJwtIssuer({ issuer: config.runtimeJwtIssuer });
+    const store = createTokenStore(":memory:");
+    const runtime = store.getOrCreateAgentRuntime({
+      workspaceId: "T123",
+      slackUserId: "U123",
+      engine: "openclaw",
+      endpointUrl: "http://runtime-u123:8080",
+      authTokenHash: "hash-u123",
+      statePath: "/data/runtimes/u123/state",
+      configPath: "/data/runtimes/u123/config/openclaw.json",
+      workspacePath: "/data/runtimes/u123/workspace"
+    });
+    store.upsertProviderConnection({
+      provider: "google",
+      email: "person@example.com",
+      slackUserId: "U123",
+      providerLogin: "google-user@example.com",
+      accessToken: "google-token",
+      refreshToken: null,
+      accessTokenExpiresAt: null
+    });
+    const token = issuer.issueRuntimeJwt({
+      audience: "http://agentgateway:3000/mcp",
+      runtimeId: runtime.id,
+      workspaceId: "T123",
+      slackUserId: "U123"
+    });
+    const originalFetch = globalThis.fetch;
+    let requestedUrl = "";
+    let requestBody: unknown;
+    globalThis.fetch = (async (input, init) => {
+      requestedUrl = String(input);
+      expect(new Headers(init?.headers).get("authorization")).toBe(
+        "Bearer google-token"
+      );
+      requestBody = JSON.parse(String(init?.body));
+      return Response.json({
+        id: "deck-copy",
+        name: "ApeLogic Template Copy",
+        mimeType: "application/vnd.google-apps.presentation",
+        webViewLink: "https://docs.google.com/presentation/d/deck-copy"
+      });
+    }) as typeof fetch;
+
+    try {
+      const response = await handleProviderMcpRequest(
+        config,
+        store,
+        issuer,
+        mcpRequest(
+          {
+            method: "tools/call",
+            params: {
+              name: "google_slides_copy_presentation",
+              arguments: {
+                presentationId: "deck-template",
+                name: "ApeLogic Template Copy"
+              }
+            }
+          },
+          token
+        )
+      );
+      const body = readMcpBody(await response.text());
+      const toolResult = JSON.parse(body.result.content[0].text);
+
+      expect(response.status).toBe(200);
+      expect(new URL(requestedUrl).pathname).toBe(
+        "/drive/v3/files/deck-template/copy"
+      );
+      expect(requestBody).toEqual({ name: "ApeLogic Template Copy" });
+      expect(toolResult).toEqual({
+        classification: "user_private",
+        content: {
+          id: "deck-copy",
+          name: "ApeLogic Template Copy",
+          mimeType: "application/vnd.google-apps.presentation",
+          webViewLink: "https://docs.google.com/presentation/d/deck-copy"
+        }
+      });
+    } finally {
+      globalThis.fetch = originalFetch;
+      store.close();
+    }
+  });
+
   test("executes Google Slides placeholder fills through provider MCP", async () => {
     const issuer = createRuntimeJwtIssuer({ issuer: config.runtimeJwtIssuer });
     const store = createTokenStore(":memory:");
