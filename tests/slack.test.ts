@@ -291,6 +291,18 @@ describe("formatAgentProgressEvent", () => {
         "old text"
       )
     ).toBe("1. ApeLogic Presentation Template");
+
+    expect(
+      formatAgentProgressEvent(
+        {
+          type: "message_replace",
+          text: "Done: *<https://\ndocs.google.com/presentation/d/deck-id/edit|ApeLogic>*"
+        },
+        "old text"
+      )
+    ).toBe(
+      "Done: *<https://docs.google.com/presentation/d/deck-id/edit|ApeLogic>*"
+    );
   });
 
   test("accumulates runtime message deltas in Slack progress messages", () => {
@@ -648,6 +660,56 @@ describe("formatAgentProgressEvent", () => {
       expect(JSON.stringify(updates.at(-1)?.blocks)).not.toContain("▉");
       expect(JSON.stringify(updates.at(-1)?.blocks)).toContain(
         "I found *1\\n* Google Slides file."
+      );
+    } finally {
+      Date.now = originalNow;
+    }
+  });
+
+  test("normalizes Hermes split Slack links in final response text", async () => {
+    const updates: string[] = [];
+    const originalNow = Date.now;
+    Date.now = () => 1_500;
+    try {
+      const progressMessage = {
+        channel: "D123",
+        ts: "123.456",
+        text: "Starting agent runtime...",
+        startedAtMs: 0,
+        streamedText:
+          "Done: *<https://\ndocs.google.com/presentation/d/deck-id/edit|ApeLogic>*",
+        toolStartedAtMs: {},
+        toolLinesByCallId: {},
+        toolCallOrder: []
+      };
+      const client = {
+        chat: {
+          update: async (input: { text: string }) => {
+            updates.push(input.text);
+            return {};
+          }
+        }
+      };
+
+      await postConversationResponse(client as never, {
+        response: {
+          visibility: "dm",
+          classification: "user_private",
+          text: "Done: *<https://\ndocs.google.com/presentation/d/deck-id/edit|ApeLogic>*",
+          usage: {
+            inputTokens: 2,
+            outputTokens: 1,
+            totalTokens: 3,
+            usageSource: "provider-output"
+          }
+        },
+        channel: "D123",
+        user: "U123",
+        progressMessage
+      });
+
+      expect(updates.at(-1)).toBe(
+        "Done: *<https://docs.google.com/presentation/d/deck-id/edit|ApeLogic>*\n\n_Final result in 1.5s (3 tokens)._"
       );
     } finally {
       Date.now = originalNow;
