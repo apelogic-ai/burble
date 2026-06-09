@@ -26,8 +26,10 @@ from gateway.platforms.base import (
 from gateway.session import build_session_key
 
 logger = logging.getLogger(__name__)
-HERMES_STREAM_CURSOR = " ▉"
-HERMES_STREAM_CURSOR_GLYPHS = ("▉", "■")
+HERMES_STREAM_CURSOR = "[[BURBLE_STREAM_CURSOR]]"
+HERMES_LEGACY_STREAM_CURSOR = " ▉"
+HERMES_STREAM_CURSOR_GLYPHS = (HERMES_STREAM_CURSOR, "\u2063", "▉", "■")
+HERMES_STREAM_CURSORS = (HERMES_STREAM_CURSOR, HERMES_LEGACY_STREAM_CURSOR)
 
 
 def _env(name: str, default: str = "") -> str:
@@ -538,7 +540,8 @@ class BurbleAdapter(BasePlatformAdapter):
 
     @staticmethod
     def _is_stream_preview(text: str) -> bool:
-        return str(text or "").endswith(HERMES_STREAM_CURSOR)
+        value = str(text or "")
+        return any(value.endswith(cursor) for cursor in HERMES_STREAM_CURSORS)
 
     async def _post_runtime_callback(self, run_id: str, payload: dict[str, Any]) -> bool:
         callback = f"{self.runtime_callback_url}/{quote(run_id, safe='')}/messages"

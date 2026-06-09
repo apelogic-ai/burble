@@ -4887,6 +4887,7 @@ export async function postConversationResponse(
     threadTs?: string;
   }
 ): Promise<void> {
+  const responseBlocks = sanitizeConversationResponseBlocks(input.response.blocks);
   if (input.progressMessage && input.response.visibility !== "ephemeral") {
     const finalProgressLine = formatSlackFinalProgressLine(
       Date.now() - input.progressMessage.startedAtMs,
@@ -4901,7 +4902,7 @@ export async function postConversationResponse(
       try {
         await stopSlackNativeStream(client, input.progressMessage, {
           markdownText: finalStreamText,
-          blocks: input.response.blocks
+          blocks: responseBlocks
         });
         const hasToolProgress = input.progressMessage.toolCallOrder.some((callId) =>
           Boolean(input.progressMessage?.toolLinesByCallId[callId]?.trim())
@@ -4934,7 +4935,7 @@ export async function postConversationResponse(
         channel: input.progressMessage.channel,
         ts: input.progressMessage.ts,
         text: finishedText,
-        ...(input.response.blocks ? { blocks: input.response.blocks } : {})
+        ...(responseBlocks ? { blocks: responseBlocks } : {})
       });
       return;
     }
@@ -4954,7 +4955,7 @@ export async function postConversationResponse(
         ? { thread_ts: input.threadTs }
         : {}),
       text: renderConversationResponseText(input.response),
-      ...(input.response.blocks ? { blocks: input.response.blocks } : {})
+      ...(responseBlocks ? { blocks: responseBlocks } : {})
     });
     return;
   }
@@ -4964,7 +4965,7 @@ export async function postConversationResponse(
       channel: input.channel,
       user: input.user,
       text: renderConversationResponseText(input.response),
-      ...(input.response.blocks ? { blocks: input.response.blocks } : {})
+      ...(responseBlocks ? { blocks: responseBlocks } : {})
     });
     return;
   }
@@ -4973,7 +4974,7 @@ export async function postConversationResponse(
     await client.chat.postMessage({
       channel: input.user,
       text: renderConversationResponseText(input.response),
-      ...(input.response.blocks ? { blocks: input.response.blocks } : {})
+      ...(responseBlocks ? { blocks: responseBlocks } : {})
     });
     return;
   }
@@ -4982,7 +4983,7 @@ export async function postConversationResponse(
     channel: input.channel,
     ...(input.threadTs ? { thread_ts: input.threadTs } : {}),
     text: renderConversationResponseText(input.response),
-    ...(input.response.blocks ? { blocks: input.response.blocks } : {})
+    ...(responseBlocks ? { blocks: responseBlocks } : {})
   });
 }
 
@@ -5000,6 +5001,33 @@ function renderConversationResponseText(response: ConversationResponse): string 
       return `- ${label} (${attachment.kind}, ${attachment.mimeType})`;
     })
   ].join("\n");
+}
+
+function sanitizeConversationResponseBlocks(blocks: unknown[] | undefined): unknown[] | undefined {
+  if (!blocks) {
+    return undefined;
+  }
+
+  return sanitizeRuntimeStreamValue(blocks) as unknown[];
+}
+
+function sanitizeRuntimeStreamValue(value: unknown): unknown {
+  if (typeof value === "string") {
+    return sanitizeRuntimeStreamText(value);
+  }
+  if (Array.isArray(value)) {
+    return value.map((item) => sanitizeRuntimeStreamValue(item));
+  }
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, entry]) => [
+        key,
+        sanitizeRuntimeStreamValue(entry)
+      ])
+    );
+  }
+
+  return value;
 }
 
 async function postMentionWorkingState(
@@ -5447,10 +5475,19 @@ function appendSlackStreamedText(currentText: string, delta: string): string {
   return currentText ? `${currentText}${cleanedDelta}` : cleanedDelta.trimStart();
 }
 
-const hermesRuntimeStreamCursorPattern = /[ \t]*[▉■]/g;
+const hermesRuntimeStreamCursorPattern =
+  /(?:[ \t]*\[\[BURBLE_STREAM_CURSOR\]\]|[ \t]*[\u2063▉■])/g;
 
 function sanitizeRuntimeStreamText(text: string): string {
-  return text.replace(hermesRuntimeStreamCursorPattern, "");
+  hermesRuntimeStreamCursorPattern.lastIndex = 0;
+  if (!hermesRuntimeStreamCursorPattern.test(text)) {
+    return text;
+  }
+  hermesRuntimeStreamCursorPattern.lastIndex = 0;
+  return text
+    .replace(hermesRuntimeStreamCursorPattern, "")
+    .replace(/([^\n])\n+([,.;:!?])/g, "$1$2")
+    .replace(/(\d+\.)[ \t]*\n+(?=\S)/g, "$1 ");
 }
 
 function isAgentProgressPlaceholder(text: string): boolean {

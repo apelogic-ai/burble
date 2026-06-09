@@ -271,6 +271,26 @@ describe("formatAgentProgressEvent", () => {
         "old text"
       )
     ).toBe("Google Analytics properties\n\n1. ApeLogic");
+
+    expect(
+      formatAgentProgressEvent(
+        {
+          type: "message_replace",
+          text: "I found 1 Google Slides file\u2063\n, sorted by most recently touched:"
+        },
+        "old text"
+      )
+    ).toBe("I found 1 Google Slides file, sorted by most recently touched:");
+
+    expect(
+      formatAgentProgressEvent(
+        {
+          type: "message_replace",
+          text: "1. [[BURBLE_STREAM_CURSOR]]\nApeLogic Presentation Template"
+        },
+        "old text"
+      )
+    ).toBe("1. ApeLogic Presentation Template");
   });
 
   test("accumulates runtime message deltas in Slack progress messages", () => {
@@ -570,6 +590,65 @@ describe("formatAgentProgressEvent", () => {
       expect(updates).toEqual([
         "Most recently\n\ntouched Google Slides file\n\n_Final result in 1.5s (3 tokens)._"
       ]);
+    } finally {
+      Date.now = originalNow;
+    }
+  });
+
+  test("strips Hermes stream cursor glyphs from final response blocks", async () => {
+    const updates: Array<{ text: string; blocks?: unknown[] }> = [];
+    const originalNow = Date.now;
+    Date.now = () => 1_500;
+    try {
+      const progressMessage = {
+        channel: "D123",
+        ts: "123.456",
+        text: "Starting agent runtime...",
+        startedAtMs: 0,
+        streamedText: "I found 1 Google Slides file.",
+        toolStartedAtMs: {},
+        toolLinesByCallId: {},
+        toolCallOrder: []
+      };
+      const client = {
+        chat: {
+          update: async (input: { text: string; blocks?: unknown[] }) => {
+            updates.push(input);
+            return {};
+          }
+        }
+      };
+
+      await postConversationResponse(client as never, {
+        response: {
+          visibility: "dm",
+          classification: "user_private",
+          text: "I found 1 Google Slides file.",
+          blocks: [
+            {
+              type: "section",
+              text: {
+                type: "mrkdwn",
+                text: "I found *1 ▉\n* Google Slides file."
+              }
+            }
+          ],
+          usage: {
+            inputTokens: 2,
+            outputTokens: 1,
+            totalTokens: 3,
+            usageSource: "provider-output"
+          }
+        },
+        channel: "D123",
+        user: "U123",
+        progressMessage
+      });
+
+      expect(JSON.stringify(updates.at(-1)?.blocks)).not.toContain("▉");
+      expect(JSON.stringify(updates.at(-1)?.blocks)).toContain(
+        "I found *1\\n* Google Slides file."
+      );
     } finally {
       Date.now = originalNow;
     }

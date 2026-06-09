@@ -733,8 +733,15 @@ print(json.dumps({
     expect(config).toContain("burble-platform");
     expect(config).toContain("burble-provider-tool");
     expect(config).toContain(
-      'streaming:\n  enabled: true\n  transport: edit\n  cursor: " ▉"'
+      [
+        "streaming:",
+        "  enabled: true",
+        "  transport: edit",
+        '  cursor: "[[BURBLE_STREAM_CURSOR]]"'
+      ].join("\n")
     );
+    expect(config).not.toContain("\u2063");
+    expect(config).not.toContain("▉");
     expect(config).not.toContain("mcp_servers:");
   });
 
@@ -748,6 +755,7 @@ os.environ["BURBLE_INTERNAL_TOKEN"] = "token"
 os.environ["BURBLE_RUNTIME_ID"] = "rt_123"
 
 async def main():
+    cursor = "[[BURBLE_STREAM_CURSOR]]"
     adapter = mod.BurbleAdapter(
         types.SimpleNamespace(
             extra={
@@ -757,8 +765,8 @@ async def main():
     )
     adapter._pending_runs["route-1"] = "run-1"
 
-    sent = await adapter.send("route-1", "Hello ▉")
-    await adapter.edit_message("route-1", sent.message_id, "Hello world ▉")
+    sent = await adapter.send("route-1", f"Hello{cursor}")
+    await adapter.edit_message("route-1", sent.message_id, f"Hello world{cursor}")
     await adapter.edit_message("route-1", sent.message_id, "Hello world", finalize=True)
 
     print(json.dumps({

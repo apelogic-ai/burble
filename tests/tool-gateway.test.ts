@@ -1515,6 +1515,50 @@ describe("handleToolGatewayRequest", () => {
     ]);
   });
 
+  test("strips Hermes stream cursors from runtime conversation sends", async () => {
+    const response = await handleToolGatewayRequest(
+      config,
+      createStore(null, runtime),
+      "conversation.sendMessage",
+      request(
+        "conversation.sendMessage",
+        {
+          input: {
+            text:
+              "I found 1 Google Slides file\u2063\n, sorted by most recently touched:\n\n1. [[BURBLE_STREAM_CURSOR]]\nApeLogic Presentation Template"
+          },
+          conversation: {
+            source: "slack",
+            workspaceId: "T123",
+            channelId: "C123",
+            rootId: "channel:C123:thread:1779841118.237",
+            isDirectMessage: false
+          }
+        },
+        "runtime-token-u123",
+        "rt_u123"
+      ),
+      {
+        postActiveConversationMessage: async (input) => {
+          expect(input).toEqual({
+            transport: "slack",
+            channelId: "C123",
+            text:
+              "I found 1 Google Slides file, sorted by most recently touched:\n\n1. ApeLogic Presentation Template",
+            threadTs: "1779841118.237"
+          });
+          return {
+            transport: "slack",
+            channelId: "C123",
+            messageId: "1779841120.000"
+          };
+        }
+      }
+    );
+
+    expect(response.status).toBe(200);
+  });
+
   test("lets a runtime refresh heartbeat without provider credentials or audit noise", async () => {
     const runtimeEvents: unknown[] = [];
     const touchedRuntimeIds: string[] = [];

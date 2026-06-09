@@ -298,7 +298,10 @@ export async function handleToolGatewayRequest(
     if (!isConversationSendInput(body?.input)) {
       return new Response("Invalid tool input", { status: 400 });
     }
-    const sendInput = body.input;
+    const sendInput = {
+      ...body.input,
+      text: sanitizeRuntimeConversationText(body.input.text)
+    };
     const destination = sendInput.routeId
       ? resolveConversationRouteDestination(store, auth.runtime, sendInput.routeId)
       : resolveActiveConversationDestination(auth.runtime, body?.conversation);
@@ -3352,12 +3355,13 @@ function renderTextWithAttachments(
   text: string,
   attachments?: ConversationAttachment[]
 ): string {
+  const cleanText = sanitizeRuntimeConversationText(text);
   if (!attachments || attachments.length === 0) {
-    return text;
+    return cleanText;
   }
 
   return [
-    text,
+    cleanText,
     "",
     "*Attachments:*",
     ...attachments.map((attachment) => {
@@ -3365,6 +3369,21 @@ function renderTextWithAttachments(
       return `- ${label} (${attachment.kind}, ${attachment.mimeType})`;
     })
   ].join("\n");
+}
+
+const runtimeConversationCursorPattern =
+  /(?:[ \t]*\[\[BURBLE_STREAM_CURSOR\]\]|[ \t]*[\u2063▉■])/g;
+
+function sanitizeRuntimeConversationText(text: string): string {
+  runtimeConversationCursorPattern.lastIndex = 0;
+  if (!runtimeConversationCursorPattern.test(text)) {
+    return text;
+  }
+  runtimeConversationCursorPattern.lastIndex = 0;
+  return text
+    .replace(runtimeConversationCursorPattern, "")
+    .replace(/([^\n])\n+([,.;:!?])/g, "$1$2")
+    .replace(/(\d+\.)[ \t]*\n+(?=\S)/g, "$1 ");
 }
 
 const allowedMutatingAtlassianMcpTools = new Set([
