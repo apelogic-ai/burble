@@ -3039,6 +3039,121 @@ describe("runOpenClawCliRequest", () => {
     expect(events[3]).toMatchObject({ type: "tool_result" });
   });
 
+  test("strips mixed OpenClaw gateway prose and tool-call JSON from Slack output", async () => {
+    const events: Array<RunEvent> = [];
+    const mixedText = [
+      "Done — I created the deck.",
+      "",
+      JSON.stringify({
+        tool_call: {
+          name: "google.slidesCreateSlide",
+          arguments: {
+            presentationId: "deck-1",
+            predefinedLayout: "TITLE_AND_BODY"
+          }
+        }
+      })
+    ].join("\n");
+
+    await withMockFetch(
+      (async (_input, init) => {
+        const requestBody = JSON.parse(String(init?.body ?? "{}")) as Record<
+          string,
+          unknown
+        >;
+        expect(requestBody.stream).toBe(true);
+        const stream = new ReadableStream({
+          start(controller) {
+            const encoder = new TextEncoder();
+            for (const delta of [
+              "Done — I created the deck.",
+              "\n\n",
+              JSON.stringify({
+                tool_call: {
+                  name: "google.slidesCreateSlide",
+                  arguments: {
+                    presentationId: "deck-1",
+                    predefinedLayout: "TITLE_AND_BODY"
+                  }
+                }
+              })
+            ]) {
+              controller.enqueue(
+                encoder.encode(
+                  `data: ${JSON.stringify({
+                    type: "response.output_text.delta",
+                    delta
+                  })}\n\n`
+                )
+              );
+            }
+            controller.enqueue(
+              encoder.encode(
+                `data: ${JSON.stringify({
+                  type: "response.completed",
+                  response: openResponsesText(mixedText)
+                })}\n\n`
+              )
+            );
+            controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+            controller.close();
+          }
+        });
+        return new Response(stream, {
+          status: 200,
+          headers: { "content-type": "text/event-stream" }
+        });
+      }) as typeof fetch,
+      async () => {
+        for await (const event of runOpenClawCliRequestStream(
+          {
+            runId: "run-gateway-mixed-tool-tail",
+            executionMode: "native-runtime",
+            input: {
+              text: "populate the deck",
+              connections: {
+                github: { connected: false },
+                google: {
+                  connected: true,
+                  email: "person@example.com",
+                  providerLogin: "person@example.com"
+                }
+              }
+            }
+          },
+          { ...config, engine: "openclaw-gateway" },
+          async () => ({
+            classification: "user_private",
+            content: []
+          }),
+          async function* () {
+            throw new Error("unexpected cli call");
+          },
+          () => undefined
+        )) {
+          events.push(event);
+        }
+      }
+    );
+
+    const streamedText = events
+      .filter((event): event is Extract<RunEvent, { type: "message_delta" }> =>
+        event.type === "message_delta"
+      )
+      .map((event) => event.text)
+      .join("");
+    expect(streamedText).toBe("Done — I created the deck.");
+    expect(streamedText).not.toContain("tool_call");
+    expect(events.some((event) => event.type === "tool_call")).toBe(false);
+    expect(events.at(-1)).toMatchObject({
+      type: "final",
+      response: {
+        classification: "user_private",
+        text: "Done — I created the deck."
+      }
+    });
+  });
+
   test("yields stdout deltas before the OpenClaw process exits", async () => {
     let resolveExit!: () => void;
     const exitGate = new Promise<void>((resolve) => {

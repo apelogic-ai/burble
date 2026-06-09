@@ -241,6 +241,35 @@ describe("formatAgentProgressEvent", () => {
     ).toBe("Rewritten answer");
   });
 
+  test("strips leaked tool-call protocol from streaming progress", () => {
+    const leakedProtocol = JSON.stringify({
+      tool_call: {
+        name: "google.slidesCreateSlide",
+        arguments: { presentationId: "deck-1" }
+      }
+    });
+
+    expect(
+      formatAgentProgressEvent(
+        {
+          type: "message_delta",
+          text: `\n\n${leakedProtocol}`
+        },
+        "Done — I created the deck."
+      )
+    ).toBe("Done — I created the deck.");
+
+    expect(
+      formatAgentProgressEvent(
+        {
+          type: "message_replace",
+          text: `Done — I created the deck.\n\n${leakedProtocol}`
+        },
+        ""
+      )
+    ).toBe("Done — I created the deck.");
+  });
+
   test("strips Hermes stream cursor glyphs from response progress", () => {
     expect(
       formatAgentProgressEvent(
