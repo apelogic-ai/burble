@@ -767,7 +767,7 @@ function googleApiErrorResult(error: GoogleApiError): GoogleAuthErrorResult {
       content: {
         error: "google_drive_file_not_accessible",
         message:
-          "Google Drive blocked access to that file. Burble can search Drive metadata, but with the current `drive.file` permission it can only read or edit files it created, or files explicitly opened for this app. Reconnecting Google will not grant access to arbitrary existing files."
+          "Google Drive blocked access to that file. The connected Google account may not have access, or Burble's stored Google authorization may not include full Drive access yet. If Google scopes were just expanded, reconnect Google with `/auth google`; otherwise share the file with the connected Google account."
       }
     };
   }

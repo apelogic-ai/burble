@@ -976,7 +976,7 @@ async function runAiSdkAgent(
       });
       tools.google_get_drive_file = tool({
         description:
-          "Get Google Drive file metadata and optionally text content for an app-accessible file. With the current drive.file permission, app-accessible means files Burble created or files explicitly opened for this app.",
+          "Get Google Drive file metadata and optionally text content for a file accessible to the connected Google account and granted Drive scopes.",
         inputSchema: z.object({
           fileId: z.string().min(1),
           includeContent: z.boolean().optional()
@@ -998,7 +998,7 @@ async function runAiSdkAgent(
       });
       tools.google_update_drive_text_file = tool({
         description:
-          "Replace the text contents of an app-accessible Google Drive text file. With the current drive.file permission, app-accessible means files Burble created or files explicitly opened for this app. Use only when clearly requested.",
+          "Replace the text contents of a Google Drive text file accessible to the connected Google account and granted Drive scopes. Use only when clearly requested.",
         inputSchema: z.object({
           fileId: z.string().min(1),
           text: z.string().max(200_000),
@@ -1021,7 +1021,7 @@ async function runAiSdkAgent(
       });
       tools.google_append_to_drive_text_file = tool({
         description:
-          "Append text to an app-accessible Google Drive text file. With the current drive.file permission, app-accessible means files Burble created or files explicitly opened for this app; reconnecting Google does not grant access to arbitrary existing Drive files. Use only when clearly requested.",
+          "Append text to a Google Drive text file accessible to the connected Google account and granted Drive scopes. Use only when clearly requested.",
         inputSchema: z.object({
           fileId: z.string().min(1),
           text: z.string().max(200_000),

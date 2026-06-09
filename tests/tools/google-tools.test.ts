@@ -71,7 +71,7 @@ describe("createGoogleTools", () => {
     });
   });
 
-  test("explains Drive file app-access failures without asking for reauth", async () => {
+  test("explains Drive file access failures without leaking Google details", async () => {
     const tools = createGoogleTools({
       getGoogleUser: async () => ({
         email: "person@google.example"
@@ -103,11 +103,11 @@ describe("createGoogleTools", () => {
     expect(result.content).toEqual({
       error: "google_drive_file_not_accessible",
       message:
-        "Google Drive blocked access to that file. Burble can search Drive metadata, but with the current `drive.file` permission it can only read or edit files it created, or files explicitly opened for this app. Reconnecting Google will not grant access to arbitrary existing files."
+        "Google Drive blocked access to that file. The connected Google account may not have access, or Burble's stored Google authorization may not include full Drive access yet. If Google scopes were just expanded, reconnect Google with `/auth google`; otherwise share the file with the connected Google account."
     });
     expect(JSON.stringify(result.content)).not.toContain("146084443593");
     expect(JSON.stringify(result.content)).not.toContain("1isJjEDSMUH3g");
-    expect(JSON.stringify(result.content)).not.toContain("/auth google");
+    expect(JSON.stringify(result.content)).toContain("/auth google");
   });
 
   test("treats generic Drive file permission failures as file access errors", async () => {
@@ -141,7 +141,44 @@ describe("createGoogleTools", () => {
     expect(result.content).toMatchObject({
       error: "google_drive_file_not_accessible"
     });
-    expect(JSON.stringify(result.content)).not.toContain("/auth google");
+    expect(JSON.stringify(result.content)).toContain("/auth google");
+  });
+
+  test("explains Slides copy access failures as reconnect-or-share problems", async () => {
+    const tools = createGoogleTools({
+      getGoogleUser: async () => ({
+        email: "person@google.example"
+      }),
+      searchGoogleDriveFiles: async () => [],
+      createGoogleDriveTextFile: async () => ({
+        id: "file-1",
+        name: "Test"
+      }),
+      copyGoogleSlidesPresentation: async () => {
+        throw new GoogleApiError(
+          "Google Slides presentation copy failed: The user has not granted the app 146084443593 read access to the file deck-template",
+          403
+        );
+      },
+      searchGoogleCalendarEvents: async () => [],
+      searchGoogleMailMessages: async () => []
+    });
+
+    const result = await tools.copySlidesPresentation.execute({
+      connection,
+      input: {
+        presentationId: "deck-template",
+        name: "Template Copy"
+      }
+    });
+
+    expect(result.content).toEqual({
+      error: "google_drive_file_not_accessible",
+      message:
+        "Google Drive blocked access to that file. The connected Google account may not have access, or Burble's stored Google authorization may not include full Drive access yet. If Google scopes were just expanded, reconnect Google with `/auth google`; otherwise share the file with the connected Google account."
+    });
+    expect(JSON.stringify(result.content)).not.toContain("146084443593");
+    expect(JSON.stringify(result.content)).not.toContain("deck-template");
   });
 
   test("refreshes an expiring token and persists the refreshed connection", async () => {
