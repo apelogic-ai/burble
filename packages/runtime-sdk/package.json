@@ -10,6 +10,7 @@
     "./runtime-contract-http-client": "./src/runtime-contract-http-client.ts",
     "./runtime-contract-harness": "./src/runtime-contract-harness.ts",
     "./runtime-engines": "./src/runtime-engines.ts",
+    "./runtime-text-protocol": "./src/runtime-text-protocol.ts",
     "./server": "./src/server.ts",
     "./tool-gateway": "./src/tool-gateway.ts"
   },

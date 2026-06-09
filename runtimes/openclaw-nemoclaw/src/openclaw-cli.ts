@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
+import { stripRuntimeToolCallProtocolFragments } from "@burble/runtime-sdk/runtime-text-protocol";
 import { readFileSync } from "node:fs";
 import { mkdir, readFile, unlink } from "node:fs/promises";
 import { join } from "node:path";
@@ -655,7 +656,7 @@ async function* collectOpenClawGatewayHttpResponse(
   const deltas: string[] = [];
   let wakeDeltas: (() => void) | null = null;
   const pushDelta = (delta: string) => {
-    const sanitizedDelta = stripToolCallProtocolFragments(delta);
+    const sanitizedDelta = stripRuntimeToolCallProtocolFragments(delta);
     if (sanitizedDelta.trim()) {
       deltas.push(sanitizedDelta);
     }
@@ -3323,7 +3324,7 @@ function readPlannedToolCall(
   stdout: string,
   catalog: ToolCatalogItem[]
 ): PlannedToolCall | null {
-  const strippedProtocol = stripToolCallProtocolFragments(stdout).trim();
+  const strippedProtocol = stripRuntimeToolCallProtocolFragments(stdout).trim();
   if (strippedProtocol && strippedProtocol !== stdout.trim()) {
     return null;
   }
@@ -4439,7 +4440,7 @@ function hashSessionKey(value: string): string {
 }
 
 function extractOpenClawText(stdout: string): string | null {
-  const trimmed = stripToolCallProtocolFragments(stdout).trim();
+  const trimmed = stripRuntimeToolCallProtocolFragments(stdout).trim();
   if (!trimmed) {
     return null;
   }
@@ -4518,86 +4519,6 @@ function extractOpenResponsesText(responseText: string): string | null {
     .trim();
 
   return texts || null;
-}
-
-function stripToolCallProtocolFragments(text: string): string {
-  let output = "";
-  let index = 0;
-  let removedProtocol = false;
-  while (index < text.length) {
-    if (text[index] !== "{") {
-      output += text[index];
-      index += 1;
-      continue;
-    }
-
-    const end = findJsonObjectEnd(text, index);
-    if (end === null) {
-      output += text[index];
-      index += 1;
-      continue;
-    }
-
-    const candidate = text.slice(index, end + 1);
-    const parsed = parseJsonObject(candidate);
-    if (parsed && typeof parsed.tool_call === "object" && parsed.tool_call !== null) {
-      removedProtocol = true;
-      index = end + 1;
-      continue;
-    }
-
-    output += candidate;
-    index = end + 1;
-  }
-
-  return removedProtocol
-    ? output
-        .replace(/[ \t]+\n/g, "\n")
-        .replace(/\n{3,}/g, "\n\n")
-        .trim()
-    : text;
-}
-
-function findJsonObjectEnd(text: string, start: number): number | null {
-  let depth = 0;
-  let inString = false;
-  let escaped = false;
-
-  for (let index = start; index < text.length; index += 1) {
-    const char = text[index];
-
-    if (inString) {
-      if (escaped) {
-        escaped = false;
-      } else if (char === "\\") {
-        escaped = true;
-      } else if (char === "\"") {
-        inString = false;
-      }
-      continue;
-    }
-
-    if (char === "\"") {
-      inString = true;
-      continue;
-    }
-
-    if (char === "{") {
-      depth += 1;
-      continue;
-    }
-
-    if (char !== "}") {
-      continue;
-    }
-
-    depth -= 1;
-    if (depth === 0) {
-      return index;
-    }
-  }
-
-  return null;
 }
 
 function readLastJsonResponseText(value: string): string | null {
