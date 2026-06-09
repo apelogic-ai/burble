@@ -158,11 +158,13 @@ function sign(config: Config, encodedPayload: string): string {
 }
 
 function capabilitySecret(config: Config): string {
-  return (
-    config.internalApiToken ??
-    config.agentRuntimeTokenSecret ??
-    config.slackBotToken
-  );
+  const secret = config.internalApiToken ?? config.agentRuntimeTokenSecret;
+  if (!secret) {
+    throw new Error(
+      "Attachment capability signing requires INTERNAL_API_TOKEN or AGENT_RUNTIME_TOKEN_SECRET"
+    );
+  }
+  return secret;
 }
 
 function safeEqual(left: string, right: string): boolean {

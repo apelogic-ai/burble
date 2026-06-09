@@ -2396,6 +2396,49 @@ describe("handleToolGatewayRequest", () => {
     expect(await response.text()).toBe("Attachment not available for this run");
   });
 
+  test("rejects tampered attachment capability signatures", async () => {
+    const attachmentId = createConversationAttachmentCapability(config, {
+      runtimeId: "rt_u123",
+      runId: "run_123",
+      source: "slack",
+      externalId: "F123",
+      expiresAtMs: Date.now() + 60_000
+    });
+    const tamperedAttachmentId = `${attachmentId.slice(0, -1)}${
+      attachmentId.endsWith("a") ? "b" : "a"
+    }`;
+    const response = await handleToolGatewayRequest(
+      config,
+      createStore(null, runtime),
+      "conversation.getAttachment",
+      request(
+        "conversation.getAttachment",
+        {
+          runId: "run_123",
+          input: { attachmentId: tamperedAttachmentId },
+          attachments: [
+            {
+              id: tamperedAttachmentId,
+              source: "slack",
+              kind: "file",
+              mimeType: "text/plain"
+            }
+          ]
+        },
+        "runtime-token-u123",
+        "rt_u123"
+      ),
+      {
+        fetchConversationAttachment: async () => {
+          throw new Error("unexpected attachment fetch");
+        }
+      }
+    );
+
+    expect(response.status).toBe(404);
+    expect(await response.text()).toBe("Attachment not available for this run");
+  });
+
   test("rejects unsigned runtime attachment ids", async () => {
     const response = await handleToolGatewayRequest(
       config,
