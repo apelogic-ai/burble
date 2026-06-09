@@ -1,4 +1,5 @@
 import { App, LogLevel } from "@slack/bolt";
+import { stripRuntimeToolCallProtocolFragments } from "@burble/runtime-sdk/runtime-text-protocol";
 import type { View } from "@slack/types";
 import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
@@ -5487,7 +5488,7 @@ const hermesRuntimeStreamCursorPattern =
 function sanitizeRuntimeStreamText(text: string): string {
   hermesRuntimeStreamCursorPattern.lastIndex = 0;
   const hasHermesCursor = hermesRuntimeStreamCursorPattern.test(text);
-  let sanitized = text;
+  let sanitized = stripRuntimeToolCallProtocolFragments(text);
   if (hasHermesCursor) {
     hermesRuntimeStreamCursorPattern.lastIndex = 0;
     sanitized = sanitized

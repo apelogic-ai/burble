@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
+import { stripRuntimeToolCallProtocolFragments } from "@burble/runtime-sdk/runtime-text-protocol";
 import { readFileSync } from "node:fs";
 import { mkdir, readFile, unlink } from "node:fs/promises";
 import { join } from "node:path";
@@ -655,7 +656,10 @@ async function* collectOpenClawGatewayHttpResponse(
   const deltas: string[] = [];
   let wakeDeltas: (() => void) | null = null;
   const pushDelta = (delta: string) => {
-    deltas.push(delta);
+    const sanitizedDelta = stripRuntimeToolCallProtocolFragments(delta);
+    if (sanitizedDelta.trim()) {
+      deltas.push(sanitizedDelta);
+    }
     wakeDeltas?.();
     wakeDeltas = null;
   };
@@ -3320,6 +3324,11 @@ function readPlannedToolCall(
   stdout: string,
   catalog: ToolCatalogItem[]
 ): PlannedToolCall | null {
+  const strippedProtocol = stripRuntimeToolCallProtocolFragments(stdout).trim();
+  if (strippedProtocol && strippedProtocol !== stdout.trim()) {
+    return null;
+  }
+
   const parsed = readLastJsonObject(stdout);
   const toolCall =
     parsed && typeof parsed.tool_call === "object" && parsed.tool_call !== null
@@ -4431,7 +4440,7 @@ function hashSessionKey(value: string): string {
 }
 
 function extractOpenClawText(stdout: string): string | null {
-  const trimmed = stdout.trim();
+  const trimmed = stripRuntimeToolCallProtocolFragments(stdout).trim();
   if (!trimmed) {
     return null;
   }

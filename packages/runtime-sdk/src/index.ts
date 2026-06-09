@@ -26,6 +26,7 @@ export {
   type RuntimeToolGatewayClient,
   type RuntimeToolGatewayFetch
 } from "./tool-gateway";
+export { stripRuntimeToolCallProtocolFragments } from "./runtime-text-protocol";
 export {
   createRuntimeContractServer,
   type RuntimeContractServer,
