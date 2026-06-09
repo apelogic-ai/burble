@@ -206,7 +206,7 @@ HERMES_PROVIDER_TOOL_HINTS: dict[str, list[dict[str, str]]] = {
 }
 
 DEFAULT_HERMES_PLATFORM_TOOLSETS = ["burble", "cronjob", "web"]
-HERMES_STREAM_CURSOR = " ▉"
+HERMES_STREAM_CURSOR = "\u2063"
 DEFAULT_HERMES_DISABLED_TOOLSETS = [
     "browser",
     "clarify",

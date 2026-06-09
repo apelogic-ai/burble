@@ -5475,7 +5475,7 @@ function appendSlackStreamedText(currentText: string, delta: string): string {
   return currentText ? `${currentText}${cleanedDelta}` : cleanedDelta.trimStart();
 }
 
-const hermesRuntimeStreamCursorPattern = /[ \t]*[▉■]/g;
+const hermesRuntimeStreamCursorPattern = /[ \t]*[\u2063▉■]/g;
 
 function sanitizeRuntimeStreamText(text: string): string {
   return text.replace(hermesRuntimeStreamCursorPattern, "");
