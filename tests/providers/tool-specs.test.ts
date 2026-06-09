@@ -54,9 +54,15 @@ describe("provider tool specs", () => {
     expect(names).toContain("google_analytics_run_report");
     expect(names).toContain("google_slides_probe_template");
     expect(names).toContain("google_slides_copy_presentation");
+    expect(names).toContain("google_slides_fill_placeholders");
     expect(
       googleProviderToolSpecs.find(
         (tool) => tool.name === "google_slides_copy_presentation"
+      )?.risk
+    ).toBe("low_write");
+    expect(
+      googleProviderToolSpecs.find(
+        (tool) => tool.name === "google_slides_fill_placeholders"
       )?.risk
     ).toBe("low_write");
     expect(
@@ -85,6 +91,25 @@ describe("provider tool specs", () => {
 
     expect(schema.to.safeParse(["person@example.com"]).success).toBe(true);
     expect(schema.to.safeParse(["not-an-email"]).success).toBe(false);
+  });
+
+  test("validates object array item formats from YAML", () => {
+    const fillPlaceholders = googleProviderToolSpecs.find(
+      (tool) => tool.name === "google_slides_fill_placeholders"
+    );
+    expect(fillPlaceholders).toBeDefined();
+
+    const schema = providerToolInputSchema(fillPlaceholders!);
+
+    expect(
+      schema.replacements.safeParse([
+        { placeholderType: "TITLE", text: "ApeLogic" }
+      ]).success
+    ).toBe(true);
+    expect(
+      schema.replacements.safeParse([{ placeholderType: "TITLE" }]).success
+    ).toBe(false);
+    expect(schema.replacements.safeParse([]).success).toBe(false);
   });
 
   test("loads Jira MCP tool metadata from YAML", () => {

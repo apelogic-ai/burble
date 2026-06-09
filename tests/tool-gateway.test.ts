@@ -487,6 +487,69 @@ describe("handleToolGatewayRequest", () => {
     });
   });
 
+  test("passes Google Slides placeholder fill inputs to the provider tool", async () => {
+    const response = await handleToolGatewayRequest(
+      config,
+      createStore(googleConnection),
+      "google.slidesFillPlaceholders",
+      request("google.slidesFillPlaceholders", {
+        user: { email: "person@example.com" },
+        input: {
+          presentationId: "deck-copy",
+          replacements: [
+            { placeholderType: "TITLE", text: "ApeLogic" },
+            {
+              placeholderType: "SUBTITLE",
+              text: "Test presentation from template"
+            }
+          ]
+        }
+      }),
+      {
+        fillGoogleSlidesPlaceholders: async (token, input) => {
+          expect(token).toBe("google-token");
+          expect(input).toEqual({
+            presentationId: "deck-copy",
+            replacements: [
+              { placeholderType: "TITLE", text: "ApeLogic" },
+              {
+                placeholderType: "SUBTITLE",
+                text: "Test presentation from template"
+              }
+            ]
+          });
+          return {
+            presentationId: "deck-copy",
+            slideObjectId: "slide-1",
+            updatedPlaceholders: [
+              {
+                placeholderType: "TITLE",
+                objectId: "title-shape",
+                text: "ApeLogic"
+              }
+            ]
+          };
+        }
+      }
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      classification: "user_private",
+      content: {
+        presentationId: "deck-copy",
+        slideObjectId: "slide-1",
+        updatedPlaceholders: [
+          {
+            placeholderType: "TITLE",
+            objectId: "title-shape",
+            text: "ApeLogic"
+          }
+        ]
+      }
+    });
+  });
+
   test("rejects invalid GitHub pull request list options", async () => {
     const response = await handleToolGatewayRequest(
       config,

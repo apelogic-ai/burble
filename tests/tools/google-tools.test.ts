@@ -409,6 +409,62 @@ describe("createGoogleTools", () => {
     });
   });
 
+  test("fills Google Slides placeholders with the caller token", async () => {
+    const tools = createGoogleTools({
+      getGoogleUser: async () => ({
+        email: "person@google.example"
+      }),
+      searchGoogleDriveFiles: async () => [],
+      createGoogleDriveTextFile: async () => ({
+        id: "file-1",
+        name: "Test"
+      }),
+      searchGoogleCalendarEvents: async () => [],
+      searchGoogleMailMessages: async () => [],
+      fillGoogleSlidesPlaceholders: async (token, input) => {
+        expect(token).toBe("google-token");
+        expect(input).toEqual({
+          presentationId: "deck-1",
+          replacements: [{ placeholderType: "TITLE", text: "ApeLogic" }]
+        });
+        return {
+          presentationId: "deck-1",
+          slideObjectId: "slide-1",
+          updatedPlaceholders: [
+            {
+              placeholderType: "TITLE",
+              objectId: "title-shape",
+              text: "ApeLogic"
+            }
+          ]
+        };
+      }
+    });
+
+    const result = await tools.fillSlidesPlaceholders.execute({
+      connection,
+      input: {
+        presentationId: "deck-1",
+        replacements: [{ placeholderType: "TITLE", text: "ApeLogic" }]
+      }
+    });
+
+    expect(result).toEqual({
+      classification: "user_private",
+      content: {
+        presentationId: "deck-1",
+        slideObjectId: "slide-1",
+        updatedPlaceholders: [
+          {
+            placeholderType: "TITLE",
+            objectId: "title-shape",
+            text: "ApeLogic"
+          }
+        ]
+      }
+    });
+  });
+
   test("runs Google Analytics reports with the caller token", async () => {
     const tools = createGoogleTools({
       getGoogleUser: async () => ({

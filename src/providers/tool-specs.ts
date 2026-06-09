@@ -63,7 +63,7 @@ type ProviderEnumInputSpec = BaseInputSpec & {
 
 type ProviderArrayInputSpec = BaseInputSpec & {
   type: "array";
-  items: "string";
+  items: "string" | ProviderObjectInputSpec;
   itemFormat?: "email";
   min?: number;
   max?: number;
@@ -73,6 +73,7 @@ type ProviderArrayInputSpec = BaseInputSpec & {
 
 type ProviderObjectInputSpec = BaseInputSpec & {
   type: "object";
+  properties?: Record<string, ProviderToolInputSpec>;
 };
 
 type ProviderToolSpecDocument = {
@@ -130,10 +131,16 @@ function zodForInputSpec(spec: ProviderToolInputSpec): z.ZodType {
       schema = z.enum(spec.values as [string, ...string[]]);
       break;
     case "array": {
-      let itemSchema = z.string();
-      if (spec.itemFormat === "email") itemSchema = itemSchema.email();
-      if (spec.itemMin !== undefined) itemSchema = itemSchema.min(spec.itemMin);
-      if (spec.itemMax !== undefined) itemSchema = itemSchema.max(spec.itemMax);
+      let itemSchema: z.ZodType;
+      if (spec.items === "string") {
+        let stringSchema = z.string();
+        if (spec.itemFormat === "email") stringSchema = stringSchema.email();
+        if (spec.itemMin !== undefined) stringSchema = stringSchema.min(spec.itemMin);
+        if (spec.itemMax !== undefined) stringSchema = stringSchema.max(spec.itemMax);
+        itemSchema = stringSchema;
+      } else {
+        itemSchema = zodForInputSpec(spec.items);
+      }
 
       let arraySchema = z.array(itemSchema);
       if (spec.min !== undefined) arraySchema = arraySchema.min(spec.min);
@@ -142,7 +149,16 @@ function zodForInputSpec(spec: ProviderToolInputSpec): z.ZodType {
       break;
     }
     case "object":
-      schema = z.record(z.string(), z.unknown());
+      schema = spec.properties
+        ? z.object(
+            Object.fromEntries(
+              Object.entries(spec.properties).map(([name, child]) => [
+                name,
+                zodForInputSpec(child)
+              ])
+            )
+          )
+        : z.record(z.string(), z.unknown());
       break;
   }
 
@@ -258,9 +274,20 @@ function parseInputSpec(parsed: unknown, source: string): ProviderToolInputSpec 
       return { ...base, type, values };
     }
     case "array": {
-      const items = readRequiredString(parsed, "items", source);
-      if (items !== "string") {
-        throw new Error(`Provider array input spec ${source}.items must be string`);
+      const rawItems = parsed.items;
+      const items =
+        typeof rawItems === "string"
+          ? rawItems
+          : isRecord(rawItems)
+            ? parseInputSpec(rawItems, `${source}.items`)
+            : null;
+      if (
+        items !== "string" &&
+        !(typeof items === "object" && items !== null && items.type === "object")
+      ) {
+        throw new Error(
+          `Provider array input spec ${source}.items must be string or object`
+        );
       }
       return {
         ...base,
@@ -274,10 +301,33 @@ function parseInputSpec(parsed: unknown, source: string): ProviderToolInputSpec 
       };
     }
     case "object":
-      return { ...base, type };
+      return {
+        ...base,
+        type,
+        properties: parseOptionalInputProperties(parsed, `${source}.properties`)
+      };
     default:
       throw new Error(`Unsupported provider input spec type ${type} at ${source}`);
   }
+}
+
+function parseOptionalInputProperties(
+  parsed: Record<string, unknown>,
+  source: string
+): Record<string, ProviderToolInputSpec> | undefined {
+  const value = parsed.properties;
+  if (value === undefined) {
+    return undefined;
+  }
+  if (!isRecord(value)) {
+    throw new Error(`${source} must be a mapping`);
+  }
+  return Object.fromEntries(
+    Object.entries(value).map(([name, child]) => [
+      name,
+      parseInputSpec(child, `${source}.${name}`)
+    ])
+  );
 }
 
 function readRequiredString(

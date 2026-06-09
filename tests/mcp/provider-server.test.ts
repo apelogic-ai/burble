@@ -1000,6 +1000,106 @@ describe("handleProviderMcpRequest", () => {
     store.close();
   });
 
+  test("executes Google Slides placeholder fills through provider MCP", async () => {
+    const issuer = createRuntimeJwtIssuer({ issuer: config.runtimeJwtIssuer });
+    const store = createTokenStore(":memory:");
+    const runtime = store.getOrCreateAgentRuntime({
+      workspaceId: "T123",
+      slackUserId: "U123",
+      engine: "openclaw",
+      endpointUrl: "http://runtime-u123:8080",
+      authTokenHash: "hash-u123",
+      statePath: "/data/runtimes/u123/state",
+      configPath: "/data/runtimes/u123/config/openclaw.json",
+      workspacePath: "/data/runtimes/u123/workspace"
+    });
+    store.upsertProviderConnection({
+      provider: "google",
+      email: "person@example.com",
+      slackUserId: "U123",
+      providerLogin: "google-user@example.com",
+      accessToken: "google-token",
+      refreshToken: null,
+      accessTokenExpiresAt: null
+    });
+    const token = issuer.issueRuntimeJwt({
+      audience: "http://agentgateway:3000/mcp",
+      runtimeId: runtime.id,
+      workspaceId: "T123",
+      slackUserId: "U123"
+    });
+
+    const response = await handleProviderMcpRequest(
+      config,
+      store,
+      issuer,
+      mcpRequest(
+        {
+          method: "tools/call",
+          params: {
+            name: "google_slides_fill_placeholders",
+            arguments: {
+              presentationId: "deck-copy",
+              replacements: [
+                { placeholderType: "TITLE", text: "ApeLogic" },
+                {
+                  placeholderType: "SUBTITLE",
+                  text: "Test presentation from template"
+                }
+              ]
+            }
+          }
+        },
+        token
+      ),
+      {
+        fillGoogleSlidesPlaceholders: async (accessToken, input) => {
+          expect(accessToken).toBe("google-token");
+          expect(input).toEqual({
+            presentationId: "deck-copy",
+            replacements: [
+              { placeholderType: "TITLE", text: "ApeLogic" },
+              {
+                placeholderType: "SUBTITLE",
+                text: "Test presentation from template"
+              }
+            ]
+          });
+          return {
+            presentationId: "deck-copy",
+            slideObjectId: "slide-1",
+            updatedPlaceholders: [
+              {
+                placeholderType: "TITLE",
+                objectId: "title-shape",
+                text: "ApeLogic"
+              }
+            ]
+          };
+        }
+      }
+    );
+    const body = readMcpBody(await response.text());
+    const toolResult = JSON.parse(body.result.content[0].text);
+
+    expect(response.status).toBe(200);
+    expect(toolResult).toEqual({
+      classification: "user_private",
+      content: {
+        presentationId: "deck-copy",
+        slideObjectId: "slide-1",
+        updatedPlaceholders: [
+          {
+            placeholderType: "TITLE",
+            objectId: "title-shape",
+            text: "ApeLogic"
+          }
+        ]
+      }
+    });
+    store.close();
+  });
+
   test("enforces scheduled job capabilities for principal-scoped MCP calls", async () => {
     const issuer = createRuntimeJwtIssuer({ issuer: config.runtimeJwtIssuer });
     const store = createTokenStore(":memory:");

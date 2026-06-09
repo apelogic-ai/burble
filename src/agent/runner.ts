@@ -1315,6 +1315,38 @@ async function runAiSdkAgent(
             );
           })
       });
+      tools.google_slides_fill_placeholders = tool({
+        description:
+          "Fill text placeholders on an existing Google Slides presentation slide. Defaults to slide 1 when slideObjectId is omitted. Use after copying or finding a deck when the user asks to set title, subtitle, body, or other placeholder text.",
+        inputSchema: z.object({
+          presentationId: z.string().min(1),
+          slideObjectId: z.string().min(1).optional(),
+          replacements: z
+            .array(
+              z.object({
+                placeholderType: z.string().min(1),
+                text: z.string().max(5_000),
+                index: z.number().int().nonnegative().optional()
+              })
+            )
+            .min(1)
+            .max(10)
+        }),
+        execute: async (toolInput) =>
+          executeTool("google_slides_fill_placeholders", async () => {
+            const connection = input.connections.google;
+            if (!connection) {
+              return missingGoogleConnection();
+            }
+
+            return record(
+              await deps.googleTools!.fillSlidesPlaceholders.execute({
+                connection,
+                input: toolInput
+              })
+            );
+          })
+      });
       tools.google_analytics_get_metadata = tool({
         description:
           "List available Google Analytics dimensions and metrics for a GA4 property.",

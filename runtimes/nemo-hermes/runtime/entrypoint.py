@@ -112,6 +112,11 @@ HERMES_PROVIDER_TOOL_HINTS: dict[str, list[dict[str, str]]] = {
             "args": "presentationId, name",
         },
         {
+            "name": "google_slides_fill_placeholders",
+            "alias": "google.slidesFillPlaceholders",
+            "args": "presentationId, replacements, slideObjectId?",
+        },
+        {
             "name": "google_analytics_list_properties",
             "alias": "google.analyticsListProperties",
             "args": "limit?",

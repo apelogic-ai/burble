@@ -26,7 +26,9 @@ import {
 } from "./providers/github/client";
 import {
   buildGoogleOAuthUrl,
+  copyGoogleSlidesPresentation,
   createGoogleDriveTextFile,
+  fillGoogleSlidesPlaceholders,
   getGoogleAnalyticsMetadata,
   getGoogleSlidesPresentation,
   getGoogleUser,
@@ -285,6 +287,8 @@ export function createSlackRuntime(
     searchGoogleSlidesPresentations,
     getGoogleSlidesPresentation,
     probeGoogleSlidesTemplate,
+    copyGoogleSlidesPresentation,
+    fillGoogleSlidesPlaceholders,
     listGoogleAnalyticsProperties,
     getGoogleAnalyticsMetadata,
     runGoogleAnalyticsReport,

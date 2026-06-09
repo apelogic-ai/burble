@@ -6,6 +6,7 @@ import {
   getGoogleUser,
   getGoogleAnalyticsMetadata,
   getGoogleSlidesPresentation,
+  fillGoogleSlidesPlaceholders,
   listGoogleAnalyticsProperties,
   probeGoogleSlidesTemplate,
   refreshGoogleAccessToken,
@@ -83,6 +84,7 @@ describe("buildGoogleOAuthUrl", () => {
     );
     expect(scopes).toContain("https://www.googleapis.com/auth/drive");
     expect(scopes).toContain("https://www.googleapis.com/auth/drive.file");
+    expect(scopes).toContain("https://www.googleapis.com/auth/presentations");
     expect(scopes).toContain(
       "https://www.googleapis.com/auth/calendar.readonly"
     );
@@ -519,6 +521,129 @@ describe("Google OAuth and API helpers", () => {
       );
       expect(requestedBody).toEqual({
         name: "ApeLogic Template Copy"
+      });
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  test("fills Google Slides placeholders through batchUpdate", async () => {
+    const originalFetch = globalThis.fetch;
+    const requests: Array<{ url: string; method?: string; body?: unknown }> = [];
+    globalThis.fetch = (async (input, init) => {
+      const url = String(input);
+      requests.push({
+        url,
+        method: init?.method,
+        ...(init?.body ? { body: JSON.parse(String(init.body)) } : {})
+      });
+      expect(new Headers(init?.headers).get("authorization")).toBe(
+        "Bearer google-token"
+      );
+      if (url.includes(":batchUpdate")) {
+        expect(init?.method).toBe("POST");
+        return Response.json({
+          presentationId: "deck-1",
+          replies: [{}, {}, {}, {}]
+        });
+      }
+      return Response.json({
+        presentationId: "deck-1",
+        title: "ApeLogic",
+        layouts: [],
+        slides: [
+          {
+            objectId: "slide-1",
+            pageElements: [
+              {
+                objectId: "title-shape",
+                shape: {
+                  shapeType: "TEXT_BOX",
+                  placeholder: { type: "TITLE", index: 0 },
+                  text: {
+                    textElements: [{ textRun: { content: "Click to add title\n" } }]
+                  }
+                }
+              },
+              {
+                objectId: "subtitle-shape",
+                shape: {
+                  shapeType: "TEXT_BOX",
+                  placeholder: { type: "SUBTITLE", index: 0 },
+                  text: {
+                    textElements: [
+                      { textRun: { content: "Click to add subtitle\n" } }
+                    ]
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      });
+    }) as typeof fetch;
+
+    try {
+      const result = await fillGoogleSlidesPlaceholders("google-token", {
+        presentationId: "deck-1",
+        replacements: [
+          { placeholderType: "TITLE", text: "ApeLogic" },
+          {
+            placeholderType: "SUBTITLE",
+            text: "Test presentation from template"
+          }
+        ]
+      });
+
+      expect(result).toEqual({
+        presentationId: "deck-1",
+        slideObjectId: "slide-1",
+        updatedPlaceholders: [
+          {
+            placeholderType: "TITLE",
+            objectId: "title-shape",
+            text: "ApeLogic"
+          },
+          {
+            placeholderType: "SUBTITLE",
+            objectId: "subtitle-shape",
+            text: "Test presentation from template"
+          }
+        ]
+      });
+      expect(requests.map((request) => new URL(request.url).pathname)).toEqual([
+        "/v1/presentations/deck-1",
+        "/v1/presentations/deck-1:batchUpdate"
+      ]);
+      expect(requests[1]?.body).toEqual({
+        requests: [
+          {
+            deleteText: {
+              objectId: "title-shape",
+              textRange: { type: "ALL" }
+            }
+          },
+          {
+            insertText: {
+              objectId: "title-shape",
+              insertionIndex: 0,
+              text: "ApeLogic"
+            }
+          },
+          {
+            deleteText: {
+              objectId: "subtitle-shape",
+              textRange: { type: "ALL" }
+            }
+          },
+          {
+            insertText: {
+              objectId: "subtitle-shape",
+              insertionIndex: 0,
+              text: "Test presentation from template"
+            }
+          }
+        ]
       });
     } finally {
       globalThis.fetch = originalFetch;

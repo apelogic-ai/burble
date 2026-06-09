@@ -2036,6 +2036,17 @@ async function buildToolCatalog(
         }
       },
       {
+        name: "google.slidesFillPlaceholders",
+        description:
+          "Fill text placeholders on an existing Google Slides presentation slide. Defaults to the first slide when slideObjectId is omitted. Use after copying a deck when the user asks to set title, subtitle, body, or similar placeholder text.",
+        inputSchema: {
+          presentationId: "string Google Slides presentation ID to edit",
+          slideObjectId: "optional string slide object ID; defaults to first slide",
+          replacements:
+            "array of {placeholderType:string,text:string,index?:number}; placeholderType examples include TITLE and SUBTITLE"
+        }
+      },
+      {
         name: "google.analyticsListProperties",
         description:
           "List Google Analytics GA4 properties available to the requesting Slack user's connected Google account.",
@@ -2537,6 +2548,8 @@ function mcpToolNameToBurbleToolName(name: string): string | null {
       return "google.slidesProbeTemplate";
     case "google_slides_copy_presentation":
       return "google.slidesCopyPresentation";
+    case "google_slides_fill_placeholders":
+      return "google.slidesFillPlaceholders";
     case "google_analytics_list_properties":
       return "google.analyticsListProperties";
     case "google_analytics_get_metadata":

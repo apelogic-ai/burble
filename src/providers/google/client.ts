@@ -87,6 +87,27 @@ export type GoogleSlidesTemplateProbe = {
 
 export type GoogleSlidesCopiedPresentation = GoogleDriveCreatedFile;
 
+export type GoogleSlidesPlaceholderFillInput = {
+  presentationId: string;
+  slideObjectId?: string;
+  replacements: Array<{
+    placeholderType: string;
+    text: string;
+    index?: number;
+  }>;
+};
+
+export type GoogleSlidesPlaceholderFillResult = {
+  presentationId: string;
+  slideObjectId: string;
+  updatedPlaceholders: Array<{
+    placeholderType: string;
+    objectId: string;
+    text: string;
+    index?: number;
+  }>;
+};
+
 export type GoogleCalendarEvent = {
   id: string;
   summary?: string;
@@ -238,6 +259,7 @@ const googleScopes = [
   "https://www.googleapis.com/auth/drive",
   "https://www.googleapis.com/auth/drive.metadata.readonly",
   "https://www.googleapis.com/auth/drive.file",
+  "https://www.googleapis.com/auth/presentations",
   "https://www.googleapis.com/auth/calendar.readonly",
   "https://www.googleapis.com/auth/calendar.events",
   "https://www.googleapis.com/auth/gmail.readonly",
@@ -464,6 +486,84 @@ export async function copyGoogleSlidesPresentation(
     );
   }
   return sanitizeCreatedDriveFile(body);
+}
+
+export async function fillGoogleSlidesPlaceholders(
+  token: string,
+  input: GoogleSlidesPlaceholderFillInput
+): Promise<GoogleSlidesPlaceholderFillResult> {
+  const presentation = await readGoogleSlidesPresentation(token, input.presentationId);
+  const slide = resolveSlidesTargetSlide(presentation, input.slideObjectId);
+  const slideObjectId = slide.objectId ?? input.slideObjectId ?? "";
+  const updates = input.replacements.map((replacement) => {
+    const placeholderType = normalizeSlidesPlaceholderType(
+      replacement.placeholderType
+    );
+    const element = findSlidePlaceholderElement(
+      slide,
+      placeholderType,
+      replacement.index
+    );
+    if (!element.objectId) {
+      throw new GoogleApiError(
+        `Google Slides placeholder ${placeholderType} has no object id`,
+        400
+      );
+    }
+    return {
+      placeholderType,
+      objectId: element.objectId,
+      text: replacement.text,
+      ...(typeof replacement.index === "number" ? { index: replacement.index } : {})
+    };
+  });
+
+  const url = new URL(
+    `https://slides.googleapis.com/v1/presentations/${encodeURIComponent(
+      input.presentationId
+    )}:batchUpdate`
+  );
+  const response = await fetch(url, {
+    method: "POST",
+    headers: {
+      ...googleHeaders(token),
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      requests: updates.flatMap((update) => [
+        {
+          deleteText: {
+            objectId: update.objectId,
+            textRange: { type: "ALL" }
+          }
+        },
+        {
+          insertText: {
+            objectId: update.objectId,
+            insertionIndex: 0,
+            text: update.text
+          }
+        }
+      ])
+    })
+  });
+  const body = (await response.json()) as {
+    presentationId?: string;
+    error?: { message?: string };
+  };
+  if (!response.ok) {
+    throw googleError(
+      response,
+      "Google Slides placeholder fill failed",
+      body.error?.message
+    );
+  }
+
+  return {
+    presentationId: body.presentationId ?? input.presentationId,
+    slideObjectId,
+    updatedPlaceholders: updates
+  };
 }
 
 export async function createGoogleDriveTextFile(
@@ -1249,6 +1349,49 @@ function sanitizeSlidesPresentation(
         })
       : []
   };
+}
+
+function resolveSlidesTargetSlide(
+  presentation: GoogleSlidesApiPresentation,
+  slideObjectId: string | undefined
+): GoogleSlidesApiSlide {
+  const slide = slideObjectId
+    ? (presentation.slides ?? []).find((candidate) => candidate.objectId === slideObjectId)
+    : presentation.slides?.[0];
+  if (!slide?.objectId) {
+    throw new GoogleApiError(
+      slideObjectId
+        ? `Google Slides slide not found: ${slideObjectId}`
+        : "Google Slides presentation has no editable slides",
+      400
+    );
+  }
+  return slide;
+}
+
+function findSlidePlaceholderElement(
+  slide: GoogleSlidesApiSlide,
+  placeholderType: string,
+  index: number | undefined
+): GoogleSlidesApiPageElement {
+  const element = (slide.pageElements ?? []).find((candidate) => {
+    const placeholder = candidate.shape?.placeholder;
+    if (normalizeSlidesPlaceholderType(placeholder?.type) !== placeholderType) {
+      return false;
+    }
+    return typeof index === "number" ? placeholder?.index === index : true;
+  });
+  if (!element?.objectId) {
+    throw new GoogleApiError(
+      `Google Slides placeholder not found on slide ${slide.objectId}: ${placeholderType}`,
+      400
+    );
+  }
+  return element;
+}
+
+function normalizeSlidesPlaceholderType(type: string | undefined): string {
+  return (type ?? "").trim().toUpperCase();
 }
 
 function sanitizeSlidesElements(

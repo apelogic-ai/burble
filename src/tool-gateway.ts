@@ -31,6 +31,7 @@ import {
   createGoogleDriveFolder,
   createGoogleDriveTextFile,
   copyGoogleSlidesPresentation,
+  fillGoogleSlidesPlaceholders,
   getGoogleAnalyticsMetadata,
   getGoogleDriveFile,
   getGoogleUser,
@@ -199,6 +200,7 @@ const defaultDeps = {
   getGoogleSlidesPresentation,
   probeGoogleSlidesTemplate,
   copyGoogleSlidesPresentation,
+  fillGoogleSlidesPlaceholders,
   searchGoogleCalendarEvents,
   createGoogleCalendarEvent,
   updateGoogleCalendarEvent,
@@ -1138,6 +1140,19 @@ export async function handleToolGatewayRequest(
       );
     }
 
+    case "google.slidesFillPlaceholders": {
+      if (!isGoogleSlidesFillPlaceholdersInput(body.input)) {
+        return new Response("Invalid tool input", { status: 400 });
+      }
+
+      return respondWithAudit(
+        await googleTools.fillSlidesPlaceholders.execute({
+          connection,
+          input: body.input
+        })
+      );
+    }
+
     case "google.analyticsListProperties": {
       if (!isGoogleAnalyticsListPropertiesInput(body.input)) {
         return new Response("Invalid tool input", { status: 400 });
@@ -1491,6 +1506,7 @@ function isKnownTool(toolName: string): boolean {
     toolName === "google.slidesGetPresentation" ||
     toolName === "google.slidesProbeTemplate" ||
     toolName === "google.slidesCopyPresentation" ||
+    toolName === "google.slidesFillPlaceholders" ||
     toolName === "google.analyticsListProperties" ||
     toolName === "google.analyticsGetMetadata" ||
     toolName === "google.analyticsRunReport" ||
@@ -2515,6 +2531,36 @@ function isGoogleSlidesCopyPresentationInput(input: unknown): input is {
     isOptionalObject(input) &&
     isNonEmptyString(input.presentationId) &&
     isNonEmptyString(input.name)
+  );
+}
+
+function isGoogleSlidesFillPlaceholdersInput(input: unknown): input is {
+  presentationId: string;
+  slideObjectId?: string;
+  replacements: Array<{
+    placeholderType: string;
+    text: string;
+    index?: number;
+  }>;
+} {
+  return (
+    isOptionalObject(input) &&
+    isNonEmptyString(input.presentationId) &&
+    optionalString(input.slideObjectId) &&
+    Array.isArray(input.replacements) &&
+    input.replacements.length > 0 &&
+    input.replacements.length <= 10 &&
+    input.replacements.every(
+      (replacement) =>
+        isOptionalObject(replacement) &&
+        isNonEmptyString(replacement.placeholderType) &&
+        typeof replacement.text === "string" &&
+        replacement.text.length <= 5_000 &&
+        (typeof replacement.index === "undefined" ||
+          (typeof replacement.index === "number" &&
+            Number.isInteger(replacement.index) &&
+            replacement.index >= 0))
+    )
   );
 }
 

@@ -959,6 +959,19 @@ describe("createBurbleToolExecutor", () => {
           name: "ApeLogic Template Copy"
         }
       });
+      await executor("google.slidesFillPlaceholders", {
+        user: { email: "person@example.com" },
+        input: {
+          presentationId: "deck-copy",
+          replacements: [
+            { placeholderType: "TITLE", text: "ApeLogic" },
+            {
+              placeholderType: "SUBTITLE",
+              text: "Test presentation from template"
+            }
+          ]
+        }
+      });
       await executor("google.analyticsListProperties", {
         user: { email: "person@example.com" },
         input: { limit: 6 }
@@ -1176,6 +1189,22 @@ describe("createBurbleToolExecutor", () => {
             arguments: {
               presentationId: "template-123",
               name: "ApeLogic Template Copy"
+            }
+          }
+        },
+        {
+          method: "tools/call",
+          params: {
+            name: "google_slides_fill_placeholders",
+            arguments: {
+              presentationId: "deck-copy",
+              replacements: [
+                { placeholderType: "TITLE", text: "ApeLogic" },
+                {
+                  placeholderType: "SUBTITLE",
+                  text: "Test presentation from template"
+                }
+              ]
             }
           }
         },

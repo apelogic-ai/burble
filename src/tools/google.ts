@@ -11,6 +11,8 @@ import {
   type GoogleDriveCreatedFile,
   type GoogleDriveFileContent,
   type GoogleSlidesCopiedPresentation,
+  type GoogleSlidesPlaceholderFillInput,
+  type GoogleSlidesPlaceholderFillResult,
   isGoogleAuthorizationError,
   type GoogleCalendarEvent,
   type GoogleDriveFile,
@@ -53,6 +55,10 @@ export type GoogleToolDeps = {
     token: string,
     input: { presentationId: string; name: string }
   ) => Promise<GoogleSlidesCopiedPresentation>;
+  fillGoogleSlidesPlaceholders?: (
+    token: string,
+    input: GoogleSlidesPlaceholderFillInput
+  ) => Promise<GoogleSlidesPlaceholderFillResult>;
   listGoogleAnalyticsProperties?: (
     token: string,
     input: { limit?: number }
@@ -553,6 +559,35 @@ export function createGoogleTools(deps: GoogleToolDeps) {
         return {
           classification: "user_private",
           content: sanitizeCreatedDriveFile(presentation)
+        };
+      }
+    },
+
+    fillSlidesPlaceholders: {
+      async execute(
+        context: GoogleToolContext & {
+          input: GoogleSlidesPlaceholderFillInput;
+        }
+      ): Promise<
+        ToolResult<GoogleSlidesPlaceholderFillResult | GoogleAuthErrorContent>
+      > {
+        const result = await withGoogleToken(
+          deps,
+          context.connection,
+          (accessToken) => {
+            if (!deps.fillGoogleSlidesPlaceholders) {
+              throw new Error("Google Slides placeholder editing is not configured");
+            }
+            return deps.fillGoogleSlidesPlaceholders(accessToken, context.input);
+          }
+        );
+        if (isGoogleAuthErrorResult(result)) {
+          return result;
+        }
+
+        return {
+          classification: "user_private",
+          content: result
         };
       }
     },

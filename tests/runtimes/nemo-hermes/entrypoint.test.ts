@@ -602,6 +602,7 @@ print(json.dumps({"text": mod.build_hermes_turn_text(payload)}))
     expect(text).toContain("google_slides_get_presentation");
     expect(text).toContain("google_slides_probe_template");
     expect(text).toContain("google_slides_copy_presentation");
+    expect(text).toContain("google_slides_fill_placeholders");
     expect(text).toContain("google_analytics_list_properties");
     expect(text).toContain("google_analytics_get_metadata");
     expect(text).toContain("google_analytics_run_report");
@@ -1064,6 +1065,7 @@ print(json.dumps({
     "analytics": mod.normalize_burble_tool_name("google_analytics_run_report"),
     "slides": mod.normalize_burble_tool_name("google_slides_probe_template"),
     "slides_copy": mod.normalize_burble_tool_name("google_slides_copy_presentation"),
+    "slides_fill": mod.normalize_burble_tool_name("google_slides_fill_placeholders"),
     "hubspot": mod.normalize_burble_tool_name("hubspot_read_api_resource"),
     "jira": mod.normalize_burble_tool_name("jira_list_assigned_issues"),
     "job": mod.normalize_burble_tool_name("scheduled_job_register_capability"),
@@ -1077,6 +1079,7 @@ print(json.dumps({
       analytics: "google.analyticsRunReport",
       slides: "google.slidesProbeTemplate",
       slides_copy: "google.slidesCopyPresentation",
+      slides_fill: "google.slidesFillPlaceholders",
       hubspot: "hubspot.readApiResource",
       jira: "jira.listAssignedIssues",
       job: "scheduledJob.registerCapability",
