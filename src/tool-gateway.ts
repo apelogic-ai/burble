@@ -34,6 +34,7 @@ import {
   getGoogleAnalyticsMetadata,
   getGoogleDriveFile,
   getGoogleUser,
+  isGoogleWorkspaceDocumentMimeType,
   listGoogleAnalyticsProperties,
   moveGoogleDriveFile,
   getGoogleSlidesPresentation,
@@ -2335,7 +2336,9 @@ function isCreateGoogleDriveTextFileInput(input: unknown): input is {
     input.name.length <= 200 &&
     (text === undefined ||
       (typeof text === "string" && text.length <= 200_000)) &&
-    optionalString(input.mimeType)
+    optionalString(input.mimeType) &&
+    (typeof input.mimeType !== "string" ||
+      !isGoogleWorkspaceDocumentMimeType(input.mimeType))
   );
 }
 

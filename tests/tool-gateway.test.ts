@@ -701,6 +701,36 @@ describe("handleToolGatewayRequest", () => {
     });
   });
 
+  test("rejects Google Workspace MIME types for Drive text file creation", async () => {
+    let didCallProvider = false;
+    const response = await handleToolGatewayRequest(
+      config,
+      createStore(googleConnection),
+      "google.createDriveTextFile",
+      request("google.createDriveTextFile", {
+        user: { email: "person@example.com" },
+        input: {
+          name: "Deck",
+          text: "",
+          mimeType: "application/vnd.google-apps.presentation"
+        }
+      }),
+      {
+        createGoogleDriveTextFile: async () => {
+          didCallProvider = true;
+          return {
+            id: "file-2",
+            name: "Deck"
+          };
+        }
+      }
+    );
+
+    expect(response.status).toBe(400);
+    expect(await response.text()).toBe("Invalid tool input");
+    expect(didCallProvider).toBe(false);
+  });
+
   test("executes HubSpot CRM search tools with the stored caller token", async () => {
     const response = await handleToolGatewayRequest(
       config,

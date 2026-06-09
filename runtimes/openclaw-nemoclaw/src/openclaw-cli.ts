@@ -1972,11 +1972,12 @@ async function buildToolCatalog(
       {
         name: "google.createDriveTextFile",
         description:
-          "Create a new app-owned text file in Google Drive using the requesting Slack user's connected Google account.",
+          "Create a new app-owned plain/text-like file in Google Drive using the requesting Slack user's connected Google account. Do not use this to create Google Docs, Sheets, or Slides.",
         inputSchema: {
           name: "string Drive file name",
           text: "optional string text body to write into the file; defaults to an empty text file",
-          mimeType: "optional string MIME type; defaults to text/plain"
+          mimeType:
+            "optional non-Google-Workspace MIME type; defaults to text/plain"
         }
       },
       {

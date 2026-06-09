@@ -74,7 +74,7 @@ HERMES_PROVIDER_TOOL_HINTS: dict[str, list[dict[str, str]]] = {
         {
             "name": "google_create_drive_text_file",
             "alias": "google.createDriveTextFile",
-            "args": "name, text?, mimeType?",
+            "args": "name, text?, non-Google-Workspace mimeType?",
         },
         {
             "name": "google_append_to_drive_text_file",

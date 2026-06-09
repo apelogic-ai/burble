@@ -136,6 +136,30 @@ describe("buildGoogleOAuthUrl", () => {
       globalThis.fetch = originalFetch;
     }
   });
+
+  test("rejects Google Workspace MIME types for Drive text file creation", async () => {
+    const originalFetch = globalThis.fetch;
+    let didFetch = false;
+    globalThis.fetch = (async (_input, _init) => {
+      didFetch = true;
+      return Response.json({});
+    }) as typeof fetch;
+
+    try {
+      await expect(
+        createGoogleDriveTextFile("google-token", {
+          name: "Deck",
+          text: "",
+          mimeType: "application/vnd.google-apps.presentation"
+        })
+      ).rejects.toThrow(
+        "Google Drive text files cannot use Google Workspace document MIME types"
+      );
+      expect(didFetch).toBe(false);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
 });
 
 describe("Google OAuth and API helpers", () => {

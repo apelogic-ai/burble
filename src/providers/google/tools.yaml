@@ -28,7 +28,7 @@ tools:
     alias: google.createDriveTextFile
     implementation: createDriveTextFile
     title: Google Drive create text file
-    description: Create a new app-owned text file in Google Drive using this Slack user's connected Google account.
+    description: Create a new app-owned plain/text-like file in Google Drive using this Slack user's connected Google account. Do not use this to create Google Docs, Sheets, or Slides; use dedicated tools for those file types.
     risk: low_write
     confirmation: none
     input:
@@ -45,7 +45,7 @@ tools:
       mimeType:
         type: string
         optional: true
-        description: Optional MIME type. Defaults to text/plain.
+        description: Optional non-Google-Workspace MIME type. Defaults to text/plain.
 
   - name: google_get_drive_file
     alias: google.getDriveFile

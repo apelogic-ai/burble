@@ -12,6 +12,7 @@ import type { createHubSpotTools } from "../tools/hubspot";
 import type { createJiraTools } from "../tools/jira";
 import type { createSlackTools } from "../tools/slack";
 import type { ToolClassification } from "../conversation/types";
+import { isGoogleWorkspaceDocumentMimeType } from "../providers/google/client";
 import { hubSpotReadableCrmObjectTypes } from "../providers/hubspot/client";
 import { createDirectModelResolver } from "./providers";
 import type { DirectLanguageModel, ModelResolver } from "./providers";
@@ -935,7 +936,7 @@ async function runAiSdkAgent(
       });
       tools.google_create_drive_text_file = tool({
         description:
-          "Create a new app-owned text file in Google Drive using the authenticated Slack user's connected Google account. If no text is supplied, create an empty text file.",
+          "Create a new app-owned plain/text-like file in Google Drive using the authenticated Slack user's connected Google account. If no text is supplied, create an empty text file. Do not use this to create Google Docs, Sheets, or Slides; use dedicated tools for those file types.",
         inputSchema: z.object({
           name: z.string().min(1).max(200).describe("Drive file name"),
           text: z
@@ -943,7 +944,16 @@ async function runAiSdkAgent(
             .max(200_000)
             .optional()
             .describe("Optional text body to write into the file"),
-          mimeType: z.string().optional().describe("Optional MIME type")
+          mimeType: z
+            .string()
+            .refine(
+              (mimeType) => !isGoogleWorkspaceDocumentMimeType(mimeType),
+              "Google Workspace document MIME types are not valid for text file creation"
+            )
+            .optional()
+            .describe(
+              "Optional non-Google-Workspace MIME type, such as text/plain or text/markdown"
+            )
         }),
         execute: async ({ name, text, mimeType }) =>
           executeTool("google_create_drive_text_file", async () => {

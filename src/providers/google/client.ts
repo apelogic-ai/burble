@@ -246,6 +246,13 @@ const googleScopes = [
   "https://www.googleapis.com/auth/presentations.readonly"
 ];
 
+export function isGoogleWorkspaceDocumentMimeType(mimeType: string): boolean {
+  return mimeType
+    .trim()
+    .toLowerCase()
+    .startsWith("application/vnd.google-apps.");
+}
+
 export function buildGoogleOAuthUrl(config: Config, state: string): string {
   if (!config.googleClientId || !config.googleClientSecret) {
     throw new Error("Google OAuth is not configured");
@@ -463,6 +470,15 @@ export async function createGoogleDriveTextFile(
   token: string,
   input: { name: string; text: string; mimeType?: string }
 ): Promise<GoogleDriveCreatedFile> {
+  if (
+    input.mimeType &&
+    isGoogleWorkspaceDocumentMimeType(input.mimeType)
+  ) {
+    throw new Error(
+      "Google Drive text files cannot use Google Workspace document MIME types. Use the dedicated Google Docs, Sheets, or Slides tools instead."
+    );
+  }
+
   const url = new URL("https://www.googleapis.com/upload/drive/v3/files");
   url.searchParams.set("uploadType", "multipart");
   url.searchParams.set("fields", "id,name,mimeType,webViewLink");
