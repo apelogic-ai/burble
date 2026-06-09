@@ -4987,12 +4987,13 @@ export async function postConversationResponse(
 }
 
 function renderConversationResponseText(response: ConversationResponse): string {
+  const responseText = sanitizeRuntimeStreamText(response.text);
   if (!response.attachments || response.attachments.length === 0) {
-    return response.text;
+    return responseText;
   }
 
   return [
-    ...(response.text.trim() ? [response.text, ""] : []),
+    ...(responseText.trim() ? [responseText, ""] : []),
     "*Attachments:*",
     ...response.attachments.map((attachment) => {
       const label = attachment.name ?? attachment.id;
@@ -5071,14 +5072,14 @@ export async function updateAgentProgressMessage(
   ) {
     progressMessage.streamedText =
       event.type === "message_replace"
-        ? event.text
+        ? sanitizeRuntimeStreamText(event.text)
         : appendSlackStreamedText(progressMessage.streamedText ?? "", event.text);
     if (!progressMessage.streamedText.trim()) {
       return;
     }
     try {
       await updateSlackNativeStream(client, progressMessage, {
-        text: event.text,
+        text: sanitizeRuntimeStreamText(event.text),
         replace: event.type === "message_replace"
       });
       return;
@@ -5326,7 +5327,7 @@ export function formatAgentProgressEvent(
       ) || undefined;
     }
     case "message_replace":
-      return event.text.trim() || undefined;
+      return sanitizeRuntimeStreamText(event.text).trim() || undefined;
     case "final":
     case "error":
       return undefined;
@@ -5427,7 +5428,7 @@ export function formatAgentProgressMessage(
   if (event.type === "message_delta" || event.type === "message_replace") {
     progressMessage.streamedText =
       event.type === "message_replace"
-        ? event.text
+        ? sanitizeRuntimeStreamText(event.text)
         : appendSlackStreamedText(progressMessage.streamedText ?? "", event.text);
     return progressMessage.streamedText.trim()
       ? renderProgressLines(progressMessage, [progressMessage.streamedText])
@@ -5438,11 +5439,18 @@ export function formatAgentProgressMessage(
 }
 
 function appendSlackStreamedText(currentText: string, delta: string): string {
-  if (!delta.trim()) {
+  const cleanedDelta = sanitizeRuntimeStreamText(delta);
+  if (!cleanedDelta.trim()) {
     return currentText;
   }
 
-  return currentText ? `${currentText}${delta}` : delta.trimStart();
+  return currentText ? `${currentText}${cleanedDelta}` : cleanedDelta.trimStart();
+}
+
+const hermesRuntimeStreamCursorPattern = /[ \t]*[▉■]/g;
+
+function sanitizeRuntimeStreamText(text: string): string {
+  return text.replace(hermesRuntimeStreamCursorPattern, "");
 }
 
 function isAgentProgressPlaceholder(text: string): boolean {
