@@ -339,6 +339,63 @@ tools:
         max: 200
         description: Name for the copied presentation.
 
+  - name: google_slides_create_slide
+    alias: google.slidesCreateSlide
+    implementation: createSlidesSlide
+    title: Google Slides create slide
+    description: Create a new slide in an existing Google Slides presentation, optionally from a layout or predefined layout, and optionally fill placeholders on the created slide. Use this for explicit user requests to add a slide to a deck.
+    risk: low_write
+    confirmation: none
+    input:
+      presentationId:
+        type: string
+        min: 1
+        description: Google Slides presentation ID to edit.
+      objectId:
+        type: string
+        min: 1
+        optional: true
+        description: Optional caller-supplied object ID for the new slide.
+      insertionIndex:
+        type: number
+        int: true
+        min: 0
+        optional: true
+        description: Optional zero-based insertion index. Use 2 to create slide 3.
+      layoutObjectId:
+        type: string
+        min: 1
+        optional: true
+        description: Optional layout object ID from google_slides_get_presentation or google_slides_probe_template.
+      predefinedLayout:
+        type: string
+        min: 1
+        optional: true
+        description: Optional Google predefined layout such as TITLE_AND_BODY or TITLE_AND_TWO_COLUMNS.
+      replacements:
+        type: array
+        min: 1
+        max: 10
+        optional: true
+        description: Optional placeholder text replacements to apply to the created slide.
+        items:
+          type: object
+          properties:
+            placeholderType:
+              type: string
+              min: 1
+              description: Google Slides placeholder type such as TITLE, SUBTITLE, BODY, CENTERED_TITLE, or SLIDE_NUMBER.
+            text:
+              type: string
+              max: 5000
+              description: Text to place into the placeholder.
+            index:
+              type: number
+              int: true
+              min: 0
+              optional: true
+              description: Optional placeholder index when a slide has multiple placeholders of the same type.
+
   - name: google_slides_fill_placeholders
     alias: google.slidesFillPlaceholders
     implementation: fillSlidesPlaceholders

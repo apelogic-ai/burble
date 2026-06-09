@@ -27,7 +27,10 @@ from burble_runtime_contract import (
 HERMES_PLUGIN_SOURCE = Path("/runtime/hermes-plugins")
 MAX_HERMES_CONTEXT_MESSAGES = 12
 MAX_HERMES_CONTEXT_MESSAGE_CHARS = 300
-HERMES_PROVIDER_TOOL_HINTS: dict[str, list[dict[str, str]]] = {
+HERMES_GOOGLE_PROVIDER_TOOL_HINTS_PATH = Path(__file__).with_name(
+    "google-provider-tool-hints.json"
+)
+HERMES_PROVIDER_TOOL_HINTS: dict[str, list[dict[str, Any]]] = {
     "github": [
         {
             "name": "github_list_my_pull_requests",
@@ -112,9 +115,14 @@ HERMES_PROVIDER_TOOL_HINTS: dict[str, list[dict[str, str]]] = {
             "args": "presentationId, name",
         },
         {
+            "name": "google_slides_create_slide",
+            "alias": "google.slidesCreateSlide",
+            "args": "presentationId, insertionIndex?, layoutObjectId?, predefinedLayout?, replacements?",
+        },
+        {
             "name": "google_slides_fill_placeholders",
             "alias": "google.slidesFillPlaceholders",
-            "args": "presentationId, replacements, slideObjectId?",
+            "args": "presentationId, replacements[{placeholderType,text,index?}], slideObjectId?",
         },
         {
             "name": "google_analytics_list_properties",
@@ -214,6 +222,48 @@ HERMES_PROVIDER_TOOL_HINTS: dict[str, list[dict[str, str]]] = {
         },
     ],
 }
+
+
+def load_hermes_provider_tool_hints(
+    path: Path, fallback: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    if not path.exists():
+        return fallback
+    with path.open("r", encoding="utf-8") as handle:
+        payload = json.load(handle)
+    tools = payload.get("tools") if isinstance(payload, dict) else None
+    if not isinstance(tools, list):
+        raise ValueError(f"Invalid provider tool hints: {path}")
+    hints: list[dict[str, Any]] = []
+    for tool in tools:
+        if not isinstance(tool, dict):
+            raise ValueError(f"Invalid provider tool hint entry: {path}")
+        name = tool.get("name")
+        alias = tool.get("alias")
+        description = tool.get("description")
+        input_schema = tool.get("input")
+        if (
+            not isinstance(name, str)
+            or not isinstance(alias, str)
+            or not isinstance(description, str)
+            or not isinstance(input_schema, dict)
+        ):
+            raise ValueError(f"Invalid provider tool hint shape: {path}")
+        hints.append(
+            {
+                "name": name,
+                "alias": alias,
+                "description": description,
+                "input": input_schema,
+            }
+        )
+    return hints
+
+
+HERMES_PROVIDER_TOOL_HINTS["google"] = load_hermes_provider_tool_hints(
+    HERMES_GOOGLE_PROVIDER_TOOL_HINTS_PATH,
+    HERMES_PROVIDER_TOOL_HINTS["google"],
+)
 
 DEFAULT_HERMES_PLATFORM_TOOLSETS = ["burble", "cronjob", "web"]
 HERMES_STREAM_CURSOR = "[[BURBLE_STREAM_CURSOR]]"
@@ -477,9 +527,7 @@ def build_hermes_turn_text(input_body: dict[str, Any]) -> str:
                         "For native scheduled/background jobs that will use Burble provider tools, first create the native job without an immediate/manual run, then call the dedicated scheduled provider registration tool scheduled_job_register_capability with the exact returned jobId and requiredTools, then include the returned scheduledPromptInstruction verbatim in the scheduled job prompt before enabling or triggering it.",
                     ]
                     for hint in tool_hints:
-                        lines.append(
-                            f"- {hint['name']} ({hint['alias']}): args {hint['args']}"
-                        )
+                        lines.append(format_hermes_provider_tool_hint(hint))
                     sections.append("\n".join(lines))
 
     scheduled_job_context = format_scheduled_job_context(input_body)
@@ -561,8 +609,23 @@ def format_scheduled_job_context(input_body: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
-def selected_hermes_provider_tool_hints(groups: list[str]) -> list[dict[str, str]]:
-    hints: list[dict[str, str]] = []
+def format_hermes_provider_tool_hint(hint: dict[str, Any]) -> str:
+    input_schema = hint.get("input")
+    if isinstance(input_schema, dict):
+        compact_schema = json.dumps(
+            input_schema,
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+        return (
+            f"- {hint['name']} ({hint['alias']}): {hint.get('description', '')} "
+            f"input schema {compact_schema}"
+        )
+    return f"- {hint['name']} ({hint['alias']}): args {hint.get('args', '')}"
+
+
+def selected_hermes_provider_tool_hints(groups: list[str]) -> list[dict[str, Any]]:
+    hints: list[dict[str, Any]] = []
     seen: set[str] = set()
     for group in groups:
         for hint in HERMES_PROVIDER_TOOL_HINTS.get(group, []):

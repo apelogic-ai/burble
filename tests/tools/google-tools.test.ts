@@ -469,6 +469,60 @@ describe("createGoogleTools", () => {
     });
   });
 
+  test("creates Google Slides slides with the caller token", async () => {
+    const tools = createGoogleTools({
+      getGoogleUser: async () => ({
+        email: "person@google.example"
+      }),
+      searchGoogleDriveFiles: async () => [],
+      createGoogleDriveTextFile: async () => ({
+        id: "file-1",
+        name: "Test"
+      }),
+      searchGoogleCalendarEvents: async () => [],
+      searchGoogleMailMessages: async () => [],
+      createGoogleSlidesSlide: async (token, input) => {
+        expect(token).toBe("google-token");
+        expect(input).toEqual({
+          presentationId: "deck-1",
+          insertionIndex: 2,
+          predefinedLayout: "TITLE_AND_TWO_COLUMNS",
+          replacements: [
+            { placeholderType: "TITLE", text: "Test slide 3" },
+            { placeholderType: "BODY", index: 0, text: "Left text" },
+            { placeholderType: "BODY", index: 1, text: "Right text" }
+          ]
+        });
+        return {
+          presentationId: "deck-1",
+          slideObjectId: "slide-3"
+        };
+      }
+    });
+
+    const result = await tools.createSlidesSlide.execute({
+      connection,
+      input: {
+        presentationId: "deck-1",
+        insertionIndex: 2,
+        predefinedLayout: "TITLE_AND_TWO_COLUMNS",
+        replacements: [
+          { placeholderType: "TITLE", text: "Test slide 3" },
+          { placeholderType: "BODY", index: 0, text: "Left text" },
+          { placeholderType: "BODY", index: 1, text: "Right text" }
+        ]
+      }
+    });
+
+    expect(result).toEqual({
+      classification: "user_private",
+      content: {
+        presentationId: "deck-1",
+        slideObjectId: "slide-3"
+      }
+    });
+  });
+
   test("runs Google Analytics reports with the caller token", async () => {
     const tools = createGoogleTools({
       getGoogleUser: async () => ({

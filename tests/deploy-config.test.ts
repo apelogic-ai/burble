@@ -328,6 +328,9 @@ describe("dev deploy config", () => {
       "COPY runtimes/nemo-hermes/runtime/burble_runtime_contract.py /runtime/burble_runtime_contract.py"
     );
     expect(hermesDockerfile).toContain(
+      "COPY runtimes/nemo-hermes/runtime/google-provider-tool-hints.json /runtime/google-provider-tool-hints.json"
+    );
+    expect(hermesDockerfile).toContain(
       "COPY packages/runtime-sdk/schema/runtime-contract.schema.json /runtime/runtime-contract.schema.json"
     );
     expect(ciWorkflow).toContain(

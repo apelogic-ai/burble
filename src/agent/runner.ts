@@ -1315,9 +1315,45 @@ async function runAiSdkAgent(
             );
           })
       });
+      tools.google_slides_create_slide = tool({
+        description:
+          "Create a new slide in an existing Google Slides presentation, optionally from a layout or predefined layout, and optionally fill placeholders on the created slide. Use when the user asks to add a slide.",
+        inputSchema: z.object({
+          presentationId: z.string().min(1),
+          objectId: z.string().min(1).optional(),
+          insertionIndex: z.number().int().nonnegative().optional(),
+          layoutObjectId: z.string().min(1).optional(),
+          predefinedLayout: z.string().min(1).optional(),
+          replacements: z
+            .array(
+              z.object({
+                placeholderType: z.string().min(1),
+                text: z.string().max(5_000),
+                index: z.number().int().nonnegative().optional()
+              })
+            )
+            .min(1)
+            .max(10)
+            .optional()
+        }),
+        execute: async (toolInput) =>
+          executeTool("google_slides_create_slide", async () => {
+            const connection = input.connections.google;
+            if (!connection) {
+              return missingGoogleConnection();
+            }
+
+            return record(
+              await deps.googleTools!.createSlidesSlide.execute({
+                connection,
+                input: toolInput
+              })
+            );
+          })
+      });
       tools.google_slides_fill_placeholders = tool({
         description:
-          "Fill text placeholders on an existing Google Slides presentation slide. Defaults to slide 1 when slideObjectId is omitted. Use after copying or finding a deck when the user asks to set title, subtitle, body, or other placeholder text.",
+          "Fill text placeholders on an existing Google Slides presentation slide. When slideObjectId is omitted, Burble chooses the slide that best matches the requested placeholders. Use after copying or finding a deck when the user asks to set title, subtitle, body, or other placeholder text.",
         inputSchema: z.object({
           presentationId: z.string().min(1),
           slideObjectId: z.string().min(1).optional(),

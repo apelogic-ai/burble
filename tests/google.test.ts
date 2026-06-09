@@ -11,6 +11,7 @@ import {
   probeGoogleSlidesTemplate,
   refreshGoogleAccessToken,
   copyGoogleSlidesPresentation,
+  createGoogleSlidesSlide,
   createGoogleDriveTextFile,
   runGoogleAnalyticsReport,
   searchGoogleDriveFiles,
@@ -521,6 +522,144 @@ describe("Google OAuth and API helpers", () => {
       );
       expect(requestedBody).toEqual({
         name: "ApeLogic Template Copy"
+      });
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  test("creates a Google Slides slide through batchUpdate and fills placeholders", async () => {
+    const originalFetch = globalThis.fetch;
+    const requests: Array<{ url: string; method?: string; body?: unknown }> = [];
+    globalThis.fetch = (async (input, init) => {
+      const url = String(input);
+      requests.push({
+        url,
+        method: init?.method,
+        ...(init?.body ? { body: JSON.parse(String(init.body)) } : {})
+      });
+      expect(new Headers(init?.headers).get("authorization")).toBe(
+        "Bearer google-token"
+      );
+      if (url.endsWith(":batchUpdate")) {
+        expect(init?.method).toBe("POST");
+        const body = init?.body ? JSON.parse(String(init.body)) : {};
+        if (
+          Array.isArray(body.requests) &&
+          body.requests.some((request: unknown) =>
+            Boolean((request as { createSlide?: unknown }).createSlide)
+          )
+        ) {
+          return Response.json({
+            presentationId: "deck-1",
+            replies: [{ createSlide: { objectId: "slide-3" } }]
+          });
+        }
+        return Response.json({
+          presentationId: "deck-1",
+          replies: [{}, {}, {}, {}]
+        });
+      }
+      return Response.json({
+        presentationId: "deck-1",
+        title: "ApeLogic",
+        layouts: [],
+        slides: [
+          {
+            objectId: "slide-3",
+            slideProperties: { layoutObjectId: "layout-two-columns" },
+            pageElements: [
+              {
+                objectId: "title-shape",
+                shape: {
+                  shapeType: "TEXT_BOX",
+                  placeholder: { type: "TITLE", index: 0 },
+                  text: { textElements: [] }
+                }
+              },
+              {
+                objectId: "left-body",
+                shape: {
+                  shapeType: "TEXT_BOX",
+                  placeholder: { type: "BODY", index: 0 },
+                  text: { textElements: [] }
+                }
+              },
+              {
+                objectId: "right-body",
+                shape: {
+                  shapeType: "TEXT_BOX",
+                  placeholder: { type: "BODY", index: 1 },
+                  text: { textElements: [] }
+                }
+              }
+            ]
+          }
+        ]
+      });
+    }) as typeof fetch;
+
+    try {
+      const result = await createGoogleSlidesSlide("google-token", {
+        presentationId: "deck-1",
+        insertionIndex: 2,
+        predefinedLayout: "TITLE_AND_TWO_COLUMNS",
+        replacements: [
+          { placeholderType: "TITLE", text: "Test slide 3" },
+          { placeholderType: "BODY", index: 0, text: "Left side text" },
+          { placeholderType: "BODY", index: 1, text: "Right side text" }
+        ]
+      });
+
+      expect(result).toEqual({
+        presentationId: "deck-1",
+        slideObjectId: "slide-3",
+        layoutObjectId: "layout-two-columns",
+        filledPlaceholders: {
+          presentationId: "deck-1",
+          slideObjectId: "slide-3",
+          updatedPlaceholders: [
+            {
+              placeholderType: "TITLE",
+              matchedPlaceholderType: "TITLE",
+              objectId: "title-shape",
+              text: "Test slide 3"
+            },
+            {
+              placeholderType: "BODY",
+              matchedPlaceholderType: "BODY",
+              objectId: "left-body",
+              text: "Left side text",
+              index: 0
+            },
+            {
+              placeholderType: "BODY",
+              matchedPlaceholderType: "BODY",
+              objectId: "right-body",
+              text: "Right side text",
+              index: 1
+            }
+          ],
+          skippedPlaceholders: []
+        }
+      });
+      expect(requests.map((request) => new URL(request.url).pathname)).toEqual([
+        "/v1/presentations/deck-1:batchUpdate",
+        "/v1/presentations/deck-1",
+        "/v1/presentations/deck-1:batchUpdate",
+        "/v1/presentations/deck-1"
+      ]);
+      expect(requests[0]?.body).toEqual({
+        requests: [
+          {
+            createSlide: {
+              insertionIndex: 2,
+              slideLayoutReference: {
+                predefinedLayout: "TITLE_AND_TWO_COLUMNS"
+              }
+            }
+          }
+        ]
       });
     } finally {
       globalThis.fetch = originalFetch;

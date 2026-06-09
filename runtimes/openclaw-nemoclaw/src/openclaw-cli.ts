@@ -2036,12 +2036,28 @@ async function buildToolCatalog(
         }
       },
       {
-        name: "google.slidesFillPlaceholders",
+        name: "google.slidesCreateSlide",
         description:
-          "Fill text placeholders on an existing Google Slides presentation slide. Defaults to the first slide when slideObjectId is omitted. Use after copying a deck when the user asks to set title, subtitle, body, or similar placeholder text.",
+          "Create a new slide in an existing Google Slides presentation, optionally using a layout or predefined layout, and optionally fill placeholders on the created slide.",
         inputSchema: {
           presentationId: "string Google Slides presentation ID to edit",
-          slideObjectId: "optional string slide object ID; defaults to first slide",
+          objectId: "optional string caller-supplied object ID for the new slide",
+          insertionIndex: "optional integer zero-based insertion index; use 2 to create slide 3",
+          layoutObjectId:
+            "optional string layout object ID from google.slidesGetPresentation or google.slidesProbeTemplate",
+          predefinedLayout:
+            "optional string Google predefined layout such as TITLE_AND_BODY or TITLE_AND_TWO_COLUMNS",
+          replacements:
+            "optional array of {placeholderType:string,text:string,index?:number} to fill on the created slide"
+        }
+      },
+      {
+        name: "google.slidesFillPlaceholders",
+        description:
+          "Fill text placeholders on an existing Google Slides presentation slide. When slideObjectId is omitted, Burble chooses the slide that best matches the requested placeholders. Use after copying a deck when the user asks to set title, subtitle, body, or similar placeholder text.",
+        inputSchema: {
+          presentationId: "string Google Slides presentation ID to edit",
+          slideObjectId: "optional string slide object ID; omit to choose the best matching slide",
           replacements:
             "array of {placeholderType:string,text:string,index?:number}; placeholderType examples include TITLE and SUBTITLE"
         }
@@ -2548,6 +2564,8 @@ function mcpToolNameToBurbleToolName(name: string): string | null {
       return "google.slidesProbeTemplate";
     case "google_slides_copy_presentation":
       return "google.slidesCopyPresentation";
+    case "google_slides_create_slide":
+      return "google.slidesCreateSlide";
     case "google_slides_fill_placeholders":
       return "google.slidesFillPlaceholders";
     case "google_analytics_list_properties":

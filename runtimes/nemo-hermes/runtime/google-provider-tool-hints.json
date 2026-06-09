@@ -1,0 +1,406 @@
+{
+  "provider": "google",
+  "tools": [
+    {
+      "name": "google_search_drive_files",
+      "alias": "google.searchDriveFiles",
+      "description": "Search Google Drive files visible to this Slack user's connected Google account.",
+      "input": {
+        "query": {
+          "optional": true,
+          "description": "Optional Drive search terms",
+          "type": "string"
+        },
+        "limit": {
+          "optional": true,
+          "type": "number",
+          "int": true,
+          "max": 20,
+          "positive": true
+        }
+      }
+    },
+    {
+      "name": "google_create_drive_text_file",
+      "alias": "google.createDriveTextFile",
+      "description": "Create a new app-owned plain/text-like file in Google Drive using this Slack user's connected Google account. Do not use this to create Google Docs, Sheets, or Slides; use dedicated tools for those file types.",
+      "input": {
+        "name": {
+          "description": "Drive file name",
+          "type": "string",
+          "min": 1,
+          "max": 200
+        },
+        "text": {
+          "optional": true,
+          "description": "Text body to write into the file. Defaults to an empty text file.",
+          "type": "string",
+          "max": 200000
+        },
+        "mimeType": {
+          "optional": true,
+          "description": "Optional non-Google-Workspace MIME type. Defaults to text/plain.",
+          "type": "string"
+        }
+      }
+    },
+    {
+      "name": "google_get_drive_file",
+      "alias": "google.getDriveFile",
+      "description": "Read Google Drive file metadata and, by default, text content for files accessible to the connected Google account and granted Drive scopes. Drive metadata search may find files whose content cannot be read or edited if the stored Google connection lacks the required Drive scope or the file is not shared with the connected account.",
+      "input": {
+        "fileId": {
+          "description": "Google Drive file ID",
+          "type": "string",
+          "min": 1
+        },
+        "includeContent": {
+          "optional": true,
+          "description": "Whether to include exported/downloaded text content. Defaults to true.",
+          "type": "boolean"
+        }
+      }
+    },
+    {
+      "name": "google_append_to_drive_text_file",
+      "alias": "google.appendDriveTextFile",
+      "description": "Append text to a Google Drive text file accessible to the connected Google account and granted Drive scopes by reading existing content then replacing it.",
+      "input": {
+        "fileId": {
+          "description": "Google Drive file ID",
+          "type": "string",
+          "min": 1
+        },
+        "text": {
+          "description": "Text to append",
+          "type": "string",
+          "max": 200000
+        },
+        "separator": {
+          "optional": true,
+          "description": "Separator before appended text",
+          "type": "string",
+          "max": 20
+        },
+        "mimeType": {
+          "optional": true,
+          "description": "Optional MIME type. Defaults to text/plain.",
+          "type": "string"
+        }
+      }
+    },
+    {
+      "name": "google_search_calendar_events",
+      "alias": "google.searchCalendarEvents",
+      "description": "Search upcoming Google Calendar events visible to this Slack user's connected Google account.",
+      "input": {
+        "query": {
+          "optional": true,
+          "description": "Optional calendar search terms",
+          "type": "string"
+        },
+        "timeMin": {
+          "optional": true,
+          "description": "Optional RFC3339 lower bound; defaults to now",
+          "type": "string"
+        },
+        "timeMax": {
+          "optional": true,
+          "description": "Optional RFC3339 upper bound",
+          "type": "string"
+        },
+        "limit": {
+          "optional": true,
+          "type": "number",
+          "int": true,
+          "max": 20,
+          "positive": true
+        }
+      }
+    },
+    {
+      "name": "google_search_mail_messages",
+      "alias": "google.searchMailMessages",
+      "description": "Search Gmail messages visible to this Slack user's connected Google account.",
+      "input": {
+        "query": {
+          "description": "Gmail search query",
+          "type": "string",
+          "min": 1
+        },
+        "limit": {
+          "optional": true,
+          "type": "number",
+          "int": true,
+          "max": 10,
+          "positive": true
+        }
+      }
+    },
+    {
+      "name": "google_slides_search_presentations",
+      "alias": "google.slidesSearchPresentations",
+      "description": "Search Google Slides presentations visible to this Slack user's connected Google account.",
+      "input": {
+        "query": {
+          "optional": true,
+          "description": "Optional presentation name search query.",
+          "type": "string"
+        },
+        "limit": {
+          "optional": true,
+          "type": "number",
+          "int": true,
+          "max": 20,
+          "positive": true
+        }
+      }
+    },
+    {
+      "name": "google_slides_get_presentation",
+      "alias": "google.slidesGetPresentation",
+      "description": "Read sanitized structure, slide text, layout IDs, and placeholder metadata from a Google Slides presentation.",
+      "input": {
+        "presentationId": {
+          "description": "Google Slides presentation ID.",
+          "type": "string",
+          "min": 1
+        },
+        "includeSlides": {
+          "optional": true,
+          "description": "Whether to include slide content. Defaults to true.",
+          "type": "boolean"
+        }
+      }
+    },
+    {
+      "name": "google_slides_probe_template",
+      "alias": "google.slidesProbeTemplate",
+      "description": "Probe a Google Slides presentation's layouts and placeholders into a manifest for future deterministic slide rendering.",
+      "input": {
+        "presentationId": {
+          "description": "Google Slides presentation ID to inspect as a template.",
+          "type": "string",
+          "min": 1
+        }
+      }
+    },
+    {
+      "name": "google_slides_copy_presentation",
+      "alias": "google.slidesCopyPresentation",
+      "description": "Copy an existing Google Slides presentation into a new presentation using the connected Google account. Use this for explicit user requests to create a new deck from a template; it does not edit slide contents.",
+      "input": {
+        "presentationId": {
+          "description": "Source Google Slides presentation ID.",
+          "type": "string",
+          "min": 1
+        },
+        "name": {
+          "description": "Name for the copied presentation.",
+          "type": "string",
+          "min": 1,
+          "max": 200
+        }
+      }
+    },
+    {
+      "name": "google_slides_create_slide",
+      "alias": "google.slidesCreateSlide",
+      "description": "Create a new slide in an existing Google Slides presentation, optionally from a layout or predefined layout, and optionally fill placeholders on the created slide. Use this for explicit user requests to add a slide to a deck.",
+      "input": {
+        "presentationId": {
+          "description": "Google Slides presentation ID to edit.",
+          "type": "string",
+          "min": 1
+        },
+        "objectId": {
+          "optional": true,
+          "description": "Optional caller-supplied object ID for the new slide.",
+          "type": "string",
+          "min": 1
+        },
+        "insertionIndex": {
+          "optional": true,
+          "description": "Optional zero-based insertion index. Use 2 to create slide 3.",
+          "type": "number",
+          "int": true,
+          "min": 0
+        },
+        "layoutObjectId": {
+          "optional": true,
+          "description": "Optional layout object ID from google_slides_get_presentation or google_slides_probe_template.",
+          "type": "string",
+          "min": 1
+        },
+        "predefinedLayout": {
+          "optional": true,
+          "description": "Optional Google predefined layout such as TITLE_AND_BODY or TITLE_AND_TWO_COLUMNS.",
+          "type": "string",
+          "min": 1
+        },
+        "replacements": {
+          "optional": true,
+          "description": "Optional placeholder text replacements to apply to the created slide.",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "placeholderType": {
+                "description": "Google Slides placeholder type such as TITLE, SUBTITLE, BODY, CENTERED_TITLE, or SLIDE_NUMBER.",
+                "type": "string",
+                "min": 1
+              },
+              "text": {
+                "description": "Text to place into the placeholder.",
+                "type": "string",
+                "max": 5000
+              },
+              "index": {
+                "optional": true,
+                "description": "Optional placeholder index when a slide has multiple placeholders of the same type.",
+                "type": "number",
+                "int": true,
+                "min": 0
+              }
+            }
+          },
+          "min": 1,
+          "max": 10
+        }
+      }
+    },
+    {
+      "name": "google_slides_fill_placeholders",
+      "alias": "google.slidesFillPlaceholders",
+      "description": "Fill text placeholders on an existing Google Slides presentation slide. When slideObjectId is omitted, Burble chooses the slide that best matches the requested placeholders. Use for explicit user requests to set title, subtitle, body, or similar placeholder text in a deck.",
+      "input": {
+        "presentationId": {
+          "description": "Google Slides presentation ID to edit.",
+          "type": "string",
+          "min": 1
+        },
+        "slideObjectId": {
+          "optional": true,
+          "description": "Optional slide object ID. If omitted, Burble chooses the slide that best matches the requested placeholders.",
+          "type": "string"
+        },
+        "replacements": {
+          "description": "Placeholder text replacements to apply.",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "placeholderType": {
+                "description": "Google Slides placeholder type such as TITLE, SUBTITLE, BODY, CENTERED_TITLE, or SLIDE_NUMBER.",
+                "type": "string",
+                "min": 1
+              },
+              "text": {
+                "description": "Text to place into the placeholder.",
+                "type": "string",
+                "max": 5000
+              },
+              "index": {
+                "optional": true,
+                "description": "Optional placeholder index when a slide has multiple placeholders of the same type.",
+                "type": "number",
+                "int": true,
+                "min": 0
+              }
+            }
+          },
+          "min": 1,
+          "max": 10
+        }
+      }
+    },
+    {
+      "name": "google_analytics_list_properties",
+      "alias": "google.analyticsListProperties",
+      "description": "List Google Analytics accounts and GA4 properties visible to this Slack user's connected Google account.",
+      "input": {
+        "limit": {
+          "optional": true,
+          "type": "number",
+          "int": true,
+          "max": 50,
+          "positive": true
+        }
+      }
+    },
+    {
+      "name": "google_analytics_get_metadata",
+      "alias": "google.analyticsGetMetadata",
+      "description": "List available Google Analytics dimensions and metrics for a GA4 property, optionally filtered by search terms.",
+      "input": {
+        "propertyId": {
+          "description": "GA4 property ID, either numeric or properties/{id}.",
+          "type": "string",
+          "min": 1
+        },
+        "dimensionQuery": {
+          "optional": true,
+          "description": "Optional case-insensitive filter for dimensions.",
+          "type": "string"
+        },
+        "metricQuery": {
+          "optional": true,
+          "description": "Optional case-insensitive filter for metrics.",
+          "type": "string"
+        },
+        "limit": {
+          "optional": true,
+          "type": "number",
+          "int": true,
+          "max": 100,
+          "positive": true
+        }
+      }
+    },
+    {
+      "name": "google_analytics_run_report",
+      "alias": "google.analyticsRunReport",
+      "description": "Run a read-only GA4 report for a Google Analytics property using selected dimensions, metrics, and a date range of at most 366 days.",
+      "input": {
+        "propertyId": {
+          "description": "GA4 property ID, either numeric or properties/{id}.",
+          "type": "string",
+          "min": 1
+        },
+        "startDate": {
+          "description": "Report start date, e.g. 2026-06-01 or 30daysAgo.",
+          "type": "string",
+          "min": 1
+        },
+        "endDate": {
+          "description": "Report end date, e.g. today.",
+          "type": "string",
+          "min": 1
+        },
+        "metrics": {
+          "description": "GA4 metric API names, such as activeUsers or sessions.",
+          "type": "array",
+          "items": "string",
+          "min": 1,
+          "max": 10,
+          "itemMin": 1
+        },
+        "dimensions": {
+          "optional": true,
+          "description": "Optional GA4 dimension API names, such as country or date.",
+          "type": "array",
+          "items": "string",
+          "max": 10,
+          "itemMin": 1
+        },
+        "limit": {
+          "optional": true,
+          "type": "number",
+          "int": true,
+          "max": 100,
+          "positive": true
+        }
+      }
+    }
+  ]
+}

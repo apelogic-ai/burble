@@ -30,6 +30,7 @@ import {
   createGoogleCalendarEvent,
   createGoogleDriveFolder,
   createGoogleDriveTextFile,
+  createGoogleSlidesSlide,
   copyGoogleSlidesPresentation,
   fillGoogleSlidesPlaceholders,
   getGoogleAnalyticsMetadata,
@@ -200,6 +201,7 @@ const defaultDeps = {
   getGoogleSlidesPresentation,
   probeGoogleSlidesTemplate,
   copyGoogleSlidesPresentation,
+  createGoogleSlidesSlide,
   fillGoogleSlidesPlaceholders,
   searchGoogleCalendarEvents,
   createGoogleCalendarEvent,
@@ -1140,15 +1142,36 @@ export async function handleToolGatewayRequest(
       );
     }
 
+    case "google.slidesCreateSlide": {
+      const input = normalizeGoogleSlidesCreateSlideInput(body.input);
+      if (!isGoogleSlidesCreateSlideInput(input)) {
+        return new Response(
+          "Invalid tool input: google.slidesCreateSlide requires presentationId and optional layoutObjectId, predefinedLayout, insertionIndex, objectId, and replacements.",
+          { status: 400 }
+        );
+      }
+
+      return respondWithAudit(
+        await googleTools.createSlidesSlide.execute({
+          connection,
+          input
+        })
+      );
+    }
+
     case "google.slidesFillPlaceholders": {
-      if (!isGoogleSlidesFillPlaceholdersInput(body.input)) {
-        return new Response("Invalid tool input", { status: 400 });
+      const input = normalizeGoogleSlidesFillPlaceholdersInput(body.input);
+      if (!isGoogleSlidesFillPlaceholdersInput(input)) {
+        return new Response(
+          "Invalid tool input: google.slidesFillPlaceholders requires presentationId and at least one replacement with placeholderType and text.",
+          { status: 400 }
+        );
       }
 
       return respondWithAudit(
         await googleTools.fillSlidesPlaceholders.execute({
           connection,
-          input: body.input
+          input
         })
       );
     }
@@ -1506,6 +1529,7 @@ function isKnownTool(toolName: string): boolean {
     toolName === "google.slidesGetPresentation" ||
     toolName === "google.slidesProbeTemplate" ||
     toolName === "google.slidesCopyPresentation" ||
+    toolName === "google.slidesCreateSlide" ||
     toolName === "google.slidesFillPlaceholders" ||
     toolName === "google.analyticsListProperties" ||
     toolName === "google.analyticsGetMetadata" ||
@@ -2534,6 +2558,46 @@ function isGoogleSlidesCopyPresentationInput(input: unknown): input is {
   );
 }
 
+function isGoogleSlidesCreateSlideInput(input: unknown): input is {
+  presentationId: string;
+  objectId?: string;
+  insertionIndex?: number;
+  layoutObjectId?: string;
+  predefinedLayout?: string;
+  replacements?: Array<{
+    placeholderType: string;
+    text: string;
+    index?: number;
+  }>;
+} {
+  return (
+    isOptionalObject(input) &&
+    isNonEmptyString(input.presentationId) &&
+    optionalString(input.objectId) &&
+    (typeof input.insertionIndex === "undefined" ||
+      (typeof input.insertionIndex === "number" &&
+        Number.isInteger(input.insertionIndex) &&
+        input.insertionIndex >= 0)) &&
+    optionalString(input.layoutObjectId) &&
+    optionalString(input.predefinedLayout) &&
+    (typeof input.replacements === "undefined" ||
+      (Array.isArray(input.replacements) &&
+        input.replacements.length > 0 &&
+        input.replacements.length <= 10 &&
+        input.replacements.every(
+          (replacement) =>
+            isOptionalObject(replacement) &&
+            isNonEmptyString(replacement.placeholderType) &&
+            typeof replacement.text === "string" &&
+            replacement.text.length <= 5_000 &&
+            (typeof replacement.index === "undefined" ||
+              (typeof replacement.index === "number" &&
+                Number.isInteger(replacement.index) &&
+                replacement.index >= 0))
+        )))
+  );
+}
+
 function isGoogleSlidesFillPlaceholdersInput(input: unknown): input is {
   presentationId: string;
   slideObjectId?: string;
@@ -2562,6 +2626,213 @@ function isGoogleSlidesFillPlaceholdersInput(input: unknown): input is {
             replacement.index >= 0))
     )
   );
+}
+
+function normalizeGoogleSlidesCreateSlideInput(input: unknown): unknown {
+  if (!isOptionalObject(input)) {
+    return input;
+  }
+  const record = input as Record<string, unknown>;
+  const presentationId = readStringAlias(record, [
+    "presentationId",
+    "presentation_id",
+    "deckId",
+    "deck_id"
+  ]);
+  const objectId = readStringAlias(record, [
+    "objectId",
+    "object_id",
+    "slideObjectId",
+    "slide_object_id",
+    "slideId",
+    "slide_id"
+  ]);
+  const insertionIndex = readNumberAlias(record, [
+    "insertionIndex",
+    "insertion_index",
+    "index",
+    "slideIndex",
+    "slide_index"
+  ]);
+  const layoutObjectId = readStringAlias(record, [
+    "layoutObjectId",
+    "layout_object_id",
+    "layoutId",
+    "layout_id"
+  ]);
+  const predefinedLayout = readStringAlias(record, [
+    "predefinedLayout",
+    "predefined_layout",
+    "layout",
+    "layoutType",
+    "layout_type"
+  ]);
+  const rawReplacements = readUnknownAlias(record, [
+    "replacements",
+    "replacement",
+    "updates",
+    "update",
+    "placeholders",
+    "placeholder",
+    "fills",
+    "fill"
+  ]);
+  const replacements =
+    rawReplacements === undefined
+      ? normalizeTopLevelSlidesPlaceholderReplacements(record)
+      : normalizeSlidesPlaceholderReplacements(rawReplacements);
+  const normalized = {
+    ...(presentationId !== null ? { presentationId } : {}),
+    ...(objectId !== null ? { objectId } : {}),
+    ...(insertionIndex !== undefined ? { insertionIndex } : {}),
+    ...(layoutObjectId !== null ? { layoutObjectId } : {}),
+    ...(predefinedLayout !== null
+      ? { predefinedLayout: predefinedLayout.trim().toUpperCase() }
+      : {}),
+    ...(replacements !== undefined ? { replacements } : {})
+  };
+  if (objectId !== null || presentationId === null) {
+    return normalized;
+  }
+  return {
+    ...normalized,
+    objectId: deterministicGoogleSlidesObjectId(normalized)
+  };
+}
+
+function deterministicGoogleSlidesObjectId(input: unknown): string {
+  return `burble_slide_${createHash("sha256")
+    .update(stableJson(input))
+    .digest("hex")
+    .slice(0, 32)}`;
+}
+
+function normalizeGoogleSlidesFillPlaceholdersInput(input: unknown): unknown {
+  if (!isOptionalObject(input)) {
+    return input;
+  }
+  const record = input as Record<string, unknown>;
+  const presentationId = readStringAlias(record, [
+    "presentationId",
+    "presentation_id",
+    "deckId",
+    "deck_id"
+  ]);
+  const slideObjectId = readStringAlias(record, [
+    "slideObjectId",
+    "slide_object_id",
+    "slideId",
+    "slide_id",
+    "pageObjectId",
+    "page_object_id"
+  ]);
+  const rawReplacements = readUnknownAlias(record, [
+    "replacements",
+    "replacement",
+    "updates",
+    "update",
+    "placeholders",
+    "placeholder",
+    "fills",
+    "fill"
+  ]);
+  const replacements =
+    rawReplacements === undefined
+      ? normalizeTopLevelSlidesPlaceholderReplacements(record)
+      : normalizeSlidesPlaceholderReplacements(rawReplacements);
+  return {
+    ...(presentationId !== null ? { presentationId } : {}),
+    ...(slideObjectId !== null ? { slideObjectId } : {}),
+    ...(replacements !== undefined ? { replacements } : {})
+  };
+}
+
+function normalizeSlidesPlaceholderReplacements(
+  value: unknown
+): unknown[] | undefined {
+  if (Array.isArray(value)) {
+    return value.map((replacement) =>
+      normalizeSlidesPlaceholderReplacement(replacement)
+    );
+  }
+  if (isOptionalObject(value)) {
+    return [normalizeSlidesPlaceholderReplacement(value)];
+  }
+  return undefined;
+}
+
+function normalizeTopLevelSlidesPlaceholderReplacements(
+  record: Record<string, unknown>
+): unknown[] | undefined {
+  const replacement = normalizeSlidesPlaceholderReplacement(record);
+  if (isOptionalObject(replacement) && replacement.placeholderType !== undefined) {
+    return [replacement];
+  }
+
+  const replacements: Array<{
+    placeholderType: string;
+    text: string;
+  }> = [];
+  for (const [key, placeholderType] of [
+    ["title", "TITLE"],
+    ["subtitle", "SUBTITLE"],
+    ["body", "BODY"]
+  ] as const) {
+    const text = record[key];
+    if (typeof text === "string") {
+      replacements.push({ placeholderType, text });
+    }
+  }
+  return replacements.length > 0 ? replacements : undefined;
+}
+
+function normalizeSlidesPlaceholderReplacement(value: unknown): unknown {
+  if (!isOptionalObject(value)) {
+    return value;
+  }
+  const record = value as Record<string, unknown>;
+  const placeholderType = readStringAlias(record, [
+    "placeholderType",
+    "placeholder_type",
+    "type",
+    "role",
+    "placeholder"
+  ]);
+  const text = readStringValueAlias(record, [
+    "text",
+    "value",
+    "content",
+    "replacementText",
+    "replacement_text"
+  ]);
+  const index = readNumberAlias(record, [
+    "index",
+    "placeholderIndex",
+    "placeholder_index"
+  ]);
+  return {
+    ...(placeholderType !== null
+      ? { placeholderType: placeholderType.trim().toUpperCase() }
+      : {}),
+    ...(text !== null ? { text } : {}),
+    ...(index !== undefined ? { index } : {})
+  };
+}
+
+function readNumberAlias(
+  record: Record<string, unknown>,
+  keys: string[]
+): number | undefined {
+  const value = readUnknownAlias(record, keys);
+  return typeof value === "number" ? value : undefined;
+}
+
+function readStringValueAlias(
+  record: Record<string, unknown>,
+  keys: string[]
+): string | undefined {
+  const value = readUnknownAlias(record, keys);
+  return typeof value === "string" ? value : undefined;
 }
 
 function isGoogleAnalyticsListPropertiesInput(input: unknown): input is {
@@ -3634,6 +3905,24 @@ function toolGatewayIdentityFields(auth: ToolGatewayAuth): {
     runtimeId: auth.runtime.id,
     runtimeType: auth.runtime.engine
   };
+}
+
+function stableJson(value: unknown): string {
+  return JSON.stringify(sortJson(value));
+}
+
+function sortJson(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map(sortJson);
+  }
+  if (!isOptionalObject(value)) {
+    return value;
+  }
+  return Object.fromEntries(
+    Object.entries(value)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, entry]) => [key, sortJson(entry)])
+  );
 }
 
 function readToolProviderForTelemetry(toolName: string): string {

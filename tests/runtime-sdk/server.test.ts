@@ -285,6 +285,25 @@ describe("runtime SDK tool gateway client", () => {
     });
     expect(statuses).toEqual([]);
   });
+
+  test("does not retry tools that the caller marks non-idempotent", async () => {
+    let calls = 0;
+    const client = createRuntimeToolGatewayClient({
+      baseUrl: "http://burble-app:3000/internal/tools/",
+      runtimeToken: "runtime-token",
+      retryBaseDelayMs: 0,
+      shouldRetryTool: (toolName) => toolName !== "google.slidesCopyPresentation",
+      fetch: async () => {
+        calls += 1;
+        return new Response("temporarily unavailable", { status: 503 });
+      }
+    });
+
+    await expect(
+      client.execute("google.slidesCopyPresentation", {})
+    ).rejects.toThrow("Burble tool gateway returned HTTP 503");
+    expect(calls).toBe(1);
+  });
 });
 
 async function waitFor(predicate: () => boolean): Promise<void> {
