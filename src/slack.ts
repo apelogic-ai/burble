@@ -333,6 +333,7 @@ export function createSlackRuntime(
   const agentRunner =
     config.agentMode === "llm"
       ? createConfiguredAgentRunner({
+          config,
           runtime: config.agentRuntime,
           model: config.aiModel,
           githubTools,

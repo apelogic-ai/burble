@@ -117,6 +117,7 @@ import {
   isScheduledJobToolAllowed,
   normalizeScheduledJobToolNames
 } from "./agent/scheduled-job-tools";
+import { resolveConversationAttachmentCapability } from "./conversation/attachment-capabilities";
 
 type ToolGatewayDeps = Partial<Parameters<typeof createGitHubTools>[0]> &
   Partial<GoogleToolDeps> &
@@ -152,6 +153,7 @@ type ToolGatewayDeps = Partial<Parameters<typeof createGitHubTools>[0]> &
   };
 
 type ToolGatewayBody = {
+  runId?: unknown;
   user?: {
     email?: unknown;
   };
@@ -354,10 +356,22 @@ export async function handleToolGatewayRequest(
     if (!attachment) {
       return new Response("Attachment not available for this run", { status: 404 });
     }
+    const resolvedAttachment = resolveConversationAttachmentCapability(config, {
+      capabilityId: attachment.id,
+      runtimeId: auth.runtime.id,
+      runId: typeof body?.runId === "string" ? body.runId : ""
+    });
+    if (!resolvedAttachment) {
+      return new Response("Attachment not available for this run", { status: 404 });
+    }
 
     const content = await (deps.fetchConversationAttachment ??
       ((input) => defaultFetchConversationAttachment(config, input)))({
-      attachment,
+      attachment: {
+        ...attachment,
+        source: resolvedAttachment.source,
+        externalId: resolvedAttachment.externalId
+      },
       maxBytes: maxConversationAttachmentBytes
     });
 
