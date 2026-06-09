@@ -107,6 +107,25 @@ async function* streamRuntimeContractProbe(
       callId: "contract-tool-probe",
       classification: "user_private"
     };
+  } else if (
+    request.input.text === "runtime contract attachment capability probe"
+  ) {
+    yield {
+      type: "tool_call",
+      toolName: "conversation.getAttachment",
+      callId: "contract-attachment-probe",
+      input: {
+        attachmentId:
+          request.input.attachments?.[0]?.id ?? "attcap_contract_probe"
+      }
+    };
+    yield {
+      type: "tool_result",
+      toolName: "conversation.getAttachment",
+      callId: "contract-attachment-probe",
+      classification: "user_private",
+      content: { text: "contract attachment content" }
+    };
   }
   const response = runtimeContractProbeResponse(request);
   yield { type: "message_delta", text: response.text };

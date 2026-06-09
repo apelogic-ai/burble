@@ -267,6 +267,23 @@ describe("handleRuntimeRequest", () => {
       }),
       { ...config, engine: "openclaw", contractProbeMode: true }
     );
+    const attachmentResponse = await handleRuntimeRequest(
+      new Request("http://runtime/runs", {
+        method: "POST",
+        headers: {
+          accept: "application/x-ndjson",
+          "content-type": "application/json"
+        },
+        body: JSON.stringify(
+          contractProbeRequest({
+            runId: "run-contract-attachment-probe",
+            text: "runtime contract attachment capability probe",
+            attachment: true
+          })
+        )
+      }),
+      { ...config, engine: "openclaw", contractProbeMode: true }
+    );
 
     expect(readNdjsonEvents(await toolResponse.text())).toContainEqual({
       type: "tool_call",
@@ -277,6 +294,12 @@ describe("handleRuntimeRequest", () => {
       type: "tool_call",
       toolName: "scheduledJob.registerCapability",
       callId: "contract-scheduled-provider-probe"
+    });
+    expect(readNdjsonEvents(await attachmentResponse.text())).toContainEqual({
+      type: "tool_call",
+      toolName: "conversation.getAttachment",
+      callId: "contract-attachment-probe",
+      input: { attachmentId: "attcap_contract_probe" }
     });
   });
 
@@ -1590,6 +1613,7 @@ function contractProbeRequest(input: {
   runId: string;
   text: string;
   scheduled?: boolean;
+  attachment?: boolean;
 }) {
   return {
     runId: input.runId,
@@ -1610,6 +1634,20 @@ function contractProbeRequest(input: {
                 allowPrivateToolDeclassification: false
               }
             }
+          }
+        : {}),
+      ...(input.attachment
+        ? {
+            attachments: [
+              {
+                id: "attcap_contract_probe",
+                source: "slack",
+                kind: "file",
+                name: "contract-attachment.txt",
+                mimeType: "text/plain",
+                sizeBytes: 27
+              }
+            ]
           }
         : {}),
       conversation: {
