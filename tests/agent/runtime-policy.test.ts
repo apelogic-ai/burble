@@ -170,14 +170,14 @@ describe("resolveRuntimeEngineForPrincipal", () => {
     store.upsertWorkspacePolicy({
       workspaceId: "T123",
       key: "runtime.allowedEngines",
-      value: ["openclaw", "hermes"],
+      value: ["openclaw", "burble-native"],
       updatedBySlackUserId: "UADMIN"
     });
     store.upsertUserPreference({
       workspaceId: "T123",
       slackUserId: "U123",
       key: "runtime.engine",
-      value: "hermes"
+      value: "burble-native"
     });
 
     const selection = resolveRuntimeEngineForPrincipal({
@@ -191,10 +191,10 @@ describe("resolveRuntimeEngineForPrincipal", () => {
     });
 
     expect(selection.effectiveEngine).toBe("openclaw");
-    expect(selection.preferredEngine).toBe("hermes");
+    expect(selection.preferredEngine).toBe("burble-native");
     expect(selection.selectableEngines).toEqual(["openclaw"]);
     expect(selection.compatibility).toContainEqual({
-      engine: "hermes",
+      engine: "burble-native",
       selectable: false,
       reasons: ["missing attachment support"]
     });
@@ -206,7 +206,7 @@ describe("resolveRuntimeEngineForPrincipal", () => {
     store.upsertWorkspacePolicy({
       workspaceId: "T123",
       key: "runtime.allowedEngines",
-      value: ["hermes", "burble-native"],
+      value: ["burble-native"],
       updatedBySlackUserId: "UADMIN"
     });
 

@@ -23,7 +23,8 @@ export type RuntimeContractCheckName =
   | "final_response"
   | "usage"
   | "tool_calls"
-  | "scheduled_provider_calls";
+  | "scheduled_provider_calls"
+  | "attachments";
 
 export type RuntimeContractCheck = {
   name: RuntimeContractCheckName;
@@ -100,6 +101,10 @@ export async function runRuntimeContractSmokeTest(input: {
     if (manifest.scheduledProviderCalls) {
       await assertScheduledProviderCapability(input.client, request);
       checks.push({ name: "scheduled_provider_calls", status: "ok" });
+    }
+    if (manifest.attachments) {
+      await assertAttachmentCapability(input.client, request);
+      checks.push({ name: "attachments", status: "ok" });
     }
   }
 
@@ -195,6 +200,66 @@ async function assertScheduledProviderCapability(
     failCheck(
       "scheduled_provider_calls",
       "runtime claims scheduledProviderCalls but emitted no matching scheduledJob.registerCapability tool_result"
+    );
+  }
+}
+
+async function assertAttachmentCapability(
+  client: RuntimeContractClient,
+  baseRequest: RuntimeRunRequest
+): Promise<void> {
+  const runId = `${baseRequest.runId ?? "contract"}-attachment-capability`;
+  const attachmentId = "attcap_contract_probe";
+  const events = await runProbe(client, {
+    ...baseRequest,
+    runId,
+    input: {
+      ...baseRequest.input,
+      text: "runtime contract attachment capability probe",
+      scheduledJob: undefined,
+      attachments: [
+        {
+          id: attachmentId,
+          source: "slack",
+          kind: "file",
+          name: "contract-attachment.txt",
+          mimeType: "text/plain",
+          sizeBytes: 27
+        }
+      ]
+    }
+  });
+  const attachmentCall = events.find(
+    (event): event is Extract<RuntimeRunEvent, { type: "tool_call" }> =>
+      event.type === "tool_call" &&
+      event.toolName === "conversation.getAttachment"
+  );
+  if (!attachmentCall) {
+    failCheck(
+      "attachments",
+      "runtime claims attachments but emitted no conversation.getAttachment tool_call during probe"
+    );
+  }
+  const attachmentInput =
+    attachmentCall.input && typeof attachmentCall.input === "object"
+      ? (attachmentCall.input as { attachmentId?: unknown })
+      : {};
+  if (attachmentInput.attachmentId !== attachmentId) {
+    failCheck(
+      "attachments",
+      "runtime claims attachments but did not request the current probe attachment id"
+    );
+  }
+  const attachmentResult = events.find(
+    (event): event is Extract<RuntimeRunEvent, { type: "tool_result" }> =>
+      event.type === "tool_result" &&
+      event.toolName === "conversation.getAttachment" &&
+      event.callId === attachmentCall.callId
+  );
+  if (!attachmentResult) {
+    failCheck(
+      "attachments",
+      "runtime claims attachments but emitted no matching conversation.getAttachment tool_result during probe"
     );
   }
 }

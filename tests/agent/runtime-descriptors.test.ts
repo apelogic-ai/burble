@@ -69,7 +69,8 @@ describe("runtime descriptors", () => {
       runtimeType: "hermes",
       toolBridgeModes: ["tool_gateway", "mcp"],
       usageReporting: "exact",
-      multimodalInput: false
+      multimodalInput: false,
+      attachments: true
     });
     expect(runtimeDescriptor("burble-native").capabilities).toMatchObject({
       runtimeType: "burble-native",

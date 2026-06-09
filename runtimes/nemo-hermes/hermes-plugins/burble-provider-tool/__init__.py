@@ -80,6 +80,7 @@ TOOL_NAME_ALIASES = {
     "atlassian_list_mcp_tools": "atlassian.listMcpTools",
     "atlassian_call_mcp_tool": "atlassian.callMcpTool",
     "scheduled_job_register_capability": "scheduledJob.registerCapability",
+    "conversation_get_attachment": "conversation.getAttachment",
 }
 
 PROVIDER_BRIDGE_TOOLSETS = ["cronjob", "web"]

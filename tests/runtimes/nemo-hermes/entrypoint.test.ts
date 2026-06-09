@@ -256,7 +256,7 @@ print(json.dumps(mod.build_runtime_capability_manifest()))
       multimodalOutput: false,
       memory: false,
       durableWorkflowState: true,
-      attachments: false,
+      attachments: true,
       conversationSend: true,
       jobScopedAuth: true
     });
@@ -327,6 +327,38 @@ print(json.dumps({"text": mod.build_hermes_turn_text(payload)}))
     expect(text).not.toContain("old message should not be included");
     expect(text).toContain("recent message 20");
     expect(text).not.toContain("x".repeat(350));
+  });
+
+  test("builds current attachment guidance for Hermes turns", () => {
+    const result = runHermesEntrypointProbe(`${importEntrypoint}
+payload = {
+    "text": "summarize the file",
+    "toolGroups": {
+        "groups": ["attachments", "conversation"],
+        "reasons": ["metadata:attachments", "default:conversation"],
+    },
+    "attachments": [
+        {
+            "id": "attcap_123",
+            "kind": "file",
+            "source": "slack",
+            "name": "notes.md",
+            "mimeType": "text/markdown",
+            "sizeBytes": 1234,
+        }
+    ],
+}
+print(json.dumps({"text": mod.build_hermes_turn_text(payload)}))
+`);
+
+    const text = (result as { text: string }).text;
+    expect(text).toContain("Current request attachments:");
+    expect(text).toContain("notes.md");
+    expect(text).toContain("attcap_123");
+    expect(text).toContain("conversation_get_attachment");
+    expect(text).toContain("conversation.getAttachment");
+    expect(text).toContain("attachmentId");
+    expect(text).not.toContain("externalId");
   });
 
   test("accepts Hermes message deltas without completing the run", () => {
@@ -476,7 +508,24 @@ async def main():
         "text": "runtime contract scheduled provider capability probe",
         "scheduledJob": {"jobId": "contract-scheduled-job"},
     })
-    print(json.dumps({"toolEvents": tool_events, "scheduledEvents": scheduled_events}))
+    attachment_events = await run_probe({
+        "originalText": "runtime contract attachment capability probe",
+        "text": "runtime contract attachment capability probe",
+        "attachments": [
+            {
+                "id": "attcap_contract_probe",
+                "kind": "file",
+                "mimeType": "text/plain",
+                "source": "slack",
+                "name": "contract.txt",
+            }
+        ],
+    })
+    print(json.dumps({
+        "toolEvents": tool_events,
+        "scheduledEvents": scheduled_events,
+        "attachmentEvents": attachment_events,
+    }))
 
 asyncio.run(main())
 `);
@@ -484,6 +533,7 @@ asyncio.run(main())
     const typed = result as {
       toolEvents: unknown[];
       scheduledEvents: unknown[];
+      attachmentEvents: unknown[];
     };
     expect(typed.toolEvents).toContainEqual({
       type: "tool_call",
@@ -506,6 +556,19 @@ asyncio.run(main())
       toolName: "scheduledJob.registerCapability",
       callId: "contract-scheduled-provider-probe",
       classification: "user_private"
+    });
+    expect(typed.attachmentEvents).toContainEqual({
+      type: "tool_call",
+      toolName: "conversation.getAttachment",
+      callId: "contract-attachment-probe",
+      input: { attachmentId: "attcap_contract_probe" }
+    });
+    expect(typed.attachmentEvents).toContainEqual({
+      type: "tool_result",
+      toolName: "conversation.getAttachment",
+      callId: "contract-attachment-probe",
+      classification: "user_private",
+      content: { text: "contract attachment content" }
     });
   });
 
@@ -1077,6 +1140,7 @@ print(json.dumps({
     "hubspot": mod.normalize_burble_tool_name("hubspot_read_api_resource"),
     "jira": mod.normalize_burble_tool_name("jira_list_assigned_issues"),
     "job": mod.normalize_burble_tool_name("scheduled_job_register_capability"),
+    "attachment": mod.normalize_burble_tool_name("conversation_get_attachment"),
     "dotted": mod.normalize_burble_tool_name("google.searchDriveFiles"),
 }))
 `);
@@ -1092,6 +1156,7 @@ print(json.dumps({
       hubspot: "hubspot.readApiResource",
       jira: "jira.listAssignedIssues",
       job: "scheduledJob.registerCapability",
+      attachment: "conversation.getAttachment",
       dotted: "google.searchDriveFiles"
     });
   });
@@ -1147,6 +1212,13 @@ print(json.dumps(ctx.tools))
     expect(result).toContainEqual(
       expect.objectContaining({
         name: "scheduled_job_register_capability",
+        toolset: "cronjob",
+        is_async: true
+      })
+    );
+    expect(result).toContainEqual(
+      expect.objectContaining({
+        name: "conversation_get_attachment",
         toolset: "cronjob",
         is_async: true
       })

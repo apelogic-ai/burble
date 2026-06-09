@@ -144,25 +144,34 @@ describe("runtime conformance harness", () => {
       authToken: "runtime-token",
       dataRoot: "/tmp/runtime-conformance-test"
     });
-    const runRequests: Array<{ runId?: string; text?: string; scheduled?: boolean }> =
-      [];
+    const runRequests: Array<{
+      runId?: string;
+      text?: string;
+      scheduled?: boolean;
+      attachments?: boolean;
+    }> = [];
     const runtimeFetch: RuntimeContractFetch = async (url, init) => {
       const parsed = new URL(url);
       if (parsed.pathname === "/healthz") {
         return new Response("ok");
       }
       if (parsed.pathname === "/capabilities") {
-        return Response.json(capabilityManifest());
+        return Response.json({ ...capabilityManifest(), attachments: true });
       }
       if (parsed.pathname === "/runs") {
         const request = JSON.parse(String(init?.body ?? "{}")) as {
           runId?: string;
-          input?: { text?: string; scheduledJob?: unknown };
+          input?: {
+            text?: string;
+            scheduledJob?: unknown;
+            attachments?: unknown[];
+          };
         };
         runRequests.push({
           runId: request.runId,
           text: request.input?.text,
-          scheduled: Boolean(request.input?.scheduledJob)
+          scheduled: Boolean(request.input?.scheduledJob),
+          attachments: Boolean(request.input?.attachments?.length)
         });
         return Response.json({ runId: request.runId });
       }
@@ -214,6 +223,24 @@ describe("runtime conformance harness", () => {
             finalEvent()
           ]);
         }
+        if (url.includes("attachment-capability")) {
+          return new FakeRuntimeWebSocket([
+            {
+              type: "tool_call",
+              toolName: "conversation.getAttachment",
+              callId: "attachment-probe-1",
+              input: { attachmentId: "attcap_contract_probe" }
+            },
+            {
+              type: "tool_result",
+              toolName: "conversation.getAttachment",
+              callId: "attachment-probe-1",
+              classification: "user_private",
+              content: { text: "contract attachment content" }
+            },
+            finalEvent()
+          ]);
+        }
         return new FakeRuntimeWebSocket([
           { type: "status", text: "accepted" },
           finalEvent()
@@ -229,9 +256,10 @@ describe("runtime conformance harness", () => {
       "final_response",
       "usage",
       "tool_calls",
-      "scheduled_provider_calls"
+      "scheduled_provider_calls",
+      "attachments"
     ]);
-    expect(runRequests).toHaveLength(3);
+    expect(runRequests).toHaveLength(4);
     expect(runRequests[0].runId).toContain("contract-rt_");
     expect(runRequests[1].runId).toContain("tool-capability");
     expect(runRequests[2].runId).toContain("scheduled-provider");
@@ -242,6 +270,10 @@ describe("runtime conformance harness", () => {
     expect(runRequests[2]).toMatchObject({
       text: "runtime contract scheduled provider capability probe",
       scheduled: true
+    });
+    expect(runRequests[3]).toMatchObject({
+      text: "runtime contract attachment capability probe",
+      attachments: true
     });
 
     store.close();

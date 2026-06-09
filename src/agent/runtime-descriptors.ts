@@ -107,7 +107,7 @@ const hermesCapabilityManifest: RuntimeCapabilityManifest = {
   multimodalOutput: false,
   memory: false,
   durableWorkflowState: true,
-  attachments: false,
+  attachments: true,
   conversationSend: true,
   jobScopedAuth: true
 };
