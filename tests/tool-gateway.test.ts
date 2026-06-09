@@ -487,6 +487,57 @@ describe("handleToolGatewayRequest", () => {
     });
   });
 
+  test("normalizes Google Slides slide creation inputs to the provider tool", async () => {
+    const response = await handleToolGatewayRequest(
+      config,
+      createStore(googleConnection),
+      "google.slidesCreateSlide",
+      request("google.slidesCreateSlide", {
+        user: { email: "person@example.com" },
+        input: {
+          presentation_id: "deck-copy",
+          slide_index: 2,
+          predefined_layout: "title_and_two_columns",
+          placeholders: [
+            { placeholder_type: "title", value: "Test slide 3" },
+            { role: "body", index: 0, content: "Left text" },
+            { role: "body", index: 1, content: "Right text" }
+          ]
+        }
+      }),
+      {
+        createGoogleSlidesSlide: async (token, input) => {
+          expect(token).toBe("google-token");
+          expect(input).toEqual({
+            presentationId: "deck-copy",
+            insertionIndex: 2,
+            predefinedLayout: "TITLE_AND_TWO_COLUMNS",
+            replacements: [
+              { placeholderType: "TITLE", text: "Test slide 3" },
+              { placeholderType: "BODY", index: 0, text: "Left text" },
+              { placeholderType: "BODY", index: 1, text: "Right text" }
+            ]
+          });
+          return {
+            presentationId: "deck-copy",
+            slideObjectId: "slide-3",
+            layoutObjectId: "layout-two-columns"
+          };
+        }
+      }
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      classification: "user_private",
+      content: {
+        presentationId: "deck-copy",
+        slideObjectId: "slide-3",
+        layoutObjectId: "layout-two-columns"
+      }
+    });
+  });
+
   test("passes Google Slides placeholder fill inputs to the provider tool", async () => {
     const response = await handleToolGatewayRequest(
       config,
@@ -552,6 +603,141 @@ describe("handleToolGatewayRequest", () => {
         skippedPlaceholders: []
       }
     });
+  });
+
+  test("normalizes Google Slides placeholder fill aliases from provider bridge calls", async () => {
+    const response = await handleToolGatewayRequest(
+      config,
+      createStore(googleConnection),
+      "google.slidesFillPlaceholders",
+      request("google.slidesFillPlaceholders", {
+        user: { email: "person@example.com" },
+        input: {
+          presentation_id: "deck-copy",
+          slide_object_id: "slide-2",
+          placeholders: [
+            { placeholder_type: "title", value: "Test slide 2" },
+            {
+              role: "body",
+              content: "This slide was updated by Burble."
+            }
+          ]
+        }
+      }),
+      {
+        fillGoogleSlidesPlaceholders: async (token, input) => {
+          expect(token).toBe("google-token");
+          expect(input).toEqual({
+            presentationId: "deck-copy",
+            slideObjectId: "slide-2",
+            replacements: [
+              { placeholderType: "TITLE", text: "Test slide 2" },
+              {
+                placeholderType: "BODY",
+                text: "This slide was updated by Burble."
+              }
+            ]
+          });
+          return {
+            presentationId: "deck-copy",
+            slideObjectId: "slide-2",
+            updatedPlaceholders: [
+              {
+                placeholderType: "TITLE",
+                matchedPlaceholderType: "TITLE",
+                objectId: "title-shape",
+                text: "Test slide 2"
+              },
+              {
+                placeholderType: "BODY",
+                matchedPlaceholderType: "BODY",
+                objectId: "body-shape",
+                text: "This slide was updated by Burble."
+              }
+            ],
+            skippedPlaceholders: []
+          };
+        }
+      }
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      classification: "user_private",
+      content: {
+        presentationId: "deck-copy",
+        slideObjectId: "slide-2",
+        updatedPlaceholders: [
+          {
+            placeholderType: "TITLE",
+            matchedPlaceholderType: "TITLE",
+            objectId: "title-shape",
+            text: "Test slide 2"
+          },
+          {
+            placeholderType: "BODY",
+            matchedPlaceholderType: "BODY",
+            objectId: "body-shape",
+            text: "This slide was updated by Burble."
+          }
+        ],
+        skippedPlaceholders: []
+      }
+    });
+  });
+
+  test("normalizes top-level Google Slides placeholder fill fields", async () => {
+    const response = await handleToolGatewayRequest(
+      config,
+      createStore(googleConnection),
+      "google.slidesFillPlaceholders",
+      request("google.slidesFillPlaceholders", {
+        user: { email: "person@example.com" },
+        input: {
+          presentationId: "deck-copy",
+          slideObjectId: "slide-2",
+          placeholder_type: "title",
+          text: "Test slide 2"
+        }
+      }),
+      {
+        fillGoogleSlidesPlaceholders: async (_token, input) => {
+          expect(input).toEqual({
+            presentationId: "deck-copy",
+            slideObjectId: "slide-2",
+            replacements: [{ placeholderType: "TITLE", text: "Test slide 2" }]
+          });
+          return {
+            presentationId: "deck-copy",
+            slideObjectId: "slide-2",
+            updatedPlaceholders: [],
+            skippedPlaceholders: []
+          };
+        }
+      }
+    );
+
+    expect(response.status).toBe(200);
+  });
+
+  test("explains invalid Google Slides placeholder fill inputs", async () => {
+    const response = await handleToolGatewayRequest(
+      config,
+      createStore(googleConnection),
+      "google.slidesFillPlaceholders",
+      request("google.slidesFillPlaceholders", {
+        user: { email: "person@example.com" },
+        input: {
+          presentationId: "deck-copy",
+          replacements: [{ placeholderType: "TITLE" }]
+        }
+      })
+    );
+
+    expect(response.status).toBe(400);
+    expect(await response.text()).toContain(
+      "google.slidesFillPlaceholders requires presentationId and at least one replacement"
+    );
   });
 
   test("rejects invalid GitHub pull request list options", async () => {

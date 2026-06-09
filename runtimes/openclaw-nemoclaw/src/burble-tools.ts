@@ -535,6 +535,8 @@ function toMcpToolName(toolName: string): string {
       return "google_slides_probe_template";
     case "google.slidesCopyPresentation":
       return "google_slides_copy_presentation";
+    case "google.slidesCreateSlide":
+      return "google_slides_create_slide";
     case "google.slidesFillPlaceholders":
       return "google_slides_fill_placeholders";
     case "google.analyticsListProperties":
@@ -972,11 +974,88 @@ function toMcpToolArgumentsWithoutScheduledJobIdentity(
     ]);
   }
 
+  if (toolName === "google.slidesCreateSlide") {
+    return compactToolInput(readRecordKey(body, "input"), [
+      "presentationId",
+      "presentation_id",
+      "deckId",
+      "deck_id",
+      "objectId",
+      "object_id",
+      "slideObjectId",
+      "slide_object_id",
+      "slideId",
+      "slide_id",
+      "insertionIndex",
+      "insertion_index",
+      "index",
+      "slideIndex",
+      "slide_index",
+      "layoutObjectId",
+      "layout_object_id",
+      "layoutId",
+      "layout_id",
+      "predefinedLayout",
+      "predefined_layout",
+      "layout",
+      "layoutType",
+      "layout_type",
+      "replacements",
+      "replacement",
+      "updates",
+      "update",
+      "placeholders",
+      "placeholder",
+      "fills",
+      "fill",
+      "placeholderType",
+      "placeholder_type",
+      "type",
+      "role",
+      "text",
+      "value",
+      "content",
+      "replacementText",
+      "replacement_text",
+      "title",
+      "subtitle",
+      "body"
+    ]);
+  }
+
   if (toolName === "google.slidesFillPlaceholders") {
     return compactToolInput(readRecordKey(body, "input"), [
       "presentationId",
+      "presentation_id",
       "slideObjectId",
-      "replacements"
+      "slide_object_id",
+      "slideId",
+      "slide_id",
+      "pageObjectId",
+      "page_object_id",
+      "replacements",
+      "replacement",
+      "updates",
+      "update",
+      "placeholders",
+      "placeholder",
+      "fills",
+      "fill",
+      "placeholderType",
+      "placeholder_type",
+      "type",
+      "role",
+      "text",
+      "value",
+      "content",
+      "replacementText",
+      "replacement_text",
+      "index",
+      "placeholderIndex",
+      "placeholder_index",
+      "title",
+      "subtitle",
+      "body"
     ]);
   }
 

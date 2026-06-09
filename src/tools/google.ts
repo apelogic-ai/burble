@@ -10,6 +10,8 @@ import {
   type GoogleCreatedDraft,
   type GoogleDriveCreatedFile,
   type GoogleDriveFileContent,
+  type GoogleSlidesCreateSlideInput,
+  type GoogleSlidesCreatedSlide,
   type GoogleSlidesCopiedPresentation,
   type GoogleSlidesPlaceholderFillInput,
   type GoogleSlidesPlaceholderFillResult,
@@ -55,6 +57,10 @@ export type GoogleToolDeps = {
     token: string,
     input: { presentationId: string; name: string }
   ) => Promise<GoogleSlidesCopiedPresentation>;
+  createGoogleSlidesSlide?: (
+    token: string,
+    input: GoogleSlidesCreateSlideInput
+  ) => Promise<GoogleSlidesCreatedSlide>;
   fillGoogleSlidesPlaceholders?: (
     token: string,
     input: GoogleSlidesPlaceholderFillInput
@@ -559,6 +565,33 @@ export function createGoogleTools(deps: GoogleToolDeps) {
         return {
           classification: "user_private",
           content: sanitizeCreatedDriveFile(presentation)
+        };
+      }
+    },
+
+    createSlidesSlide: {
+      async execute(
+        context: GoogleToolContext & {
+          input: GoogleSlidesCreateSlideInput;
+        }
+      ): Promise<ToolResult<GoogleSlidesCreatedSlide | GoogleAuthErrorContent>> {
+        const result = await withGoogleToken(
+          deps,
+          context.connection,
+          (accessToken) => {
+            if (!deps.createGoogleSlidesSlide) {
+              throw new Error("Google Slides slide creation is not configured");
+            }
+            return deps.createGoogleSlidesSlide(accessToken, context.input);
+          }
+        );
+        if (isGoogleAuthErrorResult(result)) {
+          return result;
+        }
+
+        return {
+          classification: "user_private",
+          content: result
         };
       }
     },

@@ -959,15 +959,29 @@ describe("createBurbleToolExecutor", () => {
           name: "ApeLogic Template Copy"
         }
       });
+      await executor("google.slidesCreateSlide", {
+        user: { email: "person@example.com" },
+        input: {
+          presentation_id: "deck-copy",
+          slide_index: 2,
+          predefined_layout: "TITLE_AND_TWO_COLUMNS",
+          placeholders: [
+            { placeholder_type: "TITLE", value: "Test slide 3" },
+            { role: "BODY", index: 0, content: "Left text" },
+            { role: "BODY", index: 1, content: "Right text" }
+          ]
+        }
+      });
       await executor("google.slidesFillPlaceholders", {
         user: { email: "person@example.com" },
         input: {
-          presentationId: "deck-copy",
-          replacements: [
-            { placeholderType: "TITLE", text: "ApeLogic" },
+          presentation_id: "deck-copy",
+          slide_object_id: "slide-2",
+          placeholders: [
+            { placeholder_type: "TITLE", value: "ApeLogic" },
             {
-              placeholderType: "SUBTITLE",
-              text: "Test presentation from template"
+              role: "BODY",
+              content: "Test presentation from template"
             }
           ]
         }
@@ -1195,14 +1209,31 @@ describe("createBurbleToolExecutor", () => {
         {
           method: "tools/call",
           params: {
+            name: "google_slides_create_slide",
+            arguments: {
+              presentation_id: "deck-copy",
+              slide_index: 2,
+              predefined_layout: "TITLE_AND_TWO_COLUMNS",
+              placeholders: [
+                { placeholder_type: "TITLE", value: "Test slide 3" },
+                { role: "BODY", index: 0, content: "Left text" },
+                { role: "BODY", index: 1, content: "Right text" }
+              ]
+            }
+          }
+        },
+        {
+          method: "tools/call",
+          params: {
             name: "google_slides_fill_placeholders",
             arguments: {
-              presentationId: "deck-copy",
-              replacements: [
-                { placeholderType: "TITLE", text: "ApeLogic" },
+              presentation_id: "deck-copy",
+              slide_object_id: "slide-2",
+              placeholders: [
+                { placeholder_type: "TITLE", value: "ApeLogic" },
                 {
-                  placeholderType: "SUBTITLE",
-                  text: "Test presentation from template"
+                  role: "BODY",
+                  content: "Test presentation from template"
                 }
               ]
             }

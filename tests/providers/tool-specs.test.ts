@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
 import {
   allowedMutatingAtlassianMcpTools,
   atlassianProviderToolSpecs
@@ -9,6 +10,16 @@ import { hubspotProviderToolSpecs } from "../../src/providers/hubspot/tool-specs
 import { jiraProviderToolSpecs } from "../../src/providers/jira/tool-specs";
 import { slackProviderToolSpecs } from "../../src/providers/slack/tool-specs";
 import { providerToolInputSchema } from "../../src/providers/tool-specs";
+
+type HermesProviderToolHints = {
+  provider: string;
+  tools: Array<{
+    name: string;
+    alias: string;
+    description: string;
+    input: Record<string, unknown>;
+  }>;
+};
 
 describe("provider tool specs", () => {
   test("loads GitHub MCP tool metadata from YAML", () => {
@@ -54,6 +65,7 @@ describe("provider tool specs", () => {
     expect(names).toContain("google_analytics_run_report");
     expect(names).toContain("google_slides_probe_template");
     expect(names).toContain("google_slides_copy_presentation");
+    expect(names).toContain("google_slides_create_slide");
     expect(names).toContain("google_slides_fill_placeholders");
     expect(
       googleProviderToolSpecs.find(
@@ -63,6 +75,11 @@ describe("provider tool specs", () => {
     expect(
       googleProviderToolSpecs.find(
         (tool) => tool.name === "google_slides_fill_placeholders"
+      )?.risk
+    ).toBe("low_write");
+    expect(
+      googleProviderToolSpecs.find(
+        (tool) => tool.name === "google_slides_create_slide"
       )?.risk
     ).toBe("low_write");
     expect(
@@ -110,6 +127,57 @@ describe("provider tool specs", () => {
       schema.replacements.safeParse([{ placeholderType: "TITLE" }]).success
     ).toBe(false);
     expect(schema.replacements.safeParse([]).success).toBe(false);
+  });
+
+  test("validates Google Slides create slide schema from YAML", () => {
+    const createSlide = googleProviderToolSpecs.find(
+      (tool) => tool.name === "google_slides_create_slide"
+    );
+    expect(createSlide).toBeDefined();
+
+    const schema = providerToolInputSchema(createSlide!);
+
+    expect(schema.presentationId.safeParse("deck-123").success).toBe(true);
+    expect(schema.insertionIndex.safeParse(2).success).toBe(true);
+    expect(schema.insertionIndex.safeParse(-1).success).toBe(false);
+    expect(
+      schema.replacements.safeParse([
+        { placeholderType: "TITLE", text: "Test slide 3" },
+        { placeholderType: "BODY", index: 0, text: "Left text" },
+        { placeholderType: "BODY", index: 1, text: "Right text" }
+      ]).success
+    ).toBe(true);
+    expect(
+      schema.replacements.safeParse([{ placeholderType: "TITLE" }]).success
+    ).toBe(false);
+  });
+
+  test("keeps Hermes Google provider hints sourced from Google tool specs", () => {
+    const hints = JSON.parse(
+      readFileSync(
+        new URL(
+          "../../runtimes/nemo-hermes/runtime/google-provider-tool-hints.json",
+          import.meta.url
+        ),
+        "utf8"
+      )
+    ) as HermesProviderToolHints;
+    const specsByName = new Map(
+      googleProviderToolSpecs.map((tool) => [tool.name, tool])
+    );
+
+    expect(hints.provider).toBe("google");
+    expect(hints.tools.length).toBeGreaterThan(0);
+    for (const hint of hints.tools) {
+      const spec = specsByName.get(hint.name);
+      expect(spec).toBeDefined();
+      if (!spec) {
+        throw new Error(`Missing Google provider tool spec for ${hint.name}`);
+      }
+      expect(hint.alias).toBe(spec.alias);
+      expect(hint.description).toBe(spec.description);
+      expect(hint.input).toEqual(spec.input);
+    }
   });
 
   test("loads Jira MCP tool metadata from YAML", () => {

@@ -97,6 +97,22 @@ export type GoogleSlidesPlaceholderFillInput = {
   }>;
 };
 
+export type GoogleSlidesCreateSlideInput = {
+  presentationId: string;
+  objectId?: string;
+  insertionIndex?: number;
+  layoutObjectId?: string;
+  predefinedLayout?: string;
+  replacements?: GoogleSlidesPlaceholderFillInput["replacements"];
+};
+
+export type GoogleSlidesCreatedSlide = {
+  presentationId: string;
+  slideObjectId: string;
+  layoutObjectId?: string;
+  filledPlaceholders?: GoogleSlidesPlaceholderFillResult;
+};
+
 export type GoogleSlidesPlaceholderFillResult = {
   presentationId: string;
   slideObjectId: string;
@@ -494,6 +510,90 @@ export async function copyGoogleSlidesPresentation(
     );
   }
   return sanitizeCreatedDriveFile(body);
+}
+
+export async function createGoogleSlidesSlide(
+  token: string,
+  input: GoogleSlidesCreateSlideInput
+): Promise<GoogleSlidesCreatedSlide> {
+  const createSlide: Record<string, unknown> = {};
+  if (input.objectId) {
+    createSlide.objectId = input.objectId;
+  }
+  if (typeof input.insertionIndex === "number") {
+    createSlide.insertionIndex = input.insertionIndex;
+  }
+  if (input.layoutObjectId) {
+    createSlide.slideLayoutReference = { layoutId: input.layoutObjectId };
+  } else if (input.predefinedLayout) {
+    createSlide.slideLayoutReference = {
+      predefinedLayout: input.predefinedLayout
+    };
+  }
+
+  const url = new URL(
+    `https://slides.googleapis.com/v1/presentations/${encodeURIComponent(
+      input.presentationId
+    )}:batchUpdate`
+  );
+  const response = await fetch(url, {
+    method: "POST",
+    headers: {
+      ...googleHeaders(token),
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      requests: [{ createSlide }]
+    })
+  });
+  const body = (await response.json()) as {
+    presentationId?: string;
+    replies?: Array<{ createSlide?: { objectId?: string } }>;
+    error?: { message?: string };
+  };
+  if (!response.ok) {
+    throw googleError(
+      response,
+      "Google Slides slide creation failed",
+      body.error?.message
+    );
+  }
+
+  const slideObjectId =
+    body.replies?.find((reply) => reply.createSlide)?.createSlide?.objectId ??
+    input.objectId;
+  if (!slideObjectId) {
+    throw new GoogleApiError(
+      "Google Slides slide creation returned no slide object ID",
+      502
+    );
+  }
+
+  const filledPlaceholders =
+    input.replacements && input.replacements.length > 0
+      ? await fillGoogleSlidesPlaceholders(token, {
+          presentationId: input.presentationId,
+          slideObjectId,
+          replacements: input.replacements
+        })
+      : undefined;
+
+  const presentation = await readGoogleSlidesPresentation(
+    token,
+    input.presentationId
+  );
+  const slide = presentation.slides?.find(
+    (candidate) => candidate.objectId === slideObjectId
+  );
+
+  return {
+    presentationId: body.presentationId ?? input.presentationId,
+    slideObjectId,
+    ...(slide?.slideProperties?.layoutObjectId
+      ? { layoutObjectId: slide.slideProperties.layoutObjectId }
+      : {}),
+    ...(filledPlaceholders ? { filledPlaceholders } : {})
+  };
 }
 
 export async function fillGoogleSlidesPlaceholders(

@@ -212,6 +212,37 @@ function createGoogleMcpHandlers(
         }
       }),
 
+    createSlidesSlide: (connection, args) =>
+      googleTools.createSlidesSlide.execute({
+        connection,
+        input: {
+          presentationId: stringArg(args, "presentationId"),
+          ...(optionalStringArg(args, "objectId")
+            ? { objectId: optionalStringArg(args, "objectId") }
+            : {}),
+          ...(optionalNumberArg(args, "insertionIndex") !== undefined
+            ? { insertionIndex: optionalNumberArg(args, "insertionIndex") }
+            : {}),
+          ...(optionalStringArg(args, "layoutObjectId")
+            ? { layoutObjectId: optionalStringArg(args, "layoutObjectId") }
+            : {}),
+          ...(optionalStringArg(args, "predefinedLayout")
+            ? { predefinedLayout: optionalStringArg(args, "predefinedLayout") }
+            : {}),
+          ...(Array.isArray(args.replacements)
+            ? {
+                replacements: arrayArg(args, "replacements").map((replacement) => ({
+                  placeholderType: stringArg(replacement, "placeholderType"),
+                  text: stringArg(replacement, "text"),
+                  ...(optionalNumberArg(replacement, "index") !== undefined
+                    ? { index: optionalNumberArg(replacement, "index") }
+                    : {})
+                }))
+              }
+            : {})
+        }
+      }),
+
     fillSlidesPlaceholders: (connection, args) =>
       googleTools.fillSlidesPlaceholders.execute({
         connection,
