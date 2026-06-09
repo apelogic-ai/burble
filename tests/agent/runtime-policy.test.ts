@@ -4,6 +4,7 @@ import { createTokenStore } from "../../src/db";
 import {
   buildRuntimeManifestForPrincipal,
   RuntimeEngineSelectionError,
+  runtimeCapabilityManifestCompatibility,
   resolveRuntimeEngineForPrincipal,
   runtimeEngineCompatibility
 } from "../../src/agent/runtime-policy";
@@ -165,7 +166,7 @@ describe("resolveRuntimeEngineForPrincipal", () => {
     store.close();
   });
 
-  test("falls back from a preferred runtime that lacks attachment support", () => {
+  test("keeps an attachment-capable preferred runtime selected", () => {
     const store = createTokenStore(":memory:");
     store.upsertWorkspacePolicy({
       workspaceId: "T123",
@@ -190,53 +191,42 @@ describe("resolveRuntimeEngineForPrincipal", () => {
       requirements: { attachments: true }
     });
 
-    expect(selection.effectiveEngine).toBe("openclaw");
+    expect(selection.effectiveEngine).toBe("burble-native");
     expect(selection.preferredEngine).toBe("burble-native");
-    expect(selection.selectableEngines).toEqual(["openclaw"]);
-    expect(selection.compatibility).toContainEqual({
+    expect(selection.selectableEngines).toEqual(["openclaw", "burble-native"]);
+    store.close();
+  });
+
+  test("marks manifests without attachment support incompatible for attachment turns", () => {
+    expect(
+      runtimeCapabilityManifestCompatibility(
+        "burble-native",
+        {
+          runtimeType: "burble-native",
+          version: "test",
+          transports: ["http", "websocket"],
+          streaming: true,
+          cancellation: false,
+          nativeScheduler: false,
+          scheduledProviderCalls: false,
+          toolCalls: true,
+          toolBridgeModes: ["tool_gateway"],
+          usageReporting: "exact",
+          multimodalInput: false,
+          multimodalOutput: false,
+          memory: false,
+          durableWorkflowState: false,
+          attachments: false,
+          conversationSend: true,
+          jobScopedAuth: true
+        },
+        { requirements: { attachments: true } }
+      )
+    ).toEqual({
       engine: "burble-native",
       selectable: false,
       reasons: ["missing attachment support"]
     });
-    store.close();
-  });
-
-  test("fails clearly when attachment turns have no capable runtime", () => {
-    const store = createTokenStore(":memory:");
-    store.upsertWorkspacePolicy({
-      workspaceId: "T123",
-      key: "runtime.allowedEngines",
-      value: ["burble-native"],
-      updatedBySlackUserId: "UADMIN"
-    });
-
-    expect(() =>
-      resolveRuntimeEngineForPrincipal({
-        config,
-        store,
-        principal: {
-          workspaceId: "T123",
-          slackUserId: "U123"
-        },
-        requirements: { attachments: true }
-      })
-    ).toThrow(RuntimeEngineSelectionError);
-
-    try {
-      resolveRuntimeEngineForPrincipal({
-        config,
-        store,
-        principal: {
-          workspaceId: "T123",
-          slackUserId: "U123"
-        },
-        requirements: { attachments: true }
-      });
-    } catch (error) {
-      expect(error).toBeInstanceOf(RuntimeEngineSelectionError);
-      expect(String(error)).toContain("missing attachment support");
-    }
-    store.close();
   });
 
   test("ignores a user runtime preference that is not allowed", () => {

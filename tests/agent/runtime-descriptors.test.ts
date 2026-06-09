@@ -82,7 +82,7 @@ describe("runtime descriptors", () => {
       multimodalInput: false,
       memory: false,
       durableWorkflowState: false,
-      attachments: false
+      attachments: true
     });
   });
 

@@ -43,6 +43,7 @@ const DEFAULT_PROVIDER_RETRY_BASE_DELAY_MS = 250;
 const MAX_TOOL_LOOP_STEPS = 4;
 const MAX_PROMPT_TOOLS = 24;
 const MAX_MODEL_TOOL_OUTPUT_CHARS = 12_000;
+const MAX_ATTACHMENT_NAME_CHARS = 120;
 const BURBLE_PROVIDER_TOOL_NAME = "burble_provider_call";
 
 const runtimeContractServer = createRuntimeContractServer<
@@ -109,7 +110,7 @@ export function buildRuntimeCapabilityManifest(): CapabilityManifest {
     multimodalOutput: false,
     memory: false,
     durableWorkflowState: false,
-    attachments: false,
+    attachments: true,
     conversationSend: true,
     jobScopedAuth: true
   };
@@ -165,6 +166,32 @@ async function* runNativeTurn(
         response: {
           classification: "user_private",
           text: "Runtime contract tool capability response.",
+          usage: nativeUsage()
+        }
+      };
+      return;
+    }
+    if (request.input.text === "runtime contract attachment capability probe") {
+      const attachmentId =
+        request.input.attachments?.[0]?.id ?? "attcap_contract_probe";
+      yield {
+        type: "tool_call",
+        toolName: "conversation.getAttachment",
+        callId: "contract-attachment-probe",
+        input: { attachmentId }
+      };
+      yield {
+        type: "tool_result",
+        toolName: "conversation.getAttachment",
+        callId: "contract-attachment-probe",
+        classification: "user_private",
+        content: { text: "contract attachment content" }
+      };
+      yield {
+        type: "final",
+        response: {
+          classification: "user_private",
+          text: "Runtime contract attachment capability response.",
           usage: nativeUsage()
         }
       };
@@ -650,8 +677,10 @@ function buildOpenAiInput(request: RunRequest): OpenAiInputItem[] {
     .map((message) => `${message.author}: ${message.text}`)
     .join("\n");
   const toolCatalog = formatSelectedToolCatalog(request);
+  const attachmentContext = formatCurrentRequestAttachments(request);
   const text = [
     "You are Burble, a concise Slack-native work assistant.",
+    attachmentContext,
     toolCatalog
       ? [
           "Use burble_provider_call only when provider data or actions are needed.",
@@ -708,10 +737,43 @@ function selectedRuntimeTools(request: RunRequest): RuntimeRequestManifestTool[]
   if (groups.size === 0) {
     return [];
   }
-  return (request.runtime.manifest?.tools ?? [])
+  const builtInTools = selectedBuiltInRuntimeTools(request, groups);
+  const manifestTools = (request.runtime.manifest?.tools ?? [])
     .filter((tool) => tool.enabled && toolMatchesSelectedGroups(tool, groups))
     .sort(compareRuntimeTools)
-    .slice(0, MAX_PROMPT_TOOLS);
+    .slice(0, Math.max(0, MAX_PROMPT_TOOLS - builtInTools.length));
+  return [...builtInTools, ...manifestTools];
+}
+
+function selectedBuiltInRuntimeTools(
+  request: RunRequest,
+  groups: Set<string>
+): RuntimeRequestManifestTool[] {
+  if (!groups.has("attachments") || !request.input.attachments?.length) {
+    return [];
+  }
+  return [
+    {
+      name: "conversation_get_attachment",
+      alias: "conversation.getAttachment",
+      provider: "conversation",
+      title: "Current request attachment fetch",
+      description:
+        "Fetch text or supported file content for one current-turn attachment by opaque attachment id.",
+      enabled: true,
+      risk: "read",
+      routeRequired: true,
+      confirmation: "none",
+      input: [
+        {
+          name: "attachmentId",
+          type: "string",
+          required: true,
+          description: "Opaque attachment id from Current request attachments."
+        }
+      ]
+    }
+  ];
 }
 
 function toolMatchesSelectedGroups(
@@ -779,6 +841,28 @@ function formatSelectedToolCatalog(request: RunRequest): string {
   ]
     .filter(Boolean)
     .join("\n");
+}
+
+function formatCurrentRequestAttachments(request: RunRequest): string {
+  const attachments = request.input.attachments ?? [];
+  if (attachments.length === 0) {
+    return "";
+  }
+  return [
+    "Current request attachments:",
+    "Use only the opaque attachment ids shown here. Fetch content with conversation.getAttachment and input { attachmentId } before summarizing or using an attached file.",
+    ...attachments.map((attachment, index) => {
+      const name = truncateForPrompt(
+        attachment.name ?? "attachment",
+        MAX_ATTACHMENT_NAME_CHARS
+      );
+      const size =
+        typeof attachment.sizeBytes === "number"
+          ? `, size=${attachment.sizeBytes} bytes`
+          : "";
+      return `- ${index + 1}. id=${attachment.id}, name=${name}, kind=${attachment.kind}, mimeType=${attachment.mimeType}${size}`;
+    })
+  ].join("\n");
 }
 
 function formatRuntimeTool(tool: RuntimeRequestManifestTool): string {
