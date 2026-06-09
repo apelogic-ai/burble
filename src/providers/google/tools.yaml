@@ -343,7 +343,7 @@ tools:
     alias: google.slidesFillPlaceholders
     implementation: fillSlidesPlaceholders
     title: Google Slides fill placeholders
-    description: Fill text placeholders on an existing Google Slides presentation slide. Defaults to the first slide when slideObjectId is omitted. Use for explicit user requests to set title, subtitle, body, or similar placeholder text in a deck.
+    description: Fill text placeholders on an existing Google Slides presentation slide. When slideObjectId is omitted, Burble chooses the slide that best matches the requested placeholders. Use for explicit user requests to set title, subtitle, body, or similar placeholder text in a deck.
     risk: low_write
     confirmation: none
     input:
@@ -354,7 +354,7 @@ tools:
       slideObjectId:
         type: string
         optional: true
-        description: Optional slide object ID. Defaults to the first slide.
+        description: Optional slide object ID. If omitted, Burble chooses the slide that best matches the requested placeholders.
       replacements:
         type: array
         min: 1

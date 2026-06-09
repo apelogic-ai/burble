@@ -433,10 +433,12 @@ describe("createGoogleTools", () => {
           updatedPlaceholders: [
             {
               placeholderType: "TITLE",
+              matchedPlaceholderType: "TITLE",
               objectId: "title-shape",
               text: "ApeLogic"
             }
-          ]
+          ],
+          skippedPlaceholders: []
         };
       }
     });
@@ -457,10 +459,12 @@ describe("createGoogleTools", () => {
         updatedPlaceholders: [
           {
             placeholderType: "TITLE",
+            matchedPlaceholderType: "TITLE",
             objectId: "title-shape",
             text: "ApeLogic"
           }
-        ]
+        ],
+        skippedPlaceholders: []
       }
     });
   });

@@ -524,10 +524,12 @@ describe("handleToolGatewayRequest", () => {
             updatedPlaceholders: [
               {
                 placeholderType: "TITLE",
+                matchedPlaceholderType: "TITLE",
                 objectId: "title-shape",
                 text: "ApeLogic"
               }
-            ]
+            ],
+            skippedPlaceholders: []
           };
         }
       }
@@ -542,10 +544,12 @@ describe("handleToolGatewayRequest", () => {
         updatedPlaceholders: [
           {
             placeholderType: "TITLE",
+            matchedPlaceholderType: "TITLE",
             objectId: "title-shape",
             text: "ApeLogic"
           }
-        ]
+        ],
+        skippedPlaceholders: []
       }
     });
   });

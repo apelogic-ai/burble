@@ -1071,10 +1071,12 @@ describe("handleProviderMcpRequest", () => {
             updatedPlaceholders: [
               {
                 placeholderType: "TITLE",
+                matchedPlaceholderType: "TITLE",
                 objectId: "title-shape",
                 text: "ApeLogic"
               }
-            ]
+            ],
+            skippedPlaceholders: []
           };
         }
       }
@@ -1091,10 +1093,12 @@ describe("handleProviderMcpRequest", () => {
         updatedPlaceholders: [
           {
             placeholderType: "TITLE",
+            matchedPlaceholderType: "TITLE",
             objectId: "title-shape",
             text: "ApeLogic"
           }
-        ]
+        ],
+        skippedPlaceholders: []
       }
     });
     store.close();

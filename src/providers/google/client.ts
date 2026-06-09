@@ -102,8 +102,16 @@ export type GoogleSlidesPlaceholderFillResult = {
   slideObjectId: string;
   updatedPlaceholders: Array<{
     placeholderType: string;
+    matchedPlaceholderType: string;
     objectId: string;
     text: string;
+    index?: number;
+  }>;
+  skippedPlaceholders: Array<{
+    placeholderType: string;
+    slideObjectId: string;
+    text: string;
+    reason: "placeholder_not_found";
     index?: number;
   }>;
 };
@@ -493,9 +501,15 @@ export async function fillGoogleSlidesPlaceholders(
   input: GoogleSlidesPlaceholderFillInput
 ): Promise<GoogleSlidesPlaceholderFillResult> {
   const presentation = await readGoogleSlidesPresentation(token, input.presentationId);
-  const slide = resolveSlidesTargetSlide(presentation, input.slideObjectId);
+  const slide = resolveSlidesTargetSlide(
+    presentation,
+    input.slideObjectId,
+    input.replacements
+  );
   const slideObjectId = slide.objectId ?? input.slideObjectId ?? "";
-  const updates = input.replacements.map((replacement) => {
+  const skippedPlaceholders: GoogleSlidesPlaceholderFillResult["skippedPlaceholders"] =
+    [];
+  const updates = input.replacements.flatMap((replacement) => {
     const placeholderType = normalizeSlidesPlaceholderType(
       replacement.placeholderType
     );
@@ -505,19 +519,37 @@ export async function fillGoogleSlidesPlaceholders(
       replacement.index
     );
     if (!element.objectId) {
-      throw new GoogleApiError(
-        `Google Slides placeholder ${placeholderType} has no object id`,
-        400
-      );
+      skippedPlaceholders.push({
+        placeholderType,
+        slideObjectId,
+        text: replacement.text,
+        reason: "placeholder_not_found",
+        ...(typeof replacement.index === "number" ? { index: replacement.index } : {})
+      });
+      return [];
     }
-    return {
-      placeholderType,
-      objectId: element.objectId,
-      text: replacement.text,
-      hasExistingText: hasSlidesElementText(element),
-      ...(typeof replacement.index === "number" ? { index: replacement.index } : {})
-    };
+    return [
+      {
+        placeholderType,
+        matchedPlaceholderType: normalizeSlidesPlaceholderType(
+          element.shape?.placeholder?.type
+        ),
+        objectId: element.objectId,
+        text: replacement.text,
+        hasExistingText: hasSlidesElementText(element),
+        ...(typeof replacement.index === "number" ? { index: replacement.index } : {})
+      }
+    ];
   });
+
+  if (updates.length === 0) {
+    return {
+      presentationId: presentation.presentationId ?? input.presentationId,
+      slideObjectId,
+      updatedPlaceholders: [],
+      skippedPlaceholders
+    };
+  }
 
   const url = new URL(
     `https://slides.googleapis.com/v1/presentations/${encodeURIComponent(
@@ -569,7 +601,8 @@ export async function fillGoogleSlidesPlaceholders(
   return {
     presentationId: body.presentationId ?? input.presentationId,
     slideObjectId,
-    updatedPlaceholders: updates.map(({ hasExistingText: _hasExistingText, ...update }) => update)
+    updatedPlaceholders: updates.map(({ hasExistingText: _hasExistingText, ...update }) => update),
+    skippedPlaceholders
   };
 }
 
@@ -1360,11 +1393,13 @@ function sanitizeSlidesPresentation(
 
 function resolveSlidesTargetSlide(
   presentation: GoogleSlidesApiPresentation,
-  slideObjectId: string | undefined
+  slideObjectId: string | undefined,
+  replacements: GoogleSlidesPlaceholderFillInput["replacements"]
 ): GoogleSlidesApiSlide {
+  const slides = presentation.slides ?? [];
   const slide = slideObjectId
-    ? (presentation.slides ?? []).find((candidate) => candidate.objectId === slideObjectId)
-    : presentation.slides?.[0];
+    ? slides.find((candidate) => candidate.objectId === slideObjectId)
+    : selectBestPlaceholderSlide(slides, replacements);
   if (!slide?.objectId) {
     throw new GoogleApiError(
       slideObjectId
@@ -1376,6 +1411,38 @@ function resolveSlidesTargetSlide(
   return slide;
 }
 
+function selectBestPlaceholderSlide(
+  slides: GoogleSlidesApiSlide[],
+  replacements: GoogleSlidesPlaceholderFillInput["replacements"]
+): GoogleSlidesApiSlide | undefined {
+  const scoredSlides = slides
+    .filter((slide) => slide.objectId)
+    .map((slide) => ({
+      slide,
+      score: replacements.reduce((score, replacement) => {
+        const placeholderType = normalizeSlidesPlaceholderType(
+          replacement.placeholderType
+        );
+        return findSlidePlaceholderElement(
+          slide,
+          placeholderType,
+          replacement.index
+        ).objectId
+          ? score + 1
+          : score;
+      }, 0)
+    }));
+  const bestSlide = scoredSlides.reduce<
+    { slide: GoogleSlidesApiSlide; score: number } | undefined
+  >((best, current) => {
+    if (!best || current.score > best.score) {
+      return current;
+    }
+    return best;
+  }, undefined);
+  return bestSlide && bestSlide.score > 0 ? bestSlide.slide : slides[0];
+}
+
 function findSlidePlaceholderElement(
   slide: GoogleSlidesApiSlide,
   placeholderType: string,
@@ -1383,22 +1450,42 @@ function findSlidePlaceholderElement(
 ): GoogleSlidesApiPageElement {
   const element = (slide.pageElements ?? []).find((candidate) => {
     const placeholder = candidate.shape?.placeholder;
-    if (normalizeSlidesPlaceholderType(placeholder?.type) !== placeholderType) {
+    if (!slidesPlaceholderTypeMatches(placeholder?.type, placeholderType)) {
       return false;
     }
     return typeof index === "number" ? placeholder?.index === index : true;
   });
-  if (!element?.objectId) {
-    throw new GoogleApiError(
-      `Google Slides placeholder not found on slide ${slide.objectId}: ${placeholderType}`,
-      400
-    );
-  }
-  return element;
+  return element ?? {};
 }
 
 function normalizeSlidesPlaceholderType(type: string | undefined): string {
   return (type ?? "").trim().toUpperCase();
+}
+
+function slidesPlaceholderTypeMatches(
+  actualType: string | undefined,
+  requestedType: string
+): boolean {
+  const actual = normalizeSlidesPlaceholderType(actualType);
+  const requested = normalizeSlidesPlaceholderType(requestedType);
+  if (!actual || !requested) {
+    return false;
+  }
+  const aliases = slidesPlaceholderTypeAliases(requested);
+  return aliases.includes(actual);
+}
+
+function slidesPlaceholderTypeAliases(type: string): string[] {
+  switch (type) {
+    case "TITLE":
+    case "CENTERED_TITLE":
+      return ["TITLE", "CENTERED_TITLE"];
+    case "BODY":
+    case "CENTERED_BODY":
+      return ["BODY", "CENTERED_BODY"];
+    default:
+      return [type];
+  }
 }
 
 function hasSlidesElementText(element: GoogleSlidesApiPageElement): boolean {
