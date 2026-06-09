@@ -2419,7 +2419,7 @@ async function readDiscoveredProviderToolCatalog(
       return [];
     }
 
-    const name = mcpToolNameToBurbleToolName(tool.name);
+    const name = mcpToolNameToBurbleToolName(tool.name, request);
     if (!name || !isDiscoveredProviderToolAvailable(name, request)) {
       return [];
     }
@@ -2496,7 +2496,15 @@ function readDiscoveredMcpTool(value: unknown): {
   };
 }
 
-function mcpToolNameToBurbleToolName(name: string): string | null {
+function mcpToolNameToBurbleToolName(
+  name: string,
+  request: RunRequest
+): string | null {
+  const manifestToolName = manifestMcpToolNameToBurbleToolName(name, request);
+  if (manifestToolName) {
+    return manifestToolName;
+  }
+
   switch (name) {
     case "github_get_authenticated_user":
       return "github.getAuthenticatedUser";
@@ -2639,6 +2647,19 @@ function mcpToolNameToBurbleToolName(name: string): string | null {
     default:
       return null;
   }
+}
+
+function manifestMcpToolNameToBurbleToolName(
+  name: string,
+  request: RunRequest
+): string | null {
+  const tools = request.runtime?.manifest?.tools;
+  if (!tools) {
+    return null;
+  }
+
+  const tool = tools.find((entry) => entry.enabled !== false && entry.name === name);
+  return tool?.alias ?? null;
 }
 
 function isDiscoveredProviderToolAvailable(

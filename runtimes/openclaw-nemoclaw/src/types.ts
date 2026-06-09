@@ -44,6 +44,12 @@ export type RunRequest = {
         valuePreview: string;
         updatedAt: string;
       }>;
+      tools?: Array<{
+        name: string;
+        alias: string;
+        provider: string;
+        enabled: boolean;
+      }>;
     };
   };
   input: {

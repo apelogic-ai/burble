@@ -174,6 +174,93 @@ describe("runOpenClawCliRequest", () => {
     expect(catalogText).not.toContain('"name":"jira.searchIssues"');
   });
 
+  test("maps discovered MCP tools through runtime manifest aliases", async () => {
+    const prompts: string[] = [];
+
+    const response = await runOpenClawCliRequest(
+      {
+        runtime: {
+          id: "rt_test",
+          manifest: {
+            version: "1",
+            policyHash: "policy-123",
+            skills: [],
+            memory: {
+              userMemoryEnabled: false,
+              workspaceMemoryEnabled: false,
+              jobMemoryEnabled: false
+            },
+            tools: [
+              {
+                name: "google_future_tool",
+                alias: "google.futureTool",
+                provider: "google",
+                enabled: true
+              }
+            ]
+          }
+        },
+        input: {
+          text: "use a new Google tool",
+          toolGroups: {
+            groups: ["conversation", "google"],
+            reasons: ["test"]
+          },
+          connections: {
+            github: { connected: false },
+            google: {
+              connected: true,
+              email: "person@example.com"
+            }
+          }
+        }
+      },
+      {
+        ...config,
+        mcpGatewayUrl: "http://agentgateway:3000/mcp",
+        runtimeJwt: "runtime-jwt"
+      },
+      async (toolName) => {
+        if (toolName === "burble.mcp.listTools") {
+          return {
+            classification: "user_private",
+            content: [
+              {
+                name: "google_future_tool",
+                description: "MCP-discovered future Google tool",
+                inputSchema: { type: "object" }
+              }
+            ]
+          };
+        }
+
+        return {
+          classification: "user_private",
+          content: []
+        };
+      },
+      async (_command, args) => {
+        prompts.push(args[args.indexOf("--message") + 1] ?? "");
+        return {
+          exitCode: 0,
+          stdout: JSON.stringify({
+            response: {
+              text: "Hi."
+            }
+          }),
+          stderr: ""
+        };
+      },
+      () => undefined
+    );
+
+    expect(response.response.text).toBe("Hi.");
+    const catalogText =
+      prompts[0].split("Available Burble tools:\n")[1]?.split("\n\n")[0] ?? "";
+    expect(catalogText).toContain("google.futureTool");
+    expect(catalogText).toContain("MCP-discovered future Google tool");
+  });
+
   test("filters MCP-discovered provider catalog by selected tool groups", async () => {
     const prompts: string[] = [];
 
