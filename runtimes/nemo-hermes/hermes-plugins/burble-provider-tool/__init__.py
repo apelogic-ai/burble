@@ -44,6 +44,7 @@ TOOL_NAME_ALIASES = {
     "google_slides_search_presentations": "google.slidesSearchPresentations",
     "google_slides_get_presentation": "google.slidesGetPresentation",
     "google_slides_probe_template": "google.slidesProbeTemplate",
+    "google_slides_copy_presentation": "google.slidesCopyPresentation",
     "google_analytics_list_properties": "google.analyticsListProperties",
     "google_analytics_get_metadata": "google.analyticsGetMetadata",
     "google_analytics_run_report": "google.analyticsRunReport",

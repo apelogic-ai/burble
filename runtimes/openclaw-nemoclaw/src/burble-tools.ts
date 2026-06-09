@@ -525,6 +525,8 @@ function toMcpToolName(toolName: string): string {
       return "google_slides_get_presentation";
     case "google.slidesProbeTemplate":
       return "google_slides_probe_template";
+    case "google.slidesCopyPresentation":
+      return "google_slides_copy_presentation";
     case "google.analyticsListProperties":
       return "google_analytics_list_properties";
     case "google.analyticsGetMetadata":
@@ -951,6 +953,13 @@ function toMcpToolArgumentsWithoutScheduledJobIdentity(
 
   if (toolName === "google.slidesProbeTemplate") {
     return compactToolInput(readRecordKey(body, "input"), ["presentationId"]);
+  }
+
+  if (toolName === "google.slidesCopyPresentation") {
+    return compactToolInput(readRecordKey(body, "input"), [
+      "presentationId",
+      "name"
+    ]);
   }
 
   if (toolName === "google.analyticsListProperties") {

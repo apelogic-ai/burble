@@ -9,6 +9,7 @@ import {
   listGoogleAnalyticsProperties,
   probeGoogleSlidesTemplate,
   refreshGoogleAccessToken,
+  copyGoogleSlidesPresentation,
   createGoogleDriveTextFile,
   runGoogleAnalyticsReport,
   searchGoogleDriveFiles,
@@ -76,22 +77,20 @@ describe("buildGoogleOAuthUrl", () => {
     expect(url.searchParams.get("access_type")).toBe("offline");
     expect(url.searchParams.get("prompt")).toBe("consent");
     expect(url.searchParams.get("state")).toBe("state-123");
-    expect(url.searchParams.get("scope")).toContain(
+    const scopes = url.searchParams.get("scope")?.split(" ") ?? [];
+    expect(scopes).toContain(
       "https://www.googleapis.com/auth/drive.metadata.readonly"
     );
-    expect(url.searchParams.get("scope")).toContain(
-      "https://www.googleapis.com/auth/drive.file"
-    );
-    expect(url.searchParams.get("scope")).toContain(
+    expect(scopes).toContain("https://www.googleapis.com/auth/drive");
+    expect(scopes).toContain("https://www.googleapis.com/auth/drive.file");
+    expect(scopes).toContain(
       "https://www.googleapis.com/auth/calendar.readonly"
     );
-    expect(url.searchParams.get("scope")).toContain(
-      "https://www.googleapis.com/auth/gmail.readonly"
-    );
-    expect(url.searchParams.get("scope")).toContain(
+    expect(scopes).toContain("https://www.googleapis.com/auth/gmail.readonly");
+    expect(scopes).toContain(
       "https://www.googleapis.com/auth/analytics.readonly"
     );
-    expect(url.searchParams.get("scope")).toContain(
+    expect(scopes).toContain(
       "https://www.googleapis.com/auth/presentations.readonly"
     );
   });
@@ -452,6 +451,51 @@ describe("Google OAuth and API helpers", () => {
         "trashed = false and mimeType = 'application/vnd.google-apps.presentation' and name contains 'QBR'"
       );
       expect(url.searchParams.get("pageSize")).toBe("4");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  test("copies a Google Slides presentation through Drive copy", async () => {
+    const originalFetch = globalThis.fetch;
+    let requestedUrl = "";
+    let requestedBody: unknown = null;
+    globalThis.fetch = (async (input, init) => {
+      requestedUrl = String(input);
+      requestedBody = JSON.parse(String(init?.body));
+      expect(init?.method).toBe("POST");
+      expect(new Headers(init?.headers).get("authorization")).toBe(
+        "Bearer google-token"
+      );
+      return Response.json({
+        id: "deck-copy",
+        name: "ApeLogic Template Copy",
+        mimeType: "application/vnd.google-apps.presentation",
+        webViewLink: "https://docs.google.com/presentation/d/deck-copy"
+      });
+    }) as typeof fetch;
+
+    try {
+      const copied = await copyGoogleSlidesPresentation("google-token", {
+        presentationId: "deck-template",
+        name: "ApeLogic Template Copy"
+      });
+      expect(copied).toEqual({
+        id: "deck-copy",
+        name: "ApeLogic Template Copy",
+        mimeType: "application/vnd.google-apps.presentation",
+        webViewLink: "https://docs.google.com/presentation/d/deck-copy"
+      });
+      const url = new URL(requestedUrl);
+      expect(url.origin + url.pathname).toBe(
+        "https://www.googleapis.com/drive/v3/files/deck-template/copy"
+      );
+      expect(url.searchParams.get("fields")).toBe(
+        "id,name,mimeType,webViewLink"
+      );
+      expect(requestedBody).toEqual({
+        name: "ApeLogic Template Copy"
+      });
     } finally {
       globalThis.fetch = originalFetch;
     }

@@ -30,6 +30,7 @@ import {
   createGoogleCalendarEvent,
   createGoogleDriveFolder,
   createGoogleDriveTextFile,
+  copyGoogleSlidesPresentation,
   getGoogleAnalyticsMetadata,
   getGoogleDriveFile,
   getGoogleUser,
@@ -196,6 +197,7 @@ const defaultDeps = {
   searchGoogleSlidesPresentations,
   getGoogleSlidesPresentation,
   probeGoogleSlidesTemplate,
+  copyGoogleSlidesPresentation,
   searchGoogleCalendarEvents,
   createGoogleCalendarEvent,
   updateGoogleCalendarEvent,
@@ -1122,6 +1124,19 @@ export async function handleToolGatewayRequest(
       );
     }
 
+    case "google.slidesCopyPresentation": {
+      if (!isGoogleSlidesCopyPresentationInput(body.input)) {
+        return new Response("Invalid tool input", { status: 400 });
+      }
+
+      return respondWithAudit(
+        await googleTools.copySlidesPresentation.execute({
+          connection,
+          input: body.input
+        })
+      );
+    }
+
     case "google.analyticsListProperties": {
       if (!isGoogleAnalyticsListPropertiesInput(body.input)) {
         return new Response("Invalid tool input", { status: 400 });
@@ -1474,6 +1489,7 @@ function isKnownTool(toolName: string): boolean {
     toolName === "google.slidesSearchPresentations" ||
     toolName === "google.slidesGetPresentation" ||
     toolName === "google.slidesProbeTemplate" ||
+    toolName === "google.slidesCopyPresentation" ||
     toolName === "google.analyticsListProperties" ||
     toolName === "google.analyticsGetMetadata" ||
     toolName === "google.analyticsRunReport" ||
@@ -2486,6 +2502,17 @@ function isGoogleSlidesProbeTemplateInput(input: unknown): input is {
   presentationId: string;
 } {
   return isOptionalObject(input) && isNonEmptyString(input.presentationId);
+}
+
+function isGoogleSlidesCopyPresentationInput(input: unknown): input is {
+  presentationId: string;
+  name: string;
+} {
+  return (
+    isOptionalObject(input) &&
+    isNonEmptyString(input.presentationId) &&
+    isNonEmptyString(input.name)
+  );
 }
 
 function isGoogleAnalyticsListPropertiesInput(input: unknown): input is {

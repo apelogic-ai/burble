@@ -446,6 +446,47 @@ describe("handleToolGatewayRequest", () => {
     });
   });
 
+  test("passes Google Slides copy inputs to the provider tool", async () => {
+    const response = await handleToolGatewayRequest(
+      config,
+      createStore(googleConnection),
+      "google.slidesCopyPresentation",
+      request("google.slidesCopyPresentation", {
+        user: { email: "person@example.com" },
+        input: {
+          presentationId: "deck-template",
+          name: "ApeLogic Template Copy"
+        }
+      }),
+      {
+        copyGoogleSlidesPresentation: async (token, input) => {
+          expect(token).toBe("google-token");
+          expect(input).toEqual({
+            presentationId: "deck-template",
+            name: "ApeLogic Template Copy"
+          });
+          return {
+            id: "deck-copy",
+            name: "ApeLogic Template Copy",
+            mimeType: "application/vnd.google-apps.presentation",
+            webViewLink: "https://docs.google.com/presentation/d/deck-copy"
+          };
+        }
+      }
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      classification: "user_private",
+      content: {
+        id: "deck-copy",
+        name: "ApeLogic Template Copy",
+        mimeType: "application/vnd.google-apps.presentation",
+        webViewLink: "https://docs.google.com/presentation/d/deck-copy"
+      }
+    });
+  });
+
   test("rejects invalid GitHub pull request list options", async () => {
     const response = await handleToolGatewayRequest(
       config,

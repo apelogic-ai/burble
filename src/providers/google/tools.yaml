@@ -321,6 +321,24 @@ tools:
         min: 1
         description: Google Slides presentation ID to inspect as a template.
 
+  - name: google_slides_copy_presentation
+    alias: google.slidesCopyPresentation
+    implementation: copySlidesPresentation
+    title: Google Slides copy presentation
+    description: Copy an existing Google Slides presentation into a new presentation using the connected Google account. Use this for explicit user requests to create a new deck from a template; it does not edit slide contents.
+    risk: low_write
+    confirmation: none
+    input:
+      presentationId:
+        type: string
+        min: 1
+        description: Source Google Slides presentation ID.
+      name:
+        type: string
+        min: 1
+        max: 200
+        description: Name for the copied presentation.
+
   - name: google_analytics_list_properties
     alias: google.analyticsListProperties
     implementation: listAnalyticsProperties

@@ -1283,6 +1283,28 @@ async function runAiSdkAgent(
             );
           })
       });
+      tools.google_slides_copy_presentation = tool({
+        description:
+          "Copy an existing Google Slides presentation into a new presentation. Use only for explicit user requests to create a new deck from a template; this does not edit slide contents.",
+        inputSchema: z.object({
+          presentationId: z.string().min(1),
+          name: z.string().min(1).max(200)
+        }),
+        execute: async (toolInput) =>
+          executeTool("google_slides_copy_presentation", async () => {
+            const connection = input.connections.google;
+            if (!connection) {
+              return missingGoogleConnection();
+            }
+
+            return record(
+              await deps.googleTools!.copySlidesPresentation.execute({
+                connection,
+                input: toolInput
+              })
+            );
+          })
+      });
       tools.google_analytics_get_metadata = tool({
         description:
           "List available Google Analytics dimensions and metrics for a GA4 property.",

@@ -10,6 +10,7 @@ import {
   type GoogleCreatedDraft,
   type GoogleDriveCreatedFile,
   type GoogleDriveFileContent,
+  type GoogleSlidesCopiedPresentation,
   isGoogleAuthorizationError,
   type GoogleCalendarEvent,
   type GoogleDriveFile,
@@ -48,6 +49,10 @@ export type GoogleToolDeps = {
     token: string,
     input: { presentationId: string }
   ) => Promise<GoogleSlidesTemplateProbe>;
+  copyGoogleSlidesPresentation?: (
+    token: string,
+    input: { presentationId: string; name: string }
+  ) => Promise<GoogleSlidesCopiedPresentation>;
   listGoogleAnalyticsProperties?: (
     token: string,
     input: { limit?: number }
@@ -519,6 +524,35 @@ export function createGoogleTools(deps: GoogleToolDeps) {
         return {
           classification: "user_private",
           content: probe
+        };
+      }
+    },
+
+    copySlidesPresentation: {
+      async execute(
+        context: GoogleToolContext & {
+          input: { presentationId: string; name: string };
+        }
+      ): Promise<
+        ToolResult<GoogleSlidesCopiedPresentation | GoogleAuthErrorContent>
+      > {
+        const presentation = await withGoogleToken(
+          deps,
+          context.connection,
+          (accessToken) => {
+            if (!deps.copyGoogleSlidesPresentation) {
+              throw new Error("Google Slides presentation copy is not configured");
+            }
+            return deps.copyGoogleSlidesPresentation(accessToken, context.input);
+          }
+        );
+        if (isGoogleAuthErrorResult(presentation)) {
+          return presentation;
+        }
+
+        return {
+          classification: "user_private",
+          content: sanitizeCreatedDriveFile(presentation)
         };
       }
     },

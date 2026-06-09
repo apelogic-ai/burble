@@ -107,6 +107,11 @@ HERMES_PROVIDER_TOOL_HINTS: dict[str, list[dict[str, str]]] = {
             "args": "presentationId",
         },
         {
+            "name": "google_slides_copy_presentation",
+            "alias": "google.slidesCopyPresentation",
+            "args": "presentationId, name",
+        },
+        {
             "name": "google_analytics_list_properties",
             "alias": "google.analyticsListProperties",
             "args": "limit?",

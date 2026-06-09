@@ -2026,6 +2026,15 @@ async function buildToolCatalog(
         }
       },
       {
+        name: "google.slidesCopyPresentation",
+        description:
+          "Copy an existing Google Slides presentation into a new presentation. Use only when the user explicitly asks to create a new deck from a template.",
+        inputSchema: {
+          presentationId: "string source Google Slides presentation ID",
+          name: "string name for the copied presentation"
+        }
+      },
+      {
         name: "google.analyticsListProperties",
         description:
           "List Google Analytics GA4 properties available to the requesting Slack user's connected Google account.",
@@ -2525,6 +2534,8 @@ function mcpToolNameToBurbleToolName(name: string): string | null {
       return "google.slidesGetPresentation";
     case "google_slides_probe_template":
       return "google.slidesProbeTemplate";
+    case "google_slides_copy_presentation":
+      return "google.slidesCopyPresentation";
     case "google_analytics_list_properties":
       return "google.analyticsListProperties";
     case "google_analytics_get_metadata":

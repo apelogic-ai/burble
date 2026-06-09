@@ -53,6 +53,12 @@ describe("provider tool specs", () => {
     expect(names).toContain("gmail_create_draft");
     expect(names).toContain("google_analytics_run_report");
     expect(names).toContain("google_slides_probe_template");
+    expect(names).toContain("google_slides_copy_presentation");
+    expect(
+      googleProviderToolSpecs.find(
+        (tool) => tool.name === "google_slides_copy_presentation"
+      )?.risk
+    ).toBe("low_write");
     expect(
       googleProviderToolSpecs.find(
         (tool) => tool.name === "google_append_to_drive_text_file"

@@ -85,6 +85,8 @@ export type GoogleSlidesTemplateProbe = {
   }>;
 };
 
+export type GoogleSlidesCopiedPresentation = GoogleDriveCreatedFile;
+
 export type GoogleCalendarEvent = {
   id: string;
   summary?: string;
@@ -233,6 +235,7 @@ const googleScopes = [
   "openid",
   "email",
   "profile",
+  "https://www.googleapis.com/auth/drive",
   "https://www.googleapis.com/auth/drive.metadata.readonly",
   "https://www.googleapis.com/auth/drive.file",
   "https://www.googleapis.com/auth/calendar.readonly",
@@ -425,6 +428,35 @@ export async function probeGoogleSlidesTemplate(
       slots: layout.slots
     }))
   };
+}
+
+export async function copyGoogleSlidesPresentation(
+  token: string,
+  input: { presentationId: string; name: string }
+): Promise<GoogleSlidesCopiedPresentation> {
+  const url = new URL(
+    `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(input.presentationId)}/copy`
+  );
+  url.searchParams.set("fields", "id,name,mimeType,webViewLink");
+  const response = await fetch(url, {
+    method: "POST",
+    headers: {
+      ...googleHeaders(token),
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({ name: input.name })
+  });
+  const body = (await response.json()) as GoogleDriveCreatedFile & {
+    error?: { message?: string };
+  };
+  if (!response.ok || !body.id || !body.name) {
+    throw googleError(
+      response,
+      "Google Slides presentation copy failed",
+      body.error?.message
+    );
+  }
+  return sanitizeCreatedDriveFile(body);
 }
 
 export async function createGoogleDriveTextFile(
