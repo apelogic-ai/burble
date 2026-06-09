@@ -13,6 +13,8 @@ import {
   RuntimeCapabilityDiscoveryError
 } from "../runtime-contract-http-client";
 import { runtimeCompatibilityFamily } from "../runtime-descriptors";
+import { sealRuntimeConversationAttachments } from "../../conversation/attachment-capabilities";
+import type { Config } from "../../config";
 
 export type AgentRuntimeFetch = (
   input: string,
@@ -32,6 +34,7 @@ export type AgentRuntimeWebSocketFactory = (
 ) => AgentRuntimeWebSocket;
 
 export type ManagedRuntimeAgentRunnerDeps = {
+  config?: Config;
   baseUrl?: string;
   runtimeFactory?: RuntimeFactory;
   fetch?: AgentRuntimeFetch;
@@ -126,7 +129,11 @@ export function createManagedRuntimeAdapter(
         text: "Starting agent runtime..."
       };
       const runtime = deps.runtimeFactory
-        ? await deps.runtimeFactory.getOrCreateRuntime(input.principal)
+        ? await deps.runtimeFactory.getOrCreateRuntime(input.principal, {
+            ...(input.attachments && input.attachments.length > 0
+              ? { attachments: true }
+              : {})
+          })
         : null;
       const baseUrl = runtime?.endpointUrl.replace(/\/+$/, "") ?? fallbackBaseUrl;
       if (!baseUrl) {
@@ -219,7 +226,11 @@ export function createManagedRuntimeAdapter(
         principal: input.principal,
         ...(input.executionMode ? { executionMode: input.executionMode } : {}),
         ...(runtime ? { runtime: sanitizeRuntimeHandle(runtime) } : {}),
-        input: sanitizeAgentInput(input)
+        input: sanitizeAgentInput(input, {
+          ...(deps.config ? { config: deps.config } : {}),
+          ...(runtime?.id ? { runtimeId: runtime.id } : {}),
+          runId
+        })
       };
       const runUrl = `${baseUrl}/runs`;
       let agentResponse: AgentOutput | null;
@@ -1205,7 +1216,14 @@ function toWebSocketUrl(url: string): string {
   return parsed.toString();
 }
 
-function sanitizeAgentInput(input: AgentInput): {
+function sanitizeAgentInput(
+  input: AgentInput,
+  options?: {
+    config?: Config;
+    runtimeId?: string;
+    runId?: string;
+  }
+): {
   text: string;
   attachments?: RuntimeAttachment[];
   conversation?: NonNullable<AgentInput["conversation"]>;
@@ -1226,9 +1244,18 @@ function sanitizeAgentInput(input: AgentInput): {
   const jira = input.connections.jira;
   const slack = input.connections.slack;
 
+  const attachments =
+    input.attachments && options?.config && options.runtimeId && options.runId
+      ? sealRuntimeConversationAttachments(options.config, {
+          runtimeId: options.runtimeId,
+          runId: options.runId,
+          attachments: input.attachments
+        })
+      : input.attachments;
+
   return {
     text: input.text,
-    ...(input.attachments ? { attachments: input.attachments } : {}),
+    ...(attachments ? { attachments } : {}),
     ...(input.conversation ? { conversation: input.conversation } : {}),
     ...(input.context ? { context: compactRuntimeContext(input.context) } : {}),
     ...(input.toolGroups ? { toolGroups: input.toolGroups } : {}),

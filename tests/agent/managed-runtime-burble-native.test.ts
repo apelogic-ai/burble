@@ -284,6 +284,104 @@ describe("managed runtime Burble Native integration", () => {
       "POST http://burble-app:3000/internal/tools/github.getAuthenticatedUser/execute"
     );
   });
+
+  test("seals Slack attachment ids before sending input to a runtime", async () => {
+    const runtimeToken = "runtime-token-u123";
+    const runtimeHandle: RuntimeHandle = {
+      id: "rt_native",
+      engine: "burble-native",
+      endpointUrl: "http://burble-native-runtime:8080",
+      authToken: runtimeToken,
+      status: "ready",
+      statePath: "/data/runtimes/rt_native/state",
+      configPath: "/data/runtimes/rt_native/config/burble-native.json",
+      workspacePath: "/data/runtimes/rt_native/workspace",
+      manifest: runtimeManifest("rt_native")
+    };
+    let postedBody: unknown;
+    let runtimeRequirements: unknown;
+
+    const runner = createManagedRuntimeAgentRunner({
+      config: baseConfig,
+      runtimeFactory: {
+        async getOrCreateRuntime(_principal, requirements) {
+          runtimeRequirements = requirements;
+          return runtimeHandle;
+        },
+        async stopRuntime() {},
+        async reapIdleRuntimes() {}
+      },
+      fetch: async (url, init) => {
+        const parsed = new URL(url);
+        if (
+          parsed.hostname === "burble-native-runtime" &&
+          parsed.pathname === "/runs"
+        ) {
+          postedBody = JSON.parse(String(init.body));
+          return Response.json({
+            response: {
+              classification: "public",
+              text: "ok"
+            }
+          });
+        }
+
+        return new Response("not found", { status: 404 });
+      }
+    });
+
+    const result = await collectAgentRun(runner, {
+      principal,
+      conversation: {
+        source: "slack",
+        workspaceId: principal.workspaceId,
+        channelId: "D123",
+        rootId: "dm:D123",
+        isDirectMessage: true
+      },
+      text: "summarize the file",
+      toolGroups: {
+        groups: ["attachments", "conversation"],
+        reasons: ["metadata:attachments", "default:conversation"]
+      },
+      attachments: [
+        {
+          id: "slack:F123",
+          externalId: "F123",
+          source: "slack",
+          kind: "file",
+          mimeType: "text/markdown",
+          name: "scope.md",
+          sizeBytes: 12
+        }
+      ],
+      connections: {
+        github: null
+      }
+    });
+
+    expect(result.text).toBe("ok");
+    expect(runtimeRequirements).toEqual({ attachments: true });
+    expect(postedBody).toMatchObject({
+      input: {
+        attachments: [
+          {
+            source: "slack",
+            kind: "file",
+            mimeType: "text/markdown",
+            name: "scope.md",
+            sizeBytes: 12
+          }
+        ]
+      }
+    });
+    const attachment = (postedBody as {
+      input?: { attachments?: Array<Record<string, unknown>> };
+    }).input?.attachments?.[0];
+    expect(attachment?.id).toStartWith("attcap_");
+    expect(attachment).not.toHaveProperty("externalId");
+    expect(JSON.stringify(postedBody)).not.toContain("F123");
+  });
 });
 
 function runtimeManifest(runtimeId: string): RuntimeManifest {

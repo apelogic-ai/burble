@@ -266,6 +266,7 @@ async function getConversationAttachment(
         "x-burble-runtime-id": runtimeId
       },
       body: JSON.stringify({
+        ...(request?.runId ? { runId: request.runId } : {}),
         input,
         ...(request?.input.attachments
           ? { attachments: request.input.attachments }

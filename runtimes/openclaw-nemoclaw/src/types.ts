@@ -195,12 +195,13 @@ export type RunTelemetryStep = {
 
 export type RunEvent =
   | { type: "status"; text: string }
-  | { type: "tool_call"; toolName: string; callId: string }
+  | { type: "tool_call"; toolName: string; callId: string; input?: unknown }
   | {
       type: "tool_result";
       toolName: string;
       callId: string;
       classification: ToolClassification;
+      content?: unknown;
     }
   | { type: "message_delta"; text: string }
   | { type: "message_replace"; text: string }

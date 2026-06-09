@@ -31,8 +31,15 @@ export type RuntimeConfigRead = {
   text: string;
 };
 
+export type RuntimeSelectionRequirements = {
+  attachments?: boolean;
+};
+
 export type RuntimeFactory = {
-  getOrCreateRuntime(principal: PrincipalId): Promise<RuntimeHandle>;
+  getOrCreateRuntime(
+    principal: PrincipalId,
+    requirements?: RuntimeSelectionRequirements
+  ): Promise<RuntimeHandle>;
   syncRuntimeStatus?(runtimeId: string): Promise<AgentRuntimeRecord | null>;
   readRuntimeConfig?(runtimeId: string): Promise<RuntimeConfigRead>;
   stopRuntime(runtimeId: string): Promise<void>;

@@ -1,4 +1,4 @@
-import type { AgentRuntime } from "../config";
+import type { AgentRuntime, Config } from "../config";
 import type { createGitHubTools } from "../tools/github";
 import type { createGoogleTools } from "../tools/google";
 import type { createHubSpotTools } from "../tools/hubspot";
@@ -13,6 +13,7 @@ import type { AgentRunner } from "./types";
 import type { ObservabilitySink } from "../observability";
 
 export type ConfiguredAgentRunnerDeps = {
+  config?: Config;
   runtime: AgentRuntime;
   model: string;
   githubTools: ReturnType<typeof createGitHubTools>;
@@ -56,6 +57,7 @@ export function createConfiguredAgentRunner(
       }
 
       return createManagedRuntimeAgentRunner({
+        ...(deps.config ? { config: deps.config } : {}),
         ...(managedRuntimeUrl ? { baseUrl: managedRuntimeUrl } : {}),
         ...(deps.runtimeFactory ? { runtimeFactory: deps.runtimeFactory } : {}),
         ...(deps.logInfo ? { logInfo: deps.logInfo } : {}),

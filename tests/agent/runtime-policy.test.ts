@@ -4,6 +4,7 @@ import { createTokenStore } from "../../src/db";
 import {
   buildRuntimeManifestForPrincipal,
   RuntimeEngineSelectionError,
+  runtimeCapabilityManifestCompatibility,
   resolveRuntimeEngineForPrincipal,
   runtimeEngineCompatibility
 } from "../../src/agent/runtime-policy";
@@ -163,6 +164,69 @@ describe("resolveRuntimeEngineForPrincipal", () => {
     expect(selection.allowedEngines).toEqual(["openclaw", "hermes"]);
     expect(selection.selectableEngines).toEqual(["openclaw", "hermes"]);
     store.close();
+  });
+
+  test("keeps an attachment-capable preferred runtime selected", () => {
+    const store = createTokenStore(":memory:");
+    store.upsertWorkspacePolicy({
+      workspaceId: "T123",
+      key: "runtime.allowedEngines",
+      value: ["openclaw", "burble-native"],
+      updatedBySlackUserId: "UADMIN"
+    });
+    store.upsertUserPreference({
+      workspaceId: "T123",
+      slackUserId: "U123",
+      key: "runtime.engine",
+      value: "burble-native"
+    });
+
+    const selection = resolveRuntimeEngineForPrincipal({
+      config,
+      store,
+      principal: {
+        workspaceId: "T123",
+        slackUserId: "U123"
+      },
+      requirements: { attachments: true }
+    });
+
+    expect(selection.effectiveEngine).toBe("burble-native");
+    expect(selection.preferredEngine).toBe("burble-native");
+    expect(selection.selectableEngines).toEqual(["openclaw", "burble-native"]);
+    store.close();
+  });
+
+  test("marks manifests without attachment support incompatible for attachment turns", () => {
+    expect(
+      runtimeCapabilityManifestCompatibility(
+        "burble-native",
+        {
+          runtimeType: "burble-native",
+          version: "test",
+          transports: ["http", "websocket"],
+          streaming: true,
+          cancellation: false,
+          nativeScheduler: false,
+          scheduledProviderCalls: false,
+          toolCalls: true,
+          toolBridgeModes: ["tool_gateway"],
+          usageReporting: "exact",
+          multimodalInput: false,
+          multimodalOutput: false,
+          memory: false,
+          durableWorkflowState: false,
+          attachments: false,
+          conversationSend: true,
+          jobScopedAuth: true
+        },
+        { requirements: { attachments: true } }
+      )
+    ).toEqual({
+      engine: "burble-native",
+      selectable: false,
+      reasons: ["missing attachment support"]
+    });
   });
 
   test("ignores a user runtime preference that is not allowed", () => {

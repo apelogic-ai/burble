@@ -23,7 +23,7 @@ describe("Burble Native runtime server", () => {
       multimodalOutput: false,
       memory: false,
       durableWorkflowState: false,
-      attachments: false,
+      attachments: true,
       conversationSend: true,
       jobScopedAuth: true
     });
@@ -51,6 +51,76 @@ describe("Burble Native runtime server", () => {
         usage: nativeUsage()
       }
     });
+  });
+
+  test("streams deterministic attachment capability probe events", async () => {
+    const baseRequest = nativeRunRequest(
+      "runtime contract attachment capability probe"
+    );
+    const response = await handleRuntimeRequest(
+      new Request("http://runtime/runs", {
+        method: "POST",
+        headers: {
+          accept: "application/x-ndjson",
+          "content-type": "application/json"
+        },
+        body: JSON.stringify({
+          ...baseRequest,
+          input: {
+            ...baseRequest.input,
+            attachments: [
+              {
+                id: "attcap_contract_probe",
+                source: "slack",
+                kind: "file",
+                name: "contract.txt",
+                mimeType: "text/plain"
+              }
+            ]
+          }
+        })
+      }),
+      {
+        env: {
+          BURBLE_RUNTIME_CONTRACT_PROBE: "1"
+        }
+      }
+    );
+
+    expect(response.status).toBe(200);
+    expect(
+      (await response.text())
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line))
+    ).toEqual([
+      { type: "status", text: "Burble Native accepted the turn." },
+      {
+        type: "tool_call",
+        toolName: "conversation.getAttachment",
+        callId: "contract-attachment-probe",
+        input: { attachmentId: "attcap_contract_probe" }
+      },
+      {
+        type: "tool_result",
+        toolName: "conversation.getAttachment",
+        callId: "contract-attachment-probe",
+        classification: "user_private",
+        content: { text: "contract attachment content" }
+      },
+      {
+        type: "message_delta",
+        text: "Runtime contract attachment capability response."
+      },
+      {
+        type: "final",
+        response: {
+          classification: "user_private",
+          text: "Runtime contract attachment capability response.",
+          usage: nativeUsage()
+        }
+      }
+    ]);
   });
 
   test("streams OpenAI response deltas and exact usage for no-tool turns", async () => {
@@ -467,6 +537,152 @@ describe("Burble Native runtime server", () => {
       authorization: "Bearer runtime-token",
       "content-type": "application/json",
       "x-burble-runtime-id": "rt_native"
+    });
+  });
+
+  test("exposes current-turn attachments to the native tool loop", async () => {
+    const requests: Array<{ url: string; init?: RequestInit }> = [];
+    const baseRequest = nativeRunRequest("summarize the attached file");
+    const response = await handleRuntimeRequest(
+      new Request("http://runtime/runs", {
+        method: "POST",
+        headers: {
+          accept: "application/x-ndjson",
+          "content-type": "application/json"
+        },
+        body: JSON.stringify(
+          withToolGroups(
+            {
+              ...baseRequest,
+              input: {
+                ...baseRequest.input,
+                attachments: [
+                  {
+                    id: "attcap_native_123",
+                    source: "slack",
+                    kind: "file",
+                    name: "notes.md",
+                    mimeType: "text/markdown",
+                    sizeBytes: 42
+                  }
+                ]
+              }
+            },
+            ["attachments", "conversation"]
+          )
+        )
+      }),
+      {
+        env: {
+          AI_MODEL: "openai:gpt-5.4",
+          OPENAI_API_KEY: "test-openai-key",
+          OPENAI_BASE_URL: "https://openai-compatible.example/v1",
+          BURBLE_TOOL_GATEWAY_URL: "http://burble-app:3000/internal/tools",
+          BURBLE_INTERNAL_TOKEN: "runtime-token",
+          BURBLE_NATIVE_TOOL_GATEWAY_RETRY_BASE_MS: "0"
+        },
+        fetch: async (url: string, init?: RequestInit) => {
+          requests.push({ url, init });
+          if (url.includes("/conversation.getAttachment/execute")) {
+            return Response.json({
+              classification: "user_private",
+              content: { text: "# Notes\\nAttachment body." }
+            });
+          }
+          const providerRequestCount = requests.filter((request) =>
+            request.url.endsWith("/responses")
+          ).length;
+          if (providerRequestCount === 1) {
+            return new Response(
+              sseEvent({
+                type: "response.completed",
+                response: {
+                  output: [
+                    {
+                      type: "function_call",
+                      call_id: "call_attachment",
+                      name: "burble_provider_call",
+                      arguments: JSON.stringify({
+                        toolName: "conversation.getAttachment",
+                        input: {
+                          attachmentId: "attcap_native_123"
+                        }
+                      })
+                    }
+                  ],
+                  usage: {
+                    input_tokens: 100,
+                    output_tokens: 5,
+                    total_tokens: 105
+                  }
+                }
+              }),
+              { headers: { "content-type": "text/event-stream" } }
+            );
+          }
+          return new Response(
+            [
+              sseEvent({
+                type: "response.output_text.delta",
+                delta: "The file says Attachment body."
+              }),
+              sseEvent({
+                type: "response.completed",
+                response: {
+                  output_text: "The file says Attachment body.",
+                  usage: {
+                    input_tokens: 80,
+                    output_tokens: 7,
+                    total_tokens: 87
+                  }
+                }
+              })
+            ].join(""),
+            { headers: { "content-type": "text/event-stream" } }
+          );
+        }
+      }
+    );
+
+    expect(response.status).toBe(200);
+    const events = (await response.text())
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+    expect(events).toContainEqual({
+      type: "tool_call",
+      toolName: "conversation.getAttachment",
+      callId: "call_attachment"
+    });
+    expect(events).toContainEqual({
+      type: "tool_result",
+      toolName: "conversation.getAttachment",
+      callId: "call_attachment",
+      classification: "user_private"
+    });
+    expect(events.at(-1)).toMatchObject({
+      type: "final",
+      response: {
+        text: "The file says Attachment body."
+      }
+    });
+    const providerRequests = requests.filter((request) =>
+      request.url.endsWith("/responses")
+    );
+    const firstProviderBody = JSON.parse(String(providerRequests[0].init?.body));
+    expect(firstProviderBody.input[0].content).toContain(
+      "Current request attachments"
+    );
+    expect(firstProviderBody.input[0].content).toContain("attcap_native_123");
+    expect(firstProviderBody.input[0].content).toContain(
+      "conversation.getAttachment"
+    );
+    const toolRequest = requests.find((request) =>
+      request.url.includes("/conversation.getAttachment/execute")
+    );
+    expect(toolRequest).toBeDefined();
+    expect(JSON.parse(String(toolRequest?.init?.body))).toEqual({
+      attachmentId: "attcap_native_123"
     });
   });
 

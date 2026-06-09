@@ -27,6 +27,7 @@ from burble_runtime_contract import (
 HERMES_PLUGIN_SOURCE = Path("/runtime/hermes-plugins")
 MAX_HERMES_CONTEXT_MESSAGES = 12
 MAX_HERMES_CONTEXT_MESSAGE_CHARS = 300
+MAX_HERMES_ATTACHMENT_NAME_CHARS = 120
 HERMES_GOOGLE_PROVIDER_TOOL_HINTS_PATH = Path(__file__).with_name(
     "google-provider-tool-hints.json"
 )
@@ -464,7 +465,7 @@ def build_runtime_capability_manifest() -> dict[str, Any]:
         "multimodalOutput": False,
         "memory": False,
         "durableWorkflowState": True,
-        "attachments": False,
+        "attachments": True,
         "conversationSend": True,
         "jobScopedAuth": True,
     }
@@ -492,6 +493,10 @@ def build_hermes_turn_text(input_body: dict[str, Any]) -> str:
                 lines.append(f"- {speaker}: {message_text}")
         if len(lines) > 1:
             sections.append("\n".join(lines))
+
+    attachment_context = format_current_request_attachments(input_body)
+    if attachment_context:
+        sections.append(attachment_context)
 
     tool_groups = input_body.get("toolGroups")
     if isinstance(tool_groups, dict):
@@ -536,6 +541,37 @@ def build_hermes_turn_text(input_body: dict[str, Any]) -> str:
 
     sections.append(f"User request:\n{text}")
     return "\n\n".join(sections)
+
+
+def format_current_request_attachments(input_body: dict[str, Any]) -> str:
+    attachments = input_body.get("attachments")
+    if not isinstance(attachments, list) or not attachments:
+        return ""
+
+    lines = [
+        "Current request attachments:",
+        "Use Hermes tool conversation_get_attachment or burble_provider_call with toolName conversation.getAttachment and input {\"attachmentId\":\"<id>\"} to fetch content for these current-turn attachments.",
+        "Use only the opaque attachment id shown here. Do not invent or mention Slack file ids, external ids, private URLs, or download URLs.",
+    ]
+    for index, attachment in enumerate(attachments, start=1):
+        if not isinstance(attachment, dict):
+            continue
+        attachment_id = str(attachment.get("id") or "").strip()
+        if not attachment_id:
+            continue
+        name = truncate_hermes_context_text(
+            str(attachment.get("name") or "attachment"),
+            MAX_HERMES_ATTACHMENT_NAME_CHARS,
+        )
+        kind = str(attachment.get("kind") or "file").strip() or "file"
+        mime_type = str(attachment.get("mimeType") or "application/octet-stream").strip()
+        size = attachment.get("sizeBytes")
+        size_text = f", size={size} bytes" if isinstance(size, (int, float)) else ""
+        lines.append(
+            f"- {index}. id={attachment_id}, name={name}, kind={kind}, mimeType={mime_type}{size_text}"
+        )
+
+    return "\n".join(lines) if len(lines) > 3 else ""
 
 
 def format_scheduled_job_context(input_body: dict[str, Any]) -> str:
@@ -636,10 +672,12 @@ def selected_hermes_provider_tool_hints(groups: list[str]) -> list[dict[str, Any
     return hints
 
 
-def truncate_hermes_context_text(text: str) -> str:
-    if len(text) <= MAX_HERMES_CONTEXT_MESSAGE_CHARS:
+def truncate_hermes_context_text(
+    text: str, limit: int = MAX_HERMES_CONTEXT_MESSAGE_CHARS
+) -> str:
+    if len(text) <= limit:
         return text
-    return f"{text[:MAX_HERMES_CONTEXT_MESSAGE_CHARS - 3]}..."
+    return f"{text[:limit - 3]}..."
 
 
 def build_hermes_thread_id(
@@ -791,6 +829,7 @@ class BurbleHermesRuntime:
                     "routeId": route_id,
                     "originalText": text,
                     "scheduledJob": input_body.get("scheduledJob"),
+                    "attachments": input_body.get("attachments"),
                     "text": build_hermes_turn_text(input_body),
                     "threadId": build_hermes_thread_id(run_id, conversation),
                     "actorId": principal.get("slackUserId"),
@@ -944,6 +983,43 @@ class BurbleHermesRuntime:
                     response = {
                         "classification": "user_private",
                         "text": "Runtime contract tool capability response.",
+                        "usage": {
+                            "inputTokens": 1,
+                            "outputTokens": 1,
+                            "totalTokens": 2,
+                            "usageSource": "contract-probe",
+                        },
+                    }
+                    await waiter.emit({"type": "message_delta", "text": response["text"]})
+                    await waiter.finish(response)
+                    return response
+                if (
+                    message.get("originalText") == "runtime contract attachment capability probe"
+                    or message.get("text") == "runtime contract attachment capability probe"
+                ):
+                    attachments = message.get("attachments")
+                    attachment_id = "attcap_contract_probe"
+                    if isinstance(attachments, list) and attachments:
+                        first_attachment = attachments[0]
+                        if isinstance(first_attachment, dict):
+                            attachment_id = str(first_attachment.get("id") or attachment_id)
+                    await waiter.emit({"type": "status", "text": "Runtime contract probe accepted."})
+                    await waiter.emit({
+                        "type": "tool_call",
+                        "toolName": "conversation.getAttachment",
+                        "callId": "contract-attachment-probe",
+                        "input": {"attachmentId": attachment_id},
+                    })
+                    await waiter.emit({
+                        "type": "tool_result",
+                        "toolName": "conversation.getAttachment",
+                        "callId": "contract-attachment-probe",
+                        "classification": "user_private",
+                        "content": {"text": "contract attachment content"},
+                    })
+                    response = {
+                        "classification": "user_private",
+                        "text": "Runtime contract attachment capability response.",
                         "usage": {
                             "inputTokens": 1,
                             "outputTokens": 1,

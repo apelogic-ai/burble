@@ -797,6 +797,7 @@ describe("createBurbleToolExecutor", () => {
 
     try {
       const executor = createBurbleToolExecutor(config, "rt_u123", {
+        runId: "run_123",
         runtime: { id: "rt_u123" },
         input: {
           text: "what is in this image?",
@@ -835,6 +836,7 @@ describe("createBurbleToolExecutor", () => {
       );
       expect(requests[0].headers.get("x-burble-runtime-id")).toBe("rt_u123");
       expect(await requests[0].json()).toEqual({
+        runId: "run_123",
         input: { attachmentId: "slack:F123" },
         attachments: [
           {

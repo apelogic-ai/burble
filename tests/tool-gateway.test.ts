@@ -10,6 +10,7 @@ import type {
 import { JiraApiError } from "../src/providers/jira/client";
 import { handleToolGatewayRequest } from "../src/tool-gateway";
 import type { ObservabilityEventInput } from "../src/observability";
+import { createConversationAttachmentCapability } from "../src/conversation/attachment-capabilities";
 
 const config: Config = {
   slackBotToken: "xoxb-test",
@@ -2159,6 +2160,13 @@ describe("handleToolGatewayRequest", () => {
   });
 
   test("lets a runtime fetch a current-turn Slack attachment", async () => {
+    const attachmentId = createConversationAttachmentCapability(config, {
+      runtimeId: "rt_u123",
+      runId: "run_123",
+      source: "slack",
+      externalId: "F123",
+      expiresAtMs: Date.now() + 60_000
+    });
     const response = await handleToolGatewayRequest(
       config,
       createStore(null, runtime),
@@ -2166,11 +2174,11 @@ describe("handleToolGatewayRequest", () => {
       request(
         "conversation.getAttachment",
         {
-          input: { attachmentId: "slack:F123" },
+          runId: "run_123",
+          input: { attachmentId },
           attachments: [
             {
-              id: "slack:F123",
-              externalId: "F123",
+              id: attachmentId,
               source: "slack",
               kind: "file",
               mimeType: "text/plain",
@@ -2187,7 +2195,7 @@ describe("handleToolGatewayRequest", () => {
           expect(input).toEqual({
             maxBytes: 5 * 1024 * 1024,
             attachment: {
-              id: "slack:F123",
+              id: attachmentId,
               externalId: "F123",
               source: "slack",
               kind: "file",
@@ -2210,7 +2218,7 @@ describe("handleToolGatewayRequest", () => {
       classification: "user_private",
       content: {
         attachment: {
-          id: "slack:F123",
+          id: attachmentId,
           externalId: "F123",
           source: "slack",
           kind: "file",
@@ -2222,6 +2230,246 @@ describe("handleToolGatewayRequest", () => {
         text: "hello world"
       }
     });
+  });
+
+  test("ignores runtime-supplied attachment external ids", async () => {
+    const attachmentId = createConversationAttachmentCapability(config, {
+      runtimeId: "rt_u123",
+      runId: "run_123",
+      source: "slack",
+      externalId: "F123",
+      expiresAtMs: Date.now() + 60_000
+    });
+    const response = await handleToolGatewayRequest(
+      config,
+      createStore(null, runtime),
+      "conversation.getAttachment",
+      request(
+        "conversation.getAttachment",
+        {
+          runId: "run_123",
+          input: { attachmentId },
+          attachments: [
+            {
+              id: attachmentId,
+              externalId: "F999",
+              source: "slack",
+              kind: "file",
+              mimeType: "text/plain"
+            }
+          ]
+        },
+        "runtime-token-u123",
+        "rt_u123"
+      ),
+      {
+        fetchConversationAttachment: async (input) => {
+          expect(input.attachment.externalId).toBe("F123");
+          return {
+            attachment: input.attachment,
+            contentBase64: Buffer.from("hello").toString("base64")
+          };
+        }
+      }
+    );
+
+    expect(response.status).toBe(200);
+  });
+
+  test("rejects attachment capabilities bound to another runtime", async () => {
+    const attachmentId = createConversationAttachmentCapability(config, {
+      runtimeId: "rt_other",
+      runId: "run_123",
+      source: "slack",
+      externalId: "F123",
+      expiresAtMs: Date.now() + 60_000
+    });
+    const response = await handleToolGatewayRequest(
+      config,
+      createStore(null, runtime),
+      "conversation.getAttachment",
+      request(
+        "conversation.getAttachment",
+        {
+          runId: "run_123",
+          input: { attachmentId },
+          attachments: [
+            {
+              id: attachmentId,
+              source: "slack",
+              kind: "file",
+              mimeType: "text/plain"
+            }
+          ]
+        },
+        "runtime-token-u123",
+        "rt_u123"
+      ),
+      {
+        fetchConversationAttachment: async () => {
+          throw new Error("unexpected attachment fetch");
+        }
+      }
+    );
+
+    expect(response.status).toBe(404);
+    expect(await response.text()).toBe("Attachment not available for this run");
+  });
+
+  test("rejects attachment capabilities bound to another run", async () => {
+    const attachmentId = createConversationAttachmentCapability(config, {
+      runtimeId: "rt_u123",
+      runId: "run_other",
+      source: "slack",
+      externalId: "F123",
+      expiresAtMs: Date.now() + 60_000
+    });
+    const response = await handleToolGatewayRequest(
+      config,
+      createStore(null, runtime),
+      "conversation.getAttachment",
+      request(
+        "conversation.getAttachment",
+        {
+          runId: "run_123",
+          input: { attachmentId },
+          attachments: [
+            {
+              id: attachmentId,
+              source: "slack",
+              kind: "file",
+              mimeType: "text/plain"
+            }
+          ]
+        },
+        "runtime-token-u123",
+        "rt_u123"
+      ),
+      {
+        fetchConversationAttachment: async () => {
+          throw new Error("unexpected attachment fetch");
+        }
+      }
+    );
+
+    expect(response.status).toBe(404);
+    expect(await response.text()).toBe("Attachment not available for this run");
+  });
+
+  test("rejects expired attachment capabilities", async () => {
+    const attachmentId = createConversationAttachmentCapability(config, {
+      runtimeId: "rt_u123",
+      runId: "run_123",
+      source: "slack",
+      externalId: "F123",
+      expiresAtMs: Date.now() - 1
+    });
+    const response = await handleToolGatewayRequest(
+      config,
+      createStore(null, runtime),
+      "conversation.getAttachment",
+      request(
+        "conversation.getAttachment",
+        {
+          runId: "run_123",
+          input: { attachmentId },
+          attachments: [
+            {
+              id: attachmentId,
+              source: "slack",
+              kind: "file",
+              mimeType: "text/plain"
+            }
+          ]
+        },
+        "runtime-token-u123",
+        "rt_u123"
+      ),
+      {
+        fetchConversationAttachment: async () => {
+          throw new Error("unexpected attachment fetch");
+        }
+      }
+    );
+
+    expect(response.status).toBe(404);
+    expect(await response.text()).toBe("Attachment not available for this run");
+  });
+
+  test("rejects tampered attachment capability signatures", async () => {
+    const attachmentId = createConversationAttachmentCapability(config, {
+      runtimeId: "rt_u123",
+      runId: "run_123",
+      source: "slack",
+      externalId: "F123",
+      expiresAtMs: Date.now() + 60_000
+    });
+    const tamperedAttachmentId = `${attachmentId.slice(0, -1)}${
+      attachmentId.endsWith("a") ? "b" : "a"
+    }`;
+    const response = await handleToolGatewayRequest(
+      config,
+      createStore(null, runtime),
+      "conversation.getAttachment",
+      request(
+        "conversation.getAttachment",
+        {
+          runId: "run_123",
+          input: { attachmentId: tamperedAttachmentId },
+          attachments: [
+            {
+              id: tamperedAttachmentId,
+              source: "slack",
+              kind: "file",
+              mimeType: "text/plain"
+            }
+          ]
+        },
+        "runtime-token-u123",
+        "rt_u123"
+      ),
+      {
+        fetchConversationAttachment: async () => {
+          throw new Error("unexpected attachment fetch");
+        }
+      }
+    );
+
+    expect(response.status).toBe(404);
+    expect(await response.text()).toBe("Attachment not available for this run");
+  });
+
+  test("rejects unsigned runtime attachment ids", async () => {
+    const response = await handleToolGatewayRequest(
+      config,
+      createStore(null, runtime),
+      "conversation.getAttachment",
+      request(
+        "conversation.getAttachment",
+        {
+          input: { attachmentId: "slack:F123" },
+          attachments: [
+            {
+              id: "slack:F123",
+              externalId: "F123",
+              source: "slack",
+              kind: "file",
+              mimeType: "text/plain"
+            }
+          ]
+        },
+        "runtime-token-u123",
+        "rt_u123"
+      ),
+      {
+        fetchConversationAttachment: async () => {
+          throw new Error("unexpected attachment fetch");
+        }
+      }
+    );
+
+    expect(response.status).toBe(404);
+    expect(await response.text()).toBe("Attachment not available for this run");
   });
 
   test("rejects attachment fetches outside the current turn", async () => {
