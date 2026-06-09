@@ -1,0 +1,1728 @@
+{
+  "providers": [
+    {
+      "provider": "atlassian",
+      "tools": [
+        {
+          "name": "atlassian_call_mcp_tool",
+          "alias": "atlassian.callMcpTool",
+          "description": "Call an allowlisted upstream Atlassian MCP tool with this Slack user's connected Jira identity.",
+          "input": {
+            "name": {
+              "description": "Upstream Atlassian MCP tool name",
+              "type": "string",
+              "min": 1
+            },
+            "arguments": {
+              "optional": true,
+              "description": "JSON arguments for the upstream MCP tool",
+              "type": "object"
+            }
+          }
+        },
+        {
+          "name": "atlassian_list_mcp_tools",
+          "alias": "atlassian.listMcpTools",
+          "description": "List allowed tool metadata advertised by the upstream Atlassian MCP server for this Slack user's connected Jira account.",
+          "input": {}
+        }
+      ]
+    },
+    {
+      "provider": "github",
+      "tools": [
+        {
+          "name": "github_add_labels",
+          "alias": "github.addLabels",
+          "description": "Add labels to a GitHub issue or pull request.",
+          "input": {
+            "repo": {
+              "description": "Repository in owner/name format",
+              "type": "string",
+              "min": 1
+            },
+            "number": {
+              "description": "Issue or pull request number",
+              "type": "number",
+              "int": true,
+              "positive": true
+            },
+            "labels": {
+              "type": "array",
+              "items": "string",
+              "min": 1,
+              "max": 20,
+              "itemMin": 1
+            }
+          }
+        },
+        {
+          "name": "github_close_issue",
+          "alias": "github.closeIssue",
+          "description": "Close a GitHub issue. Use only when explicitly requested.",
+          "input": {
+            "repo": {
+              "description": "Repository in owner/name format",
+              "type": "string",
+              "min": 1
+            },
+            "number": {
+              "description": "Issue number",
+              "type": "number",
+              "int": true,
+              "positive": true
+            }
+          }
+        },
+        {
+          "name": "github_comment_on_issue_or_pr",
+          "alias": "github.commentOnIssueOrPullRequest",
+          "description": "Add a comment to a GitHub issue or pull request using this Slack user's connected GitHub account.",
+          "input": {
+            "repo": {
+              "description": "Repository in owner/name format",
+              "type": "string",
+              "min": 1
+            },
+            "number": {
+              "description": "Issue or pull request number",
+              "type": "number",
+              "int": true,
+              "positive": true
+            },
+            "body": {
+              "description": "Comment body",
+              "type": "string",
+              "min": 1,
+              "max": 65536
+            }
+          }
+        },
+        {
+          "name": "github_create_branch",
+          "alias": "github.createBranch",
+          "description": "Create a GitHub branch from another branch or the repository default branch.",
+          "input": {
+            "repo": {
+              "description": "Repository in owner/name format",
+              "type": "string",
+              "min": 1
+            },
+            "branch": {
+              "description": "New branch name",
+              "type": "string",
+              "min": 1
+            },
+            "fromRef": {
+              "optional": true,
+              "description": "Optional source branch. Defaults to repository default branch.",
+              "type": "string",
+              "min": 1
+            }
+          }
+        },
+        {
+          "name": "github_create_issue",
+          "alias": "github.createIssue",
+          "description": "Create a GitHub issue visible to this Slack user's connected GitHub account.",
+          "input": {
+            "repo": {
+              "description": "Repository in owner/name format",
+              "type": "string",
+              "min": 1
+            },
+            "title": {
+              "description": "Issue title",
+              "type": "string",
+              "min": 1,
+              "max": 256
+            },
+            "body": {
+              "optional": true,
+              "description": "Issue body",
+              "type": "string",
+              "max": 65536
+            },
+            "labels": {
+              "optional": true,
+              "type": "array",
+              "items": "string",
+              "max": 20,
+              "itemMin": 1
+            },
+            "assignees": {
+              "optional": true,
+              "type": "array",
+              "items": "string",
+              "max": 20,
+              "itemMin": 1
+            }
+          }
+        },
+        {
+          "name": "github_create_or_update_file",
+          "alias": "github.createOrUpdateFile",
+          "description": "Create or update a single GitHub repository file. For updates, pass the file SHA from github_get_file.",
+          "input": {
+            "repo": {
+              "description": "Repository in owner/name format",
+              "type": "string",
+              "min": 1
+            },
+            "path": {
+              "description": "Repository file path",
+              "type": "string",
+              "min": 1
+            },
+            "content": {
+              "description": "New full file content",
+              "type": "string",
+              "max": 1000000
+            },
+            "message": {
+              "description": "Commit message",
+              "type": "string",
+              "min": 1,
+              "max": 256
+            },
+            "branch": {
+              "optional": true,
+              "description": "Optional target branch",
+              "type": "string",
+              "min": 1
+            },
+            "sha": {
+              "optional": true,
+              "description": "Current file SHA when updating",
+              "type": "string",
+              "min": 1
+            }
+          }
+        },
+        {
+          "name": "github_create_pr",
+          "alias": "github.createPullRequest",
+          "description": "Open a pull request from an existing branch using this Slack user's connected GitHub account.",
+          "input": {
+            "repo": {
+              "description": "Repository in owner/name format",
+              "type": "string",
+              "min": 1
+            },
+            "title": {
+              "description": "Pull request title",
+              "type": "string",
+              "min": 1,
+              "max": 256
+            },
+            "head": {
+              "description": "Head branch or owner:branch",
+              "type": "string",
+              "min": 1
+            },
+            "base": {
+              "description": "Base branch",
+              "type": "string",
+              "min": 1
+            },
+            "body": {
+              "optional": true,
+              "description": "Pull request body",
+              "type": "string",
+              "max": 65536
+            },
+            "draft": {
+              "optional": true,
+              "description": "Whether to create a draft PR",
+              "type": "boolean"
+            }
+          }
+        },
+        {
+          "name": "github_get_authenticated_user",
+          "alias": "github.getAuthenticatedUser",
+          "description": "Return the GitHub identity connected to this Slack user.",
+          "input": {}
+        },
+        {
+          "name": "github_get_file",
+          "alias": "github.getFile",
+          "description": "Read a text file from a GitHub repository. Use before updating an existing file.",
+          "input": {
+            "repo": {
+              "description": "Repository in owner/name format",
+              "type": "string",
+              "min": 1
+            },
+            "path": {
+              "description": "Repository file path",
+              "type": "string",
+              "min": 1
+            },
+            "ref": {
+              "optional": true,
+              "description": "Optional branch, tag, or commit SHA",
+              "type": "string",
+              "min": 1
+            }
+          }
+        },
+        {
+          "name": "github_get_issue",
+          "alias": "github.getIssue",
+          "description": "Get a GitHub issue by repository and issue number. Use before editing issue metadata.",
+          "input": {
+            "repo": {
+              "description": "Repository in owner/name format",
+              "type": "string",
+              "min": 1
+            },
+            "number": {
+              "description": "Issue number",
+              "type": "number",
+              "int": true,
+              "positive": true
+            }
+          }
+        },
+        {
+          "name": "github_get_pr",
+          "alias": "github.getPullRequest",
+          "description": "Get a GitHub pull request by repository and PR number. Use before editing PR metadata.",
+          "input": {
+            "repo": {
+              "description": "Repository in owner/name format",
+              "type": "string",
+              "min": 1
+            },
+            "number": {
+              "description": "Pull request number",
+              "type": "number",
+              "int": true,
+              "positive": true
+            }
+          }
+        },
+        {
+          "name": "github_list_assigned_issues",
+          "alias": "github.listAssignedIssues",
+          "description": "List GitHub issues assigned to this Slack user.",
+          "input": {}
+        },
+        {
+          "name": "github_list_my_pull_requests",
+          "alias": "github.listMyPullRequests",
+          "description": "List GitHub pull requests authored by this Slack user's connected GitHub account. Defaults to open PRs sorted by most recently updated.",
+          "input": {
+            "limit": {
+              "optional": true,
+              "description": "Maximum number of pull requests to return. Defaults to 10.",
+              "type": "number",
+              "int": true,
+              "min": 1,
+              "max": 20
+            },
+            "state": {
+              "optional": true,
+              "description": "Pull request state to include. Defaults to open.",
+              "type": "enum",
+              "values": [
+                "open",
+                "closed",
+                "all"
+              ]
+            },
+            "sort": {
+              "optional": true,
+              "description": "Sort field. Defaults to updated.",
+              "type": "enum",
+              "values": [
+                "updated",
+                "created",
+                "comments"
+              ]
+            },
+            "order": {
+              "optional": true,
+              "description": "Sort order. Defaults to desc.",
+              "type": "enum",
+              "values": [
+                "desc",
+                "asc"
+              ]
+            },
+            "owner": {
+              "optional": true,
+              "description": "Optional GitHub owner or organization login, for example example-org.",
+              "type": "string",
+              "min": 1
+            },
+            "repo": {
+              "optional": true,
+              "description": "Optional repository in owner/name format. Takes precedence over owner.",
+              "type": "string",
+              "min": 1
+            }
+          }
+        },
+        {
+          "name": "github_remove_labels",
+          "alias": "github.removeLabels",
+          "description": "Remove labels from a GitHub issue or pull request.",
+          "input": {
+            "repo": {
+              "description": "Repository in owner/name format",
+              "type": "string",
+              "min": 1
+            },
+            "number": {
+              "description": "Issue or pull request number",
+              "type": "number",
+              "int": true,
+              "positive": true
+            },
+            "labels": {
+              "type": "array",
+              "items": "string",
+              "min": 1,
+              "max": 20,
+              "itemMin": 1
+            }
+          }
+        },
+        {
+          "name": "github_reopen_issue",
+          "alias": "github.reopenIssue",
+          "description": "Reopen a GitHub issue. Use only when explicitly requested.",
+          "input": {
+            "repo": {
+              "description": "Repository in owner/name format",
+              "type": "string",
+              "min": 1
+            },
+            "number": {
+              "description": "Issue number",
+              "type": "number",
+              "int": true,
+              "positive": true
+            }
+          }
+        },
+        {
+          "name": "github_request_review",
+          "alias": "github.requestReview",
+          "description": "Request users or teams to review a GitHub pull request.",
+          "input": {
+            "repo": {
+              "description": "Repository in owner/name format",
+              "type": "string",
+              "min": 1
+            },
+            "number": {
+              "description": "Pull request number",
+              "type": "number",
+              "int": true,
+              "positive": true
+            },
+            "reviewers": {
+              "optional": true,
+              "type": "array",
+              "items": "string",
+              "max": 20,
+              "itemMin": 1
+            },
+            "teamReviewers": {
+              "optional": true,
+              "type": "array",
+              "items": "string",
+              "max": 20,
+              "itemMin": 1
+            }
+          }
+        },
+        {
+          "name": "github_search_issues",
+          "alias": "github.searchIssues",
+          "description": "Search GitHub issues and pull requests visible to this Slack user's connected GitHub account.",
+          "input": {
+            "query": {
+              "description": "GitHub search query",
+              "type": "string",
+              "min": 1
+            }
+          }
+        },
+        {
+          "name": "github_update_issue",
+          "alias": "github.updateIssue",
+          "description": "Update GitHub issue metadata only: title, body, state, labels, or assignees.",
+          "input": {
+            "repo": {
+              "description": "Repository in owner/name format",
+              "type": "string",
+              "min": 1
+            },
+            "number": {
+              "description": "Issue number",
+              "type": "number",
+              "int": true,
+              "positive": true
+            },
+            "title": {
+              "optional": true,
+              "type": "string",
+              "min": 1,
+              "max": 256
+            },
+            "body": {
+              "optional": true,
+              "type": "string",
+              "max": 65536
+            },
+            "state": {
+              "optional": true,
+              "type": "enum",
+              "values": [
+                "open",
+                "closed"
+              ]
+            },
+            "labels": {
+              "optional": true,
+              "type": "array",
+              "items": "string",
+              "max": 20,
+              "itemMin": 1
+            },
+            "assignees": {
+              "optional": true,
+              "type": "array",
+              "items": "string",
+              "max": 20,
+              "itemMin": 1
+            }
+          }
+        },
+        {
+          "name": "github_update_pr",
+          "alias": "github.updatePullRequest",
+          "description": "Update pull request metadata only: title, body, base branch, or draft state.",
+          "input": {
+            "repo": {
+              "description": "Repository in owner/name format",
+              "type": "string",
+              "min": 1
+            },
+            "number": {
+              "description": "Pull request number",
+              "type": "number",
+              "int": true,
+              "positive": true
+            },
+            "title": {
+              "optional": true,
+              "type": "string",
+              "min": 1,
+              "max": 256
+            },
+            "body": {
+              "optional": true,
+              "type": "string",
+              "max": 65536
+            },
+            "base": {
+              "optional": true,
+              "type": "string",
+              "min": 1
+            },
+            "draft": {
+              "optional": true,
+              "type": "boolean"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "provider": "google",
+      "tools": [
+        {
+          "name": "gmail_create_draft",
+          "alias": "gmail.createDraft",
+          "description": "Create a Gmail draft only. This does not send email and should be used before any user-reviewed send workflow.",
+          "input": {
+            "to": {
+              "description": "Recipient emails",
+              "type": "array",
+              "items": "string",
+              "itemFormat": "email",
+              "min": 1,
+              "max": 20
+            },
+            "subject": {
+              "description": "Draft subject",
+              "type": "string",
+              "min": 1,
+              "max": 512
+            },
+            "body": {
+              "description": "Plain text draft body",
+              "type": "string",
+              "max": 200000
+            },
+            "cc": {
+              "optional": true,
+              "type": "array",
+              "items": "string",
+              "itemFormat": "email",
+              "max": 20
+            },
+            "bcc": {
+              "optional": true,
+              "type": "array",
+              "items": "string",
+              "itemFormat": "email",
+              "max": 20
+            }
+          }
+        },
+        {
+          "name": "google_analytics_get_metadata",
+          "alias": "google.analyticsGetMetadata",
+          "description": "List available Google Analytics dimensions and metrics for a GA4 property, optionally filtered by search terms.",
+          "input": {
+            "propertyId": {
+              "description": "GA4 property ID, either numeric or properties/{id}.",
+              "type": "string",
+              "min": 1
+            },
+            "dimensionQuery": {
+              "optional": true,
+              "description": "Optional case-insensitive filter for dimensions.",
+              "type": "string"
+            },
+            "metricQuery": {
+              "optional": true,
+              "description": "Optional case-insensitive filter for metrics.",
+              "type": "string"
+            },
+            "limit": {
+              "optional": true,
+              "type": "number",
+              "int": true,
+              "max": 100,
+              "positive": true
+            }
+          }
+        },
+        {
+          "name": "google_analytics_list_properties",
+          "alias": "google.analyticsListProperties",
+          "description": "List Google Analytics accounts and GA4 properties visible to this Slack user's connected Google account.",
+          "input": {
+            "limit": {
+              "optional": true,
+              "type": "number",
+              "int": true,
+              "max": 50,
+              "positive": true
+            }
+          }
+        },
+        {
+          "name": "google_analytics_run_report",
+          "alias": "google.analyticsRunReport",
+          "description": "Run a read-only GA4 report for a Google Analytics property using selected dimensions, metrics, and a date range of at most 366 days.",
+          "input": {
+            "propertyId": {
+              "description": "GA4 property ID, either numeric or properties/{id}.",
+              "type": "string",
+              "min": 1
+            },
+            "startDate": {
+              "description": "Report start date, e.g. 2026-06-01 or 30daysAgo.",
+              "type": "string",
+              "min": 1
+            },
+            "endDate": {
+              "description": "Report end date, e.g. today.",
+              "type": "string",
+              "min": 1
+            },
+            "metrics": {
+              "description": "GA4 metric API names, such as activeUsers or sessions.",
+              "type": "array",
+              "items": "string",
+              "min": 1,
+              "max": 10,
+              "itemMin": 1
+            },
+            "dimensions": {
+              "optional": true,
+              "description": "Optional GA4 dimension API names, such as country or date.",
+              "type": "array",
+              "items": "string",
+              "max": 10,
+              "itemMin": 1
+            },
+            "limit": {
+              "optional": true,
+              "type": "number",
+              "int": true,
+              "max": 100,
+              "positive": true
+            }
+          }
+        },
+        {
+          "name": "google_append_to_drive_text_file",
+          "alias": "google.appendDriveTextFile",
+          "description": "Append text to a Google Drive text file accessible to the connected Google account and granted Drive scopes by reading existing content then replacing it.",
+          "input": {
+            "fileId": {
+              "description": "Google Drive file ID",
+              "type": "string",
+              "min": 1
+            },
+            "text": {
+              "description": "Text to append",
+              "type": "string",
+              "max": 200000
+            },
+            "separator": {
+              "optional": true,
+              "description": "Separator before appended text",
+              "type": "string",
+              "max": 20
+            },
+            "mimeType": {
+              "optional": true,
+              "description": "Optional MIME type. Defaults to text/plain.",
+              "type": "string"
+            }
+          }
+        },
+        {
+          "name": "google_create_calendar_event",
+          "alias": "google.createCalendarEvent",
+          "description": "Create a Google Calendar event. Use only when clearly requested.",
+          "input": {
+            "calendarId": {
+              "optional": true,
+              "description": "Calendar ID. Defaults to primary.",
+              "type": "string"
+            },
+            "summary": {
+              "description": "Event title",
+              "type": "string",
+              "min": 1,
+              "max": 512
+            },
+            "start": {
+              "description": "RFC3339 start date-time",
+              "type": "string",
+              "min": 1
+            },
+            "end": {
+              "description": "RFC3339 end date-time",
+              "type": "string",
+              "min": 1
+            },
+            "description": {
+              "optional": true,
+              "type": "string",
+              "max": 65536
+            },
+            "location": {
+              "optional": true,
+              "type": "string",
+              "max": 512
+            },
+            "timeZone": {
+              "optional": true,
+              "description": "Optional IANA time zone",
+              "type": "string"
+            }
+          }
+        },
+        {
+          "name": "google_create_drive_folder",
+          "alias": "google.createDriveFolder",
+          "description": "Create a Google Drive folder using this Slack user's Google account.",
+          "input": {
+            "name": {
+              "description": "Folder name",
+              "type": "string",
+              "min": 1,
+              "max": 200
+            },
+            "parentId": {
+              "optional": true,
+              "description": "Optional parent folder ID",
+              "type": "string",
+              "min": 1
+            }
+          }
+        },
+        {
+          "name": "google_create_drive_text_file",
+          "alias": "google.createDriveTextFile",
+          "description": "Create a new app-owned plain/text-like file in Google Drive using this Slack user's connected Google account. Do not use this to create Google Docs, Sheets, or Slides; use dedicated tools for those file types.",
+          "input": {
+            "name": {
+              "description": "Drive file name",
+              "type": "string",
+              "min": 1,
+              "max": 200
+            },
+            "text": {
+              "optional": true,
+              "description": "Text body to write into the file. Defaults to an empty text file.",
+              "type": "string",
+              "max": 200000
+            },
+            "mimeType": {
+              "optional": true,
+              "description": "Optional non-Google-Workspace MIME type. Defaults to text/plain.",
+              "type": "string"
+            }
+          }
+        },
+        {
+          "name": "google_get_authenticated_user",
+          "alias": "google.getAuthenticatedUser",
+          "description": "Return the Google identity connected to this Slack user.",
+          "input": {}
+        },
+        {
+          "name": "google_get_drive_file",
+          "alias": "google.getDriveFile",
+          "description": "Read Google Drive file metadata and, by default, text content for files accessible to the connected Google account and granted Drive scopes. Drive metadata search may find files whose content cannot be read or edited if the stored Google connection lacks the required Drive scope or the file is not shared with the connected account.",
+          "input": {
+            "fileId": {
+              "description": "Google Drive file ID",
+              "type": "string",
+              "min": 1
+            },
+            "includeContent": {
+              "optional": true,
+              "description": "Whether to include exported/downloaded text content. Defaults to true.",
+              "type": "boolean"
+            }
+          }
+        },
+        {
+          "name": "google_move_drive_file",
+          "alias": "google.moveDriveFile",
+          "description": "Move a Google Drive file accessible to the connected Google account and granted Drive scopes into a folder. Does not delete the file.",
+          "input": {
+            "fileId": {
+              "description": "Google Drive file ID",
+              "type": "string",
+              "min": 1
+            },
+            "parentId": {
+              "description": "Destination folder ID",
+              "type": "string",
+              "min": 1
+            },
+            "removeParentIds": {
+              "optional": true,
+              "description": "Optional parent IDs to remove. Defaults to current parents.",
+              "type": "array",
+              "items": "string",
+              "max": 20,
+              "itemMin": 1
+            }
+          }
+        },
+        {
+          "name": "google_search_calendar_events",
+          "alias": "google.searchCalendarEvents",
+          "description": "Search upcoming Google Calendar events visible to this Slack user's connected Google account.",
+          "input": {
+            "query": {
+              "optional": true,
+              "description": "Optional calendar search terms",
+              "type": "string"
+            },
+            "timeMin": {
+              "optional": true,
+              "description": "Optional RFC3339 lower bound; defaults to now",
+              "type": "string"
+            },
+            "timeMax": {
+              "optional": true,
+              "description": "Optional RFC3339 upper bound",
+              "type": "string"
+            },
+            "limit": {
+              "optional": true,
+              "type": "number",
+              "int": true,
+              "max": 20,
+              "positive": true
+            }
+          }
+        },
+        {
+          "name": "google_search_drive_files",
+          "alias": "google.searchDriveFiles",
+          "description": "Search Google Drive files visible to this Slack user's connected Google account.",
+          "input": {
+            "query": {
+              "optional": true,
+              "description": "Optional Drive search terms",
+              "type": "string"
+            },
+            "limit": {
+              "optional": true,
+              "type": "number",
+              "int": true,
+              "max": 20,
+              "positive": true
+            }
+          }
+        },
+        {
+          "name": "google_search_mail_messages",
+          "alias": "google.searchMailMessages",
+          "description": "Search Gmail messages visible to this Slack user's connected Google account.",
+          "input": {
+            "query": {
+              "description": "Gmail search query",
+              "type": "string",
+              "min": 1
+            },
+            "limit": {
+              "optional": true,
+              "type": "number",
+              "int": true,
+              "max": 10,
+              "positive": true
+            }
+          }
+        },
+        {
+          "name": "google_slides_copy_presentation",
+          "alias": "google.slidesCopyPresentation",
+          "description": "Copy an existing Google Slides presentation into a new presentation using the connected Google account. Use this for explicit user requests to create a new deck from a template; it does not edit slide contents.",
+          "input": {
+            "presentationId": {
+              "description": "Source Google Slides presentation ID.",
+              "type": "string",
+              "min": 1
+            },
+            "name": {
+              "description": "Name for the copied presentation.",
+              "type": "string",
+              "min": 1,
+              "max": 200
+            }
+          }
+        },
+        {
+          "name": "google_slides_create_slide",
+          "alias": "google.slidesCreateSlide",
+          "description": "Create a new slide in an existing Google Slides presentation, optionally from a layout or predefined layout, and optionally fill placeholders on the created slide. Use this for explicit user requests to add a slide to a deck.",
+          "input": {
+            "presentationId": {
+              "description": "Google Slides presentation ID to edit.",
+              "type": "string",
+              "min": 1
+            },
+            "objectId": {
+              "optional": true,
+              "description": "Optional caller-supplied object ID for the new slide.",
+              "type": "string",
+              "min": 1
+            },
+            "insertionIndex": {
+              "optional": true,
+              "description": "Optional zero-based insertion index. Use 2 to create slide 3.",
+              "type": "number",
+              "int": true,
+              "min": 0
+            },
+            "layoutObjectId": {
+              "optional": true,
+              "description": "Optional layout object ID from google_slides_get_presentation or google_slides_probe_template.",
+              "type": "string",
+              "min": 1
+            },
+            "predefinedLayout": {
+              "optional": true,
+              "description": "Optional Google predefined layout such as TITLE_AND_BODY or TITLE_AND_TWO_COLUMNS.",
+              "type": "string",
+              "min": 1
+            },
+            "replacements": {
+              "optional": true,
+              "description": "Optional placeholder text replacements to apply to the created slide.",
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "placeholderType": {
+                    "description": "Google Slides placeholder type such as TITLE, SUBTITLE, BODY, CENTERED_TITLE, or SLIDE_NUMBER.",
+                    "type": "string",
+                    "min": 1
+                  },
+                  "text": {
+                    "description": "Text to place into the placeholder.",
+                    "type": "string",
+                    "max": 5000
+                  },
+                  "index": {
+                    "optional": true,
+                    "description": "Optional placeholder index when a slide has multiple placeholders of the same type.",
+                    "type": "number",
+                    "int": true,
+                    "min": 0
+                  }
+                }
+              },
+              "min": 1,
+              "max": 10
+            }
+          }
+        },
+        {
+          "name": "google_slides_fill_placeholders",
+          "alias": "google.slidesFillPlaceholders",
+          "description": "Fill text placeholders on an existing Google Slides presentation slide. When slideObjectId is omitted, Burble chooses the slide that best matches the requested placeholders. Use for explicit user requests to set title, subtitle, body, or similar placeholder text in a deck.",
+          "input": {
+            "presentationId": {
+              "description": "Google Slides presentation ID to edit.",
+              "type": "string",
+              "min": 1
+            },
+            "slideObjectId": {
+              "optional": true,
+              "description": "Optional slide object ID. If omitted, Burble chooses the slide that best matches the requested placeholders.",
+              "type": "string"
+            },
+            "replacements": {
+              "description": "Placeholder text replacements to apply.",
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "placeholderType": {
+                    "description": "Google Slides placeholder type such as TITLE, SUBTITLE, BODY, CENTERED_TITLE, or SLIDE_NUMBER.",
+                    "type": "string",
+                    "min": 1
+                  },
+                  "text": {
+                    "description": "Text to place into the placeholder.",
+                    "type": "string",
+                    "max": 5000
+                  },
+                  "index": {
+                    "optional": true,
+                    "description": "Optional placeholder index when a slide has multiple placeholders of the same type.",
+                    "type": "number",
+                    "int": true,
+                    "min": 0
+                  }
+                }
+              },
+              "min": 1,
+              "max": 10
+            }
+          }
+        },
+        {
+          "name": "google_slides_get_presentation",
+          "alias": "google.slidesGetPresentation",
+          "description": "Read sanitized structure, slide text, layout IDs, and placeholder metadata from a Google Slides presentation.",
+          "input": {
+            "presentationId": {
+              "description": "Google Slides presentation ID.",
+              "type": "string",
+              "min": 1
+            },
+            "includeSlides": {
+              "optional": true,
+              "description": "Whether to include slide content. Defaults to true.",
+              "type": "boolean"
+            }
+          }
+        },
+        {
+          "name": "google_slides_probe_template",
+          "alias": "google.slidesProbeTemplate",
+          "description": "Probe a Google Slides presentation's layouts and placeholders into a manifest for future deterministic slide rendering.",
+          "input": {
+            "presentationId": {
+              "description": "Google Slides presentation ID to inspect as a template.",
+              "type": "string",
+              "min": 1
+            }
+          }
+        },
+        {
+          "name": "google_slides_search_presentations",
+          "alias": "google.slidesSearchPresentations",
+          "description": "Search Google Slides presentations visible to this Slack user's connected Google account.",
+          "input": {
+            "query": {
+              "optional": true,
+              "description": "Optional presentation name search query.",
+              "type": "string"
+            },
+            "limit": {
+              "optional": true,
+              "type": "number",
+              "int": true,
+              "max": 20,
+              "positive": true
+            }
+          }
+        },
+        {
+          "name": "google_update_calendar_event",
+          "alias": "google.updateCalendarEvent",
+          "description": "Update Google Calendar event metadata or start/end time. Does not delete events.",
+          "input": {
+            "calendarId": {
+              "optional": true,
+              "description": "Calendar ID. Defaults to primary.",
+              "type": "string"
+            },
+            "eventId": {
+              "description": "Calendar event ID",
+              "type": "string",
+              "min": 1
+            },
+            "summary": {
+              "optional": true,
+              "type": "string",
+              "min": 1,
+              "max": 512
+            },
+            "start": {
+              "optional": true,
+              "description": "RFC3339 start date-time",
+              "type": "string",
+              "min": 1
+            },
+            "end": {
+              "optional": true,
+              "description": "RFC3339 end date-time",
+              "type": "string",
+              "min": 1
+            },
+            "description": {
+              "optional": true,
+              "type": "string",
+              "max": 65536
+            },
+            "location": {
+              "optional": true,
+              "type": "string",
+              "max": 512
+            },
+            "timeZone": {
+              "optional": true,
+              "description": "Optional IANA time zone",
+              "type": "string"
+            }
+          }
+        },
+        {
+          "name": "google_update_drive_text_file",
+          "alias": "google.updateDriveTextFile",
+          "description": "Replace the content of a Google Drive text file accessible to the connected Google account and granted Drive scopes. Use google_get_drive_file first when preserving existing content matters.",
+          "input": {
+            "fileId": {
+              "description": "Google Drive file ID",
+              "type": "string",
+              "min": 1
+            },
+            "text": {
+              "description": "New full file text",
+              "type": "string",
+              "max": 1000000
+            },
+            "mimeType": {
+              "optional": true,
+              "description": "Optional MIME type. Defaults to text/plain.",
+              "type": "string"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "provider": "hubspot",
+      "tools": [
+        {
+          "name": "hubspot_get_authenticated_user",
+          "alias": "hubspot.getAuthenticatedUser",
+          "description": "Return the HubSpot account and user connected to this Slack user.",
+          "input": {}
+        },
+        {
+          "name": "hubspot_list_owners",
+          "alias": "hubspot.listOwners",
+          "description": "List HubSpot CRM owners/users assignable to CRM records.",
+          "input": {
+            "limit": {
+              "optional": true,
+              "type": "number",
+              "int": true,
+              "max": 100,
+              "positive": true
+            },
+            "after": {
+              "optional": true,
+              "description": "Optional HubSpot paging cursor",
+              "type": "string",
+              "min": 1,
+              "max": 500
+            }
+          }
+        },
+        {
+          "name": "hubspot_list_users",
+          "alias": "hubspot.listUsers",
+          "description": "List users in the connected HubSpot account when the account granted the settings.users.read scope.",
+          "input": {
+            "limit": {
+              "optional": true,
+              "type": "number",
+              "int": true,
+              "max": 100,
+              "positive": true
+            },
+            "after": {
+              "optional": true,
+              "description": "Optional HubSpot paging cursor",
+              "type": "string",
+              "min": 1,
+              "max": 500
+            }
+          }
+        },
+        {
+          "name": "hubspot_read_api_resource",
+          "alias": "hubspot.readApiResource",
+          "description": "Read a HubSpot API resource with GET for less common read-only scopes when no first-class HubSpot tool exists. The path must be a HubSpot API path, for example /crm/v3/schemas/deals or /marketing/v3/campaigns.",
+          "input": {
+            "path": {
+              "description": "HubSpot API path starting with /",
+              "type": "string",
+              "min": 1,
+              "max": 300
+            },
+            "query": {
+              "optional": true,
+              "description": "Optional query string parameters",
+              "type": "object"
+            }
+          }
+        },
+        {
+          "name": "hubspot_search_companies",
+          "alias": "hubspot.searchCompanies",
+          "description": "Search HubSpot CRM companies visible to this Slack user's connected HubSpot account.",
+          "input": {
+            "query": {
+              "description": "Company search terms",
+              "type": "string",
+              "min": 1,
+              "max": 200
+            },
+            "limit": {
+              "optional": true,
+              "type": "number",
+              "int": true,
+              "max": 20,
+              "positive": true
+            }
+          }
+        },
+        {
+          "name": "hubspot_search_contacts",
+          "alias": "hubspot.searchContacts",
+          "description": "Search HubSpot CRM contacts visible to this Slack user's connected HubSpot account.",
+          "input": {
+            "query": {
+              "description": "Contact search terms",
+              "type": "string",
+              "min": 1,
+              "max": 200
+            },
+            "limit": {
+              "optional": true,
+              "type": "number",
+              "int": true,
+              "max": 20,
+              "positive": true
+            }
+          }
+        },
+        {
+          "name": "hubspot_search_crm_objects",
+          "alias": "hubspot.searchCrmObjects",
+          "description": "Search or list HubSpot CRM objects covered by the connected account's read scopes. Use this for HubSpot object types beyond contacts, companies and deals, and for recent CRM object requests without a keyword query.",
+          "input": {
+            "objectType": {
+              "description": "HubSpot CRM object type to read",
+              "type": "enum",
+              "values": [
+                "appointments",
+                "carts",
+                "commercepayments",
+                "companies",
+                "contacts",
+                "courses",
+                "deals",
+                "goals",
+                "invoices",
+                "leads",
+                "line_items",
+                "listings",
+                "marketing_events",
+                "orders",
+                "partner-clients",
+                "partner-services",
+                "quotes",
+                "services",
+                "subscriptions",
+                "users"
+              ]
+            },
+            "query": {
+              "optional": true,
+              "description": "Optional search terms. Omit for most-recent records.",
+              "type": "string",
+              "min": 1,
+              "max": 200
+            },
+            "limit": {
+              "optional": true,
+              "type": "number",
+              "int": true,
+              "max": 20,
+              "positive": true
+            },
+            "properties": {
+              "optional": true,
+              "description": "Optional HubSpot property names to include",
+              "type": "array",
+              "items": "string",
+              "max": 20,
+              "itemMin": 1,
+              "itemMax": 100
+            }
+          }
+        },
+        {
+          "name": "hubspot_search_deals",
+          "alias": "hubspot.searchDeals",
+          "description": "Search HubSpot CRM deals visible to this Slack user's connected HubSpot account.",
+          "input": {
+            "query": {
+              "description": "Deal search terms",
+              "type": "string",
+              "min": 1,
+              "max": 200
+            },
+            "limit": {
+              "optional": true,
+              "type": "number",
+              "int": true,
+              "max": 20,
+              "positive": true
+            }
+          }
+        }
+      ]
+    },
+    {
+      "provider": "jira",
+      "tools": [
+        {
+          "name": "jira_add_comment",
+          "alias": "jira.addComment",
+          "description": "Add a plain-text comment to a Jira issue.",
+          "input": {
+            "issueKey": {
+              "description": "Jira issue key",
+              "type": "string",
+              "min": 1
+            },
+            "body": {
+              "description": "Comment body",
+              "type": "string",
+              "min": 1,
+              "max": 65536
+            }
+          }
+        },
+        {
+          "name": "jira_add_labels",
+          "alias": "jira.addLabels",
+          "description": "Add labels to a Jira issue.",
+          "input": {
+            "issueKey": {
+              "description": "Jira issue key",
+              "type": "string",
+              "min": 1
+            },
+            "labels": {
+              "type": "array",
+              "items": "string",
+              "min": 1,
+              "max": 50,
+              "itemMin": 1
+            }
+          }
+        },
+        {
+          "name": "jira_create_issue",
+          "alias": "jira.createIssue",
+          "description": "Create a Jira issue via Jira REST with this Slack user's connected Jira account. Use after confirming project and issue type.",
+          "input": {
+            "projectKey": {
+              "description": "Jira project key",
+              "type": "string",
+              "min": 1
+            },
+            "issueTypeName": {
+              "optional": true,
+              "description": "Jira issue type name",
+              "type": "string"
+            },
+            "issueTypeId": {
+              "optional": true,
+              "description": "Jira issue type ID",
+              "type": "string"
+            },
+            "summary": {
+              "description": "Issue summary",
+              "type": "string",
+              "min": 1
+            },
+            "description": {
+              "optional": true,
+              "description": "Plain text issue description",
+              "type": "string"
+            },
+            "assigneeAccountId": {
+              "optional": true,
+              "description": "Optional Jira account ID for the assignee",
+              "type": "string"
+            }
+          }
+        },
+        {
+          "name": "jira_create_subtask",
+          "alias": "jira.createSubtask",
+          "description": "Create a Jira subtask under an existing parent issue. Confirm the subtask issue type first when possible.",
+          "input": {
+            "parentIssueKey": {
+              "description": "Parent Jira issue key",
+              "type": "string",
+              "min": 1
+            },
+            "summary": {
+              "description": "Subtask summary",
+              "type": "string",
+              "min": 1
+            },
+            "projectKey": {
+              "optional": true,
+              "description": "Optional Jira project key",
+              "type": "string",
+              "min": 1
+            },
+            "issueTypeName": {
+              "optional": true,
+              "description": "Subtask issue type name",
+              "type": "string",
+              "min": 1
+            },
+            "issueTypeId": {
+              "optional": true,
+              "description": "Subtask issue type ID",
+              "type": "string",
+              "min": 1
+            },
+            "description": {
+              "optional": true,
+              "description": "Plain text subtask description",
+              "type": "string"
+            },
+            "assigneeAccountId": {
+              "optional": true,
+              "description": "Optional Jira assignee account ID",
+              "type": "string"
+            }
+          }
+        },
+        {
+          "name": "jira_edit_issue",
+          "alias": "jira.editIssue",
+          "description": "Edit Jira issue fields via Jira REST with this Slack user's connected Jira account.",
+          "input": {
+            "issueKey": {
+              "description": "Jira issue key",
+              "type": "string",
+              "min": 1
+            },
+            "summary": {
+              "optional": true,
+              "description": "New issue summary",
+              "type": "string"
+            },
+            "description": {
+              "optional": true,
+              "description": "New plain text description",
+              "type": "string"
+            },
+            "assigneeAccountId": {
+              "optional": true,
+              "nullable": true,
+              "description": "Jira account ID for assignee, or null to unassign",
+              "type": "string"
+            }
+          }
+        },
+        {
+          "name": "jira_get_authenticated_user",
+          "alias": "jira.getAuthenticatedUser",
+          "description": "Return the Jira identity connected to this Slack user.",
+          "input": {}
+        },
+        {
+          "name": "jira_get_issue",
+          "alias": "jira.getIssue",
+          "description": "Get a Jira issue by key, including summary, status, labels, and text description.",
+          "input": {
+            "issueKey": {
+              "description": "Jira issue key",
+              "type": "string",
+              "min": 1
+            }
+          }
+        },
+        {
+          "name": "jira_link_issues",
+          "alias": "jira.linkIssues",
+          "description": "Create a Jira issue link between two issues.",
+          "input": {
+            "inwardIssueKey": {
+              "description": "Inward Jira issue key",
+              "type": "string",
+              "min": 1
+            },
+            "outwardIssueKey": {
+              "description": "Outward Jira issue key",
+              "type": "string",
+              "min": 1
+            },
+            "typeName": {
+              "optional": true,
+              "description": "Jira issue link type name. Defaults to Relates.",
+              "type": "string",
+              "min": 1
+            },
+            "comment": {
+              "optional": true,
+              "type": "string",
+              "max": 65536
+            }
+          }
+        },
+        {
+          "name": "jira_list_accessible_resources",
+          "alias": "jira.listAccessibleResources",
+          "description": "List Atlassian resources visible to this Slack user's connected Jira account. Use the resource url as Jira MCP cloudId for the Atlassian Rovo MCP server.",
+          "input": {}
+        },
+        {
+          "name": "jira_list_assigned_issues",
+          "alias": "jira.listAssignedIssues",
+          "description": "List Jira issues assigned to this Slack user.",
+          "input": {}
+        },
+        {
+          "name": "jira_list_visible_projects",
+          "alias": "jira.listVisibleProjects",
+          "description": "List Jira projects visible to this Slack user's connected Jira account. Use query='DM', action='create', and expandIssueTypes=true to confirm create access and issue types before creating a Jira issue.",
+          "input": {
+            "query": {
+              "optional": true,
+              "description": "Optional project key or name search",
+              "type": "string"
+            },
+            "action": {
+              "optional": true,
+              "description": "Optional Jira project action permission filter",
+              "type": "enum",
+              "values": [
+                "view",
+                "browse",
+                "edit",
+                "create"
+              ]
+            },
+            "expandIssueTypes": {
+              "optional": true,
+              "description": "Whether to include project issue types",
+              "type": "boolean"
+            }
+          }
+        },
+        {
+          "name": "jira_remove_labels",
+          "alias": "jira.removeLabels",
+          "description": "Remove labels from a Jira issue.",
+          "input": {
+            "issueKey": {
+              "description": "Jira issue key",
+              "type": "string",
+              "min": 1
+            },
+            "labels": {
+              "type": "array",
+              "items": "string",
+              "min": 1,
+              "max": 50,
+              "itemMin": 1
+            }
+          }
+        },
+        {
+          "name": "jira_search_issues",
+          "alias": "jira.searchIssues",
+          "description": "Search Jira issues visible to this Slack user's connected Jira account.",
+          "input": {
+            "jql": {
+              "description": "Jira JQL query",
+              "type": "string",
+              "min": 1
+            }
+          }
+        },
+        {
+          "name": "jira_search_users",
+          "alias": "jira.searchUsers",
+          "description": "Search Jira users visible to this Slack user's connected Jira account. Use this to resolve assignee account IDs from emails or names.",
+          "input": {
+            "query": {
+              "description": "Jira user email, display name, or query",
+              "type": "string",
+              "min": 1
+            }
+          }
+        },
+        {
+          "name": "jira_transition_issue",
+          "alias": "jira.transitionIssue",
+          "description": "Transition a Jira issue by transition id or by matching available transition name.",
+          "input": {
+            "issueKey": {
+              "description": "Jira issue key",
+              "type": "string",
+              "min": 1
+            },
+            "transitionId": {
+              "optional": true,
+              "type": "string",
+              "min": 1
+            },
+            "transitionName": {
+              "optional": true,
+              "type": "string",
+              "min": 1
+            }
+          }
+        },
+        {
+          "name": "jira_update_issue",
+          "alias": "jira.updateIssue",
+          "description": "Update Jira issue fields: summary, description, assignee, or full labels set.",
+          "input": {
+            "issueKey": {
+              "description": "Jira issue key",
+              "type": "string",
+              "min": 1
+            },
+            "summary": {
+              "optional": true,
+              "type": "string",
+              "min": 1
+            },
+            "description": {
+              "optional": true,
+              "type": "string"
+            },
+            "assigneeAccountId": {
+              "optional": true,
+              "nullable": true,
+              "description": "Jira account ID for assignee, or null to unassign",
+              "type": "string"
+            },
+            "labels": {
+              "optional": true,
+              "type": "array",
+              "items": "string",
+              "max": 50,
+              "itemMin": 1
+            }
+          }
+        }
+      ]
+    },
+    {
+      "provider": "slack",
+      "tools": [
+        {
+          "name": "slack_search_messages",
+          "alias": "slack.searchMessages",
+          "description": "Search Slack messages visible to this Slack user's connected Slack search token.",
+          "input": {
+            "query": {
+              "description": "Slack search terms",
+              "type": "string",
+              "min": 1
+            },
+            "fromUserId": {
+              "optional": true,
+              "description": "Optional Slack user ID to filter by author",
+              "type": "string"
+            },
+            "inChannel": {
+              "optional": true,
+              "description": "Optional channel name without #, or channel ID",
+              "type": "string"
+            },
+            "limit": {
+              "optional": true,
+              "type": "number",
+              "int": true,
+              "max": 20,
+              "positive": true
+            }
+          }
+        },
+        {
+          "name": "slack_search_users",
+          "alias": "slack.searchUsers",
+          "description": "Search Slack users by display name, real name, username, or Slack user ID.",
+          "input": {
+            "query": {
+              "description": "Slack user name, display name, or ID",
+              "type": "string",
+              "min": 1
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

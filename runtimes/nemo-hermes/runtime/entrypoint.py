@@ -28,242 +28,54 @@ HERMES_PLUGIN_SOURCE = Path("/runtime/hermes-plugins")
 MAX_HERMES_CONTEXT_MESSAGES = 12
 MAX_HERMES_CONTEXT_MESSAGE_CHARS = 300
 MAX_HERMES_ATTACHMENT_NAME_CHARS = 120
-HERMES_GOOGLE_PROVIDER_TOOL_HINTS_PATH = Path(__file__).with_name(
-    "google-provider-tool-hints.json"
-)
-HERMES_PROVIDER_TOOL_HINTS: dict[str, list[dict[str, Any]]] = {
-    "github": [
-        {
-            "name": "github_list_my_pull_requests",
-            "alias": "github.listMyPullRequests",
-            "args": "limit?, state?, sort?, order?, owner?, repo?, query?",
-        },
-        {
-            "name": "github_search_issues",
-            "alias": "github.searchIssues",
-            "args": "query, limit?",
-        },
-        {
-            "name": "github_get_pr",
-            "alias": "github.getPullRequest",
-            "args": "repo, number",
-        },
-        {
-            "name": "github_create_issue",
-            "alias": "github.createIssue",
-            "args": "repo, title, body?, labels?, assignees?",
-        },
-        {
-            "name": "github_comment_on_issue_or_pr",
-            "alias": "github.commentOnIssueOrPullRequest",
-            "args": "repo, number, body",
-        },
-        {
-            "name": "github_request_review",
-            "alias": "github.requestReview",
-            "args": "repo, number, reviewers?, team_reviewers?",
-        },
-    ],
-    "google": [
-        {
-            "name": "google_search_drive_files",
-            "alias": "google.searchDriveFiles",
-            "args": "query?, limit?, orderBy?",
-        },
-        {
-            "name": "google_get_drive_file",
-            "alias": "google.getDriveFile",
-            "args": "fileId",
-        },
-        {
-            "name": "google_create_drive_text_file",
-            "alias": "google.createDriveTextFile",
-            "args": "name, text?, non-Google-Workspace mimeType?",
-        },
-        {
-            "name": "google_append_to_drive_text_file",
-            "alias": "google.appendToDriveTextFile",
-            "args": "fileId, text",
-        },
-        {
-            "name": "google_search_calendar_events",
-            "alias": "google.searchCalendarEvents",
-            "args": "query?, timeMin?, timeMax?, limit?",
-        },
-        {
-            "name": "google_search_mail_messages",
-            "alias": "google.searchMailMessages",
-            "args": "query, limit?",
-        },
-        {
-            "name": "google_slides_search_presentations",
-            "alias": "google.slidesSearchPresentations",
-            "args": "query?, limit?",
-        },
-        {
-            "name": "google_slides_get_presentation",
-            "alias": "google.slidesGetPresentation",
-            "args": "presentationId, includeSlides?",
-        },
-        {
-            "name": "google_slides_probe_template",
-            "alias": "google.slidesProbeTemplate",
-            "args": "presentationId",
-        },
-        {
-            "name": "google_slides_copy_presentation",
-            "alias": "google.slidesCopyPresentation",
-            "args": "presentationId, name",
-        },
-        {
-            "name": "google_slides_create_slide",
-            "alias": "google.slidesCreateSlide",
-            "args": "presentationId, insertionIndex?, layoutObjectId?, predefinedLayout?, replacements?",
-        },
-        {
-            "name": "google_slides_fill_placeholders",
-            "alias": "google.slidesFillPlaceholders",
-            "args": "presentationId, replacements[{placeholderType,text,index?}], slideObjectId?",
-        },
-        {
-            "name": "google_analytics_list_properties",
-            "alias": "google.analyticsListProperties",
-            "args": "limit?",
-        },
-        {
-            "name": "google_analytics_get_metadata",
-            "alias": "google.analyticsGetMetadata",
-            "args": "propertyId, dimensionQuery?, metricQuery?, limit?",
-        },
-        {
-            "name": "google_analytics_run_report",
-            "alias": "google.analyticsRunReport",
-            "args": "propertyId, startDate, endDate, metrics, dimensions?, limit?",
-        },
-    ],
-    "hubspot": [
-        {
-            "name": "hubspot_get_authenticated_user",
-            "alias": "hubspot.getAuthenticatedUser",
-            "args": "",
-        },
-        {
-            "name": "hubspot_search_contacts",
-            "alias": "hubspot.searchContacts",
-            "args": "query?, limit?",
-        },
-        {
-            "name": "hubspot_search_companies",
-            "alias": "hubspot.searchCompanies",
-            "args": "query?, limit?",
-        },
-        {
-            "name": "hubspot_search_deals",
-            "alias": "hubspot.searchDeals",
-            "args": "query?, limit?",
-        },
-        {
-            "name": "hubspot_search_crm_objects",
-            "alias": "hubspot.searchCrmObjects",
-            "args": "objectType, query?, limit?, properties?",
-        },
-        {
-            "name": "hubspot_list_owners",
-            "alias": "hubspot.listOwners",
-            "args": "limit?, after?",
-        },
-        {
-            "name": "hubspot_list_users",
-            "alias": "hubspot.listUsers",
-            "args": "limit?, after?",
-        },
-        {
-            "name": "hubspot_read_api_resource",
-            "alias": "hubspot.readApiResource",
-            "args": "path, query?",
-        },
-    ],
-    "jira": [
-        {
-            "name": "jira_list_assigned_issues",
-            "alias": "jira.listAssignedIssues",
-            "args": "limit?, status?",
-        },
-        {
-            "name": "jira_search_issues",
-            "alias": "jira.searchIssues",
-            "args": "jql?, query?, limit?",
-        },
-        {
-            "name": "jira_get_issue",
-            "alias": "jira.getIssue",
-            "args": "issueKey",
-        },
-        {
-            "name": "jira_create_issue",
-            "alias": "jira.createIssue",
-            "args": "projectKey, issueTypeName, summary, description?",
-        },
-        {
-            "name": "jira_add_comment",
-            "alias": "jira.addComment",
-            "args": "issueKey, body",
-        },
-    ],
-    "slack": [
-        {
-            "name": "slack_search_users",
-            "alias": "slack.searchUsers",
-            "args": "query, limit?",
-        },
-        {
-            "name": "slack_search_messages",
-            "alias": "slack.searchMessages",
-            "args": "query, limit?",
-        },
-    ],
-}
+HERMES_PROVIDER_TOOL_HINTS_PATH = Path(__file__).with_name("provider-tool-hints.json")
 
 
-def load_hermes_provider_tool_hints(
-    path: Path, fallback: list[dict[str, Any]]
-) -> list[dict[str, Any]]:
+def load_hermes_provider_tool_hints(path: Path) -> dict[str, list[dict[str, Any]]]:
     if not path.exists():
-        return fallback
+        raise ValueError(f"Missing provider tool hints: {path}")
     with path.open("r", encoding="utf-8") as handle:
         payload = json.load(handle)
-    tools = payload.get("tools") if isinstance(payload, dict) else None
-    if not isinstance(tools, list):
+    providers = payload.get("providers") if isinstance(payload, dict) else None
+    if not isinstance(providers, list):
         raise ValueError(f"Invalid provider tool hints: {path}")
-    hints: list[dict[str, Any]] = []
-    for tool in tools:
-        if not isinstance(tool, dict):
-            raise ValueError(f"Invalid provider tool hint entry: {path}")
-        name = tool.get("name")
-        alias = tool.get("alias")
-        description = tool.get("description")
-        input_schema = tool.get("input")
-        if (
-            not isinstance(name, str)
-            or not isinstance(alias, str)
-            or not isinstance(description, str)
-            or not isinstance(input_schema, dict)
-        ):
-            raise ValueError(f"Invalid provider tool hint shape: {path}")
-        hints.append(
-            {
-                "name": name,
-                "alias": alias,
-                "description": description,
-                "input": input_schema,
-            }
-        )
-    return hints
+    hints_by_provider: dict[str, list[dict[str, Any]]] = {}
+    for provider_payload in providers:
+        if not isinstance(provider_payload, dict):
+            raise ValueError(f"Invalid provider tool hint provider entry: {path}")
+        provider = provider_payload.get("provider")
+        tools = provider_payload.get("tools")
+        if not isinstance(provider, str) or not isinstance(tools, list):
+            raise ValueError(f"Invalid provider tool hint provider shape: {path}")
+        hints: list[dict[str, Any]] = []
+        for tool in tools:
+            if not isinstance(tool, dict):
+                raise ValueError(f"Invalid provider tool hint entry: {path}")
+            name = tool.get("name")
+            alias = tool.get("alias")
+            description = tool.get("description")
+            input_schema = tool.get("input")
+            if (
+                not isinstance(name, str)
+                or not isinstance(alias, str)
+                or not isinstance(description, str)
+                or not isinstance(input_schema, dict)
+            ):
+                raise ValueError(f"Invalid provider tool hint shape: {path}")
+            hints.append(
+                {
+                    "name": name,
+                    "alias": alias,
+                    "description": description,
+                    "input": input_schema,
+                }
+            )
+        hints_by_provider[provider] = hints
+    return hints_by_provider
 
 
-HERMES_PROVIDER_TOOL_HINTS["google"] = load_hermes_provider_tool_hints(
-    HERMES_GOOGLE_PROVIDER_TOOL_HINTS_PATH,
-    HERMES_PROVIDER_TOOL_HINTS["google"],
+HERMES_PROVIDER_TOOL_HINTS = load_hermes_provider_tool_hints(
+    HERMES_PROVIDER_TOOL_HINTS_PATH
 )
 
 DEFAULT_HERMES_PLATFORM_TOOLSETS = ["burble", "cronjob", "web"]
