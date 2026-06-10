@@ -49,7 +49,7 @@ function createBurbleMcpToolExecutor(
       return listBurbleMcpTools(config, sessionId);
     }
 
-    const mcpToolName = toMcpToolName(actualToolName);
+    const mcpToolName = toMcpToolName(actualToolName, request);
     const args = toMcpToolArguments(actualToolName, actualBody);
     const sessionId = await sessionIdPromise;
     info(`Burble MCP tool start tool=${mcpToolName}${summarizeLogObject("args", args)}`);
@@ -395,7 +395,15 @@ function mcpHeaders(config: RuntimeConfig): Record<string, string> {
   };
 }
 
-function toMcpToolName(toolName: string): string {
+function toMcpToolName(
+  toolName: string,
+  request: RunRequest | undefined
+): string {
+  const manifestToolName = manifestToolNameToMcpToolName(toolName, request);
+  if (manifestToolName) {
+    return manifestToolName;
+  }
+
   switch (toolName) {
     case "github_get_authenticated_user":
     case "github_list_assigned_issues":
@@ -607,6 +615,23 @@ function toMcpToolName(toolName: string): string {
     default:
       throw new Error(`Unsupported Burble MCP tool: ${toolName}`);
   }
+}
+
+function manifestToolNameToMcpToolName(
+  toolName: string,
+  request: RunRequest | undefined
+): string | null {
+  const tools = request?.runtime?.manifest?.tools;
+  if (!tools) {
+    return null;
+  }
+
+  const tool = tools.find(
+    (entry) =>
+      entry.enabled !== false &&
+      (entry.name === toolName || entry.alias === toolName)
+  );
+  return tool?.name ?? null;
 }
 
 function toMcpToolArguments(
@@ -1259,7 +1284,7 @@ function toMcpToolArgumentsWithoutScheduledJobIdentity(
     };
   }
 
-  return {};
+  return readRecordKey(body, "input") ?? {};
 }
 
 function withScheduledJobIdentity(

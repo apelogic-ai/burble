@@ -11,6 +11,7 @@
     "start": "bun src/index.ts",
     "typecheck": "tsc --noEmit",
     "test": "bun test",
+    "provider-tools:generate-hints": "bun src/providers/generate-runtime-tool-hints.ts",
     "runtime-sdk:generate-schema": "bun packages/runtime-sdk/scripts/generate-json-schema.ts",
     "test:e2e:runtime-readiness": "BURBLE_E2E_RUNTIMES=1 bun test tests/e2e/runtime-readiness.test.ts"
   },

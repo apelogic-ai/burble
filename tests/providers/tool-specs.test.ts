@@ -9,15 +9,19 @@ import { googleProviderToolSpecs } from "../../src/providers/google/tool-specs";
 import { hubspotProviderToolSpecs } from "../../src/providers/hubspot/tool-specs";
 import { jiraProviderToolSpecs } from "../../src/providers/jira/tool-specs";
 import { slackProviderToolSpecs } from "../../src/providers/slack/tool-specs";
+import { providerToolCatalog } from "../../src/providers/catalog";
+import { buildRuntimeProviderToolHints } from "../../src/providers/runtime-tool-hints";
 import { providerToolInputSchema } from "../../src/providers/tool-specs";
 
 type HermesProviderToolHints = {
-  provider: string;
-  tools: Array<{
-    name: string;
-    alias: string;
-    description: string;
-    input: Record<string, unknown>;
+  providers: Array<{
+    provider: string;
+    tools: Array<{
+      name: string;
+      alias: string;
+      description: string;
+      input: Record<string, unknown>;
+    }>;
   }>;
 };
 
@@ -152,32 +156,18 @@ describe("provider tool specs", () => {
     ).toBe(false);
   });
 
-  test("keeps Hermes Google provider hints sourced from Google tool specs", () => {
+  test("keeps Hermes provider hints sourced from the provider tool catalog", () => {
     const hints = JSON.parse(
       readFileSync(
         new URL(
-          "../../runtimes/nemo-hermes/runtime/google-provider-tool-hints.json",
+          "../../runtimes/nemo-hermes/runtime/provider-tool-hints.json",
           import.meta.url
         ),
         "utf8"
       )
     ) as HermesProviderToolHints;
-    const specsByName = new Map(
-      googleProviderToolSpecs.map((tool) => [tool.name, tool])
-    );
 
-    expect(hints.provider).toBe("google");
-    expect(hints.tools.length).toBeGreaterThan(0);
-    for (const hint of hints.tools) {
-      const spec = specsByName.get(hint.name);
-      expect(spec).toBeDefined();
-      if (!spec) {
-        throw new Error(`Missing Google provider tool spec for ${hint.name}`);
-      }
-      expect(hint.alias).toBe(spec.alias);
-      expect(hint.description).toBe(spec.description);
-      expect(hint.input).toEqual(spec.input);
-    }
+    expect(hints).toEqual(buildRuntimeProviderToolHints(providerToolCatalog));
   });
 
   test("loads Jira MCP tool metadata from YAML", () => {

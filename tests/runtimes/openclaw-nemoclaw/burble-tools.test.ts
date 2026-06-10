@@ -208,6 +208,115 @@ describe("createBurbleToolExecutor", () => {
     }
   });
 
+  test("maps manifest provider tool aliases to MCP names with generic input", async () => {
+    const originalFetch = globalThis.fetch;
+    const requests: Request[] = [];
+    globalThis.fetch = (async (input, init) => {
+      const request = new Request(input, init);
+      requests.push(request);
+      const payload = await request.clone().json();
+      if (payload.method === "initialize") {
+        return Response.json(
+          {
+            result: {
+              protocolVersion: "2025-06-18",
+              capabilities: {},
+              serverInfo: { name: "agentgateway", version: "test" }
+            }
+          },
+          { headers: { "mcp-session-id": "session-123" } }
+        );
+      }
+      if (payload.method === "notifications/initialized") {
+        return new Response(null, { status: 202 });
+      }
+      return new Response(
+        [
+          "event: message",
+          `data: ${JSON.stringify({
+            result: {
+              content: [
+                {
+                  type: "text",
+                  text: JSON.stringify({
+                    classification: "user_private",
+                    content: { ok: true }
+                  })
+                }
+              ]
+            },
+            jsonrpc: "2.0",
+            id: "request-id"
+          })}`,
+          ""
+        ].join("\n"),
+        { headers: { "content-type": "text/event-stream" } }
+      );
+    }) as typeof fetch;
+
+    try {
+      const executor = createBurbleToolExecutor(
+        {
+          ...config,
+          mcpGatewayUrl: "http://agentgateway:3000/mcp",
+          runtimeJwt: "runtime-jwt"
+        },
+        "rt_u123",
+        {
+          runId: "run_123",
+          runtime: {
+            id: "rt_u123",
+            manifest: {
+              version: "1",
+              policyHash: "policy-123",
+              skills: [],
+              memory: {
+                userMemoryEnabled: false,
+                workspaceMemoryEnabled: false,
+                jobMemoryEnabled: false
+              },
+              tools: [
+                {
+                  name: "google_future_tool",
+                  alias: "google.futureTool",
+                  provider: "google",
+                  enabled: true
+                }
+              ]
+            }
+          },
+          input: {
+            text: "use a new Google tool",
+            connections: {
+              github: { connected: false },
+              google: { connected: true, email: "person@example.com" }
+            }
+          }
+        }
+      );
+      const result = await executor("google.futureTool", {
+        input: {
+          first: "value",
+          nested: { ok: true }
+        }
+      });
+
+      expect(result.content).toEqual({ ok: true });
+      expect(await requests[2].json()).toMatchObject({
+        method: "tools/call",
+        params: {
+          name: "google_future_tool",
+          arguments: {
+            first: "value",
+            nested: { ok: true }
+          }
+        }
+      });
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
   test("requires the documented provider bridge input wrapper", async () => {
     const executor = createBurbleToolExecutor({
       ...config,

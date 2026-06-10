@@ -36,7 +36,7 @@ WORKDIR /runtime
 COPY runtimes/nemo-hermes/hermes-plugins /runtime/hermes-plugins
 COPY runtimes/nemo-hermes/runtime/entrypoint.py /runtime/entrypoint.py
 COPY runtimes/nemo-hermes/runtime/burble_runtime_contract.py /runtime/burble_runtime_contract.py
-COPY runtimes/nemo-hermes/runtime/google-provider-tool-hints.json /runtime/google-provider-tool-hints.json
+COPY runtimes/nemo-hermes/runtime/provider-tool-hints.json /runtime/provider-tool-hints.json
 COPY packages/runtime-sdk/schema/runtime-contract.schema.json /runtime/runtime-contract.schema.json
 
 EXPOSE 8080 8766
