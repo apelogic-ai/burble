@@ -49,7 +49,28 @@ function providerManifestRequest(): RunRequest {
           name: tool.name,
           alias: tool.alias,
           provider: tool.provider,
-          enabled: true
+          title: tool.title,
+          description: tool.description,
+          enabled: true,
+          risk: tool.risk ?? "read",
+          routeRequired: true,
+          confirmation: tool.confirmation ?? "none",
+          input: Object.entries(tool.input)
+            .map(([name, spec]) => ({
+              name,
+              type:
+                spec.type === "array"
+                  ? "string[]"
+                  : spec.type === "enum"
+                    ? "enum"
+                    : spec.type,
+              required: spec.optional !== true,
+              ...(spec.nullable ? { nullable: true } : {}),
+              ...(spec.description ? { description: spec.description } : {}),
+              ...("values" in spec ? { values: spec.values } : {}),
+              ...(spec.aliases?.length ? { aliases: spec.aliases } : {})
+            }))
+            .sort((left, right) => left.name.localeCompare(right.name))
         }))
       }
     },
@@ -1286,7 +1307,7 @@ describe("createBurbleToolExecutor", () => {
           method: "tools/call",
           params: {
             name: "google_create_drive_text_file",
-            arguments: { name: "Blank", text: "" }
+            arguments: { name: "Blank" }
           }
         },
         {
@@ -1343,10 +1364,10 @@ describe("createBurbleToolExecutor", () => {
           params: {
             name: "google_slides_create_slide",
             arguments: {
-              presentation_id: "deck-copy",
-              slide_index: 2,
-              predefined_layout: "TITLE_AND_TWO_COLUMNS",
-              placeholders: [
+              presentationId: "deck-copy",
+              insertionIndex: 2,
+              predefinedLayout: "TITLE_AND_TWO_COLUMNS",
+              replacements: [
                 { placeholder_type: "TITLE", value: "Test slide 3" },
                 { role: "BODY", index: 0, content: "Left text" },
                 { role: "BODY", index: 1, content: "Right text" }
@@ -1359,9 +1380,9 @@ describe("createBurbleToolExecutor", () => {
           params: {
             name: "google_slides_fill_placeholders",
             arguments: {
-              presentation_id: "deck-copy",
-              slide_object_id: "slide-2",
-              placeholders: [
+              presentationId: "deck-copy",
+              slideObjectId: "slide-2",
+              replacements: [
                 { placeholder_type: "TITLE", value: "ApeLogic" },
                 {
                   role: "BODY",

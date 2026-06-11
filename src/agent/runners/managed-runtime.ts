@@ -1094,8 +1094,10 @@ function sanitizeRuntimeHandle(runtime: RuntimeHandle): {
         name: string;
         type: string;
         required: boolean;
+        nullable?: boolean;
         description?: string;
         values?: string[];
+        aliases?: string[];
       }>;
     }>;
     memory: {
@@ -1126,9 +1128,7 @@ function sanitizeRuntimeHandle(runtime: RuntimeHandle): {
             version: runtime.manifest.version,
             policyHash: runtime.manifest.policyHash,
             skills: runtime.manifest.skills,
-            ...(runtime.engine === "burble-native"
-              ? { tools: runtime.manifest.tools }
-              : {}),
+            tools: runtime.manifest.tools,
             memory: runtime.manifest.memory,
             streaming: runtime.manifest.streaming,
             memoryContext: runtime.manifest.memoryContext

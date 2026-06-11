@@ -928,18 +928,36 @@
           "input": {
             "presentationId": {
               "description": "Google Slides presentation ID to edit.",
+              "aliases": [
+                "presentation_id",
+                "deckId",
+                "deck_id"
+              ],
               "type": "string",
               "min": 1
             },
             "objectId": {
               "optional": true,
               "description": "Optional caller-supplied object ID for the new slide.",
+              "aliases": [
+                "object_id",
+                "slideObjectId",
+                "slide_object_id",
+                "slideId",
+                "slide_id"
+              ],
               "type": "string",
               "min": 1
             },
             "insertionIndex": {
               "optional": true,
               "description": "Optional zero-based insertion index. Use 2 to create slide 3.",
+              "aliases": [
+                "insertion_index",
+                "index",
+                "slideIndex",
+                "slide_index"
+              ],
               "type": "number",
               "int": true,
               "min": 0
@@ -947,18 +965,38 @@
             "layoutObjectId": {
               "optional": true,
               "description": "Optional layout object ID from google_slides_get_presentation or google_slides_probe_template.",
+              "aliases": [
+                "layout_object_id",
+                "layoutId",
+                "layout_id"
+              ],
               "type": "string",
               "min": 1
             },
             "predefinedLayout": {
               "optional": true,
               "description": "Optional Google predefined layout such as TITLE_AND_BODY or TITLE_AND_TWO_COLUMNS.",
+              "aliases": [
+                "predefined_layout",
+                "layout",
+                "layoutType",
+                "layout_type"
+              ],
               "type": "string",
               "min": 1
             },
             "replacements": {
               "optional": true,
               "description": "Optional placeholder text replacements to apply to the created slide.",
+              "aliases": [
+                "replacement",
+                "updates",
+                "update",
+                "placeholders",
+                "placeholder",
+                "fills",
+                "fill"
+              ],
               "type": "array",
               "items": {
                 "type": "object",
@@ -984,6 +1022,47 @@
               },
               "min": 1,
               "max": 10
+            },
+            "placeholderType": {
+              "optional": true,
+              "description": "Compatibility top-level placeholder type alias normalized by the Google Slides provider.",
+              "aliases": [
+                "placeholder_type",
+                "type",
+                "role"
+              ],
+              "type": "string",
+              "min": 1
+            },
+            "text": {
+              "optional": true,
+              "description": "Compatibility top-level placeholder text alias normalized by the Google Slides provider.",
+              "aliases": [
+                "value",
+                "content",
+                "replacementText",
+                "replacement_text"
+              ],
+              "type": "string",
+              "max": 5000
+            },
+            "title": {
+              "optional": true,
+              "description": "Compatibility title text alias normalized by the Google Slides provider.",
+              "type": "string",
+              "max": 5000
+            },
+            "subtitle": {
+              "optional": true,
+              "description": "Compatibility subtitle text alias normalized by the Google Slides provider.",
+              "type": "string",
+              "max": 5000
+            },
+            "body": {
+              "optional": true,
+              "description": "Compatibility body text alias normalized by the Google Slides provider.",
+              "type": "string",
+              "max": 5000
             }
           }
         },
@@ -994,16 +1073,37 @@
           "input": {
             "presentationId": {
               "description": "Google Slides presentation ID to edit.",
+              "aliases": [
+                "presentation_id",
+                "deckId",
+                "deck_id"
+              ],
               "type": "string",
               "min": 1
             },
             "slideObjectId": {
               "optional": true,
               "description": "Optional slide object ID. If omitted, Burble chooses the slide that best matches the requested placeholders.",
+              "aliases": [
+                "slide_object_id",
+                "slideId",
+                "slide_id",
+                "pageObjectId",
+                "page_object_id"
+              ],
               "type": "string"
             },
             "replacements": {
               "description": "Placeholder text replacements to apply.",
+              "aliases": [
+                "replacement",
+                "updates",
+                "update",
+                "placeholders",
+                "placeholder",
+                "fills",
+                "fill"
+              ],
               "type": "array",
               "items": {
                 "type": "object",
@@ -1029,6 +1129,58 @@
               },
               "min": 1,
               "max": 10
+            },
+            "placeholderType": {
+              "optional": true,
+              "description": "Compatibility top-level placeholder type alias normalized by the Google Slides provider.",
+              "aliases": [
+                "placeholder_type",
+                "type",
+                "role"
+              ],
+              "type": "string",
+              "min": 1
+            },
+            "text": {
+              "optional": true,
+              "description": "Compatibility top-level placeholder text alias normalized by the Google Slides provider.",
+              "aliases": [
+                "value",
+                "content",
+                "replacementText",
+                "replacement_text"
+              ],
+              "type": "string",
+              "max": 5000
+            },
+            "index": {
+              "optional": true,
+              "description": "Compatibility top-level placeholder index alias normalized by the Google Slides provider.",
+              "aliases": [
+                "placeholderIndex",
+                "placeholder_index"
+              ],
+              "type": "number",
+              "int": true,
+              "min": 0
+            },
+            "title": {
+              "optional": true,
+              "description": "Compatibility title text alias normalized by the Google Slides provider.",
+              "type": "string",
+              "max": 5000
+            },
+            "subtitle": {
+              "optional": true,
+              "description": "Compatibility subtitle text alias normalized by the Google Slides provider.",
+              "type": "string",
+              "max": 5000
+            },
+            "body": {
+              "optional": true,
+              "description": "Compatibility body text alias normalized by the Google Slides provider.",
+              "type": "string",
+              "max": 5000
             }
           }
         },

@@ -70,8 +70,10 @@ export const runtimeManifestToolInputSchema = z
     name: z.string().min(1),
     type: z.string().min(1),
     required: z.boolean(),
+    nullable: z.boolean().optional(),
     description: z.string().optional(),
-    values: z.array(z.string()).optional()
+    values: z.array(z.string()).optional(),
+    aliases: z.array(z.string().min(1)).optional()
   })
   .strict();
 

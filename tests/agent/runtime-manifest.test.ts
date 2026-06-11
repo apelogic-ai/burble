@@ -40,6 +40,7 @@ const toolCatalog: ProviderToolSpec[] = [
         type: "number",
         int: true,
         optional: true,
+        aliases: ["limit"],
         description: "Maximum number of results"
       }
     }
@@ -179,7 +180,8 @@ describe("buildRuntimeManifest", () => {
             name: "maxResults",
             type: "number",
             required: false,
-            description: "Maximum number of results"
+            description: "Maximum number of results",
+            aliases: ["limit"]
           },
           {
             name: "query",

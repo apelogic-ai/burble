@@ -35,6 +35,7 @@ type BaseInputSpec = {
   optional?: boolean;
   nullable?: boolean;
   description?: string;
+  aliases?: string[];
 };
 
 type ProviderStringInputSpec = BaseInputSpec & {
@@ -243,7 +244,8 @@ function parseInputSpec(parsed: unknown, source: string): ProviderToolInputSpec 
   const base = {
     optional: readOptionalBoolean(parsed, "optional", source),
     nullable: readOptionalBoolean(parsed, "nullable", source),
-    description: readOptionalString(parsed, "description", source)
+    description: readOptionalString(parsed, "description", source),
+    aliases: readOptionalStringArray(parsed, "aliases", source)
   };
 
   switch (type) {
