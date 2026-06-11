@@ -43,14 +43,15 @@ function createBurbleMcpToolExecutor(
       );
     }
 
-    sessionIdPromise ??= initializeMcpSession(config);
     if (actualToolName === "burble.mcp.listTools") {
+      sessionIdPromise ??= initializeMcpSession(config);
       const sessionId = await sessionIdPromise;
       return listBurbleMcpTools(config, sessionId);
     }
 
     const mcpToolName = toMcpToolName(actualToolName, request);
     const args = toMcpToolArguments(actualToolName, actualBody, request);
+    sessionIdPromise ??= initializeMcpSession(config);
     const sessionId = await sessionIdPromise;
     info(`Burble MCP tool start tool=${mcpToolName}${summarizeLogObject("args", args)}`);
 
@@ -498,14 +499,18 @@ function coerceManifestToolInput(
 
   const output: Record<string, unknown> = {};
   for (const field of tool.input ?? []) {
-    const value = readManifestInputField(input, field);
-    if (value === undefined) {
+    const result = readManifestInputField(input, field);
+    if (result.value === undefined) {
       if (field.required) {
-        throw new Error(`${toolName} requires input.${field.name}`);
+        throw new Error(
+          `${toolName} requires input.${field.name}${
+            result.invalid ? ` to be ${field.type}` : ""
+          }`
+        );
       }
       continue;
     }
-    output[field.name] = value;
+    output[field.name] = result.value;
   }
   return output;
 }
@@ -513,19 +518,21 @@ function coerceManifestToolInput(
 function readManifestInputField(
   input: Record<string, unknown> | null,
   field: RuntimeManifestToolInputSummary
-): unknown {
+): { value: unknown; invalid: boolean } {
   if (!input) {
-    return undefined;
+    return { value: undefined, invalid: false };
   }
+  let invalid = false;
   for (const key of [field.name, ...(field.aliases ?? [])]) {
     if (Object.hasOwn(input, key)) {
       const value = coerceManifestInputValue(input[key], field);
       if (value !== undefined) {
-        return value;
+        return { value, invalid: false };
       }
+      invalid = true;
     }
   }
-  return undefined;
+  return { value: undefined, invalid };
 }
 
 function coerceManifestInputValue(
@@ -542,16 +549,33 @@ function coerceManifestInputValue(
     case "string":
       return typeof value === "string" && value.trim() ? value : undefined;
     case "number":
-      return typeof value === "number" && Number.isFinite(value)
-        ? value
-        : undefined;
+      if (typeof value === "number" && Number.isFinite(value)) {
+        return value;
+      }
+      if (typeof value === "string" && value.trim()) {
+        const parsed = Number(value);
+        return Number.isFinite(parsed) ? parsed : undefined;
+      }
+      return undefined;
     case "boolean":
-      return typeof value === "boolean" ? value : undefined;
+      if (typeof value === "boolean") {
+        return value;
+      }
+      if (typeof value === "string") {
+        const normalized = value.trim().toLowerCase();
+        if (normalized === "true") {
+          return true;
+        }
+        if (normalized === "false") {
+          return false;
+        }
+      }
+      return undefined;
     case "enum":
-      return typeof value === "string" &&
-        value.trim() &&
-        (!field.values?.length || field.values.includes(value))
-        ? value
+      return typeof value === "string" && value.trim()
+        ? !field.values?.length || field.values.includes(value.trim())
+          ? value.trim()
+          : undefined
         : undefined;
     case "string[]":
       return Array.isArray(value) ? value : undefined;

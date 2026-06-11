@@ -99,6 +99,44 @@ function createMcpProviderExecutor() {
   );
 }
 
+function mockMcpGatewayPayloads() {
+  const originalFetch = globalThis.fetch;
+  const payloads: unknown[] = [];
+  globalThis.fetch = (async (input, init) => {
+    const request = new Request(input, init);
+    const payload = await request.json();
+    payloads.push(payload);
+    if (payload.method === "initialize") {
+      return Response.json(
+        { result: { protocolVersion: "2025-06-18", capabilities: {} } },
+        { headers: { "mcp-session-id": "session-123" } }
+      );
+    }
+    if (payload.method === "notifications/initialized") {
+      return new Response(null, { status: 202 });
+    }
+    return Response.json({
+      result: {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify({
+              classification: "user_private",
+              content: []
+            })
+          }
+        ]
+      }
+    });
+  }) as typeof fetch;
+  return {
+    payloads,
+    restore() {
+      globalThis.fetch = originalFetch;
+    }
+  };
+}
+
 describe("createBurbleToolExecutor", () => {
   test("requires MCP gateway settings for provider tools", async () => {
     const executor = createBurbleToolExecutor(config, "rt_u123");
@@ -1531,6 +1569,119 @@ describe("createBurbleToolExecutor", () => {
       ]);
     } finally {
       globalThis.fetch = originalFetch;
+    }
+  });
+
+  test("coerces manifest primitive inputs from model-style strings", async () => {
+    const mock = mockMcpGatewayPayloads();
+    try {
+      const executor = createMcpProviderExecutor();
+      await executor("google.slidesGetPresentation", {
+        user: { email: "person@example.com" },
+        input: { presentationId: "deck-123", includeSlides: "false" }
+      });
+      await executor("google.analyticsListProperties", {
+        user: { email: "person@example.com" },
+        input: { limit: "6" }
+      });
+      await executor("google.slidesCreateSlide", {
+        user: { email: "person@example.com" },
+        input: {
+          presentation_id: "deck-copy",
+          slide_index: "2",
+          predefined_layout: "TITLE_AND_BODY",
+          title: "Test slide"
+        }
+      });
+
+      expect(mock.payloads).toMatchObject([
+        { method: "initialize" },
+        { method: "notifications/initialized" },
+        {
+          method: "tools/call",
+          params: {
+            name: "google_slides_get_presentation",
+            arguments: { presentationId: "deck-123", includeSlides: false }
+          }
+        },
+        {
+          method: "tools/call",
+          params: {
+            name: "google_analytics_list_properties",
+            arguments: { limit: 6 }
+          }
+        },
+        {
+          method: "tools/call",
+          params: {
+            name: "google_slides_create_slide",
+            arguments: {
+              presentationId: "deck-copy",
+              insertionIndex: 2,
+              predefinedLayout: "TITLE_AND_BODY",
+              title: "Test slide"
+            }
+          }
+        }
+      ]);
+    } finally {
+      mock.restore();
+    }
+  });
+
+  test("keeps Google Slides placeholder synonym payloads intact", async () => {
+    const mock = mockMcpGatewayPayloads();
+    try {
+      const executor = createMcpProviderExecutor();
+      await executor("google.slidesFillPlaceholders", {
+        user: { email: "person@example.com" },
+        input: {
+          deck_id: "deck-copy",
+          slide_id: "slide-2",
+          update: [
+            { placeholder_type: "TITLE", value: "ApeLogic" },
+            { role: "BODY", placeholderIndex: 1, content: "Right text" }
+          ]
+        }
+      });
+
+      expect(mock.payloads).toMatchObject([
+        { method: "initialize" },
+        { method: "notifications/initialized" },
+        {
+          method: "tools/call",
+          params: {
+            name: "google_slides_fill_placeholders",
+            arguments: {
+              presentationId: "deck-copy",
+              slideObjectId: "slide-2",
+              replacements: [
+                { placeholder_type: "TITLE", value: "ApeLogic" },
+                { role: "BODY", placeholderIndex: 1, content: "Right text" }
+              ]
+            }
+          }
+        }
+      ]);
+    } finally {
+      mock.restore();
+    }
+  });
+
+  test("reports type errors for present required manifest inputs", async () => {
+    const mock = mockMcpGatewayPayloads();
+    try {
+      const executor = createMcpProviderExecutor();
+      await expect(
+        executor("google.analyticsGetMetadata", {
+          user: { email: "person@example.com" },
+          input: { propertyId: 1234 }
+        })
+      ).rejects.toThrow(
+        "google.analyticsGetMetadata requires input.propertyId to be string"
+      );
+    } finally {
+      mock.restore();
     }
   });
 
