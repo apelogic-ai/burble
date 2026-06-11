@@ -37,8 +37,10 @@ export type RuntimeManifestToolInput = {
   name: string;
   type: string;
   required: boolean;
+  nullable?: boolean;
   description?: string;
   values?: string[];
+  aliases?: string[];
 };
 
 export type RuntimeManifestSkill = {
@@ -217,8 +219,10 @@ function manifestToolInputs(
       name,
       type: inputTypeName(spec),
       required: spec.optional !== true,
+      ...(spec.nullable ? { nullable: true } : {}),
       ...(spec.description ? { description: spec.description } : {}),
-      ...("values" in spec ? { values: spec.values } : {})
+      ...("values" in spec ? { values: spec.values } : {}),
+      ...(spec.aliases?.length ? { aliases: spec.aliases } : {})
     }))
     .sort((left, right) => left.name.localeCompare(right.name));
 }

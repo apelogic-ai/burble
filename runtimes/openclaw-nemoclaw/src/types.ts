@@ -48,7 +48,21 @@ export type RunRequest = {
         name: string;
         alias: string;
         provider: string;
+        title?: string;
+        description?: string;
         enabled: boolean;
+        risk?: "read" | "low_write" | "moderate_write" | "high_write";
+        routeRequired?: boolean;
+        confirmation?: "none" | "explicit" | "strong";
+        input?: Array<{
+          name: string;
+          type: string;
+          required: boolean;
+          nullable?: boolean;
+          description?: string;
+          values?: string[];
+          aliases?: string[];
+        }>;
       }>;
     };
   };

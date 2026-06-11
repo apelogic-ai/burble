@@ -350,26 +350,36 @@ tools:
       presentationId:
         type: string
         min: 1
+        aliases: [presentation_id, deckId, deck_id]
         description: Google Slides presentation ID to edit.
       objectId:
         type: string
         min: 1
+        aliases:
+          - object_id
+          - slideObjectId
+          - slide_object_id
+          - slideId
+          - slide_id
         optional: true
         description: Optional caller-supplied object ID for the new slide.
       insertionIndex:
         type: number
         int: true
         min: 0
+        aliases: [insertion_index, index, slideIndex, slide_index]
         optional: true
         description: Optional zero-based insertion index. Use 2 to create slide 3.
       layoutObjectId:
         type: string
         min: 1
+        aliases: [layout_object_id, layoutId, layout_id]
         optional: true
         description: Optional layout object ID from google_slides_get_presentation or google_slides_probe_template.
       predefinedLayout:
         type: string
         min: 1
+        aliases: [predefined_layout, layout, layoutType, layout_type]
         optional: true
         description: Optional Google predefined layout such as TITLE_AND_BODY or TITLE_AND_TWO_COLUMNS.
       replacements:
@@ -377,6 +387,7 @@ tools:
         min: 1
         max: 10
         optional: true
+        aliases: [replacement, updates, update, placeholders, placeholder, fills, fill]
         description: Optional placeholder text replacements to apply to the created slide.
         items:
           type: object
@@ -395,6 +406,33 @@ tools:
               min: 0
               optional: true
               description: Optional placeholder index when a slide has multiple placeholders of the same type.
+      placeholderType:
+        type: string
+        min: 1
+        aliases: [placeholder_type, type, role]
+        optional: true
+        description: Compatibility top-level placeholder type alias normalized by the Google Slides provider.
+      text:
+        type: string
+        max: 5000
+        aliases: [value, content, replacementText, replacement_text]
+        optional: true
+        description: Compatibility top-level placeholder text alias normalized by the Google Slides provider.
+      title:
+        type: string
+        max: 5000
+        optional: true
+        description: Compatibility title text alias normalized by the Google Slides provider.
+      subtitle:
+        type: string
+        max: 5000
+        optional: true
+        description: Compatibility subtitle text alias normalized by the Google Slides provider.
+      body:
+        type: string
+        max: 5000
+        optional: true
+        description: Compatibility body text alias normalized by the Google Slides provider.
 
   - name: google_slides_fill_placeholders
     alias: google.slidesFillPlaceholders
@@ -407,15 +445,18 @@ tools:
       presentationId:
         type: string
         min: 1
+        aliases: [presentation_id, deckId, deck_id]
         description: Google Slides presentation ID to edit.
       slideObjectId:
         type: string
+        aliases: [slide_object_id, slideId, slide_id, pageObjectId, page_object_id]
         optional: true
         description: Optional slide object ID. If omitted, Burble chooses the slide that best matches the requested placeholders.
       replacements:
         type: array
         min: 1
         max: 10
+        aliases: [replacement, updates, update, placeholders, placeholder, fills, fill]
         description: Placeholder text replacements to apply.
         items:
           type: object
@@ -434,6 +475,40 @@ tools:
               min: 0
               optional: true
               description: Optional placeholder index when a slide has multiple placeholders of the same type.
+      placeholderType:
+        type: string
+        min: 1
+        aliases: [placeholder_type, type, role]
+        optional: true
+        description: Compatibility top-level placeholder type alias normalized by the Google Slides provider.
+      text:
+        type: string
+        max: 5000
+        aliases: [value, content, replacementText, replacement_text]
+        optional: true
+        description: Compatibility top-level placeholder text alias normalized by the Google Slides provider.
+      index:
+        type: number
+        int: true
+        min: 0
+        aliases: [placeholderIndex, placeholder_index]
+        optional: true
+        description: Compatibility top-level placeholder index alias normalized by the Google Slides provider.
+      title:
+        type: string
+        max: 5000
+        optional: true
+        description: Compatibility title text alias normalized by the Google Slides provider.
+      subtitle:
+        type: string
+        max: 5000
+        optional: true
+        description: Compatibility subtitle text alias normalized by the Google Slides provider.
+      body:
+        type: string
+        max: 5000
+        optional: true
+        description: Compatibility body text alias normalized by the Google Slides provider.
 
   - name: google_analytics_list_properties
     alias: google.analyticsListProperties

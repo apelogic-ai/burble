@@ -255,7 +255,7 @@ describe("createOpenClawNemoClawAgentRunner", () => {
     expect(JSON.stringify(body)).not.toContain("secret-token");
   });
 
-  test("sends the runtime tool catalog only to Burble Native runtimes", async () => {
+  test("sends the runtime tool catalog to managed runtimes", async () => {
     const toolCatalog: RuntimeManifest["tools"] = [
       {
         name: "github_get_authenticated_user",
@@ -327,7 +327,7 @@ describe("createOpenClawNemoClawAgentRunner", () => {
     expect(
       (seenRunBodies[0].runtime as { manifest?: { tools?: unknown } }).manifest
         ?.tools
-    ).toBeUndefined();
+    ).toEqual(toolCatalog);
     expect(
       (seenRunBodies[1].runtime as { manifest?: { tools?: unknown } }).manifest
         ?.tools

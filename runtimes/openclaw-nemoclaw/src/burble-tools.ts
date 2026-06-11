@@ -43,14 +43,15 @@ function createBurbleMcpToolExecutor(
       );
     }
 
-    sessionIdPromise ??= initializeMcpSession(config);
     if (actualToolName === "burble.mcp.listTools") {
+      sessionIdPromise ??= initializeMcpSession(config);
       const sessionId = await sessionIdPromise;
       return listBurbleMcpTools(config, sessionId);
     }
 
     const mcpToolName = toMcpToolName(actualToolName, request);
-    const args = toMcpToolArguments(actualToolName, actualBody);
+    const args = toMcpToolArguments(actualToolName, actualBody, request);
+    sessionIdPromise ??= initializeMcpSession(config);
     const sessionId = await sessionIdPromise;
     info(`Burble MCP tool start tool=${mcpToolName}${summarizeLogObject("args", args)}`);
 
@@ -429,658 +430,173 @@ export const __openClawBurbleToolMappingTestHooks = {
   toMcpToolName
 };
 
+type RuntimeManifestToolSummary = NonNullable<
+  NonNullable<NonNullable<RunRequest["runtime"]>["manifest"]>["tools"]
+>[number];
+
+type RuntimeManifestToolInputSummary = NonNullable<
+  RuntimeManifestToolSummary["input"]
+>[number];
+
 function toMcpToolArguments(
   toolName: string,
-  body: unknown
+  body: unknown,
+  request: RunRequest | undefined
 ): Record<string, unknown> {
   return withScheduledJobIdentity(
-    toMcpToolArgumentsWithoutScheduledJobIdentity(toolName, body),
+    toMcpToolArgumentsWithoutScheduledJobIdentity(toolName, body, request),
     readRecordKey(body, "input")
   );
 }
 
 function toMcpToolArgumentsWithoutScheduledJobIdentity(
   toolName: string,
-  body: unknown
+  body: unknown,
+  request: RunRequest | undefined
 ): Record<string, unknown> {
-  if (toolName === "github.searchIssues") {
-    const query = readNestedString(body, "input", "query");
-    if (!query) {
-      throw new Error("github.searchIssues requires input.query");
-    }
-    return { query };
+  const input = readProviderToolInput(body);
+  const tool = findManifestTool(toolName, request);
+  if (!tool) {
+    throw new Error(`Unsupported Burble MCP tool: ${toolName}`);
   }
+  return coerceManifestToolInput(toolName, input, tool);
+}
 
-  if (toolName === "github.listMyPullRequests") {
-    return compactToolInput(readRecordKey(body, "input"), [
-      "limit",
-      "state",
-      "sort",
-      "order",
-      "owner",
-      "repo"
-    ]);
+function findManifestTool(
+  toolName: string,
+  request: RunRequest | undefined
+): RuntimeManifestToolSummary | null {
+  return request?.runtime?.manifest?.tools?.find(
+    (entry) =>
+      entry.enabled !== false &&
+      (entry.name === toolName || entry.alias === toolName)
+  ) ?? null;
+}
+
+function readProviderToolInput(body: unknown): Record<string, unknown> | null {
+  const input = readRecordKey(body, "input");
+  if (!input) {
+    return null;
   }
-
-  if (toolName === "github.createIssue") {
-    const input = readRecordKey(body, "input");
-    const repo = readNestedString(body, "input", "repo");
-    const title = readNestedString(body, "input", "title");
-    if (!repo) {
-      throw new Error("github.createIssue requires input.repo");
-    }
-    if (!title) {
-      throw new Error("github.createIssue requires input.title");
-    }
-    return {
-      repo,
-      title,
-      ...compactToolInput(input, ["body", "labels", "assignees"])
-    };
-  }
-
+  const keys = Object.keys(input);
   if (
-    toolName === "github.getIssue" ||
-    toolName === "github.getPullRequest" ||
-    toolName === "github.closeIssue" ||
-    toolName === "github.reopenIssue"
+    keys.length === 1 &&
+    (keys[0] === "input" || keys[0] === "arguments" || keys[0] === "params")
   ) {
-    const input = readRecordKey(body, "input");
-    const repo = readNestedString(body, "input", "repo");
-    const number = readRecordNumber(input, "number");
-    if (!repo) {
-      throw new Error(`${toolName} requires input.repo`);
+    return readNestedRecord(body, "input", keys[0]) ?? input;
+  }
+  return input;
+}
+
+function coerceManifestToolInput(
+  toolName: string,
+  input: Record<string, unknown> | null,
+  tool: RuntimeManifestToolSummary
+): Record<string, unknown> {
+  if (!tool.input?.length) {
+    return input ?? {};
+  }
+
+  const output: Record<string, unknown> = {};
+  for (const field of tool.input ?? []) {
+    const result = readManifestInputField(input, field);
+    if (result.value === undefined) {
+      if (field.required) {
+        throw new Error(
+          `${toolName} requires input.${field.name}${
+            result.invalid ? ` to be ${field.type}` : ""
+          }`
+        );
+      }
+      continue;
     }
-    if (!number) {
-      throw new Error(`${toolName} requires input.number`);
+    output[field.name] = result.value;
+  }
+  return output;
+}
+
+function readManifestInputField(
+  input: Record<string, unknown> | null,
+  field: RuntimeManifestToolInputSummary
+): { value: unknown; invalid: boolean } {
+  if (!input) {
+    return { value: undefined, invalid: false };
+  }
+  let invalid = false;
+  for (const key of [field.name, ...(field.aliases ?? [])]) {
+    if (Object.hasOwn(input, key)) {
+      const value = coerceManifestInputValue(input[key], field);
+      if (value !== undefined) {
+        return { value, invalid: false };
+      }
+      invalid = true;
     }
-    return { repo, number };
   }
+  return { value: undefined, invalid };
+}
 
-  if (toolName === "github.updateIssue") {
-    const input = readRecordKey(body, "input");
-    const repo = readNestedString(body, "input", "repo");
-    const number = readRecordNumber(input, "number");
-    if (!repo) {
-      throw new Error("github.updateIssue requires input.repo");
-    }
-    if (!number) {
-      throw new Error("github.updateIssue requires input.number");
-    }
-    return {
-      repo,
-      number,
-      ...compactToolInput(input, ["title", "body", "state", "labels", "assignees"])
-    };
+function coerceManifestInputValue(
+  value: unknown,
+  field: RuntimeManifestToolInputSummary
+): unknown {
+  if (value === null) {
+    return field.nullable ? null : undefined;
   }
-
-  if (toolName === "github.commentOnIssueOrPullRequest") {
-    const input = readRecordKey(body, "input");
-    const repo = readNestedString(body, "input", "repo");
-    const issueNumber = readRecordNumber(input, "number");
-    const commentBody = readNestedString(body, "input", "body");
-    if (!repo) {
-      throw new Error("github.commentOnIssueOrPullRequest requires input.repo");
-    }
-    if (!issueNumber) {
-      throw new Error("github.commentOnIssueOrPullRequest requires input.number");
-    }
-    if (!commentBody) {
-      throw new Error("github.commentOnIssueOrPullRequest requires input.body");
-    }
-    return {
-      repo,
-      number: issueNumber,
-      body: commentBody
-    };
+  if (value === undefined) {
+    return undefined;
   }
-
-  if (toolName === "github.createPullRequest") {
-    const input = readRecordKey(body, "input");
-    const repo = readNestedString(body, "input", "repo");
-    const title = readNestedString(body, "input", "title");
-    const head = readNestedString(body, "input", "head");
-    const base = readNestedString(body, "input", "base");
-    if (!repo) {
-      throw new Error("github.createPullRequest requires input.repo");
-    }
-    if (!title) {
-      throw new Error("github.createPullRequest requires input.title");
-    }
-    if (!head) {
-      throw new Error("github.createPullRequest requires input.head");
-    }
-    if (!base) {
-      throw new Error("github.createPullRequest requires input.base");
-    }
-    return {
-      repo,
-      title,
-      head,
-      base,
-      ...compactToolInput(input, ["body", "draft"])
-    };
+  switch (field.type) {
+    case "string":
+      return typeof value === "string" && value.trim() ? value : undefined;
+    case "number":
+      if (typeof value === "number" && Number.isFinite(value)) {
+        return value;
+      }
+      if (typeof value === "string" && value.trim()) {
+        const parsed = Number(value);
+        return Number.isFinite(parsed) ? parsed : undefined;
+      }
+      return undefined;
+    case "boolean":
+      if (typeof value === "boolean") {
+        return value;
+      }
+      if (typeof value === "string") {
+        const normalized = value.trim().toLowerCase();
+        if (normalized === "true") {
+          return true;
+        }
+        if (normalized === "false") {
+          return false;
+        }
+      }
+      return undefined;
+    case "enum":
+      return typeof value === "string" && value.trim()
+        ? !field.values?.length || field.values.includes(value.trim())
+          ? value.trim()
+          : undefined
+        : undefined;
+    case "string[]":
+      return Array.isArray(value) ? value : undefined;
+    case "object":
+      return value && typeof value === "object" && !Array.isArray(value)
+        ? value
+        : undefined;
+    default:
+      return isCompactManifestValue(value) ? value : undefined;
   }
+}
 
-  if (toolName === "github.updatePullRequest") {
-    const input = readRecordKey(body, "input");
-    const repo = readNestedString(body, "input", "repo");
-    const prNumber = readRecordNumber(input, "number");
-    if (!repo) {
-      throw new Error("github.updatePullRequest requires input.repo");
-    }
-    if (!prNumber) {
-      throw new Error("github.updatePullRequest requires input.number");
-    }
-    return {
-      repo,
-      number: prNumber,
-      ...compactToolInput(input, ["title", "body", "base", "draft"])
-    };
-  }
-
-  if (toolName === "github.addLabels" || toolName === "github.removeLabels") {
-    const input = readRecordKey(body, "input");
-    const repo = readNestedString(body, "input", "repo");
-    const issueNumber = readRecordNumber(input, "number");
-    if (!repo) {
-      throw new Error(`${toolName} requires input.repo`);
-    }
-    if (!issueNumber) {
-      throw new Error(`${toolName} requires input.number`);
-    }
-    return {
-      repo,
-      number: issueNumber,
-      ...compactToolInput(input, ["labels"])
-    };
-  }
-
-  if (toolName === "github.requestReview") {
-    const input = readRecordKey(body, "input");
-    const repo = readNestedString(body, "input", "repo");
-    const prNumber = readRecordNumber(input, "number");
-    if (!repo) {
-      throw new Error("github.requestReview requires input.repo");
-    }
-    if (!prNumber) {
-      throw new Error("github.requestReview requires input.number");
-    }
-    return {
-      repo,
-      number: prNumber,
-      ...compactToolInput(input, ["reviewers", "teamReviewers"])
-    };
-  }
-
-  if (toolName === "github.getFile") {
-    const input = readRecordKey(body, "input");
-    const repo = readNestedString(body, "input", "repo");
-    const path = readNestedString(body, "input", "path");
-    if (!repo) {
-      throw new Error("github.getFile requires input.repo");
-    }
-    if (!path) {
-      throw new Error("github.getFile requires input.path");
-    }
-    return {
-      repo,
-      path,
-      ...compactToolInput(input, ["ref"])
-    };
-  }
-
-  if (toolName === "github.createOrUpdateFile") {
-    const input = readRecordKey(body, "input");
-    const repo = readNestedString(body, "input", "repo");
-    const path = readNestedString(body, "input", "path");
-    const content = readNestedValue(body, "input", "content");
-    const message = readNestedString(body, "input", "message");
-    if (!repo) {
-      throw new Error("github.createOrUpdateFile requires input.repo");
-    }
-    if (!path) {
-      throw new Error("github.createOrUpdateFile requires input.path");
-    }
-    if (typeof content !== "string") {
-      throw new Error("github.createOrUpdateFile requires input.content");
-    }
-    if (!message) {
-      throw new Error("github.createOrUpdateFile requires input.message");
-    }
-    return {
-      repo,
-      path,
-      content,
-      message,
-      ...compactToolInput(input, ["branch", "sha"])
-    };
-  }
-
-  if (toolName === "github.createBranch") {
-    const input = readRecordKey(body, "input");
-    const repo = readNestedString(body, "input", "repo");
-    const branch = readNestedString(body, "input", "branch");
-    if (!repo) {
-      throw new Error("github.createBranch requires input.repo");
-    }
-    if (!branch) {
-      throw new Error("github.createBranch requires input.branch");
-    }
-    return {
-      repo,
-      branch,
-      ...compactToolInput(input, ["fromRef"])
-    };
-  }
-
-  if (toolName === "jira.searchIssues") {
-    const jql = readNestedString(body, "input", "jql");
-    if (!jql) {
-      throw new Error("jira.searchIssues requires input.jql");
-    }
-    return { jql };
-  }
-
-  if (toolName === "google.searchDriveFiles") {
-    return compactToolInput(readRecordKey(body, "input"), [
-      "query",
-      "limit"
-    ]);
-  }
-
-  if (toolName === "google.createDriveTextFile") {
-    const name = readNestedString(body, "input", "name");
-    const rawText = readNestedValue(body, "input", "text");
-    const text = typeof rawText === "string" ? rawText : "";
-    if (!name) {
-      throw new Error("google.createDriveTextFile requires input.name");
-    }
-    return {
-      name,
-      text,
-      ...compactToolInput(readRecordKey(body, "input"), ["mimeType"])
-    };
-  }
-
-  if (toolName === "google.getDriveFile") {
-    return compactToolInput(readRecordKey(body, "input"), [
-      "fileId",
-      "includeContent"
-    ]);
-  }
-
-  if (
-    toolName === "google.updateDriveTextFile" ||
-    toolName === "google.appendDriveTextFile" ||
-    toolName === "google.appendToDriveTextFile"
-  ) {
-    return compactToolInput(readRecordKey(body, "input"), [
-      "fileId",
-      "text",
-      "separator",
-      "mimeType"
-    ]);
-  }
-
-  if (toolName === "google.createDriveFolder") {
-    return compactToolInput(readRecordKey(body, "input"), ["name", "parentId"]);
-  }
-
-  if (toolName === "google.moveDriveFile") {
-    return compactToolInput(readRecordKey(body, "input"), [
-      "fileId",
-      "parentId",
-      "removeParentIds"
-    ]);
-  }
-
-  if (toolName === "google.searchCalendarEvents") {
-    return compactToolInput(readRecordKey(body, "input"), [
-      "query",
-      "timeMin",
-      "timeMax",
-      "limit"
-    ]);
-  }
-
-  if (
-    toolName === "google.createCalendarEvent" ||
-    toolName === "google.updateCalendarEvent"
-  ) {
-    return compactToolInput(readRecordKey(body, "input"), [
-      "calendarId",
-      "eventId",
-      "summary",
-      "start",
-      "end",
-      "description",
-      "location",
-      "timeZone"
-    ]);
-  }
-
-  if (toolName === "google.searchMailMessages") {
-    const query = readNestedString(body, "input", "query");
-    if (!query) {
-      throw new Error("google.searchMailMessages requires input.query");
-    }
-    return {
-      query,
-      ...compactToolInput(readRecordKey(body, "input"), ["limit"])
-    };
-  }
-
-  if (toolName === "google.slidesSearchPresentations") {
-    return compactToolInput(readRecordKey(body, "input"), [
-      "query",
-      "limit"
-    ]);
-  }
-
-  if (toolName === "google.slidesGetPresentation") {
-    return compactToolInput(readRecordKey(body, "input"), [
-      "presentationId",
-      "includeSlides"
-    ]);
-  }
-
-  if (toolName === "google.slidesProbeTemplate") {
-    return compactToolInput(readRecordKey(body, "input"), ["presentationId"]);
-  }
-
-  if (toolName === "google.slidesCopyPresentation") {
-    return compactToolInput(readRecordKey(body, "input"), [
-      "presentationId",
-      "name"
-    ]);
-  }
-
-  if (toolName === "google.slidesCreateSlide") {
-    return compactToolInput(readRecordKey(body, "input"), [
-      "presentationId",
-      "presentation_id",
-      "deckId",
-      "deck_id",
-      "objectId",
-      "object_id",
-      "slideObjectId",
-      "slide_object_id",
-      "slideId",
-      "slide_id",
-      "insertionIndex",
-      "insertion_index",
-      "index",
-      "slideIndex",
-      "slide_index",
-      "layoutObjectId",
-      "layout_object_id",
-      "layoutId",
-      "layout_id",
-      "predefinedLayout",
-      "predefined_layout",
-      "layout",
-      "layoutType",
-      "layout_type",
-      "replacements",
-      "replacement",
-      "updates",
-      "update",
-      "placeholders",
-      "placeholder",
-      "fills",
-      "fill",
-      "placeholderType",
-      "placeholder_type",
-      "type",
-      "role",
-      "text",
-      "value",
-      "content",
-      "replacementText",
-      "replacement_text",
-      "title",
-      "subtitle",
-      "body"
-    ]);
-  }
-
-  if (toolName === "google.slidesFillPlaceholders") {
-    return compactToolInput(readRecordKey(body, "input"), [
-      "presentationId",
-      "presentation_id",
-      "slideObjectId",
-      "slide_object_id",
-      "slideId",
-      "slide_id",
-      "pageObjectId",
-      "page_object_id",
-      "replacements",
-      "replacement",
-      "updates",
-      "update",
-      "placeholders",
-      "placeholder",
-      "fills",
-      "fill",
-      "placeholderType",
-      "placeholder_type",
-      "type",
-      "role",
-      "text",
-      "value",
-      "content",
-      "replacementText",
-      "replacement_text",
-      "index",
-      "placeholderIndex",
-      "placeholder_index",
-      "title",
-      "subtitle",
-      "body"
-    ]);
-  }
-
-  if (toolName === "google.analyticsListProperties") {
-    return compactToolInput(readRecordKey(body, "input"), ["limit"]);
-  }
-
-  if (toolName === "google.analyticsGetMetadata") {
-    return compactToolInput(readRecordKey(body, "input"), [
-      "propertyId",
-      "dimensionQuery",
-      "metricQuery",
-      "limit"
-    ]);
-  }
-
-  if (toolName === "google.analyticsRunReport") {
-    return compactToolInput(readRecordKey(body, "input"), [
-      "propertyId",
-      "startDate",
-      "endDate",
-      "metrics",
-      "dimensions",
-      "limit"
-    ]);
-  }
-
-  if (toolName === "gmail.createDraft") {
-    return compactToolInput(readRecordKey(body, "input"), [
-      "to",
-      "subject",
-      "body",
-      "cc",
-      "bcc"
-    ]);
-  }
-
-  if (
-    toolName === "hubspot.searchContacts" ||
-    toolName === "hubspot.searchCompanies" ||
-    toolName === "hubspot.searchDeals"
-  ) {
-    return compactToolInput(readRecordKey(body, "input"), [
-      "query",
-      "limit"
-    ]);
-  }
-
-  if (toolName === "hubspot.searchCrmObjects") {
-    return compactToolInput(readRecordKey(body, "input"), [
-      "objectType",
-      "query",
-      "limit",
-      "properties"
-    ]);
-  }
-
-  if (toolName === "hubspot.listOwners" || toolName === "hubspot.listUsers") {
-    return compactToolInput(readRecordKey(body, "input"), [
-      "limit",
-      "after"
-    ]);
-  }
-
-  if (toolName === "hubspot.readApiResource") {
-    const input = readRecordKey(body, "input");
-    return {
-      ...compactToolInput(input, ["path"]),
-      ...(input ? compactRecordField(input, "query") : {})
-    };
-  }
-
-  if (toolName === "jira.listVisibleProjects") {
-    const input = readNestedRecord(body, "input", "input") ??
-      readNestedRecord(body, "input", "arguments") ??
-      readNestedRecord(body, "input", "params") ??
-      readRecordKey(body, "input");
-    if (!input) {
-      return {};
-    }
-
-    return {
-      ...(typeof input.query === "string" && input.query.trim()
-        ? { query: input.query }
-        : {}),
-      ...(typeof input.action === "string" && input.action.trim()
-        ? { action: input.action }
-        : {}),
-      ...(typeof input.expandIssueTypes === "boolean"
-        ? { expandIssueTypes: input.expandIssueTypes }
-        : {})
-    };
-  }
-
-  if (toolName === "jira.searchUsers") {
-    const query = readNestedString(body, "input", "query");
-    if (!query) {
-      throw new Error("jira.searchUsers requires input.query");
-    }
-    return { query };
-  }
-
-  if (toolName === "slack.searchUsers") {
-    const query = readNestedString(body, "input", "query");
-    if (!query) {
-      throw new Error("slack.searchUsers requires input.query");
-    }
-    return { query };
-  }
-
-  if (toolName === "slack.searchMessages") {
-    return compactToolInput(readRecordKey(body, "input"), [
-      "query",
-      "fromUserId",
-      "inChannel",
-      "limit"
-    ]);
-  }
-
-  if (toolName === "jira.createIssue") {
-    return compactToolInput(readRecordKey(body, "input"), [
-      "projectKey",
-      "issueTypeName",
-      "issueTypeId",
-      "summary",
-      "description",
-      "assigneeAccountId"
-    ]);
-  }
-
-  if (toolName === "jira.editIssue") {
-    return compactToolInput(readRecordKey(body, "input"), [
-      "issueKey",
-      "summary",
-      "description",
-      "assigneeAccountId"
-    ]);
-  }
-
-  if (toolName === "jira.getIssue") {
-    return compactToolInput(readRecordKey(body, "input"), ["issueKey"]);
-  }
-
-  if (toolName === "jira.updateIssue") {
-    return compactToolInput(readRecordKey(body, "input"), [
-      "issueKey",
-      "summary",
-      "description",
-      "assigneeAccountId",
-      "labels"
-    ]);
-  }
-
-  if (toolName === "jira.addComment") {
-    return compactToolInput(readRecordKey(body, "input"), ["issueKey", "body"]);
-  }
-
-  if (toolName === "jira.transitionIssue") {
-    return compactToolInput(readRecordKey(body, "input"), [
-      "issueKey",
-      "transitionId",
-      "transitionName"
-    ]);
-  }
-
-  if (toolName === "jira.addLabels" || toolName === "jira.removeLabels") {
-    return compactToolInput(readRecordKey(body, "input"), ["issueKey", "labels"]);
-  }
-
-  if (toolName === "jira.linkIssues") {
-    return compactToolInput(readRecordKey(body, "input"), [
-      "inwardIssueKey",
-      "outwardIssueKey",
-      "typeName",
-      "comment"
-    ]);
-  }
-
-  if (toolName === "jira.createSubtask") {
-    return compactToolInput(readRecordKey(body, "input"), [
-      "parentIssueKey",
-      "summary",
-      "projectKey",
-      "issueTypeName",
-      "issueTypeId",
-      "description",
-      "assigneeAccountId"
-    ]);
-  }
-
-  if (toolName === "atlassian.callMcpTool") {
-    const name = readNestedString(body, "input", "name");
-    if (!name) {
-      throw new Error("atlassian.callMcpTool requires input.name");
-    }
-
-    return {
-      name,
-      arguments: readNestedRecord(body, "input", "arguments") ?? {}
-    };
-  }
-
-  return readRecordKey(body, "input") ?? {};
+function isCompactManifestValue(value: unknown): boolean {
+  return (
+    value === null ||
+    (typeof value === "string" && value.trim().length > 0) ||
+    typeof value === "boolean" ||
+    typeof value === "number" ||
+    Array.isArray(value) ||
+    (value !== null && typeof value === "object")
+  );
 }
 
 function withScheduledJobIdentity(
