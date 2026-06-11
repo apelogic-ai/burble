@@ -2505,87 +2505,7 @@ function mcpToolNameToBurbleToolName(
     return manifestToolName;
   }
 
-  return legacyMcpToolNameToBurbleToolName(name);
-}
-
-const legacyMcpToolNameToBurbleToolNameEntries = [
-  ["github_get_authenticated_user", "github.getAuthenticatedUser"],
-  ["github_list_assigned_issues", "github.listAssignedIssues"],
-  ["github_search_issues", "github.searchIssues"],
-  ["github_list_my_pull_requests", "github.listMyPullRequests"],
-  ["github_get_issue", "github.getIssue"],
-  ["github_get_pr", "github.getPullRequest"],
-  ["github_create_issue", "github.createIssue"],
-  ["github_update_issue", "github.updateIssue"],
-  ["github_close_issue", "github.closeIssue"],
-  ["github_reopen_issue", "github.reopenIssue"],
-  ["github_comment_on_issue_or_pr", "github.commentOnIssueOrPullRequest"],
-  ["github_create_pr", "github.createPullRequest"],
-  ["github_update_pr", "github.updatePullRequest"],
-  ["github_add_labels", "github.addLabels"],
-  ["github_remove_labels", "github.removeLabels"],
-  ["github_request_review", "github.requestReview"],
-  ["github_get_file", "github.getFile"],
-  ["github_create_or_update_file", "github.createOrUpdateFile"],
-  ["github_create_branch", "github.createBranch"],
-  ["google_get_authenticated_user", "google.getAuthenticatedUser"],
-  ["google_search_drive_files", "google.searchDriveFiles"],
-  ["google_create_drive_text_file", "google.createDriveTextFile"],
-  ["google_get_drive_file", "google.getDriveFile"],
-  ["google_update_drive_text_file", "google.updateDriveTextFile"],
-  ["google_append_to_drive_text_file", "google.appendDriveTextFile"],
-  ["google_create_drive_folder", "google.createDriveFolder"],
-  ["google_move_drive_file", "google.moveDriveFile"],
-  ["google_search_calendar_events", "google.searchCalendarEvents"],
-  ["google_create_calendar_event", "google.createCalendarEvent"],
-  ["google_update_calendar_event", "google.updateCalendarEvent"],
-  ["google_search_mail_messages", "google.searchMailMessages"],
-  ["google_slides_search_presentations", "google.slidesSearchPresentations"],
-  ["google_slides_get_presentation", "google.slidesGetPresentation"],
-  ["google_slides_probe_template", "google.slidesProbeTemplate"],
-  ["google_slides_copy_presentation", "google.slidesCopyPresentation"],
-  ["google_slides_create_slide", "google.slidesCreateSlide"],
-  ["google_slides_fill_placeholders", "google.slidesFillPlaceholders"],
-  ["google_analytics_list_properties", "google.analyticsListProperties"],
-  ["google_analytics_get_metadata", "google.analyticsGetMetadata"],
-  ["google_analytics_run_report", "google.analyticsRunReport"],
-  ["gmail_create_draft", "gmail.createDraft"],
-  ["hubspot_get_authenticated_user", "hubspot.getAuthenticatedUser"],
-  ["hubspot_search_contacts", "hubspot.searchContacts"],
-  ["hubspot_search_companies", "hubspot.searchCompanies"],
-  ["hubspot_search_deals", "hubspot.searchDeals"],
-  ["hubspot_search_crm_objects", "hubspot.searchCrmObjects"],
-  ["hubspot_list_owners", "hubspot.listOwners"],
-  ["hubspot_list_users", "hubspot.listUsers"],
-  ["hubspot_read_api_resource", "hubspot.readApiResource"],
-  ["jira_get_authenticated_user", "jira.getAuthenticatedUser"],
-  ["jira_list_accessible_resources", "jira.listAccessibleResources"],
-  ["jira_list_visible_projects", "jira.listVisibleProjects"],
-  ["jira_search_users", "jira.searchUsers"],
-  ["jira_create_issue", "jira.createIssue"],
-  ["jira_edit_issue", "jira.editIssue"],
-  ["jira_get_issue", "jira.getIssue"],
-  ["jira_update_issue", "jira.updateIssue"],
-  ["jira_add_comment", "jira.addComment"],
-  ["jira_transition_issue", "jira.transitionIssue"],
-  ["jira_add_labels", "jira.addLabels"],
-  ["jira_remove_labels", "jira.removeLabels"],
-  ["jira_link_issues", "jira.linkIssues"],
-  ["jira_create_subtask", "jira.createSubtask"],
-  ["jira_list_assigned_issues", "jira.listAssignedIssues"],
-  ["jira_search_issues", "jira.searchIssues"],
-  ["slack_search_users", "slack.searchUsers"],
-  ["slack_search_messages", "slack.searchMessages"],
-  ["atlassian_list_mcp_tools", "atlassian.listMcpTools"],
-  ["atlassian_call_mcp_tool", "atlassian.callMcpTool"]
-] as const;
-
-const legacyMcpToolNameToBurbleToolNameMap = new Map<string, string>(
-  legacyMcpToolNameToBurbleToolNameEntries
-);
-
-function legacyMcpToolNameToBurbleToolName(name: string): string | null {
-  return legacyMcpToolNameToBurbleToolNameMap.get(name) ?? null;
+  return null;
 }
 
 function manifestMcpToolNameToBurbleToolName(
@@ -2603,10 +2523,7 @@ function manifestMcpToolNameToBurbleToolName(
 
 export const __openClawCliProviderToolMappingTestHooks = {
   manifestMcpToolNameToBurbleToolName,
-  legacyMcpToolNameToBurbleToolName,
-  legacyMcpToolNames: (): string[] => [
-    ...legacyMcpToolNameToBurbleToolNameMap.keys()
-  ]
+  mcpToolNameToBurbleToolName
 };
 
 function isDiscoveredProviderToolAvailable(

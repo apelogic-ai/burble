@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { createBurbleToolExecutor } from "../../../runtimes/openclaw-nemoclaw/src/burble-tools";
 import type { RuntimeConfig } from "../../../runtimes/openclaw-nemoclaw/src/config";
+import type { RunRequest } from "../../../runtimes/openclaw-nemoclaw/src/types";
+import { providerToolCatalog } from "../../../src/providers/catalog";
 
 const config: RuntimeConfig = {
   port: 8080,
@@ -28,6 +30,53 @@ const config: RuntimeConfig = {
   llmModel: "openai:gpt-5.4",
   ollamaBaseUrl: "https://ollama.com"
 };
+
+function providerManifestRequest(): RunRequest {
+  return {
+    runId: "run_provider_tools",
+    runtime: {
+      id: "rt_u123",
+      manifest: {
+        version: "1",
+        policyHash: "policy-123",
+        skills: [],
+        memory: {
+          userMemoryEnabled: false,
+          workspaceMemoryEnabled: false,
+          jobMemoryEnabled: false
+        },
+        tools: providerToolCatalog.map((tool) => ({
+          name: tool.name,
+          alias: tool.alias,
+          provider: tool.provider,
+          enabled: true
+        }))
+      }
+    },
+    input: {
+      text: "test",
+      connections: {
+        github: { connected: true, email: "person@example.com" },
+        google: { connected: true, email: "person@example.com" },
+        hubspot: { connected: true, email: "person@example.com" },
+        jira: { connected: true, email: "person@example.com" },
+        slack: { connected: true, email: "person@example.com" }
+      }
+    }
+  };
+}
+
+function createMcpProviderExecutor() {
+  return createBurbleToolExecutor(
+    {
+      ...config,
+      mcpGatewayUrl: "http://agentgateway:3000/mcp",
+      runtimeJwt: "runtime-jwt"
+    },
+    "rt_u123",
+    providerManifestRequest()
+  );
+}
 
 describe("createBurbleToolExecutor", () => {
   test("requires MCP gateway settings for provider tools", async () => {
@@ -92,11 +141,7 @@ describe("createBurbleToolExecutor", () => {
     }) as typeof fetch;
 
     try {
-      const executor = createBurbleToolExecutor({
-        ...config,
-        mcpGatewayUrl: "http://agentgateway:3000/mcp",
-        runtimeJwt: "runtime-jwt"
-      });
+      const executor = createMcpProviderExecutor();
       const result = await executor("github.getAuthenticatedUser", {
         user: { email: "person@example.com" }
       });
@@ -177,11 +222,7 @@ describe("createBurbleToolExecutor", () => {
     }) as typeof fetch;
 
     try {
-      const executor = createBurbleToolExecutor({
-        ...config,
-        mcpGatewayUrl: "http://agentgateway:3000/mcp",
-        runtimeJwt: "runtime-jwt"
-      });
+      const executor = createMcpProviderExecutor();
       const result = await executor("burble_provider_call", {
         input: {
           toolName: "google.getDriveFile",
@@ -384,11 +425,7 @@ describe("createBurbleToolExecutor", () => {
     }) as typeof fetch;
 
     try {
-      const executor = createBurbleToolExecutor({
-        ...config,
-        mcpGatewayUrl: "http://agentgateway:3000/mcp",
-        runtimeJwt: "runtime-jwt"
-      });
+      const executor = createMcpProviderExecutor();
 
       await executor("github.listMyPullRequests", {
         input: { limit: 3, jobId: "job-123" }
@@ -466,11 +503,7 @@ describe("createBurbleToolExecutor", () => {
     }) as typeof fetch;
 
     try {
-      const executor = createBurbleToolExecutor({
-        ...config,
-        mcpGatewayUrl: "http://agentgateway:3000/mcp",
-        runtimeJwt: "runtime-jwt"
-      });
+      const executor = createMcpProviderExecutor();
       await executor("github.listMyPullRequests", {
         input: {
           limit: 3,
@@ -552,11 +585,7 @@ describe("createBurbleToolExecutor", () => {
     }) as typeof fetch;
 
     try {
-      const executor = createBurbleToolExecutor({
-        ...config,
-        mcpGatewayUrl: "http://agentgateway:3000/mcp",
-        runtimeJwt: "runtime-jwt"
-      });
+      const executor = createMcpProviderExecutor();
       await executor("github.createIssue", {
         input: {
           repo: "acme/app",
@@ -635,11 +664,7 @@ describe("createBurbleToolExecutor", () => {
     }) as typeof fetch;
 
     try {
-      const executor = createBurbleToolExecutor({
-        ...config,
-        mcpGatewayUrl: "http://agentgateway:3000/mcp",
-        runtimeJwt: "runtime-jwt"
-      });
+      const executor = createMcpProviderExecutor();
       const result = await executor("burble.mcp.listTools", {});
 
       expect(result.content).toEqual([
@@ -995,11 +1020,7 @@ describe("createBurbleToolExecutor", () => {
     }) as typeof fetch;
 
     try {
-      const executor = createBurbleToolExecutor({
-        ...config,
-        mcpGatewayUrl: "http://agentgateway:3000/mcp",
-        runtimeJwt: "runtime-jwt"
-      });
+      const executor = createMcpProviderExecutor();
       await executor("github.searchIssues", {
         user: { email: "person@example.com" },
         input: { query: "is:issue billing" }
@@ -1519,11 +1540,7 @@ describe("createBurbleToolExecutor", () => {
     }) as typeof fetch;
 
     try {
-      const executor = createBurbleToolExecutor({
-        ...config,
-        mcpGatewayUrl: "http://agentgateway:3000/mcp",
-        runtimeJwt: "runtime-jwt"
-      });
+      const executor = createMcpProviderExecutor();
       const result = await executor("jira.listAssignedIssues", {
         user: { email: "person@example.com" }
       });
