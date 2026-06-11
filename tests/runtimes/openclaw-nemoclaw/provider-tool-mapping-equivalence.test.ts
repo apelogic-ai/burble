@@ -6,6 +6,21 @@ import { __openClawCliProviderToolMappingTestHooks } from "../../../runtimes/ope
 import type { RunRequest } from "../../../runtimes/openclaw-nemoclaw/src/types";
 
 function buildCatalogManifestRequest(): RunRequest {
+  return buildManifestRequest(
+    providerToolCatalog.map((tool) => ({
+      name: tool.name,
+      alias: tool.alias,
+      provider: tool.provider,
+      enabled: true
+    }))
+  );
+}
+
+function buildManifestRequest(
+  tools: NonNullable<
+    NonNullable<NonNullable<RunRequest["runtime"]>["manifest"]>["tools"]
+  >
+): RunRequest {
   return {
     runId: "run_mapping_equivalence",
     runtime: {
@@ -19,12 +34,7 @@ function buildCatalogManifestRequest(): RunRequest {
           workspaceMemoryEnabled: false,
           jobMemoryEnabled: false
         },
-        tools: providerToolCatalog.map((tool) => ({
-          name: tool.name,
-          alias: tool.alias,
-          provider: tool.provider,
-          enabled: true
-        }))
+        tools
       }
     },
     input: {
@@ -37,7 +47,7 @@ function buildCatalogManifestRequest(): RunRequest {
 }
 
 describe("OpenClaw provider tool mapping equivalence", () => {
-  test("manifest mappings match the legacy OpenClaw mappings for every catalog tool", () => {
+  test("manifest mappings match the provider tool catalog for every catalog tool", () => {
     const request = buildCatalogManifestRequest();
 
     for (const tool of providerToolCatalog) {
@@ -46,53 +56,96 @@ describe("OpenClaw provider tool mapping equivalence", () => {
           tool.name,
           request
         )
-      ).toBe(
-        __openClawBurbleToolMappingTestHooks.legacyBurbleToolNameToMcpToolName(
-          tool.name
-        )
-      );
+      ).toBe(tool.name);
       expect(
         __openClawBurbleToolMappingTestHooks.manifestToolNameToMcpToolName(
           tool.alias,
           request
         )
-      ).toBe(
-        __openClawBurbleToolMappingTestHooks.legacyBurbleToolNameToMcpToolName(
-          tool.alias
-        )
-      );
+      ).toBe(tool.name);
+      expect(
+        __openClawBurbleToolMappingTestHooks.toMcpToolName(tool.name, request)
+      ).toBe(tool.name);
+      expect(
+        __openClawBurbleToolMappingTestHooks.toMcpToolName(tool.alias, request)
+      ).toBe(tool.name);
       expect(
         __openClawCliProviderToolMappingTestHooks.manifestMcpToolNameToBurbleToolName(
           tool.name,
           request
         )
-      ).toBe(
-        __openClawCliProviderToolMappingTestHooks.legacyMcpToolNameToBurbleToolName(
-          tool.name
+      ).toBe(tool.alias);
+      expect(
+        __openClawCliProviderToolMappingTestHooks.mcpToolNameToBurbleToolName(
+          tool.name,
+          request
         )
-      );
+      ).toBe(tool.alias);
     }
   });
 
-  test("legacy OpenClaw mappings contain no tools outside the provider catalog", () => {
-    const catalogNames = new Set(providerToolCatalog.map((tool) => tool.name));
-    const catalogAliases = new Set(
-      providerToolCatalog.flatMap((tool) => [
-        tool.alias,
-        ...(tool.aliases ?? [])
-      ])
+  test("provider tool aliases declared for compatibility resolve only when selected in the manifest", () => {
+    const appendTool = providerToolCatalog.find(
+      (tool) => tool.name === "google_append_to_drive_text_file"
     );
-
-    for (const legacyInput of __openClawBurbleToolMappingTestHooks.legacyBurbleToolNameInputs()) {
-      if (legacyInput.includes(".")) {
-        expect(catalogAliases.has(legacyInput), legacyInput).toBe(true);
-      } else {
-        expect(catalogNames.has(legacyInput), legacyInput).toBe(true);
+    expect(appendTool).toBeDefined();
+    const request = buildManifestRequest([
+      {
+        name: appendTool!.name,
+        alias: "google.appendToDriveTextFile",
+        provider: appendTool!.provider,
+        enabled: true
       }
-    }
+    ]);
 
-    for (const legacyMcpName of __openClawCliProviderToolMappingTestHooks.legacyMcpToolNames()) {
-      expect(catalogNames.has(legacyMcpName), legacyMcpName).toBe(true);
-    }
+    expect(
+      __openClawBurbleToolMappingTestHooks.toMcpToolName(
+        "google.appendToDriveTextFile",
+        request
+      )
+    ).toBe("google_append_to_drive_text_file");
+    expect(
+      __openClawCliProviderToolMappingTestHooks.mcpToolNameToBurbleToolName(
+        "google_append_to_drive_text_file",
+        request
+      )
+    ).toBe("google.appendToDriveTextFile");
+  });
+
+  test("provider tools absent or disabled in the manifest do not fall back to legacy maps", () => {
+    const disabledRequest = buildManifestRequest([
+      {
+        name: "github_get_authenticated_user",
+        alias: "github.getAuthenticatedUser",
+        provider: "github",
+        enabled: false
+      }
+    ]);
+    const absentRequest = buildManifestRequest([]);
+
+    expect(() =>
+      __openClawBurbleToolMappingTestHooks.toMcpToolName(
+        "github.getAuthenticatedUser",
+        disabledRequest
+      )
+    ).toThrow("Unsupported Burble MCP tool: github.getAuthenticatedUser");
+    expect(
+      __openClawCliProviderToolMappingTestHooks.mcpToolNameToBurbleToolName(
+        "github_get_authenticated_user",
+        disabledRequest
+      )
+    ).toBeNull();
+    expect(() =>
+      __openClawBurbleToolMappingTestHooks.toMcpToolName(
+        "github.getAuthenticatedUser",
+        absentRequest
+      )
+    ).toThrow("Unsupported Burble MCP tool: github.getAuthenticatedUser");
+    expect(
+      __openClawCliProviderToolMappingTestHooks.mcpToolNameToBurbleToolName(
+        "github_get_authenticated_user",
+        absentRequest
+      )
+    ).toBeNull();
   });
 });

@@ -6,6 +6,7 @@ import {
 import type { RuntimeConfig } from "../../../runtimes/openclaw-nemoclaw/src/config";
 import type { RunEvent } from "../../../runtimes/openclaw-nemoclaw/src/types";
 import { clearGatewayDiagnosticText } from "../../../runtimes/openclaw-nemoclaw/src/gateway-diagnostics";
+import { providerToolCatalog } from "../../../src/providers/catalog";
 import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -103,12 +104,35 @@ function openResponsesText(text: string, usage: Record<string, unknown> = {
   };
 }
 
+function providerManifest() {
+  return {
+    version: "1",
+    policyHash: "policy-123",
+    skills: [],
+    memory: {
+      userMemoryEnabled: false,
+      workspaceMemoryEnabled: false,
+      jobMemoryEnabled: false
+    },
+    tools: providerToolCatalog.map((tool) => ({
+      name: tool.name,
+      alias: tool.alias,
+      provider: tool.provider,
+      enabled: true
+    }))
+  };
+}
+
 describe("runOpenClawCliRequest", () => {
   test("builds provider catalog from MCP tools/list metadata", async () => {
     const prompts: string[] = [];
 
     const response = await runOpenClawCliRequest(
       {
+        runtime: {
+          id: "rt_test",
+          manifest: providerManifest()
+        },
         input: {
           text: "hello",
           connections: {
@@ -362,6 +386,10 @@ describe("runOpenClawCliRequest", () => {
 
     const discoveredResponse = await runOpenClawCliRequest(
       {
+        runtime: {
+          id: "rt_test",
+          manifest: providerManifest()
+        },
         input: {
           text: "find HubSpot contacts for Acme",
           toolGroups: {
