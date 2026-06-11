@@ -404,217 +404,161 @@ function toMcpToolName(
     return manifestToolName;
   }
 
-  switch (toolName) {
-    case "github_get_authenticated_user":
-    case "github_list_assigned_issues":
-    case "github_search_issues":
-    case "github_list_my_pull_requests":
-    case "github_get_issue":
-    case "github_get_pr":
-    case "github_create_issue":
-    case "github_update_issue":
-    case "github_close_issue":
-    case "github_reopen_issue":
-    case "github_comment_on_issue_or_pr":
-    case "github_create_pr":
-    case "github_update_pr":
-    case "github_add_labels":
-    case "github_remove_labels":
-    case "github_request_review":
-    case "github_get_file":
-    case "github_create_or_update_file":
-    case "github_create_branch":
-    case "google_get_authenticated_user":
-    case "google_search_drive_files":
-    case "google_create_drive_text_file":
-    case "google_get_drive_file":
-    case "google_update_drive_text_file":
-    case "google_append_to_drive_text_file":
-    case "google_create_drive_folder":
-    case "google_move_drive_file":
-    case "google_search_calendar_events":
-    case "google_create_calendar_event":
-    case "google_update_calendar_event":
-    case "google_search_mail_messages":
-    case "google_slides_search_presentations":
-    case "google_slides_get_presentation":
-    case "google_slides_probe_template":
-    case "google_slides_copy_presentation":
-    case "google_slides_fill_placeholders":
-    case "google_analytics_list_properties":
-    case "google_analytics_get_metadata":
-    case "google_analytics_run_report":
-    case "gmail_create_draft":
-    case "hubspot_get_authenticated_user":
-    case "hubspot_search_contacts":
-    case "hubspot_search_companies":
-    case "hubspot_search_deals":
-    case "hubspot_search_crm_objects":
-    case "hubspot_list_owners":
-    case "hubspot_list_users":
-    case "hubspot_read_api_resource":
-    case "jira_get_authenticated_user":
-    case "jira_list_accessible_resources":
-    case "jira_list_visible_projects":
-    case "jira_search_users":
-    case "jira_create_issue":
-    case "jira_edit_issue":
-    case "jira_get_issue":
-    case "jira_update_issue":
-    case "jira_add_comment":
-    case "jira_transition_issue":
-    case "jira_add_labels":
-    case "jira_remove_labels":
-    case "jira_link_issues":
-    case "jira_create_subtask":
-    case "jira_list_assigned_issues":
-    case "jira_search_issues":
-    case "slack_search_users":
-    case "slack_search_messages":
-    case "atlassian_list_mcp_tools":
-    case "atlassian_call_mcp_tool":
-      return toolName;
-    case "github.getAuthenticatedUser":
-      return "github_get_authenticated_user";
-    case "github.listAssignedIssues":
-      return "github_list_assigned_issues";
-    case "github.searchIssues":
-      return "github_search_issues";
-    case "github.listMyPullRequests":
-      return "github_list_my_pull_requests";
-    case "github.getIssue":
-      return "github_get_issue";
-    case "github.getPullRequest":
-      return "github_get_pr";
-    case "github.createIssue":
-      return "github_create_issue";
-    case "github.updateIssue":
-      return "github_update_issue";
-    case "github.closeIssue":
-      return "github_close_issue";
-    case "github.reopenIssue":
-      return "github_reopen_issue";
-    case "github.commentOnIssueOrPullRequest":
-      return "github_comment_on_issue_or_pr";
-    case "github.createPullRequest":
-      return "github_create_pr";
-    case "github.updatePullRequest":
-      return "github_update_pr";
-    case "github.addLabels":
-      return "github_add_labels";
-    case "github.removeLabels":
-      return "github_remove_labels";
-    case "github.requestReview":
-      return "github_request_review";
-    case "github.getFile":
-      return "github_get_file";
-    case "github.createOrUpdateFile":
-      return "github_create_or_update_file";
-    case "github.createBranch":
-      return "github_create_branch";
-    case "google.getAuthenticatedUser":
-      return "google_get_authenticated_user";
-    case "google.searchDriveFiles":
-      return "google_search_drive_files";
-    case "google.createDriveTextFile":
-      return "google_create_drive_text_file";
-    case "google.getDriveFile":
-      return "google_get_drive_file";
-    case "google.updateDriveTextFile":
-      return "google_update_drive_text_file";
-    case "google.appendToDriveTextFile":
-      return "google_append_to_drive_text_file";
-    case "google.createDriveFolder":
-      return "google_create_drive_folder";
-    case "google.moveDriveFile":
-      return "google_move_drive_file";
-    case "google.searchCalendarEvents":
-      return "google_search_calendar_events";
-    case "google.createCalendarEvent":
-      return "google_create_calendar_event";
-    case "google.updateCalendarEvent":
-      return "google_update_calendar_event";
-    case "google.searchMailMessages":
-      return "google_search_mail_messages";
-    case "google.slidesSearchPresentations":
-      return "google_slides_search_presentations";
-    case "google.slidesGetPresentation":
-      return "google_slides_get_presentation";
-    case "google.slidesProbeTemplate":
-      return "google_slides_probe_template";
-    case "google.slidesCopyPresentation":
-      return "google_slides_copy_presentation";
-    case "google.slidesCreateSlide":
-      return "google_slides_create_slide";
-    case "google.slidesFillPlaceholders":
-      return "google_slides_fill_placeholders";
-    case "google.analyticsListProperties":
-      return "google_analytics_list_properties";
-    case "google.analyticsGetMetadata":
-      return "google_analytics_get_metadata";
-    case "google.analyticsRunReport":
-      return "google_analytics_run_report";
-    case "gmail.createDraft":
-      return "gmail_create_draft";
-    case "hubspot.getAuthenticatedUser":
-      return "hubspot_get_authenticated_user";
-    case "hubspot.searchContacts":
-      return "hubspot_search_contacts";
-    case "hubspot.searchCompanies":
-      return "hubspot_search_companies";
-    case "hubspot.searchDeals":
-      return "hubspot_search_deals";
-    case "hubspot.searchCrmObjects":
-      return "hubspot_search_crm_objects";
-    case "hubspot.listOwners":
-      return "hubspot_list_owners";
-    case "hubspot.listUsers":
-      return "hubspot_list_users";
-    case "hubspot.readApiResource":
-      return "hubspot_read_api_resource";
-    case "jira.getAuthenticatedUser":
-      return "jira_get_authenticated_user";
-    case "jira.listAccessibleResources":
-      return "jira_list_accessible_resources";
-    case "jira.listVisibleProjects":
-      return "jira_list_visible_projects";
-    case "jira.searchUsers":
-      return "jira_search_users";
-    case "jira.createIssue":
-      return "jira_create_issue";
-    case "jira.editIssue":
-      return "jira_edit_issue";
-    case "jira.getIssue":
-      return "jira_get_issue";
-    case "jira.updateIssue":
-      return "jira_update_issue";
-    case "jira.addComment":
-      return "jira_add_comment";
-    case "jira.transitionIssue":
-      return "jira_transition_issue";
-    case "jira.addLabels":
-      return "jira_add_labels";
-    case "jira.removeLabels":
-      return "jira_remove_labels";
-    case "jira.linkIssues":
-      return "jira_link_issues";
-    case "jira.createSubtask":
-      return "jira_create_subtask";
-    case "jira.listAssignedIssues":
-      return "jira_list_assigned_issues";
-    case "jira.searchIssues":
-      return "jira_search_issues";
-    case "slack.searchUsers":
-      return "slack_search_users";
-    case "slack.searchMessages":
-      return "slack_search_messages";
-    case "atlassian.listMcpTools":
-      return "atlassian_list_mcp_tools";
-    case "atlassian.callMcpTool":
-      return "atlassian_call_mcp_tool";
-    default:
-      throw new Error(`Unsupported Burble MCP tool: ${toolName}`);
+  return legacyBurbleToolNameToMcpToolName(toolName);
+}
+
+const legacyBurbleToolNameToMcpToolNameEntries = [
+  ["github_get_authenticated_user", "github_get_authenticated_user"],
+  ["github_list_assigned_issues", "github_list_assigned_issues"],
+  ["github_search_issues", "github_search_issues"],
+  ["github_list_my_pull_requests", "github_list_my_pull_requests"],
+  ["github_get_issue", "github_get_issue"],
+  ["github_get_pr", "github_get_pr"],
+  ["github_create_issue", "github_create_issue"],
+  ["github_update_issue", "github_update_issue"],
+  ["github_close_issue", "github_close_issue"],
+  ["github_reopen_issue", "github_reopen_issue"],
+  ["github_comment_on_issue_or_pr", "github_comment_on_issue_or_pr"],
+  ["github_create_pr", "github_create_pr"],
+  ["github_update_pr", "github_update_pr"],
+  ["github_add_labels", "github_add_labels"],
+  ["github_remove_labels", "github_remove_labels"],
+  ["github_request_review", "github_request_review"],
+  ["github_get_file", "github_get_file"],
+  ["github_create_or_update_file", "github_create_or_update_file"],
+  ["github_create_branch", "github_create_branch"],
+  ["google_get_authenticated_user", "google_get_authenticated_user"],
+  ["google_search_drive_files", "google_search_drive_files"],
+  ["google_create_drive_text_file", "google_create_drive_text_file"],
+  ["google_get_drive_file", "google_get_drive_file"],
+  ["google_update_drive_text_file", "google_update_drive_text_file"],
+  ["google_append_to_drive_text_file", "google_append_to_drive_text_file"],
+  ["google_create_drive_folder", "google_create_drive_folder"],
+  ["google_move_drive_file", "google_move_drive_file"],
+  ["google_search_calendar_events", "google_search_calendar_events"],
+  ["google_create_calendar_event", "google_create_calendar_event"],
+  ["google_update_calendar_event", "google_update_calendar_event"],
+  ["google_search_mail_messages", "google_search_mail_messages"],
+  ["google_slides_search_presentations", "google_slides_search_presentations"],
+  ["google_slides_get_presentation", "google_slides_get_presentation"],
+  ["google_slides_probe_template", "google_slides_probe_template"],
+  ["google_slides_copy_presentation", "google_slides_copy_presentation"],
+  ["google_slides_create_slide", "google_slides_create_slide"],
+  ["google_slides_fill_placeholders", "google_slides_fill_placeholders"],
+  ["google_analytics_list_properties", "google_analytics_list_properties"],
+  ["google_analytics_get_metadata", "google_analytics_get_metadata"],
+  ["google_analytics_run_report", "google_analytics_run_report"],
+  ["gmail_create_draft", "gmail_create_draft"],
+  ["hubspot_get_authenticated_user", "hubspot_get_authenticated_user"],
+  ["hubspot_search_contacts", "hubspot_search_contacts"],
+  ["hubspot_search_companies", "hubspot_search_companies"],
+  ["hubspot_search_deals", "hubspot_search_deals"],
+  ["hubspot_search_crm_objects", "hubspot_search_crm_objects"],
+  ["hubspot_list_owners", "hubspot_list_owners"],
+  ["hubspot_list_users", "hubspot_list_users"],
+  ["hubspot_read_api_resource", "hubspot_read_api_resource"],
+  ["jira_get_authenticated_user", "jira_get_authenticated_user"],
+  ["jira_list_accessible_resources", "jira_list_accessible_resources"],
+  ["jira_list_visible_projects", "jira_list_visible_projects"],
+  ["jira_search_users", "jira_search_users"],
+  ["jira_create_issue", "jira_create_issue"],
+  ["jira_edit_issue", "jira_edit_issue"],
+  ["jira_get_issue", "jira_get_issue"],
+  ["jira_update_issue", "jira_update_issue"],
+  ["jira_add_comment", "jira_add_comment"],
+  ["jira_transition_issue", "jira_transition_issue"],
+  ["jira_add_labels", "jira_add_labels"],
+  ["jira_remove_labels", "jira_remove_labels"],
+  ["jira_link_issues", "jira_link_issues"],
+  ["jira_create_subtask", "jira_create_subtask"],
+  ["jira_list_assigned_issues", "jira_list_assigned_issues"],
+  ["jira_search_issues", "jira_search_issues"],
+  ["slack_search_users", "slack_search_users"],
+  ["slack_search_messages", "slack_search_messages"],
+  ["atlassian_list_mcp_tools", "atlassian_list_mcp_tools"],
+  ["atlassian_call_mcp_tool", "atlassian_call_mcp_tool"],
+  ["github.getAuthenticatedUser", "github_get_authenticated_user"],
+  ["github.listAssignedIssues", "github_list_assigned_issues"],
+  ["github.searchIssues", "github_search_issues"],
+  ["github.listMyPullRequests", "github_list_my_pull_requests"],
+  ["github.getIssue", "github_get_issue"],
+  ["github.getPullRequest", "github_get_pr"],
+  ["github.createIssue", "github_create_issue"],
+  ["github.updateIssue", "github_update_issue"],
+  ["github.closeIssue", "github_close_issue"],
+  ["github.reopenIssue", "github_reopen_issue"],
+  ["github.commentOnIssueOrPullRequest", "github_comment_on_issue_or_pr"],
+  ["github.createPullRequest", "github_create_pr"],
+  ["github.updatePullRequest", "github_update_pr"],
+  ["github.addLabels", "github_add_labels"],
+  ["github.removeLabels", "github_remove_labels"],
+  ["github.requestReview", "github_request_review"],
+  ["github.getFile", "github_get_file"],
+  ["github.createOrUpdateFile", "github_create_or_update_file"],
+  ["github.createBranch", "github_create_branch"],
+  ["google.getAuthenticatedUser", "google_get_authenticated_user"],
+  ["google.searchDriveFiles", "google_search_drive_files"],
+  ["google.createDriveTextFile", "google_create_drive_text_file"],
+  ["google.getDriveFile", "google_get_drive_file"],
+  ["google.updateDriveTextFile", "google_update_drive_text_file"],
+  ["google.appendDriveTextFile", "google_append_to_drive_text_file"],
+  ["google.appendToDriveTextFile", "google_append_to_drive_text_file"],
+  ["google.createDriveFolder", "google_create_drive_folder"],
+  ["google.moveDriveFile", "google_move_drive_file"],
+  ["google.searchCalendarEvents", "google_search_calendar_events"],
+  ["google.createCalendarEvent", "google_create_calendar_event"],
+  ["google.updateCalendarEvent", "google_update_calendar_event"],
+  ["google.searchMailMessages", "google_search_mail_messages"],
+  ["google.slidesSearchPresentations", "google_slides_search_presentations"],
+  ["google.slidesGetPresentation", "google_slides_get_presentation"],
+  ["google.slidesProbeTemplate", "google_slides_probe_template"],
+  ["google.slidesCopyPresentation", "google_slides_copy_presentation"],
+  ["google.slidesCreateSlide", "google_slides_create_slide"],
+  ["google.slidesFillPlaceholders", "google_slides_fill_placeholders"],
+  ["google.analyticsListProperties", "google_analytics_list_properties"],
+  ["google.analyticsGetMetadata", "google_analytics_get_metadata"],
+  ["google.analyticsRunReport", "google_analytics_run_report"],
+  ["gmail.createDraft", "gmail_create_draft"],
+  ["hubspot.getAuthenticatedUser", "hubspot_get_authenticated_user"],
+  ["hubspot.searchContacts", "hubspot_search_contacts"],
+  ["hubspot.searchCompanies", "hubspot_search_companies"],
+  ["hubspot.searchDeals", "hubspot_search_deals"],
+  ["hubspot.searchCrmObjects", "hubspot_search_crm_objects"],
+  ["hubspot.listOwners", "hubspot_list_owners"],
+  ["hubspot.listUsers", "hubspot_list_users"],
+  ["hubspot.readApiResource", "hubspot_read_api_resource"],
+  ["jira.getAuthenticatedUser", "jira_get_authenticated_user"],
+  ["jira.listAccessibleResources", "jira_list_accessible_resources"],
+  ["jira.listVisibleProjects", "jira_list_visible_projects"],
+  ["jira.searchUsers", "jira_search_users"],
+  ["jira.createIssue", "jira_create_issue"],
+  ["jira.editIssue", "jira_edit_issue"],
+  ["jira.getIssue", "jira_get_issue"],
+  ["jira.updateIssue", "jira_update_issue"],
+  ["jira.addComment", "jira_add_comment"],
+  ["jira.transitionIssue", "jira_transition_issue"],
+  ["jira.addLabels", "jira_add_labels"],
+  ["jira.removeLabels", "jira_remove_labels"],
+  ["jira.linkIssues", "jira_link_issues"],
+  ["jira.createSubtask", "jira_create_subtask"],
+  ["jira.listAssignedIssues", "jira_list_assigned_issues"],
+  ["jira.searchIssues", "jira_search_issues"],
+  ["slack.searchUsers", "slack_search_users"],
+  ["slack.searchMessages", "slack_search_messages"],
+  ["atlassian.listMcpTools", "atlassian_list_mcp_tools"],
+  ["atlassian.callMcpTool", "atlassian_call_mcp_tool"]
+] as const;
+
+const legacyBurbleToolNameToMcpToolNameMap = new Map<string, string>(
+  legacyBurbleToolNameToMcpToolNameEntries
+);
+
+function legacyBurbleToolNameToMcpToolName(toolName: string): string {
+  const mcpToolName = legacyBurbleToolNameToMcpToolNameMap.get(toolName);
+  if (!mcpToolName) {
+    throw new Error(`Unsupported Burble MCP tool: ${toolName}`);
   }
+  return mcpToolName;
 }
 
 function manifestToolNameToMcpToolName(
@@ -633,6 +577,14 @@ function manifestToolNameToMcpToolName(
   );
   return tool?.name ?? null;
 }
+
+export const __openClawBurbleToolMappingTestHooks = {
+  manifestToolNameToMcpToolName,
+  legacyBurbleToolNameToMcpToolName,
+  legacyBurbleToolNameInputs: (): string[] => [
+    ...legacyBurbleToolNameToMcpToolNameMap.keys()
+  ]
+};
 
 function toMcpToolArguments(
   toolName: string,
@@ -917,6 +869,7 @@ function toMcpToolArgumentsWithoutScheduledJobIdentity(
 
   if (
     toolName === "google.updateDriveTextFile" ||
+    toolName === "google.appendDriveTextFile" ||
     toolName === "google.appendToDriveTextFile"
   ) {
     return compactToolInput(readRecordKey(body, "input"), [
