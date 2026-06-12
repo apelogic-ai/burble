@@ -1,5 +1,11 @@
 import { describe, expect, test } from "bun:test";
+import analyticsGetMetadataCassette from "./fixtures/provider-cassettes/google/analytics-get-metadata.json";
+import analyticsListPropertiesCassette from "./fixtures/provider-cassettes/google/analytics-list-properties.json";
+import analyticsRunReportCassette from "./fixtures/provider-cassettes/google/analytics-run-report.json";
+import slidesPresentationCassette from "./fixtures/provider-cassettes/google/slides-presentation.json";
+import { installProviderCassette } from "./helpers/provider-cassettes";
 import type { Config } from "../src/config";
+import { googleProviderToolSpecs } from "../src/providers/google/tool-specs";
 import {
   buildGoogleOAuthUrl,
   exchangeGoogleCode,
@@ -17,6 +23,15 @@ import {
   searchGoogleDriveFiles,
   searchGoogleSlidesPresentations
 } from "../src/providers/google/client";
+import type { ProviderCassette } from "./helpers/provider-cassettes";
+
+const googleProviderApiCassetteToolNames = [
+  "google_analytics_get_metadata",
+  "google_analytics_list_properties",
+  "google_analytics_run_report",
+  "google_slides_get_presentation",
+  "google_slides_probe_template"
+].sort();
 
 const config: Config = {
   slackBotToken: "xoxb-test",
@@ -166,6 +181,20 @@ describe("buildGoogleOAuthUrl", () => {
 });
 
 describe("Google OAuth and API helpers", () => {
+  test("keeps provider API cassette coverage for Google Analytics and Slides template reads", () => {
+    const requiredToolNames = googleProviderToolSpecs
+      .filter(
+        (tool) =>
+          tool.name.startsWith("google_analytics_") ||
+          tool.name === "google_slides_get_presentation" ||
+          tool.name === "google_slides_probe_template"
+      )
+      .map((tool) => tool.name)
+      .sort();
+
+    expect(googleProviderApiCassetteToolNames).toEqual(requiredToolNames);
+  });
+
   test("exchanges an OAuth code", async () => {
     const originalFetch = globalThis.fetch;
     globalThis.fetch = (async (input, init) => {
@@ -263,30 +292,9 @@ describe("Google OAuth and API helpers", () => {
   });
 
   test("lists Google Analytics properties through the Admin API", async () => {
-    const originalFetch = globalThis.fetch;
-    let requestedUrl = "";
-    globalThis.fetch = (async (input, init) => {
-      requestedUrl = String(input);
-      expect(new Headers(init?.headers).get("authorization")).toBe(
-        "Bearer google-token"
-      );
-      return Response.json({
-        accountSummaries: [
-          {
-            account: "accounts/123",
-            displayName: "ApeLogic",
-            propertySummaries: [
-              {
-                property: "properties/456",
-                displayName: "Website",
-                parent: "accounts/123",
-                propertyType: "PROPERTY_TYPE_ORDINARY"
-              }
-            ]
-          }
-        ]
-      });
-    }) as typeof fetch;
+    const cassette = installProviderCassette(
+      analyticsListPropertiesCassette as ProviderCassette
+    );
 
     try {
       const properties = await listGoogleAnalyticsProperties("google-token", {
@@ -303,7 +311,8 @@ describe("Google OAuth and API helpers", () => {
           propertyType: "PROPERTY_TYPE_ORDINARY"
         }
       ]);
-      const url = new URL(requestedUrl);
+      cassette.assertComplete();
+      const url = new URL(cassette.requests[0]?.url ?? "");
       expect(url.origin + url.pathname).toBe(
         "https://analyticsadmin.googleapis.com/v1beta/accountSummaries"
       );
@@ -312,26 +321,14 @@ describe("Google OAuth and API helpers", () => {
         "accountSummaries(account,displayName,propertySummaries(property,displayName,parent,propertyType))"
       );
     } finally {
-      globalThis.fetch = originalFetch;
+      cassette.restore();
     }
   });
 
   test("reads and filters Google Analytics metadata", async () => {
-    const originalFetch = globalThis.fetch;
-    let requestedUrl = "";
-    globalThis.fetch = (async (input) => {
-      requestedUrl = String(input);
-      return Response.json({
-        dimensions: [
-          { apiName: "country", uiName: "Country", category: "Geo" },
-          { apiName: "browser", uiName: "Browser", category: "Platform" }
-        ],
-        metrics: [
-          { apiName: "activeUsers", uiName: "Active users", category: "User" },
-          { apiName: "sessions", uiName: "Sessions", category: "Session" }
-        ]
-      });
-    }) as typeof fetch;
+    const cassette = installProviderCassette(
+      analyticsGetMetadataCassette as ProviderCassette
+    );
 
     try {
       const metadata = await getGoogleAnalyticsMetadata("google-token", {
@@ -341,41 +338,37 @@ describe("Google OAuth and API helpers", () => {
         limit: 10
       });
       expect(metadata).toEqual({
-        dimensions: [{ apiName: "country", uiName: "Country", category: "Geo" }],
-        metrics: [{ apiName: "sessions", uiName: "Sessions", category: "Session" }]
+        dimensions: [
+          {
+            apiName: "country",
+            uiName: "Country",
+            description: "The country from which activity originated.",
+            category: "Geo"
+          }
+        ],
+        metrics: [
+          {
+            apiName: "sessions",
+            uiName: "Sessions",
+            description: "The number of sessions that began.",
+            category: "Session"
+          }
+        ]
       });
-      const url = new URL(requestedUrl);
+      cassette.assertComplete();
+      const url = new URL(cassette.requests[0]?.url ?? "");
       expect(url.origin + url.pathname).toBe(
         "https://analyticsdata.googleapis.com/v1beta/properties/456/metadata"
       );
     } finally {
-      globalThis.fetch = originalFetch;
+      cassette.restore();
     }
   });
 
   test("runs a Google Analytics report through the Data API", async () => {
-    const originalFetch = globalThis.fetch;
-    let requestedUrl = "";
-    let requestedBody: unknown = null;
-    globalThis.fetch = (async (input, init) => {
-      requestedUrl = String(input);
-      requestedBody = JSON.parse(String(init?.body));
-      expect(init?.method).toBe("POST");
-      expect(new Headers(init?.headers).get("authorization")).toBe(
-        "Bearer google-token"
-      );
-      return Response.json({
-        dimensionHeaders: [{ name: "country" }],
-        metricHeaders: [{ name: "activeUsers" }],
-        rows: [
-          {
-            dimensionValues: [{ value: "US" }],
-            metricValues: [{ value: "42" }]
-          }
-        ],
-        rowCount: 1
-      });
-    }) as typeof fetch;
+    const cassette = installProviderCassette(
+      analyticsRunReportCassette as ProviderCassette
+    );
 
     try {
       const report = await runGoogleAnalyticsReport("google-token", {
@@ -398,17 +391,18 @@ describe("Google OAuth and API helpers", () => {
         ],
         rowCount: 1
       });
-      expect(requestedUrl).toBe(
+      cassette.assertComplete();
+      expect(cassette.requests[0]?.url).toBe(
         "https://analyticsdata.googleapis.com/v1beta/properties/456:runReport"
       );
-      expect(requestedBody).toEqual({
+      expect(cassette.requests[0]?.bodyJson).toEqual({
         dateRanges: [{ startDate: "7daysAgo", endDate: "today" }],
         metrics: [{ name: "activeUsers" }],
         dimensions: [{ name: "country" }],
         limit: "3"
       });
     } finally {
-      globalThis.fetch = originalFetch;
+      cassette.restore();
     }
   });
 
@@ -1104,60 +1098,9 @@ describe("Google OAuth and API helpers", () => {
   });
 
   test("reads sanitized Google Slides presentation structure", async () => {
-    const originalFetch = globalThis.fetch;
-    let requestedUrl = "";
-    globalThis.fetch = (async (input, init) => {
-      requestedUrl = String(input);
-      expect(new Headers(init?.headers).get("authorization")).toBe(
-        "Bearer google-token"
-      );
-      return Response.json({
-        presentationId: "deck-1",
-        title: "QBR",
-        layouts: [
-          {
-            objectId: "layout-title-body",
-            layoutProperties: { displayName: "Title and Body" },
-            pageElements: [
-              {
-                objectId: "layout-title",
-                shape: {
-                  shapeType: "TEXT_BOX",
-                  placeholder: { type: "TITLE", index: 0 },
-                  text: {
-                    textElements: [{ textRun: { content: "Title\n" } }]
-                  }
-                }
-              },
-              {
-                objectId: "layout-body",
-                shape: {
-                  shapeType: "TEXT_BOX",
-                  placeholder: { type: "BODY", index: 0 }
-                }
-              }
-            ]
-          }
-        ],
-        slides: [
-          {
-            objectId: "slide-1",
-            slideProperties: { layoutObjectId: "layout-title-body" },
-            pageElements: [
-              {
-                objectId: "slide-title",
-                shape: {
-                  shapeType: "TEXT_BOX",
-                  text: {
-                    textElements: [{ textRun: { content: "Revenue update\n" } }]
-                  }
-                }
-              }
-            ]
-          }
-        ]
-      });
-    }) as typeof fetch;
+    const cassette = installProviderCassette(
+      slidesPresentationCassette as ProviderCassette
+    );
 
     try {
       const presentation = await getGoogleSlidesPresentation("google-token", {
@@ -1165,98 +1108,130 @@ describe("Google OAuth and API helpers", () => {
       });
       expect(presentation).toEqual({
         presentationId: "deck-1",
-        title: "QBR",
+        title: "ApeLogic Presentation Template",
         layouts: [
           {
-            objectId: "layout-title-body",
-            name: "Title and Body",
+            objectId: "layout-title",
+            name: "Title slide",
             slots: [
               {
                 role: "title",
-                objectId: "layout-title",
-                placeholder: { type: "TITLE", index: 0 }
+                objectId: "layout-centered-title",
+                placeholder: { type: "CENTERED_TITLE", index: 0 }
               },
               {
-                role: "body",
-                objectId: "layout-body",
-                placeholder: { type: "BODY", index: 0 }
+                role: "subtitle",
+                objectId: "layout-subtitle",
+                placeholder: { type: "SUBTITLE", index: 0 }
               }
             ],
             elements: [
               {
-                objectId: "layout-title",
+                objectId: "layout-centered-title",
                 elementType: "shape",
                 shapeType: "TEXT_BOX",
-                placeholder: { type: "TITLE", index: 0 },
-                text: "Title"
+                placeholder: { type: "CENTERED_TITLE", index: 0 },
+                text: "Click to add title"
               },
               {
-                objectId: "layout-body",
+                objectId: "layout-subtitle",
+                elementType: "shape",
+                shapeType: "TEXT_BOX",
+                placeholder: { type: "SUBTITLE", index: 0 }
+              }
+            ]
+          },
+          {
+            objectId: "layout-two-column",
+            name: "Title and two columns",
+            slots: [
+              {
+                role: "title",
+                objectId: "layout-two-column-title",
+                placeholder: { type: "TITLE", index: 0 }
+              },
+              {
+                role: "body",
+                objectId: "layout-left-body",
+                placeholder: { type: "BODY", index: 0 }
+              },
+              {
+                role: "body_2",
+                objectId: "layout-right-body",
+                placeholder: { type: "BODY", index: 1 }
+              }
+            ],
+            elements: [
+              {
+                objectId: "layout-two-column-title",
+                elementType: "shape",
+                shapeType: "TEXT_BOX",
+                placeholder: { type: "TITLE", index: 0 }
+              },
+              {
+                objectId: "layout-left-body",
                 elementType: "shape",
                 shapeType: "TEXT_BOX",
                 placeholder: { type: "BODY", index: 0 }
+              },
+              {
+                objectId: "layout-right-body",
+                elementType: "shape",
+                shapeType: "TEXT_BOX",
+                placeholder: { type: "BODY", index: 1 }
               }
             ]
           }
         ],
         slides: [
           {
-            objectId: "slide-1",
-            layoutObjectId: "layout-title-body",
+            objectId: "slide-title",
+            layoutObjectId: "layout-title",
             elements: [
               {
-                objectId: "slide-title",
+                objectId: "slide-title-shape",
                 elementType: "shape",
                 shapeType: "TEXT_BOX",
-                text: "Revenue update"
+                placeholder: {
+                  type: "CENTERED_TITLE",
+                  index: 0,
+                  parentObjectId: "layout-centered-title"
+                },
+                text: "ApeLogic"
+              },
+              {
+                objectId: "slide-subtitle-shape",
+                elementType: "shape",
+                shapeType: "TEXT_BOX",
+                placeholder: {
+                  type: "SUBTITLE",
+                  index: 0,
+                  parentObjectId: "layout-subtitle"
+                }
+              },
+              {
+                objectId: "slide-logo",
+                elementType: "image",
+                imageContentUrl: "https://lh3.googleusercontent.com/template-logo"
               }
             ]
           }
         ]
       });
-      const url = new URL(requestedUrl);
+      cassette.assertComplete();
+      const url = new URL(cassette.requests[0]?.url ?? "");
       expect(url.origin + url.pathname).toBe(
         "https://slides.googleapis.com/v1/presentations/deck-1"
       );
     } finally {
-      globalThis.fetch = originalFetch;
+      cassette.restore();
     }
   });
 
   test("probes Google Slides layout placeholders into a template manifest", async () => {
-    const originalFetch = globalThis.fetch;
-    globalThis.fetch = (async (_input, _init) =>
-      Response.json({
-        presentationId: "deck-1",
-        title: "Template",
-        layouts: [
-          {
-            objectId: "layout-1",
-            layoutProperties: { displayName: "Two Column" },
-            pageElements: [
-              {
-                objectId: "slot-title",
-                shape: {
-                  placeholder: { type: "TITLE", index: 0 }
-                }
-              },
-              {
-                objectId: "slot-body-left",
-                shape: {
-                  placeholder: { type: "BODY", index: 0 }
-                }
-              },
-              {
-                objectId: "slot-body-right",
-                shape: {
-                  placeholder: { type: "BODY", index: 1 }
-                }
-              }
-            ]
-          }
-        ],
-        slides: [{ objectId: "slide-ignored" }]
-      })) as typeof fetch;
+    const cassette = installProviderCassette(
+      slidesPresentationCassette as ProviderCassette
+    );
 
     try {
       const probe = await probeGoogleSlidesTemplate("google-token", {
@@ -1264,33 +1239,50 @@ describe("Google OAuth and API helpers", () => {
       });
       expect(probe).toEqual({
         presentationId: "deck-1",
-        title: "Template",
+        title: "ApeLogic Presentation Template",
         layouts: [
           {
-            layoutId: "layout-1",
-            name: "Two Column",
+            layoutId: "layout-title",
+            name: "Title slide",
             slots: [
               {
                 role: "title",
-                objectId: "slot-title",
+                objectId: "layout-centered-title",
+                placeholder: { type: "CENTERED_TITLE", index: 0 }
+              },
+              {
+                role: "subtitle",
+                objectId: "layout-subtitle",
+                placeholder: { type: "SUBTITLE", index: 0 }
+              }
+            ]
+          },
+          {
+            layoutId: "layout-two-column",
+            name: "Title and two columns",
+            slots: [
+              {
+                role: "title",
+                objectId: "layout-two-column-title",
                 placeholder: { type: "TITLE", index: 0 }
               },
               {
                 role: "body",
-                objectId: "slot-body-left",
+                objectId: "layout-left-body",
                 placeholder: { type: "BODY", index: 0 }
               },
               {
                 role: "body_2",
-                objectId: "slot-body-right",
+                objectId: "layout-right-body",
                 placeholder: { type: "BODY", index: 1 }
               }
             ]
           }
         ]
       });
+      cassette.assertComplete();
     } finally {
-      globalThis.fetch = originalFetch;
+      cassette.restore();
     }
   });
 });

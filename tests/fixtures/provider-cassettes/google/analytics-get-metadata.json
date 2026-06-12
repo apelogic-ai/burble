@@ -1,0 +1,47 @@
+{
+  "name": "google.analytics.get-metadata",
+  "interactions": [
+    {
+      "request": {
+        "method": "GET",
+        "url": "https://analyticsdata.googleapis.com/v1beta/properties/456/metadata?fields=dimensions%28apiName%2CuiName%2Cdescription%2Ccategory%29%2Cmetrics%28apiName%2CuiName%2Cdescription%2Ccategory%29",
+        "headers": {
+          "authorization": "Bearer google-token"
+        }
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "dimensions": [
+            {
+              "apiName": "country",
+              "uiName": "Country",
+              "description": "The country from which activity originated.",
+              "category": "Geo"
+            },
+            {
+              "apiName": "browser",
+              "uiName": "Browser",
+              "description": "The browser used to view the site.",
+              "category": "Platform"
+            }
+          ],
+          "metrics": [
+            {
+              "apiName": "activeUsers",
+              "uiName": "Active users",
+              "description": "The number of distinct users who visited.",
+              "category": "User"
+            },
+            {
+              "apiName": "sessions",
+              "uiName": "Sessions",
+              "description": "The number of sessions that began.",
+              "category": "Session"
+            }
+          ]
+        }
+      }
+    }
+  ]
+}
