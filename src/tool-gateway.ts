@@ -1,8 +1,14 @@
 import type { Config } from "./config";
-import type { AgentRuntimeEngine, AgentRuntimeRecord, TokenStore } from "./db";
+import type {
+  AgentRuntimeEngine,
+  AgentRuntimeRecord,
+  Provider,
+  TokenStore
+} from "./db";
 import type { ConversationAttachment } from "./conversation/types";
 import { isKnownRuntimeEngine } from "./agent/runtime-descriptors";
 import { createHash, timingSafeEqual } from "node:crypto";
+import { connectionProviderForToolName } from "./providers/descriptors";
 import {
   addGitHubIssueLabels,
   commentOnGitHubIssueOrPullRequest,
@@ -1584,24 +1590,14 @@ function isKnownTool(toolName: string): boolean {
   );
 }
 
-function readToolProvider(
-  toolName: string
-): "github" | "google" | "hubspot" | "jira" | "slack" {
-  return toolName.startsWith("slack.")
-    ? "slack"
-    : toolName.startsWith("hubspot.")
-    ? "hubspot"
-    : toolName.startsWith("google.") || toolName.startsWith("gmail.")
-    ? "google"
-    : toolName.startsWith("jira.") || toolName.startsWith("atlassian.")
-    ? "jira"
-    : "github";
+function readToolProvider(toolName: string): Provider {
+  return connectionProviderForToolName(toolName) ?? "github";
 }
 
 function resolveToolGatewayConnection(
   store: TokenStore,
   auth: ToolGatewayAuth,
-  provider: "github" | "google" | "hubspot" | "jira" | "slack",
+  provider: Provider,
   body: ToolGatewayBody
 ) {
   if (auth.kind === "runtime") {
