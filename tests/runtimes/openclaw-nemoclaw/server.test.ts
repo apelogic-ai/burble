@@ -336,6 +336,17 @@ describe("handleRuntimeRequest", () => {
       callId: "contract-tool-reachability-0",
       input: { query: "contract-query" }
     });
+    expect(reachabilityEvents).toContainEqual({
+      type: "tool_result",
+      toolName: "github_search_issues",
+      callId: "contract-tool-reachability-0",
+      classification: "user_private",
+      content: {
+        ok: true,
+        toolName: "github_search_issues",
+        input: { query: "contract-query" }
+      }
+    });
     expect(JSON.stringify(reachabilityEvents)).not.toContain("github.createIssue");
   });
 

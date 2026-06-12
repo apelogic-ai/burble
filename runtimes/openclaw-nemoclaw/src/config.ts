@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 export type RuntimeConfig = {
   port: number;
   contractProbeMode?: boolean;
+  fetch?: RuntimeFetch;
   runtimeId?: string | null;
   runtimeHeartbeatIntervalMs?: number;
   toolGatewayUrl: string;
@@ -35,6 +36,11 @@ export type RuntimeConfig = {
   llmModel: string;
   ollamaBaseUrl: string;
 };
+
+export type RuntimeFetch = (
+  input: RequestInfo | URL,
+  init?: RequestInit
+) => Promise<Response>;
 
 export type RuntimeEngine =
   | "deterministic"

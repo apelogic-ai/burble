@@ -52,7 +52,7 @@ export function createRuntimeRunner(
       executeTool = createBurbleToolExecutor(config, request.runtime?.id, request)
     ) {
       if (config.contractProbeMode) {
-        yield* streamRuntimeContractProbe(request);
+        yield* streamRuntimeContractProbe(request, config);
         return;
       }
       const effectiveConfig = resolveRuntimeConfigForRequest(config, request);
@@ -85,7 +85,8 @@ function runtimeContractProbeResponse(
 }
 
 async function* streamRuntimeContractProbe(
-  request: Pick<RunRequest, "input" | "runtime">
+  request: Pick<RunRequest, "input" | "runtime">,
+  config: RuntimeConfig
 ): AsyncIterable<RunEvent> {
   yield { type: "status", text: "Runtime contract probe accepted." };
   if (request.input.scheduledJob) {
@@ -115,7 +116,11 @@ async function* streamRuntimeContractProbe(
   } else if (request.input.text === "runtime contract tool reachability probe") {
     for (const [index, tool] of reachableManifestTools(request).entries()) {
       const callId = `contract-tool-reachability-${index}`;
-      const probed = probeBurbleProviderToolReachability(tool.alias, request);
+      const probed = await probeBurbleProviderToolReachability(
+        tool.alias,
+        request,
+        config
+      );
       yield {
         type: "tool_call",
         toolName: probed.toolName,
@@ -126,7 +131,8 @@ async function* streamRuntimeContractProbe(
         type: "tool_result",
         toolName: probed.toolName,
         callId,
-        classification: "user_private"
+        classification: "user_private",
+        content: probed.content
       };
     }
   } else if (

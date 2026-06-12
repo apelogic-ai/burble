@@ -7,6 +7,8 @@ import type {
   ToolResult
 } from "./types";
 
+type RuntimeFetch = NonNullable<RuntimeConfig["fetch"]>;
+
 export function createBurbleToolExecutor(
   config: RuntimeConfig,
   runtimeId?: string,
@@ -22,6 +24,7 @@ function createBurbleMcpToolExecutor(
 ): ToolExecutor {
   let sessionIdPromise: Promise<string> | null = null;
   return async (toolName, body) => {
+    const fetchImpl = runtimeFetch(config);
     const bridgeCall = isBurbleProviderBridgeTool(toolName)
       ? readBurbleProviderBridgeCall(body)
       : null;
@@ -55,7 +58,7 @@ function createBurbleMcpToolExecutor(
     const sessionId = await sessionIdPromise;
     info(`Burble MCP tool start tool=${mcpToolName}${summarizeLogObject("args", args)}`);
 
-    const response = await fetch(config.mcpGatewayUrl!, {
+    const response = await fetchImpl(config.mcpGatewayUrl!, {
       method: "POST",
       headers: {
         ...mcpHeaders(config),
@@ -126,6 +129,7 @@ async function sendConversationMessage(
   request: RunRequest | undefined,
   body: unknown
 ): Promise<ToolResult> {
+  const fetchImpl = runtimeFetch(config);
   if (!runtimeId) {
     throw new Error("conversation.sendMessage requires a runtime id");
   }
@@ -150,7 +154,7 @@ async function sendConversationMessage(
     `Burble conversation tool start tool=conversation.sendMessage${summarizeLogObject("input", input)}`
   );
 
-  const response = await fetch(
+  const response = await fetchImpl(
     `${config.toolGatewayUrl}/${encodeURIComponent("conversation.sendMessage")}/execute`,
     {
       method: "POST",
@@ -190,6 +194,7 @@ async function registerScheduledJobCapability(
   runtimeId: string | undefined,
   body: unknown
 ): Promise<ToolResult> {
+  const fetchImpl = runtimeFetch(config);
   if (!runtimeId) {
     throw new Error("scheduledJob.registerCapability requires a runtime id");
   }
@@ -201,7 +206,7 @@ async function registerScheduledJobCapability(
     `Burble scheduled job tool start tool=scheduledJob.registerCapability${summarizeLogObject("input", input)}`
   );
 
-  const response = await fetch(
+  const response = await fetchImpl(
     `${config.toolGatewayUrl}/${encodeURIComponent("scheduledJob.registerCapability")}/execute`,
     {
       method: "POST",
@@ -244,6 +249,7 @@ async function getConversationAttachment(
   request: RunRequest | undefined,
   body: unknown
 ): Promise<ToolResult> {
+  const fetchImpl = runtimeFetch(config);
   if (!runtimeId) {
     throw new Error("conversation.getAttachment requires a runtime id");
   }
@@ -257,7 +263,7 @@ async function getConversationAttachment(
     `Burble conversation tool start tool=conversation.getAttachment${summarizeLogObject("input", input)}`
   );
 
-  const response = await fetch(
+  const response = await fetchImpl(
     `${config.toolGatewayUrl}/${encodeURIComponent("conversation.getAttachment")}/execute`,
     {
       method: "POST",
@@ -300,8 +306,9 @@ async function listBurbleMcpTools(
   config: RuntimeConfig,
   sessionId: string
 ): Promise<ToolResult> {
+  const fetchImpl = runtimeFetch(config);
   info("Burble MCP tools/list start");
-  const response = await fetch(config.mcpGatewayUrl!, {
+  const response = await fetchImpl(config.mcpGatewayUrl!, {
     method: "POST",
     headers: {
       ...mcpHeaders(config),
@@ -329,8 +336,9 @@ async function listBurbleMcpTools(
 }
 
 async function initializeMcpSession(config: RuntimeConfig): Promise<string> {
+  const fetchImpl = runtimeFetch(config);
   info("Burble MCP session initialize start");
-  const response = await fetch(config.mcpGatewayUrl!, {
+  const response = await fetchImpl(config.mcpGatewayUrl!, {
     method: "POST",
     headers: mcpHeaders(config),
     body: JSON.stringify({
@@ -368,7 +376,8 @@ async function sendMcpInitializedNotification(
   config: RuntimeConfig,
   sessionId: string
 ): Promise<void> {
-  const response = await fetch(config.mcpGatewayUrl!, {
+  const fetchImpl = runtimeFetch(config);
+  const response = await fetchImpl(config.mcpGatewayUrl!, {
     method: "POST",
     headers: {
       ...mcpHeaders(config),
@@ -430,18 +439,112 @@ export const __openClawBurbleToolMappingTestHooks = {
   toMcpToolName
 };
 
-export function probeBurbleProviderToolReachability(
+export async function probeBurbleProviderToolReachability(
   toolName: string,
-  request: RunRequest
-): { toolName: string; input: Record<string, unknown> } {
+  request: RunRequest,
+  config: RuntimeConfig
+): Promise<{ toolName: string; input: Record<string, unknown>; content: unknown }> {
   const tool = findManifestTool(toolName, request);
   if (!tool) {
     throw new Error(`Unsupported Burble MCP tool: ${toolName}`);
   }
   const input = sampleManifestToolInput(tool);
+  const observed: {
+    toolName?: string;
+    input?: Record<string, unknown>;
+  } = {};
+  const executeTool = createBurbleToolExecutor(
+    {
+      ...config,
+      mcpGatewayUrl: "http://burble-contract-probe/mcp",
+      runtimeJwt: "contract-probe-runtime-jwt",
+      fetch: createMcpReachabilityProbeFetch(observed)
+    },
+    request.runtime?.id,
+    request
+  );
+  const result = await executeTool(toolName, { input });
+  if (!observed.toolName || !observed.input) {
+    throw new Error("Burble MCP reachability probe did not call a tool");
+  }
   return {
-    toolName: toMcpToolName(toolName, request),
-    input: toMcpToolArguments(toolName, { input }, request)
+    toolName: observed.toolName,
+    input: observed.input,
+    content: result.content
+  };
+}
+
+function createMcpReachabilityProbeFetch(observed: {
+  toolName?: string;
+  input?: Record<string, unknown>;
+}): RuntimeFetch {
+  return async (_url, init) => {
+    if (readInitHeader(init, "authorization") !== "Bearer contract-probe-runtime-jwt") {
+      return Response.json({ message: "missing probe authorization" }, { status: 401 });
+    }
+
+    const body = parseJsonRecord(init?.body);
+    const method = typeof body.method === "string" ? body.method : "";
+    const id = body.id;
+
+    if (method === "initialize") {
+      return Response.json(
+        {
+          jsonrpc: "2.0",
+          id,
+          result: {
+            protocolVersion: "2025-06-18",
+            capabilities: {},
+            serverInfo: {
+              name: "burble-contract-probe",
+              version: "1"
+            }
+          }
+        },
+        { headers: { "mcp-session-id": "contract-probe-session" } }
+      );
+    }
+
+    if (readInitHeader(init, "mcp-session-id") !== "contract-probe-session") {
+      return Response.json({ message: "missing probe session" }, { status: 400 });
+    }
+
+    if (method === "notifications/initialized") {
+      return new Response(null, { status: 202 });
+    }
+
+    if (method !== "tools/call") {
+      return Response.json({ message: "unexpected probe method" }, { status: 400 });
+    }
+
+    const params = readRecordKey(body, "params");
+    const toolName = typeof params?.name === "string" ? params.name : "";
+    const args = readRecordKey(params, "arguments");
+    if (!toolName || !args) {
+      return Response.json({ message: "invalid probe tool call" }, { status: 400 });
+    }
+
+    observed.toolName = toolName;
+    observed.input = args;
+    return Response.json({
+      jsonrpc: "2.0",
+      id,
+      result: {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify({
+              classification: "user_private",
+              content: {
+                ok: true,
+                toolName,
+                input: args
+              }
+            })
+          }
+        ]
+      }
+    });
   };
 }
 
@@ -795,6 +898,39 @@ function readRecordKey(
     : null;
 }
 
+function parseJsonRecord(value: unknown): Record<string, unknown> {
+  if (typeof value !== "string") {
+    return {};
+  }
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : {};
+  } catch {
+    return {};
+  }
+}
+
+function readInitHeader(
+  init: RequestInit | undefined,
+  name: string
+): string | null {
+  const headers = init?.headers;
+  if (!headers) {
+    return null;
+  }
+  if (headers instanceof Headers) {
+    return headers.get(name);
+  }
+  const normalized = name.toLowerCase();
+  if (Array.isArray(headers)) {
+    return headers.find(([key]) => key.toLowerCase() === normalized)?.[1] ?? null;
+  }
+  const record = headers as Record<string, string>;
+  return record[name] ?? record[normalized] ?? null;
+}
+
 function readRecordNumber(
   value: Record<string, unknown> | null,
   key: string
@@ -1027,4 +1163,8 @@ function isToolResult(value: unknown): value is ToolResult {
       record.classification === "restricted") &&
     "content" in record
   );
+}
+
+function runtimeFetch(config: RuntimeConfig): RuntimeFetch {
+  return config.fetch ?? fetch;
 }
