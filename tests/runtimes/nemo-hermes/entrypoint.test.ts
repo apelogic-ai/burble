@@ -503,6 +503,52 @@ async def main():
     tool_events = await run_probe({
         "text": "runtime contract tool capability probe",
     })
+    reachability_events = await run_probe({
+        "text": "runtime contract tool reachability probe",
+        "runtime": {
+            "id": "rt_probe",
+            "engine": "hermes",
+            "manifest": {
+                "version": "1",
+                "policyHash": "contract-probe",
+                "skills": [],
+                "tools": [
+                    {
+                        "name": "github_get_authenticated_user",
+                        "alias": "github.getAuthenticatedUser",
+                        "provider": "github",
+                        "title": "GitHub authenticated user",
+                        "description": "Return the connected GitHub identity.",
+                        "enabled": True,
+                        "risk": "read",
+                        "routeRequired": True,
+                        "confirmation": "none",
+                        "retrySafe": True,
+                        "input": [],
+                    },
+                    {
+                        "name": "github_create_issue",
+                        "alias": "github.createIssue",
+                        "provider": "github",
+                        "title": "GitHub create issue",
+                        "description": "Create a GitHub issue.",
+                        "enabled": False,
+                        "risk": "low_write",
+                        "routeRequired": True,
+                        "confirmation": "none",
+                        "retrySafe": False,
+                        "input": [],
+                    },
+                ],
+                "memory": {
+                    "userMemoryEnabled": False,
+                    "workspaceMemoryEnabled": False,
+                    "jobMemoryEnabled": False,
+                },
+                "streaming": {"messageDeltasEnabled": True},
+            },
+        },
+    })
     scheduled_events = await run_probe({
         "originalText": "runtime contract scheduled provider capability probe",
         "text": "runtime contract scheduled provider capability probe",
@@ -523,6 +569,7 @@ async def main():
     })
     print(json.dumps({
         "toolEvents": tool_events,
+        "reachabilityEvents": reachability_events,
         "scheduledEvents": scheduled_events,
         "attachmentEvents": attachment_events,
     }))
@@ -532,6 +579,7 @@ asyncio.run(main())
 
     const typed = result as {
       toolEvents: unknown[];
+      reachabilityEvents: unknown[];
       scheduledEvents: unknown[];
       attachmentEvents: unknown[];
     };
@@ -546,6 +594,14 @@ asyncio.run(main())
       callId: "contract-tool-probe",
       classification: "user_private"
     });
+    expect(typed.reachabilityEvents).toContainEqual({
+      type: "tool_call",
+      toolName: "github.getAuthenticatedUser",
+      callId: "contract-tool-reachability-0"
+    });
+    expect(JSON.stringify(typed.reachabilityEvents)).not.toContain(
+      "github.createIssue"
+    );
     expect(typed.scheduledEvents).toContainEqual({
       type: "tool_call",
       toolName: "scheduledJob.registerCapability",

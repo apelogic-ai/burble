@@ -123,6 +123,74 @@ describe("Burble Native runtime server", () => {
     ]);
   });
 
+  test("streams deterministic tool reachability probe events", async () => {
+    const response = await handleRuntimeRequest(
+      new Request("http://runtime/runs", {
+        method: "POST",
+        headers: {
+          accept: "application/x-ndjson",
+          "content-type": "application/json"
+        },
+        body: JSON.stringify(
+          withRuntimeManifestTools(
+            nativeRunRequest("runtime contract tool reachability probe"),
+            [
+              {
+                name: "github_get_authenticated_user",
+                alias: "github.getAuthenticatedUser",
+                provider: "github",
+                title: "GitHub authenticated user",
+                description: "Return the connected GitHub identity.",
+                enabled: true,
+                risk: "read",
+                routeRequired: true,
+                confirmation: "none",
+                retrySafe: true,
+                input: []
+              },
+              {
+                name: "github_create_issue",
+                alias: "github.createIssue",
+                provider: "github",
+                title: "GitHub create issue",
+                description: "Create a GitHub issue.",
+                enabled: false,
+                risk: "low_write",
+                routeRequired: true,
+                confirmation: "none",
+                retrySafe: false,
+                input: []
+              }
+            ]
+          )
+        )
+      }),
+      {
+        env: {
+          BURBLE_RUNTIME_CONTRACT_PROBE: "1"
+        }
+      }
+    );
+
+    expect(response.status).toBe(200);
+    const events = (await response.text())
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+    expect(events).toContainEqual({
+      type: "tool_call",
+      toolName: "github.getAuthenticatedUser",
+      callId: "contract-tool-reachability-0"
+    });
+    expect(events).toContainEqual({
+      type: "tool_result",
+      toolName: "github.getAuthenticatedUser",
+      callId: "contract-tool-reachability-0",
+      classification: "user_private"
+    });
+    expect(JSON.stringify(events)).not.toContain("github.createIssue");
+  });
+
   test("streams OpenAI response deltas and exact usage for no-tool turns", async () => {
     const requests: Array<{ url: string; init?: RequestInit }> = [];
     const response = await handleRuntimeRequest(

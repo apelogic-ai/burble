@@ -355,6 +355,28 @@ def build_hermes_turn_text(input_body: dict[str, Any]) -> str:
     return "\n\n".join(sections)
 
 
+def reachable_manifest_tools(message: dict[str, Any]) -> list[dict[str, str]]:
+    runtime = message.get("runtime")
+    if not isinstance(runtime, dict):
+        return []
+    manifest = runtime.get("manifest")
+    if not isinstance(manifest, dict):
+        return []
+    tools = manifest.get("tools")
+    if not isinstance(tools, list):
+        return []
+    reachable: list[dict[str, str]] = []
+    for tool in tools:
+        if not isinstance(tool, dict):
+            continue
+        if tool.get("enabled") is not True:
+            continue
+        alias = str(tool.get("alias") or "")
+        if alias:
+            reachable.append({"alias": alias})
+    return reachable
+
+
 def format_current_request_attachments(input_body: dict[str, Any]) -> str:
     attachments = input_body.get("attachments")
     if not isinstance(attachments, list) or not attachments:
@@ -642,6 +664,7 @@ class BurbleHermesRuntime:
                     "originalText": text,
                     "scheduledJob": input_body.get("scheduledJob"),
                     "attachments": input_body.get("attachments"),
+                    "runtime": body.get("runtime"),
                     "text": build_hermes_turn_text(input_body),
                     "threadId": build_hermes_thread_id(run_id, conversation),
                     "actorId": principal.get("slackUserId"),
@@ -795,6 +818,37 @@ class BurbleHermesRuntime:
                     response = {
                         "classification": "user_private",
                         "text": "Runtime contract tool capability response.",
+                        "usage": {
+                            "inputTokens": 1,
+                            "outputTokens": 1,
+                            "totalTokens": 2,
+                            "usageSource": "contract-probe",
+                        },
+                    }
+                    await waiter.emit({"type": "message_delta", "text": response["text"]})
+                    await waiter.finish(response)
+                    return response
+                if (
+                    message.get("originalText") == "runtime contract tool reachability probe"
+                    or message.get("text") == "runtime contract tool reachability probe"
+                ):
+                    await waiter.emit({"type": "status", "text": "Runtime contract probe accepted."})
+                    for index, tool in enumerate(reachable_manifest_tools(message)):
+                        call_id = f"contract-tool-reachability-{index}"
+                        await waiter.emit({
+                            "type": "tool_call",
+                            "toolName": tool["alias"],
+                            "callId": call_id,
+                        })
+                        await waiter.emit({
+                            "type": "tool_result",
+                            "toolName": tool["alias"],
+                            "callId": call_id,
+                            "classification": "user_private",
+                        })
+                    response = {
+                        "classification": "user_private",
+                        "text": "Runtime contract tool reachability response.",
                         "usage": {
                             "inputTokens": 1,
                             "outputTokens": 1,

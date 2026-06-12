@@ -163,6 +163,7 @@ runtimeConformanceDescribe("runtime contract conformance e2e", () => {
           ];
           if (report.manifest.toolCalls) {
             expectedChecks.push("tool_calls");
+            expectedChecks.push("tool_reachability");
           }
           if (report.manifest.scheduledProviderCalls) {
             expectedChecks.push("scheduled_provider_calls");

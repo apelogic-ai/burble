@@ -1,4 +1,6 @@
 import type { AgentRuntimeEngine } from "../db";
+import { providerToolCatalog } from "../providers/catalog";
+import { buildRuntimeManifest } from "./runtime-manifest";
 import {
   createRuntimeContractHttpClient,
   type RuntimeContractFetch,
@@ -28,6 +30,20 @@ export async function runRuntimeConformanceCheck(input: {
   const runtime = await input.runtimeFactory.getOrCreateRuntime(input.principal);
   const baseUrl =
     (await input.resolveBaseUrl?.(runtime)) ?? runtime.endpointUrl;
+  const runtimeManifest = buildRuntimeManifest({
+    principal: input.principal,
+    runtime: {
+      engine: input.engine,
+      factory: "static",
+      ttlMs: 0,
+      reaperEnabled: false
+    },
+    defaultModel: "openai:gpt-5.4",
+    defaultStreaming: true,
+    workspacePolicy: [],
+    userPreferences: [],
+    toolCatalog: providerToolCatalog
+  });
   const report = await runRuntimeContractSmokeTest({
     client: createRuntimeContractHttpClient({
       baseUrl,
@@ -43,7 +59,16 @@ export async function runRuntimeConformanceCheck(input: {
       principal: input.principal,
       runtime: {
         id: runtime.id,
-        engine: input.engine
+        engine: input.engine,
+        manifest: {
+          version: runtimeManifest.version,
+          policyHash: runtimeManifest.policyHash,
+          skills: runtimeManifest.skills,
+          tools: runtimeManifest.tools,
+          memory: runtimeManifest.memory,
+          streaming: runtimeManifest.streaming,
+          memoryContext: runtimeManifest.memoryContext
+        }
       },
       input: {
         text: "runtime contract probe",

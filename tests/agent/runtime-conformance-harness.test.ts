@@ -150,6 +150,10 @@ describe("runtime conformance harness", () => {
       scheduled?: boolean;
       attachments?: boolean;
     }> = [];
+    const manifestToolsByRunId = new Map<
+      string,
+      Array<{ name: string; alias: string; enabled: boolean }>
+    >();
     const runtimeFetch: RuntimeContractFetch = async (url, init) => {
       const parsed = new URL(url);
       if (parsed.pathname === "/healthz") {
@@ -166,7 +170,18 @@ describe("runtime conformance harness", () => {
             scheduledJob?: unknown;
             attachments?: unknown[];
           };
+          runtime?: {
+            manifest?: {
+              tools?: Array<{ name: string; alias: string; enabled: boolean }>;
+            };
+          };
         };
+        if (request.runId) {
+          manifestToolsByRunId.set(
+            request.runId,
+            request.runtime?.manifest?.tools ?? []
+          );
+        }
         runRequests.push({
           runId: request.runId,
           text: request.input?.text,
@@ -199,6 +214,33 @@ describe("runtime conformance harness", () => {
               classification: "user_private",
               content: { ok: true }
             },
+            finalEvent()
+          ]);
+        }
+        if (url.includes("tool-reachability")) {
+          const runId = url.match(/\/runs\/([^/]+)\//)?.[1] ?? "";
+          const tools = manifestToolsByRunId.get(runId) ?? [];
+          return new FakeRuntimeWebSocket([
+            ...tools
+              .filter((tool) => tool.enabled)
+              .flatMap((tool, index) => {
+                const callId = `reachability-${index}`;
+                return [
+                  {
+                    type: "tool_call",
+                    toolName: tool.alias,
+                    callId,
+                    input: {}
+                  },
+                  {
+                    type: "tool_result",
+                    toolName: tool.alias,
+                    callId,
+                    classification: "user_private",
+                    content: { ok: true }
+                  }
+                ];
+              }),
             finalEvent()
           ]);
         }
@@ -256,22 +298,28 @@ describe("runtime conformance harness", () => {
       "final_response",
       "usage",
       "tool_calls",
+      "tool_reachability",
       "scheduled_provider_calls",
       "attachments"
     ]);
-    expect(runRequests).toHaveLength(4);
+    expect(runRequests).toHaveLength(5);
     expect(runRequests[0].runId).toContain("contract-rt_");
     expect(runRequests[1].runId).toContain("tool-capability");
-    expect(runRequests[2].runId).toContain("scheduled-provider");
+    expect(runRequests[2].runId).toContain("tool-reachability");
+    expect(runRequests[3].runId).toContain("scheduled-provider");
     expect(runRequests[1]).toMatchObject({
       text: "runtime contract tool capability probe",
       scheduled: false
     });
     expect(runRequests[2]).toMatchObject({
+      text: "runtime contract tool reachability probe",
+      scheduled: false
+    });
+    expect(runRequests[3]).toMatchObject({
       text: "runtime contract scheduled provider capability probe",
       scheduled: true
     });
-    expect(runRequests[3]).toMatchObject({
+    expect(runRequests[4]).toMatchObject({
       text: "runtime contract attachment capability probe",
       attachments: true
     });

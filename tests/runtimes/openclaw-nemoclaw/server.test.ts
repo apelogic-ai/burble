@@ -284,6 +284,34 @@ describe("handleRuntimeRequest", () => {
       }),
       { ...config, engine: "openclaw", contractProbeMode: true }
     );
+    const reachabilityResponse = await handleRuntimeRequest(
+      new Request("http://runtime/runs", {
+        method: "POST",
+        headers: {
+          accept: "application/x-ndjson",
+          "content-type": "application/json"
+        },
+        body: JSON.stringify(
+          contractProbeRequest({
+            runId: "run-contract-reachability-probe",
+            text: "runtime contract tool reachability probe",
+            tools: [
+              {
+                name: "github_get_authenticated_user",
+                alias: "github.getAuthenticatedUser",
+                enabled: true
+              },
+              {
+                name: "github_create_issue",
+                alias: "github.createIssue",
+                enabled: false
+              }
+            ]
+          })
+        )
+      }),
+      { ...config, engine: "openclaw", contractProbeMode: true }
+    );
 
     expect(readNdjsonEvents(await toolResponse.text())).toContainEqual({
       type: "tool_call",
@@ -301,6 +329,13 @@ describe("handleRuntimeRequest", () => {
       callId: "contract-attachment-probe",
       input: { attachmentId: "attcap_contract_probe" }
     });
+    const reachabilityEvents = readNdjsonEvents(await reachabilityResponse.text());
+    expect(reachabilityEvents).toContainEqual({
+      type: "tool_call",
+      toolName: "github.getAuthenticatedUser",
+      callId: "contract-tool-reachability-0"
+    });
+    expect(JSON.stringify(reachabilityEvents)).not.toContain("github.createIssue");
   });
 
   test("accepts HubSpot runtime tool groups and connection summaries", async () => {
@@ -1614,11 +1649,41 @@ function contractProbeRequest(input: {
   text: string;
   scheduled?: boolean;
   attachment?: boolean;
+  tools?: Array<{ name: string; alias: string; enabled: boolean }>;
 }) {
   return {
     runId: input.runId,
     principal: { workspaceId: "T123", slackUserId: "U123" },
-    runtime: { id: "rt_probe", engine: "openclaw" },
+    runtime: {
+      id: "rt_probe",
+      engine: "openclaw",
+      ...(input.tools
+        ? {
+            manifest: {
+              version: "1",
+              policyHash: "contract-probe",
+              skills: [],
+              tools: input.tools.map((tool) => ({
+                ...tool,
+                provider: "github",
+                title: tool.name,
+                description: tool.name,
+                risk: tool.enabled ? "read" : "low_write",
+                routeRequired: true,
+                confirmation: "none",
+                retrySafe: tool.enabled,
+                input: []
+              })),
+              memory: {
+                userMemoryEnabled: false,
+                workspaceMemoryEnabled: false,
+                jobMemoryEnabled: false
+              },
+              streaming: { messageDeltasEnabled: true }
+            }
+          }
+        : {})
+    },
     input: {
       text: input.text,
       ...(input.scheduled

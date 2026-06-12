@@ -171,6 +171,31 @@ async function* runNativeTurn(
       };
       return;
     }
+    if (request.input.text === "runtime contract tool reachability probe") {
+      for (const [index, tool] of reachableManifestTools(request).entries()) {
+        const callId = `contract-tool-reachability-${index}`;
+        yield {
+          type: "tool_call",
+          toolName: tool.alias,
+          callId
+        };
+        yield {
+          type: "tool_result",
+          toolName: tool.alias,
+          callId,
+          classification: "user_private"
+        };
+      }
+      yield {
+        type: "final",
+        response: {
+          classification: "user_private",
+          text: "Runtime contract tool reachability response.",
+          usage: nativeUsage()
+        }
+      };
+      return;
+    }
     if (request.input.text === "runtime contract attachment capability probe") {
       const attachmentId =
         request.input.attachments?.[0]?.id ?? "attcap_contract_probe";
@@ -263,6 +288,12 @@ async function* runNativeTurn(
       usage
     }
   };
+}
+
+function reachableManifestTools(request: RunRequest): Array<{ alias: string }> {
+  return (request.runtime.manifest?.tools ?? [])
+    .filter((tool) => tool.enabled === true && tool.alias.length > 0)
+    .map((tool) => ({ alias: tool.alias }));
 }
 
 function nativeUsage(): RunUsage {
