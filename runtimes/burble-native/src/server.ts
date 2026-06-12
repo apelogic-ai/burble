@@ -454,6 +454,7 @@ async function executeBurbleProviderTool(
     toolGatewayUrl,
     runtimeToken,
     runtimeId: request.runtime.id,
+    tools: request.runtime.manifest?.tools ?? [],
     maxAttempts: readToolGatewayMaxAttempts(context.env),
     retryBaseDelayMs: readToolGatewayRetryBaseDelayMs(context.env),
     ...(context.fetch ? { fetch: context.fetch } : {})
@@ -764,6 +765,7 @@ function selectedBuiltInRuntimeTools(
       risk: "read",
       routeRequired: true,
       confirmation: "none",
+      retrySafe: true,
       input: [
         {
           name: "attachmentId",

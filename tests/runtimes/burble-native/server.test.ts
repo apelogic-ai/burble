@@ -311,6 +311,7 @@ describe("Burble Native runtime server", () => {
                 risk: "read",
                 routeRequired: true,
                 confirmation: "none",
+                retrySafe: true,
                 input: []
               },
               {
@@ -324,6 +325,7 @@ describe("Burble Native runtime server", () => {
                 risk: "read",
                 routeRequired: true,
                 confirmation: "none",
+                retrySafe: true,
                 input: [
                   {
                     name: "state",
@@ -350,6 +352,7 @@ describe("Burble Native runtime server", () => {
                 risk: "read",
                 routeRequired: true,
                 confirmation: "none",
+                retrySafe: true,
                 input: [
                   {
                     name: "query",
@@ -369,6 +372,7 @@ describe("Burble Native runtime server", () => {
                 risk: "low_write",
                 routeRequired: true,
                 confirmation: "none",
+                retrySafe: false,
                 input: [
                   {
                     name: "repo",
@@ -715,6 +719,7 @@ describe("Burble Native runtime server", () => {
                 risk: "read",
                 routeRequired: true,
                 confirmation: "none",
+                retrySafe: true,
                 input: []
               }
             ]
@@ -851,6 +856,7 @@ describe("Burble Native runtime server", () => {
                 risk: "read",
                 routeRequired: true,
                 confirmation: "none",
+                retrySafe: true,
                 input: []
               }
             ]
@@ -1245,11 +1251,52 @@ describe("Burble Native runtime server", () => {
     });
   });
 
-  test("does not blindly retry non-idempotent provider write tools", async () => {
+  test("retries manifest-declared retry-safe read tools", async () => {
     let calls = 0;
     const executeTool = createBurbleNativeToolExecutor({
       toolGatewayUrl: "http://burble-app:3000/internal/tools/",
       runtimeToken: "runtime-token",
+      tools: [
+        {
+          name: "github_list_my_pull_requests",
+          alias: "github.listMyPullRequests",
+          retrySafe: true
+        }
+      ],
+      retryBaseDelayMs: 0,
+      fetch: async () => {
+        calls += 1;
+        if (calls === 1) {
+          return new Response("temporarily unavailable", { status: 503 });
+        }
+        return Response.json({
+          classification: "user_private",
+          content: { pullRequests: [] }
+        });
+      }
+    });
+
+    await expect(
+      executeTool("github.listMyPullRequests", { input: { limit: 3 } })
+    ).resolves.toEqual({
+      classification: "user_private",
+      content: { pullRequests: [] }
+    });
+    expect(calls).toBe(2);
+  });
+
+  test("does not retry manifest-declared unsafe write tools", async () => {
+    let calls = 0;
+    const executeTool = createBurbleNativeToolExecutor({
+      toolGatewayUrl: "http://burble-app:3000/internal/tools/",
+      runtimeToken: "runtime-token",
+      tools: [
+        {
+          name: "google_slides_fill_placeholders",
+          alias: "google.slidesFillPlaceholders",
+          retrySafe: false
+        }
+      ],
       retryBaseDelayMs: 0,
       fetch: async () => {
         calls += 1;
@@ -1258,8 +1305,11 @@ describe("Burble Native runtime server", () => {
     });
 
     await expect(
-      executeTool("google.slidesCopyPresentation", {
-        input: { presentationId: "deck-1", name: "Copy" }
+      executeTool("google.slidesFillPlaceholders", {
+        input: {
+          presentationId: "deck-1",
+          replacements: [{ placeholderType: "TITLE", text: "Title" }]
+        }
       })
     ).rejects.toThrow("Burble tool gateway returned HTTP 503");
     expect(calls).toBe(1);

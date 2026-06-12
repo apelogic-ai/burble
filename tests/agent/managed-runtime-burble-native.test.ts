@@ -409,6 +409,7 @@ function runtimeManifest(runtimeId: string): RuntimeManifest {
         risk: "read",
         routeRequired: true,
         confirmation: "none",
+        retrySafe: true,
         input: []
       }
     ],

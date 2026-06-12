@@ -54,6 +54,7 @@ export type RunRequest = {
         risk?: "read" | "low_write" | "moderate_write" | "high_write";
         routeRequired?: boolean;
         confirmation?: "none" | "explicit" | "strong";
+        retrySafe?: boolean;
         input?: Array<{
           name: string;
           type: string;

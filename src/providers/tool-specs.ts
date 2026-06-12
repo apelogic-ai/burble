@@ -12,6 +12,7 @@ export type ProviderToolSpec = {
   description: string;
   risk?: ProviderToolRisk;
   confirmation?: ProviderToolConfirmation;
+  retrySafe?: boolean;
   input: Record<string, ProviderToolInputSpec>;
 };
 
@@ -226,6 +227,7 @@ function parseProviderToolSpec(
       "explicit",
       "strong"
     ]),
+    retrySafe: readOptionalBoolean(parsed, "retrySafe", source),
     input: Object.fromEntries(
       Object.entries(input).map(([name, spec]) => [
         name,
