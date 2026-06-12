@@ -297,8 +297,8 @@ describe("handleRuntimeRequest", () => {
             text: "runtime contract tool reachability probe",
             tools: [
               {
-                name: "github_get_authenticated_user",
-                alias: "github.getAuthenticatedUser",
+                name: "github_search_issues",
+                alias: "github.searchIssues",
                 enabled: true
               },
               {
@@ -332,8 +332,9 @@ describe("handleRuntimeRequest", () => {
     const reachabilityEvents = readNdjsonEvents(await reachabilityResponse.text());
     expect(reachabilityEvents).toContainEqual({
       type: "tool_call",
-      toolName: "github.getAuthenticatedUser",
-      callId: "contract-tool-reachability-0"
+      toolName: "github_search_issues",
+      callId: "contract-tool-reachability-0",
+      input: { query: "contract-query" }
     });
     expect(JSON.stringify(reachabilityEvents)).not.toContain("github.createIssue");
   });
@@ -1672,7 +1673,16 @@ function contractProbeRequest(input: {
                 routeRequired: true,
                 confirmation: "none",
                 retrySafe: tool.enabled,
-                input: []
+                input:
+                  tool.name === "github_search_issues"
+                    ? [
+                        {
+                          name: "query",
+                          type: "string",
+                          required: true
+                        }
+                      ]
+                    : []
               })),
               memory: {
                 userMemoryEnabled: false,

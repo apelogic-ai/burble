@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import importlib.util
 import json
 import os
 import shutil
@@ -25,6 +26,13 @@ from burble_runtime_contract import (
 
 
 HERMES_PLUGIN_SOURCE = Path("/runtime/hermes-plugins")
+HERMES_PROVIDER_TOOL_PLUGIN_PATHS = [
+    HERMES_PLUGIN_SOURCE / "burble-provider-tool" / "__init__.py",
+    Path(__file__).resolve().parent.parent
+    / "hermes-plugins"
+    / "burble-provider-tool"
+    / "__init__.py",
+]
 MAX_HERMES_CONTEXT_MESSAGES = 12
 MAX_HERMES_CONTEXT_MESSAGE_CHARS = 300
 MAX_HERMES_ATTACHMENT_NAME_CHARS = 120
@@ -371,10 +379,54 @@ def reachable_manifest_tools(message: dict[str, Any]) -> list[dict[str, str]]:
             continue
         if tool.get("enabled") is not True:
             continue
+        name = str(tool.get("name") or "")
         alias = str(tool.get("alias") or "")
-        if alias:
-            reachable.append({"alias": alias})
+        provider = str(tool.get("provider") or "")
+        if not alias or not name or not provider:
+            continue
+        hint = hermes_provider_tool_hint(provider, name, alias)
+        normalized = normalize_burble_provider_tool_name(name)
+        if normalized != alias:
+            raise ValueError(
+                f"Hermes provider bridge normalized {name} to {normalized}, expected {alias}"
+            )
+        reachable.append({"name": hint["name"], "alias": hint["alias"]})
     return reachable
+
+
+def hermes_provider_tool_hint(
+    provider: str,
+    name: str,
+    alias: str,
+) -> dict[str, Any]:
+    for hint in HERMES_PROVIDER_TOOL_HINTS.get(provider, []):
+        if hint.get("name") == name and hint.get("alias") == alias:
+            return hint
+    raise ValueError(f"Hermes provider hints do not include {provider}:{name} ({alias})")
+
+
+_BURBLE_PROVIDER_TOOL_PLUGIN: Any | None = None
+
+
+def normalize_burble_provider_tool_name(name: str) -> str:
+    global _BURBLE_PROVIDER_TOOL_PLUGIN
+    if _BURBLE_PROVIDER_TOOL_PLUGIN is None:
+        for path in HERMES_PROVIDER_TOOL_PLUGIN_PATHS:
+            if not path.exists():
+                continue
+            spec = importlib.util.spec_from_file_location(
+                "burble_provider_tool_contract_probe",
+                path,
+            )
+            if spec is None or spec.loader is None:
+                continue
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+            _BURBLE_PROVIDER_TOOL_PLUGIN = module
+            break
+    if _BURBLE_PROVIDER_TOOL_PLUGIN is None:
+        raise ValueError("Hermes provider bridge plugin is not available")
+    return str(_BURBLE_PROVIDER_TOOL_PLUGIN.normalize_burble_tool_name(name))
 
 
 def format_current_request_attachments(input_body: dict[str, Any]) -> str:

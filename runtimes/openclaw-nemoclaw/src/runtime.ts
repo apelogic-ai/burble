@@ -1,5 +1,8 @@
 import type { RuntimeConfig } from "./config";
-import { createBurbleToolExecutor } from "./burble-tools";
+import {
+  createBurbleToolExecutor,
+  probeBurbleProviderToolReachability
+} from "./burble-tools";
 import {
   runOpenClawCliRequest,
   runOpenClawCliRequestStream
@@ -112,14 +115,16 @@ async function* streamRuntimeContractProbe(
   } else if (request.input.text === "runtime contract tool reachability probe") {
     for (const [index, tool] of reachableManifestTools(request).entries()) {
       const callId = `contract-tool-reachability-${index}`;
+      const probed = probeBurbleProviderToolReachability(tool.alias, request);
       yield {
         type: "tool_call",
-        toolName: tool.alias,
-        callId
+        toolName: probed.toolName,
+        callId,
+        input: probed.input
       };
       yield {
         type: "tool_result",
-        toolName: tool.alias,
+        toolName: probed.toolName,
         callId,
         classification: "user_private"
       };

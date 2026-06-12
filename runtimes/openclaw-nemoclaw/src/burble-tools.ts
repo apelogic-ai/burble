@@ -430,6 +430,21 @@ export const __openClawBurbleToolMappingTestHooks = {
   toMcpToolName
 };
 
+export function probeBurbleProviderToolReachability(
+  toolName: string,
+  request: RunRequest
+): { toolName: string; input: Record<string, unknown> } {
+  const tool = findManifestTool(toolName, request);
+  if (!tool) {
+    throw new Error(`Unsupported Burble MCP tool: ${toolName}`);
+  }
+  const input = sampleManifestToolInput(tool);
+  return {
+    toolName: toMcpToolName(toolName, request),
+    input: toMcpToolArguments(toolName, { input }, request)
+  };
+}
+
 type RuntimeManifestToolSummary = NonNullable<
   NonNullable<NonNullable<RunRequest["runtime"]>["manifest"]>["tools"]
 >[number];
@@ -585,6 +600,38 @@ function coerceManifestInputValue(
         : undefined;
     default:
       return isCompactManifestValue(value) ? value : undefined;
+  }
+}
+
+function sampleManifestToolInput(
+  tool: RuntimeManifestToolSummary
+): Record<string, unknown> {
+  const input: Record<string, unknown> = {};
+  for (const field of tool.input ?? []) {
+    if (!field.required) {
+      continue;
+    }
+    input[field.name] = sampleManifestInputValue(field);
+  }
+  return input;
+}
+
+function sampleManifestInputValue(field: RuntimeManifestToolInputSummary): unknown {
+  switch (field.type) {
+    case "string":
+      return `contract-${field.name}`;
+    case "number":
+      return 1;
+    case "boolean":
+      return true;
+    case "enum":
+      return field.values?.[0] ?? "contract";
+    case "string[]":
+      return ["contract"];
+    case "object":
+      return { contract: true };
+    default:
+      return `contract-${field.name}`;
   }
 }
 

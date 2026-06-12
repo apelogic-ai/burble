@@ -1203,7 +1203,7 @@ print(json.dumps({
 
     expect(result).toEqual({
       github: "github.listMyPullRequests",
-      google: "google.appendToDriveTextFile",
+      google: "google.appendDriveTextFile",
       analytics: "google.analyticsRunReport",
       slides: "google.slidesProbeTemplate",
       slides_copy: "google.slidesCopyPresentation",

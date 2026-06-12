@@ -174,16 +174,19 @@ async function* runNativeTurn(
     if (request.input.text === "runtime contract tool reachability probe") {
       for (const [index, tool] of reachableManifestTools(request).entries()) {
         const callId = `contract-tool-reachability-${index}`;
+        const probed = await probeBurbleProviderToolReachability(tool, request);
         yield {
           type: "tool_call",
           toolName: tool.alias,
-          callId
+          callId,
+          input: probed.input
         };
         yield {
           type: "tool_result",
           toolName: tool.alias,
           callId,
-          classification: "user_private"
+          classification: "user_private",
+          content: probed.content
         };
       }
       yield {
@@ -290,10 +293,96 @@ async function* runNativeTurn(
   };
 }
 
-function reachableManifestTools(request: RunRequest): Array<{ alias: string }> {
+type ReachableRuntimeTool = NonNullable<
+  NonNullable<RunRequest["runtime"]["manifest"]>["tools"]
+>[number];
+
+function reachableManifestTools(request: RunRequest): ReachableRuntimeTool[] {
   return (request.runtime.manifest?.tools ?? [])
-    .filter((tool) => tool.enabled === true && tool.alias.length > 0)
-    .map((tool) => ({ alias: tool.alias }));
+    .filter((tool) => tool.enabled === true && tool.alias.length > 0);
+}
+
+async function probeBurbleProviderToolReachability(
+  tool: ReachableRuntimeTool,
+  request: RunRequest
+): Promise<{ input: Record<string, unknown>; content: unknown }> {
+  const input = sampleRuntimeToolInput(tool);
+  const executeTool = createBurbleNativeToolExecutor({
+    toolGatewayUrl: "http://burble-contract-probe/internal/tools",
+    runtimeToken: "contract-probe-token",
+    runtimeId: request.runtime.id,
+    tools: request.runtime.manifest?.tools ?? [],
+    maxAttempts: 1,
+    fetch: async (url, init) => {
+      const parsed = new URL(url);
+      const toolName = decodeURIComponent(
+        parsed.pathname
+          .replace(/^\/internal\/tools\//, "")
+          .replace(/\/execute$/, "")
+      );
+      const body = parseJsonRecord(init?.body);
+      if (!toolName || !isRecord(body.input)) {
+        return Response.json({ message: "invalid contract probe call" }, { status: 400 });
+      }
+      return Response.json({
+        classification: "user_private",
+        content: {
+          ok: true,
+          toolName,
+          input: body.input
+        }
+      });
+    }
+  });
+  const result = await executeTool(tool.alias, { input });
+  return {
+    input,
+    content: isRecord(result) && "content" in result ? result.content : result
+  };
+}
+
+function sampleRuntimeToolInput(tool: ReachableRuntimeTool): Record<string, unknown> {
+  const input: Record<string, unknown> = {};
+  for (const field of tool.input ?? []) {
+    if (!field.required) {
+      continue;
+    }
+    input[field.name] = sampleRuntimeToolInputValue(field);
+  }
+  return input;
+}
+
+function sampleRuntimeToolInputValue(
+  field: NonNullable<ReachableRuntimeTool["input"]>[number]
+): unknown {
+  switch (field.type) {
+    case "string":
+      return `contract-${field.name}`;
+    case "number":
+      return 1;
+    case "boolean":
+      return true;
+    case "enum":
+      return field.values?.[0] ?? "contract";
+    case "string[]":
+      return ["contract"];
+    case "object":
+      return { contract: true };
+    default:
+      return `contract-${field.name}`;
+  }
+}
+
+function parseJsonRecord(value: unknown): Record<string, unknown> {
+  if (typeof value !== "string") {
+    return {};
+  }
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    return isRecord(parsed) ? parsed : {};
+  } catch {
+    return {};
+  }
 }
 
 function nativeUsage(): RunUsage {
