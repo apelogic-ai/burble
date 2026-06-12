@@ -1,35 +1,27 @@
 import { createRuntimeToolGatewayClient } from "@burble/runtime-sdk/tool-gateway";
 import type { ToolExecutor } from "./types";
 
-const nonIdempotentToolVerbs = [
-  "add",
-  "append",
-  "close",
-  "comment",
-  "copy",
-  "create",
-  "delete",
-  "edit",
-  "move",
-  "reopen",
-  "request",
-  "transition",
-  "update"
-];
-
 export type BurbleNativeToolGatewayFetch = (
   url: string,
   init?: RequestInit
 ) => Promise<Response>;
 
+export type BurbleNativeToolRetrySummary = {
+  name: string;
+  alias?: string;
+  retrySafe?: boolean;
+};
+
 export function createBurbleNativeToolExecutor(input: {
   toolGatewayUrl: string;
   runtimeToken: string;
   runtimeId?: string;
+  tools?: BurbleNativeToolRetrySummary[];
   maxAttempts?: number;
   retryBaseDelayMs?: number;
   fetch?: BurbleNativeToolGatewayFetch;
 }): ToolExecutor {
+  const retrySafety = buildToolRetrySafety(input.tools ?? []);
   const toolGateway = createRuntimeToolGatewayClient({
     baseUrl: input.toolGatewayUrl,
     runtimeToken: input.runtimeToken,
@@ -38,25 +30,29 @@ export function createBurbleNativeToolExecutor(input: {
     ...(input.retryBaseDelayMs !== undefined
       ? { retryBaseDelayMs: input.retryBaseDelayMs }
       : {}),
-    shouldRetryTool: shouldRetryBurbleProviderTool,
+    shouldRetryTool: (toolName) =>
+      shouldRetryBurbleProviderTool(toolName, retrySafety),
     ...(input.fetch ? { fetch: input.fetch } : {})
   });
   return (toolName, body) => toolGateway.execute(toolName, body);
 }
 
-function shouldRetryBurbleProviderTool(toolName: string): boolean {
-  return !isNonIdempotentBurbleProviderTool(toolName);
+function buildToolRetrySafety(
+  tools: BurbleNativeToolRetrySummary[]
+): Map<string, boolean> {
+  const retrySafety = new Map<string, boolean>();
+  for (const tool of tools) {
+    retrySafety.set(tool.name, tool.retrySafe === true);
+    if (tool.alias) {
+      retrySafety.set(tool.alias, tool.retrySafe === true);
+    }
+  }
+  return retrySafety;
 }
 
-function isNonIdempotentBurbleProviderTool(toolName: string): boolean {
-  const normalized = toolName
-    .replace(/([a-z0-9])([A-Z])/g, "$1_$2")
-    .toLowerCase();
-  return nonIdempotentToolVerbs.some(
-    (verb) =>
-      normalized.includes(`.${verb}`) ||
-      normalized.startsWith(`${verb}.`) ||
-      normalized.includes(`_${verb}_`) ||
-      normalized.endsWith(`_${verb}`)
-  );
+function shouldRetryBurbleProviderTool(
+  toolName: string,
+  retrySafety: Map<string, boolean>
+): boolean {
+  return retrySafety.get(toolName) === true;
 }

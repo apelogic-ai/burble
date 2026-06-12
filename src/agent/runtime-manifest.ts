@@ -30,6 +30,7 @@ export type RuntimeManifestTool = {
   risk: RuntimeToolRisk;
   routeRequired: boolean;
   confirmation: RuntimeToolConfirmation;
+  retrySafe: boolean;
   input: RuntimeManifestToolInput[];
 };
 
@@ -196,6 +197,8 @@ function manifestTool(input: {
   const providerAllowed =
     !input.allowedProviders || input.allowedProviders.has(input.tool.provider);
 
+  const risk = lastPolicy?.risk ?? input.tool.risk ?? "read";
+
   return {
     name: input.tool.name,
     alias: input.tool.alias,
@@ -204,9 +207,10 @@ function manifestTool(input: {
     description: input.tool.description,
     enabled:
       providerAllowed && !denied && !input.disabledTools.has(input.tool.name),
-    risk: lastPolicy?.risk ?? input.tool.risk ?? "read",
+    risk,
     routeRequired: lastPolicy?.routeRequired ?? true,
     confirmation: lastPolicy?.confirmation ?? input.tool.confirmation ?? "none",
+    retrySafe: input.tool.retrySafe ?? risk === "read",
     input: manifestToolInputs(input.tool.input)
   };
 }

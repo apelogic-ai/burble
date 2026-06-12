@@ -88,6 +88,7 @@ export const runtimeManifestToolSchema = z
     risk: z.enum(["read", "low_write", "moderate_write", "high_write"]),
     routeRequired: z.boolean(),
     confirmation: z.enum(["none", "explicit", "strong"]),
+    retrySafe: z.boolean().optional(),
     input: z.array(runtimeManifestToolInputSchema)
   })
   .strict();

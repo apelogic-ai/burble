@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import importlib.util
 import json
 import os
 import shutil
@@ -13,6 +14,7 @@ import time
 import uuid
 from pathlib import Path
 from typing import Any
+from urllib.parse import unquote, urlparse
 
 from aiohttp import ClientSession, ClientTimeout, web
 
@@ -25,6 +27,13 @@ from burble_runtime_contract import (
 
 
 HERMES_PLUGIN_SOURCE = Path("/runtime/hermes-plugins")
+HERMES_PROVIDER_TOOL_PLUGIN_PATHS = [
+    HERMES_PLUGIN_SOURCE / "burble-provider-tool" / "__init__.py",
+    Path(__file__).resolve().parent.parent
+    / "hermes-plugins"
+    / "burble-provider-tool"
+    / "__init__.py",
+]
 MAX_HERMES_CONTEXT_MESSAGES = 12
 MAX_HERMES_CONTEXT_MESSAGE_CHARS = 300
 MAX_HERMES_ATTACHMENT_NAME_CHARS = 120
@@ -355,6 +364,249 @@ def build_hermes_turn_text(input_body: dict[str, Any]) -> str:
     return "\n\n".join(sections)
 
 
+def reachable_manifest_tools(message: dict[str, Any]) -> list[dict[str, Any]]:
+    runtime = message.get("runtime")
+    if not isinstance(runtime, dict):
+        return []
+    manifest = runtime.get("manifest")
+    if not isinstance(manifest, dict):
+        return []
+    tools = manifest.get("tools")
+    if not isinstance(tools, list):
+        return []
+    reachable: list[dict[str, str]] = []
+    for tool in tools:
+        if not isinstance(tool, dict):
+            continue
+        if tool.get("enabled") is not True:
+            continue
+        name = str(tool.get("name") or "")
+        alias = str(tool.get("alias") or "")
+        provider = str(tool.get("provider") or "")
+        if not alias or not name or not provider:
+            continue
+        hint = hermes_provider_tool_hint(provider, name, alias)
+        normalized = normalize_burble_provider_tool_name(name)
+        if normalized != alias:
+            raise ValueError(
+                f"Hermes provider bridge normalized {name} to {normalized}, expected {alias}"
+            )
+        reachable.append({
+            "name": hint["name"],
+            "alias": hint["alias"],
+            "input": tool.get("input") if isinstance(tool.get("input"), list) else [],
+        })
+    return reachable
+
+
+def hermes_provider_tool_hint(
+    provider: str,
+    name: str,
+    alias: str,
+) -> dict[str, Any]:
+    for hint in HERMES_PROVIDER_TOOL_HINTS.get(provider, []):
+        if hint.get("name") == name and hint.get("alias") == alias:
+            return hint
+    raise ValueError(f"Hermes provider hints do not include {provider}:{name} ({alias})")
+
+
+_BURBLE_PROVIDER_TOOL_PLUGIN: Any | None = None
+
+
+def load_burble_provider_tool_plugin() -> Any:
+    global _BURBLE_PROVIDER_TOOL_PLUGIN
+    if _BURBLE_PROVIDER_TOOL_PLUGIN is None:
+        for path in HERMES_PROVIDER_TOOL_PLUGIN_PATHS:
+            if not path.exists():
+                continue
+            spec = importlib.util.spec_from_file_location(
+                "burble_provider_tool_contract_probe",
+                path,
+            )
+            if spec is None or spec.loader is None:
+                continue
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+            _BURBLE_PROVIDER_TOOL_PLUGIN = module
+            break
+    if _BURBLE_PROVIDER_TOOL_PLUGIN is None:
+        raise ValueError("Hermes provider bridge plugin is not available")
+    return _BURBLE_PROVIDER_TOOL_PLUGIN
+
+
+def normalize_burble_provider_tool_name(name: str) -> str:
+    module = load_burble_provider_tool_plugin()
+    return str(module.normalize_burble_tool_name(name))
+
+
+async def probe_hermes_provider_tool_reachability(
+    tool: dict[str, Any],
+    message: dict[str, Any],
+) -> dict[str, Any]:
+    module = load_burble_provider_tool_plugin()
+    runtime = message.get("runtime")
+    runtime_id = (
+        str(runtime.get("id") or "contract-probe-runtime")
+        if isinstance(runtime, dict)
+        else "contract-probe-runtime"
+    )
+    input_body = sample_hermes_tool_input(tool)
+    observed: dict[str, Any] = {}
+    previous_env = {
+        "BURBLE_TOOL_GATEWAY_URL": os.environ.get("BURBLE_TOOL_GATEWAY_URL"),
+        "BURBLE_INTERNAL_TOKEN": os.environ.get("BURBLE_INTERNAL_TOKEN"),
+        "BURBLE_RUNTIME_ID": os.environ.get("BURBLE_RUNTIME_ID"),
+    }
+    previous_session = getattr(module, "ClientSession")
+    previous_timeout = getattr(module, "ClientTimeout")
+    try:
+        os.environ["BURBLE_TOOL_GATEWAY_URL"] = "http://burble-contract-probe/internal/tools"
+        os.environ["BURBLE_INTERNAL_TOKEN"] = "contract-probe-token"
+        os.environ["BURBLE_RUNTIME_ID"] = runtime_id
+        module.ClientTimeout = lambda total=None: {"total": total}
+        module.ClientSession = lambda timeout=None: HermesProviderProbeSession(
+            runtime_id,
+            observed,
+        )
+        raw_result = await module._burble_provider_call(
+            {"toolName": tool["alias"], "input": input_body}
+        )
+        try:
+            content = json.loads(raw_result)
+        except Exception:
+            content = raw_result
+    finally:
+        for key, value in previous_env.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+        module.ClientSession = previous_session
+        module.ClientTimeout = previous_timeout
+
+    tool_name = observed.get("toolName")
+    tool_input = observed.get("input")
+    if not isinstance(tool_name, str) or not isinstance(tool_input, dict):
+        raise ValueError("Hermes provider bridge reachability probe did not call a tool")
+    return {
+        "toolName": tool_name,
+        "input": tool_input,
+        "content": content,
+    }
+
+
+class HermesProviderProbeSession:
+    def __init__(self, runtime_id: str, observed: dict[str, Any]) -> None:
+        self.runtime_id = runtime_id
+        self.observed = observed
+
+    async def __aenter__(self) -> "HermesProviderProbeSession":
+        return self
+
+    async def __aexit__(self, *_args: Any) -> None:
+        return None
+
+    def post(
+        self,
+        url: str,
+        *,
+        json: dict[str, Any] | None = None,
+        headers: dict[str, str] | None = None,
+    ) -> "HermesProviderProbeResponse":
+        headers = headers or {}
+        if headers.get("authorization") != "Bearer contract-probe-token":
+            return HermesProviderProbeResponse(
+                401,
+                {"message": "missing probe authorization"},
+            )
+        if headers.get("x-burble-runtime-id") != self.runtime_id:
+            return HermesProviderProbeResponse(
+                400,
+                {"message": "missing probe runtime id"},
+            )
+        if headers.get("content-type") != "application/json":
+            return HermesProviderProbeResponse(
+                400,
+                {"message": "missing probe content type"},
+            )
+        parsed = urlparse(url)
+        if not parsed.path.endswith("/execute"):
+            return HermesProviderProbeResponse(
+                400,
+                {"message": "invalid probe path"},
+            )
+        encoded_tool_name = parsed.path.removesuffix("/execute").rsplit("/", 1)[-1]
+        tool_name = unquote(encoded_tool_name)
+        input_body = json.get("input") if isinstance(json, dict) else None
+        if not tool_name or not isinstance(input_body, dict):
+            return HermesProviderProbeResponse(
+                400,
+                {"message": "invalid probe tool call"},
+            )
+        self.observed["toolName"] = tool_name
+        self.observed["input"] = input_body
+        return HermesProviderProbeResponse(
+            200,
+            {
+                "classification": "user_private",
+                "content": {
+                    "ok": True,
+                    "toolName": tool_name,
+                    "input": input_body,
+                },
+            },
+        )
+
+
+class HermesProviderProbeResponse:
+    def __init__(self, status: int, body: dict[str, Any]) -> None:
+        self.status = status
+        self.body = body
+
+    async def __aenter__(self) -> "HermesProviderProbeResponse":
+        return self
+
+    async def __aexit__(self, *_args: Any) -> None:
+        return None
+
+    async def json(self) -> dict[str, Any]:
+        return self.body
+
+    async def text(self) -> str:
+        return json.dumps(self.body, ensure_ascii=False)
+
+
+def sample_hermes_tool_input(tool: dict[str, Any]) -> dict[str, Any]:
+    output: dict[str, Any] = {}
+    fields = tool.get("input")
+    if not isinstance(fields, list):
+        return output
+    for field in fields:
+        if not isinstance(field, dict) or field.get("required") is not True:
+            continue
+        name = str(field.get("name") or "").strip()
+        if not name:
+            continue
+        output[name] = sample_hermes_tool_input_value(field)
+    return output
+
+
+def sample_hermes_tool_input_value(field: dict[str, Any]) -> Any:
+    field_type = str(field.get("type") or "")
+    if field_type == "number":
+        return 1
+    if field_type == "boolean":
+        return True
+    if field_type == "enum":
+        values = field.get("values")
+        return values[0] if isinstance(values, list) and values else "contract"
+    if field_type == "string[]":
+        return ["contract"]
+    if field_type == "object":
+        return {"contract": True}
+    return f"contract-{field.get('name') or 'value'}"
+
+
 def format_current_request_attachments(input_body: dict[str, Any]) -> str:
     attachments = input_body.get("attachments")
     if not isinstance(attachments, list) or not attachments:
@@ -642,6 +894,7 @@ class BurbleHermesRuntime:
                     "originalText": text,
                     "scheduledJob": input_body.get("scheduledJob"),
                     "attachments": input_body.get("attachments"),
+                    "runtime": body.get("runtime"),
                     "text": build_hermes_turn_text(input_body),
                     "threadId": build_hermes_thread_id(run_id, conversation),
                     "actorId": principal.get("slackUserId"),
@@ -795,6 +1048,43 @@ class BurbleHermesRuntime:
                     response = {
                         "classification": "user_private",
                         "text": "Runtime contract tool capability response.",
+                        "usage": {
+                            "inputTokens": 1,
+                            "outputTokens": 1,
+                            "totalTokens": 2,
+                            "usageSource": "contract-probe",
+                        },
+                    }
+                    await waiter.emit({"type": "message_delta", "text": response["text"]})
+                    await waiter.finish(response)
+                    return response
+                if (
+                    message.get("originalText") == "runtime contract tool reachability probe"
+                    or message.get("text") == "runtime contract tool reachability probe"
+                ):
+                    await waiter.emit({"type": "status", "text": "Runtime contract probe accepted."})
+                    for index, tool in enumerate(reachable_manifest_tools(message)):
+                        call_id = f"contract-tool-reachability-{index}"
+                        probed = await probe_hermes_provider_tool_reachability(
+                            tool,
+                            message,
+                        )
+                        await waiter.emit({
+                            "type": "tool_call",
+                            "toolName": probed["toolName"],
+                            "callId": call_id,
+                            "input": probed["input"],
+                        })
+                        await waiter.emit({
+                            "type": "tool_result",
+                            "toolName": probed["toolName"],
+                            "callId": call_id,
+                            "classification": "user_private",
+                            "content": probed["content"],
+                        })
+                    response = {
+                        "classification": "user_private",
+                        "text": "Runtime contract tool reachability response.",
                         "usage": {
                             "inputTokens": 1,
                             "outputTokens": 1,

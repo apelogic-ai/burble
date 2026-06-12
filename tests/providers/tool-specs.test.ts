@@ -83,6 +83,11 @@ describe("provider tool specs", () => {
     ).toBe("low_write");
     expect(
       googleProviderToolSpecs.find(
+        (tool) => tool.name === "google_slides_fill_placeholders"
+      )?.retrySafe
+    ).toBe(false);
+    expect(
+      googleProviderToolSpecs.find(
         (tool) => tool.name === "google_slides_create_slide"
       )?.risk
     ).toBe("low_write");

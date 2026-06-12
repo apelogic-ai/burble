@@ -441,6 +441,7 @@ tools:
     description: Fill text placeholders on an existing Google Slides presentation slide. When slideObjectId is omitted, Burble chooses the slide that best matches the requested placeholders. Use for explicit user requests to set title, subtitle, body, or similar placeholder text in a deck.
     risk: low_write
     confirmation: none
+    retrySafe: false
     input:
       presentationId:
         type: string

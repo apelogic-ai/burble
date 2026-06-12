@@ -149,6 +149,9 @@
                           "strong"
                         ]
                       },
+                      "retrySafe": {
+                        "type": "boolean"
+                      },
                       "input": {
                         "type": "array",
                         "items": {

@@ -267,6 +267,7 @@ describe("createOpenClawNemoClawAgentRunner", () => {
         risk: "read",
         routeRequired: true,
         confirmation: "none",
+        retrySafe: true,
         input: []
       }
     ];

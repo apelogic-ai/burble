@@ -1219,6 +1219,7 @@ function isRuntimeManifestToolSummary(tool: unknown): boolean {
     typeof record.risk === "string" &&
     typeof record.routeRequired === "boolean" &&
     typeof record.confirmation === "string" &&
+    (record.retrySafe === undefined || typeof record.retrySafe === "boolean") &&
     Array.isArray(record.input) &&
     record.input.every(isRuntimeManifestToolInputSummary)
   );

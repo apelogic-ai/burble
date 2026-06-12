@@ -23,6 +23,7 @@ export type RuntimeContractCheckName =
   | "final_response"
   | "usage"
   | "tool_calls"
+  | "tool_reachability"
   | "scheduled_provider_calls"
   | "attachments";
 
@@ -97,6 +98,8 @@ export async function runRuntimeContractSmokeTest(input: {
     if (manifest.toolCalls) {
       await assertToolCallCapability(input.client, request);
       checks.push({ name: "tool_calls", status: "ok" });
+      await assertToolReachability(input.client, request);
+      checks.push({ name: "tool_reachability", status: "ok" });
     }
     if (manifest.scheduledProviderCalls) {
       await assertScheduledProviderCapability(input.client, request);
@@ -201,6 +204,55 @@ async function assertScheduledProviderCapability(
       "scheduled_provider_calls",
       "runtime claims scheduledProviderCalls but emitted no matching scheduledJob.registerCapability tool_result"
     );
+  }
+}
+
+async function assertToolReachability(
+  client: RuntimeContractClient,
+  baseRequest: RuntimeRunRequest
+): Promise<void> {
+  const manifestTools = baseRequest.runtime.manifest?.tools?.filter(
+    (tool) => tool.enabled
+  );
+  if (!manifestTools?.length) {
+    return;
+  }
+
+  const runId = `${baseRequest.runId ?? "contract"}-tool-reachability`;
+  const events = await runProbe(client, {
+    ...baseRequest,
+    runId,
+    input: {
+      ...baseRequest.input,
+      text: "runtime contract tool reachability probe",
+      scheduledJob: undefined
+    }
+  });
+
+  for (const tool of manifestTools) {
+    const names = new Set([tool.name, tool.alias]);
+    const toolCall = events.find(
+      (event): event is Extract<RuntimeRunEvent, { type: "tool_call" }> =>
+        event.type === "tool_call" && names.has(event.toolName)
+    );
+    if (!toolCall) {
+      failCheck(
+        "tool_reachability",
+        `runtime did not emit a tool_call for manifest tool ${tool.name}`
+      );
+    }
+    const toolResult = events.find(
+      (event): event is Extract<RuntimeRunEvent, { type: "tool_result" }> =>
+        event.type === "tool_result" &&
+        event.toolName === toolCall.toolName &&
+        event.callId === toolCall.callId
+    );
+    if (!toolResult) {
+      failCheck(
+        "tool_reachability",
+        `runtime did not emit a matching tool_result for manifest tool ${tool.name}`
+      );
+    }
   }
 }
 

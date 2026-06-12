@@ -1,5 +1,8 @@
 import type { RuntimeConfig } from "./config";
-import { createBurbleToolExecutor } from "./burble-tools";
+import {
+  createBurbleToolExecutor,
+  probeBurbleProviderToolReachability
+} from "./burble-tools";
 import {
   runOpenClawCliRequest,
   runOpenClawCliRequestStream
@@ -49,7 +52,7 @@ export function createRuntimeRunner(
       executeTool = createBurbleToolExecutor(config, request.runtime?.id, request)
     ) {
       if (config.contractProbeMode) {
-        yield* streamRuntimeContractProbe(request);
+        yield* streamRuntimeContractProbe(request, config);
         return;
       }
       const effectiveConfig = resolveRuntimeConfigForRequest(config, request);
@@ -64,6 +67,8 @@ function runtimeContractProbeResponse(
 ): RunResponse["response"] {
   const text = request?.input.scheduledJob
     ? "Runtime contract scheduled provider capability response."
+    : request?.input.text === "runtime contract tool reachability probe"
+      ? "Runtime contract tool reachability response."
     : request?.input.text === "runtime contract tool capability probe"
       ? "Runtime contract tool capability response."
       : "Runtime contract probe response.";
@@ -80,7 +85,8 @@ function runtimeContractProbeResponse(
 }
 
 async function* streamRuntimeContractProbe(
-  request: Pick<RunRequest, "input">
+  request: Pick<RunRequest, "input" | "runtime">,
+  config: RuntimeConfig
 ): AsyncIterable<RunEvent> {
   yield { type: "status", text: "Runtime contract probe accepted." };
   if (request.input.scheduledJob) {
@@ -107,6 +113,28 @@ async function* streamRuntimeContractProbe(
       callId: "contract-tool-probe",
       classification: "user_private"
     };
+  } else if (request.input.text === "runtime contract tool reachability probe") {
+    for (const [index, tool] of reachableManifestTools(request).entries()) {
+      const callId = `contract-tool-reachability-${index}`;
+      const probed = await probeBurbleProviderToolReachability(
+        tool.alias,
+        request,
+        config
+      );
+      yield {
+        type: "tool_call",
+        toolName: probed.toolName,
+        callId,
+        input: probed.input
+      };
+      yield {
+        type: "tool_result",
+        toolName: probed.toolName,
+        callId,
+        classification: "user_private",
+        content: probed.content
+      };
+    }
   } else if (
     request.input.text === "runtime contract attachment capability probe"
   ) {
@@ -130,6 +158,14 @@ async function* streamRuntimeContractProbe(
   const response = runtimeContractProbeResponse(request);
   yield { type: "message_delta", text: response.text };
   yield { type: "final", response };
+}
+
+function reachableManifestTools(
+  request: Pick<RunRequest, "runtime">
+): Array<{ alias: string }> {
+  return (request.runtime?.manifest?.tools ?? [])
+    .filter((tool) => tool.enabled === true && tool.alias.length > 0)
+    .map((tool) => ({ alias: tool.alias }));
 }
 
 export function resolveRuntimeConfigForRequest(

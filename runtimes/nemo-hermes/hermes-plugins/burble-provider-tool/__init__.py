@@ -34,7 +34,7 @@ TOOL_NAME_ALIASES = {
     "google_get_drive_file": "google.getDriveFile",
     "google_create_drive_text_file": "google.createDriveTextFile",
     "google_update_drive_text_file": "google.updateDriveTextFile",
-    "google_append_to_drive_text_file": "google.appendToDriveTextFile",
+    "google_append_to_drive_text_file": "google.appendDriveTextFile",
     "google_create_drive_folder": "google.createDriveFolder",
     "google_move_drive_file": "google.moveDriveFile",
     "google_search_calendar_events": "google.searchCalendarEvents",

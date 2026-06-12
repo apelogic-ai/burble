@@ -151,6 +151,7 @@ describe("buildRuntimeManifest", () => {
         risk: "moderate_write",
         routeRequired: true,
         confirmation: "explicit",
+        retrySafe: false,
         input: []
       },
       {
@@ -163,6 +164,7 @@ describe("buildRuntimeManifest", () => {
         risk: "read",
         routeRequired: true,
         confirmation: "none",
+        retrySafe: true,
         input: []
       },
       {
@@ -175,6 +177,7 @@ describe("buildRuntimeManifest", () => {
         risk: "read",
         routeRequired: true,
         confirmation: "none",
+        retrySafe: true,
         input: [
           {
             name: "maxResults",
@@ -326,7 +329,8 @@ describe("buildRuntimeManifest", () => {
       manifest.tools.find((tool) => tool.name === "github_create_pr")
     ).toMatchObject({
       risk: "moderate_write",
-      confirmation: "none"
+      confirmation: "none",
+      retrySafe: false
     });
   });
 
