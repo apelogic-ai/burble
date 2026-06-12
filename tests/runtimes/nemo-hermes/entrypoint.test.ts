@@ -597,7 +597,19 @@ asyncio.run(main())
     expect(typed.reachabilityEvents).toContainEqual({
       type: "tool_call",
       toolName: "github.getAuthenticatedUser",
-      callId: "contract-tool-reachability-0"
+      callId: "contract-tool-reachability-0",
+      input: {}
+    });
+    expect(typed.reachabilityEvents).toContainEqual({
+      type: "tool_result",
+      toolName: "github.getAuthenticatedUser",
+      callId: "contract-tool-reachability-0",
+      classification: "user_private",
+      content: {
+        ok: true,
+        toolName: "github.getAuthenticatedUser",
+        input: {}
+      }
     });
     expect(JSON.stringify(typed.reachabilityEvents)).not.toContain(
       "github.createIssue"
