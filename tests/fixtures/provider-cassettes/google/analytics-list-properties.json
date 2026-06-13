@@ -1,0 +1,33 @@
+{
+  "name": "google.analytics.list-properties",
+  "interactions": [
+    {
+      "request": {
+        "method": "GET",
+        "url": "https://analyticsadmin.googleapis.com/v1beta/accountSummaries?pageSize=5&fields=accountSummaries%28account%2CdisplayName%2CpropertySummaries%28property%2CdisplayName%2Cparent%2CpropertyType%29%29",
+        "headers": {
+          "authorization": "Bearer google-token"
+        }
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "accountSummaries": [
+            {
+              "account": "accounts/123",
+              "displayName": "ApeLogic",
+              "propertySummaries": [
+                {
+                  "property": "properties/456",
+                  "displayName": "Website",
+                  "parent": "accounts/123",
+                  "propertyType": "PROPERTY_TYPE_ORDINARY"
+                }
+              ]
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

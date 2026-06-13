@@ -1,0 +1,69 @@
+{
+  "name": "google.analytics.run-report",
+  "interactions": [
+    {
+      "request": {
+        "method": "POST",
+        "url": "https://analyticsdata.googleapis.com/v1beta/properties/456:runReport",
+        "headers": {
+          "authorization": "Bearer google-token",
+          "content-type": "application/json"
+        },
+        "bodyJson": {
+          "dateRanges": [
+            {
+              "startDate": "7daysAgo",
+              "endDate": "today"
+            }
+          ],
+          "metrics": [
+            {
+              "name": "activeUsers"
+            }
+          ],
+          "dimensions": [
+            {
+              "name": "country"
+            }
+          ],
+          "limit": "3"
+        }
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "dimensionHeaders": [
+            {
+              "name": "country"
+            }
+          ],
+          "metricHeaders": [
+            {
+              "name": "activeUsers",
+              "type": "TYPE_INTEGER"
+            }
+          ],
+          "rows": [
+            {
+              "dimensionValues": [
+                {
+                  "value": "US"
+                }
+              ],
+              "metricValues": [
+                {
+                  "value": "42"
+                }
+              ]
+            }
+          ],
+          "rowCount": 1,
+          "metadata": {
+            "currencyCode": "USD",
+            "timeZone": "America/Los_Angeles"
+          }
+        }
+      }
+    }
+  ]
+}

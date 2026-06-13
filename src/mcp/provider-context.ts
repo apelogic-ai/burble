@@ -5,16 +5,13 @@ import type { HubSpotToolDeps } from "../tools/hubspot";
 import type { JiraToolDeps } from "../tools/jira";
 import type { SlackToolDeps } from "../tools/slack";
 import type { ToolResult } from "../tools/types";
+import {
+  providerDescriptor,
+  type ProviderDescriptorId
+} from "../providers/descriptors";
 import type { UpstreamMcpTool, UpstreamMcpToolResult } from "./upstream-http-client";
 
-export type ProviderMcpScope =
-  | "all"
-  | "github"
-  | "google"
-  | "hubspot"
-  | "jira"
-  | "slack"
-  | "atlassian";
+export type ProviderMcpScope = "all" | ProviderDescriptorId;
 
 export type ProviderMcpDeps = Partial<GitHubToolDeps> &
   Partial<GoogleToolDeps> &
@@ -48,15 +45,8 @@ export async function withConnection<TContent>(
       content: {
         error: `${provider}_not_connected`,
         message:
-          provider === "github"
-            ? "Connect GitHub first."
-            : provider === "google"
-              ? "Connect Google first: `/auth google`."
-            : provider === "hubspot"
-              ? "Connect HubSpot first: `/auth hubspot`."
-            : provider === "jira"
-              ? "Connect Jira first."
-              : "Connect Slack search first: `/auth slack`."
+          providerDescriptor(provider)?.missingConnectionText ??
+          `Connect ${provider} first.`
       }
     };
   }

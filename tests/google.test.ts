@@ -1,5 +1,11 @@
 import { describe, expect, test } from "bun:test";
+import analyticsGetMetadataCassette from "./fixtures/provider-cassettes/google/analytics-get-metadata.json";
+import analyticsListPropertiesCassette from "./fixtures/provider-cassettes/google/analytics-list-properties.json";
+import analyticsRunReportCassette from "./fixtures/provider-cassettes/google/analytics-run-report.json";
+import slidesPresentationCassette from "./fixtures/provider-cassettes/google/slides-presentation.json";
+import { withProviderCassette } from "./helpers/provider-cassettes";
 import type { Config } from "../src/config";
+import { googleProviderToolSpecs } from "../src/providers/google/tool-specs";
 import {
   buildGoogleOAuthUrl,
   exchangeGoogleCode,
@@ -17,6 +23,15 @@ import {
   searchGoogleDriveFiles,
   searchGoogleSlidesPresentations
 } from "../src/providers/google/client";
+import type { ProviderCassette } from "./helpers/provider-cassettes";
+
+const googleProviderApiCassetteToolNames = [
+  "google_analytics_get_metadata",
+  "google_analytics_list_properties",
+  "google_analytics_run_report",
+  "google_slides_get_presentation",
+  "google_slides_probe_template"
+].sort();
 
 const config: Config = {
   slackBotToken: "xoxb-test",
@@ -166,6 +181,20 @@ describe("buildGoogleOAuthUrl", () => {
 });
 
 describe("Google OAuth and API helpers", () => {
+  test("keeps provider API cassette coverage for Google Analytics and Slides template reads", () => {
+    const requiredToolNames = googleProviderToolSpecs
+      .filter(
+        (tool) =>
+          tool.name.startsWith("google_analytics_") ||
+          tool.name === "google_slides_get_presentation" ||
+          tool.name === "google_slides_probe_template"
+      )
+      .map((tool) => tool.name)
+      .sort();
+
+    expect(googleProviderApiCassetteToolNames).toEqual(requiredToolNames);
+  });
+
   test("exchanges an OAuth code", async () => {
     const originalFetch = globalThis.fetch;
     globalThis.fetch = (async (input, init) => {
@@ -263,153 +292,109 @@ describe("Google OAuth and API helpers", () => {
   });
 
   test("lists Google Analytics properties through the Admin API", async () => {
-    const originalFetch = globalThis.fetch;
-    let requestedUrl = "";
-    globalThis.fetch = (async (input, init) => {
-      requestedUrl = String(input);
-      expect(new Headers(init?.headers).get("authorization")).toBe(
-        "Bearer google-token"
-      );
-      return Response.json({
-        accountSummaries: [
+    await withProviderCassette(
+      analyticsListPropertiesCassette as ProviderCassette,
+      async (cassette) => {
+        const properties = await listGoogleAnalyticsProperties("google-token", {
+          limit: 5
+        });
+        expect(properties).toEqual([
           {
             account: "accounts/123",
-            displayName: "ApeLogic",
-            propertySummaries: [
-              {
-                property: "properties/456",
-                displayName: "Website",
-                parent: "accounts/123",
-                propertyType: "PROPERTY_TYPE_ORDINARY"
-              }
-            ]
+            accountDisplayName: "ApeLogic",
+            property: "properties/456",
+            propertyId: "456",
+            displayName: "Website",
+            parent: "accounts/123",
+            propertyType: "PROPERTY_TYPE_ORDINARY"
           }
-        ]
-      });
-    }) as typeof fetch;
-
-    try {
-      const properties = await listGoogleAnalyticsProperties("google-token", {
-        limit: 5
-      });
-      expect(properties).toEqual([
-        {
-          account: "accounts/123",
-          accountDisplayName: "ApeLogic",
-          property: "properties/456",
-          propertyId: "456",
-          displayName: "Website",
-          parent: "accounts/123",
-          propertyType: "PROPERTY_TYPE_ORDINARY"
-        }
-      ]);
-      const url = new URL(requestedUrl);
-      expect(url.origin + url.pathname).toBe(
-        "https://analyticsadmin.googleapis.com/v1beta/accountSummaries"
-      );
-      expect(url.searchParams.get("pageSize")).toBe("5");
-      expect(url.searchParams.get("fields")).toBe(
-        "accountSummaries(account,displayName,propertySummaries(property,displayName,parent,propertyType))"
-      );
-    } finally {
-      globalThis.fetch = originalFetch;
-    }
+        ]);
+        cassette.assertComplete();
+        const url = new URL(cassette.requests[0]?.url ?? "");
+        expect(url.origin + url.pathname).toBe(
+          "https://analyticsadmin.googleapis.com/v1beta/accountSummaries"
+        );
+        expect(url.searchParams.get("pageSize")).toBe("5");
+        expect(url.searchParams.get("fields")).toBe(
+          "accountSummaries(account,displayName,propertySummaries(property,displayName,parent,propertyType))"
+        );
+      }
+    );
   });
 
   test("reads and filters Google Analytics metadata", async () => {
-    const originalFetch = globalThis.fetch;
-    let requestedUrl = "";
-    globalThis.fetch = (async (input) => {
-      requestedUrl = String(input);
-      return Response.json({
-        dimensions: [
-          { apiName: "country", uiName: "Country", category: "Geo" },
-          { apiName: "browser", uiName: "Browser", category: "Platform" }
-        ],
-        metrics: [
-          { apiName: "activeUsers", uiName: "Active users", category: "User" },
-          { apiName: "sessions", uiName: "Sessions", category: "Session" }
-        ]
-      });
-    }) as typeof fetch;
-
-    try {
-      const metadata = await getGoogleAnalyticsMetadata("google-token", {
-        propertyId: "properties/456",
-        dimensionQuery: "geo",
-        metricQuery: "session",
-        limit: 10
-      });
-      expect(metadata).toEqual({
-        dimensions: [{ apiName: "country", uiName: "Country", category: "Geo" }],
-        metrics: [{ apiName: "sessions", uiName: "Sessions", category: "Session" }]
-      });
-      const url = new URL(requestedUrl);
-      expect(url.origin + url.pathname).toBe(
-        "https://analyticsdata.googleapis.com/v1beta/properties/456/metadata"
-      );
-    } finally {
-      globalThis.fetch = originalFetch;
-    }
+    await withProviderCassette(
+      analyticsGetMetadataCassette as ProviderCassette,
+      async (cassette) => {
+        const metadata = await getGoogleAnalyticsMetadata("google-token", {
+          propertyId: "properties/456",
+          dimensionQuery: "geo",
+          metricQuery: "session",
+          limit: 10
+        });
+        expect(metadata).toEqual({
+          dimensions: [
+            {
+              apiName: "country",
+              uiName: "Country",
+              description: "The country from which activity originated.",
+              category: "Geo"
+            }
+          ],
+          metrics: [
+            {
+              apiName: "sessions",
+              uiName: "Sessions",
+              description: "The number of sessions that began.",
+              category: "Session"
+            }
+          ]
+        });
+        cassette.assertComplete();
+        const url = new URL(cassette.requests[0]?.url ?? "");
+        expect(url.origin + url.pathname).toBe(
+          "https://analyticsdata.googleapis.com/v1beta/properties/456/metadata"
+        );
+      }
+    );
   });
 
   test("runs a Google Analytics report through the Data API", async () => {
-    const originalFetch = globalThis.fetch;
-    let requestedUrl = "";
-    let requestedBody: unknown = null;
-    globalThis.fetch = (async (input, init) => {
-      requestedUrl = String(input);
-      requestedBody = JSON.parse(String(init?.body));
-      expect(init?.method).toBe("POST");
-      expect(new Headers(init?.headers).get("authorization")).toBe(
-        "Bearer google-token"
-      );
-      return Response.json({
-        dimensionHeaders: [{ name: "country" }],
-        metricHeaders: [{ name: "activeUsers" }],
-        rows: [
-          {
-            dimensionValues: [{ value: "US" }],
-            metricValues: [{ value: "42" }]
-          }
-        ],
-        rowCount: 1
-      });
-    }) as typeof fetch;
-
-    try {
-      const report = await runGoogleAnalyticsReport("google-token", {
-        propertyId: "456",
-        startDate: "7daysAgo",
-        endDate: "today",
-        dimensions: ["country"],
-        metrics: ["activeUsers"],
-        limit: 3
-      });
-      expect(report).toEqual({
-        propertyId: "456",
-        dimensionHeaders: ["country"],
-        metricHeaders: ["activeUsers"],
-        rows: [
-          {
-            dimensions: { country: "US" },
-            metrics: { activeUsers: "42" }
-          }
-        ],
-        rowCount: 1
-      });
-      expect(requestedUrl).toBe(
-        "https://analyticsdata.googleapis.com/v1beta/properties/456:runReport"
-      );
-      expect(requestedBody).toEqual({
-        dateRanges: [{ startDate: "7daysAgo", endDate: "today" }],
-        metrics: [{ name: "activeUsers" }],
-        dimensions: [{ name: "country" }],
-        limit: "3"
-      });
-    } finally {
-      globalThis.fetch = originalFetch;
-    }
+    await withProviderCassette(
+      analyticsRunReportCassette as ProviderCassette,
+      async (cassette) => {
+        const report = await runGoogleAnalyticsReport("google-token", {
+          propertyId: "456",
+          startDate: "7daysAgo",
+          endDate: "today",
+          dimensions: ["country"],
+          metrics: ["activeUsers"],
+          limit: 3
+        });
+        expect(report).toEqual({
+          propertyId: "456",
+          dimensionHeaders: ["country"],
+          metricHeaders: ["activeUsers"],
+          rows: [
+            {
+              dimensions: { country: "US" },
+              metrics: { activeUsers: "42" }
+            }
+          ],
+          rowCount: 1
+        });
+        cassette.assertComplete();
+        expect(cassette.requests[0]?.url).toBe(
+          "https://analyticsdata.googleapis.com/v1beta/properties/456:runReport"
+        );
+        expect(cassette.requests[0]?.bodyJson).toEqual({
+          dateRanges: [{ startDate: "7daysAgo", endDate: "today" }],
+          metrics: [{ name: "activeUsers" }],
+          dimensions: [{ name: "country" }],
+          limit: "3"
+        });
+      }
+    );
   });
 
   test("rejects Google Analytics reports with too-wide date ranges before fetching", async () => {
@@ -1104,193 +1089,186 @@ describe("Google OAuth and API helpers", () => {
   });
 
   test("reads sanitized Google Slides presentation structure", async () => {
-    const originalFetch = globalThis.fetch;
-    let requestedUrl = "";
-    globalThis.fetch = (async (input, init) => {
-      requestedUrl = String(input);
-      expect(new Headers(init?.headers).get("authorization")).toBe(
-        "Bearer google-token"
-      );
-      return Response.json({
-        presentationId: "deck-1",
-        title: "QBR",
-        layouts: [
-          {
-            objectId: "layout-title-body",
-            layoutProperties: { displayName: "Title and Body" },
-            pageElements: [
-              {
-                objectId: "layout-title",
-                shape: {
-                  shapeType: "TEXT_BOX",
-                  placeholder: { type: "TITLE", index: 0 },
-                  text: {
-                    textElements: [{ textRun: { content: "Title\n" } }]
-                  }
+    await withProviderCassette(
+      slidesPresentationCassette as ProviderCassette,
+      async (cassette) => {
+        const presentation = await getGoogleSlidesPresentation("google-token", {
+          presentationId: "deck-1"
+        });
+        expect(presentation).toEqual({
+          presentationId: "deck-1",
+          title: "ApeLogic Presentation Template",
+          layouts: [
+            {
+              objectId: "layout-title",
+              name: "Title slide",
+              slots: [
+                {
+                  role: "title",
+                  objectId: "layout-centered-title",
+                  placeholder: { type: "CENTERED_TITLE", index: 0 }
+                },
+                {
+                  role: "subtitle",
+                  objectId: "layout-subtitle",
+                  placeholder: { type: "SUBTITLE", index: 0 }
                 }
-              },
-              {
-                objectId: "layout-body",
-                shape: {
+              ],
+              elements: [
+                {
+                  objectId: "layout-centered-title",
+                  elementType: "shape",
+                  shapeType: "TEXT_BOX",
+                  placeholder: { type: "CENTERED_TITLE", index: 0 },
+                  text: "Click to add title"
+                },
+                {
+                  objectId: "layout-subtitle",
+                  elementType: "shape",
+                  shapeType: "TEXT_BOX",
+                  placeholder: { type: "SUBTITLE", index: 0 }
+                }
+              ]
+            },
+            {
+              objectId: "layout-two-column",
+              name: "Title and two columns",
+              slots: [
+                {
+                  role: "title",
+                  objectId: "layout-two-column-title",
+                  placeholder: { type: "TITLE", index: 0 }
+                },
+                {
+                  role: "body",
+                  objectId: "layout-left-body",
+                  placeholder: { type: "BODY", index: 0 }
+                },
+                {
+                  role: "body_2",
+                  objectId: "layout-right-body",
+                  placeholder: { type: "BODY", index: 1 }
+                }
+              ],
+              elements: [
+                {
+                  objectId: "layout-two-column-title",
+                  elementType: "shape",
+                  shapeType: "TEXT_BOX",
+                  placeholder: { type: "TITLE", index: 0 }
+                },
+                {
+                  objectId: "layout-left-body",
+                  elementType: "shape",
                   shapeType: "TEXT_BOX",
                   placeholder: { type: "BODY", index: 0 }
-                }
-              }
-            ]
-          }
-        ],
-        slides: [
-          {
-            objectId: "slide-1",
-            slideProperties: { layoutObjectId: "layout-title-body" },
-            pageElements: [
-              {
-                objectId: "slide-title",
-                shape: {
+                },
+                {
+                  objectId: "layout-right-body",
+                  elementType: "shape",
                   shapeType: "TEXT_BOX",
-                  text: {
-                    textElements: [{ textRun: { content: "Revenue update\n" } }]
-                  }
+                  placeholder: { type: "BODY", index: 1 }
                 }
-              }
-            ]
-          }
-        ]
-      });
-    }) as typeof fetch;
-
-    try {
-      const presentation = await getGoogleSlidesPresentation("google-token", {
-        presentationId: "deck-1"
-      });
-      expect(presentation).toEqual({
-        presentationId: "deck-1",
-        title: "QBR",
-        layouts: [
-          {
-            objectId: "layout-title-body",
-            name: "Title and Body",
-            slots: [
-              {
-                role: "title",
-                objectId: "layout-title",
-                placeholder: { type: "TITLE", index: 0 }
-              },
-              {
-                role: "body",
-                objectId: "layout-body",
-                placeholder: { type: "BODY", index: 0 }
-              }
-            ],
-            elements: [
-              {
-                objectId: "layout-title",
-                elementType: "shape",
-                shapeType: "TEXT_BOX",
-                placeholder: { type: "TITLE", index: 0 },
-                text: "Title"
-              },
-              {
-                objectId: "layout-body",
-                elementType: "shape",
-                shapeType: "TEXT_BOX",
-                placeholder: { type: "BODY", index: 0 }
-              }
-            ]
-          }
-        ],
-        slides: [
-          {
-            objectId: "slide-1",
-            layoutObjectId: "layout-title-body",
-            elements: [
-              {
-                objectId: "slide-title",
-                elementType: "shape",
-                shapeType: "TEXT_BOX",
-                text: "Revenue update"
-              }
-            ]
-          }
-        ]
-      });
-      const url = new URL(requestedUrl);
-      expect(url.origin + url.pathname).toBe(
-        "https://slides.googleapis.com/v1/presentations/deck-1"
-      );
-    } finally {
-      globalThis.fetch = originalFetch;
-    }
+              ]
+            }
+          ],
+          slides: [
+            {
+              objectId: "slide-title",
+              layoutObjectId: "layout-title",
+              elements: [
+                {
+                  objectId: "slide-title-shape",
+                  elementType: "shape",
+                  shapeType: "TEXT_BOX",
+                  placeholder: {
+                    type: "CENTERED_TITLE",
+                    index: 0,
+                    parentObjectId: "layout-centered-title"
+                  },
+                  text: "ApeLogic"
+                },
+                {
+                  objectId: "slide-subtitle-shape",
+                  elementType: "shape",
+                  shapeType: "TEXT_BOX",
+                  placeholder: {
+                    type: "SUBTITLE",
+                    index: 0,
+                    parentObjectId: "layout-subtitle"
+                  }
+                },
+                {
+                  objectId: "slide-logo",
+                  elementType: "image",
+                  imageContentUrl:
+                    "https://lh3.googleusercontent.com/template-logo"
+                }
+              ]
+            }
+          ]
+        });
+        cassette.assertComplete();
+        const url = new URL(cassette.requests[0]?.url ?? "");
+        expect(url.origin + url.pathname).toBe(
+          "https://slides.googleapis.com/v1/presentations/deck-1"
+        );
+      }
+    );
   });
 
   test("probes Google Slides layout placeholders into a template manifest", async () => {
-    const originalFetch = globalThis.fetch;
-    globalThis.fetch = (async (_input, _init) =>
-      Response.json({
-        presentationId: "deck-1",
-        title: "Template",
-        layouts: [
-          {
-            objectId: "layout-1",
-            layoutProperties: { displayName: "Two Column" },
-            pageElements: [
-              {
-                objectId: "slot-title",
-                shape: {
+    await withProviderCassette(
+      slidesPresentationCassette as ProviderCassette,
+      async (cassette) => {
+        const probe = await probeGoogleSlidesTemplate("google-token", {
+          presentationId: "deck-1"
+        });
+        expect(probe).toEqual({
+          presentationId: "deck-1",
+          title: "ApeLogic Presentation Template",
+          layouts: [
+            {
+              layoutId: "layout-title",
+              name: "Title slide",
+              slots: [
+                {
+                  role: "title",
+                  objectId: "layout-centered-title",
+                  placeholder: { type: "CENTERED_TITLE", index: 0 }
+                },
+                {
+                  role: "subtitle",
+                  objectId: "layout-subtitle",
+                  placeholder: { type: "SUBTITLE", index: 0 }
+                }
+              ]
+            },
+            {
+              layoutId: "layout-two-column",
+              name: "Title and two columns",
+              slots: [
+                {
+                  role: "title",
+                  objectId: "layout-two-column-title",
                   placeholder: { type: "TITLE", index: 0 }
-                }
-              },
-              {
-                objectId: "slot-body-left",
-                shape: {
+                },
+                {
+                  role: "body",
+                  objectId: "layout-left-body",
                   placeholder: { type: "BODY", index: 0 }
-                }
-              },
-              {
-                objectId: "slot-body-right",
-                shape: {
+                },
+                {
+                  role: "body_2",
+                  objectId: "layout-right-body",
                   placeholder: { type: "BODY", index: 1 }
                 }
-              }
-            ]
-          }
-        ],
-        slides: [{ objectId: "slide-ignored" }]
-      })) as typeof fetch;
-
-    try {
-      const probe = await probeGoogleSlidesTemplate("google-token", {
-        presentationId: "deck-1"
-      });
-      expect(probe).toEqual({
-        presentationId: "deck-1",
-        title: "Template",
-        layouts: [
-          {
-            layoutId: "layout-1",
-            name: "Two Column",
-            slots: [
-              {
-                role: "title",
-                objectId: "slot-title",
-                placeholder: { type: "TITLE", index: 0 }
-              },
-              {
-                role: "body",
-                objectId: "slot-body-left",
-                placeholder: { type: "BODY", index: 0 }
-              },
-              {
-                role: "body_2",
-                objectId: "slot-body-right",
-                placeholder: { type: "BODY", index: 1 }
-              }
-            ]
-          }
-        ]
-      });
-    } finally {
-      globalThis.fetch = originalFetch;
-    }
+              ]
+            }
+          ]
+        });
+        cassette.assertComplete();
+      }
+    );
   });
 });

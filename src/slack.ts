@@ -67,6 +67,11 @@ import {
   searchSlackMessages,
   searchSlackUsers
 } from "./providers/slack/client";
+import {
+  connectedProviderDescriptors,
+  connectedProviderIds,
+  isConnectedProviderId
+} from "./providers/descriptors";
 import type {
   AgentRuntimeRecord,
   AgentRuntimeEngine,
@@ -385,13 +390,7 @@ export function createSlackRuntime(
         config,
         store.createOAuthState(input.slackUserId)
       ),
-      connections: {
-        github: store.getConnectionForSlackUser("github", input.slackUserId),
-        google: store.getConnectionForSlackUser("google", input.slackUserId),
-        hubspot: store.getConnectionForSlackUser("hubspot", input.slackUserId),
-        jira: store.getConnectionForSlackUser("jira", input.slackUserId),
-        slack: store.getConnectionForSlackUser("slack", input.slackUserId)
-      },
+      connections: providerConnectionsForUser(store, input.slackUserId),
       agentSettings
     });
   };
@@ -1142,25 +1141,7 @@ export function createSlackRuntime(
                   hubspotUrl,
                   jiraUrl,
                   slackUrl,
-                  connections: {
-                    github: store.getConnectionForSlackUser(
-                      "github",
-                      body.user_id
-                    ),
-                    google: store.getConnectionForSlackUser(
-                      "google",
-                      body.user_id
-                    ),
-                    hubspot: store.getConnectionForSlackUser(
-                      "hubspot",
-                      body.user_id
-                    ),
-                    jira: store.getConnectionForSlackUser("jira", body.user_id),
-                    slack: store.getConnectionForSlackUser(
-                      "slack",
-                      body.user_id
-                    )
-                  }
+                  connections: providerConnectionsForUser(store, body.user_id)
                 })
       );
     } catch (error) {
@@ -2062,11 +2043,7 @@ type ProviderConnectionViewInput = {
   jiraUrl: string | null;
   slackUrl: string | null;
   connections?: {
-    github: ProviderConnection | null;
-    google: ProviderConnection | null;
-    hubspot: ProviderConnection | null;
-    jira: ProviderConnection | null;
-    slack: ProviderConnection | null;
+    [provider in Provider]?: ProviderConnection | null;
   };
   agentSettings?: AgentHomeSettingsView;
 };
@@ -2103,6 +2080,18 @@ type AgentHomeSettingsView = {
     lastUsedAt: string | null;
   };
 };
+
+function providerConnectionsForUser(
+  store: TokenStore,
+  slackUserId: string
+): ProviderConnectionViewInput["connections"] {
+  return Object.fromEntries(
+    connectedProviderIds.map((provider) => [
+      provider,
+      store.getConnectionForSlackUser(provider, slackUserId)
+    ])
+  ) as ProviderConnectionViewInput["connections"];
+}
 
 export function buildAppHomeView(input: ProviderConnectionViewInput): View {
   return {
@@ -2188,66 +2177,24 @@ export function buildAuthResponse(input: ProviderConnectionViewInput) {
 }
 
 function buildProviderConnectionBlocks(input: ProviderConnectionViewInput) {
-  return [
-    buildProviderConnectionBlock({
-      provider: "github",
-      title: "GitHub",
-      status: formatConnectionStatus(input.connections?.github, "github"),
-      configured: true,
-      url: input.githubUrl,
-      connected: Boolean(input.connections?.github),
-      actionId: "connect_github",
-      usage: "Issues, pull requests, repository metadata and approved write actions"
-    }),
-    buildProviderConnectionBlock({
-      provider: "google",
-      title: "Google Workspace",
-      status: input.googleUrl
-        ? formatConnectionStatus(input.connections?.google, "google")
-        : "Google OAuth is not configured.",
-      configured: Boolean(input.googleUrl),
-      url: input.googleUrl,
-      connected: Boolean(input.connections?.google),
-      actionId: "connect_google",
-      usage: "Drive files, Calendar events, Gmail search and drafts"
-    }),
-    buildProviderConnectionBlock({
-      provider: "hubspot",
-      title: "HubSpot",
-      status: input.hubspotUrl
-        ? formatConnectionStatus(input.connections?.hubspot, "hubspot")
-        : "HubSpot OAuth is not configured.",
-      configured: Boolean(input.hubspotUrl),
-      url: input.hubspotUrl,
-      connected: Boolean(input.connections?.hubspot),
-      actionId: "connect_hubspot",
-      usage: "CRM users, owners, contacts, companies, deals and scoped CRM records"
-    }),
-    buildProviderConnectionBlock({
-      provider: "jira",
-      title: "Atlassian Jira",
-      status: input.jiraUrl
-        ? formatConnectionStatus(input.connections?.jira, "jira")
-        : "Jira OAuth is not configured.",
-      configured: Boolean(input.jiraUrl),
-      url: input.jiraUrl,
-      connected: Boolean(input.connections?.jira),
-      actionId: "connect_jira",
-      usage: "Jira issues, projects, users, comments and approved workflow actions"
-    }),
-    buildProviderConnectionBlock({
-      provider: "slack",
-      title: "Slack search",
-      status: input.slackUrl
-        ? formatConnectionStatus(input.connections?.slack, "slack")
-        : "Slack OAuth is not configured.",
-      configured: Boolean(input.slackUrl),
-      url: input.slackUrl,
-      connected: Boolean(input.connections?.slack),
-      actionId: "connect_slack",
-      usage: "User search and message search through your Slack identity"
+  return connectedProviderDescriptors
+    .map((descriptor) => {
+      const url = input[descriptor.authUrlInputKey];
+      const connection = input.connections?.[descriptor.id] ?? null;
+      return buildProviderConnectionBlock({
+        provider: descriptor.id,
+        title: descriptor.connectionTitle,
+        status: url
+          ? formatConnectionStatus(connection, descriptor.id)
+          : descriptor.oauthNotConfiguredText,
+        configured: Boolean(url),
+        url,
+        connected: Boolean(connection),
+        actionId: `connect_${descriptor.authCommand}`,
+        usage: descriptor.usage
+      });
     })
-  ].flat();
+    .flat();
 }
 
 export function buildAgentHomeSettings(input: {
@@ -4097,13 +4044,7 @@ export async function applyAgentRuntimeEngineSelection(input: {
 }
 
 function isDisconnectableProvider(value: unknown): value is Provider {
-  return (
-    value === "github" ||
-    value === "google" ||
-    value === "hubspot" ||
-    value === "jira" ||
-    value === "slack"
-  );
+  return typeof value === "string" && isConnectedProviderId(value);
 }
 
 export async function restartAgentRuntimeIfConfigChanged(input: {

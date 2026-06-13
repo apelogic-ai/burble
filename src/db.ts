@@ -4,6 +4,7 @@ import {
   isAgentRuntimeEngine,
   type AgentRuntimeEngine
 } from "./runtime-engines";
+import type { ConnectedProviderId } from "./providers/descriptors";
 export type { AgentRuntimeEngine } from "./runtime-engines";
 
 export type OAuthState = {
@@ -20,7 +21,7 @@ export type ConnectedUser = {
   connectedAt: string;
 };
 
-export type Provider = "github" | "jira" | "slack" | "google" | "hubspot";
+export type Provider = ConnectedProviderId;
 
 export type ProviderConnection = {
   provider: Provider;

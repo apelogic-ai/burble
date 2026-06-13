@@ -14,6 +14,11 @@ import { exchangeSlackCode } from "./providers/slack/client";
 import type { SlackRuntime } from "./slack";
 import { handleToolGatewayRequest } from "./tool-gateway";
 import type { ObservabilitySink } from "./observability";
+import {
+  isProviderDescriptorId,
+  providerDescriptorIds,
+  type ProviderDescriptorId
+} from "./providers/descriptors";
 
 export type GitHubOAuthDeps = {
   exchangeGitHubCode: typeof exchangeGitHubCode;
@@ -63,6 +68,10 @@ const defaultSlackOAuthDeps: SlackOAuthDeps = {
   exchangeSlackCode
 };
 
+const providerMcpRoutePattern = new RegExp(
+  `^/mcp(?:/(${providerDescriptorIds.join("|")}))?$`
+);
+
 export function startOAuthServer(
   config: Config,
   store: TokenStore,
@@ -83,24 +92,16 @@ export function startOAuthServer(
         return jsonResponse(runtimeJwtIssuer.jwks());
       }
 
-      const providerMcpMatch = url.pathname.match(
-        /^\/mcp(?:\/(github|google|hubspot|jira|slack|atlassian))?$/
-      );
+      const providerMcpMatch = url.pathname.match(providerMcpRoutePattern);
       if (providerMcpMatch) {
+        const providerScope = providerMcpScopeFromPath(providerMcpMatch[1]);
         return handleProviderMcpRequest(
           config,
           store,
           runtimeJwtIssuer,
           request,
           {},
-          (providerMcpMatch[1] ?? "all") as
-            | "all"
-            | "github"
-            | "google"
-            | "hubspot"
-            | "jira"
-            | "slack"
-            | "atlassian"
+          providerScope
         );
       }
 
@@ -140,6 +141,16 @@ export function startOAuthServer(
       return new Response("Not found", { status: 404 });
     }
   });
+}
+
+function providerMcpScopeFromPath(value: string | undefined): "all" | ProviderDescriptorId {
+  if (!value) {
+    return "all";
+  }
+  if (!isProviderDescriptorId(value)) {
+    throw new Error(`Unknown provider MCP scope: ${value}`);
+  }
+  return value;
 }
 
 function jsonResponse(value: unknown): Response {

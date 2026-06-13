@@ -1,0 +1,145 @@
+{
+  "name": "google.slides.presentation",
+  "interactions": [
+    {
+      "request": {
+        "method": "GET",
+        "url": "https://slides.googleapis.com/v1/presentations/deck-1?fields=presentationId%2Ctitle%2Clayouts%28objectId%2ClayoutProperties%28displayName%29%2CpageElements%28objectId%2Cshape%28shapeType%2Cplaceholder%2Ctext%28textElements%28textRun%28content%29%29%29%29%2Cimage%28contentUrl%29%29%29%2Cslides%28objectId%2CslideProperties%28layoutObjectId%29%2CpageElements%28objectId%2Cshape%28shapeType%2Cplaceholder%2Ctext%28textElements%28textRun%28content%29%29%29%29%2Cimage%28contentUrl%29%29%29",
+        "headers": {
+          "authorization": "Bearer google-token"
+        }
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "presentationId": "deck-1",
+          "title": "ApeLogic Presentation Template",
+          "layouts": [
+            {
+              "objectId": "layout-title",
+              "layoutProperties": {
+                "displayName": "Title slide"
+              },
+              "pageElements": [
+                {
+                  "objectId": "layout-centered-title",
+                  "shape": {
+                    "shapeType": "TEXT_BOX",
+                    "placeholder": {
+                      "type": "CENTERED_TITLE",
+                      "index": 0
+                    },
+                    "text": {
+                      "textElements": [
+                        {
+                          "textRun": {
+                            "content": "Click to add title\n"
+                          }
+                        }
+                      ]
+                    }
+                  }
+                },
+                {
+                  "objectId": "layout-subtitle",
+                  "shape": {
+                    "shapeType": "TEXT_BOX",
+                    "placeholder": {
+                      "type": "SUBTITLE",
+                      "index": 0
+                    }
+                  }
+                }
+              ]
+            },
+            {
+              "objectId": "layout-two-column",
+              "layoutProperties": {
+                "displayName": "Title and two columns"
+              },
+              "pageElements": [
+                {
+                  "objectId": "layout-two-column-title",
+                  "shape": {
+                    "shapeType": "TEXT_BOX",
+                    "placeholder": {
+                      "type": "TITLE",
+                      "index": 0
+                    }
+                  }
+                },
+                {
+                  "objectId": "layout-left-body",
+                  "shape": {
+                    "shapeType": "TEXT_BOX",
+                    "placeholder": {
+                      "type": "BODY",
+                      "index": 0
+                    }
+                  }
+                },
+                {
+                  "objectId": "layout-right-body",
+                  "shape": {
+                    "shapeType": "TEXT_BOX",
+                    "placeholder": {
+                      "type": "BODY",
+                      "index": 1
+                    }
+                  }
+                }
+              ]
+            }
+          ],
+          "slides": [
+            {
+              "objectId": "slide-title",
+              "slideProperties": {
+                "layoutObjectId": "layout-title"
+              },
+              "pageElements": [
+                {
+                  "objectId": "slide-title-shape",
+                  "shape": {
+                    "shapeType": "TEXT_BOX",
+                    "placeholder": {
+                      "type": "CENTERED_TITLE",
+                      "index": 0,
+                      "parentObjectId": "layout-centered-title"
+                    },
+                    "text": {
+                      "textElements": [
+                        {
+                          "textRun": {
+                            "content": "ApeLogic\n"
+                          }
+                        }
+                      ]
+                    }
+                  }
+                },
+                {
+                  "objectId": "slide-subtitle-shape",
+                  "shape": {
+                    "shapeType": "TEXT_BOX",
+                    "placeholder": {
+                      "type": "SUBTITLE",
+                      "index": 0,
+                      "parentObjectId": "layout-subtitle"
+                    }
+                  }
+                },
+                {
+                  "objectId": "slide-logo",
+                  "image": {
+                    "contentUrl": "https://lh3.googleusercontent.com/template-logo"
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

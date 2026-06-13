@@ -1662,7 +1662,14 @@ function buildSlidesTemplateSlots(
 }
 
 function slidesPlaceholderRole(placeholder: GoogleSlidesPlaceholderRef): string {
-  const base = placeholder.type.toLocaleLowerCase().replace(/[^a-z0-9]+/g, "_");
+  const normalizedType = normalizeSlidesPlaceholderType(placeholder.type);
+  const logicalRole =
+    normalizedType === "CENTERED_TITLE"
+      ? "TITLE"
+      : normalizedType === "CENTERED_BODY"
+        ? "BODY"
+        : normalizedType;
+  const base = logicalRole.toLocaleLowerCase().replace(/[^a-z0-9]+/g, "_");
   if (!base) {
     return typeof placeholder.index === "number"
       ? `placeholder_${placeholder.index}`
