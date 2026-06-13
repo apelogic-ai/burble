@@ -84,3 +84,21 @@ export function installProviderCassette(cassette: ProviderCassette): {
     }
   };
 }
+
+export async function withProviderCassette<T>(
+  cassette: ProviderCassette,
+  fn: (installed: {
+    requests: ProviderCassetteRequest[];
+    assertComplete: () => void;
+  }) => T | Promise<T>
+): Promise<T> {
+  const installed = installProviderCassette(cassette);
+  try {
+    return await fn({
+      requests: installed.requests,
+      assertComplete: installed.assertComplete
+    });
+  } finally {
+    installed.restore();
+  }
+}
