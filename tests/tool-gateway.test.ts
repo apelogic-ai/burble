@@ -11,6 +11,11 @@ import { JiraApiError } from "../src/providers/jira/client";
 import { handleToolGatewayRequest } from "../src/tool-gateway";
 import type { ObservabilityEventInput } from "../src/observability";
 import { createConversationAttachmentCapability } from "../src/conversation/attachment-capabilities";
+import analyticsRunReportCassette from "./fixtures/provider-cassettes/google/analytics-run-report.json";
+import {
+  withProviderCassette,
+  type ProviderCassette
+} from "./helpers/provider-cassettes";
 
 const config: Config = {
   slackBotToken: "xoxb-test",
@@ -429,6 +434,54 @@ describe("handleToolGatewayRequest", () => {
     );
 
     expect(response.status).toBe(200);
+  });
+
+  test("replays coerced Google Analytics gateway calls against the provider cassette", async () => {
+    await withProviderCassette(
+      analyticsRunReportCassette as ProviderCassette,
+      async (cassette) => {
+        const response = await handleToolGatewayRequest(
+          config,
+          createStore(googleConnection),
+          "google.analyticsRunReport",
+          request("google.analyticsRunReport", {
+            user: { email: "person@example.com" },
+            input: {
+              property_id: "456",
+              start_date: "7daysAgo",
+              end_date: "today",
+              metrics: ["activeUsers"],
+              dimensions: ["country"],
+              limit: "3"
+            }
+          })
+        );
+
+        expect(response.status).toBe(200);
+        expect(await response.json()).toEqual({
+          classification: "user_private",
+          content: {
+            propertyId: "456",
+            dimensionHeaders: ["country"],
+            metricHeaders: ["activeUsers"],
+            rows: [
+              {
+                dimensions: { country: "US" },
+                metrics: { activeUsers: "42" }
+              }
+            ],
+            rowCount: 1
+          }
+        });
+        cassette.assertComplete();
+        expect(cassette.requests[0]?.bodyJson).toEqual({
+          dateRanges: [{ startDate: "7daysAgo", endDate: "today" }],
+          metrics: [{ name: "activeUsers" }],
+          dimensions: [{ name: "country" }],
+          limit: "3"
+        });
+      }
+    );
   });
 
   test("passes Google Slides template probe inputs to the provider tool", async () => {
