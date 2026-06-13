@@ -636,16 +636,26 @@
           "input": {
             "propertyId": {
               "description": "GA4 property ID, either numeric or properties/{id}.",
+              "aliases": [
+                "property_id",
+                "property"
+              ],
               "type": "string",
               "min": 1
             },
             "startDate": {
               "description": "Report start date, e.g. 2026-06-01 or 30daysAgo.",
+              "aliases": [
+                "start_date"
+              ],
               "type": "string",
               "min": 1
             },
             "endDate": {
               "description": "Report end date, e.g. today.",
+              "aliases": [
+                "end_date"
+              ],
               "type": "string",
               "min": 1
             },
@@ -1003,17 +1013,33 @@
                 "properties": {
                   "placeholderType": {
                     "description": "Google Slides placeholder type such as TITLE, SUBTITLE, BODY, CENTERED_TITLE, or SLIDE_NUMBER.",
+                    "aliases": [
+                      "placeholder_type",
+                      "type",
+                      "role",
+                      "placeholder"
+                    ],
                     "type": "string",
                     "min": 1
                   },
                   "text": {
                     "description": "Text to place into the placeholder.",
+                    "aliases": [
+                      "value",
+                      "content",
+                      "replacementText",
+                      "replacement_text"
+                    ],
                     "type": "string",
                     "max": 5000
                   },
                   "index": {
                     "optional": true,
                     "description": "Optional placeholder index when a slide has multiple placeholders of the same type.",
+                    "aliases": [
+                      "placeholderIndex",
+                      "placeholder_index"
+                    ],
                     "type": "number",
                     "int": true,
                     "min": 0
@@ -1094,6 +1120,7 @@
               "type": "string"
             },
             "replacements": {
+              "optional": true,
               "description": "Placeholder text replacements to apply.",
               "aliases": [
                 "replacement",
@@ -1110,17 +1137,33 @@
                 "properties": {
                   "placeholderType": {
                     "description": "Google Slides placeholder type such as TITLE, SUBTITLE, BODY, CENTERED_TITLE, or SLIDE_NUMBER.",
+                    "aliases": [
+                      "placeholder_type",
+                      "type",
+                      "role",
+                      "placeholder"
+                    ],
                     "type": "string",
                     "min": 1
                   },
                   "text": {
                     "description": "Text to place into the placeholder.",
+                    "aliases": [
+                      "value",
+                      "content",
+                      "replacementText",
+                      "replacement_text"
+                    ],
                     "type": "string",
                     "max": 5000
                   },
                   "index": {
                     "optional": true,
                     "description": "Optional placeholder index when a slide has multiple placeholders of the same type.",
+                    "aliases": [
+                      "placeholderIndex",
+                      "placeholder_index"
+                    ],
                     "type": "number",
                     "int": true,
                     "min": 0

@@ -392,6 +392,45 @@ describe("handleToolGatewayRequest", () => {
     });
   });
 
+  test("coerces provider-spec aliases and primitive values at the gateway", async () => {
+    const response = await handleToolGatewayRequest(
+      config,
+      createStore(googleConnection),
+      "google.analyticsRunReport",
+      request("google.analyticsRunReport", {
+        user: { email: "person@example.com" },
+        input: {
+          property_id: "456",
+          start_date: "7daysAgo",
+          end_date: "today",
+          metrics: ["activeUsers"],
+          dimensions: ["country"],
+          limit: "3"
+        }
+      }),
+      {
+        runGoogleAnalyticsReport: async (_token, input) => {
+          expect(input).toEqual({
+            propertyId: "456",
+            startDate: "7daysAgo",
+            endDate: "today",
+            metrics: ["activeUsers"],
+            dimensions: ["country"],
+            limit: 3
+          });
+          return {
+            propertyId: "456",
+            dimensionHeaders: ["country"],
+            metricHeaders: ["activeUsers"],
+            rows: []
+          };
+        }
+      }
+    );
+
+    expect(response.status).toBe(200);
+  });
+
   test("passes Google Slides template probe inputs to the provider tool", async () => {
     const response = await handleToolGatewayRequest(
       config,
@@ -497,12 +536,12 @@ describe("handleToolGatewayRequest", () => {
         user: { email: "person@example.com" },
         input: {
           presentation_id: "deck-copy",
-          slide_index: 2,
+          slide_index: "2",
           predefined_layout: "title_and_two_columns",
           placeholders: [
             { placeholder_type: "title", value: "Test slide 3" },
             { role: "body", index: 0, content: "Left text" },
-            { role: "body", index: 1, content: "Right text" }
+            { role: "body", index: "1", content: "Right text" }
           ]
         }
       }),
