@@ -477,55 +477,6 @@ describe("createTokenStore", () => {
     store.close();
   });
 
-  test("finds and revokes conversation routes by destination", () => {
-    const store = createTokenStore(":memory:");
-    const destination = {
-      channelId: "C123",
-      isDirectMessage: false,
-      rootId: "channel:C123"
-    };
-    const route = store.upsertConversationRoute({
-      workspaceId: "T123",
-      slackUserId: "U123",
-      transport: "slack",
-      destination,
-      kind: "grant",
-      grantedBySlackUserId: "U123",
-      now: new Date("2026-05-26T00:00:00.000Z")
-    });
-
-    expect(
-      store.getConversationRouteForDestination({
-        workspaceId: "T123",
-        slackUserId: "U123",
-        transport: "slack",
-        destination,
-        kind: "grant"
-      })?.id
-    ).toBe(route.id);
-
-    const revoked = store.revokeConversationRoute({
-      id: route.id,
-      workspaceId: "T123",
-      slackUserId: "U123",
-      now: new Date("2026-05-26T01:00:00.000Z")
-    });
-
-    expect(revoked?.revokedAt).toBe("2026-05-26T01:00:00.000Z");
-    expect(store.getConversationRoute(route.id)?.revokedAt).toBe(
-      "2026-05-26T01:00:00.000Z"
-    );
-    expect(
-      store.revokeConversationRoute({
-        id: route.id,
-        workspaceId: "T999",
-        slackUserId: "U123"
-      })
-    ).toBeNull();
-
-    store.close();
-  });
-
   test("revokes all conversation grants for a workspace destination", () => {
     const store = createTokenStore(":memory:");
     const destination = {

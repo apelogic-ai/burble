@@ -93,8 +93,6 @@ function createFakeStore() {
       throw new Error("unexpected conversation route write");
     },
     getConversationRoute: () => null,
-    getConversationRouteForDestination: () => null,
-    revokeConversationRoute: () => null,
     revokeConversationRoutesForDestination: () => 0,
     upsertWorkspacePolicy: () => {
       throw new Error("unexpected workspace policy write");

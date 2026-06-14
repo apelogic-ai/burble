@@ -14,6 +14,7 @@ import {
   buildAgentDestinationGrantRevokedResponse,
   buildAgentDestinationGrantWorkspaceMissingResponse,
   applyAgentRuntimeEngineSelection,
+  applySlackDestinationGrantRevoke,
   buildAgentUserConfigGetResponse,
   buildAgentExecLoadingResponse,
   buildAgentExecMissingTaskResponse,
@@ -2394,6 +2395,64 @@ describe("Slack destination grants", () => {
         channelId: "C123"
       })
     ).toBe(0);
+
+    store.close();
+  });
+
+  test("revokes destination grants without requiring channel preflight", async () => {
+    const store = createTokenStore(":memory:");
+    const route = createSlackDestinationGrantRoute({
+      store,
+      principal: {
+        workspaceId: "T123",
+        slackUserId: "U456"
+      },
+      channelId: "C123"
+    });
+
+    const response = applySlackDestinationGrantRevoke({
+      store,
+      principal: {
+        workspaceId: "T123",
+        slackUserId: "U123"
+      },
+      channelId: "C123",
+      now: new Date("2026-05-26T01:00:00.000Z")
+    });
+
+    expect(response.text).toContain("Revoked this channel");
+    expect(store.getConversationRoute(route.id)?.revokedAt).toBe(
+      "2026-05-26T01:00:00.000Z"
+    );
+
+    store.close();
+  });
+
+  test("revoke helper does not call Slack channel verification", () => {
+    const store = createTokenStore(":memory:");
+    const route = createSlackDestinationGrantRoute({
+      store,
+      principal: {
+        workspaceId: "T123",
+        slackUserId: "U456"
+      },
+      channelId: "C123"
+    });
+
+    const response = applySlackDestinationGrantRevoke({
+      store,
+      principal: {
+        workspaceId: "T123",
+        slackUserId: "U123"
+      },
+      channelId: "C123",
+      now: new Date("2026-05-26T01:00:00.000Z")
+    });
+
+    expect(response.text).toContain("Revoked this channel");
+    expect(store.getConversationRoute(route.id)?.revokedAt).toBe(
+      "2026-05-26T01:00:00.000Z"
+    );
 
     store.close();
   });

@@ -1238,7 +1238,7 @@ export function createSlackRuntime(
 
         await ack(buildAgentDestinationGrantLoadingResponse("Revoking destination grant..."));
         try {
-          const revokedCount = revokeSlackDestinationGrantRoutes({
+          const response = applySlackDestinationGrantRevoke({
             store,
             principal: {
               workspaceId: body.team_id,
@@ -1247,7 +1247,7 @@ export function createSlackRuntime(
             channelId: body.channel_id
           });
           await respond({
-            ...buildAgentDestinationGrantRevokedResponse(revokedCount),
+            ...response,
             replace_original: true
           });
         } catch (error) {
@@ -2020,6 +2020,20 @@ export function revokeSlackDestinationGrantRoutes(input: {
     kind: "grant",
     ...(input.now ? { now: input.now } : {})
   });
+}
+
+export function applySlackDestinationGrantRevoke(input: {
+  store: TokenStore;
+  principal: {
+    workspaceId: string;
+    slackUserId: string;
+  };
+  channelId: string;
+  threadTs?: string;
+  now?: Date;
+}) {
+  const revokedCount = revokeSlackDestinationGrantRoutes(input);
+  return buildAgentDestinationGrantRevokedResponse(revokedCount);
 }
 
 function slackDestinationGrantDestination(input: {

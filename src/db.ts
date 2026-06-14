@@ -710,14 +710,6 @@ export function createTokenStore(path: string) {
     FROM conversation_routes
     WHERE id = ?
   `);
-  const revokeConversationRouteById = db.query(`
-    UPDATE conversation_routes
-    SET revoked_at = ?, updated_at = ?
-    WHERE id = ?
-      AND workspace_id = ?
-      AND slack_user_id = ?
-      AND revoked_at IS NULL
-  `);
   const revokeConversationRoutesByDestination = db.query(`
     UPDATE conversation_routes
     SET revoked_at = ?, updated_at = ?
@@ -1352,46 +1344,6 @@ export function createTokenStore(path: string) {
 
     getConversationRoute(id: string): ConversationRouteRecord | null {
       return getConversationRouteById.get(id);
-    },
-
-    getConversationRouteForDestination(input: {
-      workspaceId: string;
-      slackUserId: string;
-      transport: ConversationTransport;
-      destination: Record<string, unknown>;
-      kind?: ConversationRouteKind;
-      binding?: Record<string, unknown> | null;
-    }): ConversationRouteRecord | null {
-      const destinationJson = stableJson(input.destination);
-      const bindingJson = input.binding ? stableJson(input.binding) : null;
-      const id = buildConversationRouteId(
-        input.workspaceId,
-        input.slackUserId,
-        input.transport,
-        destinationJson,
-        input.kind ?? "origin",
-        bindingJson
-      );
-      return getConversationRouteById.get(id);
-    },
-
-    revokeConversationRoute(input: {
-      id: string;
-      workspaceId: string;
-      slackUserId: string;
-      now?: Date;
-    }): ConversationRouteRecord | null {
-      const now = (input.now ?? new Date()).toISOString();
-      const result = revokeConversationRouteById.run(
-        now,
-        now,
-        input.id,
-        input.workspaceId,
-        input.slackUserId
-      ) as { changes: number | bigint };
-      return Number(result.changes) > 0
-        ? getConversationRouteById.get(input.id)
-        : null;
     },
 
     revokeConversationRoutesForDestination(input: {
