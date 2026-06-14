@@ -1747,11 +1747,13 @@ async function buildToolCatalog(
     catalog.push({
       name: "conversation.sendMessage",
       description:
-        "Send a message through Burble to the active conversation or a durable conversation route. Burble chooses and validates the transport and destination; provide message text and, for scheduled/background jobs, the active routeId.",
+        "Send a message through Burble to the active conversation or a durable conversation route. Burble chooses and validates the transport and destination; provide message text. Scheduled/background routeId and jobId are injected from trusted run context.",
       inputSchema: {
         text: "string message text to send",
         routeId:
-          "optional durable Burble route ID for scheduled/background messages"
+          "optional durable Burble route ID for non-scheduled messages",
+        jobId:
+          "ignored unless supplied by trusted scheduled run context; do not invent scheduled job ids"
       }
     });
     catalog.push({
