@@ -1890,6 +1890,47 @@ async function createSlackConversationRoute(input: {
   });
 }
 
+export function createSlackDestinationGrantRoute(input: {
+  store: TokenStore;
+  principal: {
+    workspaceId: string;
+    slackUserId: string;
+  };
+  channelId: string;
+  threadTs?: string;
+  expiresAt?: string | null;
+  binding?: Record<string, unknown> | null;
+  now?: Date;
+}) {
+  if (input.channelId.startsWith("D")) {
+    throw new Error("Destination grants must target a Slack channel");
+  }
+
+  return input.store.upsertConversationRoute({
+    workspaceId: input.principal.workspaceId,
+    slackUserId: input.principal.slackUserId,
+    transport: "slack",
+    destination: {
+      channelId: input.channelId,
+      isDirectMessage: false,
+      rootId: input.threadTs
+        ? buildConversationRootIdForSlack({
+            isDirectMessage: false,
+            channelId: input.channelId,
+            messageTs: input.threadTs,
+            threadTs: input.threadTs
+          })
+        : `channel:${input.channelId}`,
+      ...(input.threadTs ? { threadTs: input.threadTs } : {})
+    },
+    kind: "grant",
+    grantedBySlackUserId: input.principal.slackUserId,
+    expiresAt: input.expiresAt ?? null,
+    binding: input.binding ?? null,
+    ...(input.now ? { now: input.now } : {})
+  });
+}
+
 function buildConversationRootIdForSlack(input: {
   isDirectMessage: boolean;
   channelId: string;
