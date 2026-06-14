@@ -7,6 +7,8 @@ import {
   buildAgentConfigModalView,
   buildAgentConfigResponse,
   buildAgentCommandHelpResponse,
+  buildAgentDestinationGrantDirectMessageResponse,
+  buildAgentDestinationGrantResponse,
   applyAgentRuntimeEngineSelection,
   buildAgentUserConfigGetResponse,
   buildAgentExecLoadingResponse,
@@ -1391,6 +1393,21 @@ describe("parseAgentCommand", () => {
       taskId: "abc123"
     });
   });
+
+  test("routes destination grant commands", () => {
+    expect(parseAgentCommand("destination grant")).toEqual({
+      kind: "destination_grant"
+    });
+    expect(parseAgentCommand("grant destination")).toEqual({
+      kind: "destination_grant"
+    });
+    expect(parseAgentCommand("grant here")).toEqual({
+      kind: "destination_grant"
+    });
+    expect(parseAgentCommand("allow here")).toEqual({
+      kind: "destination_grant"
+    });
+  });
 });
 
 describe("buildAuthResponse", () => {
@@ -1967,6 +1984,7 @@ describe("buildAgentCommandHelpResponse", () => {
     expect(JSON.stringify(response.blocks)).toContain("/agent status");
     expect(JSON.stringify(response.blocks)).toContain("/agent config");
     expect(JSON.stringify(response.blocks)).toContain("/agent exec");
+    expect(JSON.stringify(response.blocks)).toContain("/agent grant here");
   });
 
   test("builds exec response states", () => {
@@ -2248,6 +2266,35 @@ describe("Slack destination grants", () => {
     });
 
     store.close();
+  });
+
+  test("formats destination grant command responses", () => {
+    const store = createTokenStore(":memory:");
+    const route = createSlackDestinationGrantRoute({
+      store,
+      principal: {
+        workspaceId: "T123",
+        slackUserId: "U123"
+      },
+      channelId: "C123",
+      now: new Date("2026-05-26T00:00:00.000Z")
+    });
+
+    const response = buildAgentDestinationGrantResponse(route);
+
+    expect(response.response_type).toBe("ephemeral");
+    expect(response.text).toContain("Authorized this channel");
+    expect(response.text).toContain(route.id);
+    expect(response.text).toContain("scheduled jobs");
+
+    store.close();
+  });
+
+  test("formats destination grant direct-message rejection", () => {
+    const response = buildAgentDestinationGrantDirectMessageResponse();
+
+    expect(response.response_type).toBe("ephemeral");
+    expect(response.text).toContain("Run `/agent grant here` in the channel");
   });
 });
 

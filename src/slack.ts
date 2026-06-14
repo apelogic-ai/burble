@@ -76,6 +76,7 @@ import type {
   AgentRuntimeRecord,
   AgentRuntimeEngine,
   AgentRuntimeStatus,
+  ConversationRouteRecord,
   Provider,
   ProviderConnection,
   TokenStore
@@ -1178,6 +1179,24 @@ export function createSlackRuntime(
         return;
       }
 
+      if (action.kind === "destination_grant") {
+        if (body.channel_id.startsWith("D")) {
+          await ack(buildAgentDestinationGrantDirectMessageResponse());
+          return;
+        }
+
+        const route = createSlackDestinationGrantRoute({
+          store,
+          principal: {
+            workspaceId: body.team_id ?? "",
+            slackUserId: body.user_id
+          },
+          channelId: body.channel_id
+        });
+        await ack(buildAgentDestinationGrantResponse(route));
+        return;
+      }
+
       if (action.kind === "status") {
         await ack(buildAgentStatusLoadingResponse());
         try {
@@ -2003,6 +2022,7 @@ export type AgentCommand =
   | { kind: "help" }
   | { kind: "status" }
   | { kind: "config" }
+  | { kind: "destination_grant" }
   | { kind: "config_get"; key?: string }
   | { kind: "config_set"; key: string; value: string }
   | { kind: "exec_list" }
@@ -2019,6 +2039,16 @@ export function parseAgentCommand(text: string): AgentCommand {
 
   if (normalized === "status" || normalized === "runtime status") {
     return { kind: "status" };
+  }
+
+  if (
+    normalized === "destination grant" ||
+    normalized === "grant destination" ||
+    normalized === "grant here" ||
+    normalized === "allow destination" ||
+    normalized === "allow here"
+  ) {
+    return { kind: "destination_grant" };
   }
 
   if (
@@ -2909,6 +2939,7 @@ export function buildAgentCommandHelpResponse() {
             "• `/agent config` - inspect your current agent config file",
             "• `/agent config get [key]` - inspect your user runtime preferences",
             "• `/agent config set <key> <value>` - update an allowed user preference",
+            "• `/agent grant here` - authorize this channel for scheduled job output",
             "• `/agent exec` - list active agent tasks",
             "• `/agent exec <task>` - send an explicit task to your private agent runtime",
             "• `/agent exec <id> inspect` - inspect an active or recent task",
@@ -2917,6 +2948,32 @@ export function buildAgentCommandHelpResponse() {
         }
       }
     ]
+  };
+}
+
+export function buildAgentDestinationGrantResponse(
+  route: ConversationRouteRecord
+) {
+  return {
+    response_type: "ephemeral" as const,
+    text: [
+      "Authorized this channel as a destination for scheduled jobs.",
+      "",
+      `Route id: \`${route.id}\``,
+      "",
+      "When you schedule a public job, ask Burble to post results here and use this destination route."
+    ].join("\n")
+  };
+}
+
+export function buildAgentDestinationGrantDirectMessageResponse() {
+  return {
+    response_type: "ephemeral" as const,
+    text: [
+      "Destination grants must be created from the target channel.",
+      "",
+      "Run `/agent grant here` in the channel where scheduled jobs should post."
+    ].join("\n")
   };
 }
 
