@@ -1238,7 +1238,7 @@ export function createSlackRuntime(
 
         await ack(buildAgentDestinationGrantLoadingResponse("Revoking destination grant..."));
         try {
-          const route = revokeSlackDestinationGrantRoute({
+          const revokedCount = revokeSlackDestinationGrantRoutes({
             store,
             principal: {
               workspaceId: body.team_id,
@@ -1247,7 +1247,7 @@ export function createSlackRuntime(
             channelId: body.channel_id
           });
           await respond({
-            ...buildAgentDestinationGrantRevokedResponse(route),
+            ...buildAgentDestinationGrantRevokedResponse(revokedCount),
             replace_original: true
           });
         } catch (error) {
@@ -2002,7 +2002,7 @@ export function createSlackDestinationGrantRoute(input: {
   });
 }
 
-export function revokeSlackDestinationGrantRoute(input: {
+export function revokeSlackDestinationGrantRoutes(input: {
   store: TokenStore;
   principal: {
     workspaceId: string;
@@ -2011,23 +2011,13 @@ export function revokeSlackDestinationGrantRoute(input: {
   channelId: string;
   threadTs?: string;
   now?: Date;
-}): ConversationRouteRecord | null {
+}): number {
   const destination = slackDestinationGrantDestination(input);
-  const route = input.store.getConversationRouteForDestination({
+  return input.store.revokeConversationRoutesForDestination({
     workspaceId: input.principal.workspaceId,
-    slackUserId: input.principal.slackUserId,
     transport: "slack",
     destination,
-    kind: "grant"
-  });
-  if (!route || route.revokedAt) {
-    return null;
-  }
-
-  return input.store.revokeConversationRoute({
-    id: route.id,
-    workspaceId: input.principal.workspaceId,
-    slackUserId: input.principal.slackUserId,
+    kind: "grant",
     ...(input.now ? { now: input.now } : {})
   });
 }
@@ -3137,12 +3127,12 @@ export function buildAgentDestinationGrantPreflightFailureResponse(
 }
 
 export function buildAgentDestinationGrantRevokedResponse(
-  route: ConversationRouteRecord | null
+  revokedCount: number
 ) {
   return {
     response_type: "ephemeral" as const,
-    text: route
-      ? `Revoked this channel's scheduled job destination grant. Route id: \`${route.id}\`.`
+    text: revokedCount > 0
+      ? `Revoked ${revokedCount === 1 ? "this channel's scheduled job destination grant" : `${revokedCount} scheduled job destination grants for this channel`}.`
       : "No active scheduled job destination grant exists for this channel."
   };
 }
@@ -3167,10 +3157,14 @@ export async function verifySlackDestinationGrantChannel(input: {
     }
     return { ok: true };
   } catch (error) {
+    const detail = formatSlackApiErrorDetail(error);
+    if (detail === "not_in_channel" || detail === "channel_not_found") {
+      return { ok: false, reason: "not_in_channel", detail };
+    }
     return {
       ok: false,
       reason: "unverified",
-      detail: formatSlackApiErrorDetail(error)
+      detail
     };
   }
 }
@@ -3580,11 +3574,7 @@ export function isDirectMessageSlashCommand(
 export function isDestinationGrantSlashCommandChannel(
   body: SlackSlashCommandVisibilityBody
 ): body is SlackSlashCommandVisibilityBody & { channel_id: string } {
-  if (!body.channel_id || isDirectMessageSlashCommand(body)) {
-    return false;
-  }
-  const channelName = body.channel_name?.toLowerCase() ?? "";
-  return channelName !== "mpim" && !channelName.startsWith("mpdm");
+  return Boolean(body.channel_id) && !isDirectMessageSlashCommand(body);
 }
 
 type AgentConfigModalValues = {

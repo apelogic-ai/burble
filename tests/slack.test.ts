@@ -45,7 +45,7 @@ import {
   restartAgentRuntimeIfConfigChanged,
   runtimeImageForEngine,
   createSlackDestinationGrantRoute,
-  revokeSlackDestinationGrantRoute,
+  revokeSlackDestinationGrantRoutes,
   resolveSlackProgressStreamingMode,
   shouldHandleDirectMessageEvent,
   summarizeSlackPayload,
@@ -2335,19 +2335,20 @@ describe("Slack destination grants", () => {
       channelId: "C123"
     });
 
-    expect(buildAgentDestinationGrantRevokedResponse(route).text).toContain(
+    expect(route.id).toMatch(/^convrt_/);
+    expect(buildAgentDestinationGrantRevokedResponse(1).text).toContain(
       "Revoked"
     );
-    expect(buildAgentDestinationGrantRevokedResponse(null).text).toContain(
+    expect(buildAgentDestinationGrantRevokedResponse(0).text).toContain(
       "No active"
     );
 
     store.close();
   });
 
-  test("revokes active destination grants for the current channel", () => {
+  test("revokes active destination grants for the current channel across grantors", () => {
     const store = createTokenStore(":memory:");
-    const route = createSlackDestinationGrantRoute({
+    const first = createSlackDestinationGrantRoute({
       store,
       principal: {
         workspaceId: "T123",
@@ -2356,8 +2357,17 @@ describe("Slack destination grants", () => {
       channelId: "C123",
       now: new Date("2026-05-26T00:00:00.000Z")
     });
+    const second = createSlackDestinationGrantRoute({
+      store,
+      principal: {
+        workspaceId: "T123",
+        slackUserId: "U456"
+      },
+      channelId: "C123",
+      now: new Date("2026-05-26T00:00:00.000Z")
+    });
 
-    const revoked = revokeSlackDestinationGrantRoute({
+    const revoked = revokeSlackDestinationGrantRoutes({
       store,
       principal: {
         workspaceId: "T123",
@@ -2367,10 +2377,15 @@ describe("Slack destination grants", () => {
       now: new Date("2026-05-26T01:00:00.000Z")
     });
 
-    expect(revoked?.id).toBe(route.id);
-    expect(revoked?.revokedAt).toBe("2026-05-26T01:00:00.000Z");
+    expect(revoked).toBe(2);
+    expect(store.getConversationRoute(first.id)?.revokedAt).toBe(
+      "2026-05-26T01:00:00.000Z"
+    );
+    expect(store.getConversationRoute(second.id)?.revokedAt).toBe(
+      "2026-05-26T01:00:00.000Z"
+    );
     expect(
-      revokeSlackDestinationGrantRoute({
+      revokeSlackDestinationGrantRoutes({
         store,
         principal: {
           workspaceId: "T123",
@@ -2378,7 +2393,7 @@ describe("Slack destination grants", () => {
         },
         channelId: "C123"
       })
-    ).toBeNull();
+    ).toBe(0);
 
     store.close();
   });
@@ -2401,7 +2416,7 @@ describe("Slack destination grants", () => {
         channel_id: "G123",
         channel_name: "mpdm-leo--mario--burble-1"
       })
-    ).toBe(false);
+    ).toBe(true);
   });
 
   test("verifies bot membership before minting destination grants", async () => {
@@ -2440,6 +2455,13 @@ describe("Slack destination grants", () => {
         }
       }
     };
+    const privateNotMemberClient = {
+      conversations: {
+        async info() {
+          throw { data: { error: "channel_not_found" } };
+        }
+      }
+    };
 
     expect(
       await verifySlackDestinationGrantChannel({
@@ -2459,6 +2481,16 @@ describe("Slack destination grants", () => {
         channelId: "G123"
       })
     ).toEqual({ ok: false, reason: "unsupported" });
+    expect(
+      await verifySlackDestinationGrantChannel({
+        client: privateNotMemberClient as never,
+        channelId: "G123"
+      })
+    ).toEqual({
+      ok: false,
+      reason: "not_in_channel",
+      detail: "channel_not_found"
+    });
   });
 });
 

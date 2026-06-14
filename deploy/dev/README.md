@@ -388,7 +388,9 @@ Add Slack scopes:
 
 - `app_mentions:read`
 - `channels:history`
+- `channels:read`
 - `groups:history`
+- `groups:read`
 - `im:history`
 - `search:read` as a user token scope for `/auth slack`
 - `users:read` as both a bot token scope and a user token scope for `/auth slack`
