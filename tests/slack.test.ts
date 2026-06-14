@@ -37,6 +37,7 @@ import {
   parseAuthCommand,
   restartAgentRuntimeIfConfigChanged,
   runtimeImageForEngine,
+  createSlackDestinationGrantRoute,
   resolveSlackProgressStreamingMode,
   shouldHandleDirectMessageEvent,
   summarizeSlackPayload,
@@ -2167,6 +2168,86 @@ describe("buildAgentConfigResponse", () => {
 
     expect(configFile.path).toBe("/host/runtime.json");
     expect(configFile.redactedText).toContain("factory");
+  });
+});
+
+describe("Slack destination grants", () => {
+  test("creates in-channel destination grant routes", () => {
+    const store = createTokenStore(":memory:");
+
+    const route = createSlackDestinationGrantRoute({
+      store,
+      principal: {
+        workspaceId: "T123",
+        slackUserId: "U123"
+      },
+      channelId: "C123",
+      threadTs: "1779841118.237",
+      expiresAt: "2026-06-30T00:00:00.000Z",
+      binding: {
+        jobId: "daily-standup"
+      },
+      now: new Date("2026-05-26T00:00:00.000Z")
+    });
+
+    expect(route).toMatchObject({
+      workspaceId: "T123",
+      slackUserId: "U123",
+      transport: "slack",
+      kind: "grant",
+      grantedBySlackUserId: "U123",
+      expiresAt: "2026-06-30T00:00:00.000Z",
+      revokedAt: null
+    });
+    expect(JSON.parse(route.destinationJson)).toEqual({
+      channelId: "C123",
+      isDirectMessage: false,
+      rootId: "channel:C123:thread:1779841118.237",
+      threadTs: "1779841118.237"
+    });
+    expect(JSON.parse(route.bindingJson ?? "{}")).toEqual({
+      jobId: "daily-standup"
+    });
+
+    store.close();
+  });
+
+  test("does not mint destination grants for direct message channels", () => {
+    const store = createTokenStore(":memory:");
+
+    expect(() =>
+      createSlackDestinationGrantRoute({
+        store,
+        principal: {
+          workspaceId: "T123",
+          slackUserId: "U123"
+        },
+        channelId: "D123"
+      })
+    ).toThrow("Destination grants must target a Slack channel");
+
+    store.close();
+  });
+
+  test("creates channel-level destination grants when no thread is provided", () => {
+    const store = createTokenStore(":memory:");
+
+    const route = createSlackDestinationGrantRoute({
+      store,
+      principal: {
+        workspaceId: "T123",
+        slackUserId: "U123"
+      },
+      channelId: "C123"
+    });
+
+    expect(JSON.parse(route.destinationJson)).toEqual({
+      channelId: "C123",
+      isDirectMessage: false,
+      rootId: "channel:C123"
+    });
+
+    store.close();
   });
 });
 

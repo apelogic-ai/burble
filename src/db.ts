@@ -83,6 +83,7 @@ export type AgentRuntimeEventRecord = {
 };
 
 export type ConversationTransport = "slack";
+export type ConversationRouteKind = "origin" | "grant";
 
 export type ConversationRouteRecord = {
   id: string;
@@ -90,6 +91,10 @@ export type ConversationRouteRecord = {
   slackUserId: string;
   transport: ConversationTransport;
   destinationJson: string;
+  kind?: ConversationRouteKind;
+  grantedBySlackUserId?: string | null;
+  expiresAt?: string | null;
+  bindingJson?: string | null;
   createdAt: string;
   updatedAt: string;
   revokedAt: string | null;
@@ -285,6 +290,10 @@ export function createTokenStore(path: string) {
       slack_user_id TEXT NOT NULL,
       transport TEXT NOT NULL,
       destination_json TEXT NOT NULL,
+      kind TEXT NOT NULL DEFAULT 'origin',
+      granted_by_slack_user_id TEXT,
+      expires_at TEXT,
+      binding_json TEXT,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL,
       revoked_at TEXT
@@ -415,6 +424,14 @@ export function createTokenStore(path: string) {
     "visibility_policy_json",
     "TEXT NOT NULL DEFAULT '{}'"
   );
+  ensureConversationRouteColumn(
+    db,
+    "kind",
+    "TEXT NOT NULL DEFAULT 'origin'"
+  );
+  ensureConversationRouteColumn(db, "granted_by_slack_user_id", "TEXT");
+  ensureConversationRouteColumn(db, "expires_at", "TEXT");
+  ensureConversationRouteColumn(db, "binding_json", "TEXT");
 
   const insertState = db.query(
     "INSERT INTO oauth_state (state, slack_user_id, expires_at) VALUES (?, ?, ?)"
@@ -658,13 +675,21 @@ export function createTokenStore(path: string) {
       slack_user_id,
       transport,
       destination_json,
+      kind,
+      granted_by_slack_user_id,
+      expires_at,
+      binding_json,
       created_at,
       updated_at,
       revoked_at
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?, NULL)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)
     ON CONFLICT(id) DO UPDATE SET
       destination_json = excluded.destination_json,
+      kind = excluded.kind,
+      granted_by_slack_user_id = excluded.granted_by_slack_user_id,
+      expires_at = excluded.expires_at,
+      binding_json = excluded.binding_json,
       updated_at = excluded.updated_at,
       revoked_at = NULL
   `);
@@ -675,6 +700,10 @@ export function createTokenStore(path: string) {
       slack_user_id AS slackUserId,
       transport,
       destination_json AS destinationJson,
+      kind,
+      granted_by_slack_user_id AS grantedBySlackUserId,
+      expires_at AS expiresAt,
+      binding_json AS bindingJson,
       created_at AS createdAt,
       updated_at AS updatedAt,
       revoked_at AS revokedAt
@@ -1266,14 +1295,21 @@ export function createTokenStore(path: string) {
       slackUserId: string;
       transport: ConversationTransport;
       destination: Record<string, unknown>;
+      kind?: ConversationRouteKind;
+      grantedBySlackUserId?: string | null;
+      expiresAt?: string | null;
+      binding?: Record<string, unknown> | null;
       now?: Date;
     }): ConversationRouteRecord {
       const destinationJson = stableJson(input.destination);
+      const bindingJson = input.binding ? stableJson(input.binding) : null;
       const id = buildConversationRouteId(
         input.workspaceId,
         input.slackUserId,
         input.transport,
-        destinationJson
+        destinationJson,
+        input.kind ?? "origin",
+        bindingJson
       );
       const now = (input.now ?? new Date()).toISOString();
       upsertConversationRoute.run(
@@ -1282,6 +1318,10 @@ export function createTokenStore(path: string) {
         input.slackUserId,
         input.transport,
         destinationJson,
+        input.kind ?? "origin",
+        input.grantedBySlackUserId ?? null,
+        input.expiresAt ?? null,
+        bindingJson,
         now,
         now
       );
@@ -1706,6 +1746,20 @@ function ensureAgentJobCapabilityColumn(
   }
 }
 
+function ensureConversationRouteColumn(
+  db: Database,
+  name: string,
+  definition: string
+): void {
+  const columns = db
+    .query<{ name: string }, []>("PRAGMA table_info(conversation_routes)")
+    .all()
+    .map((column) => column.name);
+  if (!columns.includes(name)) {
+    db.exec(`ALTER TABLE conversation_routes ADD COLUMN ${name} ${definition}`);
+  }
+}
+
 function buildAgentRuntimeId(
   workspaceId: string,
   slackUserId: string,
@@ -1721,10 +1775,16 @@ function buildConversationRouteId(
   workspaceId: string,
   slackUserId: string,
   transport: ConversationTransport,
-  destinationJson: string
+  destinationJson: string,
+  kind: ConversationRouteKind = "origin",
+  bindingJson: string | null = null
 ): string {
+  const seed =
+    kind === "origin" && !bindingJson
+      ? `${workspaceId}:${slackUserId}:${transport}:${destinationJson}`
+      : `${workspaceId}:${slackUserId}:${transport}:${kind}:${destinationJson}:${bindingJson ?? ""}`;
   return `convrt_${createHash("sha256")
-    .update(`${workspaceId}:${slackUserId}:${transport}:${destinationJson}`)
+    .update(seed)
     .digest("hex")
     .slice(0, 24)}`;
 }
