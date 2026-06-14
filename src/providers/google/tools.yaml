@@ -395,15 +395,18 @@ tools:
             placeholderType:
               type: string
               min: 1
+              aliases: [placeholder_type, type, role, placeholder]
               description: Google Slides placeholder type such as TITLE, SUBTITLE, BODY, CENTERED_TITLE, or SLIDE_NUMBER.
             text:
               type: string
               max: 5000
+              aliases: [value, content, replacementText, replacement_text]
               description: Text to place into the placeholder.
             index:
               type: number
               int: true
               min: 0
+              aliases: [placeholderIndex, placeholder_index]
               optional: true
               description: Optional placeholder index when a slide has multiple placeholders of the same type.
       placeholderType:
@@ -457,6 +460,7 @@ tools:
         type: array
         min: 1
         max: 10
+        optional: true
         aliases: [replacement, updates, update, placeholders, placeholder, fills, fill]
         description: Placeholder text replacements to apply.
         items:
@@ -465,15 +469,18 @@ tools:
             placeholderType:
               type: string
               min: 1
+              aliases: [placeholder_type, type, role, placeholder]
               description: Google Slides placeholder type such as TITLE, SUBTITLE, BODY, CENTERED_TITLE, or SLIDE_NUMBER.
             text:
               type: string
               max: 5000
+              aliases: [value, content, replacementText, replacement_text]
               description: Text to place into the placeholder.
             index:
               type: number
               int: true
               min: 0
+              aliases: [placeholderIndex, placeholder_index]
               optional: true
               description: Optional placeholder index when a slide has multiple placeholders of the same type.
       placeholderType:
@@ -558,14 +565,17 @@ tools:
       propertyId:
         type: string
         min: 1
+        aliases: [property_id, property]
         description: GA4 property ID, either numeric or properties/{id}.
       startDate:
         type: string
         min: 1
+        aliases: [start_date]
         description: Report start date, e.g. 2026-06-01 or 30daysAgo.
       endDate:
         type: string
         min: 1
+        aliases: [end_date]
         description: Report end date, e.g. today.
       metrics:
         type: array

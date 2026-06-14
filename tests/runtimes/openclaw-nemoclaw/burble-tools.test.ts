@@ -1402,10 +1402,10 @@ describe("createBurbleToolExecutor", () => {
           params: {
             name: "google_slides_create_slide",
             arguments: {
-              presentationId: "deck-copy",
-              insertionIndex: 2,
-              predefinedLayout: "TITLE_AND_TWO_COLUMNS",
-              replacements: [
+              presentation_id: "deck-copy",
+              slide_index: 2,
+              predefined_layout: "TITLE_AND_TWO_COLUMNS",
+              placeholders: [
                 { placeholder_type: "TITLE", value: "Test slide 3" },
                 { role: "BODY", index: 0, content: "Left text" },
                 { role: "BODY", index: 1, content: "Right text" }
@@ -1418,9 +1418,9 @@ describe("createBurbleToolExecutor", () => {
           params: {
             name: "google_slides_fill_placeholders",
             arguments: {
-              presentationId: "deck-copy",
-              slideObjectId: "slide-2",
-              replacements: [
+              presentation_id: "deck-copy",
+              slide_object_id: "slide-2",
+              placeholders: [
                 { placeholder_type: "TITLE", value: "ApeLogic" },
                 {
                   role: "BODY",
@@ -1572,7 +1572,7 @@ describe("createBurbleToolExecutor", () => {
     }
   });
 
-  test("coerces manifest primitive inputs from model-style strings", async () => {
+  test("forwards model-style manifest inputs to the gateway for shared coercion", async () => {
     const mock = mockMcpGatewayPayloads();
     try {
       const executor = createMcpProviderExecutor();
@@ -1601,14 +1601,14 @@ describe("createBurbleToolExecutor", () => {
           method: "tools/call",
           params: {
             name: "google_slides_get_presentation",
-            arguments: { presentationId: "deck-123", includeSlides: false }
+            arguments: { presentationId: "deck-123", includeSlides: "false" }
           }
         },
         {
           method: "tools/call",
           params: {
             name: "google_analytics_list_properties",
-            arguments: { limit: 6 }
+            arguments: { limit: "6" }
           }
         },
         {
@@ -1616,9 +1616,9 @@ describe("createBurbleToolExecutor", () => {
           params: {
             name: "google_slides_create_slide",
             arguments: {
-              presentationId: "deck-copy",
-              insertionIndex: 2,
-              predefinedLayout: "TITLE_AND_BODY",
+              presentation_id: "deck-copy",
+              slide_index: "2",
+              predefined_layout: "TITLE_AND_BODY",
               title: "Test slide"
             }
           }
@@ -1653,9 +1653,9 @@ describe("createBurbleToolExecutor", () => {
           params: {
             name: "google_slides_fill_placeholders",
             arguments: {
-              presentationId: "deck-copy",
-              slideObjectId: "slide-2",
-              replacements: [
+              deck_id: "deck-copy",
+              slide_id: "slide-2",
+              update: [
                 { placeholder_type: "TITLE", value: "ApeLogic" },
                 { role: "BODY", placeholderIndex: 1, content: "Right text" }
               ]
@@ -1668,18 +1668,25 @@ describe("createBurbleToolExecutor", () => {
     }
   });
 
-  test("reports type errors for present required manifest inputs", async () => {
+  test("forwards mistyped required manifest inputs to the gateway", async () => {
     const mock = mockMcpGatewayPayloads();
     try {
       const executor = createMcpProviderExecutor();
-      await expect(
-        executor("google.analyticsGetMetadata", {
-          user: { email: "person@example.com" },
-          input: { propertyId: 1234 }
-        })
-      ).rejects.toThrow(
-        "google.analyticsGetMetadata requires input.propertyId to be string"
-      );
+      await executor("google.analyticsGetMetadata", {
+        user: { email: "person@example.com" },
+        input: { propertyId: 1234 }
+      });
+      expect(mock.payloads).toMatchObject([
+        { method: "initialize" },
+        { method: "notifications/initialized" },
+        {
+          method: "tools/call",
+          params: {
+            name: "google_analytics_get_metadata",
+            arguments: { propertyId: 1234 }
+          }
+        }
+      ]);
     } finally {
       mock.restore();
     }

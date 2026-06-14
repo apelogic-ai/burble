@@ -11,6 +11,11 @@ import { JiraApiError } from "../src/providers/jira/client";
 import { handleToolGatewayRequest } from "../src/tool-gateway";
 import type { ObservabilityEventInput } from "../src/observability";
 import { createConversationAttachmentCapability } from "../src/conversation/attachment-capabilities";
+import analyticsRunReportCassette from "./fixtures/provider-cassettes/google/analytics-run-report.json";
+import {
+  withProviderCassette,
+  type ProviderCassette
+} from "./helpers/provider-cassettes";
 
 const config: Config = {
   slackBotToken: "xoxb-test",
@@ -392,6 +397,121 @@ describe("handleToolGatewayRequest", () => {
     });
   });
 
+  test("coerces provider-spec aliases and primitive values at the gateway", async () => {
+    const response = await handleToolGatewayRequest(
+      config,
+      createStore(googleConnection),
+      "google.analyticsRunReport",
+      request("google.analyticsRunReport", {
+        user: { email: "person@example.com" },
+        input: {
+          property_id: "456",
+          start_date: "7daysAgo",
+          end_date: "today",
+          metrics: ["activeUsers"],
+          dimensions: ["country"],
+          limit: "3"
+        }
+      }),
+      {
+        runGoogleAnalyticsReport: async (_token, input) => {
+          expect(input).toEqual({
+            propertyId: "456",
+            startDate: "7daysAgo",
+            endDate: "today",
+            metrics: ["activeUsers"],
+            dimensions: ["country"],
+            limit: 3
+          });
+          return {
+            propertyId: "456",
+            dimensionHeaders: ["country"],
+            metricHeaders: ["activeUsers"],
+            rows: []
+          };
+        }
+      }
+    );
+
+    expect(response.status).toBe(200);
+  });
+
+  test("preserves undeclared provider fields while coercing declared fields", async () => {
+    const response = await handleToolGatewayRequest(
+      config,
+      createStore(hubspotConnection),
+      "hubspot.searchContacts",
+      request("hubspot.searchContacts", {
+        user: { email: "person@example.com" },
+        input: {
+          query: "Acme",
+          limit: "3",
+          experimentalField: "keep-me"
+        }
+      }),
+      {
+        searchHubSpotContacts: async (_token, input) => {
+          expect(input as Record<string, unknown>).toEqual({
+            query: "Acme",
+            limit: 3,
+            experimentalField: "keep-me"
+          });
+          return [];
+        }
+      }
+    );
+
+    expect(response.status).toBe(200);
+  });
+
+  test("replays coerced Google Analytics gateway calls against the provider cassette", async () => {
+    await withProviderCassette(
+      analyticsRunReportCassette as ProviderCassette,
+      async (cassette) => {
+        const response = await handleToolGatewayRequest(
+          config,
+          createStore(googleConnection),
+          "google.analyticsRunReport",
+          request("google.analyticsRunReport", {
+            user: { email: "person@example.com" },
+            input: {
+              property_id: "456",
+              start_date: "7daysAgo",
+              end_date: "today",
+              metrics: ["activeUsers"],
+              dimensions: ["country"],
+              limit: "3"
+            }
+          })
+        );
+
+        expect(response.status).toBe(200);
+        expect(await response.json()).toEqual({
+          classification: "user_private",
+          content: {
+            propertyId: "456",
+            dimensionHeaders: ["country"],
+            metricHeaders: ["activeUsers"],
+            rows: [
+              {
+                dimensions: { country: "US" },
+                metrics: { activeUsers: "42" }
+              }
+            ],
+            rowCount: 1
+          }
+        });
+        cassette.assertComplete();
+        expect(cassette.requests[0]?.bodyJson).toEqual({
+          dateRanges: [{ startDate: "7daysAgo", endDate: "today" }],
+          metrics: [{ name: "activeUsers" }],
+          dimensions: [{ name: "country" }],
+          limit: "3"
+        });
+      }
+    );
+  });
+
   test("passes Google Slides template probe inputs to the provider tool", async () => {
     const response = await handleToolGatewayRequest(
       config,
@@ -497,12 +617,12 @@ describe("handleToolGatewayRequest", () => {
         user: { email: "person@example.com" },
         input: {
           presentation_id: "deck-copy",
-          slide_index: 2,
+          slide_index: "2",
           predefined_layout: "title_and_two_columns",
           placeholders: [
             { placeholder_type: "title", value: "Test slide 3" },
             { role: "body", index: 0, content: "Left text" },
-            { role: "body", index: 1, content: "Right text" }
+            { role: "body", index: "1", content: "Right text" }
           ]
         }
       }),
