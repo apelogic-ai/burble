@@ -1451,6 +1451,101 @@ describe("handleToolGatewayRequest", () => {
     expect(body.content.scheduledPromptInstruction).not.toContain("Hermes");
   });
 
+  test("rejects channel destination grants for non-public scheduled output", async () => {
+    const route: ConversationRouteRecord = {
+      id: "convrt_grant",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      transport: "slack",
+      destinationJson: JSON.stringify({
+        channelId: "C123",
+        isDirectMessage: false,
+        rootId: "channel:C123"
+      }),
+      kind: "grant",
+      grantedBySlackUserId: "U123",
+      expiresAt: null,
+      bindingJson: null,
+      createdAt: "2026-05-26T00:00:00.000Z",
+      updatedAt: "2026-05-26T00:00:00.000Z",
+      revokedAt: null
+    };
+
+    const response = await handleToolGatewayRequest(
+      config,
+      createStore(null, runtime, [], route),
+      "scheduledJob.registerCapability",
+      request(
+        "scheduledJob.registerCapability",
+        {
+          input: {
+            jobId: "ai-news-hourly",
+            requiredTools: ["google.getDriveFile"],
+            routeId: "convrt_grant",
+            visibilityPolicy: {
+              maxOutputVisibility: "user_private"
+            }
+          }
+        },
+        "runtime-token-u123",
+        "rt_u123"
+      )
+    );
+
+    expect(response.status).toBe(403);
+    expect(await response.text()).toContain(
+      "Destination grant requires public scheduled output visibility"
+    );
+  });
+
+  test("rejects scheduled route grants bound to another job", async () => {
+    const route: ConversationRouteRecord = {
+      id: "convrt_grant",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      transport: "slack",
+      destinationJson: JSON.stringify({
+        channelId: "C123",
+        isDirectMessage: false,
+        rootId: "channel:C123"
+      }),
+      kind: "grant",
+      grantedBySlackUserId: "U123",
+      expiresAt: null,
+      bindingJson: JSON.stringify({
+        jobId: "another-job",
+        runtimeId: "rt_u123"
+      }),
+      createdAt: "2026-05-26T00:00:00.000Z",
+      updatedAt: "2026-05-26T00:00:00.000Z",
+      revokedAt: null
+    };
+
+    const response = await handleToolGatewayRequest(
+      config,
+      createStore(null, runtime, [], route),
+      "scheduledJob.registerCapability",
+      request(
+        "scheduledJob.registerCapability",
+        {
+          input: {
+            jobId: "ai-news-hourly",
+            requiredTools: ["google.getDriveFile"],
+            routeId: "convrt_grant",
+            visibilityPolicy: {
+              maxOutputVisibility: "public"
+            }
+          }
+        },
+        "runtime-token-u123",
+        "rt_u123"
+      )
+    );
+
+    expect(response.status).toBe(403);
+    expect(await response.text()).toContain("Conversation route job mismatch");
+  });
+
   test("accepts scheduled job provider capability aliases used by native runtimes", async () => {
     const cases: Array<{ name: string; input: unknown }> = [
       {

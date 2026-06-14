@@ -5,7 +5,10 @@ import type {
   Provider,
   TokenStore
 } from "./db";
-import type { ConversationAttachment } from "./conversation/types";
+import type {
+  ConversationAttachment,
+  ToolClassification
+} from "./conversation/types";
 import { isKnownRuntimeEngine } from "./agent/runtime-descriptors";
 import { createHash, timingSafeEqual } from "node:crypto";
 import { connectionProviderForToolName } from "./providers/descriptors";
@@ -427,7 +430,13 @@ export async function handleToolGatewayRequest(
       const destination = resolveConversationRouteDestination(
         store,
         auth.runtime,
-        input.routeId
+        input.routeId,
+        {
+          jobId: input.jobId,
+          maxOutputVisibility: normalizedMaxOutputVisibility(
+            input.visibilityPolicy
+          )
+        }
       );
       if (!destination.ok) {
         return new Response(destination.message, { status: destination.status });
@@ -3214,7 +3223,12 @@ function resolveActiveConversationDestination(
 function resolveConversationRouteDestination(
   store: TokenStore,
   runtime: AgentRuntimeRecord,
-  routeId: string
+  routeId: string,
+  options: {
+    jobId?: string;
+    maxOutputVisibility?: ToolClassification;
+    now?: Date;
+  } = {}
 ):
   | {
       ok: true;
@@ -3229,6 +3243,12 @@ function resolveConversationRouteDestination(
   }
   if (route.revokedAt) {
     return { ok: false, status: 410, message: "Conversation route revoked" };
+  }
+  if (
+    route.expiresAt &&
+    Date.parse(route.expiresAt) <= (options.now ?? new Date()).getTime()
+  ) {
+    return { ok: false, status: 410, message: "Conversation route expired" };
   }
   if (
     route.workspaceId !== runtime.workspaceId ||
@@ -3263,6 +3283,32 @@ function resolveConversationRouteDestination(
       message: "Runtime route mismatch"
     };
   }
+  const binding = readConversationRouteBinding(route.bindingJson);
+  if (binding?.runtimeId && binding.runtimeId !== runtime.id) {
+    return {
+      ok: false,
+      status: 403,
+      message: "Conversation route runtime mismatch"
+    };
+  }
+  if (binding?.jobId && options.jobId && binding.jobId !== options.jobId) {
+    return {
+      ok: false,
+      status: 403,
+      message: "Conversation route job mismatch"
+    };
+  }
+  if (
+    route.kind === "grant" &&
+    !destination.isDirectMessage &&
+    options.maxOutputVisibility !== "public"
+  ) {
+    return {
+      ok: false,
+      status: 403,
+      message: "Destination grant requires public scheduled output visibility"
+    };
+  }
 
   return {
     ok: true,
@@ -3273,7 +3319,12 @@ function resolveConversationRouteDestination(
 
 function readSlackRouteDestination(
   destinationJson: string
-): { channelId: string; threadTs?: string; runtimeId?: string } | null {
+): {
+  channelId: string;
+  threadTs?: string;
+  runtimeId?: string;
+  isDirectMessage: boolean;
+} | null {
   try {
     const parsed = JSON.parse(destinationJson) as unknown;
     if (
@@ -3308,6 +3359,7 @@ function readSlackRouteDestination(
 
     return {
       channelId: record.channelId,
+      isDirectMessage: record.isDirectMessage === true,
       ...(typeof record.threadTs === "string" && record.threadTs.trim()
         ? { threadTs: record.threadTs }
         : {}),
@@ -3318,6 +3370,51 @@ function readSlackRouteDestination(
   } catch {
     return null;
   }
+}
+
+function readConversationRouteBinding(
+  bindingJson: string | null | undefined
+): { jobId?: string; runtimeId?: string } | null {
+  if (!bindingJson) {
+    return null;
+  }
+  try {
+    const parsed = JSON.parse(bindingJson) as unknown;
+    if (
+      typeof parsed !== "object" ||
+      parsed === null ||
+      Array.isArray(parsed)
+    ) {
+      return null;
+    }
+    const record = parsed as Record<string, unknown>;
+    return {
+      ...(typeof record.jobId === "string" && record.jobId.trim()
+        ? { jobId: record.jobId }
+        : {}),
+      ...(typeof record.runtimeId === "string" && record.runtimeId.trim()
+        ? { runtimeId: record.runtimeId }
+        : {})
+    };
+  } catch {
+    return null;
+  }
+}
+
+function normalizedMaxOutputVisibility(
+  visibilityPolicy: unknown
+): ToolClassification | undefined {
+  if (
+    typeof visibilityPolicy !== "object" ||
+    visibilityPolicy === null ||
+    Array.isArray(visibilityPolicy)
+  ) {
+    return undefined;
+  }
+  const value = (visibilityPolicy as Record<string, unknown>).maxOutputVisibility;
+  return value === "public" || value === "user_private" || value === "restricted"
+    ? value
+    : undefined;
 }
 
 function isAtlassianMcpToolCallInput(

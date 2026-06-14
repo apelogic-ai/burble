@@ -91,10 +91,10 @@ export type ConversationRouteRecord = {
   slackUserId: string;
   transport: ConversationTransport;
   destinationJson: string;
-  kind: ConversationRouteKind;
-  grantedBySlackUserId: string | null;
-  expiresAt: string | null;
-  bindingJson: string | null;
+  kind?: ConversationRouteKind;
+  grantedBySlackUserId?: string | null;
+  expiresAt?: string | null;
+  bindingJson?: string | null;
   createdAt: string;
   updatedAt: string;
   revokedAt: string | null;
