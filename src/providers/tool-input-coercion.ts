@@ -35,15 +35,17 @@ function coerceProviderToolInput(
     return { ok: true, input: input ?? {} };
   }
 
-  const output: Record<string, unknown> = {};
+  const output: Record<string, unknown> = input ? { ...input } : {};
   for (const [name, spec] of Object.entries(tool.input)) {
     const result = readInputField(input, name, spec);
     if (result.invalid) {
       output[name] = result.raw;
+      deleteInputAliases(output, name, spec);
       continue;
     }
     if (result.value !== undefined) {
       output[name] = result.value;
+      deleteInputAliases(output, name, spec);
     }
   }
   return { ok: true, input: output };
@@ -80,6 +82,18 @@ function inputFieldKeys(name: string, spec: ProviderToolInputSpec): string[] {
     snakeCase(name),
     ...(spec.aliases ?? [])
   ]);
+}
+
+function deleteInputAliases(
+  output: Record<string, unknown>,
+  name: string,
+  spec: ProviderToolInputSpec
+): void {
+  for (const key of inputFieldKeys(name, spec)) {
+    if (key !== name) {
+      delete output[key];
+    }
+  }
 }
 
 function coerceInputValue(value: unknown, spec: ProviderToolInputSpec): unknown {
@@ -188,9 +202,14 @@ function coerceObjectValue(
     return value;
   }
 
-  const output: Record<string, unknown> = {};
+  const output: Record<string, unknown> = { ...value };
   for (const [name, child] of Object.entries(spec.properties)) {
     const result = readInputField(value, name, child);
+    if (result.invalid) {
+      output[name] = result.raw;
+      deleteInputAliases(output, name, child);
+      continue;
+    }
     if (result.value === undefined) {
       if (!child.optional) {
         return undefined;
@@ -198,6 +217,7 @@ function coerceObjectValue(
       continue;
     }
     output[name] = result.value;
+    deleteInputAliases(output, name, child);
   }
   return output;
 }

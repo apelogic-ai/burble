@@ -577,7 +577,7 @@ function toMcpToolArgumentsWithoutScheduledJobIdentity(
   if (!tool) {
     throw new Error(`Unsupported Burble MCP tool: ${toolName}`);
   }
-  return coerceManifestToolInput(toolName, input, tool);
+  return input ?? {};
 }
 
 function findManifestTool(
@@ -604,106 +604,6 @@ function readProviderToolInput(body: unknown): Record<string, unknown> | null {
     return readNestedRecord(body, "input", keys[0]) ?? input;
   }
   return input;
-}
-
-function coerceManifestToolInput(
-  toolName: string,
-  input: Record<string, unknown> | null,
-  tool: RuntimeManifestToolSummary
-): Record<string, unknown> {
-  if (!tool.input?.length) {
-    return input ?? {};
-  }
-
-  const output: Record<string, unknown> = {};
-  for (const field of tool.input ?? []) {
-    const result = readManifestInputField(input, field);
-    if (result.value === undefined) {
-      if (field.required) {
-        throw new Error(
-          `${toolName} requires input.${field.name}${
-            result.invalid ? ` to be ${field.type}` : ""
-          }`
-        );
-      }
-      continue;
-    }
-    output[field.name] = result.value;
-  }
-  return output;
-}
-
-function readManifestInputField(
-  input: Record<string, unknown> | null,
-  field: RuntimeManifestToolInputSummary
-): { value: unknown; invalid: boolean } {
-  if (!input) {
-    return { value: undefined, invalid: false };
-  }
-  let invalid = false;
-  for (const key of [field.name, ...(field.aliases ?? [])]) {
-    if (Object.hasOwn(input, key)) {
-      const value = coerceManifestInputValue(input[key], field);
-      if (value !== undefined) {
-        return { value, invalid: false };
-      }
-      invalid = true;
-    }
-  }
-  return { value: undefined, invalid };
-}
-
-function coerceManifestInputValue(
-  value: unknown,
-  field: RuntimeManifestToolInputSummary
-): unknown {
-  if (value === null) {
-    return field.nullable ? null : undefined;
-  }
-  if (value === undefined) {
-    return undefined;
-  }
-  switch (field.type) {
-    case "string":
-      return typeof value === "string" && value.trim() ? value : undefined;
-    case "number":
-      if (typeof value === "number" && Number.isFinite(value)) {
-        return value;
-      }
-      if (typeof value === "string" && value.trim()) {
-        const parsed = Number(value);
-        return Number.isFinite(parsed) ? parsed : undefined;
-      }
-      return undefined;
-    case "boolean":
-      if (typeof value === "boolean") {
-        return value;
-      }
-      if (typeof value === "string") {
-        const normalized = value.trim().toLowerCase();
-        if (normalized === "true") {
-          return true;
-        }
-        if (normalized === "false") {
-          return false;
-        }
-      }
-      return undefined;
-    case "enum":
-      return typeof value === "string" && value.trim()
-        ? !field.values?.length || field.values.includes(value.trim())
-          ? value.trim()
-          : undefined
-        : undefined;
-    case "string[]":
-      return Array.isArray(value) ? value : undefined;
-    case "object":
-      return value && typeof value === "object" && !Array.isArray(value)
-        ? value
-        : undefined;
-    default:
-      return isCompactManifestValue(value) ? value : undefined;
-  }
 }
 
 function sampleManifestToolInput(
@@ -736,17 +636,6 @@ function sampleManifestInputValue(field: RuntimeManifestToolInputSummary): unkno
     default:
       return `contract-${field.name}`;
   }
-}
-
-function isCompactManifestValue(value: unknown): boolean {
-  return (
-    value === null ||
-    (typeof value === "string" && value.trim().length > 0) ||
-    typeof value === "boolean" ||
-    typeof value === "number" ||
-    Array.isArray(value) ||
-    (value !== null && typeof value === "object")
-  );
 }
 
 function withScheduledJobIdentity(

@@ -436,6 +436,34 @@ describe("handleToolGatewayRequest", () => {
     expect(response.status).toBe(200);
   });
 
+  test("preserves undeclared provider fields while coercing declared fields", async () => {
+    const response = await handleToolGatewayRequest(
+      config,
+      createStore(hubspotConnection),
+      "hubspot.searchContacts",
+      request("hubspot.searchContacts", {
+        user: { email: "person@example.com" },
+        input: {
+          query: "Acme",
+          limit: "3",
+          experimentalField: "keep-me"
+        }
+      }),
+      {
+        searchHubSpotContacts: async (_token, input) => {
+          expect(input as Record<string, unknown>).toEqual({
+            query: "Acme",
+            limit: 3,
+            experimentalField: "keep-me"
+          });
+          return [];
+        }
+      }
+    );
+
+    expect(response.status).toBe(200);
+  });
+
   test("replays coerced Google Analytics gateway calls against the provider cassette", async () => {
     await withProviderCassette(
       analyticsRunReportCassette as ProviderCassette,
