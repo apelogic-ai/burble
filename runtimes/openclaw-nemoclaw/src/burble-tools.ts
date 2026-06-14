@@ -138,13 +138,12 @@ async function sendConversationMessage(
   if (!text && !attachments?.length) {
     throw new Error("conversation.sendMessage requires input.text or input.attachments");
   }
+  const scheduledJob = request?.input.scheduledJob;
   const routeId =
+    scheduledJob?.routeId ??
     readNestedString(body, "input", "routeId") ??
-    request?.input.conversation?.routeId ??
-    request?.input.scheduledJob?.routeId;
-  const jobId =
-    readNestedString(body, "input", "jobId") ??
-    request?.input.scheduledJob?.jobId;
+    request?.input.conversation?.routeId;
+  const jobId = scheduledJob?.jobId;
   if (!routeId && !request?.input.conversation) {
     throw new Error("conversation.sendMessage requires a route id or active conversation");
   }

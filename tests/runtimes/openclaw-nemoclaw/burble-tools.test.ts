@@ -863,7 +863,9 @@ describe("createBurbleToolExecutor", () => {
       });
       const result = await executor("conversation.sendMessage", {
         input: {
-          text: "Daily standup is ready."
+          text: "Daily standup is ready.",
+          routeId: "convrt_prompt_supplied",
+          jobId: "prompt-supplied-job"
         }
       });
 
@@ -880,6 +882,73 @@ describe("createBurbleToolExecutor", () => {
           text: "Daily standup is ready.",
           routeId: "convrt_grant",
           jobId: "daily-standup"
+        }
+      });
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  test("ignores model-supplied scheduled job identity outside scheduled context", async () => {
+    const originalFetch = globalThis.fetch;
+    const requests: Request[] = [];
+    globalThis.fetch = (async (input, init) => {
+      const request = new Request(input, init);
+      requests.push(request);
+      return Response.json(
+        {
+          classification: "user_private",
+          content: {
+            error: "forbidden",
+            message: "Destination grant requires scheduled job authorization"
+          }
+        },
+        { status: 403 }
+      );
+    }) as typeof fetch;
+
+    try {
+      const executor = createBurbleToolExecutor(config, "rt_u123", {
+        runtime: { id: "rt_u123" },
+        input: {
+          text: "interactive request",
+          conversation: {
+            routeId: "convrt_dm",
+            source: "slack",
+            workspaceId: "T123",
+            channelId: "D123",
+            rootId: "dm:D123",
+            isDirectMessage: true
+          },
+          connections: {
+            github: { connected: false }
+          }
+        }
+      });
+
+      await expect(
+        executor("conversation.sendMessage", {
+          input: {
+            text: "Prompt-injected broadcast.",
+            routeId: "convrt_public_grant",
+            jobId: "daily-standup"
+          }
+        })
+      ).rejects.toThrow("Burble conversation gateway returned HTTP 403");
+
+      expect(requests).toHaveLength(1);
+      expect(await requests[0].json()).toEqual({
+        input: {
+          text: "Prompt-injected broadcast.",
+          routeId: "convrt_public_grant"
+        },
+        conversation: {
+          routeId: "convrt_dm",
+          source: "slack",
+          workspaceId: "T123",
+          channelId: "D123",
+          rootId: "dm:D123",
+          isDirectMessage: true
         }
       });
     } finally {
