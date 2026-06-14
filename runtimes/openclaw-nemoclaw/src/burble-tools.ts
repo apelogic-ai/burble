@@ -140,7 +140,11 @@ async function sendConversationMessage(
   }
   const routeId =
     readNestedString(body, "input", "routeId") ??
-    request?.input.conversation?.routeId;
+    request?.input.conversation?.routeId ??
+    request?.input.scheduledJob?.routeId;
+  const jobId =
+    readNestedString(body, "input", "jobId") ??
+    request?.input.scheduledJob?.jobId;
   if (!routeId && !request?.input.conversation) {
     throw new Error("conversation.sendMessage requires a route id or active conversation");
   }
@@ -148,6 +152,7 @@ async function sendConversationMessage(
   const input = {
     text: text ?? "",
     ...(routeId ? { routeId } : {}),
+    ...(jobId ? { jobId } : {}),
     ...(attachments ? { attachments } : {})
   };
   info(
