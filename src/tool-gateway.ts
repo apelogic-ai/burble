@@ -321,8 +321,21 @@ export async function handleToolGatewayRequest(
       ...body.input,
       text: sanitizeRuntimeConversationText(body.input.text)
     };
+    const sendRouteOptions = sendInput.routeId
+      ? resolveConversationSendRouteOptions(store, auth.runtime, sendInput)
+      : { ok: true as const, options: {} };
+    if (!sendRouteOptions.ok) {
+      return new Response(sendRouteOptions.message, {
+        status: sendRouteOptions.status
+      });
+    }
     const destination = sendInput.routeId
-      ? resolveConversationRouteDestination(store, auth.runtime, sendInput.routeId)
+      ? resolveConversationRouteDestination(
+          store,
+          auth.runtime,
+          sendInput.routeId,
+          sendRouteOptions.options
+        )
       : resolveActiveConversationDestination(auth.runtime, body?.conversation);
     if (!destination.ok) {
       return new Response(destination.message, { status: destination.status });
@@ -3077,6 +3090,7 @@ function isConversationSendInput(
 ): input is {
   text: string;
   routeId?: string;
+  jobId?: string;
   attachments?: ConversationAttachment[];
 } {
   const attachments =
@@ -3100,7 +3114,10 @@ function isConversationSendInput(
       isConversationAttachmentArray(input.attachments)) &&
     (!("routeId" in input) ||
       input.routeId === undefined ||
-      (typeof input.routeId === "string" && input.routeId.trim().length > 0))
+      (typeof input.routeId === "string" && input.routeId.trim().length > 0)) &&
+    (!("jobId" in input) ||
+      input.jobId === undefined ||
+      (typeof input.jobId === "string" && input.jobId.trim().length > 0))
   );
 }
 
@@ -3291,7 +3308,7 @@ function resolveConversationRouteDestination(
       message: "Conversation route runtime mismatch"
     };
   }
-  if (binding?.jobId && options.jobId && binding.jobId !== options.jobId) {
+  if (binding?.jobId && binding.jobId !== options.jobId) {
     return {
       ok: false,
       status: 403,
@@ -3314,6 +3331,71 @@ function resolveConversationRouteDestination(
     ok: true,
     transport: "slack",
     ...destination
+  };
+}
+
+function resolveConversationSendRouteOptions(
+  store: TokenStore,
+  runtime: AgentRuntimeRecord,
+  input: { routeId?: string; jobId?: string }
+):
+  | {
+      ok: true;
+      options: {
+        jobId?: string;
+        maxOutputVisibility?: ToolClassification;
+      };
+    }
+  | { ok: false; status: number; message: string } {
+  if (!input.jobId) {
+    return { ok: true, options: {} };
+  }
+
+  const capability = store.getAgentJobCapability(input.jobId);
+  if (!capability) {
+    return {
+      ok: false,
+      status: 404,
+      message: "Scheduled job capability not found"
+    };
+  }
+  if (
+    capability.workspaceId !== runtime.workspaceId ||
+    capability.slackUserId !== runtime.slackUserId
+  ) {
+    return {
+      ok: false,
+      status: 403,
+      message: "Scheduled job principal mismatch"
+    };
+  }
+  if (capability.routeId && capability.routeId !== input.routeId) {
+    return {
+      ok: false,
+      status: 403,
+      message: "Scheduled job route mismatch"
+    };
+  }
+  if (
+    capability.policyHash &&
+    runtime.policyHash &&
+    capability.policyHash !== runtime.policyHash
+  ) {
+    return {
+      ok: false,
+      status: 403,
+      message: "Scheduled job policy mismatch"
+    };
+  }
+
+  return {
+    ok: true,
+    options: {
+      jobId: capability.jobId,
+      maxOutputVisibility: normalizedMaxOutputVisibility(
+        capability.visibilityPolicy
+      )
+    }
   };
 }
 
