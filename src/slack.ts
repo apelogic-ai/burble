@@ -2906,6 +2906,7 @@ export function buildHelpResponse() {
             "• `/auth slack` - connect or reconnect Slack search",
             "• `/agent status` - show and power up your current agent runtime",
             "• `/agent config` - inspect your current agent config file",
+            "• `/agent grant here` - authorize this channel for scheduled job output",
             "• `/agent exec <task>` - send an explicit task to your private agent runtime",
             "• `/agent-status` - legacy alias for agent status",
             "• `/agent-config` - legacy alias for agent config",
