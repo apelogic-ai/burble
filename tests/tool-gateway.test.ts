@@ -171,6 +171,8 @@ function createStore(
       throw new Error("unexpected conversation route write");
     },
     getConversationRoute: (id) => (id === foundRoute?.id ? foundRoute : null),
+    getConversationRouteForDestination: () => null,
+    revokeConversationRoute: () => null,
     upsertWorkspacePolicy: () => {
       throw new Error("unexpected workspace policy write");
     },
