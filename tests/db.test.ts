@@ -404,7 +404,11 @@ describe("createTokenStore", () => {
       transport: "slack",
       createdAt: "2026-05-26T00:00:00.000Z",
       updatedAt: "2026-05-26T00:00:00.000Z",
-      revokedAt: null
+      revokedAt: null,
+      kind: "origin",
+      grantedBySlackUserId: null,
+      expiresAt: null,
+      bindingJson: null
     });
     expect(JSON.parse(route.destinationJson)).toEqual({
       channelId: "C123",
@@ -417,7 +421,107 @@ describe("createTokenStore", () => {
       workspaceId: "T123",
       slackUserId: "U123",
       transport: "slack",
-      destinationJson: route.destinationJson
+      destinationJson: route.destinationJson,
+      kind: "origin",
+      grantedBySlackUserId: null,
+      expiresAt: null,
+      bindingJson: null
+    });
+
+    store.close();
+  });
+
+  test("stores channel destination grants with binding metadata", () => {
+    const store = createTokenStore(":memory:");
+
+    const route = store.upsertConversationRoute({
+      workspaceId: "T123",
+      slackUserId: "U123",
+      transport: "slack",
+      destination: {
+        channelId: "C123",
+        isDirectMessage: false,
+        rootId: "channel:C123"
+      },
+      kind: "grant",
+      grantedBySlackUserId: "U123",
+      expiresAt: "2026-06-30T00:00:00.000Z",
+      binding: {
+        jobId: "job-daily-standup",
+        runtimeId: "rt_123"
+      },
+      now: new Date("2026-05-26T00:00:00.000Z")
+    });
+
+    expect(route).toMatchObject({
+      workspaceId: "T123",
+      slackUserId: "U123",
+      transport: "slack",
+      kind: "grant",
+      grantedBySlackUserId: "U123",
+      expiresAt: "2026-06-30T00:00:00.000Z",
+      revokedAt: null
+    });
+    expect(JSON.parse(route.destinationJson)).toEqual({
+      channelId: "C123",
+      isDirectMessage: false,
+      rootId: "channel:C123"
+    });
+    expect(JSON.parse(route.bindingJson ?? "{}")).toEqual({
+      jobId: "job-daily-standup",
+      runtimeId: "rt_123"
+    });
+
+    expect(store.getConversationRoute(route.id)).toEqual(route);
+
+    store.close();
+  });
+
+  test("migrates existing conversation routes with grant columns", () => {
+    const path = join(mkdtempSync(join(tmpdir(), "burble-db-")), "burble.db");
+    const db = new Database(path);
+    db.exec(`
+      CREATE TABLE conversation_routes (
+        id TEXT PRIMARY KEY,
+        workspace_id TEXT NOT NULL,
+        slack_user_id TEXT NOT NULL,
+        transport TEXT NOT NULL,
+        destination_json TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        revoked_at TEXT
+      );
+      INSERT INTO conversation_routes (
+        id,
+        workspace_id,
+        slack_user_id,
+        transport,
+        destination_json,
+        created_at,
+        updated_at,
+        revoked_at
+      )
+      VALUES (
+        'convrt_existing',
+        'T123',
+        'U123',
+        'slack',
+        '{"channelId":"D123","isDirectMessage":true,"rootId":"dm:D123"}',
+        '2026-05-26T00:00:00.000Z',
+        '2026-05-26T00:00:00.000Z',
+        NULL
+      );
+    `);
+    db.close();
+
+    const store = createTokenStore(path);
+
+    expect(store.getConversationRoute("convrt_existing")).toMatchObject({
+      id: "convrt_existing",
+      kind: "origin",
+      grantedBySlackUserId: null,
+      expiresAt: null,
+      bindingJson: null
     });
 
     store.close();
