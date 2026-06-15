@@ -2496,7 +2496,7 @@ function parseSlackStreamingModePreference(
   return fallback;
 }
 
-async function buildSyncedAgentHomeSettings(input: {
+export async function buildSyncedAgentHomeSettings(input: {
   config: Config;
   store: TokenStore;
   runtimeFactory?: RuntimeFactory;
@@ -2517,7 +2517,17 @@ async function buildSyncedAgentHomeSettings(input: {
     engine: selection.effectiveEngine
   });
   if (runtime && input.runtimeFactory?.syncRuntimeStatus) {
-    await input.runtimeFactory.syncRuntimeStatus(runtime.id);
+    try {
+      await input.runtimeFactory.syncRuntimeStatus(runtime.id);
+    } catch (error) {
+      input.store.updateAgentRuntimeStatus(runtime.id, {
+        status: "failed",
+        failureReason:
+          error instanceof Error
+            ? `Runtime status sync failed: ${error.message}`
+            : "Runtime status sync failed"
+      });
+    }
   }
 
   return buildAgentHomeSettings(input);
