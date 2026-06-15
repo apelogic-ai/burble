@@ -159,7 +159,7 @@ type ToolGatewayDeps = Partial<Parameters<typeof createGitHubTools>[0]> &
       jobId?: string;
       channelId: string;
       errorMessage: string;
-      revoked: boolean;
+      errorCode?: string;
     }) => Promise<void>;
     listAtlassianMcpTools?: (input: {
       url: string;
@@ -364,32 +364,49 @@ export async function handleToolGatewayRequest(
         ...(destination.threadTs ? { threadTs: destination.threadTs } : {})
       });
     } catch (error) {
-      if (sendInput.routeId && destination.routeKind === "grant") {
-        const errorMessage = formatToolGatewayErrorMessage(error);
-        if (isPermanentSlackDestinationDeliveryFailure(errorMessage)) {
-          const revokedCount = revokeDestinationGrantForSlackDestination(store, {
-            workspaceId: auth.runtime.workspaceId,
+      const failure = classifyConversationDeliveryFailure(error);
+      let notificationSent = false;
+      if (
+        sendInput.routeId &&
+        destination.routeKind === "grant" &&
+        !failure.retryable &&
+        !hasPriorDestinationGrantDeliveryFailureNotification(store, {
+          runtimeId: auth.runtime.id,
+          routeId: sendInput.routeId
+        })
+      ) {
+        try {
+          await (deps.notifyDestinationGrantDeliveryFailure ??
+            ((notification) =>
+              defaultNotifyDestinationGrantDeliveryFailure(config, notification)))({
+            runtime: auth.runtime,
+            routeId: sendInput.routeId,
+            ...(sendInput.jobId ? { jobId: sendInput.jobId } : {}),
             channelId: destination.channelId,
-            ...(destination.threadTs ? { threadTs: destination.threadTs } : {})
+            errorMessage: failure.message,
+            ...(failure.code ? { errorCode: failure.code } : {})
           });
-          try {
-            await (deps.notifyDestinationGrantDeliveryFailure ??
-              ((notification) =>
-                defaultNotifyDestinationGrantDeliveryFailure(config, notification)))({
-              runtime: auth.runtime,
-              routeId: sendInput.routeId,
-              ...(sendInput.jobId ? { jobId: sendInput.jobId } : {}),
-              channelId: destination.channelId,
-              errorMessage,
-              revoked: revokedCount > 0
-            });
-          } catch (notifyError) {
-            console.warn(
-              `Destination grant delivery failure notification failed runtimeId=${auth.runtime.id} routeId=${sendInput.routeId} error=${formatToolGatewayErrorMessage(notifyError)}`
-            );
-          }
+          notificationSent = true;
+        } catch (notifyError) {
+          console.warn(
+            `Destination grant delivery failure notification failed runtimeId=${auth.runtime.id} routeId=${sendInput.routeId} error=${formatToolGatewayErrorMessage(notifyError)}`
+          );
         }
       }
+      recordConversationDeliveryFailure(store, auth.runtime, toolName, {
+        routeId: sendInput.routeId,
+        jobId: sendInput.jobId,
+        routeKind: destination.routeKind,
+        channelId: destination.channelId,
+        error: failure,
+        notificationSent
+      });
+      emitToolGatewayFailed(
+        { observability: deps.observability, startedAt: toolStartedAt, body },
+        auth,
+        toolName,
+        failure
+      );
       return new Response("Conversation delivery failed", { status: 502 });
     }
 
@@ -3804,15 +3821,21 @@ async function defaultPostActiveConversationMessage(
     })
   });
 
-  const body = (await response.json()) as {
+  let body: {
     ok?: boolean;
     error?: string;
     channel?: string;
     ts?: string;
   };
+  try {
+    body = (await response.json()) as typeof body;
+  } catch {
+    body = {};
+  }
   if (!response.ok || !body.ok) {
-    throw new Error(
-      `Slack message send failed: ${body.error ?? `HTTP ${response.status}`}`
+    throw new SlackMessageSendError(
+      body.error ?? `http_${response.status}`,
+      response.status
     );
   }
 
@@ -3831,7 +3854,7 @@ async function defaultNotifyDestinationGrantDeliveryFailure(
     jobId?: string;
     channelId: string;
     errorMessage: string;
-    revoked: boolean;
+    errorCode?: string;
   }
 ): Promise<void> {
   await defaultPostActiveConversationMessage(config, {
@@ -3842,9 +3865,7 @@ async function defaultNotifyDestinationGrantDeliveryFailure(
       ...(input.jobId ? [`Job: \`${input.jobId}\``] : []),
       `Route id: \`${input.routeId}\``,
       `Reason: ${input.errorMessage}`,
-      input.revoked
-        ? "I revoked this destination grant so future scheduled runs will stop trying to post there. Invite Burble back to the channel and run `/agent grant here` in that channel to enable it again."
-        : "I could not automatically revoke this destination grant. Invite Burble back to the channel, or run `/agent ungrant here` from the affected channel."
+      "The destination grant is still active. Fix the channel/app access, or run `/agent ungrant here` from the affected channel to stop future scheduled delivery attempts."
     ].join("\n")
   });
 }
@@ -3853,34 +3874,132 @@ function formatToolGatewayErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-function isPermanentSlackDestinationDeliveryFailure(message: string): boolean {
+class SlackMessageSendError extends Error {
+  readonly code: string;
+  readonly status: number;
+
+  constructor(code: string, status: number) {
+    super(`Slack message send failed: ${code}`);
+    this.name = "SlackMessageSendError";
+    this.code = code;
+    this.status = status;
+  }
+}
+
+type ConversationDeliveryFailure = {
+  message: string;
+  code?: string;
+  retryable: boolean;
+};
+
+function classifyConversationDeliveryFailure(
+  error: unknown
+): ConversationDeliveryFailure {
+  const message = formatToolGatewayErrorMessage(error);
+  const code =
+    error instanceof SlackMessageSendError
+      ? error.code
+      : readSlackErrorCodeFromMessage(message);
+  return {
+    message,
+    ...(code ? { code } : {}),
+    retryable: isRetryableConversationDeliveryFailure(code, message)
+  };
+}
+
+function readSlackErrorCodeFromMessage(message: string): string | undefined {
+  const match = message.match(/Slack message send failed:\s*([a-z0-9_]+)/i);
+  return match?.[1]?.toLowerCase();
+}
+
+function isRetryableConversationDeliveryFailure(
+  code: string | undefined,
+  message: string
+): boolean {
+  if (code) {
+    if (code === "rate_limited" || code === "http_429") {
+      return true;
+    }
+    const httpStatus = code.match(/^http_(\d{3})$/)?.[1];
+    if (httpStatus && Number(httpStatus) >= 500) {
+      return true;
+    }
+    return false;
+  }
+
+  const normalized = message.toLowerCase();
   return (
-    message.includes("not_in_channel") ||
-    message.includes("channel_not_found") ||
-    message.includes("is_archived")
+    normalized.includes("timeout") ||
+    normalized.includes("timed out") ||
+    normalized.includes("econnreset") ||
+    normalized.includes("etimedout") ||
+    normalized.includes("fetch failed") ||
+    normalized.includes("network")
   );
 }
 
-function revokeDestinationGrantForSlackDestination(
+function hasPriorDestinationGrantDeliveryFailureNotification(
   store: TokenStore,
   input: {
-    workspaceId: string;
-    channelId: string;
-    threadTs?: string;
+    runtimeId: string;
+    routeId: string;
   }
-): number {
-  return store.revokeConversationRoutesForDestination({
-    workspaceId: input.workspaceId,
-    transport: "slack",
-    destination: {
+): boolean {
+  return store.listAgentRuntimeEvents(input.runtimeId).some((event) => {
+    if (event.eventType !== "runtime_tool_failed") {
+      return false;
+    }
+    const summary =
+      typeof event.summaryJson === "string"
+        ? readRuntimeEventSummary(event.summaryJson)
+        : null;
+    return (
+      summary?.toolName === "conversation.sendMessage" &&
+      summary.routeId === input.routeId &&
+      summary.routeKind === "grant" &&
+      summary.notificationSent === true
+    );
+  });
+}
+
+function readRuntimeEventSummary(
+  summaryJson: string
+): Record<string, unknown> | null {
+  try {
+    const parsed = JSON.parse(summaryJson) as unknown;
+    return isOptionalObject(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function recordConversationDeliveryFailure(
+  store: TokenStore,
+  runtime: AgentRuntimeRecord,
+  toolName: string,
+  input: {
+    routeId?: string;
+    jobId?: string;
+    routeKind: "origin" | "grant";
+    channelId: string;
+    error: ConversationDeliveryFailure;
+    notificationSent: boolean;
+  }
+): void {
+  store.recordAgentRuntimeEvent({
+    runtimeId: runtime.id,
+    eventType: "runtime_tool_failed",
+    summary: {
+      toolName,
+      routeKind: input.routeKind,
       channelId: input.channelId,
-      isDirectMessage: false,
-      rootId: input.threadTs
-        ? `channel:${input.channelId}:thread:${input.threadTs}`
-        : `channel:${input.channelId}`,
-      ...(input.threadTs ? { threadTs: input.threadTs } : {})
-    },
-    kind: "grant"
+      ...(input.routeId ? { routeId: input.routeId } : {}),
+      ...(input.jobId ? { jobId: input.jobId } : {}),
+      error: input.error.message,
+      ...(input.error.code ? { deliveryFailureCode: input.error.code } : {}),
+      deliveryFailureRetryable: input.error.retryable,
+      notificationSent: input.notificationSent
+    }
   });
 }
 
@@ -4147,6 +4266,31 @@ function emitToolGatewayCompleted(
       authKind: auth.kind,
       provider: readToolProviderForTelemetry(toolName),
       itemCount: Array.isArray(result.content) ? result.content.length : null
+    }
+  });
+}
+
+function emitToolGatewayFailed(
+  context: ToolGatewayObservabilityContext | undefined,
+  auth: ToolGatewayAuth,
+  toolName: string,
+  error: ConversationDeliveryFailure
+): void {
+  context?.observability?.emit({
+    name: "tool.gateway.completed",
+    ...toolGatewayIdentityFields(auth),
+    toolName,
+    durationMs: Date.now() - context.startedAt,
+    status: "error",
+    attributes: {
+      authKind: auth.kind,
+      provider: readToolProviderForTelemetry(toolName),
+      ...(error.code ? { deliveryFailureCode: error.code } : {}),
+      deliveryFailureRetryable: error.retryable
+    },
+    error: {
+      message: error.message,
+      ...(error.code ? { code: error.code } : {})
     }
   });
 }

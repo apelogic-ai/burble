@@ -70,7 +70,8 @@ export type AgentRuntimeEventType =
   | "runtime_stopped"
   | "runtime_run_started"
   | "runtime_run_finished"
-  | "runtime_tool_called";
+  | "runtime_tool_called"
+  | "runtime_tool_failed";
 
 export type AgentRuntimeEventRecord = {
   id: string;

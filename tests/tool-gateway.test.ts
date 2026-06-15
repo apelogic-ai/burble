@@ -167,7 +167,7 @@ function createStore(
     recordAgentRuntimeEvent: (event) => {
       runtimeEvents.push(event);
     },
-    listAgentRuntimeEvents: () => [],
+    listAgentRuntimeEvents: () => runtimeEvents as never,
     upsertConversationRoute: () => {
       throw new Error("unexpected conversation route write");
     },
@@ -2540,7 +2540,114 @@ describe("handleToolGatewayRequest", () => {
     });
   });
 
-  test("revokes and notifies the grant owner when permanent scheduled grant delivery fails", async () => {
+  test("records and notifies the grant owner when permanent scheduled grant delivery fails", async () => {
+    const route: ConversationRouteRecord = {
+      id: "convrt_grant",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      transport: "slack",
+      destinationJson: JSON.stringify({
+        channelId: "CENG",
+        isDirectMessage: false,
+        rootId: "channel:CENG"
+      }),
+      kind: "grant",
+      grantedBySlackUserId: "U123",
+      expiresAt: null,
+      bindingJson: JSON.stringify({
+        jobId: "daily-standup",
+        runtimeId: "rt_u123"
+      }),
+      createdAt: "2026-05-26T00:00:00.000Z",
+      updatedAt: "2026-05-26T00:00:00.000Z",
+      revokedAt: null
+    };
+    const jobCapability: AgentJobCapabilityRecord = {
+      jobId: "daily-standup",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      requiredTools: ["conversation.sendMessage"],
+      routeId: "convrt_grant",
+      policyHash: "policy-hash",
+      capabilityProfile: "scheduled_job",
+      runtimeType: "openclaw",
+      stateRefs: [],
+      visibilityPolicy: {
+        maxOutputVisibility: "public"
+      },
+      createdAt: "2026-06-01T00:00:00.000Z",
+      updatedAt: "2026-06-01T00:00:00.000Z"
+    };
+    const notifications: unknown[] = [];
+    const routeRevocations: unknown[] = [];
+    const runtimeEvents: unknown[] = [];
+
+    const response = await handleToolGatewayRequest(
+      config,
+      createStore(
+        null,
+        runtime,
+        runtimeEvents,
+        route,
+        [],
+        { found: jobCapability },
+        routeRevocations
+      ),
+      "conversation.sendMessage",
+      request(
+        "conversation.sendMessage",
+        {
+          input: {
+            text: "Daily standup is ready.",
+            routeId: "convrt_grant",
+            jobId: "daily-standup"
+          }
+        },
+        "runtime-token-u123",
+        "rt_u123"
+      ),
+      {
+        postActiveConversationMessage: async () => {
+          throw new Error("Slack message send failed: not_in_channel");
+        },
+        notifyDestinationGrantDeliveryFailure: async (input) => {
+          notifications.push(input);
+        }
+      }
+    );
+
+    expect(response.status).toBe(502);
+    expect(await response.text()).toContain("Conversation delivery failed");
+    expect(routeRevocations).toEqual([]);
+    expect(runtimeEvents).toEqual([
+      expect.objectContaining({
+        eventType: "runtime_tool_failed",
+        runtimeId: "rt_u123",
+        summary: expect.objectContaining({
+          toolName: "conversation.sendMessage",
+          routeId: "convrt_grant",
+          routeKind: "grant",
+          channelId: "CENG",
+          jobId: "daily-standup",
+          deliveryFailureCode: "not_in_channel",
+          deliveryFailureRetryable: false,
+          error: "Slack message send failed: not_in_channel"
+        })
+      })
+    ]);
+    expect(notifications).toEqual([
+      expect.objectContaining({
+        runtime,
+        routeId: "convrt_grant",
+        jobId: "daily-standup",
+        channelId: "CENG",
+        errorMessage: "Slack message send failed: not_in_channel",
+        errorCode: "not_in_channel"
+      })
+    ]);
+  });
+
+  test("notifies the grant owner for unlisted non-retryable Slack failures", async () => {
     const route: ConversationRouteRecord = {
       id: "convrt_grant",
       workspaceId: "T123",
@@ -2607,6 +2714,96 @@ describe("handleToolGatewayRequest", () => {
       ),
       {
         postActiveConversationMessage: async () => {
+          throw new Error("Slack message send failed: restricted_action");
+        },
+        notifyDestinationGrantDeliveryFailure: async (input) => {
+          notifications.push(input);
+        }
+      }
+    );
+
+    expect(response.status).toBe(502);
+    expect(routeRevocations).toEqual([]);
+    expect(notifications).toEqual([
+      expect.objectContaining({
+        errorCode: "restricted_action",
+        errorMessage: "Slack message send failed: restricted_action"
+      })
+    ]);
+  });
+
+  test("suppresses repeat grant delivery failure notifications", async () => {
+    const route: ConversationRouteRecord = {
+      id: "convrt_grant",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      transport: "slack",
+      destinationJson: JSON.stringify({
+        channelId: "CENG",
+        isDirectMessage: false,
+        rootId: "channel:CENG"
+      }),
+      kind: "grant",
+      grantedBySlackUserId: "U123",
+      expiresAt: null,
+      bindingJson: JSON.stringify({
+        jobId: "daily-standup",
+        runtimeId: "rt_u123"
+      }),
+      createdAt: "2026-05-26T00:00:00.000Z",
+      updatedAt: "2026-05-26T00:00:00.000Z",
+      revokedAt: null
+    };
+    const jobCapability: AgentJobCapabilityRecord = {
+      jobId: "daily-standup",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      requiredTools: ["conversation.sendMessage"],
+      routeId: "convrt_grant",
+      policyHash: "policy-hash",
+      capabilityProfile: "scheduled_job",
+      runtimeType: "openclaw",
+      stateRefs: [],
+      visibilityPolicy: {
+        maxOutputVisibility: "public"
+      },
+      createdAt: "2026-06-01T00:00:00.000Z",
+      updatedAt: "2026-06-01T00:00:00.000Z"
+    };
+    const runtimeEvents: unknown[] = [
+      {
+        eventType: "runtime_tool_failed",
+        summaryJson: JSON.stringify({
+          toolName: "conversation.sendMessage",
+          routeId: "convrt_grant",
+          routeKind: "grant",
+          deliveryFailureCode: "not_in_channel",
+          notificationSent: true
+        })
+      }
+    ];
+    const notifications: unknown[] = [];
+
+    const response = await handleToolGatewayRequest(
+      config,
+      createStore(null, runtime, runtimeEvents, route, [], {
+        found: jobCapability
+      }),
+      "conversation.sendMessage",
+      request(
+        "conversation.sendMessage",
+        {
+          input: {
+            text: "Daily standup is ready.",
+            routeId: "convrt_grant",
+            jobId: "daily-standup"
+          }
+        },
+        "runtime-token-u123",
+        "rt_u123"
+      ),
+      {
+        postActiveConversationMessage: async () => {
           throw new Error("Slack message send failed: not_in_channel");
         },
         notifyDestinationGrantDeliveryFailure: async (input) => {
@@ -2616,29 +2813,7 @@ describe("handleToolGatewayRequest", () => {
     );
 
     expect(response.status).toBe(502);
-    expect(await response.text()).toContain("Conversation delivery failed");
-    expect(routeRevocations).toEqual([
-      expect.objectContaining({
-        workspaceId: "T123",
-        transport: "slack",
-        destination: {
-          channelId: "CENG",
-          isDirectMessage: false,
-          rootId: "channel:CENG"
-        },
-        kind: "grant"
-      })
-    ]);
-    expect(notifications).toEqual([
-      expect.objectContaining({
-        runtime,
-        routeId: "convrt_grant",
-        jobId: "daily-standup",
-        channelId: "CENG",
-        errorMessage: "Slack message send failed: not_in_channel",
-        revoked: true
-      })
-    ]);
+    expect(notifications).toEqual([]);
   });
 
   test("does not revoke or notify for transient scheduled grant delivery failures", async () => {
@@ -2815,7 +2990,7 @@ describe("handleToolGatewayRequest", () => {
       );
       expect(String(calls[1].body.text)).toContain("not_in_channel");
       expect(String(calls[1].body.text)).toContain(
-        "I revoked this destination grant"
+        "The destination grant is still active"
       );
       expect(String(calls[1].body.text)).not.toContain(
         "revoke the destination grant with `/agent ungrant here`"
