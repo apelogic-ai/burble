@@ -408,7 +408,11 @@ describe("createTokenStore", () => {
       kind: "origin",
       grantedBySlackUserId: null,
       expiresAt: null,
-      bindingJson: null
+      bindingJson: null,
+      lastDeliveryFailureAt: null,
+      lastDeliveryFailureCode: null,
+      lastDeliveryFailureNotifiedAt: null,
+      consecutiveDeliveryFailures: 0
     });
     expect(JSON.parse(route.destinationJson)).toEqual({
       channelId: "C123",
@@ -473,6 +477,68 @@ describe("createTokenStore", () => {
     });
 
     expect(store.getConversationRoute(route.id)).toEqual(route);
+
+    store.close();
+  });
+
+  test("tracks and resets conversation route delivery failures", () => {
+    const store = createTokenStore(":memory:");
+
+    const route = store.upsertConversationRoute({
+      workspaceId: "T123",
+      slackUserId: "U123",
+      transport: "slack",
+      destination: {
+        channelId: "C123",
+        isDirectMessage: false,
+        rootId: "channel:C123"
+      },
+      kind: "grant",
+      now: new Date("2026-05-26T00:00:00.000Z")
+    });
+
+    const failed = store.recordConversationRouteDeliveryFailure({
+      routeId: route.id,
+      code: "not_in_channel",
+      notificationSent: true,
+      now: new Date("2026-05-26T01:00:00.000Z")
+    });
+
+    expect(failed).toMatchObject({
+      id: route.id,
+      lastDeliveryFailureAt: "2026-05-26T01:00:00.000Z",
+      lastDeliveryFailureCode: "not_in_channel",
+      lastDeliveryFailureNotifiedAt: "2026-05-26T01:00:00.000Z",
+      consecutiveDeliveryFailures: 1
+    });
+
+    const failedAgain = store.recordConversationRouteDeliveryFailure({
+      routeId: route.id,
+      code: "restricted_action",
+      notificationSent: false,
+      now: new Date("2026-05-26T02:00:00.000Z")
+    });
+
+    expect(failedAgain).toMatchObject({
+      id: route.id,
+      lastDeliveryFailureAt: "2026-05-26T02:00:00.000Z",
+      lastDeliveryFailureCode: "restricted_action",
+      lastDeliveryFailureNotifiedAt: "2026-05-26T01:00:00.000Z",
+      consecutiveDeliveryFailures: 2
+    });
+
+    const reset = store.resetConversationRouteDeliveryFailure({
+      routeId: route.id,
+      now: new Date("2026-05-26T03:00:00.000Z")
+    });
+
+    expect(reset).toMatchObject({
+      id: route.id,
+      lastDeliveryFailureAt: null,
+      lastDeliveryFailureCode: null,
+      lastDeliveryFailureNotifiedAt: null,
+      consecutiveDeliveryFailures: 0
+    });
 
     store.close();
   });

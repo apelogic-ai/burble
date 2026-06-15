@@ -96,6 +96,10 @@ export type ConversationRouteRecord = {
   grantedBySlackUserId?: string | null;
   expiresAt?: string | null;
   bindingJson?: string | null;
+  lastDeliveryFailureAt?: string | null;
+  lastDeliveryFailureCode?: string | null;
+  lastDeliveryFailureNotifiedAt?: string | null;
+  consecutiveDeliveryFailures?: number | null;
   createdAt: string;
   updatedAt: string;
   revokedAt: string | null;
@@ -295,6 +299,10 @@ export function createTokenStore(path: string) {
       granted_by_slack_user_id TEXT,
       expires_at TEXT,
       binding_json TEXT,
+      last_delivery_failure_at TEXT,
+      last_delivery_failure_code TEXT,
+      last_delivery_failure_notified_at TEXT,
+      consecutive_delivery_failures INTEGER NOT NULL DEFAULT 0,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL,
       revoked_at TEXT
@@ -433,6 +441,14 @@ export function createTokenStore(path: string) {
   ensureConversationRouteColumn(db, "granted_by_slack_user_id", "TEXT");
   ensureConversationRouteColumn(db, "expires_at", "TEXT");
   ensureConversationRouteColumn(db, "binding_json", "TEXT");
+  ensureConversationRouteColumn(db, "last_delivery_failure_at", "TEXT");
+  ensureConversationRouteColumn(db, "last_delivery_failure_code", "TEXT");
+  ensureConversationRouteColumn(db, "last_delivery_failure_notified_at", "TEXT");
+  ensureConversationRouteColumn(
+    db,
+    "consecutive_delivery_failures",
+    "INTEGER NOT NULL DEFAULT 0"
+  );
 
   const insertState = db.query(
     "INSERT INTO oauth_state (state, slack_user_id, expires_at) VALUES (?, ?, ?)"
@@ -680,17 +696,25 @@ export function createTokenStore(path: string) {
       granted_by_slack_user_id,
       expires_at,
       binding_json,
+      last_delivery_failure_at,
+      last_delivery_failure_code,
+      last_delivery_failure_notified_at,
+      consecutive_delivery_failures,
       created_at,
       updated_at,
       revoked_at
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, 0, ?, ?, NULL)
     ON CONFLICT(id) DO UPDATE SET
       destination_json = excluded.destination_json,
       kind = excluded.kind,
       granted_by_slack_user_id = excluded.granted_by_slack_user_id,
       expires_at = excluded.expires_at,
       binding_json = excluded.binding_json,
+      last_delivery_failure_at = NULL,
+      last_delivery_failure_code = NULL,
+      last_delivery_failure_notified_at = NULL,
+      consecutive_delivery_failures = 0,
       updated_at = excluded.updated_at,
       revoked_at = NULL
   `);
@@ -705,6 +729,10 @@ export function createTokenStore(path: string) {
       granted_by_slack_user_id AS grantedBySlackUserId,
       expires_at AS expiresAt,
       binding_json AS bindingJson,
+      last_delivery_failure_at AS lastDeliveryFailureAt,
+      last_delivery_failure_code AS lastDeliveryFailureCode,
+      last_delivery_failure_notified_at AS lastDeliveryFailureNotifiedAt,
+      consecutive_delivery_failures AS consecutiveDeliveryFailures,
       created_at AS createdAt,
       updated_at AS updatedAt,
       revoked_at AS revokedAt
@@ -719,6 +747,33 @@ export function createTokenStore(path: string) {
       AND destination_json = ?
       AND kind = ?
       AND revoked_at IS NULL
+  `);
+  const recordConversationRouteDeliveryFailure = db.query(`
+    UPDATE conversation_routes
+    SET
+      last_delivery_failure_at = ?,
+      last_delivery_failure_code = ?,
+      last_delivery_failure_notified_at =
+        CASE WHEN ? THEN ? ELSE last_delivery_failure_notified_at END,
+      consecutive_delivery_failures = consecutive_delivery_failures + 1,
+      updated_at = ?
+    WHERE id = ?
+  `);
+  const resetConversationRouteDeliveryFailure = db.query(`
+    UPDATE conversation_routes
+    SET
+      last_delivery_failure_at = NULL,
+      last_delivery_failure_code = NULL,
+      last_delivery_failure_notified_at = NULL,
+      consecutive_delivery_failures = 0,
+      updated_at = ?
+    WHERE id = ?
+      AND (
+        last_delivery_failure_at IS NOT NULL
+        OR last_delivery_failure_code IS NOT NULL
+        OR last_delivery_failure_notified_at IS NOT NULL
+        OR consecutive_delivery_failures <> 0
+      )
   `);
   const upsertWorkspacePolicy = db.query(`
     INSERT INTO workspace_policy (
@@ -1366,6 +1421,33 @@ export function createTokenStore(path: string) {
         null
       );
       return getConversationRouteById.get(id);
+    },
+
+    recordConversationRouteDeliveryFailure(input: {
+      routeId: string;
+      code?: string | null;
+      notificationSent?: boolean;
+      now?: Date;
+    }): ConversationRouteRecord | null {
+      const now = (input.now ?? new Date()).toISOString();
+      recordConversationRouteDeliveryFailure.run(
+        now,
+        input.code ?? null,
+        input.notificationSent ? 1 : 0,
+        now,
+        now,
+        input.routeId
+      );
+      return getConversationRouteById.get(input.routeId);
+    },
+
+    resetConversationRouteDeliveryFailure(input: {
+      routeId: string;
+      now?: Date;
+    }): ConversationRouteRecord | null {
+      const now = (input.now ?? new Date()).toISOString();
+      resetConversationRouteDeliveryFailure.run(now, input.routeId);
+      return getConversationRouteById.get(input.routeId);
     },
 
     revokeConversationRoutesForDestination(input: {

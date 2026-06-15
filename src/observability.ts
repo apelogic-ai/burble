@@ -328,6 +328,10 @@ function observerEntryShape(event: ObservabilityEvent): Pick<
     return { entryType: "tool_result", role: "tool" };
   }
 
+  if (event.name === "tool.gateway.failed") {
+    return { entryType: "tool_result", role: "tool" };
+  }
+
   if (event.name === "llm.call.completed" && event.usage) {
     return { entryType: "token_usage", role: "assistant" };
   }

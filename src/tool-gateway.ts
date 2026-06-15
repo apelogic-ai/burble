@@ -2,6 +2,7 @@ import type { Config } from "./config";
 import type {
   AgentRuntimeEngine,
   AgentRuntimeRecord,
+  ConversationRouteRecord,
   Provider,
   TokenStore
 } from "./db";
@@ -366,14 +367,14 @@ export async function handleToolGatewayRequest(
     } catch (error) {
       const failure = classifyConversationDeliveryFailure(error);
       let notificationSent = false;
+      const route =
+        destination.routeKind === "grant" ? destination.route : undefined;
       if (
         sendInput.routeId &&
         destination.routeKind === "grant" &&
+        route &&
         !failure.retryable &&
-        !hasPriorDestinationGrantDeliveryFailureNotification(store, {
-          runtimeId: auth.runtime.id,
-          routeId: sendInput.routeId
-        })
+        !route.lastDeliveryFailureNotifiedAt
       ) {
         try {
           await (deps.notifyDestinationGrantDeliveryFailure ??
@@ -393,7 +394,10 @@ export async function handleToolGatewayRequest(
           );
         }
       }
-      recordConversationDeliveryFailure(store, auth.runtime, toolName, {
+      recordRouteConversationDeliveryFailure(store, sendInput.routeId, failure, {
+        notificationSent
+      });
+      recordConversationDeliveryFailureEvent(store, auth.runtime, toolName, {
         routeId: sendInput.routeId,
         jobId: sendInput.jobId,
         routeKind: destination.routeKind,
@@ -401,7 +405,7 @@ export async function handleToolGatewayRequest(
         error: failure,
         notificationSent
       });
-      emitToolGatewayFailed(
+      emitToolGatewayFailedBestEffort(
         { observability: deps.observability, startedAt: toolStartedAt, body },
         auth,
         toolName,
@@ -410,7 +414,7 @@ export async function handleToolGatewayRequest(
       return new Response("Conversation delivery failed", { status: 502 });
     }
 
-    return respondWithAudit({
+    const response = respondWithAudit({
       classification: "user_private",
       content: {
         ok: true,
@@ -420,6 +424,10 @@ export async function handleToolGatewayRequest(
         ...(result.messageId ? { messageId: result.messageId } : {})
       }
     });
+    if (sendInput.routeId && destination.routeKind === "grant") {
+      resetRouteConversationDeliveryFailure(store, sendInput.routeId);
+    }
+    return response;
   }
 
   if (toolName === "conversation.getAttachment") {
@@ -3358,6 +3366,7 @@ function resolveActiveConversationDestination(
       channelId: string;
       threadTs?: string;
       routeKind: "origin" | "grant";
+      route?: ConversationRouteRecord;
     }
   | { ok: false; status: number; message: string } {
   if (!isActiveConversation(conversation)) {
@@ -3396,6 +3405,7 @@ function resolveConversationRouteDestination(
       channelId: string;
       threadTs?: string;
       routeKind: "origin" | "grant";
+      route?: ConversationRouteRecord;
     }
   | { ok: false; status: number; message: string } {
   const route = store.getConversationRoute(routeId);
@@ -3475,6 +3485,7 @@ function resolveConversationRouteDestination(
     ok: true,
     transport: "slack",
     routeKind: route.kind ?? "origin",
+    route,
     ...destination
   };
 }
@@ -3865,7 +3876,8 @@ async function defaultNotifyDestinationGrantDeliveryFailure(
       ...(input.jobId ? [`Job: \`${input.jobId}\``] : []),
       `Route id: \`${input.routeId}\``,
       `Reason: ${input.errorMessage}`,
-      "The destination grant is still active. Fix the channel/app access, or run `/agent ungrant here` from the affected channel to stop future scheduled delivery attempts."
+      ...(input.errorCode ? [`Slack error code: \`${input.errorCode}\``] : []),
+      `The destination grant is still active. Fix the channel/app access, or open <#${input.channelId}> and run \`/agent ungrant here\` there to stop future scheduled delivery attempts.`
     ].join("\n")
   });
 }
@@ -3879,9 +3891,10 @@ class SlackMessageSendError extends Error {
   readonly status: number;
 
   constructor(code: string, status: number) {
-    super(`Slack message send failed: ${code}`);
+    const normalizedCode = code.toLowerCase();
+    super(`Slack message send failed: ${normalizedCode}`);
     this.name = "SlackMessageSendError";
-    this.code = code;
+    this.code = normalizedCode;
     this.status = status;
   }
 }
@@ -3917,63 +3930,97 @@ function isRetryableConversationDeliveryFailure(
   message: string
 ): boolean {
   if (code) {
-    if (code === "rate_limited" || code === "http_429") {
+    if (
+      code === "ratelimited" ||
+      code === "rate_limited" ||
+      code === "http_429"
+    ) {
       return true;
     }
     const httpStatus = code.match(/^http_(\d{3})$/)?.[1];
     if (httpStatus && Number(httpStatus) >= 500) {
       return true;
     }
-    return false;
+    if (httpStatus) {
+      return false;
+    }
+    return !isKnownPermanentConversationDeliveryFailure(code);
   }
 
   const normalized = message.toLowerCase();
-  return (
+  if (
+    normalized.includes("aborterror") ||
     normalized.includes("timeout") ||
     normalized.includes("timed out") ||
     normalized.includes("econnreset") ||
+    normalized.includes("econnrefused") ||
     normalized.includes("etimedout") ||
+    normalized.includes("enotfound") ||
+    normalized.includes("eai_again") ||
+    normalized.includes("epipe") ||
+    normalized.includes("socket hang up") ||
     normalized.includes("fetch failed") ||
+    normalized.includes("tls") ||
+    normalized.includes("certificate") ||
     normalized.includes("network")
-  );
+  ) {
+    return true;
+  }
+
+  return true;
 }
 
-function hasPriorDestinationGrantDeliveryFailureNotification(
+function isKnownPermanentConversationDeliveryFailure(code: string): boolean {
+  return new Set([
+    "account_inactive",
+    "channel_not_found",
+    "invalid_auth",
+    "is_archived",
+    "msg_too_long",
+    "no_text",
+    "not_authed",
+    "not_in_channel",
+    "restricted_action",
+    "token_revoked"
+  ]).has(code);
+}
+
+function recordRouteConversationDeliveryFailure(
   store: TokenStore,
-  input: {
-    runtimeId: string;
-    routeId: string;
+  routeId: string | undefined,
+  error: ConversationDeliveryFailure,
+  input: { notificationSent: boolean }
+): void {
+  if (!routeId) {
+    return;
   }
-): boolean {
-  return store.listAgentRuntimeEvents(input.runtimeId).some((event) => {
-    if (event.eventType !== "runtime_tool_failed") {
-      return false;
-    }
-    const summary =
-      typeof event.summaryJson === "string"
-        ? readRuntimeEventSummary(event.summaryJson)
-        : null;
-    return (
-      summary?.toolName === "conversation.sendMessage" &&
-      summary.routeId === input.routeId &&
-      summary.routeKind === "grant" &&
-      summary.notificationSent === true
-    );
-  });
-}
-
-function readRuntimeEventSummary(
-  summaryJson: string
-): Record<string, unknown> | null {
   try {
-    const parsed = JSON.parse(summaryJson) as unknown;
-    return isOptionalObject(parsed) ? parsed : null;
-  } catch {
-    return null;
+    store.recordConversationRouteDeliveryFailure({
+      routeId,
+      ...(error.code ? { code: error.code } : {}),
+      notificationSent: input.notificationSent
+    });
+  } catch (recordError) {
+    console.warn(
+      `Conversation route delivery failure record failed routeId=${routeId} error=${formatToolGatewayErrorMessage(recordError)}`
+    );
   }
 }
 
-function recordConversationDeliveryFailure(
+function resetRouteConversationDeliveryFailure(
+  store: TokenStore,
+  routeId: string
+): void {
+  try {
+    store.resetConversationRouteDeliveryFailure({ routeId });
+  } catch (resetError) {
+    console.warn(
+      `Conversation route delivery failure reset failed routeId=${routeId} error=${formatToolGatewayErrorMessage(resetError)}`
+    );
+  }
+}
+
+function recordConversationDeliveryFailureEvent(
   store: TokenStore,
   runtime: AgentRuntimeRecord,
   toolName: string,
@@ -3986,21 +4033,27 @@ function recordConversationDeliveryFailure(
     notificationSent: boolean;
   }
 ): void {
-  store.recordAgentRuntimeEvent({
-    runtimeId: runtime.id,
-    eventType: "runtime_tool_failed",
-    summary: {
-      toolName,
-      routeKind: input.routeKind,
-      channelId: input.channelId,
-      ...(input.routeId ? { routeId: input.routeId } : {}),
-      ...(input.jobId ? { jobId: input.jobId } : {}),
-      error: input.error.message,
-      ...(input.error.code ? { deliveryFailureCode: input.error.code } : {}),
-      deliveryFailureRetryable: input.error.retryable,
-      notificationSent: input.notificationSent
-    }
-  });
+  try {
+    store.recordAgentRuntimeEvent({
+      runtimeId: runtime.id,
+      eventType: "runtime_tool_failed",
+      summary: {
+        toolName,
+        routeKind: input.routeKind,
+        channelId: input.channelId,
+        ...(input.routeId ? { routeId: input.routeId } : {}),
+        ...(input.jobId ? { jobId: input.jobId } : {}),
+        error: input.error.message,
+        ...(input.error.code ? { deliveryFailureCode: input.error.code } : {}),
+        deliveryFailureRetryable: input.error.retryable,
+        notificationSent: input.notificationSent
+      }
+    });
+  } catch (recordError) {
+    console.warn(
+      `Runtime delivery failure event record failed runtimeId=${runtime.id} error=${formatToolGatewayErrorMessage(recordError)}`
+    );
+  }
 }
 
 async function defaultFetchConversationAttachment(
@@ -4237,16 +4290,22 @@ function emitToolGatewayStarted(
   toolName: string,
   body: ToolGatewayBody | null
 ): void {
-  observability?.emit({
-    name: "tool.gateway.started",
-    ...toolGatewayIdentityFields(auth),
-    toolName,
-    attributes: {
-      authKind: auth.kind,
-      provider: readToolProviderForTelemetry(toolName),
-      hasUserEmail: typeof body?.user?.email === "string"
-    }
-  });
+  try {
+    observability?.emit({
+      name: "tool.gateway.started",
+      ...toolGatewayIdentityFields(auth),
+      toolName,
+      attributes: {
+        authKind: auth.kind,
+        provider: readToolProviderForTelemetry(toolName),
+        hasUserEmail: typeof body?.user?.email === "string"
+      }
+    });
+  } catch (emitError) {
+    console.warn(
+      `Tool gateway started event emit failed toolName=${toolName} error=${formatToolGatewayErrorMessage(emitError)}`
+    );
+  }
 }
 
 function emitToolGatewayCompleted(
@@ -4255,44 +4314,56 @@ function emitToolGatewayCompleted(
   toolName: string,
   result: ToolResult<unknown>
 ): void {
-  context?.observability?.emit({
-    name: "tool.gateway.completed",
-    ...toolGatewayIdentityFields(auth),
-    toolName,
-    classification: result.classification,
-    durationMs: Date.now() - context.startedAt,
-    status: "ok",
-    attributes: {
-      authKind: auth.kind,
-      provider: readToolProviderForTelemetry(toolName),
-      itemCount: Array.isArray(result.content) ? result.content.length : null
-    }
-  });
+  try {
+    context?.observability?.emit({
+      name: "tool.gateway.completed",
+      ...toolGatewayIdentityFields(auth),
+      toolName,
+      classification: result.classification,
+      durationMs: Date.now() - context.startedAt,
+      status: "ok",
+      attributes: {
+        authKind: auth.kind,
+        provider: readToolProviderForTelemetry(toolName),
+        itemCount: Array.isArray(result.content) ? result.content.length : null
+      }
+    });
+  } catch (emitError) {
+    console.warn(
+      `Tool gateway completed event emit failed toolName=${toolName} error=${formatToolGatewayErrorMessage(emitError)}`
+    );
+  }
 }
 
-function emitToolGatewayFailed(
+function emitToolGatewayFailedBestEffort(
   context: ToolGatewayObservabilityContext | undefined,
   auth: ToolGatewayAuth,
   toolName: string,
   error: ConversationDeliveryFailure
 ): void {
-  context?.observability?.emit({
-    name: "tool.gateway.completed",
-    ...toolGatewayIdentityFields(auth),
-    toolName,
-    durationMs: Date.now() - context.startedAt,
-    status: "error",
-    attributes: {
-      authKind: auth.kind,
-      provider: readToolProviderForTelemetry(toolName),
-      ...(error.code ? { deliveryFailureCode: error.code } : {}),
-      deliveryFailureRetryable: error.retryable
-    },
-    error: {
-      message: error.message,
-      ...(error.code ? { code: error.code } : {})
-    }
-  });
+  try {
+    context?.observability?.emit({
+      name: "tool.gateway.failed",
+      ...toolGatewayIdentityFields(auth),
+      toolName,
+      durationMs: Date.now() - context.startedAt,
+      status: "error",
+      attributes: {
+        authKind: auth.kind,
+        provider: readToolProviderForTelemetry(toolName),
+        ...(error.code ? { deliveryFailureCode: error.code } : {}),
+        deliveryFailureRetryable: error.retryable
+      },
+      error: {
+        message: error.message,
+        ...(error.code ? { code: error.code } : {})
+      }
+    });
+  } catch (emitError) {
+    console.warn(
+      `Tool gateway failure event emit failed toolName=${toolName} error=${formatToolGatewayErrorMessage(emitError)}`
+    );
+  }
 }
 
 function emitRuntimeHeartbeat(
