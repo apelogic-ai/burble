@@ -2032,7 +2032,7 @@ function parseScheduledJobDestinationString(
   if (slackMention?.[1]) {
     return { channelId: slackMention[1] };
   }
-  if (/^[CG][A-Z0-9]{2,}$/.test(trimmed)) {
+  if (/^[CG][A-Z0-9]{8,}$/.test(trimmed)) {
     return { channelId: trimmed };
   }
   const channelName = trimmed.replace(/^#/, "").trim();
@@ -3462,57 +3462,61 @@ async function defaultResolveSlackChannelIdByName(
     return null;
   }
 
-  let cursor: string | undefined;
-  for (let page = 0; page < 10; page += 1) {
-    const params = new URLSearchParams({
-      exclude_archived: "true",
-      limit: "1000",
-      types: "public_channel,private_channel"
-    });
-    if (cursor) {
-      params.set("cursor", cursor);
-    }
-    const response = await fetch(
-      `https://slack.com/api/conversations.list?${params.toString()}`,
-      {
-        headers: {
-          Authorization: `Bearer ${config.slackBotToken}`
+  try {
+    let cursor: string | undefined;
+    for (let page = 0; page < 10; page += 1) {
+      const params = new URLSearchParams({
+        exclude_archived: "true",
+        limit: "1000",
+        types: "public_channel,private_channel"
+      });
+      if (cursor) {
+        params.set("cursor", cursor);
+      }
+      const response = await fetch(
+        `https://slack.com/api/conversations.list?${params.toString()}`,
+        {
+          headers: {
+            Authorization: `Bearer ${config.slackBotToken}`
+          }
+        }
+      );
+      if (!response.ok) {
+        return null;
+      }
+      const body = (await response.json()) as {
+        ok?: unknown;
+        channels?: unknown;
+        response_metadata?: { next_cursor?: unknown };
+      };
+      if (body.ok !== true || !Array.isArray(body.channels)) {
+        return null;
+      }
+      for (const channel of body.channels) {
+        if (!isOptionalObject(channel)) {
+          continue;
+        }
+        if (
+          typeof channel.id === "string" &&
+          typeof channel.name === "string" &&
+          channel.name.trim().toLowerCase() === targetName
+        ) {
+          return channel.id;
         }
       }
-    );
-    if (!response.ok) {
-      return null;
-    }
-    const body = (await response.json()) as {
-      ok?: unknown;
-      channels?: unknown;
-      response_metadata?: { next_cursor?: unknown };
-    };
-    if (body.ok !== true || !Array.isArray(body.channels)) {
-      return null;
-    }
-    for (const channel of body.channels) {
-      if (!isOptionalObject(channel)) {
-        continue;
-      }
-      if (
-        typeof channel.id === "string" &&
-        typeof channel.name === "string" &&
-        channel.name.trim().toLowerCase() === targetName
-      ) {
-        return channel.id;
+      cursor =
+        typeof body.response_metadata?.next_cursor === "string" &&
+        body.response_metadata.next_cursor.trim()
+          ? body.response_metadata.next_cursor.trim()
+          : undefined;
+      if (!cursor) {
+        return null;
       }
     }
-    cursor =
-      typeof body.response_metadata?.next_cursor === "string" &&
-      body.response_metadata.next_cursor.trim()
-        ? body.response_metadata.next_cursor.trim()
-        : undefined;
-    if (!cursor) {
-      return null;
-    }
+    return null;
+  } catch {
+    return null;
   }
-  return null;
 }
 
 function resolveConversationSendRouteOptions(

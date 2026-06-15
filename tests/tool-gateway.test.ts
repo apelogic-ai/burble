@@ -1577,6 +1577,64 @@ describe("handleToolGatewayRequest", () => {
     });
   });
 
+  test("resolves short uppercase scheduled destination names through channel lookup", async () => {
+    const route: ConversationRouteRecord = {
+      id: "convrt_grant",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      transport: "slack",
+      destinationJson: JSON.stringify({
+        channelId: "C0GTMREAL",
+        isDirectMessage: false,
+        rootId: "channel:C0GTMREAL"
+      }),
+      kind: "grant",
+      grantedBySlackUserId: "U123",
+      expiresAt: null,
+      bindingJson: null,
+      createdAt: "2026-05-26T00:00:00.000Z",
+      updatedAt: "2026-05-26T00:00:00.000Z",
+      revokedAt: null
+    };
+    const upserts: unknown[] = [];
+    const response = await handleToolGatewayRequest(
+      config,
+      createStore(null, runtime, [], route, [], { upserts }),
+      "scheduledJob.registerCapability",
+      request(
+        "scheduledJob.registerCapability",
+        {
+          input: {
+            jobId: "daily-standup",
+            requiredTools: ["conversation.sendMessage"],
+            destination: "GTM",
+            visibilityPolicy: {
+              maxOutputVisibility: "public"
+            }
+          }
+        },
+        "runtime-token-u123",
+        "rt_u123"
+      ),
+      {
+        resolveSlackChannelIdByName: async (input) => {
+          expect(input).toEqual({
+            workspaceId: "T123",
+            channelName: "GTM"
+          });
+          return "C0GTMREAL";
+        }
+      }
+    );
+
+    expect(response.status).toBe(200);
+    expect(upserts).toEqual([
+      expect.objectContaining({
+        routeId: "convrt_grant"
+      })
+    ]);
+  });
+
   test("resolves a scheduled job destination Slack channel mention without name lookup", async () => {
     const route: ConversationRouteRecord = {
       id: "convrt_grant",
@@ -1658,6 +1716,40 @@ describe("handleToolGatewayRequest", () => {
 
     expect(response.status).toBe(404);
     expect(await response.text()).toContain("Destination grant not found");
+  });
+
+  test("returns a clean miss when Slack channel-name lookup fails transiently", async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async () => {
+      throw new Error("Slack unavailable");
+    }) as unknown as typeof fetch;
+    try {
+      const response = await handleToolGatewayRequest(
+        config,
+        createStore(null, runtime),
+        "scheduledJob.registerCapability",
+        request(
+          "scheduledJob.registerCapability",
+          {
+            input: {
+              jobId: "daily-standup",
+              requiredTools: ["conversation.sendMessage"],
+              destination: "#eng",
+              visibilityPolicy: {
+                maxOutputVisibility: "public"
+              }
+            }
+          },
+          "runtime-token-u123",
+          "rt_u123"
+        )
+      );
+
+      expect(response.status).toBe(404);
+      expect(await response.text()).toContain("Destination grant not found");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
   });
 
   test("rejects scheduled route grants bound to another job", async () => {
