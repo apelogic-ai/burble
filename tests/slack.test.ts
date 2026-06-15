@@ -1984,6 +1984,7 @@ describe("buildHelpResponse", () => {
     expect(JSON.stringify(response.blocks)).toContain("/agent status");
     expect(JSON.stringify(response.blocks)).toContain("/agent grant here");
     expect(JSON.stringify(response.blocks)).toContain("/agent ungrant here");
+    expect(JSON.stringify(response.blocks)).toContain("any channel member");
     expect(JSON.stringify(response.blocks)).toContain("/agent-config");
     expect(JSON.stringify(response.blocks)).toContain("/agent-status");
     expect(JSON.stringify(response.blocks)).toContain("assign DM-12 to me");
@@ -2000,6 +2001,7 @@ describe("buildAgentCommandHelpResponse", () => {
     expect(JSON.stringify(response.blocks)).toContain("/agent exec");
     expect(JSON.stringify(response.blocks)).toContain("/agent grant here");
     expect(JSON.stringify(response.blocks)).toContain("/agent ungrant here");
+    expect(JSON.stringify(response.blocks)).toContain("any channel member");
   });
 
   test("builds exec response states", () => {

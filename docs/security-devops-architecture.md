@@ -170,6 +170,11 @@ Required bot scopes:
 - `users:read`
 - `users:read.email`
 
+Scheduled-output destination grants:
+
+- `/agent grant here` authorizes a Slack channel for scheduled job output only after Burble verifies that the bot is already a channel member.
+- `/agent ungrant here` revokes active scheduled-output grants for the channel. Revocation is channel-level cleanup, so any channel member can remove the channel's grants.
+
 Optional user OAuth scopes for Slack search:
 
 - `search:read`
