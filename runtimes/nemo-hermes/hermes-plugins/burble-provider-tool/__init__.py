@@ -136,6 +136,14 @@ def _provider_alias_schema(alias: str, canonical_name: str) -> dict[str, Any]:
                         "type": "string",
                         "description": "Optional durable Burble route id for scheduled/background delivery.",
                     },
+                    "destination": {
+                        "type": "string",
+                        "description": (
+                            "Optional Slack destination label for scheduled/background delivery, "
+                            "such as #eng, <#C123|eng>, or a channel id. Burble resolves it only "
+                            "when the user has already granted that channel with /agent grant here."
+                        ),
+                    },
                     "stateRefs": {
                         "type": "array",
                         "description": "Optional durable provider-backed state references.",

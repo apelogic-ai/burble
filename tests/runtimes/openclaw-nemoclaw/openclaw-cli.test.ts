@@ -4008,6 +4008,10 @@ describe("runOpenClawCliRequest", () => {
       "GitHub, Jira, Google, or Slack search"
     );
     expect(String(requests[0].body.input)).toContain(
+      "pass destination with the channel mention/name/id"
+    );
+    expect(String(requests[0].body.input)).toContain("/agent grant here");
+    expect(String(requests[0].body.input)).toContain(
       "stateRefs entries must be objects"
     );
     expect(String(requests[0].body.input)).toContain(

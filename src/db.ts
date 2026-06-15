@@ -1346,6 +1346,27 @@ export function createTokenStore(path: string) {
       return getConversationRouteById.get(id);
     },
 
+    getConversationGrantRouteForSlackChannel(input: {
+      workspaceId: string;
+      slackUserId: string;
+      channelId: string;
+    }): ConversationRouteRecord | null {
+      const destinationJson = stableJson({
+        channelId: input.channelId,
+        isDirectMessage: false,
+        rootId: `channel:${input.channelId}`
+      });
+      const id = buildConversationRouteId(
+        input.workspaceId,
+        input.slackUserId,
+        "slack",
+        destinationJson,
+        "grant",
+        null
+      );
+      return getConversationRouteById.get(id);
+    },
+
     revokeConversationRoutesForDestination(input: {
       workspaceId: string;
       transport: ConversationTransport;

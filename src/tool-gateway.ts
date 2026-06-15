@@ -149,6 +149,10 @@ type ToolGatewayDeps = Partial<Parameters<typeof createGitHubTools>[0]> &
       channelId: string;
       messageId?: string;
     }>;
+    resolveSlackChannelIdByName?: (input: {
+      workspaceId: string;
+      channelName: string;
+    }) => Promise<string | null>;
     listAtlassianMcpTools?: (input: {
       url: string;
       accessToken: string;
@@ -439,11 +443,23 @@ export async function handleToolGatewayRequest(
     if (!input) {
       return new Response("Invalid tool input", { status: 400 });
     }
-    if (input.routeId) {
+    const resolvedRouteId = input.routeId ?? (input.destination
+      ? await resolveScheduledJobDestinationRouteId({
+          config,
+          store,
+          runtime: auth.runtime,
+          destination: input.destination,
+          resolveSlackChannelIdByName: deps.resolveSlackChannelIdByName
+        })
+      : null);
+    if (input.destination && !resolvedRouteId) {
+      return new Response("Destination grant not found", { status: 404 });
+    }
+    if (resolvedRouteId) {
       const destination = resolveConversationRouteDestination(
         store,
         auth.runtime,
-        input.routeId,
+        resolvedRouteId,
         {
           jobId: input.jobId,
           maxOutputVisibility: normalizedMaxOutputVisibility(
@@ -461,7 +477,7 @@ export async function handleToolGatewayRequest(
       workspaceId: auth.runtime.workspaceId,
       slackUserId: auth.runtime.slackUserId,
       requiredTools,
-      routeId: input.routeId ?? null,
+      routeId: resolvedRouteId,
       policyHash: auth.runtime.policyHash,
       capabilityProfile: input.capabilityProfile ?? "scheduled_job",
       runtimeType: input.runtimeType ?? auth.runtime.engine,
@@ -1764,6 +1780,7 @@ function readScheduledJobRegisterCapabilityInput(input: unknown):
       jobId: string;
       requiredTools: string[];
       routeId?: string;
+      destination?: ScheduledJobDestinationInput;
       capabilityProfile?: string;
       runtimeType?: AgentRuntimeEngine;
       stateRefs?: unknown[];
@@ -1803,6 +1820,7 @@ function readScheduledJobRegisterCapabilityInput(input: unknown):
     jobId,
     requiredTools,
     ...(typeof normalized.routeId === "string" ? { routeId: normalized.routeId } : {}),
+    ...(normalized.destination ? { destination: normalized.destination } : {}),
     ...(typeof normalized.capabilityProfile === "string"
       ? { capabilityProfile: normalized.capabilityProfile }
       : {}),
@@ -1905,6 +1923,7 @@ type ScheduledJobRegistrationInput = {
   jobId?: unknown;
   requiredTools?: unknown;
   routeId?: unknown;
+  destination?: ScheduledJobDestinationInput | null;
   capabilityProfile?: unknown;
   runtimeType?: unknown;
   stateRefs?: unknown;
@@ -1921,6 +1940,18 @@ function normalizeScheduledJobRegistrationInput(
   const source =
     readObjectAlias(input, ["scheduledJob", "scheduled_job", "capability"]) ??
     input;
+  const destination = normalizeScheduledJobDestination(
+    readUnknownAlias(source, [
+      "destination",
+      "outputDestination",
+      "output_destination",
+      "deliveryDestination",
+      "delivery_destination",
+      "channel",
+      "slackChannel",
+      "slack_channel"
+    ])
+  );
 
   return {
     jobId: readUnknownAlias(source, [
@@ -1937,6 +1968,7 @@ function normalizeScheduledJobRegistrationInput(
       "tools"
     ]),
     routeId: readUnknownAlias(source, ["routeId", "route_id"]),
+    ...(destination ? { destination } : {}),
     capabilityProfile: readUnknownAlias(source, [
       "capabilityProfile",
       "capability_profile"
@@ -1952,6 +1984,59 @@ function normalizeScheduledJobRegistrationInput(
       "visibility_policy"
     ])
   };
+}
+
+type ScheduledJobDestinationInput =
+  | { routeId: string }
+  | { channelId: string }
+  | { channelName: string };
+
+function normalizeScheduledJobDestination(
+  value: unknown
+): ScheduledJobDestinationInput | null {
+  if (typeof value === "string") {
+    return parseScheduledJobDestinationString(value);
+  }
+  if (!isOptionalObject(value)) {
+    return null;
+  }
+  const routeId = readStringAlias(value, ["routeId", "route_id"]);
+  if (routeId) {
+    return { routeId };
+  }
+  const channelValue = readStringAlias(value, [
+    "channelId",
+    "channel_id",
+    "id",
+    "channel",
+    "slackChannel",
+    "slack_channel",
+    "name",
+    "channelName",
+    "channel_name"
+  ]);
+  return channelValue ? parseScheduledJobDestinationString(channelValue) : null;
+}
+
+function parseScheduledJobDestinationString(
+  value: string
+): ScheduledJobDestinationInput | null {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return null;
+  }
+  if (/^convrt_[A-Za-z0-9_-]+$/.test(trimmed)) {
+    return { routeId: trimmed };
+  }
+  const slackMention = trimmed.match(/^<#([A-Z0-9]+)(?:\|[^>]+)?>$/);
+  if (slackMention?.[1]) {
+    return { channelId: slackMention[1] };
+  }
+  if (/^[CG][A-Z0-9]{2,}$/.test(trimmed)) {
+    return { channelId: trimmed };
+  }
+  const channelName = trimmed.replace(/^#/, "").trim();
+  return channelName ? { channelName } : null;
 }
 
 function readScheduledJobRegistrationId(
@@ -3332,6 +3417,102 @@ function resolveConversationRouteDestination(
     transport: "slack",
     ...destination
   };
+}
+
+async function resolveScheduledJobDestinationRouteId(input: {
+  config: Config;
+  store: TokenStore;
+  runtime: AgentRuntimeRecord;
+  destination: ScheduledJobDestinationInput;
+  resolveSlackChannelIdByName?: (input: {
+    workspaceId: string;
+    channelName: string;
+  }) => Promise<string | null>;
+}): Promise<string | null> {
+  if ("routeId" in input.destination) {
+    return input.destination.routeId;
+  }
+
+  const channelId =
+    "channelId" in input.destination
+      ? input.destination.channelId
+      : await (input.resolveSlackChannelIdByName ??
+          ((lookup) => defaultResolveSlackChannelIdByName(input.config, lookup)))({
+          workspaceId: input.runtime.workspaceId,
+          channelName: input.destination.channelName
+        });
+  if (!channelId) {
+    return null;
+  }
+
+  const route = input.store.getConversationGrantRouteForSlackChannel({
+    workspaceId: input.runtime.workspaceId,
+    slackUserId: input.runtime.slackUserId,
+    channelId
+  });
+  return route?.id ?? null;
+}
+
+async function defaultResolveSlackChannelIdByName(
+  config: Config,
+  input: { workspaceId: string; channelName: string }
+): Promise<string | null> {
+  const targetName = input.channelName.replace(/^#/, "").trim().toLowerCase();
+  if (!targetName) {
+    return null;
+  }
+
+  let cursor: string | undefined;
+  for (let page = 0; page < 10; page += 1) {
+    const params = new URLSearchParams({
+      exclude_archived: "true",
+      limit: "1000",
+      types: "public_channel,private_channel"
+    });
+    if (cursor) {
+      params.set("cursor", cursor);
+    }
+    const response = await fetch(
+      `https://slack.com/api/conversations.list?${params.toString()}`,
+      {
+        headers: {
+          Authorization: `Bearer ${config.slackBotToken}`
+        }
+      }
+    );
+    if (!response.ok) {
+      return null;
+    }
+    const body = (await response.json()) as {
+      ok?: unknown;
+      channels?: unknown;
+      response_metadata?: { next_cursor?: unknown };
+    };
+    if (body.ok !== true || !Array.isArray(body.channels)) {
+      return null;
+    }
+    for (const channel of body.channels) {
+      if (!isOptionalObject(channel)) {
+        continue;
+      }
+      if (
+        typeof channel.id === "string" &&
+        typeof channel.name === "string" &&
+        channel.name.trim().toLowerCase() === targetName
+      ) {
+        return channel.id;
+      }
+    }
+    cursor =
+      typeof body.response_metadata?.next_cursor === "string" &&
+      body.response_metadata.next_cursor.trim()
+        ? body.response_metadata.next_cursor.trim()
+        : undefined;
+    if (!cursor) {
+      return null;
+    }
+  }
+  return null;
 }
 
 function resolveConversationSendRouteOptions(

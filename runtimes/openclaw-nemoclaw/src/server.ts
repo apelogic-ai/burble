@@ -603,6 +603,12 @@ function scheduledJobRegisterCapabilityMcpTool(): Record<string, unknown> {
           description:
             "Optional durable Burble convrt_* conversation route for scheduled delivery."
         },
+        destination: {
+          type: "string",
+          minLength: 1,
+          description:
+            "Optional Slack destination label for scheduled delivery, such as #eng, <#C123|eng>, or a channel id. Burble resolves it only when the user has already granted that channel with /agent grant here."
+        },
         stateRefs: {
           type: "array",
           description:

@@ -2301,7 +2301,9 @@ describe("Slack destination grants", () => {
 
     expect(response.response_type).toBe("ephemeral");
     expect(response.text).toContain("Authorized this channel");
+    expect(response.text).toContain("post results to <#C123>");
     expect(response.text).toContain(route.id);
+    expect(response.text).toContain("usually do not need to copy it");
     expect(response.text).toContain("scheduled jobs");
 
     store.close();
