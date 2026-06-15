@@ -76,6 +76,7 @@ import type {
   AgentRuntimeRecord,
   AgentRuntimeEngine,
   AgentRuntimeStatus,
+  ConversationRouteRecord,
   Provider,
   ProviderConnection,
   TokenStore
@@ -1178,6 +1179,88 @@ export function createSlackRuntime(
         return;
       }
 
+      if (action.kind === "destination_grant") {
+        if (!body.team_id) {
+          await ack(buildAgentDestinationGrantWorkspaceMissingResponse());
+          return;
+        }
+        if (!isDestinationGrantSlashCommandChannel(body)) {
+          await ack(buildAgentDestinationGrantDirectMessageResponse());
+          return;
+        }
+
+        await ack(buildAgentDestinationGrantLoadingResponse());
+        const preflight = await verifySlackDestinationGrantChannel({
+          client,
+          channelId: body.channel_id
+        });
+        if (!preflight.ok) {
+          await respond({
+            ...buildAgentDestinationGrantPreflightFailureResponse(preflight),
+            replace_original: true
+          });
+          return;
+        }
+
+        try {
+          const route = createSlackDestinationGrantRoute({
+            store,
+            principal: {
+              workspaceId: body.team_id,
+              slackUserId: body.user_id
+            },
+            channelId: body.channel_id
+          });
+          await respond({
+            ...buildAgentDestinationGrantResponse(route),
+            replace_original: true
+          });
+        } catch (error) {
+          logger.error(formatLogError(error));
+          await respond({
+            response_type: "ephemeral",
+            replace_original: true,
+            text: "I could not authorize this channel as a scheduled job destination."
+          });
+        }
+        return;
+      }
+
+      if (action.kind === "destination_revoke") {
+        if (!body.team_id) {
+          await ack(buildAgentDestinationGrantWorkspaceMissingResponse());
+          return;
+        }
+        if (!isDestinationGrantSlashCommandChannel(body)) {
+          await ack(buildAgentDestinationGrantDirectMessageResponse());
+          return;
+        }
+
+        await ack(buildAgentDestinationGrantLoadingResponse("Revoking destination grant..."));
+        try {
+          const response = applySlackDestinationGrantRevoke({
+            store,
+            principal: {
+              workspaceId: body.team_id,
+              slackUserId: body.user_id
+            },
+            channelId: body.channel_id
+          });
+          await respond({
+            ...response,
+            replace_original: true
+          });
+        } catch (error) {
+          logger.error(formatLogError(error));
+          await respond({
+            response_type: "ephemeral",
+            replace_original: true,
+            text: "I could not revoke this channel's scheduled job destination grant."
+          });
+        }
+        return;
+      }
+
       if (action.kind === "status") {
         await ack(buildAgentStatusLoadingResponse());
         try {
@@ -1910,25 +1993,66 @@ export function createSlackDestinationGrantRoute(input: {
     workspaceId: input.principal.workspaceId,
     slackUserId: input.principal.slackUserId,
     transport: "slack",
-    destination: {
-      channelId: input.channelId,
-      isDirectMessage: false,
-      rootId: input.threadTs
-        ? buildConversationRootIdForSlack({
-            isDirectMessage: false,
-            channelId: input.channelId,
-            messageTs: input.threadTs,
-            threadTs: input.threadTs
-          })
-        : `channel:${input.channelId}`,
-      ...(input.threadTs ? { threadTs: input.threadTs } : {})
-    },
+    destination: slackDestinationGrantDestination(input),
     kind: "grant",
     grantedBySlackUserId: input.principal.slackUserId,
     expiresAt: input.expiresAt ?? null,
     binding: input.binding ?? null,
     ...(input.now ? { now: input.now } : {})
   });
+}
+
+export function revokeSlackDestinationGrantRoutes(input: {
+  store: TokenStore;
+  principal: {
+    workspaceId: string;
+    slackUserId: string;
+  };
+  channelId: string;
+  threadTs?: string;
+  now?: Date;
+}): number {
+  const destination = slackDestinationGrantDestination(input);
+  return input.store.revokeConversationRoutesForDestination({
+    workspaceId: input.principal.workspaceId,
+    transport: "slack",
+    destination,
+    kind: "grant",
+    ...(input.now ? { now: input.now } : {})
+  });
+}
+
+export function applySlackDestinationGrantRevoke(input: {
+  store: TokenStore;
+  principal: {
+    workspaceId: string;
+    slackUserId: string;
+  };
+  channelId: string;
+  threadTs?: string;
+  now?: Date;
+}) {
+  const revokedCount = revokeSlackDestinationGrantRoutes(input);
+  return buildAgentDestinationGrantRevokedResponse(revokedCount);
+}
+
+function slackDestinationGrantDestination(input: {
+  channelId: string;
+  threadTs?: string;
+}): Record<string, unknown> {
+  return {
+    channelId: input.channelId,
+    isDirectMessage: false,
+    rootId: input.threadTs
+      ? buildConversationRootIdForSlack({
+          isDirectMessage: false,
+          channelId: input.channelId,
+          messageTs: input.threadTs,
+          threadTs: input.threadTs
+        })
+      : `channel:${input.channelId}`,
+    ...(input.threadTs ? { threadTs: input.threadTs } : {})
+  };
 }
 
 function buildConversationRootIdForSlack(input: {
@@ -2003,6 +2127,8 @@ export type AgentCommand =
   | { kind: "help" }
   | { kind: "status" }
   | { kind: "config" }
+  | { kind: "destination_grant" }
+  | { kind: "destination_revoke" }
   | { kind: "config_get"; key?: string }
   | { kind: "config_set"; key: string; value: string }
   | { kind: "exec_list" }
@@ -2019,6 +2145,23 @@ export function parseAgentCommand(text: string): AgentCommand {
 
   if (normalized === "status" || normalized === "runtime status") {
     return { kind: "status" };
+  }
+
+  if (
+    normalized === "destination grant" ||
+    normalized === "grant destination" ||
+    normalized === "grant here"
+  ) {
+    return { kind: "destination_grant" };
+  }
+
+  if (
+    normalized === "destination revoke" ||
+    normalized === "revoke destination" ||
+    normalized === "revoke here" ||
+    normalized === "ungrant here"
+  ) {
+    return { kind: "destination_revoke" };
   }
 
   if (
@@ -2876,6 +3019,8 @@ export function buildHelpResponse() {
             "• `/auth slack` - connect or reconnect Slack search",
             "• `/agent status` - show and power up your current agent runtime",
             "• `/agent config` - inspect your current agent config file",
+            "• `/agent grant here` - authorize this channel for scheduled job output",
+            "• `/agent ungrant here` - revoke this channel's scheduled job destination grants; any channel member can clean them up",
             "• `/agent exec <task>` - send an explicit task to your private agent runtime",
             "• `/agent-status` - legacy alias for agent status",
             "• `/agent-config` - legacy alias for agent config",
@@ -2909,6 +3054,8 @@ export function buildAgentCommandHelpResponse() {
             "• `/agent config` - inspect your current agent config file",
             "• `/agent config get [key]` - inspect your user runtime preferences",
             "• `/agent config set <key> <value>` - update an allowed user preference",
+            "• `/agent grant here` - authorize this channel for scheduled job output",
+            "• `/agent ungrant here` - revoke this channel's scheduled job destination grants; any channel member can clean them up",
             "• `/agent exec` - list active agent tasks",
             "• `/agent exec <task>` - send an explicit task to your private agent runtime",
             "• `/agent exec <id> inspect` - inspect an active or recent task",
@@ -2918,6 +3065,132 @@ export function buildAgentCommandHelpResponse() {
       }
     ]
   };
+}
+
+export function buildAgentDestinationGrantResponse(
+  route: ConversationRouteRecord
+) {
+  return {
+    response_type: "ephemeral" as const,
+    text: [
+      "Authorized this channel as a destination for scheduled jobs.",
+      "",
+      `Route id: \`${route.id}\``,
+      "",
+      "When you schedule a public job, ask Burble to post results here and use this destination route."
+    ].join("\n")
+  };
+}
+
+export function buildAgentDestinationGrantLoadingResponse(
+  text = "Checking channel permissions..."
+) {
+  return {
+    response_type: "ephemeral" as const,
+    text
+  };
+}
+
+export function buildAgentDestinationGrantDirectMessageResponse() {
+  return {
+    response_type: "ephemeral" as const,
+    text: [
+      "Destination grants must be created from the target channel.",
+      "",
+      "Run `/agent grant here` in the channel where scheduled jobs should post."
+    ].join("\n")
+  };
+}
+
+export function buildAgentDestinationGrantWorkspaceMissingResponse() {
+  return {
+    response_type: "ephemeral" as const,
+    text: "I could not identify this Slack workspace, so I cannot create a scheduled job destination grant here."
+  };
+}
+
+export type SlackDestinationGrantPreflightFailureReason =
+  | "not_in_channel"
+  | "archived"
+  | "unsupported"
+  | "unverified";
+
+export type SlackDestinationGrantPreflightResult =
+  | { ok: true }
+  | {
+      ok: false;
+      reason: SlackDestinationGrantPreflightFailureReason;
+      detail?: string;
+    };
+
+export function buildAgentDestinationGrantPreflightFailureResponse(
+  preflight: Exclude<SlackDestinationGrantPreflightResult, { ok: true }>
+) {
+  const text =
+    preflight.reason === "not_in_channel"
+      ? "I cannot authorize this channel yet because Burble is not a member. Please invite me to this channel, then run `/agent grant here` again."
+      : preflight.reason === "archived"
+        ? "I cannot authorize an archived Slack channel for scheduled job output."
+        : preflight.reason === "unsupported"
+          ? "Destination grants can only target Slack channels, not direct messages or group DMs."
+          : "I could not verify that Burble can post in this channel. Invite Burble to the channel or reconnect Slack, then try `/agent grant here` again.";
+  return {
+    response_type: "ephemeral" as const,
+    text: preflight.detail ? `${text}\n\nSlack detail: \`${preflight.detail}\`` : text
+  };
+}
+
+export function buildAgentDestinationGrantRevokedResponse(
+  revokedCount: number
+) {
+  return {
+    response_type: "ephemeral" as const,
+    text: revokedCount > 0
+      ? `Revoked ${revokedCount === 1 ? "this channel's scheduled job destination grant" : `${revokedCount} scheduled job destination grants for this channel`}.`
+      : "No active scheduled job destination grant exists for this channel."
+  };
+}
+
+export async function verifySlackDestinationGrantChannel(input: {
+  client: App["client"];
+  channelId: string;
+}): Promise<SlackDestinationGrantPreflightResult> {
+  try {
+    const response = await input.client.conversations.info({
+      channel: input.channelId
+    });
+    const channel = (response as { channel?: Record<string, unknown> }).channel;
+    if (!channel || channel.is_im === true || channel.is_mpim === true) {
+      return { ok: false, reason: "unsupported" };
+    }
+    if (channel.is_archived === true) {
+      return { ok: false, reason: "archived" };
+    }
+    if (channel.is_member !== true) {
+      return { ok: false, reason: "not_in_channel" };
+    }
+    return { ok: true };
+  } catch (error) {
+    const detail = formatSlackApiErrorDetail(error);
+    if (detail === "not_in_channel" || detail === "channel_not_found") {
+      return { ok: false, reason: "not_in_channel", detail };
+    }
+    return {
+      ok: false,
+      reason: "unverified",
+      detail
+    };
+  }
+}
+
+function formatSlackApiErrorDetail(error: unknown): string {
+  if (error && typeof error === "object" && "data" in error) {
+    const data = (error as { data?: { error?: unknown } }).data;
+    if (typeof data?.error === "string" && data.error.trim()) {
+      return data.error.trim();
+    }
+  }
+  return error instanceof Error ? error.message : String(error);
 }
 
 async function updateAgentExecResponse(input: {
@@ -3310,6 +3583,12 @@ export function isDirectMessageSlashCommand(
     body.channel_name === "directmessage" ||
     body.channel_id?.startsWith("D") === true
   );
+}
+
+export function isDestinationGrantSlashCommandChannel(
+  body: SlackSlashCommandVisibilityBody
+): body is SlackSlashCommandVisibilityBody & { channel_id: string } {
+  return Boolean(body.channel_id) && !isDirectMessageSlashCommand(body);
 }
 
 type AgentConfigModalValues = {

@@ -388,7 +388,9 @@ Add Slack scopes:
 
 - `app_mentions:read`
 - `channels:history`
+- `channels:read`
 - `groups:history`
+- `groups:read`
 - `im:history`
 - `search:read` as a user token scope for `/auth slack`
 - `users:read` as both a bot token scope and a user token scope for `/auth slack`
@@ -400,6 +402,11 @@ Add Slack slash commands:
 - `/agent`
 - `/agent-status`
 - `/agent-config`
+
+Scheduled-output destination grants:
+
+- Run `/agent grant here` in a channel to authorize that channel for scheduled job output. The bot must already be a channel member.
+- Run `/agent ungrant here` in the channel to revoke active scheduled-output grants for that channel. Revocation is channel-level cleanup and can be performed by any channel member.
 
 The checked-in manifest at `deploy/dev/slack-app-manifest.yaml` contains the
 expected scopes, events, and slash commands. If a command is missing from the

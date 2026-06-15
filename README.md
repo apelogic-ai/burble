@@ -89,11 +89,18 @@ Required Slack bot scopes:
 - `chat:write`
 - `commands`
 - `channels:history`
+- `channels:read`
 - `groups:history`
+- `groups:read`
 - `im:history`
 - `im:write`
 - `users:read`
 - `users:read.email`
+
+Slack scheduled-output destination grants:
+
+- Run `/agent grant here` in a Slack channel to authorize that channel for scheduled job output. Burble must already be a member of the channel.
+- Run `/agent ungrant here` in that channel to revoke active scheduled-output grants for the channel. Revocation is channel-level cleanup: any channel member can remove the channel's grants.
 
 Optional Slack user OAuth scopes for `/auth slack` message search:
 

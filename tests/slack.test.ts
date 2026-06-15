@@ -7,7 +7,14 @@ import {
   buildAgentConfigModalView,
   buildAgentConfigResponse,
   buildAgentCommandHelpResponse,
+  buildAgentDestinationGrantDirectMessageResponse,
+  buildAgentDestinationGrantLoadingResponse,
+  buildAgentDestinationGrantPreflightFailureResponse,
+  buildAgentDestinationGrantResponse,
+  buildAgentDestinationGrantRevokedResponse,
+  buildAgentDestinationGrantWorkspaceMissingResponse,
   applyAgentRuntimeEngineSelection,
+  applySlackDestinationGrantRevoke,
   buildAgentUserConfigGetResponse,
   buildAgentExecLoadingResponse,
   buildAgentExecMissingTaskResponse,
@@ -33,15 +40,18 @@ import {
   formatIssuesMessage,
   formatMentionWorkingMessage,
   isDirectMessageSlashCommand,
+  isDestinationGrantSlashCommandChannel,
   parseAgentCommand,
   parseAuthCommand,
   restartAgentRuntimeIfConfigChanged,
   runtimeImageForEngine,
   createSlackDestinationGrantRoute,
+  revokeSlackDestinationGrantRoutes,
   resolveSlackProgressStreamingMode,
   shouldHandleDirectMessageEvent,
   summarizeSlackPayload,
-  validateAgentRuntimeEngineSelection
+  validateAgentRuntimeEngineSelection,
+  verifySlackDestinationGrantChannel
 } from "../src/slack";
 import type { Config } from "../src/config";
 import { createTokenStore } from "../src/db";
@@ -1391,6 +1401,25 @@ describe("parseAgentCommand", () => {
       taskId: "abc123"
     });
   });
+
+  test("routes destination grant commands", () => {
+    expect(parseAgentCommand("destination grant")).toEqual({
+      kind: "destination_grant"
+    });
+    expect(parseAgentCommand("grant destination")).toEqual({
+      kind: "destination_grant"
+    });
+    expect(parseAgentCommand("grant here")).toEqual({
+      kind: "destination_grant"
+    });
+    expect(parseAgentCommand("allow here")).toEqual({ kind: "help" });
+    expect(parseAgentCommand("ungrant here")).toEqual({
+      kind: "destination_revoke"
+    });
+    expect(parseAgentCommand("revoke here")).toEqual({
+      kind: "destination_revoke"
+    });
+  });
 });
 
 describe("buildAuthResponse", () => {
@@ -1953,6 +1982,9 @@ describe("buildHelpResponse", () => {
     expect(JSON.stringify(response.blocks)).toContain("/agent config");
     expect(JSON.stringify(response.blocks)).toContain("/agent exec");
     expect(JSON.stringify(response.blocks)).toContain("/agent status");
+    expect(JSON.stringify(response.blocks)).toContain("/agent grant here");
+    expect(JSON.stringify(response.blocks)).toContain("/agent ungrant here");
+    expect(JSON.stringify(response.blocks)).toContain("any channel member");
     expect(JSON.stringify(response.blocks)).toContain("/agent-config");
     expect(JSON.stringify(response.blocks)).toContain("/agent-status");
     expect(JSON.stringify(response.blocks)).toContain("assign DM-12 to me");
@@ -1967,6 +1999,9 @@ describe("buildAgentCommandHelpResponse", () => {
     expect(JSON.stringify(response.blocks)).toContain("/agent status");
     expect(JSON.stringify(response.blocks)).toContain("/agent config");
     expect(JSON.stringify(response.blocks)).toContain("/agent exec");
+    expect(JSON.stringify(response.blocks)).toContain("/agent grant here");
+    expect(JSON.stringify(response.blocks)).toContain("/agent ungrant here");
+    expect(JSON.stringify(response.blocks)).toContain("any channel member");
   });
 
   test("builds exec response states", () => {
@@ -2248,6 +2283,275 @@ describe("Slack destination grants", () => {
     });
 
     store.close();
+  });
+
+  test("formats destination grant command responses", () => {
+    const store = createTokenStore(":memory:");
+    const route = createSlackDestinationGrantRoute({
+      store,
+      principal: {
+        workspaceId: "T123",
+        slackUserId: "U123"
+      },
+      channelId: "C123",
+      now: new Date("2026-05-26T00:00:00.000Z")
+    });
+
+    const response = buildAgentDestinationGrantResponse(route);
+
+    expect(response.response_type).toBe("ephemeral");
+    expect(response.text).toContain("Authorized this channel");
+    expect(response.text).toContain(route.id);
+    expect(response.text).toContain("scheduled jobs");
+
+    store.close();
+  });
+
+  test("formats destination grant direct-message rejection", () => {
+    const response = buildAgentDestinationGrantDirectMessageResponse();
+
+    expect(response.response_type).toBe("ephemeral");
+    expect(response.text).toContain("Run `/agent grant here` in the channel");
+  });
+
+  test("formats destination grant preflight and revoke responses", () => {
+    expect(buildAgentDestinationGrantLoadingResponse().text).toContain(
+      "Checking"
+    );
+    expect(buildAgentDestinationGrantWorkspaceMissingResponse().text).toContain(
+      "workspace"
+    );
+    expect(
+      buildAgentDestinationGrantPreflightFailureResponse({
+        ok: false,
+        reason: "not_in_channel"
+      }).text
+    ).toContain("invite me");
+
+    const store = createTokenStore(":memory:");
+    const route = createSlackDestinationGrantRoute({
+      store,
+      principal: {
+        workspaceId: "T123",
+        slackUserId: "U123"
+      },
+      channelId: "C123"
+    });
+
+    expect(route.id).toMatch(/^convrt_/);
+    expect(buildAgentDestinationGrantRevokedResponse(1).text).toContain(
+      "Revoked"
+    );
+    expect(buildAgentDestinationGrantRevokedResponse(0).text).toContain(
+      "No active"
+    );
+
+    store.close();
+  });
+
+  test("revokes active destination grants for the current channel across grantors", () => {
+    const store = createTokenStore(":memory:");
+    const first = createSlackDestinationGrantRoute({
+      store,
+      principal: {
+        workspaceId: "T123",
+        slackUserId: "U123"
+      },
+      channelId: "C123",
+      now: new Date("2026-05-26T00:00:00.000Z")
+    });
+    const second = createSlackDestinationGrantRoute({
+      store,
+      principal: {
+        workspaceId: "T123",
+        slackUserId: "U456"
+      },
+      channelId: "C123",
+      now: new Date("2026-05-26T00:00:00.000Z")
+    });
+
+    const revoked = revokeSlackDestinationGrantRoutes({
+      store,
+      principal: {
+        workspaceId: "T123",
+        slackUserId: "U123"
+      },
+      channelId: "C123",
+      now: new Date("2026-05-26T01:00:00.000Z")
+    });
+
+    expect(revoked).toBe(2);
+    expect(store.getConversationRoute(first.id)?.revokedAt).toBe(
+      "2026-05-26T01:00:00.000Z"
+    );
+    expect(store.getConversationRoute(second.id)?.revokedAt).toBe(
+      "2026-05-26T01:00:00.000Z"
+    );
+    expect(
+      revokeSlackDestinationGrantRoutes({
+        store,
+        principal: {
+          workspaceId: "T123",
+          slackUserId: "U123"
+        },
+        channelId: "C123"
+      })
+    ).toBe(0);
+
+    store.close();
+  });
+
+  test("revokes destination grants without requiring channel preflight", async () => {
+    const store = createTokenStore(":memory:");
+    const route = createSlackDestinationGrantRoute({
+      store,
+      principal: {
+        workspaceId: "T123",
+        slackUserId: "U456"
+      },
+      channelId: "C123"
+    });
+
+    const response = applySlackDestinationGrantRevoke({
+      store,
+      principal: {
+        workspaceId: "T123",
+        slackUserId: "U123"
+      },
+      channelId: "C123",
+      now: new Date("2026-05-26T01:00:00.000Z")
+    });
+
+    expect(response.text).toContain("Revoked this channel");
+    expect(store.getConversationRoute(route.id)?.revokedAt).toBe(
+      "2026-05-26T01:00:00.000Z"
+    );
+
+    store.close();
+  });
+
+  test("revoke helper does not call Slack channel verification", () => {
+    const store = createTokenStore(":memory:");
+    const route = createSlackDestinationGrantRoute({
+      store,
+      principal: {
+        workspaceId: "T123",
+        slackUserId: "U456"
+      },
+      channelId: "C123"
+    });
+
+    const response = applySlackDestinationGrantRevoke({
+      store,
+      principal: {
+        workspaceId: "T123",
+        slackUserId: "U123"
+      },
+      channelId: "C123",
+      now: new Date("2026-05-26T01:00:00.000Z")
+    });
+
+    expect(response.text).toContain("Revoked this channel");
+    expect(store.getConversationRoute(route.id)?.revokedAt).toBe(
+      "2026-05-26T01:00:00.000Z"
+    );
+
+    store.close();
+  });
+
+  test("only allows destination grants from Slack channels", () => {
+    expect(
+      isDestinationGrantSlashCommandChannel({
+        channel_id: "C123",
+        channel_name: "eng"
+      })
+    ).toBe(true);
+    expect(
+      isDestinationGrantSlashCommandChannel({
+        channel_id: "D123",
+        channel_name: "directmessage"
+      })
+    ).toBe(false);
+    expect(
+      isDestinationGrantSlashCommandChannel({
+        channel_id: "G123",
+        channel_name: "mpdm-leo--mario--burble-1"
+      })
+    ).toBe(true);
+  });
+
+  test("verifies bot membership before minting destination grants", async () => {
+    const okClient = {
+      conversations: {
+        async info() {
+          return {
+            channel: {
+              is_member: true,
+              is_archived: false
+            }
+          };
+        }
+      }
+    };
+    const notMemberClient = {
+      conversations: {
+        async info() {
+          return {
+            channel: {
+              is_member: false
+            }
+          };
+        }
+      }
+    };
+    const mpimClient = {
+      conversations: {
+        async info() {
+          return {
+            channel: {
+              is_mpim: true,
+              is_member: true
+            }
+          };
+        }
+      }
+    };
+    const privateNotMemberClient = {
+      conversations: {
+        async info() {
+          throw { data: { error: "channel_not_found" } };
+        }
+      }
+    };
+
+    expect(
+      await verifySlackDestinationGrantChannel({
+        client: okClient as never,
+        channelId: "C123"
+      })
+    ).toEqual({ ok: true });
+    expect(
+      await verifySlackDestinationGrantChannel({
+        client: notMemberClient as never,
+        channelId: "C123"
+      })
+    ).toEqual({ ok: false, reason: "not_in_channel" });
+    expect(
+      await verifySlackDestinationGrantChannel({
+        client: mpimClient as never,
+        channelId: "G123"
+      })
+    ).toEqual({ ok: false, reason: "unsupported" });
+    expect(
+      await verifySlackDestinationGrantChannel({
+        client: privateNotMemberClient as never,
+        channelId: "G123"
+      })
+    ).toEqual({
+      ok: false,
+      reason: "not_in_channel",
+      detail: "channel_not_found"
+    });
   });
 });
 

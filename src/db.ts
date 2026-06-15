@@ -710,6 +710,15 @@ export function createTokenStore(path: string) {
     FROM conversation_routes
     WHERE id = ?
   `);
+  const revokeConversationRoutesByDestination = db.query(`
+    UPDATE conversation_routes
+    SET revoked_at = ?, updated_at = ?
+    WHERE workspace_id = ?
+      AND transport = ?
+      AND destination_json = ?
+      AND kind = ?
+      AND revoked_at IS NULL
+  `);
   const upsertWorkspacePolicy = db.query(`
     INSERT INTO workspace_policy (
       workspace_id,
@@ -1335,6 +1344,25 @@ export function createTokenStore(path: string) {
 
     getConversationRoute(id: string): ConversationRouteRecord | null {
       return getConversationRouteById.get(id);
+    },
+
+    revokeConversationRoutesForDestination(input: {
+      workspaceId: string;
+      transport: ConversationTransport;
+      destination: Record<string, unknown>;
+      kind?: ConversationRouteKind;
+      now?: Date;
+    }): number {
+      const now = (input.now ?? new Date()).toISOString();
+      const result = revokeConversationRoutesByDestination.run(
+        now,
+        now,
+        input.workspaceId,
+        input.transport,
+        stableJson(input.destination),
+        input.kind ?? "origin"
+      ) as { changes: number | bigint };
+      return Number(result.changes);
     },
 
     upsertWorkspacePolicy(input: {

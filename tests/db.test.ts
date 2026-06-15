@@ -477,6 +477,63 @@ describe("createTokenStore", () => {
     store.close();
   });
 
+  test("revokes all conversation grants for a workspace destination", () => {
+    const store = createTokenStore(":memory:");
+    const destination = {
+      channelId: "C123",
+      isDirectMessage: false,
+      rootId: "channel:C123"
+    };
+    const first = store.upsertConversationRoute({
+      workspaceId: "T123",
+      slackUserId: "U123",
+      transport: "slack",
+      destination,
+      kind: "grant"
+    });
+    const second = store.upsertConversationRoute({
+      workspaceId: "T123",
+      slackUserId: "U456",
+      transport: "slack",
+      destination,
+      kind: "grant"
+    });
+    const otherWorkspace = store.upsertConversationRoute({
+      workspaceId: "T999",
+      slackUserId: "U123",
+      transport: "slack",
+      destination,
+      kind: "grant"
+    });
+
+    const revoked = store.revokeConversationRoutesForDestination({
+      workspaceId: "T123",
+      transport: "slack",
+      destination,
+      kind: "grant",
+      now: new Date("2026-05-26T01:00:00.000Z")
+    });
+
+    expect(revoked).toBe(2);
+    expect(store.getConversationRoute(first.id)?.revokedAt).toBe(
+      "2026-05-26T01:00:00.000Z"
+    );
+    expect(store.getConversationRoute(second.id)?.revokedAt).toBe(
+      "2026-05-26T01:00:00.000Z"
+    );
+    expect(store.getConversationRoute(otherWorkspace.id)?.revokedAt).toBeNull();
+    expect(
+      store.revokeConversationRoutesForDestination({
+        workspaceId: "T123",
+        transport: "slack",
+        destination,
+        kind: "grant"
+      })
+    ).toBe(0);
+
+    store.close();
+  });
+
   test("migrates existing conversation routes with grant columns", () => {
     const path = join(mkdtempSync(join(tmpdir(), "burble-db-")), "burble.db");
     const db = new Database(path);
