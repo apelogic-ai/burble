@@ -216,6 +216,17 @@ function createStore(
       };
       return route;
     },
+    revokeConversationRoute: (input) => {
+      if (!route || input.routeId !== route.id || route.revokedAt) {
+        return null;
+      }
+      route = {
+        ...route,
+        revokedAt: new Date().toISOString()
+      };
+      routeRevocations.push(input);
+      return route;
+    },
     revokeConversationRoutesForDestination: (input) => {
       routeRevocations.push(input);
       return 1;
@@ -1623,6 +1634,60 @@ describe("handleToolGatewayRequest", () => {
     );
   });
 
+  test("stores trimmed scheduled route ids from top-level input", async () => {
+    const route: ConversationRouteRecord = {
+      id: "convrt_1234567890abcdef12345678",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      transport: "slack",
+      destinationJson: JSON.stringify({
+        channelId: "CENG",
+        isDirectMessage: false,
+        rootId: "channel:CENG"
+      }),
+      kind: "grant",
+      grantedBySlackUserId: "U123",
+      expiresAt: null,
+      bindingJson: null,
+      createdAt: "2026-05-26T00:00:00.000Z",
+      updatedAt: "2026-05-26T00:00:00.000Z",
+      revokedAt: null
+    };
+    const upserts: unknown[] = [];
+    const response = await handleToolGatewayRequest(
+      config,
+      createStore(null, runtime, [], route, [], { upserts }),
+      "scheduledJob.registerCapability",
+      request(
+        "scheduledJob.registerCapability",
+        {
+          input: {
+            jobId: "daily-standup",
+            requiredTools: ["conversation.sendMessage"],
+            routeId: "  convrt_1234567890abcdef12345678\n",
+            visibilityPolicy: {
+              maxOutputVisibility: "public"
+            }
+          }
+        },
+        "runtime-token-u123",
+        "rt_u123"
+      )
+    );
+
+    expect(response.status).toBe(200);
+    expect(upserts).toEqual([
+      expect.objectContaining({
+        jobId: "daily-standup",
+        routeId: "convrt_1234567890abcdef12345678"
+      })
+    ]);
+    const body = await response.json();
+    expect(body.content.scheduledJob).toMatchObject({
+      routeId: "convrt_1234567890abcdef12345678"
+    });
+  });
+
   test("warns routeless scheduled jobs not to configure Burble channel delivery", async () => {
     const response = await handleToolGatewayRequest(
       config,
@@ -2565,6 +2630,7 @@ describe("handleToolGatewayRequest", () => {
   test("rejects Slack labels as conversation route ids", async () => {
     const runtimeEvents: unknown[] = [];
     const observabilityEvents: ObservabilityEventInput[] = [];
+    const notifications: unknown[] = [];
     let posted = false;
     const response = await handleToolGatewayRequest(
       config,
@@ -2573,7 +2639,11 @@ describe("handleToolGatewayRequest", () => {
       request(
         "conversation.sendMessage",
         {
-          input: { text: "Cron finished.", routeId: "#burble-test" }
+          input: {
+            text: "Cron finished.",
+            routeId: "#burble-test",
+            jobId: "ai-news-hourly"
+          }
         },
         "runtime-token-u123",
         "rt_u123"
@@ -2582,6 +2652,9 @@ describe("handleToolGatewayRequest", () => {
         postActiveConversationMessage: async () => {
           posted = true;
           throw new Error("should not post");
+        },
+        notifyDestinationGrantDeliveryFailure: async (input) => {
+          notifications.push(input);
         },
         observability: {
           emit: (event) => {
@@ -2603,13 +2676,22 @@ describe("handleToolGatewayRequest", () => {
         summary: {
           toolName: "conversation.sendMessage",
           routeId: "#burble-test",
+          jobId: "ai-news-hourly",
           error:
             "Conversation route id must be a resolved convrt_* route id. Register scheduled destination labels with scheduledJob.registerCapability and use the returned routeId for delivery.",
           deliveryFailureCode: "invalid_route_id",
           deliveryFailureRetryable: false,
-          notificationSent: false
+          notificationSent: true
         }
       }
+    ]);
+    expect(notifications).toEqual([
+      expect.objectContaining({
+        runtime,
+        routeId: "#burble-test",
+        jobId: "ai-news-hourly",
+        errorCode: "invalid_route_id"
+      })
     ]);
     expect(observabilityEvents).toHaveLength(2);
     expect(observabilityEvents[0]).toMatchObject({
@@ -2868,6 +2950,197 @@ describe("handleToolGatewayRequest", () => {
         })
       ])
     );
+  });
+
+  test("auto-revokes a grant route after repeated permanent delivery failures", async () => {
+    const route: ConversationRouteRecord = {
+      id: "convrt_1234567890abcdef12345678",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      transport: "slack",
+      destinationJson: JSON.stringify({
+        channelId: "CENG",
+        isDirectMessage: false,
+        rootId: "channel:CENG"
+      }),
+      kind: "grant",
+      grantedBySlackUserId: "U123",
+      expiresAt: null,
+      bindingJson: JSON.stringify({
+        jobId: "daily-standup",
+        runtimeId: "rt_u123"
+      }),
+      lastDeliveryFailureAt: "2026-06-02T00:00:00.000Z",
+      lastDeliveryFailureCode: "not_in_channel",
+      lastDeliveryFailureNotifiedAt: "2026-06-02T00:00:00.000Z",
+      consecutiveDeliveryFailures: 2,
+      createdAt: "2026-05-26T00:00:00.000Z",
+      updatedAt: "2026-05-26T00:00:00.000Z",
+      revokedAt: null
+    };
+    const jobCapability: AgentJobCapabilityRecord = {
+      jobId: "daily-standup",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      requiredTools: ["conversation.sendMessage"],
+      routeId: "convrt_1234567890abcdef12345678",
+      policyHash: "policy-hash",
+      capabilityProfile: "scheduled_job",
+      runtimeType: "openclaw",
+      stateRefs: [],
+      visibilityPolicy: {
+        maxOutputVisibility: "public"
+      },
+      createdAt: "2026-06-01T00:00:00.000Z",
+      updatedAt: "2026-06-01T00:00:00.000Z"
+    };
+    const notifications: unknown[] = [];
+    const routeRevocations: unknown[] = [];
+    const runtimeEvents: unknown[] = [];
+
+    const response = await handleToolGatewayRequest(
+      config,
+      createStore(
+        null,
+        runtime,
+        runtimeEvents,
+        route,
+        [],
+        { found: jobCapability },
+        routeRevocations
+      ),
+      "conversation.sendMessage",
+      request(
+        "conversation.sendMessage",
+        {
+          input: {
+            text: "Daily standup is ready.",
+            routeId: "convrt_1234567890abcdef12345678",
+            jobId: "daily-standup"
+          }
+        },
+        "runtime-token-u123",
+        "rt_u123"
+      ),
+      {
+        postActiveConversationMessage: async () => {
+          throw new Error("Slack message send failed: not_in_channel");
+        },
+        notifyDestinationGrantDeliveryFailure: async (input) => {
+          notifications.push(input);
+        }
+      }
+    );
+
+    expect(response.status).toBe(502);
+    expect(routeRevocations).toEqual([
+      { routeId: "convrt_1234567890abcdef12345678" }
+    ]);
+    expect(notifications).toEqual([
+      expect.objectContaining({
+        routeId: "convrt_1234567890abcdef12345678",
+        errorCode: "not_in_channel",
+        autoRevoked: true
+      })
+    ]);
+    expect(runtimeEvents).toEqual([
+      expect.objectContaining({
+        eventType: "runtime_tool_failed",
+        summary: expect.objectContaining({
+          autoRevoked: true,
+          notificationSent: true
+        })
+      })
+    ]);
+  });
+
+  test("notifies but does not revoke after repeated retryable delivery failures", async () => {
+    const route: ConversationRouteRecord = {
+      id: "convrt_1234567890abcdef12345678",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      transport: "slack",
+      destinationJson: JSON.stringify({
+        channelId: "CENG",
+        isDirectMessage: false,
+        rootId: "channel:CENG"
+      }),
+      kind: "grant",
+      grantedBySlackUserId: "U123",
+      expiresAt: null,
+      bindingJson: JSON.stringify({
+        jobId: "daily-standup",
+        runtimeId: "rt_u123"
+      }),
+      lastDeliveryFailureAt: "2026-06-02T00:00:00.000Z",
+      lastDeliveryFailureCode: "ratelimited",
+      lastDeliveryFailureNotifiedAt: null,
+      consecutiveDeliveryFailures: 2,
+      createdAt: "2026-05-26T00:00:00.000Z",
+      updatedAt: "2026-05-26T00:00:00.000Z",
+      revokedAt: null
+    };
+    const jobCapability: AgentJobCapabilityRecord = {
+      jobId: "daily-standup",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      requiredTools: ["conversation.sendMessage"],
+      routeId: "convrt_1234567890abcdef12345678",
+      policyHash: "policy-hash",
+      capabilityProfile: "scheduled_job",
+      runtimeType: "openclaw",
+      stateRefs: [],
+      visibilityPolicy: {
+        maxOutputVisibility: "public"
+      },
+      createdAt: "2026-06-01T00:00:00.000Z",
+      updatedAt: "2026-06-01T00:00:00.000Z"
+    };
+    const notifications: unknown[] = [];
+    const routeRevocations: unknown[] = [];
+
+    const response = await handleToolGatewayRequest(
+      config,
+      createStore(
+        null,
+        runtime,
+        [],
+        route,
+        [],
+        { found: jobCapability },
+        routeRevocations
+      ),
+      "conversation.sendMessage",
+      request(
+        "conversation.sendMessage",
+        {
+          input: {
+            text: "Daily standup is ready.",
+            routeId: "convrt_1234567890abcdef12345678",
+            jobId: "daily-standup"
+          }
+        },
+        "runtime-token-u123",
+        "rt_u123"
+      ),
+      {
+        postActiveConversationMessage: async () => {
+          throw new Error("Slack message send failed: ratelimited");
+        },
+        notifyDestinationGrantDeliveryFailure: async (input) => {
+          notifications.push(input);
+        }
+      }
+    );
+
+    expect(response.status).toBe(502);
+    expect(routeRevocations).toEqual([]);
+    expect(notifications).toEqual([
+      expect.objectContaining({
+        routeId: "convrt_1234567890abcdef12345678",
+        errorCode: "ratelimited"
+      })
+    ]);
   });
 
   test("notifies the grant owner for unlisted non-retryable Slack failures", async () => {

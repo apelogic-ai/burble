@@ -543,6 +543,82 @@ describe("createTokenStore", () => {
     store.close();
   });
 
+  test("revokes one conversation route by id", () => {
+    const store = createTokenStore(":memory:");
+    const destination = {
+      channelId: "C123",
+      isDirectMessage: false,
+      rootId: "channel:C123"
+    };
+    const first = store.upsertConversationRoute({
+      workspaceId: "T123",
+      slackUserId: "U123",
+      transport: "slack",
+      destination,
+      kind: "grant"
+    });
+    const second = store.upsertConversationRoute({
+      workspaceId: "T123",
+      slackUserId: "U456",
+      transport: "slack",
+      destination,
+      kind: "grant"
+    });
+
+    const revoked = store.revokeConversationRoute({
+      routeId: first.id,
+      now: new Date("2026-05-26T01:00:00.000Z")
+    });
+
+    expect(revoked).toMatchObject({
+      id: first.id,
+      revokedAt: "2026-05-26T01:00:00.000Z"
+    });
+    expect(store.getConversationRoute(first.id)?.revokedAt).toBe(
+      "2026-05-26T01:00:00.000Z"
+    );
+    expect(store.getConversationRoute(second.id)?.revokedAt).toBeNull();
+    expect(store.revokeConversationRoute({ routeId: first.id })).toBeNull();
+
+    store.close();
+  });
+
+  test("does not record delivery failures on revoked conversation routes", () => {
+    const store = createTokenStore(":memory:");
+    const route = store.upsertConversationRoute({
+      workspaceId: "T123",
+      slackUserId: "U123",
+      transport: "slack",
+      destination: {
+        channelId: "C123",
+        isDirectMessage: false,
+        rootId: "channel:C123"
+      },
+      kind: "grant",
+      now: new Date("2026-05-26T00:00:00.000Z")
+    });
+    store.revokeConversationRoute({
+      routeId: route.id,
+      now: new Date("2026-05-26T01:00:00.000Z")
+    });
+
+    const failed = store.recordConversationRouteDeliveryFailure({
+      routeId: route.id,
+      code: "not_in_channel",
+      notificationSent: true,
+      now: new Date("2026-05-26T02:00:00.000Z")
+    });
+
+    expect(failed).toMatchObject({
+      id: route.id,
+      revokedAt: "2026-05-26T01:00:00.000Z",
+      lastDeliveryFailureAt: null,
+      consecutiveDeliveryFailures: 0
+    });
+
+    store.close();
+  });
+
   test("revokes all conversation grants for a workspace destination", () => {
     const store = createTokenStore(":memory:");
     const destination = {

@@ -748,6 +748,12 @@ export function createTokenStore(path: string) {
       AND kind = ?
       AND revoked_at IS NULL
   `);
+  const revokeConversationRouteById = db.query(`
+    UPDATE conversation_routes
+    SET revoked_at = ?, updated_at = ?
+    WHERE id = ?
+      AND revoked_at IS NULL
+  `);
   const recordConversationRouteDeliveryFailure = db.query(`
     UPDATE conversation_routes
     SET
@@ -758,6 +764,7 @@ export function createTokenStore(path: string) {
       consecutive_delivery_failures = consecutive_delivery_failures + 1,
       updated_at = ?
     WHERE id = ?
+      AND revoked_at IS NULL
   `);
   const resetConversationRouteDeliveryFailure = db.query(`
     UPDATE conversation_routes
@@ -1439,6 +1446,15 @@ export function createTokenStore(path: string) {
         input.routeId
       );
       return getConversationRouteById.get(input.routeId);
+    },
+
+    revokeConversationRoute(input: {
+      routeId: string;
+      now?: Date;
+    }): ConversationRouteRecord | null {
+      const now = (input.now ?? new Date()).toISOString();
+      const result = revokeConversationRouteById.run(now, now, input.routeId);
+      return result.changes > 0 ? getConversationRouteById.get(input.routeId) : null;
     },
 
     resetConversationRouteDeliveryFailure(input: {

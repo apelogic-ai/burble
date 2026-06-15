@@ -158,9 +158,10 @@ type ToolGatewayDeps = Partial<Parameters<typeof createGitHubTools>[0]> &
       runtime: AgentRuntimeRecord;
       routeId: string;
       jobId?: string;
-      channelId: string;
+      channelId?: string;
       errorMessage: string;
       errorCode?: string;
+      autoRevoked?: boolean;
     }) => Promise<void>;
     listAtlassianMcpTools?: (input: {
       url: string;
@@ -193,6 +194,8 @@ type ConversationAttachmentContent = {
 
 const maxConversationAttachmentBytes = 5 * 1024 * 1024;
 const maxConversationAttachmentTextChars = 64 * 1024;
+const destinationGrantFailureNotificationThreshold = 3;
+const destinationGrantAutoRevokeThreshold = 3;
 
 const defaultDeps = {
   getGitHubUser,
@@ -337,11 +340,30 @@ export async function handleToolGatewayRequest(
     };
     if (sendInput.routeId && !isConversationRouteId(sendInput.routeId)) {
       const failure = invalidConversationRouteIdFailure();
+      let notificationSent = false;
+      if (sendInput.jobId) {
+        try {
+          await (deps.notifyDestinationGrantDeliveryFailure ??
+            ((notification) =>
+              defaultNotifyDestinationGrantDeliveryFailure(config, notification)))({
+            runtime: auth.runtime,
+            routeId: sendInput.routeId,
+            jobId: sendInput.jobId,
+            errorMessage: failure.message,
+            ...(failure.code ? { errorCode: failure.code } : {})
+          });
+          notificationSent = true;
+        } catch (notifyError) {
+          console.warn(
+            `Invalid scheduled route notification failed runtimeId=${auth.runtime.id} routeId=${sendInput.routeId} error=${formatToolGatewayErrorMessage(notifyError)}`
+          );
+        }
+      }
       recordConversationDeliveryFailureEvent(store, auth.runtime, toolName, {
         routeId: sendInput.routeId,
         ...(sendInput.jobId ? { jobId: sendInput.jobId } : {}),
         error: failure,
-        notificationSent: false
+        notificationSent
       });
       emitToolGatewayFailedBestEffort(
         { observability: deps.observability, startedAt: toolStartedAt, body },
@@ -383,16 +405,24 @@ export async function handleToolGatewayRequest(
       });
     } catch (error) {
       const failure = classifyConversationDeliveryFailure(error);
-      let notificationSent = false;
       const route =
         destination.routeKind === "grant" ? destination.route : undefined;
-      if (
-        sendInput.routeId &&
-        destination.routeKind === "grant" &&
-        route &&
-        !failure.retryable &&
-        !route.lastDeliveryFailureNotifiedAt
-      ) {
+      const nextConsecutiveFailures = route
+        ? (route.consecutiveDeliveryFailures ?? 0) + 1
+        : 0;
+      const shouldNotify =
+        Boolean(sendInput.routeId && route && !route.lastDeliveryFailureNotifiedAt) &&
+        (!failure.retryable ||
+          nextConsecutiveFailures >= destinationGrantFailureNotificationThreshold);
+      const shouldAutoRevoke =
+        Boolean(sendInput.routeId && route && !failure.retryable) &&
+        nextConsecutiveFailures >= destinationGrantAutoRevokeThreshold;
+      const autoRevoked =
+        shouldAutoRevoke && sendInput.routeId
+          ? Boolean(revokeDestinationGrantRoute(store, sendInput.routeId))
+          : false;
+      let notificationSent = false;
+      if (sendInput.routeId && route && (shouldNotify || autoRevoked)) {
         try {
           await (deps.notifyDestinationGrantDeliveryFailure ??
             ((notification) =>
@@ -402,7 +432,8 @@ export async function handleToolGatewayRequest(
             ...(sendInput.jobId ? { jobId: sendInput.jobId } : {}),
             channelId: destination.channelId,
             errorMessage: failure.message,
-            ...(failure.code ? { errorCode: failure.code } : {})
+            ...(failure.code ? { errorCode: failure.code } : {}),
+            ...(autoRevoked ? { autoRevoked: true } : {})
           });
           notificationSent = true;
         } catch (notifyError) {
@@ -411,16 +442,19 @@ export async function handleToolGatewayRequest(
           );
         }
       }
-      recordRouteConversationDeliveryFailure(store, sendInput.routeId, failure, {
-        notificationSent
-      });
+      if (destination.routeKind === "grant") {
+        recordRouteConversationDeliveryFailure(store, sendInput.routeId, failure, {
+          notificationSent
+        });
+      }
       recordConversationDeliveryFailureEvent(store, auth.runtime, toolName, {
         routeId: sendInput.routeId,
         jobId: sendInput.jobId,
         routeKind: destination.routeKind,
         channelId: destination.channelId,
         error: failure,
-        notificationSent
+        notificationSent,
+        ...(autoRevoked ? { autoRevoked: true } : {})
       });
       emitToolGatewayFailedBestEffort(
         { observability: deps.observability, startedAt: toolStartedAt, body },
@@ -532,15 +566,17 @@ export async function handleToolGatewayRequest(
     if (routeIdValidationError) {
       return new Response(routeIdValidationError, { status: 400 });
     }
-    const resolvedRouteId = input.routeId ?? (input.destination
-      ? await resolveScheduledJobDestinationRouteId({
-          config,
-          store,
-          runtime: auth.runtime,
-          destination: input.destination,
-          resolveSlackChannelIdByName: deps.resolveSlackChannelIdByName
-        })
-      : null);
+    const resolvedRouteId = input.routeId
+      ? input.routeId.trim()
+      : input.destination
+        ? await resolveScheduledJobDestinationRouteId({
+            config,
+            store,
+            runtime: auth.runtime,
+            destination: input.destination,
+            resolveSlackChannelIdByName: deps.resolveSlackChannelIdByName
+          })
+        : null;
     if (input.destination && !resolvedRouteId) {
       return new Response("Destination grant not found", { status: 404 });
     }
@@ -3545,7 +3581,7 @@ async function resolveScheduledJobDestinationRouteId(input: {
   }) => Promise<string | null>;
 }): Promise<string | null> {
   if ("routeId" in input.destination) {
-    return input.destination.routeId;
+    return input.destination.routeId.trim();
   }
 
   const channelId =
@@ -3907,21 +3943,29 @@ async function defaultNotifyDestinationGrantDeliveryFailure(
     runtime: AgentRuntimeRecord;
     routeId: string;
     jobId?: string;
-    channelId: string;
+    channelId?: string;
     errorMessage: string;
     errorCode?: string;
+    autoRevoked?: boolean;
   }
 ): Promise<void> {
+  const destinationText = input.channelId
+    ? `<#${input.channelId}>`
+    : "the configured scheduled-job destination";
   await defaultPostActiveConversationMessage(config, {
     transport: "slack",
     channelId: input.runtime.slackUserId,
     text: [
-      `Burble could not post scheduled job output to <#${input.channelId}>.`,
+      `Burble could not post scheduled job output to ${destinationText}.`,
       ...(input.jobId ? [`Job: \`${input.jobId}\``] : []),
       `Route id: \`${input.routeId}\``,
       `Reason: ${input.errorMessage}`,
       ...(input.errorCode ? [`Slack error code: \`${input.errorCode}\``] : []),
-      `The destination grant is still active. Fix the channel/app access, or open <#${input.channelId}> and run \`/agent ungrant here\` there to stop future scheduled delivery attempts.`
+      input.autoRevoked
+        ? "Burble auto-revoked this destination grant after repeated permanent delivery failures."
+        : input.channelId
+          ? `The destination grant is still active. Fix the channel/app access, or open <#${input.channelId}> and run \`/agent ungrant here\` there to stop future scheduled delivery attempts.`
+          : "The scheduled delivery route is invalid. Re-register the scheduled job with a resolved convrt_* destination route."
     ].join("\n")
   });
 }
@@ -4060,6 +4104,20 @@ function recordRouteConversationDeliveryFailure(
   }
 }
 
+function revokeDestinationGrantRoute(
+  store: TokenStore,
+  routeId: string
+): ConversationRouteRecord | null {
+  try {
+    return store.revokeConversationRoute({ routeId });
+  } catch (revokeError) {
+    console.warn(
+      `Destination grant auto-revoke failed routeId=${routeId} error=${formatToolGatewayErrorMessage(revokeError)}`
+    );
+    return null;
+  }
+}
+
 function resetRouteConversationDeliveryFailure(
   store: TokenStore,
   routeId: string
@@ -4084,6 +4142,7 @@ function recordConversationDeliveryFailureEvent(
     channelId?: string;
     error: ConversationDeliveryFailure;
     notificationSent: boolean;
+    autoRevoked?: boolean;
   }
 ): void {
   try {
@@ -4099,7 +4158,8 @@ function recordConversationDeliveryFailureEvent(
         error: input.error.message,
         ...(input.error.code ? { deliveryFailureCode: input.error.code } : {}),
         deliveryFailureRetryable: input.error.retryable,
-        notificationSent: input.notificationSent
+        notificationSent: input.notificationSent,
+        ...(input.autoRevoked ? { autoRevoked: true } : {})
       }
     });
   } catch (recordError) {
