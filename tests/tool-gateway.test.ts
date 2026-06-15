@@ -1497,6 +1497,12 @@ describe("handleToolGatewayRequest", () => {
     expect(body.content.scheduledPromptInstruction).toContain(
       "use only the listed allowedTools"
     );
+    expect(body.content.scheduledPromptInstruction).toContain(
+      'For scheduled/background delivery, use the resolved Burble conversation route id "convrt_abc123".'
+    );
+    expect(body.content.scheduledPromptInstruction).toContain(
+      "Do not use Slack channel names, Slack mentions, channel ids, or the original destination label as a delivery route."
+    );
     expect(body.content.scheduledPromptInstruction).not.toContain("Hermes");
   });
 
@@ -1609,6 +1615,12 @@ describe("handleToolGatewayRequest", () => {
       jobId: "daily-standup",
       routeId: "convrt_grant"
     });
+    expect(body.content.scheduledPromptInstruction).toContain(
+      'For scheduled/background delivery, use the resolved Burble conversation route id "convrt_grant".'
+    );
+    expect(body.content.scheduledPromptInstruction).toContain(
+      "Do not use Slack channel names, Slack mentions, channel ids, or the original destination label as a delivery route."
+    );
   });
 
   test("resolves short uppercase scheduled destination names through channel lookup", async () => {
@@ -2484,6 +2496,35 @@ describe("handleToolGatewayRequest", () => {
         messageId: "1779841130.000"
       }
     });
+  });
+
+  test("rejects Slack labels as conversation route ids", async () => {
+    let posted = false;
+    const response = await handleToolGatewayRequest(
+      config,
+      createStore(null, runtime),
+      "conversation.sendMessage",
+      request(
+        "conversation.sendMessage",
+        {
+          input: { text: "Cron finished.", routeId: "#burble-test" }
+        },
+        "runtime-token-u123",
+        "rt_u123"
+      ),
+      {
+        postActiveConversationMessage: async () => {
+          posted = true;
+          throw new Error("should not post");
+        }
+      }
+    );
+
+    expect(response.status).toBe(400);
+    expect(await response.text()).toContain(
+      "Conversation route id must be a resolved convrt_* route id"
+    );
+    expect(posted).toBe(false);
   });
 
   test("lets a public scheduled job send through a destination grant", async () => {

@@ -332,8 +332,15 @@ export async function handleToolGatewayRequest(
     }
     const sendInput = {
       ...body.input,
-      text: sanitizeRuntimeConversationText(body.input.text)
+      text: sanitizeRuntimeConversationText(body.input.text),
+      ...(body.input.routeId ? { routeId: body.input.routeId.trim() } : {})
     };
+    if (sendInput.routeId && !isConversationRouteId(sendInput.routeId)) {
+      return new Response(
+        "Conversation route id must be a resolved convrt_* route id. Register scheduled destination labels with scheduledJob.registerCapability and use the returned routeId for delivery.",
+        { status: 400 }
+      );
+    }
     const sendRouteOptions = sendInput.routeId
       ? resolveConversationSendRouteOptions(store, auth.runtime, sendInput)
       : { ok: true as const, options: {} };
@@ -2089,7 +2096,7 @@ function parseScheduledJobDestinationString(
   if (!trimmed) {
     return null;
   }
-  if (/^convrt_[A-Za-z0-9_-]+$/.test(trimmed)) {
+  if (isConversationRouteId(trimmed)) {
     return { routeId: trimmed };
   }
   const slackMention = trimmed.match(/^<#([A-Z0-9]+)(?:\|[^>]+)?>$/);
@@ -2101,6 +2108,10 @@ function parseScheduledJobDestinationString(
   }
   const channelName = trimmed.replace(/^#/, "").trim();
   return channelName ? { channelName } : null;
+}
+
+function isConversationRouteId(value: string): boolean {
+  return /^convrt_[A-Za-z0-9_-]+$/.test(value);
 }
 
 function readScheduledJobRegistrationId(
@@ -2261,7 +2272,13 @@ function buildScheduledJobPromptInstruction(
     `jobId=${scheduledJob.jobId}`,
     `allowedTools=${scheduledJob.allowedTools.join(",")}`,
     `capabilityProfile=${scheduledJob.capabilityProfile}`,
-    ...(scheduledJob.routeId ? [`routeId=${scheduledJob.routeId}`] : []),
+    ...(scheduledJob.routeId
+      ? [
+          `routeId=${scheduledJob.routeId}`,
+          `For scheduled/background delivery, use the resolved Burble conversation route id "${scheduledJob.routeId}".`,
+          "Do not use Slack channel names, Slack mentions, channel ids, or the original destination label as a delivery route."
+        ]
+      : []),
     `maxOutputVisibility=${scheduledJob.visibilityPolicy.maxOutputVisibility ?? "user_private"}`,
     `allowPrivateToolDeclassification=${scheduledJob.visibilityPolicy.allowPrivateToolDeclassification === true ? "true" : "false"}`
   ];
