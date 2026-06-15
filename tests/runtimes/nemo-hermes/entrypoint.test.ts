@@ -114,8 +114,14 @@ class FakeSession:
         return self
     async def __aexit__(self, exc_type, exc, tb):
         return False
-    def post(self, url, json):
-        posted_payloads.append({"url": url, "json": json})
+    def post(self, url, **kwargs):
+        payload = {
+            "url": url,
+            "json": kwargs.get("json"),
+        }
+        if kwargs.get("headers") is not None:
+            payload["headers"] = kwargs.get("headers")
+        posted_payloads.append(payload)
         return FakeResponse()
 
 class FakeTimeout:
@@ -970,6 +976,49 @@ asyncio.run(main())
     expect(result).toEqual({
       ok: true,
       payloads: []
+    });
+  });
+
+  test("forwards Hermes route-send job metadata to the conversation gateway", () => {
+    const result = runHermesEntrypointProbe(`${importBurblePlatformAdapter}
+import asyncio
+import os
+
+os.environ["BURBLE_TOOL_GATEWAY_URL"] = "http://burble-app:3000/internal/tools"
+os.environ["BURBLE_INTERNAL_TOKEN"] = "token"
+os.environ["BURBLE_RUNTIME_ID"] = "rt_123"
+
+async def main():
+    adapter = mod.BurbleAdapter(types.SimpleNamespace(extra={}))
+    sent = await adapter.send(
+        "convrt_abc123",
+        "Scheduled report",
+        metadata={"jobId": "job-123"},
+    )
+    print(json.dumps({"success": sent.success, "payloads": posted_payloads}))
+
+asyncio.run(main())
+`);
+
+    expect(result).toEqual({
+      success: true,
+      payloads: [
+        {
+          url: "http://burble-app:3000/internal/tools/conversation.sendMessage/execute",
+          headers: {
+            authorization: "Bearer token",
+            "content-type": "application/json",
+            "x-burble-runtime-id": "rt_123"
+          },
+          json: {
+            input: {
+              routeId: "convrt_abc123",
+              text: "Scheduled report",
+              jobId: "job-123"
+            }
+          }
+        }
+      ]
     });
   });
 

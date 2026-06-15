@@ -5,6 +5,7 @@ import type { ConversationAttachment, RunRequest, ToolResult } from "./types";
 
 export type BurbleConversationRoute = {
   routeId: string;
+  jobId?: string;
 };
 
 export type BurbleConversationMessage = BurbleConversationRoute & {
@@ -34,12 +35,16 @@ export function createBurbleConversationConnector(
   runtimeId: string,
   request?: RunRequest
 ): BurbleConversationConnector {
-  const executor = createBurbleToolExecutor(config, runtimeId, request);
   const sendMessage = async (
     message: BurbleConversationMessage
   ): Promise<ToolResult> => {
     info(
       `Burble conversation connector send routeId=${message.routeId} textChars=${message.text.length} attachments=${message.attachments?.length ?? 0}`
+    );
+    const executor = createBurbleToolExecutor(
+      config,
+      runtimeId,
+      message.jobId ? requestWithScheduledDelivery(message) : request
     );
     const result = await executor("conversation.sendMessage", {
       input: {
@@ -69,9 +74,33 @@ export function createBurbleConversationConnector(
 
       return sendMessage({
         routeId: event.routeId,
+        ...(event.jobId ? { jobId: event.jobId } : {}),
         text: text ?? "",
         ...attachments
       });
+    }
+  };
+}
+
+function requestWithScheduledDelivery(
+  message: BurbleConversationMessage
+): RunRequest {
+  return {
+    input: {
+      text: "",
+      connections: {
+        github: {
+          connected: false
+        }
+      },
+      scheduledJob: {
+        jobId: message.jobId ?? "",
+        capabilityProfile: "scheduled_job",
+        allowedTools: ["conversation.sendMessage"],
+        routeId: message.routeId,
+        stateRefs: [],
+        visibilityPolicy: {}
+      }
     }
   };
 }

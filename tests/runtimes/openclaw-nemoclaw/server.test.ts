@@ -818,6 +818,7 @@ describe("handleRuntimeRequest", () => {
             method: "POST",
             headers: { "content-type": "application/json" },
             body: JSON.stringify({
+              jobId: "job-123",
               routeId: "convrt_abc123",
               text: "hello"
             })
@@ -847,6 +848,7 @@ describe("handleRuntimeRequest", () => {
     expect(requests[0].headers.get("x-burble-runtime-id")).toBe("rt_u123");
     expect(await requests[0].json()).toEqual({
       input: {
+        jobId: "job-123",
         routeId: "convrt_abc123",
         text: "hello"
       }
@@ -1359,6 +1361,7 @@ describe("handleRuntimeRequest", () => {
     );
     expect(await requests[0].json()).toEqual({
       input: {
+        jobId: "job-123",
         routeId: "convrt_abc123",
         text: "Open GitHub PRs: none found."
       }

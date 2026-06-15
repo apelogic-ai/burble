@@ -333,11 +333,24 @@ export async function handleToolGatewayRequest(
     if (!isConversationSendInput(body?.input)) {
       return new Response("Invalid tool input", { status: 400 });
     }
-    const sendInput = {
+    let sendInput = {
       ...body.input,
       text: sanitizeRuntimeConversationText(body.input.text),
       ...(body.input.routeId ? { routeId: body.input.routeId.trim() } : {})
     };
+    if (sendInput.routeId && !isConversationRouteId(sendInput.routeId)) {
+      const scheduledRouteId = resolveScheduledJobConversationRouteId(
+        store,
+        auth.runtime,
+        sendInput.jobId
+      );
+      if (scheduledRouteId) {
+        sendInput = {
+          ...sendInput,
+          routeId: scheduledRouteId
+        };
+      }
+    }
     if (sendInput.routeId && !isConversationRouteId(sendInput.routeId)) {
       const failure = invalidConversationRouteIdFailure();
       let notificationSent = false;
@@ -3733,6 +3746,34 @@ function resolveConversationSendRouteOptions(
       )
     }
   };
+}
+
+function resolveScheduledJobConversationRouteId(
+  store: TokenStore,
+  runtime: AgentRuntimeRecord,
+  jobId: string | undefined
+): string | null {
+  if (!jobId) {
+    return null;
+  }
+  const capability = store.getAgentJobCapability(jobId);
+  if (!capability?.routeId || !isConversationRouteId(capability.routeId)) {
+    return null;
+  }
+  if (
+    capability.workspaceId !== runtime.workspaceId ||
+    capability.slackUserId !== runtime.slackUserId
+  ) {
+    return null;
+  }
+  if (
+    capability.policyHash &&
+    runtime.policyHash &&
+    capability.policyHash !== runtime.policyHash
+  ) {
+    return null;
+  }
+  return capability.routeId;
 }
 
 function readSlackRouteDestination(

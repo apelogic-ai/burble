@@ -288,8 +288,13 @@ async function handleLocalBurbleChannelEventRequest(
   }
 
   const payload = await readJsonBody(request);
+  const jobId = readLocalBurbleChannelJobId(payload);
   const connector = createBurbleConversationConnector(config, config.runtimeId);
-  const result = await connector.deliverEvent({ routeId, payload });
+  const result = await connector.deliverEvent({
+    routeId,
+    ...(jobId ? { jobId } : {}),
+    payload
+  });
   if (!result) {
     return new Response("Burble channel event did not contain deliverable text", {
       status: 202
@@ -337,6 +342,7 @@ async function readLocalConversationMessageBody(
   request: Request
 ): Promise<{
   routeId: string;
+  jobId?: string;
   text: string;
   attachments?: ConversationAttachment[];
 } | null> {
@@ -369,6 +375,7 @@ async function readLocalConversationMessageBody(
 
   return {
     routeId: record.routeId,
+    ...readOptionalJobId(record),
     text: record.text,
     ...(attachments?.length ? { attachments } : {})
   };
@@ -756,6 +763,7 @@ async function readLocalBurbleChannelMessageBody(
   routeId: string
 ): Promise<{
   routeId: string;
+  jobId?: string;
   text: string;
   attachments?: ConversationAttachment[];
 } | null> {
@@ -786,9 +794,27 @@ async function readLocalBurbleChannelMessageBody(
 
   return {
     routeId,
+    ...readOptionalJobId(record),
     text: record.text,
     ...(attachments?.length ? { attachments } : {})
   };
+}
+
+function readLocalBurbleChannelJobId(payload: unknown): string | null {
+  if (typeof payload !== "object" || payload === null || Array.isArray(payload)) {
+    return null;
+  }
+  return readOptionalJobId(payload as Record<string, unknown>).jobId ?? null;
+}
+
+function readOptionalJobId(record: Record<string, unknown>): { jobId?: string } {
+  for (const name of ["jobId", "job_id"]) {
+    const value = record[name];
+    if (typeof value === "string" && value.trim().length > 0) {
+      return { jobId: value.trim() };
+    }
+  }
+  return {};
 }
 
 function addRunId(body: unknown, runId: string): unknown {

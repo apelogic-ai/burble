@@ -138,6 +138,23 @@ function extractBurbleAttachments(ctx) {
   return [];
 }
 
+function extractBurbleJobId(ctx) {
+  const candidates = [
+    ctx.jobId,
+    ctx.job_id,
+    ctx.metadata && ctx.metadata.jobId,
+    ctx.metadata && ctx.metadata.job_id,
+    ctx.extra && ctx.extra.jobId,
+    ctx.extra && ctx.extra.job_id
+  ];
+  for (const candidate of candidates) {
+    if (typeof candidate === "string" && candidate.trim()) {
+      return candidate.trim();
+    }
+  }
+  return undefined;
+}
+
 async function sendBurbleMessage(ctx) {
   const account = resolveAccount(ctx.cfg, ctx.accountId ?? null);
   if (!account.enabled) {
@@ -152,6 +169,7 @@ async function sendBurbleMessage(ctx) {
     routeId
   )}/messages`;
   const attachments = extractBurbleAttachments(ctx);
+  const jobId = extractBurbleJobId(ctx);
   const text = typeof ctx.text === "string" ? ctx.text : "";
   if (!text.trim() && attachments.length === 0) {
     throw new Error("Burble channel delivery requires text or attachments");
@@ -161,6 +179,7 @@ async function sendBurbleMessage(ctx) {
     text,
     source: "openclaw-channel",
     accountId: account.accountId,
+    ...(jobId ? { jobId } : {}),
     threadId: ctx.threadId == null ? undefined : String(ctx.threadId),
     replyToId: ctx.replyToId ?? undefined,
     ...(attachments.length > 0 ? { attachments } : {})

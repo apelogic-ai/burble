@@ -229,6 +229,25 @@ def _usage_from_metadata(metadata: Optional[Dict[str, Any]]) -> Optional[dict[st
     return _normalize_usage(metadata)
 
 
+def _job_id_from_metadata(metadata: Optional[Dict[str, Any]]) -> Optional[str]:
+    if not _keyed(metadata):
+        return None
+
+    for key in ("jobId", "job_id", "scheduledJobId", "scheduled_job_id"):
+        value = _get_key(metadata, key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+
+    for key in ("scheduledJob", "scheduled_job", "job", "runtime"):
+        nested = _get_key(metadata, key)
+        if _keyed(nested):
+            job_id = _job_id_from_metadata(nested)
+            if job_id:
+                return job_id
+
+    return None
+
+
 def _usage_snapshot(value: Any) -> Optional[dict[str, int]]:
     if not _keyed(value):
         return None
@@ -450,7 +469,7 @@ class BurbleAdapter(BasePlatformAdapter):
             f"[INFO] Burble Hermes platform route send routeId={route_id} textChars={len(text)}",
             flush=True,
         )
-        return await self._send_to_burble_route(route_id, text)
+        return await self._send_to_burble_route(route_id, text, _job_id_from_metadata(metadata))
 
     async def edit_message(
         self,
@@ -667,11 +686,16 @@ class BurbleAdapter(BasePlatformAdapter):
         except Exception:
             return None
 
-    async def _send_to_burble_route(self, route_id: str, text: str) -> SendResult:
+    async def _send_to_burble_route(
+        self, route_id: str, text: str, job_id: Optional[str] = None
+    ) -> SendResult:
         url = (
             f"{self.tool_gateway_url}/"
             f"{quote('conversation.sendMessage', safe='')}/execute"
         )
+        input_body: dict[str, Any] = {"routeId": route_id, "text": text}
+        if job_id:
+            input_body["jobId"] = job_id
         async with ClientSession(timeout=ClientTimeout(total=60)) as session:
             async with session.post(
                 url,
@@ -680,7 +704,7 @@ class BurbleAdapter(BasePlatformAdapter):
                     "content-type": "application/json",
                     "x-burble-runtime-id": self.runtime_id,
                 },
-                json={"input": {"routeId": route_id, "text": text}},
+                json={"input": input_body},
             ) as response:
                 body = await response.text()
                 if response.status >= 400:
