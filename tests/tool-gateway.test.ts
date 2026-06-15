@@ -2536,6 +2536,182 @@ describe("handleToolGatewayRequest", () => {
     });
   });
 
+  test("notifies the grant owner when scheduled grant delivery fails", async () => {
+    const route: ConversationRouteRecord = {
+      id: "convrt_grant",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      transport: "slack",
+      destinationJson: JSON.stringify({
+        channelId: "CENG",
+        isDirectMessage: false,
+        rootId: "channel:CENG"
+      }),
+      kind: "grant",
+      grantedBySlackUserId: "U123",
+      expiresAt: null,
+      bindingJson: JSON.stringify({
+        jobId: "daily-standup",
+        runtimeId: "rt_u123"
+      }),
+      createdAt: "2026-05-26T00:00:00.000Z",
+      updatedAt: "2026-05-26T00:00:00.000Z",
+      revokedAt: null
+    };
+    const jobCapability: AgentJobCapabilityRecord = {
+      jobId: "daily-standup",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      requiredTools: ["conversation.sendMessage"],
+      routeId: "convrt_grant",
+      policyHash: "policy-hash",
+      capabilityProfile: "scheduled_job",
+      runtimeType: "openclaw",
+      stateRefs: [],
+      visibilityPolicy: {
+        maxOutputVisibility: "public"
+      },
+      createdAt: "2026-06-01T00:00:00.000Z",
+      updatedAt: "2026-06-01T00:00:00.000Z"
+    };
+    const notifications: unknown[] = [];
+
+    const response = await handleToolGatewayRequest(
+      config,
+      createStore(null, runtime, [], route, [], { found: jobCapability }),
+      "conversation.sendMessage",
+      request(
+        "conversation.sendMessage",
+        {
+          input: {
+            text: "Daily standup is ready.",
+            routeId: "convrt_grant",
+            jobId: "daily-standup"
+          }
+        },
+        "runtime-token-u123",
+        "rt_u123"
+      ),
+      {
+        postActiveConversationMessage: async () => {
+          throw new Error("Slack message send failed: not_in_channel");
+        },
+        notifyDestinationGrantDeliveryFailure: async (input) => {
+          notifications.push(input);
+        }
+      }
+    );
+
+    expect(response.status).toBe(502);
+    expect(await response.text()).toContain("Conversation delivery failed");
+    expect(notifications).toEqual([
+      expect.objectContaining({
+        runtime,
+        routeId: "convrt_grant",
+        jobId: "daily-standup",
+        channelId: "CENG",
+        errorMessage: "Slack message send failed: not_in_channel"
+      })
+    ]);
+  });
+
+  test("uses Slack DM fallback notification when grant delivery fails", async () => {
+    const route: ConversationRouteRecord = {
+      id: "convrt_grant",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      transport: "slack",
+      destinationJson: JSON.stringify({
+        channelId: "CENG",
+        isDirectMessage: false,
+        rootId: "channel:CENG"
+      }),
+      kind: "grant",
+      grantedBySlackUserId: "U123",
+      expiresAt: null,
+      bindingJson: JSON.stringify({
+        jobId: "daily-standup",
+        runtimeId: "rt_u123"
+      }),
+      createdAt: "2026-05-26T00:00:00.000Z",
+      updatedAt: "2026-05-26T00:00:00.000Z",
+      revokedAt: null
+    };
+    const jobCapability: AgentJobCapabilityRecord = {
+      jobId: "daily-standup",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      requiredTools: ["conversation.sendMessage"],
+      routeId: "convrt_grant",
+      policyHash: "policy-hash",
+      capabilityProfile: "scheduled_job",
+      runtimeType: "openclaw",
+      stateRefs: [],
+      visibilityPolicy: {
+        maxOutputVisibility: "public"
+      },
+      createdAt: "2026-06-01T00:00:00.000Z",
+      updatedAt: "2026-06-01T00:00:00.000Z"
+    };
+    const calls: Array<{ url: string; body: Record<string, unknown> }> = [];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input, init) => {
+      calls.push({
+        url: String(input),
+        body: JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>
+      });
+      return new Response(
+        JSON.stringify(
+          calls.length === 1
+            ? { ok: false, error: "not_in_channel" }
+            : { ok: true, channel: "U123", ts: "1779841150.000" }
+        ),
+        { status: 200, headers: { "content-type": "application/json" } }
+      );
+    }) as typeof fetch;
+    try {
+      const response = await handleToolGatewayRequest(
+        config,
+        createStore(null, runtime, [], route, [], { found: jobCapability }),
+        "conversation.sendMessage",
+        request(
+          "conversation.sendMessage",
+          {
+            input: {
+              text: "Daily standup is ready.",
+              routeId: "convrt_grant",
+              jobId: "daily-standup"
+            }
+          },
+          "runtime-token-u123",
+          "rt_u123"
+        )
+      );
+
+      expect(response.status).toBe(502);
+      expect(calls).toHaveLength(2);
+      expect(calls[0]).toMatchObject({
+        url: "https://slack.com/api/chat.postMessage",
+        body: {
+          channel: "CENG",
+          text: "Daily standup is ready."
+        }
+      });
+      expect(calls[1]).toMatchObject({
+        url: "https://slack.com/api/chat.postMessage",
+        body: {
+          channel: "U123"
+        }
+      });
+      expect(String(calls[1].body.text)).toContain(
+        "could not post scheduled job output to <#CENG>"
+      );
+      expect(String(calls[1].body.text)).toContain("not_in_channel");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
   test("rejects private scheduled job output through a destination grant", async () => {
     const route: ConversationRouteRecord = {
       id: "convrt_grant",
