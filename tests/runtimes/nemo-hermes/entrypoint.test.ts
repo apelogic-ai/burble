@@ -1247,7 +1247,18 @@ class Ctx:
 ctx = Ctx()
 mod.register(ctx)
 print(json.dumps(ctx.tools))
-`);
+`) as Array<{
+      name?: string;
+      toolset?: string;
+      is_async?: boolean;
+      schema?: {
+        parameters?: {
+          properties?: {
+            destination?: { description?: string };
+          };
+        };
+      };
+    }>;
 
     expect(result).toContainEqual(
       expect.objectContaining({
@@ -1284,6 +1295,13 @@ print(json.dumps(ctx.tools))
         is_async: true
       })
     );
+    const scheduledJobTool = result.find(
+      (tool: { name?: string }) =>
+        tool.name === "scheduled_job_register_capability"
+    );
+    expect(
+      scheduledJobTool?.schema?.parameters?.properties?.destination?.description
+    ).toContain("/agent grant here");
     expect(result).toContainEqual(
       expect.objectContaining({
         name: "conversation_get_attachment",

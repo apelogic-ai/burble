@@ -3070,16 +3070,43 @@ export function buildAgentCommandHelpResponse() {
 export function buildAgentDestinationGrantResponse(
   route: ConversationRouteRecord
 ) {
+  const destination = readSlackDestinationGrantResponseTarget(route);
+  const destinationText = destination
+    ? `When you schedule a public job, ask Burble to post results to <#${destination.channelId}>.`
+    : "When you schedule a public job, ask Burble to post results to this channel.";
   return {
     response_type: "ephemeral" as const,
     text: [
       "Authorized this channel as a destination for scheduled jobs.",
       "",
+      destinationText,
+      "",
       `Route id: \`${route.id}\``,
       "",
-      "When you schedule a public job, ask Burble to post results here and use this destination route."
+      "The route id is kept for debugging; you usually do not need to copy it."
     ].join("\n")
   };
+}
+
+function readSlackDestinationGrantResponseTarget(
+  route: ConversationRouteRecord
+): { channelId: string } | null {
+  try {
+    const parsed = JSON.parse(route.destinationJson) as unknown;
+    if (
+      typeof parsed !== "object" ||
+      parsed === null ||
+      Array.isArray(parsed)
+    ) {
+      return null;
+    }
+    const channelId = (parsed as Record<string, unknown>).channelId;
+    return typeof channelId === "string" && channelId.trim()
+      ? { channelId: channelId.trim() }
+      : null;
+  } catch {
+    return null;
+  }
 }
 
 export function buildAgentDestinationGrantLoadingResponse(

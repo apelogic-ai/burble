@@ -1231,6 +1231,9 @@ describe("handleRuntimeRequest", () => {
     expect(tool).toBeTruthy();
     expect(tool.description).toContain("scheduledJob.registerCapability");
     expect(tool.inputSchema.required).toEqual(["jobId", "requiredTools"]);
+    expect(tool.inputSchema.properties.destination.description).toContain(
+      "/agent grant here"
+    );
     expect(tool.inputSchema.properties.stateRefs.description).toContain(
       "objects, never strings"
     );
