@@ -336,10 +336,20 @@ export async function handleToolGatewayRequest(
       ...(body.input.routeId ? { routeId: body.input.routeId.trim() } : {})
     };
     if (sendInput.routeId && !isConversationRouteId(sendInput.routeId)) {
-      return new Response(
-        "Conversation route id must be a resolved convrt_* route id. Register scheduled destination labels with scheduledJob.registerCapability and use the returned routeId for delivery.",
-        { status: 400 }
+      const failure = invalidConversationRouteIdFailure();
+      recordConversationDeliveryFailureEvent(store, auth.runtime, toolName, {
+        routeId: sendInput.routeId,
+        ...(sendInput.jobId ? { jobId: sendInput.jobId } : {}),
+        error: failure,
+        notificationSent: false
+      });
+      emitToolGatewayFailedBestEffort(
+        { observability: deps.observability, startedAt: toolStartedAt, body },
+        auth,
+        toolName,
+        failure
       );
+      return new Response(failure.message, { status: 400 });
     }
     const sendRouteOptions = sendInput.routeId
       ? resolveConversationSendRouteOptions(store, auth.runtime, sendInput)
@@ -513,6 +523,14 @@ export async function handleToolGatewayRequest(
     const input = readScheduledJobRegisterCapabilityInput(body.input);
     if (!input) {
       return new Response("Invalid tool input", { status: 400 });
+    }
+    const routeIdValidationError = input.routeId
+      ? validateConversationRouteId(input.routeId)
+      : input.destination && "routeId" in input.destination
+        ? validateConversationRouteId(input.destination.routeId)
+        : null;
+    if (routeIdValidationError) {
+      return new Response(routeIdValidationError, { status: 400 });
     }
     const resolvedRouteId = input.routeId ?? (input.destination
       ? await resolveScheduledJobDestinationRouteId({
@@ -2073,7 +2091,7 @@ function normalizeScheduledJobDestination(
   }
   const routeId = readStringAlias(value, ["routeId", "route_id"]);
   if (routeId) {
-    return { routeId };
+    return { routeId: routeId.trim() };
   }
   const channelValue = readStringAlias(value, [
     "channelId",
@@ -2111,7 +2129,13 @@ function parseScheduledJobDestinationString(
 }
 
 function isConversationRouteId(value: string): boolean {
-  return /^convrt_[A-Za-z0-9_-]+$/.test(value);
+  return /^convrt_[0-9a-f]{24}$/.test(value);
+}
+
+function validateConversationRouteId(value: string): string | null {
+  return isConversationRouteId(value.trim())
+    ? null
+    : invalidConversationRouteIdFailure().message;
 }
 
 function readScheduledJobRegistrationId(
@@ -2278,7 +2302,10 @@ function buildScheduledJobPromptInstruction(
           `For scheduled/background delivery, use the resolved Burble conversation route id "${scheduledJob.routeId}".`,
           "Do not use Slack channel names, Slack mentions, channel ids, or the original destination label as a delivery route."
         ]
-      : []),
+      : [
+          "No scheduled/background Burble delivery route is authorized for this job.",
+          'Do not set delivery.channel to "burble" or delivery.to to a Slack channel name, Slack mention, channel id, or guessed route id.'
+        ]),
     `maxOutputVisibility=${scheduledJob.visibilityPolicy.maxOutputVisibility ?? "user_private"}`,
     `allowPrivateToolDeclassification=${scheduledJob.visibilityPolicy.allowPrivateToolDeclassification === true ? "true" : "false"}`
   ];
@@ -3922,6 +3949,15 @@ type ConversationDeliveryFailure = {
   retryable: boolean;
 };
 
+function invalidConversationRouteIdFailure(): ConversationDeliveryFailure {
+  return {
+    message:
+      "Conversation route id must be a resolved convrt_* route id. Register scheduled destination labels with scheduledJob.registerCapability and use the returned routeId for delivery.",
+    code: "invalid_route_id",
+    retryable: false
+  };
+}
+
 function classifyConversationDeliveryFailure(
   error: unknown
 ): ConversationDeliveryFailure {
@@ -4044,8 +4080,8 @@ function recordConversationDeliveryFailureEvent(
   input: {
     routeId?: string;
     jobId?: string;
-    routeKind: "origin" | "grant";
-    channelId: string;
+    routeKind?: "origin" | "grant";
+    channelId?: string;
     error: ConversationDeliveryFailure;
     notificationSent: boolean;
   }
@@ -4056,8 +4092,8 @@ function recordConversationDeliveryFailureEvent(
       eventType: "runtime_tool_failed",
       summary: {
         toolName,
-        routeKind: input.routeKind,
-        channelId: input.channelId,
+        ...(input.routeKind ? { routeKind: input.routeKind } : {}),
+        ...(input.channelId ? { channelId: input.channelId } : {}),
         ...(input.routeId ? { routeId: input.routeId } : {}),
         ...(input.jobId ? { jobId: input.jobId } : {}),
         error: input.error.message,

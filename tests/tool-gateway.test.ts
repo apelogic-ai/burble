@@ -1397,7 +1397,7 @@ describe("handleToolGatewayRequest", () => {
 
   test("lets a runtime register a scheduled job provider capability", async () => {
     const route: ConversationRouteRecord = {
-      id: "convrt_abc123",
+      id: "convrt_abcdefabcdefabcdefabcdef",
       workspaceId: "T123",
       slackUserId: "U123",
       transport: "slack",
@@ -1422,7 +1422,7 @@ describe("handleToolGatewayRequest", () => {
               "google.getDriveFile",
               "google.appendToDriveTextFile"
             ],
-            routeId: "convrt_abc123",
+            routeId: "convrt_abcdefabcdefabcdefabcdef",
             stateRefs: [
               {
                 provider: "google",
@@ -1448,7 +1448,7 @@ describe("handleToolGatewayRequest", () => {
         jobId: "ai-news-hourly",
         workspaceId: "T123",
         slackUserId: "U123",
-        routeId: "convrt_abc123",
+        routeId: "convrt_abcdefabcdefabcdefabcdef",
         requiredTools: [
           "google_append_to_drive_text_file",
           "google_get_drive_file"
@@ -1464,7 +1464,7 @@ describe("handleToolGatewayRequest", () => {
         "google_append_to_drive_text_file",
         "google_get_drive_file"
       ],
-      routeId: "convrt_abc123"
+      routeId: "convrt_abcdefabcdefabcdefabcdef"
     });
     expect(body.content.scheduledPromptInstruction).toContain(
       "jobId=ai-news-hourly"
@@ -1498,7 +1498,7 @@ describe("handleToolGatewayRequest", () => {
       "use only the listed allowedTools"
     );
     expect(body.content.scheduledPromptInstruction).toContain(
-      'For scheduled/background delivery, use the resolved Burble conversation route id "convrt_abc123".'
+      'For scheduled/background delivery, use the resolved Burble conversation route id "convrt_abcdefabcdefabcdefabcdef".'
     );
     expect(body.content.scheduledPromptInstruction).toContain(
       "Do not use Slack channel names, Slack mentions, channel ids, or the original destination label as a delivery route."
@@ -1508,7 +1508,7 @@ describe("handleToolGatewayRequest", () => {
 
   test("rejects channel destination grants for non-public scheduled output", async () => {
     const route: ConversationRouteRecord = {
-      id: "convrt_grant",
+      id: "convrt_1234567890abcdef12345678",
       workspaceId: "T123",
       slackUserId: "U123",
       transport: "slack",
@@ -1536,7 +1536,7 @@ describe("handleToolGatewayRequest", () => {
           input: {
             jobId: "ai-news-hourly",
             requiredTools: ["google.getDriveFile"],
-            routeId: "convrt_grant",
+            routeId: "convrt_1234567890abcdef12345678",
             visibilityPolicy: {
               maxOutputVisibility: "user_private"
             }
@@ -1555,7 +1555,7 @@ describe("handleToolGatewayRequest", () => {
 
   test("resolves a scheduled job destination channel name to an existing grant", async () => {
     const route: ConversationRouteRecord = {
-      id: "convrt_grant",
+      id: "convrt_1234567890abcdef12345678",
       workspaceId: "T123",
       slackUserId: "U123",
       transport: "slack",
@@ -1607,25 +1607,89 @@ describe("handleToolGatewayRequest", () => {
     expect(upserts).toEqual([
       expect.objectContaining({
         jobId: "daily-standup",
-        routeId: "convrt_grant"
+        routeId: "convrt_1234567890abcdef12345678"
       })
     ]);
     const body = await response.json();
     expect(body.content.scheduledJob).toMatchObject({
       jobId: "daily-standup",
-      routeId: "convrt_grant"
+      routeId: "convrt_1234567890abcdef12345678"
     });
     expect(body.content.scheduledPromptInstruction).toContain(
-      'For scheduled/background delivery, use the resolved Burble conversation route id "convrt_grant".'
+      'For scheduled/background delivery, use the resolved Burble conversation route id "convrt_1234567890abcdef12345678".'
     );
     expect(body.content.scheduledPromptInstruction).toContain(
       "Do not use Slack channel names, Slack mentions, channel ids, or the original destination label as a delivery route."
     );
   });
 
+  test("warns routeless scheduled jobs not to configure Burble channel delivery", async () => {
+    const response = await handleToolGatewayRequest(
+      config,
+      createStore(null, runtime),
+      "scheduledJob.registerCapability",
+      request(
+        "scheduledJob.registerCapability",
+        {
+          input: {
+            jobId: "daily-standup",
+            requiredTools: ["google.getDriveFile"]
+          }
+        },
+        "runtime-token-u123",
+        "rt_u123"
+      )
+    );
+
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.content.scheduledJob).toMatchObject({
+      jobId: "daily-standup"
+    });
+    expect(body.content.scheduledJob.routeId).toBeUndefined();
+    expect(body.content.scheduledPromptInstruction).toContain(
+      "No scheduled/background Burble delivery route is authorized for this job."
+    );
+    expect(body.content.scheduledPromptInstruction).toContain(
+      "Do not set delivery.channel to \"burble\" or delivery.to to a Slack channel name, Slack mention, channel id, or guessed route id."
+    );
+  });
+
+  test("rejects malformed object-form scheduled route ids", async () => {
+    const upserts: unknown[] = [];
+    const response = await handleToolGatewayRequest(
+      config,
+      createStore(null, runtime, [], null, [], { upserts }),
+      "scheduledJob.registerCapability",
+      request(
+        "scheduledJob.registerCapability",
+        {
+          input: {
+            jobId: "daily-standup",
+            requiredTools: ["conversation.sendMessage"],
+            destination: {
+              routeId: "convrt_burbletest"
+            },
+            visibilityPolicy: {
+              maxOutputVisibility: "public"
+            }
+          }
+        },
+        "runtime-token-u123",
+        "rt_u123"
+      )
+    );
+
+    expect(response.status).toBe(400);
+    expect(await response.text()).toContain(
+      "Conversation route id must be a resolved convrt_* route id"
+    );
+    expect(upserts).toEqual([]);
+  });
+
   test("resolves short uppercase scheduled destination names through channel lookup", async () => {
     const route: ConversationRouteRecord = {
-      id: "convrt_grant",
+      id: "convrt_1234567890abcdef12345678",
       workspaceId: "T123",
       slackUserId: "U123",
       transport: "slack",
@@ -1676,14 +1740,14 @@ describe("handleToolGatewayRequest", () => {
     expect(response.status).toBe(200);
     expect(upserts).toEqual([
       expect.objectContaining({
-        routeId: "convrt_grant"
+        routeId: "convrt_1234567890abcdef12345678"
       })
     ]);
   });
 
   test("resolves a scheduled job destination Slack channel mention without name lookup", async () => {
     const route: ConversationRouteRecord = {
-      id: "convrt_grant",
+      id: "convrt_1234567890abcdef12345678",
       workspaceId: "T123",
       slackUserId: "U123",
       transport: "slack",
@@ -1730,7 +1794,7 @@ describe("handleToolGatewayRequest", () => {
     expect(response.status).toBe(200);
     expect(upserts).toEqual([
       expect.objectContaining({
-        routeId: "convrt_grant"
+        routeId: "convrt_1234567890abcdef12345678"
       })
     ]);
   });
@@ -1800,7 +1864,7 @@ describe("handleToolGatewayRequest", () => {
 
   test("rejects scheduled route grants bound to another job", async () => {
     const route: ConversationRouteRecord = {
-      id: "convrt_grant",
+      id: "convrt_1234567890abcdef12345678",
       workspaceId: "T123",
       slackUserId: "U123",
       transport: "slack",
@@ -1831,7 +1895,7 @@ describe("handleToolGatewayRequest", () => {
           input: {
             jobId: "ai-news-hourly",
             requiredTools: ["google.getDriveFile"],
-            routeId: "convrt_grant",
+            routeId: "convrt_1234567890abcdef12345678",
             visibilityPolicy: {
               maxOutputVisibility: "public"
             }
@@ -1980,7 +2044,7 @@ describe("handleToolGatewayRequest", () => {
 
   test("normalizes scheduled job registration metadata aliases", async () => {
     const route: ConversationRouteRecord = {
-      id: "convrt_abc123",
+      id: "convrt_abcdefabcdefabcdefabcdef",
       workspaceId: "T123",
       slackUserId: "U123",
       transport: "slack",
@@ -2006,7 +2070,7 @@ describe("handleToolGatewayRequest", () => {
                 "google_get_drive_file",
                 "google_append_to_drive_text_file"
               ],
-              route_id: "convrt_abc123",
+              route_id: "convrt_abcdefabcdefabcdefabcdef",
               capability_profile: "scheduled_job",
               runtime_type: "hermes",
               state_refs: [
@@ -2031,7 +2095,7 @@ describe("handleToolGatewayRequest", () => {
     expect(upserts).toEqual([
       expect.objectContaining({
         jobId: "ai-news-hourly",
-        routeId: "convrt_abc123",
+        routeId: "convrt_abcdefabcdefabcdefabcdef",
         capabilityProfile: "scheduled_job",
         runtimeType: "hermes",
         requiredTools: [
@@ -2444,7 +2508,7 @@ describe("handleToolGatewayRequest", () => {
 
   test("lets a runtime send through a durable conversation route", async () => {
     const route: ConversationRouteRecord = {
-      id: "convrt_abc123",
+      id: "convrt_abcdefabcdefabcdefabcdef",
       workspaceId: "T123",
       slackUserId: "U123",
       transport: "slack",
@@ -2463,7 +2527,7 @@ describe("handleToolGatewayRequest", () => {
       request(
         "conversation.sendMessage",
         {
-          input: { text: "Cron finished.", routeId: "convrt_abc123" }
+          input: { text: "Cron finished.", routeId: "convrt_abcdefabcdefabcdefabcdef" }
         },
         "runtime-token-u123",
         "rt_u123"
@@ -2492,17 +2556,19 @@ describe("handleToolGatewayRequest", () => {
         ok: true,
         transport: "slack",
         conversationId: "C123",
-        routeId: "convrt_abc123",
+        routeId: "convrt_abcdefabcdefabcdefabcdef",
         messageId: "1779841130.000"
       }
     });
   });
 
   test("rejects Slack labels as conversation route ids", async () => {
+    const runtimeEvents: unknown[] = [];
+    const observabilityEvents: ObservabilityEventInput[] = [];
     let posted = false;
     const response = await handleToolGatewayRequest(
       config,
-      createStore(null, runtime),
+      createStore(null, runtime, runtimeEvents),
       "conversation.sendMessage",
       request(
         "conversation.sendMessage",
@@ -2516,6 +2582,11 @@ describe("handleToolGatewayRequest", () => {
         postActiveConversationMessage: async () => {
           posted = true;
           throw new Error("should not post");
+        },
+        observability: {
+          emit: (event) => {
+            observabilityEvents.push(event);
+          }
         }
       }
     );
@@ -2525,11 +2596,75 @@ describe("handleToolGatewayRequest", () => {
       "Conversation route id must be a resolved convrt_* route id"
     );
     expect(posted).toBe(false);
+    expect(runtimeEvents).toEqual([
+      {
+        runtimeId: "rt_u123",
+        eventType: "runtime_tool_failed",
+        summary: {
+          toolName: "conversation.sendMessage",
+          routeId: "#burble-test",
+          error:
+            "Conversation route id must be a resolved convrt_* route id. Register scheduled destination labels with scheduledJob.registerCapability and use the returned routeId for delivery.",
+          deliveryFailureCode: "invalid_route_id",
+          deliveryFailureRetryable: false,
+          notificationSent: false
+        }
+      }
+    ]);
+    expect(observabilityEvents).toHaveLength(2);
+    expect(observabilityEvents[0]).toMatchObject({
+      name: "tool.gateway.started",
+      toolName: "conversation.sendMessage"
+    });
+    expect(observabilityEvents[1]).toMatchObject({
+      name: "tool.gateway.failed",
+      toolName: "conversation.sendMessage",
+      status: "error",
+      error: {
+        code: "invalid_route_id",
+        message:
+          "Conversation route id must be a resolved convrt_* route id. Register scheduled destination labels with scheduledJob.registerCapability and use the returned routeId for delivery."
+      },
+      attributes: {
+        deliveryFailureCode: "invalid_route_id",
+        deliveryFailureRetryable: false
+      }
+    });
+  });
+
+  test("rejects hallucinated convrt route ids before route lookup", async () => {
+    let lookedUp = false;
+    const store = createStore(null, runtime);
+    const originalGetConversationRoute = store.getConversationRoute;
+    store.getConversationRoute = (id) => {
+      lookedUp = true;
+      return originalGetConversationRoute(id);
+    };
+
+    const response = await handleToolGatewayRequest(
+      config,
+      store,
+      "conversation.sendMessage",
+      request(
+        "conversation.sendMessage",
+        {
+          input: { text: "Cron finished.", routeId: "convrt_burbletest" }
+        },
+        "runtime-token-u123",
+        "rt_u123"
+      )
+    );
+
+    expect(response.status).toBe(400);
+    expect(await response.text()).toContain(
+      "Conversation route id must be a resolved convrt_* route id"
+    );
+    expect(lookedUp).toBe(false);
   });
 
   test("lets a public scheduled job send through a destination grant", async () => {
     const route: ConversationRouteRecord = {
-      id: "convrt_grant",
+      id: "convrt_1234567890abcdef12345678",
       workspaceId: "T123",
       slackUserId: "U123",
       transport: "slack",
@@ -2554,7 +2689,7 @@ describe("handleToolGatewayRequest", () => {
       workspaceId: "T123",
       slackUserId: "U123",
       requiredTools: ["conversation.sendMessage"],
-      routeId: "convrt_grant",
+      routeId: "convrt_1234567890abcdef12345678",
       policyHash: "policy-hash",
       capabilityProfile: "scheduled_job",
       runtimeType: "openclaw",
@@ -2575,7 +2710,7 @@ describe("handleToolGatewayRequest", () => {
         {
           input: {
             text: "Daily standup is ready.",
-            routeId: "convrt_grant",
+            routeId: "convrt_1234567890abcdef12345678",
             jobId: "daily-standup"
           }
         },
@@ -2605,7 +2740,7 @@ describe("handleToolGatewayRequest", () => {
         ok: true,
         transport: "slack",
         conversationId: "CENG",
-        routeId: "convrt_grant",
+        routeId: "convrt_1234567890abcdef12345678",
         messageId: "1779841140.000"
       }
     });
@@ -2613,7 +2748,7 @@ describe("handleToolGatewayRequest", () => {
 
   test("records and notifies the grant owner when permanent scheduled grant delivery fails", async () => {
     const route: ConversationRouteRecord = {
-      id: "convrt_grant",
+      id: "convrt_1234567890abcdef12345678",
       workspaceId: "T123",
       slackUserId: "U123",
       transport: "slack",
@@ -2638,7 +2773,7 @@ describe("handleToolGatewayRequest", () => {
       workspaceId: "T123",
       slackUserId: "U123",
       requiredTools: ["conversation.sendMessage"],
-      routeId: "convrt_grant",
+      routeId: "convrt_1234567890abcdef12345678",
       policyHash: "policy-hash",
       capabilityProfile: "scheduled_job",
       runtimeType: "openclaw",
@@ -2671,7 +2806,7 @@ describe("handleToolGatewayRequest", () => {
         {
           input: {
             text: "Daily standup is ready.",
-            routeId: "convrt_grant",
+            routeId: "convrt_1234567890abcdef12345678",
             jobId: "daily-standup"
           }
         },
@@ -2702,7 +2837,7 @@ describe("handleToolGatewayRequest", () => {
         runtimeId: "rt_u123",
         summary: expect.objectContaining({
           toolName: "conversation.sendMessage",
-          routeId: "convrt_grant",
+          routeId: "convrt_1234567890abcdef12345678",
           routeKind: "grant",
           channelId: "CENG",
           jobId: "daily-standup",
@@ -2715,7 +2850,7 @@ describe("handleToolGatewayRequest", () => {
     expect(notifications).toEqual([
       expect.objectContaining({
         runtime,
-        routeId: "convrt_grant",
+        routeId: "convrt_1234567890abcdef12345678",
         jobId: "daily-standup",
         channelId: "CENG",
         errorMessage: "Slack message send failed: not_in_channel",
@@ -2737,7 +2872,7 @@ describe("handleToolGatewayRequest", () => {
 
   test("notifies the grant owner for unlisted non-retryable Slack failures", async () => {
     const route: ConversationRouteRecord = {
-      id: "convrt_grant",
+      id: "convrt_1234567890abcdef12345678",
       workspaceId: "T123",
       slackUserId: "U123",
       transport: "slack",
@@ -2762,7 +2897,7 @@ describe("handleToolGatewayRequest", () => {
       workspaceId: "T123",
       slackUserId: "U123",
       requiredTools: ["conversation.sendMessage"],
-      routeId: "convrt_grant",
+      routeId: "convrt_1234567890abcdef12345678",
       policyHash: "policy-hash",
       capabilityProfile: "scheduled_job",
       runtimeType: "openclaw",
@@ -2793,7 +2928,7 @@ describe("handleToolGatewayRequest", () => {
         {
           input: {
             text: "Daily standup is ready.",
-            routeId: "convrt_grant",
+            routeId: "convrt_1234567890abcdef12345678",
             jobId: "daily-standup"
           }
         },
@@ -2822,7 +2957,7 @@ describe("handleToolGatewayRequest", () => {
 
   test("suppresses repeat grant delivery failure notifications", async () => {
     const route: ConversationRouteRecord = {
-      id: "convrt_grant",
+      id: "convrt_1234567890abcdef12345678",
       workspaceId: "T123",
       slackUserId: "U123",
       transport: "slack",
@@ -2851,7 +2986,7 @@ describe("handleToolGatewayRequest", () => {
       workspaceId: "T123",
       slackUserId: "U123",
       requiredTools: ["conversation.sendMessage"],
-      routeId: "convrt_grant",
+      routeId: "convrt_1234567890abcdef12345678",
       policyHash: "policy-hash",
       capabilityProfile: "scheduled_job",
       runtimeType: "openclaw",
@@ -2875,7 +3010,7 @@ describe("handleToolGatewayRequest", () => {
         {
           input: {
             text: "Daily standup is ready.",
-            routeId: "convrt_grant",
+            routeId: "convrt_1234567890abcdef12345678",
             jobId: "daily-standup"
           }
         },
@@ -2898,7 +3033,7 @@ describe("handleToolGatewayRequest", () => {
 
   test("does not revoke or notify for Slack rate-limit delivery failures", async () => {
     const route: ConversationRouteRecord = {
-      id: "convrt_grant",
+      id: "convrt_1234567890abcdef12345678",
       workspaceId: "T123",
       slackUserId: "U123",
       transport: "slack",
@@ -2923,7 +3058,7 @@ describe("handleToolGatewayRequest", () => {
       workspaceId: "T123",
       slackUserId: "U123",
       requiredTools: ["conversation.sendMessage"],
-      routeId: "convrt_grant",
+      routeId: "convrt_1234567890abcdef12345678",
       policyHash: "policy-hash",
       capabilityProfile: "scheduled_job",
       runtimeType: "openclaw",
@@ -2954,7 +3089,7 @@ describe("handleToolGatewayRequest", () => {
         {
           input: {
             text: "Daily standup is ready.",
-            routeId: "convrt_grant",
+            routeId: "convrt_1234567890abcdef12345678",
             jobId: "daily-standup"
           }
         },
@@ -2978,7 +3113,7 @@ describe("handleToolGatewayRequest", () => {
 
   test("treats unknown Slack delivery failures as retryable", async () => {
     const route: ConversationRouteRecord = {
-      id: "convrt_grant",
+      id: "convrt_1234567890abcdef12345678",
       workspaceId: "T123",
       slackUserId: "U123",
       transport: "slack",
@@ -3003,7 +3138,7 @@ describe("handleToolGatewayRequest", () => {
       workspaceId: "T123",
       slackUserId: "U123",
       requiredTools: ["conversation.sendMessage"],
-      routeId: "convrt_grant",
+      routeId: "convrt_1234567890abcdef12345678",
       policyHash: "policy-hash",
       capabilityProfile: "scheduled_job",
       runtimeType: "openclaw",
@@ -3025,7 +3160,7 @@ describe("handleToolGatewayRequest", () => {
         {
           input: {
             text: "Daily standup is ready.",
-            routeId: "convrt_grant",
+            routeId: "convrt_1234567890abcdef12345678",
             jobId: "daily-standup"
           }
         },
@@ -3049,7 +3184,7 @@ describe("handleToolGatewayRequest", () => {
 
   test("returns the delivery failure response when bookkeeping throws", async () => {
     const route: ConversationRouteRecord = {
-      id: "convrt_grant",
+      id: "convrt_1234567890abcdef12345678",
       workspaceId: "T123",
       slackUserId: "U123",
       transport: "slack",
@@ -3074,7 +3209,7 @@ describe("handleToolGatewayRequest", () => {
       workspaceId: "T123",
       slackUserId: "U123",
       requiredTools: ["conversation.sendMessage"],
-      routeId: "convrt_grant",
+      routeId: "convrt_1234567890abcdef12345678",
       policyHash: "policy-hash",
       capabilityProfile: "scheduled_job",
       runtimeType: "openclaw",
@@ -3104,7 +3239,7 @@ describe("handleToolGatewayRequest", () => {
         {
           input: {
             text: "Daily standup is ready.",
-            routeId: "convrt_grant",
+            routeId: "convrt_1234567890abcdef12345678",
             jobId: "daily-standup"
           }
         },
@@ -3130,7 +3265,7 @@ describe("handleToolGatewayRequest", () => {
 
   test("uses Slack DM fallback notification when grant delivery fails", async () => {
     const route: ConversationRouteRecord = {
-      id: "convrt_grant",
+      id: "convrt_1234567890abcdef12345678",
       workspaceId: "T123",
       slackUserId: "U123",
       transport: "slack",
@@ -3155,7 +3290,7 @@ describe("handleToolGatewayRequest", () => {
       workspaceId: "T123",
       slackUserId: "U123",
       requiredTools: ["conversation.sendMessage"],
-      routeId: "convrt_grant",
+      routeId: "convrt_1234567890abcdef12345678",
       policyHash: "policy-hash",
       capabilityProfile: "scheduled_job",
       runtimeType: "openclaw",
@@ -3192,7 +3327,7 @@ describe("handleToolGatewayRequest", () => {
           {
             input: {
               text: "Daily standup is ready.",
-              routeId: "convrt_grant",
+              routeId: "convrt_1234567890abcdef12345678",
               jobId: "daily-standup"
             }
           },
@@ -3233,7 +3368,7 @@ describe("handleToolGatewayRequest", () => {
 
   test("rejects private scheduled job output through a destination grant", async () => {
     const route: ConversationRouteRecord = {
-      id: "convrt_grant",
+      id: "convrt_1234567890abcdef12345678",
       workspaceId: "T123",
       slackUserId: "U123",
       transport: "slack",
@@ -3258,7 +3393,7 @@ describe("handleToolGatewayRequest", () => {
       workspaceId: "T123",
       slackUserId: "U123",
       requiredTools: ["conversation.sendMessage"],
-      routeId: "convrt_grant",
+      routeId: "convrt_1234567890abcdef12345678",
       policyHash: "policy-hash",
       capabilityProfile: "scheduled_job",
       runtimeType: "openclaw",
@@ -3279,7 +3414,7 @@ describe("handleToolGatewayRequest", () => {
         {
           input: {
             text: "Private digest.",
-            routeId: "convrt_grant",
+            routeId: "convrt_1234567890abcdef12345678",
             jobId: "private-digest",
             visibilityPolicy: {
               maxOutputVisibility: "public"
@@ -3304,7 +3439,7 @@ describe("handleToolGatewayRequest", () => {
 
   test("rejects invisible-only conversation messages", async () => {
     const route: ConversationRouteRecord = {
-      id: "convrt_abc123",
+      id: "convrt_abcdefabcdefabcdefabcdef",
       workspaceId: "T123",
       slackUserId: "U123",
       transport: "slack",
@@ -3322,7 +3457,7 @@ describe("handleToolGatewayRequest", () => {
       request(
         "conversation.sendMessage",
         {
-          input: { text: "\u200B", routeId: "convrt_abc123" }
+          input: { text: "\u200B", routeId: "convrt_abcdefabcdefabcdefabcdef" }
         },
         "runtime-token-u123",
         "rt_u123"
@@ -3340,7 +3475,7 @@ describe("handleToolGatewayRequest", () => {
 
   test("passes outbound conversation attachment metadata through durable routes", async () => {
     const route: ConversationRouteRecord = {
-      id: "convrt_abc123",
+      id: "convrt_abcdefabcdefabcdefabcdef",
       workspaceId: "T123",
       slackUserId: "U123",
       transport: "slack",
@@ -3361,7 +3496,7 @@ describe("handleToolGatewayRequest", () => {
         {
           input: {
             text: "Cron finished.",
-            routeId: "convrt_abc123",
+            routeId: "convrt_abcdefabcdefabcdefabcdef",
             attachments: [
               {
                 id: "agent:report-1",
@@ -3411,7 +3546,7 @@ describe("handleToolGatewayRequest", () => {
         ok: true,
         transport: "slack",
         conversationId: "C123",
-        routeId: "convrt_abc123",
+        routeId: "convrt_abcdefabcdefabcdefabcdef",
         messageId: "1779841130.000"
       }
     });
@@ -3419,7 +3554,7 @@ describe("handleToolGatewayRequest", () => {
 
   test("allows attachment-only outbound conversation messages", async () => {
     const route: ConversationRouteRecord = {
-      id: "convrt_abc123",
+      id: "convrt_abcdefabcdefabcdefabcdef",
       workspaceId: "T123",
       slackUserId: "U123",
       transport: "slack",
@@ -3439,7 +3574,7 @@ describe("handleToolGatewayRequest", () => {
         {
           input: {
             text: "",
-            routeId: "convrt_abc123",
+            routeId: "convrt_abcdefabcdefabcdefabcdef",
             attachments: [
               {
                 id: "agent:image-1",
@@ -3826,7 +3961,7 @@ describe("handleToolGatewayRequest", () => {
 
   test("rejects durable conversation routes bound to another runtime", async () => {
     const route: ConversationRouteRecord = {
-      id: "convrt_abc123",
+      id: "convrt_abcdefabcdefabcdefabcdef",
       workspaceId: "T123",
       slackUserId: "U123",
       transport: "slack",
@@ -3845,7 +3980,7 @@ describe("handleToolGatewayRequest", () => {
       request(
         "conversation.sendMessage",
         {
-          input: { text: "Cron finished.", routeId: "convrt_abc123" }
+          input: { text: "Cron finished.", routeId: "convrt_abcdefabcdefabcdefabcdef" }
         },
         "runtime-token-u123",
         "rt_u123"
