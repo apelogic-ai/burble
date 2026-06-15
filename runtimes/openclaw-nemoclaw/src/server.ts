@@ -794,7 +794,7 @@ async function readLocalBurbleChannelMessageBody(
 
   return {
     routeId,
-    ...readOptionalJobId(record),
+    ...readOptionalJobId(record, { includeThreadId: true }),
     text: record.text,
     ...(attachments?.length ? { attachments } : {})
   };
@@ -804,11 +804,21 @@ function readLocalBurbleChannelJobId(payload: unknown): string | null {
   if (typeof payload !== "object" || payload === null || Array.isArray(payload)) {
     return null;
   }
-  return readOptionalJobId(payload as Record<string, unknown>).jobId ?? null;
+  return (
+    readOptionalJobId(payload as Record<string, unknown>, {
+      includeThreadId: true
+    }).jobId ?? null
+  );
 }
 
-function readOptionalJobId(record: Record<string, unknown>): { jobId?: string } {
-  for (const name of ["jobId", "job_id"]) {
+function readOptionalJobId(
+  record: Record<string, unknown>,
+  options: { includeThreadId?: boolean } = {}
+): { jobId?: string } {
+  const names = options.includeThreadId
+    ? ["jobId", "job_id", "threadId", "thread_id"]
+    : ["jobId", "job_id"];
+  for (const name of names) {
     const value = record[name];
     if (typeof value === "string" && value.trim().length > 0) {
       return { jobId: value.trim() };

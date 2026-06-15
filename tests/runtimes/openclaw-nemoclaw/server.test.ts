@@ -909,6 +909,48 @@ describe("handleRuntimeRequest", () => {
     });
   });
 
+  test("uses Burble channel thread ids as scheduled delivery job identity", async () => {
+    const requests: Request[] = [];
+    const response = await withMockFetch(
+      (async (input, init) => {
+        const request = new Request(input, init);
+        requests.push(request);
+        return Response.json({
+          classification: "user_private",
+          content: { ok: true }
+        });
+      }) as typeof fetch,
+      () =>
+        handleRuntimeRequest(
+          new Request(
+            "http://runtime/internal/burble/channel/routes/%23burble-test/messages",
+            {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({
+                text: "Cron finished.",
+                threadId: "hourly-ai-news-summary-drive-dedupe"
+              })
+            }
+          ),
+          {
+            ...config,
+            runtimeId: "rt_u123"
+          }
+        )
+    );
+
+    expect(response.status).toBe(200);
+    expect(requests).toHaveLength(1);
+    expect(await requests[0].json()).toEqual({
+      input: {
+        jobId: "hourly-ai-news-summary-drive-dedupe",
+        routeId: "#burble-test",
+        text: "Cron finished."
+      }
+    });
+  });
+
   test("proxies Burble MCP calls with the runtime JWT", async () => {
     const requests: Request[] = [];
     const response = await withMockFetch(
