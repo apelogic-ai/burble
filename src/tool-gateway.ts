@@ -159,6 +159,7 @@ type ToolGatewayDeps = Partial<Parameters<typeof createGitHubTools>[0]> &
       jobId?: string;
       channelId: string;
       errorMessage: string;
+      revoked: boolean;
     }) => Promise<void>;
     listAtlassianMcpTools?: (input: {
       url: string;
@@ -365,20 +366,28 @@ export async function handleToolGatewayRequest(
     } catch (error) {
       if (sendInput.routeId && destination.routeKind === "grant") {
         const errorMessage = formatToolGatewayErrorMessage(error);
-        try {
-          await (deps.notifyDestinationGrantDeliveryFailure ??
-            ((notification) =>
-              defaultNotifyDestinationGrantDeliveryFailure(config, notification)))({
-            runtime: auth.runtime,
-            routeId: sendInput.routeId,
-            ...(sendInput.jobId ? { jobId: sendInput.jobId } : {}),
+        if (isPermanentSlackDestinationDeliveryFailure(errorMessage)) {
+          const revokedCount = revokeDestinationGrantForSlackDestination(store, {
+            workspaceId: auth.runtime.workspaceId,
             channelId: destination.channelId,
-            errorMessage
+            ...(destination.threadTs ? { threadTs: destination.threadTs } : {})
           });
-        } catch (notifyError) {
-          console.warn(
-            `Destination grant delivery failure notification failed runtimeId=${auth.runtime.id} routeId=${sendInput.routeId} error=${formatToolGatewayErrorMessage(notifyError)}`
-          );
+          try {
+            await (deps.notifyDestinationGrantDeliveryFailure ??
+              ((notification) =>
+                defaultNotifyDestinationGrantDeliveryFailure(config, notification)))({
+              runtime: auth.runtime,
+              routeId: sendInput.routeId,
+              ...(sendInput.jobId ? { jobId: sendInput.jobId } : {}),
+              channelId: destination.channelId,
+              errorMessage,
+              revoked: revokedCount > 0
+            });
+          } catch (notifyError) {
+            console.warn(
+              `Destination grant delivery failure notification failed runtimeId=${auth.runtime.id} routeId=${sendInput.routeId} error=${formatToolGatewayErrorMessage(notifyError)}`
+            );
+          }
         }
       }
       return new Response("Conversation delivery failed", { status: 502 });
@@ -3822,35 +3831,57 @@ async function defaultNotifyDestinationGrantDeliveryFailure(
     jobId?: string;
     channelId: string;
     errorMessage: string;
+    revoked: boolean;
   }
 ): Promise<void> {
-  const response = await fetch("https://slack.com/api/chat.postMessage", {
-    method: "POST",
-    headers: {
-      authorization: `Bearer ${config.slackBotToken}`,
-      "content-type": "application/json; charset=utf-8"
-    },
-    body: JSON.stringify({
-      channel: input.runtime.slackUserId,
-      text: [
-        `Burble could not post scheduled job output to <#${input.channelId}>.`,
-        ...(input.jobId ? [`Job: \`${input.jobId}\``] : []),
-        `Route id: \`${input.routeId}\``,
-        `Reason: ${input.errorMessage}`,
-        "Invite Burble back to the channel or revoke the destination grant with `/agent ungrant here`."
-      ].join("\n")
-    })
+  await defaultPostActiveConversationMessage(config, {
+    transport: "slack",
+    channelId: input.runtime.slackUserId,
+    text: [
+      `Burble could not post scheduled job output to <#${input.channelId}>.`,
+      ...(input.jobId ? [`Job: \`${input.jobId}\``] : []),
+      `Route id: \`${input.routeId}\``,
+      `Reason: ${input.errorMessage}`,
+      input.revoked
+        ? "I revoked this destination grant so future scheduled runs will stop trying to post there. Invite Burble back to the channel and run `/agent grant here` in that channel to enable it again."
+        : "I could not automatically revoke this destination grant. Invite Burble back to the channel, or run `/agent ungrant here` from the affected channel."
+    ].join("\n")
   });
-  const body = (await response.json()) as { ok?: boolean; error?: string };
-  if (!response.ok || body.ok !== true) {
-    throw new Error(
-      `Slack delivery failure notification failed: ${body.error ?? `HTTP ${response.status}`}`
-    );
-  }
 }
 
 function formatToolGatewayErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function isPermanentSlackDestinationDeliveryFailure(message: string): boolean {
+  return (
+    message.includes("not_in_channel") ||
+    message.includes("channel_not_found") ||
+    message.includes("is_archived")
+  );
+}
+
+function revokeDestinationGrantForSlackDestination(
+  store: TokenStore,
+  input: {
+    workspaceId: string;
+    channelId: string;
+    threadTs?: string;
+  }
+): number {
+  return store.revokeConversationRoutesForDestination({
+    workspaceId: input.workspaceId,
+    transport: "slack",
+    destination: {
+      channelId: input.channelId,
+      isDirectMessage: false,
+      rootId: input.threadTs
+        ? `channel:${input.channelId}:thread:${input.threadTs}`
+        : `channel:${input.channelId}`,
+      ...(input.threadTs ? { threadTs: input.threadTs } : {})
+    },
+    kind: "grant"
+  });
 }
 
 async function defaultFetchConversationAttachment(
