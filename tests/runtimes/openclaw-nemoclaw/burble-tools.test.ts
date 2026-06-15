@@ -889,6 +889,53 @@ describe("createBurbleToolExecutor", () => {
     }
   });
 
+  test("does not use model-supplied route ids for scheduled delivery", async () => {
+    const originalFetch = globalThis.fetch;
+    const requests: Request[] = [];
+    globalThis.fetch = (async (input, init) => {
+      requests.push(new Request(input, init));
+      return Response.json({
+        classification: "user_private",
+        content: { ok: true }
+      });
+    }) as typeof fetch;
+
+    try {
+      const executor = createBurbleToolExecutor(config, "rt_u123", {
+        runtime: { id: "rt_u123" },
+        input: {
+          text: "run a scheduled report",
+          scheduledJob: {
+            jobId: "daily-standup",
+            capabilityProfile: "scheduled_job",
+            allowedTools: ["conversation.sendMessage"],
+            runtimeType: "openclaw",
+            stateRefs: [],
+            visibilityPolicy: {
+              maxOutputVisibility: "public"
+            }
+          },
+          connections: {
+            github: { connected: false }
+          }
+        }
+      });
+
+      await expect(
+        executor("conversation.sendMessage", {
+          input: {
+            text: "Daily standup is ready.",
+            routeId: "#burble-test"
+          }
+        })
+      ).rejects.toThrow("conversation.sendMessage requires a trusted scheduled route id");
+
+      expect(requests).toHaveLength(0);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
   test("ignores model-supplied scheduled job identity outside scheduled context", async () => {
     const originalFetch = globalThis.fetch;
     const requests: Request[] = [];

@@ -262,6 +262,9 @@ async function handleLocalBurbleChannelMessageRequest(
   if (!body) {
     return new Response("Invalid Burble channel message input", { status: 400 });
   }
+  if (!isBurbleConversationRouteId(routeId) && !body.jobId) {
+    return unresolvedBurbleChannelRouteResponse();
+  }
 
   const connector = createBurbleConversationConnector(config, config.runtimeId);
   const result = await connector.sendMessage(body);
@@ -289,6 +292,9 @@ async function handleLocalBurbleChannelEventRequest(
 
   const payload = await readJsonBody(request);
   const jobId = readLocalBurbleChannelJobId(payload);
+  if (!isBurbleConversationRouteId(routeId) && !jobId) {
+    return unresolvedBurbleChannelRouteResponse();
+  }
   const connector = createBurbleConversationConnector(config, config.runtimeId);
   const result = await connector.deliverEvent({
     routeId,
@@ -825,6 +831,13 @@ function readOptionalJobId(
     }
   }
   return {};
+}
+
+function unresolvedBurbleChannelRouteResponse(): Response {
+  return new Response(
+    "Burble channel delivery requires a resolved convrt_* route id unless the scheduled job identity is present for grant lookup.",
+    { status: 400 }
+  );
 }
 
 function addRunId(body: unknown, runId: string): unknown {

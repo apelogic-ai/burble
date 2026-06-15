@@ -951,6 +951,42 @@ describe("handleRuntimeRequest", () => {
     });
   });
 
+  test("rejects unresolved Burble channel labels without scheduled identity", async () => {
+    const requests: Request[] = [];
+    const response = await withMockFetch(
+      (async (input, init) => {
+        requests.push(new Request(input, init));
+        return Response.json({
+          classification: "user_private",
+          content: { ok: true }
+        });
+      }) as typeof fetch,
+      () =>
+        handleRuntimeRequest(
+          new Request(
+            "http://runtime/internal/burble/channel/routes/%23burble-test/messages",
+            {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({
+                text: "Cron finished."
+              })
+            }
+          ),
+          {
+            ...config,
+            runtimeId: "rt_u123"
+          }
+        )
+    );
+
+    expect(response.status).toBe(400);
+    expect(await response.text()).toContain(
+      "Burble channel delivery requires a resolved convrt_* route id"
+    );
+    expect(requests).toHaveLength(0);
+  });
+
   test("proxies Burble MCP calls with the runtime JWT", async () => {
     const requests: Request[] = [];
     const response = await withMockFetch(
