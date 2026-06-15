@@ -524,7 +524,7 @@ function readMcpToolCallJobId(payload: {
 }
 
 function isBurbleConversationRouteId(routeId: string): boolean {
-  return /^convrt_[A-Za-z0-9_-]+$/.test(routeId);
+  return /^convrt_[0-9a-f]{24}$/.test(routeId);
 }
 
 function readMcpJsonRpcId(payload: unknown): unknown {
@@ -612,7 +612,7 @@ function scheduledJobRegisterCapabilityMcpTool(): Record<string, unknown> {
         routeId: {
           type: "string",
           minLength: 1,
-          pattern: "^convrt_[A-Za-z0-9_-]+$",
+          pattern: "^convrt_[0-9a-f]{24}$",
           description:
             "Optional durable Burble convrt_* conversation route for scheduled delivery."
         },
@@ -678,7 +678,7 @@ function addRouteIdToMcpToolSchema(tool: unknown): unknown {
         routeId: {
           type: "string",
           minLength: 1,
-          pattern: "^convrt_[A-Za-z0-9_-]+$",
+          pattern: "^convrt_[0-9a-f]{24}$",
           description:
             "Exact Burble convrt_* conversation route id for this Slack conversation. Never use a cron job id, run id, session id, or UUID."
         },
@@ -800,7 +800,7 @@ async function readLocalBurbleChannelMessageBody(
 
   return {
     routeId,
-    ...readOptionalJobId(record, { includeThreadId: true }),
+    ...readOptionalJobId(record),
     text: record.text,
     ...(attachments?.length ? { attachments } : {})
   };
@@ -811,19 +811,12 @@ function readLocalBurbleChannelJobId(payload: unknown): string | null {
     return null;
   }
   return (
-    readOptionalJobId(payload as Record<string, unknown>, {
-      includeThreadId: true
-    }).jobId ?? null
+    readOptionalJobId(payload as Record<string, unknown>).jobId ?? null
   );
 }
 
-function readOptionalJobId(
-  record: Record<string, unknown>,
-  options: { includeThreadId?: boolean } = {}
-): { jobId?: string } {
-  const names = options.includeThreadId
-    ? ["jobId", "job_id", "threadId", "thread_id"]
-    : ["jobId", "job_id"];
+function readOptionalJobId(record: Record<string, unknown>): { jobId?: string } {
+  const names = ["jobId", "job_id"];
   for (const name of names) {
     const value = record[name];
     if (typeof value === "string" && value.trim().length > 0) {

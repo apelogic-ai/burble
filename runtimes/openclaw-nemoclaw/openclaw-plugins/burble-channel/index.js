@@ -139,14 +139,7 @@ function extractBurbleAttachments(ctx) {
 }
 
 function extractBurbleJobId(ctx) {
-  const candidates = [
-    ctx.jobId,
-    ctx.job_id,
-    ctx.metadata && ctx.metadata.jobId,
-    ctx.metadata && ctx.metadata.job_id,
-    ctx.extra && ctx.extra.jobId,
-    ctx.extra && ctx.extra.job_id
-  ];
+  const candidates = [ctx.jobId, ctx.job_id];
   for (const candidate of candidates) {
     if (typeof candidate === "string" && candidate.trim()) {
       return candidate.trim();

@@ -928,9 +928,91 @@ describe("createBurbleToolExecutor", () => {
             routeId: "#burble-test"
           }
         })
-      ).rejects.toThrow("conversation.sendMessage requires a trusted scheduled route id");
+      ).rejects.toThrow(
+        "conversation.sendMessage requires a trusted scheduled route id or active conversation"
+      );
 
       expect(requests).toHaveLength(0);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  test("falls back to the active conversation for scheduled delivery without a stored route", async () => {
+    const originalFetch = globalThis.fetch;
+    const requests: Request[] = [];
+    globalThis.fetch = (async (input, init) => {
+      const request = new Request(input, init);
+      requests.push(request);
+      return Response.json({
+        classification: "user_private",
+        content: {
+          ok: true,
+          transport: "slack",
+          conversationId: "D123",
+          routeId: "convrt_dm",
+          messageId: "1779841120.000"
+        }
+      });
+    }) as typeof fetch;
+
+    try {
+      const executor = createBurbleToolExecutor(config, "rt_u123", {
+        runtime: { id: "rt_u123" },
+        input: {
+          text: "run a scheduled report",
+          scheduledJob: {
+            jobId: "daily-standup",
+            capabilityProfile: "scheduled_job",
+            allowedTools: ["conversation.sendMessage"],
+            runtimeType: "openclaw",
+            stateRefs: [],
+            visibilityPolicy: {
+              maxOutputVisibility: "user_private"
+            }
+          },
+          conversation: {
+            routeId: "convrt_dm",
+            source: "slack",
+            workspaceId: "T123",
+            channelId: "D123",
+            rootId: "dm:D123",
+            isDirectMessage: true
+          },
+          connections: {
+            github: { connected: false }
+          }
+        }
+      });
+
+      const result = await executor("conversation.sendMessage", {
+        input: {
+          text: "Daily standup is ready.",
+          routeId: "#burble-test"
+        }
+      });
+
+      expect(result.content).toMatchObject({
+        ok: true,
+        transport: "slack",
+        conversationId: "D123",
+        routeId: "convrt_dm"
+      });
+      expect(requests).toHaveLength(1);
+      expect(await requests[0].json()).toEqual({
+        input: {
+          text: "Daily standup is ready.",
+          routeId: "convrt_dm"
+        },
+        conversation: {
+          routeId: "convrt_dm",
+          source: "slack",
+          workspaceId: "T123",
+          channelId: "D123",
+          rootId: "dm:D123",
+          isDirectMessage: true
+        }
+      });
     } finally {
       globalThis.fetch = originalFetch;
     }

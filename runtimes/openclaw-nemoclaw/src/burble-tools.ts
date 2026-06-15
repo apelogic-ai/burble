@@ -140,13 +140,13 @@ async function sendConversationMessage(
   }
   const scheduledJob = request?.input.scheduledJob;
   const routeId = scheduledJob
-    ? scheduledJob.routeId
+    ? scheduledJob.routeId ?? request?.input.conversation?.routeId
     : readNestedString(body, "input", "routeId") ??
       request?.input.conversation?.routeId;
-  const jobId = scheduledJob?.jobId;
+  const jobId = scheduledJob?.routeId ? scheduledJob.jobId : undefined;
   if (scheduledJob && !routeId) {
     throw new Error(
-      "conversation.sendMessage requires a trusted scheduled route id"
+      "conversation.sendMessage requires a trusted scheduled route id or active conversation"
     );
   }
   if (!routeId && !request?.input.conversation) {

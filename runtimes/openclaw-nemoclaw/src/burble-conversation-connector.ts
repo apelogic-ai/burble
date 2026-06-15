@@ -41,18 +41,18 @@ export function createBurbleConversationConnector(
     info(
       `Burble conversation connector send routeId=${message.routeId} textChars=${message.text.length} attachments=${message.attachments?.length ?? 0}`
     );
-    const executor = createBurbleToolExecutor(
-      config,
-      runtimeId,
-      message.jobId ? requestWithScheduledDelivery(message) : request
-    );
-    const result = await executor("conversation.sendMessage", {
-      input: {
-        routeId: message.routeId,
-        text: message.text,
-        ...(message.attachments ? { attachments: message.attachments } : {})
-      }
-    });
+    const result = message.jobId
+      ? await sendScheduledChannelMessage(config, runtimeId, message)
+      : await createBurbleToolExecutor(config, runtimeId, request)(
+          "conversation.sendMessage",
+          {
+            input: {
+              routeId: message.routeId,
+              text: message.text,
+              ...(message.attachments ? { attachments: message.attachments } : {})
+            }
+          }
+        );
     info(`Burble conversation connector sent routeId=${message.routeId}`);
     return result;
   };
@@ -82,27 +82,41 @@ export function createBurbleConversationConnector(
   };
 }
 
-function requestWithScheduledDelivery(
+async function sendScheduledChannelMessage(
+  config: RuntimeConfig,
+  runtimeId: string,
   message: BurbleConversationMessage
-): RunRequest {
-  return {
-    input: {
-      text: "",
-      connections: {
-        github: {
-          connected: false
-        }
+): Promise<ToolResult> {
+  const response = await fetch(
+    `${config.toolGatewayUrl}/${encodeURIComponent("conversation.sendMessage")}/execute`,
+    {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${config.internalToken}`,
+        "x-burble-runtime-id": runtimeId
       },
-      scheduledJob: {
-        jobId: message.jobId ?? "",
-        capabilityProfile: "scheduled_job",
-        allowedTools: ["conversation.sendMessage"],
-        routeId: message.routeId,
-        stateRefs: [],
-        visibilityPolicy: {}
-      }
+      body: JSON.stringify({
+        input: {
+          routeId: message.routeId,
+          text: message.text,
+          jobId: message.jobId,
+          ...(message.attachments ? { attachments: message.attachments } : {})
+        }
+      })
     }
-  };
+  );
+  if (!response.ok) {
+    throw new Error(
+      `Burble conversation gateway returned HTTP ${response.status}${await readErrorDetail(response)}`
+    );
+  }
+
+  const result = (await response.json()) as unknown;
+  if (!isToolResult(result)) {
+    throw new Error("Burble conversation gateway returned invalid tool result");
+  }
+  return result;
 }
 
 export function buildBurbleConversationDeliveryTarget(
@@ -232,4 +246,19 @@ function isConversationAttachment(value: unknown): value is ConversationAttachme
 
 function optionalString(value: unknown): boolean {
   return value === undefined || typeof value === "string";
+}
+
+async function readErrorDetail(response: Response): Promise<string> {
+  const detail = await response.text().catch(() => "");
+  return detail ? `: ${detail}` : "";
+}
+
+function isToolResult(value: unknown): value is ToolResult {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    !Array.isArray(value) &&
+    typeof (value as { classification?: unknown }).classification === "string" &&
+    "content" in value
+  );
 }
