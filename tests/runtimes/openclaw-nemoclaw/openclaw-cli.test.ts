@@ -1758,10 +1758,13 @@ describe("runOpenClawCliRequest", () => {
       "do not put the Slack label in delivery.to"
     );
     expect(prompts[0]).toContain(
-      "First call scheduledJob.registerCapability with destination set to that label"
+      "For public/open-internet scheduled output, first call scheduledJob.registerCapability with destination set to that label"
     );
     expect(prompts[0]).toContain(
-      'visibilityPolicy {"maxOutputVisibility":"public","allowPrivateToolDeclassification":true}'
+      'visibilityPolicy {"maxOutputVisibility":"public"}'
+    );
+    expect(prompts[0]).toContain(
+      "If the job uses authenticated Burble provider tools, do not register the channel destination"
     );
     expect(prompts[0]).toContain(
       "If registration does not return ok with a resolved route, do not update, enable, or trigger the job"
@@ -4035,7 +4038,13 @@ describe("runOpenClawCliRequest", () => {
       "Do not use the original destination label in native delivery"
     );
     expect(String(requests[0].body.input)).toContain(
-      'include visibilityPolicy {"maxOutputVisibility":"public","allowPrivateToolDeclassification":true}'
+      'include visibilityPolicy {"maxOutputVisibility":"public"}'
+    );
+    expect(String(requests[0].body.input)).toContain(
+      'requiredTools ["conversation.sendMessage"]'
+    );
+    expect(String(requests[0].body.input)).toContain(
+      "do not register a Slack channel destination"
     );
     expect(String(requests[0].body.input)).toContain("/agent grant here");
     expect(String(requests[0].body.input)).toContain(

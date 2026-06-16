@@ -1364,6 +1364,9 @@ describe("handleRuntimeRequest", () => {
     expect(tool.inputSchema.properties.visibilityPolicy.description).toContain(
       '"maxOutputVisibility":"public"'
     );
+    expect(tool.inputSchema.properties.visibilityPolicy.description).toContain(
+      "Do not set allowPrivateToolDeclassification automatically"
+    );
     expect(tool.inputSchema.properties.stateRefs.description).toContain(
       "objects, never strings"
     );

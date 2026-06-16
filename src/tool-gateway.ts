@@ -13,6 +13,7 @@ import type {
 import { isKnownRuntimeEngine } from "./agent/runtime-descriptors";
 import { createHash, timingSafeEqual } from "node:crypto";
 import { connectionProviderForToolName } from "./providers/descriptors";
+import { providerToolCatalog } from "./providers/catalog";
 import { coerceProviderToolGatewayInput } from "./providers/tool-input-coercion";
 import {
   addGitHubIssueLabels,
@@ -405,6 +406,14 @@ export async function handleToolGatewayRequest(
     if (!destination.ok) {
       return new Response(destination.message, { status: destination.status });
     }
+    if (
+      destination.routeKind === "grant" &&
+      sendRouteOptions.options.usesAuthenticatedProviderTools
+    ) {
+      return new Response(destinationGrantAuthenticatedProviderMessage(), {
+        status: 403
+      });
+    }
 
     let result: { transport: "slack"; channelId: string; messageId?: string };
     try {
@@ -593,6 +602,7 @@ export async function handleToolGatewayRequest(
     if (input.destination && !resolvedRouteId) {
       return new Response("Destination grant not found", { status: 404 });
     }
+    const requiredTools = normalizeScheduledJobToolNames(input.requiredTools);
     if (resolvedRouteId) {
       const destination = resolveConversationRouteDestination(
         store,
@@ -608,8 +618,16 @@ export async function handleToolGatewayRequest(
       if (!destination.ok) {
         return new Response(destination.message, { status: destination.status });
       }
+      if (
+        destination.routeKind === "grant" &&
+        requiredToolsUseAuthenticatedProviders(requiredTools)
+      ) {
+        return new Response(
+          destinationGrantAuthenticatedProviderMessage(),
+          { status: 403 }
+        );
+      }
     }
-    const requiredTools = normalizeScheduledJobToolNames(input.requiredTools);
     const record = store.upsertAgentJobCapability({
       jobId: input.jobId,
       workspaceId: auth.runtime.workspaceId,
@@ -2200,6 +2218,24 @@ function readScheduledJobRegistrationTools(
   return normalizeScheduledJobRegistrationTools(input.requiredTools);
 }
 
+function requiredToolsUseAuthenticatedProviders(toolNames: string[]): boolean {
+  return toolNames.some((toolName) => {
+    if (connectionProviderForToolName(toolName)) {
+      return true;
+    }
+    return providerToolCatalog.some(
+      (tool) =>
+        tool.name === toolName ||
+        tool.alias === toolName ||
+        (tool.aliases ?? []).includes(toolName)
+    );
+  });
+}
+
+function destinationGrantAuthenticatedProviderMessage(): string {
+  return "Destination grants cannot be used for scheduled jobs that require authenticated Burble provider tools. Public channel delivery is only allowed for public-output jobs; private-tool declassification requires an explicit approval flow that is not implemented yet.";
+}
+
 function normalizeScheduledJobRegistrationTools(value: unknown): string[] | null {
   if (typeof value === "string") {
     const tools = value
@@ -3571,7 +3607,7 @@ function resolveConversationRouteDestination(
       ok: false,
       status: 403,
       message:
-        'Destination grant requires public scheduled output visibility. If the user explicitly asked to post scheduled output to this channel, retry scheduledJob.registerCapability with visibilityPolicy {"maxOutputVisibility":"public","allowPrivateToolDeclassification":true}.'
+        'Destination grant requires public scheduled output visibility. If the user explicitly asked to post public scheduled output to this channel, retry scheduledJob.registerCapability with visibilityPolicy {"maxOutputVisibility":"public"}.'
     };
   }
 
@@ -3694,6 +3730,7 @@ function resolveConversationSendRouteOptions(
       options: {
         jobId?: string;
         maxOutputVisibility?: ToolClassification;
+        usesAuthenticatedProviderTools?: boolean;
       };
     }
   | { ok: false; status: number; message: string } {
@@ -3744,6 +3781,9 @@ function resolveConversationSendRouteOptions(
       jobId: capability.jobId,
       maxOutputVisibility: normalizedMaxOutputVisibility(
         capability.visibilityPolicy
+      ),
+      usesAuthenticatedProviderTools: requiredToolsUseAuthenticatedProviders(
+        capability.requiredTools
       )
     }
   };

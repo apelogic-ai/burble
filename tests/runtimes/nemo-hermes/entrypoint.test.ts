@@ -826,9 +826,13 @@ print(json.dumps({"text": mod.build_hermes_turn_text(payload)}))
     expect(text).toContain("After the native scheduler returns the stable job id");
     expect(text).toContain("If registration does not return ok, do not trigger");
     expect(text).toContain(
-      'visibilityPolicy {"maxOutputVisibility":"public","allowPrivateToolDeclassification":true}'
+      'visibilityPolicy {"maxOutputVisibility":"public"}'
     );
     expect(text).toContain("Slack channel labels are not route ids");
+    expect(text).toContain(
+      "do not register a Slack channel destination"
+    );
+    expect(text).toContain("explicit declassification approval flow");
     expect(text).toContain("Only after the job prompt has been updated");
     expect(text).toContain("scheduled_job_register_capability");
     expect(text).toContain(
@@ -1362,6 +1366,9 @@ print(json.dumps(ctx.tools))
     expect(
       scheduledJobTool?.schema?.parameters?.properties?.visibilityPolicy?.description
     ).toContain('"maxOutputVisibility":"public"');
+    expect(
+      scheduledJobTool?.schema?.parameters?.properties?.visibilityPolicy?.description
+    ).toContain("Do not set allowPrivateToolDeclassification automatically");
     expect(result).toContainEqual(
       expect.objectContaining({
         name: "conversation_get_attachment",
