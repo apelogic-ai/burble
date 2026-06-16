@@ -161,7 +161,24 @@ def _provider_alias_schema(alias: str, canonical_name: str) -> dict[str, Any]:
                             "to that channel. Do not set allowPrivateToolDeclassification "
                             "automatically."
                         ),
-                        "additionalProperties": True,
+                        "properties": {
+                            "maxOutputVisibility": {
+                                "type": "string",
+                                "enum": ["public", "user_private", "restricted"],
+                                "description": (
+                                    'Set to "public" only when the user explicitly asked '
+                                    "public-source scheduled output to post to a Slack channel."
+                                ),
+                            },
+                            "allowPrivateToolDeclassification": {
+                                "type": "boolean",
+                                "description": (
+                                    "Do not set automatically. Reserved for an explicit "
+                                    "declassification approval flow."
+                                ),
+                            },
+                        },
+                        "additionalProperties": False,
                     },
                 },
                 "required": ["jobId", "requiredTools"],

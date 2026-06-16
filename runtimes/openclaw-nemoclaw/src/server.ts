@@ -641,7 +641,21 @@ function scheduledJobRegisterCapabilityMcpTool(): Record<string, unknown> {
         visibilityPolicy: {
           type: "object",
           description:
-            'Optional output visibility policy for scheduled delivery. Slack channel destinations require {"maxOutputVisibility":"public"} when the user explicitly asked to post public scheduled output to that channel. Do not set allowPrivateToolDeclassification automatically.'
+            'Optional output visibility policy for scheduled delivery. Slack channel destinations require {"maxOutputVisibility":"public"} when the user explicitly asked to post public scheduled output to that channel. Do not set allowPrivateToolDeclassification automatically.',
+          properties: {
+            maxOutputVisibility: {
+              type: "string",
+              enum: ["public", "user_private", "restricted"],
+              description:
+                'Set to "public" only when the user explicitly asked public-source scheduled output to post to a Slack channel.'
+            },
+            allowPrivateToolDeclassification: {
+              type: "boolean",
+              description:
+                "Do not set automatically. Reserved for an explicit declassification approval flow."
+            }
+          },
+          additionalProperties: false
         }
       },
       required: ["jobId", "requiredTools"]

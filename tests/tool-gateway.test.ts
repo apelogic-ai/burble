@@ -1692,6 +1692,79 @@ describe("handleToolGatewayRequest", () => {
     ]);
   });
 
+  for (const { name, visibilityInput } of [
+    {
+      name: "JSON string visibilityPolicy",
+      visibilityInput: {
+        visibilityPolicy: '{"maxOutputVisibility":"public"}'
+      }
+    },
+    {
+      name: "top-level maxOutputVisibility alias",
+      visibilityInput: {
+        maxOutputVisibility: "public"
+      }
+    }
+  ]) {
+    test(`accepts scheduled channel visibility policy from ${name}`, async () => {
+      const route: ConversationRouteRecord = {
+        id: "convrt_1234567890abcdef12345678",
+        workspaceId: "T123",
+        slackUserId: "U123",
+        transport: "slack",
+        destinationJson: JSON.stringify({
+          channelId: "C123",
+          isDirectMessage: false,
+          rootId: "channel:C123"
+        }),
+        kind: "grant",
+        grantedBySlackUserId: "U123",
+        expiresAt: null,
+        bindingJson: null,
+        createdAt: "2026-05-26T00:00:00.000Z",
+        updatedAt: "2026-05-26T00:00:00.000Z",
+        revokedAt: null
+      };
+      const upserts: unknown[] = [];
+
+      const response = await handleToolGatewayRequest(
+        config,
+        createStore(null, runtime, [], route, [], { upserts }),
+        "scheduledJob.registerCapability",
+        request(
+          "scheduledJob.registerCapability",
+          {
+            input: {
+              jobId: "public-news-dedupe",
+              requiredTools: [
+                "conversation.sendMessage",
+                "google.updateDriveTextFile"
+              ],
+              destination: "#eng",
+              ...visibilityInput
+            }
+          },
+          "runtime-token-u123",
+          "rt_u123"
+        ),
+        {
+          resolveSlackChannelIdByName: async () => "C123"
+        }
+      );
+
+      expect(response.status).toBe(200);
+      expect(upserts).toEqual([
+        expect.objectContaining({
+          jobId: "public-news-dedupe",
+          routeId: "convrt_1234567890abcdef12345678",
+          visibilityPolicy: {
+            maxOutputVisibility: "public"
+          }
+        })
+      ]);
+    });
+  }
+
   test("resolves a scheduled job destination channel name to an existing grant", async () => {
     const route: ConversationRouteRecord = {
       id: "convrt_1234567890abcdef12345678",

@@ -2084,6 +2084,8 @@ type ScheduledJobRegistrationInput = {
   runtimeType?: unknown;
   stateRefs?: unknown;
   visibilityPolicy?: unknown;
+  maxOutputVisibility?: unknown;
+  allowPrivateToolDeclassification?: unknown;
 };
 
 function normalizeScheduledJobRegistrationInput(
@@ -2108,6 +2110,8 @@ function normalizeScheduledJobRegistrationInput(
       "slack_channel"
     ])
   );
+
+  const visibilityPolicy = normalizeScheduledJobVisibilityPolicy(source);
 
   return {
     jobId: readUnknownAlias(source, [
@@ -2135,11 +2139,84 @@ function normalizeScheduledJobRegistrationInput(
     stateRefs: normalizeScheduledJobStateRefs(
       readUnknownAlias(source, ["stateRefs", "state_refs"])
     ),
-    visibilityPolicy: readUnknownAlias(source, [
-      "visibilityPolicy",
-      "visibility_policy"
-    ])
+    ...(visibilityPolicy !== undefined ? { visibilityPolicy } : {})
   };
+}
+
+function normalizeScheduledJobVisibilityPolicy(
+  source: Record<string, unknown>
+): unknown | undefined {
+  const explicit = readUnknownAlias(source, [
+    "visibilityPolicy",
+    "visibility_policy"
+  ]);
+  const maxOutputVisibility = readUnknownAlias(source, [
+    "maxOutputVisibility",
+    "max_output_visibility",
+    "outputVisibility",
+    "output_visibility"
+  ]);
+  const allowPrivateToolDeclassification = readUnknownAlias(source, [
+    "allowPrivateToolDeclassification",
+    "allow_private_tool_declassification"
+  ]);
+  const explicitPolicy = coerceScheduledJobVisibilityPolicy(explicit);
+
+  if (
+    explicitPolicy === undefined &&
+    maxOutputVisibility === undefined &&
+    allowPrivateToolDeclassification === undefined
+  ) {
+    return undefined;
+  }
+
+  const policy =
+    explicitPolicy &&
+    typeof explicitPolicy === "object" &&
+    !Array.isArray(explicitPolicy)
+      ? { ...(explicitPolicy as Record<string, unknown>) }
+      : {};
+  if (
+    policy.maxOutputVisibility === undefined &&
+    isToolClassificationValue(maxOutputVisibility)
+  ) {
+    policy.maxOutputVisibility = maxOutputVisibility;
+  }
+  if (
+    policy.allowPrivateToolDeclassification === undefined &&
+    typeof allowPrivateToolDeclassification === "boolean"
+  ) {
+    policy.allowPrivateToolDeclassification = allowPrivateToolDeclassification;
+  }
+  return policy;
+}
+
+function coerceScheduledJobVisibilityPolicy(value: unknown): unknown | undefined {
+  if (value === undefined || value === null) {
+    return undefined;
+  }
+  if (isToolClassificationValue(value)) {
+    return { maxOutputVisibility: value };
+  }
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (!trimmed) {
+      return undefined;
+    }
+    if (isToolClassificationValue(trimmed)) {
+      return { maxOutputVisibility: trimmed };
+    }
+    try {
+      return coerceScheduledJobVisibilityPolicy(JSON.parse(trimmed));
+    } catch {
+      return value;
+    }
+  }
+  return value;
+}
+
+function isToolClassificationValue(value: unknown): value is ToolClassification {
+  return value === "public" || value === "user_private" || value === "restricted";
 }
 
 type ScheduledJobDestinationInput =
@@ -3905,17 +3982,16 @@ function readConversationRouteBinding(
 function normalizedMaxOutputVisibility(
   visibilityPolicy: unknown
 ): ToolClassification | undefined {
+  const coerced = coerceScheduledJobVisibilityPolicy(visibilityPolicy);
   if (
-    typeof visibilityPolicy !== "object" ||
-    visibilityPolicy === null ||
-    Array.isArray(visibilityPolicy)
+    typeof coerced !== "object" ||
+    coerced === null ||
+    Array.isArray(coerced)
   ) {
     return undefined;
   }
-  const value = (visibilityPolicy as Record<string, unknown>).maxOutputVisibility;
-  return value === "public" || value === "user_private" || value === "restricted"
-    ? value
-    : undefined;
+  const value = (coerced as Record<string, unknown>).maxOutputVisibility;
+  return isToolClassificationValue(value) ? value : undefined;
 }
 
 function isAtlassianMcpToolCallInput(

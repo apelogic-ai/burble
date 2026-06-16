@@ -1312,7 +1312,14 @@ print(json.dumps(ctx.tools))
         parameters?: {
           properties?: {
             destination?: { description?: string };
-            visibilityPolicy?: { description?: string };
+            visibilityPolicy?: {
+              description?: string;
+              properties?: {
+                maxOutputVisibility?: { enum?: string[] };
+                allowPrivateToolDeclassification?: { type?: string };
+              };
+              additionalProperties?: boolean;
+            };
           };
         };
       };
@@ -1369,6 +1376,18 @@ print(json.dumps(ctx.tools))
     expect(
       scheduledJobTool?.schema?.parameters?.properties?.visibilityPolicy?.description
     ).toContain("Do not set allowPrivateToolDeclassification automatically");
+    expect(
+      scheduledJobTool?.schema?.parameters?.properties?.visibilityPolicy
+        ?.properties?.maxOutputVisibility?.enum
+    ).toEqual(["public", "user_private", "restricted"]);
+    expect(
+      scheduledJobTool?.schema?.parameters?.properties?.visibilityPolicy
+        ?.properties?.allowPrivateToolDeclassification?.type
+    ).toBe("boolean");
+    expect(
+      scheduledJobTool?.schema?.parameters?.properties?.visibilityPolicy
+        ?.additionalProperties
+    ).toBe(false);
     expect(result).toContainEqual(
       expect.objectContaining({
         name: "conversation_get_attachment",

@@ -1770,8 +1770,16 @@ async function buildToolCatalog(
           "optional Slack destination label for scheduled/background delivery, such as #eng, <#C123|eng>, or a channel id; pass named Slack channels here instead of using them as delivery route ids. Burble resolves it only when the user has already granted that channel with /agent grant here",
         stateRefs:
           'optional array of durable provider-backed state reference objects, never strings; each entry must include provider and kind strings, for example {"provider":"google","kind":"drive_file","id":"<fileId>","purpose":"dedupe_state"}',
-        visibilityPolicy:
-          'optional output visibility policy for scheduled delivery; Slack channel destinations require {"maxOutputVisibility":"public"} when the user explicitly asked to post public scheduled output to that channel'
+        visibilityPolicy: {
+          type: "object",
+          properties: {
+            maxOutputVisibility:
+              'optional string enum public|user_private|restricted; use "public" when the user explicitly asked public-source scheduled output to post to a Slack channel',
+            allowPrivateToolDeclassification:
+              "optional boolean; do not set automatically"
+          },
+          example: { maxOutputVisibility: "public" }
+        }
       }
     });
     if (selectedRuntimeToolGroups(request)?.has("scheduler")) {

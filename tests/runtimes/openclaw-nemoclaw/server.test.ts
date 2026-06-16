@@ -1367,6 +1367,17 @@ describe("handleRuntimeRequest", () => {
     expect(tool.inputSchema.properties.visibilityPolicy.description).toContain(
       "Do not set allowPrivateToolDeclassification automatically"
     );
+    expect(
+      tool.inputSchema.properties.visibilityPolicy.properties.maxOutputVisibility
+        .enum
+    ).toEqual(["public", "user_private", "restricted"]);
+    expect(
+      tool.inputSchema.properties.visibilityPolicy.properties
+        .allowPrivateToolDeclassification.type
+    ).toBe("boolean");
+    expect(
+      tool.inputSchema.properties.visibilityPolicy.additionalProperties
+    ).toBe(false);
     expect(tool.inputSchema.properties.stateRefs.description).toContain(
       "objects, never strings"
     );
@@ -1401,6 +1412,9 @@ describe("handleRuntimeRequest", () => {
                   jobId: "job-123",
                   requiredTools: ["google.getDriveFile"],
                   routeId: "convrt_abcdefabcdefabcdefabcdef",
+                  visibilityPolicy: {
+                    maxOutputVisibility: "public"
+                  },
                   stateRefs: [
                     {
                       provider: "google",
@@ -1435,6 +1449,9 @@ describe("handleRuntimeRequest", () => {
         jobId: "job-123",
         requiredTools: ["google.getDriveFile"],
         routeId: "convrt_abcdefabcdefabcdefabcdef",
+        visibilityPolicy: {
+          maxOutputVisibility: "public"
+        },
         stateRefs: [
           {
             provider: "google",
