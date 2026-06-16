@@ -262,6 +262,25 @@ describe("runtime conformance harness", () => {
               classification: "user_private",
               content: { ok: true }
             },
+            {
+              type: "tool_call",
+              toolName: "burble_provider_call",
+              callId: "scheduled-provider-bridge-probe",
+              input: {
+                toolName: "runtime.conformance.echo",
+                input: {
+                  jobId: "contract-scheduled-job",
+                  message: "scheduled provider bridge probe"
+                }
+              }
+            },
+            {
+              type: "tool_result",
+              toolName: "burble_provider_call",
+              callId: "scheduled-provider-bridge-probe",
+              classification: "user_private",
+              content: { ok: true }
+            },
             finalEvent()
           ]);
         }

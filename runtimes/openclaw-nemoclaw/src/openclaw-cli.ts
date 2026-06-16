@@ -1783,18 +1783,11 @@ async function buildToolCatalog(
       }
     });
     if (selectedRuntimeToolGroups(request)?.has("scheduler")) {
-      catalog.push({
-        name: "burble_provider_call",
-        description:
-          "Call one Burble provider tool through the runtime-scoped Burble provider bridge. Use this envelope for scheduled/background provider calls; set toolName to an allowed Burble provider tool and input to that tool's arguments, including jobId for scheduled jobs.",
-        inputSchema: {
-          toolName:
-            "Burble provider tool name, for example google_get_drive_file",
-          input:
-            "object arguments for that Burble provider tool; scheduled jobs must include jobId"
-        }
-      });
+      addBurbleProviderBridgeTool(catalog);
     }
+  }
+  if (request.input.scheduledJob) {
+    addBurbleProviderBridgeTool(catalog);
   }
   if ((request.input.attachments ?? []).length > 0) {
     catalog.push({
@@ -2297,6 +2290,24 @@ async function buildToolCatalog(
   });
 }
 
+function addBurbleProviderBridgeTool(catalog: ToolCatalogItem[]): void {
+  if (catalog.some((tool) => tool.name === "burble_provider_call")) {
+    return;
+  }
+
+  catalog.push({
+    name: "burble_provider_call",
+    description:
+      "Call one Burble provider tool through the runtime-scoped Burble provider bridge. Use this envelope for scheduled/background provider calls; set toolName to an allowed Burble provider tool and input to that tool's arguments, including jobId for scheduled jobs.",
+    inputSchema: {
+      toolName:
+        "Burble provider tool name, for example google_get_drive_file",
+      input:
+        "object arguments for that Burble provider tool; scheduled jobs must include jobId"
+    }
+  });
+}
+
 function filterToolCatalogBySelectedGroups(
   request: RunRequest,
   catalogBuild: {
@@ -2314,6 +2325,7 @@ function filterToolCatalogBySelectedGroups(
 
   const catalog = catalogBuild.catalog.filter((tool) =>
     isRouteScopedControlPlaneTool(tool.name) ||
+    (request.input.scheduledJob && tool.name === "burble_provider_call") ||
     isToolAllowedBySelectedGroups(tool.name, selectedGroups)
   );
   const allowedToolNames = new Set(catalog.map((tool) => tool.name));

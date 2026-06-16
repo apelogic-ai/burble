@@ -335,10 +335,30 @@ describe("handleRuntimeRequest", () => {
       toolName: "runtime.conformance.echo",
       callId: "contract-tool-probe"
     });
-    expect(readNdjsonEvents(await scheduledResponse.text())).toContainEqual({
+    const scheduledEvents = readNdjsonEvents(await scheduledResponse.text());
+    expect(scheduledEvents).toContainEqual({
       type: "tool_call",
       toolName: "scheduledJob.registerCapability",
       callId: "contract-scheduled-provider-probe"
+    });
+    expect(scheduledEvents).toContainEqual({
+      type: "tool_call",
+      toolName: "burble_provider_call",
+      callId: "contract-scheduled-provider-bridge-probe",
+      input: {
+        toolName: "runtime.conformance.echo",
+        input: {
+          jobId: "contract-scheduled-job",
+          message: "scheduled provider bridge probe"
+        }
+      }
+    });
+    expect(scheduledEvents).toContainEqual({
+      type: "tool_result",
+      toolName: "burble_provider_call",
+      callId: "contract-scheduled-provider-bridge-probe",
+      classification: "user_private",
+      content: { ok: true }
     });
     expect(readNdjsonEvents(await attachmentResponse.text())).toContainEqual({
       type: "tool_call",

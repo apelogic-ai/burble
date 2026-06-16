@@ -1023,6 +1023,28 @@ class BurbleHermesRuntime:
                         "callId": "contract-scheduled-provider-probe",
                         "classification": "user_private",
                     })
+                    await waiter.emit({
+                        "type": "tool_call",
+                        "toolName": "burble_provider_call",
+                        "callId": "contract-scheduled-provider-bridge-probe",
+                        "input": {
+                            "toolName": "runtime.conformance.echo",
+                            "input": {
+                                "jobId": str(
+                                    message.get("scheduledJob", {}).get("jobId")
+                                    or "contract-scheduled-job"
+                                ),
+                                "message": "scheduled provider bridge probe",
+                            },
+                        },
+                    })
+                    await waiter.emit({
+                        "type": "tool_result",
+                        "toolName": "burble_provider_call",
+                        "callId": "contract-scheduled-provider-bridge-probe",
+                        "classification": "user_private",
+                        "content": {"ok": True},
+                    })
                     response = {
                         "classification": "user_private",
                         "text": "Runtime contract scheduled provider capability response.",

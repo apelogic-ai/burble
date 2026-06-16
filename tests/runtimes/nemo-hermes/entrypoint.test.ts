@@ -631,6 +631,25 @@ asyncio.run(main())
       callId: "contract-scheduled-provider-probe",
       classification: "user_private"
     });
+    expect(typed.scheduledEvents).toContainEqual({
+      type: "tool_call",
+      toolName: "burble_provider_call",
+      callId: "contract-scheduled-provider-bridge-probe",
+      input: {
+        toolName: "runtime.conformance.echo",
+        input: {
+          jobId: "contract-scheduled-job",
+          message: "scheduled provider bridge probe"
+        }
+      }
+    });
+    expect(typed.scheduledEvents).toContainEqual({
+      type: "tool_result",
+      toolName: "burble_provider_call",
+      callId: "contract-scheduled-provider-bridge-probe",
+      classification: "user_private",
+      content: { ok: true }
+    });
     expect(typed.attachmentEvents).toContainEqual({
       type: "tool_call",
       toolName: "conversation.getAttachment",

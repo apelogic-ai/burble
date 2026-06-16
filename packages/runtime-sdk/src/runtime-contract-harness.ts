@@ -205,6 +205,28 @@ async function assertScheduledProviderCapability(
       "runtime claims scheduledProviderCalls but emitted no matching scheduledJob.registerCapability tool_result"
     );
   }
+  const providerBridgeCall = events.find(
+    (event): event is Extract<RuntimeRunEvent, { type: "tool_call" }> =>
+      event.type === "tool_call" && event.toolName === "burble_provider_call"
+  );
+  if (!providerBridgeCall) {
+    failCheck(
+      "scheduled_provider_calls",
+      "runtime claims scheduledProviderCalls but emitted no burble_provider_call tool_call during scheduled provider probe"
+    );
+  }
+  const providerBridgeResult = events.find(
+    (event): event is Extract<RuntimeRunEvent, { type: "tool_result" }> =>
+      event.type === "tool_result" &&
+      event.toolName === providerBridgeCall.toolName &&
+      event.callId === providerBridgeCall.callId
+  );
+  if (!providerBridgeResult) {
+    failCheck(
+      "scheduled_provider_calls",
+      "runtime claims scheduledProviderCalls but emitted no matching burble_provider_call tool_result"
+    );
+  }
 }
 
 async function assertToolReachability(

@@ -1874,6 +1874,82 @@ describe("runOpenClawCliRequest", () => {
     );
   });
 
+  test("exposes provider bridge during scheduled job execution without active conversation", async () => {
+    const prompts: string[] = [];
+    await runOpenClawCliRequest(
+      {
+        executionMode: "native-runtime",
+        input: {
+          text: "run the scheduled PR monitor",
+          toolGroups: {
+            groups: ["github", "google"],
+            reasons: ["scheduled-job:allowed-tools"]
+          },
+          scheduledJob: {
+            jobId: "job-pr-monitor",
+            capabilityProfile: "scheduled_job",
+            allowedTools: [
+              "github_list_my_pull_requests",
+              "google_get_drive_file",
+              "google_append_to_drive_text_file"
+            ],
+            routeId: "convrt_abc123",
+            runtimeType: "openclaw",
+            stateRefs: [
+              {
+                provider: "google",
+                kind: "drive_file",
+                id: "dedupe-file",
+                purpose: "dedupe_state"
+              }
+            ],
+            visibilityPolicy: {
+              maxOutputVisibility: "user_private",
+              allowPrivateToolDeclassification: false
+            }
+          },
+          connections: {
+            github: {
+              connected: true,
+              email: "person@example.com",
+              providerLogin: "person"
+            },
+            google: {
+              connected: true,
+              email: "person@example.com",
+              providerLogin: "person@example.com"
+            }
+          }
+        }
+      },
+      config,
+      async () => ({
+        classification: "user_private",
+        content: {}
+      }),
+      async (_command, args) => {
+        prompts.push(args[args.indexOf("--message") + 1]);
+        return {
+          exitCode: 0,
+          stdout: "PR monitor run complete.",
+          stderr: ""
+        };
+      },
+      () => undefined
+    );
+
+    expect(prompts[0]).toContain("Scheduled Burble job context:");
+    expect(prompts[0]).toContain("jobId=job-pr-monitor");
+    expect(prompts[0]).toContain("Available Burble tools:");
+    expect(prompts[0]).toContain("burble_provider_call");
+    expect(prompts[0]).toContain(
+      "Call one Burble provider tool through the runtime-scoped Burble provider bridge"
+    );
+    expect(prompts[0]).toContain(
+      "For this scheduled job, use only the listed allowedTools"
+    );
+  });
+
   test("lets OpenClaw fetch current request attachments", async () => {
     const prompts: string[] = [];
     const toolCalls: Array<{ toolName: string; body: unknown }> = [];
