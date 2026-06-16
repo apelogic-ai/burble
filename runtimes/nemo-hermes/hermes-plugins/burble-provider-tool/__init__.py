@@ -86,6 +86,7 @@ TOOL_NAME_ALIASES = {
 PROVIDER_BRIDGE_TOOLSETS = ["cronjob", "web"]
 PROVIDER_ALIAS_TOOLSETS = ["cronjob"]
 WEB_TOOLSET_BRIDGE_TOOLS = ["burble_provider_call"]
+BRIDGE_TOOL_NAMES = {"burble_provider_call", "burble.providerCall"}
 
 
 BURBLE_PROVIDER_CALL_SCHEMA = {
@@ -209,15 +210,35 @@ def normalize_burble_tool_name(name: str) -> str:
     return TOOL_NAME_ALIASES.get(clean_name, clean_name)
 
 
-def _read_tool_name(args: dict[str, Any]) -> str:
+def _bridge_call_envelope(args: dict[str, Any]) -> dict[str, Any]:
     raw_name = args.get("toolName") or args.get("tool") or args.get("name")
-    return normalize_burble_tool_name(str(raw_name or ""))
+    if raw_name and str(raw_name).strip() not in BRIDGE_TOOL_NAMES:
+        return args
+
+    for key in ("input", "arguments"):
+        raw_value = args.get(key)
+        if isinstance(raw_value, dict) and (
+            raw_value.get("toolName") or raw_value.get("tool") or raw_value.get("name")
+        ):
+            return raw_value
+
+    return args
+
+
+def _read_tool_name(args: dict[str, Any]) -> str:
+    envelope = _bridge_call_envelope(args)
+    raw_name = envelope.get("toolName") or envelope.get("tool") or envelope.get("name")
+    tool_name = normalize_burble_tool_name(str(raw_name or ""))
+    if tool_name in BRIDGE_TOOL_NAMES:
+        raise ValueError("burble_provider_call requires toolName")
+    return tool_name
 
 
 def _read_tool_input(args: dict[str, Any]) -> dict[str, Any]:
-    raw_input = args.get("input")
+    envelope = _bridge_call_envelope(args)
+    raw_input = envelope.get("input")
     if raw_input is None:
-        raw_input = args.get("arguments")
+        raw_input = envelope.get("arguments")
     if raw_input is None:
         return {}
     if isinstance(raw_input, dict):
