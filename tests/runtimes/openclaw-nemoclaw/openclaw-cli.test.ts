@@ -1760,6 +1760,8 @@ describe("runOpenClawCliRequest", () => {
     expect(prompts[0]).toContain(
       "For output that only reads public/open-internet sources, first call scheduledJob.registerCapability with destination set to that label"
     );
+    expect(prompts[0]).toContain("omit routeId");
+    expect(prompts[0]).toContain("Never send both routeId and destination");
     expect(prompts[0]).toContain(
       'visibilityPolicy {"maxOutputVisibility":"public"}'
     );
@@ -4036,6 +4038,10 @@ describe("runOpenClawCliRequest", () => {
     );
     expect(String(requests[0].body.input)).toContain(
       "Do not use the original destination label in native delivery"
+    );
+    expect(String(requests[0].body.input)).toContain("omit routeId");
+    expect(String(requests[0].body.input)).toContain(
+      "Never send both routeId and destination"
     );
     expect(String(requests[0].body.input)).toContain(
       'include visibilityPolicy {"maxOutputVisibility":"public"}'

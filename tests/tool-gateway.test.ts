@@ -1889,6 +1889,56 @@ describe("handleToolGatewayRequest", () => {
     });
   });
 
+  test("rejects scheduled registrations that mix routeId with a named destination", async () => {
+    const route: ConversationRouteRecord = {
+      id: "convrt_1234567890abcdef12345678",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      transport: "slack",
+      destinationJson: JSON.stringify({
+        channelId: "D123",
+        isDirectMessage: true,
+        rootId: "dm:D123"
+      }),
+      kind: "origin",
+      grantedBySlackUserId: null,
+      expiresAt: null,
+      bindingJson: null,
+      createdAt: "2026-05-26T00:00:00.000Z",
+      updatedAt: "2026-05-26T00:00:00.000Z",
+      revokedAt: null
+    };
+    const upserts: unknown[] = [];
+
+    const response = await handleToolGatewayRequest(
+      config,
+      createStore(null, runtime, [], route, [], { upserts }),
+      "scheduledJob.registerCapability",
+      request(
+        "scheduledJob.registerCapability",
+        {
+          input: {
+            jobId: "public-news-dedupe",
+            requiredTools: ["conversation.sendMessage"],
+            routeId: "convrt_1234567890abcdef12345678",
+            destination: "#burble-test",
+            visibilityPolicy: {
+              maxOutputVisibility: "public"
+            }
+          }
+        },
+        "runtime-token-u123",
+        "rt_u123"
+      )
+    );
+
+    expect(response.status).toBe(400);
+    expect(await response.text()).toContain(
+      "requires either routeId or destination, not both"
+    );
+    expect(upserts).toEqual([]);
+  });
+
   test("warns routeless scheduled jobs not to configure Burble channel delivery", async () => {
     const response = await handleToolGatewayRequest(
       config,

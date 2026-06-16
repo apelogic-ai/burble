@@ -580,6 +580,12 @@ export async function handleToolGatewayRequest(
     if (!input) {
       return new Response("Invalid tool input", { status: 400 });
     }
+    if (input.routeId && input.destination) {
+      return new Response(
+        "scheduledJob.registerCapability requires either routeId or destination, not both. Use destination for named Slack channels and routeId only for an already resolved convrt_* route.",
+        { status: 400 }
+      );
+    }
     const routeIdValidationError = input.routeId
       ? validateConversationRouteId(input.routeId)
       : input.destination && "routeId" in input.destination
