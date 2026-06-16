@@ -207,6 +207,13 @@ def _provider_alias_schema(alias: str, canonical_name: str) -> dict[str, Any]:
                     },
                 },
                 "required": ["jobId"],
+                "anyOf": [
+                    {"required": ["requiredTools"]},
+                    {"required": ["allowedTools"]},
+                    {"required": ["required_tools"]},
+                    {"required": ["allowed_tools"]},
+                    {"required": ["tools"]},
+                ],
                 "additionalProperties": True,
             },
         }

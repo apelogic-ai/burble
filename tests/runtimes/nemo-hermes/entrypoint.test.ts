@@ -1429,6 +1429,7 @@ print(json.dumps(ctx.tools))
       schema?: {
         parameters?: {
           required?: string[];
+          anyOf?: Array<{ required?: string[] }>;
           properties?: Record<string, { items?: unknown }>;
         };
       };
@@ -1438,6 +1439,13 @@ print(json.dumps(ctx.tools))
     );
     expect(registrationTool?.schema?.parameters?.required).toEqual([
       "jobId"
+    ]);
+    expect(registrationTool?.schema?.parameters?.anyOf).toEqual([
+      { required: ["requiredTools"] },
+      { required: ["allowedTools"] },
+      { required: ["required_tools"] },
+      { required: ["allowed_tools"] },
+      { required: ["tools"] }
     ]);
     expect(
       registrationTool?.schema?.parameters?.properties?.requiredTools?.items
