@@ -1348,9 +1348,18 @@ describe("handleRuntimeRequest", () => {
     );
     expect(tool).toBeTruthy();
     expect(tool.description).toContain("scheduledJob.registerCapability");
+    expect(tool.description).toContain("scheduled Slack destination delivery");
+    expect(tool.description).toContain("returned convrt_* route");
+    expect(tool.description).toContain("never use a Slack label as delivery.to");
     expect(tool.inputSchema.required).toEqual(["jobId", "requiredTools"]);
+    expect(tool.inputSchema.properties.routeId.description).toContain(
+      "Never pass a Slack label"
+    );
     expect(tool.inputSchema.properties.destination.description).toContain(
       "/agent grant here"
+    );
+    expect(tool.inputSchema.properties.destination.description).toContain(
+      "Pass named Slack channels here"
     );
     expect(tool.inputSchema.properties.stateRefs.description).toContain(
       "objects, never strings"

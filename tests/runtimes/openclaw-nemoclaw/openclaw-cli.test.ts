@@ -1750,10 +1750,19 @@ describe("runOpenClawCliRequest", () => {
     expect(prompts[0]).toContain(
       "Active Burble conversation channel route: convrt_abc123"
     );
-    expect(prompts[0]).toContain("Native OpenClaw Burble channel delivery");
+    expect(prompts[0]).toContain("Native Burble channel delivery");
     expect(prompts[0]).toContain('delivery.mode to "announce"');
     expect(prompts[0]).toContain('delivery.channel to "burble"');
     expect(prompts[0]).toContain('delivery.to to "convrt_abc123"');
+    expect(prompts[0]).toContain(
+      "do not put the Slack label in delivery.to"
+    );
+    expect(prompts[0]).toContain(
+      "First call scheduledJob.registerCapability with destination set to that label"
+    );
+    expect(prompts[0]).toContain(
+      "If registration does not return ok with a resolved route, do not update, enable, or trigger the job"
+    );
     expect(prompts[0]).not.toContain(
       'use Burble provider tools with routeId "convrt_abc123"'
     );
@@ -4010,6 +4019,18 @@ describe("runOpenClawCliRequest", () => {
     expect(String(requests[0].body.input)).toContain(
       "pass destination with the channel mention/name/id"
     );
+    expect(String(requests[0].body.input)).toContain(
+      "A Slack channel label, Slack mention, Slack channel id, or guessed convrt_* value is not a delivery route"
+    );
+    expect(String(requests[0].body.input)).toContain(
+      'Never set native delivery.to to values like "#eng"'
+    );
+    expect(String(requests[0].body.input)).toContain(
+      "use only the returned scheduledJob.routeId / routeId convrt_* value as native delivery.to"
+    );
+    expect(String(requests[0].body.input)).toContain(
+      "Do not use the original destination label in native delivery"
+    );
     expect(String(requests[0].body.input)).toContain("/agent grant here");
     expect(String(requests[0].body.input)).toContain(
       "stateRefs entries must be objects"
@@ -4022,6 +4043,12 @@ describe("runOpenClawCliRequest", () => {
     );
     expect(String(requests[0].body.input)).toContain(
       "Scheduled provider tool calls must include the returned jobId"
+    );
+    expect(String(requests[0].body.input)).toContain(
+      "Burble channel delivery"
+    );
+    expect(String(requests[0].body.input)).toContain(
+      "delivery target is not a resolved convrt_* route"
     );
     expect(String(requests[0].body.input)).toContain(
       "must not use direct web/browser access to provider URLs"
@@ -4106,6 +4133,9 @@ describe("runOpenClawCliRequest", () => {
     );
     expect(String(requests[0].body.input)).toContain(
       "after the native scheduler returns the stable job id"
+    );
+    expect(String(requests[0].body.input)).toContain(
+      "use Burble provider tools or post scheduled output through Burble"
     );
   });
 

@@ -593,7 +593,7 @@ function scheduledJobRegisterCapabilityMcpTool(): Record<string, unknown> {
   return {
     name: localScheduledJobRegisterCapabilityToolName,
     description:
-      "Register a native scheduled/background job with Burble's scheduledJob.registerCapability control-plane tool before enabling or triggering provider-backed scheduled work.",
+      "Register a native scheduled/background job with Burble's scheduledJob.registerCapability control-plane tool before enabling or triggering provider-backed scheduled work or scheduled Slack destination delivery. Use the returned convrt_* route for native delivery; never use a Slack label as delivery.to.",
     inputSchema: {
       type: "object",
       properties: {
@@ -614,13 +614,13 @@ function scheduledJobRegisterCapabilityMcpTool(): Record<string, unknown> {
           minLength: 1,
           pattern: "^convrt_[0-9a-f]{24}$",
           description:
-            "Optional durable Burble convrt_* conversation route for scheduled delivery."
+            "Optional durable Burble convrt_* conversation route for scheduled delivery. Never pass a Slack label, mention, channel id, run id, or guessed value here."
         },
         destination: {
           type: "string",
           minLength: 1,
           description:
-            "Optional Slack destination label for scheduled delivery, such as #eng, <#C123|eng>, or a channel id. Burble resolves it only when the user has already granted that channel with /agent grant here."
+            "Optional Slack destination label for scheduled delivery, such as #eng, <#C123|eng>, or a channel id. Pass named Slack channels here; Burble resolves it only when the user has already granted that channel with /agent grant here."
         },
         stateRefs: {
           type: "array",
