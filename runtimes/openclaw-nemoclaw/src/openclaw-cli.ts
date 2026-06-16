@@ -3243,18 +3243,27 @@ function readPlannedToolCall(
     return null;
   }
 
-  if (!catalog.some((tool) => tool.name === toolCall.name)) {
+  const canonicalToolName = canonicalPlannedToolName(toolCall.name);
+  if (!catalog.some((tool) => tool.name === canonicalToolName)) {
     return null;
   }
 
   const args = toolCall.arguments;
   return {
-    name: toolCall.name,
+    name: canonicalToolName,
     arguments:
       args && typeof args === "object" && !Array.isArray(args)
         ? (args as Record<string, unknown>)
         : {}
   };
+}
+
+function canonicalPlannedToolName(toolName: string): string {
+  if (toolName === "scheduled_job_register_capability") {
+    return "scheduledJob.registerCapability";
+  }
+
+  return toolName;
 }
 
 function normalizePlannedToolCall(toolCall: PlannedToolCall | null): PlannedToolCall | null {

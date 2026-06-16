@@ -4237,6 +4237,89 @@ describe("runOpenClawCliRequest", () => {
     ]);
   });
 
+  test("accepts the native scheduled job registration alias", async () => {
+    const toolCalls: Array<{ toolName: string; body: Record<string, unknown> }> =
+      [];
+
+    const response = await runOpenClawCliRequest(
+      {
+        runId: "run-register-scheduled-job-alias",
+        executionMode: "native-runtime",
+        input: {
+          text: "modify the public cron job to post to #burble-test",
+          toolGroups: {
+            groups: ["conversation", "scheduler"],
+            reasons: ["default:conversation", "keyword:scheduler:cron"]
+          },
+          conversation: {
+            routeId: "convrt_abc123",
+            source: "slack",
+            workspaceId: "T123",
+            channelId: "D123",
+            rootId: "dm:D123",
+            isDirectMessage: true
+          },
+          connections: {
+            github: { connected: false },
+            google: { connected: false },
+            jira: { connected: false },
+            slack: { connected: false }
+          }
+        }
+      },
+      { ...config, engine: "openclaw" },
+      async (toolName, body) => {
+        toolCalls.push({ toolName, body: body as Record<string, unknown> });
+        return {
+          classification: "user_private",
+          content: {
+            ok: true,
+            routeId: "convrt_0123456789abcdef01234567",
+            scheduledJob: {
+              routeId: "convrt_0123456789abcdef01234567"
+            },
+            scheduledPromptInstruction:
+              "Use routeId convrt_0123456789abcdef01234567."
+          }
+        };
+      },
+      async () => {
+        if (toolCalls.length === 0) {
+          return openClawToolCall("scheduled_job_register_capability", {
+            jobId: "job-ai-news-public",
+            destination: "#burble-test",
+            requiredTools: ["conversation.sendMessage"],
+            visibilityPolicy: { maxOutputVisibility: "public" }
+          });
+        }
+
+        return {
+          exitCode: 0,
+          stdout: "Registered destination and stopped before manual trigger.",
+          stderr: ""
+        };
+      },
+      () => undefined
+    );
+
+    expect(response.response.text).toBe(
+      "Registered destination and stopped before manual trigger."
+    );
+    expect(toolCalls).toEqual([
+      {
+        toolName: "scheduledJob.registerCapability",
+        body: {
+          input: {
+            jobId: "job-ai-news-public",
+            destination: "#burble-test",
+            requiredTools: ["conversation.sendMessage"],
+            visibilityPolicy: { maxOutputVisibility: "public" }
+          }
+        }
+      }
+    ]);
+  });
+
   test("executes provider bridge calls as Burble-internal tools", async () => {
     const toolCalls: Array<{ toolName: string; body: Record<string, unknown> }> =
       [];
