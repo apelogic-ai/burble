@@ -1568,7 +1568,7 @@ describe("handleToolGatewayRequest", () => {
     );
   });
 
-  test("rejects channel destination grants for authenticated provider jobs", async () => {
+  test("rejects channel destination grants for authenticated provider read-source jobs", async () => {
     const route: ConversationRouteRecord = {
       id: "convrt_1234567890abcdef12345678",
       workspaceId: "T123",
@@ -1615,9 +1615,81 @@ describe("handleToolGatewayRequest", () => {
 
     expect(response.status).toBe(403);
     expect(await response.text()).toContain(
-      "Destination grants cannot be used for scheduled jobs that require authenticated Burble provider tools"
+      "Destination grants cannot be used for scheduled jobs that read from authenticated Burble provider sources"
     );
     expect(upserts).toEqual([]);
+  });
+
+  test("allows channel destination grants for public jobs that only write provider state", async () => {
+    const route: ConversationRouteRecord = {
+      id: "convrt_1234567890abcdef12345678",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      transport: "slack",
+      destinationJson: JSON.stringify({
+        channelId: "C123",
+        isDirectMessage: false,
+        rootId: "channel:C123"
+      }),
+      kind: "grant",
+      grantedBySlackUserId: "U123",
+      expiresAt: null,
+      bindingJson: null,
+      createdAt: "2026-05-26T00:00:00.000Z",
+      updatedAt: "2026-05-26T00:00:00.000Z",
+      revokedAt: null
+    };
+    const upserts: unknown[] = [];
+
+    const response = await handleToolGatewayRequest(
+      config,
+      createStore(null, runtime, [], route, [], { upserts }),
+      "scheduledJob.registerCapability",
+      request(
+        "scheduledJob.registerCapability",
+        {
+          input: {
+            jobId: "public-news-dedupe",
+            requiredTools: [
+              "conversation.sendMessage",
+              "google.appendToDriveTextFile"
+            ],
+            destination: "#eng",
+            visibilityPolicy: {
+              maxOutputVisibility: "public"
+            }
+          }
+        },
+        "runtime-token-u123",
+        "rt_u123"
+      ),
+      {
+        resolveSlackChannelIdByName: async () => "C123"
+      }
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      content: {
+        ok: true,
+        scheduledJob: {
+          routeId: "convrt_1234567890abcdef12345678"
+        }
+      }
+    });
+    expect(upserts).toMatchObject([
+      {
+        jobId: "public-news-dedupe",
+        requiredTools: [
+          "conversation.sendMessage",
+          "google_append_to_drive_text_file"
+        ],
+        routeId: "convrt_1234567890abcdef12345678",
+        visibilityPolicy: {
+          maxOutputVisibility: "public"
+        }
+      }
+    ]);
   });
 
   test("resolves a scheduled job destination channel name to an existing grant", async () => {
@@ -3854,7 +3926,7 @@ describe("handleToolGatewayRequest", () => {
     );
   });
 
-  test("rejects authenticated provider scheduled output through a destination grant at send time", async () => {
+  test("rejects authenticated provider read-source scheduled output through a destination grant at send time", async () => {
     const route: ConversationRouteRecord = {
       id: "convrt_1234567890abcdef12345678",
       workspaceId: "T123",
@@ -3918,8 +3990,95 @@ describe("handleToolGatewayRequest", () => {
 
     expect(response.status).toBe(403);
     expect(await response.text()).toContain(
-      "Destination grants cannot be used for scheduled jobs that require authenticated Burble provider tools"
+      "Destination grants cannot be used for scheduled jobs that read from authenticated Burble provider sources"
     );
+  });
+
+  test("allows scheduled public output through a destination grant when provider tools are write-only", async () => {
+    const route: ConversationRouteRecord = {
+      id: "convrt_1234567890abcdef12345678",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      transport: "slack",
+      destinationJson: JSON.stringify({
+        channelId: "CENG",
+        isDirectMessage: false,
+        rootId: "channel:CENG"
+      }),
+      kind: "grant",
+      grantedBySlackUserId: "U123",
+      expiresAt: null,
+      bindingJson: JSON.stringify({
+        jobId: "public-news-dedupe",
+        runtimeId: "rt_u123"
+      }),
+      createdAt: "2026-05-26T00:00:00.000Z",
+      updatedAt: "2026-05-26T00:00:00.000Z",
+      revokedAt: null
+    };
+    const jobCapability: AgentJobCapabilityRecord = {
+      jobId: "public-news-dedupe",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      requiredTools: [
+        "conversation.sendMessage",
+        "google_update_drive_text_file"
+      ],
+      routeId: "convrt_1234567890abcdef12345678",
+      policyHash: "policy-hash",
+      capabilityProfile: "scheduled_job",
+      runtimeType: "openclaw",
+      stateRefs: [],
+      visibilityPolicy: {
+        maxOutputVisibility: "public"
+      },
+      createdAt: "2026-06-01T00:00:00.000Z",
+      updatedAt: "2026-06-01T00:00:00.000Z"
+    };
+    const posts: unknown[] = [];
+
+    const response = await handleToolGatewayRequest(
+      config,
+      createStore(null, runtime, [], route, [], { found: jobCapability }),
+      "conversation.sendMessage",
+      request(
+        "conversation.sendMessage",
+        {
+          input: {
+            text: "Public news digest.",
+            routeId: "convrt_1234567890abcdef12345678",
+            jobId: "public-news-dedupe"
+          }
+        },
+        "runtime-token-u123",
+        "rt_u123"
+      ),
+      {
+        postActiveConversationMessage: async (input) => {
+          posts.push(input);
+          return {
+            transport: "slack",
+            channelId: input.channelId,
+            messageId: "1710000000.000100"
+          };
+        }
+      }
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      content: {
+        ok: true,
+        conversationId: "CENG",
+        messageId: "1710000000.000100"
+      }
+    });
+    expect(posts).toMatchObject([
+      {
+        channelId: "CENG",
+        text: "Public news digest."
+      }
+    ]);
   });
 
   test("rejects invisible-only conversation messages", async () => {

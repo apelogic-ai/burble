@@ -408,9 +408,9 @@ export async function handleToolGatewayRequest(
     }
     if (
       destination.routeKind === "grant" &&
-      sendRouteOptions.options.usesAuthenticatedProviderTools
+      sendRouteOptions.options.usesPrivateReadSourceTools
     ) {
-      return new Response(destinationGrantAuthenticatedProviderMessage(), {
+      return new Response(destinationGrantPrivateReadSourceMessage(), {
         status: 403
       });
     }
@@ -620,10 +620,10 @@ export async function handleToolGatewayRequest(
       }
       if (
         destination.routeKind === "grant" &&
-        requiredToolsUseAuthenticatedProviders(requiredTools)
+        requiredToolsUsePrivateReadSources(requiredTools)
       ) {
         return new Response(
-          destinationGrantAuthenticatedProviderMessage(),
+          destinationGrantPrivateReadSourceMessage(),
           { status: 403 }
         );
       }
@@ -2218,22 +2218,23 @@ function readScheduledJobRegistrationTools(
   return normalizeScheduledJobRegistrationTools(input.requiredTools);
 }
 
-function requiredToolsUseAuthenticatedProviders(toolNames: string[]): boolean {
+function requiredToolsUsePrivateReadSources(toolNames: string[]): boolean {
   return toolNames.some((toolName) => {
-    if (connectionProviderForToolName(toolName)) {
-      return true;
-    }
-    return providerToolCatalog.some(
+    const tool = providerToolCatalog.find(
       (tool) =>
         tool.name === toolName ||
         tool.alias === toolName ||
         (tool.aliases ?? []).includes(toolName)
     );
+    if (tool) {
+      return !tool.risk || tool.risk === "read";
+    }
+    return connectionProviderForToolName(toolName) !== null;
   });
 }
 
-function destinationGrantAuthenticatedProviderMessage(): string {
-  return "Destination grants cannot be used for scheduled jobs that require authenticated Burble provider tools. Public channel delivery is only allowed for public-output jobs; private-tool declassification requires an explicit approval flow that is not implemented yet.";
+function destinationGrantPrivateReadSourceMessage(): string {
+  return "Destination grants cannot be used for scheduled jobs that read from authenticated Burble provider sources. Public channel delivery is only allowed for public-source jobs; private-tool declassification requires an explicit approval flow that is not implemented yet.";
 }
 
 function normalizeScheduledJobRegistrationTools(value: unknown): string[] | null {
@@ -3730,7 +3731,7 @@ function resolveConversationSendRouteOptions(
       options: {
         jobId?: string;
         maxOutputVisibility?: ToolClassification;
-        usesAuthenticatedProviderTools?: boolean;
+        usesPrivateReadSourceTools?: boolean;
       };
     }
   | { ok: false; status: number; message: string } {
@@ -3782,7 +3783,7 @@ function resolveConversationSendRouteOptions(
       maxOutputVisibility: normalizedMaxOutputVisibility(
         capability.visibilityPolicy
       ),
-      usesAuthenticatedProviderTools: requiredToolsUseAuthenticatedProviders(
+      usesPrivateReadSourceTools: requiredToolsUsePrivateReadSources(
         capability.requiredTools
       )
     }

@@ -337,7 +337,8 @@ def build_hermes_turn_text(input_body: dict[str, Any]) -> str:
                                 "When creating a new provider-backed native job, do not request an immediate/manual run as part of the create call. Create it paused/disabled or without an immediate trigger if the scheduler supports that; otherwise create it, then stop before triggering.",
                                 "After the native scheduler returns the stable job id, call the dedicated scheduled provider registration tool scheduled_job_register_capability with that exact jobId and requiredTools, then wait for an ok result. If registration does not return ok, do not trigger the job and report the registration failure.",
                                 'If the user explicitly asks public scheduled output to post to a granted Slack channel, pass destination with the channel mention/name/id to scheduled_job_register_capability and include visibilityPolicy {"maxOutputVisibility":"public"}. Slack channel labels are not route ids and must not be used as native delivery targets.',
-                                "If the scheduled job uses authenticated Burble provider tools such as GitHub, Google, Jira, Slack search, HubSpot, or Atlassian MCP, do not register a Slack channel destination. Report that public channel delivery for private-tool output requires an explicit declassification approval flow that is not implemented yet.",
+                                "If the scheduled job reads from authenticated Burble provider sources such as GitHub, Google Drive, Jira, Slack search, HubSpot, or Atlassian MCP, do not register a Slack channel destination. Report that public channel delivery for private-tool output requires an explicit declassification approval flow that is not implemented yet.",
+                                "If the scheduled job only reads public/open-internet sources, channel delivery may include write-only provider state tools such as google.updateDriveTextFile or google.appendToDriveTextFile in requiredTools.",
                                 "If it does and its prompt lacks Burble jobId provider-call instructions, update the job first by calling the dedicated scheduled provider registration tool scheduled_job_register_capability with jobId and requiredTools, then rewrite the scheduled prompt to include the returned scheduledPromptInstruction verbatim.",
                                 "Only after the job prompt has been updated with the returned scheduledPromptInstruction may you enable, manually trigger, or reschedule the job.",
                                 "Scheduled provider tool calls must include the returned jobId in each Burble provider tool input. Do not use routeId as provider-call identity; routeId is only a delivery/state binding.",
@@ -706,7 +707,7 @@ def format_scheduled_job_context(input_body: dict[str, Any]) -> str:
         "Ensure this native scheduled job has the provider bridge toolset enabled: include the cronjob toolset along with any other needed toolsets such as web. Do not run provider-backed scheduled jobs with only web enabled."
     )
     lines.append(
-        "Respect maxOutputVisibility when sending scheduled output. Do not publicly post private-tool-derived content; public channel delivery for authenticated provider output requires an explicit declassification approval flow that is not implemented yet."
+        "Respect maxOutputVisibility when sending scheduled output. Do not publicly post private-tool-derived content; public channel delivery for authenticated provider read output requires an explicit declassification approval flow that is not implemented yet. Write-only provider state tools do not by themselves make public-source output private."
     )
     return "\n".join(lines)
 
