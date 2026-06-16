@@ -31,7 +31,8 @@ export function extractBurbleJobId(ctx) {
     readNestedJobId(ctx?.task),
     readNestedJobId(ctx?.delivery),
     readNestedJobId(ctx?.origin),
-    readNestedJobId(ctx?.context)
+    readNestedJobId(ctx?.context),
+    readNestedJobId(ctx?.identity)
   ];
   for (const candidate of candidates) {
     if (candidate) {
@@ -57,12 +58,13 @@ export function summarizeBurbleJobIdContext(ctx) {
     "task",
     "delivery",
     "origin",
-    "context"
+    "context",
+    "identity"
   ]
     .map((key) =>
       isObject(ctx[key]) ? `${key}=[${Object.keys(ctx[key]).sort().join(",")}]` : null
     )
     .filter(Boolean)
     .join(" ");
-  return `ctxKeys=[${keys}]${nested ? ` ${nested}` : ""}`;
+  return `${nested ? `${nested} ` : ""}ctxKeys=[${keys}]`;
 }

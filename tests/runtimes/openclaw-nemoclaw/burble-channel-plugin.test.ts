@@ -24,6 +24,9 @@ describe("burble channel plugin job identity", () => {
     expect(extractBurbleJobId({ origin: { job_id: "job-origin" } })).toBe(
       "job-origin"
     );
+    expect(extractBurbleJobId({ identity: { jobId: "job-identity" } })).toBe(
+      "job-identity"
+    );
   });
 
   test("does not trust model-reachable metadata or extra job ids", () => {
@@ -44,6 +47,6 @@ describe("burble channel plugin job identity", () => {
           jobId: "secret-job"
         }
       })
-    ).toBe("ctxKeys=[scheduler,text,to] scheduler=[jobId]");
+    ).toBe("scheduler=[jobId] ctxKeys=[scheduler,text,to]");
   });
 });
