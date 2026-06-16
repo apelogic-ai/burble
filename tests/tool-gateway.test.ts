@@ -138,6 +138,7 @@ function createStore(
   touchedRuntimeIds: string[] = [],
   jobCapabilities: {
     found?: AgentJobCapabilityRecord | null;
+    list?: AgentJobCapabilityRecord[];
     upserts?: unknown[];
   } = {},
   routeRevocations: unknown[] = []
@@ -271,7 +272,13 @@ function createStore(
     },
     getAgentJobCapability: (jobId) =>
       jobId === jobCapabilities.found?.jobId ? jobCapabilities.found : null,
-    listAgentJobCapabilitiesForPrincipal: () => [],
+    listAgentJobCapabilitiesForPrincipal: (workspaceId, slackUserId) =>
+      (jobCapabilities.list ?? [])
+        .filter(
+          (capability) =>
+            capability.workspaceId === workspaceId &&
+            capability.slackUserId === slackUserId
+        ),
     deleteAgentJobCapability: () => undefined,
     upsertSkillCatalog: () => {
       throw new Error("unexpected skill catalog write");
@@ -4202,6 +4209,152 @@ describe("handleToolGatewayRequest", () => {
         text: "Public news digest."
       }
     ]);
+  });
+
+  test("uses a single matching scheduled capability for legacy route-only destination grant delivery", async () => {
+    const route: ConversationRouteRecord = {
+      id: "convrt_1234567890abcdef12345678",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      transport: "slack",
+      destinationJson: JSON.stringify({
+        channelId: "CENG",
+        isDirectMessage: false,
+        rootId: "channel:CENG"
+      }),
+      kind: "grant",
+      grantedBySlackUserId: "U123",
+      expiresAt: null,
+      bindingJson: null,
+      createdAt: "2026-05-26T00:00:00.000Z",
+      updatedAt: "2026-05-26T00:00:00.000Z",
+      revokedAt: null
+    };
+    const jobCapability: AgentJobCapabilityRecord = {
+      jobId: "public-news-dedupe",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      requiredTools: [
+        "conversation.sendMessage",
+        "google_update_drive_text_file"
+      ],
+      routeId: "convrt_1234567890abcdef12345678",
+      policyHash: "policy-hash",
+      capabilityProfile: "scheduled_job",
+      runtimeType: "openclaw",
+      stateRefs: [],
+      visibilityPolicy: {
+        maxOutputVisibility: "public"
+      },
+      createdAt: "2026-06-01T00:00:00.000Z",
+      updatedAt: "2026-06-01T00:00:00.000Z"
+    };
+    const posts: unknown[] = [];
+
+    const response = await handleToolGatewayRequest(
+      config,
+      createStore(null, runtime, [], route, [], { list: [jobCapability] }),
+      "conversation.sendMessage",
+      request(
+        "conversation.sendMessage",
+        {
+          input: {
+            text: "Public news digest.",
+            routeId: "convrt_1234567890abcdef12345678"
+          }
+        },
+        "runtime-token-u123",
+        "rt_u123"
+      ),
+      {
+        postActiveConversationMessage: async (input) => {
+          posts.push(input);
+          return {
+            transport: "slack",
+            channelId: input.channelId,
+            messageId: "1710000000.000100"
+          };
+        }
+      }
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      content: {
+        ok: true,
+        conversationId: "CENG"
+      }
+    });
+    expect(posts).toHaveLength(1);
+  });
+
+  test("does not infer scheduled capability for ambiguous route-only destination grant delivery", async () => {
+    const route: ConversationRouteRecord = {
+      id: "convrt_1234567890abcdef12345678",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      transport: "slack",
+      destinationJson: JSON.stringify({
+        channelId: "CENG",
+        isDirectMessage: false,
+        rootId: "channel:CENG"
+      }),
+      kind: "grant",
+      grantedBySlackUserId: "U123",
+      expiresAt: null,
+      bindingJson: null,
+      createdAt: "2026-05-26T00:00:00.000Z",
+      updatedAt: "2026-05-26T00:00:00.000Z",
+      revokedAt: null
+    };
+    const baseCapability: AgentJobCapabilityRecord = {
+      jobId: "public-news-dedupe",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      requiredTools: ["conversation.sendMessage"],
+      routeId: "convrt_1234567890abcdef12345678",
+      policyHash: "policy-hash",
+      capabilityProfile: "scheduled_job",
+      runtimeType: "openclaw",
+      stateRefs: [],
+      visibilityPolicy: {
+        maxOutputVisibility: "public"
+      },
+      createdAt: "2026-06-01T00:00:00.000Z",
+      updatedAt: "2026-06-01T00:00:00.000Z"
+    };
+
+    const response = await handleToolGatewayRequest(
+      config,
+      createStore(null, runtime, [], route, [], {
+        list: [
+          baseCapability,
+          { ...baseCapability, jobId: "second-public-news-dedupe" }
+        ]
+      }),
+      "conversation.sendMessage",
+      request(
+        "conversation.sendMessage",
+        {
+          input: {
+            text: "Public news digest.",
+            routeId: "convrt_1234567890abcdef12345678"
+          }
+        },
+        "runtime-token-u123",
+        "rt_u123"
+      ),
+      {
+        postActiveConversationMessage: async () => {
+          throw new Error("ambiguous route-only delivery should not be posted");
+        }
+      }
+    );
+
+    expect(response.status).toBe(403);
+    expect(await response.text()).toContain(
+      "Destination grant requires public scheduled output visibility"
+    );
   });
 
   test("rejects invisible-only conversation messages", async () => {

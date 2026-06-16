@@ -1,5 +1,6 @@
 import type { Config } from "./config";
 import type {
+  AgentJobCapabilityRecord,
   AgentRuntimeEngine,
   AgentRuntimeRecord,
   ConversationRouteRecord,
@@ -3819,7 +3820,17 @@ function resolveConversationSendRouteOptions(
     }
   | { ok: false; status: number; message: string } {
   if (!input.jobId) {
-    return { ok: true, options: {} };
+    const capability = findSingleScheduledJobCapabilityForRoute(
+      store,
+      runtime,
+      input.routeId
+    );
+    return {
+      ok: true,
+      options: capability
+        ? scheduledJobCapabilityRouteOptions(capability)
+        : {}
+    };
   }
 
   const capability = store.getAgentJobCapability(input.jobId);
@@ -3861,15 +3872,56 @@ function resolveConversationSendRouteOptions(
 
   return {
     ok: true,
-    options: {
-      jobId: capability.jobId,
-      maxOutputVisibility: normalizedMaxOutputVisibility(
-        capability.visibilityPolicy
-      ),
-      usesPrivateReadSourceTools: requiredToolsUsePrivateReadSources(
-        capability.requiredTools
-      )
-    }
+    options: scheduledJobCapabilityRouteOptions(capability)
+  };
+}
+
+function findSingleScheduledJobCapabilityForRoute(
+  store: TokenStore,
+  runtime: AgentRuntimeRecord,
+  routeId: string | undefined
+): AgentJobCapabilityRecord | null {
+  if (!routeId) {
+    return null;
+  }
+
+  const matches = store
+    .listAgentJobCapabilitiesForPrincipal(
+      runtime.workspaceId,
+      runtime.slackUserId
+    )
+    .filter((capability) => {
+      if (capability.routeId !== routeId) {
+        return false;
+      }
+      if (
+        capability.policyHash &&
+        runtime.policyHash &&
+        capability.policyHash !== runtime.policyHash
+      ) {
+        return false;
+      }
+      return true;
+    });
+
+  return matches.length === 1 ? matches[0] : null;
+}
+
+function scheduledJobCapabilityRouteOptions(
+  capability: AgentJobCapabilityRecord
+): {
+  jobId?: string;
+  maxOutputVisibility?: ToolClassification;
+  usesPrivateReadSourceTools?: boolean;
+} {
+  return {
+    jobId: capability.jobId,
+    maxOutputVisibility: normalizedMaxOutputVisibility(
+      capability.visibilityPolicy
+    ),
+    usesPrivateReadSourceTools: requiredToolsUsePrivateReadSources(
+      capability.requiredTools
+    )
   };
 }
 
