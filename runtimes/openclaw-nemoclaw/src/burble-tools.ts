@@ -29,7 +29,14 @@ function createBurbleMcpToolExecutor(
       ? readBurbleProviderBridgeCall(body)
       : null;
     const actualToolName = bridgeCall?.toolName ?? toolName;
-    const actualBody = bridgeCall ? { input: bridgeCall.input } : body;
+    const actualBody = bridgeCall
+      ? {
+          input: bridgeCall.input,
+          ...(request?.input.scheduledJob
+            ? { scheduledJob: request.input.scheduledJob }
+            : {})
+        }
+      : body;
 
     if (actualToolName === "conversation.sendMessage") {
       return sendConversationMessage(config, runtimeId, request, actualBody);
@@ -572,7 +579,8 @@ function toMcpToolArguments(
 ): Record<string, unknown> {
   return withScheduledJobIdentity(
     toMcpToolArgumentsWithoutScheduledJobIdentity(toolName, body, request),
-    readRecordKey(body, "input")
+    readRecordKey(body, "input"),
+    request?.input.scheduledJob?.jobId
   );
 }
 
@@ -649,9 +657,10 @@ function sampleManifestInputValue(field: RuntimeManifestToolInputSummary): unkno
 
 function withScheduledJobIdentity(
   args: Record<string, unknown>,
-  input: Record<string, unknown> | null
+  input: Record<string, unknown> | null,
+  trustedJobId?: string
 ): Record<string, unknown> {
-  const jobId = readScheduledJobIdFromInput(input);
+  const jobId = readScheduledJobIdFromInput(input) ?? trustedJobId;
   return jobId ? { ...args, jobId } : args;
 }
 

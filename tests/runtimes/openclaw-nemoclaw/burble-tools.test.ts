@@ -308,6 +308,97 @@ describe("createBurbleToolExecutor", () => {
     }
   });
 
+  test("adds trusted scheduled job identity to provider bridge calls", async () => {
+    const originalFetch = globalThis.fetch;
+    const requests: Request[] = [];
+    globalThis.fetch = (async (input, init) => {
+      const request = new Request(input, init);
+      requests.push(request);
+      const payload = await request.clone().json();
+      if (payload.method === "initialize") {
+        return Response.json(
+          {
+            result: {
+              protocolVersion: "2025-06-18",
+              capabilities: {},
+              serverInfo: { name: "agentgateway", version: "test" }
+            }
+          },
+          { headers: { "mcp-session-id": "session-123" } }
+        );
+      }
+      if (payload.method === "notifications/initialized") {
+        return new Response(null, { status: 202 });
+      }
+      return new Response(
+        [
+          "event: message",
+          `data: ${JSON.stringify({
+            result: {
+              content: [
+                {
+                  type: "text",
+                  text: JSON.stringify({
+                    classification: "user_private",
+                    content: { name: "Scratchpad" }
+                  })
+                }
+              ]
+            },
+            jsonrpc: "2.0",
+            id: "request-id"
+          })}`,
+          ""
+        ].join("\n"),
+        { headers: { "content-type": "text/event-stream" } }
+      );
+    }) as typeof fetch;
+
+    try {
+      const scheduledRequest = providerManifestRequest();
+      scheduledRequest.input.scheduledJob = {
+        jobId: "job-123",
+        capabilityProfile: "scheduled_job",
+        allowedTools: ["google.getDriveFile"],
+        routeId: "convrt_abc123",
+        runtimeType: "openclaw",
+        stateRefs: [],
+        visibilityPolicy: {}
+      };
+      const executor = createBurbleToolExecutor(
+        {
+          ...config,
+          mcpGatewayUrl: "http://agentgateway:3000/mcp",
+          runtimeJwt: "runtime-jwt"
+        },
+        "rt_u123",
+        scheduledRequest
+      );
+      const result = await executor("burble_provider_call", {
+        input: {
+          toolName: "google.getDriveFile",
+          input: {
+            fileId: "file-123"
+          }
+        }
+      });
+
+      expect(result.content).toEqual({ name: "Scratchpad" });
+      expect(await requests[2].json()).toMatchObject({
+        method: "tools/call",
+        params: {
+          name: "google_get_drive_file",
+          arguments: {
+            fileId: "file-123",
+            jobId: "job-123"
+          }
+        }
+      });
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
   test("maps manifest provider tool aliases to MCP names with generic input", async () => {
     const originalFetch = globalThis.fetch;
     const requests: Request[] = [];

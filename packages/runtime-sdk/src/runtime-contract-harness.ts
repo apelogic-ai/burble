@@ -215,6 +215,7 @@ async function assertScheduledProviderCapability(
       "runtime claims scheduledProviderCalls but emitted no burble_provider_call tool_call during scheduled provider probe"
     );
   }
+  assertScheduledProviderBridgeEnvelope(providerBridgeCall.input);
   const providerBridgeResult = events.find(
     (event): event is Extract<RuntimeRunEvent, { type: "tool_result" }> =>
       event.type === "tool_result" &&
@@ -227,6 +228,37 @@ async function assertScheduledProviderCapability(
       "runtime claims scheduledProviderCalls but emitted no matching burble_provider_call tool_result"
     );
   }
+}
+
+function assertScheduledProviderBridgeEnvelope(input: unknown): void {
+  if (!isRecord(input)) {
+    failCheck(
+      "scheduled_provider_calls",
+      "runtime emitted burble_provider_call without an object input envelope"
+    );
+  }
+  if (input.toolName !== "runtime.conformance.echo") {
+    failCheck(
+      "scheduled_provider_calls",
+      "runtime emitted burble_provider_call with an unexpected toolName"
+    );
+  }
+  if (!isRecord(input.input)) {
+    failCheck(
+      "scheduled_provider_calls",
+      "runtime emitted burble_provider_call without inner input"
+    );
+  }
+  if (input.input.jobId !== "contract-scheduled-job") {
+    failCheck(
+      "scheduled_provider_calls",
+      "runtime emitted burble_provider_call without the trusted scheduled job id"
+    );
+  }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 async function assertToolReachability(

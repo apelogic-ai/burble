@@ -1011,6 +1011,11 @@ class BurbleHermesRuntime:
         try:
             if truthy_env("BURBLE_RUNTIME_CONTRACT_PROBE"):
                 if message.get("scheduledJob"):
+                    scheduled_job = (
+                        message.get("scheduledJob")
+                        if isinstance(message.get("scheduledJob"), dict)
+                        else {}
+                    )
                     await waiter.emit({"type": "status", "text": "Runtime contract probe accepted."})
                     await waiter.emit({
                         "type": "tool_call",
@@ -1030,10 +1035,7 @@ class BurbleHermesRuntime:
                         "input": {
                             "toolName": "runtime.conformance.echo",
                             "input": {
-                                "jobId": str(
-                                    message.get("scheduledJob", {}).get("jobId")
-                                    or "contract-scheduled-job"
-                                ),
+                                "jobId": str(scheduled_job.get("jobId") or ""),
                                 "message": "scheduled provider bridge probe",
                             },
                         },

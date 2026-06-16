@@ -184,6 +184,7 @@ type ToolGatewayBody = {
     email?: unknown;
   };
   input?: unknown;
+  scheduledJob?: unknown;
   conversation?: unknown;
   attachments?: unknown;
 };
@@ -1843,7 +1844,25 @@ function validateAndStripScheduledJobToolGatewayInput(
   toolName: string,
   body: ToolGatewayBody
 ): { body: ToolGatewayBody; response: Response | null } {
-  const jobId = readScheduledJobId(body.input);
+  const trustedJobId = readScheduledJobId(body.scheduledJob);
+  const inputJobId = readScheduledJobId(body.input);
+  if (trustedJobId && inputJobId && trustedJobId !== inputJobId) {
+    return {
+      body,
+      response: jsonResponse(
+        {
+          classification: "user_private",
+          content: {
+            error: "scheduled_job_identity_mismatch",
+            message: "Scheduled job provider call identity does not match trusted runtime context."
+          }
+        },
+        403
+      )
+    };
+  }
+
+  const jobId = trustedJobId ?? inputJobId;
   if (!jobId) {
     return { body, response: null };
   }

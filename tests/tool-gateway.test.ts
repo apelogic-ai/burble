@@ -2784,6 +2784,97 @@ describe("handleToolGatewayRequest", () => {
     });
   });
 
+  test("enforces scheduled job capability from trusted runtime context when input omits job id", async () => {
+    const capability: AgentJobCapabilityRecord = {
+      jobId: "pr-monitor",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      requiredTools: ["github.listMyPullRequests"],
+      routeId: null,
+      policyHash: "policy-hash",
+      capabilityProfile: "scheduled_job",
+      runtimeType: "openclaw",
+      stateRefs: [],
+      visibilityPolicy: {},
+      createdAt: "2026-06-01T00:00:00.000Z",
+      updatedAt: "2026-06-01T00:00:00.000Z"
+    };
+    const response = await handleToolGatewayRequest(
+      config,
+      createStore(googleConnection, runtime, [], null, [], { found: capability }),
+      "google.appendToDriveTextFile",
+      request(
+        "google.appendToDriveTextFile",
+        {
+          scheduledJob: {
+            jobId: "pr-monitor"
+          },
+          input: {
+            fileId: "file-1",
+            text: "Reported item"
+          }
+        },
+        "runtime-token-u123",
+        "rt_u123"
+      )
+    );
+
+    expect(response.status).toBe(403);
+    await expect(response.json()).resolves.toEqual({
+      classification: "user_private",
+      content: {
+        error: "scheduled_job_tool_denied",
+        message:
+          "Tool google.appendToDriveTextFile is not available to scheduled job pr-monitor."
+      }
+    });
+  });
+
+  test("rejects scheduled provider calls with forged inner job ids", async () => {
+    const capability: AgentJobCapabilityRecord = {
+      jobId: "pr-monitor",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      requiredTools: ["github.listMyPullRequests"],
+      routeId: null,
+      policyHash: "policy-hash",
+      capabilityProfile: "scheduled_job",
+      runtimeType: "openclaw",
+      stateRefs: [],
+      visibilityPolicy: {},
+      createdAt: "2026-06-01T00:00:00.000Z",
+      updatedAt: "2026-06-01T00:00:00.000Z"
+    };
+    const response = await handleToolGatewayRequest(
+      config,
+      createStore(googleConnection, runtime, [], null, [], { found: capability }),
+      "github.listMyPullRequests",
+      request(
+        "github.listMyPullRequests",
+        {
+          scheduledJob: {
+            jobId: "pr-monitor"
+          },
+          input: {
+            jobId: "other-job"
+          }
+        },
+        "runtime-token-u123",
+        "rt_u123"
+      )
+    );
+
+    expect(response.status).toBe(403);
+    await expect(response.json()).resolves.toEqual({
+      classification: "user_private",
+      content: {
+        error: "scheduled_job_identity_mismatch",
+        message:
+          "Scheduled job provider call identity does not match trusted runtime context."
+      }
+    });
+  });
+
   test("emits observability events for runtime-authenticated provider tools", async () => {
     const observabilityEvents: ObservabilityEventInput[] = [];
     const response = await handleToolGatewayRequest(
