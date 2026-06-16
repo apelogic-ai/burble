@@ -291,7 +291,8 @@ async function handleLocalBurbleChannelEventRequest(
   }
 
   const payload = await readJsonBody(request);
-  const jobId = readLocalBurbleChannelJobId(payload);
+  const jobId =
+    readLocalBurbleChannelJobId(payload) ?? readLocalBurbleChannelUrlJobId(request);
   if (!isBurbleConversationRouteId(routeId) && !jobId) {
     return unresolvedBurbleChannelRouteResponse();
   }
@@ -813,9 +814,11 @@ async function readLocalBurbleChannelMessageBody(
     return null;
   }
 
+  const bodyJobId = readOptionalJobId(record);
+
   return {
     routeId,
-    ...readOptionalJobId(record),
+    ...(bodyJobId.jobId ? bodyJobId : readOptionalJobIdFromUrl(request)),
     text: record.text,
     ...(attachments?.length ? { attachments } : {})
   };
@@ -830,11 +833,26 @@ function readLocalBurbleChannelJobId(payload: unknown): string | null {
   );
 }
 
+function readLocalBurbleChannelUrlJobId(request: Request): string | null {
+  return readOptionalJobIdFromUrl(request).jobId ?? null;
+}
+
 function readOptionalJobId(record: Record<string, unknown>): { jobId?: string } {
   const names = ["jobId", "job_id"];
   for (const name of names) {
     const value = record[name];
     if (typeof value === "string" && value.trim().length > 0) {
+      return { jobId: value.trim() };
+    }
+  }
+  return {};
+}
+
+function readOptionalJobIdFromUrl(request: Request): { jobId?: string } {
+  const url = new URL(request.url);
+  for (const name of ["jobId", "job_id"]) {
+    const value = url.searchParams.get(name);
+    if (value?.trim()) {
       return { jobId: value.trim() };
     }
   }

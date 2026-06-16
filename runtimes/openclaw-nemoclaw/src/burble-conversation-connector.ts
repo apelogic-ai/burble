@@ -59,7 +59,7 @@ export function createBurbleConversationConnector(
 
   return {
     describeDeliveryTarget(route) {
-      return buildBurbleConversationDeliveryTarget(config, route.routeId);
+      return buildBurbleConversationDeliveryTarget(config, route);
     },
     sendMessage,
     async deliverEvent(event) {
@@ -121,14 +121,18 @@ async function sendScheduledChannelMessage(
 
 export function buildBurbleConversationDeliveryTarget(
   config: RuntimeConfig,
-  routeId: string
+  route: BurbleConversationRoute
 ): BurbleConversationDeliveryTarget {
+  const routeId = route.routeId;
   const encodedRouteId = encodeURIComponent(routeId);
+  const jobQuery = route.jobId
+    ? `?jobId=${encodeURIComponent(route.jobId)}`
+    : "";
   return {
     channel: "burble",
     routeId,
-    localMessageUrl: `http://127.0.0.1:${config.port}/internal/burble/channel/routes/${encodedRouteId}/messages`,
-    localEventUrl: `http://127.0.0.1:${config.port}/internal/burble/channel/routes/${encodedRouteId}/events`
+    localMessageUrl: `http://127.0.0.1:${config.port}/internal/burble/channel/routes/${encodedRouteId}/messages${jobQuery}`,
+    localEventUrl: `http://127.0.0.1:${config.port}/internal/burble/channel/routes/${encodedRouteId}/events${jobQuery}`
   };
 }
 

@@ -3,6 +3,7 @@ import {
   attachRuntimeEventWebSocket,
   handleRuntimeRequest
 } from "../../../runtimes/openclaw-nemoclaw/src/server";
+import { buildBurbleConversationDeliveryTarget } from "../../../runtimes/openclaw-nemoclaw/src/burble-conversation-connector";
 import type { RuntimeConfig } from "../../../runtimes/openclaw-nemoclaw/src/config";
 import { parseRuntimeCapabilityManifest } from "../../../src/agent/runtime-contract";
 
@@ -63,6 +64,22 @@ async function withMockFetch<T>(
 }
 
 describe("handleRuntimeRequest", () => {
+  test("builds Burble channel delivery URLs with scheduled job identity", () => {
+    const target = buildBurbleConversationDeliveryTarget(config, {
+      routeId: "convrt_abcdefabcdefabcdefabcdef",
+      jobId: "job-123"
+    });
+
+    expect(target).toEqual({
+      channel: "burble",
+      routeId: "convrt_abcdefabcdefabcdefabcdef",
+      localMessageUrl:
+        "http://127.0.0.1:8080/internal/burble/channel/routes/convrt_abcdefabcdefabcdefabcdef/messages?jobId=job-123",
+      localEventUrl:
+        "http://127.0.0.1:8080/internal/burble/channel/routes/convrt_abcdefabcdefabcdefabcdef/events?jobId=job-123"
+    });
+  });
+
   test("serves health checks", async () => {
     const response = await handleRuntimeRequest(
       new Request("http://runtime/healthz"),
@@ -855,6 +872,47 @@ describe("handleRuntimeRequest", () => {
     });
   });
 
+  test("delivers Burble channel messages with scheduled job identity from the local URL", async () => {
+    const requests: Request[] = [];
+    const response = await withMockFetch(
+      (async (input, init) => {
+        const request = new Request(input, init);
+        requests.push(request);
+        return Response.json({
+          classification: "user_private",
+          content: { ok: true }
+        });
+      }) as typeof fetch,
+      () =>
+        handleRuntimeRequest(
+          new Request(
+            "http://runtime/internal/burble/channel/routes/convrt_abcdefabcdefabcdefabcdef/messages?jobId=job-123",
+            {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({
+                text: "No significant new AI news in the last 15 minutes."
+              })
+            }
+          ),
+          {
+            ...config,
+            runtimeId: "rt_u123"
+          }
+        )
+    );
+
+    expect(response.status).toBe(200);
+    expect(requests).toHaveLength(1);
+    expect(await requests[0].json()).toEqual({
+      input: {
+        jobId: "job-123",
+        routeId: "convrt_abcdefabcdefabcdefabcdef",
+        text: "No significant new AI news in the last 15 minutes."
+      }
+    });
+  });
+
   test("delivers attachment-only local conversation messages", async () => {
     const requests: Request[] = [];
     const response = await withMockFetch(
@@ -1512,6 +1570,49 @@ describe("handleRuntimeRequest", () => {
         jobId: "job-123",
         routeId: "convrt_abcdefabcdefabcdefabcdef",
         text: "Open GitHub PRs: none found."
+      }
+    });
+  });
+
+  test("delivers Burble channel events with scheduled job identity from the local URL", async () => {
+    const requests: Request[] = [];
+    const response = await withMockFetch(
+      (async (input, init) => {
+        const request = new Request(input, init);
+        requests.push(request);
+        return Response.json({
+          classification: "user_private",
+          content: { ok: true }
+        });
+      }) as typeof fetch,
+      () =>
+        handleRuntimeRequest(
+          new Request(
+            "http://runtime/internal/burble/channel/routes/convrt_abcdefabcdefabcdefabcdef/events?jobId=job-123",
+            {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({
+                result: {
+                  summary: "No significant new AI news in the last 15 minutes."
+                }
+              })
+            }
+          ),
+          {
+            ...config,
+            runtimeId: "rt_u123"
+          }
+        )
+    );
+
+    expect(response.status).toBe(200);
+    expect(requests).toHaveLength(1);
+    expect(await requests[0].json()).toEqual({
+      input: {
+        jobId: "job-123",
+        routeId: "convrt_abcdefabcdefabcdefabcdef",
+        text: "No significant new AI news in the last 15 minutes."
       }
     });
   });
