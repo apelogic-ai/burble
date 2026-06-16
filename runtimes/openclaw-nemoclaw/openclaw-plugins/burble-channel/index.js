@@ -7,6 +7,10 @@ import {
   createMessageReceiptFromOutboundResults,
   defineChannelMessageAdapter
 } from "openclaw/plugin-sdk/channel-message";
+import {
+  extractBurbleJobId,
+  summarizeBurbleJobIdContext
+} from "./job-id.js";
 
 const CHANNEL_ID = "burble";
 const DEFAULT_BASE_URL = "http://127.0.0.1:8080";
@@ -138,16 +142,6 @@ function extractBurbleAttachments(ctx) {
   return [];
 }
 
-function extractBurbleJobId(ctx) {
-  const candidates = [ctx.jobId, ctx.job_id];
-  for (const candidate of candidates) {
-    if (typeof candidate === "string" && candidate.trim()) {
-      return candidate.trim();
-    }
-  }
-  return undefined;
-}
-
 async function sendBurbleMessage(ctx) {
   const account = resolveAccount(ctx.cfg, ctx.accountId ?? null);
   if (!account.enabled) {
@@ -163,6 +157,11 @@ async function sendBurbleMessage(ctx) {
   )}/messages`;
   const attachments = extractBurbleAttachments(ctx);
   const jobId = extractBurbleJobId(ctx);
+  if (!jobId) {
+    console.warn(
+      `[burble-channel] scheduled job identity missing routeId=${routeId} ${summarizeBurbleJobIdContext(ctx)}`
+    );
+  }
   const text = typeof ctx.text === "string" ? ctx.text : "";
   if (!text.trim() && attachments.length === 0) {
     throw new Error("Burble channel delivery requires text or attachments");
