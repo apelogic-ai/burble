@@ -143,7 +143,7 @@ async function sendConversationMessage(
     ? scheduledJob.routeId ?? request?.input.conversation?.routeId
     : readNestedString(body, "input", "routeId") ??
       request?.input.conversation?.routeId;
-  const jobId = scheduledJob?.routeId ? scheduledJob.jobId : undefined;
+  const jobId = scheduledJob ? scheduledJob.jobId : undefined;
   if (scheduledJob && !routeId) {
     throw new Error(
       "conversation.sendMessage requires a trusted scheduled route id or active conversation"

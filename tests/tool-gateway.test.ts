@@ -1705,12 +1705,6 @@ describe("handleToolGatewayRequest", () => {
       visibilityInput: {
         visibilityPolicy: '{"maxOutputVisibility":"public"}'
       }
-    },
-    {
-      name: "top-level maxOutputVisibility alias",
-      visibilityInput: {
-        maxOutputVisibility: "public"
-      }
     }
   ]) {
     test(`accepts scheduled channel visibility policy from ${name}`, async () => {
@@ -1771,6 +1765,56 @@ describe("handleToolGatewayRequest", () => {
       ]);
     });
   }
+
+  test("does not accept top-level output visibility aliases for scheduled channel grants", async () => {
+    const route: ConversationRouteRecord = {
+      id: "convrt_1234567890abcdef12345678",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      transport: "slack",
+      destinationJson: JSON.stringify({
+        channelId: "C123",
+        isDirectMessage: false,
+        rootId: "channel:C123"
+      }),
+      kind: "grant",
+      grantedBySlackUserId: "U123",
+      expiresAt: null,
+      bindingJson: null,
+      createdAt: "2026-05-26T00:00:00.000Z",
+      updatedAt: "2026-05-26T00:00:00.000Z",
+      revokedAt: null
+    };
+    const upserts: unknown[] = [];
+
+    const response = await handleToolGatewayRequest(
+      config,
+      createStore(null, runtime, [], route, [], { upserts }),
+      "scheduledJob.registerCapability",
+      request(
+        "scheduledJob.registerCapability",
+        {
+          input: {
+            jobId: "public-news-dedupe",
+            requiredTools: ["conversation.sendMessage"],
+            destination: "#eng",
+            maxOutputVisibility: "public"
+          }
+        },
+        "runtime-token-u123",
+        "rt_u123"
+      ),
+      {
+        resolveSlackChannelIdByName: async () => "C123"
+      }
+    );
+
+    expect(response.status).toBe(403);
+    expect(await response.text()).toContain(
+      "Destination grant requires public scheduled output visibility"
+    );
+    expect(upserts).toEqual([]);
+  });
 
   test("resolves a scheduled job destination channel name to an existing grant", async () => {
     const route: ConversationRouteRecord = {
@@ -4211,7 +4255,7 @@ describe("handleToolGatewayRequest", () => {
     ]);
   });
 
-  test("uses a single matching scheduled capability for legacy route-only destination grant delivery", async () => {
+  test("does not infer scheduled public visibility for route-only destination grant delivery", async () => {
     const route: ConversationRouteRecord = {
       id: "convrt_1234567890abcdef12345678",
       workspaceId: "T123",
@@ -4249,8 +4293,6 @@ describe("handleToolGatewayRequest", () => {
       createdAt: "2026-06-01T00:00:00.000Z",
       updatedAt: "2026-06-01T00:00:00.000Z"
     };
-    const posts: unknown[] = [];
-
     const response = await handleToolGatewayRequest(
       config,
       createStore(null, runtime, [], route, [], { list: [jobCapability] }),
@@ -4267,25 +4309,16 @@ describe("handleToolGatewayRequest", () => {
         "rt_u123"
       ),
       {
-        postActiveConversationMessage: async (input) => {
-          posts.push(input);
-          return {
-            transport: "slack",
-            channelId: input.channelId,
-            messageId: "1710000000.000100"
-          };
+        postActiveConversationMessage: async () => {
+          throw new Error("route-only scheduled grant delivery should not be posted");
         }
       }
     );
 
-    expect(response.status).toBe(200);
-    expect(await response.json()).toMatchObject({
-      content: {
-        ok: true,
-        conversationId: "CENG"
-      }
-    });
-    expect(posts).toHaveLength(1);
+    expect(response.status).toBe(403);
+    expect(await response.text()).toContain(
+      "Destination grant requires public scheduled output visibility"
+    );
   });
 
   test("does not infer scheduled capability for ambiguous route-only destination grant delivery", async () => {

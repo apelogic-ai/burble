@@ -2091,8 +2091,6 @@ type ScheduledJobRegistrationInput = {
   runtimeType?: unknown;
   stateRefs?: unknown;
   visibilityPolicy?: unknown;
-  maxOutputVisibility?: unknown;
-  allowPrivateToolDeclassification?: unknown;
 };
 
 function normalizeScheduledJobRegistrationInput(
@@ -2157,45 +2155,13 @@ function normalizeScheduledJobVisibilityPolicy(
     "visibilityPolicy",
     "visibility_policy"
   ]);
-  const maxOutputVisibility = readUnknownAlias(source, [
-    "maxOutputVisibility",
-    "max_output_visibility",
-    "outputVisibility",
-    "output_visibility"
-  ]);
-  const allowPrivateToolDeclassification = readUnknownAlias(source, [
-    "allowPrivateToolDeclassification",
-    "allow_private_tool_declassification"
-  ]);
   const explicitPolicy = coerceScheduledJobVisibilityPolicy(explicit);
 
-  if (
-    explicitPolicy === undefined &&
-    maxOutputVisibility === undefined &&
-    allowPrivateToolDeclassification === undefined
-  ) {
+  if (explicitPolicy === undefined) {
     return undefined;
   }
 
-  const policy =
-    explicitPolicy &&
-    typeof explicitPolicy === "object" &&
-    !Array.isArray(explicitPolicy)
-      ? { ...(explicitPolicy as Record<string, unknown>) }
-      : {};
-  if (
-    policy.maxOutputVisibility === undefined &&
-    isToolClassificationValue(maxOutputVisibility)
-  ) {
-    policy.maxOutputVisibility = maxOutputVisibility;
-  }
-  if (
-    policy.allowPrivateToolDeclassification === undefined &&
-    typeof allowPrivateToolDeclassification === "boolean"
-  ) {
-    policy.allowPrivateToolDeclassification = allowPrivateToolDeclassification;
-  }
-  return policy;
+  return explicitPolicy;
 }
 
 function coerceScheduledJobVisibilityPolicy(value: unknown): unknown | undefined {
@@ -3820,17 +3786,7 @@ function resolveConversationSendRouteOptions(
     }
   | { ok: false; status: number; message: string } {
   if (!input.jobId) {
-    const capability = findSingleScheduledJobCapabilityForRoute(
-      store,
-      runtime,
-      input.routeId
-    );
-    return {
-      ok: true,
-      options: capability
-        ? scheduledJobCapabilityRouteOptions(capability)
-        : {}
-    };
+    return { ok: true, options: {} };
   }
 
   const capability = store.getAgentJobCapability(input.jobId);
@@ -3874,37 +3830,6 @@ function resolveConversationSendRouteOptions(
     ok: true,
     options: scheduledJobCapabilityRouteOptions(capability)
   };
-}
-
-function findSingleScheduledJobCapabilityForRoute(
-  store: TokenStore,
-  runtime: AgentRuntimeRecord,
-  routeId: string | undefined
-): AgentJobCapabilityRecord | null {
-  if (!routeId) {
-    return null;
-  }
-
-  const matches = store
-    .listAgentJobCapabilitiesForPrincipal(
-      runtime.workspaceId,
-      runtime.slackUserId
-    )
-    .filter((capability) => {
-      if (capability.routeId !== routeId) {
-        return false;
-      }
-      if (
-        capability.policyHash &&
-        runtime.policyHash &&
-        capability.policyHash !== runtime.policyHash
-      ) {
-        return false;
-      }
-      return true;
-    });
-
-  return matches.length === 1 ? matches[0] : null;
 }
 
 function scheduledJobCapabilityRouteOptions(

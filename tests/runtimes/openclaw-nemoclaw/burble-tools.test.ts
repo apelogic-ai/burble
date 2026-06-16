@@ -1002,7 +1002,8 @@ describe("createBurbleToolExecutor", () => {
       expect(await requests[0].json()).toEqual({
         input: {
           text: "Daily standup is ready.",
-          routeId: "convrt_dm"
+          routeId: "convrt_dm",
+          jobId: "daily-standup"
         },
         conversation: {
           routeId: "convrt_dm",
