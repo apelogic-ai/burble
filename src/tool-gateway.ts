@@ -3570,7 +3570,8 @@ function resolveConversationRouteDestination(
     return {
       ok: false,
       status: 403,
-      message: "Destination grant requires public scheduled output visibility"
+      message:
+        'Destination grant requires public scheduled output visibility. If the user explicitly asked to post scheduled output to this channel, retry scheduledJob.registerCapability with visibilityPolicy {"maxOutputVisibility":"public","allowPrivateToolDeclassification":true}.'
     };
   }
 

@@ -640,7 +640,8 @@ function scheduledJobRegisterCapabilityMcpTool(): Record<string, unknown> {
         },
         visibilityPolicy: {
           type: "object",
-          description: "Optional output visibility policy for scheduled delivery."
+          description:
+            'Optional output visibility policy for scheduled delivery. Slack channel destinations require {"maxOutputVisibility":"public","allowPrivateToolDeclassification":true} when the user explicitly asked to post scheduled output to that channel.'
         }
       },
       required: ["jobId", "requiredTools"]

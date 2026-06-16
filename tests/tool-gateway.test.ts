@@ -1559,8 +1559,12 @@ describe("handleToolGatewayRequest", () => {
     );
 
     expect(response.status).toBe(403);
-    expect(await response.text()).toContain(
+    const text = await response.text();
+    expect(text).toContain(
       "Destination grant requires public scheduled output visibility"
+    );
+    expect(text).toContain(
+      '"maxOutputVisibility":"public"'
     );
   });
 

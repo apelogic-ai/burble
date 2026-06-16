@@ -1361,6 +1361,9 @@ describe("handleRuntimeRequest", () => {
     expect(tool.inputSchema.properties.destination.description).toContain(
       "Pass named Slack channels here"
     );
+    expect(tool.inputSchema.properties.visibilityPolicy.description).toContain(
+      '"maxOutputVisibility":"public"'
+    );
     expect(tool.inputSchema.properties.stateRefs.description).toContain(
       "objects, never strings"
     );

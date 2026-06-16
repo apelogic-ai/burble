@@ -1771,7 +1771,7 @@ async function buildToolCatalog(
         stateRefs:
           'optional array of durable provider-backed state reference objects, never strings; each entry must include provider and kind strings, for example {"provider":"google","kind":"drive_file","id":"<fileId>","purpose":"dedupe_state"}',
         visibilityPolicy:
-          "optional output visibility policy for scheduled delivery"
+          'optional output visibility policy for scheduled delivery; Slack channel destinations require {"maxOutputVisibility":"public","allowPrivateToolDeclassification":true} when the user explicitly asked to post scheduled output to that channel'
       }
     });
     if (selectedRuntimeToolGroups(request)?.has("scheduler")) {
@@ -3011,6 +3011,7 @@ function formatScheduledProviderCapabilityInstruction(
     `If a native cron/background job will use Burble provider tools such as GitHub, Jira, Google, or Slack search, first call scheduledJob.registerCapability with routeId "${routeId}", requiredTools set to the exact Burble provider tool names the job will use, and stateRefs for any durable state files it should read or update.`,
     'A Slack channel label, Slack mention, Slack channel id, or guessed convrt_* value is not a delivery route. Never set native delivery.to to values like "#eng", "<#C123|eng>", "C123", "G123", or "convrt_<guess>".',
     'If the user explicitly asks scheduled output to post to a granted Slack channel, pass destination with the channel mention/name/id (for example "#eng" or "<#C123|eng>") to scheduledJob.registerCapability instead of inventing or copying a routeId. Burble resolves destination only when that user has already authorized the channel with /agent grant here.',
+    'Because Slack channel delivery is public to that channel, include visibilityPolicy {"maxOutputVisibility":"public","allowPrivateToolDeclassification":true} only when the user explicitly asked scheduled output to post there.',
     "After scheduledJob.registerCapability returns ok for a Slack destination, use only the returned scheduledJob.routeId / routeId convrt_* value as native delivery.to. Do not use the original destination label in native delivery.",
     'stateRefs entries must be objects, not compact strings. Each entry must include provider and kind strings, for example {"provider":"google","kind":"drive_file","id":"<fileId>","purpose":"dedupe_state"}.',
     "When creating a new provider-backed native job, do not request an immediate/manual run as part of the create call. Create it paused/disabled or without an immediate trigger if the scheduler supports that; otherwise create it, then stop before triggering.",
@@ -3034,7 +3035,7 @@ function formatActiveConversationRouteInstruction(
   return [
     `Active Burble conversation channel route: ${routeId}.`,
     `Native Burble channel delivery is installed. For cron/background jobs whose requested destination is this active conversation, set delivery.mode to "announce", delivery.channel to "burble", and delivery.to to "${routeId}". The scheduled prompt should produce the final Slack-ready message text; Burble resolves the route to the actual transport outside the runtime.`,
-    'If the user names a different Slack destination such as "#eng", "<#C123|eng>", or a channel id, do not use the active conversation route and do not put the Slack label in delivery.to. First call scheduledJob.registerCapability with destination set to that label, then set delivery.to to the returned convrt_* route. If registration does not return ok with a resolved route, do not update, enable, or trigger the job.',
+    'If the user names a different Slack destination such as "#eng", "<#C123|eng>", or a channel id, do not use the active conversation route and do not put the Slack label in delivery.to. First call scheduledJob.registerCapability with destination set to that label and visibilityPolicy {"maxOutputVisibility":"public","allowPrivateToolDeclassification":true}, then set delivery.to to the returned convrt_* route. If registration does not return ok with a resolved route, do not update, enable, or trigger the job.',
     `For an immediate request to send, post, message, or report something here now, do not create a cron job or background job unless the user explicitly asks for a schedule, delay, recurrence, or later delivery. Produce the final Slack-ready message once and stop.`,
     "Do not fetch, POST to, or mention local/private/internal Burble URLs for delivery. Do not create cron jobs that rely on conversation.sendMessage JSON blobs, announce delivery, Slack channel IDs, Slack credentials, or Burble credentials. Burble's channel connector owns route auth and transport delivery outside the OpenClaw process."
   ];

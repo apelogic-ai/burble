@@ -115,7 +115,9 @@ def _provider_alias_schema(alias: str, canonical_name: str) -> dict[str, Any]:
             "description": (
                 "Register the Burble provider tools a native scheduled/background job "
                 "will need before creating, updating, or manually triggering that job. "
-                "Include the returned scheduledPromptInstruction verbatim in the job prompt."
+                "Include the returned scheduledPromptInstruction verbatim in the job prompt. "
+                "For scheduled Slack channel delivery, pass the channel label as destination "
+                "and use the returned convrt_* route for native delivery."
             ),
             "parameters": {
                 "type": "object",
@@ -141,7 +143,8 @@ def _provider_alias_schema(alias: str, canonical_name: str) -> dict[str, Any]:
                         "description": (
                             "Optional Slack destination label for scheduled/background delivery, "
                             "such as #eng, <#C123|eng>, or a channel id. Burble resolves it only "
-                            "when the user has already granted that channel with /agent grant here."
+                            "when the user has already granted that channel with /agent grant here. "
+                            "Pass named Slack channels here instead of using them as route ids."
                         ),
                     },
                     "stateRefs": {
@@ -151,7 +154,12 @@ def _provider_alias_schema(alias: str, canonical_name: str) -> dict[str, Any]:
                     },
                     "visibilityPolicy": {
                         "type": "object",
-                        "description": "Optional output visibility policy for scheduled delivery.",
+                        "description": (
+                            "Optional output visibility policy for scheduled delivery. Slack "
+                            'channel destinations require {"maxOutputVisibility":"public",'
+                            '"allowPrivateToolDeclassification":true} when the user explicitly '
+                            "asked to post scheduled output to that channel."
+                        ),
                         "additionalProperties": True,
                     },
                 },

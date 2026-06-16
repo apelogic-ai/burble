@@ -1761,6 +1761,9 @@ describe("runOpenClawCliRequest", () => {
       "First call scheduledJob.registerCapability with destination set to that label"
     );
     expect(prompts[0]).toContain(
+      'visibilityPolicy {"maxOutputVisibility":"public","allowPrivateToolDeclassification":true}'
+    );
+    expect(prompts[0]).toContain(
       "If registration does not return ok with a resolved route, do not update, enable, or trigger the job"
     );
     expect(prompts[0]).not.toContain(
@@ -4030,6 +4033,9 @@ describe("runOpenClawCliRequest", () => {
     );
     expect(String(requests[0].body.input)).toContain(
       "Do not use the original destination label in native delivery"
+    );
+    expect(String(requests[0].body.input)).toContain(
+      'include visibilityPolicy {"maxOutputVisibility":"public","allowPrivateToolDeclassification":true}'
     );
     expect(String(requests[0].body.input)).toContain("/agent grant here");
     expect(String(requests[0].body.input)).toContain(
