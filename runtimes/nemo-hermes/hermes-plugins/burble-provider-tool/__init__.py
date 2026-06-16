@@ -83,9 +83,13 @@ TOOL_NAME_ALIASES = {
     "conversation_get_attachment": "conversation.getAttachment",
 }
 
-PROVIDER_BRIDGE_TOOLSETS = ["cronjob", "web"]
-PROVIDER_ALIAS_TOOLSETS = ["cronjob"]
-WEB_TOOLSET_BRIDGE_TOOLS = ["burble_provider_call"]
+PROVIDER_BRIDGE_TOOLSETS = ["burble", "cronjob", "web"]
+PROVIDER_ALIAS_TOOLSETS = ["burble", "cronjob"]
+TOOLSET_BRIDGE_TOOLS = {
+    "burble": ["burble_provider_call"],
+    "cronjob": ["burble_provider_call"],
+    "web": ["burble_provider_call"],
+}
 BRIDGE_TOOL_NAMES = {"burble_provider_call", "burble.providerCall"}
 
 
@@ -135,6 +139,26 @@ def _provider_alias_schema(alias: str, canonical_name: str) -> dict[str, Any]:
                             "for example google_get_drive_file and google_append_to_drive_text_file."
                         ),
                     },
+                    "allowedTools": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Alias for requiredTools.",
+                    },
+                    "required_tools": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Alias for requiredTools.",
+                    },
+                    "allowed_tools": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Alias for requiredTools.",
+                    },
+                    "tools": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Alias for requiredTools.",
+                    },
                     "routeId": {
                         "type": "string",
                         "description": "Optional durable Burble route id for scheduled/background delivery.",
@@ -182,7 +206,7 @@ def _provider_alias_schema(alias: str, canonical_name: str) -> dict[str, Any]:
                         "additionalProperties": False,
                     },
                 },
-                "required": ["jobId", "requiredTools"],
+                "required": ["jobId"],
                 "additionalProperties": True,
             },
         }
@@ -305,24 +329,25 @@ def _make_provider_alias_handler(canonical_name: str):
     return _provider_alias_call
 
 
-def _pin_provider_bridge_to_web_toolset() -> None:
+def _pin_provider_bridge_to_toolsets() -> None:
     try:
         import toolsets
 
-        web_toolset = toolsets.TOOLSETS.setdefault(
-            "web",
-            {
-                "description": "Web research and content extraction tools",
-                "tools": [],
-                "includes": [],
-            },
-        )
-        tools = web_toolset.setdefault("tools", [])
-        if not isinstance(tools, list):
-            return
-        for tool_name in WEB_TOOLSET_BRIDGE_TOOLS:
-            if tool_name not in tools:
-                tools.append(tool_name)
+        for toolset_name, bridge_tools in TOOLSET_BRIDGE_TOOLS.items():
+            entry = toolsets.TOOLSETS.setdefault(
+                toolset_name,
+                {
+                    "description": f"{toolset_name} tools",
+                    "tools": [],
+                    "includes": [],
+                },
+            )
+            tools = entry.setdefault("tools", [])
+            if not isinstance(tools, list):
+                continue
+            for tool_name in bridge_tools:
+                if tool_name not in tools:
+                    tools.append(tool_name)
     except Exception as error:
         print(
             f"[WARN] Burble provider bridge web toolset install failed: {error}",
@@ -331,7 +356,7 @@ def _pin_provider_bridge_to_web_toolset() -> None:
 
 
 def register(ctx) -> None:
-    _pin_provider_bridge_to_web_toolset()
+    _pin_provider_bridge_to_toolsets()
     for toolset in PROVIDER_BRIDGE_TOOLSETS:
         ctx.register_tool(
             name="burble_provider_call",

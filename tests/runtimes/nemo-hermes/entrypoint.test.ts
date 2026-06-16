@@ -829,6 +829,9 @@ print(json.dumps({"text": mod.build_hermes_turn_text(payload)}))
       'visibilityPolicy {"maxOutputVisibility":"public"}'
     );
     expect(text).toContain("Slack channel labels are not route ids");
+    expect(text).toContain("use the Burble platform delivery target");
+    expect(text).toContain("burble:<returned routeId>");
+    expect(text).toContain("Never use slack:<channelId>");
     expect(text).toContain(
       "do not register a Slack channel destination"
     );
@@ -1328,6 +1331,13 @@ print(json.dumps(ctx.tools))
     expect(result).toContainEqual(
       expect.objectContaining({
         name: "burble_provider_call",
+        toolset: "burble",
+        is_async: true
+      })
+    );
+    expect(result).toContainEqual(
+      expect.objectContaining({
+        name: "burble_provider_call",
         toolset: "cronjob",
         is_async: true
       })
@@ -1427,11 +1437,16 @@ print(json.dumps(ctx.tools))
       (tool: { name?: string }) => tool.name === "scheduled_job_register_capability"
     );
     expect(registrationTool?.schema?.parameters?.required).toEqual([
-      "jobId",
-      "requiredTools"
+      "jobId"
     ]);
     expect(
       registrationTool?.schema?.parameters?.properties?.requiredTools?.items
+    ).toEqual({ type: "string" });
+    expect(
+      registrationTool?.schema?.parameters?.properties?.allowedTools?.items
+    ).toEqual({ type: "string" });
+    expect(
+      registrationTool?.schema?.parameters?.properties?.tools?.items
     ).toEqual({ type: "string" });
   });
 
@@ -1634,5 +1649,74 @@ print(json.dumps(toolsets.TOOLSETS["web"]["tools"]))
     expect(result).not.toContain("google_get_drive_file");
     expect(result).not.toContain("google_append_to_drive_text_file");
     expect(result).not.toContain("scheduled_job_register_capability");
+  });
+
+  test("Hermes web extract falls back locally when upstream safety helper is unavailable", () => {
+    const result = runHermesEntrypointProbe(String.raw`
+import importlib.util
+import json
+import os
+import sys
+import types
+import asyncio
+
+for key in ("FIRECRAWL_API_KEY", "FIRECRAWL_API_URL", "TAVILY_API_KEY", "EXA_API_KEY", "PARALLEL_API_KEY"):
+    os.environ.pop(key, None)
+
+tools = types.ModuleType("tools")
+web_tools = types.ModuleType("tools.web_tools")
+web_tools.WEB_EXTRACT_SCHEMA = {"description": "extract"}
+sys.modules["tools"] = tools
+sys.modules["tools.web_tools"] = web_tools
+
+class FakeResponse:
+    status = 200
+    url = "https://example.com/news"
+    async def __aenter__(self):
+        return self
+    async def __aexit__(self, *_args):
+        return None
+    async def text(self, errors=None):
+        return "<html><title>AI News</title><body><article><h1>Hello</h1><p>Public update</p></article></body></html>"
+
+class FakeSession:
+    def __init__(self, *args, **kwargs):
+        pass
+    async def __aenter__(self):
+        return self
+    async def __aexit__(self, *_args):
+        return None
+    def get(self, url, **kwargs):
+        return FakeResponse()
+
+aiohttp = types.ModuleType("aiohttp")
+aiohttp.ClientSession = FakeSession
+aiohttp.ClientTimeout = lambda **_kwargs: None
+sys.modules["aiohttp"] = aiohttp
+
+spec = importlib.util.spec_from_file_location(
+    "burble_web_extract",
+    "runtimes/nemo-hermes/hermes-plugins/burble-web-extract/__init__.py",
+)
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+
+async def main():
+    value = await mod._local_web_extract({"urls": ["https://example.com/news"]})
+    print(json.dumps(json.loads(value)))
+
+asyncio.run(main())
+`);
+
+    expect(result).toEqual({
+      results: [
+        expect.objectContaining({
+          url: "https://example.com/news",
+          title: "AI News",
+          content: expect.stringContaining("Public update"),
+          error: null
+        })
+      ]
+    });
   });
 });
