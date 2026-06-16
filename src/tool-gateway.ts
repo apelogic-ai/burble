@@ -595,17 +595,18 @@ export async function handleToolGatewayRequest(
     if (routeIdValidationError) {
       return new Response(routeIdValidationError, { status: 400 });
     }
-    const resolvedRouteId = input.routeId
-      ? input.routeId.trim()
-      : input.destination
-        ? await resolveScheduledJobDestinationRouteId({
+    const resolvedDestinationRoute = input.destination
+      ? await resolveScheduledJobDestinationRoute({
             config,
             store,
             runtime: auth.runtime,
             destination: input.destination,
             resolveSlackChannelIdByName: deps.resolveSlackChannelIdByName
           })
-        : null;
+      : null;
+    let resolvedRouteId = input.routeId
+      ? input.routeId.trim()
+      : resolvedDestinationRoute?.id ?? null;
     if (input.destination && !resolvedRouteId) {
       return new Response("Destination grant not found", { status: 404 });
     }
@@ -633,6 +634,21 @@ export async function handleToolGatewayRequest(
           destinationGrantPrivateReadSourceMessage(),
           { status: 403 }
         );
+      }
+      if (input.destination && destination.routeKind === "grant" && destination.route) {
+        resolvedRouteId = store.upsertConversationRoute({
+          workspaceId: auth.runtime.workspaceId,
+          slackUserId: auth.runtime.slackUserId,
+          transport: destination.route.transport,
+          destination: readConversationRouteDestinationRecord(destination.route),
+          kind: "grant",
+          grantedBySlackUserId: destination.route.grantedBySlackUserId ?? null,
+          expiresAt: destination.route.expiresAt ?? null,
+          binding: {
+            jobId: input.jobId,
+            runtimeId: auth.runtime.id
+          }
+        }).id;
       }
     }
     const record = store.upsertAgentJobCapability({
@@ -3671,7 +3687,7 @@ function resolveConversationRouteDestination(
   };
 }
 
-async function resolveScheduledJobDestinationRouteId(input: {
+async function resolveScheduledJobDestinationRoute(input: {
   config: Config;
   store: TokenStore;
   runtime: AgentRuntimeRecord;
@@ -3680,9 +3696,9 @@ async function resolveScheduledJobDestinationRouteId(input: {
     workspaceId: string;
     channelName: string;
   }) => Promise<string | null>;
-}): Promise<string | null> {
+}): Promise<ConversationRouteRecord | null> {
   if ("routeId" in input.destination) {
-    return input.destination.routeId.trim();
+    return input.store.getConversationRoute(input.destination.routeId.trim());
   }
 
   const channelId =
@@ -3702,7 +3718,7 @@ async function resolveScheduledJobDestinationRouteId(input: {
     slackUserId: input.runtime.slackUserId,
     channelId
   });
-  return route?.id ?? null;
+  return route ?? null;
 }
 
 async function defaultResolveSlackChannelIdByName(
@@ -3786,9 +3802,73 @@ function resolveConversationSendRouteOptions(
     }
   | { ok: false; status: number; message: string } {
   if (!input.jobId) {
+    const boundRouteOptions = resolveBoundConversationRouteSendOptions(
+      store,
+      runtime,
+      input.routeId
+    );
+    if (boundRouteOptions) {
+      return boundRouteOptions;
+    }
     return { ok: true, options: {} };
   }
 
+  return resolveScheduledJobCapabilitySendOptions(store, runtime, {
+    jobId: input.jobId,
+    routeId: input.routeId
+  });
+}
+
+function resolveBoundConversationRouteSendOptions(
+  store: TokenStore,
+  runtime: AgentRuntimeRecord,
+  routeId: string | undefined
+):
+  | {
+      ok: true;
+      options: {
+        jobId?: string;
+        maxOutputVisibility?: ToolClassification;
+        usesPrivateReadSourceTools?: boolean;
+      };
+    }
+  | { ok: false; status: number; message: string }
+  | null {
+  if (!routeId) {
+    return null;
+  }
+  const route = store.getConversationRoute(routeId);
+  const binding = readConversationRouteBinding(route?.bindingJson);
+  if (!binding?.jobId) {
+    return null;
+  }
+  if (binding.runtimeId && binding.runtimeId !== runtime.id) {
+    return {
+      ok: false,
+      status: 403,
+      message: "Conversation route runtime mismatch"
+    };
+  }
+  return resolveScheduledJobCapabilitySendOptions(store, runtime, {
+    jobId: binding.jobId,
+    routeId
+  });
+}
+
+function resolveScheduledJobCapabilitySendOptions(
+  store: TokenStore,
+  runtime: AgentRuntimeRecord,
+  input: { routeId?: string; jobId: string }
+):
+  | {
+      ok: true;
+      options: {
+        jobId?: string;
+        maxOutputVisibility?: ToolClassification;
+        usesPrivateReadSourceTools?: boolean;
+      };
+    }
+  | { ok: false; status: number; message: string } {
   const capability = store.getAgentJobCapability(input.jobId);
   if (!capability) {
     return {
@@ -3931,6 +4011,36 @@ function readSlackRouteDestination(
   } catch {
     return null;
   }
+}
+
+function readConversationRouteDestinationRecord(
+  route: ConversationRouteRecord
+): Record<string, unknown> {
+  try {
+    const parsed = JSON.parse(route.destinationJson) as unknown;
+    if (
+      typeof parsed === "object" &&
+      parsed !== null &&
+      !Array.isArray(parsed)
+    ) {
+      return parsed as Record<string, unknown>;
+    }
+  } catch {
+    // Fall through to a minimal Slack route destination from the validated route.
+  }
+  const destination = readSlackRouteDestination(route.destinationJson);
+  if (!destination) {
+    return {};
+  }
+  return {
+    channelId: destination.channelId,
+    isDirectMessage: destination.isDirectMessage,
+    rootId: destination.isDirectMessage
+      ? `dm:${destination.channelId}`
+      : `channel:${destination.channelId}`,
+    ...(destination.threadTs ? { threadTs: destination.threadTs } : {}),
+    ...(destination.runtimeId ? { runtimeId: destination.runtimeId } : {})
+  };
 }
 
 function readConversationRouteBinding(

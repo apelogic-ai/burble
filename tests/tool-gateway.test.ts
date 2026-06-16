@@ -141,7 +141,8 @@ function createStore(
     list?: AgentJobCapabilityRecord[];
     upserts?: unknown[];
   } = {},
-  routeRevocations: unknown[] = []
+  routeRevocations: unknown[] = [],
+  routeUpserts: unknown[] | null = null
 ): TokenStore {
   let route = foundRoute;
   return {
@@ -170,8 +171,26 @@ function createStore(
       runtimeEvents.push(event);
     },
     listAgentRuntimeEvents: () => runtimeEvents as never,
-    upsertConversationRoute: () => {
-      throw new Error("unexpected conversation route write");
+    upsertConversationRoute: (input) => {
+      if (!routeUpserts) {
+        throw new Error("unexpected conversation route write");
+      }
+      routeUpserts.push(input);
+      route = {
+        id: "convrt_aaaaaaaaaaaaaaaaaaaaaaaa",
+        workspaceId: input.workspaceId,
+        slackUserId: input.slackUserId,
+        transport: input.transport,
+        destinationJson: JSON.stringify(input.destination),
+        kind: input.kind ?? "origin",
+        grantedBySlackUserId: input.grantedBySlackUserId ?? null,
+        expiresAt: input.expiresAt ?? null,
+        bindingJson: input.binding ? JSON.stringify(input.binding) : null,
+        createdAt: "2026-06-01T00:00:00.000Z",
+        updatedAt: "2026-06-01T00:00:00.000Z",
+        revokedAt: null
+      };
+      return route;
     },
     getConversationRoute: (id) => (id === route?.id ? route : null),
     getConversationGrantRouteForSlackChannel: (input) => {
@@ -1524,6 +1543,98 @@ describe("handleToolGatewayRequest", () => {
     expect(body.content.scheduledPromptInstruction).not.toContain("Hermes");
   });
 
+  test("binds channel destination routes to the scheduled job during registration", async () => {
+    const route: ConversationRouteRecord = {
+      id: "convrt_1234567890abcdef12345678",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      transport: "slack",
+      destinationJson: JSON.stringify({
+        channelId: "C123",
+        isDirectMessage: false,
+        rootId: "channel:C123"
+      }),
+      kind: "grant",
+      grantedBySlackUserId: "U123",
+      expiresAt: null,
+      bindingJson: null,
+      createdAt: "2026-05-26T00:00:00.000Z",
+      updatedAt: "2026-05-26T00:00:00.000Z",
+      revokedAt: null
+    };
+    const upserts: unknown[] = [];
+    const routeUpserts: unknown[] = [];
+
+    const response = await handleToolGatewayRequest(
+      config,
+      createStore(null, runtime, [], route, [], { upserts }, [], routeUpserts),
+      "scheduledJob.registerCapability",
+      request(
+        "scheduledJob.registerCapability",
+        {
+          input: {
+            jobId: "ai-news-public-safe-15m",
+            requiredTools: ["web.search"],
+            destination: {
+              channelName: "#burble-test"
+            },
+            visibilityPolicy: {
+              maxOutputVisibility: "public"
+            }
+          }
+        },
+        "runtime-token-u123",
+        "rt_u123"
+      ),
+      {
+        resolveSlackChannelIdByName: async (input) => {
+          expect(input).toEqual({
+            workspaceId: "T123",
+            channelName: "burble-test"
+          });
+          return "C123";
+        }
+      }
+    );
+
+    expect(response.status).toBe(200);
+    expect(routeUpserts).toEqual([
+      expect.objectContaining({
+        workspaceId: "T123",
+        slackUserId: "U123",
+        transport: "slack",
+        kind: "grant",
+        grantedBySlackUserId: "U123",
+        destination: {
+          channelId: "C123",
+          isDirectMessage: false,
+          rootId: "channel:C123"
+        },
+        binding: {
+          jobId: "ai-news-public-safe-15m",
+          runtimeId: "rt_u123"
+        }
+      })
+    ]);
+    expect(upserts).toEqual([
+      expect.objectContaining({
+        jobId: "ai-news-public-safe-15m",
+        routeId: "convrt_aaaaaaaaaaaaaaaaaaaaaaaa",
+        visibilityPolicy: {
+          maxOutputVisibility: "public"
+        }
+      })
+    ]);
+    const body = await response.json();
+    expect(body.content.scheduledJob).toMatchObject({
+      jobId: "ai-news-public-safe-15m",
+      routeId: "convrt_aaaaaaaaaaaaaaaaaaaaaaaa"
+    });
+    expect(body.content.scheduledPromptInstruction).toContain(
+      'For scheduled/background delivery, use the resolved Burble conversation route id "convrt_aaaaaaaaaaaaaaaaaaaaaaaa".'
+    );
+  });
+
   test("rejects channel destination grants for non-public scheduled output", async () => {
     const route: ConversationRouteRecord = {
       id: "convrt_1234567890abcdef12345678",
@@ -1595,10 +1706,11 @@ describe("handleToolGatewayRequest", () => {
       revokedAt: null
     };
     const upserts: unknown[] = [];
+    const routeUpserts: unknown[] = [];
 
     const response = await handleToolGatewayRequest(
       config,
-      createStore(null, runtime, [], route, [], { upserts }),
+      createStore(null, runtime, [], route, [], { upserts }, [], routeUpserts),
       "scheduledJob.registerCapability",
       request(
         "scheduledJob.registerCapability",
@@ -1647,10 +1759,11 @@ describe("handleToolGatewayRequest", () => {
       revokedAt: null
     };
     const upserts: unknown[] = [];
+    const routeUpserts: unknown[] = [];
 
     const response = await handleToolGatewayRequest(
       config,
-      createStore(null, runtime, [], route, [], { upserts }),
+      createStore(null, runtime, [], route, [], { upserts }, [], routeUpserts),
       "scheduledJob.registerCapability",
       request(
         "scheduledJob.registerCapability",
@@ -1680,7 +1793,7 @@ describe("handleToolGatewayRequest", () => {
       content: {
         ok: true,
         scheduledJob: {
-          routeId: "convrt_1234567890abcdef12345678"
+          routeId: "convrt_aaaaaaaaaaaaaaaaaaaaaaaa"
         }
       }
     });
@@ -1691,7 +1804,7 @@ describe("handleToolGatewayRequest", () => {
           "conversation.sendMessage",
           "google_append_to_drive_text_file"
         ],
-        routeId: "convrt_1234567890abcdef12345678",
+        routeId: "convrt_aaaaaaaaaaaaaaaaaaaaaaaa",
         visibilityPolicy: {
           maxOutputVisibility: "public"
         }
@@ -1727,10 +1840,11 @@ describe("handleToolGatewayRequest", () => {
         revokedAt: null
       };
       const upserts: unknown[] = [];
+      const routeUpserts: unknown[] = [];
 
       const response = await handleToolGatewayRequest(
         config,
-        createStore(null, runtime, [], route, [], { upserts }),
+        createStore(null, runtime, [], route, [], { upserts }, [], routeUpserts),
         "scheduledJob.registerCapability",
         request(
           "scheduledJob.registerCapability",
@@ -1757,7 +1871,7 @@ describe("handleToolGatewayRequest", () => {
       expect(upserts).toEqual([
         expect.objectContaining({
           jobId: "public-news-dedupe",
-          routeId: "convrt_1234567890abcdef12345678",
+          routeId: "convrt_aaaaaaaaaaaaaaaaaaaaaaaa",
           visibilityPolicy: {
             maxOutputVisibility: "public"
           }
@@ -1836,9 +1950,10 @@ describe("handleToolGatewayRequest", () => {
       revokedAt: null
     };
     const upserts: unknown[] = [];
+    const routeUpserts: unknown[] = [];
     const response = await handleToolGatewayRequest(
       config,
-      createStore(null, runtime, [], route, [], { upserts }),
+      createStore(null, runtime, [], route, [], { upserts }, [], routeUpserts),
       "scheduledJob.registerCapability",
       request(
         "scheduledJob.registerCapability",
@@ -1870,16 +1985,16 @@ describe("handleToolGatewayRequest", () => {
     expect(upserts).toEqual([
       expect.objectContaining({
         jobId: "daily-standup",
-        routeId: "convrt_1234567890abcdef12345678"
+        routeId: "convrt_aaaaaaaaaaaaaaaaaaaaaaaa"
       })
     ]);
     const body = await response.json();
     expect(body.content.scheduledJob).toMatchObject({
       jobId: "daily-standup",
-      routeId: "convrt_1234567890abcdef12345678"
+      routeId: "convrt_aaaaaaaaaaaaaaaaaaaaaaaa"
     });
     expect(body.content.scheduledPromptInstruction).toContain(
-      'For scheduled/background delivery, use the resolved Burble conversation route id "convrt_1234567890abcdef12345678".'
+      'For scheduled/background delivery, use the resolved Burble conversation route id "convrt_aaaaaaaaaaaaaaaaaaaaaaaa".'
     );
     expect(body.content.scheduledPromptInstruction).toContain(
       "Do not use Slack channel names, Slack mentions, channel ids, or the original destination label as a delivery route."
@@ -1906,9 +2021,10 @@ describe("handleToolGatewayRequest", () => {
       revokedAt: null
     };
     const upserts: unknown[] = [];
+    const routeUpserts: unknown[] = [];
     const response = await handleToolGatewayRequest(
       config,
-      createStore(null, runtime, [], route, [], { upserts }),
+      createStore(null, runtime, [], route, [], { upserts }, [], routeUpserts),
       "scheduledJob.registerCapability",
       request(
         "scheduledJob.registerCapability",
@@ -2074,9 +2190,10 @@ describe("handleToolGatewayRequest", () => {
       revokedAt: null
     };
     const upserts: unknown[] = [];
+    const routeUpserts: unknown[] = [];
     const response = await handleToolGatewayRequest(
       config,
-      createStore(null, runtime, [], route, [], { upserts }),
+      createStore(null, runtime, [], route, [], { upserts }, [], routeUpserts),
       "scheduledJob.registerCapability",
       request(
         "scheduledJob.registerCapability",
@@ -2107,7 +2224,7 @@ describe("handleToolGatewayRequest", () => {
     expect(response.status).toBe(200);
     expect(upserts).toEqual([
       expect.objectContaining({
-        routeId: "convrt_1234567890abcdef12345678"
+        routeId: "convrt_aaaaaaaaaaaaaaaaaaaaaaaa"
       })
     ]);
   });
@@ -2132,9 +2249,10 @@ describe("handleToolGatewayRequest", () => {
       revokedAt: null
     };
     const upserts: unknown[] = [];
+    const routeUpserts: unknown[] = [];
     const response = await handleToolGatewayRequest(
       config,
-      createStore(null, runtime, [], route, [], { upserts }),
+      createStore(null, runtime, [], route, [], { upserts }, [], routeUpserts),
       "scheduledJob.registerCapability",
       request(
         "scheduledJob.registerCapability",
@@ -2161,7 +2279,7 @@ describe("handleToolGatewayRequest", () => {
     expect(response.status).toBe(200);
     expect(upserts).toEqual([
       expect.objectContaining({
-        routeId: "convrt_1234567890abcdef12345678"
+        routeId: "convrt_aaaaaaaaaaaaaaaaaaaaaaaa"
       })
     ]);
   });
@@ -3213,6 +3331,89 @@ describe("handleToolGatewayRequest", () => {
         transport: "slack",
         conversationId: "CENG",
         routeId: "convrt_1234567890abcdef12345678",
+        messageId: "1779841140.000"
+      }
+    });
+  });
+
+  test("lets a bound public scheduled job route send without an explicit job id", async () => {
+    const route: ConversationRouteRecord = {
+      id: "convrt_aaaaaaaaaaaaaaaaaaaaaaaa",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      transport: "slack",
+      destinationJson: JSON.stringify({
+        channelId: "CENG",
+        isDirectMessage: false,
+        rootId: "channel:CENG"
+      }),
+      kind: "grant",
+      grantedBySlackUserId: "U123",
+      expiresAt: null,
+      bindingJson: JSON.stringify({
+        jobId: "daily-standup",
+        runtimeId: "rt_u123"
+      }),
+      createdAt: "2026-05-26T00:00:00.000Z",
+      updatedAt: "2026-05-26T00:00:00.000Z",
+      revokedAt: null
+    };
+    const jobCapability: AgentJobCapabilityRecord = {
+      jobId: "daily-standup",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      requiredTools: ["conversation.sendMessage"],
+      routeId: "convrt_aaaaaaaaaaaaaaaaaaaaaaaa",
+      policyHash: "policy-hash",
+      capabilityProfile: "scheduled_job",
+      runtimeType: "openclaw",
+      stateRefs: [],
+      visibilityPolicy: {
+        maxOutputVisibility: "public"
+      },
+      createdAt: "2026-06-01T00:00:00.000Z",
+      updatedAt: "2026-06-01T00:00:00.000Z"
+    };
+
+    const response = await handleToolGatewayRequest(
+      config,
+      createStore(null, runtime, [], route, [], { found: jobCapability }),
+      "conversation.sendMessage",
+      request(
+        "conversation.sendMessage",
+        {
+          input: {
+            text: "Daily standup is ready.",
+            routeId: "convrt_aaaaaaaaaaaaaaaaaaaaaaaa"
+          }
+        },
+        "runtime-token-u123",
+        "rt_u123"
+      ),
+      {
+        postActiveConversationMessage: async (input) => {
+          expect(input).toEqual({
+            transport: "slack",
+            channelId: "CENG",
+            text: "Daily standup is ready."
+          });
+          return {
+            transport: "slack",
+            channelId: "CENG",
+            messageId: "1779841140.000"
+          };
+        }
+      }
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      classification: "user_private",
+      content: {
+        ok: true,
+        transport: "slack",
+        conversationId: "CENG",
+        routeId: "convrt_aaaaaaaaaaaaaaaaaaaaaaaa",
         messageId: "1779841140.000"
       }
     });
