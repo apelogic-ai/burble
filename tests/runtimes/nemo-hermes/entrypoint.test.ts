@@ -1567,6 +1567,9 @@ asyncio.run(main())
             input: {
               fileId: "file-123",
               jobId: "job-123"
+            },
+            scheduledJob: {
+              jobId: "job-123"
             }
           },
           headers: {
@@ -1638,6 +1641,9 @@ asyncio.run(main())
             input: {
               fileId: "file-123",
               jobId: "job-123"
+            },
+            scheduledJob: {
+              jobId: "job-123"
             }
           },
           headers: {
@@ -1678,7 +1684,7 @@ asyncio.run(main())
     });
   });
 
-  test("pins Burble provider bridge tool into the Hermes web toolset for cron jobs", () => {
+  test("pins Burble provider bridge tool into Hermes toolsets for cron jobs", () => {
     const result = runHermesEntrypointProbe(`${importProviderToolPlugin}
 toolsets = types.ModuleType("toolsets")
 toolsets.TOOLSETS = {
@@ -1722,7 +1728,7 @@ print(json.dumps({
     expect(result.web).not.toContain("google_append_to_drive_text_file");
     expect(result.web).not.toContain("scheduled_job_register_capability");
     expect(result.pr_monitor).toContain("cron_run");
-    expect(result.pr_monitor).not.toContain("burble_provider_call");
+    expect(result.pr_monitor).toContain("burble_provider_call");
     expect(result.registered).toContainEqual({
       name: "burble_provider_call",
       toolset: "web"
