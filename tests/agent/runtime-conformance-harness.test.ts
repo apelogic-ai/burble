@@ -279,7 +279,14 @@ describe("runtime conformance harness", () => {
               toolName: "burble_provider_call",
               callId: "scheduled-provider-bridge-probe",
               classification: "user_private",
-              content: { ok: true }
+              content: {
+                ok: true,
+                toolName: "runtime.conformance.echo",
+                input: {
+                  jobId: "contract-scheduled-job",
+                  message: "scheduled provider bridge probe"
+                }
+              }
             },
             finalEvent()
           ]);

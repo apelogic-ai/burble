@@ -461,13 +461,14 @@ export const __openClawBurbleToolMappingTestHooks = {
 export async function probeBurbleProviderToolReachability(
   toolName: string,
   request: RunRequest,
-  config: RuntimeConfig
+  config: RuntimeConfig,
+  inputOverride?: Record<string, unknown>
 ): Promise<{ toolName: string; input: Record<string, unknown>; content: unknown }> {
   const tool = findManifestTool(toolName, request);
   if (!tool) {
     throw new Error(`Unsupported Burble MCP tool: ${toolName}`);
   }
-  const input = sampleManifestToolInput(tool);
+  const input = inputOverride ?? sampleManifestToolInput(tool);
   const observed: {
     toolName?: string;
     input?: Record<string, unknown>;

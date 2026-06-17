@@ -228,6 +228,7 @@ async function assertScheduledProviderCapability(
       "runtime claims scheduledProviderCalls but emitted no matching burble_provider_call tool_result"
     );
   }
+  assertScheduledProviderBridgeResult(providerBridgeResult.content);
 }
 
 function assertScheduledProviderBridgeEnvelope(input: unknown): void {
@@ -253,6 +254,33 @@ function assertScheduledProviderBridgeEnvelope(input: unknown): void {
     failCheck(
       "scheduled_provider_calls",
       "runtime emitted burble_provider_call without the trusted scheduled job id"
+    );
+  }
+}
+
+function assertScheduledProviderBridgeResult(content: unknown): void {
+  if (!isRecord(content)) {
+    failCheck(
+      "scheduled_provider_calls",
+      "runtime emitted burble_provider_call result without object content"
+    );
+  }
+  if (content.toolName !== "runtime.conformance.echo") {
+    failCheck(
+      "scheduled_provider_calls",
+      "runtime emitted burble_provider_call result without observed dispatch toolName"
+    );
+  }
+  if (!isRecord(content.input)) {
+    failCheck(
+      "scheduled_provider_calls",
+      "runtime emitted burble_provider_call result without observed dispatch input"
+    );
+  }
+  if (content.input.jobId !== "contract-scheduled-job") {
+    failCheck(
+      "scheduled_provider_calls",
+      "runtime emitted burble_provider_call result without observed scheduled job id"
     );
   }
 }

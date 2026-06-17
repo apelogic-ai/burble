@@ -446,6 +446,7 @@ def normalize_burble_provider_tool_name(name: str) -> str:
 async def probe_hermes_provider_tool_reachability(
     tool: dict[str, Any],
     message: dict[str, Any],
+    input_body: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     module = load_burble_provider_tool_plugin()
     runtime = message.get("runtime")
@@ -454,7 +455,7 @@ async def probe_hermes_provider_tool_reachability(
         if isinstance(runtime, dict)
         else "contract-probe-runtime"
     )
-    input_body = sample_hermes_tool_input(tool)
+    effective_input = input_body if input_body is not None else sample_hermes_tool_input(tool)
     observed: dict[str, Any] = {}
     previous_env = {
         "BURBLE_TOOL_GATEWAY_URL": os.environ.get("BURBLE_TOOL_GATEWAY_URL"),
@@ -473,7 +474,7 @@ async def probe_hermes_provider_tool_reachability(
             observed,
         )
         raw_result = await module._burble_provider_call(
-            {"toolName": tool["alias"], "input": input_body}
+            {"toolName": tool["alias"], "input": effective_input}
         )
         try:
             content = json.loads(raw_result)
@@ -1040,12 +1041,23 @@ class BurbleHermesRuntime:
                             },
                         },
                     })
+                    probed = await probe_hermes_provider_tool_reachability(
+                        {
+                            "alias": "runtime.conformance.echo",
+                            "input": [],
+                        },
+                        message,
+                        {
+                            "jobId": str(scheduled_job.get("jobId") or ""),
+                            "message": "scheduled provider bridge probe",
+                        },
+                    )
                     await waiter.emit({
                         "type": "tool_result",
                         "toolName": "burble_provider_call",
                         "callId": "contract-scheduled-provider-bridge-probe",
                         "classification": "user_private",
-                        "content": {"ok": True},
+                        "content": probed["content"],
                     })
                     response = {
                         "classification": "user_private",

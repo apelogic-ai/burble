@@ -113,12 +113,21 @@ async function* streamRuntimeContractProbe(
         }
       }
     };
+    const probed = await probeBurbleProviderToolReachability(
+      "runtime.conformance.echo",
+      request as RunRequest,
+      config,
+      {
+        jobId: request.input.scheduledJob.jobId,
+        message: "scheduled provider bridge probe"
+      }
+    );
     yield {
       type: "tool_result",
       toolName: "burble_provider_call",
       callId: "contract-scheduled-provider-bridge-probe",
       classification: "user_private",
-      content: { ok: true }
+      content: probed.content
     };
   } else if (request.input.text === "runtime contract tool capability probe") {
     yield {

@@ -278,7 +278,14 @@ describe("handleRuntimeRequest", () => {
           contractProbeRequest({
             runId: "run-contract-scheduled-probe",
             text: "runtime contract scheduled provider capability probe",
-            scheduled: true
+            scheduled: true,
+            tools: [
+              {
+                name: "runtime.conformance.echo",
+                alias: "runtime.conformance.echo",
+                enabled: true
+              }
+            ]
           })
         )
       }),
@@ -358,7 +365,14 @@ describe("handleRuntimeRequest", () => {
       toolName: "burble_provider_call",
       callId: "contract-scheduled-provider-bridge-probe",
       classification: "user_private",
-      content: { ok: true }
+      content: {
+        ok: true,
+        toolName: "runtime.conformance.echo",
+        input: {
+          jobId: "contract-scheduled-job",
+          message: "scheduled provider bridge probe"
+        }
+      }
     });
     expect(readNdjsonEvents(await attachmentResponse.text())).toContainEqual({
       type: "tool_call",
