@@ -65,12 +65,17 @@ export async function runRuntimeContractSmokeTest(input: {
 
   let sawEvent = false;
   let finalEvent: Extract<RuntimeRunEvent, { type: "final" }> | null = null;
+  let errorEvent: Extract<RuntimeRunEvent, { type: "error" }> | null = null;
   let usage: RuntimeUsage | null = null;
   for await (const rawEvent of input.client.streamRunEvents(start.runId)) {
     sawEvent = true;
     const event = parseRuntimeRunEvent(rawEvent);
     if (event.type === "usage") {
       usage = event.usage;
+    }
+    if (event.type === "error") {
+      errorEvent = event;
+      break;
     }
     if (event.type === "final") {
       finalEvent = event;
@@ -85,7 +90,12 @@ export async function runRuntimeContractSmokeTest(input: {
   checks.push({ name: "events_stream", status: "ok" });
 
   if (!finalEvent) {
-    failCheck("final_response", "runtime did not emit a final event");
+    failCheck(
+      "final_response",
+      errorEvent
+        ? runtimeErrorEventDetail(errorEvent)
+        : "runtime did not emit a final event"
+    );
   }
   checks.push({ name: "final_response", status: "ok" });
 
@@ -407,17 +417,33 @@ async function runProbe(
     failCheck("run_accepted", "runtime did not return a run id");
   }
   const events: RuntimeRunEvent[] = [];
+  let errorEvent: Extract<RuntimeRunEvent, { type: "error" }> | null = null;
   for await (const rawEvent of client.streamRunEvents(start.runId)) {
     const event = parseRuntimeRunEvent(rawEvent);
     events.push(event);
+    if (event.type === "error") {
+      errorEvent = event;
+      break;
+    }
     if (event.type === "final") {
       break;
     }
   }
   if (!events.some((event) => event.type === "final")) {
-    failCheck("final_response", "runtime did not emit a final event");
+    failCheck(
+      "final_response",
+      errorEvent
+        ? runtimeErrorEventDetail(errorEvent)
+        : "runtime did not emit a final event"
+    );
   }
   return events;
+}
+
+function runtimeErrorEventDetail(
+  event: Extract<RuntimeRunEvent, { type: "error" }>
+): string {
+  return `runtime emitted error event${event.code ? ` ${event.code}` : ""}: ${event.message}`;
 }
 
 function failCheck(name: RuntimeContractCheckName, detail?: string): never {

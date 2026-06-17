@@ -122,6 +122,23 @@ describe("runtime contract harness", () => {
       runRuntimeContractSmokeTest({ client, request })
     ).rejects.toThrow("Runtime contract check failed: final_response");
   });
+
+  test("surfaces runtime error events instead of hiding them as missing finals", async () => {
+    const client = fakeClient([
+      { type: "status", text: "Starting..." },
+      {
+        type: "error",
+        message: "Unsupported Burble MCP tool: runtime.conformance.echo",
+        code: "unsupported_tool"
+      }
+    ]);
+
+    await expect(
+      runRuntimeContractSmokeTest({ client, request })
+    ).rejects.toThrow(
+      "Runtime contract check failed: final_response: runtime emitted error event unsupported_tool: Unsupported Burble MCP tool: runtime.conformance.echo"
+    );
+  });
 });
 
 function fakeClient(events: RuntimeRunEvent[]): RuntimeContractClient {
