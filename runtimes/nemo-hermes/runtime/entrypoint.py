@@ -12,6 +12,7 @@ import subprocess
 import sys
 import time
 import uuid
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 from urllib.parse import unquote, urlparse
@@ -88,6 +89,7 @@ HERMES_PROVIDER_TOOL_HINTS = load_hermes_provider_tool_hints(
 )
 
 DEFAULT_HERMES_PLATFORM_TOOLSETS = ["burble", "cronjob", "web"]
+REQUIRED_HERMES_SCHEDULED_PLATFORM_TOOLSETS = ["cronjob", "web"]
 HERMES_STREAM_CURSOR = "[[BURBLE_STREAM_CURSOR]]"
 DEFAULT_HERMES_DISABLED_TOOLSETS = [
     "browser",
@@ -148,6 +150,18 @@ def env_list(name: str, default: list[str]) -> list[str]:
         return []
     values = [value.strip() for value in raw.replace("\n", ",").split(",")]
     return list(dict.fromkeys(value for value in values if value))
+
+
+def append_required_hermes_scheduled_toolsets(toolsets: list[str]) -> list[str]:
+    merged = list(dict.fromkeys(toolsets))
+    for toolset in REQUIRED_HERMES_SCHEDULED_PLATFORM_TOOLSETS:
+        if toolset not in merged:
+            merged.append(toolset)
+    return merged
+
+
+def current_utc_iso() -> str:
+    return datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
 def _to_non_negative_int(value: Any) -> int | None:
@@ -261,6 +275,39 @@ def build_runtime_response(result: dict[str, Any], prompt: str = "") -> dict[str
     if usage:
         response["usage"] = usage
     return response
+
+
+def scheduled_provider_bridge_missing_error(
+    message: dict[str, Any], response_text: str
+) -> str | None:
+    scheduled_job = message.get("scheduledJob")
+    if not isinstance(scheduled_job, dict):
+        return None
+    allowed_tools = scheduled_job.get("allowedTools")
+    if not isinstance(allowed_tools, list) or not allowed_tools:
+        return None
+    normalized_text = " ".join(response_text.lower().split())
+    if not normalized_text:
+        return None
+    missing_bridge_phrases = [
+        "burble_provider_call is not exposed",
+        "burble_provider_call was not exposed",
+        "does not expose the required burble_provider_call",
+        "burble_provider_call tool is not exposed",
+        "burble_provider_call tool was not exposed",
+        "required runtime tools were not available",
+        "required burble provider bridge tool",
+        "provider bridge tool burble_provider_call is not available",
+        "provider bridge tool burble_provider_call was not available",
+    ]
+    if not any(phrase in normalized_text for phrase in missing_bridge_phrases):
+        return None
+    job_id = str(scheduled_job.get("jobId") or "").strip() or "unknown"
+    return (
+        "scheduled_provider_bridge_missing: scheduled job "
+        f"{job_id} requires provider tools but Hermes reported "
+        "burble_provider_call/runtime tools unavailable"
+    )
 
 
 def build_runtime_tool_bridge_modes() -> list[str]:
@@ -643,7 +690,9 @@ def format_current_request_attachments(input_body: dict[str, Any]) -> str:
     return "\n".join(lines) if len(lines) > 3 else ""
 
 
-def format_scheduled_job_context(input_body: dict[str, Any]) -> str:
+def format_scheduled_job_context(
+    input_body: dict[str, Any], *, now_utc: str | None = None
+) -> str:
     scheduled_job = input_body.get("scheduledJob")
     if not isinstance(scheduled_job, dict):
         return ""
@@ -672,6 +721,7 @@ def format_scheduled_job_context(input_body: dict[str, Any]) -> str:
     lines = [
         "Scheduled Burble job context:",
         f"- jobId={scheduled_job.get('jobId') or ''}",
+        f"- currentUtc={now_utc or current_utc_iso()}",
         f"- capabilityProfile={scheduled_job.get('capabilityProfile') or ''}",
         f"- allowedTools={allowed_tool_text}",
     ]
@@ -710,6 +760,9 @@ def format_scheduled_job_context(input_body: dict[str, Any]) -> str:
     )
     lines.append(
         "The Burble provider bridge tool burble_provider_call is runtime-pinned into native toolsets for scheduled jobs; use it for allowedTools instead of declaring that the bridge is unavailable."
+    )
+    lines.append(
+        "Use currentUtc for scheduled time-window calculations. Do not call shell, terminal, or time tools just to compute the current UTC time."
     )
     lines.append(
         "Respect maxOutputVisibility when sending scheduled output. Do not publicly post private-tool-derived content; public channel delivery for authenticated provider read output requires an explicit declassification approval flow that is not implemented yet. Write-only provider state tools do not by themselves make public-source output private."
@@ -1208,6 +1261,11 @@ class BurbleHermesRuntime:
                 timeout=int_env("HERMES_RUN_TIMEOUT_SECONDS", 180),
             )
             response = build_runtime_response(result, str(message.get("text") or ""))
+            bridge_missing_error = scheduled_provider_bridge_missing_error(
+                message, response["text"]
+            )
+            if bridge_missing_error:
+                raise RuntimeError(bridge_missing_error)
             await waiter.finish(response)
             print(
                 f"[INFO] {timestamp()} Nemo Hermes run finish runId={run_id} textChars={len(response['text'])}",
@@ -1363,6 +1421,9 @@ class BurbleHermesRuntime:
         platform_toolsets = env_list(
             "BURBLE_HERMES_PLATFORM_TOOLSETS",
             DEFAULT_HERMES_PLATFORM_TOOLSETS,
+        )
+        platform_toolsets = append_required_hermes_scheduled_toolsets(
+            platform_toolsets
         )
         lines.append("platform_toolsets:")
         lines.append("  burble:")

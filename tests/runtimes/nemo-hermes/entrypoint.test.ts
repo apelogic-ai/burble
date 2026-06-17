@@ -813,6 +813,7 @@ print(json.dumps({"text": mod.build_hermes_turn_text(payload)}))
     const text = (result as { text: string }).text;
     expect(text).toContain("Scheduled Burble job context:");
     expect(text).toContain("jobId=job-123");
+    expect(text).toMatch(/currentUtc=\d{4}-\d{2}-\d{2}T/);
     expect(text).toContain("capabilityProfile=scheduled_job");
     expect(text).toContain(
       "allowedTools=google_append_drive_text_file,google_get_drive_file"
@@ -827,7 +828,58 @@ print(json.dumps({"text": mod.build_hermes_turn_text(payload)}))
     expect(text).toContain(
       "burble_provider_call is runtime-pinned into native toolsets"
     );
+    expect(text).toContain("Use currentUtc for scheduled time-window calculations");
+    expect(text).toContain("Do not call shell, terminal, or time tools");
     expect(text).not.toContain("Do not run provider-backed scheduled jobs with only web enabled");
+  });
+
+  test("formats deterministic scheduled run time context", () => {
+    const result = runHermesEntrypointProbe(`${importEntrypoint}
+payload = {
+    "scheduledJob": {
+        "jobId": "job-123",
+        "allowedTools": ["github_search_issues"],
+    },
+}
+print(json.dumps({"text": mod.format_scheduled_job_context(payload, now_utc="2026-06-17T19:00:00Z")}))
+`);
+
+    const text = (result as { text: string }).text;
+    expect(text).toContain("currentUtc=2026-06-17T19:00:00Z");
+    expect(text).toContain("allowedTools=github_search_issues");
+    expect(text).toContain("Use currentUtc for scheduled time-window calculations");
+  });
+
+  test("detects scheduled provider bridge missing final responses", () => {
+    const result = runHermesEntrypointProbe(`${importEntrypoint}
+message = {
+    "scheduledJob": {
+        "jobId": "job-123",
+        "allowedTools": ["github_search_issues"],
+    },
+}
+print(json.dumps({
+    "missing": mod.scheduled_provider_bridge_missing_error(
+        message,
+        "Blocked: this runtime session does not expose the required burble_provider_call tool."
+    ),
+    "normal": mod.scheduled_provider_bridge_missing_error(
+        message,
+        "No new pull requests were found."
+    ),
+    "interactive": mod.scheduled_provider_bridge_missing_error(
+        {},
+        "burble_provider_call is not exposed here."
+    ),
+}))
+`);
+
+    expect(result).toEqual({
+      missing:
+        "scheduled_provider_bridge_missing: scheduled job job-123 requires provider tools but Hermes reported burble_provider_call/runtime tools unavailable",
+      normal: null,
+      interactive: null
+    });
   });
 
   test("adds provider-backed scheduled job repair guidance to scheduler-only Hermes turns", () => {
@@ -1101,6 +1153,42 @@ asyncio.run(main())
     });
   });
 
+  test("refuses scheduled route sends that report a missing provider bridge", () => {
+    const result = runHermesEntrypointProbe(`${importBurblePlatformAdapter}
+import asyncio
+import os
+
+os.environ["BURBLE_TOOL_GATEWAY_URL"] = "http://burble-app:3000/internal/tools"
+os.environ["BURBLE_INTERNAL_TOKEN"] = "token"
+os.environ["BURBLE_RUNTIME_ID"] = "rt_123"
+
+async def main():
+    adapter = mod.BurbleAdapter(types.SimpleNamespace(extra={}))
+    content = """
+Cronjob Response: apelogic-ai-open-prs-last-24h-drive-dedupe
+(job_id: job-123)
+-------------
+
+Unable to complete this run as requested because the runtime session does not expose the required Burble provider bridge tool burble_provider_call or any equivalent GitHub/Google Drive provider tools.
+"""
+    sent = await adapter.send(
+        "convrt_abc123",
+        content,
+        metadata={"jobId": "job-123"},
+    )
+    print(json.dumps({"success": sent.success, "error": sent.error, "payloads": posted_payloads}))
+
+asyncio.run(main())
+`);
+
+    expect(result).toEqual({
+      success: false,
+      error:
+        "scheduled_provider_bridge_missing: Hermes scheduled output reported burble_provider_call/runtime provider tools unavailable",
+      payloads: []
+    });
+  });
+
   test("strips Hermes stream cursors even when embedded in cumulative text", () => {
     const result = runHermesEntrypointProbe(`${importBurblePlatformAdapter}
 import asyncio
@@ -1299,6 +1387,26 @@ print(json.dumps({
     expect(config).toContain("    - terminal");
   });
 
+  test("keeps scheduled provider bridge toolsets when Hermes platform toolsets are overridden", () => {
+    const result = runHermesEntrypointProbe(`${importEntrypoint}
+import os
+import tempfile
+
+home = tempfile.mkdtemp()
+os.environ["HERMES_HOME"] = home
+os.environ["BURBLE_HERMES_PLATFORM_TOOLSETS"] = "burble"
+
+runtime = mod.BurbleHermesRuntime()
+runtime._ensure_gateway_config()
+print(json.dumps({
+    "config": (runtime.home / "config.yaml").read_text(),
+}))
+`);
+
+    const config = (result as { config: string }).config;
+    expect(config).toContain("platform_toolsets:\n  burble:\n    - burble\n    - cronjob\n    - web");
+  });
+
   test("can opt Hermes back into full MCP catalog for debugging", () => {
     const result = runHermesEntrypointProbe(`${importEntrypoint}
 import os
@@ -1399,7 +1507,7 @@ print(json.dumps(list(ctx.tools_by_name.values())))
     expect(result).toContainEqual(
       expect.objectContaining({
         name: "burble_provider_call",
-        toolset: "web",
+        toolset: "cronjob",
         is_async: true
       })
     );
@@ -1738,7 +1846,7 @@ print(json.dumps({
     expect(result.pr_monitor).toContain("burble_provider_call");
     expect(result.registered).toContainEqual({
       name: "burble_provider_call",
-      toolset: "web"
+      toolset: "cronjob"
     });
   });
 

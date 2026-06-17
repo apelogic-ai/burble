@@ -83,7 +83,7 @@ TOOL_NAME_ALIASES = {
     "conversation_get_attachment": "conversation.getAttachment",
 }
 
-PROVIDER_BRIDGE_TOOLSET = "web"
+PROVIDER_BRIDGE_TOOLSET = "cronjob"
 PROVIDER_ALIAS_TOOLSETS = ["cronjob"]
 BRIDGE_TOOL_NAMES = {"burble_provider_call", "burble.providerCall"}
 
@@ -343,7 +343,8 @@ def _make_provider_alias_handler(canonical_name: str):
     return _provider_alias_call
 
 
-def _pin_provider_bridge_to_toolsets() -> None:
+def _pin_provider_bridge_to_toolsets() -> dict[str, Any]:
+    pinned: list[str] = []
     try:
         import toolsets
 
@@ -355,7 +356,7 @@ def _pin_provider_bridge_to_toolsets() -> None:
                 "includes": [],
             },
         )
-        for entry in toolsets.TOOLSETS.values():
+        for name, entry in toolsets.TOOLSETS.items():
             if not isinstance(entry, dict):
                 continue
             tools = entry.setdefault("tools", [])
@@ -363,15 +364,22 @@ def _pin_provider_bridge_to_toolsets() -> None:
                 continue
             if "burble_provider_call" not in tools:
                 tools.append("burble_provider_call")
+            pinned.append(str(name))
+        return {
+            "ok": True,
+            "toolsets": pinned,
+            "count": len(pinned),
+        }
     except Exception as error:
         print(
             f"[WARN] Burble provider bridge toolset install failed: {error}",
             flush=True,
         )
+        return {"ok": False, "error": str(error), "toolsets": [], "count": 0}
 
 
 def register(ctx) -> None:
-    _pin_provider_bridge_to_toolsets()
+    pin_result = _pin_provider_bridge_to_toolsets()
     ctx.register_tool(
         name="burble_provider_call",
         toolset=PROVIDER_BRIDGE_TOOLSET,
@@ -381,6 +389,7 @@ def register(ctx) -> None:
         description=BURBLE_PROVIDER_CALL_SCHEMA["description"],
         override=True,
     )
+    registered_aliases = 0
     for toolset in PROVIDER_ALIAS_TOOLSETS:
         for alias, canonical_name in sorted(TOOL_NAME_ALIASES.items()):
             schema = _provider_alias_schema(alias, canonical_name)
@@ -393,3 +402,13 @@ def register(ctx) -> None:
                 description=schema["description"],
                 override=True,
             )
+            registered_aliases += 1
+    print(
+        "[INFO] Burble provider bridge registered "
+        f"bridgeToolset={PROVIDER_BRIDGE_TOOLSET} "
+        f"aliasToolsets={','.join(PROVIDER_ALIAS_TOOLSETS)} "
+        f"aliases={registered_aliases} "
+        f"pinnedToolsets={','.join(pin_result.get('toolsets') or [])} "
+        f"pinOk={pin_result.get('ok')}",
+        flush=True,
+    )
