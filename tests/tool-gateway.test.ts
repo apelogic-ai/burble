@@ -2796,6 +2796,66 @@ describe("handleToolGatewayRequest", () => {
     });
   });
 
+  test("routes scheduled conformance echo through the gateway allowlist", async () => {
+    const capability: AgentJobCapabilityRecord = {
+      jobId: "contract-scheduled-job",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      requiredTools: ["runtime.conformance.echo"],
+      routeId: null,
+      policyHash: "policy-hash",
+      capabilityProfile: "scheduled_job",
+      runtimeType: "openclaw",
+      stateRefs: [],
+      visibilityPolicy: {},
+      createdAt: "2026-06-01T00:00:00.000Z",
+      updatedAt: "2026-06-01T00:00:00.000Z"
+    };
+    const runtimeEvents: unknown[] = [];
+    const response = await handleToolGatewayRequest(
+      config,
+      createStore(null, runtime, runtimeEvents, null, [], { found: capability }),
+      "runtime.conformance.echo",
+      request(
+        "runtime.conformance.echo",
+        {
+          scheduledJob: {
+            jobId: "contract-scheduled-job"
+          },
+          input: {
+            jobId: "contract-scheduled-job",
+            message: "scheduled provider bridge probe"
+          }
+        },
+        "runtime-token-u123",
+        "rt_u123"
+      )
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({
+      classification: "user_private",
+      content: {
+        ok: true,
+        toolName: "runtime.conformance.echo",
+        input: {
+          message: "scheduled provider bridge probe"
+        }
+      }
+    });
+    expect(runtimeEvents).toEqual([
+      {
+        runtimeId: "rt_u123",
+        eventType: "runtime_tool_called",
+        summary: {
+          toolName: "runtime.conformance.echo",
+          classification: "user_private",
+          itemCount: null
+        }
+      }
+    ]);
+  });
+
   test("rejects runtime tool gateway calls outside the scheduled job capability", async () => {
     const capability: AgentJobCapabilityRecord = {
       jobId: "ai-news-hourly",
@@ -2836,6 +2896,51 @@ describe("handleToolGatewayRequest", () => {
         error: "scheduled_job_tool_denied",
         message:
           "Tool google.appendToDriveTextFile is not available to scheduled job ai-news-hourly."
+      }
+    });
+  });
+
+  test("rejects scheduled conformance echo when the capability omits it", async () => {
+    const capability: AgentJobCapabilityRecord = {
+      jobId: "ai-news-hourly",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      requiredTools: ["google.searchDriveFiles"],
+      routeId: null,
+      policyHash: "policy-hash",
+      capabilityProfile: "scheduled_job",
+      runtimeType: "openclaw",
+      stateRefs: [],
+      visibilityPolicy: {},
+      createdAt: "2026-06-01T00:00:00.000Z",
+      updatedAt: "2026-06-01T00:00:00.000Z"
+    };
+    const response = await handleToolGatewayRequest(
+      config,
+      createStore(null, runtime, [], null, [], { found: capability }),
+      "runtime.conformance.echo",
+      request(
+        "runtime.conformance.echo",
+        {
+          scheduledJob: {
+            jobId: "ai-news-hourly"
+          },
+          input: {
+            message: "scheduled provider bridge probe"
+          }
+        },
+        "runtime-token-u123",
+        "rt_u123"
+      )
+    );
+
+    expect(response.status).toBe(403);
+    await expect(response.json()).resolves.toEqual({
+      classification: "user_private",
+      content: {
+        error: "scheduled_job_tool_denied",
+        message:
+          "Tool runtime.conformance.echo is not available to scheduled job ai-news-hourly."
       }
     });
   });

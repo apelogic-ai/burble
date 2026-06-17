@@ -724,6 +724,21 @@ export async function handleToolGatewayRequest(
   }
   body = scheduledValidation.body;
 
+  if (toolName === "runtime.conformance.echo") {
+    if (auth.kind !== "runtime") {
+      return new Response("Runtime auth required", { status: 403 });
+    }
+
+    return respondWithAudit({
+      classification: "user_private",
+      content: {
+        ok: true,
+        toolName,
+        input: isOptionalObject(body.input) ? body.input : {}
+      }
+    });
+  }
+
   const inputCoercion = coerceProviderToolGatewayInput(toolName, body.input);
   if (!inputCoercion.ok) {
     return new Response(`Invalid tool input: ${inputCoercion.error}`, {
@@ -1847,6 +1862,7 @@ function isKnownTool(toolName: string): boolean {
     toolName === "conversation.getAttachment" ||
     toolName === "scheduledJob.registerCapability" ||
     toolName === "runtime.heartbeat" ||
+    toolName === "runtime.conformance.echo" ||
     toolName === "atlassian.listMcpTools" ||
     toolName === "atlassian.callMcpTool"
   );
