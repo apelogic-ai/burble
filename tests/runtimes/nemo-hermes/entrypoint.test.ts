@@ -1354,20 +1354,20 @@ print(json.dumps({
     const result = runHermesEntrypointProbe(`${importProviderToolPlugin}
 class Ctx:
     def __init__(self):
-        self.tools = []
+        self.tools_by_name = {}
 
     def register_tool(self, **kwargs):
-        self.tools.append({
+        self.tools_by_name[kwargs.get("name")] = {
             "name": kwargs.get("name"),
             "toolset": kwargs.get("toolset"),
             "is_async": kwargs.get("is_async"),
             "description": kwargs.get("description"),
             "schema": kwargs.get("schema"),
-        })
+        }
 
 ctx = Ctx()
 mod.register(ctx)
-print(json.dumps(ctx.tools))
+print(json.dumps(list(ctx.tools_by_name.values())))
 `) as Array<{
       name?: string;
       toolset?: string;
@@ -1392,21 +1392,7 @@ print(json.dumps(ctx.tools))
     expect(result).toContainEqual(
       expect.objectContaining({
         name: "burble_provider_call",
-        toolset: null,
-        is_async: true
-      })
-    );
-    expect(result).toContainEqual(
-      expect.objectContaining({
-        name: "burble_provider_call",
-        toolset: "burble",
-        is_async: true
-      })
-    );
-    expect(result).toContainEqual(
-      expect.objectContaining({
-        name: "burble_provider_call",
-        toolset: "cronjob",
+        toolset: "web",
         is_async: true
       })
     );
@@ -1470,20 +1456,6 @@ print(json.dumps(ctx.tools))
       expect.objectContaining({
         name: "conversation_get_attachment",
         toolset: "cronjob",
-        is_async: true
-      })
-    );
-    expect(result).toContainEqual(
-      expect.objectContaining({
-        name: "burble_provider_call",
-        toolset: "web",
-        is_async: true
-      })
-    );
-    expect(result).toContainEqual(
-      expect.objectContaining({
-        name: "burble_provider_call",
-        toolset: "burble",
         is_async: true
       })
     );
@@ -1706,7 +1678,7 @@ asyncio.run(main())
     });
   });
 
-  test("pins Burble provider bridge tools into every Hermes native toolset for cron jobs", () => {
+  test("pins Burble provider bridge tool into the Hermes web toolset for cron jobs", () => {
     const result = runHermesEntrypointProbe(`${importProviderToolPlugin}
 toolsets = types.ModuleType("toolsets")
 toolsets.TOOLSETS = {
@@ -1750,16 +1722,10 @@ print(json.dumps({
     expect(result.web).not.toContain("google_append_to_drive_text_file");
     expect(result.web).not.toContain("scheduled_job_register_capability");
     expect(result.pr_monitor).toContain("cron_run");
-    expect(result.pr_monitor).toContain("burble_provider_call");
-    expect(result.registered).toContainEqual(
-      expect.objectContaining({
-        name: "burble_provider_call",
-        toolset: null
-      })
-    );
+    expect(result.pr_monitor).not.toContain("burble_provider_call");
     expect(result.registered).toContainEqual({
       name: "burble_provider_call",
-      toolset: "pr_monitor"
+      toolset: "web"
     });
   });
 

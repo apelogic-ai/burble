@@ -83,12 +83,10 @@ TOOL_NAME_ALIASES = {
     "conversation_get_attachment": "conversation.getAttachment",
 }
 
-PROVIDER_BRIDGE_TOOLSETS = ["burble", "cronjob", "web"]
-PROVIDER_ALIAS_TOOLSETS = ["burble", "cronjob"]
+PROVIDER_BRIDGE_TOOLSET = "web"
+PROVIDER_ALIAS_TOOLSETS = ["cronjob"]
 TOOLSET_BRIDGE_TOOLS = {
-    "burble": ["burble_provider_call"],
-    "cronjob": ["burble_provider_call"],
-    "web": ["burble_provider_call"],
+    PROVIDER_BRIDGE_TOOLSET: ["burble_provider_call"],
 }
 BRIDGE_TOOL_NAMES = {"burble_provider_call", "burble.providerCall"}
 
@@ -336,34 +334,24 @@ def _make_provider_alias_handler(canonical_name: str):
     return _provider_alias_call
 
 
-def _pin_provider_bridge_to_toolsets() -> None:
+def _pin_provider_bridge_to_web_toolset() -> None:
     try:
         import toolsets
 
-        all_toolset_names = {
-            *TOOLSET_BRIDGE_TOOLS.keys(),
-            *[
-                str(name)
-                for name, entry in getattr(toolsets, "TOOLSETS", {}).items()
-                if isinstance(entry, dict)
-            ],
-        }
-        for toolset_name in sorted(all_toolset_names):
-            bridge_tools = TOOLSET_BRIDGE_TOOLS.get(toolset_name, ["burble_provider_call"])
-            entry = toolsets.TOOLSETS.setdefault(
-                toolset_name,
-                {
-                    "description": f"{toolset_name} tools",
-                    "tools": [],
-                    "includes": [],
-                },
-            )
-            tools = entry.setdefault("tools", [])
-            if not isinstance(tools, list):
-                continue
-            for tool_name in bridge_tools:
-                if tool_name not in tools:
-                    tools.append(tool_name)
+        entry = toolsets.TOOLSETS.setdefault(
+            PROVIDER_BRIDGE_TOOLSET,
+            {
+                "description": "Web research and content extraction tools",
+                "tools": [],
+                "includes": [],
+            },
+        )
+        tools = entry.setdefault("tools", [])
+        if not isinstance(tools, list):
+            return
+        for tool_name in TOOLSET_BRIDGE_TOOLS[PROVIDER_BRIDGE_TOOLSET]:
+            if tool_name not in tools:
+                tools.append(tool_name)
     except Exception as error:
         print(
             f"[WARN] Burble provider bridge web toolset install failed: {error}",
@@ -372,31 +360,16 @@ def _pin_provider_bridge_to_toolsets() -> None:
 
 
 def register(ctx) -> None:
-    _pin_provider_bridge_to_toolsets()
-    try:
-        ctx.register_tool(
-            name="burble_provider_call",
-            schema=BURBLE_PROVIDER_CALL_SCHEMA,
-            handler=_burble_provider_call,
-            is_async=True,
-            description=BURBLE_PROVIDER_CALL_SCHEMA["description"],
-            override=True,
-        )
-    except Exception as error:
-        print(
-            f"[WARN] Burble provider bridge global tool install failed: {error}",
-            flush=True,
-        )
-    for toolset in _provider_bridge_toolsets():
-        ctx.register_tool(
-            name="burble_provider_call",
-            toolset=toolset,
-            schema=BURBLE_PROVIDER_CALL_SCHEMA,
-            handler=_burble_provider_call,
-            is_async=True,
-            description=BURBLE_PROVIDER_CALL_SCHEMA["description"],
-            override=True,
-        )
+    _pin_provider_bridge_to_web_toolset()
+    ctx.register_tool(
+        name="burble_provider_call",
+        toolset=PROVIDER_BRIDGE_TOOLSET,
+        schema=BURBLE_PROVIDER_CALL_SCHEMA,
+        handler=_burble_provider_call,
+        is_async=True,
+        description=BURBLE_PROVIDER_CALL_SCHEMA["description"],
+        override=True,
+    )
     for toolset in PROVIDER_ALIAS_TOOLSETS:
         for alias, canonical_name in sorted(TOOL_NAME_ALIASES.items()):
             schema = _provider_alias_schema(alias, canonical_name)
@@ -409,18 +382,3 @@ def register(ctx) -> None:
                 description=schema["description"],
                 override=True,
             )
-
-
-def _provider_bridge_toolsets() -> list[str]:
-    toolset_names = set(PROVIDER_BRIDGE_TOOLSETS)
-    try:
-        import toolsets
-
-        toolset_names.update(
-            str(name)
-            for name, entry in getattr(toolsets, "TOOLSETS", {}).items()
-            if isinstance(entry, dict)
-        )
-    except Exception:
-        pass
-    return sorted(toolset_names)
