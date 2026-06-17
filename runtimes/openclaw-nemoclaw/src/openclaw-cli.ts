@@ -1759,7 +1759,7 @@ async function buildToolCatalog(
     catalog.push({
       name: "scheduledJob.registerCapability",
       description:
-        "Register the Burble provider tools and durable state references a native scheduled/background job will need. Use before creating or updating a native cron/background job that will call Burble provider tools; include the returned scheduledPromptInstruction verbatim in the scheduled job prompt.",
+        "Register the Burble provider tools, durable state references, and optional resolved Slack delivery route a native scheduled/background job will need. Use before creating, updating, enabling, or triggering a native cron/background job that will call Burble provider tools or post scheduled output to a Slack destination; include the returned scheduledPromptInstruction verbatim in the scheduled job prompt and use the returned convrt_* route for native delivery.",
       inputSchema: {
         jobId: "string stable native scheduler job id or name",
         requiredTools:
@@ -1767,26 +1767,27 @@ async function buildToolCatalog(
         routeId:
           "optional durable Burble route ID for scheduled/background delivery",
         destination:
-          "optional Slack destination label for scheduled/background delivery, such as #eng, <#C123|eng>, or a channel id; Burble resolves it only when the user has already granted that channel with /agent grant here",
+          "optional Slack destination label for scheduled/background delivery, such as #eng, <#C123|eng>, or a channel id; pass named Slack channels here instead of using them as delivery route ids. Burble resolves it only when the user has already granted that channel with /agent grant here",
         stateRefs:
           'optional array of durable provider-backed state reference objects, never strings; each entry must include provider and kind strings, for example {"provider":"google","kind":"drive_file","id":"<fileId>","purpose":"dedupe_state"}',
-        visibilityPolicy:
-          "optional output visibility policy for scheduled delivery"
+        visibilityPolicy: {
+          type: "object",
+          properties: {
+            maxOutputVisibility:
+              'optional string enum public|user_private|restricted; use "public" when the user explicitly asked public-source scheduled output to post to a Slack channel',
+            allowPrivateToolDeclassification:
+              "optional boolean; do not set automatically"
+          },
+          example: { maxOutputVisibility: "public" }
+        }
       }
     });
     if (selectedRuntimeToolGroups(request)?.has("scheduler")) {
-      catalog.push({
-        name: "burble_provider_call",
-        description:
-          "Call one Burble provider tool through the runtime-scoped Burble provider bridge. Use this envelope for scheduled/background provider calls; set toolName to an allowed Burble provider tool and input to that tool's arguments, including jobId for scheduled jobs.",
-        inputSchema: {
-          toolName:
-            "Burble provider tool name, for example google_get_drive_file",
-          input:
-            "object arguments for that Burble provider tool; scheduled jobs must include jobId"
-        }
-      });
+      addBurbleProviderBridgeTool(catalog);
     }
+  }
+  if (request.input.scheduledJob) {
+    addBurbleProviderBridgeTool(catalog);
   }
   if ((request.input.attachments ?? []).length > 0) {
     catalog.push({
@@ -2289,6 +2290,24 @@ async function buildToolCatalog(
   });
 }
 
+function addBurbleProviderBridgeTool(catalog: ToolCatalogItem[]): void {
+  if (catalog.some((tool) => tool.name === "burble_provider_call")) {
+    return;
+  }
+
+  catalog.push({
+    name: "burble_provider_call",
+    description:
+      "Call one Burble provider tool through the runtime-scoped Burble provider bridge. Use this envelope for scheduled/background provider calls; set toolName to an allowed Burble provider tool and input to that tool's arguments, including jobId for scheduled jobs.",
+    inputSchema: {
+      toolName:
+        "Burble provider tool name, for example google_get_drive_file",
+      input:
+        "object arguments for that Burble provider tool; scheduled jobs must include jobId"
+    }
+  });
+}
+
 function filterToolCatalogBySelectedGroups(
   request: RunRequest,
   catalogBuild: {
@@ -2306,6 +2325,7 @@ function filterToolCatalogBySelectedGroups(
 
   const catalog = catalogBuild.catalog.filter((tool) =>
     isRouteScopedControlPlaneTool(tool.name) ||
+    (request.input.scheduledJob && tool.name === "burble_provider_call") ||
     isToolAllowedBySelectedGroups(tool.name, selectedGroups)
   );
   const allowedToolNames = new Set(catalog.map((tool) => tool.name));
@@ -2983,7 +3003,7 @@ function formatScheduledJobContextInstruction(request: RunRequest): string[] {
 
   lines.push(
     "For this scheduled job, use only the listed allowedTools for Burble provider calls. Treat stateRefs as durable job state locations supplied by Burble.",
-    "Respect maxOutputVisibility when sending scheduled output. Do not publicly post private-tool-derived content unless allowPrivateToolDeclassification is true and the user explicitly asked for that behavior."
+    "Respect maxOutputVisibility when sending scheduled output. Do not publicly post private-tool-derived content; public channel delivery for authenticated provider read output requires an explicit declassification approval flow that is not implemented yet. Write-only provider state tools do not by themselves make public-source output private."
   );
 
   return lines;
@@ -3000,7 +3020,7 @@ function formatScheduledProviderCapabilityInstruction(
   if (!selectedRuntimeToolGroups(request)?.has("scheduler")) {
     return [
       "Scheduled provider tool registration guard:",
-      "If this turn creates, updates, enables, or manually triggers a native scheduled/background job that will use Burble provider tools, call scheduledJob.registerCapability after the native scheduler returns the stable job id and before enabling or triggering that job."
+      "If this turn creates, updates, enables, or manually triggers a native scheduled/background job that will use Burble provider tools or post scheduled output through Burble, call scheduledJob.registerCapability after the native scheduler returns the stable job id and before enabling or triggering that job."
     ];
   }
 
@@ -3008,15 +3028,20 @@ function formatScheduledProviderCapabilityInstruction(
     "Scheduled provider tool registration:",
     "Setup-time provider calls are not scheduled provider calls. If you need to create, find, read, or validate durable provider state during the current user turn, use ordinary Burble provider calls for the active conversation and do not include jobId.",
     "Never invent placeholder job ids for setup-time provider calls. jobId is only valid after the native scheduler has returned a stable job id and scheduledJob.registerCapability has returned ok for that exact id.",
-    `If a native cron/background job will use Burble provider tools such as GitHub, Jira, Google, or Slack search, first call scheduledJob.registerCapability with routeId "${routeId}", requiredTools set to the exact Burble provider tool names the job will use, and stateRefs for any durable state files it should read or update.`,
-    'If the user explicitly asks scheduled output to post to a granted Slack channel, pass destination with the channel mention/name/id (for example "#eng" or "<#C123|eng>") instead of inventing a routeId. Burble resolves destination only when that user has already authorized the channel with /agent grant here.',
+    `If a native cron/background job will post back to this active conversation and use Burble provider tools such as GitHub, Jira, Google, or Slack search, first call scheduledJob.registerCapability with routeId "${routeId}", requiredTools set to the exact Burble provider tool names the job will use, and stateRefs for any durable state files it should read or update.`,
+    'A Slack channel label, Slack mention, Slack channel id, or guessed convrt_* value is not a delivery route. Never set native delivery.to to values like "#eng", "<#C123|eng>", "C123", "G123", or "convrt_<guess>".',
+    'If the user explicitly asks scheduled output to post to a granted Slack channel, pass destination with the channel mention/name/id (for example "#eng" or "<#C123|eng>") to scheduledJob.registerCapability and omit routeId. Never send both routeId and destination. Burble resolves destination only when that user has already authorized the channel with /agent grant here.',
+    'Because Slack channel delivery is public to that channel, include visibilityPolicy {"maxOutputVisibility":"public"} only when the user explicitly asked public scheduled output to post there. Do not set allowPrivateToolDeclassification automatically.',
+    "If the scheduled job reads from authenticated Burble provider sources such as GitHub, Google Drive, Jira, Slack search, HubSpot, or Atlassian MCP, do not register a Slack channel destination. Report that public channel delivery for private-tool output requires an explicit declassification approval flow that is not implemented yet.",
+    'If the scheduled job only reads public/open-internet sources, register it with destination set to the requested channel and visibilityPolicy {"maxOutputVisibility":"public"}. Include conversation.sendMessage plus any write-only provider state tools it uses, such as google.updateDriveTextFile or google.appendToDriveTextFile, in requiredTools.',
+    "After scheduledJob.registerCapability returns ok for a Slack destination, use only the returned scheduledJob.routeId / routeId convrt_* value as native delivery.to. Do not use the original destination label in native delivery.",
     'stateRefs entries must be objects, not compact strings. Each entry must include provider and kind strings, for example {"provider":"google","kind":"drive_file","id":"<fileId>","purpose":"dedupe_state"}.',
     "When creating a new provider-backed native job, do not request an immediate/manual run as part of the create call. Create it paused/disabled or without an immediate trigger if the scheduler supports that; otherwise create it, then stop before triggering.",
     "After the native scheduler returns the stable job id, call scheduledJob.registerCapability with that exact jobId and wait for an ok result. If registration does not return ok, do not trigger the job and report the registration failure.",
     "Include the returned scheduledPromptInstruction verbatim in the native scheduled job prompt.",
     "Only after the job prompt has been updated with the returned scheduledPromptInstruction may you enable, manually trigger, or reschedule the job.",
     "Scheduled provider tool calls must include the returned jobId in each Burble provider tool input. Do not use routeId as provider-call identity; routeId is only a delivery/state binding.",
-    "Provider-backed scheduled job repair: before manually triggering, enabling, or rescheduling an existing native job, inspect whether it uses provider-backed state or authenticated provider resources. If it does and its prompt lacks Burble jobId provider-call instructions, update the job first by calling scheduledJob.registerCapability and rewriting the scheduled prompt to use Burble provider tools. The job must not use direct web/browser access to provider URLs for authenticated provider work."
+    "Provider-backed scheduled job repair: before manually triggering, enabling, or rescheduling an existing native job, inspect whether it uses provider-backed state, authenticated provider resources, or Burble channel delivery. If it does and its prompt lacks Burble jobId provider-call instructions or its delivery target is not a resolved convrt_* route, update the job first by calling scheduledJob.registerCapability and rewriting the scheduled prompt/delivery to use the returned Burble instructions and route. The job must not use direct web/browser access to provider URLs for authenticated provider work."
   ];
 }
 
@@ -3031,7 +3056,8 @@ function formatActiveConversationRouteInstruction(
 
   return [
     `Active Burble conversation channel route: ${routeId}.`,
-    `Native OpenClaw Burble channel delivery is installed. For cron/background jobs, set delivery.mode to "announce", delivery.channel to "burble", and delivery.to to "${routeId}". The scheduled prompt should produce the final Slack-ready message text; Burble resolves the route to the actual transport outside OpenClaw.`,
+    `Native Burble channel delivery is installed. For cron/background jobs whose requested destination is this active conversation, set delivery.mode to "announce", delivery.channel to "burble", and delivery.to to "${routeId}". The scheduled prompt should produce the final Slack-ready message text; Burble resolves the route to the actual transport outside the runtime.`,
+    'If the user names a different Slack destination such as "#eng", "<#C123|eng>", or a channel id, do not use the active conversation route and do not put the Slack label in delivery.to. For output that only reads public/open-internet sources, first call scheduledJob.registerCapability with destination set to that label, omit routeId, and visibilityPolicy {"maxOutputVisibility":"public"}, then set delivery.to to the returned convrt_* route. Never send both routeId and destination. If the job reads from authenticated Burble provider sources, do not register the channel destination; report that explicit declassification approval is not implemented. If registration does not return ok with a resolved route, do not update, enable, or trigger the job.',
     `For an immediate request to send, post, message, or report something here now, do not create a cron job or background job unless the user explicitly asks for a schedule, delay, recurrence, or later delivery. Produce the final Slack-ready message once and stop.`,
     "Do not fetch, POST to, or mention local/private/internal Burble URLs for delivery. Do not create cron jobs that rely on conversation.sendMessage JSON blobs, announce delivery, Slack channel IDs, Slack credentials, or Burble credentials. Burble's channel connector owns route auth and transport delivery outside the OpenClaw process."
   ];
@@ -3229,18 +3255,27 @@ function readPlannedToolCall(
     return null;
   }
 
-  if (!catalog.some((tool) => tool.name === toolCall.name)) {
+  const canonicalToolName = canonicalPlannedToolName(toolCall.name);
+  if (!catalog.some((tool) => tool.name === canonicalToolName)) {
     return null;
   }
 
   const args = toolCall.arguments;
   return {
-    name: toolCall.name,
+    name: canonicalToolName,
     arguments:
       args && typeof args === "object" && !Array.isArray(args)
         ? (args as Record<string, unknown>)
         : {}
   };
+}
+
+function canonicalPlannedToolName(toolName: string): string {
+  if (toolName === "scheduled_job_register_capability") {
+    return "scheduledJob.registerCapability";
+  }
+
+  return toolName;
 }
 
 function normalizePlannedToolCall(toolCall: PlannedToolCall | null): PlannedToolCall | null {

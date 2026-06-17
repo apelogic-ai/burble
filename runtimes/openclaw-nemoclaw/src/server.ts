@@ -262,6 +262,9 @@ async function handleLocalBurbleChannelMessageRequest(
   if (!body) {
     return new Response("Invalid Burble channel message input", { status: 400 });
   }
+  if (!isBurbleConversationRouteId(routeId) && !body.jobId) {
+    return unresolvedBurbleChannelRouteResponse();
+  }
 
   const connector = createBurbleConversationConnector(config, config.runtimeId);
   const result = await connector.sendMessage(body);
@@ -288,8 +291,17 @@ async function handleLocalBurbleChannelEventRequest(
   }
 
   const payload = await readJsonBody(request);
+  const jobId =
+    readLocalBurbleChannelJobId(payload) ?? readLocalBurbleChannelUrlJobId(request);
+  if (!isBurbleConversationRouteId(routeId) && !jobId) {
+    return unresolvedBurbleChannelRouteResponse();
+  }
   const connector = createBurbleConversationConnector(config, config.runtimeId);
-  const result = await connector.deliverEvent({ routeId, payload });
+  const result = await connector.deliverEvent({
+    routeId,
+    ...(jobId ? { jobId } : {}),
+    payload
+  });
   if (!result) {
     return new Response("Burble channel event did not contain deliverable text", {
       status: 202
@@ -337,6 +349,7 @@ async function readLocalConversationMessageBody(
   request: Request
 ): Promise<{
   routeId: string;
+  jobId?: string;
   text: string;
   attachments?: ConversationAttachment[];
 } | null> {
@@ -369,6 +382,7 @@ async function readLocalConversationMessageBody(
 
   return {
     routeId: record.routeId,
+    ...readOptionalJobId(record),
     text: record.text,
     ...(attachments?.length ? { attachments } : {})
   };
@@ -511,7 +525,7 @@ function readMcpToolCallJobId(payload: {
 }
 
 function isBurbleConversationRouteId(routeId: string): boolean {
-  return /^convrt_[A-Za-z0-9_-]+$/.test(routeId);
+  return /^convrt_[0-9a-f]{24}$/.test(routeId);
 }
 
 function readMcpJsonRpcId(payload: unknown): unknown {
@@ -580,7 +594,7 @@ function scheduledJobRegisterCapabilityMcpTool(): Record<string, unknown> {
   return {
     name: localScheduledJobRegisterCapabilityToolName,
     description:
-      "Register a native scheduled/background job with Burble's scheduledJob.registerCapability control-plane tool before enabling or triggering provider-backed scheduled work.",
+      "Register a native scheduled/background job with Burble's scheduledJob.registerCapability control-plane tool before enabling or triggering provider-backed scheduled work or scheduled Slack destination delivery. Use the returned convrt_* route for native delivery; never use a Slack label as delivery.to.",
     inputSchema: {
       type: "object",
       properties: {
@@ -599,15 +613,15 @@ function scheduledJobRegisterCapabilityMcpTool(): Record<string, unknown> {
         routeId: {
           type: "string",
           minLength: 1,
-          pattern: "^convrt_[A-Za-z0-9_-]+$",
+          pattern: "^convrt_[0-9a-f]{24}$",
           description:
-            "Optional durable Burble convrt_* conversation route for scheduled delivery."
+            "Optional durable Burble convrt_* conversation route for scheduled delivery. Never pass a Slack label, mention, channel id, run id, or guessed value here."
         },
         destination: {
           type: "string",
           minLength: 1,
           description:
-            "Optional Slack destination label for scheduled delivery, such as #eng, <#C123|eng>, or a channel id. Burble resolves it only when the user has already granted that channel with /agent grant here."
+            "Optional Slack destination label for scheduled delivery, such as #eng, <#C123|eng>, or a channel id. Pass named Slack channels here; Burble resolves it only when the user has already granted that channel with /agent grant here."
         },
         stateRefs: {
           type: "array",
@@ -627,7 +641,22 @@ function scheduledJobRegisterCapabilityMcpTool(): Record<string, unknown> {
         },
         visibilityPolicy: {
           type: "object",
-          description: "Optional output visibility policy for scheduled delivery."
+          description:
+            'Optional output visibility policy for scheduled delivery. Slack channel destinations require {"maxOutputVisibility":"public"} when the user explicitly asked to post public scheduled output to that channel. Do not set allowPrivateToolDeclassification automatically.',
+          properties: {
+            maxOutputVisibility: {
+              type: "string",
+              enum: ["public", "user_private", "restricted"],
+              description:
+                'Set to "public" only when the user explicitly asked public-source scheduled output to post to a Slack channel.'
+            },
+            allowPrivateToolDeclassification: {
+              type: "boolean",
+              description:
+                "Do not set automatically. Reserved for an explicit declassification approval flow."
+            }
+          },
+          additionalProperties: false
         }
       },
       required: ["jobId", "requiredTools"]
@@ -665,7 +694,7 @@ function addRouteIdToMcpToolSchema(tool: unknown): unknown {
         routeId: {
           type: "string",
           minLength: 1,
-          pattern: "^convrt_[A-Za-z0-9_-]+$",
+          pattern: "^convrt_[0-9a-f]{24}$",
           description:
             "Exact Burble convrt_* conversation route id for this Slack conversation. Never use a cron job id, run id, session id, or UUID."
         },
@@ -756,6 +785,7 @@ async function readLocalBurbleChannelMessageBody(
   routeId: string
 ): Promise<{
   routeId: string;
+  jobId?: string;
   text: string;
   attachments?: ConversationAttachment[];
 } | null> {
@@ -784,11 +814,56 @@ async function readLocalBurbleChannelMessageBody(
     return null;
   }
 
+  const bodyJobId = readOptionalJobId(record);
+
   return {
     routeId,
+    ...(bodyJobId.jobId ? bodyJobId : readOptionalJobIdFromUrl(request)),
     text: record.text,
     ...(attachments?.length ? { attachments } : {})
   };
+}
+
+function readLocalBurbleChannelJobId(payload: unknown): string | null {
+  if (typeof payload !== "object" || payload === null || Array.isArray(payload)) {
+    return null;
+  }
+  return (
+    readOptionalJobId(payload as Record<string, unknown>).jobId ?? null
+  );
+}
+
+function readLocalBurbleChannelUrlJobId(request: Request): string | null {
+  return readOptionalJobIdFromUrl(request).jobId ?? null;
+}
+
+function readOptionalJobId(record: Record<string, unknown>): { jobId?: string } {
+  const names = ["jobId", "job_id"];
+  for (const name of names) {
+    const value = record[name];
+    if (typeof value === "string" && value.trim().length > 0) {
+      return { jobId: value.trim() };
+    }
+  }
+  return {};
+}
+
+function readOptionalJobIdFromUrl(request: Request): { jobId?: string } {
+  const url = new URL(request.url);
+  for (const name of ["jobId", "job_id"]) {
+    const value = url.searchParams.get(name);
+    if (value?.trim()) {
+      return { jobId: value.trim() };
+    }
+  }
+  return {};
+}
+
+function unresolvedBurbleChannelRouteResponse(): Response {
+  return new Response(
+    "Burble channel delivery requires a resolved convrt_* route id unless the scheduled job identity is present for grant lookup.",
+    { status: 400 }
+  );
 }
 
 function addRunId(body: unknown, runId: string): unknown {

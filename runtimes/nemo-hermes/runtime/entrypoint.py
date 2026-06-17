@@ -336,6 +336,10 @@ def build_hermes_turn_text(input_body: dict[str, Any]) -> str:
                                 "Never invent placeholder job ids for setup-time provider calls. jobId is only valid after the native scheduler has returned a stable job id and scheduled_job_register_capability has returned ok for that exact id.",
                                 "When creating a new provider-backed native job, do not request an immediate/manual run as part of the create call. Create it paused/disabled or without an immediate trigger if the scheduler supports that; otherwise create it, then stop before triggering.",
                                 "After the native scheduler returns the stable job id, call the dedicated scheduled provider registration tool scheduled_job_register_capability with that exact jobId and requiredTools, then wait for an ok result. If registration does not return ok, do not trigger the job and report the registration failure.",
+                                'If the user explicitly asks public scheduled output to post to a granted Slack channel, pass destination with the channel mention/name/id to scheduled_job_register_capability and include visibilityPolicy {"maxOutputVisibility":"public"}. Slack channel labels are not route ids and must not be used as native delivery targets.',
+                                "After scheduled_job_register_capability returns ok for a Slack channel destination, use the Burble platform delivery target burble:<returned routeId> for the native job. Never use slack:<channelId> or a raw Slack channel id/name for Burble scheduled channel output.",
+                                "If the scheduled job reads from authenticated Burble provider sources such as GitHub, Google Drive, Jira, Slack search, HubSpot, or Atlassian MCP, do not register a Slack channel destination. Report that public channel delivery for private-tool output requires an explicit declassification approval flow that is not implemented yet.",
+                                "If the scheduled job only reads public/open-internet sources, channel delivery may include write-only provider state tools such as google.updateDriveTextFile or google.appendToDriveTextFile in requiredTools.",
                                 "If it does and its prompt lacks Burble jobId provider-call instructions, update the job first by calling the dedicated scheduled provider registration tool scheduled_job_register_capability with jobId and requiredTools, then rewrite the scheduled prompt to include the returned scheduledPromptInstruction verbatim.",
                                 "Only after the job prompt has been updated with the returned scheduledPromptInstruction may you enable, manually trigger, or reschedule the job.",
                                 "Scheduled provider tool calls must include the returned jobId in each Burble provider tool input. Do not use routeId as provider-call identity; routeId is only a delivery/state binding.",
@@ -673,6 +677,9 @@ def format_scheduled_job_context(input_body: dict[str, Any]) -> str:
     route_id = scheduled_job.get("routeId")
     if route_id:
         lines.append(f"- routeId={route_id}")
+        lines.append(
+            f"- nativeDeliveryTarget=burble:{route_id} (use the Burble platform; never use slack:<channelId> for this Burble route)"
+        )
     runtime_type = scheduled_job.get("runtimeType")
     if runtime_type:
         lines.append(f"- runtimeType={runtime_type}")
@@ -701,10 +708,10 @@ def format_scheduled_job_context(input_body: dict[str, Any]) -> str:
         "For this scheduled job, use only the listed allowedTools for Burble provider calls. Treat stateRefs as durable job state locations supplied by Burble."
     )
     lines.append(
-        "Ensure this native scheduled job has the provider bridge toolset enabled: include the cronjob toolset along with any other needed toolsets such as web. Do not run provider-backed scheduled jobs with only web enabled."
+        "The Burble provider bridge tool burble_provider_call is runtime-pinned into native toolsets for scheduled jobs; use it for allowedTools instead of declaring that the bridge is unavailable."
     )
     lines.append(
-        "Respect maxOutputVisibility when sending scheduled output. Do not publicly post private-tool-derived content unless allowPrivateToolDeclassification is true and the user explicitly asked for that behavior."
+        "Respect maxOutputVisibility when sending scheduled output. Do not publicly post private-tool-derived content; public channel delivery for authenticated provider read output requires an explicit declassification approval flow that is not implemented yet. Write-only provider state tools do not by themselves make public-source output private."
     )
     return "\n".join(lines)
 
@@ -1004,6 +1011,11 @@ class BurbleHermesRuntime:
         try:
             if truthy_env("BURBLE_RUNTIME_CONTRACT_PROBE"):
                 if message.get("scheduledJob"):
+                    scheduled_job = (
+                        message.get("scheduledJob")
+                        if isinstance(message.get("scheduledJob"), dict)
+                        else {}
+                    )
                     await waiter.emit({"type": "status", "text": "Runtime contract probe accepted."})
                     await waiter.emit({
                         "type": "tool_call",
@@ -1015,6 +1027,25 @@ class BurbleHermesRuntime:
                         "toolName": "scheduledJob.registerCapability",
                         "callId": "contract-scheduled-provider-probe",
                         "classification": "user_private",
+                    })
+                    await waiter.emit({
+                        "type": "tool_call",
+                        "toolName": "burble_provider_call",
+                        "callId": "contract-scheduled-provider-bridge-probe",
+                        "input": {
+                            "toolName": "runtime.conformance.echo",
+                            "input": {
+                                "jobId": str(scheduled_job.get("jobId") or ""),
+                                "message": "scheduled provider bridge probe",
+                            },
+                        },
+                    })
+                    await waiter.emit({
+                        "type": "tool_result",
+                        "toolName": "burble_provider_call",
+                        "callId": "contract-scheduled-provider-bridge-probe",
+                        "classification": "user_private",
+                        "content": {"ok": True},
                     })
                     response = {
                         "classification": "user_private",

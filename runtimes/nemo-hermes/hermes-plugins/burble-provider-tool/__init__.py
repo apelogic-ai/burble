@@ -83,9 +83,12 @@ TOOL_NAME_ALIASES = {
     "conversation_get_attachment": "conversation.getAttachment",
 }
 
-PROVIDER_BRIDGE_TOOLSETS = ["cronjob", "web"]
+PROVIDER_BRIDGE_TOOLSET = "web"
 PROVIDER_ALIAS_TOOLSETS = ["cronjob"]
-WEB_TOOLSET_BRIDGE_TOOLS = ["burble_provider_call"]
+TOOLSET_BRIDGE_TOOLS = {
+    PROVIDER_BRIDGE_TOOLSET: ["burble_provider_call"],
+}
+BRIDGE_TOOL_NAMES = {"burble_provider_call", "burble.providerCall"}
 
 
 BURBLE_PROVIDER_CALL_SCHEMA = {
@@ -115,7 +118,9 @@ def _provider_alias_schema(alias: str, canonical_name: str) -> dict[str, Any]:
             "description": (
                 "Register the Burble provider tools a native scheduled/background job "
                 "will need before creating, updating, or manually triggering that job. "
-                "Include the returned scheduledPromptInstruction verbatim in the job prompt."
+                "Include the returned scheduledPromptInstruction verbatim in the job prompt. "
+                "For scheduled Slack channel delivery, pass the channel label as destination "
+                "and use the returned convrt_* route for native delivery."
             ),
             "parameters": {
                 "type": "object",
@@ -132,6 +137,26 @@ def _provider_alias_schema(alias: str, canonical_name: str) -> dict[str, Any]:
                             "for example google_get_drive_file and google_append_to_drive_text_file."
                         ),
                     },
+                    "allowedTools": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Alias for requiredTools.",
+                    },
+                    "required_tools": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Alias for requiredTools.",
+                    },
+                    "allowed_tools": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Alias for requiredTools.",
+                    },
+                    "tools": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Alias for requiredTools.",
+                    },
                     "routeId": {
                         "type": "string",
                         "description": "Optional durable Burble route id for scheduled/background delivery.",
@@ -141,7 +166,8 @@ def _provider_alias_schema(alias: str, canonical_name: str) -> dict[str, Any]:
                         "description": (
                             "Optional Slack destination label for scheduled/background delivery, "
                             "such as #eng, <#C123|eng>, or a channel id. Burble resolves it only "
-                            "when the user has already granted that channel with /agent grant here."
+                            "when the user has already granted that channel with /agent grant here. "
+                            "Pass named Slack channels here instead of using them as route ids."
                         ),
                     },
                     "stateRefs": {
@@ -151,11 +177,41 @@ def _provider_alias_schema(alias: str, canonical_name: str) -> dict[str, Any]:
                     },
                     "visibilityPolicy": {
                         "type": "object",
-                        "description": "Optional output visibility policy for scheduled delivery.",
-                        "additionalProperties": True,
+                        "description": (
+                            "Optional output visibility policy for scheduled delivery. Slack "
+                            'channel destinations require {"maxOutputVisibility":"public"} '
+                            "when the user explicitly asked to post public scheduled output "
+                            "to that channel. Do not set allowPrivateToolDeclassification "
+                            "automatically."
+                        ),
+                        "properties": {
+                            "maxOutputVisibility": {
+                                "type": "string",
+                                "enum": ["public", "user_private", "restricted"],
+                                "description": (
+                                    'Set to "public" only when the user explicitly asked '
+                                    "public-source scheduled output to post to a Slack channel."
+                                ),
+                            },
+                            "allowPrivateToolDeclassification": {
+                                "type": "boolean",
+                                "description": (
+                                    "Do not set automatically. Reserved for an explicit "
+                                    "declassification approval flow."
+                                ),
+                            },
+                        },
+                        "additionalProperties": False,
                     },
                 },
-                "required": ["jobId", "requiredTools"],
+                "required": ["jobId"],
+                "anyOf": [
+                    {"required": ["requiredTools"]},
+                    {"required": ["allowedTools"]},
+                    {"required": ["required_tools"]},
+                    {"required": ["allowed_tools"]},
+                    {"required": ["tools"]},
+                ],
                 "additionalProperties": True,
             },
         }
@@ -183,15 +239,35 @@ def normalize_burble_tool_name(name: str) -> str:
     return TOOL_NAME_ALIASES.get(clean_name, clean_name)
 
 
-def _read_tool_name(args: dict[str, Any]) -> str:
+def _bridge_call_envelope(args: dict[str, Any]) -> dict[str, Any]:
     raw_name = args.get("toolName") or args.get("tool") or args.get("name")
-    return normalize_burble_tool_name(str(raw_name or ""))
+    if raw_name and str(raw_name).strip() not in BRIDGE_TOOL_NAMES:
+        return args
+
+    for key in ("input", "arguments"):
+        raw_value = args.get(key)
+        if isinstance(raw_value, dict) and (
+            raw_value.get("toolName") or raw_value.get("tool") or raw_value.get("name")
+        ):
+            return raw_value
+
+    return args
+
+
+def _read_tool_name(args: dict[str, Any]) -> str:
+    envelope = _bridge_call_envelope(args)
+    raw_name = envelope.get("toolName") or envelope.get("tool") or envelope.get("name")
+    tool_name = normalize_burble_tool_name(str(raw_name or ""))
+    if tool_name in BRIDGE_TOOL_NAMES:
+        raise ValueError("burble_provider_call requires toolName")
+    return tool_name
 
 
 def _read_tool_input(args: dict[str, Any]) -> dict[str, Any]:
-    raw_input = args.get("input")
+    envelope = _bridge_call_envelope(args)
+    raw_input = envelope.get("input")
     if raw_input is None:
-        raw_input = args.get("arguments")
+        raw_input = envelope.get("arguments")
     if raw_input is None:
         return {}
     if isinstance(raw_input, dict):
@@ -262,18 +338,18 @@ def _pin_provider_bridge_to_web_toolset() -> None:
     try:
         import toolsets
 
-        web_toolset = toolsets.TOOLSETS.setdefault(
-            "web",
+        entry = toolsets.TOOLSETS.setdefault(
+            PROVIDER_BRIDGE_TOOLSET,
             {
                 "description": "Web research and content extraction tools",
                 "tools": [],
                 "includes": [],
             },
         )
-        tools = web_toolset.setdefault("tools", [])
+        tools = entry.setdefault("tools", [])
         if not isinstance(tools, list):
             return
-        for tool_name in WEB_TOOLSET_BRIDGE_TOOLS:
+        for tool_name in TOOLSET_BRIDGE_TOOLS[PROVIDER_BRIDGE_TOOLSET]:
             if tool_name not in tools:
                 tools.append(tool_name)
     except Exception as error:
@@ -285,16 +361,15 @@ def _pin_provider_bridge_to_web_toolset() -> None:
 
 def register(ctx) -> None:
     _pin_provider_bridge_to_web_toolset()
-    for toolset in PROVIDER_BRIDGE_TOOLSETS:
-        ctx.register_tool(
-            name="burble_provider_call",
-            toolset=toolset,
-            schema=BURBLE_PROVIDER_CALL_SCHEMA,
-            handler=_burble_provider_call,
-            is_async=True,
-            description=BURBLE_PROVIDER_CALL_SCHEMA["description"],
-            override=True,
-        )
+    ctx.register_tool(
+        name="burble_provider_call",
+        toolset=PROVIDER_BRIDGE_TOOLSET,
+        schema=BURBLE_PROVIDER_CALL_SCHEMA,
+        handler=_burble_provider_call,
+        is_async=True,
+        description=BURBLE_PROVIDER_CALL_SCHEMA["description"],
+        override=True,
+    )
     for toolset in PROVIDER_ALIAS_TOOLSETS:
         for alias, canonical_name in sorted(TOOL_NAME_ALIASES.items()):
             schema = _provider_alias_schema(alias, canonical_name)

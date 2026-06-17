@@ -408,7 +408,11 @@ describe("createTokenStore", () => {
       kind: "origin",
       grantedBySlackUserId: null,
       expiresAt: null,
-      bindingJson: null
+      bindingJson: null,
+      lastDeliveryFailureAt: null,
+      lastDeliveryFailureCode: null,
+      lastDeliveryFailureNotifiedAt: null,
+      consecutiveDeliveryFailures: 0
     });
     expect(JSON.parse(route.destinationJson)).toEqual({
       channelId: "C123",
@@ -477,6 +481,192 @@ describe("createTokenStore", () => {
     store.close();
   });
 
+  test("tracks and resets conversation route delivery failures", () => {
+    const store = createTokenStore(":memory:");
+
+    const route = store.upsertConversationRoute({
+      workspaceId: "T123",
+      slackUserId: "U123",
+      transport: "slack",
+      destination: {
+        channelId: "C123",
+        isDirectMessage: false,
+        rootId: "channel:C123"
+      },
+      kind: "grant",
+      now: new Date("2026-05-26T00:00:00.000Z")
+    });
+
+    const failed = store.recordConversationRouteDeliveryFailure({
+      routeId: route.id,
+      code: "not_in_channel",
+      notificationSent: true,
+      now: new Date("2026-05-26T01:00:00.000Z")
+    });
+
+    expect(failed).toMatchObject({
+      id: route.id,
+      lastDeliveryFailureAt: "2026-05-26T01:00:00.000Z",
+      lastDeliveryFailureCode: "not_in_channel",
+      lastDeliveryFailureNotifiedAt: "2026-05-26T01:00:00.000Z",
+      consecutiveDeliveryFailures: 1
+    });
+
+    const failedAgain = store.recordConversationRouteDeliveryFailure({
+      routeId: route.id,
+      code: "restricted_action",
+      notificationSent: false,
+      now: new Date("2026-05-26T02:00:00.000Z")
+    });
+
+    expect(failedAgain).toMatchObject({
+      id: route.id,
+      lastDeliveryFailureAt: "2026-05-26T02:00:00.000Z",
+      lastDeliveryFailureCode: "restricted_action",
+      lastDeliveryFailureNotifiedAt: "2026-05-26T01:00:00.000Z",
+      consecutiveDeliveryFailures: 2
+    });
+
+    const reset = store.resetConversationRouteDeliveryFailure({
+      routeId: route.id,
+      now: new Date("2026-05-26T03:00:00.000Z")
+    });
+
+    expect(reset).toMatchObject({
+      id: route.id,
+      lastDeliveryFailureAt: null,
+      lastDeliveryFailureCode: null,
+      lastDeliveryFailureNotifiedAt: null,
+      consecutiveDeliveryFailures: 0
+    });
+
+    store.close();
+  });
+
+  test("preserves bound grant delivery health across scheduled re-registration", () => {
+    const store = createTokenStore(":memory:");
+    const input = {
+      workspaceId: "T123",
+      slackUserId: "U123",
+      transport: "slack" as const,
+      destination: {
+        channelId: "C123",
+        isDirectMessage: false,
+        rootId: "channel:C123"
+      },
+      kind: "grant" as const,
+      binding: {
+        jobId: "job-daily-standup",
+        runtimeId: "rt_123"
+      },
+      now: new Date("2026-05-26T00:00:00.000Z")
+    };
+
+    const route = store.upsertConversationRoute(input);
+    store.recordConversationRouteDeliveryFailure({
+      routeId: route.id,
+      code: "not_in_channel",
+      notificationSent: true,
+      now: new Date("2026-05-26T01:00:00.000Z")
+    });
+    store.revokeConversationRoute({
+      routeId: route.id,
+      now: new Date("2026-05-26T02:00:00.000Z")
+    });
+
+    const upserted = store.upsertConversationRoute({
+      ...input,
+      now: new Date("2026-05-26T03:00:00.000Z")
+    });
+
+    expect(upserted).toMatchObject({
+      id: route.id,
+      lastDeliveryFailureAt: "2026-05-26T01:00:00.000Z",
+      lastDeliveryFailureCode: "not_in_channel",
+      lastDeliveryFailureNotifiedAt: "2026-05-26T01:00:00.000Z",
+      consecutiveDeliveryFailures: 1,
+      revokedAt: "2026-05-26T02:00:00.000Z"
+    });
+
+    store.close();
+  });
+
+  test("revokes one conversation route by id", () => {
+    const store = createTokenStore(":memory:");
+    const destination = {
+      channelId: "C123",
+      isDirectMessage: false,
+      rootId: "channel:C123"
+    };
+    const first = store.upsertConversationRoute({
+      workspaceId: "T123",
+      slackUserId: "U123",
+      transport: "slack",
+      destination,
+      kind: "grant"
+    });
+    const second = store.upsertConversationRoute({
+      workspaceId: "T123",
+      slackUserId: "U456",
+      transport: "slack",
+      destination,
+      kind: "grant"
+    });
+
+    const revoked = store.revokeConversationRoute({
+      routeId: first.id,
+      now: new Date("2026-05-26T01:00:00.000Z")
+    });
+
+    expect(revoked).toMatchObject({
+      id: first.id,
+      revokedAt: "2026-05-26T01:00:00.000Z"
+    });
+    expect(store.getConversationRoute(first.id)?.revokedAt).toBe(
+      "2026-05-26T01:00:00.000Z"
+    );
+    expect(store.getConversationRoute(second.id)?.revokedAt).toBeNull();
+    expect(store.revokeConversationRoute({ routeId: first.id })).toBeNull();
+
+    store.close();
+  });
+
+  test("does not record delivery failures on revoked conversation routes", () => {
+    const store = createTokenStore(":memory:");
+    const route = store.upsertConversationRoute({
+      workspaceId: "T123",
+      slackUserId: "U123",
+      transport: "slack",
+      destination: {
+        channelId: "C123",
+        isDirectMessage: false,
+        rootId: "channel:C123"
+      },
+      kind: "grant",
+      now: new Date("2026-05-26T00:00:00.000Z")
+    });
+    store.revokeConversationRoute({
+      routeId: route.id,
+      now: new Date("2026-05-26T01:00:00.000Z")
+    });
+
+    const failed = store.recordConversationRouteDeliveryFailure({
+      routeId: route.id,
+      code: "not_in_channel",
+      notificationSent: true,
+      now: new Date("2026-05-26T02:00:00.000Z")
+    });
+
+    expect(failed).toMatchObject({
+      id: route.id,
+      revokedAt: "2026-05-26T01:00:00.000Z",
+      lastDeliveryFailureAt: null,
+      consecutiveDeliveryFailures: 0
+    });
+
+    store.close();
+  });
+
   test("revokes all conversation grants for a workspace destination", () => {
     const store = createTokenStore(":memory:");
     const destination = {
@@ -530,6 +720,32 @@ describe("createTokenStore", () => {
         kind: "grant"
       })
     ).toBe(0);
+
+    store.close();
+  });
+
+  test("finds private Slack channel grant routes by channel", () => {
+    const store = createTokenStore(":memory:");
+    const route = store.upsertConversationRoute({
+      workspaceId: "T123",
+      slackUserId: "U123",
+      transport: "slack",
+      destination: {
+        channelId: "G123",
+        isDirectMessage: false,
+        isPrivateChannel: true,
+        rootId: "channel:G123"
+      },
+      kind: "grant"
+    });
+
+    expect(
+      store.getConversationGrantRouteForSlackChannel({
+        workspaceId: "T123",
+        slackUserId: "U123",
+        channelId: "G123"
+      })?.id
+    ).toBe(route.id);
 
     store.close();
   });

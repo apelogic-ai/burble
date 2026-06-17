@@ -101,6 +101,25 @@ async function* streamRuntimeContractProbe(
       callId: "contract-scheduled-provider-probe",
       classification: "user_private"
     };
+    yield {
+      type: "tool_call",
+      toolName: "burble_provider_call",
+      callId: "contract-scheduled-provider-bridge-probe",
+      input: {
+        toolName: "runtime.conformance.echo",
+        input: {
+          jobId: request.input.scheduledJob.jobId,
+          message: "scheduled provider bridge probe"
+        }
+      }
+    };
+    yield {
+      type: "tool_result",
+      toolName: "burble_provider_call",
+      callId: "contract-scheduled-provider-bridge-probe",
+      classification: "user_private",
+      content: { ok: true }
+    };
   } else if (request.input.text === "runtime contract tool capability probe") {
     yield {
       type: "tool_call",

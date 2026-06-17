@@ -3,6 +3,7 @@ import {
   attachRuntimeEventWebSocket,
   handleRuntimeRequest
 } from "../../../runtimes/openclaw-nemoclaw/src/server";
+import { buildBurbleConversationDeliveryTarget } from "../../../runtimes/openclaw-nemoclaw/src/burble-conversation-connector";
 import type { RuntimeConfig } from "../../../runtimes/openclaw-nemoclaw/src/config";
 import { parseRuntimeCapabilityManifest } from "../../../src/agent/runtime-contract";
 
@@ -63,6 +64,22 @@ async function withMockFetch<T>(
 }
 
 describe("handleRuntimeRequest", () => {
+  test("builds Burble channel delivery URLs with scheduled job identity", () => {
+    const target = buildBurbleConversationDeliveryTarget(config, {
+      routeId: "convrt_abcdefabcdefabcdefabcdef",
+      jobId: "job-123"
+    });
+
+    expect(target).toEqual({
+      channel: "burble",
+      routeId: "convrt_abcdefabcdefabcdefabcdef",
+      localMessageUrl:
+        "http://127.0.0.1:8080/internal/burble/channel/routes/convrt_abcdefabcdefabcdefabcdef/messages?jobId=job-123",
+      localEventUrl:
+        "http://127.0.0.1:8080/internal/burble/channel/routes/convrt_abcdefabcdefabcdefabcdef/events?jobId=job-123"
+    });
+  });
+
   test("serves health checks", async () => {
     const response = await handleRuntimeRequest(
       new Request("http://runtime/healthz"),
@@ -318,10 +335,30 @@ describe("handleRuntimeRequest", () => {
       toolName: "runtime.conformance.echo",
       callId: "contract-tool-probe"
     });
-    expect(readNdjsonEvents(await scheduledResponse.text())).toContainEqual({
+    const scheduledEvents = readNdjsonEvents(await scheduledResponse.text());
+    expect(scheduledEvents).toContainEqual({
       type: "tool_call",
       toolName: "scheduledJob.registerCapability",
       callId: "contract-scheduled-provider-probe"
+    });
+    expect(scheduledEvents).toContainEqual({
+      type: "tool_call",
+      toolName: "burble_provider_call",
+      callId: "contract-scheduled-provider-bridge-probe",
+      input: {
+        toolName: "runtime.conformance.echo",
+        input: {
+          jobId: "contract-scheduled-job",
+          message: "scheduled provider bridge probe"
+        }
+      }
+    });
+    expect(scheduledEvents).toContainEqual({
+      type: "tool_result",
+      toolName: "burble_provider_call",
+      callId: "contract-scheduled-provider-bridge-probe",
+      classification: "user_private",
+      content: { ok: true }
     });
     expect(readNdjsonEvents(await attachmentResponse.text())).toContainEqual({
       type: "tool_call",
@@ -818,7 +855,8 @@ describe("handleRuntimeRequest", () => {
             method: "POST",
             headers: { "content-type": "application/json" },
             body: JSON.stringify({
-              routeId: "convrt_abc123",
+              jobId: "job-123",
+              routeId: "convrt_abcdefabcdefabcdefabcdef",
               text: "hello"
             })
           }),
@@ -846,9 +884,57 @@ describe("handleRuntimeRequest", () => {
     expect(requests[0].headers.get("authorization")).toBe("Bearer secret");
     expect(requests[0].headers.get("x-burble-runtime-id")).toBe("rt_u123");
     expect(await requests[0].json()).toEqual({
+      scheduledJob: {
+        jobId: "job-123"
+      },
       input: {
-        routeId: "convrt_abc123",
+        jobId: "job-123",
+        routeId: "convrt_abcdefabcdefabcdefabcdef",
         text: "hello"
+      }
+    });
+  });
+
+  test("delivers Burble channel messages with scheduled job identity from the local URL", async () => {
+    const requests: Request[] = [];
+    const response = await withMockFetch(
+      (async (input, init) => {
+        const request = new Request(input, init);
+        requests.push(request);
+        return Response.json({
+          classification: "user_private",
+          content: { ok: true }
+        });
+      }) as typeof fetch,
+      () =>
+        handleRuntimeRequest(
+          new Request(
+            "http://runtime/internal/burble/channel/routes/convrt_abcdefabcdefabcdefabcdef/messages?jobId=job-123",
+            {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({
+                text: "No significant new AI news in the last 15 minutes."
+              })
+            }
+          ),
+          {
+            ...config,
+            runtimeId: "rt_u123"
+          }
+        )
+    );
+
+    expect(response.status).toBe(200);
+    expect(requests).toHaveLength(1);
+    expect(await requests[0].json()).toEqual({
+      scheduledJob: {
+        jobId: "job-123"
+      },
+      input: {
+        jobId: "job-123",
+        routeId: "convrt_abcdefabcdefabcdefabcdef",
+        text: "No significant new AI news in the last 15 minutes."
       }
     });
   });
@@ -866,7 +952,7 @@ describe("handleRuntimeRequest", () => {
       }) as typeof fetch,
       () =>
         handleRuntimeRequest(
-          new Request("http://runtime/internal/burble/channel/routes/convrt_abc123/messages", {
+          new Request("http://runtime/internal/burble/channel/routes/convrt_abcdefabcdefabcdefabcdef/messages", {
             method: "POST",
             headers: { "content-type": "application/json" },
             body: JSON.stringify({
@@ -892,7 +978,7 @@ describe("handleRuntimeRequest", () => {
     expect(response.status).toBe(200);
     expect(await requests[0].json()).toEqual({
       input: {
-        routeId: "convrt_abc123",
+        routeId: "convrt_abcdefabcdefabcdefabcdef",
         text: "",
         attachments: [
           {
@@ -905,6 +991,125 @@ describe("handleRuntimeRequest", () => {
         ]
       }
     });
+  });
+
+  test("does not use Burble channel thread ids as scheduled delivery job identity", async () => {
+    const requests: Request[] = [];
+    const response = await withMockFetch(
+      (async (input, init) => {
+        const request = new Request(input, init);
+        requests.push(request);
+        return Response.json({
+          classification: "user_private",
+          content: { ok: true }
+        });
+      }) as typeof fetch,
+      () =>
+        handleRuntimeRequest(
+          new Request(
+            "http://runtime/internal/burble/channel/routes/%23burble-test/messages",
+            {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({
+                text: "Cron finished.",
+                threadId: "hourly-ai-news-summary-drive-dedupe"
+              })
+            }
+          ),
+          {
+            ...config,
+            runtimeId: "rt_u123"
+          }
+        )
+    );
+
+    expect(response.status).toBe(400);
+    expect(await response.text()).toContain(
+      "Burble channel delivery requires a resolved convrt_* route id"
+    );
+    expect(requests).toHaveLength(0);
+  });
+
+  test("forwards unresolved Burble channel labels only with explicit scheduled job identity", async () => {
+    const requests: Request[] = [];
+    const response = await withMockFetch(
+      (async (input, init) => {
+        const request = new Request(input, init);
+        requests.push(request);
+        return Response.json({
+          classification: "user_private",
+          content: { ok: true }
+        });
+      }) as typeof fetch,
+      () =>
+        handleRuntimeRequest(
+          new Request(
+            "http://runtime/internal/burble/channel/routes/%23burble-test/messages",
+            {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({
+                text: "Cron finished.",
+                jobId: "hourly-ai-news-summary-drive-dedupe"
+              })
+            }
+          ),
+          {
+            ...config,
+            runtimeId: "rt_u123"
+          }
+        )
+    );
+
+    expect(response.status).toBe(200);
+    expect(requests).toHaveLength(1);
+    expect(await requests[0].json()).toEqual({
+      scheduledJob: {
+        jobId: "hourly-ai-news-summary-drive-dedupe"
+      },
+      input: {
+        jobId: "hourly-ai-news-summary-drive-dedupe",
+        routeId: "#burble-test",
+        text: "Cron finished."
+      }
+    });
+  });
+
+  test("rejects unresolved Burble channel labels without scheduled identity", async () => {
+    const requests: Request[] = [];
+    const response = await withMockFetch(
+      (async (input, init) => {
+        requests.push(new Request(input, init));
+        return Response.json({
+          classification: "user_private",
+          content: { ok: true }
+        });
+      }) as typeof fetch,
+      () =>
+        handleRuntimeRequest(
+          new Request(
+            "http://runtime/internal/burble/channel/routes/%23burble-test/messages",
+            {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({
+                text: "Cron finished."
+              })
+            }
+          ),
+          {
+            ...config,
+            runtimeId: "rt_u123"
+          }
+        )
+    );
+
+    expect(response.status).toBe(400);
+    expect(await response.text()).toContain(
+      "Burble channel delivery requires a resolved convrt_* route id"
+    );
+    expect(requests).toHaveLength(0);
   });
 
   test("proxies Burble MCP calls with the runtime JWT", async () => {
@@ -944,7 +1149,7 @@ describe("handleRuntimeRequest", () => {
               params: {
                 name: "github_search_issues",
                 arguments: {
-                  routeId: "convrt_abc123",
+                  routeId: "convrt_abcdefabcdefabcdefabcdef",
                   query: "repo:apelogic/burble is:pr"
                 }
               }
@@ -973,7 +1178,7 @@ describe("handleRuntimeRequest", () => {
       params: {
         name: "github_search_issues",
         arguments: {
-          routeId: "convrt_abc123",
+          routeId: "convrt_abcdefabcdefabcdefabcdef",
           query: "repo:apelogic/burble is:pr"
         }
       }
@@ -1176,7 +1381,7 @@ describe("handleRuntimeRequest", () => {
     expect(schema.properties.routeId).toMatchObject({
       type: "string",
       minLength: 1,
-      pattern: "^convrt_[A-Za-z0-9_-]+$"
+      pattern: "^convrt_[0-9a-f]{24}$"
     });
     expect(schema.properties.routeId.description).toContain(
       "Never use a cron job id"
@@ -1230,10 +1435,36 @@ describe("handleRuntimeRequest", () => {
     );
     expect(tool).toBeTruthy();
     expect(tool.description).toContain("scheduledJob.registerCapability");
+    expect(tool.description).toContain("scheduled Slack destination delivery");
+    expect(tool.description).toContain("returned convrt_* route");
+    expect(tool.description).toContain("never use a Slack label as delivery.to");
     expect(tool.inputSchema.required).toEqual(["jobId", "requiredTools"]);
+    expect(tool.inputSchema.properties.routeId.description).toContain(
+      "Never pass a Slack label"
+    );
     expect(tool.inputSchema.properties.destination.description).toContain(
       "/agent grant here"
     );
+    expect(tool.inputSchema.properties.destination.description).toContain(
+      "Pass named Slack channels here"
+    );
+    expect(tool.inputSchema.properties.visibilityPolicy.description).toContain(
+      '"maxOutputVisibility":"public"'
+    );
+    expect(tool.inputSchema.properties.visibilityPolicy.description).toContain(
+      "Do not set allowPrivateToolDeclassification automatically"
+    );
+    expect(
+      tool.inputSchema.properties.visibilityPolicy.properties.maxOutputVisibility
+        .enum
+    ).toEqual(["public", "user_private", "restricted"]);
+    expect(
+      tool.inputSchema.properties.visibilityPolicy.properties
+        .allowPrivateToolDeclassification.type
+    ).toBe("boolean");
+    expect(
+      tool.inputSchema.properties.visibilityPolicy.additionalProperties
+    ).toBe(false);
     expect(tool.inputSchema.properties.stateRefs.description).toContain(
       "objects, never strings"
     );
@@ -1267,7 +1498,10 @@ describe("handleRuntimeRequest", () => {
                 arguments: {
                   jobId: "job-123",
                   requiredTools: ["google.getDriveFile"],
-                  routeId: "convrt_abc123",
+                  routeId: "convrt_abcdefabcdefabcdefabcdef",
+                  visibilityPolicy: {
+                    maxOutputVisibility: "public"
+                  },
                   stateRefs: [
                     {
                       provider: "google",
@@ -1301,7 +1535,10 @@ describe("handleRuntimeRequest", () => {
       input: {
         jobId: "job-123",
         requiredTools: ["google.getDriveFile"],
-        routeId: "convrt_abc123",
+        routeId: "convrt_abcdefabcdefabcdefabcdef",
+        visibilityPolicy: {
+          maxOutputVisibility: "public"
+        },
         stateRefs: [
           {
             provider: "google",
@@ -1332,7 +1569,7 @@ describe("handleRuntimeRequest", () => {
       () =>
         handleRuntimeRequest(
           new Request(
-            "http://runtime/internal/burble/channel/routes/convrt_abc123/events",
+            "http://runtime/internal/burble/channel/routes/convrt_abcdefabcdefabcdefabcdef/events",
             {
               method: "POST",
               headers: { "content-type": "application/json" },
@@ -1358,9 +1595,59 @@ describe("handleRuntimeRequest", () => {
       "http://burble-app:3000/internal/tools/conversation.sendMessage/execute"
     );
     expect(await requests[0].json()).toEqual({
+      scheduledJob: {
+        jobId: "job-123"
+      },
       input: {
-        routeId: "convrt_abc123",
+        jobId: "job-123",
+        routeId: "convrt_abcdefabcdefabcdefabcdef",
         text: "Open GitHub PRs: none found."
+      }
+    });
+  });
+
+  test("delivers Burble channel events with scheduled job identity from the local URL", async () => {
+    const requests: Request[] = [];
+    const response = await withMockFetch(
+      (async (input, init) => {
+        const request = new Request(input, init);
+        requests.push(request);
+        return Response.json({
+          classification: "user_private",
+          content: { ok: true }
+        });
+      }) as typeof fetch,
+      () =>
+        handleRuntimeRequest(
+          new Request(
+            "http://runtime/internal/burble/channel/routes/convrt_abcdefabcdefabcdefabcdef/events?jobId=job-123",
+            {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({
+                result: {
+                  summary: "No significant new AI news in the last 15 minutes."
+                }
+              })
+            }
+          ),
+          {
+            ...config,
+            runtimeId: "rt_u123"
+          }
+        )
+    );
+
+    expect(response.status).toBe(200);
+    expect(requests).toHaveLength(1);
+    expect(await requests[0].json()).toEqual({
+      scheduledJob: {
+        jobId: "job-123"
+      },
+      input: {
+        jobId: "job-123",
+        routeId: "convrt_abcdefabcdefabcdefabcdef",
+        text: "No significant new AI news in the last 15 minutes."
       }
     });
   });
@@ -1375,7 +1662,7 @@ describe("handleRuntimeRequest", () => {
       () =>
         handleRuntimeRequest(
           new Request(
-            "http://runtime/internal/burble/channel/routes/convrt_abc123/messages",
+            "http://runtime/internal/burble/channel/routes/convrt_abcdefabcdefabcdefabcdef/messages",
             {
               method: "POST",
               headers: { "content-type": "application/json" },
@@ -1404,7 +1691,7 @@ describe("handleRuntimeRequest", () => {
       () =>
         handleRuntimeRequest(
           new Request(
-            "http://runtime/internal/burble/channel/routes/convrt_abc123/events",
+            "http://runtime/internal/burble/channel/routes/convrt_abcdefabcdefabcdefabcdef/events",
             {
               method: "POST",
               headers: { "content-type": "application/json" },
@@ -1439,7 +1726,7 @@ describe("handleRuntimeRequest", () => {
       () =>
         handleRuntimeRequest(
           new Request(
-            "http://runtime/internal/burble/channel/routes/convrt_abc123/events",
+            "http://runtime/internal/burble/channel/routes/convrt_abcdefabcdefabcdefabcdef/events",
             {
               method: "POST",
               headers: { "content-type": "application/json" },
@@ -1468,7 +1755,7 @@ describe("handleRuntimeRequest", () => {
     expect(response.status).toBe(200);
     expect(await requests[0].json()).toEqual({
       input: {
-        routeId: "convrt_abc123",
+        routeId: "convrt_abcdefabcdefabcdefabcdef",
         text: "",
         attachments: [
           {
@@ -1493,7 +1780,7 @@ describe("handleRuntimeRequest", () => {
       () =>
         handleRuntimeRequest(
           new Request(
-            "http://runtime/internal/burble/channel/routes/convrt_abc123/events",
+            "http://runtime/internal/burble/channel/routes/convrt_abcdefabcdefabcdefabcdef/events",
             {
               method: "POST",
               headers: { "content-type": "application/json" },
@@ -1532,7 +1819,7 @@ describe("handleRuntimeRequest", () => {
       () =>
         handleRuntimeRequest(
           new Request(
-            "http://runtime/internal/conversation/routes/convrt_abc123/webhook",
+            "http://runtime/internal/conversation/routes/convrt_abcdefabcdefabcdefabcdef/webhook",
             {
               method: "POST",
               headers: { "content-type": "application/json" },
@@ -1549,7 +1836,7 @@ describe("handleRuntimeRequest", () => {
     expect(response.status).toBe(200);
     expect(await requests[0].json()).toEqual({
       input: {
-        routeId: "convrt_abc123",
+        routeId: "convrt_abcdefabcdefabcdefabcdef",
         text: "hello through old path"
       }
     });
@@ -1716,7 +2003,7 @@ function contractProbeRequest(input: {
               jobId: "contract-scheduled-job",
               capabilityProfile: "contract-probe",
               allowedTools: ["runtime.conformance.echo"],
-              routeId: "convrt_contract_probe",
+              routeId: "convrt_111111111111111111111111",
               stateRefs: [],
               visibilityPolicy: {
                 maxOutputVisibility: "user_private",

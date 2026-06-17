@@ -2,11 +2,14 @@ from __future__ import annotations
 
 import asyncio
 import html
+import ipaddress
 import json
 import os
 import re
+import socket
 from html.parser import HTMLParser
 from typing import Any
+from urllib.parse import urlparse
 
 from aiohttp import ClientSession, ClientTimeout
 
@@ -71,11 +74,59 @@ def _has_configured_extract_backend() -> bool:
     return any(os.getenv(key, "").strip() for key in env_keys)
 
 
+def _is_public_address(value: str) -> bool:
+    try:
+        address = ipaddress.ip_address(value)
+    except ValueError:
+        return False
+    return not (
+        address.is_private
+        or address.is_loopback
+        or address.is_link_local
+        or address.is_multicast
+        or address.is_reserved
+        or address.is_unspecified
+    )
+
+
+async def _resolve_host_addresses(host: str, port: int) -> list[str]:
+    loop = asyncio.get_running_loop()
+    infos = await loop.getaddrinfo(
+        host,
+        port,
+        type=socket.SOCK_STREAM,
+        proto=socket.IPPROTO_TCP,
+    )
+    return [str(info[4][0]) for info in infos if info and info[4]]
+
+
+async def _is_safe_url(url: str) -> bool:
+    try:
+        parsed = urlparse(str(url or "").strip())
+    except Exception:
+        return False
+    if parsed.scheme not in {"http", "https"}:
+        return False
+    host = (parsed.hostname or "").strip().lower().rstrip(".")
+    if not host:
+        return False
+    if host in {"localhost"} or host.endswith(".localhost"):
+        return False
+    if _is_public_address(host):
+        return True
+    try:
+        addresses = await _resolve_host_addresses(
+            host,
+            parsed.port or (443 if parsed.scheme == "https" else 80),
+        )
+    except Exception:
+        return False
+    return bool(addresses) and all(_is_public_address(address) for address in addresses)
+
+
 async def _fetch_url(session: ClientSession, url: str) -> dict[str, Any]:
     try:
-        from tools.web_tools import is_safe_url
-
-        if not is_safe_url(url):
+        if not await _is_safe_url(url):
             return {
                 "url": url,
                 "title": "",
@@ -89,7 +140,7 @@ async def _fetch_url(session: ClientSession, url: str) -> dict[str, Any]:
             headers={"User-Agent": "Burble-Hermes/0.1"},
         ) as response:
             final_url = str(response.url)
-            if not is_safe_url(final_url):
+            if not await _is_safe_url(final_url):
                 return {
                     "url": final_url,
                     "title": "",
@@ -123,9 +174,12 @@ async def _fetch_url(session: ClientSession, url: str) -> dict[str, Any]:
 
 async def _local_web_extract(args: dict[str, Any], **_kwargs: Any) -> str:
     if _has_configured_extract_backend():
-        from tools.web_tools import web_extract_tool
+        try:
+            from tools.web_tools import web_extract_tool
 
-        return await web_extract_tool(**args)
+            return await web_extract_tool(**args)
+        except Exception as error:
+            raise RuntimeError(f"configured web_extract backend failed: {error}") from error
 
     urls = args.get("urls")
     if not isinstance(urls, list) or not urls:

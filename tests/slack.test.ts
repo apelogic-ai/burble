@@ -22,6 +22,7 @@ import {
   buildAgentStatusResponse,
   buildAppHomeView,
   buildAgentHomeSettings,
+  buildSyncedAgentHomeSettings,
   buildAgentRuntimeManageModalView,
   buildAuthResponse,
   buildHelpResponse,
@@ -1661,6 +1662,87 @@ describe("buildAppHomeView", () => {
     store.close();
   });
 
+  test("syncs stale runtime status before rendering Home settings", async () => {
+    const store = createTokenStore(":memory:");
+    const runtime = store.getOrCreateAgentRuntime({
+      workspaceId: "T123",
+      slackUserId: "U123",
+      engine: "burble-direct",
+      endpointUrl: "http://runtime:8080",
+      authTokenHash: "hash",
+      statePath: "/data/state",
+      configPath: "/data/config/runtime.json",
+      workspacePath: "/data/workspace",
+      policyHash: "policy-home"
+    });
+
+    const settings = await buildSyncedAgentHomeSettings({
+      config: agentConfig,
+      store,
+      runtimeFactory: {
+        async getOrCreateRuntime() {
+          throw new Error("unexpected start");
+        },
+        async syncRuntimeStatus(runtimeId) {
+          store.updateAgentRuntimeStatus(runtimeId, {
+            status: "stopped",
+            failureReason: "Runtime container is not present"
+          });
+          return store.getAgentRuntime(runtimeId);
+        },
+        async stopRuntime() {},
+        async reapIdleRuntimes() {}
+      },
+      workspaceId: "T123",
+      slackUserId: "U123"
+    });
+
+    expect(settings.runtime.id).toBe(runtime.id);
+    expect(settings.runtime.status).toBe("stopped");
+    expect(store.getAgentRuntime(runtime.id)?.status).toBe("stopped");
+    store.close();
+  });
+
+  test("preserves Home runtime status when status sync throws", async () => {
+    const store = createTokenStore(":memory:");
+    const runtime = store.getOrCreateAgentRuntime({
+      workspaceId: "T123",
+      slackUserId: "U123",
+      engine: "burble-direct",
+      endpointUrl: "http://runtime:8080",
+      authTokenHash: "hash",
+      statePath: "/data/state",
+      configPath: "/data/config/runtime.json",
+      workspacePath: "/data/workspace",
+      policyHash: "policy-home"
+    });
+
+    const settings = await buildSyncedAgentHomeSettings({
+      config: agentConfig,
+      store,
+      runtimeFactory: {
+        async getOrCreateRuntime() {
+          throw new Error("unexpected start");
+        },
+        async syncRuntimeStatus() {
+          throw new Error("docker inspect failed");
+        },
+        async stopRuntime() {},
+        async reapIdleRuntimes() {}
+      },
+      workspaceId: "T123",
+      slackUserId: "U123"
+    });
+
+    expect(settings.runtime.id).toBe(runtime.id);
+    expect(settings.runtime.status).toBe("ready");
+    expect(store.getAgentRuntime(runtime.id)).toMatchObject({
+      status: "ready",
+      failureReason: null
+    });
+    store.close();
+  });
+
   test("builds an agent settings modal from effective config", () => {
     const store = createTokenStore(":memory:");
     store.upsertUserPreference({
@@ -2489,7 +2571,21 @@ describe("Slack destination grants", () => {
           return {
             channel: {
               is_member: true,
-              is_archived: false
+              is_archived: false,
+              is_private: false
+            }
+          };
+        }
+      }
+    };
+    const privateOkClient = {
+      conversations: {
+        async info() {
+          return {
+            channel: {
+              is_member: true,
+              is_archived: false,
+              is_private: true
             }
           };
         }
@@ -2531,7 +2627,13 @@ describe("Slack destination grants", () => {
         client: okClient as never,
         channelId: "C123"
       })
-    ).toEqual({ ok: true });
+    ).toEqual({ ok: true, isPrivateChannel: false });
+    expect(
+      await verifySlackDestinationGrantChannel({
+        client: privateOkClient as never,
+        channelId: "G123"
+      })
+    ).toEqual({ ok: true, isPrivateChannel: true });
     expect(
       await verifySlackDestinationGrantChannel({
         client: notMemberClient as never,

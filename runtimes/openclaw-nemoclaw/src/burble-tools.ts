@@ -29,7 +29,14 @@ function createBurbleMcpToolExecutor(
       ? readBurbleProviderBridgeCall(body)
       : null;
     const actualToolName = bridgeCall?.toolName ?? toolName;
-    const actualBody = bridgeCall ? { input: bridgeCall.input } : body;
+    const actualBody = bridgeCall
+      ? {
+          input: bridgeCall.input,
+          ...(request?.input.scheduledJob
+            ? { scheduledJob: request.input.scheduledJob }
+            : {})
+        }
+      : body;
 
     if (actualToolName === "conversation.sendMessage") {
       return sendConversationMessage(config, runtimeId, request, actualBody);
@@ -139,11 +146,16 @@ async function sendConversationMessage(
     throw new Error("conversation.sendMessage requires input.text or input.attachments");
   }
   const scheduledJob = request?.input.scheduledJob;
-  const routeId =
-    scheduledJob?.routeId ??
-    readNestedString(body, "input", "routeId") ??
-    request?.input.conversation?.routeId;
-  const jobId = scheduledJob?.jobId;
+  const routeId = scheduledJob
+    ? scheduledJob.routeId ?? request?.input.conversation?.routeId
+    : readNestedString(body, "input", "routeId") ??
+      request?.input.conversation?.routeId;
+  const jobId = scheduledJob ? scheduledJob.jobId : undefined;
+  if (scheduledJob && !routeId) {
+    throw new Error(
+      "conversation.sendMessage requires a trusted scheduled route id or active conversation"
+    );
+  }
   if (!routeId && !request?.input.conversation) {
     throw new Error("conversation.sendMessage requires a route id or active conversation");
   }
@@ -169,6 +181,9 @@ async function sendConversationMessage(
       },
       body: JSON.stringify({
         input,
+        ...(request?.input.scheduledJob
+          ? { scheduledJob: request.input.scheduledJob }
+          : {}),
         ...(request?.input.conversation
           ? { conversation: request.input.conversation }
           : {})
@@ -567,7 +582,8 @@ function toMcpToolArguments(
 ): Record<string, unknown> {
   return withScheduledJobIdentity(
     toMcpToolArgumentsWithoutScheduledJobIdentity(toolName, body, request),
-    readRecordKey(body, "input")
+    readRecordKey(body, "input"),
+    request?.input.scheduledJob?.jobId
   );
 }
 
@@ -644,9 +660,10 @@ function sampleManifestInputValue(field: RuntimeManifestToolInputSummary): unkno
 
 function withScheduledJobIdentity(
   args: Record<string, unknown>,
-  input: Record<string, unknown> | null
+  input: Record<string, unknown> | null,
+  trustedJobId?: string
 ): Record<string, unknown> {
-  const jobId = readScheduledJobIdFromInput(input);
+  const jobId = readScheduledJobIdFromInput(input) ?? trustedJobId;
   return jobId ? { ...args, jobId } : args;
 }
 

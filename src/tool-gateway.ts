@@ -1,7 +1,9 @@
 import type { Config } from "./config";
 import type {
+  AgentJobCapabilityRecord,
   AgentRuntimeEngine,
   AgentRuntimeRecord,
+  ConversationRouteRecord,
   Provider,
   TokenStore
 } from "./db";
@@ -12,6 +14,7 @@ import type {
 import { isKnownRuntimeEngine } from "./agent/runtime-descriptors";
 import { createHash, timingSafeEqual } from "node:crypto";
 import { connectionProviderForToolName } from "./providers/descriptors";
+import { providerToolCatalog } from "./providers/catalog";
 import { coerceProviderToolGatewayInput } from "./providers/tool-input-coercion";
 import {
   addGitHubIssueLabels,
@@ -129,6 +132,9 @@ import {
 } from "./agent/scheduled-job-tools";
 import { resolveConversationAttachmentCapability } from "./conversation/attachment-capabilities";
 
+const INVALID_ROUTE_NOTIFICATION_THROTTLE_MS = 6 * 60 * 60 * 1000;
+const invalidRouteNotificationTimes = new Map<string, number>();
+
 type ToolGatewayDeps = Partial<Parameters<typeof createGitHubTools>[0]> &
   Partial<GoogleToolDeps> &
   Partial<HubSpotToolDeps> &
@@ -153,6 +159,15 @@ type ToolGatewayDeps = Partial<Parameters<typeof createGitHubTools>[0]> &
       workspaceId: string;
       channelName: string;
     }) => Promise<string | null>;
+    notifyDestinationGrantDeliveryFailure?: (input: {
+      runtime: AgentRuntimeRecord;
+      routeId: string;
+      jobId?: string;
+      channelId?: string;
+      errorMessage: string;
+      errorCode?: string;
+      autoRevoked?: boolean;
+    }) => Promise<void>;
     listAtlassianMcpTools?: (input: {
       url: string;
       accessToken: string;
@@ -172,6 +187,7 @@ type ToolGatewayBody = {
     email?: unknown;
   };
   input?: unknown;
+  scheduledJob?: unknown;
   conversation?: unknown;
   attachments?: unknown;
 };
@@ -184,6 +200,8 @@ type ConversationAttachmentContent = {
 
 const maxConversationAttachmentBytes = 5 * 1024 * 1024;
 const maxConversationAttachmentTextChars = 64 * 1024;
+const destinationGrantFailureNotificationThreshold = 3;
+const destinationGrantAutoRevokeThreshold = 3;
 
 const defaultDeps = {
   getGitHubUser,
@@ -321,10 +339,91 @@ export async function handleToolGatewayRequest(
     if (!isConversationSendInput(body?.input)) {
       return new Response("Invalid tool input", { status: 400 });
     }
-    const sendInput = {
+    let sendInput = {
       ...body.input,
-      text: sanitizeRuntimeConversationText(body.input.text)
+      text: sanitizeRuntimeConversationText(body.input.text),
+      ...(body.input.routeId ? { routeId: body.input.routeId.trim() } : {})
     };
+    const trustedScheduledJobId = readScheduledJobId(body.scheduledJob);
+    const inputScheduledJobId = readScheduledJobId(body.input);
+    if (
+      trustedScheduledJobId &&
+      inputScheduledJobId &&
+      trustedScheduledJobId !== inputScheduledJobId
+    ) {
+      return new Response(
+        "Scheduled job provider call identity does not match trusted runtime context.",
+        { status: 403 }
+      );
+    }
+    if (trustedScheduledJobId) {
+      sendInput = { ...sendInput, jobId: trustedScheduledJobId };
+    } else if (sendInput.jobId) {
+      const { jobId: _jobId, ...rest } = sendInput;
+      sendInput = rest;
+    }
+    if (sendInput.routeId && !isConversationRouteId(sendInput.routeId)) {
+      const scheduledRouteId = resolveScheduledJobConversationRouteId(
+        store,
+        auth.runtime,
+        sendInput.jobId
+      );
+      if (scheduledRouteId) {
+        sendInput = {
+          ...sendInput,
+          routeId: scheduledRouteId
+        };
+      }
+    }
+    if (sendInput.routeId && !isConversationRouteId(sendInput.routeId)) {
+      const failure = invalidConversationRouteIdFailure();
+      let notificationSent = false;
+      if (
+        sendInput.jobId &&
+        shouldNotifyInvalidRouteFailure({
+          runtimeId: auth.runtime.id,
+          routeId: sendInput.routeId,
+          jobId: sendInput.jobId,
+          errorCode: failure.code
+        })
+      ) {
+        try {
+          await (deps.notifyDestinationGrantDeliveryFailure ??
+            ((notification) =>
+              defaultNotifyDestinationGrantDeliveryFailure(config, notification)))({
+            runtime: auth.runtime,
+            routeId: sendInput.routeId,
+            jobId: sendInput.jobId,
+            errorMessage: failure.message,
+            ...(failure.code ? { errorCode: failure.code } : {})
+          });
+          markInvalidRouteFailureNotified({
+            runtimeId: auth.runtime.id,
+            routeId: sendInput.routeId,
+            jobId: sendInput.jobId,
+            errorCode: failure.code
+          });
+          notificationSent = true;
+        } catch (notifyError) {
+          console.warn(
+            `Invalid scheduled route notification failed runtimeId=${auth.runtime.id} routeId=${sendInput.routeId} error=${formatToolGatewayErrorMessage(notifyError)}`
+          );
+        }
+      }
+      recordConversationDeliveryFailureEvent(store, auth.runtime, toolName, {
+        routeId: sendInput.routeId,
+        ...(sendInput.jobId ? { jobId: sendInput.jobId } : {}),
+        error: failure,
+        notificationSent
+      });
+      emitToolGatewayFailedBestEffort(
+        { observability: deps.observability, startedAt: toolStartedAt, body },
+        auth,
+        toolName,
+        failure
+      );
+      return new Response(failure.message, { status: 400 });
+    }
     const sendRouteOptions = sendInput.routeId
       ? resolveConversationSendRouteOptions(store, auth.runtime, sendInput)
       : { ok: true as const, options: {} };
@@ -344,17 +443,89 @@ export async function handleToolGatewayRequest(
     if (!destination.ok) {
       return new Response(destination.message, { status: destination.status });
     }
+    if (
+      destination.routeKind === "grant" &&
+      isPublicSlackChannelGrantDestination(destination) &&
+      sendRouteOptions.options.usesPrivateReadSourceTools
+    ) {
+      return new Response(destinationGrantPrivateReadSourceMessage(), {
+        status: 403
+      });
+    }
 
-    const result = await (deps.postActiveConversationMessage ??
-      ((input) => defaultPostActiveConversationMessage(config, input)))({
-      transport: destination.transport,
-      channelId: destination.channelId,
-      text: sendInput.text,
-      ...(sendInput.attachments ? { attachments: sendInput.attachments } : {}),
-      ...(destination.threadTs ? { threadTs: destination.threadTs } : {})
-    });
+    let result: { transport: "slack"; channelId: string; messageId?: string };
+    try {
+      result = await (deps.postActiveConversationMessage ??
+        ((input) => defaultPostActiveConversationMessage(config, input)))({
+        transport: destination.transport,
+        channelId: destination.channelId,
+        text: sendInput.text,
+        ...(sendInput.attachments ? { attachments: sendInput.attachments } : {}),
+        ...(destination.threadTs ? { threadTs: destination.threadTs } : {})
+      });
+    } catch (error) {
+      const failure = classifyConversationDeliveryFailure(error);
+      const route =
+        destination.routeKind === "grant" ? destination.route : undefined;
+      const nextConsecutiveFailures = route
+        ? (route.consecutiveDeliveryFailures ?? 0) + 1
+        : 0;
+      const shouldNotify =
+        Boolean(sendInput.routeId && route && !route.lastDeliveryFailureNotifiedAt) &&
+        (!failure.retryable ||
+          nextConsecutiveFailures >= destinationGrantFailureNotificationThreshold);
+      const shouldAutoRevoke =
+        Boolean(sendInput.routeId && route && !failure.retryable) &&
+        nextConsecutiveFailures >= destinationGrantAutoRevokeThreshold;
+      const autoRevoked =
+        shouldAutoRevoke && sendInput.routeId
+          ? Boolean(revokeDestinationGrantRoute(store, sendInput.routeId))
+          : false;
+      let notificationSent = false;
+      if (sendInput.routeId && route && (shouldNotify || autoRevoked)) {
+        try {
+          await (deps.notifyDestinationGrantDeliveryFailure ??
+            ((notification) =>
+              defaultNotifyDestinationGrantDeliveryFailure(config, notification)))({
+            runtime: auth.runtime,
+            routeId: sendInput.routeId,
+            ...(sendInput.jobId ? { jobId: sendInput.jobId } : {}),
+            channelId: destination.channelId,
+            errorMessage: failure.message,
+            ...(failure.code ? { errorCode: failure.code } : {}),
+            ...(autoRevoked ? { autoRevoked: true } : {})
+          });
+          notificationSent = true;
+        } catch (notifyError) {
+          console.warn(
+            `Destination grant delivery failure notification failed runtimeId=${auth.runtime.id} routeId=${sendInput.routeId} error=${formatToolGatewayErrorMessage(notifyError)}`
+          );
+        }
+      }
+      if (destination.routeKind === "grant") {
+        recordRouteConversationDeliveryFailure(store, sendInput.routeId, failure, {
+          notificationSent
+        });
+      }
+      recordConversationDeliveryFailureEvent(store, auth.runtime, toolName, {
+        routeId: sendInput.routeId,
+        jobId: sendInput.jobId,
+        routeKind: destination.routeKind,
+        channelId: destination.channelId,
+        error: failure,
+        notificationSent,
+        ...(autoRevoked ? { autoRevoked: true } : {})
+      });
+      emitToolGatewayFailedBestEffort(
+        { observability: deps.observability, startedAt: toolStartedAt, body },
+        auth,
+        toolName,
+        failure
+      );
+      return new Response("Conversation delivery failed", { status: 502 });
+    }
 
-    return respondWithAudit({
+    const response = respondWithAudit({
       classification: "user_private",
       content: {
         ok: true,
@@ -364,6 +535,10 @@ export async function handleToolGatewayRequest(
         ...(result.messageId ? { messageId: result.messageId } : {})
       }
     });
+    if (sendInput.routeId && destination.routeKind === "grant") {
+      resetRouteConversationDeliveryFailure(store, sendInput.routeId);
+    }
+    return response;
   }
 
   if (toolName === "conversation.getAttachment") {
@@ -443,18 +618,36 @@ export async function handleToolGatewayRequest(
     if (!input) {
       return new Response("Invalid tool input", { status: 400 });
     }
-    const resolvedRouteId = input.routeId ?? (input.destination
-      ? await resolveScheduledJobDestinationRouteId({
-          config,
-          store,
-          runtime: auth.runtime,
-          destination: input.destination,
-          resolveSlackChannelIdByName: deps.resolveSlackChannelIdByName
-        })
-      : null);
+    if (input.routeId && input.destination) {
+      return new Response(
+        "scheduledJob.registerCapability requires either routeId or destination, not both. Use destination for named Slack channels and routeId only for an already resolved convrt_* route.",
+        { status: 400 }
+      );
+    }
+    const routeIdValidationError = input.routeId
+      ? validateConversationRouteId(input.routeId)
+      : input.destination && "routeId" in input.destination
+        ? validateConversationRouteId(input.destination.routeId)
+        : null;
+    if (routeIdValidationError) {
+      return new Response(routeIdValidationError, { status: 400 });
+    }
+    const resolvedDestinationRoute = input.destination
+      ? await resolveScheduledJobDestinationRoute({
+            config,
+            store,
+            runtime: auth.runtime,
+            destination: input.destination,
+            resolveSlackChannelIdByName: deps.resolveSlackChannelIdByName
+          })
+      : null;
+    let resolvedRouteId = input.routeId
+      ? input.routeId.trim()
+      : resolvedDestinationRoute?.id ?? null;
     if (input.destination && !resolvedRouteId) {
       return new Response("Destination grant not found", { status: 404 });
     }
+    const requiredTools = normalizeScheduledJobToolNames(input.requiredTools);
     if (resolvedRouteId) {
       const destination = resolveConversationRouteDestination(
         store,
@@ -470,8 +663,32 @@ export async function handleToolGatewayRequest(
       if (!destination.ok) {
         return new Response(destination.message, { status: destination.status });
       }
+      if (
+        destination.routeKind === "grant" &&
+        isPublicSlackChannelGrantDestination(destination) &&
+        requiredToolsUsePrivateReadSources(requiredTools)
+      ) {
+        return new Response(
+          destinationGrantPrivateReadSourceMessage(),
+          { status: 403 }
+        );
+      }
+      if (input.destination && destination.routeKind === "grant" && destination.route) {
+        resolvedRouteId = store.upsertConversationRoute({
+          workspaceId: auth.runtime.workspaceId,
+          slackUserId: auth.runtime.slackUserId,
+          transport: destination.route.transport,
+          destination: readConversationRouteDestinationRecord(destination.route),
+          kind: "grant",
+          grantedBySlackUserId: destination.route.grantedBySlackUserId ?? null,
+          expiresAt: destination.route.expiresAt ?? null,
+          binding: {
+            jobId: input.jobId,
+            runtimeId: auth.runtime.id
+          }
+        }).id;
+      }
     }
-    const requiredTools = normalizeScheduledJobToolNames(input.requiredTools);
     const record = store.upsertAgentJobCapability({
       jobId: input.jobId,
       workspaceId: auth.runtime.workspaceId,
@@ -1664,7 +1881,25 @@ function validateAndStripScheduledJobToolGatewayInput(
   toolName: string,
   body: ToolGatewayBody
 ): { body: ToolGatewayBody; response: Response | null } {
-  const jobId = readScheduledJobId(body.input);
+  const trustedJobId = readScheduledJobId(body.scheduledJob);
+  const inputJobId = readScheduledJobId(body.input);
+  if (trustedJobId && inputJobId && trustedJobId !== inputJobId) {
+    return {
+      body,
+      response: jsonResponse(
+        {
+          classification: "user_private",
+          content: {
+            error: "scheduled_job_identity_mismatch",
+            message: "Scheduled job provider call identity does not match trusted runtime context."
+          }
+        },
+        403
+      )
+    };
+  }
+
+  const jobId = trustedJobId ?? inputJobId;
   if (!jobId) {
     return { body, response: null };
   }
@@ -1953,6 +2188,8 @@ function normalizeScheduledJobRegistrationInput(
     ])
   );
 
+  const visibilityPolicy = normalizeScheduledJobVisibilityPolicy(source);
+
   return {
     jobId: readUnknownAlias(source, [
       "jobId",
@@ -1979,11 +2216,52 @@ function normalizeScheduledJobRegistrationInput(
     stateRefs: normalizeScheduledJobStateRefs(
       readUnknownAlias(source, ["stateRefs", "state_refs"])
     ),
-    visibilityPolicy: readUnknownAlias(source, [
-      "visibilityPolicy",
-      "visibility_policy"
-    ])
+    ...(visibilityPolicy !== undefined ? { visibilityPolicy } : {})
   };
+}
+
+function normalizeScheduledJobVisibilityPolicy(
+  source: Record<string, unknown>
+): unknown | undefined {
+  const explicit = readUnknownAlias(source, [
+    "visibilityPolicy",
+    "visibility_policy"
+  ]);
+  const explicitPolicy = coerceScheduledJobVisibilityPolicy(explicit);
+
+  if (explicitPolicy === undefined) {
+    return undefined;
+  }
+
+  return explicitPolicy;
+}
+
+function coerceScheduledJobVisibilityPolicy(value: unknown): unknown | undefined {
+  if (value === undefined || value === null) {
+    return undefined;
+  }
+  if (isToolClassificationValue(value)) {
+    return { maxOutputVisibility: value };
+  }
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (!trimmed) {
+      return undefined;
+    }
+    if (isToolClassificationValue(trimmed)) {
+      return { maxOutputVisibility: trimmed };
+    }
+    try {
+      return coerceScheduledJobVisibilityPolicy(JSON.parse(trimmed));
+    } catch {
+      return value;
+    }
+  }
+  return value;
+}
+
+function isToolClassificationValue(value: unknown): value is ToolClassification {
+  return value === "public" || value === "user_private" || value === "restricted";
 }
 
 type ScheduledJobDestinationInput =
@@ -2002,7 +2280,7 @@ function normalizeScheduledJobDestination(
   }
   const routeId = readStringAlias(value, ["routeId", "route_id"]);
   if (routeId) {
-    return { routeId };
+    return { routeId: routeId.trim() };
   }
   const channelValue = readStringAlias(value, [
     "channelId",
@@ -2025,7 +2303,7 @@ function parseScheduledJobDestinationString(
   if (!trimmed) {
     return null;
   }
-  if (/^convrt_[A-Za-z0-9_-]+$/.test(trimmed)) {
+  if (isConversationRouteId(trimmed)) {
     return { routeId: trimmed };
   }
   const slackMention = trimmed.match(/^<#([A-Z0-9]+)(?:\|[^>]+)?>$/);
@@ -2039,6 +2317,16 @@ function parseScheduledJobDestinationString(
   return channelName ? { channelName } : null;
 }
 
+function isConversationRouteId(value: string): boolean {
+  return /^convrt_[0-9a-f]{24}$/.test(value);
+}
+
+function validateConversationRouteId(value: string): string | null {
+  return isConversationRouteId(value.trim())
+    ? null
+    : invalidConversationRouteIdFailure().message;
+}
+
 function readScheduledJobRegistrationId(
   input: ScheduledJobRegistrationInput
 ): string | null {
@@ -2050,6 +2338,34 @@ function readScheduledJobRegistrationTools(
   input: ScheduledJobRegistrationInput
 ): string[] | null {
   return normalizeScheduledJobRegistrationTools(input.requiredTools);
+}
+
+function requiredToolsUsePrivateReadSources(toolNames: string[]): boolean {
+  return toolNames.some((toolName) => {
+    const tool = providerToolCatalog.find(
+      (tool) =>
+        tool.name === toolName ||
+        tool.alias === toolName ||
+        (tool.aliases ?? []).includes(toolName)
+    );
+    if (tool) {
+      return providerToolUsesPrivateReadSource(tool);
+    }
+    return connectionProviderForToolName(toolName) !== null;
+  });
+}
+
+function providerToolUsesPrivateReadSource(tool: (typeof providerToolCatalog)[number]): boolean {
+  if (!tool.risk || tool.risk === "read") {
+    return true;
+  }
+  return new Set([
+    "appendDriveTextFile"
+  ]).has(tool.implementation);
+}
+
+function destinationGrantPrivateReadSourceMessage(): string {
+  return "Public Slack channel destination grants cannot be used for scheduled jobs that read from authenticated Burble provider sources. Public channel delivery is only allowed for public-source jobs; private-tool declassification requires an explicit approval flow that is not implemented yet.";
 }
 
 function normalizeScheduledJobRegistrationTools(value: unknown): string[] | null {
@@ -2197,7 +2513,16 @@ function buildScheduledJobPromptInstruction(
     `jobId=${scheduledJob.jobId}`,
     `allowedTools=${scheduledJob.allowedTools.join(",")}`,
     `capabilityProfile=${scheduledJob.capabilityProfile}`,
-    ...(scheduledJob.routeId ? [`routeId=${scheduledJob.routeId}`] : []),
+    ...(scheduledJob.routeId
+      ? [
+          `routeId=${scheduledJob.routeId}`,
+          `For scheduled/background delivery, use the resolved Burble conversation route id "${scheduledJob.routeId}".`,
+          "Do not use Slack channel names, Slack mentions, channel ids, or the original destination label as a delivery route."
+        ]
+      : [
+          "No scheduled/background Burble delivery route is authorized for this job.",
+          'Do not set delivery.channel to "burble" or delivery.to to a Slack channel name, Slack mention, channel id, or guessed route id.'
+        ]),
     `maxOutputVisibility=${scheduledJob.visibilityPolicy.maxOutputVisibility ?? "user_private"}`,
     `allowPrivateToolDeclassification=${scheduledJob.visibilityPolicy.allowPrivateToolDeclassification === true ? "true" : "false"}`
   ];
@@ -3301,6 +3626,8 @@ function resolveActiveConversationDestination(
       transport: "slack";
       channelId: string;
       threadTs?: string;
+      routeKind: "origin" | "grant";
+      route?: ConversationRouteRecord;
     }
   | { ok: false; status: number; message: string } {
   if (!isActiveConversation(conversation)) {
@@ -3318,6 +3645,7 @@ function resolveActiveConversationDestination(
     ok: true,
     transport: conversation.source,
     channelId: conversation.channelId,
+    routeKind: "origin",
     ...readConversationThread(conversation)
   };
 }
@@ -3337,6 +3665,8 @@ function resolveConversationRouteDestination(
       transport: "slack";
       channelId: string;
       threadTs?: string;
+      routeKind: "origin" | "grant";
+      route?: ConversationRouteRecord;
     }
   | { ok: false; status: number; message: string } {
   const route = store.getConversationRoute(routeId);
@@ -3402,24 +3732,27 @@ function resolveConversationRouteDestination(
   }
   if (
     route.kind === "grant" &&
-    !destination.isDirectMessage &&
+    isPublicSlackChannelGrantDestination(destination) &&
     options.maxOutputVisibility !== "public"
   ) {
     return {
       ok: false,
       status: 403,
-      message: "Destination grant requires public scheduled output visibility"
+      message:
+        'Destination grant requires public scheduled output visibility. If the user explicitly asked to post public scheduled output to this channel, retry scheduledJob.registerCapability with visibilityPolicy {"maxOutputVisibility":"public"}.'
     };
   }
 
   return {
     ok: true,
     transport: "slack",
+    routeKind: route.kind ?? "origin",
+    route,
     ...destination
   };
 }
 
-async function resolveScheduledJobDestinationRouteId(input: {
+async function resolveScheduledJobDestinationRoute(input: {
   config: Config;
   store: TokenStore;
   runtime: AgentRuntimeRecord;
@@ -3428,9 +3761,9 @@ async function resolveScheduledJobDestinationRouteId(input: {
     workspaceId: string;
     channelName: string;
   }) => Promise<string | null>;
-}): Promise<string | null> {
+}): Promise<ConversationRouteRecord | null> {
   if ("routeId" in input.destination) {
-    return input.destination.routeId;
+    return input.store.getConversationRoute(input.destination.routeId.trim());
   }
 
   const channelId =
@@ -3450,7 +3783,7 @@ async function resolveScheduledJobDestinationRouteId(input: {
     slackUserId: input.runtime.slackUserId,
     channelId
   });
-  return route?.id ?? null;
+  return route ?? null;
 }
 
 async function defaultResolveSlackChannelIdByName(
@@ -3529,13 +3862,78 @@ function resolveConversationSendRouteOptions(
       options: {
         jobId?: string;
         maxOutputVisibility?: ToolClassification;
+        usesPrivateReadSourceTools?: boolean;
       };
     }
   | { ok: false; status: number; message: string } {
   if (!input.jobId) {
+    const boundRouteOptions = resolveBoundConversationRouteSendOptions(
+      store,
+      runtime,
+      input.routeId
+    );
+    if (boundRouteOptions) {
+      return boundRouteOptions;
+    }
     return { ok: true, options: {} };
   }
 
+  return resolveScheduledJobCapabilitySendOptions(store, runtime, {
+    jobId: input.jobId,
+    routeId: input.routeId
+  });
+}
+
+function resolveBoundConversationRouteSendOptions(
+  store: TokenStore,
+  runtime: AgentRuntimeRecord,
+  routeId: string | undefined
+):
+  | {
+      ok: true;
+      options: {
+        jobId?: string;
+        maxOutputVisibility?: ToolClassification;
+        usesPrivateReadSourceTools?: boolean;
+      };
+    }
+  | { ok: false; status: number; message: string }
+  | null {
+  if (!routeId) {
+    return null;
+  }
+  const route = store.getConversationRoute(routeId);
+  const binding = readConversationRouteBinding(route?.bindingJson);
+  if (!binding?.jobId) {
+    return null;
+  }
+  if (binding.runtimeId && binding.runtimeId !== runtime.id) {
+    return {
+      ok: false,
+      status: 403,
+      message: "Conversation route runtime mismatch"
+    };
+  }
+  return resolveScheduledJobCapabilitySendOptions(store, runtime, {
+    jobId: binding.jobId,
+    routeId
+  });
+}
+
+function resolveScheduledJobCapabilitySendOptions(
+  store: TokenStore,
+  runtime: AgentRuntimeRecord,
+  input: { routeId?: string; jobId: string }
+):
+  | {
+      ok: true;
+      options: {
+        jobId?: string;
+        maxOutputVisibility?: ToolClassification;
+        usesPrivateReadSourceTools?: boolean;
+      };
+    }
+  | { ok: false; status: number; message: string } {
   const capability = store.getAgentJobCapability(input.jobId);
   if (!capability) {
     return {
@@ -3575,13 +3973,54 @@ function resolveConversationSendRouteOptions(
 
   return {
     ok: true,
-    options: {
-      jobId: capability.jobId,
-      maxOutputVisibility: normalizedMaxOutputVisibility(
-        capability.visibilityPolicy
-      )
-    }
+    options: scheduledJobCapabilityRouteOptions(capability)
   };
+}
+
+function scheduledJobCapabilityRouteOptions(
+  capability: AgentJobCapabilityRecord
+): {
+  jobId?: string;
+  maxOutputVisibility?: ToolClassification;
+  usesPrivateReadSourceTools?: boolean;
+} {
+  return {
+    jobId: capability.jobId,
+    maxOutputVisibility: normalizedMaxOutputVisibility(
+      capability.visibilityPolicy
+    ),
+    usesPrivateReadSourceTools: requiredToolsUsePrivateReadSources(
+      capability.requiredTools
+    )
+  };
+}
+
+function resolveScheduledJobConversationRouteId(
+  store: TokenStore,
+  runtime: AgentRuntimeRecord,
+  jobId: string | undefined
+): string | null {
+  if (!jobId) {
+    return null;
+  }
+  const capability = store.getAgentJobCapability(jobId);
+  if (!capability?.routeId || !isConversationRouteId(capability.routeId)) {
+    return null;
+  }
+  if (
+    capability.workspaceId !== runtime.workspaceId ||
+    capability.slackUserId !== runtime.slackUserId
+  ) {
+    return null;
+  }
+  if (
+    capability.policyHash &&
+    runtime.policyHash &&
+    capability.policyHash !== runtime.policyHash
+  ) {
+    return null;
+  }
+  return capability.routeId;
 }
 
 function readSlackRouteDestination(
@@ -3591,6 +4030,7 @@ function readSlackRouteDestination(
   threadTs?: string;
   runtimeId?: string;
   isDirectMessage: boolean;
+  isPrivateChannel?: boolean;
 } | null {
   try {
     const parsed = JSON.parse(destinationJson) as unknown;
@@ -3627,6 +4067,7 @@ function readSlackRouteDestination(
     return {
       channelId: record.channelId,
       isDirectMessage: record.isDirectMessage === true,
+      ...(record.isPrivateChannel === true ? { isPrivateChannel: true } : {}),
       ...(typeof record.threadTs === "string" && record.threadTs.trim()
         ? { threadTs: record.threadTs }
         : {}),
@@ -3637,6 +4078,45 @@ function readSlackRouteDestination(
   } catch {
     return null;
   }
+}
+
+function readConversationRouteDestinationRecord(
+  route: ConversationRouteRecord
+): Record<string, unknown> {
+  try {
+    const parsed = JSON.parse(route.destinationJson) as unknown;
+    if (
+      typeof parsed === "object" &&
+      parsed !== null &&
+      !Array.isArray(parsed)
+    ) {
+      return parsed as Record<string, unknown>;
+    }
+  } catch {
+    // Fall through to a minimal Slack route destination from the validated route.
+  }
+  const destination = readSlackRouteDestination(route.destinationJson);
+  if (!destination) {
+    return {};
+  }
+  return {
+    channelId: destination.channelId,
+    isDirectMessage: destination.isDirectMessage,
+    rootId: destination.isDirectMessage
+      ? `dm:${destination.channelId}`
+      : `channel:${destination.channelId}`,
+    ...(destination.isPrivateChannel === true ? { isPrivateChannel: true } : {}),
+    ...(destination.threadTs ? { threadTs: destination.threadTs } : {}),
+    ...(destination.runtimeId ? { runtimeId: destination.runtimeId } : {})
+  };
+}
+
+function isPublicSlackChannelGrantDestination(destination: {
+  channelId: string;
+  isDirectMessage?: boolean;
+  isPrivateChannel?: boolean;
+}): boolean {
+  return destination.isDirectMessage !== true && destination.isPrivateChannel !== true;
 }
 
 function readConversationRouteBinding(
@@ -3671,17 +4151,16 @@ function readConversationRouteBinding(
 function normalizedMaxOutputVisibility(
   visibilityPolicy: unknown
 ): ToolClassification | undefined {
+  const coerced = coerceScheduledJobVisibilityPolicy(visibilityPolicy);
   if (
-    typeof visibilityPolicy !== "object" ||
-    visibilityPolicy === null ||
-    Array.isArray(visibilityPolicy)
+    typeof coerced !== "object" ||
+    coerced === null ||
+    Array.isArray(coerced)
   ) {
     return undefined;
   }
-  const value = (visibilityPolicy as Record<string, unknown>).maxOutputVisibility;
-  return value === "public" || value === "user_private" || value === "restricted"
-    ? value
-    : undefined;
+  const value = (coerced as Record<string, unknown>).maxOutputVisibility;
+  return isToolClassificationValue(value) ? value : undefined;
 }
 
 function isAtlassianMcpToolCallInput(
@@ -3761,15 +4240,21 @@ async function defaultPostActiveConversationMessage(
     })
   });
 
-  const body = (await response.json()) as {
+  let body: {
     ok?: boolean;
     error?: string;
     channel?: string;
     ts?: string;
   };
+  try {
+    body = (await response.json()) as typeof body;
+  } catch {
+    body = {};
+  }
   if (!response.ok || !body.ok) {
-    throw new Error(
-      `Slack message send failed: ${body.error ?? `HTTP ${response.status}`}`
+    throw new SlackMessageSendError(
+      body.error ?? `http_${response.status}`,
+      response.status
     );
   }
 
@@ -3778,6 +4263,278 @@ async function defaultPostActiveConversationMessage(
     channelId: body.channel ?? input.channelId,
     ...(body.ts ? { messageId: body.ts } : {})
   };
+}
+
+async function defaultNotifyDestinationGrantDeliveryFailure(
+  config: Config,
+  input: {
+    runtime: AgentRuntimeRecord;
+    routeId: string;
+    jobId?: string;
+    channelId?: string;
+    errorMessage: string;
+    errorCode?: string;
+    autoRevoked?: boolean;
+  }
+): Promise<void> {
+  const destinationText = input.channelId
+    ? `<#${input.channelId}>`
+    : "the configured scheduled-job destination";
+  await defaultPostActiveConversationMessage(config, {
+    transport: "slack",
+    channelId: input.runtime.slackUserId,
+    text: [
+      `Burble could not post scheduled job output to ${destinationText}.`,
+      ...(input.jobId ? [`Job: \`${input.jobId}\``] : []),
+      `Route id: \`${input.routeId}\``,
+      `Reason: ${input.errorMessage}`,
+      ...(input.errorCode ? [`Slack error code: \`${input.errorCode}\``] : []),
+      input.autoRevoked
+        ? "Burble auto-revoked this destination grant after repeated permanent delivery failures."
+        : input.channelId
+          ? `The destination grant is still active. Fix the channel/app access, or open <#${input.channelId}> and run \`/agent ungrant here\` there to stop future scheduled delivery attempts.`
+          : "The scheduled delivery route is invalid. Re-register the scheduled job with a resolved convrt_* destination route."
+    ].join("\n")
+  });
+}
+
+function formatToolGatewayErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+class SlackMessageSendError extends Error {
+  readonly code: string;
+  readonly status: number;
+
+  constructor(code: string, status: number) {
+    const normalizedCode = code.toLowerCase();
+    super(`Slack message send failed: ${normalizedCode}`);
+    this.name = "SlackMessageSendError";
+    this.code = normalizedCode;
+    this.status = status;
+  }
+}
+
+type ConversationDeliveryFailure = {
+  message: string;
+  code?: string;
+  retryable: boolean;
+};
+
+function invalidConversationRouteIdFailure(): ConversationDeliveryFailure {
+  return {
+    message:
+      "Conversation route id must be a resolved convrt_* route id. Register scheduled destination labels with scheduledJob.registerCapability and use the returned routeId for delivery.",
+    code: "invalid_route_id",
+    retryable: false
+  };
+}
+
+function classifyConversationDeliveryFailure(
+  error: unknown
+): ConversationDeliveryFailure {
+  const message = formatToolGatewayErrorMessage(error);
+  const code =
+    error instanceof SlackMessageSendError
+      ? error.code
+      : readSlackErrorCodeFromMessage(message);
+  return {
+    message,
+    ...(code ? { code } : {}),
+    retryable: isRetryableConversationDeliveryFailure(code, message)
+  };
+}
+
+function readSlackErrorCodeFromMessage(message: string): string | undefined {
+  const match = message.match(/Slack message send failed:\s*([a-z0-9_]+)/i);
+  return match?.[1]?.toLowerCase();
+}
+
+function isRetryableConversationDeliveryFailure(
+  code: string | undefined,
+  message: string
+): boolean {
+  if (code) {
+    if (
+      code === "ratelimited" ||
+      code === "rate_limited" ||
+      code === "http_429"
+    ) {
+      return true;
+    }
+    const httpStatus = code.match(/^http_(\d{3})$/)?.[1];
+    if (httpStatus && Number(httpStatus) >= 500) {
+      return true;
+    }
+    if (httpStatus) {
+      return false;
+    }
+    return false;
+  }
+
+  const normalized = message.toLowerCase();
+  if (
+    normalized.includes("aborterror") ||
+    normalized.includes("timeout") ||
+    normalized.includes("timed out") ||
+    normalized.includes("econnreset") ||
+    normalized.includes("econnrefused") ||
+    normalized.includes("etimedout") ||
+    normalized.includes("enotfound") ||
+    normalized.includes("eai_again") ||
+    normalized.includes("epipe") ||
+    normalized.includes("socket hang up") ||
+    normalized.includes("fetch failed") ||
+    normalized.includes("tls") ||
+    normalized.includes("certificate") ||
+    normalized.includes("network")
+  ) {
+    return true;
+  }
+
+  return false;
+}
+
+function isKnownPermanentConversationDeliveryFailure(code: string): boolean {
+  return new Set([
+    "account_inactive",
+    "channel_not_found",
+    "invalid_auth",
+    "is_archived",
+    "msg_too_long",
+    "no_text",
+    "not_authed",
+    "not_in_channel",
+    "restricted_action",
+    "token_revoked"
+  ]).has(code);
+}
+
+function recordRouteConversationDeliveryFailure(
+  store: TokenStore,
+  routeId: string | undefined,
+  error: ConversationDeliveryFailure,
+  input: { notificationSent: boolean }
+): void {
+  if (!routeId) {
+    return;
+  }
+  try {
+    store.recordConversationRouteDeliveryFailure({
+      routeId,
+      ...(error.code ? { code: error.code } : {}),
+      notificationSent: input.notificationSent
+    });
+  } catch (recordError) {
+    console.warn(
+      `Conversation route delivery failure record failed routeId=${routeId} error=${formatToolGatewayErrorMessage(recordError)}`
+    );
+  }
+}
+
+function shouldNotifyInvalidRouteFailure(input: {
+  runtimeId: string;
+  routeId: string;
+  jobId: string;
+  errorCode?: string;
+}): boolean {
+  const key = invalidRouteNotificationKey(input);
+  const lastNotifiedAt = invalidRouteNotificationTimes.get(key);
+  if (
+    lastNotifiedAt &&
+    Date.now() - lastNotifiedAt < INVALID_ROUTE_NOTIFICATION_THROTTLE_MS
+  ) {
+    return false;
+  }
+  return true;
+}
+
+function markInvalidRouteFailureNotified(input: {
+  runtimeId: string;
+  routeId: string;
+  jobId: string;
+  errorCode?: string;
+}): void {
+  invalidRouteNotificationTimes.set(invalidRouteNotificationKey(input), Date.now());
+}
+
+function invalidRouteNotificationKey(input: {
+  runtimeId: string;
+  routeId: string;
+  jobId: string;
+  errorCode?: string;
+}): string {
+  return [
+    input.runtimeId,
+    input.jobId,
+    input.routeId,
+    input.errorCode ?? "unknown"
+  ].join("\u0000");
+}
+
+function revokeDestinationGrantRoute(
+  store: TokenStore,
+  routeId: string
+): ConversationRouteRecord | null {
+  try {
+    return store.revokeConversationRoute({ routeId });
+  } catch (revokeError) {
+    console.warn(
+      `Destination grant auto-revoke failed routeId=${routeId} error=${formatToolGatewayErrorMessage(revokeError)}`
+    );
+    return null;
+  }
+}
+
+function resetRouteConversationDeliveryFailure(
+  store: TokenStore,
+  routeId: string
+): void {
+  try {
+    store.resetConversationRouteDeliveryFailure({ routeId });
+  } catch (resetError) {
+    console.warn(
+      `Conversation route delivery failure reset failed routeId=${routeId} error=${formatToolGatewayErrorMessage(resetError)}`
+    );
+  }
+}
+
+function recordConversationDeliveryFailureEvent(
+  store: TokenStore,
+  runtime: AgentRuntimeRecord,
+  toolName: string,
+  input: {
+    routeId?: string;
+    jobId?: string;
+    routeKind?: "origin" | "grant";
+    channelId?: string;
+    error: ConversationDeliveryFailure;
+    notificationSent: boolean;
+    autoRevoked?: boolean;
+  }
+): void {
+  try {
+    store.recordAgentRuntimeEvent({
+      runtimeId: runtime.id,
+      eventType: "runtime_tool_failed",
+      summary: {
+        toolName,
+        ...(input.routeKind ? { routeKind: input.routeKind } : {}),
+        ...(input.channelId ? { channelId: input.channelId } : {}),
+        ...(input.routeId ? { routeId: input.routeId } : {}),
+        ...(input.jobId ? { jobId: input.jobId } : {}),
+        error: input.error.message,
+        ...(input.error.code ? { deliveryFailureCode: input.error.code } : {}),
+        deliveryFailureRetryable: input.error.retryable,
+        notificationSent: input.notificationSent,
+        ...(input.autoRevoked ? { autoRevoked: true } : {})
+      }
+    });
+  } catch (recordError) {
+    console.warn(
+      `Runtime delivery failure event record failed runtimeId=${runtime.id} error=${formatToolGatewayErrorMessage(recordError)}`
+    );
+  }
 }
 
 async function defaultFetchConversationAttachment(
@@ -4014,16 +4771,22 @@ function emitToolGatewayStarted(
   toolName: string,
   body: ToolGatewayBody | null
 ): void {
-  observability?.emit({
-    name: "tool.gateway.started",
-    ...toolGatewayIdentityFields(auth),
-    toolName,
-    attributes: {
-      authKind: auth.kind,
-      provider: readToolProviderForTelemetry(toolName),
-      hasUserEmail: typeof body?.user?.email === "string"
-    }
-  });
+  try {
+    observability?.emit({
+      name: "tool.gateway.started",
+      ...toolGatewayIdentityFields(auth),
+      toolName,
+      attributes: {
+        authKind: auth.kind,
+        provider: readToolProviderForTelemetry(toolName),
+        hasUserEmail: typeof body?.user?.email === "string"
+      }
+    });
+  } catch (emitError) {
+    console.warn(
+      `Tool gateway started event emit failed toolName=${toolName} error=${formatToolGatewayErrorMessage(emitError)}`
+    );
+  }
 }
 
 function emitToolGatewayCompleted(
@@ -4032,19 +4795,56 @@ function emitToolGatewayCompleted(
   toolName: string,
   result: ToolResult<unknown>
 ): void {
-  context?.observability?.emit({
-    name: "tool.gateway.completed",
-    ...toolGatewayIdentityFields(auth),
-    toolName,
-    classification: result.classification,
-    durationMs: Date.now() - context.startedAt,
-    status: "ok",
-    attributes: {
-      authKind: auth.kind,
-      provider: readToolProviderForTelemetry(toolName),
-      itemCount: Array.isArray(result.content) ? result.content.length : null
-    }
-  });
+  try {
+    context?.observability?.emit({
+      name: "tool.gateway.completed",
+      ...toolGatewayIdentityFields(auth),
+      toolName,
+      classification: result.classification,
+      durationMs: Date.now() - context.startedAt,
+      status: "ok",
+      attributes: {
+        authKind: auth.kind,
+        provider: readToolProviderForTelemetry(toolName),
+        itemCount: Array.isArray(result.content) ? result.content.length : null
+      }
+    });
+  } catch (emitError) {
+    console.warn(
+      `Tool gateway completed event emit failed toolName=${toolName} error=${formatToolGatewayErrorMessage(emitError)}`
+    );
+  }
+}
+
+function emitToolGatewayFailedBestEffort(
+  context: ToolGatewayObservabilityContext | undefined,
+  auth: ToolGatewayAuth,
+  toolName: string,
+  error: ConversationDeliveryFailure
+): void {
+  try {
+    context?.observability?.emit({
+      name: "tool.gateway.failed",
+      ...toolGatewayIdentityFields(auth),
+      toolName,
+      durationMs: Date.now() - context.startedAt,
+      status: "error",
+      attributes: {
+        authKind: auth.kind,
+        provider: readToolProviderForTelemetry(toolName),
+        ...(error.code ? { deliveryFailureCode: error.code } : {}),
+        deliveryFailureRetryable: error.retryable
+      },
+      error: {
+        message: error.message,
+        ...(error.code ? { code: error.code } : {})
+      }
+    });
+  } catch (emitError) {
+    console.warn(
+      `Tool gateway failure event emit failed toolName=${toolName} error=${formatToolGatewayErrorMessage(emitError)}`
+    );
+  }
 }
 
 function emitRuntimeHeartbeat(

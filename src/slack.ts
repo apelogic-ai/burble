@@ -1209,7 +1209,8 @@ export function createSlackRuntime(
               workspaceId: body.team_id,
               slackUserId: body.user_id
             },
-            channelId: body.channel_id
+            channelId: body.channel_id,
+            isPrivateChannel: preflight.isPrivateChannel
           });
           await respond({
             ...buildAgentDestinationGrantResponse(route),
@@ -1980,6 +1981,7 @@ export function createSlackDestinationGrantRoute(input: {
     slackUserId: string;
   };
   channelId: string;
+  isPrivateChannel?: boolean;
   threadTs?: string;
   expiresAt?: string | null;
   binding?: Record<string, unknown> | null;
@@ -2012,14 +2014,26 @@ export function revokeSlackDestinationGrantRoutes(input: {
   threadTs?: string;
   now?: Date;
 }): number {
-  const destination = slackDestinationGrantDestination(input);
-  return input.store.revokeConversationRoutesForDestination({
+  const baseDestination = slackDestinationGrantDestination(input);
+  const revokedLegacyAndPublic = input.store.revokeConversationRoutesForDestination({
     workspaceId: input.principal.workspaceId,
     transport: "slack",
-    destination,
+    destination: baseDestination,
     kind: "grant",
     ...(input.now ? { now: input.now } : {})
   });
+  const privateDestination = slackDestinationGrantDestination({
+    ...input,
+    isPrivateChannel: true
+  });
+  const revokedPrivate = input.store.revokeConversationRoutesForDestination({
+    workspaceId: input.principal.workspaceId,
+    transport: "slack",
+    destination: privateDestination,
+    kind: "grant",
+    ...(input.now ? { now: input.now } : {})
+  });
+  return revokedLegacyAndPublic + revokedPrivate;
 }
 
 export function applySlackDestinationGrantRevoke(input: {
@@ -2038,6 +2052,7 @@ export function applySlackDestinationGrantRevoke(input: {
 
 function slackDestinationGrantDestination(input: {
   channelId: string;
+  isPrivateChannel?: boolean;
   threadTs?: string;
 }): Record<string, unknown> {
   return {
@@ -2051,6 +2066,7 @@ function slackDestinationGrantDestination(input: {
           threadTs: input.threadTs
         })
       : `channel:${input.channelId}`,
+    ...(input.isPrivateChannel === true ? { isPrivateChannel: true } : {}),
     ...(input.threadTs ? { threadTs: input.threadTs } : {})
   };
 }
@@ -2496,7 +2512,7 @@ function parseSlackStreamingModePreference(
   return fallback;
 }
 
-async function buildSyncedAgentHomeSettings(input: {
+export async function buildSyncedAgentHomeSettings(input: {
   config: Config;
   store: TokenStore;
   runtimeFactory?: RuntimeFactory;
@@ -2517,7 +2533,15 @@ async function buildSyncedAgentHomeSettings(input: {
     engine: selection.effectiveEngine
   });
   if (runtime && input.runtimeFactory?.syncRuntimeStatus) {
-    await input.runtimeFactory.syncRuntimeStatus(runtime.id);
+    try {
+      await input.runtimeFactory.syncRuntimeStatus(runtime.id);
+    } catch (error) {
+      console.warn(
+        `Runtime status sync failed runtimeId=${runtime.id} error=${
+          error instanceof Error ? error.message : String(error)
+        }`
+      );
+    }
   }
 
   return buildAgentHomeSettings(input);
@@ -3143,7 +3167,7 @@ export type SlackDestinationGrantPreflightFailureReason =
   | "unverified";
 
 export type SlackDestinationGrantPreflightResult =
-  | { ok: true }
+  | { ok: true; isPrivateChannel: boolean }
   | {
       ok: false;
       reason: SlackDestinationGrantPreflightFailureReason;
@@ -3196,7 +3220,7 @@ export async function verifySlackDestinationGrantChannel(input: {
     if (channel.is_member !== true) {
       return { ok: false, reason: "not_in_channel" };
     }
-    return { ok: true };
+    return { ok: true, isPrivateChannel: channel.is_private === true };
   } catch (error) {
     const detail = formatSlackApiErrorDetail(error);
     if (detail === "not_in_channel" || detail === "channel_not_found") {

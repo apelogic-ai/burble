@@ -1750,10 +1750,27 @@ describe("runOpenClawCliRequest", () => {
     expect(prompts[0]).toContain(
       "Active Burble conversation channel route: convrt_abc123"
     );
-    expect(prompts[0]).toContain("Native OpenClaw Burble channel delivery");
+    expect(prompts[0]).toContain("Native Burble channel delivery");
     expect(prompts[0]).toContain('delivery.mode to "announce"');
     expect(prompts[0]).toContain('delivery.channel to "burble"');
     expect(prompts[0]).toContain('delivery.to to "convrt_abc123"');
+    expect(prompts[0]).toContain(
+      "do not put the Slack label in delivery.to"
+    );
+    expect(prompts[0]).toContain(
+      "For output that only reads public/open-internet sources, first call scheduledJob.registerCapability with destination set to that label"
+    );
+    expect(prompts[0]).toContain("omit routeId");
+    expect(prompts[0]).toContain("Never send both routeId and destination");
+    expect(prompts[0]).toContain(
+      'visibilityPolicy {"maxOutputVisibility":"public"}'
+    );
+    expect(prompts[0]).toContain(
+      "If the job reads from authenticated Burble provider sources, do not register the channel destination"
+    );
+    expect(prompts[0]).toContain(
+      "If registration does not return ok with a resolved route, do not update, enable, or trigger the job"
+    );
     expect(prompts[0]).not.toContain(
       'use Burble provider tools with routeId "convrt_abc123"'
     );
@@ -1854,6 +1871,82 @@ describe("runOpenClawCliRequest", () => {
     expect(prompts[0]).toContain("allowPrivateToolDeclassification=false");
     expect(prompts[0]).toContain(
       "stateRef provider=google kind=drive_file id=file-123 purpose=dedupe_state"
+    );
+  });
+
+  test("exposes provider bridge during scheduled job execution without active conversation", async () => {
+    const prompts: string[] = [];
+    await runOpenClawCliRequest(
+      {
+        executionMode: "native-runtime",
+        input: {
+          text: "run the scheduled PR monitor",
+          toolGroups: {
+            groups: ["github", "google"],
+            reasons: ["scheduled-job:allowed-tools"]
+          },
+          scheduledJob: {
+            jobId: "job-pr-monitor",
+            capabilityProfile: "scheduled_job",
+            allowedTools: [
+              "github_list_my_pull_requests",
+              "google_get_drive_file",
+              "google_append_to_drive_text_file"
+            ],
+            routeId: "convrt_abc123",
+            runtimeType: "openclaw",
+            stateRefs: [
+              {
+                provider: "google",
+                kind: "drive_file",
+                id: "dedupe-file",
+                purpose: "dedupe_state"
+              }
+            ],
+            visibilityPolicy: {
+              maxOutputVisibility: "user_private",
+              allowPrivateToolDeclassification: false
+            }
+          },
+          connections: {
+            github: {
+              connected: true,
+              email: "person@example.com",
+              providerLogin: "person"
+            },
+            google: {
+              connected: true,
+              email: "person@example.com",
+              providerLogin: "person@example.com"
+            }
+          }
+        }
+      },
+      config,
+      async () => ({
+        classification: "user_private",
+        content: {}
+      }),
+      async (_command, args) => {
+        prompts.push(args[args.indexOf("--message") + 1]);
+        return {
+          exitCode: 0,
+          stdout: "PR monitor run complete.",
+          stderr: ""
+        };
+      },
+      () => undefined
+    );
+
+    expect(prompts[0]).toContain("Scheduled Burble job context:");
+    expect(prompts[0]).toContain("jobId=job-pr-monitor");
+    expect(prompts[0]).toContain("Available Burble tools:");
+    expect(prompts[0]).toContain("burble_provider_call");
+    expect(prompts[0]).toContain(
+      "Call one Burble provider tool through the runtime-scoped Burble provider bridge"
+    );
+    expect(prompts[0]).toContain(
+      "For this scheduled job, use only the listed allowedTools"
     );
   });
 
@@ -4010,6 +4103,31 @@ describe("runOpenClawCliRequest", () => {
     expect(String(requests[0].body.input)).toContain(
       "pass destination with the channel mention/name/id"
     );
+    expect(String(requests[0].body.input)).toContain(
+      "A Slack channel label, Slack mention, Slack channel id, or guessed convrt_* value is not a delivery route"
+    );
+    expect(String(requests[0].body.input)).toContain(
+      'Never set native delivery.to to values like "#eng"'
+    );
+    expect(String(requests[0].body.input)).toContain(
+      "use only the returned scheduledJob.routeId / routeId convrt_* value as native delivery.to"
+    );
+    expect(String(requests[0].body.input)).toContain(
+      "Do not use the original destination label in native delivery"
+    );
+    expect(String(requests[0].body.input)).toContain("omit routeId");
+    expect(String(requests[0].body.input)).toContain(
+      "Never send both routeId and destination"
+    );
+    expect(String(requests[0].body.input)).toContain(
+      'include visibilityPolicy {"maxOutputVisibility":"public"}'
+    );
+    expect(String(requests[0].body.input)).toContain(
+      "Include conversation.sendMessage plus any write-only provider state tools"
+    );
+    expect(String(requests[0].body.input)).toContain(
+      "If the scheduled job reads from authenticated Burble provider sources"
+    );
     expect(String(requests[0].body.input)).toContain("/agent grant here");
     expect(String(requests[0].body.input)).toContain(
       "stateRefs entries must be objects"
@@ -4022,6 +4140,12 @@ describe("runOpenClawCliRequest", () => {
     );
     expect(String(requests[0].body.input)).toContain(
       "Scheduled provider tool calls must include the returned jobId"
+    );
+    expect(String(requests[0].body.input)).toContain(
+      "Burble channel delivery"
+    );
+    expect(String(requests[0].body.input)).toContain(
+      "delivery target is not a resolved convrt_* route"
     );
     expect(String(requests[0].body.input)).toContain(
       "must not use direct web/browser access to provider URLs"
@@ -4107,6 +4231,9 @@ describe("runOpenClawCliRequest", () => {
     expect(String(requests[0].body.input)).toContain(
       "after the native scheduler returns the stable job id"
     );
+    expect(String(requests[0].body.input)).toContain(
+      "use Burble provider tools or post scheduled output through Burble"
+    );
   });
 
   test("executes scheduled job registration as a Burble-internal tool", async () => {
@@ -4180,6 +4307,89 @@ describe("runOpenClawCliRequest", () => {
             jobId: "job-ai-news",
             requiredTools: ["google.getDriveFile"],
             routeId: "convrt_abc123"
+          }
+        }
+      }
+    ]);
+  });
+
+  test("accepts the native scheduled job registration alias", async () => {
+    const toolCalls: Array<{ toolName: string; body: Record<string, unknown> }> =
+      [];
+
+    const response = await runOpenClawCliRequest(
+      {
+        runId: "run-register-scheduled-job-alias",
+        executionMode: "native-runtime",
+        input: {
+          text: "modify the public cron job to post to #burble-test",
+          toolGroups: {
+            groups: ["conversation", "scheduler"],
+            reasons: ["default:conversation", "keyword:scheduler:cron"]
+          },
+          conversation: {
+            routeId: "convrt_abc123",
+            source: "slack",
+            workspaceId: "T123",
+            channelId: "D123",
+            rootId: "dm:D123",
+            isDirectMessage: true
+          },
+          connections: {
+            github: { connected: false },
+            google: { connected: false },
+            jira: { connected: false },
+            slack: { connected: false }
+          }
+        }
+      },
+      { ...config, engine: "openclaw" },
+      async (toolName, body) => {
+        toolCalls.push({ toolName, body: body as Record<string, unknown> });
+        return {
+          classification: "user_private",
+          content: {
+            ok: true,
+            routeId: "convrt_0123456789abcdef01234567",
+            scheduledJob: {
+              routeId: "convrt_0123456789abcdef01234567"
+            },
+            scheduledPromptInstruction:
+              "Use routeId convrt_0123456789abcdef01234567."
+          }
+        };
+      },
+      async () => {
+        if (toolCalls.length === 0) {
+          return openClawToolCall("scheduled_job_register_capability", {
+            jobId: "job-ai-news-public",
+            destination: "#burble-test",
+            requiredTools: ["conversation.sendMessage"],
+            visibilityPolicy: { maxOutputVisibility: "public" }
+          });
+        }
+
+        return {
+          exitCode: 0,
+          stdout: "Registered destination and stopped before manual trigger.",
+          stderr: ""
+        };
+      },
+      () => undefined
+    );
+
+    expect(response.response.text).toBe(
+      "Registered destination and stopped before manual trigger."
+    );
+    expect(toolCalls).toEqual([
+      {
+        toolName: "scheduledJob.registerCapability",
+        body: {
+          input: {
+            jobId: "job-ai-news-public",
+            destination: "#burble-test",
+            requiredTools: ["conversation.sendMessage"],
+            visibilityPolicy: { maxOutputVisibility: "public" }
           }
         }
       }

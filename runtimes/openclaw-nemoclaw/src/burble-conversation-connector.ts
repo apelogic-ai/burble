@@ -5,6 +5,7 @@ import type { ConversationAttachment, RunRequest, ToolResult } from "./types";
 
 export type BurbleConversationRoute = {
   routeId: string;
+  jobId?: string;
 };
 
 export type BurbleConversationMessage = BurbleConversationRoute & {
@@ -34,27 +35,31 @@ export function createBurbleConversationConnector(
   runtimeId: string,
   request?: RunRequest
 ): BurbleConversationConnector {
-  const executor = createBurbleToolExecutor(config, runtimeId, request);
   const sendMessage = async (
     message: BurbleConversationMessage
   ): Promise<ToolResult> => {
     info(
       `Burble conversation connector send routeId=${message.routeId} textChars=${message.text.length} attachments=${message.attachments?.length ?? 0}`
     );
-    const result = await executor("conversation.sendMessage", {
-      input: {
-        routeId: message.routeId,
-        text: message.text,
-        ...(message.attachments ? { attachments: message.attachments } : {})
-      }
-    });
+    const result = message.jobId
+      ? await sendScheduledChannelMessage(config, runtimeId, message)
+      : await createBurbleToolExecutor(config, runtimeId, request)(
+          "conversation.sendMessage",
+          {
+            input: {
+              routeId: message.routeId,
+              text: message.text,
+              ...(message.attachments ? { attachments: message.attachments } : {})
+            }
+          }
+        );
     info(`Burble conversation connector sent routeId=${message.routeId}`);
     return result;
   };
 
   return {
     describeDeliveryTarget(route) {
-      return buildBurbleConversationDeliveryTarget(config, route.routeId);
+      return buildBurbleConversationDeliveryTarget(config, route);
     },
     sendMessage,
     async deliverEvent(event) {
@@ -69,6 +74,7 @@ export function createBurbleConversationConnector(
 
       return sendMessage({
         routeId: event.routeId,
+        ...(event.jobId ? { jobId: event.jobId } : {}),
         text: text ?? "",
         ...attachments
       });
@@ -76,16 +82,60 @@ export function createBurbleConversationConnector(
   };
 }
 
+async function sendScheduledChannelMessage(
+  config: RuntimeConfig,
+  runtimeId: string,
+  message: BurbleConversationMessage
+): Promise<ToolResult> {
+  const response = await fetch(
+    `${config.toolGatewayUrl}/${encodeURIComponent("conversation.sendMessage")}/execute`,
+    {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${config.internalToken}`,
+        "x-burble-runtime-id": runtimeId
+      },
+      body: JSON.stringify({
+        scheduledJob: {
+          jobId: message.jobId
+        },
+        input: {
+          routeId: message.routeId,
+          text: message.text,
+          jobId: message.jobId,
+          ...(message.attachments ? { attachments: message.attachments } : {})
+        }
+      })
+    }
+  );
+  if (!response.ok) {
+    throw new Error(
+      `Burble conversation gateway returned HTTP ${response.status}${await readErrorDetail(response)}`
+    );
+  }
+
+  const result = (await response.json()) as unknown;
+  if (!isToolResult(result)) {
+    throw new Error("Burble conversation gateway returned invalid tool result");
+  }
+  return result;
+}
+
 export function buildBurbleConversationDeliveryTarget(
   config: RuntimeConfig,
-  routeId: string
+  route: BurbleConversationRoute
 ): BurbleConversationDeliveryTarget {
+  const routeId = route.routeId;
   const encodedRouteId = encodeURIComponent(routeId);
+  const jobQuery = route.jobId
+    ? `?jobId=${encodeURIComponent(route.jobId)}`
+    : "";
   return {
     channel: "burble",
     routeId,
-    localMessageUrl: `http://127.0.0.1:${config.port}/internal/burble/channel/routes/${encodedRouteId}/messages`,
-    localEventUrl: `http://127.0.0.1:${config.port}/internal/burble/channel/routes/${encodedRouteId}/events`
+    localMessageUrl: `http://127.0.0.1:${config.port}/internal/burble/channel/routes/${encodedRouteId}/messages${jobQuery}`,
+    localEventUrl: `http://127.0.0.1:${config.port}/internal/burble/channel/routes/${encodedRouteId}/events${jobQuery}`
   };
 }
 
@@ -203,4 +253,19 @@ function isConversationAttachment(value: unknown): value is ConversationAttachme
 
 function optionalString(value: unknown): boolean {
   return value === undefined || typeof value === "string";
+}
+
+async function readErrorDetail(response: Response): Promise<string> {
+  const detail = await response.text().catch(() => "");
+  return detail ? `: ${detail}` : "";
+}
+
+function isToolResult(value: unknown): value is ToolResult {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    !Array.isArray(value) &&
+    typeof (value as { classification?: unknown }).classification === "string" &&
+    "content" in value
+  );
 }

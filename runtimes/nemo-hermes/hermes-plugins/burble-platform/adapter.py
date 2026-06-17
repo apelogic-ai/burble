@@ -75,6 +75,94 @@ def _is_burble_platform_notice(text: str) -> bool:
     )
 
 
+def _looks_like_hermes_tool_protocol_line(text: str) -> bool:
+    value = text.strip()
+    if not value:
+        return False
+    if value.startswith(("to=", "recipient=", "<tool", "</tool>")):
+        return True
+    return False
+
+
+def _looks_like_hermes_tool_json_line(text: str) -> bool:
+    value = text.strip()
+    if not (value.startswith("{") and value.endswith("}")):
+        return False
+    try:
+        parsed = json.loads(value)
+    except json.JSONDecodeError:
+        return False
+    if not isinstance(parsed, dict):
+        return False
+    protocol_keys = {
+        "command",
+        "timeout_ms",
+        "toolName",
+        "input",
+        "stdout",
+        "stderr",
+        "exit_code",
+        "tool",
+        "ok",
+        "data",
+    }
+    return any(key in parsed for key in protocol_keys)
+
+
+def _starts_hermes_tool_json_block(text: str) -> bool:
+    value = text.strip()
+    if not value.startswith("{"):
+        return False
+    return any(
+        marker in value
+        for marker in (
+            '"command"',
+            '"timeout_ms"',
+            '"toolName"',
+            '"input"',
+            '"stdout"',
+            '"stderr"',
+            '"exit_code"',
+            '"tool"',
+            '"ok"',
+            '"data"',
+        )
+    )
+
+
+def _strip_hermes_tool_protocol(text: str) -> tuple[str, bool]:
+    value = str(text or "")
+    if "to=" not in value and "recipient=" not in value and "<tool" not in value:
+        return value, False
+
+    kept: list[str] = []
+    removed = False
+    skipping_json_block = False
+    for line in value.splitlines():
+        if skipping_json_block:
+            removed = True
+            if line.strip().endswith("}"):
+                skipping_json_block = False
+            continue
+        if _looks_like_hermes_tool_protocol_line(line) or _looks_like_hermes_tool_json_line(line):
+            removed = True
+            continue
+        if _starts_hermes_tool_json_block(line):
+            removed = True
+            if not line.strip().endswith("}"):
+                skipping_json_block = True
+            continue
+        kept.append(line)
+
+    if not removed:
+        return value, False
+
+    cleaned = "\n".join(kept)
+    while "\n\n\n" in cleaned:
+        cleaned = cleaned.replace("\n\n\n", "\n\n")
+    return cleaned.strip(), True
+
+
 def _to_non_negative_int(value: Any) -> Optional[int]:
     if isinstance(value, bool) or value is None:
         return None
@@ -229,6 +317,25 @@ def _usage_from_metadata(metadata: Optional[Dict[str, Any]]) -> Optional[dict[st
     return _normalize_usage(metadata)
 
 
+def _job_id_from_metadata(metadata: Optional[Dict[str, Any]]) -> Optional[str]:
+    if not _keyed(metadata):
+        return None
+
+    for key in ("jobId", "job_id", "scheduledJobId", "scheduled_job_id"):
+        value = _get_key(metadata, key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+
+    for key in ("scheduledJob", "scheduled_job", "job", "runtime"):
+        nested = _get_key(metadata, key)
+        if _keyed(nested):
+            job_id = _job_id_from_metadata(nested)
+            if job_id:
+                return job_id
+
+    return None
+
+
 def _usage_snapshot(value: Any) -> Optional[dict[str, int]]:
     if not _keyed(value):
         return None
@@ -370,9 +477,22 @@ class BurbleAdapter(BasePlatformAdapter):
         metadata: Optional[Dict[str, Any]] = None,
     ) -> SendResult:
         route_id = str(chat_id or "").strip()
-        text = str(content or "")
+        text, removed_tool_protocol = _strip_hermes_tool_protocol(str(content or ""))
         if not route_id:
             return SendResult(success=False, error="Burble route id is required")
+        if removed_tool_protocol:
+            print(
+                f"[ERROR] Burble Hermes platform refused leaked tool protocol routeId={route_id}",
+                flush=True,
+            )
+            return SendResult(
+                success=False,
+                error=(
+                    "Hermes produced tool-call protocol text instead of structured tool calls; "
+                    "refusing to publish untrusted assistant content"
+                ),
+                retryable=False,
+            )
         if not text.strip():
             return SendResult(success=True, message_id=f"burble:{route_id}:{int(time.time() * 1000)}")
         if _is_burble_platform_notice(text):
@@ -450,7 +570,7 @@ class BurbleAdapter(BasePlatformAdapter):
             f"[INFO] Burble Hermes platform route send routeId={route_id} textChars={len(text)}",
             flush=True,
         )
-        return await self._send_to_burble_route(route_id, text)
+        return await self._send_to_burble_route(route_id, text, _job_id_from_metadata(metadata))
 
     async def edit_message(
         self,
@@ -667,11 +787,16 @@ class BurbleAdapter(BasePlatformAdapter):
         except Exception:
             return None
 
-    async def _send_to_burble_route(self, route_id: str, text: str) -> SendResult:
+    async def _send_to_burble_route(
+        self, route_id: str, text: str, job_id: Optional[str] = None
+    ) -> SendResult:
         url = (
             f"{self.tool_gateway_url}/"
             f"{quote('conversation.sendMessage', safe='')}/execute"
         )
+        input_body: dict[str, Any] = {"routeId": route_id, "text": text}
+        if job_id:
+            input_body["jobId"] = job_id
         async with ClientSession(timeout=ClientTimeout(total=60)) as session:
             async with session.post(
                 url,
@@ -680,7 +805,10 @@ class BurbleAdapter(BasePlatformAdapter):
                     "content-type": "application/json",
                     "x-burble-runtime-id": self.runtime_id,
                 },
-                json={"input": {"routeId": route_id, "text": text}},
+                json={
+                    "input": input_body,
+                    **({"scheduledJob": {"jobId": job_id}} if job_id else {}),
+                },
             ) as response:
                 body = await response.text()
                 if response.status >= 400:

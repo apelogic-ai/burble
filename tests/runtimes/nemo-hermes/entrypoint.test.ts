@@ -114,8 +114,14 @@ class FakeSession:
         return self
     async def __aexit__(self, exc_type, exc, tb):
         return False
-    def post(self, url, json):
-        posted_payloads.append({"url": url, "json": json})
+    def post(self, url, **kwargs):
+        payload = {
+            "url": url,
+            "json": kwargs.get("json"),
+        }
+        if kwargs.get("headers") is not None:
+            payload["headers"] = kwargs.get("headers")
+        posted_payloads.append(payload)
         return FakeResponse()
 
 class FakeTimeout:
@@ -625,6 +631,25 @@ asyncio.run(main())
       callId: "contract-scheduled-provider-probe",
       classification: "user_private"
     });
+    expect(typed.scheduledEvents).toContainEqual({
+      type: "tool_call",
+      toolName: "burble_provider_call",
+      callId: "contract-scheduled-provider-bridge-probe",
+      input: {
+        toolName: "runtime.conformance.echo",
+        input: {
+          jobId: "contract-scheduled-job",
+          message: "scheduled provider bridge probe"
+        }
+      }
+    });
+    expect(typed.scheduledEvents).toContainEqual({
+      type: "tool_result",
+      toolName: "burble_provider_call",
+      callId: "contract-scheduled-provider-bridge-probe",
+      classification: "user_private",
+      content: { ok: true }
+    });
     expect(typed.attachmentEvents).toContainEqual({
       type: "tool_call",
       toolName: "conversation.getAttachment",
@@ -793,9 +818,9 @@ print(json.dumps({"text": mod.build_hermes_turn_text(payload)}))
       "stateRef provider=google kind=drive_file id=file-123 purpose=dedupe_state"
     );
     expect(text).toContain(
-      "Ensure this native scheduled job has the provider bridge toolset enabled"
+      "burble_provider_call is runtime-pinned into native toolsets"
     );
-    expect(text).toContain("cronjob");
+    expect(text).not.toContain("Do not run provider-backed scheduled jobs with only web enabled");
   });
 
   test("adds provider-backed scheduled job repair guidance to scheduler-only Hermes turns", () => {
@@ -819,6 +844,17 @@ print(json.dumps({"text": mod.build_hermes_turn_text(payload)}))
     expect(text).toContain("do not request an immediate/manual run");
     expect(text).toContain("After the native scheduler returns the stable job id");
     expect(text).toContain("If registration does not return ok, do not trigger");
+    expect(text).toContain(
+      'visibilityPolicy {"maxOutputVisibility":"public"}'
+    );
+    expect(text).toContain("Slack channel labels are not route ids");
+    expect(text).toContain("use the Burble platform delivery target");
+    expect(text).toContain("burble:<returned routeId>");
+    expect(text).toContain("Never use slack:<channelId>");
+    expect(text).toContain(
+      "do not register a Slack channel destination"
+    );
+    expect(text).toContain("explicit declassification approval flow");
     expect(text).toContain("Only after the job prompt has been updated");
     expect(text).toContain("scheduled_job_register_capability");
     expect(text).toContain(
@@ -969,6 +1005,91 @@ asyncio.run(main())
 
     expect(result).toEqual({
       ok: true,
+      payloads: []
+    });
+  });
+
+  test("forwards Hermes route-send job metadata to the conversation gateway", () => {
+    const result = runHermesEntrypointProbe(`${importBurblePlatformAdapter}
+import asyncio
+import os
+
+os.environ["BURBLE_TOOL_GATEWAY_URL"] = "http://burble-app:3000/internal/tools"
+os.environ["BURBLE_INTERNAL_TOKEN"] = "token"
+os.environ["BURBLE_RUNTIME_ID"] = "rt_123"
+
+async def main():
+    adapter = mod.BurbleAdapter(types.SimpleNamespace(extra={}))
+    sent = await adapter.send(
+        "convrt_abc123",
+        "Scheduled report",
+        metadata={"jobId": "job-123"},
+    )
+    print(json.dumps({"success": sent.success, "payloads": posted_payloads}))
+
+asyncio.run(main())
+`);
+
+    expect(result).toEqual({
+      success: true,
+      payloads: [
+        {
+          url: "http://burble-app:3000/internal/tools/conversation.sendMessage/execute",
+          headers: {
+            authorization: "Bearer token",
+            "content-type": "application/json",
+            "x-burble-runtime-id": "rt_123"
+          },
+          json: {
+            scheduledJob: {
+              jobId: "job-123"
+            },
+            input: {
+              routeId: "convrt_abc123",
+              text: "Scheduled report",
+              jobId: "job-123"
+            }
+          }
+        }
+      ]
+    });
+  });
+
+  test("refuses Hermes tool protocol from scheduled route sends", () => {
+    const result = runHermesEntrypointProbe(`${importBurblePlatformAdapter}
+import asyncio
+import os
+
+os.environ["BURBLE_TOOL_GATEWAY_URL"] = "http://burble-app:3000/internal/tools"
+os.environ["BURBLE_INTERNAL_TOKEN"] = "token"
+os.environ["BURBLE_RUNTIME_ID"] = "rt_123"
+
+async def main():
+    adapter = mod.BurbleAdapter(types.SimpleNamespace(extra={}))
+    content = """Checking the last 24h window.
+to=terminal_exec code
+{"command":"date -u","timeout_ms":120000}
+{"stdout":"2026-06-17T13:03:48Z\\n","stderr":"","exit_code":0}
+to=burble_provider_call code
+{"toolName":"github_search_issues","input":{"jobId":"job-123","query":"org:apelogic-ai is:pr"}}
+{"tool":"github_search_issues","ok":true,"data":{"issues":[{"number":602}]}}
+
+New open apelogic-ai PRs in the last 24h
+- apelogic-ai/ape-leads #602 - notion - PR link
+"""
+    sent = await adapter.send(
+        "convrt_abc123",
+        content,
+        metadata={"jobId": "job-123"},
+    )
+    print(json.dumps({"success": sent.success, "error": sent.error, "payloads": posted_payloads}))
+
+asyncio.run(main())
+`);
+
+    expect(result).toEqual({
+      success: false,
+      error: "Hermes produced tool-call protocol text instead of structured tool calls; refusing to publish untrusted assistant content",
       payloads: []
     });
   });
@@ -1233,20 +1354,20 @@ print(json.dumps({
     const result = runHermesEntrypointProbe(`${importProviderToolPlugin}
 class Ctx:
     def __init__(self):
-        self.tools = []
+        self.tools_by_name = {}
 
     def register_tool(self, **kwargs):
-        self.tools.append({
+        self.tools_by_name[kwargs.get("name")] = {
             "name": kwargs.get("name"),
             "toolset": kwargs.get("toolset"),
             "is_async": kwargs.get("is_async"),
             "description": kwargs.get("description"),
             "schema": kwargs.get("schema"),
-        })
+        }
 
 ctx = Ctx()
 mod.register(ctx)
-print(json.dumps(ctx.tools))
+print(json.dumps(list(ctx.tools_by_name.values())))
 `) as Array<{
       name?: string;
       toolset?: string;
@@ -1255,6 +1376,14 @@ print(json.dumps(ctx.tools))
         parameters?: {
           properties?: {
             destination?: { description?: string };
+            visibilityPolicy?: {
+              description?: string;
+              properties?: {
+                maxOutputVisibility?: { enum?: string[] };
+                allowPrivateToolDeclassification?: { type?: string };
+              };
+              additionalProperties?: boolean;
+            };
           };
         };
       };
@@ -1263,7 +1392,7 @@ print(json.dumps(ctx.tools))
     expect(result).toContainEqual(
       expect.objectContaining({
         name: "burble_provider_call",
-        toolset: "cronjob",
+        toolset: "web",
         is_async: true
       })
     );
@@ -1302,17 +1431,31 @@ print(json.dumps(ctx.tools))
     expect(
       scheduledJobTool?.schema?.parameters?.properties?.destination?.description
     ).toContain("/agent grant here");
+    expect(
+      scheduledJobTool?.schema?.parameters?.properties?.destination?.description
+    ).toContain("instead of using them as route ids");
+    expect(
+      scheduledJobTool?.schema?.parameters?.properties?.visibilityPolicy?.description
+    ).toContain('"maxOutputVisibility":"public"');
+    expect(
+      scheduledJobTool?.schema?.parameters?.properties?.visibilityPolicy?.description
+    ).toContain("Do not set allowPrivateToolDeclassification automatically");
+    expect(
+      scheduledJobTool?.schema?.parameters?.properties?.visibilityPolicy
+        ?.properties?.maxOutputVisibility?.enum
+    ).toEqual(["public", "user_private", "restricted"]);
+    expect(
+      scheduledJobTool?.schema?.parameters?.properties?.visibilityPolicy
+        ?.properties?.allowPrivateToolDeclassification?.type
+    ).toBe("boolean");
+    expect(
+      scheduledJobTool?.schema?.parameters?.properties?.visibilityPolicy
+        ?.additionalProperties
+    ).toBe(false);
     expect(result).toContainEqual(
       expect.objectContaining({
         name: "conversation_get_attachment",
         toolset: "cronjob",
-        is_async: true
-      })
-    );
-    expect(result).toContainEqual(
-      expect.objectContaining({
-        name: "burble_provider_call",
-        toolset: "web",
         is_async: true
       })
     );
@@ -1333,6 +1476,7 @@ print(json.dumps(ctx.tools))
       schema?: {
         parameters?: {
           required?: string[];
+          anyOf?: Array<{ required?: string[] }>;
           properties?: Record<string, { items?: unknown }>;
         };
       };
@@ -1341,11 +1485,23 @@ print(json.dumps(ctx.tools))
       (tool: { name?: string }) => tool.name === "scheduled_job_register_capability"
     );
     expect(registrationTool?.schema?.parameters?.required).toEqual([
-      "jobId",
-      "requiredTools"
+      "jobId"
+    ]);
+    expect(registrationTool?.schema?.parameters?.anyOf).toEqual([
+      { required: ["requiredTools"] },
+      { required: ["allowedTools"] },
+      { required: ["required_tools"] },
+      { required: ["allowed_tools"] },
+      { required: ["tools"] }
     ]);
     expect(
       registrationTool?.schema?.parameters?.properties?.requiredTools?.items
+    ).toEqual({ type: "string" });
+    expect(
+      registrationTool?.schema?.parameters?.properties?.allowedTools?.items
+    ).toEqual({ type: "string" });
+    expect(
+      registrationTool?.schema?.parameters?.properties?.tools?.items
     ).toEqual({ type: "string" });
   });
 
@@ -1423,7 +1579,106 @@ asyncio.run(main())
     });
   });
 
-  test("pins Burble provider bridge tools into the Hermes web toolset for cron jobs", () => {
+  test("unwraps nested Hermes provider bridge envelopes", () => {
+    const result = runHermesEntrypointProbe(`${importProviderToolPlugin}
+import asyncio
+import os
+
+os.environ["BURBLE_TOOL_GATEWAY_URL"] = "http://burble-app:3000/internal/tools"
+os.environ["BURBLE_INTERNAL_TOKEN"] = "runtime-secret"
+os.environ["BURBLE_RUNTIME_ID"] = "rt_u123"
+
+calls = []
+
+class FakeResponse:
+    status = 200
+    async def __aenter__(self):
+        return self
+    async def __aexit__(self, *_args):
+        return None
+    async def json(self):
+        return {
+            "classification": "user_private",
+            "content": {"name": "Scratchpad"},
+        }
+
+class FakeSession:
+    def __init__(self, *args, **kwargs):
+        pass
+    async def __aenter__(self):
+        return self
+    async def __aexit__(self, *_args):
+        return None
+    def post(self, url, json=None, headers=None):
+        calls.append({"url": url, "json": json, "headers": headers})
+        return FakeResponse()
+
+mod.ClientSession = FakeSession
+mod.ClientTimeout = lambda **_kwargs: None
+
+async def main():
+    result = await mod._burble_provider_call({
+        "name": "burble_provider_call",
+        "arguments": {
+            "toolName": "google_get_drive_file",
+            "input": {"fileId": "file-123", "jobId": "job-123"},
+        },
+    })
+    print(json.dumps({"result": json.loads(result), "calls": calls}))
+
+asyncio.run(main())
+`);
+
+    expect(result).toEqual({
+      result: { name: "Scratchpad" },
+      calls: [
+        {
+          url: "http://burble-app:3000/internal/tools/google.getDriveFile/execute",
+          json: {
+            input: {
+              fileId: "file-123",
+              jobId: "job-123"
+            }
+          },
+          headers: {
+            authorization: "Bearer runtime-secret",
+            "content-type": "application/json",
+            "x-burble-runtime-id": "rt_u123"
+          }
+        }
+      ]
+    });
+  });
+
+  test("rejects recursive Hermes provider bridge calls locally", () => {
+    const result = runHermesEntrypointProbe(`${importProviderToolPlugin}
+import asyncio
+import os
+
+os.environ["BURBLE_TOOL_GATEWAY_URL"] = "http://burble-app:3000/internal/tools"
+os.environ["BURBLE_INTERNAL_TOKEN"] = "runtime-secret"
+os.environ["BURBLE_RUNTIME_ID"] = "rt_u123"
+
+class FakeSession:
+    def __init__(self, *args, **kwargs):
+        raise AssertionError("gateway should not be called")
+
+mod.ClientSession = FakeSession
+
+async def main():
+    result = await mod._burble_provider_call({"name": "burble_provider_call"})
+    print(json.dumps(json.loads(result)))
+
+asyncio.run(main())
+`);
+
+    expect(result).toEqual({
+      error: true,
+      message: "burble_provider_call requires toolName"
+    });
+  });
+
+  test("pins Burble provider bridge tool into the Hermes web toolset for cron jobs", () => {
     const result = runHermesEntrypointProbe(`${importProviderToolPlugin}
 toolsets = types.ModuleType("toolsets")
 toolsets.TOOLSETS = {
@@ -1431,23 +1686,227 @@ toolsets.TOOLSETS = {
         "description": "Web research and content extraction tools",
         "tools": ["web_search", "web_extract"],
         "includes": [],
+    },
+    "pr_monitor": {
+        "description": "Existing saved PR monitor toolset",
+        "tools": ["cron_run"],
+        "includes": [],
     }
 }
 sys.modules["toolsets"] = toolsets
 
 class Ctx:
-    def register_tool(self, **kwargs):
-        pass
+    def __init__(self):
+        self.registered = []
 
-mod.register(Ctx())
-print(json.dumps(toolsets.TOOLSETS["web"]["tools"]))
+    def register_tool(self, **kwargs):
+        self.registered.append({"name": kwargs.get("name"), "toolset": kwargs.get("toolset")})
+
+ctx = Ctx()
+mod.register(ctx)
+print(json.dumps({
+    "web": toolsets.TOOLSETS["web"]["tools"],
+    "pr_monitor": toolsets.TOOLSETS["pr_monitor"]["tools"],
+    "registered": ctx.registered,
+}))
+`) as {
+      web: string[];
+      pr_monitor: string[];
+      registered: Array<{ name?: string; toolset?: string }>;
+    };
+
+    expect(result.web).toContain("web_search");
+    expect(result.web).toContain("web_extract");
+    expect(result.web).toContain("burble_provider_call");
+    expect(result.web).not.toContain("google_get_drive_file");
+    expect(result.web).not.toContain("google_append_to_drive_text_file");
+    expect(result.web).not.toContain("scheduled_job_register_capability");
+    expect(result.pr_monitor).toContain("cron_run");
+    expect(result.pr_monitor).not.toContain("burble_provider_call");
+    expect(result.registered).toContainEqual({
+      name: "burble_provider_call",
+      toolset: "web"
+    });
+  });
+
+  test("Hermes web extract falls back locally when upstream safety helper is unavailable", () => {
+    const result = runHermesEntrypointProbe(String.raw`
+import importlib.util
+import json
+import os
+import sys
+import types
+import asyncio
+
+for key in ("FIRECRAWL_API_KEY", "FIRECRAWL_API_URL", "TAVILY_API_KEY", "EXA_API_KEY", "PARALLEL_API_KEY"):
+    os.environ.pop(key, None)
+
+tools = types.ModuleType("tools")
+web_tools = types.ModuleType("tools.web_tools")
+web_tools.WEB_EXTRACT_SCHEMA = {"description": "extract"}
+sys.modules["tools"] = tools
+sys.modules["tools.web_tools"] = web_tools
+
+class FakeResponse:
+    status = 200
+    url = "https://example.com/news"
+    async def __aenter__(self):
+        return self
+    async def __aexit__(self, *_args):
+        return None
+    async def text(self, errors=None):
+        return "<html><title>AI News</title><body><article><h1>Hello</h1><p>Public update</p></article></body></html>"
+
+class FakeSession:
+    def __init__(self, *args, **kwargs):
+        pass
+    async def __aenter__(self):
+        return self
+    async def __aexit__(self, *_args):
+        return None
+    def get(self, url, **kwargs):
+        return FakeResponse()
+
+aiohttp = types.ModuleType("aiohttp")
+aiohttp.ClientSession = FakeSession
+aiohttp.ClientTimeout = lambda **_kwargs: None
+sys.modules["aiohttp"] = aiohttp
+
+spec = importlib.util.spec_from_file_location(
+    "burble_web_extract",
+    "runtimes/nemo-hermes/hermes-plugins/burble-web-extract/__init__.py",
+)
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+async def fake_resolve_host_addresses(host, port):
+    return ["93.184.216.34"]
+mod._resolve_host_addresses = fake_resolve_host_addresses
+
+async def main():
+    value = await mod._local_web_extract({"urls": ["https://example.com/news"]})
+    print(json.dumps(json.loads(value)))
+
+asyncio.run(main())
 `);
 
-    expect(result).toContain("web_search");
-    expect(result).toContain("web_extract");
-    expect(result).toContain("burble_provider_call");
-    expect(result).not.toContain("google_get_drive_file");
-    expect(result).not.toContain("google_append_to_drive_text_file");
-    expect(result).not.toContain("scheduled_job_register_capability");
+    expect(result).toEqual({
+      results: [
+        expect.objectContaining({
+          url: "https://example.com/news",
+          title: "AI News",
+          content: expect.stringContaining("Public update"),
+          error: null
+        })
+      ]
+    });
+  });
+
+  test("Hermes web extract blocks hostnames resolving to private addresses", () => {
+    const result = runHermesEntrypointProbe(String.raw`
+import importlib.util
+import json
+import os
+import sys
+import types
+import asyncio
+
+for key in ("FIRECRAWL_API_KEY", "FIRECRAWL_API_URL", "TAVILY_API_KEY", "EXA_API_KEY", "PARALLEL_API_KEY"):
+    os.environ.pop(key, None)
+
+tools = types.ModuleType("tools")
+web_tools = types.ModuleType("tools.web_tools")
+web_tools.WEB_EXTRACT_SCHEMA = {"description": "extract"}
+sys.modules["tools"] = tools
+sys.modules["tools.web_tools"] = web_tools
+
+class FakeSession:
+    def __init__(self, *args, **kwargs):
+        pass
+    async def __aenter__(self):
+        return self
+    async def __aexit__(self, *_args):
+        return None
+    def get(self, url, **kwargs):
+        raise AssertionError("private-resolving host must not be fetched")
+
+aiohttp = types.ModuleType("aiohttp")
+aiohttp.ClientSession = FakeSession
+aiohttp.ClientTimeout = lambda **_kwargs: None
+sys.modules["aiohttp"] = aiohttp
+
+spec = importlib.util.spec_from_file_location(
+    "burble_web_extract",
+    "runtimes/nemo-hermes/hermes-plugins/burble-web-extract/__init__.py",
+)
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+async def fake_resolve_host_addresses(host, port):
+    return ["169.254.169.254"]
+mod._resolve_host_addresses = fake_resolve_host_addresses
+
+async def main():
+    value = await mod._local_web_extract({"urls": ["http://metadata.attacker.test/latest"]})
+    print(json.dumps(json.loads(value)))
+
+asyncio.run(main())
+`);
+
+    expect(result).toEqual({
+      results: [
+        expect.objectContaining({
+          url: "http://metadata.attacker.test/latest",
+          content: "",
+          error: "Blocked: URL targets a private or internal network address"
+        })
+      ]
+    });
+  });
+
+  test("Hermes web extract does not fall back locally after configured backend failure", () => {
+    const result = runHermesEntrypointProbe(String.raw`
+import importlib.util
+import json
+import os
+import sys
+import types
+import asyncio
+
+os.environ["FIRECRAWL_API_KEY"] = "configured"
+
+tools = types.ModuleType("tools")
+web_tools = types.ModuleType("tools.web_tools")
+web_tools.WEB_EXTRACT_SCHEMA = {"description": "extract"}
+async def web_extract_tool(**_kwargs):
+    raise RuntimeError("backend policy rejected URL")
+web_tools.web_extract_tool = web_extract_tool
+sys.modules["tools"] = tools
+sys.modules["tools.web_tools"] = web_tools
+
+aiohttp = types.ModuleType("aiohttp")
+aiohttp.ClientSession = lambda *args, **kwargs: (_ for _ in ()).throw(
+    AssertionError("local fallback must not run after backend failure")
+)
+aiohttp.ClientTimeout = lambda **_kwargs: None
+sys.modules["aiohttp"] = aiohttp
+
+spec = importlib.util.spec_from_file_location(
+    "burble_web_extract",
+    "runtimes/nemo-hermes/hermes-plugins/burble-web-extract/__init__.py",
+)
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+
+async def main():
+    try:
+        await mod._local_web_extract({"urls": ["https://example.com/news"]})
+    except Exception as error:
+        print(json.dumps({"error": str(error)}))
+
+asyncio.run(main())
+`);
+
+    expect(result).toEqual({
+      error: "configured web_extract backend failed: backend policy rejected URL"
+    });
   });
 });
