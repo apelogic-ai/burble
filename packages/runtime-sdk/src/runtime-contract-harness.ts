@@ -242,6 +242,25 @@ async function assertScheduledProviderCapability(
     );
   }
   assertScheduledProviderBridgeResult(providerBridgeResult.content);
+  const finalEvent = events.find(
+    (event): event is Extract<RuntimeRunEvent, { type: "final" }> =>
+      event.type === "final"
+  );
+  if (!finalEvent) {
+    failCheck(
+      "scheduled_provider_calls",
+      "runtime scheduled provider probe did not emit a final response"
+    );
+  }
+  if (
+    finalEvent.response.text.trim() !==
+    "Runtime contract scheduled provider capability response."
+  ) {
+    failCheck(
+      "scheduled_provider_calls",
+      "runtime scheduled provider probe final response did not confirm scheduled provider capability"
+    );
+  }
 }
 
 function assertScheduledProviderBridgeEnvelope(input: unknown): void {
