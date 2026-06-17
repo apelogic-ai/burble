@@ -884,6 +884,9 @@ describe("handleRuntimeRequest", () => {
     expect(requests[0].headers.get("authorization")).toBe("Bearer secret");
     expect(requests[0].headers.get("x-burble-runtime-id")).toBe("rt_u123");
     expect(await requests[0].json()).toEqual({
+      scheduledJob: {
+        jobId: "job-123"
+      },
       input: {
         jobId: "job-123",
         routeId: "convrt_abcdefabcdefabcdefabcdef",
@@ -925,6 +928,9 @@ describe("handleRuntimeRequest", () => {
     expect(response.status).toBe(200);
     expect(requests).toHaveLength(1);
     expect(await requests[0].json()).toEqual({
+      scheduledJob: {
+        jobId: "job-123"
+      },
       input: {
         jobId: "job-123",
         routeId: "convrt_abcdefabcdefabcdefabcdef",
@@ -1059,6 +1065,9 @@ describe("handleRuntimeRequest", () => {
     expect(response.status).toBe(200);
     expect(requests).toHaveLength(1);
     expect(await requests[0].json()).toEqual({
+      scheduledJob: {
+        jobId: "hourly-ai-news-summary-drive-dedupe"
+      },
       input: {
         jobId: "hourly-ai-news-summary-drive-dedupe",
         routeId: "#burble-test",
@@ -1586,6 +1595,9 @@ describe("handleRuntimeRequest", () => {
       "http://burble-app:3000/internal/tools/conversation.sendMessage/execute"
     );
     expect(await requests[0].json()).toEqual({
+      scheduledJob: {
+        jobId: "job-123"
+      },
       input: {
         jobId: "job-123",
         routeId: "convrt_abcdefabcdefabcdefabcdef",
@@ -1629,6 +1641,9 @@ describe("handleRuntimeRequest", () => {
     expect(response.status).toBe(200);
     expect(requests).toHaveLength(1);
     expect(await requests[0].json()).toEqual({
+      scheduledJob: {
+        jobId: "job-123"
+      },
       input: {
         jobId: "job-123",
         routeId: "convrt_abcdefabcdefabcdefabcdef",

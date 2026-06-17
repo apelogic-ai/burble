@@ -1703,7 +1703,7 @@ describe("buildAppHomeView", () => {
     store.close();
   });
 
-  test("fails closed when Home runtime status sync throws", async () => {
+  test("preserves Home runtime status when status sync throws", async () => {
     const store = createTokenStore(":memory:");
     const runtime = store.getOrCreateAgentRuntime({
       workspaceId: "T123",
@@ -1735,10 +1735,10 @@ describe("buildAppHomeView", () => {
     });
 
     expect(settings.runtime.id).toBe(runtime.id);
-    expect(settings.runtime.status).toBe("failed");
+    expect(settings.runtime.status).toBe("ready");
     expect(store.getAgentRuntime(runtime.id)).toMatchObject({
-      status: "failed",
-      failureReason: "Runtime status sync failed: docker inspect failed"
+      status: "ready",
+      failureReason: null
     });
     store.close();
   });

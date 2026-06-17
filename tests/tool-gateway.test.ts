@@ -1772,7 +1772,7 @@ describe("handleToolGatewayRequest", () => {
             jobId: "public-news-dedupe",
             requiredTools: [
               "conversation.sendMessage",
-              "google.appendToDriveTextFile"
+              "google.createDriveTextFile"
             ],
             destination: "#eng",
             visibilityPolicy: {
@@ -1802,7 +1802,7 @@ describe("handleToolGatewayRequest", () => {
         jobId: "public-news-dedupe",
         requiredTools: [
           "conversation.sendMessage",
-          "google_append_to_drive_text_file"
+          "google_create_drive_text_file"
         ],
         routeId: "convrt_aaaaaaaaaaaaaaaaaaaaaaaa",
         visibilityPolicy: {
@@ -3150,6 +3150,9 @@ describe("handleToolGatewayRequest", () => {
       request(
         "conversation.sendMessage",
         {
+          scheduledJob: {
+            jobId: "ai-news-hourly"
+          },
           input: {
             text: "Cron finished.",
             routeId: "#burble-test",
@@ -3275,6 +3278,9 @@ describe("handleToolGatewayRequest", () => {
       request(
         "conversation.sendMessage",
         {
+          scheduledJob: {
+            jobId: "daily-standup"
+          },
           input: {
             text: "Daily standup is ready.",
             routeId: "#eng",
@@ -3389,6 +3395,9 @@ describe("handleToolGatewayRequest", () => {
       request(
         "conversation.sendMessage",
         {
+          scheduledJob: {
+            jobId: "daily-standup"
+          },
           input: {
             text: "Daily standup is ready.",
             routeId: "convrt_1234567890abcdef12345678",
@@ -3473,6 +3482,9 @@ describe("handleToolGatewayRequest", () => {
       request(
         "conversation.sendMessage",
         {
+          scheduledJob: {
+            jobId: "daily-standup"
+          },
           input: {
             text: "Daily standup is ready.",
             routeId: "convrt_aaaaaaaaaaaaaaaaaaaaaaaa"
@@ -3568,6 +3580,9 @@ describe("handleToolGatewayRequest", () => {
       request(
         "conversation.sendMessage",
         {
+          scheduledJob: {
+            jobId: "daily-standup"
+          },
           input: {
             text: "Daily standup is ready.",
             routeId: "convrt_1234567890abcdef12345678",
@@ -4066,7 +4081,7 @@ describe("handleToolGatewayRequest", () => {
     expect(notifications).toEqual([]);
   });
 
-  test("treats unknown Slack delivery failures as retryable", async () => {
+  test("treats unknown Slack delivery failures as non-retryable", async () => {
     const route: ConversationRouteRecord = {
       id: "convrt_1234567890abcdef12345678",
       workspaceId: "T123",
@@ -4113,6 +4128,9 @@ describe("handleToolGatewayRequest", () => {
       request(
         "conversation.sendMessage",
         {
+          scheduledJob: {
+            jobId: "daily-standup"
+          },
           input: {
             text: "Daily standup is ready.",
             routeId: "convrt_1234567890abcdef12345678",
@@ -4134,7 +4152,13 @@ describe("handleToolGatewayRequest", () => {
 
     expect(response.status).toBe(502);
     expect(await response.text()).toContain("Conversation delivery failed");
-    expect(notifications).toEqual([]);
+    expect(notifications).toEqual([
+      expect.objectContaining({
+        routeId: "convrt_1234567890abcdef12345678",
+        jobId: "daily-standup",
+        errorCode: "weird_new_slack_code"
+      })
+    ]);
   });
 
   test("returns the delivery failure response when bookkeeping throws", async () => {
@@ -4457,6 +4481,99 @@ describe("handleToolGatewayRequest", () => {
     expect(response.status).toBe(403);
     expect(await response.text()).toContain(
       "Destination grants cannot be used for scheduled jobs that read from authenticated Burble provider sources"
+    );
+  });
+
+  test("does not trust input job id for destination grant visibility", async () => {
+    const route: ConversationRouteRecord = {
+      id: "convrt_1234567890abcdef12345678",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      transport: "slack",
+      destinationJson: JSON.stringify({
+        channelId: "CENG",
+        isDirectMessage: false,
+        rootId: "channel:CENG"
+      }),
+      kind: "grant",
+      grantedBySlackUserId: "U123",
+      expiresAt: null,
+      bindingJson: null,
+      createdAt: "2026-05-26T00:00:00.000Z",
+      updatedAt: "2026-05-26T00:00:00.000Z",
+      revokedAt: null
+    };
+    const throwawayCapability: AgentJobCapabilityRecord = {
+      jobId: "throwaway-public",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      requiredTools: ["conversation.sendMessage"],
+      routeId: "convrt_1234567890abcdef12345678",
+      policyHash: "policy-hash",
+      capabilityProfile: "scheduled_job",
+      runtimeType: "openclaw",
+      stateRefs: [],
+      visibilityPolicy: {
+        maxOutputVisibility: "public"
+      },
+      createdAt: "2026-06-01T00:00:00.000Z",
+      updatedAt: "2026-06-01T00:00:00.000Z"
+    };
+
+    const response = await handleToolGatewayRequest(
+      config,
+      createStore(null, runtime, [], route, [], { found: throwawayCapability }),
+      "conversation.sendMessage",
+      request(
+        "conversation.sendMessage",
+        {
+          input: {
+            text: "Private digest.",
+            routeId: "convrt_1234567890abcdef12345678",
+            jobId: "throwaway-public"
+          }
+        },
+        "runtime-token-u123",
+        "rt_u123"
+      ),
+      {
+        postActiveConversationMessage: async () => {
+          throw new Error("untrusted input job id should not authorize delivery");
+        }
+      }
+    );
+
+    expect(response.status).toBe(403);
+    expect(await response.text()).toContain(
+      "Destination grant requires public scheduled output visibility"
+    );
+  });
+
+  test("rejects conversation sends with forged inner scheduled job ids", async () => {
+    const response = await handleToolGatewayRequest(
+      config,
+      createStore(null, runtime),
+      "conversation.sendMessage",
+      request(
+        "conversation.sendMessage",
+        {
+          scheduledJob: {
+            jobId: "trusted-job"
+          },
+          input: {
+            text: "Private digest.",
+            routeId: "convrt_1234567890abcdef12345678",
+            jobId: "forged-job"
+          }
+        },
+        "runtime-token-u123",
+        "rt_u123"
+      )
+    );
+
+    expect(response.status).toBe(403);
+    expect(await response.text()).toContain(
+      "Scheduled job provider call identity does not match trusted runtime context"
     );
   });
 

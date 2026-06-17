@@ -97,6 +97,9 @@ async function sendScheduledChannelMessage(
         "x-burble-runtime-id": runtimeId
       },
       body: JSON.stringify({
+        scheduledJob: {
+          jobId: message.jobId
+        },
         input: {
           routeId: message.routeId,
           text: message.text,

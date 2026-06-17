@@ -704,7 +704,10 @@ class BurbleAdapter(BasePlatformAdapter):
                     "content-type": "application/json",
                     "x-burble-runtime-id": self.runtime_id,
                 },
-                json={"input": input_body},
+                json={
+                    "input": input_body,
+                    **({"scheduledJob": {"jobId": job_id}} if job_id else {}),
+                },
             ) as response:
                 body = await response.text()
                 if response.status >= 400:

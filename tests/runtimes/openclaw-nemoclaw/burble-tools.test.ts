@@ -969,6 +969,17 @@ describe("createBurbleToolExecutor", () => {
       });
       expect(requests).toHaveLength(1);
       expect(await requests[0].json()).toEqual({
+        scheduledJob: {
+          jobId: "daily-standup",
+          capabilityProfile: "scheduled_job",
+          allowedTools: ["conversation.sendMessage"],
+          routeId: "convrt_grant",
+          runtimeType: "openclaw",
+          stateRefs: [],
+          visibilityPolicy: {
+            maxOutputVisibility: "public"
+          }
+        },
         input: {
           text: "Daily standup is ready.",
           routeId: "convrt_grant",
@@ -1091,6 +1102,16 @@ describe("createBurbleToolExecutor", () => {
       });
       expect(requests).toHaveLength(1);
       expect(await requests[0].json()).toEqual({
+        scheduledJob: {
+          jobId: "daily-standup",
+          capabilityProfile: "scheduled_job",
+          allowedTools: ["conversation.sendMessage"],
+          runtimeType: "openclaw",
+          stateRefs: [],
+          visibilityPolicy: {
+            maxOutputVisibility: "user_private"
+          }
+        },
         input: {
           text: "Daily standup is ready.",
           routeId: "convrt_dm",

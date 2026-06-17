@@ -181,6 +181,9 @@ async function sendConversationMessage(
       },
       body: JSON.stringify({
         input,
+        ...(request?.input.scheduledJob
+          ? { scheduledJob: request.input.scheduledJob }
+          : {}),
         ...(request?.input.conversation
           ? { conversation: request.input.conversation }
           : {})

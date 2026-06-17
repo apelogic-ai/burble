@@ -711,12 +711,17 @@ export function createTokenStore(path: string) {
       granted_by_slack_user_id = excluded.granted_by_slack_user_id,
       expires_at = excluded.expires_at,
       binding_json = excluded.binding_json,
-      last_delivery_failure_at = NULL,
-      last_delivery_failure_code = NULL,
-      last_delivery_failure_notified_at = NULL,
-      consecutive_delivery_failures = 0,
+      last_delivery_failure_at =
+        CASE WHEN excluded.binding_json IS NULL THEN NULL ELSE last_delivery_failure_at END,
+      last_delivery_failure_code =
+        CASE WHEN excluded.binding_json IS NULL THEN NULL ELSE last_delivery_failure_code END,
+      last_delivery_failure_notified_at =
+        CASE WHEN excluded.binding_json IS NULL THEN NULL ELSE last_delivery_failure_notified_at END,
+      consecutive_delivery_failures =
+        CASE WHEN excluded.binding_json IS NULL THEN 0 ELSE consecutive_delivery_failures END,
       updated_at = excluded.updated_at,
-      revoked_at = NULL
+      revoked_at =
+        CASE WHEN excluded.binding_json IS NULL THEN NULL ELSE revoked_at END
   `);
   const getConversationRouteById = db.query<ConversationRouteRecord, [string]>(`
     SELECT

@@ -1041,6 +1041,9 @@ asyncio.run(main())
             "x-burble-runtime-id": "rt_123"
           },
           json: {
+            scheduledJob: {
+              jobId: "job-123"
+            },
             input: {
               routeId: "convrt_abc123",
               text: "Scheduled report",
@@ -1727,6 +1730,9 @@ spec = importlib.util.spec_from_file_location(
 )
 mod = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(mod)
+async def fake_resolve_host_addresses(host, port):
+    return ["93.184.216.34"]
+mod._resolve_host_addresses = fake_resolve_host_addresses
 
 async def main():
     value = await mod._local_web_extract({"urls": ["https://example.com/news"]})
@@ -1744,6 +1750,115 @@ asyncio.run(main())
           error: null
         })
       ]
+    });
+  });
+
+  test("Hermes web extract blocks hostnames resolving to private addresses", () => {
+    const result = runHermesEntrypointProbe(String.raw`
+import importlib.util
+import json
+import os
+import sys
+import types
+import asyncio
+
+for key in ("FIRECRAWL_API_KEY", "FIRECRAWL_API_URL", "TAVILY_API_KEY", "EXA_API_KEY", "PARALLEL_API_KEY"):
+    os.environ.pop(key, None)
+
+tools = types.ModuleType("tools")
+web_tools = types.ModuleType("tools.web_tools")
+web_tools.WEB_EXTRACT_SCHEMA = {"description": "extract"}
+sys.modules["tools"] = tools
+sys.modules["tools.web_tools"] = web_tools
+
+class FakeSession:
+    def __init__(self, *args, **kwargs):
+        pass
+    async def __aenter__(self):
+        return self
+    async def __aexit__(self, *_args):
+        return None
+    def get(self, url, **kwargs):
+        raise AssertionError("private-resolving host must not be fetched")
+
+aiohttp = types.ModuleType("aiohttp")
+aiohttp.ClientSession = FakeSession
+aiohttp.ClientTimeout = lambda **_kwargs: None
+sys.modules["aiohttp"] = aiohttp
+
+spec = importlib.util.spec_from_file_location(
+    "burble_web_extract",
+    "runtimes/nemo-hermes/hermes-plugins/burble-web-extract/__init__.py",
+)
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+async def fake_resolve_host_addresses(host, port):
+    return ["169.254.169.254"]
+mod._resolve_host_addresses = fake_resolve_host_addresses
+
+async def main():
+    value = await mod._local_web_extract({"urls": ["http://metadata.attacker.test/latest"]})
+    print(json.dumps(json.loads(value)))
+
+asyncio.run(main())
+`);
+
+    expect(result).toEqual({
+      results: [
+        expect.objectContaining({
+          url: "http://metadata.attacker.test/latest",
+          content: "",
+          error: "Blocked: URL targets a private or internal network address"
+        })
+      ]
+    });
+  });
+
+  test("Hermes web extract does not fall back locally after configured backend failure", () => {
+    const result = runHermesEntrypointProbe(String.raw`
+import importlib.util
+import json
+import os
+import sys
+import types
+import asyncio
+
+os.environ["FIRECRAWL_API_KEY"] = "configured"
+
+tools = types.ModuleType("tools")
+web_tools = types.ModuleType("tools.web_tools")
+web_tools.WEB_EXTRACT_SCHEMA = {"description": "extract"}
+async def web_extract_tool(**_kwargs):
+    raise RuntimeError("backend policy rejected URL")
+web_tools.web_extract_tool = web_extract_tool
+sys.modules["tools"] = tools
+sys.modules["tools.web_tools"] = web_tools
+
+aiohttp = types.ModuleType("aiohttp")
+aiohttp.ClientSession = lambda *args, **kwargs: (_ for _ in ()).throw(
+    AssertionError("local fallback must not run after backend failure")
+)
+aiohttp.ClientTimeout = lambda **_kwargs: None
+sys.modules["aiohttp"] = aiohttp
+
+spec = importlib.util.spec_from_file_location(
+    "burble_web_extract",
+    "runtimes/nemo-hermes/hermes-plugins/burble-web-extract/__init__.py",
+)
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+
+async def main():
+    try:
+        await mod._local_web_extract({"urls": ["https://example.com/news"]})
+    except Exception as error:
+        print(json.dumps({"error": str(error)}))
+
+asyncio.run(main())
+`);
+
+    expect(result).toEqual({
+      error: "configured web_extract backend failed: backend policy rejected URL"
     });
   });
 });

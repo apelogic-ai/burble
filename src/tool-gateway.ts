@@ -341,6 +341,24 @@ export async function handleToolGatewayRequest(
       text: sanitizeRuntimeConversationText(body.input.text),
       ...(body.input.routeId ? { routeId: body.input.routeId.trim() } : {})
     };
+    const trustedScheduledJobId = readScheduledJobId(body.scheduledJob);
+    const inputScheduledJobId = readScheduledJobId(body.input);
+    if (
+      trustedScheduledJobId &&
+      inputScheduledJobId &&
+      trustedScheduledJobId !== inputScheduledJobId
+    ) {
+      return new Response(
+        "Scheduled job provider call identity does not match trusted runtime context.",
+        { status: 403 }
+      );
+    }
+    if (trustedScheduledJobId) {
+      sendInput = { ...sendInput, jobId: trustedScheduledJobId };
+    } else if (sendInput.jobId) {
+      const { jobId: _jobId, ...rest } = sendInput;
+      sendInput = rest;
+    }
     if (sendInput.routeId && !isConversationRouteId(sendInput.routeId)) {
       const scheduledRouteId = resolveScheduledJobConversationRouteId(
         store,
@@ -2312,10 +2330,19 @@ function requiredToolsUsePrivateReadSources(toolNames: string[]): boolean {
         (tool.aliases ?? []).includes(toolName)
     );
     if (tool) {
-      return !tool.risk || tool.risk === "read";
+      return providerToolUsesPrivateReadSource(tool);
     }
     return connectionProviderForToolName(toolName) !== null;
   });
+}
+
+function providerToolUsesPrivateReadSource(tool: (typeof providerToolCatalog)[number]): boolean {
+  if (!tool.risk || tool.risk === "read") {
+    return true;
+  }
+  return new Set([
+    "appendDriveTextFile"
+  ]).has(tool.implementation);
 }
 
 function destinationGrantPrivateReadSourceMessage(): string {
@@ -4312,7 +4339,7 @@ function isRetryableConversationDeliveryFailure(
     if (httpStatus) {
       return false;
     }
-    return !isKnownPermanentConversationDeliveryFailure(code);
+    return false;
   }
 
   const normalized = message.toLowerCase();
@@ -4335,7 +4362,7 @@ function isRetryableConversationDeliveryFailure(
     return true;
   }
 
-  return true;
+  return false;
 }
 
 function isKnownPermanentConversationDeliveryFailure(code: string): boolean {

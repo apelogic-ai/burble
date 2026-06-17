@@ -2520,13 +2520,11 @@ export async function buildSyncedAgentHomeSettings(input: {
     try {
       await input.runtimeFactory.syncRuntimeStatus(runtime.id);
     } catch (error) {
-      input.store.updateAgentRuntimeStatus(runtime.id, {
-        status: "failed",
-        failureReason:
-          error instanceof Error
-            ? `Runtime status sync failed: ${error.message}`
-            : "Runtime status sync failed"
-      });
+      console.warn(
+        `Runtime status sync failed runtimeId=${runtime.id} error=${
+          error instanceof Error ? error.message : String(error)
+        }`
+      );
     }
   }
 
