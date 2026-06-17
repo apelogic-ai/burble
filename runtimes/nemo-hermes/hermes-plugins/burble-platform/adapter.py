@@ -75,6 +75,94 @@ def _is_burble_platform_notice(text: str) -> bool:
     )
 
 
+def _looks_like_hermes_tool_protocol_line(text: str) -> bool:
+    value = text.strip()
+    if not value:
+        return False
+    if value.startswith(("to=", "recipient=", "<tool", "</tool>")):
+        return True
+    return False
+
+
+def _looks_like_hermes_tool_json_line(text: str) -> bool:
+    value = text.strip()
+    if not (value.startswith("{") and value.endswith("}")):
+        return False
+    try:
+        parsed = json.loads(value)
+    except json.JSONDecodeError:
+        return False
+    if not isinstance(parsed, dict):
+        return False
+    protocol_keys = {
+        "command",
+        "timeout_ms",
+        "toolName",
+        "input",
+        "stdout",
+        "stderr",
+        "exit_code",
+        "tool",
+        "ok",
+        "data",
+    }
+    return any(key in parsed for key in protocol_keys)
+
+
+def _starts_hermes_tool_json_block(text: str) -> bool:
+    value = text.strip()
+    if not value.startswith("{"):
+        return False
+    return any(
+        marker in value
+        for marker in (
+            '"command"',
+            '"timeout_ms"',
+            '"toolName"',
+            '"input"',
+            '"stdout"',
+            '"stderr"',
+            '"exit_code"',
+            '"tool"',
+            '"ok"',
+            '"data"',
+        )
+    )
+
+
+def _strip_hermes_tool_protocol(text: str) -> str:
+    value = str(text or "")
+    if "to=" not in value and "recipient=" not in value and "<tool" not in value:
+        return value
+
+    kept: list[str] = []
+    removed = False
+    skipping_json_block = False
+    for line in value.splitlines():
+        if skipping_json_block:
+            removed = True
+            if line.strip().endswith("}"):
+                skipping_json_block = False
+            continue
+        if _looks_like_hermes_tool_protocol_line(line) or _looks_like_hermes_tool_json_line(line):
+            removed = True
+            continue
+        if _starts_hermes_tool_json_block(line):
+            removed = True
+            if not line.strip().endswith("}"):
+                skipping_json_block = True
+            continue
+        kept.append(line)
+
+    if not removed:
+        return value
+
+    cleaned = "\n".join(kept)
+    while "\n\n\n" in cleaned:
+        cleaned = cleaned.replace("\n\n\n", "\n\n")
+    return cleaned.strip()
+
+
 def _to_non_negative_int(value: Any) -> Optional[int]:
     if isinstance(value, bool) or value is None:
         return None
@@ -389,7 +477,7 @@ class BurbleAdapter(BasePlatformAdapter):
         metadata: Optional[Dict[str, Any]] = None,
     ) -> SendResult:
         route_id = str(chat_id or "").strip()
-        text = str(content or "")
+        text = _strip_hermes_tool_protocol(str(content or ""))
         if not route_id:
             return SendResult(success=False, error="Burble route id is required")
         if not text.strip():

@@ -1055,6 +1055,63 @@ asyncio.run(main())
     });
   });
 
+  test("strips Hermes tool protocol from scheduled route sends", () => {
+    const result = runHermesEntrypointProbe(`${importBurblePlatformAdapter}
+import asyncio
+import os
+
+os.environ["BURBLE_TOOL_GATEWAY_URL"] = "http://burble-app:3000/internal/tools"
+os.environ["BURBLE_INTERNAL_TOKEN"] = "token"
+os.environ["BURBLE_RUNTIME_ID"] = "rt_123"
+
+async def main():
+    adapter = mod.BurbleAdapter(types.SimpleNamespace(extra={}))
+    content = """Checking the last 24h window.
+to=terminal_exec code
+{"command":"date -u","timeout_ms":120000}
+{"stdout":"2026-06-17T13:03:48Z\\n","stderr":"","exit_code":0}
+to=burble_provider_call code
+{"toolName":"github_search_issues","input":{"jobId":"job-123","query":"org:apelogic-ai is:pr"}}
+{"tool":"github_search_issues","ok":true,"data":{"issues":[{"number":602}]}}
+
+New open apelogic-ai PRs in the last 24h
+- apelogic-ai/ape-leads #602 - notion - PR link
+"""
+    sent = await adapter.send(
+        "convrt_abc123",
+        content,
+        metadata={"jobId": "job-123"},
+    )
+    print(json.dumps({"success": sent.success, "payloads": posted_payloads}))
+
+asyncio.run(main())
+`);
+
+    expect(result).toEqual({
+      success: true,
+      payloads: [
+        {
+          url: "http://burble-app:3000/internal/tools/conversation.sendMessage/execute",
+          headers: {
+            authorization: "Bearer token",
+            "content-type": "application/json",
+            "x-burble-runtime-id": "rt_123"
+          },
+          json: {
+            scheduledJob: {
+              jobId: "job-123"
+            },
+            input: {
+              routeId: "convrt_abc123",
+              text: "Checking the last 24h window.\n\nNew open apelogic-ai PRs in the last 24h\n- apelogic-ai/ape-leads #602 - notion - PR link",
+              jobId: "job-123"
+            }
+          }
+        }
+      ]
+    });
+  });
+
   test("strips Hermes stream cursors even when embedded in cumulative text", () => {
     const result = runHermesEntrypointProbe(`${importBurblePlatformAdapter}
 import asyncio
