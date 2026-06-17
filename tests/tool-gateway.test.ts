@@ -3228,6 +3228,68 @@ describe("handleToolGatewayRequest", () => {
     });
   });
 
+  test("throttles repeated invalid scheduled route notifications", async () => {
+    const runtimeEvents: unknown[] = [];
+    const notifications: unknown[] = [];
+    const store = createStore(null, runtime, runtimeEvents);
+    const deps = {
+      postActiveConversationMessage: async () => {
+        throw new Error("should not post");
+      },
+      notifyDestinationGrantDeliveryFailure: async (input: unknown) => {
+        notifications.push(input);
+      }
+    };
+    const body = {
+      scheduledJob: {
+        jobId: "ai-news-dedup"
+      },
+      input: {
+        text: "Cron finished.",
+        routeId: "#missing-dedup",
+        jobId: "ai-news-dedup"
+      }
+    };
+
+    const first = await handleToolGatewayRequest(
+      config,
+      store,
+      "conversation.sendMessage",
+      request(
+        "conversation.sendMessage",
+        body,
+        "runtime-token-u123",
+        "rt_u123"
+      ),
+      deps
+    );
+    const second = await handleToolGatewayRequest(
+      config,
+      store,
+      "conversation.sendMessage",
+      request(
+        "conversation.sendMessage",
+        body,
+        "runtime-token-u123",
+        "rt_u123"
+      ),
+      deps
+    );
+
+    expect(first.status).toBe(400);
+    expect(second.status).toBe(400);
+    expect(notifications).toEqual([
+      expect.objectContaining({
+        routeId: "#missing-dedup",
+        jobId: "ai-news-dedup",
+        errorCode: "invalid_route_id"
+      })
+    ]);
+    expect(
+      runtimeEvents.map((event) => (event as { summary: { notificationSent: boolean } }).summary.notificationSent)
+    ).toEqual([true, false]);
+  });
+
   test("repairs scheduled delivery labels through the stored job route", async () => {
     const route: ConversationRouteRecord = {
       id: "convrt_1234567890abcdef12345678",

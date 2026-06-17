@@ -132,6 +132,9 @@ import {
 } from "./agent/scheduled-job-tools";
 import { resolveConversationAttachmentCapability } from "./conversation/attachment-capabilities";
 
+const INVALID_ROUTE_NOTIFICATION_THROTTLE_MS = 6 * 60 * 60 * 1000;
+const invalidRouteNotificationTimes = new Map<string, number>();
+
 type ToolGatewayDeps = Partial<Parameters<typeof createGitHubTools>[0]> &
   Partial<GoogleToolDeps> &
   Partial<HubSpotToolDeps> &
@@ -375,7 +378,15 @@ export async function handleToolGatewayRequest(
     if (sendInput.routeId && !isConversationRouteId(sendInput.routeId)) {
       const failure = invalidConversationRouteIdFailure();
       let notificationSent = false;
-      if (sendInput.jobId) {
+      if (
+        sendInput.jobId &&
+        shouldNotifyInvalidRouteFailure({
+          runtimeId: auth.runtime.id,
+          routeId: sendInput.routeId,
+          jobId: sendInput.jobId,
+          errorCode: failure.code
+        })
+      ) {
         try {
           await (deps.notifyDestinationGrantDeliveryFailure ??
             ((notification) =>
@@ -385,6 +396,12 @@ export async function handleToolGatewayRequest(
             jobId: sendInput.jobId,
             errorMessage: failure.message,
             ...(failure.code ? { errorCode: failure.code } : {})
+          });
+          markInvalidRouteFailureNotified({
+            runtimeId: auth.runtime.id,
+            routeId: sendInput.routeId,
+            jobId: sendInput.jobId,
+            errorCode: failure.code
           });
           notificationSent = true;
         } catch (notifyError) {
@@ -4400,6 +4417,46 @@ function recordRouteConversationDeliveryFailure(
       `Conversation route delivery failure record failed routeId=${routeId} error=${formatToolGatewayErrorMessage(recordError)}`
     );
   }
+}
+
+function shouldNotifyInvalidRouteFailure(input: {
+  runtimeId: string;
+  routeId: string;
+  jobId: string;
+  errorCode?: string;
+}): boolean {
+  const key = invalidRouteNotificationKey(input);
+  const lastNotifiedAt = invalidRouteNotificationTimes.get(key);
+  if (
+    lastNotifiedAt &&
+    Date.now() - lastNotifiedAt < INVALID_ROUTE_NOTIFICATION_THROTTLE_MS
+  ) {
+    return false;
+  }
+  return true;
+}
+
+function markInvalidRouteFailureNotified(input: {
+  runtimeId: string;
+  routeId: string;
+  jobId: string;
+  errorCode?: string;
+}): void {
+  invalidRouteNotificationTimes.set(invalidRouteNotificationKey(input), Date.now());
+}
+
+function invalidRouteNotificationKey(input: {
+  runtimeId: string;
+  routeId: string;
+  jobId: string;
+  errorCode?: string;
+}): string {
+  return [
+    input.runtimeId,
+    input.jobId,
+    input.routeId,
+    input.errorCode ?? "unknown"
+  ].join("\u0000");
 }
 
 function revokeDestinationGrantRoute(
