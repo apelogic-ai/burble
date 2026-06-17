@@ -1419,20 +1419,39 @@ export function createTokenStore(path: string) {
       slackUserId: string;
       channelId: string;
     }): ConversationRouteRecord | null {
-      const destinationJson = stableJson({
+      const legacyDestinationJson = stableJson({
         channelId: input.channelId,
         isDirectMessage: false,
         rootId: `channel:${input.channelId}`
       });
-      const id = buildConversationRouteId(
+      const legacyId = buildConversationRouteId(
         input.workspaceId,
         input.slackUserId,
         "slack",
-        destinationJson,
+        legacyDestinationJson,
         "grant",
         null
       );
-      return getConversationRouteById.get(id);
+      const legacyRoute = getConversationRouteById.get(legacyId);
+      if (legacyRoute) {
+        return legacyRoute;
+      }
+
+      const privateDestinationJson = stableJson({
+        channelId: input.channelId,
+        isDirectMessage: false,
+        isPrivateChannel: true,
+        rootId: `channel:${input.channelId}`
+      });
+      const privateId = buildConversationRouteId(
+        input.workspaceId,
+        input.slackUserId,
+        "slack",
+        privateDestinationJson,
+        "grant",
+        null
+      );
+      return getConversationRouteById.get(privateId);
     },
 
     recordConversationRouteDeliveryFailure(input: {

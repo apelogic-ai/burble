@@ -1686,6 +1686,62 @@ describe("handleToolGatewayRequest", () => {
     );
   });
 
+  test("allows private channel destination grants for non-public scheduled output", async () => {
+    const route: ConversationRouteRecord = {
+      id: "convrt_1234567890abcdef12345678",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      transport: "slack",
+      destinationJson: JSON.stringify({
+        channelId: "G123",
+        isDirectMessage: false,
+        isPrivateChannel: true,
+        rootId: "channel:G123"
+      }),
+      kind: "grant",
+      grantedBySlackUserId: "U123",
+      expiresAt: null,
+      bindingJson: null,
+      createdAt: "2026-05-26T00:00:00.000Z",
+      updatedAt: "2026-05-26T00:00:00.000Z",
+      revokedAt: null
+    };
+    const upserts: unknown[] = [];
+
+    const response = await handleToolGatewayRequest(
+      config,
+      createStore(null, runtime, [], route, [], { upserts }),
+      "scheduledJob.registerCapability",
+      request(
+        "scheduledJob.registerCapability",
+        {
+          input: {
+            jobId: "private-digest",
+            requiredTools: ["github.searchIssues", "conversation.sendMessage"],
+            routeId: "convrt_1234567890abcdef12345678",
+            visibilityPolicy: {
+              maxOutputVisibility: "user_private"
+            }
+          }
+        },
+        "runtime-token-u123",
+        "rt_u123"
+      )
+    );
+
+    expect(response.status).toBe(200);
+    expect(upserts).toMatchObject([
+      {
+        jobId: "private-digest",
+        requiredTools: ["conversation.sendMessage", "github_search_issues"],
+        routeId: "convrt_1234567890abcdef12345678",
+        visibilityPolicy: {
+          maxOutputVisibility: "user_private"
+        }
+      }
+    ]);
+  });
+
   test("rejects channel destination grants for authenticated provider read-source jobs", async () => {
     const route: ConversationRouteRecord = {
       id: "convrt_1234567890abcdef12345678",
@@ -1734,7 +1790,7 @@ describe("handleToolGatewayRequest", () => {
 
     expect(response.status).toBe(403);
     expect(await response.text()).toContain(
-      "Destination grants cannot be used for scheduled jobs that read from authenticated Burble provider sources"
+      "Public Slack channel destination grants cannot be used for scheduled jobs that read from authenticated Burble provider sources"
     );
     expect(upserts).toEqual([]);
   });
@@ -4542,8 +4598,82 @@ describe("handleToolGatewayRequest", () => {
 
     expect(response.status).toBe(403);
     expect(await response.text()).toContain(
-      "Destination grants cannot be used for scheduled jobs that read from authenticated Burble provider sources"
+      "Public Slack channel destination grants cannot be used for scheduled jobs that read from authenticated Burble provider sources"
     );
+  });
+
+  test("allows authenticated provider read-source scheduled output through a private channel grant", async () => {
+    const route: ConversationRouteRecord = {
+      id: "convrt_1234567890abcdef12345678",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      transport: "slack",
+      destinationJson: JSON.stringify({
+        channelId: "GENG",
+        isDirectMessage: false,
+        isPrivateChannel: true,
+        rootId: "channel:GENG"
+      }),
+      kind: "grant",
+      grantedBySlackUserId: "U123",
+      expiresAt: null,
+      bindingJson: JSON.stringify({
+        jobId: "github-digest",
+        runtimeId: "rt_u123"
+      }),
+      createdAt: "2026-05-26T00:00:00.000Z",
+      updatedAt: "2026-05-26T00:00:00.000Z",
+      revokedAt: null
+    };
+    const jobCapability: AgentJobCapabilityRecord = {
+      jobId: "github-digest",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      requiredTools: ["github_search_issues", "conversation.sendMessage"],
+      routeId: "convrt_1234567890abcdef12345678",
+      policyHash: "policy-hash",
+      capabilityProfile: "scheduled_job",
+      runtimeType: "openclaw",
+      stateRefs: [],
+      visibilityPolicy: {
+        maxOutputVisibility: "user_private"
+      },
+      createdAt: "2026-06-01T00:00:00.000Z",
+      updatedAt: "2026-06-01T00:00:00.000Z"
+    };
+    const posts: unknown[] = [];
+
+    const response = await handleToolGatewayRequest(
+      config,
+      createStore(null, runtime, [], route, [], { found: jobCapability }),
+      "conversation.sendMessage",
+      request(
+        "conversation.sendMessage",
+        {
+          input: {
+            text: "Private digest.",
+            routeId: "convrt_1234567890abcdef12345678",
+            jobId: "github-digest"
+          }
+        },
+        "runtime-token-u123",
+        "rt_u123"
+      ),
+      {
+        postActiveConversationMessage: async (input) => {
+          posts.push(input);
+          return { transport: "slack", channelId: input.channelId };
+        }
+      }
+    );
+
+    expect(response.status).toBe(200);
+    expect(posts).toMatchObject([
+      {
+        channelId: "GENG",
+        text: "Private digest."
+      }
+    ]);
   });
 
   test("does not trust input job id for destination grant visibility", async () => {

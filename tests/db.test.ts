@@ -724,6 +724,32 @@ describe("createTokenStore", () => {
     store.close();
   });
 
+  test("finds private Slack channel grant routes by channel", () => {
+    const store = createTokenStore(":memory:");
+    const route = store.upsertConversationRoute({
+      workspaceId: "T123",
+      slackUserId: "U123",
+      transport: "slack",
+      destination: {
+        channelId: "G123",
+        isDirectMessage: false,
+        isPrivateChannel: true,
+        rootId: "channel:G123"
+      },
+      kind: "grant"
+    });
+
+    expect(
+      store.getConversationGrantRouteForSlackChannel({
+        workspaceId: "T123",
+        slackUserId: "U123",
+        channelId: "G123"
+      })?.id
+    ).toBe(route.id);
+
+    store.close();
+  });
+
   test("migrates existing conversation routes with grant columns", () => {
     const path = join(mkdtempSync(join(tmpdir(), "burble-db-")), "burble.db");
     const db = new Database(path);

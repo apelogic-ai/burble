@@ -2571,7 +2571,21 @@ describe("Slack destination grants", () => {
           return {
             channel: {
               is_member: true,
-              is_archived: false
+              is_archived: false,
+              is_private: false
+            }
+          };
+        }
+      }
+    };
+    const privateOkClient = {
+      conversations: {
+        async info() {
+          return {
+            channel: {
+              is_member: true,
+              is_archived: false,
+              is_private: true
             }
           };
         }
@@ -2613,7 +2627,13 @@ describe("Slack destination grants", () => {
         client: okClient as never,
         channelId: "C123"
       })
-    ).toEqual({ ok: true });
+    ).toEqual({ ok: true, isPrivateChannel: false });
+    expect(
+      await verifySlackDestinationGrantChannel({
+        client: privateOkClient as never,
+        channelId: "G123"
+      })
+    ).toEqual({ ok: true, isPrivateChannel: true });
     expect(
       await verifySlackDestinationGrantChannel({
         client: notMemberClient as never,

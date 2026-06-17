@@ -445,6 +445,7 @@ export async function handleToolGatewayRequest(
     }
     if (
       destination.routeKind === "grant" &&
+      isPublicSlackChannelGrantDestination(destination) &&
       sendRouteOptions.options.usesPrivateReadSourceTools
     ) {
       return new Response(destinationGrantPrivateReadSourceMessage(), {
@@ -664,6 +665,7 @@ export async function handleToolGatewayRequest(
       }
       if (
         destination.routeKind === "grant" &&
+        isPublicSlackChannelGrantDestination(destination) &&
         requiredToolsUsePrivateReadSources(requiredTools)
       ) {
         return new Response(
@@ -2363,7 +2365,7 @@ function providerToolUsesPrivateReadSource(tool: (typeof providerToolCatalog)[nu
 }
 
 function destinationGrantPrivateReadSourceMessage(): string {
-  return "Destination grants cannot be used for scheduled jobs that read from authenticated Burble provider sources. Public channel delivery is only allowed for public-source jobs; private-tool declassification requires an explicit approval flow that is not implemented yet.";
+  return "Public Slack channel destination grants cannot be used for scheduled jobs that read from authenticated Burble provider sources. Public channel delivery is only allowed for public-source jobs; private-tool declassification requires an explicit approval flow that is not implemented yet.";
 }
 
 function normalizeScheduledJobRegistrationTools(value: unknown): string[] | null {
@@ -3730,7 +3732,7 @@ function resolveConversationRouteDestination(
   }
   if (
     route.kind === "grant" &&
-    !destination.isDirectMessage &&
+    isPublicSlackChannelGrantDestination(destination) &&
     options.maxOutputVisibility !== "public"
   ) {
     return {
@@ -4028,6 +4030,7 @@ function readSlackRouteDestination(
   threadTs?: string;
   runtimeId?: string;
   isDirectMessage: boolean;
+  isPrivateChannel?: boolean;
 } | null {
   try {
     const parsed = JSON.parse(destinationJson) as unknown;
@@ -4064,6 +4067,7 @@ function readSlackRouteDestination(
     return {
       channelId: record.channelId,
       isDirectMessage: record.isDirectMessage === true,
+      ...(record.isPrivateChannel === true ? { isPrivateChannel: true } : {}),
       ...(typeof record.threadTs === "string" && record.threadTs.trim()
         ? { threadTs: record.threadTs }
         : {}),
@@ -4101,9 +4105,18 @@ function readConversationRouteDestinationRecord(
     rootId: destination.isDirectMessage
       ? `dm:${destination.channelId}`
       : `channel:${destination.channelId}`,
+    ...(destination.isPrivateChannel === true ? { isPrivateChannel: true } : {}),
     ...(destination.threadTs ? { threadTs: destination.threadTs } : {}),
     ...(destination.runtimeId ? { runtimeId: destination.runtimeId } : {})
   };
+}
+
+function isPublicSlackChannelGrantDestination(destination: {
+  channelId: string;
+  isDirectMessage?: boolean;
+  isPrivateChannel?: boolean;
+}): boolean {
+  return destination.isDirectMessage !== true && destination.isPrivateChannel !== true;
 }
 
 function readConversationRouteBinding(
