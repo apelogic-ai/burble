@@ -139,6 +139,61 @@ describe("runtime contract harness", () => {
       "Runtime contract check failed: final_response: runtime emitted error event unsupported_tool: Unsupported Burble MCP tool: runtime.conformance.echo"
     );
   });
+
+  test("fails when final response leaks runtime tool-call protocol", async () => {
+    const client = fakeClient([
+      {
+        type: "final",
+        response: {
+          classification: "user_private",
+          text: `Done.\nto=burble_provider_call code\n{"toolName":"github_search_issues","input":{"jobId":"job-123"}}`,
+          usage: {
+            inputTokens: 1,
+            outputTokens: 1,
+            totalTokens: 2
+          }
+        }
+      }
+    ]);
+
+    await expect(
+      runRuntimeContractSmokeTest({ client, request })
+    ).rejects.toThrow(
+      "Runtime contract check failed: final_response: runtime final response leaked tool-call protocol text"
+    );
+  });
+
+  test("fails when streamed progress leaks runtime tool-call protocol", async () => {
+    const client = fakeClient([
+      {
+        type: "message_delta",
+        text: JSON.stringify({
+          tool_call: {
+            name: "google.getDriveFile",
+            arguments: { fileId: "file-123" }
+          }
+        })
+      },
+      {
+        type: "final",
+        response: {
+          classification: "user_private",
+          text: "Done.",
+          usage: {
+            inputTokens: 1,
+            outputTokens: 1,
+            totalTokens: 2
+          }
+        }
+      }
+    ]);
+
+    await expect(
+      runRuntimeContractSmokeTest({ client, request })
+    ).rejects.toThrow(
+      "Runtime contract check failed: events_stream: runtime message_delta leaked tool-call protocol text"
+    );
+  });
 });
 
 function fakeClient(events: RuntimeRunEvent[]): RuntimeContractClient {

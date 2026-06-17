@@ -7,6 +7,7 @@ import {
   type RuntimeRunRequest,
   type RuntimeUsage
 } from "./runtime-contract";
+import { containsRuntimeToolCallProtocolFragments } from "./runtime-text-protocol";
 
 export type RuntimeContractClient = {
   getCapabilityManifest: () => Promise<RuntimeCapabilityManifest>;
@@ -73,6 +74,7 @@ export async function runRuntimeContractSmokeTest(input: {
     if (event.type === "usage") {
       usage = event.usage;
     }
+    assertEventTextDoesNotLeakProtocol(event);
     if (event.type === "error") {
       errorEvent = event;
       break;
@@ -97,6 +99,7 @@ export async function runRuntimeContractSmokeTest(input: {
         : "runtime did not emit a final event"
     );
   }
+  assertFinalTextDoesNotLeakProtocol(finalEvent);
   checks.push({ name: "final_response", status: "ok" });
 
   if (manifest.usageReporting === "exact" && !usage) {
@@ -421,6 +424,7 @@ async function runProbe(
   for await (const rawEvent of client.streamRunEvents(start.runId)) {
     const event = parseRuntimeRunEvent(rawEvent);
     events.push(event);
+    assertEventTextDoesNotLeakProtocol(event);
     if (event.type === "error") {
       errorEvent = event;
       break;
@@ -438,6 +442,32 @@ async function runProbe(
     );
   }
   return events;
+}
+
+function assertEventTextDoesNotLeakProtocol(event: RuntimeRunEvent): void {
+  if (event.type === "message_delta" || event.type === "message_replace") {
+    if (containsRuntimeToolCallProtocolFragments(event.text)) {
+      failCheck(
+        "events_stream",
+        `runtime ${event.type} leaked tool-call protocol text`
+      );
+    }
+  }
+
+  if (event.type === "final") {
+    assertFinalTextDoesNotLeakProtocol(event);
+  }
+}
+
+function assertFinalTextDoesNotLeakProtocol(
+  event: Extract<RuntimeRunEvent, { type: "final" }>
+): void {
+  if (containsRuntimeToolCallProtocolFragments(event.response.text)) {
+    failCheck(
+      "final_response",
+      "runtime final response leaked tool-call protocol text"
+    );
+  }
 }
 
 function runtimeErrorEventDetail(

@@ -1,5 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { stripRuntimeToolCallProtocolFragments } from "@burble/runtime-sdk/runtime-text-protocol";
+import {
+  containsRuntimeToolCallProtocolFragments,
+  stripRuntimeToolCallProtocolFragments
+} from "@burble/runtime-sdk/runtime-text-protocol";
 
 describe("stripRuntimeToolCallProtocolFragments", () => {
   test("leaves ordinary prose unchanged", () => {
@@ -51,5 +54,36 @@ describe("stripRuntimeToolCallProtocolFragments", () => {
     expect(stripRuntimeToolCallProtocolFragments(`Debug payload:\n${json}`)).toBe(
       `Debug payload:\n${json}`
     );
+  });
+
+  test("detects JSON runtime tool-call protocol", () => {
+    expect(
+      containsRuntimeToolCallProtocolFragments(
+        JSON.stringify({
+          tool_call: {
+            name: "google.slidesCreateSlide",
+            arguments: { presentationId: "deck-1" }
+          }
+        })
+      )
+    ).toBe(true);
+  });
+
+  test("detects Hermes-style leaked tool transcript lines", () => {
+    expect(
+      containsRuntimeToolCallProtocolFragments(`Checking the window.
+to=terminal_exec code
+{"command":"date -u","timeout_ms":120000}
+recipient=shell
+New PRs found.`)
+    ).toBe(true);
+  });
+
+  test("does not flag ordinary prose or non-protocol JSON", () => {
+    expect(
+      containsRuntimeToolCallProtocolFragments(
+        `Send this to=example note in prose.\n${JSON.stringify({ ok: true })}`
+      )
+    ).toBe(false);
   });
 });

@@ -1,3 +1,33 @@
+export function containsRuntimeToolCallProtocolFragments(text: string): boolean {
+  if (containsRuntimeToolProtocolLine(text)) {
+    return true;
+  }
+
+  let index = 0;
+  while (index < text.length) {
+    if (text[index] !== "{") {
+      index += 1;
+      continue;
+    }
+
+    const end = findJsonObjectEnd(text, index);
+    if (end === null) {
+      index += 1;
+      continue;
+    }
+
+    const candidate = text.slice(index, end + 1);
+    const parsed = parseJsonObject(candidate);
+    if (parsed && typeof parsed.tool_call === "object" && parsed.tool_call !== null) {
+      return true;
+    }
+
+    index = end + 1;
+  }
+
+  return false;
+}
+
 export function stripRuntimeToolCallProtocolFragments(text: string): string {
   let output = "";
   let index = 0;
@@ -35,6 +65,18 @@ export function stripRuntimeToolCallProtocolFragments(text: string): string {
         .replace(/\n{3,}/g, "\n\n")
         .trim()
     : text;
+}
+
+function containsRuntimeToolProtocolLine(text: string): boolean {
+  return text.split(/\r?\n/).some((line) => {
+    const value = line.trim();
+    return (
+      value.startsWith("to=") ||
+      value.startsWith("recipient=") ||
+      value.startsWith("<tool") ||
+      value.startsWith("</tool>")
+    );
+  });
 }
 
 function findJsonObjectEnd(text: string, start: number): number | null {
