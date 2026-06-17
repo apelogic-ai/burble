@@ -47,6 +47,9 @@ function createBurbleMcpToolExecutor(
     if (actualToolName === "scheduledJob.registerCapability") {
       return registerScheduledJobCapability(config, runtimeId, actualBody);
     }
+    if (actualToolName === "runtime.conformance.echo") {
+      return executeRuntimeConformanceEcho(config, runtimeId, actualBody);
+    }
     if (!config.mcpGatewayUrl || !config.runtimeJwt) {
       throw new Error(
         "Burble MCP gateway URL and runtime JWT are required for provider tools"
@@ -321,6 +324,43 @@ async function getConversationAttachment(
   return result;
 }
 
+async function executeRuntimeConformanceEcho(
+  config: RuntimeConfig,
+  runtimeId: string | undefined,
+  body: unknown
+): Promise<ToolResult> {
+  const fetchImpl = runtimeFetch(config);
+  if (!runtimeId) {
+    throw new Error("runtime.conformance.echo requires a runtime id");
+  }
+
+  const response = await fetchImpl(
+    `${config.toolGatewayUrl}/${encodeURIComponent("runtime.conformance.echo")}/execute`,
+    {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${config.internalToken}`,
+        "x-burble-runtime-id": runtimeId
+      },
+      body: JSON.stringify(body)
+    }
+  );
+
+  if (!response.ok) {
+    throw new Error(
+      `Burble runtime conformance gateway returned HTTP ${response.status}${await readErrorDetail(response)}`
+    );
+  }
+
+  const result = (await response.json()) as unknown;
+  if (!isToolResult(result)) {
+    throw new Error("Burble runtime conformance gateway returned invalid tool result");
+  }
+
+  return result;
+}
+
 async function listBurbleMcpTools(
   config: RuntimeConfig,
   sessionId: string
@@ -461,13 +501,15 @@ export const __openClawBurbleToolMappingTestHooks = {
 export async function probeBurbleProviderToolReachability(
   toolName: string,
   request: RunRequest,
-  config: RuntimeConfig
+  config: RuntimeConfig,
+  inputOverride?: Record<string, unknown>
 ): Promise<{ toolName: string; input: Record<string, unknown>; content: unknown }> {
-  const tool = findManifestTool(toolName, request);
-  if (!tool) {
+  const isConformanceEcho = toolName === "runtime.conformance.echo";
+  const tool = isConformanceEcho ? null : findManifestTool(toolName, request);
+  if (!isConformanceEcho && !tool) {
     throw new Error(`Unsupported Burble MCP tool: ${toolName}`);
   }
-  const input = sampleManifestToolInput(tool);
+  const input = inputOverride ?? (tool ? sampleManifestToolInput(tool) : {});
   const observed: {
     toolName?: string;
     input?: Record<string, unknown>;
@@ -475,6 +517,8 @@ export async function probeBurbleProviderToolReachability(
   const executeTool = createBurbleToolExecutor(
     {
       ...config,
+      internalToken: "contract-probe-internal-token",
+      toolGatewayUrl: "http://burble-contract-probe/internal/tools",
       mcpGatewayUrl: "http://burble-contract-probe/mcp",
       runtimeJwt: "contract-probe-runtime-jwt",
       fetch: createMcpReachabilityProbeFetch(observed)
@@ -498,6 +542,25 @@ function createMcpReachabilityProbeFetch(observed: {
   input?: Record<string, unknown>;
 }): RuntimeFetch {
   return async (_url, init) => {
+    const url = typeof _url === "string" ? _url : _url.toString();
+    if (url.includes("/runtime.conformance.echo/execute")) {
+      if (readInitHeader(init, "authorization") !== "Bearer contract-probe-internal-token") {
+        return Response.json({ message: "missing probe authorization" }, { status: 401 });
+      }
+      const body = parseJsonRecord(init?.body);
+      const input = readRecordKey(body, "input");
+      observed.toolName = "runtime.conformance.echo";
+      observed.input = input ?? {};
+      return Response.json({
+        classification: "user_private",
+        content: {
+          ok: true,
+          toolName: observed.toolName,
+          input: observed.input
+        }
+      });
+    }
+
     if (readInitHeader(init, "authorization") !== "Bearer contract-probe-runtime-jwt") {
       return Response.json({ message: "missing probe authorization" }, { status: 401 });
     }

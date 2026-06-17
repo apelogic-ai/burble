@@ -358,7 +358,14 @@ describe("handleRuntimeRequest", () => {
       toolName: "burble_provider_call",
       callId: "contract-scheduled-provider-bridge-probe",
       classification: "user_private",
-      content: { ok: true }
+      content: {
+        ok: true,
+        toolName: "runtime.conformance.echo",
+        input: {
+          jobId: "contract-scheduled-job",
+          message: "scheduled provider bridge probe"
+        }
+      }
     });
     expect(readNdjsonEvents(await attachmentResponse.text())).toContainEqual({
       type: "tool_call",
