@@ -7,6 +7,7 @@ import {
   type RuntimeRunRequest,
   type RuntimeUsage
 } from "./runtime-contract";
+import { containsRuntimeToolCallProtocolFragments } from "./runtime-text-protocol";
 
 export type RuntimeContractClient = {
   getCapabilityManifest: () => Promise<RuntimeCapabilityManifest>;
@@ -65,12 +66,18 @@ export async function runRuntimeContractSmokeTest(input: {
 
   let sawEvent = false;
   let finalEvent: Extract<RuntimeRunEvent, { type: "final" }> | null = null;
+  let errorEvent: Extract<RuntimeRunEvent, { type: "error" }> | null = null;
   let usage: RuntimeUsage | null = null;
   for await (const rawEvent of input.client.streamRunEvents(start.runId)) {
     sawEvent = true;
     const event = parseRuntimeRunEvent(rawEvent);
     if (event.type === "usage") {
       usage = event.usage;
+    }
+    assertEventTextDoesNotLeakProtocol(event);
+    if (event.type === "error") {
+      errorEvent = event;
+      break;
     }
     if (event.type === "final") {
       finalEvent = event;
@@ -85,8 +92,14 @@ export async function runRuntimeContractSmokeTest(input: {
   checks.push({ name: "events_stream", status: "ok" });
 
   if (!finalEvent) {
-    failCheck("final_response", "runtime did not emit a final event");
+    failCheck(
+      "final_response",
+      errorEvent
+        ? runtimeErrorEventDetail(errorEvent)
+        : "runtime did not emit a final event"
+    );
   }
+  assertFinalTextDoesNotLeakProtocol(finalEvent);
   checks.push({ name: "final_response", status: "ok" });
 
   if (manifest.usageReporting === "exact" && !usage) {
@@ -229,6 +242,25 @@ async function assertScheduledProviderCapability(
     );
   }
   assertScheduledProviderBridgeResult(providerBridgeResult.content);
+  const finalEvent = events.find(
+    (event): event is Extract<RuntimeRunEvent, { type: "final" }> =>
+      event.type === "final"
+  );
+  if (!finalEvent) {
+    failCheck(
+      "scheduled_provider_calls",
+      "runtime scheduled provider probe did not emit a final response"
+    );
+  }
+  if (
+    finalEvent.response.text.trim() !==
+    "Runtime contract scheduled provider capability response."
+  ) {
+    failCheck(
+      "scheduled_provider_calls",
+      "runtime scheduled provider probe final response did not confirm scheduled provider capability"
+    );
+  }
 }
 
 function assertScheduledProviderBridgeEnvelope(input: unknown): void {
@@ -407,17 +439,60 @@ async function runProbe(
     failCheck("run_accepted", "runtime did not return a run id");
   }
   const events: RuntimeRunEvent[] = [];
+  let errorEvent: Extract<RuntimeRunEvent, { type: "error" }> | null = null;
   for await (const rawEvent of client.streamRunEvents(start.runId)) {
     const event = parseRuntimeRunEvent(rawEvent);
     events.push(event);
+    assertEventTextDoesNotLeakProtocol(event);
+    if (event.type === "error") {
+      errorEvent = event;
+      break;
+    }
     if (event.type === "final") {
       break;
     }
   }
   if (!events.some((event) => event.type === "final")) {
-    failCheck("final_response", "runtime did not emit a final event");
+    failCheck(
+      "final_response",
+      errorEvent
+        ? runtimeErrorEventDetail(errorEvent)
+        : "runtime did not emit a final event"
+    );
   }
   return events;
+}
+
+function assertEventTextDoesNotLeakProtocol(event: RuntimeRunEvent): void {
+  if (event.type === "message_delta" || event.type === "message_replace") {
+    if (containsRuntimeToolCallProtocolFragments(event.text)) {
+      failCheck(
+        "events_stream",
+        `runtime ${event.type} leaked tool-call protocol text`
+      );
+    }
+  }
+
+  if (event.type === "final") {
+    assertFinalTextDoesNotLeakProtocol(event);
+  }
+}
+
+function assertFinalTextDoesNotLeakProtocol(
+  event: Extract<RuntimeRunEvent, { type: "final" }>
+): void {
+  if (containsRuntimeToolCallProtocolFragments(event.response.text)) {
+    failCheck(
+      "final_response",
+      "runtime final response leaked tool-call protocol text"
+    );
+  }
+}
+
+function runtimeErrorEventDetail(
+  event: Extract<RuntimeRunEvent, { type: "error" }>
+): string {
+  return `runtime emitted error event${event.code ? ` ${event.code}` : ""}: ${event.message}`;
 }
 
 function failCheck(name: RuntimeContractCheckName, detail?: string): never {

@@ -288,7 +288,7 @@ describe("runtime conformance harness", () => {
                 }
               }
             },
-            finalEvent()
+            finalEvent("Runtime contract scheduled provider capability response.")
           ]);
         }
         if (url.includes("attachment-capability")) {
@@ -434,12 +434,12 @@ function capabilityManifest() {
   };
 }
 
-function finalEvent() {
+function finalEvent(text = "ok") {
   return {
     type: "final",
     response: {
       classification: "user_private",
-      text: "ok",
+      text,
       usage: {
         inputTokens: 1,
         outputTokens: 1,
