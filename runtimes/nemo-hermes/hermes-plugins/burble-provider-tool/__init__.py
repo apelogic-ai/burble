@@ -85,9 +85,6 @@ TOOL_NAME_ALIASES = {
 
 PROVIDER_BRIDGE_TOOLSET = "web"
 PROVIDER_ALIAS_TOOLSETS = ["cronjob"]
-TOOLSET_BRIDGE_TOOLS = {
-    PROVIDER_BRIDGE_TOOLSET: ["burble_provider_call"],
-}
 BRIDGE_TOOL_NAMES = {"burble_provider_call", "burble.providerCall"}
 
 
@@ -275,6 +272,14 @@ def _read_tool_input(args: dict[str, Any]) -> dict[str, Any]:
     raise ValueError("input must be an object")
 
 
+def _read_scheduled_job_id(input_body: dict[str, Any]) -> str | None:
+    for key in ("jobId", "job_id", "scheduledJobId", "scheduled_job_id"):
+        value = input_body.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return None
+
+
 async def _burble_provider_call(args: dict[str, Any], **_kwargs: Any) -> str:
     gateway_url = _env("BURBLE_TOOL_GATEWAY_URL").rstrip("/")
     internal_token = _env("BURBLE_INTERNAL_TOKEN")
@@ -295,7 +300,11 @@ async def _burble_provider_call(args: dict[str, Any], **_kwargs: Any) -> str:
         return json.dumps({"error": True, "message": str(error)}, ensure_ascii=False)
 
     url = f"{gateway_url}/{quote(tool_name, safe='')}/execute"
-    payload = {"input": tool_input}
+    job_id = _read_scheduled_job_id(tool_input)
+    payload: dict[str, Any] = {
+        "input": tool_input,
+        **({"scheduledJob": {"jobId": job_id}} if job_id else {}),
+    }
     headers = {
         "authorization": f"Bearer {internal_token}",
         "content-type": "application/json",
@@ -334,11 +343,11 @@ def _make_provider_alias_handler(canonical_name: str):
     return _provider_alias_call
 
 
-def _pin_provider_bridge_to_web_toolset() -> None:
+def _pin_provider_bridge_to_toolsets() -> None:
     try:
         import toolsets
 
-        entry = toolsets.TOOLSETS.setdefault(
+        toolsets.TOOLSETS.setdefault(
             PROVIDER_BRIDGE_TOOLSET,
             {
                 "description": "Web research and content extraction tools",
@@ -346,21 +355,23 @@ def _pin_provider_bridge_to_web_toolset() -> None:
                 "includes": [],
             },
         )
-        tools = entry.setdefault("tools", [])
-        if not isinstance(tools, list):
-            return
-        for tool_name in TOOLSET_BRIDGE_TOOLS[PROVIDER_BRIDGE_TOOLSET]:
-            if tool_name not in tools:
-                tools.append(tool_name)
+        for entry in toolsets.TOOLSETS.values():
+            if not isinstance(entry, dict):
+                continue
+            tools = entry.setdefault("tools", [])
+            if not isinstance(tools, list):
+                continue
+            if "burble_provider_call" not in tools:
+                tools.append("burble_provider_call")
     except Exception as error:
         print(
-            f"[WARN] Burble provider bridge web toolset install failed: {error}",
+            f"[WARN] Burble provider bridge toolset install failed: {error}",
             flush=True,
         )
 
 
 def register(ctx) -> None:
-    _pin_provider_bridge_to_web_toolset()
+    _pin_provider_bridge_to_toolsets()
     ctx.register_tool(
         name="burble_provider_call",
         toolset=PROVIDER_BRIDGE_TOOLSET,
