@@ -29,25 +29,27 @@ export function containsRuntimeToolCallProtocolFragments(text: string): boolean 
 }
 
 export function stripRuntimeToolCallProtocolFragments(text: string): string {
+  const transcriptStripped = stripRuntimeToolTranscriptLines(text);
+  const source = transcriptStripped.text;
   let output = "";
   let index = 0;
-  let removedProtocol = false;
+  let removedProtocol = transcriptStripped.removed;
 
-  while (index < text.length) {
-    if (text[index] !== "{") {
-      output += text[index];
+  while (index < source.length) {
+    if (source[index] !== "{") {
+      output += source[index];
       index += 1;
       continue;
     }
 
-    const end = findJsonObjectEnd(text, index);
+    const end = findJsonObjectEnd(source, index);
     if (end === null) {
-      output += text[index];
+      output += source[index];
       index += 1;
       continue;
     }
 
-    const candidate = text.slice(index, end + 1);
+    const candidate = source.slice(index, end + 1);
     const parsed = parseJsonObject(candidate);
     if (parsed && typeof parsed.tool_call === "object" && parsed.tool_call !== null) {
       removedProtocol = true;
@@ -59,24 +61,65 @@ export function stripRuntimeToolCallProtocolFragments(text: string): string {
     index = end + 1;
   }
 
-  return removedProtocol
-    ? output
-        .replace(/[ \t]+\n/g, "\n")
-        .replace(/\n{3,}/g, "\n\n")
-        .trim()
-    : text;
+  return removedProtocol ? cleanProtocolStrippedText(output) : text;
 }
 
 function containsRuntimeToolProtocolLine(text: string): boolean {
   return text.split(/\r?\n/).some((line) => {
     const value = line.trim();
-    return (
-      value.startsWith("to=") ||
-      value.startsWith("recipient=") ||
-      value.startsWith("<tool") ||
-      value.startsWith("</tool>")
-    );
+    return isRuntimeToolProtocolLine(value);
   });
+}
+
+function stripRuntimeToolTranscriptLines(text: string): {
+  text: string;
+  removed: boolean;
+} {
+  const kept: string[] = [];
+  let removed = false;
+  let skippingAdjacentPayload = false;
+
+  for (const line of text.split(/\r?\n/)) {
+    const value = line.trim();
+    if (isRuntimeToolProtocolLine(value)) {
+      removed = true;
+      skippingAdjacentPayload = true;
+      continue;
+    }
+
+    if (skippingAdjacentPayload) {
+      if (!value) {
+        skippingAdjacentPayload = false;
+        kept.push(line);
+        continue;
+      }
+      if (value.startsWith("{")) {
+        removed = true;
+        continue;
+      }
+      skippingAdjacentPayload = false;
+    }
+
+    kept.push(line);
+  }
+
+  return removed ? { text: kept.join("\n"), removed } : { text, removed: false };
+}
+
+function isRuntimeToolProtocolLine(value: string): boolean {
+  return (
+    value.startsWith("to=") ||
+    value.startsWith("recipient=") ||
+    value.startsWith("<tool") ||
+    value.startsWith("</tool>")
+  );
+}
+
+function cleanProtocolStrippedText(text: string): string {
+  return text
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
 }
 
 function findJsonObjectEnd(text: string, start: number): number | null {

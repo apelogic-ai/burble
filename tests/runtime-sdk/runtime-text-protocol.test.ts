@@ -45,6 +45,24 @@ describe("stripRuntimeToolCallProtocolFragments", () => {
     ).toBe("Done — I created the deck.");
   });
 
+  test("strips Hermes-style tool transcript lines and adjacent JSON payloads", () => {
+    expect(
+      stripRuntimeToolCallProtocolFragments(`Checking the last 24h window.
+to=terminal_exec code
+{"command":"date -u","timeout_ms":120000}
+{"stdout":"2026-06-17T13:03:48Z\\n","stderr":"","exit_code":0}
+to=burble_provider_call code
+{"toolName":"github_search_issues","input":{"jobId":"job-123","query":"org:apelogic-ai is:pr"}}
+{"tool":"github_search_issues","ok":true,"data":{"issues":[{"number":602}]}}
+
+New open PRs:
+- apelogic-ai/burble #61 - link`)
+    ).toBe(`Checking the last 24h window.
+
+New open PRs:
+- apelogic-ai/burble #61 - link`);
+  });
+
   test("keeps ordinary JSON that is not the runtime tool protocol", () => {
     const json = JSON.stringify({
       status: "ok",
