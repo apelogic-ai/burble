@@ -373,6 +373,20 @@ def _pin_provider_bridge_to_toolsets() -> None:
 
 def register(ctx) -> None:
     _pin_provider_bridge_to_toolsets()
+    try:
+        ctx.register_tool(
+            name="burble_provider_call",
+            schema=BURBLE_PROVIDER_CALL_SCHEMA,
+            handler=_burble_provider_call,
+            is_async=True,
+            description=BURBLE_PROVIDER_CALL_SCHEMA["description"],
+            override=True,
+        )
+    except Exception as error:
+        print(
+            f"[WARN] Burble provider bridge global tool install failed: {error}",
+            flush=True,
+        )
     for toolset in _provider_bridge_toolsets():
         ctx.register_tool(
             name="burble_provider_call",

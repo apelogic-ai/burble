@@ -1353,6 +1353,13 @@ print(json.dumps(ctx.tools))
     expect(result).toContainEqual(
       expect.objectContaining({
         name: "burble_provider_call",
+        toolset: null,
+        is_async: true
+      })
+    );
+    expect(result).toContainEqual(
+      expect.objectContaining({
+        name: "burble_provider_call",
         toolset: "burble",
         is_async: true
       })
@@ -1705,6 +1712,12 @@ print(json.dumps({
     expect(result.web).not.toContain("scheduled_job_register_capability");
     expect(result.pr_monitor).toContain("cron_run");
     expect(result.pr_monitor).toContain("burble_provider_call");
+    expect(result.registered).toContainEqual(
+      expect.objectContaining({
+        name: "burble_provider_call",
+        toolset: null
+      })
+    );
     expect(result.registered).toContainEqual({
       name: "burble_provider_call",
       toolset: "pr_monitor"
