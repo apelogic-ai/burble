@@ -708,7 +708,7 @@ def format_scheduled_job_context(input_body: dict[str, Any]) -> str:
         "For this scheduled job, use only the listed allowedTools for Burble provider calls. Treat stateRefs as durable job state locations supplied by Burble."
     )
     lines.append(
-        "Ensure this native scheduled job has the provider bridge toolset enabled: include the cronjob toolset along with any other needed toolsets such as web. Do not run provider-backed scheduled jobs with only web enabled."
+        "The Burble provider bridge tool burble_provider_call is runtime-pinned into native toolsets for scheduled jobs; use it for allowedTools instead of declaring that the bridge is unavailable."
     )
     lines.append(
         "Respect maxOutputVisibility when sending scheduled output. Do not publicly post private-tool-derived content; public channel delivery for authenticated provider read output requires an explicit declassification approval flow that is not implemented yet. Write-only provider state tools do not by themselves make public-source output private."

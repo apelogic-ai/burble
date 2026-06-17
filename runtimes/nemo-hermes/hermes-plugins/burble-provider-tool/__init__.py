@@ -340,7 +340,16 @@ def _pin_provider_bridge_to_toolsets() -> None:
     try:
         import toolsets
 
-        for toolset_name, bridge_tools in TOOLSET_BRIDGE_TOOLS.items():
+        all_toolset_names = {
+            *TOOLSET_BRIDGE_TOOLS.keys(),
+            *[
+                str(name)
+                for name, entry in getattr(toolsets, "TOOLSETS", {}).items()
+                if isinstance(entry, dict)
+            ],
+        }
+        for toolset_name in sorted(all_toolset_names):
+            bridge_tools = TOOLSET_BRIDGE_TOOLS.get(toolset_name, ["burble_provider_call"])
             entry = toolsets.TOOLSETS.setdefault(
                 toolset_name,
                 {
@@ -364,7 +373,7 @@ def _pin_provider_bridge_to_toolsets() -> None:
 
 def register(ctx) -> None:
     _pin_provider_bridge_to_toolsets()
-    for toolset in PROVIDER_BRIDGE_TOOLSETS:
+    for toolset in _provider_bridge_toolsets():
         ctx.register_tool(
             name="burble_provider_call",
             toolset=toolset,
@@ -386,3 +395,18 @@ def register(ctx) -> None:
                 description=schema["description"],
                 override=True,
             )
+
+
+def _provider_bridge_toolsets() -> list[str]:
+    toolset_names = set(PROVIDER_BRIDGE_TOOLSETS)
+    try:
+        import toolsets
+
+        toolset_names.update(
+            str(name)
+            for name, entry in getattr(toolsets, "TOOLSETS", {}).items()
+            if isinstance(entry, dict)
+        )
+    except Exception:
+        pass
+    return sorted(toolset_names)

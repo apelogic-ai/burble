@@ -818,9 +818,9 @@ print(json.dumps({"text": mod.build_hermes_turn_text(payload)}))
       "stateRef provider=google kind=drive_file id=file-123 purpose=dedupe_state"
     );
     expect(text).toContain(
-      "Ensure this native scheduled job has the provider bridge toolset enabled"
+      "burble_provider_call is runtime-pinned into native toolsets"
     );
-    expect(text).toContain("cronjob");
+    expect(text).not.toContain("Do not run provider-backed scheduled jobs with only web enabled");
   });
 
   test("adds provider-backed scheduled job repair guidance to scheduler-only Hermes turns", () => {
@@ -1434,6 +1434,13 @@ print(json.dumps(ctx.tools))
         is_async: true
       })
     );
+    expect(result).toContainEqual(
+      expect.objectContaining({
+        name: "burble_provider_call",
+        toolset: "burble",
+        is_async: true
+      })
+    );
     expect(result).not.toContainEqual(
       expect.objectContaining({
         name: "google_get_drive_file",
@@ -1653,7 +1660,7 @@ asyncio.run(main())
     });
   });
 
-  test("pins Burble provider bridge tools into the Hermes web toolset for cron jobs", () => {
+  test("pins Burble provider bridge tools into every Hermes native toolset for cron jobs", () => {
     const result = runHermesEntrypointProbe(`${importProviderToolPlugin}
 toolsets = types.ModuleType("toolsets")
 toolsets.TOOLSETS = {
@@ -1661,24 +1668,47 @@ toolsets.TOOLSETS = {
         "description": "Web research and content extraction tools",
         "tools": ["web_search", "web_extract"],
         "includes": [],
+    },
+    "pr_monitor": {
+        "description": "Existing saved PR monitor toolset",
+        "tools": ["cron_run"],
+        "includes": [],
     }
 }
 sys.modules["toolsets"] = toolsets
 
 class Ctx:
+    def __init__(self):
+        self.registered = []
+
     def register_tool(self, **kwargs):
-        pass
+        self.registered.append({"name": kwargs.get("name"), "toolset": kwargs.get("toolset")})
 
-mod.register(Ctx())
-print(json.dumps(toolsets.TOOLSETS["web"]["tools"]))
-`);
+ctx = Ctx()
+mod.register(ctx)
+print(json.dumps({
+    "web": toolsets.TOOLSETS["web"]["tools"],
+    "pr_monitor": toolsets.TOOLSETS["pr_monitor"]["tools"],
+    "registered": ctx.registered,
+}))
+`) as {
+      web: string[];
+      pr_monitor: string[];
+      registered: Array<{ name?: string; toolset?: string }>;
+    };
 
-    expect(result).toContain("web_search");
-    expect(result).toContain("web_extract");
-    expect(result).toContain("burble_provider_call");
-    expect(result).not.toContain("google_get_drive_file");
-    expect(result).not.toContain("google_append_to_drive_text_file");
-    expect(result).not.toContain("scheduled_job_register_capability");
+    expect(result.web).toContain("web_search");
+    expect(result.web).toContain("web_extract");
+    expect(result.web).toContain("burble_provider_call");
+    expect(result.web).not.toContain("google_get_drive_file");
+    expect(result.web).not.toContain("google_append_to_drive_text_file");
+    expect(result.web).not.toContain("scheduled_job_register_capability");
+    expect(result.pr_monitor).toContain("cron_run");
+    expect(result.pr_monitor).toContain("burble_provider_call");
+    expect(result.registered).toContainEqual({
+      name: "burble_provider_call",
+      toolset: "pr_monitor"
+    });
   });
 
   test("Hermes web extract falls back locally when upstream safety helper is unavailable", () => {
