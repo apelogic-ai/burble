@@ -1055,7 +1055,7 @@ asyncio.run(main())
     });
   });
 
-  test("strips Hermes tool protocol from scheduled route sends", () => {
+  test("refuses Hermes tool protocol from scheduled route sends", () => {
     const result = runHermesEntrypointProbe(`${importBurblePlatformAdapter}
 import asyncio
 import os
@@ -1082,33 +1082,15 @@ New open apelogic-ai PRs in the last 24h
         content,
         metadata={"jobId": "job-123"},
     )
-    print(json.dumps({"success": sent.success, "payloads": posted_payloads}))
+    print(json.dumps({"success": sent.success, "error": sent.error, "payloads": posted_payloads}))
 
 asyncio.run(main())
 `);
 
     expect(result).toEqual({
-      success: true,
-      payloads: [
-        {
-          url: "http://burble-app:3000/internal/tools/conversation.sendMessage/execute",
-          headers: {
-            authorization: "Bearer token",
-            "content-type": "application/json",
-            "x-burble-runtime-id": "rt_123"
-          },
-          json: {
-            scheduledJob: {
-              jobId: "job-123"
-            },
-            input: {
-              routeId: "convrt_abc123",
-              text: "Checking the last 24h window.\n\nNew open apelogic-ai PRs in the last 24h\n- apelogic-ai/ape-leads #602 - notion - PR link",
-              jobId: "job-123"
-            }
-          }
-        }
-      ]
+      success: false,
+      error: "Hermes produced tool-call protocol text instead of structured tool calls; refusing to publish untrusted assistant content",
+      payloads: []
     });
   });
 

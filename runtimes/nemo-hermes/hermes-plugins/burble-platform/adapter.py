@@ -130,10 +130,10 @@ def _starts_hermes_tool_json_block(text: str) -> bool:
     )
 
 
-def _strip_hermes_tool_protocol(text: str) -> str:
+def _strip_hermes_tool_protocol(text: str) -> tuple[str, bool]:
     value = str(text or "")
     if "to=" not in value and "recipient=" not in value and "<tool" not in value:
-        return value
+        return value, False
 
     kept: list[str] = []
     removed = False
@@ -155,12 +155,12 @@ def _strip_hermes_tool_protocol(text: str) -> str:
         kept.append(line)
 
     if not removed:
-        return value
+        return value, False
 
     cleaned = "\n".join(kept)
     while "\n\n\n" in cleaned:
         cleaned = cleaned.replace("\n\n\n", "\n\n")
-    return cleaned.strip()
+    return cleaned.strip(), True
 
 
 def _to_non_negative_int(value: Any) -> Optional[int]:
@@ -477,9 +477,22 @@ class BurbleAdapter(BasePlatformAdapter):
         metadata: Optional[Dict[str, Any]] = None,
     ) -> SendResult:
         route_id = str(chat_id or "").strip()
-        text = _strip_hermes_tool_protocol(str(content or ""))
+        text, removed_tool_protocol = _strip_hermes_tool_protocol(str(content or ""))
         if not route_id:
             return SendResult(success=False, error="Burble route id is required")
+        if removed_tool_protocol:
+            print(
+                f"[ERROR] Burble Hermes platform refused leaked tool protocol routeId={route_id}",
+                flush=True,
+            )
+            return SendResult(
+                success=False,
+                error=(
+                    "Hermes produced tool-call protocol text instead of structured tool calls; "
+                    "refusing to publish untrusted assistant content"
+                ),
+                retryable=False,
+            )
         if not text.strip():
             return SendResult(success=True, message_id=f"burble:{route_id}:{int(time.time() * 1000)}")
         if _is_burble_platform_notice(text):
