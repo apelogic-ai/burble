@@ -278,14 +278,7 @@ describe("handleRuntimeRequest", () => {
           contractProbeRequest({
             runId: "run-contract-scheduled-probe",
             text: "runtime contract scheduled provider capability probe",
-            scheduled: true,
-            tools: [
-              {
-                name: "runtime.conformance.echo",
-                alias: "runtime.conformance.echo",
-                enabled: true
-              }
-            ]
+            scheduled: true
           })
         )
       }),

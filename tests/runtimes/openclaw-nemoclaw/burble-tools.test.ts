@@ -1255,6 +1255,73 @@ describe("createBurbleToolExecutor", () => {
     }
   });
 
+  test("executes runtime conformance echo through the internal gateway", async () => {
+    const originalFetch = globalThis.fetch;
+    const requests: Request[] = [];
+    globalThis.fetch = (async (input, init) => {
+      const request = new Request(input, init);
+      requests.push(request);
+      return Response.json({
+        classification: "user_private",
+        content: {
+          ok: true,
+          toolName: "runtime.conformance.echo",
+          input: {
+            message: "scheduled provider bridge probe"
+          }
+        }
+      });
+    }) as typeof fetch;
+
+    try {
+      const executor = createBurbleToolExecutor(config, "rt_u123", {
+        input: {
+          scheduledJob: {
+            jobId: "contract-scheduled-job",
+            routeId: "convrt_abc123"
+          }
+        }
+      } as never);
+      const result = await executor("burble_provider_call", {
+        input: {
+          toolName: "runtime.conformance.echo",
+          input: {
+            jobId: "contract-scheduled-job",
+            message: "scheduled provider bridge probe"
+          }
+        }
+      });
+
+      expect(result.content).toEqual({
+        ok: true,
+        toolName: "runtime.conformance.echo",
+        input: {
+          message: "scheduled provider bridge probe"
+        }
+      });
+      expect(requests).toHaveLength(1);
+      expect(requests[0].url).toBe(
+        "http://burble-app:3000/internal/tools/runtime.conformance.echo/execute"
+      );
+      expect(requests[0].headers.get("authorization")).toBe(
+        "Bearer runtime-secret"
+      );
+      expect(requests[0].headers.get("x-burble-runtime-id")).toBe("rt_u123");
+      expect(await requests[0].json()).toEqual({
+        input: {
+          jobId: "contract-scheduled-job",
+          message: "scheduled provider bridge probe"
+        },
+        scheduledJob: {
+          jobId: "contract-scheduled-job",
+          routeId: "convrt_abc123"
+        }
+      });
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
   test("forwards object scheduled state refs before registration", async () => {
     const originalFetch = globalThis.fetch;
     const requests: Request[] = [];
