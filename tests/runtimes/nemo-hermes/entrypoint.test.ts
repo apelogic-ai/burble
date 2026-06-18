@@ -1750,6 +1750,106 @@ asyncio.run(main())
     });
   });
 
+  test("repairs Hermes cron job toolsets after scheduled capability registration", () => {
+    const result = runHermesEntrypointProbe(`${importProviderToolPlugin}
+import asyncio
+import os
+import pathlib
+import tempfile
+
+home = tempfile.mkdtemp()
+os.environ["HERMES_HOME"] = home
+os.environ["BURBLE_TOOL_GATEWAY_URL"] = "http://burble-app:3000/internal/tools"
+os.environ["BURBLE_INTERNAL_TOKEN"] = "runtime-secret"
+os.environ["BURBLE_RUNTIME_ID"] = "rt_u123"
+
+cron_dir = pathlib.Path(home) / "cron"
+cron_dir.mkdir(parents=True, exist_ok=True)
+jobs_path = cron_dir / "jobs.json"
+jobs_path.write_text(json.dumps({
+    "jobs": [
+        {
+            "id": "9f32de992914",
+            "name": "apelogic-ai-open-prs-last-24h-drive-dedupe",
+            "prompt": "Use Burble provider calls with this jobId for this scheduled job.\\njobId=9f32de992914\\nallowedTools=github_search_issues,google_get_drive_file\\nUse the runtime's Burble provider bridge tool burble_provider_call for these tools.",
+            "enabled_toolsets": None,
+        },
+        {
+            "id": "plain",
+            "name": "plain-job",
+            "prompt": "Say hello.",
+            "enabled_toolsets": None,
+        },
+    ],
+}), encoding="utf-8")
+
+calls = []
+
+class FakeResponse:
+    status = 200
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *_args):
+        return None
+
+    async def json(self):
+        return {
+            "classification": "user_private",
+            "content": {"ok": True},
+        }
+
+class FakeSession:
+    def __init__(self, *args, **kwargs):
+        pass
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *_args):
+        return None
+
+    def post(self, url, json=None, headers=None):
+        calls.append({"url": url, "json": json, "headers": headers})
+        return FakeResponse()
+
+mod.ClientSession = FakeSession
+mod.ClientTimeout = lambda **_kwargs: None
+
+async def main():
+    result = await mod._burble_provider_call({
+        "toolName": "scheduled_job_register_capability",
+        "input": {
+            "jobId": "9f32de992914",
+            "requiredTools": ["github_search_issues", "google_get_drive_file"],
+        },
+    })
+    print(json.dumps({
+        "result": json.loads(result),
+        "jobs": json.loads(jobs_path.read_text())["jobs"],
+        "calls": calls,
+    }))
+
+asyncio.run(main())
+`);
+
+    const typed = result as {
+      result: { ok: boolean };
+      jobs: Array<{ id: string; enabled_toolsets: string[] | null }>;
+      calls: Array<{ url: string }>;
+    };
+    expect(typed.result).toEqual({ ok: true });
+    expect(typed.calls[0]?.url).toBe(
+      "http://burble-app:3000/internal/tools/scheduledJob.registerCapability/execute"
+    );
+    expect(typed.jobs.find((job) => job.id === "9f32de992914")?.enabled_toolsets).toEqual([
+      "cronjob",
+      "web"
+    ]);
+    expect(typed.jobs.find((job) => job.id === "plain")?.enabled_toolsets).toBeNull();
+  });
+
   test("unwraps nested Hermes provider bridge envelopes", () => {
     const result = runHermesEntrypointProbe(`${importProviderToolPlugin}
 import asyncio

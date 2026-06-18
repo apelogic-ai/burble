@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+from pathlib import Path
 from typing import Any
 from urllib.parse import quote
 
@@ -85,6 +86,7 @@ TOOL_NAME_ALIASES = {
 
 PROVIDER_BRIDGE_TOOLSET = "cronjob"
 PROVIDER_ALIAS_TOOLSETS = ["cronjob"]
+REQUIRED_SCHEDULED_TOOLSETS = ["cronjob", "web"]
 BRIDGE_TOOL_NAMES = {"burble_provider_call", "burble.providerCall"}
 
 
@@ -280,6 +282,74 @@ def _read_scheduled_job_id(input_body: dict[str, Any]) -> str | None:
     return None
 
 
+def _is_scheduled_provider_cron_prompt(prompt: str) -> bool:
+    normalized = prompt.lower()
+    return (
+        "use burble provider calls with this jobid for this scheduled job"
+        in normalized
+        and "burble_provider_call" in normalized
+        and "allowedtools=" in normalized
+    )
+
+
+def _repair_cron_job_toolsets(job_id: str | None = None) -> None:
+    home = Path(_env("HERMES_HOME") or "/data/openclaw/hermes")
+    jobs_path = home / "cron" / "jobs.json"
+    if not jobs_path.exists():
+        return
+    try:
+        raw = json.loads(jobs_path.read_text(encoding="utf-8"))
+        jobs = raw.get("jobs") if isinstance(raw, dict) else None
+        if not isinstance(jobs, list):
+            return
+
+        repaired: list[str] = []
+        for job in jobs:
+            if not isinstance(job, dict):
+                continue
+            current_id = str(job.get("id") or "").strip()
+            if job_id and current_id != job_id:
+                continue
+            prompt = str(job.get("prompt") or "")
+            if not _is_scheduled_provider_cron_prompt(prompt):
+                continue
+            current_toolsets = job.get("enabled_toolsets")
+            if isinstance(current_toolsets, list):
+                merged = [
+                    str(toolset)
+                    for toolset in current_toolsets
+                    if str(toolset).strip()
+                ]
+            else:
+                merged = []
+            for toolset in REQUIRED_SCHEDULED_TOOLSETS:
+                if toolset not in merged:
+                    merged.append(toolset)
+            if merged != current_toolsets:
+                job["enabled_toolsets"] = merged
+                repaired.append(current_id or str(job.get("name") or "unknown"))
+
+        if not repaired:
+            return
+
+        tmp_path = jobs_path.with_suffix(".json.tmp")
+        tmp_path.write_text(
+            json.dumps(raw, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        tmp_path.replace(jobs_path)
+        print(
+            "[INFO] Burble provider bridge repaired Hermes cron job toolsets "
+            f"jobs={','.join(repaired)} toolsets={','.join(REQUIRED_SCHEDULED_TOOLSETS)}",
+            flush=True,
+        )
+    except Exception as error:
+        print(
+            f"[WARN] Burble provider bridge cron job toolset repair failed: {error}",
+            flush=True,
+        )
+
+
 async def _burble_provider_call(args: dict[str, Any], **_kwargs: Any) -> str:
     gateway_url = _env("BURBLE_TOOL_GATEWAY_URL").rstrip("/")
     internal_token = _env("BURBLE_INTERNAL_TOKEN")
@@ -327,6 +397,8 @@ async def _burble_provider_call(args: dict[str, Any], **_kwargs: Any) -> str:
                         },
                         ensure_ascii=False,
                     )
+                if tool_name == "scheduledJob.registerCapability":
+                    _repair_cron_job_toolsets(job_id)
                 if isinstance(body, dict) and "content" in body:
                     return json.dumps(body["content"], ensure_ascii=False)
                 return json.dumps(body, ensure_ascii=False)
