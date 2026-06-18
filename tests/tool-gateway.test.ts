@@ -1525,13 +1525,16 @@ describe("handleToolGatewayRequest", () => {
       "burble_provider_call"
     );
     expect(body.content.scheduledPromptInstruction).toContain(
-      '- burble_provider_call with {"toolName":"google_get_drive_file","input":{"jobId":"ai-news-hourly"}}'
+      "toolName set to one allowedTools value"
     );
     expect(body.content.scheduledPromptInstruction).toContain(
-      '- burble_provider_call with {"toolName":"google_append_to_drive_text_file","input":{"jobId":"ai-news-hourly"}}'
+      "input set to that provider tool's required arguments plus jobId=ai-news-hourly"
     );
     expect(body.content.scheduledPromptInstruction).toContain(
-      '"jobId":"ai-news-hourly"'
+      "Do not call burble_provider_call with only jobId"
+    );
+    expect(body.content.scheduledPromptInstruction).not.toContain(
+      '"input":{"jobId":"ai-news-hourly"}}'
     );
     expect(body.content.scheduledPromptInstruction).toContain(
       "Do not use direct web/browser access to provider URLs"

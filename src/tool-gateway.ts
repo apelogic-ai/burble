@@ -2515,15 +2515,6 @@ function isAgentRuntimeEngine(value: unknown): value is AgentRuntimeEngine {
 function buildScheduledJobPromptInstruction(
   scheduledJob: ReturnType<typeof buildScheduledJobContext>
 ): string {
-  const bridgeExamples = scheduledJob.allowedTools.map((toolName) => {
-    const input = {
-      jobId: scheduledJob.jobId
-    };
-    return `- burble_provider_call with ${JSON.stringify({
-      toolName,
-      input
-    })}`;
-  });
   const lines = [
     "Use Burble provider calls with this jobId for this scheduled job.",
     `jobId=${scheduledJob.jobId}`,
@@ -2548,8 +2539,8 @@ function buildScheduledJobPromptInstruction(
   lines.push(
     "These allowedTools are Burble provider tool names, not necessarily native runtime tool names.",
     "Use the runtime's Burble provider bridge tool burble_provider_call for these tools.",
-    "Provider bridge call examples:",
-    ...bridgeExamples,
+    `For each provider call, call burble_provider_call with toolName set to one allowedTools value and input set to that provider tool's required arguments plus jobId=${scheduledJob.jobId}.`,
+    "Do not call burble_provider_call with only jobId unless the selected provider tool has no other required arguments.",
     "Do not call these provider tool names as native tools unless the runtime explicitly exposes equivalent direct aliases.",
     "Do not use direct web/browser access to provider URLs such as Google Drive, GitHub, Jira, Gmail, Calendar, or Slack URLs for this state.",
     "For every scheduled provider call, include this jobId in the tool input and use only the listed allowedTools."
