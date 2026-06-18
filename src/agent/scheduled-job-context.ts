@@ -18,6 +18,7 @@ export type ScheduledJobContext = {
   jobId: string;
   capabilityProfile: string;
   allowedTools: string[];
+  nativeToolsets?: string[];
   routeId?: string;
   runtimeType?: AgentRuntimeEngine;
   stateRefs: ScheduledJobStateRef[];
@@ -31,11 +32,28 @@ export function buildScheduledJobContext(
     jobId: capability.jobId,
     capabilityProfile: capability.capabilityProfile,
     allowedTools: [...new Set(capability.requiredTools)].sort(),
+    ...nativeToolsetsForScheduledJob(capability),
     ...(capability.routeId ? { routeId: capability.routeId } : {}),
     ...(capability.runtimeType ? { runtimeType: capability.runtimeType } : {}),
     stateRefs: normalizeStateRefs(capability.stateRefs),
     visibilityPolicy: normalizeVisibilityPolicy(capability.visibilityPolicy)
   };
+}
+
+function nativeToolsetsForScheduledJob(
+  capability: AgentJobCapabilityRecord
+): Pick<ScheduledJobContext, "nativeToolsets"> {
+  if (capability.runtimeType !== "hermes") {
+    return {};
+  }
+
+  const toolsets = new Set(["burble"]);
+  for (const toolName of capability.requiredTools) {
+    if (toolName === "web_extract" || toolName === "web_search") {
+      toolsets.add("web");
+    }
+  }
+  return { nativeToolsets: [...toolsets].sort() };
 }
 
 function normalizeStateRefs(value: unknown): ScheduledJobStateRef[] {

@@ -12,6 +12,7 @@ import subprocess
 import sys
 import time
 import uuid
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 from urllib.parse import unquote, urlparse
@@ -88,6 +89,7 @@ HERMES_PROVIDER_TOOL_HINTS = load_hermes_provider_tool_hints(
 )
 
 DEFAULT_HERMES_PLATFORM_TOOLSETS = ["burble", "cronjob", "web"]
+REQUIRED_HERMES_SCHEDULED_PLATFORM_TOOLSETS = ["burble"]
 HERMES_STREAM_CURSOR = "[[BURBLE_STREAM_CURSOR]]"
 DEFAULT_HERMES_DISABLED_TOOLSETS = [
     "browser",
@@ -148,6 +150,18 @@ def env_list(name: str, default: list[str]) -> list[str]:
         return []
     values = [value.strip() for value in raw.replace("\n", ",").split(",")]
     return list(dict.fromkeys(value for value in values if value))
+
+
+def append_required_hermes_scheduled_toolsets(toolsets: list[str]) -> list[str]:
+    merged = list(dict.fromkeys(toolsets))
+    for toolset in REQUIRED_HERMES_SCHEDULED_PLATFORM_TOOLSETS:
+        if toolset not in merged:
+            merged.append(toolset)
+    return merged
+
+
+def current_utc_iso() -> str:
+    return datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
 def _to_non_negative_int(value: Any) -> int | None:
@@ -643,7 +657,9 @@ def format_current_request_attachments(input_body: dict[str, Any]) -> str:
     return "\n".join(lines) if len(lines) > 3 else ""
 
 
-def format_scheduled_job_context(input_body: dict[str, Any]) -> str:
+def format_scheduled_job_context(
+    input_body: dict[str, Any], *, now_utc: str | None = None
+) -> str:
     scheduled_job = input_body.get("scheduledJob")
     if not isinstance(scheduled_job, dict):
         return ""
@@ -672,6 +688,7 @@ def format_scheduled_job_context(input_body: dict[str, Any]) -> str:
     lines = [
         "Scheduled Burble job context:",
         f"- jobId={scheduled_job.get('jobId') or ''}",
+        f"- currentUtc={now_utc or current_utc_iso()}",
         f"- capabilityProfile={scheduled_job.get('capabilityProfile') or ''}",
         f"- allowedTools={allowed_tool_text}",
     ]
@@ -684,6 +701,13 @@ def format_scheduled_job_context(input_body: dict[str, Any]) -> str:
     runtime_type = scheduled_job.get("runtimeType")
     if runtime_type:
         lines.append(f"- runtimeType={runtime_type}")
+    native_toolsets = scheduled_job.get("nativeToolsets")
+    if isinstance(native_toolsets, list):
+        native_toolset_text = ",".join(
+            sorted({str(toolset) for toolset in native_toolsets if str(toolset).strip()})
+        )
+        if native_toolset_text:
+            lines.append(f"- nativeToolsets={native_toolset_text}")
 
     lines.append(f"- maxOutputVisibility={max_visibility}")
     lines.append(f"- allowPrivateToolDeclassification={allow_declassification}")
@@ -709,7 +733,10 @@ def format_scheduled_job_context(input_body: dict[str, Any]) -> str:
         "For this scheduled job, use only the listed allowedTools for Burble provider calls. Treat stateRefs as durable job state locations supplied by Burble."
     )
     lines.append(
-        "The Burble provider bridge tool burble_provider_call is runtime-pinned into native toolsets for scheduled jobs; use it for allowedTools instead of declaring that the bridge is unavailable."
+        "The Burble provider bridge tool burble_provider_call is exposed through the native Burble toolset for scheduled jobs; use it for allowedTools instead of declaring that the bridge is unavailable."
+    )
+    lines.append(
+        "Use currentUtc for scheduled time-window calculations. Do not call shell, terminal, or time tools just to compute the current UTC time."
     )
     lines.append(
         "Respect maxOutputVisibility when sending scheduled output. Do not publicly post private-tool-derived content; public channel delivery for authenticated provider read output requires an explicit declassification approval flow that is not implemented yet. Write-only provider state tools do not by themselves make public-source output private."
@@ -1363,6 +1390,9 @@ class BurbleHermesRuntime:
         platform_toolsets = env_list(
             "BURBLE_HERMES_PLATFORM_TOOLSETS",
             DEFAULT_HERMES_PLATFORM_TOOLSETS,
+        )
+        platform_toolsets = append_required_hermes_scheduled_toolsets(
+            platform_toolsets
         )
         lines.append("platform_toolsets:")
         lines.append("  burble:")

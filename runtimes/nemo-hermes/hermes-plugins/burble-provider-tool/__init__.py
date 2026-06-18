@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import os
+from pathlib import Path
 from typing import Any
 from urllib.parse import quote
 
@@ -83,8 +85,8 @@ TOOL_NAME_ALIASES = {
     "conversation_get_attachment": "conversation.getAttachment",
 }
 
-PROVIDER_BRIDGE_TOOLSET = "web"
-PROVIDER_ALIAS_TOOLSETS = ["cronjob"]
+PROVIDER_BRIDGE_TOOLSET = "burble"
+PROVIDER_ALIAS_TOOLSETS = ["burble"]
 BRIDGE_TOOL_NAMES = {"burble_provider_call", "burble.providerCall"}
 
 
@@ -280,6 +282,83 @@ def _read_scheduled_job_id(input_body: dict[str, Any]) -> str | None:
     return None
 
 
+def _read_native_toolsets_from_response(body: Any) -> list[str]:
+    if not isinstance(body, dict):
+        return []
+    content = body.get("content")
+    if not isinstance(content, dict):
+        return []
+    scheduled_job = content.get("scheduledJob")
+    if not isinstance(scheduled_job, dict):
+        return []
+    raw_toolsets = scheduled_job.get("nativeToolsets")
+    if not isinstance(raw_toolsets, list):
+        return []
+    return [
+        str(toolset).strip()
+        for toolset in raw_toolsets
+        if isinstance(toolset, str) and toolset.strip()
+    ]
+
+
+def _apply_cron_job_toolsets(job_id: str | None, required_toolsets: list[str]) -> None:
+    if not job_id or not required_toolsets:
+        return
+    home = Path(_env("HERMES_HOME") or "/data/openclaw/hermes")
+    jobs_path = home / "cron" / "jobs.json"
+    if not jobs_path.exists():
+        return
+    try:
+        raw = json.loads(jobs_path.read_text(encoding="utf-8"))
+        jobs = raw.get("jobs") if isinstance(raw, dict) else None
+        if not isinstance(jobs, list):
+            return
+
+        repaired = False
+        for job in jobs:
+            if not isinstance(job, dict):
+                continue
+            current_id = str(job.get("id") or "").strip()
+            if current_id != job_id:
+                continue
+            current_toolsets = job.get("enabled_toolsets")
+            if isinstance(current_toolsets, list):
+                merged = [
+                    str(toolset)
+                    for toolset in current_toolsets
+                    if str(toolset).strip()
+                ]
+            else:
+                merged = []
+            for toolset in required_toolsets:
+                if toolset not in merged:
+                    merged.append(toolset)
+            if merged != current_toolsets:
+                job["enabled_toolsets"] = merged
+                repaired = True
+            break
+
+        if not repaired:
+            return
+
+        tmp_path = jobs_path.with_suffix(".json.tmp")
+        tmp_path.write_text(
+            json.dumps(raw, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        tmp_path.replace(jobs_path)
+        print(
+            "[INFO] Burble provider bridge repaired Hermes cron job toolsets "
+            f"jobs={job_id} toolsets={','.join(required_toolsets)}",
+            flush=True,
+        )
+    except Exception as error:
+        print(
+            f"[WARN] Burble provider bridge cron job toolset repair failed: {error}",
+            flush=True,
+        )
+
+
 async def _burble_provider_call(args: dict[str, Any], **_kwargs: Any) -> str:
     gateway_url = _env("BURBLE_TOOL_GATEWAY_URL").rstrip("/")
     internal_token = _env("BURBLE_INTERNAL_TOKEN")
@@ -327,6 +406,12 @@ async def _burble_provider_call(args: dict[str, Any], **_kwargs: Any) -> str:
                         },
                         ensure_ascii=False,
                     )
+                if tool_name == "scheduledJob.registerCapability":
+                    await asyncio.to_thread(
+                        _apply_cron_job_toolsets,
+                        job_id,
+                        _read_native_toolsets_from_response(body),
+                    )
                 if isinstance(body, dict) and "content" in body:
                     return json.dumps(body["content"], ensure_ascii=False)
                 return json.dumps(body, ensure_ascii=False)
@@ -343,19 +428,21 @@ def _make_provider_alias_handler(canonical_name: str):
     return _provider_alias_call
 
 
-def _pin_provider_bridge_to_toolsets() -> None:
+def _pin_provider_bridge_to_toolsets() -> dict[str, Any]:
+    pinned: list[str] = []
     try:
         import toolsets
 
         toolsets.TOOLSETS.setdefault(
             PROVIDER_BRIDGE_TOOLSET,
             {
-                "description": "Web research and content extraction tools",
+                "description": "Burble provider bridge and scheduled job tools",
                 "tools": [],
                 "includes": [],
             },
         )
-        for entry in toolsets.TOOLSETS.values():
+        for name in (PROVIDER_BRIDGE_TOOLSET, *PROVIDER_ALIAS_TOOLSETS):
+            entry = toolsets.TOOLSETS.get(name)
             if not isinstance(entry, dict):
                 continue
             tools = entry.setdefault("tools", [])
@@ -363,15 +450,22 @@ def _pin_provider_bridge_to_toolsets() -> None:
                 continue
             if "burble_provider_call" not in tools:
                 tools.append("burble_provider_call")
+            pinned.append(str(name))
+        return {
+            "ok": True,
+            "toolsets": pinned,
+            "count": len(pinned),
+        }
     except Exception as error:
         print(
             f"[WARN] Burble provider bridge toolset install failed: {error}",
             flush=True,
         )
+        return {"ok": False, "error": str(error), "toolsets": [], "count": 0}
 
 
 def register(ctx) -> None:
-    _pin_provider_bridge_to_toolsets()
+    pin_result = _pin_provider_bridge_to_toolsets()
     ctx.register_tool(
         name="burble_provider_call",
         toolset=PROVIDER_BRIDGE_TOOLSET,
@@ -381,6 +475,7 @@ def register(ctx) -> None:
         description=BURBLE_PROVIDER_CALL_SCHEMA["description"],
         override=True,
     )
+    registered_aliases = 0
     for toolset in PROVIDER_ALIAS_TOOLSETS:
         for alias, canonical_name in sorted(TOOL_NAME_ALIASES.items()):
             schema = _provider_alias_schema(alias, canonical_name)
@@ -393,3 +488,13 @@ def register(ctx) -> None:
                 description=schema["description"],
                 override=True,
             )
+            registered_aliases += 1
+    print(
+        "[INFO] Burble provider bridge registered "
+        f"bridgeToolset={PROVIDER_BRIDGE_TOOLSET} "
+        f"aliasToolsets={','.join(PROVIDER_ALIAS_TOOLSETS)} "
+        f"aliases={registered_aliases} "
+        f"pinnedToolsets={','.join(pin_result.get('toolsets') or [])} "
+        f"pinOk={pin_result.get('ok')}",
+        flush=True,
+    )

@@ -501,7 +501,6 @@ class BurbleAdapter(BasePlatformAdapter):
                 flush=True,
             )
             return SendResult(success=True, message_id=f"burble-notice:{route_id}:{int(time.time() * 1000)}")
-
         pending_run_id = self._pending_runs.pop(route_id, None)
         print(
             f"[INFO] Burble Hermes platform send routeId={route_id} textChars={len(text)} pendingRun={pending_run_id or 'none'}",
