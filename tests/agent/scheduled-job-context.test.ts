@@ -36,6 +36,7 @@ describe("buildScheduledJobContext", () => {
       jobId: "job-123",
       capabilityProfile: "scheduled_job",
       allowedTools: ["google_append_drive_text_file", "google_get_drive_file"],
+      nativeToolsets: ["burble"],
       routeId: "convrt_123",
       runtimeType: "hermes",
       stateRefs: [

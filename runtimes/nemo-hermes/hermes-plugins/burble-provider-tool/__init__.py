@@ -85,9 +85,8 @@ TOOL_NAME_ALIASES = {
     "conversation_get_attachment": "conversation.getAttachment",
 }
 
-PROVIDER_BRIDGE_TOOLSET = "web"
-PROVIDER_ALIAS_TOOLSETS = ["cronjob"]
-REQUIRED_SCHEDULED_TOOLSETS = ["web"]
+PROVIDER_BRIDGE_TOOLSET = "burble"
+PROVIDER_ALIAS_TOOLSETS = ["burble"]
 BRIDGE_TOOL_NAMES = {"burble_provider_call", "burble.providerCall"}
 
 
@@ -283,17 +282,28 @@ def _read_scheduled_job_id(input_body: dict[str, Any]) -> str | None:
     return None
 
 
-def _is_scheduled_provider_cron_prompt(prompt: str) -> bool:
-    normalized = prompt.lower()
-    return (
-        "use burble provider calls with this jobid for this scheduled job"
-        in normalized
-        and "burble_provider_call" in normalized
-        and "allowedtools=" in normalized
-    )
+def _read_native_toolsets_from_response(body: Any) -> list[str]:
+    if not isinstance(body, dict):
+        return []
+    content = body.get("content")
+    if not isinstance(content, dict):
+        return []
+    scheduled_job = content.get("scheduledJob")
+    if not isinstance(scheduled_job, dict):
+        return []
+    raw_toolsets = scheduled_job.get("nativeToolsets")
+    if not isinstance(raw_toolsets, list):
+        return []
+    return [
+        str(toolset).strip()
+        for toolset in raw_toolsets
+        if isinstance(toolset, str) and toolset.strip()
+    ]
 
 
-def _repair_cron_job_toolsets(job_id: str | None = None) -> None:
+def _apply_cron_job_toolsets(job_id: str | None, required_toolsets: list[str]) -> None:
+    if not job_id or not required_toolsets:
+        return
     home = Path(_env("HERMES_HOME") or "/data/openclaw/hermes")
     jobs_path = home / "cron" / "jobs.json"
     if not jobs_path.exists():
@@ -304,15 +314,12 @@ def _repair_cron_job_toolsets(job_id: str | None = None) -> None:
         if not isinstance(jobs, list):
             return
 
-        repaired: list[str] = []
+        repaired = False
         for job in jobs:
             if not isinstance(job, dict):
                 continue
             current_id = str(job.get("id") or "").strip()
-            if job_id and current_id != job_id:
-                continue
-            prompt = str(job.get("prompt") or "")
-            if not _is_scheduled_provider_cron_prompt(prompt):
+            if current_id != job_id:
                 continue
             current_toolsets = job.get("enabled_toolsets")
             if isinstance(current_toolsets, list):
@@ -323,12 +330,13 @@ def _repair_cron_job_toolsets(job_id: str | None = None) -> None:
                 ]
             else:
                 merged = []
-            for toolset in REQUIRED_SCHEDULED_TOOLSETS:
+            for toolset in required_toolsets:
                 if toolset not in merged:
                     merged.append(toolset)
             if merged != current_toolsets:
                 job["enabled_toolsets"] = merged
-                repaired.append(current_id or str(job.get("name") or "unknown"))
+                repaired = True
+            break
 
         if not repaired:
             return
@@ -341,7 +349,7 @@ def _repair_cron_job_toolsets(job_id: str | None = None) -> None:
         tmp_path.replace(jobs_path)
         print(
             "[INFO] Burble provider bridge repaired Hermes cron job toolsets "
-            f"jobs={','.join(repaired)} toolsets={','.join(REQUIRED_SCHEDULED_TOOLSETS)}",
+            f"jobs={job_id} toolsets={','.join(required_toolsets)}",
             flush=True,
         )
     except Exception as error:
@@ -399,7 +407,11 @@ async def _burble_provider_call(args: dict[str, Any], **_kwargs: Any) -> str:
                         ensure_ascii=False,
                     )
                 if tool_name == "scheduledJob.registerCapability":
-                    await asyncio.to_thread(_repair_cron_job_toolsets, job_id)
+                    await asyncio.to_thread(
+                        _apply_cron_job_toolsets,
+                        job_id,
+                        _read_native_toolsets_from_response(body),
+                    )
                 if isinstance(body, dict) and "content" in body:
                     return json.dumps(body["content"], ensure_ascii=False)
                 return json.dumps(body, ensure_ascii=False)
@@ -424,7 +436,7 @@ def _pin_provider_bridge_to_toolsets() -> dict[str, Any]:
         toolsets.TOOLSETS.setdefault(
             PROVIDER_BRIDGE_TOOLSET,
             {
-                "description": "Web research and content extraction tools",
+                "description": "Burble provider bridge and scheduled job tools",
                 "tools": [],
                 "includes": [],
             },

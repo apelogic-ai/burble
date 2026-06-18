@@ -793,6 +793,7 @@ payload = {
         ],
         "routeId": "convrt_abc123",
         "runtimeType": "hermes",
+        "nativeToolsets": ["burble"],
         "stateRefs": [
             {
                 "provider": "google",
@@ -820,13 +821,14 @@ print(json.dumps({"text": mod.build_hermes_turn_text(payload)}))
     );
     expect(text).toContain("routeId=convrt_abc123");
     expect(text).toContain("runtimeType=hermes");
+    expect(text).toContain("nativeToolsets=burble");
     expect(text).toContain("maxOutputVisibility=public");
     expect(text).toContain("allowPrivateToolDeclassification=false");
     expect(text).toContain(
       "stateRef provider=google kind=drive_file id=file-123 purpose=dedupe_state"
     );
     expect(text).toContain(
-      "burble_provider_call is runtime-pinned into native toolsets"
+      "burble_provider_call is exposed through the native Burble toolset"
     );
     expect(text).toContain("Use currentUtc for scheduled time-window calculations");
     expect(text).toContain("Do not call shell, terminal, or time tools");
@@ -1374,58 +1376,8 @@ print(json.dumps({
 `);
 
     const config = (result as { config: string }).config;
-    expect(config).toContain("platform_toolsets:\n  burble:\n    - burble\n    - web");
-  });
-
-  test("repairs persisted Hermes provider cron jobs with native toolsets", () => {
-    const result = runHermesEntrypointProbe(`${importEntrypoint}
-import os
-import pathlib
-import tempfile
-
-home = tempfile.mkdtemp()
-os.environ["HERMES_HOME"] = home
-cron_dir = pathlib.Path(home) / "cron"
-cron_dir.mkdir(parents=True, exist_ok=True)
-jobs_path = cron_dir / "jobs.json"
-jobs_path.write_text(json.dumps({
-    "jobs": [
-        {
-            "id": "9f32de992914",
-            "name": "apelogic-ai-open-prs-last-24h-drive-dedupe",
-            "prompt": "Use Burble provider calls with this jobId for this scheduled job.\\njobId=9f32de992914\\nallowedTools=github_search_issues,google_get_drive_file\\nUse the runtime's Burble provider bridge tool burble_provider_call for these tools.",
-            "enabled_toolsets": None,
-        },
-        {
-            "id": "custom",
-            "name": "custom-provider-job",
-            "prompt": "Use Burble provider calls with this jobId for this scheduled job.\\njobId=custom\\nallowedTools=google_get_drive_file\\nUse the runtime's Burble provider bridge tool burble_provider_call for these tools.",
-            "enabled_toolsets": ["safe"],
-        },
-        {
-            "id": "plain",
-            "name": "plain-job",
-            "prompt": "Say hello.",
-            "enabled_toolsets": None,
-        },
-    ],
-    "updated_at": "old",
-}), encoding="utf-8")
-
-runtime = mod.BurbleHermesRuntime()
-runtime._repair_scheduled_provider_cron_jobs()
-print(json.dumps(json.loads(jobs_path.read_text())))
-`);
-
-    const jobs = (result as { jobs: Array<{ id: string; enabled_toolsets: string[] | null }> }).jobs;
-    expect(jobs.find((job) => job.id === "9f32de992914")?.enabled_toolsets).toEqual([
-      "web"
-    ]);
-    expect(jobs.find((job) => job.id === "custom")?.enabled_toolsets).toEqual([
-      "safe",
-      "web"
-    ]);
-    expect(jobs.find((job) => job.id === "plain")?.enabled_toolsets).toBeNull();
+    expect(config).toContain("platform_toolsets:\n  burble:\n    - burble");
+    expect(config).not.toContain("    - web");
   });
 
   test("can opt Hermes back into full MCP catalog for debugging", () => {
@@ -1486,7 +1438,7 @@ print(json.dumps({
     });
   });
 
-  test("registers Burble provider bridge in web and scheduled aliases in cronjob", () => {
+  test("registers Burble provider bridge and aliases in the Burble toolset", () => {
     const result = runHermesEntrypointProbe(`${importProviderToolPlugin}
 class Ctx:
     def __init__(self):
@@ -1528,35 +1480,35 @@ print(json.dumps(list(ctx.tools_by_name.values())))
     expect(result).toContainEqual(
       expect.objectContaining({
         name: "burble_provider_call",
-        toolset: "web",
+        toolset: "burble",
         is_async: true
       })
     );
     expect(result).toContainEqual(
       expect.objectContaining({
         name: "google_get_drive_file",
-        toolset: "cronjob",
+        toolset: "burble",
         is_async: true
       })
     );
     expect(result).toContainEqual(
       expect.objectContaining({
         name: "google_append_to_drive_text_file",
-        toolset: "cronjob",
+        toolset: "burble",
         is_async: true
       })
     );
     expect(result).toContainEqual(
       expect.objectContaining({
         name: "hubspot_search_contacts",
-        toolset: "cronjob",
+        toolset: "burble",
         is_async: true
       })
     );
     expect(result).toContainEqual(
       expect.objectContaining({
         name: "scheduled_job_register_capability",
-        toolset: "cronjob",
+        toolset: "burble",
         is_async: true
       })
     );
@@ -1591,7 +1543,7 @@ print(json.dumps(list(ctx.tools_by_name.values())))
     expect(result).toContainEqual(
       expect.objectContaining({
         name: "conversation_get_attachment",
-        toolset: "cronjob",
+        toolset: "burble",
         is_async: true
       })
     );
@@ -1718,7 +1670,7 @@ asyncio.run(main())
     });
   });
 
-  test("repairs Hermes cron job toolsets after scheduled capability registration", () => {
+  test("applies registered Hermes native toolsets after scheduled capability registration", () => {
     const result = runHermesEntrypointProbe(`${importProviderToolPlugin}
 import asyncio
 import os
@@ -1739,7 +1691,7 @@ jobs_path.write_text(json.dumps({
         {
             "id": "9f32de992914",
             "name": "apelogic-ai-open-prs-last-24h-drive-dedupe",
-            "prompt": "Use Burble provider calls with this jobId for this scheduled job.\\njobId=9f32de992914\\nallowedTools=github_search_issues,google_get_drive_file\\nUse the runtime's Burble provider bridge tool burble_provider_call for these tools.",
+            "prompt": "Provider-backed scheduled job.",
             "enabled_toolsets": None,
         },
         {
@@ -1765,7 +1717,13 @@ class FakeResponse:
     async def json(self):
         return {
             "classification": "user_private",
-            "content": {"ok": True},
+            "content": {
+                "ok": True,
+                "scheduledJob": {
+                    "jobId": "9f32de992914",
+                    "nativeToolsets": ["burble"],
+                },
+            },
         }
 
 class FakeSession:
@@ -1803,16 +1761,21 @@ asyncio.run(main())
 `);
 
     const typed = result as {
-      result: { ok: boolean };
+      result: { ok: boolean; scheduledJob?: { nativeToolsets?: string[] } };
       jobs: Array<{ id: string; enabled_toolsets: string[] | null }>;
       calls: Array<{ url: string }>;
     };
-    expect(typed.result).toEqual({ ok: true });
+    expect(typed.result).toMatchObject({
+      ok: true,
+      scheduledJob: {
+        nativeToolsets: ["burble"]
+      }
+    });
     expect(typed.calls[0]?.url).toBe(
       "http://burble-app:3000/internal/tools/scheduledJob.registerCapability/execute"
     );
     expect(typed.jobs.find((job) => job.id === "9f32de992914")?.enabled_toolsets).toEqual([
-      "web"
+      "burble"
     ]);
     expect(typed.jobs.find((job) => job.id === "plain")?.enabled_toolsets).toBeNull();
   });
@@ -1919,13 +1882,13 @@ asyncio.run(main())
     });
   });
 
-  test("pins Burble provider bridge only into Hermes bridge toolsets", () => {
+  test("pins Burble provider bridge only into the Hermes Burble toolset", () => {
     const result = runHermesEntrypointProbe(`${importProviderToolPlugin}
 toolsets = types.ModuleType("toolsets")
 toolsets.TOOLSETS = {
-    "web": {
-        "description": "Web research and content extraction tools",
-        "tools": ["web_search", "web_extract"],
+    "burble": {
+        "description": "Burble runtime tools",
+        "tools": [],
         "includes": [],
     },
     "pr_monitor": {
@@ -1951,30 +1914,28 @@ class Ctx:
 ctx = Ctx()
 mod.register(ctx)
 print(json.dumps({
-    "web": toolsets.TOOLSETS["web"]["tools"],
+    "burble": toolsets.TOOLSETS["burble"]["tools"],
     "cronjob": toolsets.TOOLSETS["cronjob"]["tools"],
     "pr_monitor": toolsets.TOOLSETS["pr_monitor"]["tools"],
     "registered": ctx.registered,
 }))
 `) as {
-      web: string[];
+      burble: string[];
       cronjob: string[];
       pr_monitor: string[];
       registered: Array<{ name?: string; toolset?: string }>;
     };
 
-    expect(result.web).toContain("web_search");
-    expect(result.web).toContain("web_extract");
-    expect(result.web).toContain("burble_provider_call");
-    expect(result.web).not.toContain("google_get_drive_file");
-    expect(result.web).not.toContain("google_append_to_drive_text_file");
-    expect(result.web).not.toContain("scheduled_job_register_capability");
-    expect(result.cronjob).toContain("burble_provider_call");
+    expect(result.burble).toContain("burble_provider_call");
+    expect(result.burble).not.toContain("google_get_drive_file");
+    expect(result.burble).not.toContain("google_append_to_drive_text_file");
+    expect(result.burble).not.toContain("scheduled_job_register_capability");
+    expect(result.cronjob).not.toContain("burble_provider_call");
     expect(result.pr_monitor).toContain("cron_run");
     expect(result.pr_monitor).not.toContain("burble_provider_call");
     expect(result.registered).toContainEqual({
       name: "burble_provider_call",
-      toolset: "web"
+      toolset: "burble"
     });
   });
 

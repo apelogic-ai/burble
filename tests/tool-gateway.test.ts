@@ -130,6 +130,14 @@ const runtime: AgentRuntimeRecord = {
   failureReason: null
 };
 
+const hermesRuntime: AgentRuntimeRecord = {
+  ...runtime,
+  id: "rt_hermes",
+  engine: "hermes",
+  endpointUrl: "http://runtime-hermes:8080",
+  configPath: "/data/runtimes/u123/config/hermes.yaml"
+};
+
 function createStore(
   foundConnection: ProviderConnection | null,
   foundRuntime: AgentRuntimeRecord | null = null,
@@ -1541,6 +1549,80 @@ describe("handleToolGatewayRequest", () => {
       "Do not use Slack channel names, Slack mentions, channel ids, or the original destination label as a delivery route."
     );
     expect(body.content.scheduledPromptInstruction).not.toContain("Hermes");
+  });
+
+  test("returns Hermes native toolset requirements for scheduled provider capabilities", async () => {
+    const upserts: unknown[] = [];
+    const response = await handleToolGatewayRequest(
+      config,
+      createStore(null, hermesRuntime, [], null, [], { upserts }),
+      "scheduledJob.registerCapability",
+      request(
+        "scheduledJob.registerCapability",
+        {
+          input: {
+            jobId: "github-pr-monitor",
+            requiredTools: [
+              "github.searchIssues",
+              "google.getDriveFile"
+            ]
+          }
+        },
+        "runtime-token-u123",
+        "rt_hermes"
+      )
+    );
+
+    expect(response.status).toBe(200);
+    expect(upserts).toEqual([
+      expect.objectContaining({
+        jobId: "github-pr-monitor",
+        runtimeType: "hermes",
+        requiredTools: [
+          "github_search_issues",
+          "google_get_drive_file"
+        ]
+      })
+    ]);
+    const body = await response.json();
+    expect(body.content.scheduledJob).toMatchObject({
+      jobId: "github-pr-monitor",
+      runtimeType: "hermes",
+      nativeToolsets: ["burble"],
+      allowedTools: [
+        "github_search_issues",
+        "google_get_drive_file"
+      ]
+    });
+    expect(body.content.scheduledPromptInstruction).not.toContain("Hermes");
+  });
+
+  test("adds Hermes web native toolset only for native scheduled web tools", async () => {
+    const response = await handleToolGatewayRequest(
+      config,
+      createStore(null, hermesRuntime),
+      "scheduledJob.registerCapability",
+      request(
+        "scheduledJob.registerCapability",
+        {
+          input: {
+            jobId: "public-ai-news",
+            requiredTools: ["web_extract"]
+          }
+        },
+        "runtime-token-u123",
+        "rt_hermes"
+      )
+    );
+
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.content.scheduledJob).toMatchObject({
+      jobId: "public-ai-news",
+      runtimeType: "hermes",
+      nativeToolsets: ["burble", "web"],
+      allowedTools: ["web_extract"]
+    });
   });
 
   test("binds channel destination routes to the scheduled job during registration", async () => {
