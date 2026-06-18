@@ -1,27 +1,30 @@
-import type {
-  SandboxCredentialBinding,
-  SandboxEvent,
-  SandboxHandle,
-  SandboxPolicy,
-  SandboxProvider,
-  SandboxProviderCapabilities,
-  SandboxProvisionRequest,
-  SandboxRunHandle,
-  SandboxRunRequest
+import {
+  cloneSandboxCredentialBinding,
+  cloneSandboxHandle,
+  cloneSandboxPolicy,
+  type SandboxCredentialBinding,
+  type SandboxEvent,
+  type SandboxHandle,
+  type SandboxPolicy,
+  type SandboxProvider,
+  type SandboxProviderCapabilities,
+  type SandboxProvisionRequest,
+  type SandboxRunHandle,
+  type SandboxRunRequest
 } from "../sandbox-provider";
 
-export type OpenShellSandboxStatus =
-  | "provisioning"
-  | "ready"
-  | "running"
-  | "terminated"
-  | "failed";
+export type OpenShellSandboxStatus = SandboxHandle["status"];
 
 export type OpenShellSandboxRecord = {
   sandboxId: string;
   endpoint: string;
   workspacePath: string;
   status: OpenShellSandboxStatus;
+  principal: SandboxProvisionRequest["principal"];
+  runtime: SandboxProvisionRequest["runtime"];
+  labels: Record<string, string>;
+  policy?: SandboxPolicy;
+  credentials: SandboxCredentialBinding[];
 };
 
 export type OpenShellSandboxClient = {
@@ -54,8 +57,6 @@ export type OpenShellSandboxClient = {
 export function createOpenShellSandboxProvider(input: {
   client: OpenShellSandboxClient;
 }): SandboxProvider {
-  const cache = new Map<string, SandboxHandle>();
-
   return {
     capabilities(): SandboxProviderCapabilities {
       return {
@@ -73,18 +74,7 @@ export function createOpenShellSandboxProvider(input: {
         runtime: request.runtime,
         labels: request.labels ?? {}
       });
-      const handle: SandboxHandle = {
-        id: record.sandboxId,
-        provider: "openshell",
-        status: record.status,
-        endpointUrl: record.endpoint,
-        workspacePath: record.workspacePath,
-        principal: request.principal,
-        runtime: request.runtime,
-        labels: request.labels ?? {},
-        credentials: []
-      };
-      cache.set(handle.id, cloneHandle(handle));
+      const handle = handleFromRecord(record);
       return cloneHandle(handle);
     },
 
@@ -93,12 +83,9 @@ export function createOpenShellSandboxProvider(input: {
       policy: SandboxPolicy
     ): Promise<SandboxHandle> {
       await input.client.applyPolicy({ sandboxId, policy });
-      const handle = requireCachedHandle(cache, sandboxId);
-      const updated = {
-        ...handle,
-        policy: clonePolicy(policy)
-      };
-      cache.set(sandboxId, cloneHandle(updated));
+      const updated = handleFromRecord(
+        await input.client.getSandbox({ sandboxId })
+      );
       return cloneHandle(updated);
     },
 
@@ -107,12 +94,9 @@ export function createOpenShellSandboxProvider(input: {
       credentials: SandboxCredentialBinding[]
     ): Promise<SandboxHandle> {
       await input.client.bindCredentials({ sandboxId, credentials });
-      const handle = requireCachedHandle(cache, sandboxId);
-      const updated = {
-        ...handle,
-        credentials: credentials.map((credential) => ({ ...credential }))
-      };
-      cache.set(sandboxId, cloneHandle(updated));
+      const updated = handleFromRecord(
+        await input.client.getSandbox({ sandboxId })
+      );
       return cloneHandle(updated);
     },
 
@@ -121,8 +105,9 @@ export function createOpenShellSandboxProvider(input: {
       request: SandboxRunRequest
     ): Promise<SandboxRunHandle> {
       const result = await input.client.run({ sandboxId, request });
-      const handle = requireCachedHandle(cache, sandboxId);
-      cache.set(sandboxId, cloneHandle({ ...handle, status: "running" }));
+      const updated = handleFromRecord(
+        await input.client.getSandbox({ sandboxId })
+      );
       return {
         id: result.runId,
         sandboxId,
@@ -133,14 +118,7 @@ export function createOpenShellSandboxProvider(input: {
 
     async attach(sandboxId: string): Promise<SandboxHandle> {
       const record = await input.client.getSandbox({ sandboxId });
-      const handle = requireCachedHandle(cache, sandboxId);
-      const updated = {
-        ...handle,
-        status: record.status,
-        endpointUrl: record.endpoint,
-        workspacePath: record.workspacePath
-      };
-      cache.set(sandboxId, cloneHandle(updated));
+      const updated = handleFromRecord(record);
       return cloneHandle(updated);
     },
 
@@ -150,46 +128,32 @@ export function createOpenShellSandboxProvider(input: {
 
     async terminate(sandboxId: string): Promise<void> {
       await input.client.terminate({ sandboxId });
-      const handle = requireCachedHandle(cache, sandboxId);
-      cache.set(sandboxId, cloneHandle({ ...handle, status: "terminated" }));
+      const updated = handleFromRecord(
+        await input.client.getSandbox({ sandboxId })
+      );
     }
   };
 }
 
-function requireCachedHandle(
-  cache: Map<string, SandboxHandle>,
-  sandboxId: string
-): SandboxHandle {
-  const handle = cache.get(sandboxId);
-  if (!handle) {
-    throw new Error(`Sandbox ${sandboxId} has not been provisioned`);
-  }
-  return cloneHandle(handle);
+function handleFromRecord(record: OpenShellSandboxRecord): SandboxHandle {
+  return {
+    id: record.sandboxId,
+    provider: "openshell",
+    status: record.status,
+    endpointUrl: record.endpoint,
+    workspacePath: record.workspacePath,
+    principal: record.principal,
+    runtime: record.runtime,
+    labels: record.labels,
+    ...(record.policy ? { policy: clonePolicy(record.policy) } : {}),
+    credentials: record.credentials.map(cloneSandboxCredentialBinding)
+  };
 }
 
 function cloneHandle(handle: SandboxHandle): SandboxHandle {
-  return {
-    ...handle,
-    labels: { ...handle.labels },
-    principal: { ...handle.principal },
-    runtime: { ...handle.runtime },
-    ...(handle.policy ? { policy: clonePolicy(handle.policy) } : {}),
-    credentials: handle.credentials.map((credential) => ({ ...credential }))
-  };
+  return cloneSandboxHandle(handle);
 }
 
 function clonePolicy(policy: SandboxPolicy): SandboxPolicy {
-  if (policy.network.egress === "allowlist") {
-    return {
-      ...policy,
-      network: {
-        egress: "allowlist",
-        allowedHosts: [...policy.network.allowedHosts]
-      }
-    };
-  }
-  return {
-    ...policy,
-    network: { egress: policy.network.egress }
-  };
+  return cloneSandboxPolicy(policy);
 }

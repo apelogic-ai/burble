@@ -1,10 +1,12 @@
+import type { AgentRuntimeEngine } from "../db";
+
 export type SandboxPrincipal = {
   workspaceId: string;
   userId: string;
 };
 
 export type SandboxRuntimeRequest = {
-  engine: string;
+  engine: AgentRuntimeEngine;
   image: string;
 };
 
@@ -37,6 +39,7 @@ export type SandboxCredentialBinding = {
   name: string;
   kind: "provider-token" | "runtime-token" | "secret-ref";
   ref: string;
+  delivery: "gateway_callback" | "sandbox_reference";
 };
 
 export type SandboxHandle = {
@@ -98,3 +101,43 @@ export type SandboxProvider = {
   streamEvents(sandboxId: string): AsyncIterable<SandboxEvent>;
   terminate(sandboxId: string): Promise<void>;
 };
+
+export function cloneSandboxHandle(handle: SandboxHandle): SandboxHandle {
+  return {
+    ...handle,
+    labels: { ...handle.labels },
+    principal: { ...handle.principal },
+    runtime: { ...handle.runtime },
+    ...(handle.policy ? { policy: cloneSandboxPolicy(handle.policy) } : {}),
+    credentials: handle.credentials.map(cloneSandboxCredentialBinding)
+  };
+}
+
+export function cloneSandboxPolicy(policy: SandboxPolicy): SandboxPolicy {
+  if (policy.network.egress === "allowlist") {
+    return {
+      ...policy,
+      network: {
+        egress: "allowlist",
+        allowedHosts: [...policy.network.allowedHosts]
+      }
+    };
+  }
+  return {
+    ...policy,
+    network: { egress: policy.network.egress }
+  };
+}
+
+export function cloneSandboxCredentialBinding(
+  credential: SandboxCredentialBinding
+): SandboxCredentialBinding {
+  return { ...credential };
+}
+
+export function cloneSandboxEvent(event: SandboxEvent): SandboxEvent {
+  return {
+    ...event,
+    ...(event.detail ? { detail: { ...event.detail } } : {})
+  };
+}

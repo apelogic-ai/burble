@@ -1,14 +1,18 @@
 import { randomUUID } from "node:crypto";
-import type {
-  SandboxCredentialBinding,
-  SandboxEvent,
-  SandboxHandle,
-  SandboxPolicy,
-  SandboxProvider,
-  SandboxProviderCapabilities,
-  SandboxProvisionRequest,
-  SandboxRunHandle,
-  SandboxRunRequest
+import {
+  cloneSandboxCredentialBinding,
+  cloneSandboxEvent,
+  cloneSandboxHandle,
+  cloneSandboxPolicy,
+  type SandboxCredentialBinding,
+  type SandboxEvent,
+  type SandboxHandle,
+  type SandboxPolicy,
+  type SandboxProvider,
+  type SandboxProviderCapabilities,
+  type SandboxProvisionRequest,
+  type SandboxRunHandle,
+  type SandboxRunRequest
 } from "../sandbox-provider";
 
 export type LocalDevSandboxProvider = SandboxProvider;
@@ -46,9 +50,9 @@ export function createLocalDevSandboxProvider(): LocalDevSandboxProvider {
     capabilities(): SandboxProviderCapabilities {
       return {
         provider: "local-dev",
-        isolation: "container",
-        supportsEgressAllowlist: true,
-        supportsCredentialBinding: true,
+        isolation: "process",
+        supportsEgressAllowlist: false,
+        supportsCredentialBinding: false,
         supportsDurableSandboxes: false
       };
     },
@@ -69,7 +73,7 @@ export function createLocalDevSandboxProvider(): LocalDevSandboxProvider {
       const state: SandboxState = { handle, events: [] };
       recordEvent(state, "provisioned", { image: request.runtime.image });
       sandboxes.set(id, state);
-      return cloneHandle(handle);
+      return cloneSandboxHandle(handle);
     },
 
     async applyPolicy(
@@ -77,12 +81,15 @@ export function createLocalDevSandboxProvider(): LocalDevSandboxProvider {
       policy: SandboxPolicy
     ): Promise<SandboxHandle> {
       const state = load(sandboxId);
+      if (policy.network.egress === "allowlist") {
+        throw new Error("local-dev does not support egress allowlists");
+      }
       state.handle = {
         ...state.handle,
-        policy: clonePolicy(policy)
+        policy: cloneSandboxPolicy(policy)
       };
       recordEvent(state, "policy_applied", { egress: policy.network.egress });
-      return cloneHandle(state.handle);
+      return cloneSandboxHandle(state.handle);
     },
 
     async bindCredentials(
@@ -90,14 +97,17 @@ export function createLocalDevSandboxProvider(): LocalDevSandboxProvider {
       credentials: SandboxCredentialBinding[]
     ): Promise<SandboxHandle> {
       const state = load(sandboxId);
+      if (credentials.length > 0) {
+        throw new Error("local-dev does not support credential binding");
+      }
       state.handle = {
         ...state.handle,
-        credentials: credentials.map((credential) => ({ ...credential }))
+        credentials: credentials.map(cloneSandboxCredentialBinding)
       };
       recordEvent(state, "credentials_bound", {
         names: credentials.map((credential) => credential.name)
       });
-      return cloneHandle(state.handle);
+      return cloneSandboxHandle(state.handle);
     },
 
     async run(
@@ -111,6 +121,10 @@ export function createLocalDevSandboxProvider(): LocalDevSandboxProvider {
         status: "running"
       };
       recordEvent(state, "run_started", { argv: request.argv });
+      state.handle = {
+        ...state.handle,
+        status: "ready"
+      };
       recordEvent(state, "run_finished", { exitCode: 0 });
       return {
         id: runId,
@@ -121,14 +135,12 @@ export function createLocalDevSandboxProvider(): LocalDevSandboxProvider {
     },
 
     async attach(sandboxId: string): Promise<SandboxHandle> {
-      return cloneHandle(load(sandboxId).handle);
+      return cloneSandboxHandle(load(sandboxId).handle);
     },
 
     async *streamEvents(sandboxId: string): AsyncIterable<SandboxEvent> {
       for (const event of load(sandboxId).events) {
-        if (event.type !== "terminated") {
-          yield { ...event, detail: cloneDetail(event.detail) };
-        }
+        yield cloneSandboxEvent(event);
       }
     },
 
@@ -145,37 +157,4 @@ export function createLocalDevSandboxProvider(): LocalDevSandboxProvider {
 
 function nextSandboxId(): string {
   return randomUUID().replaceAll("-", "").slice(0, 16);
-}
-
-function cloneHandle(handle: SandboxHandle): SandboxHandle {
-  return {
-    ...handle,
-    labels: { ...handle.labels },
-    principal: { ...handle.principal },
-    runtime: { ...handle.runtime },
-    ...(handle.policy ? { policy: clonePolicy(handle.policy) } : {}),
-    credentials: handle.credentials.map((credential) => ({ ...credential }))
-  };
-}
-
-function clonePolicy(policy: SandboxPolicy): SandboxPolicy {
-  if (policy.network.egress === "allowlist") {
-    return {
-      ...policy,
-      network: {
-        egress: "allowlist",
-        allowedHosts: [...policy.network.allowedHosts]
-      }
-    };
-  }
-  return {
-    ...policy,
-    network: { egress: policy.network.egress }
-  };
-}
-
-function cloneDetail(
-  detail: Record<string, unknown> | undefined
-): Record<string, unknown> | undefined {
-  return detail ? { ...detail } : undefined;
 }
