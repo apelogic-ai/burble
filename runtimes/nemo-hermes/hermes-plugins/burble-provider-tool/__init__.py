@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 from pathlib import Path
@@ -84,9 +85,9 @@ TOOL_NAME_ALIASES = {
     "conversation_get_attachment": "conversation.getAttachment",
 }
 
-PROVIDER_BRIDGE_TOOLSET = "cronjob"
+PROVIDER_BRIDGE_TOOLSET = "web"
 PROVIDER_ALIAS_TOOLSETS = ["cronjob"]
-REQUIRED_SCHEDULED_TOOLSETS = ["cronjob", "web"]
+REQUIRED_SCHEDULED_TOOLSETS = ["web"]
 BRIDGE_TOOL_NAMES = {"burble_provider_call", "burble.providerCall"}
 
 
@@ -398,7 +399,7 @@ async def _burble_provider_call(args: dict[str, Any], **_kwargs: Any) -> str:
                         ensure_ascii=False,
                     )
                 if tool_name == "scheduledJob.registerCapability":
-                    _repair_cron_job_toolsets(job_id)
+                    await asyncio.to_thread(_repair_cron_job_toolsets, job_id)
                 if isinstance(body, dict) and "content" in body:
                     return json.dumps(body["content"], ensure_ascii=False)
                 return json.dumps(body, ensure_ascii=False)
@@ -428,7 +429,8 @@ def _pin_provider_bridge_to_toolsets() -> dict[str, Any]:
                 "includes": [],
             },
         )
-        for name, entry in toolsets.TOOLSETS.items():
+        for name in (PROVIDER_BRIDGE_TOOLSET, *PROVIDER_ALIAS_TOOLSETS):
+            entry = toolsets.TOOLSETS.get(name)
             if not isinstance(entry, dict):
                 continue
             tools = entry.setdefault("tools", [])

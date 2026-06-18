@@ -75,39 +75,6 @@ def _is_burble_platform_notice(text: str) -> bool:
     )
 
 
-def _is_scheduled_provider_bridge_missing_response(text: str) -> bool:
-    normalized = " ".join(text.strip().lower().split())
-    if not normalized:
-        return False
-    if "burble_provider_call" not in normalized:
-        return False
-    missing_bridge_markers = (
-        "not exposed",
-        "not available",
-        "does not expose",
-        "do not expose",
-        "missing tools",
-        "required runtime tools were not available",
-        "runtime tools were not available",
-        "unable to call the allowed providers",
-        "couldn't access the allowed",
-        "could not access the allowed",
-    )
-    provider_context_markers = (
-        "scheduled job",
-        "cronjob response",
-        "cron job",
-        "provider bridge",
-        "github",
-        "google drive",
-        "allowed provider",
-        "allowed tools",
-    )
-    return any(marker in normalized for marker in missing_bridge_markers) and any(
-        marker in normalized for marker in provider_context_markers
-    )
-
-
 def _looks_like_hermes_tool_protocol_line(text: str) -> bool:
     value = text.strip()
     if not value:
@@ -534,20 +501,6 @@ class BurbleAdapter(BasePlatformAdapter):
                 flush=True,
             )
             return SendResult(success=True, message_id=f"burble-notice:{route_id}:{int(time.time() * 1000)}")
-        if _is_scheduled_provider_bridge_missing_response(text):
-            print(
-                f"[ERROR] Burble Hermes platform scheduled provider bridge missing routeId={route_id} textChars={len(text)}",
-                flush=True,
-            )
-            return SendResult(
-                success=False,
-                error=(
-                    "scheduled_provider_bridge_missing: Hermes scheduled output reported "
-                    "burble_provider_call/runtime provider tools unavailable"
-                ),
-                retryable=False,
-            )
-
         pending_run_id = self._pending_runs.pop(route_id, None)
         print(
             f"[INFO] Burble Hermes platform send routeId={route_id} textChars={len(text)} pendingRun={pending_run_id or 'none'}",

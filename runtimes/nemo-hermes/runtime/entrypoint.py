@@ -89,7 +89,7 @@ HERMES_PROVIDER_TOOL_HINTS = load_hermes_provider_tool_hints(
 )
 
 DEFAULT_HERMES_PLATFORM_TOOLSETS = ["burble", "cronjob", "web"]
-REQUIRED_HERMES_SCHEDULED_PLATFORM_TOOLSETS = ["cronjob", "web"]
+REQUIRED_HERMES_SCHEDULED_PLATFORM_TOOLSETS = ["web"]
 HERMES_STREAM_CURSOR = "[[BURBLE_STREAM_CURSOR]]"
 DEFAULT_HERMES_DISABLED_TOOLSETS = [
     "browser",
@@ -285,39 +285,6 @@ def build_runtime_response(result: dict[str, Any], prompt: str = "") -> dict[str
     if usage:
         response["usage"] = usage
     return response
-
-
-def scheduled_provider_bridge_missing_error(
-    message: dict[str, Any], response_text: str
-) -> str | None:
-    scheduled_job = message.get("scheduledJob")
-    if not isinstance(scheduled_job, dict):
-        return None
-    allowed_tools = scheduled_job.get("allowedTools")
-    if not isinstance(allowed_tools, list) or not allowed_tools:
-        return None
-    normalized_text = " ".join(response_text.lower().split())
-    if not normalized_text:
-        return None
-    missing_bridge_phrases = [
-        "burble_provider_call is not exposed",
-        "burble_provider_call was not exposed",
-        "does not expose the required burble_provider_call",
-        "burble_provider_call tool is not exposed",
-        "burble_provider_call tool was not exposed",
-        "required runtime tools were not available",
-        "required burble provider bridge tool",
-        "provider bridge tool burble_provider_call is not available",
-        "provider bridge tool burble_provider_call was not available",
-    ]
-    if not any(phrase in normalized_text for phrase in missing_bridge_phrases):
-        return None
-    job_id = str(scheduled_job.get("jobId") or "").strip() or "unknown"
-    return (
-        "scheduled_provider_bridge_missing: scheduled job "
-        f"{job_id} requires provider tools but Hermes reported "
-        "burble_provider_call/runtime tools unavailable"
-    )
 
 
 def build_runtime_tool_bridge_modes() -> list[str]:
@@ -1272,11 +1239,6 @@ class BurbleHermesRuntime:
                 timeout=int_env("HERMES_RUN_TIMEOUT_SECONDS", 180),
             )
             response = build_runtime_response(result, str(message.get("text") or ""))
-            bridge_missing_error = scheduled_provider_bridge_missing_error(
-                message, response["text"]
-            )
-            if bridge_missing_error:
-                raise RuntimeError(bridge_missing_error)
             await waiter.finish(response)
             print(
                 f"[INFO] {timestamp()} Nemo Hermes run finish runId={run_id} textChars={len(response['text'])}",

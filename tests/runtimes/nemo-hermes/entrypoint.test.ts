@@ -850,38 +850,6 @@ print(json.dumps({"text": mod.format_scheduled_job_context(payload, now_utc="202
     expect(text).toContain("Use currentUtc for scheduled time-window calculations");
   });
 
-  test("detects scheduled provider bridge missing final responses", () => {
-    const result = runHermesEntrypointProbe(`${importEntrypoint}
-message = {
-    "scheduledJob": {
-        "jobId": "job-123",
-        "allowedTools": ["github_search_issues"],
-    },
-}
-print(json.dumps({
-    "missing": mod.scheduled_provider_bridge_missing_error(
-        message,
-        "Blocked: this runtime session does not expose the required burble_provider_call tool."
-    ),
-    "normal": mod.scheduled_provider_bridge_missing_error(
-        message,
-        "No new pull requests were found."
-    ),
-    "interactive": mod.scheduled_provider_bridge_missing_error(
-        {},
-        "burble_provider_call is not exposed here."
-    ),
-}))
-`);
-
-    expect(result).toEqual({
-      missing:
-        "scheduled_provider_bridge_missing: scheduled job job-123 requires provider tools but Hermes reported burble_provider_call/runtime tools unavailable",
-      normal: null,
-      interactive: null
-    });
-  });
-
   test("adds provider-backed scheduled job repair guidance to scheduler-only Hermes turns", () => {
     const result = runHermesEntrypointProbe(`${importEntrypoint}
 payload = {
@@ -1153,7 +1121,7 @@ asyncio.run(main())
     });
   });
 
-  test("refuses scheduled route sends that report a missing provider bridge", () => {
+  test("does not drop scheduled route sends based on provider bridge prose", () => {
     const result = runHermesEntrypointProbe(`${importBurblePlatformAdapter}
 import asyncio
 import os
@@ -1179,14 +1147,16 @@ Unable to complete this run as requested because the runtime session does not ex
     print(json.dumps({"success": sent.success, "error": sent.error, "payloads": posted_payloads}))
 
 asyncio.run(main())
-`);
+`) as {
+      success: boolean;
+      error: string | null;
+      payloads: Array<{ json: { input: { text: string } } }>;
+    };
 
-    expect(result).toEqual({
-      success: false,
-      error:
-        "scheduled_provider_bridge_missing: Hermes scheduled output reported burble_provider_call/runtime provider tools unavailable",
-      payloads: []
-    });
+    expect(result.success).toBe(true);
+    expect(result.error).toBeNull();
+    expect(result.payloads).toHaveLength(1);
+    expect(result.payloads[0].json.input.text).toContain("burble_provider_call");
   });
 
   test("strips Hermes stream cursors even when embedded in cumulative text", () => {
@@ -1404,7 +1374,7 @@ print(json.dumps({
 `);
 
     const config = (result as { config: string }).config;
-    expect(config).toContain("platform_toolsets:\n  burble:\n    - burble\n    - cronjob\n    - web");
+    expect(config).toContain("platform_toolsets:\n  burble:\n    - burble\n    - web");
   });
 
   test("repairs persisted Hermes provider cron jobs with native toolsets", () => {
@@ -1449,12 +1419,10 @@ print(json.dumps(json.loads(jobs_path.read_text())))
 
     const jobs = (result as { jobs: Array<{ id: string; enabled_toolsets: string[] | null }> }).jobs;
     expect(jobs.find((job) => job.id === "9f32de992914")?.enabled_toolsets).toEqual([
-      "cronjob",
       "web"
     ]);
     expect(jobs.find((job) => job.id === "custom")?.enabled_toolsets).toEqual([
       "safe",
-      "cronjob",
       "web"
     ]);
     expect(jobs.find((job) => job.id === "plain")?.enabled_toolsets).toBeNull();
@@ -1518,7 +1486,7 @@ print(json.dumps({
     });
   });
 
-  test("registers Burble provider bridge tools in a cron-visible toolset", () => {
+  test("registers Burble provider bridge in web and scheduled aliases in cronjob", () => {
     const result = runHermesEntrypointProbe(`${importProviderToolPlugin}
 class Ctx:
     def __init__(self):
@@ -1560,7 +1528,7 @@ print(json.dumps(list(ctx.tools_by_name.values())))
     expect(result).toContainEqual(
       expect.objectContaining({
         name: "burble_provider_call",
-        toolset: "cronjob",
+        toolset: "web",
         is_async: true
       })
     );
@@ -1844,7 +1812,6 @@ asyncio.run(main())
       "http://burble-app:3000/internal/tools/scheduledJob.registerCapability/execute"
     );
     expect(typed.jobs.find((job) => job.id === "9f32de992914")?.enabled_toolsets).toEqual([
-      "cronjob",
       "web"
     ]);
     expect(typed.jobs.find((job) => job.id === "plain")?.enabled_toolsets).toBeNull();
@@ -1952,7 +1919,7 @@ asyncio.run(main())
     });
   });
 
-  test("pins Burble provider bridge tool into Hermes toolsets for cron jobs", () => {
+  test("pins Burble provider bridge only into Hermes bridge toolsets", () => {
     const result = runHermesEntrypointProbe(`${importProviderToolPlugin}
 toolsets = types.ModuleType("toolsets")
 toolsets.TOOLSETS = {
@@ -1963,6 +1930,11 @@ toolsets.TOOLSETS = {
     },
     "pr_monitor": {
         "description": "Existing saved PR monitor toolset",
+        "tools": ["cron_run"],
+        "includes": [],
+    },
+    "cronjob": {
+        "description": "Cron job tools",
         "tools": ["cron_run"],
         "includes": [],
     }
@@ -1980,11 +1952,13 @@ ctx = Ctx()
 mod.register(ctx)
 print(json.dumps({
     "web": toolsets.TOOLSETS["web"]["tools"],
+    "cronjob": toolsets.TOOLSETS["cronjob"]["tools"],
     "pr_monitor": toolsets.TOOLSETS["pr_monitor"]["tools"],
     "registered": ctx.registered,
 }))
 `) as {
       web: string[];
+      cronjob: string[];
       pr_monitor: string[];
       registered: Array<{ name?: string; toolset?: string }>;
     };
@@ -1995,11 +1969,12 @@ print(json.dumps({
     expect(result.web).not.toContain("google_get_drive_file");
     expect(result.web).not.toContain("google_append_to_drive_text_file");
     expect(result.web).not.toContain("scheduled_job_register_capability");
+    expect(result.cronjob).toContain("burble_provider_call");
     expect(result.pr_monitor).toContain("cron_run");
-    expect(result.pr_monitor).toContain("burble_provider_call");
+    expect(result.pr_monitor).not.toContain("burble_provider_call");
     expect(result.registered).toContainEqual({
       name: "burble_provider_call",
-      toolset: "cronjob"
+      toolset: "web"
     });
   });
 
