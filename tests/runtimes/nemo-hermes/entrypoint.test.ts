@@ -1407,6 +1407,59 @@ print(json.dumps({
     expect(config).toContain("platform_toolsets:\n  burble:\n    - burble\n    - cronjob\n    - web");
   });
 
+  test("repairs persisted Hermes provider cron jobs with native toolsets", () => {
+    const result = runHermesEntrypointProbe(`${importEntrypoint}
+import os
+import pathlib
+import tempfile
+
+home = tempfile.mkdtemp()
+os.environ["HERMES_HOME"] = home
+cron_dir = pathlib.Path(home) / "cron"
+cron_dir.mkdir(parents=True, exist_ok=True)
+jobs_path = cron_dir / "jobs.json"
+jobs_path.write_text(json.dumps({
+    "jobs": [
+        {
+            "id": "9f32de992914",
+            "name": "apelogic-ai-open-prs-last-24h-drive-dedupe",
+            "prompt": "Use Burble provider calls with this jobId for this scheduled job.\\njobId=9f32de992914\\nallowedTools=github_search_issues,google_get_drive_file\\nUse the runtime's Burble provider bridge tool burble_provider_call for these tools.",
+            "enabled_toolsets": None,
+        },
+        {
+            "id": "custom",
+            "name": "custom-provider-job",
+            "prompt": "Use Burble provider calls with this jobId for this scheduled job.\\njobId=custom\\nallowedTools=google_get_drive_file\\nUse the runtime's Burble provider bridge tool burble_provider_call for these tools.",
+            "enabled_toolsets": ["safe"],
+        },
+        {
+            "id": "plain",
+            "name": "plain-job",
+            "prompt": "Say hello.",
+            "enabled_toolsets": None,
+        },
+    ],
+    "updated_at": "old",
+}), encoding="utf-8")
+
+runtime = mod.BurbleHermesRuntime()
+runtime._repair_scheduled_provider_cron_jobs()
+print(json.dumps(json.loads(jobs_path.read_text())))
+`);
+
+    const jobs = (result as { jobs: Array<{ id: string; enabled_toolsets: string[] | null }> }).jobs;
+    expect(jobs.find((job) => job.id === "9f32de992914")?.enabled_toolsets).toEqual([
+      "cronjob",
+      "web"
+    ]);
+    expect(jobs.find((job) => job.id === "custom")?.enabled_toolsets).toEqual([
+      "safe",
+      "cronjob",
+      "web"
+    ]);
+    expect(jobs.find((job) => job.id === "plain")?.enabled_toolsets).toBeNull();
+  });
+
   test("can opt Hermes back into full MCP catalog for debugging", () => {
     const result = runHermesEntrypointProbe(`${importEntrypoint}
 import os

@@ -160,6 +160,16 @@ def append_required_hermes_scheduled_toolsets(toolsets: list[str]) -> list[str]:
     return merged
 
 
+def _is_scheduled_provider_cron_prompt(prompt: str) -> bool:
+    normalized = prompt.lower()
+    return (
+        "use burble provider calls with this jobid for this scheduled job"
+        in normalized
+        and "burble_provider_call" in normalized
+        and "allowedtools=" in normalized
+    )
+
+
 def current_utc_iso() -> str:
     return datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
@@ -883,6 +893,7 @@ class BurbleHermesRuntime:
     async def start(self) -> None:
         self._install_plugin()
         self._ensure_gateway_config()
+        self._repair_scheduled_provider_cron_jobs()
         self._start_gateway()
 
         app = web.Application()
@@ -1456,6 +1467,62 @@ class BurbleHermesRuntime:
                 ]
             )
         config_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    def _repair_scheduled_provider_cron_jobs(self) -> None:
+        jobs_path = self.home / "cron" / "jobs.json"
+        if not jobs_path.exists():
+            return
+        try:
+            raw = json.loads(jobs_path.read_text(encoding="utf-8"))
+            jobs = raw.get("jobs") if isinstance(raw, dict) else None
+            if not isinstance(jobs, list):
+                return
+
+            repaired: list[str] = []
+            for job in jobs:
+                if not isinstance(job, dict):
+                    continue
+                prompt = str(job.get("prompt") or "")
+                if not _is_scheduled_provider_cron_prompt(prompt):
+                    continue
+                current_toolsets = job.get("enabled_toolsets")
+                if isinstance(current_toolsets, list):
+                    merged = [
+                        str(toolset)
+                        for toolset in current_toolsets
+                        if str(toolset).strip()
+                    ]
+                else:
+                    merged = []
+                for toolset in REQUIRED_HERMES_SCHEDULED_PLATFORM_TOOLSETS:
+                    if toolset not in merged:
+                        merged.append(toolset)
+                if merged != current_toolsets:
+                    job["enabled_toolsets"] = merged
+                    repaired.append(str(job.get("id") or job.get("name") or "unknown"))
+
+            if not repaired:
+                return
+
+            raw["updated_at"] = current_utc_iso()
+            tmp_path = jobs_path.with_suffix(".json.tmp")
+            tmp_path.write_text(
+                json.dumps(raw, ensure_ascii=False, indent=2) + "\n",
+                encoding="utf-8",
+            )
+            tmp_path.replace(jobs_path)
+            print(
+                "[INFO] "
+                f"{timestamp()} Nemo Hermes repaired provider cron job toolsets "
+                f"jobs={','.join(repaired)} toolsets={','.join(REQUIRED_HERMES_SCHEDULED_PLATFORM_TOOLSETS)}",
+                flush=True,
+            )
+        except Exception as error:
+            print(
+                f"[WARN] {timestamp()} Nemo Hermes provider cron job toolset repair failed error={error}",
+                file=sys.stderr,
+                flush=True,
+            )
 
     def _resolve_web_config(self) -> dict[str, str]:
         config: dict[str, str] = {}
