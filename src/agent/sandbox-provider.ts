@@ -1,0 +1,100 @@
+export type SandboxPrincipal = {
+  workspaceId: string;
+  userId: string;
+};
+
+export type SandboxRuntimeRequest = {
+  engine: string;
+  image: string;
+};
+
+export type SandboxProvisionRequest = {
+  principal: SandboxPrincipal;
+  runtime: SandboxRuntimeRequest;
+  labels?: Record<string, string>;
+};
+
+export type SandboxNetworkPolicy =
+  | {
+      egress: "deny";
+      allowedHosts?: never;
+    }
+  | {
+      egress: "allowlist";
+      allowedHosts: string[];
+    }
+  | {
+      egress: "open";
+      allowedHosts?: never;
+    };
+
+export type SandboxPolicy = {
+  network: SandboxNetworkPolicy;
+  maxLifetimeMs?: number;
+};
+
+export type SandboxCredentialBinding = {
+  name: string;
+  kind: "provider-token" | "runtime-token" | "secret-ref";
+  ref: string;
+};
+
+export type SandboxHandle = {
+  id: string;
+  provider: string;
+  status: "provisioning" | "ready" | "running" | "terminated" | "failed";
+  endpointUrl: string;
+  workspacePath: string;
+  principal: SandboxPrincipal;
+  runtime: SandboxRuntimeRequest;
+  labels: Record<string, string>;
+  policy?: SandboxPolicy;
+  credentials: SandboxCredentialBinding[];
+};
+
+export type SandboxRunRequest = {
+  argv: string[];
+  env?: Record<string, string>;
+};
+
+export type SandboxRunHandle = {
+  id: string;
+  sandboxId: string;
+  status: "running" | "finished" | "failed";
+  exitCode?: number;
+};
+
+export type SandboxEvent = {
+  sandboxId: string;
+  type:
+    | "provisioned"
+    | "policy_applied"
+    | "credentials_bound"
+    | "run_started"
+    | "run_finished"
+    | "terminated";
+  at: string;
+  detail?: Record<string, unknown>;
+};
+
+export type SandboxProviderCapabilities = {
+  provider: string;
+  isolation: "process" | "container" | "microvm" | "remote";
+  supportsEgressAllowlist: boolean;
+  supportsCredentialBinding: boolean;
+  supportsDurableSandboxes: boolean;
+};
+
+export type SandboxProvider = {
+  capabilities(): SandboxProviderCapabilities;
+  provision(request: SandboxProvisionRequest): Promise<SandboxHandle>;
+  applyPolicy(sandboxId: string, policy: SandboxPolicy): Promise<SandboxHandle>;
+  bindCredentials(
+    sandboxId: string,
+    credentials: SandboxCredentialBinding[]
+  ): Promise<SandboxHandle>;
+  run(sandboxId: string, request: SandboxRunRequest): Promise<SandboxRunHandle>;
+  attach(sandboxId: string): Promise<SandboxHandle>;
+  streamEvents(sandboxId: string): AsyncIterable<SandboxEvent>;
+  terminate(sandboxId: string): Promise<void>;
+};
