@@ -39,7 +39,8 @@ export type OpenShellSandboxClient = {
   }): Promise<void>;
   bindCredentials(input: {
     sandboxId: string;
-    credentials: SandboxCredentialBinding[];
+    credentialBindings: SandboxCredentialBinding[];
+    materializedCredentials: SandboxCredentialBinding[];
   }): Promise<void>;
   run(input: {
     sandboxId: string;
@@ -93,7 +94,14 @@ export function createOpenShellSandboxProvider(input: {
       sandboxId: string,
       credentials: SandboxCredentialBinding[]
     ): Promise<SandboxHandle> {
-      await input.client.bindCredentials({ sandboxId, credentials });
+      const credentialBindings = credentials.map(cloneSandboxCredentialBinding);
+      await input.client.bindCredentials({
+        sandboxId,
+        credentialBindings,
+        materializedCredentials: credentialBindings.filter(
+          (credential) => credential.delivery === "sandbox_reference"
+        )
+      });
       const updated = handleFromRecord(
         await input.client.getSandbox({ sandboxId })
       );
@@ -105,9 +113,6 @@ export function createOpenShellSandboxProvider(input: {
       request: SandboxRunRequest
     ): Promise<SandboxRunHandle> {
       const result = await input.client.run({ sandboxId, request });
-      const updated = handleFromRecord(
-        await input.client.getSandbox({ sandboxId })
-      );
       return {
         id: result.runId,
         sandboxId,
@@ -128,9 +133,6 @@ export function createOpenShellSandboxProvider(input: {
 
     async terminate(sandboxId: string): Promise<void> {
       await input.client.terminate({ sandboxId });
-      const updated = handleFromRecord(
-        await input.client.getSandbox({ sandboxId })
-      );
     }
   };
 }

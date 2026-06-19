@@ -58,6 +58,76 @@ describe("SandboxProvider OpenShell boundary", () => {
   });
 });
 
+describe("OpenShellSandboxProvider", () => {
+  test("does not materialize gateway-callback credential bindings into the sandbox", async () => {
+    const client = createFakeOpenShellClient();
+    const provider = createOpenShellSandboxProvider({ client });
+    const sandbox = await provider.provision({
+      principal: { workspaceId: "T123", userId: "U123" },
+      runtime: { engine: "hermes", image: "burble-runtime:dev" },
+      labels: {}
+    });
+
+    await provider.bindCredentials(sandbox.id, [
+      {
+        name: "github",
+        kind: "provider-token",
+        ref: "provider:github:T123:U123",
+        delivery: "gateway_callback"
+      },
+      {
+        name: "runtime-config",
+        kind: "secret-ref",
+        ref: "secret:runtime-config",
+        delivery: "sandbox_reference"
+      }
+    ]);
+
+    expect(client.materializedCredentialCalls).toEqual([
+      [
+        {
+          name: "runtime-config",
+          kind: "secret-ref",
+          ref: "secret:runtime-config",
+          delivery: "sandbox_reference"
+        }
+      ]
+    ]);
+
+    const attached = await provider.attach(sandbox.id);
+    expect(attached.credentials.map((credential) => credential.name)).toEqual([
+      "github",
+      "runtime-config"
+    ]);
+  });
+
+  test("does not fetch after run because the run result is the authoritative result", async () => {
+    const client = createFakeOpenShellClient();
+    const provider = createOpenShellSandboxProvider({ client });
+    const sandbox = await provider.provision({
+      principal: { workspaceId: "T123", userId: "U123" },
+      runtime: { engine: "hermes", image: "burble-runtime:dev" },
+      labels: {}
+    });
+
+    await provider.run(sandbox.id, { argv: ["true"] });
+
+    expect(client.getSandboxCalls).toBe(0);
+  });
+
+  test("does not fetch after terminate so delete-on-terminate clients can succeed", async () => {
+    const client = createFakeOpenShellClient({ deleteOnTerminate: true });
+    const provider = createOpenShellSandboxProvider({ client });
+    const sandbox = await provider.provision({
+      principal: { workspaceId: "T123", userId: "U123" },
+      runtime: { engine: "hermes", image: "burble-runtime:dev" },
+      labels: {}
+    });
+
+    await expect(provider.terminate(sandbox.id)).resolves.toBeUndefined();
+  });
+});
+
 function runSandboxProviderConformance(input: {
   name: string;
   createProvider: () => SandboxProvider;
@@ -243,7 +313,14 @@ function importSpecifiers(path: string): string[] {
   return specifiers.filter(Boolean);
 }
 
-function createFakeOpenShellClient(): OpenShellSandboxClient {
+type FakeOpenShellClient = OpenShellSandboxClient & {
+  getSandboxCalls: number;
+  materializedCredentialCalls: SandboxCredentialBinding[][];
+};
+
+function createFakeOpenShellClient(options?: {
+  deleteOnTerminate?: boolean;
+}): FakeOpenShellClient {
   const sandboxes = new Map<string, SandboxHandle>();
   const events = new Map<string, SandboxEvent[]>();
 
@@ -274,7 +351,10 @@ function createFakeOpenShellClient(): OpenShellSandboxClient {
     events.set(sandboxId, sandboxEvents);
   };
 
-  return {
+  const client: FakeOpenShellClient = {
+    getSandboxCalls: 0,
+    materializedCredentialCalls: [],
+
     async createSandbox(input) {
       const sandbox: SandboxHandle = {
         id: `sandbox-openshell-${sandboxes.size + 1}`,
@@ -300,9 +380,14 @@ function createFakeOpenShellClient(): OpenShellSandboxClient {
     },
     async bindCredentials(input) {
       const sandbox = load(input.sandboxId);
+      client.materializedCredentialCalls.push(
+        input.materializedCredentials.map((credential) => ({ ...credential }))
+      );
       save({
         ...sandbox,
-        credentials: input.credentials.map((credential) => ({ ...credential }))
+        credentials: input.credentialBindings.map((credential) => ({
+          ...credential
+        }))
       });
       recordEvent(input.sandboxId, "credentials_bound");
     },
@@ -319,6 +404,7 @@ function createFakeOpenShellClient(): OpenShellSandboxClient {
       };
     },
     async getSandbox(input) {
+      client.getSandboxCalls += 1;
       return toOpenShellRecord(load(input.sandboxId));
     },
     events(input) {
@@ -326,10 +412,16 @@ function createFakeOpenShellClient(): OpenShellSandboxClient {
     },
     async terminate(input) {
       const sandbox = load(input.sandboxId);
-      save({ ...sandbox, status: "terminated" });
       recordEvent(input.sandboxId, "terminated");
+      if (options?.deleteOnTerminate) {
+        sandboxes.delete(sandbox.id);
+        return;
+      }
+      save({ ...sandbox, status: "terminated" });
     }
   };
+
+  return client;
 }
 
 function toOpenShellRecord(sandbox: SandboxHandle) {
