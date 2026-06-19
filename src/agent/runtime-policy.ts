@@ -8,7 +8,7 @@ import {
 import { buildRuntimeManifest, type RuntimeManifest } from "./runtime-manifest";
 import type { PrincipalId } from "./runtime-factory";
 import type { RuntimeSelectionRequirements } from "./runtime-factory";
-import type { RuntimeCapabilityManifest } from "./runtime-contract";
+import type { RuntimeCapabilityManifest } from "@burble/runtime-sdk/runtime-contract";
 
 export const defaultWorkspaceRuntimePolicy = {
   memory: {

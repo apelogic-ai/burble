@@ -3,9 +3,9 @@ import { createHash } from "node:crypto";
 import {
   isAgentRuntimeEngine,
   type AgentRuntimeEngine
-} from "./runtime-engines";
+} from "@burble/runtime-sdk/runtime-engines";
 import type { ConnectedProviderId } from "./providers/descriptors";
-export type { AgentRuntimeEngine } from "./runtime-engines";
+export type { AgentRuntimeEngine } from "@burble/runtime-sdk/runtime-engines";
 
 export type OAuthState = {
   state: string;

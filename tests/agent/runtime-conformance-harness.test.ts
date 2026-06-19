@@ -5,7 +5,7 @@ import { createStaticRuntimeFactory } from "../../src/agent/runtime-factory";
 import type {
   RuntimeContractFetch,
   RuntimeContractWebSocket
-} from "../../src/agent/runtime-contract-http-client";
+} from "@burble/runtime-sdk/runtime-contract-http-client";
 
 class FakeRuntimeWebSocket implements RuntimeContractWebSocket {
   private readonly listeners = new Map<string, Array<(event: { data?: unknown }) => void>>();

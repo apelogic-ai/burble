@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { parseRuntimeCapabilityManifest } from "../../../src/agent/runtime-contract";
+import { parseRuntimeCapabilityManifest } from "@burble/runtime-sdk/runtime-contract";
 import { handleRuntimeRequest as handleRuntimeRequestRaw } from "../../../runtimes/burble-native/src/server";
 import { createBurbleNativeToolExecutor } from "../../../runtimes/burble-native/src/tools";
 

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { parseRuntimeCapabilityManifest } from "../../../src/agent/runtime-contract";
+import { parseRuntimeCapabilityManifest } from "@burble/runtime-sdk/runtime-contract";
 
 function runHermesEntrypointProbe(source: string): unknown {
   const proc = Bun.spawnSync(["python3", "-c", source], {

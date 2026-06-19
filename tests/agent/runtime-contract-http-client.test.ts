@@ -2,9 +2,9 @@ import { describe, expect, test } from "bun:test";
 import {
   createRuntimeContractHttpClient,
   RuntimeCapabilityDiscoveryError
-} from "../../src/agent/runtime-contract-http-client";
-import { runRuntimeContractSmokeTest } from "../../src/agent/runtime-contract-harness";
-import type { RuntimeCapabilityManifest } from "../../src/agent/runtime-contract";
+} from "@burble/runtime-sdk/runtime-contract-http-client";
+import { runRuntimeContractSmokeTest } from "@burble/runtime-sdk/runtime-contract-harness";
+import type { RuntimeCapabilityManifest } from "@burble/runtime-sdk/runtime-contract";
 
 const manifest: RuntimeCapabilityManifest = {
   runtimeType: "openclaw-gateway",

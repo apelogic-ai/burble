@@ -2,8 +2,8 @@ import {
   isAgentRuntimeEngine,
   runtimeEngines,
   type AgentRuntimeEngine
-} from "../runtime-engines";
-import type { RuntimeCapabilityManifest } from "./runtime-contract";
+} from "@burble/runtime-sdk/runtime-engines";
+import type { RuntimeCapabilityManifest } from "@burble/runtime-sdk/runtime-contract";
 
 export { runtimeEngines };
 
