@@ -66,9 +66,9 @@ export function createLocalDevSandboxProvider(): LocalDevSandboxProvider {
         status: "ready",
         endpointUrl: `http://${id}.local`,
         workspacePath: `/tmp/burble-sandboxes/${id}/workspace`,
-        principal: { ...request.principal },
-        runtime: { ...request.runtime },
-        labels: { ...(request.labels ?? {}) },
+        principal: request.principal,
+        runtime: request.runtime,
+        labels: request.labels ?? {},
         credentials: []
       };
       const state: SandboxState = {

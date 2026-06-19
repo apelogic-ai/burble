@@ -110,6 +110,30 @@ describe("LocalDevSandboxProvider", () => {
     );
     expect(startedAgain?.detail?.argv).toEqual(["echo", "ready"]);
   });
+
+  test("preserves structured event detail values while cloning", async () => {
+    const at = new Date("2026-06-19T00:00:00.000Z");
+    const detail = { at, seen: new Set(["github"]) };
+
+    const cloned = cloneSandboxEventDetail(detail);
+
+    expect(cloned).not.toBe(detail);
+    expect(cloned.at).toBeInstanceOf(Date);
+    expect((cloned.at as Date).toISOString()).toBe(at.toISOString());
+    expect(cloned.seen).toBeInstanceOf(Set);
+    expect([...(cloned.seen as Set<string>)]).toEqual(["github"]);
+  });
+
+  test("clones circular event detail without recursing forever", () => {
+    const detail: Record<string, unknown> = { name: "cycle" };
+    detail.self = detail;
+
+    const cloned = cloneSandboxEventDetail(detail);
+
+    expect(cloned).not.toBe(detail);
+    expect(cloned.name).toBe("cycle");
+    expect(cloned.self).toBe(cloned);
+  });
 });
 
 describe("OpenShellSandboxProvider", () => {
