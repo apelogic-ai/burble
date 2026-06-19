@@ -14,6 +14,10 @@ export type RuntimeContractServerOptions<
   TEvent extends RuntimeContractEvent,
   TResponse
 > = {
+  authorizeRequest?: (
+    request: Request,
+    context: TContext
+  ) => boolean | Promise<boolean>;
   getCapabilityManifest: (context: TContext) => unknown | Promise<unknown>;
   normalizeRunRequest: (
     raw: unknown,
@@ -116,6 +120,19 @@ export function createRuntimeContractServer<
 
       if (url.pathname === "/healthz") {
         return new Response("ok");
+      }
+
+      if (
+        protectedRuntimeContractPath(url.pathname) &&
+        input.authorizeRequest &&
+        !(await input.authorizeRequest(request, context))
+      ) {
+        return new Response("Unauthorized", {
+          status: 401,
+          headers: {
+            "www-authenticate": "Bearer"
+          }
+        });
       }
 
       if (url.pathname === "/capabilities") {
@@ -232,6 +249,33 @@ export function createRuntimeContractServer<
       })();
     }
   };
+}
+
+export function authorizeRuntimeBearerToken(
+  request: Request,
+  expectedToken: string | null | undefined
+): boolean {
+  if (!expectedToken) {
+    return false;
+  }
+  return readBearerToken(request) === expectedToken;
+}
+
+function protectedRuntimeContractPath(pathname: string): boolean {
+  return (
+    pathname === "/capabilities" ||
+    pathname === "/runs" ||
+    /^\/runs\/[^/]+$/.test(pathname)
+  );
+}
+
+function readBearerToken(request: Request): string | null {
+  const authorization = request.headers.get("authorization");
+  if (!authorization?.startsWith("Bearer ")) {
+    return null;
+  }
+  const token = authorization.slice("Bearer ".length).trim();
+  return token.length > 0 ? token : null;
 }
 
 async function consumeSharedRun<

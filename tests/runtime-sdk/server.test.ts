@@ -96,6 +96,62 @@ const server = createRuntimeContractServer<
   }
 });
 
+const authorizedServer = createRuntimeContractServer<
+  { suffix: string },
+  TestRunRequest,
+  TestRunEvent,
+  TestRunResponse
+>({
+  authorizeRequest: (request) =>
+    request.headers.get("authorization") === "Bearer runtime-token",
+  getCapabilityManifest: (context) => ({
+    runtimeType: `test-${context.suffix}`,
+    version: "1",
+    transports: ["http"],
+    streaming: false,
+    cancellation: false,
+    nativeScheduler: false,
+    scheduledProviderCalls: false,
+    toolCalls: false,
+    toolBridgeModes: [],
+    usageReporting: "none",
+    multimodalInput: false,
+    multimodalOutput: false,
+    memory: false,
+    durableWorkflowState: false,
+    attachments: false,
+    conversationSend: false,
+    jobScopedAuth: false
+  }),
+  normalizeRunRequest(raw, runId) {
+    if (
+      typeof raw !== "object" ||
+      raw === null ||
+      Array.isArray(raw) ||
+      typeof (raw as { input?: { text?: unknown } }).input?.text !== "string"
+    ) {
+      return null;
+    }
+    return {
+      runId,
+      input: {
+        text: (raw as { input: { text: string } }).input.text
+      }
+    };
+  },
+  async *streamRun(request, context) {
+    yield {
+      type: "final",
+      response: {
+        text: `${request.input.text} ${context.suffix}`
+      }
+    };
+  },
+  responseFromEvent(event) {
+    return event.type === "final" ? { response: event.response } : null;
+  }
+});
+
 describe("runtime SDK contract server", () => {
   test("serves health and capability endpoints", async () => {
     const health = await server.handleRequest(
@@ -113,6 +169,40 @@ describe("runtime SDK contract server", () => {
     expect(await capabilities?.json()).toMatchObject({
       runtimeType: "test-runtime",
       toolBridgeModes: ["tool_gateway"]
+    });
+  });
+
+  test("requires bearer auth for protected runtime contract endpoints", async () => {
+    const health = await authorizedServer.handleRequest(
+      new Request("http://runtime/healthz"),
+      { suffix: "world" }
+    );
+    const unauthorized = await authorizedServer.handleRequest(
+      new Request("http://runtime/runs", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ input: { text: "hello" } })
+      }),
+      { suffix: "world" }
+    );
+    const authorized = await authorizedServer.handleRequest(
+      new Request("http://runtime/runs", {
+        method: "POST",
+        headers: {
+          authorization: "Bearer runtime-token",
+          "content-type": "application/json"
+        },
+        body: JSON.stringify({ input: { text: "hello" } })
+      }),
+      { suffix: "world" }
+    );
+
+    expect(health?.status).toBe(200);
+    expect(unauthorized?.status).toBe(401);
+    expect(unauthorized?.headers.get("www-authenticate")).toBe("Bearer");
+    expect(authorized?.status).toBe(200);
+    expect(await authorized?.json()).toEqual({
+      response: { text: "hello world" }
     });
   });
 

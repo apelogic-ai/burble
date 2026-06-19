@@ -1036,6 +1036,7 @@ function runtimeHeaders(runtime: RuntimeHandle | null): Record<string, string> {
   }
 
   return {
+    authorization: `Bearer ${runtime.authToken}`,
     "x-burble-runtime-id": runtime.id
   };
 }

@@ -50,6 +50,7 @@ export async function runRuntimeConformanceCheck(input: {
       fetch: input.fetch,
       webSocketFactory: input.webSocketFactory,
       headers: {
+        authorization: `Bearer ${runtime.authToken}`,
         "x-burble-runtime-id": runtime.id
       }
     }),
