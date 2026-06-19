@@ -28,7 +28,9 @@ export {
 } from "./tool-gateway";
 export { stripRuntimeToolCallProtocolFragments } from "./runtime-text-protocol";
 export {
+  authorizeRuntimeBearerToken,
   createRuntimeContractServer,
+  type RuntimeContractAuthorizer,
   type RuntimeContractServer,
   type RuntimeContractServerOptions,
   type RuntimeEventWebSocket

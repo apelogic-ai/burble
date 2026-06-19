@@ -80,6 +80,7 @@ describe("runtime conformance harness", () => {
       }
       if (parsed.pathname === "/runs") {
         expect(init?.headers).toMatchObject({
+          authorization: "Bearer runtime-token",
           "x-burble-runtime-id": expect.any(String)
         });
         const request = JSON.parse(String(init?.body ?? "{}")) as {

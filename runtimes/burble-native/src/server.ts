@@ -3,6 +3,7 @@ import {
   type RuntimeFinalResponse
 } from "@burble/runtime-sdk/runtime-contract";
 import {
+  authorizeRuntimeBearerToken,
   createRuntimeContractServer,
   type RuntimeEventWebSocket
 } from "@burble/runtime-sdk/server";
@@ -52,6 +53,11 @@ const runtimeContractServer = createRuntimeContractServer<
   RunEvent,
   RunResponse
 >({
+  authorizeRequest: (request, context) =>
+    authorizeRuntimeBearerToken(
+      request,
+      readEnv(context.env, "BURBLE_INTERNAL_TOKEN")
+    ),
   getCapabilityManifest: buildRuntimeCapabilityManifest,
   normalizeRunRequest(rawBody, runId) {
     try {

@@ -232,6 +232,7 @@ runtimeBootSmokeDescribe("runtime boot smoke e2e", () => {
             baseUrl: runtime.endpointUrl,
             fetch: runtimeFetch,
             headers: {
+              authorization: `Bearer ${runtime.authToken}`,
               "x-burble-runtime-id": runtime.id
             }
           });
@@ -244,6 +245,7 @@ runtimeBootSmokeDescribe("runtime boot smoke e2e", () => {
             await assertBurbleNativeRunContract({
               runtimeId: runtime.id,
               endpointUrl: runtime.endpointUrl,
+              authToken: runtime.authToken,
               principal,
               fetch: runtimeFetch
             });
@@ -263,6 +265,7 @@ runtimeBootSmokeDescribe("runtime boot smoke e2e", () => {
 async function assertBurbleNativeRunContract(input: {
   runtimeId: string;
   endpointUrl: string;
+  authToken: string;
   principal: { workspaceId: string; slackUserId: string };
   fetch: RuntimeFetch;
 }): Promise<void> {
@@ -270,6 +273,7 @@ async function assertBurbleNativeRunContract(input: {
     method: "POST",
     headers: {
       accept: "application/x-ndjson",
+      authorization: `Bearer ${input.authToken}`,
       "content-type": "application/json",
       "x-burble-runtime-id": input.runtimeId
     },

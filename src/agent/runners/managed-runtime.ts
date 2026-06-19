@@ -9,6 +9,7 @@ import {
   type RuntimeAdapter
 } from "../runtime-adapter";
 import {
+  createRuntimeContractWebSocket,
   createRuntimeContractHttpClient,
   RuntimeCapabilityDiscoveryError
 } from "../runtime-contract-http-client";
@@ -29,8 +30,13 @@ export type AgentRuntimeWebSocket = {
   close: () => void;
 };
 
+export type AgentRuntimeWebSocketOptions = {
+  headers?: HeadersInit;
+};
+
 export type AgentRuntimeWebSocketFactory = (
-  url: string
+  url: string,
+  options?: AgentRuntimeWebSocketOptions
 ) => AgentRuntimeWebSocket;
 
 export type ManagedRuntimeAgentRunnerDeps = {
@@ -109,7 +115,7 @@ export function createManagedRuntimeAdapter(
   const fallbackBaseUrl = deps.baseUrl?.replace(/\/+$/, "");
   const requestFetch: AgentRuntimeFetch = deps.fetch ?? fetch;
   const createWebSocket: AgentRuntimeWebSocketFactory =
-    deps.webSocketFactory ?? ((url) => new WebSocket(url));
+    deps.webSocketFactory ?? createRuntimeContractWebSocket;
   const logInfo = deps.logInfo ?? (() => undefined);
   const observability = deps.observability;
   const runtimeCapabilityCache: RuntimeCapabilityCache = new Map();
@@ -291,7 +297,10 @@ export function createManagedRuntimeAdapter(
 
           try {
             agentResponse = yield* readWebSocketRunResponse(
-              createWebSocket(eventsUrl),
+              createWebSocket(
+                eventsUrl,
+                runtimeWebSocketOptions(runtime)
+              ),
               runtimeMessageDeltasEnabled(runtime),
               (event) => {
                 logInfo(
@@ -1036,7 +1045,19 @@ function runtimeHeaders(runtime: RuntimeHandle | null): Record<string, string> {
   }
 
   return {
+    authorization: `Bearer ${runtime.authToken}`,
     "x-burble-runtime-id": runtime.id
+  };
+}
+
+function runtimeWebSocketOptions(
+  runtime: RuntimeHandle | null
+): AgentRuntimeWebSocketOptions | undefined {
+  if (!runtime) {
+    return undefined;
+  }
+  return {
+    headers: runtimeHeaders(runtime)
   };
 }
 

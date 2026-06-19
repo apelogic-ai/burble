@@ -4,6 +4,7 @@ import { createBurbleConversationConnector } from "./burble-conversation-connect
 import { info } from "./logger";
 import { createRuntimeRunner } from "./runtime";
 import {
+  authorizeRuntimeBearerToken,
   createRuntimeContractServer,
   type RuntimeEventWebSocket
 } from "@burble/runtime-sdk/server";
@@ -40,6 +41,8 @@ const runtimeContractServer = createRuntimeContractServer<
   RunEvent,
   RunResponse
 >({
+  authorizeRequest: (request, { config }) =>
+    authorizeRuntimeBearerToken(request, config.internalToken),
   getCapabilityManifest: ({ config }) => buildRuntimeCapabilityManifest(config),
   normalizeRunRequest(rawBody, runId) {
     const body = addRunId(rawBody, runId);

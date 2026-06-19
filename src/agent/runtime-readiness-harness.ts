@@ -61,6 +61,7 @@ export async function runRuntimeReadinessCheck(input: {
     baseUrl: runtime.endpointUrl,
     fetch: input.fetch,
     headers: {
+      authorization: `Bearer ${runtime.authToken}`,
       "x-burble-runtime-id": runtime.id
     }
   });

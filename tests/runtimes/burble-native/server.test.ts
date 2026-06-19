@@ -1,9 +1,49 @@
 import { describe, expect, test } from "bun:test";
 import { parseRuntimeCapabilityManifest } from "../../../src/agent/runtime-contract";
-import { handleRuntimeRequest } from "../../../runtimes/burble-native/src/server";
+import { handleRuntimeRequest as handleRuntimeRequestRaw } from "../../../runtimes/burble-native/src/server";
 import { createBurbleNativeToolExecutor } from "../../../runtimes/burble-native/src/tools";
 
+const runtimeToken = "runtime-token";
+
+function handleRuntimeRequest(
+  request: Request,
+  context: Parameters<typeof handleRuntimeRequestRaw>[1] = {},
+  options: Parameters<typeof handleRuntimeRequestRaw>[2] = {}
+): ReturnType<typeof handleRuntimeRequestRaw> {
+  const token = context.env?.BURBLE_INTERNAL_TOKEN ?? runtimeToken;
+  return handleRuntimeRequestRaw(
+    withRuntimeAuthorization(request, token),
+    {
+      ...context,
+      env: {
+        ...context.env,
+        BURBLE_INTERNAL_TOKEN: token
+      }
+    },
+    options
+  );
+}
+
+function withRuntimeAuthorization(request: Request, token: string): Request {
+  const headers = new Headers(request.headers);
+  headers.set("authorization", `Bearer ${token}`);
+  return new Request(request, { headers });
+}
+
 describe("Burble Native runtime server", () => {
+  test("requires runtime bearer auth for contract endpoints", async () => {
+    const response = await handleRuntimeRequestRaw(
+      new Request("http://runtime/capabilities"),
+      {
+        env: {
+          BURBLE_INTERNAL_TOKEN: runtimeToken
+        }
+      }
+    );
+
+    expect(response.status).toBe(401);
+  });
+
   test("serves a runtime capability manifest", async () => {
     const response = await handleRuntimeRequest(new Request("http://runtime/capabilities"));
 

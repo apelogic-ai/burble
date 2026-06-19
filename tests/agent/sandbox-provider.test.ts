@@ -6,6 +6,10 @@ import {
   createOpenShellSandboxProvider,
   type OpenShellSandboxClient
 } from "../../src/agent/sandbox-providers/openshell";
+import type {
+  OpenShellProviderBindingConfig,
+  OpenShellSandboxPolicyConfig
+} from "../../src/agent/sandbox-providers/openshell-policy";
 import {
   cloneSandboxEvent,
   cloneSandboxEventDetail,
@@ -218,11 +222,75 @@ describe("OpenShellSandboxProvider", () => {
         }
       ]
     ]);
+    expect(client.compiledProviderCalls).toEqual([
+      [
+        {
+          name: "github",
+          kind: "provider-token",
+          ref: "provider:github:T123:U123",
+          delivery: "gateway_callback",
+          materialized: false
+        },
+        {
+          name: "runtime-config",
+          kind: "secret-ref",
+          ref: "secret:runtime-config",
+          delivery: "sandbox_reference",
+          materialized: true
+        }
+      ]
+    ]);
 
     const attached = await provider.attach(sandbox.id);
     expect(attached.credentials.map((credential) => credential.name)).toEqual([
       "github",
       "runtime-config"
+    ]);
+  });
+
+  test("passes compiled neutral policy config to the OpenShell client", async () => {
+    const client = createFakeOpenShellClient();
+    const provider = createOpenShellSandboxProvider({ client });
+    const sandbox = await provider.provision({
+      principal: { workspaceId: "T123", userId: "U123" },
+      runtime: { engine: "hermes", image: "burble-runtime:dev" },
+      labels: {}
+    });
+
+    await provider.applyPolicy(sandbox.id, {
+      network: {
+        egress: "allowlist",
+        allowedHosts: ["GitHub.com", "burble-gateway.internal"]
+      },
+      filesystem: {
+        readOnlyPaths: ["/workspace"],
+        readWritePaths: ["/tmp/burble"]
+      },
+      resources: {
+        cpuCount: 2,
+        memoryMb: 1024
+      },
+      maxLifetimeMs: 60_000
+    });
+
+    expect(client.compiledPolicyCalls).toEqual([
+      {
+        version: 1,
+        egress: {
+          default: "deny",
+          allowHosts: ["burble-gateway.internal", "github.com"]
+        },
+        filesystem: {
+          readOnly: ["/workspace"],
+          readWrite: ["/tmp/burble"]
+        },
+        resources: {
+          cpuCount: 2,
+          memoryMb: 1024,
+          maxLifetimeMs: 60_000
+        },
+        providers: []
+      }
     ]);
   });
 
@@ -429,6 +497,8 @@ function importSpecifiers(path: string): string[] {
 
 type FakeOpenShellClient = OpenShellSandboxClient & {
   getSandboxCalls: number;
+  compiledPolicyCalls: OpenShellSandboxPolicyConfig[];
+  compiledProviderCalls: OpenShellProviderBindingConfig[][];
   materializedCredentialCalls: SandboxCredentialBinding[][];
 };
 
@@ -469,6 +539,8 @@ function createFakeOpenShellClient(options?: {
 
   const client: FakeOpenShellClient = {
     getSandboxCalls: 0,
+    compiledPolicyCalls: [],
+    compiledProviderCalls: [],
     materializedCredentialCalls: [],
 
     async createSandbox(input) {
@@ -490,11 +562,15 @@ function createFakeOpenShellClient(options?: {
     },
     async applyPolicy(input) {
       const sandbox = load(input.sandboxId);
+      client.compiledPolicyCalls.push(input.compiledPolicy);
       save({ ...sandbox, policy: input.policy });
       recordEvent(input.sandboxId, "policy_applied");
     },
     async bindCredentials(input) {
       const sandbox = load(input.sandboxId);
+      client.compiledProviderCalls.push(
+        input.compiledProviders.map((provider) => ({ ...provider }))
+      );
       client.materializedCredentialCalls.push(
         input.materializedCredentials.map((credential) => ({ ...credential }))
       );

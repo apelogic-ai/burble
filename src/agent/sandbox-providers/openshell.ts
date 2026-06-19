@@ -2,6 +2,7 @@ import {
   cloneSandboxCredentialBinding,
   cloneSandboxHandle,
   cloneSandboxPolicy,
+  isSandboxCredentialMaterialized,
   type SandboxCredentialBinding,
   type SandboxEvent,
   type SandboxHandle,
@@ -12,6 +13,12 @@ import {
   type SandboxRunHandle,
   type SandboxRunRequest
 } from "../sandbox-provider";
+import {
+  compileOpenShellProviderBindings,
+  compileOpenShellSandboxPolicy,
+  type OpenShellProviderBindingConfig,
+  type OpenShellSandboxPolicyConfig
+} from "./openshell-policy";
 
 export type OpenShellSandboxStatus = SandboxHandle["status"];
 
@@ -36,11 +43,13 @@ export type OpenShellSandboxClient = {
   applyPolicy(input: {
     sandboxId: string;
     policy: SandboxPolicy;
+    compiledPolicy: OpenShellSandboxPolicyConfig;
   }): Promise<void>;
   bindCredentials(input: {
     sandboxId: string;
     credentialBindings: SandboxCredentialBinding[];
     materializedCredentials: SandboxCredentialBinding[];
+    compiledProviders: OpenShellProviderBindingConfig[];
   }): Promise<void>;
   run(input: {
     sandboxId: string;
@@ -83,7 +92,11 @@ export function createOpenShellSandboxProvider(input: {
       sandboxId: string,
       policy: SandboxPolicy
     ): Promise<SandboxHandle> {
-      await input.client.applyPolicy({ sandboxId, policy });
+      await input.client.applyPolicy({
+        sandboxId,
+        policy,
+        compiledPolicy: compileOpenShellSandboxPolicy({ policy })
+      });
       const updated = handleFromRecord(
         await input.client.getSandbox({ sandboxId })
       );
@@ -99,8 +112,9 @@ export function createOpenShellSandboxProvider(input: {
         sandboxId,
         credentialBindings,
         materializedCredentials: credentialBindings.filter(
-          (credential) => credential.delivery === "sandbox_reference"
-        )
+          isSandboxCredentialMaterialized
+        ),
+        compiledProviders: compileOpenShellProviderBindings(credentialBindings)
       });
       const updated = handleFromRecord(
         await input.client.getSandbox({ sandboxId })

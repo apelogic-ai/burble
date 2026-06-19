@@ -1,3 +1,5 @@
+import { timingSafeEqual } from "node:crypto";
+
 export type RuntimeEventWebSocket = {
   send: (message: string) => unknown;
   close: (code?: number, reason?: string) => unknown;
@@ -8,12 +10,20 @@ export type RuntimeContractEvent = {
   [key: string]: unknown;
 };
 
+export type RuntimeContractAuthorizer<TContext> =
+  | "public"
+  | ((
+      request: Request,
+      context: TContext
+    ) => boolean | Promise<boolean>);
+
 export type RuntimeContractServerOptions<
   TContext,
   TRequest,
   TEvent extends RuntimeContractEvent,
   TResponse
 > = {
+  authorizeRequest: RuntimeContractAuthorizer<TContext>;
   getCapabilityManifest: (context: TContext) => unknown | Promise<unknown>;
   normalizeRunRequest: (
     raw: unknown,
@@ -116,6 +126,22 @@ export function createRuntimeContractServer<
 
       if (url.pathname === "/healthz") {
         return new Response("ok");
+      }
+
+      if (
+        protectedRuntimeContractPath(url.pathname) &&
+        !(await isRuntimeContractRequestAuthorized({
+          authorizer: input.authorizeRequest,
+          request,
+          context
+        }))
+      ) {
+        return new Response("Unauthorized", {
+          status: 401,
+          headers: {
+            "www-authenticate": "Bearer"
+          }
+        });
       }
 
       if (url.pathname === "/capabilities") {
@@ -232,6 +258,61 @@ export function createRuntimeContractServer<
       })();
     }
   };
+}
+
+export function authorizeRuntimeBearerToken(
+  request: Request,
+  expectedToken: string | null | undefined
+): boolean {
+  if (!expectedToken) {
+    return false;
+  }
+  const actualToken = readBearerToken(request);
+  if (!actualToken) {
+    return false;
+  }
+  return timingSafeTokenEqual(actualToken, expectedToken);
+}
+
+function protectedRuntimeContractPath(pathname: string): boolean {
+  return (
+    pathname === "/capabilities" ||
+    pathname === "/runs" ||
+    /^\/runs\/[^/]+(?:\/events)?$/.test(pathname)
+  );
+}
+
+async function isRuntimeContractRequestAuthorized<TContext>(input: {
+  authorizer: RuntimeContractAuthorizer<TContext>;
+  request: Request;
+  context: TContext;
+}): Promise<boolean> {
+  if (input.authorizer === "public") {
+    return true;
+  }
+  try {
+    return await input.authorizer(input.request, input.context);
+  } catch {
+    return false;
+  }
+}
+
+function readBearerToken(request: Request): string | null {
+  const authorization = request.headers.get("authorization");
+  if (authorization?.startsWith("Bearer ")) {
+    const token = authorization.slice("Bearer ".length).trim();
+    return token.length > 0 ? token : null;
+  }
+  return null;
+}
+
+function timingSafeTokenEqual(actual: string, expected: string): boolean {
+  const actualBuffer = Buffer.from(actual);
+  const expectedBuffer = Buffer.from(expected);
+  if (actualBuffer.length !== expectedBuffer.length) {
+    return false;
+  }
+  return timingSafeEqual(actualBuffer, expectedBuffer);
 }
 
 async function consumeSharedRun<

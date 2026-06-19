@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   attachRuntimeEventWebSocket,
-  handleRuntimeRequest
+  handleRuntimeRequest as handleRuntimeRequestRaw
 } from "../../../runtimes/openclaw-nemoclaw/src/server";
 import type { RuntimeConfig } from "../../../runtimes/openclaw-nemoclaw/src/config";
 import { createRuntimeContractHttpClient } from "../../../src/agent/runtime-contract-http-client";
@@ -39,8 +39,8 @@ describe("OpenClaw/NemoClaw runtime contract", () => {
     const client = createRuntimeContractHttpClient({
       baseUrl: "http://runtime.local",
       fetch: async (url, init) =>
-        handleRuntimeRequest(
-          new Request(url, init),
+        handleRuntimeRequestRaw(
+          withRuntimeAuthorization(new Request(url, init), config.internalToken),
           config,
           async () => ({
             classification: "user_private",
@@ -88,6 +88,12 @@ describe("OpenClaw/NemoClaw runtime contract", () => {
     });
   });
 });
+
+function withRuntimeAuthorization(request: Request, token: string): Request {
+  const headers = new Headers(request.headers);
+  headers.set("authorization", `Bearer ${token}`);
+  return new Request(request, { headers });
+}
 
 class RuntimeHarnessWebSocket {
   private readonly listeners = new Map<
