@@ -1,5 +1,10 @@
 import { createHash } from "node:crypto";
-import type { AgentRuntimeEngine, TokenStore } from "../db";
+import {
+  buildAgentRuntimeId,
+  type AgentRuntimeEngine,
+  type AgentRuntimeRecord,
+  type TokenStore
+} from "../db";
 import type { RuntimeJwtIssuer } from "../runtime-jwt";
 import { buildBrokeredRuntimeSandboxPolicy } from "./sandbox-policy";
 import type {
@@ -173,28 +178,15 @@ export function createSandboxRuntimeFactory(input: {
       }
     });
     const paths = sandboxRuntimePaths(sandbox.workspacePath, input.engine);
-    const defaultPolicy = input.buildPolicy
-      ? null
-      : buildDefaultSandboxPolicy(input, manifest);
-    const defaultPolicyHash = defaultPolicy
-      ? sandboxRuntimePolicyHash(manifest, defaultPolicy)
-      : null;
-    let runtime = input.store.getOrCreateAgentRuntime({
-      workspaceId: principal.workspaceId,
-      slackUserId: principal.slackUserId,
-      engine: input.engine,
-      endpointUrl: sandbox.endpointUrl,
-      authTokenHash: hashRuntimeToken(token),
-      statePath: paths.statePath,
-      configPath: paths.configPath,
-      workspacePath: sandbox.workspacePath,
-      sandboxId: sandbox.id,
-      policyHash: defaultPolicyHash ?? manifest?.policyHash ?? null
-    });
+    const runtimeId = buildAgentRuntimeId(
+      principal.workspaceId,
+      principal.slackUserId,
+      input.engine
+    );
     const context = {
       principal,
       engine: input.engine,
-      runtimeId: runtime.id,
+      runtimeId,
       runtimeDataId,
       manifest
     };
@@ -202,19 +194,19 @@ export function createSandboxRuntimeFactory(input: {
       input.runtimeJwtIssuer && input.mcpGatewayUrl
         ? input.runtimeJwtIssuer.issueRuntimeJwt({
             audience: input.mcpAudience ?? input.mcpGatewayUrl,
-            runtimeId: runtime.id,
+            runtimeId,
             workspaceId: principal.workspaceId,
             slackUserId: principal.slackUserId,
             ttlSeconds: input.runtimeJwtTtlSeconds
           })
         : null;
-    const policy =
-      (await input.buildPolicy?.(context)) ??
-      defaultPolicy ??
-      buildDefaultSandboxPolicy(input, manifest);
-    const policyHash =
-      defaultPolicyHash ?? sandboxRuntimePolicyHash(manifest, policy);
-    if (runtime.policyHash !== policyHash) {
+    let runtime: AgentRuntimeRecord | null = null;
+
+    try {
+      const policy =
+        (await input.buildPolicy?.(context)) ??
+        buildDefaultSandboxPolicy(input, manifest);
+      const policyHash = sandboxRuntimePolicyHash(manifest, policy);
       runtime = input.store.getOrCreateAgentRuntime({
         workspaceId: principal.workspaceId,
         slackUserId: principal.slackUserId,
@@ -227,24 +219,21 @@ export function createSandboxRuntimeFactory(input: {
         sandboxId: sandbox.id,
         policyHash
       });
-    }
-    const credentials = (await input.buildCredentials?.(context)) ?? [];
+      const credentials = (await input.buildCredentials?.(context)) ?? [];
 
-    input.store.recordAgentRuntimeEvent({
-      runtimeId: runtime.id,
-      eventType: "runtime_provision_requested",
-      summary: {
-        engine: input.engine,
-        image: input.image,
-        sandboxId: sandbox.id,
-        policyHash
-      }
-    });
-    input.store.updateAgentRuntimeStatus(runtime.id, {
-      status: "provisioning"
-    });
-
-    try {
+      input.store.recordAgentRuntimeEvent({
+        runtimeId: runtime.id,
+        eventType: "runtime_provision_requested",
+        summary: {
+          engine: input.engine,
+          image: input.image,
+          sandboxId: sandbox.id,
+          policyHash
+        }
+      });
+      input.store.updateAgentRuntimeStatus(runtime.id, {
+        status: "provisioning"
+      });
       await input.sandboxProvider.applyPolicy(sandbox.id, policy);
       if (credentials.length > 0) {
         await input.sandboxProvider.bindCredentials(sandbox.id, credentials);
@@ -299,19 +288,21 @@ export function createSandboxRuntimeFactory(input: {
             ? terminateError.message
             : "unknown cleanup error";
       }
-      input.store.updateAgentRuntimeStatus(runtime.id, {
-        status: "failed",
-        failureReason
-      });
-      input.store.recordAgentRuntimeEvent({
-        runtimeId: runtime.id,
-        eventType: "runtime_provision_failed",
-        summary: {
-          failureReason,
-          sandboxId: sandbox.id,
-          ...(cleanupError ? { cleanupError } : {})
-        }
-      });
+      if (runtime) {
+        input.store.updateAgentRuntimeStatus(runtime.id, {
+          status: "failed",
+          failureReason
+        });
+        input.store.recordAgentRuntimeEvent({
+          runtimeId: runtime.id,
+          eventType: "runtime_provision_failed",
+          summary: {
+            failureReason,
+            sandboxId: sandbox.id,
+            ...(cleanupError ? { cleanupError } : {})
+          }
+        });
+      }
       throw error;
     }
 
@@ -470,6 +461,10 @@ function sandboxRuntimePolicyHash(
   manifest: RuntimeManifest | null | undefined,
   policy: SandboxPolicy
 ): string {
+  // Sandbox runtimes enforce egress outside the agent process, so env-derived
+  // egress changes are part of the effective runtime policy. Scheduled
+  // capabilities registered against an older hash fail closed and must
+  // re-register after this changes.
   return createHash("sha256")
     .update(
       JSON.stringify(

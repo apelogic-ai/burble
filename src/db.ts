@@ -1972,7 +1972,7 @@ function ensureConversationRouteColumn(
   }
 }
 
-function buildAgentRuntimeId(
+export function buildAgentRuntimeId(
   workspaceId: string,
   slackUserId: string,
   engine: AgentRuntimeEngine

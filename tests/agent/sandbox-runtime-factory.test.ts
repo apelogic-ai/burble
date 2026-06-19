@@ -203,6 +203,47 @@ describe("createSandboxRuntimeFactory", () => {
     store.close();
   });
 
+  test("writes custom sandbox policy hash once during provisioning", async () => {
+    const store = createTokenStore(":memory:");
+    const provider = createFakeRuntimeSandboxProvider();
+    const seenRuntimeIds: string[] = [];
+    const factory = createSandboxRuntimeFactory({
+      store,
+      sandboxProvider: provider,
+      engine: "hermes",
+      image: "burble-nemo-hermes:dev",
+      toolGatewayUrl: "http://burble-app:3000/internal/tools",
+      modelProviderUrls: ["https://api.openai.com/v1"],
+      runtimeTokenSecret: "runtime-secret",
+      startCommand: ["hermes-entrypoint"],
+      healthCheckAttempts: 1,
+      fetch: async () => new Response("ok"),
+      buildPolicy: (context) => {
+        seenRuntimeIds.push(context.runtimeId);
+        return {
+          network: {
+            egress: "allowlist",
+            allowedHosts: ["api.openai.com", "burble-app:3000"]
+          }
+        };
+      }
+    });
+
+    const handle = await factory.getOrCreateRuntime(principal);
+    const events = store.listAgentRuntimeEvents(handle.id);
+
+    expect(seenRuntimeIds).toEqual([handle.id]);
+    expect(store.getAgentRuntime(handle.id)?.policyHash).toMatch(
+      /^[0-9a-f]{64}$/
+    );
+    expect(events.map((event) => event.eventType)).toEqual([
+      "runtime_provision_requested",
+      "runtime_provision_finished"
+    ]);
+
+    store.close();
+  });
+
   test("reattaches an existing sandbox-backed runtime instead of reprovisioning", async () => {
     const store = createTokenStore(":memory:");
     const provider = createFakeRuntimeSandboxProvider();
