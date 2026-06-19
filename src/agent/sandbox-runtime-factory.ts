@@ -66,6 +66,7 @@ export function createSandboxRuntimeFactory(input: {
   env?: Record<string, string | undefined>;
 }): RuntimeFactory {
   assertSandboxProviderCapabilities(input.sandboxProvider);
+  assertSandboxStartCommand(input.startCommand);
   const requestFetch = input.fetch ?? fetch;
 
   const stopRuntime = async (runtimeId: string): Promise<void> => {
@@ -98,9 +99,29 @@ export function createSandboxRuntimeFactory(input: {
         engine: input.engine
       });
 
-      if (existing?.sandboxId && existing.status !== "stopped") {
+      if (
+        existing?.sandboxId &&
+        existing.status !== "stopped" &&
+        existing.status !== "failed"
+      ) {
         const attached = await input.sandboxProvider.attach(existing.sandboxId);
         const paths = sandboxRuntimePaths(attached.workspacePath, input.engine);
+        if (manifest?.policyHash && existing.policyHash !== manifest.policyHash) {
+          const policy =
+            (await input.buildPolicy?.({
+              principal,
+              engine: input.engine,
+              runtimeId: existing.id,
+              runtimeDataId,
+              manifest
+            })) ??
+            buildBrokeredRuntimeSandboxPolicy({
+              toolGatewayUrl: input.toolGatewayUrl,
+              mcpGatewayUrl: input.mcpGatewayUrl ?? null,
+              modelProviderUrls: input.modelProviderUrls
+            });
+          await input.sandboxProvider.applyPolicy(attached.id, policy);
+        }
         const updated = input.store.getOrCreateAgentRuntime({
           workspaceId: principal.workspaceId,
           slackUserId: principal.slackUserId,
@@ -113,22 +134,6 @@ export function createSandboxRuntimeFactory(input: {
           sandboxId: attached.id,
           policyHash: manifest?.policyHash ?? null
         });
-        if (manifest?.policyHash && existing.policyHash !== manifest.policyHash) {
-          const policy =
-            (await input.buildPolicy?.({
-              principal,
-              engine: input.engine,
-              runtimeId: updated.id,
-              runtimeDataId,
-              manifest
-            })) ??
-            buildBrokeredRuntimeSandboxPolicy({
-              toolGatewayUrl: input.toolGatewayUrl,
-              mcpGatewayUrl: input.mcpGatewayUrl ?? null,
-              modelProviderUrls: input.modelProviderUrls
-            });
-          await input.sandboxProvider.applyPolicy(attached.id, policy);
-        }
         await waitForSandboxRuntimeHealth({
           endpointUrl: attached.endpointUrl,
           fetch: requestFetch,
@@ -138,7 +143,7 @@ export function createSandboxRuntimeFactory(input: {
           intervalMs: input.healthCheckIntervalMs ?? 1000
         });
         input.store.touchAgentRuntime(existing.id);
-        if (existing.status === "failed" || existing.status === "provisioning") {
+        if (existing.status === "provisioning") {
           input.store.updateAgentRuntimeStatus(existing.id, { status: "ready" });
         }
         return toRuntimeHandle(
@@ -257,6 +262,15 @@ export function createSandboxRuntimeFactory(input: {
       } catch (error) {
         const failureReason =
           error instanceof Error ? error.message : "unknown error";
+        let cleanupError: string | undefined;
+        try {
+          await input.sandboxProvider.terminate(sandbox.id);
+        } catch (terminateError) {
+          cleanupError =
+            terminateError instanceof Error
+              ? terminateError.message
+              : "unknown cleanup error";
+        }
         input.store.updateAgentRuntimeStatus(runtime.id, {
           status: "failed",
           failureReason
@@ -264,7 +278,11 @@ export function createSandboxRuntimeFactory(input: {
         input.store.recordAgentRuntimeEvent({
           runtimeId: runtime.id,
           eventType: "runtime_provision_failed",
-          summary: { failureReason, sandboxId: sandbox.id }
+          summary: {
+            failureReason,
+            sandboxId: sandbox.id,
+            ...(cleanupError ? { cleanupError } : {})
+          }
         });
         throw error;
       }
@@ -355,6 +373,15 @@ function assertSandboxProviderCapabilities(provider: SandboxProvider): void {
     throw new Error(
       `Sandbox provider ${capabilities.provider} must support durable sandboxes for runtime provisioning`
     );
+  }
+}
+
+function assertSandboxStartCommand(startCommand: string[]): void {
+  if (
+    startCommand.length === 0 ||
+    startCommand.some((part) => part.trim() === "")
+  ) {
+    throw new Error("Sandbox runtime start command must be non-empty");
   }
 }
 

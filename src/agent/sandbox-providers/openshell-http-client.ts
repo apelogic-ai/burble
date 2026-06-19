@@ -47,10 +47,7 @@ export function createOpenShellHttpSandboxClient(
       headers
     });
     if (!response.ok) {
-      const body = await response.text().catch(() => "");
-      throw new Error(
-        `OpenShell request ${init.method ?? "GET"} ${path} failed with HTTP ${response.status}${body ? `: ${body}` : ""}`
-      );
+      throw openShellHttpError(init.method ?? "GET", path, response.status);
     }
     if (response.status === 204) {
       return undefined as T;
@@ -140,9 +137,10 @@ export function createOpenShellHttpSandboxClient(
         { headers }
       );
       if (!response.ok) {
-        const body = await response.text().catch(() => "");
-        throw new Error(
-          `OpenShell request GET /sandboxes/${input.sandboxId}/events failed with HTTP ${response.status}${body ? `: ${body}` : ""}`
+        throw openShellHttpError(
+          "GET",
+          `/sandboxes/${input.sandboxId}/events`,
+          response.status
         );
       }
       const text = await response.text();
@@ -165,6 +163,16 @@ function normalizeBaseUrl(value: string): string {
     throw new Error("OpenShell base URL is required");
   }
   return trimmed;
+}
+
+function openShellHttpError(
+  method: string,
+  path: string,
+  status: number
+): Error {
+  return new Error(
+    `OpenShell request ${method} ${path} failed with HTTP ${status}`
+  );
 }
 
 function coerceSandboxRecord(value: unknown): OpenShellSandboxRecord {

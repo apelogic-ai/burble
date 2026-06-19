@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { createSandboxRuntimeFactory } from "../../src/agent/sandbox-runtime-factory";
+import { buildRuntimeDataId } from "../../src/agent/runtime-factory";
 import {
   cloneSandboxHandle,
   type SandboxEvent,
@@ -187,6 +188,47 @@ describe("createSandboxRuntimeFactory", () => {
     store.close();
   });
 
+  test("terminates failed provisioning sandboxes and reprovisions on retry", async () => {
+    const store = createTokenStore(":memory:");
+    const provider = createFakeRuntimeSandboxProvider();
+    const factory = createSandboxRuntimeFactory({
+      store,
+      sandboxProvider: provider,
+      engine: "hermes",
+      image: "burble-nemo-hermes:dev",
+      toolGatewayUrl: "http://burble-app:3000/internal/tools",
+      modelProviderUrls: ["https://api.openai.com/v1"],
+      runtimeTokenSecret: "runtime-secret",
+      startCommand: ["hermes-entrypoint"],
+      healthCheckAttempts: 1,
+      fetch: async () => new Response("ok")
+    });
+
+    provider.failNextRun = true;
+    await expect(factory.getOrCreateRuntime(principal)).rejects.toThrow(
+      "Sandbox runtime start failed"
+    );
+
+    const runtimeId = `rt_${buildRuntimeDataId(principal, "hermes")}`;
+    expect(store.getAgentRuntime(runtimeId)).toMatchObject({
+      status: "failed",
+      sandboxId: "sandbox-1"
+    });
+    expect(provider.terminated).toEqual(["sandbox-1"]);
+
+    const retry = await factory.getOrCreateRuntime(principal);
+
+    expect(retry.id).toBe(runtimeId);
+    expect(store.getAgentRuntime(retry.id)).toMatchObject({
+      status: "ready",
+      sandboxId: "sandbox-2"
+    });
+    expect(provider.provisionCalls).toHaveLength(2);
+    expect(provider.attachCalls).toEqual([]);
+
+    store.close();
+  });
+
   test("fails closed when the sandbox provider cannot enforce egress allowlists", () => {
     const store = createTokenStore(":memory:");
 
@@ -220,6 +262,19 @@ describe("createSandboxRuntimeFactory", () => {
       })
     ).toThrow("must support durable sandboxes");
 
+    expect(() =>
+      createSandboxRuntimeFactory({
+        store,
+        sandboxProvider: createFakeRuntimeSandboxProvider(),
+        engine: "openclaw",
+        image: "burble-openclaw-nemoclaw:dev",
+        toolGatewayUrl: "http://burble-app:3000/internal/tools",
+        modelProviderUrls: ["https://api.openai.com/v1"],
+        runtimeTokenSecret: "runtime-secret",
+        startCommand: []
+      })
+    ).toThrow("start command must be non-empty");
+
     store.close();
   });
 });
@@ -230,6 +285,7 @@ type FakeRuntimeSandboxProvider = SandboxProvider & {
   runCalls: Array<{ sandboxId: string; request: SandboxRunRequest }>;
   attachCalls: string[];
   terminated: string[];
+  failNextRun: boolean;
 };
 
 function createFakeRuntimeSandboxProvider(
@@ -257,6 +313,7 @@ function createFakeRuntimeSandboxProvider(
     runCalls,
     attachCalls,
     terminated,
+    failNextRun: false,
 
     capabilities() {
       return {
@@ -305,6 +362,15 @@ function createFakeRuntimeSandboxProvider(
     async run(sandboxId, request): Promise<SandboxRunHandle> {
       const sandbox = load(sandboxId);
       runCalls.push({ sandboxId, request });
+      if (this.failNextRun) {
+        this.failNextRun = false;
+        return {
+          id: `${sandboxId}-run-1`,
+          sandboxId,
+          status: "failed",
+          exitCode: 1
+        };
+      }
       sandboxes.set(
         sandboxId,
         cloneSandboxHandle({ ...sandbox, status: "ready" })
