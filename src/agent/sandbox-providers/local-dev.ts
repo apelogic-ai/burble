@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import {
-  cloneSandboxCredentialBinding,
   cloneSandboxEvent,
+  cloneSandboxEventDetail,
   cloneSandboxHandle,
   cloneSandboxPolicy,
   type SandboxCredentialBinding,
@@ -43,7 +43,7 @@ export function createLocalDevSandboxProvider(): LocalDevSandboxProvider {
       sandboxId: state.handle.id,
       type,
       at: new Date(eventSequence++).toISOString(),
-      ...(detail ? { detail } : {})
+      ...(detail ? { detail: cloneSandboxEventDetail(detail) } : {})
     });
   };
 
@@ -66,12 +66,15 @@ export function createLocalDevSandboxProvider(): LocalDevSandboxProvider {
         status: "ready",
         endpointUrl: `http://${id}.local`,
         workspacePath: `/tmp/burble-sandboxes/${id}/workspace`,
-        principal: request.principal,
-        runtime: request.runtime,
-        labels: request.labels ?? {},
+        principal: { ...request.principal },
+        runtime: { ...request.runtime },
+        labels: { ...(request.labels ?? {}) },
         credentials: []
       };
-      const state: SandboxState = { handle, events: [] };
+      const state: SandboxState = {
+        handle: cloneSandboxHandle(handle),
+        events: []
+      };
       recordEvent(state, "provisioned", { image: request.runtime.image });
       sandboxes.set(id, state);
       return cloneSandboxHandle(handle);
@@ -82,8 +85,10 @@ export function createLocalDevSandboxProvider(): LocalDevSandboxProvider {
       policy: SandboxPolicy
     ): Promise<SandboxHandle> {
       const state = load(sandboxId);
-      if (policy.network.egress === "allowlist") {
-        throw new Error("local-dev does not support egress allowlists");
+      if (policy.network.egress !== "open") {
+        throw new Error(
+          "local-dev does not support enforced egress policies"
+        );
       }
       state.handle = {
         ...state.handle,
@@ -95,20 +100,10 @@ export function createLocalDevSandboxProvider(): LocalDevSandboxProvider {
 
     async bindCredentials(
       sandboxId: string,
-      credentials: SandboxCredentialBinding[]
+      _credentials: SandboxCredentialBinding[]
     ): Promise<SandboxHandle> {
-      const state = load(sandboxId);
-      if (credentials.length > 0) {
-        throw new Error("local-dev does not support credential binding");
-      }
-      state.handle = {
-        ...state.handle,
-        credentials: credentials.map(cloneSandboxCredentialBinding)
-      };
-      recordEvent(state, "credentials_bound", {
-        names: credentials.map((credential) => credential.name)
-      });
-      return cloneSandboxHandle(state.handle);
+      load(sandboxId);
+      throw new Error("local-dev does not support credential binding");
     },
 
     async run(

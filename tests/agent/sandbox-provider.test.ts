@@ -6,12 +6,14 @@ import {
   createOpenShellSandboxProvider,
   type OpenShellSandboxClient
 } from "../../src/agent/sandbox-providers/openshell";
-import type {
-  SandboxCredentialBinding,
-  SandboxEvent,
-  SandboxHandle,
-  SandboxPolicy,
-  SandboxProvider
+import {
+  cloneSandboxEvent,
+  cloneSandboxEventDetail,
+  type SandboxCredentialBinding,
+  type SandboxEvent,
+  type SandboxHandle,
+  type SandboxPolicy,
+  type SandboxProvider
 } from "../../src/agent/sandbox-provider";
 
 describe("SandboxProvider conformance", () => {
@@ -55,6 +57,58 @@ describe("SandboxProvider OpenShell boundary", () => {
       );
 
     expect(violations).toEqual([]);
+  });
+});
+
+describe("LocalDevSandboxProvider", () => {
+  test("does not retain mutable provision request objects as sandbox state", async () => {
+    const provider = createLocalDevSandboxProvider();
+    const request = {
+      principal: { workspaceId: "T123", userId: "U123" },
+      runtime: { engine: "hermes" as const, image: "burble-runtime:dev" },
+      labels: { jobId: "job-123", tier: "dev" }
+    };
+
+    const sandbox = await provider.provision(request);
+    request.principal.userId = "other-user";
+    request.runtime.image = "mutated-image";
+    request.labels.tier = "admin";
+
+    const attached = await provider.attach(sandbox.id);
+
+    expect(attached.principal).toEqual({ workspaceId: "T123", userId: "U123" });
+    expect(attached.runtime).toEqual({
+      engine: "hermes",
+      image: "burble-runtime:dev"
+    });
+    expect(attached.labels).toEqual({ jobId: "job-123", tier: "dev" });
+  });
+
+  test("deep-clones event detail when recording and streaming", async () => {
+    const provider = createLocalDevSandboxProvider();
+    const sandbox = await provider.provision({
+      principal: { workspaceId: "T123", userId: "U123" },
+      runtime: { engine: "hermes", image: "burble-runtime:dev" },
+      labels: {}
+    });
+    const argv = ["echo", "ready"];
+
+    await provider.run(sandbox.id, { argv });
+    argv[0] = "mutated";
+
+    const firstStream = await collectEvents(provider.streamEvents(sandbox.id));
+    const started = firstStream.find((event) => event.type === "run_started");
+    expect(started?.detail?.argv).toEqual(["echo", "ready"]);
+
+    if (Array.isArray(started?.detail?.argv)) {
+      started.detail.argv[0] = "stream-mutated";
+    }
+
+    const secondStream = await collectEvents(provider.streamEvents(sandbox.id));
+    const startedAgain = secondStream.find(
+      (event) => event.type === "run_started"
+    );
+    expect(startedAgain?.detail?.argv).toEqual(["echo", "ready"]);
   });
 });
 
@@ -251,7 +305,12 @@ function runSandboxProviderConformance(input: {
       // TODO(S3): verify disallowed egress is blocked against real OpenShell.
     } else {
       await expect(provider.applyPolicy(sandbox.id, policy)).rejects.toThrow(
-        "does not support egress allowlists"
+        "does not support enforced egress policies"
+      );
+      await expect(
+        provider.applyPolicy(sandbox.id, { network: { egress: "deny" } })
+      ).rejects.toThrow(
+        "does not support enforced egress policies"
       );
     }
 
@@ -276,6 +335,9 @@ function runSandboxProviderConformance(input: {
       await expect(
         provider.bindCredentials(sandbox.id, credentials)
       ).rejects.toThrow("does not support credential binding");
+      await expect(provider.bindCredentials(sandbox.id, [])).rejects.toThrow(
+        "does not support credential binding"
+      );
     }
 
     const run = await provider.run(sandbox.id, {
@@ -376,7 +438,7 @@ function createFakeOpenShellClient(options?: {
       sandboxId,
       type,
       at: new Date(eventSequence++).toISOString(),
-      ...(detail ? { detail } : {})
+      ...(detail ? { detail: cloneSandboxEventDetail(detail) } : {})
     });
     events.set(sandboxId, sandboxEvents);
   };
@@ -471,7 +533,7 @@ async function* streamEvents(
   events: SandboxEvent[]
 ): AsyncIterable<SandboxEvent> {
   for (const event of events) {
-    yield { ...event };
+    yield cloneSandboxEvent(event);
   }
 }
 

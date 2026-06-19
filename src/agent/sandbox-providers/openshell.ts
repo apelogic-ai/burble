@@ -144,9 +144,9 @@ function handleFromRecord(record: OpenShellSandboxRecord): SandboxHandle {
     status: record.status,
     endpointUrl: record.endpoint,
     workspacePath: record.workspacePath,
-    principal: record.principal,
-    runtime: record.runtime,
-    labels: record.labels,
+    principal: { ...record.principal },
+    runtime: { ...record.runtime },
+    labels: { ...record.labels },
     ...(record.policy ? { policy: clonePolicy(record.policy) } : {}),
     credentials: record.credentials.map(cloneSandboxCredentialBinding)
   };

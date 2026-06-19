@@ -138,6 +138,27 @@ export function cloneSandboxCredentialBinding(
 export function cloneSandboxEvent(event: SandboxEvent): SandboxEvent {
   return {
     ...event,
-    ...(event.detail ? { detail: { ...event.detail } } : {})
+    ...(event.detail ? { detail: cloneSandboxEventDetail(event.detail) } : {})
   };
+}
+
+export function cloneSandboxEventDetail(
+  detail: Record<string, unknown>
+): Record<string, unknown> {
+  return cloneEventDetailValue(detail) as Record<string, unknown>;
+}
+
+function cloneEventDetailValue(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map(cloneEventDetailValue);
+  }
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>).map(([key, entry]) => [
+        key,
+        cloneEventDetailValue(entry)
+      ])
+    );
+  }
+  return value;
 }
