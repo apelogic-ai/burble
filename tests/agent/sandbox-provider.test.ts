@@ -50,7 +50,7 @@ describe("SandboxProvider conformance", () => {
 describe("SandboxProvider OpenShell boundary", () => {
   test("does not import OpenShell adapter details outside its adapter package", () => {
     const violations = sourceFiles(join(import.meta.dir, "../../src"))
-      .filter((path) => !path.includes("/agent/sandbox-providers/openshell.ts"))
+      .filter((path) => !path.includes("/agent/sandbox-providers/"))
       .flatMap((path) =>
         importSpecifiers(path)
           .filter((specifier) => /openshell/i.test(specifier))

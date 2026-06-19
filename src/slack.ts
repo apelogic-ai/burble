@@ -98,6 +98,10 @@ import {
 import { validateAgentModelId } from "./agent/providers";
 import { selectRuntimeToolGroups } from "./agent/tool-groups";
 import { createDockerRuntimeFactory } from "./agent/container-runtime-factory";
+import { createSandboxRuntimeFactory } from "./agent/sandbox-runtime-factory";
+import type { SandboxRuntimeFetch } from "./agent/sandbox-runtime-factory";
+import type { SandboxProvider } from "./agent/sandbox-provider";
+import { modelProviderUrlsForRuntimeModel } from "./agent/runtime-env";
 import {
   buildRuntimeManifestForPrincipal,
   RuntimeEngineSelectionError,
@@ -138,6 +142,13 @@ export type SlackRuntime = {
   app: App;
   runtimeFactory?: RuntimeFactory;
   getSlackEmail: (userId: string) => Promise<string>;
+};
+
+export type SlackRuntimeOptions = {
+  sandboxProvider?: SandboxProvider;
+  sandboxStartCommand?: string[];
+  sandboxModelProviderUrls?: string[];
+  sandboxFetch?: SandboxRuntimeFetch;
 };
 
 type SlackDirectMessageEvent = {
@@ -246,7 +257,8 @@ export function createSlackRuntime(
   config: Config,
   store: TokenStore,
   runtimeJwtIssuer?: RuntimeJwtIssuer,
-  observability: ObservabilitySink = createNoopObservabilitySink()
+  observability: ObservabilitySink = createNoopObservabilitySink(),
+  options: SlackRuntimeOptions = {}
 ): SlackRuntime {
   const app = new App({
     token: config.slackBotToken,
@@ -335,7 +347,8 @@ export function createSlackRuntime(
   const runtimeFactory = createManagedRuntimeFactory(
     config,
     store,
-    runtimeJwtIssuer
+    runtimeJwtIssuer,
+    options
   );
   const agentRunner =
     config.agentMode === "llm"
@@ -1797,22 +1810,36 @@ export async function readAgentConfigFile(
   }
 }
 
-function createManagedRuntimeFactory(
+export function createManagedRuntimeFactory(
   config: Config,
   store: TokenStore,
-  runtimeJwtIssuer?: RuntimeJwtIssuer
+  runtimeJwtIssuer?: RuntimeJwtIssuer,
+  options: SlackRuntimeOptions = {}
 ): RuntimeFactory | undefined {
   if (config.agentRuntime !== "burble-runtime") {
     return undefined;
   }
 
   if (
-    config.agentRuntimeFactory === "docker" &&
+    (config.agentRuntimeFactory === "docker" ||
+      config.agentRuntimeFactory === "sandbox") &&
     !config.agentRuntimeTokenSecret
   ) {
     throw new Error(
-      "AGENT_RUNTIME_TOKEN_SECRET or INTERNAL_API_TOKEN is required for docker runtime factory"
+      "AGENT_RUNTIME_TOKEN_SECRET or INTERNAL_API_TOKEN is required for managed runtime factories"
     );
+  }
+  if (config.agentRuntimeFactory === "sandbox") {
+    if (!options.sandboxProvider) {
+      throw new Error(
+        "AGENT_RUNTIME_FACTORY=sandbox requires an injected SandboxProvider"
+      );
+    }
+    if (!options.sandboxStartCommand?.length) {
+      throw new Error(
+        "AGENT_RUNTIME_FACTORY=sandbox requires a sandbox start command"
+      );
+    }
   }
   if (config.agentRuntimeFactory === "static" && !config.managedRuntimeUrl) {
     return undefined;
@@ -1850,6 +1877,27 @@ function createManagedRuntimeFactory(
             env: Bun.env,
             buildManifest
           })
+        : config.agentRuntimeFactory === "sandbox"
+          ? createSandboxRuntimeFactory({
+              store,
+              sandboxProvider: options.sandboxProvider!,
+              engine,
+              image: runtimeImageForEngine(config, engine),
+              toolGatewayUrl: config.agentRuntimeToolGatewayUrl,
+              mcpGatewayUrl: config.agentRuntimeMcpGatewayUrl,
+              mcpAudience: config.agentRuntimeMcpAudience,
+              modelProviderUrls:
+                options.sandboxModelProviderUrls ??
+                modelProviderUrlsForRuntimeModel(config.aiModel, Bun.env),
+              runtimeJwtIssuer,
+              runtimeJwtTtlSeconds: config.agentRuntimeJwtTtlSeconds,
+              runtimeTokenSecret: config.agentRuntimeTokenSecret ?? "",
+              idleTtlMs: config.agentRuntimeIdleTtlMs,
+              startCommand: options.sandboxStartCommand!,
+              fetch: options.sandboxFetch,
+              env: Bun.env,
+              buildManifest
+            })
         : createStaticRuntimeFactory({
             store,
             engine,

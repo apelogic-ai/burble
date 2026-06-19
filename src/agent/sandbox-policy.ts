@@ -66,11 +66,16 @@ function sandboxHostFromUrl(value: string | null | undefined): string[] {
     url = new URL(trimmed);
   } catch {
     throw new Error(
-      `Sandbox egress URL must be an absolute http/https URL: ${value}`
+      `Sandbox egress URL must be an absolute http/https/ws/wss URL: ${value}`
     );
   }
-  if (url.protocol !== "http:" && url.protocol !== "https:") {
-    throw new Error(`Sandbox egress URL must use http or https: ${value}`);
+  if (
+    url.protocol !== "http:" &&
+    url.protocol !== "https:" &&
+    url.protocol !== "ws:" &&
+    url.protocol !== "wss:"
+  ) {
+    throw new Error(`Sandbox egress URL must use http, https, ws, or wss: ${value}`);
   }
   return [url.host.toLowerCase()];
 }

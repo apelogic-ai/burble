@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, createHmac } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import type {
   AgentRuntimeEngine,
@@ -154,4 +154,18 @@ export function buildRuntimeDataId(
 
 export function hashRuntimeToken(token: string): string {
   return createHash("sha256").update(token).digest("hex");
+}
+
+export function deriveRuntimeToken(input: {
+  secret: string;
+  principal: PrincipalId;
+  engine: AgentRuntimeEngine;
+}): string {
+  const digest = createHmac("sha256", input.secret)
+    .update(
+      `${input.principal.workspaceId}:${input.principal.slackUserId}:${input.engine}`
+    )
+    .digest("hex");
+
+  return `burble_rt_${digest}`;
 }

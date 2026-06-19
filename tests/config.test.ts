@@ -51,6 +51,9 @@ describe("readConfig", () => {
       agentRuntimeToolGatewayUrl: "http://burble-app:3000/internal/tools",
       agentRuntimeMcpGatewayUrl: null,
       agentRuntimeMcpAudience: null,
+      agentRuntimeSandboxUrl: null,
+      agentRuntimeSandboxToken: null,
+      agentRuntimeSandboxStartCommand: null,
       agentRuntimeStreaming: "native",
       atlassianMcpUrl: "https://mcp.atlassian.com/v1/mcp",
       runtimeJwtIssuer: "https://example.ngrok-free.app",
@@ -202,6 +205,40 @@ describe("readConfig", () => {
     expect(config.runtimeJwtIssuer).toBe("http://burble-app:3000");
     expect(config.runtimeJwtPrivateKeyPath).toBe("/data/runtime-jwt-private.pem");
     expect(config.openClawConfigPatchHostPath).toBe("/srv/burble/runtime-patches");
+  });
+
+  test("allows sandbox runtime factory override", () => {
+    const config = readConfig({
+      ...validEnv,
+      AGENT_RUNTIME_FACTORY: "sandbox",
+      AGENT_RUNTIME_TOKEN_SECRET: "runtime-secret",
+      AGENT_RUNTIME_SANDBOX_URL: "https://openshell.example.test/",
+      AGENT_RUNTIME_SANDBOX_TOKEN: "sandbox-token",
+      AGENT_RUNTIME_SANDBOX_START_COMMAND: '["bun","src/index.ts"]'
+    });
+
+    expect(config.agentRuntimeFactory).toBe("sandbox");
+    expect(config.agentRuntimeMcpGatewayUrl).toBe("http://burble-app:3000/mcp");
+    expect(config.agentRuntimeTokenSecret).toBe("runtime-secret");
+    expect(config.agentRuntimeSandboxUrl).toBe("https://openshell.example.test");
+    expect(config.agentRuntimeSandboxToken).toBe("sandbox-token");
+    expect(config.agentRuntimeSandboxStartCommand).toEqual([
+      "bun",
+      "src/index.ts"
+    ]);
+  });
+
+  test("parses whitespace-separated sandbox start commands", () => {
+    const config = readConfig({
+      ...validEnv,
+      AGENT_RUNTIME_FACTORY: "sandbox",
+      AGENT_RUNTIME_SANDBOX_START_COMMAND: "bun src/index.ts"
+    });
+
+    expect(config.agentRuntimeSandboxStartCommand).toEqual([
+      "bun",
+      "src/index.ts"
+    ]);
   });
 
   test("defaults to the Hermes runtime image for Hermes engine", () => {
@@ -384,7 +421,9 @@ describe("readConfig", () => {
   test("rejects invalid runtime factories", () => {
     expect(() =>
       readConfig({ ...validEnv, AGENT_RUNTIME_FACTORY: "kubernetes" })
-    ).toThrow("Environment variable AGENT_RUNTIME_FACTORY must be one of static, docker");
+    ).toThrow(
+      "Environment variable AGENT_RUNTIME_FACTORY must be one of static, docker, sandbox"
+    );
   });
 
   test("rejects invalid runtime reaper enabled values", () => {

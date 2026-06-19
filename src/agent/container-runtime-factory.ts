@@ -1,8 +1,8 @@
-import { createHmac } from "node:crypto";
 import type { AgentRuntimeEngine, TokenStore } from "../db";
 import type { RuntimeJwtIssuer } from "../runtime-jwt";
 import {
   buildRuntimeDataId,
+  deriveRuntimeToken,
   hashRuntimeToken,
   nativeAgentConfigFileName,
   type RuntimeConfigRead,
@@ -16,6 +16,7 @@ import {
   runtimeHealthCheckAttempts
 } from "./runtime-descriptors";
 import type { RuntimeManifest } from "./runtime-manifest";
+import { collectApprovedRuntimeEnv } from "./runtime-env";
 
 export type RuntimeCommandResult = {
   code: number;
@@ -38,67 +39,6 @@ export type ContainerRuntimeSpec = {
   env: Record<string, string>;
   volumes: Array<{ source: string; target: string; readonly?: boolean }>;
 };
-
-const approvedForwardedEnv = new Set([
-  "AI_MODEL",
-  "OPENAI_API_KEY",
-  "OPENAI_BASE_URL",
-  "OPENROUTER_API_KEY",
-  "GOOGLE_API_KEY",
-  "GEMINI_API_KEY",
-  "ANTHROPIC_API_KEY",
-  "OLLAMA_API_KEY",
-  "OLLAMA_BASE_URL",
-  "OLLAMA_OPENAI_BASE_URL",
-  "BURBLE_RUNTIME_CONTRACT_PROBE",
-  "OPENCLAW_TIMEOUT_MS",
-  "OPENCLAW_STREAM_DEBUG",
-  "OPENCLAW_LOG_LEVEL",
-  "OPENCLAW_DIAGNOSTICS",
-  "OPENCLAW_DEBUG_MODEL_TRANSPORT",
-  "OPENCLAW_DEBUG_MODEL_PAYLOAD",
-  "OPENCLAW_DEBUG_SSE",
-  "OPENCLAW_DEBUG_CODE_MODE",
-  "OPENCLAW_FAST_MODE",
-  "OPENCLAW_RAW_STREAM_DEBUG",
-  "OPENCLAW_GATEWAY_PORT",
-  "OPENCLAW_GATEWAY_BIND",
-  "OPENCLAW_GATEWAY_TOKEN",
-  "HERMES_GATEWAY_COMMAND",
-  "HERMES_INFERENCE_MODEL",
-  "HERMES_MODEL",
-  "HERMES_INFERENCE_PROVIDER",
-  "HERMES_RUN_TIMEOUT_SECONDS",
-  "HERMES_PROGRESS_INTERVAL_SECONDS",
-  "HERMES_WEB_BACKEND",
-  "HERMES_WEB_SEARCH_BACKEND",
-  "HERMES_WEB_EXTRACT_BACKEND",
-  "WEB_TOOLS_DEBUG",
-  "EXA_API_KEY",
-  "PARALLEL_API_KEY",
-  "PARALLEL_SEARCH_MODE",
-  "TAVILY_API_KEY",
-  "FIRECRAWL_API_KEY",
-  "FIRECRAWL_API_URL",
-  "FIRECRAWL_GATEWAY_URL",
-  "SEARXNG_URL",
-  "BRAVE_SEARCH_API_KEY",
-  "AGENT_BROWSER_ENGINE",
-  "AGENT_BROWSER_ARGS",
-  "AGENT_BROWSER_EXECUTABLE_PATH",
-  "AGENT_BROWSER_IDLE_TIMEOUT_MS",
-  "BROWSER_INACTIVITY_TIMEOUT",
-  "BROWSER_CDP_URL",
-  "BROWSER_USE_API_KEY",
-  "BROWSERBASE_API_KEY",
-  "BROWSERBASE_PROJECT_ID",
-  "BROWSERBASE_PROXIES",
-  "BROWSERBASE_ADVANCED_STEALTH",
-  "BROWSERBASE_KEEP_ALIVE",
-  "BROWSERBASE_SESSION_TIMEOUT",
-  "HERMES_BROWSER_ENGINE",
-  "HERMES_BROWSER_CLOUD_PROVIDER"
-]);
 
 export function createDockerRuntimeFactory(input: {
   store: TokenStore;
@@ -500,12 +440,7 @@ export function buildContainerRuntimeSpec(input: {
     env.BURBLE_RUNTIME_JWT = input.runtimeJwt;
   }
 
-  for (const key of approvedForwardedEnv) {
-    const value = input.env?.[key]?.trim();
-    if (value) {
-      env[key] = value;
-    }
-  }
+  Object.assign(env, collectApprovedRuntimeEnv(input.env ?? {}));
   if (input.manifest?.model) {
     const modelId = `${input.manifest.model.provider}:${input.manifest.model.model}`;
     env.AI_MODEL = modelId;
@@ -543,19 +478,7 @@ export function buildContainerRuntimeSpec(input: {
   };
 }
 
-export function deriveRuntimeToken(input: {
-  secret: string;
-  principal: PrincipalId;
-  engine: AgentRuntimeEngine;
-}): string {
-  const digest = createHmac("sha256", input.secret)
-    .update(
-      `${input.principal.workspaceId}:${input.principal.slackUserId}:${input.engine}`
-    )
-    .digest("hex");
-
-  return `burble_rt_${digest}`;
-}
+export { deriveRuntimeToken };
 
 function buildContainerName(runtimeDataId: string): string {
   return `burble-rt-${runtimeDataId}`;

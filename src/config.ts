@@ -45,6 +45,9 @@ export type Config = {
   agentRuntimeToolGatewayUrl: string;
   agentRuntimeMcpGatewayUrl: string | null;
   agentRuntimeMcpAudience: string | null;
+  agentRuntimeSandboxUrl: string | null;
+  agentRuntimeSandboxToken: string | null;
+  agentRuntimeSandboxStartCommand: string[] | null;
   agentRuntimeStreaming?: AgentRuntimeStreamingMode;
   atlassianMcpUrl: string;
   runtimeJwtIssuer: string;
@@ -60,13 +63,13 @@ type Env = Record<string, string | undefined>;
 export type SlackLogLevel = "debug" | "info" | "warn" | "error";
 export type AgentMode = "deterministic" | "llm";
 export type AgentRuntime = "ai-sdk" | "burble-runtime";
-export type AgentRuntimeFactory = "static" | "docker";
+export type AgentRuntimeFactory = "static" | "docker" | "sandbox";
 export type OpenClawNemoClawEngine = AgentRuntimeEngine;
 export type AgentRuntimeStreamingMode = "off" | "basic" | "native";
 const slackLogLevels = ["debug", "info", "warn", "error"] as const;
 const agentModes = ["deterministic", "llm"] as const;
 const agentRuntimes = ["ai-sdk", "burble-runtime"] as const;
-const agentRuntimeFactories = ["static", "docker"] as const;
+const agentRuntimeFactories = ["static", "docker", "sandbox"] as const;
 const agentRuntimeStreamingModes = ["off", "basic", "native"] as const;
 export const agentRuntimeEngines = runtimeEngines;
 
@@ -249,6 +252,37 @@ function optionalUrlEnv(env: Env, name: string): string | null {
   return value ? value.replace(/\/+$/, "") : null;
 }
 
+function optionalCommandEnv(env: Env, name: string): string[] | null {
+  const raw = env[name]?.trim();
+  if (!raw) {
+    return null;
+  }
+
+  if (raw.startsWith("[")) {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(raw);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      throw new Error(
+        `Environment variable ${name} must be a JSON string array or whitespace-separated command: ${message}`
+      );
+    }
+    if (
+      !Array.isArray(parsed) ||
+      parsed.length === 0 ||
+      parsed.some((value) => typeof value !== "string" || value.trim() === "")
+    ) {
+      throw new Error(
+        `Environment variable ${name} must be a non-empty JSON string array`
+      );
+    }
+    return parsed;
+  }
+
+  return raw.split(/\s+/).filter(Boolean);
+}
+
 export function readConfig(env: Env): Config {
   const baseUrl = requiredEnv(env, "BASE_URL").replace(/\/+$/, "");
   const internalApiToken = optionalSecretEnv(env, "INTERNAL_API_TOKEN");
@@ -263,7 +297,9 @@ export function readConfig(env: Env): Config {
     "static"
   );
   const defaultAgentRuntimeMcpGatewayUrl =
-    agentRuntimeFactory === "docker" ? "http://burble-app:3000/mcp" : null;
+    agentRuntimeFactory === "docker" || agentRuntimeFactory === "sandbox"
+      ? "http://burble-app:3000/mcp"
+      : null;
   const agentRuntimeMcpGatewayUrl =
     optionalUrlEnv(env, "AGENT_RUNTIME_MCP_GATEWAY_URL") ??
     defaultAgentRuntimeMcpGatewayUrl;
@@ -338,6 +374,15 @@ export function readConfig(env: Env): Config {
     agentRuntimeMcpAudience:
       optionalUrlEnv(env, "AGENT_RUNTIME_MCP_AUDIENCE") ??
       agentRuntimeMcpGatewayUrl,
+    agentRuntimeSandboxUrl: optionalUrlEnv(env, "AGENT_RUNTIME_SANDBOX_URL"),
+    agentRuntimeSandboxToken: optionalSecretEnv(
+      env,
+      "AGENT_RUNTIME_SANDBOX_TOKEN"
+    ),
+    agentRuntimeSandboxStartCommand: optionalCommandEnv(
+      env,
+      "AGENT_RUNTIME_SANDBOX_START_COMMAND"
+    ),
     agentRuntimeStreaming: optionalAgentRuntimeStreamingModeEnv(
       env,
       "AGENT_RUNTIME_STREAMING",

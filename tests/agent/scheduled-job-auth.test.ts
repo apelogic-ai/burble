@@ -16,6 +16,7 @@ const runtime: AgentRuntimeRecord = {
   statePath: "/data/runtime/state",
   configPath: "/data/runtime/config/hermes.yaml",
   workspacePath: "/data/runtime/workspace",
+  sandboxId: null,
   status: "ready",
   policyHash: "policy-a",
   createdAt: "2026-06-01T00:00:00.000Z",
