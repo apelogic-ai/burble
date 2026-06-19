@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type { AgentRuntimeEngine, TokenStore } from "../db";
 import type { RuntimeJwtIssuer } from "../runtime-jwt";
 import { buildBrokeredRuntimeSandboxPolicy } from "./sandbox-policy";
@@ -122,7 +123,10 @@ export function createSandboxRuntimeFactory(input: {
           manifest
         })) ??
         buildDefaultSandboxPolicy(input, manifest);
-      await input.sandboxProvider.applyPolicy(attached.id, policy);
+      const policyHash = sandboxRuntimePolicyHash(manifest, policy);
+      if (existing.policyHash !== policyHash) {
+        await input.sandboxProvider.applyPolicy(attached.id, policy);
+      }
       const updated = input.store.getOrCreateAgentRuntime({
         workspaceId: principal.workspaceId,
         slackUserId: principal.slackUserId,
@@ -133,7 +137,7 @@ export function createSandboxRuntimeFactory(input: {
         configPath: paths.configPath,
         workspacePath: attached.workspacePath,
         sandboxId: attached.id,
-        policyHash: manifest?.policyHash ?? null
+        policyHash
       });
       await waitForSandboxRuntimeHealth({
         endpointUrl: attached.endpointUrl,
@@ -169,7 +173,13 @@ export function createSandboxRuntimeFactory(input: {
       }
     });
     const paths = sandboxRuntimePaths(sandbox.workspacePath, input.engine);
-    const runtime = input.store.getOrCreateAgentRuntime({
+    const defaultPolicy = input.buildPolicy
+      ? null
+      : buildDefaultSandboxPolicy(input, manifest);
+    const defaultPolicyHash = defaultPolicy
+      ? sandboxRuntimePolicyHash(manifest, defaultPolicy)
+      : null;
+    let runtime = input.store.getOrCreateAgentRuntime({
       workspaceId: principal.workspaceId,
       slackUserId: principal.slackUserId,
       engine: input.engine,
@@ -179,7 +189,7 @@ export function createSandboxRuntimeFactory(input: {
       configPath: paths.configPath,
       workspacePath: sandbox.workspacePath,
       sandboxId: sandbox.id,
-      policyHash: manifest?.policyHash ?? null
+      policyHash: defaultPolicyHash ?? manifest?.policyHash ?? null
     });
     const context = {
       principal,
@@ -200,7 +210,24 @@ export function createSandboxRuntimeFactory(input: {
         : null;
     const policy =
       (await input.buildPolicy?.(context)) ??
+      defaultPolicy ??
       buildDefaultSandboxPolicy(input, manifest);
+    const policyHash =
+      defaultPolicyHash ?? sandboxRuntimePolicyHash(manifest, policy);
+    if (runtime.policyHash !== policyHash) {
+      runtime = input.store.getOrCreateAgentRuntime({
+        workspaceId: principal.workspaceId,
+        slackUserId: principal.slackUserId,
+        engine: input.engine,
+        endpointUrl: sandbox.endpointUrl,
+        authTokenHash: hashRuntimeToken(token),
+        statePath: paths.statePath,
+        configPath: paths.configPath,
+        workspacePath: sandbox.workspacePath,
+        sandboxId: sandbox.id,
+        policyHash
+      });
+    }
     const credentials = (await input.buildCredentials?.(context)) ?? [];
 
     input.store.recordAgentRuntimeEvent({
@@ -210,7 +237,7 @@ export function createSandboxRuntimeFactory(input: {
         engine: input.engine,
         image: input.image,
         sandboxId: sandbox.id,
-        ...(manifest ? { policyHash: manifest.policyHash } : {})
+        policyHash
       }
     });
     input.store.updateAgentRuntimeStatus(runtime.id, {
@@ -439,6 +466,40 @@ function buildDefaultSandboxPolicy(
   });
 }
 
+function sandboxRuntimePolicyHash(
+  manifest: RuntimeManifest | null | undefined,
+  policy: SandboxPolicy
+): string {
+  return createHash("sha256")
+    .update(
+      JSON.stringify(
+        sortJson({
+          manifestPolicyHash: manifest?.policyHash ?? null,
+          sandboxPolicy: policy
+        })
+      )
+    )
+    .digest("hex");
+}
+
+function sortJson(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map(sortJson);
+  }
+  if (!isRecord(value)) {
+    return value;
+  }
+  return Object.fromEntries(
+    Object.entries(value)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, entry]) => [key, sortJson(entry)])
+  );
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
 function buildSandboxRuntimeEnv(input: {
   engine: AgentRuntimeEngine;
   toolGatewayUrl: string;
@@ -453,6 +514,9 @@ function buildSandboxRuntimeEnv(input: {
   const configPath = `${container.dataRootTarget}/config/${container.configFileName}`;
   const env: Record<string, string> = {
     BURBLE_TOOL_GATEWAY_URL: input.toolGatewayUrl,
+    // Deliberate S3 backstop: the legacy tool gateway still uses this
+    // symmetric runtime token in-env. MCP uses the scoped JWT below; moving
+    // tool-gateway auth to that model is a separate credential-boundary step.
     BURBLE_INTERNAL_TOKEN: input.runtimeToken,
     BURBLE_RUNTIME_ID: input.runtimeId,
     AGENT_RUNTIME_ENGINE: input.engine,

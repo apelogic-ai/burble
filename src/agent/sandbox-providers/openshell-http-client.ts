@@ -138,9 +138,15 @@ export function createOpenShellHttpSandboxClient(
       if (options.token) {
         headers.set("authorization", `Bearer ${options.token}`);
       }
-      const response = await requestFetch(
+      const response = await fetchWithTimeout(
+        requestFetch,
         `${baseUrl}/sandboxes/${encodeURIComponent(input.sandboxId)}/events`,
-        { headers }
+        { headers },
+        {
+          method: "GET",
+          path: `/sandboxes/${input.sandboxId}/events`,
+          timeoutMs: 0
+        }
       );
       if (!response.ok) {
         throw openShellHttpError(
@@ -149,7 +155,9 @@ export function createOpenShellHttpSandboxClient(
           response.status
         );
       }
-      for await (const event of parseEventResponse(response)) {
+      // TODO(S3): stream incrementally when a lifecycle event consumer exists.
+      const text = await response.text();
+      for (const event of parseEventText(text)) {
         yield coerceSandboxEvent(input.sandboxId, event);
       }
     },
@@ -287,50 +295,6 @@ function coerceSandboxEvent(
       ? { detail: record.detail as Record<string, unknown> }
       : {})
   };
-}
-
-async function* parseEventResponse(response: Response): AsyncIterable<unknown> {
-  if (!response.body) {
-    yield* parseEventText(await response.text());
-    return;
-  }
-
-  const reader = response.body.getReader();
-  const decoder = new TextDecoder();
-  let buffered = "";
-  try {
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) {
-        break;
-      }
-      buffered += decoder.decode(value, { stream: true });
-      const lines = buffered.split(/\r?\n/);
-      buffered = lines.pop() ?? "";
-      for (const line of lines) {
-        const event = parseEventLine(line);
-        if (event !== undefined) {
-          yield event;
-        }
-      }
-    }
-    buffered += decoder.decode();
-    const trimmed = buffered.trim();
-    if (trimmed.startsWith("[")) {
-      for (const event of parseEventText(trimmed)) {
-        yield event;
-      }
-      return;
-    }
-    for (const line of buffered.split(/\r?\n/)) {
-      const event = parseEventLine(line);
-      if (event !== undefined) {
-        yield event;
-      }
-    }
-  } finally {
-    reader.releaseLock();
-  }
 }
 
 function parseEventText(text: string): unknown[] {

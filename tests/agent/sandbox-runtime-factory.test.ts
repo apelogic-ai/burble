@@ -84,7 +84,8 @@ describe("createSandboxRuntimeFactory", () => {
     expect(handle.manifest?.policyHash).toBe("policy-hash");
     expect(stored?.sandboxId).toBe("sandbox-1");
     expect(stored?.authTokenHash).not.toContain("runtime-secret");
-    expect(stored?.policyHash).toBe("policy-hash");
+    expect(stored?.policyHash).toMatch(/^[0-9a-f]{64}$/);
+    expect(stored?.policyHash).not.toBe("policy-hash");
     expect(provider.provisionCalls).toHaveLength(1);
     expect(provider.policyCalls).toEqual([
       {
@@ -243,6 +244,7 @@ describe("createSandboxRuntimeFactory", () => {
     });
 
     const first = await factory.getOrCreateRuntime(principal);
+    const firstPolicyHash = store.getAgentRuntime(first.id)?.policyHash;
     policyHash = "policy-b";
     const second = await factory.getOrCreateRuntime(principal);
 
@@ -252,7 +254,9 @@ describe("createSandboxRuntimeFactory", () => {
     expect(provider.attachCalls).toEqual(["sandbox-1"]);
     expect(provider.runCalls).toHaveLength(1);
     expect(provider.policyCalls).toHaveLength(2);
-    expect(store.getAgentRuntime(first.id)?.policyHash).toBe("policy-b");
+    expect(store.getAgentRuntime(first.id)?.policyHash).not.toBe(
+      firstPolicyHash
+    );
 
     store.close();
   });
@@ -299,8 +303,11 @@ describe("createSandboxRuntimeFactory", () => {
     });
 
     const first = await factory.getOrCreateRuntime(principal);
+    const firstPolicyHash = store.getAgentRuntime(first.id)?.policyHash;
     env.BRAVE_SEARCH_API_KEY = "brave-key";
     const second = await factory.getOrCreateRuntime(principal);
+    const secondPolicyHash = store.getAgentRuntime(first.id)?.policyHash;
+    await factory.getOrCreateRuntime(principal);
 
     expect(second.id).toBe(first.id);
     expect(provider.provisionCalls).toHaveLength(1);
@@ -308,7 +315,8 @@ describe("createSandboxRuntimeFactory", () => {
     expect(provider.policyCalls[1].policy.network.allowedHosts).toContain(
       "api.search.brave.com"
     );
-    expect(store.getAgentRuntime(first.id)?.policyHash).toBe("same-policy");
+    expect(secondPolicyHash).not.toBe(firstPolicyHash);
+    expect(store.getAgentRuntime(first.id)?.policyHash).toBe(secondPolicyHash);
 
     store.close();
   });
