@@ -1,7 +1,72 @@
 import { describe, expect, test } from "bun:test";
 import {
+  buildBrokeredRuntimeSandboxPolicy,
+  sandboxAllowedHostsFromUrls
+} from "../../src/agent/sandbox-policy";
+import {
   compileOpenShellSandboxPolicy
 } from "../../src/agent/sandbox-providers/openshell-policy";
+
+describe("brokered runtime sandbox policy", () => {
+  test("derives the neutral egress allowlist from gateway URLs", () => {
+    const policy = buildBrokeredRuntimeSandboxPolicy({
+      toolGatewayUrl: "http://burble-app:3000/internal/tools",
+      mcpGatewayUrl: "http://agentgateway:3000/mcp/",
+      modelProviderUrls: ["https://api.openai.com/v1", "https://api.openai.com"],
+      filesystem: {
+        readOnlyPaths: ["/data/runtime/config"],
+        readWritePaths: ["/data/runtime/workspace"]
+      },
+      resources: {
+        cpuCount: 2,
+        memoryMb: 2048
+      },
+      maxLifetimeMs: 86_400_000
+    });
+
+    expect(policy).toEqual({
+      network: {
+        egress: "allowlist",
+        allowedHosts: [
+          "agentgateway:3000",
+          "api.openai.com",
+          "burble-app:3000"
+        ]
+      },
+      filesystem: {
+        readOnlyPaths: ["/data/runtime/config"],
+        readWritePaths: ["/data/runtime/workspace"]
+      },
+      resources: {
+        cpuCount: 2,
+        memoryMb: 2048
+      },
+      maxLifetimeMs: 86_400_000
+    });
+
+    expect(compileOpenShellSandboxPolicy({ policy }).egress).toEqual({
+      default: "deny",
+      allowHosts: ["agentgateway:3000", "api.openai.com", "burble-app:3000"]
+    });
+  });
+
+  test("normalizes and validates URL-derived sandbox hosts", () => {
+    expect(
+      sandboxAllowedHostsFromUrls([
+        " HTTP://Burble-App:3000/internal/tools ",
+        null,
+        undefined,
+        "",
+        "https://api.openai.com/v1",
+        "https://API.OPENAI.com/"
+      ])
+    ).toEqual(["api.openai.com", "burble-app:3000"]);
+
+    expect(() => sandboxAllowedHostsFromUrls(["file:///etc/passwd"])).toThrow(
+      "must use http or https"
+    );
+  });
+});
 
 describe("OpenShell sandbox policy compiler", () => {
   test("compiles the neutral sandbox policy into deterministic OpenShell config", () => {
