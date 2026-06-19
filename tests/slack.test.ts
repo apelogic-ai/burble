@@ -47,6 +47,7 @@ import {
   restartAgentRuntimeIfConfigChanged,
   runtimeImageForEngine,
   createSlackDestinationGrantRoute,
+  createManagedRuntimeFactory,
   revokeSlackDestinationGrantRoutes,
   resolveSlackProgressStreamingMode,
   shouldHandleDirectMessageEvent,
@@ -56,6 +57,13 @@ import {
 } from "../src/slack";
 import type { Config } from "../src/config";
 import { createTokenStore } from "../src/db";
+import {
+  cloneSandboxHandle,
+  type SandboxEvent,
+  type SandboxHandle,
+  type SandboxProvider,
+  type SandboxRunHandle
+} from "../src/agent/sandbox-provider";
 import {
   resolveRuntimeEngineForPrincipal,
   RuntimeEngineSelectionError
@@ -109,6 +117,51 @@ const agentConfig: Config = {
   observabilityJsonlDir: null,
   observabilityIncludeContent: false
 };
+
+describe("createManagedRuntimeFactory sandbox mode", () => {
+  test("fails closed when sandbox mode is selected without an injected provider", () => {
+    const store = createTokenStore(":memory:");
+
+    expect(() =>
+      createManagedRuntimeFactory(
+        { ...agentConfig, agentRuntimeFactory: "sandbox" },
+        store
+      )
+    ).toThrow("requires an injected SandboxProvider");
+
+    store.close();
+  });
+
+  test("creates a sandbox-backed runtime factory when dependencies are injected", async () => {
+    const store = createTokenStore(":memory:");
+    const sandboxProvider = createSlackRuntimeSandboxProvider();
+    const runtimeFactory = createManagedRuntimeFactory(
+      { ...agentConfig, agentRuntimeFactory: "sandbox" },
+      store,
+      undefined,
+      {
+        sandboxProvider,
+        sandboxStartCommand: ["runtime-entrypoint"],
+        sandboxFetch: async () => new Response("ok")
+      }
+    );
+
+    const runtime = await runtimeFactory?.getOrCreateRuntime({
+      workspaceId: "T123",
+      slackUserId: "U123"
+    });
+
+    expect(runtime?.endpointUrl).toBe("http://slack-sandbox-1.local:8080");
+    expect(store.getAgentRuntime(runtime?.id ?? "")?.sandboxId).toBe(
+      "slack-sandbox-1"
+    );
+    expect(sandboxProvider.runCommands).toEqual([["runtime-entrypoint"]]);
+    expect(sandboxProvider.policyHosts).toContain("api.openai.com");
+    expect(sandboxProvider.policyHosts).toContain("burble-app:3000");
+
+    store.close();
+  });
+});
 
 describe("formatIssuesMessage", () => {
   test("returns a helpful empty state", () => {
@@ -3242,3 +3295,103 @@ describe("buildReplyThreadTs", () => {
     ).toBe("1710000000.000100");
   });
 });
+
+type SlackRuntimeSandboxProvider = SandboxProvider & {
+  policyHosts: string[];
+  runCommands: string[][];
+};
+
+function createSlackRuntimeSandboxProvider(): SlackRuntimeSandboxProvider {
+  const sandboxes = new Map<string, SandboxHandle>();
+  const policyHosts: string[] = [];
+  const runCommands: string[][] = [];
+  let sequence = 0;
+
+  const load = (sandboxId: string): SandboxHandle => {
+    const sandbox = sandboxes.get(sandboxId);
+    if (!sandbox) {
+      throw new Error(`Sandbox ${sandboxId} was not found`);
+    }
+    return cloneSandboxHandle(sandbox);
+  };
+
+  return {
+    policyHosts,
+    runCommands,
+
+    capabilities() {
+      return {
+        provider: "slack-test-sandbox",
+        isolation: "microvm",
+        supportsEgressAllowlist: true,
+        supportsCredentialBinding: true,
+        supportsDurableSandboxes: true
+      };
+    },
+
+    async provision(request) {
+      sequence += 1;
+      const sandbox: SandboxHandle = {
+        id: `slack-sandbox-${sequence}`,
+        provider: "slack-test-sandbox",
+        status: "ready",
+        endpointUrl: `http://slack-sandbox-${sequence}.local:8080`,
+        workspacePath: `/slack-sandboxes/${sequence}/workspace`,
+        principal: request.principal,
+        runtime: request.runtime,
+        labels: request.labels ?? {},
+        credentials: []
+      };
+      sandboxes.set(sandbox.id, cloneSandboxHandle(sandbox));
+      return cloneSandboxHandle(sandbox);
+    },
+
+    async applyPolicy(sandboxId, policy) {
+      const sandbox = load(sandboxId);
+      if (policy.network.egress === "allowlist") {
+        policyHosts.push(...policy.network.allowedHosts);
+      }
+      const updated = { ...sandbox, policy };
+      sandboxes.set(sandboxId, cloneSandboxHandle(updated));
+      return cloneSandboxHandle(updated);
+    },
+
+    async bindCredentials(sandboxId, credentials) {
+      const sandbox = load(sandboxId);
+      const updated = { ...sandbox, credentials };
+      sandboxes.set(sandboxId, cloneSandboxHandle(updated));
+      return cloneSandboxHandle(updated);
+    },
+
+    async run(sandboxId, request): Promise<SandboxRunHandle> {
+      const sandbox = load(sandboxId);
+      runCommands.push(request.argv);
+      sandboxes.set(
+        sandboxId,
+        cloneSandboxHandle({ ...sandbox, status: "ready" })
+      );
+      return {
+        id: `${sandboxId}-run-1`,
+        sandboxId,
+        status: "finished",
+        exitCode: 0
+      };
+    },
+
+    async attach(sandboxId) {
+      return load(sandboxId);
+    },
+
+    async *streamEvents(_sandboxId): AsyncIterable<SandboxEvent> {
+      // Slack runtime construction does not consume sandbox events.
+    },
+
+    async terminate(sandboxId) {
+      const sandbox = load(sandboxId);
+      sandboxes.set(
+        sandboxId,
+        cloneSandboxHandle({ ...sandbox, status: "terminated" })
+      );
+    }
+  };
+}

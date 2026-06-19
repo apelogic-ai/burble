@@ -60,13 +60,13 @@ type Env = Record<string, string | undefined>;
 export type SlackLogLevel = "debug" | "info" | "warn" | "error";
 export type AgentMode = "deterministic" | "llm";
 export type AgentRuntime = "ai-sdk" | "burble-runtime";
-export type AgentRuntimeFactory = "static" | "docker";
+export type AgentRuntimeFactory = "static" | "docker" | "sandbox";
 export type OpenClawNemoClawEngine = AgentRuntimeEngine;
 export type AgentRuntimeStreamingMode = "off" | "basic" | "native";
 const slackLogLevels = ["debug", "info", "warn", "error"] as const;
 const agentModes = ["deterministic", "llm"] as const;
 const agentRuntimes = ["ai-sdk", "burble-runtime"] as const;
-const agentRuntimeFactories = ["static", "docker"] as const;
+const agentRuntimeFactories = ["static", "docker", "sandbox"] as const;
 const agentRuntimeStreamingModes = ["off", "basic", "native"] as const;
 export const agentRuntimeEngines = runtimeEngines;
 
@@ -263,7 +263,9 @@ export function readConfig(env: Env): Config {
     "static"
   );
   const defaultAgentRuntimeMcpGatewayUrl =
-    agentRuntimeFactory === "docker" ? "http://burble-app:3000/mcp" : null;
+    agentRuntimeFactory === "docker" || agentRuntimeFactory === "sandbox"
+      ? "http://burble-app:3000/mcp"
+      : null;
   const agentRuntimeMcpGatewayUrl =
     optionalUrlEnv(env, "AGENT_RUNTIME_MCP_GATEWAY_URL") ??
     defaultAgentRuntimeMcpGatewayUrl;

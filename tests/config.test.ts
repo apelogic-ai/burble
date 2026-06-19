@@ -204,6 +204,18 @@ describe("readConfig", () => {
     expect(config.openClawConfigPatchHostPath).toBe("/srv/burble/runtime-patches");
   });
 
+  test("allows sandbox runtime factory override", () => {
+    const config = readConfig({
+      ...validEnv,
+      AGENT_RUNTIME_FACTORY: "sandbox",
+      AGENT_RUNTIME_TOKEN_SECRET: "runtime-secret"
+    });
+
+    expect(config.agentRuntimeFactory).toBe("sandbox");
+    expect(config.agentRuntimeMcpGatewayUrl).toBe("http://burble-app:3000/mcp");
+    expect(config.agentRuntimeTokenSecret).toBe("runtime-secret");
+  });
+
   test("defaults to the Hermes runtime image for Hermes engine", () => {
     const config = readConfig({
       ...validEnv,
@@ -384,7 +396,9 @@ describe("readConfig", () => {
   test("rejects invalid runtime factories", () => {
     expect(() =>
       readConfig({ ...validEnv, AGENT_RUNTIME_FACTORY: "kubernetes" })
-    ).toThrow("Environment variable AGENT_RUNTIME_FACTORY must be one of static, docker");
+    ).toThrow(
+      "Environment variable AGENT_RUNTIME_FACTORY must be one of static, docker, sandbox"
+    );
   });
 
   test("rejects invalid runtime reaper enabled values", () => {
