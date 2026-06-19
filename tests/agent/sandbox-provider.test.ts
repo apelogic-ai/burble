@@ -59,6 +59,53 @@ describe("SandboxProvider OpenShell boundary", () => {
 });
 
 describe("OpenShellSandboxProvider", () => {
+  test("reconstructs durable handles from the remote record after adapter restart", async () => {
+    const client = createFakeOpenShellClient();
+    const original = createOpenShellSandboxProvider({ client });
+    const sandbox = await original.provision({
+      principal: { workspaceId: "T123", userId: "U123" },
+      runtime: { engine: "hermes", image: "burble-runtime:dev" },
+      labels: { jobId: "job-123" }
+    });
+    await original.applyPolicy(sandbox.id, {
+      network: {
+        egress: "allowlist",
+        allowedHosts: ["burble-gateway.internal"]
+      }
+    });
+    await original.bindCredentials(sandbox.id, [
+      {
+        name: "github",
+        kind: "provider-token",
+        ref: "provider:github:T123:U123",
+        delivery: "gateway_callback"
+      }
+    ]);
+
+    const restarted = createOpenShellSandboxProvider({ client });
+    const attached = await restarted.attach(sandbox.id);
+
+    expect(attached).toMatchObject({
+      id: sandbox.id,
+      provider: "openshell",
+      principal: { workspaceId: "T123", userId: "U123" },
+      runtime: { engine: "hermes", image: "burble-runtime:dev" },
+      labels: { jobId: "job-123" },
+      credentials: [
+        {
+          name: "github",
+          kind: "provider-token",
+          ref: "provider:github:T123:U123",
+          delivery: "gateway_callback"
+        }
+      ]
+    });
+    expect(attached.policy?.network).toEqual({
+      egress: "allowlist",
+      allowedHosts: ["burble-gateway.internal"]
+    });
+  });
+
   test("does not materialize gateway-callback credential bindings into the sandbox", async () => {
     const client = createFakeOpenShellClient();
     const provider = createOpenShellSandboxProvider({ client });
@@ -126,6 +173,34 @@ describe("OpenShellSandboxProvider", () => {
 
     await expect(provider.terminate(sandbox.id)).resolves.toBeUndefined();
   });
+
+  test("uses monotonic fake sandbox ids after delete-on-terminate", async () => {
+    const client = createFakeOpenShellClient({ deleteOnTerminate: true });
+    const provider = createOpenShellSandboxProvider({ client });
+
+    const first = await provider.provision({
+      principal: { workspaceId: "T123", userId: "U123" },
+      runtime: { engine: "hermes", image: "burble-runtime:dev" },
+      labels: {}
+    });
+    const second = await provider.provision({
+      principal: { workspaceId: "T123", userId: "U123" },
+      runtime: { engine: "hermes", image: "burble-runtime:dev" },
+      labels: {}
+    });
+    await provider.terminate(first.id);
+    const third = await provider.provision({
+      principal: { workspaceId: "T123", userId: "U123" },
+      runtime: { engine: "hermes", image: "burble-runtime:dev" },
+      labels: {}
+    });
+
+    expect([first.id, second.id, third.id]).toEqual([
+      "sandbox-openshell-1",
+      "sandbox-openshell-2",
+      "sandbox-openshell-3"
+    ]);
+  });
 });
 
 function runSandboxProviderConformance(input: {
@@ -173,6 +248,7 @@ function runSandboxProviderConformance(input: {
       expect(withPolicy.policy?.network.allowedHosts).toEqual([
         "burble-gateway.internal"
       ]);
+      // TODO(S3): verify disallowed egress is blocked against real OpenShell.
     } else {
       await expect(provider.applyPolicy(sandbox.id, policy)).rejects.toThrow(
         "does not support egress allowlists"
@@ -195,6 +271,7 @@ function runSandboxProviderConformance(input: {
       );
       expect(withCredentials.credentials).toEqual(credentials);
       expect(withCredentials.credentials[0]?.delivery).toBe("gateway_callback");
+      // TODO(S3): assert real OpenShell only injects materializedCredentials.
     } else {
       await expect(
         provider.bindCredentials(sandbox.id, credentials)
@@ -229,55 +306,6 @@ function runSandboxProviderConformance(input: {
     );
     expect(terminatedEvents.map((event) => event.type)).toContain("terminated");
   });
-
-  if (input.expectedCapabilities.supportsDurableSandboxes) {
-    test(`${name} reconstructs durable handles from the remote record after adapter restart`, async () => {
-      const client = createFakeOpenShellClient();
-      const original = createOpenShellSandboxProvider({ client });
-      const sandbox = await original.provision({
-        principal: { workspaceId: "T123", userId: "U123" },
-        runtime: { engine: "hermes", image: "burble-runtime:dev" },
-        labels: { jobId: "job-123" }
-      });
-      await original.applyPolicy(sandbox.id, {
-        network: {
-          egress: "allowlist",
-          allowedHosts: ["burble-gateway.internal"]
-        }
-      });
-      await original.bindCredentials(sandbox.id, [
-        {
-          name: "github",
-          kind: "provider-token",
-          ref: "provider:github:T123:U123",
-          delivery: "gateway_callback"
-        }
-      ]);
-
-      const restarted = createOpenShellSandboxProvider({ client });
-      const attached = await restarted.attach(sandbox.id);
-
-      expect(attached).toMatchObject({
-        id: sandbox.id,
-        provider: "openshell",
-        principal: { workspaceId: "T123", userId: "U123" },
-        runtime: { engine: "hermes", image: "burble-runtime:dev" },
-        labels: { jobId: "job-123" },
-        credentials: [
-          {
-            name: "github",
-            kind: "provider-token",
-            ref: "provider:github:T123:U123",
-            delivery: "gateway_callback"
-          }
-        ]
-      });
-      expect(attached.policy?.network).toEqual({
-        egress: "allowlist",
-        allowedHosts: ["burble-gateway.internal"]
-      });
-    });
-  }
 }
 
 async function collectEvents(
@@ -323,6 +351,8 @@ function createFakeOpenShellClient(options?: {
 }): FakeOpenShellClient {
   const sandboxes = new Map<string, SandboxHandle>();
   const events = new Map<string, SandboxEvent[]>();
+  let eventSequence = 0;
+  let sandboxSequence = 0;
 
   const load = (sandboxId: string): SandboxHandle => {
     const sandbox = sandboxes.get(sandboxId);
@@ -345,7 +375,7 @@ function createFakeOpenShellClient(options?: {
     sandboxEvents.push({
       sandboxId,
       type,
-      at: new Date(0).toISOString(),
+      at: new Date(eventSequence++).toISOString(),
       ...(detail ? { detail } : {})
     });
     events.set(sandboxId, sandboxEvents);
@@ -356,14 +386,13 @@ function createFakeOpenShellClient(options?: {
     materializedCredentialCalls: [],
 
     async createSandbox(input) {
+      sandboxSequence += 1;
       const sandbox: SandboxHandle = {
-        id: `sandbox-openshell-${sandboxes.size + 1}`,
+        id: `sandbox-openshell-${sandboxSequence}`,
         provider: "openshell",
         status: "ready",
-        endpointUrl: `http://sandbox-openshell-${sandboxes.size + 1}.local`,
-        workspacePath: `/openshell/sandbox-openshell-${
-          sandboxes.size + 1
-        }/workspace`,
+        endpointUrl: `http://sandbox-openshell-${sandboxSequence}.local`,
+        workspacePath: `/openshell/sandbox-openshell-${sandboxSequence}/workspace`,
         principal: input.principal,
         runtime: input.runtime,
         labels: input.labels,

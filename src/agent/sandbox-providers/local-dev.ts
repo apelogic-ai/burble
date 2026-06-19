@@ -24,6 +24,7 @@ type SandboxState = {
 
 export function createLocalDevSandboxProvider(): LocalDevSandboxProvider {
   const sandboxes = new Map<string, SandboxState>();
+  let eventSequence = 0;
 
   const load = (sandboxId: string): SandboxState => {
     const state = sandboxes.get(sandboxId);
@@ -41,7 +42,7 @@ export function createLocalDevSandboxProvider(): LocalDevSandboxProvider {
     state.events.push({
       sandboxId: state.handle.id,
       type,
-      at: new Date(0).toISOString(),
+      at: new Date(eventSequence++).toISOString(),
       ...(detail ? { detail } : {})
     });
   };
