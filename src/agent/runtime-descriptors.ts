@@ -121,7 +121,7 @@ const burbleNativeCapabilityManifest: RuntimeCapabilityManifest = {
   streaming: true,
   cancellation: false,
   nativeScheduler: false,
-  scheduledProviderCalls: false,
+  scheduledProviderCalls: true,
   toolCalls: true,
   toolBridgeModes: ["tool_gateway"],
   usageReporting: "exact",

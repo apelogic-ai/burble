@@ -82,7 +82,7 @@ describe("runtime descriptors", () => {
       toolCalls: true,
       usageReporting: "exact",
       nativeScheduler: false,
-      scheduledProviderCalls: false,
+      scheduledProviderCalls: true,
       multimodalInput: false,
       memory: false,
       durableWorkflowState: false,

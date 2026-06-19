@@ -335,13 +335,13 @@ describe("resolveRuntimeEngineForPrincipal", () => {
     store.close();
   });
 
-  test("does not treat Burble Native as scheduled-workload compatible yet", () => {
+  test("treats Burble Native as scheduled-workload compatible", () => {
     expect(
       runtimeEngineCompatibility("burble-native", { workload: "scheduled" })
     ).toEqual({
       engine: "burble-native",
-      selectable: false,
-      reasons: ["missing scheduled provider calls"]
+      selectable: true,
+      reasons: []
     });
   });
 

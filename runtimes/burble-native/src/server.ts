@@ -108,7 +108,7 @@ export function buildRuntimeCapabilityManifest(): CapabilityManifest {
     streaming: true,
     cancellation: false,
     nativeScheduler: false,
-    scheduledProviderCalls: false,
+    scheduledProviderCalls: true,
     toolCalls: true,
     toolBridgeModes: ["tool_gateway"],
     usageReporting: "exact",
@@ -585,7 +585,32 @@ async function executeBurbleProviderTool(
     retryBaseDelayMs: readToolGatewayRetryBaseDelayMs(context.env),
     ...(context.fetch ? { fetch: context.fetch } : {})
   });
-  return executeTool(toolCall.toolName, toolCall.input);
+  return executeTool(
+    toolCall.toolName,
+    scheduledToolInput(toolCall, request)
+  );
+}
+
+function scheduledToolInput(
+  toolCall: OpenAiFunctionToolCall,
+  request: RunRequest
+): unknown {
+  const scheduledJob = request.input.scheduledJob;
+  if (!scheduledJob) {
+    return toolCall.input;
+  }
+  const selectedTool = selectedRuntimeTools(request).find(
+    (tool) => tool.name === toolCall.toolName || tool.alias === toolCall.toolName
+  );
+  if (!selectedTool) {
+    throw new Error(
+      `Tool ${toolCall.toolName} is not allowed for scheduled job ${scheduledJob.jobId}`
+    );
+  }
+  return {
+    ...(isRecord(toolCall.input) ? toolCall.input : {}),
+    jobId: scheduledJob.jobId
+  };
 }
 
 function sanitizeToolErrorMessage(error: unknown): string {
@@ -805,9 +830,11 @@ function buildOpenAiInput(request: RunRequest): OpenAiInputItem[] {
     .join("\n");
   const toolCatalog = formatSelectedToolCatalog(request);
   const attachmentContext = formatCurrentRequestAttachments(request);
+  const scheduledJobContext = formatScheduledJobContext(request);
   const text = [
     "You are Burble, a concise Slack-native work assistant.",
     attachmentContext,
+    scheduledJobContext,
     toolCatalog
       ? [
           "Use burble_provider_call only when provider data or actions are needed.",
@@ -860,6 +887,17 @@ type RuntimeRequestManifestTool = NonNullable<
 >[number];
 
 function selectedRuntimeTools(request: RunRequest): RuntimeRequestManifestTool[] {
+  if (request.input.scheduledJob) {
+    const allowedTools = new Set(request.input.scheduledJob.allowedTools);
+    return (request.runtime.manifest?.tools ?? [])
+      .filter(
+        (tool) =>
+          tool.enabled &&
+          (allowedTools.has(tool.name) || allowedTools.has(tool.alias))
+      )
+      .sort(compareRuntimeTools)
+      .slice(0, MAX_PROMPT_TOOLS);
+  }
   const groups = new Set(request.input.toolGroups?.groups ?? []);
   if (groups.size === 0) {
     return [];
@@ -990,6 +1028,35 @@ function formatCurrentRequestAttachments(request: RunRequest): string {
           : "";
       return `- ${index + 1}. id=${attachment.id}, name=${name}, kind=${attachment.kind}, mimeType=${attachment.mimeType}${size}`;
     })
+  ].join("\n");
+}
+
+function formatScheduledJobContext(request: RunRequest): string {
+  const scheduledJob = request.input.scheduledJob;
+  if (!scheduledJob) {
+    return "";
+  }
+  const allowedTools = [...new Set(scheduledJob.allowedTools)].sort().join(",");
+  const stateRefs = scheduledJob.stateRefs.map((stateRef) => {
+    const parts = [
+      `provider=${stateRef.provider}`,
+      `kind=${stateRef.kind}`,
+      ...(stateRef.id ? [`id=${stateRef.id}`] : []),
+      ...(stateRef.name ? [`name=${stateRef.name}`] : []),
+      ...(stateRef.purpose ? [`purpose=${stateRef.purpose}`] : [])
+    ];
+    return `- stateRef ${parts.join(" ")}`;
+  });
+  return [
+    "Scheduled Burble job context:",
+    `- jobId=${scheduledJob.jobId}`,
+    `- capabilityProfile=${scheduledJob.capabilityProfile}`,
+    `- allowedTools=${allowedTools}`,
+    ...(scheduledJob.routeId ? [`- routeId=${scheduledJob.routeId}`] : []),
+    `- maxOutputVisibility=${scheduledJob.visibilityPolicy.maxOutputVisibility ?? "user_private"}`,
+    `- allowPrivateToolDeclassification=${scheduledJob.visibilityPolicy.allowPrivateToolDeclassification === true ? "true" : "false"}`,
+    ...stateRefs,
+    "Use only the listed Available Burble tools for this scheduled job. Burble Native attaches the trusted jobId to scheduled provider calls; do not invent or override job identity."
   ].join("\n");
 }
 

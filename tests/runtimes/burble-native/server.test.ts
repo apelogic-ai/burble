@@ -55,7 +55,7 @@ describe("Burble Native runtime server", () => {
       streaming: true,
       cancellation: false,
       nativeScheduler: false,
-      scheduledProviderCalls: false,
+      scheduledProviderCalls: true,
       toolCalls: true,
       toolBridgeModes: ["tool_gateway"],
       usageReporting: "exact",
@@ -655,6 +655,160 @@ describe("Burble Native runtime server", () => {
       authorization: "Bearer runtime-token",
       "content-type": "application/json",
       "x-burble-runtime-id": "rt_native"
+    });
+  });
+
+  test("executes scheduled provider calls with trusted job identity", async () => {
+    const requests: Array<{ url: string; init?: RequestInit }> = [];
+    const response = await handleRuntimeRequest(
+      new Request("http://runtime/runs", {
+        method: "POST",
+        headers: {
+          accept: "application/x-ndjson",
+          "content-type": "application/json"
+        },
+        body: JSON.stringify(
+          withRuntimeManifestTools(
+            withScheduledJob(nativeRunRequest("check new open pull requests")),
+            [
+              {
+                name: "github_search_issues",
+                alias: "github.searchIssues",
+                provider: "github",
+                title: "GitHub issue and PR search",
+                description: "Search GitHub issues and pull requests.",
+                enabled: true,
+                risk: "read",
+                routeRequired: true,
+                confirmation: "none",
+                retrySafe: true,
+                input: [
+                  {
+                    name: "query",
+                    type: "string",
+                    required: true,
+                    description: "GitHub search query."
+                  }
+                ]
+              },
+              {
+                name: "github_create_issue",
+                alias: "github.createIssue",
+                provider: "github",
+                title: "GitHub create issue",
+                description: "Create a GitHub issue.",
+                enabled: true,
+                risk: "low_write",
+                routeRequired: true,
+                confirmation: "none",
+                retrySafe: false,
+                input: []
+              }
+            ]
+          )
+        )
+      }),
+      {
+        env: {
+          AI_MODEL: "openai:gpt-5.4",
+          OPENAI_API_KEY: "test-openai-key",
+          OPENAI_BASE_URL: "https://openai-compatible.example/v1",
+          BURBLE_TOOL_GATEWAY_URL: "http://burble-app:3000/internal/tools",
+          BURBLE_INTERNAL_TOKEN: "runtime-token",
+          BURBLE_NATIVE_TOOL_GATEWAY_RETRY_BASE_MS: "0"
+        },
+        fetch: async (url: string, init?: RequestInit) => {
+          requests.push({ url, init });
+          if (url.includes("/github.searchIssues/execute")) {
+            return Response.json({
+              classification: "user_private",
+              content: { results: [{ url: "https://github.com/acme/app/pull/1" }] }
+            });
+          }
+          const providerRequestCount = requests.filter((request) =>
+            request.url.endsWith("/responses")
+          ).length;
+          if (providerRequestCount === 1) {
+            return new Response(
+              sseEvent({
+                type: "response.completed",
+                response: {
+                  output: [
+                    {
+                      type: "function_call",
+                      call_id: "scheduled_call_1",
+                      name: "burble_provider_call",
+                      arguments: JSON.stringify({
+                        toolName: "github.searchIssues",
+                        input: {
+                          query: "org:apelogic-ai is:pr is:open",
+                          jobId: "model-forged-job"
+                        }
+                      })
+                    }
+                  ],
+                  usage: {
+                    input_tokens: 100,
+                    output_tokens: 5,
+                    total_tokens: 105
+                  }
+                }
+              }),
+              { headers: { "content-type": "text/event-stream" } }
+            );
+          }
+          return new Response(
+            [
+              sseEvent({
+                type: "response.output_text.delta",
+                delta: "Found one pull request."
+              }),
+              sseEvent({
+                type: "response.completed",
+                response: {
+                  output_text: "Found one pull request.",
+                  usage: {
+                    input_tokens: 80,
+                    output_tokens: 6,
+                    total_tokens: 86
+                  }
+                }
+              })
+            ].join(""),
+            { headers: { "content-type": "text/event-stream" } }
+          );
+        }
+      }
+    );
+
+    expect(response.status).toBe(200);
+    const events = (await response.text())
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+    expect(events).toContainEqual({
+      type: "tool_call",
+      toolName: "github.searchIssues",
+      callId: "scheduled_call_1"
+    });
+    const firstProviderBody = JSON.parse(
+      String(
+        requests.filter((request) => request.url.endsWith("/responses"))[0].init
+          ?.body
+      )
+    );
+    expect(firstProviderBody.input[0].content).toContain(
+      "Scheduled Burble job context"
+    );
+    expect(firstProviderBody.input[0].content).toContain("jobId=job-native-123");
+    expect(firstProviderBody.input[0].content).toContain("github.searchIssues");
+    expect(firstProviderBody.input[0].content).not.toContain("github.createIssue");
+    const toolRequest = requests.find((request) =>
+      request.url.includes("/github.searchIssues/execute")
+    );
+    expect(JSON.parse(String(toolRequest?.init?.body))).toEqual({
+      query: "org:apelogic-ai is:pr is:open",
+      jobId: "job-native-123"
     });
   });
 
@@ -1495,6 +1649,35 @@ function withRuntimeManifestTools<T extends ReturnType<typeof nativeRunRequest>>
         },
         streaming: {
           messageDeltasEnabled: true
+        }
+      }
+    }
+  };
+}
+
+function withScheduledJob<T extends ReturnType<typeof nativeRunRequest>>(
+  request: T
+): T {
+  return {
+    ...request,
+    input: {
+      ...request.input,
+      scheduledJob: {
+        jobId: "job-native-123",
+        capabilityProfile: "scheduled_job",
+        allowedTools: ["github_search_issues"],
+        runtimeType: "burble-native",
+        routeId: "convrt_scheduled_native",
+        stateRefs: [
+          {
+            provider: "github",
+            kind: "search",
+            purpose: "open pull request scan"
+          }
+        ],
+        visibilityPolicy: {
+          maxOutputVisibility: "user_private",
+          allowPrivateToolDeclassification: false
         }
       }
     }
