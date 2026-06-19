@@ -42,6 +42,7 @@ describe("runtime readiness harness", () => {
       async stopRuntime() {},
       async reapIdleRuntimes() {}
     };
+    const requests: Array<{ url: string; headers: Record<string, string> }> = [];
 
     await expect(
       runRuntimeReadinessCheck({
@@ -49,7 +50,11 @@ describe("runtime readiness harness", () => {
         principal,
         runtimeFactory: factory,
         store,
-        fetch: async (url) => {
+        fetch: async (url, init) => {
+          requests.push({
+            url,
+            headers: Object.fromEntries(new Headers(init?.headers).entries())
+          });
           if (url === "http://runtime.local/healthz") {
             return new Response("ok");
           }
@@ -89,6 +94,22 @@ describe("runtime readiness harness", () => {
         { name: "runtime.ready_recorded", status: "ok" }
       ]
     });
+    expect(requests).toEqual([
+      {
+        url: "http://runtime.local/healthz",
+        headers: {
+          authorization: "Bearer runtime-token",
+          "x-burble-runtime-id": runtime.id
+        }
+      },
+      {
+        url: "http://runtime.local/capabilities",
+        headers: {
+          authorization: "Bearer runtime-token",
+          "x-burble-runtime-id": runtime.id
+        }
+      }
+    ]);
 
     store.close();
   });
