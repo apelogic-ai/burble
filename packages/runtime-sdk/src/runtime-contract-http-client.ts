@@ -27,6 +27,11 @@ export type RuntimeContractWebSocketFactory = (
   options?: RuntimeContractWebSocketOptions
 ) => RuntimeContractWebSocket;
 
+type HeaderWebSocketConstructor = new (
+  url: string,
+  options?: RuntimeContractWebSocketOptions
+) => RuntimeContractWebSocket;
+
 export class RuntimeCapabilityDiscoveryError extends Error {
   constructor(
     message: string,
@@ -47,12 +52,7 @@ export function createRuntimeContractHttpClient(input: {
   const baseUrl = input.baseUrl.replace(/\/+$/, "");
   const requestFetch = input.fetch ?? fetch;
   const createWebSocket =
-    input.webSocketFactory ??
-    ((url: string, options?: RuntimeContractWebSocketOptions) =>
-      new WebSocket(
-        url,
-        options as unknown as string | string[] | undefined
-      ));
+    input.webSocketFactory ?? createRuntimeContractWebSocket;
 
   return {
     async getCapabilityManifest() {
@@ -110,6 +110,25 @@ export function createRuntimeContractHttpClient(input: {
       );
     }
   };
+}
+
+export function createRuntimeContractWebSocket(
+  url: string,
+  options?: RuntimeContractWebSocketOptions
+): RuntimeContractWebSocket {
+  if (!hasWebSocketHeaders(options)) {
+    return new WebSocket(url);
+  }
+  if (!("Bun" in globalThis)) {
+    throw new Error(
+      "Runtime WebSocket headers require Bun WebSocket support or a custom webSocketFactory"
+    );
+  }
+
+  // Bun supports `new WebSocket(url, { headers })`; the standard DOM type only
+  // models the protocols overload, so keep the Bun-specific assertion isolated.
+  const HeaderWebSocket = WebSocket as unknown as HeaderWebSocketConstructor;
+  return new HeaderWebSocket(url, options);
 }
 
 async function* readWebSocketEvents(
@@ -191,15 +210,21 @@ function toHeaderRecord(headers: HeadersInit | undefined): Record<string, string
 function runtimeWebSocketOptions(
   headers: HeadersInit | undefined
 ): RuntimeContractWebSocketOptions | undefined {
-  const authorization = new Headers(headers).get("authorization");
-  if (!authorization) {
+  const headerRecord = toHeaderRecord(headers);
+  if (Object.keys(headerRecord).length === 0) {
     return undefined;
   }
   return {
-    headers: {
-      authorization
-    }
+    headers: headerRecord
   };
+}
+
+function hasWebSocketHeaders(
+  options: RuntimeContractWebSocketOptions | undefined
+): boolean {
+  return Boolean(
+    options?.headers && Object.keys(toHeaderRecord(options.headers)).length > 0
+  );
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

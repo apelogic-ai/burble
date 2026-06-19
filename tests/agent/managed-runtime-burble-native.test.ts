@@ -132,6 +132,7 @@ describe("managed runtime Burble Native integration", () => {
       manifest: runtimeManifest(runtime.id)
     };
     const calls: string[] = [];
+    const webSocketOptions: Array<{ headers?: HeadersInit } | undefined> = [];
 
     const fetchRouter = async (url: string, init?: RequestInit): Promise<Response> => {
       calls.push(`${init?.method ?? "GET"} ${url}`);
@@ -240,7 +241,8 @@ describe("managed runtime Burble Native integration", () => {
         async reapIdleRuntimes() {}
       },
       fetch: fetchRouter,
-      webSocketFactory(url) {
+      webSocketFactory(url, options) {
+        webSocketOptions.push(options);
         const socket = new InProcessRuntimeWebSocket(url);
         const runId = decodeURIComponent(
           new URL(url).pathname.match(/^\/runs\/([^/]+)\/events$/)?.[1] ?? ""
@@ -280,6 +282,14 @@ describe("managed runtime Burble Native integration", () => {
     });
 
     expect(result.text).toBe("Authenticated as octocat.");
+    expect(webSocketOptions).toEqual([
+      {
+        headers: {
+          authorization: `Bearer ${runtimeHandle.authToken}`,
+          "x-burble-runtime-id": runtimeHandle.id
+        }
+      }
+    ]);
     expect(calls).toContain(
       "POST http://burble-app:3000/internal/tools/github.getAuthenticatedUser/execute"
     );

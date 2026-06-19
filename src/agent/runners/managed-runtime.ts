@@ -9,6 +9,7 @@ import {
   type RuntimeAdapter
 } from "../runtime-adapter";
 import {
+  createRuntimeContractWebSocket,
   createRuntimeContractHttpClient,
   RuntimeCapabilityDiscoveryError
 } from "../runtime-contract-http-client";
@@ -114,12 +115,7 @@ export function createManagedRuntimeAdapter(
   const fallbackBaseUrl = deps.baseUrl?.replace(/\/+$/, "");
   const requestFetch: AgentRuntimeFetch = deps.fetch ?? fetch;
   const createWebSocket: AgentRuntimeWebSocketFactory =
-    deps.webSocketFactory ??
-    ((url, options) =>
-      new WebSocket(
-        url,
-        options as unknown as string | string[] | undefined
-      ));
+    deps.webSocketFactory ?? createRuntimeContractWebSocket;
   const logInfo = deps.logInfo ?? (() => undefined);
   const observability = deps.observability;
   const runtimeCapabilityCache: RuntimeCapabilityCache = new Map();
@@ -1061,9 +1057,7 @@ function runtimeWebSocketOptions(
     return undefined;
   }
   return {
-    headers: {
-      authorization: `Bearer ${runtime.authToken}`
-    }
+    headers: runtimeHeaders(runtime)
   };
 }
 
