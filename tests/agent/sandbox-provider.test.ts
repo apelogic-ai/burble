@@ -6,6 +6,9 @@ import {
   createOpenShellSandboxProvider,
   type OpenShellSandboxClient
 } from "../../src/agent/sandbox-providers/openshell";
+import type {
+  OpenShellSandboxPolicyConfig
+} from "../../src/agent/sandbox-providers/openshell-policy";
 import {
   cloneSandboxEvent,
   cloneSandboxEventDetail,
@@ -226,6 +229,52 @@ describe("OpenShellSandboxProvider", () => {
     ]);
   });
 
+  test("passes compiled neutral policy config to the OpenShell client", async () => {
+    const client = createFakeOpenShellClient();
+    const provider = createOpenShellSandboxProvider({ client });
+    const sandbox = await provider.provision({
+      principal: { workspaceId: "T123", userId: "U123" },
+      runtime: { engine: "hermes", image: "burble-runtime:dev" },
+      labels: {}
+    });
+
+    await provider.applyPolicy(sandbox.id, {
+      network: {
+        egress: "allowlist",
+        allowedHosts: ["GitHub.com", "burble-gateway.internal"]
+      },
+      filesystem: {
+        readOnlyPaths: ["/workspace"],
+        readWritePaths: ["/tmp/burble"]
+      },
+      resources: {
+        cpuCount: 2,
+        memoryMb: 1024
+      },
+      maxLifetimeMs: 60_000
+    });
+
+    expect(client.compiledPolicyCalls).toEqual([
+      {
+        version: 1,
+        egress: {
+          default: "deny",
+          allowHosts: ["burble-gateway.internal", "github.com"]
+        },
+        filesystem: {
+          readOnly: ["/workspace"],
+          readWrite: ["/tmp/burble"]
+        },
+        resources: {
+          cpuCount: 2,
+          memoryMb: 1024,
+          maxLifetimeMs: 60_000
+        },
+        providers: []
+      }
+    ]);
+  });
+
   test("does not fetch after run because the run result is the authoritative result", async () => {
     const client = createFakeOpenShellClient();
     const provider = createOpenShellSandboxProvider({ client });
@@ -429,6 +478,7 @@ function importSpecifiers(path: string): string[] {
 
 type FakeOpenShellClient = OpenShellSandboxClient & {
   getSandboxCalls: number;
+  compiledPolicyCalls: OpenShellSandboxPolicyConfig[];
   materializedCredentialCalls: SandboxCredentialBinding[][];
 };
 
@@ -469,6 +519,7 @@ function createFakeOpenShellClient(options?: {
 
   const client: FakeOpenShellClient = {
     getSandboxCalls: 0,
+    compiledPolicyCalls: [],
     materializedCredentialCalls: [],
 
     async createSandbox(input) {
@@ -490,6 +541,7 @@ function createFakeOpenShellClient(options?: {
     },
     async applyPolicy(input) {
       const sandbox = load(input.sandboxId);
+      client.compiledPolicyCalls.push(input.compiledPolicy);
       save({ ...sandbox, policy: input.policy });
       recordEvent(input.sandboxId, "policy_applied");
     },

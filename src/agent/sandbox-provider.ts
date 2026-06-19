@@ -32,6 +32,15 @@ export type SandboxNetworkPolicy =
 
 export type SandboxPolicy = {
   network: SandboxNetworkPolicy;
+  filesystem?: {
+    readOnlyPaths?: string[];
+    readWritePaths?: string[];
+  };
+  resources?: {
+    cpuCount?: number;
+    memoryMb?: number;
+    diskMb?: number;
+  };
   maxLifetimeMs?: number;
 };
 
@@ -114,19 +123,30 @@ export function cloneSandboxHandle(handle: SandboxHandle): SandboxHandle {
 }
 
 export function cloneSandboxPolicy(policy: SandboxPolicy): SandboxPolicy {
-  if (policy.network.egress === "allowlist") {
-    return {
-      ...policy,
-      network: {
-        egress: "allowlist",
-        allowedHosts: [...policy.network.allowedHosts]
-      }
+  const cloned: SandboxPolicy = {
+    ...policy,
+    network:
+      policy.network.egress === "allowlist"
+        ? {
+            egress: "allowlist",
+            allowedHosts: [...policy.network.allowedHosts]
+          }
+        : { egress: policy.network.egress }
+  };
+  if (policy.filesystem) {
+    cloned.filesystem = {
+      ...(policy.filesystem.readOnlyPaths
+        ? { readOnlyPaths: [...policy.filesystem.readOnlyPaths] }
+        : {}),
+      ...(policy.filesystem.readWritePaths
+        ? { readWritePaths: [...policy.filesystem.readWritePaths] }
+        : {})
     };
   }
-  return {
-    ...policy,
-    network: { egress: policy.network.egress }
-  };
+  if (policy.resources) {
+    cloned.resources = { ...policy.resources };
+  }
+  return cloned;
 }
 
 export function cloneSandboxCredentialBinding(

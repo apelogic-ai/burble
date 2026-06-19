@@ -12,6 +12,10 @@ import {
   type SandboxRunHandle,
   type SandboxRunRequest
 } from "../sandbox-provider";
+import {
+  compileOpenShellSandboxPolicy,
+  type OpenShellSandboxPolicyConfig
+} from "./openshell-policy";
 
 export type OpenShellSandboxStatus = SandboxHandle["status"];
 
@@ -36,6 +40,7 @@ export type OpenShellSandboxClient = {
   applyPolicy(input: {
     sandboxId: string;
     policy: SandboxPolicy;
+    compiledPolicy: OpenShellSandboxPolicyConfig;
   }): Promise<void>;
   bindCredentials(input: {
     sandboxId: string;
@@ -83,7 +88,11 @@ export function createOpenShellSandboxProvider(input: {
       sandboxId: string,
       policy: SandboxPolicy
     ): Promise<SandboxHandle> {
-      await input.client.applyPolicy({ sandboxId, policy });
+      await input.client.applyPolicy({
+        sandboxId,
+        policy,
+        compiledPolicy: compileOpenShellSandboxPolicy({ policy })
+      });
       const updated = handleFromRecord(
         await input.client.getSandbox({ sandboxId })
       );
