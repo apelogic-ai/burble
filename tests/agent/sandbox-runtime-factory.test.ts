@@ -134,6 +134,40 @@ describe("createSandboxRuntimeFactory", () => {
     store.close();
   });
 
+  test("does not provision a sandbox when runtime JWT issuance fails", async () => {
+    const store = createTokenStore(":memory:");
+    const provider = createFakeRuntimeSandboxProvider();
+    const factory = createSandboxRuntimeFactory({
+      store,
+      sandboxProvider: provider,
+      engine: "openclaw",
+      image: "burble-openclaw-nemoclaw:dev",
+      toolGatewayUrl: "http://burble-app:3000/internal/tools",
+      mcpGatewayUrl: "http://agentgateway:3000/mcp",
+      modelProviderUrls: ["https://api.openai.com/v1"],
+      runtimeTokenSecret: "runtime-secret",
+      runtimeJwtIssuer: {
+        issueRuntimeJwt: () => {
+          throw new Error("jwt signer unavailable");
+        }
+      } as never,
+      startCommand: ["runtime-entrypoint"],
+      healthCheckAttempts: 1,
+      fetch: async () => new Response("ok")
+    });
+
+    await expect(factory.getOrCreateRuntime(principal)).rejects.toThrow(
+      "jwt signer unavailable"
+    );
+
+    const runtimeId = `rt_${buildRuntimeDataId(principal, "openclaw")}`;
+    expect(provider.provisionCalls).toHaveLength(0);
+    expect(provider.terminated).toEqual([]);
+    expect(store.getAgentRuntime(runtimeId)).toBeNull();
+
+    store.close();
+  });
+
   test("derives sandbox egress from the per-principal manifest model and forwarded runtime env", async () => {
     const store = createTokenStore(":memory:");
     const provider = createFakeRuntimeSandboxProvider();

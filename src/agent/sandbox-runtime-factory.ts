@@ -163,21 +163,6 @@ export function createSandboxRuntimeFactory(input: {
       );
     }
 
-    const sandbox = await input.sandboxProvider.provision({
-      principal: {
-        workspaceId: principal.workspaceId,
-        userId: principal.slackUserId
-      },
-      runtime: {
-        engine: input.engine,
-        image: input.image
-      },
-      labels: {
-        runtimeDataId,
-        engine: input.engine
-      }
-    });
-    const paths = sandboxRuntimePaths(sandbox.workspacePath, input.engine);
     const runtimeId = buildAgentRuntimeId(
       principal.workspaceId,
       principal.slackUserId,
@@ -200,6 +185,22 @@ export function createSandboxRuntimeFactory(input: {
             ttlSeconds: input.runtimeJwtTtlSeconds
           })
         : null;
+
+    const sandbox = await input.sandboxProvider.provision({
+      principal: {
+        workspaceId: principal.workspaceId,
+        userId: principal.slackUserId
+      },
+      runtime: {
+        engine: input.engine,
+        image: input.image
+      },
+      labels: {
+        runtimeDataId,
+        engine: input.engine
+      }
+    });
+    const paths = sandboxRuntimePaths(sandbox.workspacePath, input.engine);
     let runtime: AgentRuntimeRecord | null = null;
 
     try {
