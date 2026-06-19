@@ -1,7 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
   authorizeRuntimeBearerToken,
-  buildRuntimeBearerWebSocketProtocols,
   buildRuntimeBearerHeaders,
   createRuntimeContractServer,
   createRuntimeToolGatewayClient,
@@ -106,7 +105,7 @@ const authorizedServer = createRuntimeContractServer<
   TestRunResponse
 >({
   authorizeRequest: (request) =>
-    request.headers.get("authorization") === "Bearer runtime-token",
+    authorizeRuntimeBearerToken(request, "runtime-token"),
   getCapabilityManifest: (context) => ({
     runtimeType: `test-${context.suffix}`,
     version: "1",
@@ -241,31 +240,6 @@ describe("runtime SDK contract server", () => {
     ).toBe(false);
   });
 
-  test("validates runtime bearer tokens from WebSocket protocols", () => {
-    expect(
-      authorizeRuntimeBearerToken(
-        new Request("http://runtime/runs/run-123/events", {
-          headers: {
-            "sec-websocket-protocol":
-              buildRuntimeBearerWebSocketProtocols("runtime-token")[0]
-          }
-        }),
-        "runtime-token"
-      )
-    ).toBe(true);
-    expect(
-      authorizeRuntimeBearerToken(
-        new Request("http://runtime/runs/run-123/events", {
-          headers: {
-            "sec-websocket-protocol":
-              buildRuntimeBearerWebSocketProtocols("runtime")[0]
-          }
-        }),
-        "runtime-token"
-      )
-    ).toBe(false);
-  });
-
   test("requires bearer auth for protected runtime contract endpoints", async () => {
     const health = await authorizedServer.handleRequest(
       new Request("http://runtime/healthz"),
@@ -387,6 +361,80 @@ describe("runtime SDK contract server", () => {
       { type: "message_delta", text: "hello" },
       { type: "final", response: { text: "hello world" } }
     ]);
+  });
+
+  test("authenticates Bun WebSocket event streams with the bearer header", async () => {
+    const runId = `run-bun-ws-${crypto.randomUUID()}`;
+    let bunServer: Bun.Server<{ runId: string }> | undefined;
+
+    bunServer = Bun.serve<{ runId: string }>({
+      port: 0,
+      fetch: async (request) => {
+        const response = await authorizedServer.handleRequest(
+          request,
+          { suffix: "world" },
+          {
+            upgradeWebSocket: (upgradedRunId) =>
+              bunServer!.upgrade(request, {
+                data: { runId: upgradedRunId }
+              })
+          }
+        );
+        return response ?? new Response("Not found", { status: 404 });
+      },
+      websocket: {
+        open(ws) {
+          authorizedServer.attachEventWebSocket(ws.data.runId, ws);
+        },
+        message() {}
+      }
+    });
+
+    try {
+      const started = await fetch(`http://127.0.0.1:${bunServer.port}/runs`, {
+        method: "POST",
+        headers: {
+          authorization: "Bearer runtime-token",
+          "content-type": "application/json",
+          prefer: "respond-async"
+        },
+        body: JSON.stringify({ runId, input: { text: "hello" } })
+      });
+      expect(started.status).toBe(200);
+
+      const messages: unknown[] = [];
+      const socket = new WebSocket(
+        `ws://127.0.0.1:${bunServer.port}/runs/${encodeURIComponent(runId)}/events`,
+        {
+          headers: {
+            authorization: "Bearer runtime-token"
+          }
+        } as unknown as string[]
+      );
+      const opened = new Promise<void>((resolve, reject) => {
+        socket.addEventListener("open", () => resolve(), { once: true });
+        socket.addEventListener(
+          "error",
+          () => reject(new Error("WebSocket failed before opening")),
+          { once: true }
+        );
+      });
+      const closed = new Promise<void>((resolve) => {
+        socket.addEventListener("message", (event) => {
+          messages.push(JSON.parse(String(event.data)));
+        });
+        socket.addEventListener("close", () => resolve(), { once: true });
+      });
+
+      await opened;
+      await closed;
+      expect(messages).toContainEqual({
+        type: "final",
+        response: { text: "hello world" }
+      });
+    } finally {
+      bunServer.stop(true);
+    }
   });
 
   test("streams run events as SSE and NDJSON", async () => {

@@ -9,7 +9,6 @@ import {
   type RuntimeAdapter
 } from "../runtime-adapter";
 import {
-  buildRuntimeBearerWebSocketProtocols,
   createRuntimeContractHttpClient,
   RuntimeCapabilityDiscoveryError
 } from "../runtime-contract-http-client";
@@ -30,9 +29,13 @@ export type AgentRuntimeWebSocket = {
   close: () => void;
 };
 
+export type AgentRuntimeWebSocketOptions = {
+  headers?: HeadersInit;
+};
+
 export type AgentRuntimeWebSocketFactory = (
   url: string,
-  protocols?: string | string[]
+  options?: AgentRuntimeWebSocketOptions
 ) => AgentRuntimeWebSocket;
 
 export type ManagedRuntimeAgentRunnerDeps = {
@@ -112,7 +115,11 @@ export function createManagedRuntimeAdapter(
   const requestFetch: AgentRuntimeFetch = deps.fetch ?? fetch;
   const createWebSocket: AgentRuntimeWebSocketFactory =
     deps.webSocketFactory ??
-    ((url, protocols) => new WebSocket(url, protocols));
+    ((url, options) =>
+      new WebSocket(
+        url,
+        options as unknown as string | string[] | undefined
+      ));
   const logInfo = deps.logInfo ?? (() => undefined);
   const observability = deps.observability;
   const runtimeCapabilityCache: RuntimeCapabilityCache = new Map();
@@ -296,7 +303,7 @@ export function createManagedRuntimeAdapter(
             agentResponse = yield* readWebSocketRunResponse(
               createWebSocket(
                 eventsUrl,
-                runtimeWebSocketProtocols(runtime)
+                runtimeWebSocketOptions(runtime)
               ),
               runtimeMessageDeltasEnabled(runtime),
               (event) => {
@@ -1047,12 +1054,17 @@ function runtimeHeaders(runtime: RuntimeHandle | null): Record<string, string> {
   };
 }
 
-function runtimeWebSocketProtocols(
+function runtimeWebSocketOptions(
   runtime: RuntimeHandle | null
-): string[] | undefined {
-  return runtime
-    ? buildRuntimeBearerWebSocketProtocols(runtime.authToken)
-    : undefined;
+): AgentRuntimeWebSocketOptions | undefined {
+  if (!runtime) {
+    return undefined;
+  }
+  return {
+    headers: {
+      authorization: `Bearer ${runtime.authToken}`
+    }
+  };
 }
 
 function summarizeScheduledJob(input: AgentInput):

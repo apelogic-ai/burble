@@ -4,9 +4,6 @@ import type {
 } from "./runtime-contract";
 import { parseRuntimeCapabilityManifest } from "./runtime-contract";
 import type { RuntimeContractClient } from "./runtime-contract-harness";
-import { buildRuntimeBearerWebSocketProtocols } from "./server";
-
-export { buildRuntimeBearerWebSocketProtocols };
 
 export type RuntimeContractFetch = (
   url: string,
@@ -21,9 +18,13 @@ export type RuntimeContractWebSocket = {
   close: () => void;
 };
 
+export type RuntimeContractWebSocketOptions = {
+  headers?: HeadersInit;
+};
+
 export type RuntimeContractWebSocketFactory = (
   url: string,
-  protocols?: string | string[]
+  options?: RuntimeContractWebSocketOptions
 ) => RuntimeContractWebSocket;
 
 export class RuntimeCapabilityDiscoveryError extends Error {
@@ -47,8 +48,11 @@ export function createRuntimeContractHttpClient(input: {
   const requestFetch = input.fetch ?? fetch;
   const createWebSocket =
     input.webSocketFactory ??
-    ((url: string, protocols?: string | string[]) =>
-      new WebSocket(url, protocols));
+    ((url: string, options?: RuntimeContractWebSocketOptions) =>
+      new WebSocket(
+        url,
+        options as unknown as string | string[] | undefined
+      ));
 
   return {
     async getCapabilityManifest() {
@@ -101,7 +105,7 @@ export function createRuntimeContractHttpClient(input: {
       return readWebSocketEvents(
         createWebSocket(
           toWebSocketUrl(`${baseUrl}/runs/${encodeURIComponent(runId)}/events`),
-          runtimeWebSocketProtocols(input.headers)
+          runtimeWebSocketOptions(input.headers)
         )
       );
     }
@@ -184,15 +188,18 @@ function toHeaderRecord(headers: HeadersInit | undefined): Record<string, string
   return headers;
 }
 
-function runtimeWebSocketProtocols(
+function runtimeWebSocketOptions(
   headers: HeadersInit | undefined
-): string[] | undefined {
+): RuntimeContractWebSocketOptions | undefined {
   const authorization = new Headers(headers).get("authorization");
-  if (!authorization?.startsWith("Bearer ")) {
+  if (!authorization) {
     return undefined;
   }
-  const token = authorization.slice("Bearer ".length).trim();
-  return token ? buildRuntimeBearerWebSocketProtocols(token) : undefined;
+  return {
+    headers: {
+      authorization
+    }
+  };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

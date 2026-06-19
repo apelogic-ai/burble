@@ -17,8 +17,6 @@ export type RuntimeContractAuthorizer<TContext> =
       context: TContext
     ) => boolean | Promise<boolean>);
 
-const runtimeBearerWebSocketProtocolPrefix = "burble-runtime-bearer.";
-
 export type RuntimeContractServerOptions<
   TContext,
   TRequest,
@@ -276,16 +274,6 @@ export function authorizeRuntimeBearerToken(
   return timingSafeTokenEqual(actualToken, expectedToken);
 }
 
-export function buildRuntimeBearerWebSocketProtocols(
-  runtimeToken: string
-): string[] {
-  return [
-    `${runtimeBearerWebSocketProtocolPrefix}${Buffer.from(runtimeToken).toString(
-      "base64url"
-    )}`
-  ];
-}
-
 function protectedRuntimeContractPath(pathname: string): boolean {
   return (
     pathname === "/capabilities" ||
@@ -315,7 +303,7 @@ function readBearerToken(request: Request): string | null {
     const token = authorization.slice("Bearer ".length).trim();
     return token.length > 0 ? token : null;
   }
-  return readBearerTokenFromWebSocketProtocol(request);
+  return null;
 }
 
 function timingSafeTokenEqual(actual: string, expected: string): boolean {
@@ -325,26 +313,6 @@ function timingSafeTokenEqual(actual: string, expected: string): boolean {
     return false;
   }
   return timingSafeEqual(actualBuffer, expectedBuffer);
-}
-
-function readBearerTokenFromWebSocketProtocol(request: Request): string | null {
-  const raw = request.headers.get("sec-websocket-protocol");
-  if (!raw) {
-    return null;
-  }
-  for (const protocol of raw.split(",").map((value) => value.trim())) {
-    if (!protocol.startsWith(runtimeBearerWebSocketProtocolPrefix)) {
-      continue;
-    }
-    const encoded = protocol.slice(runtimeBearerWebSocketProtocolPrefix.length);
-    try {
-      const token = Buffer.from(encoded, "base64url").toString();
-      return token.length > 0 ? token : null;
-    } catch {
-      return null;
-    }
-  }
-  return null;
 }
 
 async function consumeSharedRun<

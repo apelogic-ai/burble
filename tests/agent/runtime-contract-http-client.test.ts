@@ -1,6 +1,5 @@
 import { describe, expect, test } from "bun:test";
 import {
-  buildRuntimeBearerWebSocketProtocols,
   createRuntimeContractHttpClient,
   RuntimeCapabilityDiscoveryError
 } from "../../src/agent/runtime-contract-http-client";
@@ -48,7 +47,7 @@ const request = {
 describe("runtime contract HTTP client", () => {
   test("adapts /healthz, /runs, and websocket events to the harness", async () => {
     const calls: Array<{ url: string; init?: RequestInit }> = [];
-    const webSocketProtocols: Array<string | string[] | undefined> = [];
+    const webSocketOptions: Array<{ headers?: HeadersInit } | undefined> = [];
     const fetchMock = async (url: string, init?: RequestInit): Promise<Response> => {
       calls.push({ url, init });
       if (url === "http://runtime.local/healthz") {
@@ -72,8 +71,8 @@ describe("runtime contract HTTP client", () => {
       headers: {
         authorization: "Bearer runtime-token"
       },
-      webSocketFactory: (url, protocols) => {
-        webSocketProtocols.push(protocols);
+      webSocketFactory: (url, options) => {
+        webSocketOptions.push(options);
         return new FakeWebSocket(url, [
           { type: "status", text: "Working..." },
           {
@@ -103,8 +102,12 @@ describe("runtime contract HTTP client", () => {
       "http://runtime.local/healthz",
       "http://runtime.local/runs"
     ]);
-    expect(webSocketProtocols).toEqual([
-      buildRuntimeBearerWebSocketProtocols("runtime-token")
+    expect(webSocketOptions).toEqual([
+      {
+        headers: {
+          authorization: "Bearer runtime-token"
+        }
+      }
     ]);
   });
 
