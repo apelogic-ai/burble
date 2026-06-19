@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
+  authorizeRuntimeBearerToken,
+  buildRuntimeBearerWebSocketProtocols,
   buildRuntimeBearerHeaders,
   createRuntimeContractServer,
   createRuntimeToolGatewayClient,
@@ -46,6 +48,7 @@ const server = createRuntimeContractServer<
   TestRunEvent,
   TestRunResponse
 >({
+  authorizeRequest: "public",
   getCapabilityManifest: (context) => ({
     runtimeType: `test-${context.suffix}`,
     version: "1",
@@ -152,6 +155,43 @@ const authorizedServer = createRuntimeContractServer<
   }
 });
 
+const throwingAuthorizedServer = createRuntimeContractServer<
+  { suffix: string },
+  TestRunRequest,
+  TestRunEvent,
+  TestRunResponse
+>({
+  authorizeRequest: () => {
+    throw new Error("auth backend unavailable");
+  },
+  getCapabilityManifest: (context) => ({
+    runtimeType: `test-${context.suffix}`,
+    version: "1",
+    transports: ["http"],
+    streaming: false,
+    cancellation: false,
+    nativeScheduler: false,
+    scheduledProviderCalls: false,
+    toolCalls: false,
+    toolBridgeModes: [],
+    usageReporting: "none",
+    multimodalInput: false,
+    multimodalOutput: false,
+    memory: false,
+    durableWorkflowState: false,
+    attachments: false,
+    conversationSend: false,
+    jobScopedAuth: false
+  }),
+  normalizeRunRequest() {
+    return null;
+  },
+  async *streamRun() {},
+  responseFromEvent() {
+    return null;
+  }
+});
+
 describe("runtime SDK contract server", () => {
   test("serves health and capability endpoints", async () => {
     const health = await server.handleRequest(
@@ -170,6 +210,60 @@ describe("runtime SDK contract server", () => {
       runtimeType: "test-runtime",
       toolBridgeModes: ["tool_gateway"]
     });
+  });
+
+  test("validates runtime bearer tokens without accepting prefix matches", () => {
+    expect(
+      authorizeRuntimeBearerToken(
+        new Request("http://runtime/runs", {
+          headers: {
+            authorization: "Bearer runtime-token"
+          }
+        }),
+        "runtime-token"
+      )
+    ).toBe(true);
+    expect(
+      authorizeRuntimeBearerToken(
+        new Request("http://runtime/runs", {
+          headers: {
+            authorization: "Bearer runtime"
+          }
+        }),
+        "runtime-token"
+      )
+    ).toBe(false);
+    expect(
+      authorizeRuntimeBearerToken(
+        new Request("http://runtime/runs"),
+        "runtime-token"
+      )
+    ).toBe(false);
+  });
+
+  test("validates runtime bearer tokens from WebSocket protocols", () => {
+    expect(
+      authorizeRuntimeBearerToken(
+        new Request("http://runtime/runs/run-123/events", {
+          headers: {
+            "sec-websocket-protocol":
+              buildRuntimeBearerWebSocketProtocols("runtime-token")[0]
+          }
+        }),
+        "runtime-token"
+      )
+    ).toBe(true);
+    expect(
+      authorizeRuntimeBearerToken(
+        new Request("http://runtime/runs/run-123/events", {
+          headers: {
+            "sec-websocket-protocol":
+              buildRuntimeBearerWebSocketProtocols("runtime")[0]
+          }
+        }),
+        "runtime-token"
+      )
+    ).toBe(false);
   });
 
   test("requires bearer auth for protected runtime contract endpoints", async () => {
@@ -204,6 +298,53 @@ describe("runtime SDK contract server", () => {
     expect(await authorized?.json()).toEqual({
       response: { text: "hello world" }
     });
+  });
+
+  test("requires bearer auth before upgrading run event streams", async () => {
+    const unauthorizedEvents = await authorizedServer.handleRequest(
+      new Request("http://runtime/runs/run-123/events"),
+      { suffix: "world" },
+      {
+        upgradeWebSocket: () => {
+          throw new Error("upgrade should not run");
+        }
+      }
+    );
+    const upgradedRunIds: string[] = [];
+    const authorizedEvents = await authorizedServer.handleRequest(
+      new Request("http://runtime/runs/run-123/events", {
+        headers: {
+          authorization: "Bearer runtime-token"
+        }
+      }),
+      { suffix: "world" },
+      {
+        upgradeWebSocket: (runId) => {
+          upgradedRunIds.push(runId);
+          return false;
+        }
+      }
+    );
+
+    expect(unauthorizedEvents?.status).toBe(401);
+    expect(authorizedEvents?.status).toBe(400);
+    expect(upgradedRunIds).toEqual(["run-123"]);
+  });
+
+  test("fails closed when the runtime contract authorizer throws", async () => {
+    const response = await throwingAuthorizedServer.handleRequest(
+      new Request("http://runtime/runs", {
+        method: "POST",
+        headers: {
+          authorization: "Bearer runtime-token",
+          "content-type": "application/json"
+        },
+        body: JSON.stringify({ input: { text: "hello" } })
+      }),
+      { suffix: "world" }
+    );
+
+    expect(response?.status).toBe(401);
   });
 
   test("runs synchronously and returns the final response", async () => {

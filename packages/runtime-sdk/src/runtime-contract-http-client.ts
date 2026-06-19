@@ -4,6 +4,9 @@ import type {
 } from "./runtime-contract";
 import { parseRuntimeCapabilityManifest } from "./runtime-contract";
 import type { RuntimeContractClient } from "./runtime-contract-harness";
+import { buildRuntimeBearerWebSocketProtocols } from "./server";
+
+export { buildRuntimeBearerWebSocketProtocols };
 
 export type RuntimeContractFetch = (
   url: string,
@@ -19,7 +22,8 @@ export type RuntimeContractWebSocket = {
 };
 
 export type RuntimeContractWebSocketFactory = (
-  url: string
+  url: string,
+  protocols?: string | string[]
 ) => RuntimeContractWebSocket;
 
 export class RuntimeCapabilityDiscoveryError extends Error {
@@ -42,7 +46,9 @@ export function createRuntimeContractHttpClient(input: {
   const baseUrl = input.baseUrl.replace(/\/+$/, "");
   const requestFetch = input.fetch ?? fetch;
   const createWebSocket =
-    input.webSocketFactory ?? ((url: string) => new WebSocket(url));
+    input.webSocketFactory ??
+    ((url: string, protocols?: string | string[]) =>
+      new WebSocket(url, protocols));
 
   return {
     async getCapabilityManifest() {
@@ -94,7 +100,8 @@ export function createRuntimeContractHttpClient(input: {
     streamRunEvents(runId: string) {
       return readWebSocketEvents(
         createWebSocket(
-          toWebSocketUrl(`${baseUrl}/runs/${encodeURIComponent(runId)}/events`)
+          toWebSocketUrl(`${baseUrl}/runs/${encodeURIComponent(runId)}/events`),
+          runtimeWebSocketProtocols(input.headers)
         )
       );
     }
@@ -175,6 +182,17 @@ function toHeaderRecord(headers: HeadersInit | undefined): Record<string, string
     return Object.fromEntries(headers);
   }
   return headers;
+}
+
+function runtimeWebSocketProtocols(
+  headers: HeadersInit | undefined
+): string[] | undefined {
+  const authorization = new Headers(headers).get("authorization");
+  if (!authorization?.startsWith("Bearer ")) {
+    return undefined;
+  }
+  const token = authorization.slice("Bearer ".length).trim();
+  return token ? buildRuntimeBearerWebSocketProtocols(token) : undefined;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

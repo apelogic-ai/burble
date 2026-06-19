@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   attachRuntimeEventWebSocket,
-  handleRuntimeRequest
+  handleRuntimeRequest as handleRuntimeRequestRaw
 } from "../../../runtimes/openclaw-nemoclaw/src/server";
 import { buildBurbleConversationDeliveryTarget } from "../../../runtimes/openclaw-nemoclaw/src/burble-conversation-connector";
 import type { RuntimeConfig } from "../../../runtimes/openclaw-nemoclaw/src/config";
@@ -50,6 +50,26 @@ const config: RuntimeConfig = {
   ollamaBaseUrl: "https://ollama.com"
 };
 
+function handleRuntimeRequest(
+  request: Request,
+  runtimeConfig: RuntimeConfig,
+  executeTool?: Parameters<typeof handleRuntimeRequestRaw>[2],
+  options?: Parameters<typeof handleRuntimeRequestRaw>[3]
+): ReturnType<typeof handleRuntimeRequestRaw> {
+  return handleRuntimeRequestRaw(
+    withRuntimeAuthorization(request, runtimeConfig.internalToken),
+    runtimeConfig,
+    executeTool,
+    options
+  );
+}
+
+function withRuntimeAuthorization(request: Request, token: string): Request {
+  const headers = new Headers(request.headers);
+  headers.set("authorization", `Bearer ${token}`);
+  return new Request(request, { headers });
+}
+
 async function withMockFetch<T>(
   mock: typeof fetch,
   run: () => Promise<T>
@@ -64,6 +84,15 @@ async function withMockFetch<T>(
 }
 
 describe("handleRuntimeRequest", () => {
+  test("requires runtime bearer auth for contract endpoints", async () => {
+    const response = await handleRuntimeRequestRaw(
+      new Request("http://runtime/capabilities"),
+      config
+    );
+
+    expect(response.status).toBe(401);
+  });
+
   test("builds Burble channel delivery URLs with scheduled job identity", () => {
     const target = buildBurbleConversationDeliveryTarget(config, {
       routeId: "convrt_abcdefabcdefabcdefabcdef",

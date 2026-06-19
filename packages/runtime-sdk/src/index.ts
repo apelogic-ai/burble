@@ -29,7 +29,9 @@ export {
 export { stripRuntimeToolCallProtocolFragments } from "./runtime-text-protocol";
 export {
   authorizeRuntimeBearerToken,
+  buildRuntimeBearerWebSocketProtocols,
   createRuntimeContractServer,
+  type RuntimeContractAuthorizer,
   type RuntimeContractServer,
   type RuntimeContractServerOptions,
   type RuntimeEventWebSocket

@@ -1,3 +1,5 @@
+import { timingSafeEqual } from "node:crypto";
+
 export type RuntimeEventWebSocket = {
   send: (message: string) => unknown;
   close: (code?: number, reason?: string) => unknown;
@@ -8,16 +10,22 @@ export type RuntimeContractEvent = {
   [key: string]: unknown;
 };
 
+export type RuntimeContractAuthorizer<TContext> =
+  | "public"
+  | ((
+      request: Request,
+      context: TContext
+    ) => boolean | Promise<boolean>);
+
+const runtimeBearerWebSocketProtocolPrefix = "burble-runtime-bearer.";
+
 export type RuntimeContractServerOptions<
   TContext,
   TRequest,
   TEvent extends RuntimeContractEvent,
   TResponse
 > = {
-  authorizeRequest?: (
-    request: Request,
-    context: TContext
-  ) => boolean | Promise<boolean>;
+  authorizeRequest: RuntimeContractAuthorizer<TContext>;
   getCapabilityManifest: (context: TContext) => unknown | Promise<unknown>;
   normalizeRunRequest: (
     raw: unknown,
@@ -124,8 +132,11 @@ export function createRuntimeContractServer<
 
       if (
         protectedRuntimeContractPath(url.pathname) &&
-        input.authorizeRequest &&
-        !(await input.authorizeRequest(request, context))
+        !(await isRuntimeContractRequestAuthorized({
+          authorizer: input.authorizeRequest,
+          request,
+          context
+        }))
       ) {
         return new Response("Unauthorized", {
           status: 401,
@@ -258,24 +269,82 @@ export function authorizeRuntimeBearerToken(
   if (!expectedToken) {
     return false;
   }
-  return readBearerToken(request) === expectedToken;
+  const actualToken = readBearerToken(request);
+  if (!actualToken) {
+    return false;
+  }
+  return timingSafeTokenEqual(actualToken, expectedToken);
+}
+
+export function buildRuntimeBearerWebSocketProtocols(
+  runtimeToken: string
+): string[] {
+  return [
+    `${runtimeBearerWebSocketProtocolPrefix}${Buffer.from(runtimeToken).toString(
+      "base64url"
+    )}`
+  ];
 }
 
 function protectedRuntimeContractPath(pathname: string): boolean {
   return (
     pathname === "/capabilities" ||
     pathname === "/runs" ||
-    /^\/runs\/[^/]+$/.test(pathname)
+    /^\/runs\/[^/]+(?:\/events)?$/.test(pathname)
   );
+}
+
+async function isRuntimeContractRequestAuthorized<TContext>(input: {
+  authorizer: RuntimeContractAuthorizer<TContext>;
+  request: Request;
+  context: TContext;
+}): Promise<boolean> {
+  if (input.authorizer === "public") {
+    return true;
+  }
+  try {
+    return await input.authorizer(input.request, input.context);
+  } catch {
+    return false;
+  }
 }
 
 function readBearerToken(request: Request): string | null {
   const authorization = request.headers.get("authorization");
-  if (!authorization?.startsWith("Bearer ")) {
+  if (authorization?.startsWith("Bearer ")) {
+    const token = authorization.slice("Bearer ".length).trim();
+    return token.length > 0 ? token : null;
+  }
+  return readBearerTokenFromWebSocketProtocol(request);
+}
+
+function timingSafeTokenEqual(actual: string, expected: string): boolean {
+  const actualBuffer = Buffer.from(actual);
+  const expectedBuffer = Buffer.from(expected);
+  if (actualBuffer.length !== expectedBuffer.length) {
+    return false;
+  }
+  return timingSafeEqual(actualBuffer, expectedBuffer);
+}
+
+function readBearerTokenFromWebSocketProtocol(request: Request): string | null {
+  const raw = request.headers.get("sec-websocket-protocol");
+  if (!raw) {
     return null;
   }
-  const token = authorization.slice("Bearer ".length).trim();
-  return token.length > 0 ? token : null;
+  for (const protocol of raw.split(",").map((value) => value.trim())) {
+    if (!protocol.startsWith(runtimeBearerWebSocketProtocolPrefix)) {
+      continue;
+    }
+    const encoded = protocol.slice(runtimeBearerWebSocketProtocolPrefix.length);
+    try {
+      const token = Buffer.from(encoded, "base64url").toString();
+      return token.length > 0 ? token : null;
+    } catch {
+      return null;
+    }
+  }
+  return null;
 }
 
 async function consumeSharedRun<
