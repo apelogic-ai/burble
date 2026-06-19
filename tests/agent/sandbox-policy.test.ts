@@ -61,15 +61,22 @@ describe("brokered runtime sandbox policy", () => {
         undefined,
         "",
         "https://api.openai.com/v1",
-        "https://API.OPENAI.com/"
+        "https://API.OPENAI.com/",
+        "wss://connect.browserbase.com/session",
+        "ws://Chrome.Example.Net:9222/devtools/browser/1"
       ])
-    ).toEqual(["api.openai.com", "burble-app:3000"]);
+    ).toEqual([
+      "api.openai.com",
+      "burble-app:3000",
+      "chrome.example.net:9222",
+      "connect.browserbase.com"
+    ]);
 
     expect(() => sandboxAllowedHostsFromUrls(["file:///etc/passwd"])).toThrow(
-      "must use http or https"
+      "must use http, https, ws, or wss"
     );
     expect(() => sandboxAllowedHostsFromUrls(["api.openai.com"])).toThrow(
-      "must be an absolute http/https URL"
+      "must be an absolute http/https/ws/wss URL"
     );
   });
 

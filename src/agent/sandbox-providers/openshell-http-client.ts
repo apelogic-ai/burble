@@ -138,15 +138,9 @@ export function createOpenShellHttpSandboxClient(
       if (options.token) {
         headers.set("authorization", `Bearer ${options.token}`);
       }
-      const response = await fetchWithTimeout(
-        requestFetch,
+      const response = await requestFetch(
         `${baseUrl}/sandboxes/${encodeURIComponent(input.sandboxId)}/events`,
-        { headers },
-        {
-          method: "GET",
-          path: `/sandboxes/${input.sandboxId}/events`,
-          timeoutMs: requestTimeoutMs
-        }
+        { headers }
       );
       if (!response.ok) {
         throw openShellHttpError(
@@ -155,8 +149,7 @@ export function createOpenShellHttpSandboxClient(
           response.status
         );
       }
-      const text = await response.text();
-      for (const event of parseEventText(text)) {
+      for await (const event of parseEventResponse(response)) {
         yield coerceSandboxEvent(input.sandboxId, event);
       }
     },
@@ -200,9 +193,10 @@ async function fetchWithTimeout(
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), context.timeoutMs);
   try {
+    const signal = combineAbortSignals(init.signal, controller.signal);
     return await requestFetch(input, {
       ...init,
-      signal: init.signal ?? controller.signal
+      signal
     });
   } catch (error) {
     if (controller.signal.aborted) {
@@ -214,6 +208,25 @@ async function fetchWithTimeout(
   } finally {
     clearTimeout(timeout);
   }
+}
+
+function combineAbortSignals(
+  left: AbortSignal | null | undefined,
+  right: AbortSignal
+): AbortSignal {
+  if (!left) {
+    return right;
+  }
+  if (left.aborted || right.aborted) {
+    const controller = new AbortController();
+    controller.abort();
+    return controller.signal;
+  }
+  const controller = new AbortController();
+  const abort = () => controller.abort();
+  left.addEventListener("abort", abort, { once: true });
+  right.addEventListener("abort", abort, { once: true });
+  return controller.signal;
 }
 
 function coerceSandboxRecord(value: unknown): OpenShellSandboxRecord {
@@ -276,6 +289,50 @@ function coerceSandboxEvent(
   };
 }
 
+async function* parseEventResponse(response: Response): AsyncIterable<unknown> {
+  if (!response.body) {
+    yield* parseEventText(await response.text());
+    return;
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffered = "";
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) {
+        break;
+      }
+      buffered += decoder.decode(value, { stream: true });
+      const lines = buffered.split(/\r?\n/);
+      buffered = lines.pop() ?? "";
+      for (const line of lines) {
+        const event = parseEventLine(line);
+        if (event !== undefined) {
+          yield event;
+        }
+      }
+    }
+    buffered += decoder.decode();
+    const trimmed = buffered.trim();
+    if (trimmed.startsWith("[")) {
+      for (const event of parseEventText(trimmed)) {
+        yield event;
+      }
+      return;
+    }
+    for (const line of buffered.split(/\r?\n/)) {
+      const event = parseEventLine(line);
+      if (event !== undefined) {
+        yield event;
+      }
+    }
+  } finally {
+    reader.releaseLock();
+  }
+}
+
 function parseEventText(text: string): unknown[] {
   const trimmed = text.trim();
   if (!trimmed) {
@@ -290,12 +347,20 @@ function parseEventText(text: string): unknown[] {
   }
   return trimmed
     .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter(Boolean)
-    .filter((line) => !isSseControlLine(line))
-    .map((line) => (line.startsWith("data:") ? line.slice(5).trim() : line))
-    .filter(Boolean)
-    .map((line) => JSON.parse(line) as unknown);
+    .map(parseEventLine)
+    .filter((event): event is unknown => event !== undefined);
+}
+
+function parseEventLine(line: string): unknown | undefined {
+  const trimmed = line.trim();
+  if (!trimmed || isSseControlLine(trimmed)) {
+    return undefined;
+  }
+  const payload = trimmed.startsWith("data:") ? trimmed.slice(5).trim() : trimmed;
+  if (!payload) {
+    return undefined;
+  }
+  return JSON.parse(payload) as unknown;
 }
 
 function isSseControlLine(line: string): boolean {

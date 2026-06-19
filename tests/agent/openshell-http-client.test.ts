@@ -197,6 +197,33 @@ describe("OpenShell HTTP sandbox client", () => {
       "OpenShell request GET /sandboxes/osb-1 timed out after 1ms"
     );
   });
+
+  test("does not attach the unary timeout signal to event streams", async () => {
+    let eventRequestSignal: AbortSignal | undefined;
+    const client = createOpenShellHttpSandboxClient({
+      baseUrl: "https://openshell.example.test",
+      requestTimeoutMs: 1,
+      fetch: async (_input, init) => {
+        eventRequestSignal = init?.signal ?? undefined;
+        return new Response(
+          `data: ${JSON.stringify({
+            sandboxId: "osb-1",
+            type: "run_started",
+            at: "2026-06-19T00:00:00.000Z"
+          })}\n`,
+          { headers: { "content-type": "text/event-stream" } }
+        );
+      }
+    });
+
+    const events = [];
+    for await (const event of client.events({ sandboxId: "osb-1" })) {
+      events.push(event.type);
+    }
+
+    expect(eventRequestSignal).toBeUndefined();
+    expect(events).toEqual(["run_started"]);
+  });
 });
 
 function jsonResponse(value: unknown, status = 200): Response {

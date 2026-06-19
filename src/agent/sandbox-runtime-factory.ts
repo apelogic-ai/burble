@@ -113,18 +113,16 @@ export function createSandboxRuntimeFactory(input: {
     ) {
       const attached = await input.sandboxProvider.attach(existing.sandboxId);
       const paths = sandboxRuntimePaths(attached.workspacePath, input.engine);
-      if (manifest?.policyHash && existing.policyHash !== manifest.policyHash) {
-        const policy =
-          (await input.buildPolicy?.({
-            principal,
-            engine: input.engine,
-            runtimeId: existing.id,
-            runtimeDataId,
-            manifest
-          })) ??
-          buildDefaultSandboxPolicy(input, manifest);
-        await input.sandboxProvider.applyPolicy(attached.id, policy);
-      }
+      const policy =
+        (await input.buildPolicy?.({
+          principal,
+          engine: input.engine,
+          runtimeId: existing.id,
+          runtimeDataId,
+          manifest
+        })) ??
+        buildDefaultSandboxPolicy(input, manifest);
+      await input.sandboxProvider.applyPolicy(attached.id, policy);
       const updated = input.store.getOrCreateAgentRuntime({
         workspaceId: principal.workspaceId,
         slackUserId: principal.slackUserId,

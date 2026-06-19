@@ -92,8 +92,11 @@ export function modelProviderUrlsForRuntimeModel(
     case "openrouter":
       return ["https://openrouter.ai/api/v1"];
     case "openai":
-    default:
       return [env.OPENAI_BASE_URL?.trim() || "https://api.openai.com/v1"];
+    default:
+      throw new Error(
+        `Unsupported sandbox model provider for egress allowlist: ${provider}`
+      );
   }
 }
 
@@ -135,6 +138,13 @@ export function runtimeExtraAllowedUrlsFromEnv(
   }
   if (env.BROWSERBASE_API_KEY?.trim()) {
     urls.push("https://api.browserbase.com");
+    urls.push("wss://connect.browserbase.com");
+  }
+  if (env.BROWSER_USE_API_KEY?.trim()) {
+    urls.push("https://api.browser-use.com");
+  }
+  if (env.BROWSER_CDP_URL?.trim()) {
+    urls.push(env.BROWSER_CDP_URL);
   }
 
   return urls.filter((url): url is string => Boolean(url?.trim()));

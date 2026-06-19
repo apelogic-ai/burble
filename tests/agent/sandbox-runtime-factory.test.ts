@@ -257,6 +257,62 @@ describe("createSandboxRuntimeFactory", () => {
     store.close();
   });
 
+  test("refreshes env-derived sandbox policy on durable reattach", async () => {
+    const store = createTokenStore(":memory:");
+    const provider = createFakeRuntimeSandboxProvider();
+    const env: Record<string, string | undefined> = {};
+    const factory = createSandboxRuntimeFactory({
+      store,
+      sandboxProvider: provider,
+      engine: "hermes",
+      image: "burble-nemo-hermes:dev",
+      toolGatewayUrl: "http://burble-app:3000/internal/tools",
+      modelProviderUrls: ["https://api.openai.com/v1"],
+      runtimeTokenSecret: "runtime-secret",
+      startCommand: ["hermes-entrypoint"],
+      healthCheckAttempts: 1,
+      fetch: async () => new Response("ok"),
+      env,
+      buildManifest: (runtimePrincipal) =>
+        ({
+          version: "1",
+          principal: runtimePrincipal,
+          runtime: {
+            engine: "hermes",
+            factory: "sandbox",
+            ttlMs: 86400000,
+            reaperEnabled: true
+          },
+          model: { provider: "openai", model: "gpt-5.4" },
+          tools: [],
+          skills: [],
+          memory: {
+            userMemoryEnabled: false,
+            workspaceMemoryEnabled: false,
+            jobMemoryEnabled: true
+          },
+          streaming: { messageDeltasEnabled: true },
+          memoryContext: [],
+          disabledTools: [],
+          policyHash: "same-policy"
+        }) as never
+    });
+
+    const first = await factory.getOrCreateRuntime(principal);
+    env.BRAVE_SEARCH_API_KEY = "brave-key";
+    const second = await factory.getOrCreateRuntime(principal);
+
+    expect(second.id).toBe(first.id);
+    expect(provider.provisionCalls).toHaveLength(1);
+    expect(provider.policyCalls).toHaveLength(2);
+    expect(provider.policyCalls[1].policy.network.allowedHosts).toContain(
+      "api.search.brave.com"
+    );
+    expect(store.getAgentRuntime(first.id)?.policyHash).toBe("same-policy");
+
+    store.close();
+  });
+
   test("serializes concurrent provisioning for the same runtime principal", async () => {
     const store = createTokenStore(":memory:");
     const provider = createFakeRuntimeSandboxProvider();
