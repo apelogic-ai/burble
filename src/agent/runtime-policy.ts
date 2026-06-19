@@ -120,9 +120,17 @@ export function runtimeEngineCompatibility(
     requirements?: RuntimeSelectionRequirements;
   } = {}
 ): RuntimeEngineCompatibility {
+  const descriptor = runtimeDescriptor(engine);
+  if (!descriptor.selectable) {
+    return {
+      engine,
+      selectable: false,
+      reasons: [descriptor.unselectableReason ?? "runtime is not selectable"]
+    };
+  }
   return runtimeCapabilityManifestCompatibility(
     engine,
-    knownRuntimeCapabilityManifest(engine),
+    descriptor.capabilities,
     options
   );
 }

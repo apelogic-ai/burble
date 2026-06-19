@@ -372,13 +372,24 @@ describe("readConfig", () => {
     expect(config.openClawNemoClawEngine).toBe("openclaw-gateway");
   });
 
-  test("allows Burble direct provider runtime engine override", () => {
+  test("maps legacy Burble direct runtime engine overrides to Burble Native", () => {
     const config = readConfig({
       ...validEnv,
       OPENCLAW_NEMOCLAW_ENGINE: "burble-direct"
     });
 
-    expect(config.openClawNemoClawEngine).toBe("burble-direct");
+    expect(config.openClawNemoClawEngine).toBe("burble-native");
+    expect(config.agentRuntimeEngine).toBe("burble-native");
+  });
+
+  test("maps legacy direct-provider runtime engine alias to Burble Native", () => {
+    const config = readConfig({
+      ...validEnv,
+      AGENT_RUNTIME_ENGINE: "direct-provider"
+    });
+
+    expect(config.agentRuntimeEngine).toBe("burble-native");
+    expect(config.agentRuntimeImage).toBe("burble-native-runtime:dev");
   });
 
   test("rejects invalid OpenClaw runtime engines", () => {
