@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test";
+import { readConfig } from "../../src/config";
 import {
   buildBrokeredRuntimeSandboxPolicy,
+  buildRuntimeSandboxPolicyFromConfig,
   sandboxAllowedHostsFromUrls
 } from "../../src/agent/sandbox-policy";
 import {
@@ -66,6 +68,32 @@ describe("brokered runtime sandbox policy", () => {
     expect(() => sandboxAllowedHostsFromUrls(["file:///etc/passwd"])).toThrow(
       "must use http or https"
     );
+  });
+
+  test("derives brokered egress from runtime gateway configuration", () => {
+    const config = readConfig({
+      ...validConfigEnv(),
+      AGENT_RUNTIME_FACTORY: "docker",
+      AGENT_RUNTIME_TOOL_GATEWAY_URL: "http://burble-app:3000/internal/tools",
+      AGENT_RUNTIME_MCP_GATEWAY_URL: "http://agentgateway:3000/mcp/"
+    });
+
+    const policy = buildRuntimeSandboxPolicyFromConfig(config, {
+      modelProviderUrls: ["https://api.openai.com/v1"]
+    });
+
+    expect(policy.network).toEqual({
+      egress: "allowlist",
+      allowedHosts: [
+        "agentgateway:3000",
+        "api.openai.com",
+        "burble-app:3000"
+      ]
+    });
+    expect(compileOpenShellSandboxPolicy({ policy }).egress).toEqual({
+      default: "deny",
+      allowHosts: ["agentgateway:3000", "api.openai.com", "burble-app:3000"]
+    });
   });
 });
 
@@ -219,3 +247,14 @@ describe("OpenShell sandbox policy compiler", () => {
     ]);
   });
 });
+
+function validConfigEnv(): Record<string, string> {
+  return {
+    SLACK_BOT_TOKEN: "xoxb-test",
+    SLACK_APP_TOKEN: "xapp-test",
+    GITHUB_CLIENT_ID: "github-client",
+    GITHUB_CLIENT_SECRET: "github-secret",
+    BASE_URL: "https://burble.example",
+    INTERNAL_API_TOKEN: "internal-token"
+  };
+}

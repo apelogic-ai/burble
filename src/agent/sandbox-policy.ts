@@ -1,4 +1,5 @@
 import type { SandboxPolicy } from "./sandbox-provider";
+import type { Config } from "../config";
 
 export type BrokeredRuntimeSandboxPolicyInput = {
   toolGatewayUrl: string;
@@ -9,6 +10,11 @@ export type BrokeredRuntimeSandboxPolicyInput = {
   resources?: SandboxPolicy["resources"];
   maxLifetimeMs?: number;
 };
+
+export type RuntimeSandboxPolicyConfig = Pick<
+  Config,
+  "agentRuntimeToolGatewayUrl" | "agentRuntimeMcpGatewayUrl"
+>;
 
 export function buildBrokeredRuntimeSandboxPolicy(
   input: BrokeredRuntimeSandboxPolicyInput
@@ -27,6 +33,20 @@ export function buildBrokeredRuntimeSandboxPolicy(
     ...(input.resources ? { resources: input.resources } : {}),
     ...(input.maxLifetimeMs ? { maxLifetimeMs: input.maxLifetimeMs } : {})
   };
+}
+
+export function buildRuntimeSandboxPolicyFromConfig(
+  config: RuntimeSandboxPolicyConfig,
+  options: Omit<
+    BrokeredRuntimeSandboxPolicyInput,
+    "toolGatewayUrl" | "mcpGatewayUrl"
+  > = {}
+): SandboxPolicy {
+  return buildBrokeredRuntimeSandboxPolicy({
+    ...options,
+    toolGatewayUrl: config.agentRuntimeToolGatewayUrl,
+    mcpGatewayUrl: config.agentRuntimeMcpGatewayUrl
+  });
 }
 
 export function sandboxAllowedHostsFromUrls(
