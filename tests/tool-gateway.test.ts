@@ -122,6 +122,7 @@ const runtime: AgentRuntimeRecord = {
   statePath: "/data/runtimes/u123/state",
   configPath: "/data/runtimes/u123/config/openclaw.json",
   workspacePath: "/data/runtimes/u123/workspace",
+  sandboxId: null,
   policyHash: "policy-hash",
   createdAt: "2026-05-21T00:00:00.000Z",
   lastSeenAt: "2026-05-21T00:00:00.000Z",

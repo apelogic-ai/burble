@@ -1520,6 +1520,7 @@ describe("buildAppHomeView", () => {
       statePath: "/data/state",
       configPath: "/data/config/runtime.json",
       workspacePath: "/data/workspace",
+        sandboxId: null,
       policyHash: "policy-home"
     });
     const agentSettings = buildAgentHomeSettings({
@@ -1673,6 +1674,7 @@ describe("buildAppHomeView", () => {
       statePath: "/data/state",
       configPath: "/data/config/runtime.json",
       workspacePath: "/data/workspace",
+        sandboxId: null,
       policyHash: "policy-home"
     });
 
@@ -1714,6 +1716,7 @@ describe("buildAppHomeView", () => {
       statePath: "/data/state",
       configPath: "/data/config/runtime.json",
       workspacePath: "/data/workspace",
+        sandboxId: null,
       policyHash: "policy-home"
     });
 
@@ -1802,6 +1805,7 @@ describe("buildAppHomeView", () => {
       statePath: "/data/state",
       configPath: "/data/config/runtime.json",
       workspacePath: "/data/workspace",
+        sandboxId: null,
       policyHash: "policy-modal"
     });
     const view = buildAgentRuntimeManageModalView({
@@ -1872,6 +1876,7 @@ describe("buildAppHomeView", () => {
       statePath: "/data/state",
       configPath: "/data/config/runtime.json",
       workspacePath: "/data/workspace",
+        sandboxId: null,
       policyHash: "policy"
     });
 
@@ -1929,6 +1934,7 @@ describe("buildAppHomeView", () => {
       statePath: "/data/state",
       configPath: "/data/config/hermes.json",
       workspacePath: "/data/workspace",
+        sandboxId: null,
       policyHash: "policy"
     });
     const stopped: string[] = [];
@@ -1977,6 +1983,7 @@ describe("buildAppHomeView", () => {
       statePath: "/data/state",
       configPath: "/data/config/openclaw.json",
       workspacePath: "/data/workspace",
+        sandboxId: null,
       policyHash: "policy-old"
     });
     const stopped: string[] = [];
@@ -1998,6 +2005,7 @@ describe("buildAppHomeView", () => {
             statePath: "/data/state",
             configPath: "/data/config/hermes.json",
             workspacePath: "/data/workspace",
+        sandboxId: null,
             policyHash: "policy-new"
           });
           return {
@@ -2128,6 +2136,7 @@ describe("buildAgentStatusResponse", () => {
         statePath: "/data/state",
         configPath: "/data/config/runtime.json",
         workspacePath: "/data/workspace",
+        sandboxId: null,
         policyHash: "policy-hash",
         createdAt: "2026-05-26T00:00:00.000Z",
         lastSeenAt: "2026-05-26T00:01:00.000Z",
@@ -2167,6 +2176,7 @@ describe("buildAgentStatusResponse", () => {
       statePath: "/data/state",
       configPath: "/data/config/hermes.json",
       workspacePath: "/data/workspace",
+        sandboxId: null,
       policyHash: "policy"
     });
 
@@ -2212,6 +2222,7 @@ describe("buildAgentConfigResponse", () => {
       statePath: "/data/state",
       configPath: "/data/config/runtime.json",
       workspacePath: "/data/workspace",
+        sandboxId: null,
       policyHash: "policy-hash",
       createdAt: "2026-05-26T00:00:00.000Z",
       lastSeenAt: "2026-05-26T00:01:00.000Z",
@@ -2259,6 +2270,7 @@ describe("buildAgentConfigResponse", () => {
       statePath: "/data/state",
       configPath: "/host/runtime.json",
       workspacePath: "/data/workspace",
+        sandboxId: null,
       policyHash: "policy-hash",
       createdAt: "2026-05-26T00:00:00.000Z",
       lastSeenAt: "2026-05-26T00:01:00.000Z",
@@ -2903,6 +2915,7 @@ describe("agent user config commands", () => {
       statePath: "/data/state",
       configPath: "/data/config/runtime.json",
       workspacePath: "/data/workspace",
+        sandboxId: null,
       policyHash: "policy-old"
     });
     const stopped: string[] = [];
@@ -2960,6 +2973,7 @@ describe("agent user config commands", () => {
       statePath: "/data/state",
       configPath: "/data/config/runtime.json",
       workspacePath: "/data/workspace",
+        sandboxId: null,
       policyHash: "policy-old"
     });
     store.upsertUserPreference({
@@ -3016,6 +3030,7 @@ describe("agent user config commands", () => {
       statePath: "/data/state",
       configPath: "/data/config/runtime.json",
       workspacePath: "/data/workspace",
+        sandboxId: null,
       policyHash: "policy-old"
     });
     const stopped: string[] = [];

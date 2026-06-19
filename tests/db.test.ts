@@ -183,7 +183,8 @@ describe("createTokenStore", () => {
       authTokenHash: "hash-new",
       statePath: "/new/state",
       configPath: "/new/config.json",
-      workspacePath: "/new/workspace"
+      workspacePath: "/new/workspace",
+      sandboxId: "sandbox-u123"
     });
     const otherUser = store.getOrCreateAgentRuntime({
       workspaceId: "T123",
@@ -196,15 +197,19 @@ describe("createTokenStore", () => {
       workspacePath: "/data/runtimes/u456/workspace"
     });
 
-    expect(second).toEqual(first);
+    expect(second.id).toBe(first.id);
     expect(otherUser.id).not.toBe(first.id);
-    expect(first).toMatchObject({
+    expect(second).toMatchObject({
       workspaceId: "T123",
       slackUserId: "U123",
       engine: "openclaw",
       status: "ready",
-      endpointUrl: "http://runtime-u123:8080",
-      authTokenHash: "hash-u123",
+      endpointUrl: "http://runtime-u123-new:8080",
+      authTokenHash: "hash-new",
+      statePath: "/new/state",
+      configPath: "/new/config.json",
+      workspacePath: "/new/workspace",
+      sandboxId: "sandbox-u123",
       policyHash: null
     });
 

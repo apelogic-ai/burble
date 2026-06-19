@@ -1,8 +1,8 @@
-import { createHmac } from "node:crypto";
 import type { AgentRuntimeEngine, TokenStore } from "../db";
 import type { RuntimeJwtIssuer } from "../runtime-jwt";
 import {
   buildRuntimeDataId,
+  deriveRuntimeToken,
   hashRuntimeToken,
   nativeAgentConfigFileName,
   type RuntimeConfigRead,
@@ -543,19 +543,7 @@ export function buildContainerRuntimeSpec(input: {
   };
 }
 
-export function deriveRuntimeToken(input: {
-  secret: string;
-  principal: PrincipalId;
-  engine: AgentRuntimeEngine;
-}): string {
-  const digest = createHmac("sha256", input.secret)
-    .update(
-      `${input.principal.workspaceId}:${input.principal.slackUserId}:${input.engine}`
-    )
-    .digest("hex");
-
-  return `burble_rt_${digest}`;
-}
+export { deriveRuntimeToken };
 
 function buildContainerName(runtimeDataId: string): string {
   return `burble-rt-${runtimeDataId}`;

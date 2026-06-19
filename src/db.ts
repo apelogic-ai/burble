@@ -54,6 +54,7 @@ export type AgentRuntimeRecord = {
   statePath: string;
   configPath: string;
   workspacePath: string;
+  sandboxId: string | null;
   policyHash: string | null;
   createdAt: string;
   lastSeenAt: string;
@@ -261,6 +262,7 @@ export function createTokenStore(path: string) {
       state_path TEXT NOT NULL,
       config_path TEXT NOT NULL,
       workspace_path TEXT NOT NULL,
+      sandbox_id TEXT,
       policy_hash TEXT,
       created_at TEXT NOT NULL,
       last_seen_at TEXT NOT NULL,
@@ -416,6 +418,7 @@ export function createTokenStore(path: string) {
   `);
   ensureProviderConnectionColumn(db, "refresh_token", "TEXT");
   ensureProviderConnectionColumn(db, "access_token_expires_at", "TEXT");
+  ensureAgentRuntimeColumn(db, "sandbox_id", "TEXT");
   ensureAgentRuntimeColumn(db, "policy_hash", "TEXT");
   ensureAgentJobCapabilityColumn(
     db,
@@ -567,6 +570,7 @@ export function createTokenStore(path: string) {
       state_path AS statePath,
       config_path AS configPath,
       workspace_path AS workspacePath,
+      sandbox_id AS sandboxId,
       policy_hash AS policyHash,
       created_at AS createdAt,
       last_seen_at AS lastSeenAt,
@@ -591,6 +595,7 @@ export function createTokenStore(path: string) {
       state_path AS statePath,
       config_path AS configPath,
       workspace_path AS workspacePath,
+      sandbox_id AS sandboxId,
       policy_hash AS policyHash,
       created_at AS createdAt,
       last_seen_at AS lastSeenAt,
@@ -612,6 +617,7 @@ export function createTokenStore(path: string) {
       state_path AS statePath,
       config_path AS configPath,
       workspace_path AS workspacePath,
+      sandbox_id AS sandboxId,
       policy_hash AS policyHash,
       created_at AS createdAt,
       last_seen_at AS lastSeenAt,
@@ -634,16 +640,29 @@ export function createTokenStore(path: string) {
       state_path,
       config_path,
       workspace_path,
+      sandbox_id,
       policy_hash,
       created_at,
       last_seen_at,
       last_used_at
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
   const updateAgentRuntimePolicyHash = db.query(`
     UPDATE agent_runtimes
     SET policy_hash = ?, last_seen_at = ?
+    WHERE id = ?
+  `);
+  const updateAgentRuntimeBinding = db.query(`
+    UPDATE agent_runtimes
+    SET
+      endpoint_url = ?,
+      auth_token_hash = ?,
+      state_path = ?,
+      config_path = ?,
+      workspace_path = ?,
+      sandbox_id = ?,
+      last_seen_at = ?
     WHERE id = ?
   `);
   const updateAgentRuntimeStatus = db.query(`
@@ -1257,6 +1276,7 @@ export function createTokenStore(path: string) {
       statePath: string;
       configPath: string;
       workspacePath: string;
+      sandboxId?: string | null;
       policyHash?: string | null;
       now?: Date;
     }): AgentRuntimeRecord {
@@ -1266,8 +1286,27 @@ export function createTokenStore(path: string) {
         input.engine
       );
       if (existing) {
+        const now = (input.now ?? new Date()).toISOString();
+        if (
+          existing.endpointUrl !== input.endpointUrl ||
+          existing.authTokenHash !== input.authTokenHash ||
+          existing.statePath !== input.statePath ||
+          existing.configPath !== input.configPath ||
+          existing.workspacePath !== input.workspacePath ||
+          existing.sandboxId !== (input.sandboxId ?? null)
+        ) {
+          updateAgentRuntimeBinding.run(
+            input.endpointUrl,
+            input.authTokenHash,
+            input.statePath,
+            input.configPath,
+            input.workspacePath,
+            input.sandboxId ?? null,
+            now,
+            existing.id
+          );
+        }
         if (input.policyHash && existing.policyHash !== input.policyHash) {
-          const now = (input.now ?? new Date()).toISOString();
           updateAgentRuntimePolicyHash.run(input.policyHash, now, existing.id);
           const updated = getAgentRuntimeById.get(existing.id);
           if (!updated) {
@@ -1287,7 +1326,7 @@ export function createTokenStore(path: string) {
           );
           return updated;
         }
-        return existing;
+        return getAgentRuntimeById.get(existing.id) ?? existing;
       }
 
       const id = buildAgentRuntimeId(
@@ -1307,6 +1346,7 @@ export function createTokenStore(path: string) {
         input.statePath,
         input.configPath,
         input.workspacePath,
+        input.sandboxId ?? null,
         input.policyHash ?? null,
         now,
         now,
