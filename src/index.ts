@@ -6,6 +6,7 @@ import { createSlackRuntime } from "./slack";
 import { formatLogError, formatLogLine, withUtcTimestamp } from "./logging";
 import { createRuntimeJwtIssuer } from "./runtime-jwt";
 import { createObservabilitySink } from "./observability";
+import { createConfiguredSandboxProvider } from "./agent/sandbox-providers/configured";
 
 const config = loadConfig();
 const store = createTokenStore(config.databasePath);
@@ -18,7 +19,18 @@ const runtimeJwtIssuer = createRuntimeJwtIssuer({
   issuer: config.runtimeJwtIssuer,
   privateKeyPath: config.runtimeJwtPrivateKeyPath
 });
-const slack = createSlackRuntime(config, store, runtimeJwtIssuer, observability);
+const slack = createSlackRuntime(
+  config,
+  store,
+  runtimeJwtIssuer,
+  observability,
+  config.agentRuntimeFactory === "sandbox"
+    ? {
+        sandboxProvider: createConfiguredSandboxProvider(config),
+        sandboxStartCommand: config.agentRuntimeSandboxStartCommand ?? []
+      }
+    : {}
+);
 const server = startOAuthServer(config, store, slack, runtimeJwtIssuer, observability);
 const logDebug =
   config.slackLogLevel === "debug"

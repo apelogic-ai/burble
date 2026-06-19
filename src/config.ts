@@ -45,6 +45,9 @@ export type Config = {
   agentRuntimeToolGatewayUrl: string;
   agentRuntimeMcpGatewayUrl: string | null;
   agentRuntimeMcpAudience: string | null;
+  agentRuntimeSandboxUrl: string | null;
+  agentRuntimeSandboxToken: string | null;
+  agentRuntimeSandboxStartCommand: string[] | null;
   agentRuntimeStreaming?: AgentRuntimeStreamingMode;
   atlassianMcpUrl: string;
   runtimeJwtIssuer: string;
@@ -249,6 +252,37 @@ function optionalUrlEnv(env: Env, name: string): string | null {
   return value ? value.replace(/\/+$/, "") : null;
 }
 
+function optionalCommandEnv(env: Env, name: string): string[] | null {
+  const raw = env[name]?.trim();
+  if (!raw) {
+    return null;
+  }
+
+  if (raw.startsWith("[")) {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(raw);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      throw new Error(
+        `Environment variable ${name} must be a JSON string array or whitespace-separated command: ${message}`
+      );
+    }
+    if (
+      !Array.isArray(parsed) ||
+      parsed.length === 0 ||
+      parsed.some((value) => typeof value !== "string" || value.trim() === "")
+    ) {
+      throw new Error(
+        `Environment variable ${name} must be a non-empty JSON string array`
+      );
+    }
+    return parsed;
+  }
+
+  return raw.split(/\s+/).filter(Boolean);
+}
+
 export function readConfig(env: Env): Config {
   const baseUrl = requiredEnv(env, "BASE_URL").replace(/\/+$/, "");
   const internalApiToken = optionalSecretEnv(env, "INTERNAL_API_TOKEN");
@@ -340,6 +374,15 @@ export function readConfig(env: Env): Config {
     agentRuntimeMcpAudience:
       optionalUrlEnv(env, "AGENT_RUNTIME_MCP_AUDIENCE") ??
       agentRuntimeMcpGatewayUrl,
+    agentRuntimeSandboxUrl: optionalUrlEnv(env, "AGENT_RUNTIME_SANDBOX_URL"),
+    agentRuntimeSandboxToken: optionalSecretEnv(
+      env,
+      "AGENT_RUNTIME_SANDBOX_TOKEN"
+    ),
+    agentRuntimeSandboxStartCommand: optionalCommandEnv(
+      env,
+      "AGENT_RUNTIME_SANDBOX_START_COMMAND"
+    ),
     agentRuntimeStreaming: optionalAgentRuntimeStreamingModeEnv(
       env,
       "AGENT_RUNTIME_STREAMING",
