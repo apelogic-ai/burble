@@ -2,6 +2,7 @@ import {
   cloneSandboxCredentialBinding,
   cloneSandboxHandle,
   cloneSandboxPolicy,
+  isSandboxCredentialMaterialized,
   type SandboxCredentialBinding,
   type SandboxEvent,
   type SandboxHandle,
@@ -111,7 +112,7 @@ export function createOpenShellSandboxProvider(input: {
         sandboxId,
         credentialBindings,
         materializedCredentials: credentialBindings.filter(
-          (credential) => credential.delivery === "sandbox_reference"
+          isSandboxCredentialMaterialized
         ),
         compiledProviders: compileOpenShellProviderBindings(credentialBindings)
       });

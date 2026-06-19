@@ -68,6 +68,25 @@ describe("brokered runtime sandbox policy", () => {
     expect(() => sandboxAllowedHostsFromUrls(["file:///etc/passwd"])).toThrow(
       "must use http or https"
     );
+    expect(() => sandboxAllowedHostsFromUrls(["api.openai.com"])).toThrow(
+      "must be an absolute http/https URL"
+    );
+  });
+
+  test("requires the model provider URL before building brokered egress", () => {
+    expect(() =>
+      buildBrokeredRuntimeSandboxPolicy({
+        toolGatewayUrl: "http://burble-app:3000/internal/tools",
+        modelProviderUrls: []
+      })
+    ).toThrow("modelProviderUrls must include at least one URL");
+
+    expect(() =>
+      buildBrokeredRuntimeSandboxPolicy({
+        toolGatewayUrl: "http://burble-app:3000/internal/tools",
+        modelProviderUrls: [" "]
+      })
+    ).toThrow("modelProviderUrls must include at least one URL");
   });
 
   test("derives brokered egress from runtime gateway configuration", () => {

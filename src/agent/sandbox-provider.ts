@@ -155,6 +155,12 @@ export function cloneSandboxCredentialBinding(
   return { ...credential };
 }
 
+export function isSandboxCredentialMaterialized(
+  credential: SandboxCredentialBinding
+): boolean {
+  return credential.delivery === "sandbox_reference";
+}
+
 export function cloneSandboxEvent(event: SandboxEvent): SandboxEvent {
   return {
     ...event,

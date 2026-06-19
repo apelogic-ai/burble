@@ -2,6 +2,7 @@ import type {
   SandboxCredentialBinding,
   SandboxPolicy
 } from "../sandbox-provider";
+import { isSandboxCredentialMaterialized } from "../sandbox-provider";
 
 export type OpenShellSandboxPolicyConfig = {
   version: 1;
@@ -41,7 +42,7 @@ export function compileOpenShellSandboxPolicy(input: {
       readOnly: normalizePaths(input.policy.filesystem?.readOnlyPaths ?? []),
       readWrite: normalizePaths(input.policy.filesystem?.readWritePaths ?? [])
     },
-  resources: compileResources(input.policy),
+    resources: compileResources(input.policy),
     providers: compileOpenShellProviderBindings(input.credentials ?? [])
   };
 }
@@ -54,7 +55,7 @@ export function compileOpenShellProviderBindings(
     ref: credential.ref,
     kind: credential.kind,
     delivery: credential.delivery,
-    materialized: credential.delivery === "sandbox_reference"
+    materialized: isSandboxCredentialMaterialized(credential)
   }));
 }
 

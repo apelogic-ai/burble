@@ -4,7 +4,7 @@ import type { Config } from "../config";
 export type BrokeredRuntimeSandboxPolicyInput = {
   toolGatewayUrl: string;
   mcpGatewayUrl?: string | null;
-  modelProviderUrls?: string[];
+  modelProviderUrls: string[];
   extraAllowedUrls?: string[];
   filesystem?: SandboxPolicy["filesystem"];
   resources?: SandboxPolicy["resources"];
@@ -19,6 +19,7 @@ export type RuntimeSandboxPolicyConfig = Pick<
 export function buildBrokeredRuntimeSandboxPolicy(
   input: BrokeredRuntimeSandboxPolicyInput
 ): SandboxPolicy {
+  assertRequiredUrls("modelProviderUrls", input.modelProviderUrls);
   return {
     network: {
       egress: "allowlist",
@@ -40,7 +41,7 @@ export function buildRuntimeSandboxPolicyFromConfig(
   options: Omit<
     BrokeredRuntimeSandboxPolicyInput,
     "toolGatewayUrl" | "mcpGatewayUrl"
-  > = {}
+  >
 ): SandboxPolicy {
   return buildBrokeredRuntimeSandboxPolicy({
     ...options,
@@ -60,9 +61,25 @@ function sandboxHostFromUrl(value: string | null | undefined): string[] {
   if (!trimmed) {
     return [];
   }
-  const url = new URL(trimmed);
+  let url: URL;
+  try {
+    url = new URL(trimmed);
+  } catch {
+    throw new Error(
+      `Sandbox egress URL must be an absolute http/https URL: ${value}`
+    );
+  }
   if (url.protocol !== "http:" && url.protocol !== "https:") {
     throw new Error(`Sandbox egress URL must use http or https: ${value}`);
   }
   return [url.host.toLowerCase()];
+}
+
+function assertRequiredUrls(
+  name: string,
+  urls: string[] | null | undefined
+): void {
+  if (!urls?.some((url) => url.trim())) {
+    throw new Error(`Sandbox egress ${name} must include at least one URL`);
+  }
 }
