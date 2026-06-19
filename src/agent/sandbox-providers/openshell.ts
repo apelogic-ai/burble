@@ -13,7 +13,9 @@ import {
   type SandboxRunRequest
 } from "../sandbox-provider";
 import {
+  compileOpenShellProviderBindings,
   compileOpenShellSandboxPolicy,
+  type OpenShellProviderBindingConfig,
   type OpenShellSandboxPolicyConfig
 } from "./openshell-policy";
 
@@ -46,6 +48,7 @@ export type OpenShellSandboxClient = {
     sandboxId: string;
     credentialBindings: SandboxCredentialBinding[];
     materializedCredentials: SandboxCredentialBinding[];
+    compiledProviders: OpenShellProviderBindingConfig[];
   }): Promise<void>;
   run(input: {
     sandboxId: string;
@@ -109,7 +112,8 @@ export function createOpenShellSandboxProvider(input: {
         credentialBindings,
         materializedCredentials: credentialBindings.filter(
           (credential) => credential.delivery === "sandbox_reference"
-        )
+        ),
+        compiledProviders: compileOpenShellProviderBindings(credentialBindings)
       });
       const updated = handleFromRecord(
         await input.client.getSandbox({ sandboxId })

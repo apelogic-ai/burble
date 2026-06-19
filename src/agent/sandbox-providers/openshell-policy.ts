@@ -41,15 +41,21 @@ export function compileOpenShellSandboxPolicy(input: {
       readOnly: normalizePaths(input.policy.filesystem?.readOnlyPaths ?? []),
       readWrite: normalizePaths(input.policy.filesystem?.readWritePaths ?? [])
     },
-    resources: compileResources(input.policy),
-    providers: (input.credentials ?? []).map((credential) => ({
-      name: credential.name,
-      ref: credential.ref,
-      kind: credential.kind,
-      delivery: credential.delivery,
-      materialized: credential.delivery === "sandbox_reference"
-    }))
+  resources: compileResources(input.policy),
+    providers: compileOpenShellProviderBindings(input.credentials ?? [])
   };
+}
+
+export function compileOpenShellProviderBindings(
+  credentials: SandboxCredentialBinding[]
+): OpenShellProviderBindingConfig[] {
+  return credentials.map((credential) => ({
+    name: credential.name,
+    ref: credential.ref,
+    kind: credential.kind,
+    delivery: credential.delivery,
+    materialized: credential.delivery === "sandbox_reference"
+  }));
 }
 
 function compileEgress(

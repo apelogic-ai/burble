@@ -7,6 +7,7 @@ import {
   type OpenShellSandboxClient
 } from "../../src/agent/sandbox-providers/openshell";
 import type {
+  OpenShellProviderBindingConfig,
   OpenShellSandboxPolicyConfig
 } from "../../src/agent/sandbox-providers/openshell-policy";
 import {
@@ -218,6 +219,24 @@ describe("OpenShellSandboxProvider", () => {
           kind: "secret-ref",
           ref: "secret:runtime-config",
           delivery: "sandbox_reference"
+        }
+      ]
+    ]);
+    expect(client.compiledProviderCalls).toEqual([
+      [
+        {
+          name: "github",
+          kind: "provider-token",
+          ref: "provider:github:T123:U123",
+          delivery: "gateway_callback",
+          materialized: false
+        },
+        {
+          name: "runtime-config",
+          kind: "secret-ref",
+          ref: "secret:runtime-config",
+          delivery: "sandbox_reference",
+          materialized: true
         }
       ]
     ]);
@@ -479,6 +498,7 @@ function importSpecifiers(path: string): string[] {
 type FakeOpenShellClient = OpenShellSandboxClient & {
   getSandboxCalls: number;
   compiledPolicyCalls: OpenShellSandboxPolicyConfig[];
+  compiledProviderCalls: OpenShellProviderBindingConfig[][];
   materializedCredentialCalls: SandboxCredentialBinding[][];
 };
 
@@ -520,6 +540,7 @@ function createFakeOpenShellClient(options?: {
   const client: FakeOpenShellClient = {
     getSandboxCalls: 0,
     compiledPolicyCalls: [],
+    compiledProviderCalls: [],
     materializedCredentialCalls: [],
 
     async createSandbox(input) {
@@ -547,6 +568,9 @@ function createFakeOpenShellClient(options?: {
     },
     async bindCredentials(input) {
       const sandbox = load(input.sandboxId);
+      client.compiledProviderCalls.push(
+        input.compiledProviders.map((provider) => ({ ...provider }))
+      );
       client.materializedCredentialCalls.push(
         input.materializedCredentials.map((credential) => ({ ...credential }))
       );

@@ -4,6 +4,7 @@ import {
   sandboxAllowedHostsFromUrls
 } from "../../src/agent/sandbox-policy";
 import {
+  compileOpenShellProviderBindings,
   compileOpenShellSandboxPolicy
 } from "../../src/agent/sandbox-providers/openshell-policy";
 
@@ -182,5 +183,39 @@ describe("OpenShell sandbox policy compiler", () => {
         }
       })
     ).toThrow("memoryMb must be a positive integer");
+  });
+
+  test("compiles neutral credential bindings into OpenShell provider config", () => {
+    expect(
+      compileOpenShellProviderBindings([
+        {
+          name: "github",
+          kind: "provider-token",
+          ref: "provider:github:T123:U123",
+          delivery: "gateway_callback"
+        },
+        {
+          name: "runtime-config",
+          kind: "secret-ref",
+          ref: "secret:runtime-config",
+          delivery: "sandbox_reference"
+        }
+      ])
+    ).toEqual([
+      {
+        name: "github",
+        kind: "provider-token",
+        ref: "provider:github:T123:U123",
+        delivery: "gateway_callback",
+        materialized: false
+      },
+      {
+        name: "runtime-config",
+        kind: "secret-ref",
+        ref: "secret:runtime-config",
+        delivery: "sandbox_reference",
+        materialized: true
+      }
+    ]);
   });
 });
