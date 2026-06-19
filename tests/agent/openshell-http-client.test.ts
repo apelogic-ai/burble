@@ -56,18 +56,22 @@ describe("OpenShell HTTP sandbox client", () => {
       if (input.endsWith("/events") && method === "GET") {
         return new Response(
           [
-            JSON.stringify({
+            ":keep-alive",
+            "event: run_started",
+            "id: 1",
+            `data: ${JSON.stringify({
               sandboxId: "osb-1",
               type: "run_started",
               at: "2026-06-19T00:00:00.000Z",
               detail: { argv: ["bun", "src/index.ts"] }
-            }),
-            JSON.stringify({
+            })}`,
+            "retry: 1000",
+            `data: ${JSON.stringify({
               sandboxId: "osb-1",
               type: "run_finished",
               at: "2026-06-19T00:00:01.000Z",
               detail: { exitCode: 0 }
-            })
+            })}`
           ].join("\n"),
           { headers: { "content-type": "application/x-ndjson" } }
         );
@@ -175,6 +179,23 @@ describe("OpenShell HTTP sandbox client", () => {
       "provider:github:T123:U123"
     );
     expect(events).toEqual(["run_started", "run_finished"]);
+  });
+
+  test("times out hung OpenShell requests", async () => {
+    const client = createOpenShellHttpSandboxClient({
+      baseUrl: "https://openshell.example.test",
+      requestTimeoutMs: 1,
+      fetch: async (_input, init) =>
+        new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener("abort", () => {
+            reject(new Error("aborted"));
+          });
+        })
+    });
+
+    await expect(client.getSandbox({ sandboxId: "osb-1" })).rejects.toThrow(
+      "OpenShell request GET /sandboxes/osb-1 timed out after 1ms"
+    );
   });
 });
 

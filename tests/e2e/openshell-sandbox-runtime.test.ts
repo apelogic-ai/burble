@@ -249,8 +249,7 @@ function startFakeOpenShellServer(input: {
         state.run = (await request.json()) as typeof state.run;
         return Response.json({
           runId: "openshell-run-1",
-          status: "finished",
-          exitCode: 0
+          status: "running"
         });
       }
       if (

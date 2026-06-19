@@ -133,6 +133,75 @@ describe("createSandboxRuntimeFactory", () => {
     store.close();
   });
 
+  test("derives sandbox egress from the per-principal manifest model and forwarded runtime env", async () => {
+    const store = createTokenStore(":memory:");
+    const provider = createFakeRuntimeSandboxProvider();
+    const factory = createSandboxRuntimeFactory({
+      store,
+      sandboxProvider: provider,
+      engine: "hermes",
+      image: "burble-nemo-hermes:dev",
+      toolGatewayUrl: "http://burble-app:3000/internal/tools",
+      modelProviderUrls: ["https://api.openai.com/v1"],
+      runtimeTokenSecret: "runtime-secret",
+      startCommand: ["hermes-entrypoint"],
+      healthCheckAttempts: 1,
+      fetch: async () => new Response("ok"),
+      env: {
+        EXA_API_KEY: "exa-key",
+        FIRECRAWL_API_URL: "https://firecrawl.internal/v1",
+        HERMES_WEB_SEARCH_BACKEND: "exa"
+      },
+      buildManifest: (runtimePrincipal) =>
+        ({
+          version: "1",
+          principal: runtimePrincipal,
+          runtime: {
+            engine: "hermes",
+            factory: "sandbox",
+            ttlMs: 86400000,
+            reaperEnabled: true
+          },
+          model: { provider: "anthropic", model: "claude-sonnet-4" },
+          tools: [],
+          skills: [],
+          memory: {
+            userMemoryEnabled: false,
+            workspaceMemoryEnabled: false,
+            jobMemoryEnabled: true
+          },
+          streaming: { messageDeltasEnabled: true },
+          memoryContext: [],
+          disabledTools: [],
+          policyHash: "anthropic-policy"
+        }) as never
+    });
+
+    await factory.getOrCreateRuntime(principal);
+
+    expect(provider.policyCalls[0].policy.network).toEqual({
+      egress: "allowlist",
+      allowedHosts: [
+        "api.anthropic.com",
+        "api.exa.ai",
+        "burble-app:3000",
+        "firecrawl.internal"
+      ]
+    });
+    expect(provider.runCalls[0].request.env).toMatchObject({
+      AI_MODEL: "anthropic:claude-sonnet-4",
+      HERMES_INFERENCE_PROVIDER: "anthropic",
+      EXA_API_KEY: "exa-key",
+      FIRECRAWL_API_URL: "https://firecrawl.internal/v1",
+      HERMES_WEB_SEARCH_BACKEND: "exa"
+    });
+    expect(provider.policyCalls[0].policy.network.allowedHosts).not.toContain(
+      "api.openai.com"
+    );
+
+    store.close();
+  });
+
   test("reattaches an existing sandbox-backed runtime instead of reprovisioning", async () => {
     const store = createTokenStore(":memory:");
     const provider = createFakeRuntimeSandboxProvider();
@@ -184,6 +253,70 @@ describe("createSandboxRuntimeFactory", () => {
     expect(provider.runCalls).toHaveLength(1);
     expect(provider.policyCalls).toHaveLength(2);
     expect(store.getAgentRuntime(first.id)?.policyHash).toBe("policy-b");
+
+    store.close();
+  });
+
+  test("serializes concurrent provisioning for the same runtime principal", async () => {
+    const store = createTokenStore(":memory:");
+    const provider = createFakeRuntimeSandboxProvider();
+    let releaseProvision!: () => void;
+    provider.provisionDelay = new Promise<void>((resolve) => {
+      releaseProvision = resolve;
+    });
+    const factory = createSandboxRuntimeFactory({
+      store,
+      sandboxProvider: provider,
+      engine: "hermes",
+      image: "burble-nemo-hermes:dev",
+      toolGatewayUrl: "http://burble-app:3000/internal/tools",
+      modelProviderUrls: ["https://api.openai.com/v1"],
+      runtimeTokenSecret: "runtime-secret",
+      startCommand: ["hermes-entrypoint"],
+      healthCheckAttempts: 1,
+      fetch: async () => new Response("ok")
+    });
+
+    const first = factory.getOrCreateRuntime(principal);
+    const second = factory.getOrCreateRuntime(principal);
+
+    releaseProvision();
+    const [firstRuntime, secondRuntime] = await Promise.all([first, second]);
+
+    expect(secondRuntime.id).toBe(firstRuntime.id);
+    expect(provider.provisionCalls).toHaveLength(1);
+    expect(provider.attachCalls).toEqual(["sandbox-1"]);
+
+    store.close();
+  });
+
+  test("reports immediately exited sandbox start commands without waiting for health timeout", async () => {
+    const store = createTokenStore(":memory:");
+    const provider = createFakeRuntimeSandboxProvider();
+    provider.nextRun = { status: "finished", exitCode: 2 };
+    const healthUrls: string[] = [];
+    const factory = createSandboxRuntimeFactory({
+      store,
+      sandboxProvider: provider,
+      engine: "hermes",
+      image: "burble-nemo-hermes:dev",
+      toolGatewayUrl: "http://burble-app:3000/internal/tools",
+      modelProviderUrls: ["https://api.openai.com/v1"],
+      runtimeTokenSecret: "runtime-secret",
+      startCommand: ["hermes-entrypoint"],
+      healthCheckAttempts: 5,
+      fetch: async (url) => {
+        healthUrls.push(url);
+        return new Response("ok");
+      }
+    });
+
+    await expect(factory.getOrCreateRuntime(principal)).rejects.toThrow(
+      "Sandbox runtime start exited: sandbox-1-run-1 (exit 2)"
+    );
+
+    expect(healthUrls).toEqual([]);
+    expect(provider.terminated).toEqual(["sandbox-1"]);
 
     store.close();
   });
@@ -286,6 +419,8 @@ type FakeRuntimeSandboxProvider = SandboxProvider & {
   attachCalls: string[];
   terminated: string[];
   failNextRun: boolean;
+  nextRun?: { status: SandboxRunHandle["status"]; exitCode?: number };
+  provisionDelay?: Promise<void>;
 };
 
 function createFakeRuntimeSandboxProvider(
@@ -328,6 +463,7 @@ function createFakeRuntimeSandboxProvider(
 
     async provision(request) {
       provisionCalls.push(request);
+      await this.provisionDelay;
       sequence += 1;
       const sandbox: SandboxHandle = {
         id: `sandbox-${sequence}`,
@@ -371,6 +507,16 @@ function createFakeRuntimeSandboxProvider(
           exitCode: 1
         };
       }
+      if (this.nextRun) {
+        const nextRun = this.nextRun;
+        this.nextRun = undefined;
+        return {
+          id: `${sandboxId}-run-1`,
+          sandboxId,
+          status: nextRun.status,
+          ...(nextRun.exitCode === undefined ? {} : { exitCode: nextRun.exitCode })
+        };
+      }
       sandboxes.set(
         sandboxId,
         cloneSandboxHandle({ ...sandbox, status: "ready" })
@@ -378,8 +524,7 @@ function createFakeRuntimeSandboxProvider(
       return {
         id: `${sandboxId}-run-1`,
         sandboxId,
-        status: "finished",
-        exitCode: 0
+        status: "running"
       };
     },
 

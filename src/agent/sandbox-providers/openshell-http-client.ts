@@ -21,6 +21,7 @@ export type OpenShellHttpSandboxClientOptions = {
   baseUrl: string;
   token?: string | null;
   fetch?: OpenShellHttpFetch;
+  requestTimeoutMs?: number;
 };
 
 export function createOpenShellHttpSandboxClient(
@@ -28,6 +29,7 @@ export function createOpenShellHttpSandboxClient(
 ): OpenShellSandboxClient {
   const baseUrl = normalizeBaseUrl(options.baseUrl);
   const requestFetch = options.fetch ?? fetch;
+  const requestTimeoutMs = options.requestTimeoutMs ?? 30_000;
 
   async function requestJson<T>(
     path: string,
@@ -42,9 +44,13 @@ export function createOpenShellHttpSandboxClient(
       headers.set("authorization", `Bearer ${options.token}`);
     }
 
-    const response = await requestFetch(`${baseUrl}${path}`, {
+    const response = await fetchWithTimeout(requestFetch, `${baseUrl}${path}`, {
       ...init,
       headers
+    }, {
+      method: init.method ?? "GET",
+      path,
+      timeoutMs: requestTimeoutMs
     });
     if (!response.ok) {
       throw openShellHttpError(init.method ?? "GET", path, response.status);
@@ -132,9 +138,15 @@ export function createOpenShellHttpSandboxClient(
       if (options.token) {
         headers.set("authorization", `Bearer ${options.token}`);
       }
-      const response = await requestFetch(
+      const response = await fetchWithTimeout(
+        requestFetch,
         `${baseUrl}/sandboxes/${encodeURIComponent(input.sandboxId)}/events`,
-        { headers }
+        { headers },
+        {
+          method: "GET",
+          path: `/sandboxes/${input.sandboxId}/events`,
+          timeoutMs: requestTimeoutMs
+        }
       );
       if (!response.ok) {
         throw openShellHttpError(
@@ -173,6 +185,35 @@ function openShellHttpError(
   return new Error(
     `OpenShell request ${method} ${path} failed with HTTP ${status}`
   );
+}
+
+async function fetchWithTimeout(
+  requestFetch: OpenShellHttpFetch,
+  input: string,
+  init: RequestInit,
+  context: { method: string; path: string; timeoutMs: number }
+): Promise<Response> {
+  if (context.timeoutMs <= 0) {
+    return requestFetch(input, init);
+  }
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), context.timeoutMs);
+  try {
+    return await requestFetch(input, {
+      ...init,
+      signal: init.signal ?? controller.signal
+    });
+  } catch (error) {
+    if (controller.signal.aborted) {
+      throw new Error(
+        `OpenShell request ${context.method} ${context.path} timed out after ${context.timeoutMs}ms`
+      );
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 function coerceSandboxRecord(value: unknown): OpenShellSandboxRecord {
@@ -251,10 +292,19 @@ function parseEventText(text: string): unknown[] {
     .split(/\r?\n/)
     .map((line) => line.trim())
     .filter(Boolean)
-    .filter((line) => line !== "event: message")
+    .filter((line) => !isSseControlLine(line))
     .map((line) => (line.startsWith("data:") ? line.slice(5).trim() : line))
     .filter(Boolean)
     .map((line) => JSON.parse(line) as unknown);
+}
+
+function isSseControlLine(line: string): boolean {
+  return (
+    line.startsWith(":") ||
+    line.startsWith("event:") ||
+    line.startsWith("id:") ||
+    line.startsWith("retry:")
+  );
 }
 
 function stringField(

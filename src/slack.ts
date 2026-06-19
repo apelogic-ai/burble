@@ -101,6 +101,7 @@ import { createDockerRuntimeFactory } from "./agent/container-runtime-factory";
 import { createSandboxRuntimeFactory } from "./agent/sandbox-runtime-factory";
 import type { SandboxRuntimeFetch } from "./agent/sandbox-runtime-factory";
 import type { SandboxProvider } from "./agent/sandbox-provider";
+import { modelProviderUrlsForRuntimeModel } from "./agent/runtime-env";
 import {
   buildRuntimeManifestForPrincipal,
   RuntimeEngineSelectionError,
@@ -1887,7 +1888,7 @@ export function createManagedRuntimeFactory(
               mcpAudience: config.agentRuntimeMcpAudience,
               modelProviderUrls:
                 options.sandboxModelProviderUrls ??
-                modelProviderUrlsForRuntime(config.aiModel),
+                modelProviderUrlsForRuntimeModel(config.aiModel, Bun.env),
               runtimeJwtIssuer,
               runtimeJwtTtlSeconds: config.agentRuntimeJwtTtlSeconds,
               runtimeTokenSecret: config.agentRuntimeTokenSecret ?? "",
@@ -1970,22 +1971,6 @@ export function createManagedRuntimeFactory(
       }
     }
   };
-}
-
-function modelProviderUrlsForRuntime(model: string): string[] {
-  const provider = model.split(":", 1)[0];
-  switch (provider) {
-    case "anthropic":
-      return ["https://api.anthropic.com"];
-    case "google":
-    case "gemini":
-      return ["https://generativelanguage.googleapis.com"];
-    case "openrouter":
-      return ["https://openrouter.ai/api/v1"];
-    case "openai":
-    default:
-      return ["https://api.openai.com/v1"];
-  }
 }
 
 export function runtimeImageForEngine(

@@ -21,6 +21,11 @@ import {
   type RuntimeManifestBuilder
 } from "./runtime-factory";
 import type { RuntimeManifest } from "./runtime-manifest";
+import {
+  collectApprovedRuntimeEnv,
+  modelProviderUrlsForRuntimeModel,
+  runtimeExtraAllowedUrlsFromEnv
+} from "./runtime-env";
 
 export type SandboxRuntimeFetch = (
   input: string,
@@ -68,6 +73,7 @@ export function createSandboxRuntimeFactory(input: {
   assertSandboxProviderCapabilities(input.sandboxProvider);
   assertSandboxStartCommand(input.startCommand);
   const requestFetch = input.fetch ?? fetch;
+  const runtimeLocks = new Map<string, Promise<void>>();
 
   const stopRuntime = async (runtimeId: string): Promise<void> => {
     const runtime = input.store.getAgentRuntime(runtimeId);
@@ -84,213 +90,217 @@ export function createSandboxRuntimeFactory(input: {
     });
   };
 
-  return {
-    async getOrCreateRuntime(principal) {
-      const runtimeDataId = buildRuntimeDataId(principal, input.engine);
-      const manifest = await input.buildManifest?.(principal);
-      const token = deriveRuntimeToken({
-        secret: input.runtimeTokenSecret,
-        principal,
-        engine: input.engine
-      });
-      const existing = input.store.getAgentRuntimeForPrincipal({
-        workspaceId: principal.workspaceId,
-        slackUserId: principal.slackUserId,
-        engine: input.engine
-      });
+  const getOrCreateRuntimeLocked = async (
+    principal: PrincipalId
+  ): Promise<RuntimeHandle> => {
+    const runtimeDataId = buildRuntimeDataId(principal, input.engine);
+    const manifest = await input.buildManifest?.(principal);
+    const token = deriveRuntimeToken({
+      secret: input.runtimeTokenSecret,
+      principal,
+      engine: input.engine
+    });
+    const existing = input.store.getAgentRuntimeForPrincipal({
+      workspaceId: principal.workspaceId,
+      slackUserId: principal.slackUserId,
+      engine: input.engine
+    });
 
-      if (
-        existing?.sandboxId &&
-        existing.status !== "stopped" &&
-        existing.status !== "failed"
-      ) {
-        const attached = await input.sandboxProvider.attach(existing.sandboxId);
-        const paths = sandboxRuntimePaths(attached.workspacePath, input.engine);
-        if (manifest?.policyHash && existing.policyHash !== manifest.policyHash) {
-          const policy =
-            (await input.buildPolicy?.({
-              principal,
-              engine: input.engine,
-              runtimeId: existing.id,
-              runtimeDataId,
-              manifest
-            })) ??
-            buildBrokeredRuntimeSandboxPolicy({
-              toolGatewayUrl: input.toolGatewayUrl,
-              mcpGatewayUrl: input.mcpGatewayUrl ?? null,
-              modelProviderUrls: input.modelProviderUrls
-            });
-          await input.sandboxProvider.applyPolicy(attached.id, policy);
-        }
-        const updated = input.store.getOrCreateAgentRuntime({
-          workspaceId: principal.workspaceId,
-          slackUserId: principal.slackUserId,
-          engine: input.engine,
-          endpointUrl: attached.endpointUrl,
-          authTokenHash: hashRuntimeToken(token),
-          statePath: paths.statePath,
-          configPath: paths.configPath,
-          workspacePath: attached.workspacePath,
-          sandboxId: attached.id,
-          policyHash: manifest?.policyHash ?? null
-        });
-        await waitForSandboxRuntimeHealth({
-          endpointUrl: attached.endpointUrl,
-          fetch: requestFetch,
-          attempts:
-            input.healthCheckAttempts ??
-            runtimeHealthCheckAttempts(input.engine),
-          intervalMs: input.healthCheckIntervalMs ?? 1000
-        });
-        input.store.touchAgentRuntime(existing.id);
-        if (existing.status === "provisioning") {
-          input.store.updateAgentRuntimeStatus(existing.id, { status: "ready" });
-        }
-        return toRuntimeHandle(
-          input.store.getAgentRuntime(existing.id) ?? updated,
-          token,
-          manifest
-        );
+    if (
+      existing?.sandboxId &&
+      existing.status !== "stopped" &&
+      existing.status !== "failed"
+    ) {
+      const attached = await input.sandboxProvider.attach(existing.sandboxId);
+      const paths = sandboxRuntimePaths(attached.workspacePath, input.engine);
+      if (manifest?.policyHash && existing.policyHash !== manifest.policyHash) {
+        const policy =
+          (await input.buildPolicy?.({
+            principal,
+            engine: input.engine,
+            runtimeId: existing.id,
+            runtimeDataId,
+            manifest
+          })) ??
+          buildDefaultSandboxPolicy(input, manifest);
+        await input.sandboxProvider.applyPolicy(attached.id, policy);
       }
-
-      const sandbox = await input.sandboxProvider.provision({
-        principal: {
-          workspaceId: principal.workspaceId,
-          userId: principal.slackUserId
-        },
-        runtime: {
-          engine: input.engine,
-          image: input.image
-        },
-        labels: {
-          runtimeDataId,
-          engine: input.engine
-        }
-      });
-      const paths = sandboxRuntimePaths(sandbox.workspacePath, input.engine);
-      const runtime = input.store.getOrCreateAgentRuntime({
+      const updated = input.store.getOrCreateAgentRuntime({
         workspaceId: principal.workspaceId,
         slackUserId: principal.slackUserId,
         engine: input.engine,
-        endpointUrl: sandbox.endpointUrl,
+        endpointUrl: attached.endpointUrl,
         authTokenHash: hashRuntimeToken(token),
         statePath: paths.statePath,
         configPath: paths.configPath,
-        workspacePath: sandbox.workspacePath,
-        sandboxId: sandbox.id,
+        workspacePath: attached.workspacePath,
+        sandboxId: attached.id,
         policyHash: manifest?.policyHash ?? null
       });
-      const context = {
-        principal,
-        engine: input.engine,
-        runtimeId: runtime.id,
-        runtimeDataId,
-        manifest
-      };
-      const runtimeJwt =
-        input.runtimeJwtIssuer && input.mcpGatewayUrl
-          ? input.runtimeJwtIssuer.issueRuntimeJwt({
-              audience: input.mcpAudience ?? input.mcpGatewayUrl,
-              runtimeId: runtime.id,
-              workspaceId: principal.workspaceId,
-              slackUserId: principal.slackUserId,
-              ttlSeconds: input.runtimeJwtTtlSeconds
-            })
-          : null;
-      const policy =
-        (await input.buildPolicy?.(context)) ??
-        buildBrokeredRuntimeSandboxPolicy({
-          toolGatewayUrl: input.toolGatewayUrl,
-          mcpGatewayUrl: input.mcpGatewayUrl ?? null,
-          modelProviderUrls: input.modelProviderUrls
-        });
-      const credentials = (await input.buildCredentials?.(context)) ?? [];
-
-      input.store.recordAgentRuntimeEvent({
-        runtimeId: runtime.id,
-        eventType: "runtime_provision_requested",
-        summary: {
-          engine: input.engine,
-          image: input.image,
-          sandboxId: sandbox.id,
-          ...(manifest ? { policyHash: manifest.policyHash } : {})
-        }
+      await waitForSandboxRuntimeHealth({
+        endpointUrl: attached.endpointUrl,
+        fetch: requestFetch,
+        attempts:
+          input.healthCheckAttempts ??
+          runtimeHealthCheckAttempts(input.engine),
+        intervalMs: input.healthCheckIntervalMs ?? 1000
       });
-      input.store.updateAgentRuntimeStatus(runtime.id, {
-        status: "provisioning"
-      });
-
-      try {
-        await input.sandboxProvider.applyPolicy(sandbox.id, policy);
-        if (credentials.length > 0) {
-          await input.sandboxProvider.bindCredentials(sandbox.id, credentials);
-        }
-        const run = await input.sandboxProvider.run(sandbox.id, {
-          argv: input.startCommand,
-          env: buildSandboxRuntimeEnv({
-            engine: input.engine,
-            toolGatewayUrl: input.toolGatewayUrl,
-            mcpGatewayUrl: input.mcpGatewayUrl ?? null,
-            runtimeToken: token,
-            runtimeId: runtime.id,
-            runtimeJwt,
-            manifest,
-            env: input.env ?? {}
-          })
-        });
-        if (run.status === "failed") {
-          throw new Error(`Sandbox runtime start failed: ${run.id}`);
-        }
-        await waitForSandboxRuntimeHealth({
-          endpointUrl: sandbox.endpointUrl,
-          fetch: requestFetch,
-          attempts:
-            input.healthCheckAttempts ??
-            runtimeHealthCheckAttempts(input.engine),
-          intervalMs: input.healthCheckIntervalMs ?? 1000
-        });
-        input.store.updateAgentRuntimeStatus(runtime.id, { status: "ready" });
-        input.store.recordAgentRuntimeEvent({
-          runtimeId: runtime.id,
-          eventType: "runtime_provision_finished",
-          summary: {
-            endpointUrl: sandbox.endpointUrl,
-            sandboxId: sandbox.id
-          }
-        });
-        input.store.touchAgentRuntime(runtime.id);
-      } catch (error) {
-        const failureReason =
-          error instanceof Error ? error.message : "unknown error";
-        let cleanupError: string | undefined;
-        try {
-          await input.sandboxProvider.terminate(sandbox.id);
-        } catch (terminateError) {
-          cleanupError =
-            terminateError instanceof Error
-              ? terminateError.message
-              : "unknown cleanup error";
-        }
-        input.store.updateAgentRuntimeStatus(runtime.id, {
-          status: "failed",
-          failureReason
-        });
-        input.store.recordAgentRuntimeEvent({
-          runtimeId: runtime.id,
-          eventType: "runtime_provision_failed",
-          summary: {
-            failureReason,
-            sandboxId: sandbox.id,
-            ...(cleanupError ? { cleanupError } : {})
-          }
-        });
-        throw error;
+      input.store.touchAgentRuntime(existing.id);
+      if (existing.status === "provisioning") {
+        input.store.updateAgentRuntimeStatus(existing.id, { status: "ready" });
       }
-
       return toRuntimeHandle(
-        input.store.getAgentRuntime(runtime.id) ?? runtime,
+        input.store.getAgentRuntime(existing.id) ?? updated,
         token,
         manifest
+      );
+    }
+
+    const sandbox = await input.sandboxProvider.provision({
+      principal: {
+        workspaceId: principal.workspaceId,
+        userId: principal.slackUserId
+      },
+      runtime: {
+        engine: input.engine,
+        image: input.image
+      },
+      labels: {
+        runtimeDataId,
+        engine: input.engine
+      }
+    });
+    const paths = sandboxRuntimePaths(sandbox.workspacePath, input.engine);
+    const runtime = input.store.getOrCreateAgentRuntime({
+      workspaceId: principal.workspaceId,
+      slackUserId: principal.slackUserId,
+      engine: input.engine,
+      endpointUrl: sandbox.endpointUrl,
+      authTokenHash: hashRuntimeToken(token),
+      statePath: paths.statePath,
+      configPath: paths.configPath,
+      workspacePath: sandbox.workspacePath,
+      sandboxId: sandbox.id,
+      policyHash: manifest?.policyHash ?? null
+    });
+    const context = {
+      principal,
+      engine: input.engine,
+      runtimeId: runtime.id,
+      runtimeDataId,
+      manifest
+    };
+    const runtimeJwt =
+      input.runtimeJwtIssuer && input.mcpGatewayUrl
+        ? input.runtimeJwtIssuer.issueRuntimeJwt({
+            audience: input.mcpAudience ?? input.mcpGatewayUrl,
+            runtimeId: runtime.id,
+            workspaceId: principal.workspaceId,
+            slackUserId: principal.slackUserId,
+            ttlSeconds: input.runtimeJwtTtlSeconds
+          })
+        : null;
+    const policy =
+      (await input.buildPolicy?.(context)) ??
+      buildDefaultSandboxPolicy(input, manifest);
+    const credentials = (await input.buildCredentials?.(context)) ?? [];
+
+    input.store.recordAgentRuntimeEvent({
+      runtimeId: runtime.id,
+      eventType: "runtime_provision_requested",
+      summary: {
+        engine: input.engine,
+        image: input.image,
+        sandboxId: sandbox.id,
+        ...(manifest ? { policyHash: manifest.policyHash } : {})
+      }
+    });
+    input.store.updateAgentRuntimeStatus(runtime.id, {
+      status: "provisioning"
+    });
+
+    try {
+      await input.sandboxProvider.applyPolicy(sandbox.id, policy);
+      if (credentials.length > 0) {
+        await input.sandboxProvider.bindCredentials(sandbox.id, credentials);
+      }
+      const run = await input.sandboxProvider.run(sandbox.id, {
+        argv: input.startCommand,
+        env: buildSandboxRuntimeEnv({
+          engine: input.engine,
+          toolGatewayUrl: input.toolGatewayUrl,
+          mcpGatewayUrl: input.mcpGatewayUrl ?? null,
+          runtimeToken: token,
+          runtimeId: runtime.id,
+          runtimeJwt,
+          manifest,
+          env: input.env ?? {}
+        })
+      });
+      if (run.status === "failed" || run.status === "finished") {
+        throw new Error(
+          `Sandbox runtime start ${
+            run.status === "finished" ? "exited" : "failed"
+          }: ${run.id}${run.exitCode === undefined ? "" : ` (exit ${run.exitCode})`}`
+        );
+      }
+      await waitForSandboxRuntimeHealth({
+        endpointUrl: sandbox.endpointUrl,
+        fetch: requestFetch,
+        attempts:
+          input.healthCheckAttempts ??
+          runtimeHealthCheckAttempts(input.engine),
+        intervalMs: input.healthCheckIntervalMs ?? 1000
+      });
+      input.store.updateAgentRuntimeStatus(runtime.id, { status: "ready" });
+      input.store.recordAgentRuntimeEvent({
+        runtimeId: runtime.id,
+        eventType: "runtime_provision_finished",
+        summary: {
+          endpointUrl: sandbox.endpointUrl,
+          sandboxId: sandbox.id
+        }
+      });
+      input.store.touchAgentRuntime(runtime.id);
+    } catch (error) {
+      const failureReason =
+        error instanceof Error ? error.message : "unknown error";
+      let cleanupError: string | undefined;
+      try {
+        await input.sandboxProvider.terminate(sandbox.id);
+      } catch (terminateError) {
+        cleanupError =
+          terminateError instanceof Error
+            ? terminateError.message
+            : "unknown cleanup error";
+      }
+      input.store.updateAgentRuntimeStatus(runtime.id, {
+        status: "failed",
+        failureReason
+      });
+      input.store.recordAgentRuntimeEvent({
+        runtimeId: runtime.id,
+        eventType: "runtime_provision_failed",
+        summary: {
+          failureReason,
+          sandboxId: sandbox.id,
+          ...(cleanupError ? { cleanupError } : {})
+        }
+      });
+      throw error;
+    }
+
+    return toRuntimeHandle(
+      input.store.getAgentRuntime(runtime.id) ?? runtime,
+      token,
+      manifest
+    );
+  };
+
+  return {
+    async getOrCreateRuntime(principal) {
+      return withRuntimeProvisionLock(runtimeLocks, principal, input.engine, () =>
+        getOrCreateRuntimeLocked(principal)
       );
     },
 
@@ -385,6 +395,52 @@ function assertSandboxStartCommand(startCommand: string[]): void {
   }
 }
 
+async function withRuntimeProvisionLock<T>(
+  locks: Map<string, Promise<void>>,
+  principal: PrincipalId,
+  engine: AgentRuntimeEngine,
+  operation: () => Promise<T>
+): Promise<T> {
+  const key = `${principal.workspaceId}:${principal.slackUserId}:${engine}`;
+  const previous = locks.get(key) ?? Promise.resolve();
+  let release!: () => void;
+  const current = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const chained = previous.catch(() => undefined).then(() => current);
+  locks.set(key, chained);
+
+  await previous.catch(() => undefined);
+  try {
+    return await operation();
+  } finally {
+    release();
+    if (locks.get(key) === chained) {
+      locks.delete(key);
+    }
+  }
+}
+
+function buildDefaultSandboxPolicy(
+  input: {
+    toolGatewayUrl: string;
+    mcpGatewayUrl?: string | null;
+    modelProviderUrls: string[];
+    env?: Record<string, string | undefined>;
+  },
+  manifest?: RuntimeManifest | null
+): SandboxPolicy {
+  const env = input.env ?? {};
+  return buildBrokeredRuntimeSandboxPolicy({
+    toolGatewayUrl: input.toolGatewayUrl,
+    mcpGatewayUrl: input.mcpGatewayUrl ?? null,
+    modelProviderUrls: manifest?.model
+      ? modelProviderUrlsForRuntimeModel(manifest.model, env)
+      : input.modelProviderUrls,
+    extraAllowedUrls: runtimeExtraAllowedUrlsFromEnv(env)
+  });
+}
+
 function buildSandboxRuntimeEnv(input: {
   engine: AgentRuntimeEngine;
   toolGatewayUrl: string;
@@ -424,6 +480,8 @@ function buildSandboxRuntimeEnv(input: {
     env.BURBLE_MCP_GATEWAY_URL = input.mcpGatewayUrl;
     env.BURBLE_RUNTIME_JWT = input.runtimeJwt;
   }
+
+  Object.assign(env, collectApprovedRuntimeEnv(input.env));
 
   if (input.manifest?.model) {
     const modelId = `${input.manifest.model.provider}:${input.manifest.model.model}`;

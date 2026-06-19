@@ -3376,8 +3376,7 @@ function createSlackRuntimeSandboxProvider(): SlackRuntimeSandboxProvider {
       return {
         id: `${sandboxId}-run-1`,
         sandboxId,
-        status: "finished",
-        exitCode: 0
+        status: "running"
       };
     },
 
