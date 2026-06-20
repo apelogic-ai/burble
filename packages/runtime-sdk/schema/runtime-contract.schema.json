@@ -486,7 +486,8 @@
               "type": "object",
               "properties": {
                 "routeId": {
-                  "type": "string"
+                  "type": "string",
+                  "minLength": 1
                 },
                 "source": {
                   "type": "string",

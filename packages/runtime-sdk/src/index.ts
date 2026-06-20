@@ -1,8 +1,10 @@
 export type {
   RuntimeConnectionSummary,
   RuntimeConversationAttachment,
+  RuntimeConversationSummary,
   RuntimeCapabilityManifest,
   RuntimeFinalResponse,
+  RuntimeRequestContext,
   RuntimeToolGroup,
   RuntimeToolGroupSelection,
   RuntimeRunEvent,

@@ -1,7 +1,9 @@
 import type {
   RuntimeConnectionSummary,
   RuntimeConversationAttachment,
+  RuntimeConversationSummary,
   RuntimeFinalResponse,
+  RuntimeRequestContext,
   RuntimeUsage,
   ToolClassification
 } from "@burble/runtime-sdk/runtime-contract";
@@ -85,27 +87,8 @@ export type RunRequest = {
     };
     scheduledJob?: RuntimeScheduledJobContext;
     attachments?: ConversationAttachment[];
-    conversation?: {
-      routeId?: string;
-      source: "slack";
-      workspaceId: string;
-      channelId: string;
-      rootId: string;
-      isDirectMessage: boolean;
-    };
-    context?: {
-      currentChannel?: {
-        id: string;
-        isDirectMessage: boolean;
-        historyAvailable: boolean;
-        historyError?: string;
-      };
-      recentMessages: Array<{
-        author: "user" | "assistant";
-        speaker?: string;
-        text: string;
-      }>;
-    };
+    conversation?: RuntimeConversationSummary;
+    context?: RuntimeRequestContext;
     connections: {
       github: RuntimeConnectionSummary;
       google?: RuntimeConnectionSummary;

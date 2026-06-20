@@ -56,6 +56,40 @@ export const runtimeConnectionSummarySchema = z
   })
   .strict();
 
+export const runtimeConversationSummarySchema = z
+  .object({
+    routeId: z.string().min(1).optional(),
+    source: z.literal("slack"),
+    workspaceId: z.string().min(1),
+    channelId: z.string().min(1),
+    rootId: z.string().min(1),
+    isDirectMessage: z.boolean()
+  })
+  .strict();
+
+export const runtimeRequestContextSchema = z
+  .object({
+    currentChannel: z
+      .object({
+        id: z.string().min(1),
+        isDirectMessage: z.boolean(),
+        historyAvailable: z.boolean(),
+        historyError: z.string().optional()
+      })
+      .strict()
+      .optional(),
+    recentMessages: z.array(
+      z
+        .object({
+          author: z.enum(["user", "assistant"]),
+          speaker: z.string().optional(),
+          text: z.string()
+        })
+        .strict()
+    )
+  })
+  .strict();
+
 export const runtimeMemoryContextEntrySchema = z
   .object({
     scope: z.enum(["user", "workspace", "job"]),
@@ -187,40 +221,8 @@ export const runtimeRunRequestSchema = z
         toolGroups: runtimeToolGroupSelectionSchema.optional(),
         scheduledJob: scheduledJobContextSchema.optional(),
         attachments: z.array(runtimeConversationAttachmentSchema).optional(),
-        conversation: z
-          .object({
-            routeId: z.string().optional(),
-            source: z.literal("slack"),
-            workspaceId: z.string().min(1),
-            channelId: z.string().min(1),
-            rootId: z.string().min(1),
-            isDirectMessage: z.boolean()
-          })
-          .strict()
-          .optional(),
-        context: z
-          .object({
-            currentChannel: z
-              .object({
-                id: z.string().min(1),
-                isDirectMessage: z.boolean(),
-                historyAvailable: z.boolean(),
-                historyError: z.string().optional()
-              })
-              .strict()
-              .optional(),
-            recentMessages: z.array(
-              z
-                .object({
-                  author: z.enum(["user", "assistant"]),
-                  speaker: z.string().optional(),
-                  text: z.string()
-                })
-                .strict()
-            )
-          })
-          .strict()
-          .optional(),
+        conversation: runtimeConversationSummarySchema.optional(),
+        context: runtimeRequestContextSchema.optional(),
         connections: z
           .object({
             github: runtimeConnectionSummarySchema.optional(),
@@ -369,6 +371,12 @@ export type RuntimeConversationAttachment = z.infer<
 >;
 export type RuntimeConnectionSummary = z.infer<
   typeof runtimeConnectionSummarySchema
+>;
+export type RuntimeConversationSummary = z.infer<
+  typeof runtimeConversationSummarySchema
+>;
+export type RuntimeRequestContext = z.infer<
+  typeof runtimeRequestContextSchema
 >;
 export type RuntimeRunRequest = Omit<
   ParsedRuntimeRunRequest,

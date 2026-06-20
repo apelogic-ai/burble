@@ -11,6 +11,8 @@ import {
 import {
   runtimeConnectionSummarySchema,
   runtimeConversationAttachmentSchema,
+  runtimeConversationSummarySchema,
+  runtimeRequestContextSchema,
   runtimeToolGroupSelectionSchema,
   scheduledJobContextSchema
 } from "@burble/runtime-sdk/runtime-contract";
@@ -1034,75 +1036,11 @@ function isConnectionSummary(value: unknown): boolean {
 function isConversationSummary(
   conversation: unknown
 ): conversation is RunRequest["input"]["conversation"] {
-  return (
-    typeof conversation === "object" &&
-    conversation !== null &&
-    "source" in conversation &&
-    conversation.source === "slack" &&
-    (!("routeId" in conversation) ||
-      conversation.routeId === undefined ||
-      (typeof conversation.routeId === "string" &&
-        conversation.routeId.trim().length > 0)) &&
-    "workspaceId" in conversation &&
-    typeof conversation.workspaceId === "string" &&
-    conversation.workspaceId.trim().length > 0 &&
-    "channelId" in conversation &&
-    typeof conversation.channelId === "string" &&
-    conversation.channelId.trim().length > 0 &&
-    "rootId" in conversation &&
-    typeof conversation.rootId === "string" &&
-    conversation.rootId.trim().length > 0 &&
-    "isDirectMessage" in conversation &&
-    typeof conversation.isDirectMessage === "boolean"
-  );
+  return runtimeConversationSummarySchema.safeParse(conversation).success;
 }
 
 function isRequestContext(context: unknown): context is RunRequest["input"]["context"] {
-  if (
-    typeof context !== "object" ||
-    context === null ||
-    !("recentMessages" in context) ||
-    !Array.isArray(context.recentMessages)
-  ) {
-    return false;
-  }
-
-  if (
-    "currentChannel" in context &&
-    context.currentChannel !== undefined &&
-    !isCurrentChannelContext(context.currentChannel)
-  ) {
-    return false;
-  }
-
-  return context.recentMessages.every(
-    (message) =>
-      typeof message === "object" &&
-      message !== null &&
-      "author" in message &&
-      (message.author === "user" || message.author === "assistant") &&
-      (!("speaker" in message) ||
-        message.speaker === undefined ||
-        typeof message.speaker === "string") &&
-      "text" in message &&
-      typeof message.text === "string"
-  );
-}
-
-function isCurrentChannelContext(channel: unknown): boolean {
-  return (
-    typeof channel === "object" &&
-    channel !== null &&
-    "id" in channel &&
-    typeof channel.id === "string" &&
-    "isDirectMessage" in channel &&
-    typeof channel.isDirectMessage === "boolean" &&
-    "historyAvailable" in channel &&
-    typeof channel.historyAvailable === "boolean" &&
-    (!("historyError" in channel) ||
-      channel.historyError === undefined ||
-      typeof channel.historyError === "string")
-  );
+  return runtimeRequestContextSchema.safeParse(context).success;
 }
 
 function isConversationAttachmentArray(
