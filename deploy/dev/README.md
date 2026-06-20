@@ -82,6 +82,15 @@ SLACK_REDIRECT_URI=
 AGENT_MODE=deterministic
 AGENT_FAST_TRACK=false
 AGENT_RUNTIME=ai-sdk
+AGENT_RUNTIME_FACTORY=static
+AGENT_RUNTIME_ENGINE=
+AGENT_RUNTIME_IMAGE=
+AGENT_RUNTIME_TOKEN_SECRET=
+AGENT_RUNTIME_MCP_GATEWAY_URL=
+AGENT_RUNTIME_MCP_AUDIENCE=
+AGENT_RUNTIME_SANDBOX_URL=
+AGENT_RUNTIME_SANDBOX_TOKEN=
+AGENT_RUNTIME_SANDBOX_START_COMMAND=
 AI_MODEL=openai:gpt-5.4
 OPENCLAW_NEMOCLAW_URL=
 INTERNAL_API_TOKEN=
@@ -322,6 +331,37 @@ Add `--agentgateway` when testing the MCP path:
 ```bash
 ./deploy-personal-runtimes.sh --agentgateway
 ```
+
+For the OpenShell-backed sandbox runtime path, use the same helper but select
+the sandbox factory in `.env` or on the command line. In sandbox mode the helper
+still builds the selected runtime image for same-host OpenShell testbeds, but it
+starts `burble-app` without the Docker personal-runtime compose override:
+
+```env
+AGENT_MODE=llm
+AGENT_RUNTIME=burble-runtime
+AGENT_RUNTIME_FACTORY=sandbox
+AGENT_RUNTIME_ENGINE=hermes
+AGENT_RUNTIME_IMAGE=burble-nemo-hermes:dev
+AGENT_RUNTIME_TOKEN_SECRET=<long-random-secret>
+AGENT_RUNTIME_SANDBOX_URL=http://<openshell-host>:<port>
+AGENT_RUNTIME_SANDBOX_TOKEN=<openshell-token>
+AGENT_RUNTIME_SANDBOX_START_COMMAND=["runtime-entrypoint"]
+```
+
+```bash
+AGENT_RUNTIME=burble-runtime \
+AGENT_RUNTIME_FACTORY=sandbox \
+AGENT_RUNTIME_ENGINE=hermes \
+./deploy-personal-runtimes.sh --agentgateway
+```
+
+Use `AGENT_RUNTIME_ENGINE=openclaw` with
+`AGENT_RUNTIME_IMAGE=burble-openclaw-nemoclaw-openclaw-cli:dev` for the
+OpenClaw runtime image, or `AGENT_RUNTIME_ENGINE=burble-native` with
+`AGENT_RUNTIME_IMAGE=burble-native-runtime:dev` for the native runtime.
+`AGENT_RUNTIME_SANDBOX_START_COMMAND` must be the command OpenShell should run
+inside the sandbox to start the selected runtime HTTP server.
 
 After connecting Jira, a hand-test for the upstream MCP path is:
 

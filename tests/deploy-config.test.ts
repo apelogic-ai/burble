@@ -19,6 +19,8 @@ const agentGatewayConfig = await Bun.file(
 const personalRuntimeDeployScript = await Bun.file(
   "deploy/dev/compose/deploy-personal-runtimes.sh"
 ).text();
+const rootEnvExample = await Bun.file(".env.example").text();
+const composeEnvExample = await Bun.file("deploy/dev/compose/.env.example").text();
 const caddyfile = await Bun.file("deploy/dev/compose/Caddyfile").text();
 const openClawOpenAiPatch = await Bun.file(
   "deploy/dev/compose/openclaw-patches/openai.json5"
@@ -429,6 +431,21 @@ describe("dev deploy config", () => {
     expect(personalRuntimeDeployScript).toContain("git pull --ff-only");
     expect(personalRuntimeDeployScript).toContain("runtime_build_images=()");
     expect(personalRuntimeDeployScript).toContain("runtime_build_services=()");
+    expect(personalRuntimeDeployScript).toContain("dotenv_value()");
+    expect(personalRuntimeDeployScript).toContain(
+      "runtime_factory=\"$(configured_value AGENT_RUNTIME_FACTORY docker)\""
+    );
+    expect(personalRuntimeDeployScript).toContain(
+      "if [[ \"${runtime_factory}\" != \"sandbox\" ]]"
+    );
+    expect(personalRuntimeDeployScript).toContain(
+      "runtime_engine=\"$(configured_value AGENT_RUNTIME_ENGINE openclaw)\""
+    );
+    expect(personalRuntimeDeployScript).toContain(
+      "configured_runtime_image=\"$(configured_value AGENT_RUNTIME_IMAGE)\""
+    );
+    expect(personalRuntimeDeployScript).toContain("image_compose_files=(");
+    expect(personalRuntimeDeployScript).toContain("app_compose_files=(");
     expect(personalRuntimeDeployScript).toContain("selected_runtime_image_service=\"openclaw-nemoclaw-image\"");
     expect(personalRuntimeDeployScript).toContain("selected_runtime_image_service=\"nemo-hermes-image\"");
     expect(personalRuntimeDeployScript).toContain("selected_runtime_image_service=\"burble-native-image\"");
@@ -444,6 +461,9 @@ describe("dev deploy config", () => {
     );
     expect(personalRuntimeDeployScript).toContain(
       "AGENT_RUNTIME_IMAGE=\"${runtime_build_images[$i]}\" docker compose"
+    );
+    expect(personalRuntimeDeployScript).toContain(
+      "docker compose \"${app_compose_files[@]}\" up -d --build"
     );
     expect(personalRuntimeDeployScript).toContain("--profile runtime-image build \"${runtime_build_services[$i]}\"");
     expect(personalRuntimeDeployScript).toContain("AGENT_RUNTIME_ENGINE=hermes");
@@ -489,6 +509,24 @@ describe("dev deploy config", () => {
     expect(personalRuntimeDeployScript).toContain("docker stop");
     expect(personalRuntimeDeployScript).toContain("docker rm");
     expect(personalRuntimeDeployScript).toContain("--keep-runtimes");
+  });
+
+  test("documents sandbox runtime environment examples", () => {
+    for (const envExample of [rootEnvExample, composeEnvExample]) {
+      for (const name of [
+        "AGENT_RUNTIME_FACTORY",
+        "AGENT_RUNTIME_ENGINE",
+        "AGENT_RUNTIME_IMAGE",
+        "AGENT_RUNTIME_TOKEN_SECRET",
+        "AGENT_RUNTIME_MCP_GATEWAY_URL",
+        "AGENT_RUNTIME_MCP_AUDIENCE",
+        "AGENT_RUNTIME_SANDBOX_URL",
+        "AGENT_RUNTIME_SANDBOX_TOKEN",
+        "AGENT_RUNTIME_SANDBOX_START_COMMAND"
+      ]) {
+        expect(envExample).toContain(name);
+      }
+    }
   });
 
   test("runs selectable runtime images in CI readiness and boots Burble Native", () => {
