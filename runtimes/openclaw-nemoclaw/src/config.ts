@@ -177,6 +177,9 @@ function readRuntimeEngine(value: string, name: string): RuntimeEngine {
   if (normalized === "openclaw-cli") {
     return "openclaw";
   }
+  if (normalized === "burble-direct" || normalized === "direct-provider") {
+    return "deterministic";
+  }
 
   if (!runtimeEngines.includes(normalized as RuntimeEngine)) {
     throw new Error(

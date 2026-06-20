@@ -787,7 +787,7 @@ function readNestedAttachments(
     return null;
   }
   const inner = (outer as Record<string, unknown>)[innerKey];
-  return isConversationAttachmentArray(inner) ? inner : null;
+  return conversationAttachmentsFrom(inner);
 }
 
 function readNestedObject(
@@ -804,14 +804,14 @@ function readNestedObject(
   return outer as Record<string, unknown>;
 }
 
-function isConversationAttachmentArray(
+function conversationAttachmentsFrom(
   value: unknown
-): value is ConversationAttachment[] {
-  return (
-    Array.isArray(value) &&
-    value.every((attachment) =>
-      runtimeConversationAttachmentSchema.safeParse(attachment).success
-    )
+): ConversationAttachment[] | null {
+  if (!Array.isArray(value)) {
+    return null;
+  }
+  return value.filter((attachment): attachment is ConversationAttachment =>
+    runtimeConversationAttachmentSchema.safeParse(attachment).success
   );
 }
 

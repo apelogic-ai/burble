@@ -7,7 +7,21 @@ export const toolClassificationSchema = z.enum([
   "restricted"
 ]);
 
-export const agentRuntimeEngineSchema = z.enum(runtimeEngines);
+export function normalizeAgentRuntimeEngineInput(value: unknown): unknown {
+  if (typeof value !== "string") {
+    return value;
+  }
+  const normalized = value.trim().toLowerCase();
+  if (normalized === "burble-direct" || normalized === "direct-provider") {
+    return "burble-native";
+  }
+  return normalized;
+}
+
+export const agentRuntimeEngineSchema = z.preprocess(
+  normalizeAgentRuntimeEngineInput,
+  z.enum(runtimeEngines)
+);
 
 export const runtimeToolGroups = [
   "attachments",
@@ -43,18 +57,24 @@ export const runtimeConversationAttachmentSchema = z
     mimeType: z.string().min(1),
     source: z.enum(["slack", "burble", "agent"]),
     name: z.string().optional(),
-    sizeBytes: z.number().int().nonnegative().optional(),
+    sizeBytes: z.number().finite().nonnegative().optional(),
     externalId: z.string().optional()
   })
-  .strict();
+  .passthrough();
 
 export const runtimeConnectionSummarySchema = z
   .object({
     connected: z.boolean(),
-    email: z.string().optional(),
-    providerLogin: z.string().optional()
+    email: z.preprocess(
+      (value) => (typeof value === "string" ? value : undefined),
+      z.string().optional()
+    ),
+    providerLogin: z.preprocess(
+      (value) => (typeof value === "string" ? value : undefined),
+      z.string().optional()
+    )
   })
-  .strict();
+  .passthrough();
 
 export const runtimeConversationSummarySchema = z
   .object({

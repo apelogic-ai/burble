@@ -365,9 +365,7 @@ async function readLocalConversationMessageBody(
   }
 
   const record = body as Record<string, unknown>;
-  const attachments = isConversationAttachmentArray(record.attachments)
-    ? record.attachments
-    : undefined;
+  const attachments = conversationAttachmentsFrom(record.attachments) ?? undefined;
   if (
     typeof record.routeId !== "string" ||
     record.routeId.trim().length === 0 ||
@@ -801,9 +799,7 @@ async function readLocalBurbleChannelMessageBody(
   }
 
   const record = body as Record<string, unknown>;
-  const attachments = isConversationAttachmentArray(record.attachments)
-    ? record.attachments
-    : undefined;
+  const attachments = conversationAttachmentsFrom(record.attachments) ?? undefined;
   if (
     typeof record.text !== "string" ||
     ("attachments" in record &&
@@ -1051,6 +1047,17 @@ function isConversationAttachmentArray(
     value.every((attachment) =>
       runtimeConversationAttachmentSchema.safeParse(attachment).success
     )
+  );
+}
+
+function conversationAttachmentsFrom(
+  value: unknown
+): ConversationAttachment[] | null {
+  if (!Array.isArray(value)) {
+    return null;
+  }
+  return value.filter((attachment): attachment is ConversationAttachment =>
+    runtimeConversationAttachmentSchema.safeParse(attachment).success
   );
 }
 

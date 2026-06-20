@@ -199,17 +199,15 @@ describe("readRuntimeConfig", () => {
     ).toBe("openclaw-gateway");
   });
 
-  test("rejects retired Burble direct runtime engine values", () => {
+  test("maps retired Burble direct runtime engine values to deterministic mode", () => {
     for (const engine of ["burble-direct", "direct-provider"]) {
-      expect(() =>
+      expect(
         readRuntimeConfig({
           BURBLE_TOOL_GATEWAY_URL: "http://burble-app:3000/internal/tools",
           BURBLE_INTERNAL_TOKEN: "secret",
           OPENCLAW_NEMOCLAW_ENGINE: engine
-        })
-      ).toThrow(
-        "Environment variable OPENCLAW_NEMOCLAW_ENGINE must be one of deterministic, openclaw, openclaw-gateway"
-      );
+        }).engine
+      ).toBe("deterministic");
     }
   });
 

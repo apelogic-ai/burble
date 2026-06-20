@@ -63,6 +63,10 @@ export type AgentRuntimeRecord = {
   failureReason: string | null;
 };
 
+type AgentRuntimeRow = Omit<AgentRuntimeRecord, "engine"> & {
+  engine: string;
+};
+
 export type AgentRuntimeEventType =
   | "runtime_provision_requested"
   | "runtime_provision_finished"
@@ -420,6 +424,7 @@ export function createTokenStore(path: string) {
   ensureProviderConnectionColumn(db, "access_token_expires_at", "TEXT");
   ensureAgentRuntimeColumn(db, "sandbox_id", "TEXT");
   ensureAgentRuntimeColumn(db, "policy_hash", "TEXT");
+  migrateLegacyAgentRuntimeEngines(db);
   ensureAgentJobCapabilityColumn(
     db,
     "capability_profile",
@@ -558,7 +563,7 @@ export function createTokenStore(path: string) {
     ORDER BY connected_at DESC
     LIMIT 1
   `);
-  const getAgentRuntimeById = db.query<AgentRuntimeRecord, [string]>(`
+  const getAgentRuntimeById = db.query<AgentRuntimeRow, [string]>(`
     SELECT
       id,
       workspace_id AS workspaceId,
@@ -581,7 +586,7 @@ export function createTokenStore(path: string) {
     WHERE id = ?
   `);
   const getAgentRuntimeByPrincipal = db.query<
-    AgentRuntimeRecord,
+    AgentRuntimeRow,
     [string, string, AgentRuntimeEngine]
   >(`
     SELECT
@@ -605,7 +610,7 @@ export function createTokenStore(path: string) {
     FROM agent_runtimes
     WHERE workspace_id = ? AND slack_user_id = ? AND engine = ?
   `);
-  const listIdleAgentRuntimes = db.query<AgentRuntimeRecord, [string]>(`
+  const listIdleAgentRuntimes = db.query<AgentRuntimeRow, [string]>(`
     SELECT
       id,
       workspace_id AS workspaceId,
@@ -1280,10 +1285,12 @@ export function createTokenStore(path: string) {
       policyHash?: string | null;
       now?: Date;
     }): AgentRuntimeRecord {
-      const existing = getAgentRuntimeByPrincipal.get(
-        input.workspaceId,
-        input.slackUserId,
-        input.engine
+      const existing = toAgentRuntimeRecord(
+        getAgentRuntimeByPrincipal.get(
+          input.workspaceId,
+          input.slackUserId,
+          input.engine
+        )
       );
       if (existing) {
         const now = (input.now ?? new Date()).toISOString();
@@ -1308,7 +1315,9 @@ export function createTokenStore(path: string) {
         }
         if (input.policyHash && existing.policyHash !== input.policyHash) {
           updateAgentRuntimePolicyHash.run(input.policyHash, now, existing.id);
-          const updated = getAgentRuntimeById.get(existing.id);
+          const updated = toAgentRuntimeRecord(
+            getAgentRuntimeById.get(existing.id)
+          );
           if (!updated) {
             throw new Error("Failed to update agent runtime policy hash");
           }
@@ -1326,7 +1335,9 @@ export function createTokenStore(path: string) {
           );
           return updated;
         }
-        return getAgentRuntimeById.get(existing.id) ?? existing;
+        return (
+          toAgentRuntimeRecord(getAgentRuntimeById.get(existing.id)) ?? existing
+        );
       }
 
       const id = buildAgentRuntimeId(
@@ -1353,7 +1364,7 @@ export function createTokenStore(path: string) {
         now
       );
 
-      const created = getAgentRuntimeById.get(id);
+      const created = toAgentRuntimeRecord(getAgentRuntimeById.get(id));
       if (!created) {
         throw new Error("Failed to create agent runtime record");
       }
@@ -1361,7 +1372,7 @@ export function createTokenStore(path: string) {
     },
 
     getAgentRuntime(id: string): AgentRuntimeRecord | null {
-      return getAgentRuntimeById.get(id);
+      return toAgentRuntimeRecord(getAgentRuntimeById.get(id));
     },
 
     getAgentRuntimeForPrincipal(input: {
@@ -1369,15 +1380,25 @@ export function createTokenStore(path: string) {
       slackUserId: string;
       engine: AgentRuntimeEngine;
     }): AgentRuntimeRecord | null {
-      return getAgentRuntimeByPrincipal.get(
-        input.workspaceId,
-        input.slackUserId,
-        input.engine
+      return toAgentRuntimeRecord(
+        getAgentRuntimeByPrincipal.get(
+          input.workspaceId,
+          input.slackUserId,
+          input.engine
+        )
       );
     },
 
     listIdleAgentRuntimes(idleBefore: Date): AgentRuntimeRecord[] {
-      return listIdleAgentRuntimes.all(idleBefore.toISOString());
+      return listIdleAgentRuntimes
+        .all(idleBefore.toISOString())
+        .map((runtime) => {
+          const record = toAgentRuntimeRecord(runtime);
+          if (!record) {
+            throw new Error("Failed to normalize idle agent runtime record");
+          }
+          return record;
+        });
     },
 
     recordAgentRuntimeEvent(input: {
@@ -1386,7 +1407,9 @@ export function createTokenStore(path: string) {
       summary?: Record<string, unknown>;
       now?: Date;
     }): void {
-      const runtime = getAgentRuntimeById.get(input.runtimeId);
+      const runtime = toAgentRuntimeRecord(
+        getAgentRuntimeById.get(input.runtimeId)
+      );
       if (!runtime) {
         return;
       }
@@ -1944,6 +1967,14 @@ function ensureAgentRuntimeColumn(
   }
 }
 
+function migrateLegacyAgentRuntimeEngines(db: Database): void {
+  db.exec(`
+    UPDATE OR IGNORE agent_runtimes
+    SET engine = 'burble-native'
+    WHERE engine IN ('burble-direct', 'direct-provider')
+  `);
+}
+
 function ensureAgentJobCapabilityColumn(
   db: Database,
   name: string,
@@ -2029,6 +2060,22 @@ function toAgentMemoryRecord(row: AgentMemoryRow): AgentMemoryRecord {
     key: row.key,
     value: parseStoredJson(row.valueJson),
     updatedAt: row.updatedAt
+  };
+}
+
+function toAgentRuntimeRecord(
+  row: AgentRuntimeRow | null | undefined
+): AgentRuntimeRecord | null {
+  if (!row) {
+    return null;
+  }
+  const engine = normalizeAgentRuntimeEngine(row.engine);
+  if (!engine) {
+    throw new Error(`Unknown stored agent runtime engine: ${row.engine}`);
+  }
+  return {
+    ...row,
+    engine
   };
 }
 
