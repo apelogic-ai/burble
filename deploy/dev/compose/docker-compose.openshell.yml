@@ -1,0 +1,34 @@
+# Optional OpenShell-compatible sandbox control plane.
+#
+# This dev service implements the OpenShell HTTP contract on top of the local
+# Docker daemon so the AWS compose testbed is hand-testable without a separate
+# microVM control plane. It is not a production isolation boundary.
+#
+# Set OPENSHELL_IMAGE to retag the dev image, then start with:
+#   ./deploy-personal-runtimes.sh --agentgateway --openshell
+
+services:
+  openshell:
+    image: ${OPENSHELL_IMAGE:-burble-openshell-dev-control-plane:dev}
+    build:
+      context: ../../..
+      dockerfile: deploy/dev/openshell-dev-control-plane/Dockerfile
+    restart: unless-stopped
+    expose:
+      - "${OPENSHELL_PORT:-8080}"
+    environment:
+      - PORT=${OPENSHELL_PORT:-8080}
+      - OPENSHELL_TOKEN=${AGENT_RUNTIME_SANDBOX_TOKEN:-}
+      - OPENSHELL_DOCKER_NETWORK=${AGENT_RUNTIME_DOCKER_NETWORK:-compose_default}
+      - OPENSHELL_DATA_ROOT=${OPENSHELL_DATA_ROOT:-/opt/burble/openshell}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ${OPENSHELL_DATA_ROOT:-/opt/burble/openshell}:${OPENSHELL_DATA_ROOT:-/opt/burble/openshell}
+
+  burble-app:
+    depends_on:
+      - openshell
+    environment:
+      - AGENT_RUNTIME_FACTORY=sandbox
+      - AGENT_RUNTIME_SANDBOX_URL=http://openshell:${OPENSHELL_PORT:-8080}
+      - AGENT_RUNTIME_SANDBOX_TOKEN=${AGENT_RUNTIME_SANDBOX_TOKEN:-}

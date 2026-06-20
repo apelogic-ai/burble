@@ -13,6 +13,15 @@ const personalRuntimesCompose = await Bun.file(
 const agentGatewayCompose = await Bun.file(
   "deploy/dev/compose/docker-compose.agentgateway.yml"
 ).text();
+const openShellCompose = await Bun.file(
+  "deploy/dev/compose/docker-compose.openshell.yml"
+).text();
+const openShellDevDockerfile = await Bun.file(
+  "deploy/dev/openshell-dev-control-plane/Dockerfile"
+).text();
+const openShellDevServer = await Bun.file(
+  "deploy/dev/openshell-dev-control-plane/server.ts"
+).text();
 const agentGatewayConfig = await Bun.file(
   "deploy/dev/compose/agentgateway/config.yaml"
 ).text();
@@ -427,6 +436,41 @@ describe("dev deploy config", () => {
     );
   });
 
+  test("provides an optional OpenShell sandbox provider override", () => {
+    expect(openShellCompose).toContain("openshell:");
+    expect(openShellCompose).toContain(
+      "image: ${OPENSHELL_IMAGE:-burble-openshell-dev-control-plane:dev}"
+    );
+    expect(openShellCompose).toContain(
+      "dockerfile: deploy/dev/openshell-dev-control-plane/Dockerfile"
+    );
+    expect(openShellCompose).toContain("PORT=${OPENSHELL_PORT:-8080}");
+    expect(openShellCompose).toContain(
+      "OPENSHELL_TOKEN=${AGENT_RUNTIME_SANDBOX_TOKEN:-}"
+    );
+    expect(openShellCompose).toContain(
+      "OPENSHELL_DOCKER_NETWORK=${AGENT_RUNTIME_DOCKER_NETWORK:-compose_default}"
+    );
+    expect(openShellCompose).toContain(
+      "OPENSHELL_DATA_ROOT=${OPENSHELL_DATA_ROOT:-/opt/burble/openshell}"
+    );
+    expect(openShellCompose).toContain("/var/run/docker.sock:/var/run/docker.sock");
+    expect(openShellCompose).toContain("burble-app:");
+    expect(openShellCompose).toContain("AGENT_RUNTIME_FACTORY=sandbox");
+    expect(openShellCompose).toContain(
+      "AGENT_RUNTIME_SANDBOX_URL=http://openshell:${OPENSHELL_PORT:-8080}"
+    );
+    expect(openShellCompose).toContain(
+      "AGENT_RUNTIME_SANDBOX_TOKEN=${AGENT_RUNTIME_SANDBOX_TOKEN:-}"
+    );
+    expect(openShellDevDockerfile).toContain("docker-cli");
+    expect(openShellDevDockerfile).toContain("server.ts");
+    expect(openShellDevServer).toContain('url.pathname === "/sandboxes"');
+    expect(openShellDevServer).toContain('parts[2] === "runs"');
+    expect(openShellDevServer).toContain('"docker"');
+    expect(openShellDevServer).toContain("--network");
+  });
+
   test("provides a personal runtime deployment helper", () => {
     expect(personalRuntimeDeployScript).toContain("git pull --ff-only");
     expect(personalRuntimeDeployScript).toContain("runtime_build_images=()");
@@ -472,7 +516,12 @@ describe("dev deploy config", () => {
     expect(personalRuntimeDeployScript).toContain("burble-native-runtime:dev");
     expect(personalRuntimeDeployScript).toContain("docker-compose.personal-runtimes.yml");
     expect(personalRuntimeDeployScript).toContain("--agentgateway");
+    expect(personalRuntimeDeployScript).toContain("--openshell");
+    expect(personalRuntimeDeployScript).toContain(
+      "export AGENT_RUNTIME_FACTORY=sandbox"
+    );
     expect(personalRuntimeDeployScript).toContain("docker-compose.agentgateway.yml");
+    expect(personalRuntimeDeployScript).toContain("docker-compose.openshell.yml");
     expect(personalRuntimeDeployScript).toContain("up -d --build");
     expect(personalRuntimeDeployScript).toContain(
       "up -d --force-recreate --no-deps agentgateway"
@@ -522,7 +571,10 @@ describe("dev deploy config", () => {
         "AGENT_RUNTIME_MCP_AUDIENCE",
         "AGENT_RUNTIME_SANDBOX_URL",
         "AGENT_RUNTIME_SANDBOX_TOKEN",
-        "AGENT_RUNTIME_SANDBOX_START_COMMAND"
+        "AGENT_RUNTIME_SANDBOX_START_COMMAND",
+        "OPENSHELL_IMAGE",
+        "OPENSHELL_PORT",
+        "OPENSHELL_DATA_ROOT"
       ]) {
         expect(envExample).toContain(name);
       }

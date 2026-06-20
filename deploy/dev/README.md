@@ -91,6 +91,9 @@ AGENT_RUNTIME_MCP_AUDIENCE=
 AGENT_RUNTIME_SANDBOX_URL=
 AGENT_RUNTIME_SANDBOX_TOKEN=
 AGENT_RUNTIME_SANDBOX_START_COMMAND=
+OPENSHELL_IMAGE=burble-openshell-dev-control-plane:dev
+OPENSHELL_PORT=8080
+OPENSHELL_DATA_ROOT=/opt/burble/openshell
 AI_MODEL=openai:gpt-5.4
 OPENCLAW_NEMOCLAW_URL=
 INTERNAL_API_TOKEN=
@@ -217,6 +220,67 @@ This is not a `hermes chat -q` wrapper. The image starts Hermes gateway with a
 Burble platform adapter so inbound turns, normal replies, and cron/background
 delivery flow through Burble route IDs. Burble still owns provider OAuth, MCP
 policy, and final Slack transport delivery.
+
+## OpenShell Sandbox Factory
+
+The sandbox runtime factory replaces Burble's local Docker personal-runtime
+factory with an OpenShell-compatible control plane. Burble keeps Slack/OAuth,
+tool-gateway policy, runtime tokens, and model/tool context. OpenShell owns
+the sandbox lifecycle: create a sandbox for a workspace/user/runtime, apply the
+compiled filesystem/network/resource policy, bind credentials, start the
+selected runtime image, and return the runtime contract endpoint.
+
+Use one OpenShell service for the compose stack. It is a shared control plane,
+not one service per runtime. Each agent principal still gets its own sandbox
+behind that control plane.
+
+For an externally managed OpenShell provider, set:
+
+```env
+AGENT_MODE=llm
+AGENT_RUNTIME=burble-runtime
+AGENT_RUNTIME_FACTORY=sandbox
+AGENT_RUNTIME_ENGINE=hermes
+AGENT_RUNTIME_IMAGE=burble-nemo-hermes:dev
+AGENT_RUNTIME_SANDBOX_URL=http://<openshell-host>:<port>
+AGENT_RUNTIME_SANDBOX_TOKEN=<shared-provider-token-if-required>
+AGENT_RUNTIME_SANDBOX_START_COMMAND='["runtime-entrypoint"]'
+```
+
+For a compose-managed dev provider, leave `AGENT_RUNTIME_SANDBOX_URL` empty.
+The override builds a small OpenShell-compatible control plane from
+`deploy/dev/openshell-dev-control-plane`, mounts the host Docker socket, and
+points Burble at `http://openshell:${OPENSHELL_PORT}` inside the compose
+network:
+
+```env
+AGENT_MODE=llm
+AGENT_RUNTIME=burble-runtime
+AGENT_RUNTIME_FACTORY=sandbox
+AGENT_RUNTIME_ENGINE=hermes
+AGENT_RUNTIME_IMAGE=burble-nemo-hermes:dev
+AGENT_RUNTIME_SANDBOX_URL=
+AGENT_RUNTIME_SANDBOX_TOKEN=<long-random-secret>
+AGENT_RUNTIME_SANDBOX_START_COMMAND='["runtime-entrypoint"]'
+OPENSHELL_IMAGE=burble-openshell-dev-control-plane:dev
+OPENSHELL_PORT=8080
+OPENSHELL_DATA_ROOT=/opt/burble/openshell
+```
+
+Deploy it from `deploy/dev/compose` with:
+
+```bash
+./deploy-personal-runtimes.sh --agentgateway --openshell
+```
+
+The script still builds the selected runtime image locally, because same-host
+OpenShell testbeds need the runtime image available to the control plane. If
+the OpenShell service is remote, publish the runtime image to a registry and
+set `AGENT_RUNTIME_IMAGE` to that pullable image instead.
+
+The compose-managed provider is for dev validation only. It gives the sandbox
+factory the same HTTP shape as OpenShell, but uses Docker containers underneath
+and does not enforce the production OpenShell isolation model.
 
 The runtime supports these internal engines:
 
