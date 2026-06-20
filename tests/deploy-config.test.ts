@@ -16,11 +16,8 @@ const agentGatewayCompose = await Bun.file(
 const openShellCompose = await Bun.file(
   "deploy/dev/compose/docker-compose.openshell.yml"
 ).text();
-const openShellDevDockerfile = await Bun.file(
-  "deploy/dev/openshell-dev-control-plane/Dockerfile"
-).text();
-const openShellDevServer = await Bun.file(
-  "deploy/dev/openshell-dev-control-plane/server.ts"
+const openShellGatewayConfig = await Bun.file(
+  "deploy/dev/compose/openshell/gateway.toml"
 ).text();
 const agentGatewayConfig = await Bun.file(
   "deploy/dev/compose/agentgateway/config.yaml"
@@ -81,7 +78,9 @@ describe("dev deploy config", () => {
       "AGENT_RUNTIME_MCP_AUDIENCE",
       "AGENT_RUNTIME_SANDBOX_URL",
       "AGENT_RUNTIME_SANDBOX_TOKEN",
+      "AGENT_RUNTIME_SANDBOX_TRANSPORT",
       "AGENT_RUNTIME_SANDBOX_START_COMMAND",
+      "AGENT_RUNTIME_OPENSHELL_DIAL_HOST",
       "AGENT_RUNTIME_CONFIG_PATCH_HOST_PATH",
       "ATLASSIAN_MCP_URL",
       "RUNTIME_JWT_ISSUER",
@@ -300,7 +299,9 @@ describe("dev deploy config", () => {
       "AGENT_RUNTIME_MCP_AUDIENCE",
       "AGENT_RUNTIME_SANDBOX_URL",
       "AGENT_RUNTIME_SANDBOX_TOKEN",
+      "AGENT_RUNTIME_SANDBOX_TRANSPORT",
       "AGENT_RUNTIME_SANDBOX_START_COMMAND",
+      "AGENT_RUNTIME_OPENSHELL_DIAL_HOST",
       "AGENT_RUNTIME_CONFIG_PATCH_HOST_PATH",
       "ATLASSIAN_MCP_URL",
       "RUNTIME_JWT_ISSUER",
@@ -439,36 +440,45 @@ describe("dev deploy config", () => {
   test("provides an optional OpenShell sandbox provider override", () => {
     expect(openShellCompose).toContain("openshell:");
     expect(openShellCompose).toContain(
-      "image: ${OPENSHELL_IMAGE:-burble-openshell-dev-control-plane:dev}"
+      "ghcr.io/nvidia/openshell/gateway:${OPENSHELL_IMAGE_TAG:-latest}"
     );
     expect(openShellCompose).toContain(
-      "dockerfile: deploy/dev/openshell-dev-control-plane/Dockerfile"
-    );
-    expect(openShellCompose).toContain("PORT=${OPENSHELL_PORT:-8080}");
-    expect(openShellCompose).toContain(
-      "OPENSHELL_TOKEN=${AGENT_RUNTIME_SANDBOX_TOKEN:-}"
+      "OPENSHELL_GATEWAY_CONFIG=/etc/openshell/gateway.toml"
     );
     expect(openShellCompose).toContain(
-      "OPENSHELL_DOCKER_NETWORK=${AGENT_RUNTIME_DOCKER_NETWORK:-compose_default}"
+      "OPENSHELL_DB_URL=sqlite:/var/lib/openshell/gateway.db?mode=rwc"
     );
-    expect(openShellCompose).toContain(
-      "OPENSHELL_DATA_ROOT=${OPENSHELL_DATA_ROOT:-/opt/burble/openshell}"
-    );
+    expect(openShellCompose).toContain("XDG_DATA_HOME=/var/lib/openshell");
     expect(openShellCompose).toContain("/var/run/docker.sock:/var/run/docker.sock");
+    expect(openShellCompose).toContain(
+      "${OPENSHELL_DATA_ROOT:-/var/lib/openshell}:/var/lib/openshell"
+    );
+    expect(openShellCompose).toContain(
+      "./openshell/gateway.toml:/etc/openshell/gateway.toml:ro"
+    );
+    expect(openShellCompose).toContain("host.openshell.internal:host-gateway");
     expect(openShellCompose).toContain("burble-app:");
     expect(openShellCompose).toContain("AGENT_RUNTIME_FACTORY=sandbox");
+    expect(openShellCompose).toContain("AGENT_RUNTIME_SANDBOX_TRANSPORT=grpc");
     expect(openShellCompose).toContain(
-      "AGENT_RUNTIME_SANDBOX_URL=http://openshell:${OPENSHELL_PORT:-8080}"
+      "AGENT_RUNTIME_SANDBOX_URL=http://openshell:8080"
     );
     expect(openShellCompose).toContain(
       "AGENT_RUNTIME_SANDBOX_TOKEN=${AGENT_RUNTIME_SANDBOX_TOKEN:-}"
     );
-    expect(openShellDevDockerfile).toContain("docker-cli");
-    expect(openShellDevDockerfile).toContain("server.ts");
-    expect(openShellDevServer).toContain('url.pathname === "/sandboxes"');
-    expect(openShellDevServer).toContain('parts[2] === "runs"');
-    expect(openShellDevServer).toContain('"docker"');
-    expect(openShellDevServer).toContain("--network");
+    expect(openShellCompose).toContain(
+      "AGENT_RUNTIME_OPENSHELL_DIAL_HOST=${AGENT_RUNTIME_OPENSHELL_DIAL_HOST:-openshell}"
+    );
+    expect(openShellGatewayConfig).toContain('compute_drivers     = ["docker"]');
+    expect(openShellGatewayConfig).toContain("disable_tls         = true");
+    expect(openShellGatewayConfig).toContain("[openshell.gateway.gateway_jwt]");
+    expect(openShellGatewayConfig).toContain(
+      'signing_key_path = "/var/lib/openshell/jwt/signing.pem"'
+    );
+    expect(openShellGatewayConfig).toContain("allow_unauthenticated_users = true");
+    expect(openShellGatewayConfig).toContain(
+      'grpc_endpoint     = "http://host.openshell.internal:8080"'
+    );
   });
 
   test("provides a personal runtime deployment helper", () => {
@@ -520,6 +530,8 @@ describe("dev deploy config", () => {
     expect(personalRuntimeDeployScript).toContain(
       "export AGENT_RUNTIME_FACTORY=sandbox"
     );
+    expect(personalRuntimeDeployScript).toContain("ensure_openshell_jwt_keys()");
+    expect(personalRuntimeDeployScript).toContain("openssl genpkey -algorithm Ed25519");
     expect(personalRuntimeDeployScript).toContain("docker-compose.agentgateway.yml");
     expect(personalRuntimeDeployScript).toContain("docker-compose.openshell.yml");
     expect(personalRuntimeDeployScript).toContain("up -d --build");
@@ -571,9 +583,12 @@ describe("dev deploy config", () => {
         "AGENT_RUNTIME_MCP_AUDIENCE",
         "AGENT_RUNTIME_SANDBOX_URL",
         "AGENT_RUNTIME_SANDBOX_TOKEN",
+        "AGENT_RUNTIME_SANDBOX_TRANSPORT",
         "AGENT_RUNTIME_SANDBOX_START_COMMAND",
-        "OPENSHELL_IMAGE",
+        "AGENT_RUNTIME_OPENSHELL_DIAL_HOST",
+        "OPENSHELL_IMAGE_TAG",
         "OPENSHELL_PORT",
+        "OPENSHELL_HEALTH_PORT",
         "OPENSHELL_DATA_ROOT"
       ]) {
         expect(envExample).toContain(name);

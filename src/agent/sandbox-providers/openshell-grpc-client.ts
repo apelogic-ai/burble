@@ -1,0 +1,550 @@
+import { credentials, Metadata, type ServiceClientConstructor } from "@grpc/grpc-js";
+import { loadSync } from "@grpc/proto-loader";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+import type {
+  SandboxCredentialBinding,
+  SandboxEvent,
+  SandboxPolicy
+} from "../sandbox-provider";
+import type {
+  OpenShellProviderBindingConfig,
+  OpenShellSandboxPolicyConfig
+} from "./openshell-policy";
+import type {
+  OpenShellSandboxClient,
+  OpenShellSandboxRecord
+} from "./openshell";
+
+type GrpcUnary = (
+  request: Record<string, unknown>,
+  metadata: Metadata,
+  callback: (error: Error | null, response: unknown) => void
+) => void;
+
+type GrpcServerStream = (
+  request: Record<string, unknown>,
+  metadata: Metadata
+) => {
+  on(event: "data", listener: (event: unknown) => void): void;
+  on(event: "error", listener: (error: Error) => void): void;
+  on(event: "end", listener: () => void): void;
+};
+
+type OpenShellGrpcService = {
+  Health: GrpcUnary;
+  CreateSandbox: GrpcUnary;
+  GetSandbox: GrpcUnary;
+  DeleteSandbox: GrpcUnary;
+  UpdateConfig: GrpcUnary;
+  ExposeService: GrpcUnary;
+  GetService: GrpcUnary;
+  ExecSandbox: GrpcServerStream;
+};
+
+export type OpenShellGrpcSandboxClientOptions = {
+  endpoint: string;
+  token?: string | null;
+};
+
+const protoDir = join(
+  dirname(fileURLToPath(import.meta.url)),
+  "openshell-proto"
+);
+const principalWorkspaceLabel = "burble.workspace_id";
+const principalUserLabel = "burble.user_id";
+const runtimeEngineLabel = "burble.runtime_engine";
+const runtimeImageLabel = "burble.runtime_image";
+
+export function createOpenShellGrpcSandboxClient(
+  options: OpenShellGrpcSandboxClientOptions
+): OpenShellSandboxClient {
+  const service = createGrpcService(options);
+  const metadata = () => {
+    const meta = new Metadata();
+    const token = options.token?.trim();
+    if (token) {
+      meta.set("authorization", `Bearer ${token}`);
+    }
+    return meta;
+  };
+
+  return {
+    async createSandbox(input) {
+      const sandboxName = shortSandboxName();
+      const labels = runtimeLabels(input.labels, input.principal, input.runtime);
+      objectRecord(
+        await unary(service.CreateSandbox, {
+          name: sandboxName,
+          labels,
+          spec: {
+            environment: {},
+            template: {
+              image: input.runtime.image,
+              labels
+            },
+            policy: toOpenShellGrpcPolicy(emptySandboxPolicy())
+          }
+        }),
+        "OpenShell CreateSandbox response"
+      );
+      const serviceResponse = objectRecord(
+        await unary(service.ExposeService, {
+          sandbox: sandboxName,
+          service: "runtime",
+          targetPort: 8080,
+          domain: false
+        }),
+        "OpenShell ExposeService response"
+      );
+      const readySandbox = await waitForSandboxReady(
+        service,
+        sandboxName,
+        metadata()
+      );
+      return recordFromSandbox({
+        sandbox: readySandbox,
+        endpoint: stringOrNull(serviceResponse.url) ?? "",
+        principal: input.principal,
+        runtime: input.runtime,
+        labels,
+        credentials: []
+      });
+    },
+
+    async applyPolicy(input) {
+      await unary(service.UpdateConfig, {
+        name: input.sandboxId,
+        policy: toOpenShellGrpcPolicy(input.policy),
+        global: false
+      });
+    },
+
+    async bindCredentials(_input: {
+      sandboxId: string;
+      credentialBindings: SandboxCredentialBinding[];
+      materializedCredentials: SandboxCredentialBinding[];
+      compiledProviders: OpenShellProviderBindingConfig[];
+    }) {
+      // Real OpenShell providers are first-class gateway resources. Burble's S3
+      // path currently env-injects only the runtime auth token and does not yet
+      // provision OpenShell provider records, so there is nothing to attach here.
+    },
+
+    async run(input) {
+      const command = shellBackgroundCommand(input.request.argv);
+      const sandboxObjectId = await getSandboxObjectId(
+        service,
+        input.sandboxId,
+        metadata()
+      );
+      let exitCode: number | undefined;
+      await new Promise<void>((resolve, reject) => {
+        const stream = service.ExecSandbox(
+          {
+            sandboxId: sandboxObjectId,
+            command: ["sh", "-lc", command],
+            environment: input.request.env,
+            workdir: "/runtime"
+          },
+          metadata()
+        );
+        stream.on("data", (event) => {
+          const record = objectRecord(event, "OpenShell exec event");
+          const exit = isRecord(record.exit) ? record.exit : null;
+          if (exit && typeof exit.exitCode === "number") {
+            exitCode = exit.exitCode;
+          }
+        });
+        stream.on("error", reject);
+        stream.on("end", resolve);
+      });
+
+      return {
+        runId: `run-${input.sandboxId}`,
+        status: exitCode === undefined || exitCode === 0 ? "running" : "failed",
+        ...(exitCode === undefined || exitCode === 0 ? {} : { exitCode })
+      };
+    },
+
+    async getSandbox(input) {
+      const response = objectRecord(
+        await unary(service.GetSandbox, { name: input.sandboxId }),
+        "OpenShell GetSandbox response"
+      );
+      const sandbox = objectRecord(response.sandbox, "OpenShell sandbox");
+      const labels = sandboxLabels(sandbox);
+      const serviceEndpoint = await getRuntimeServiceUrl(
+        service,
+        input.sandboxId,
+        metadata()
+      );
+      return recordFromSandbox({
+        sandbox,
+        endpoint: serviceEndpoint ?? "",
+        principal: principalFromLabels(labels),
+        runtime: runtimeFromLabels(labels),
+        labels,
+        credentials: []
+      });
+    },
+
+    async *events(input): AsyncIterable<SandboxEvent> {
+      const record = await this.getSandbox(input);
+      yield {
+        sandboxId: input.sandboxId,
+        type: record.status === "running" ? "run_started" : "provisioned",
+        at: new Date().toISOString()
+      };
+    },
+
+    async terminate(input) {
+      await unary(service.DeleteSandbox, { name: input.sandboxId });
+    }
+  };
+
+  function unary(method: GrpcUnary, request: Record<string, unknown>): Promise<unknown> {
+    return new Promise((resolve, reject) => {
+      method.call(service, request, metadata(), (error, response) => {
+        if (error) {
+          reject(error);
+          return;
+        }
+        resolve(response);
+      });
+    });
+  }
+}
+
+function createGrpcService(
+  options: OpenShellGrpcSandboxClientOptions
+): OpenShellGrpcService {
+  const packageDefinition = loadSync(join(protoDir, "openshell.proto"), {
+    includeDirs: [protoDir],
+    longs: Number,
+    enums: String,
+    defaults: true,
+    oneofs: true,
+    keepCase: false
+  });
+  const loaded = (awaitlessGrpcLoad(packageDefinition) as Record<string, unknown>)
+    .openshell as Record<string, unknown>;
+  const v1 = objectRecord(loaded.v1, "OpenShell proto package");
+  const Service = v1.OpenShell as ServiceClientConstructor;
+  return new Service(
+    grpcTarget(options.endpoint),
+    options.endpoint.startsWith("https://")
+      ? credentials.createSsl()
+      : credentials.createInsecure()
+  ) as unknown as OpenShellGrpcService;
+}
+
+function awaitlessGrpcLoad(packageDefinition: unknown): unknown {
+  // Isolated wrapper keeps the dynamic require type out of call sites.
+  return require("@grpc/grpc-js").loadPackageDefinition(packageDefinition);
+}
+
+async function getRuntimeServiceUrl(
+  service: OpenShellGrpcService,
+  sandboxId: string,
+  metadata: Metadata
+): Promise<string | null> {
+  const response = await new Promise<unknown>((resolve) => {
+    service.GetService(
+      { sandbox: sandboxId, service: "runtime" },
+      metadata,
+      (_error, result) => resolve(result ?? null)
+    );
+  });
+  if (!response) {
+    return null;
+  }
+  return stringOrNull(objectRecord(response, "OpenShell GetService response").url);
+}
+
+async function getSandboxObjectId(
+  service: OpenShellGrpcService,
+  sandboxName: string,
+  requestMetadata: Metadata
+): Promise<string> {
+  const sandboxResponse = objectRecord(
+    await new Promise<unknown>((resolve, reject) => {
+      service.GetSandbox(
+        { name: sandboxName },
+        requestMetadata,
+        (error, result) => {
+          if (error) {
+            reject(error);
+            return;
+          }
+          resolve(result);
+        }
+      );
+    }),
+    "OpenShell GetSandbox response"
+  );
+  const sandbox = objectRecord(sandboxResponse.sandbox, "OpenShell sandbox");
+  const metadata = objectRecord(sandbox.metadata, "OpenShell sandbox metadata");
+  const id = stringOrNull(metadata.id);
+  if (!id) {
+    throw new Error(`OpenShell sandbox ${sandboxName} is missing metadata.id`);
+  }
+  return id;
+}
+
+async function waitForSandboxReady(
+  service: OpenShellGrpcService,
+  sandboxName: string,
+  requestMetadata: Metadata
+): Promise<Record<string, unknown>> {
+  const timeoutAt = Date.now() + 120_000;
+  let lastPhase: unknown;
+  while (Date.now() < timeoutAt) {
+    const sandbox = await getSandboxRecord(service, sandboxName, requestMetadata);
+    const status = isRecord(sandbox.status) ? sandbox.status : {};
+    lastPhase = status.phase;
+    if (lastPhase === "SANDBOX_PHASE_RUNNING") {
+      return sandbox;
+    }
+    if (lastPhase === "SANDBOX_PHASE_FAILED") {
+      throw new Error(`OpenShell sandbox ${sandboxName} failed while provisioning`);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
+  throw new Error(
+    `OpenShell sandbox ${sandboxName} did not become ready (last phase ${String(lastPhase)})`
+  );
+}
+
+async function getSandboxRecord(
+  service: OpenShellGrpcService,
+  sandboxName: string,
+  requestMetadata: Metadata
+): Promise<Record<string, unknown>> {
+  const response = objectRecord(
+    await new Promise<unknown>((resolve, reject) => {
+      service.GetSandbox(
+        { name: sandboxName },
+        requestMetadata,
+        (error, result) => {
+          if (error) {
+            reject(error);
+            return;
+          }
+          resolve(result);
+        }
+      );
+    }),
+    "OpenShell GetSandbox response"
+  );
+  return objectRecord(response.sandbox, "OpenShell sandbox");
+}
+
+function recordFromSandbox(input: {
+  sandbox: Record<string, unknown>;
+  endpoint: string;
+  principal: OpenShellSandboxRecord["principal"];
+  runtime: OpenShellSandboxRecord["runtime"];
+  labels: Record<string, string>;
+  credentials: SandboxCredentialBinding[];
+}): OpenShellSandboxRecord {
+  const metadata = isRecord(input.sandbox.metadata) ? input.sandbox.metadata : {};
+  const status = isRecord(input.sandbox.status) ? input.sandbox.status : {};
+  const name = stringOrNull(metadata.name) ?? stringOrNull(metadata.id) ?? "";
+  const labels = sandboxLabels(input.sandbox);
+  return {
+    sandboxId: name,
+    endpoint: rewriteLocalEndpoint(input.endpoint),
+    workspacePath: "/runtime",
+    status: sandboxStatus(status.phase),
+    principal: input.principal,
+    runtime: input.runtime,
+    labels: Object.keys(labels).length > 0 ? labels : input.labels,
+    credentials: input.credentials
+  };
+}
+
+function runtimeLabels(
+  labels: Record<string, string>,
+  principal: OpenShellSandboxRecord["principal"],
+  runtime: OpenShellSandboxRecord["runtime"]
+): Record<string, string> {
+  return {
+    ...labels,
+    [principalWorkspaceLabel]: principal.workspaceId,
+    [principalUserLabel]: principal.userId,
+    [runtimeEngineLabel]: runtime.engine,
+    [runtimeImageLabel]: runtime.image
+  };
+}
+
+function sandboxLabels(sandbox: Record<string, unknown>): Record<string, string> {
+  const metadata = isRecord(sandbox.metadata) ? sandbox.metadata : {};
+  return stringRecord(metadata.labels) ?? {};
+}
+
+function principalFromLabels(
+  labels: Record<string, string>
+): OpenShellSandboxRecord["principal"] {
+  return {
+    workspaceId: labels[principalWorkspaceLabel] ?? "",
+    userId: labels[principalUserLabel] ?? ""
+  };
+}
+
+function runtimeFromLabels(
+  labels: Record<string, string>
+): OpenShellSandboxRecord["runtime"] {
+  return {
+    engine: runtimeEngineFromLabel(labels[runtimeEngineLabel]),
+    image: labels[runtimeImageLabel] ?? ""
+  };
+}
+
+function runtimeEngineFromLabel(
+  value: string | undefined
+): OpenShellSandboxRecord["runtime"]["engine"] {
+  switch (value) {
+    case "burble-native":
+    case "deterministic":
+    case "hermes":
+    case "openclaw":
+    case "openclaw-gateway":
+      return value;
+    default:
+      return "openclaw";
+  }
+}
+
+function toOpenShellGrpcPolicy(policy: SandboxPolicy): Record<string, unknown> {
+  return {
+    version: 1,
+    filesystem: {
+      includeWorkdir: true,
+      readOnly: policy.filesystem?.readOnlyPaths ?? [],
+      readWrite: policy.filesystem?.readWritePaths ?? []
+    },
+    landlock: {
+      compatibility: "best_effort"
+    },
+    process: {},
+    networkPolicies:
+      policy.network.egress === "open"
+        ? {}
+        : {
+            burble_runtime: {
+              name: "burble_runtime",
+              endpoints:
+                policy.network.egress === "deny"
+                  ? []
+                  : policy.network.allowedHosts.map(toNetworkEndpoint),
+              binaries: []
+            }
+          }
+  };
+}
+
+function toNetworkEndpoint(host: string): Record<string, unknown> {
+  const { hostname, port } = splitHostPort(host);
+  return {
+    host: hostname,
+    ports: [port],
+    protocol: "rest",
+    tls: "passthrough",
+    enforcement: "enforce",
+    access: "full"
+  };
+}
+
+function splitHostPort(host: string): { hostname: string; port: number } {
+  const trimmed = host.trim().toLowerCase();
+  const match = /^(?<hostname>.+):(?<port>\d+)$/.exec(trimmed);
+  if (!match?.groups) {
+    return { hostname: trimmed, port: 443 };
+  }
+  return {
+    hostname: match.groups.hostname,
+    port: Number.parseInt(match.groups.port, 10)
+  };
+}
+
+function emptySandboxPolicy(): SandboxPolicy {
+  return {
+    network: { egress: "deny" },
+    filesystem: { readOnlyPaths: [], readWritePaths: [] }
+  };
+}
+
+function sandboxStatus(phase: unknown): OpenShellSandboxRecord["status"] {
+  if (phase === "SANDBOX_PHASE_FAILED") {
+    return "failed";
+  }
+  if (phase === "SANDBOX_PHASE_RUNNING") {
+    return "running";
+  }
+  return "ready";
+}
+
+function shellBackgroundCommand(argv: string[]): string {
+  const command = argv.map(shellQuote).join(" ");
+  return `(${command}) >/tmp/burble-runtime.log 2>&1 &`;
+}
+
+function shellQuote(value: string): string {
+  return `'${value.replaceAll("'", "'\\''")}'`;
+}
+
+function grpcTarget(endpoint: string): string {
+  const url = new URL(endpoint);
+  return url.host;
+}
+
+function shortSandboxName(): string {
+  const bytes = new Uint8Array(8);
+  crypto.getRandomValues(bytes);
+  return `b-${[...bytes].map((byte) => byte.toString(16).padStart(2, "0")).join("")}`;
+}
+
+function rewriteLocalEndpoint(endpoint: string): string {
+  if (!endpoint) {
+    return endpoint;
+  }
+  try {
+    const url = new URL(endpoint);
+    if (url.hostname === "127.0.0.1" || url.hostname === "localhost") {
+      url.hostname = "openshell";
+      return url.toString().replace(/\/+$/, "");
+    }
+  } catch {
+    return endpoint;
+  }
+  return endpoint.replace(/\/+$/, "");
+}
+
+function objectRecord(value: unknown, name: string): Record<string, unknown> {
+  if (!isRecord(value)) {
+    throw new Error(`${name} must be an object`);
+  }
+  return value;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function stringOrNull(value: unknown): string | null {
+  return typeof value === "string" && value ? value : null;
+}
+
+function stringRecord(value: unknown): Record<string, string> | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+  const result: Record<string, string> = {};
+  for (const [key, entry] of Object.entries(value)) {
+    if (typeof entry === "string") {
+      result[key] = entry;
+    }
+  }
+  return result;
+}

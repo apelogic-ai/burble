@@ -1895,6 +1895,7 @@ export function createManagedRuntimeFactory(
               idleTtlMs: config.agentRuntimeIdleTtlMs,
               startCommand: options.sandboxStartCommand!,
               fetch: options.sandboxFetch,
+              openShellDialHost: config.agentRuntimeOpenShellDialHost,
               env: Bun.env,
               buildManifest
             })

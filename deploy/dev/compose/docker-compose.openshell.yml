@@ -1,34 +1,40 @@
-# Optional OpenShell-compatible sandbox control plane.
+# Optional NVIDIA OpenShell sandbox control plane.
 #
-# This dev service implements the OpenShell HTTP contract on top of the local
-# Docker daemon so the AWS compose testbed is hand-testable without a separate
-# microVM control plane. It is not a production isolation boundary.
-#
-# Set OPENSHELL_IMAGE to retag the dev image, then start with:
+# Starts the real OpenShell gateway with the Docker compute driver. Sandbox
+# containers are managed by OpenShell, not by this Compose file.
+# Start with:
 #   ./deploy-personal-runtimes.sh --agentgateway --openshell
 
 services:
   openshell:
-    image: ${OPENSHELL_IMAGE:-burble-openshell-dev-control-plane:dev}
-    build:
-      context: ../../..
-      dockerfile: deploy/dev/openshell-dev-control-plane/Dockerfile
+    image: ghcr.io/nvidia/openshell/gateway:${OPENSHELL_IMAGE_TAG:-latest}
     restart: unless-stopped
+    command: []
+    user: "0"
+    ports:
+      - "127.0.0.1:${OPENSHELL_PORT:-8080}:8080"
+      - "127.0.0.1:${OPENSHELL_HEALTH_PORT:-8081}:8081"
     expose:
-      - "${OPENSHELL_PORT:-8080}"
+      - "8080"
     environment:
-      - PORT=${OPENSHELL_PORT:-8080}
-      - OPENSHELL_TOKEN=${AGENT_RUNTIME_SANDBOX_TOKEN:-}
-      - OPENSHELL_DOCKER_NETWORK=${AGENT_RUNTIME_DOCKER_NETWORK:-compose_default}
-      - OPENSHELL_DATA_ROOT=${OPENSHELL_DATA_ROOT:-/opt/burble/openshell}
+      - OPENSHELL_GATEWAY_CONFIG=/etc/openshell/gateway.toml
+      - OPENSHELL_DB_URL=sqlite:/var/lib/openshell/gateway.db?mode=rwc
+      - XDG_DATA_HOME=/var/lib/openshell
+      - HOME=/var/lib/openshell
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+      - "host.openshell.internal:host-gateway"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
-      - ${OPENSHELL_DATA_ROOT:-/opt/burble/openshell}:${OPENSHELL_DATA_ROOT:-/opt/burble/openshell}
+      - ${OPENSHELL_DATA_ROOT:-/var/lib/openshell}:/var/lib/openshell
+      - ./openshell/gateway.toml:/etc/openshell/gateway.toml:ro
 
   burble-app:
     depends_on:
       - openshell
     environment:
       - AGENT_RUNTIME_FACTORY=sandbox
-      - AGENT_RUNTIME_SANDBOX_URL=http://openshell:${OPENSHELL_PORT:-8080}
+      - AGENT_RUNTIME_SANDBOX_TRANSPORT=grpc
+      - AGENT_RUNTIME_SANDBOX_URL=http://openshell:8080
       - AGENT_RUNTIME_SANDBOX_TOKEN=${AGENT_RUNTIME_SANDBOX_TOKEN:-}
+      - AGENT_RUNTIME_OPENSHELL_DIAL_HOST=${AGENT_RUNTIME_OPENSHELL_DIAL_HOST:-openshell}

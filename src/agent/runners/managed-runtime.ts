@@ -16,6 +16,10 @@ import {
 import { runtimeCompatibilityFamily } from "../runtime-descriptors";
 import { sealRuntimeConversationAttachments } from "../../conversation/attachment-capabilities";
 import type { Config } from "../../config";
+import {
+  routeRuntimeEndpointFetch,
+  routeRuntimeEndpointWebSocket
+} from "../runtime-endpoint-routing";
 
 export type AgentRuntimeFetch = (
   input: string,
@@ -113,7 +117,11 @@ export function createManagedRuntimeAdapter(
   }
 
   const fallbackBaseUrl = deps.baseUrl?.replace(/\/+$/, "");
-  const requestFetch: AgentRuntimeFetch = deps.fetch ?? fetch;
+  const routedFetch = routeRuntimeEndpointFetch(
+    (url, init) => (deps.fetch ?? fetch)(url, init ?? {}),
+    { openShellDialHost: deps.config?.agentRuntimeOpenShellDialHost }
+  );
+  const requestFetch: AgentRuntimeFetch = (url, init) => routedFetch(url, init);
   const createWebSocket: AgentRuntimeWebSocketFactory =
     deps.webSocketFactory ?? createRuntimeContractWebSocket;
   const logInfo = deps.logInfo ?? (() => undefined);
@@ -296,11 +304,13 @@ export function createManagedRuntimeAdapter(
           );
 
           try {
+            const eventSocket = routeRuntimeEndpointWebSocket(
+              eventsUrl,
+              runtimeWebSocketOptions(runtime),
+              { openShellDialHost: deps.config?.agentRuntimeOpenShellDialHost }
+            );
             agentResponse = yield* readWebSocketRunResponse(
-              createWebSocket(
-                eventsUrl,
-                runtimeWebSocketOptions(runtime)
-              ),
+              createWebSocket(eventSocket.url, eventSocket.options),
               runtimeMessageDeltasEnabled(runtime),
               (event) => {
                 logInfo(

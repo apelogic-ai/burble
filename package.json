@@ -16,10 +16,12 @@
     "test:e2e:runtime-readiness": "BURBLE_E2E_RUNTIMES=1 bun test tests/e2e/runtime-readiness.test.ts"
   },
   "dependencies": {
-    "@burble/runtime-sdk": "workspace:*",
     "@ai-sdk/anthropic": "^3.0.78",
     "@ai-sdk/openai": "^3.0.64",
     "@ai-sdk/openai-compatible": "^2.0.48",
+    "@burble/runtime-sdk": "workspace:*",
+    "@grpc/grpc-js": "^1.14.4",
+    "@grpc/proto-loader": "^0.8.1",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@slack/bolt": "^4.4.0",
     "ai": "^6.0.185",

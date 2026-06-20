@@ -5,6 +5,7 @@ import {
   createOpenShellHttpSandboxClient,
   type OpenShellHttpFetch
 } from "./openshell-http-client";
+import { createOpenShellGrpcSandboxClient } from "./openshell-grpc-client";
 
 export type ConfiguredSandboxProviderOptions = {
   fetch?: OpenShellHttpFetch;
@@ -21,10 +22,16 @@ export function createConfiguredSandboxProvider(
   }
 
   return createOpenShellSandboxProvider({
-    client: createOpenShellHttpSandboxClient({
-      baseUrl: config.agentRuntimeSandboxUrl,
-      token: config.agentRuntimeSandboxToken,
-      fetch: options.fetch
-    })
+    client:
+      config.agentRuntimeSandboxTransport === "http"
+        ? createOpenShellHttpSandboxClient({
+            baseUrl: config.agentRuntimeSandboxUrl,
+            token: config.agentRuntimeSandboxToken,
+            fetch: options.fetch
+          })
+        : createOpenShellGrpcSandboxClient({
+            endpoint: config.agentRuntimeSandboxUrl,
+            token: config.agentRuntimeSandboxToken
+          })
   });
 }

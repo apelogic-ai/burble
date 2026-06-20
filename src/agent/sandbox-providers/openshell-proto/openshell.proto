@@ -1,0 +1,171 @@
+syntax = "proto3";
+
+package openshell.v1;
+
+import "datamodel.proto";
+import "google/protobuf/struct.proto";
+import "sandbox.proto";
+
+service OpenShell {
+  rpc Health(HealthRequest) returns (HealthResponse);
+  rpc CreateSandbox(CreateSandboxRequest) returns (SandboxResponse);
+  rpc GetSandbox(GetSandboxRequest) returns (SandboxResponse);
+  rpc DeleteSandbox(DeleteSandboxRequest) returns (DeleteSandboxResponse);
+  rpc UpdateConfig(UpdateConfigRequest) returns (UpdateConfigResponse);
+  rpc ExecSandbox(ExecSandboxRequest) returns (stream ExecSandboxEvent);
+  rpc ExposeService(ExposeServiceRequest) returns (ServiceEndpointResponse);
+  rpc GetService(GetServiceRequest) returns (ServiceEndpointResponse);
+}
+
+message HealthRequest {}
+
+message HealthResponse {
+  bool ok = 1;
+}
+
+message Sandbox {
+  openshell.datamodel.v1.ObjectMeta metadata = 1;
+  SandboxSpec spec = 2;
+  SandboxStatus status = 3;
+}
+
+message SandboxSpec {
+  string log_level = 1;
+  map<string, string> environment = 5;
+  SandboxTemplate template = 6;
+  openshell.sandbox.v1.SandboxPolicy policy = 7;
+  repeated string providers = 8;
+  bool gpu = 9;
+}
+
+message SandboxTemplate {
+  string image = 1;
+  string runtime_class_name = 2;
+  string agent_socket = 3;
+  map<string, string> labels = 4;
+  map<string, string> annotations = 5;
+  map<string, string> environment = 6;
+  google.protobuf.Struct resources = 7;
+  google.protobuf.Struct volume_claim_templates = 9;
+  optional bool user_namespaces = 10;
+  google.protobuf.Struct driver_config = 11;
+}
+
+message SandboxStatus {
+  string sandbox_name = 1;
+  string agent_pod = 2;
+  string agent_fd = 3;
+  string sandbox_fd = 4;
+  repeated SandboxCondition conditions = 5;
+  SandboxPhase phase = 6;
+  uint32 current_policy_version = 7;
+}
+
+message SandboxCondition {
+  string type = 1;
+  string status = 2;
+  string reason = 3;
+  string message = 4;
+  int64 last_transition_time_ms = 5;
+}
+
+enum SandboxPhase {
+  SANDBOX_PHASE_UNSPECIFIED = 0;
+  SANDBOX_PHASE_PENDING = 1;
+  SANDBOX_PHASE_RUNNING = 2;
+  SANDBOX_PHASE_SUCCEEDED = 3;
+  SANDBOX_PHASE_FAILED = 4;
+  SANDBOX_PHASE_UNKNOWN = 5;
+}
+
+message CreateSandboxRequest {
+  SandboxSpec spec = 1;
+  string name = 2;
+  map<string, string> labels = 3;
+}
+
+message GetSandboxRequest {
+  string name = 1;
+}
+
+message DeleteSandboxRequest {
+  string name = 1;
+}
+
+message DeleteSandboxResponse {
+  bool deleted = 1;
+}
+
+message SandboxResponse {
+  Sandbox sandbox = 1;
+}
+
+message UpdateConfigRequest {
+  string name = 1;
+  openshell.sandbox.v1.SandboxPolicy policy = 2;
+  bool global = 6;
+  uint64 expected_resource_version = 8;
+}
+
+message UpdateConfigResponse {
+  uint32 version = 1;
+  string policy_hash = 2;
+}
+
+message ExecSandboxRequest {
+  string sandbox_id = 1;
+  repeated string command = 2;
+  string workdir = 3;
+  map<string, string> environment = 4;
+  uint32 timeout_seconds = 5;
+  bytes stdin = 6;
+  bool tty = 7;
+  uint32 cols = 8;
+  uint32 rows = 9;
+}
+
+message ExecSandboxEvent {
+  oneof payload {
+    ExecSandboxStdout stdout = 1;
+    ExecSandboxStderr stderr = 2;
+    ExecSandboxExit exit = 3;
+  }
+}
+
+message ExecSandboxStdout {
+  bytes data = 1;
+}
+
+message ExecSandboxStderr {
+  bytes data = 1;
+}
+
+message ExecSandboxExit {
+  int32 exit_code = 1;
+}
+
+message ExposeServiceRequest {
+  string sandbox = 1;
+  string service = 2;
+  uint32 target_port = 3;
+  bool domain = 4;
+}
+
+message GetServiceRequest {
+  string sandbox = 1;
+  string service = 2;
+}
+
+message ServiceEndpoint {
+  openshell.datamodel.v1.ObjectMeta metadata = 1;
+  string sandbox_id = 2;
+  string sandbox_name = 3;
+  string service_name = 4;
+  uint32 target_port = 5;
+  bool domain = 6;
+}
+
+message ServiceEndpointResponse {
+  ServiceEndpoint endpoint = 1;
+  string url = 2;
+}

@@ -38,6 +38,10 @@ COPY runtimes/nemo-hermes/runtime/entrypoint.py /runtime/entrypoint.py
 COPY runtimes/nemo-hermes/runtime/burble_runtime_contract.py /runtime/burble_runtime_contract.py
 COPY runtimes/nemo-hermes/runtime/provider-tool-hints.json /runtime/provider-tool-hints.json
 COPY packages/runtime-sdk/schema/runtime-contract.schema.json /runtime/runtime-contract.schema.json
+RUN groupadd --gid 1000660000 sandbox \
+  && useradd --uid 1000660000 --gid 1000660000 --home-dir /runtime --shell /bin/sh sandbox \
+  && mkdir -p /runtime/config /runtime/state /runtime/workspace \
+  && chown -R sandbox:sandbox /runtime
 
 EXPOSE 8080 8766
 

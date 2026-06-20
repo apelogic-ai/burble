@@ -138,6 +138,39 @@ container_runtime_engine() {
     awk -F= '$1 == "AGENT_RUNTIME_ENGINE" { print $2; exit }'
 }
 
+ensure_openshell_jwt_keys() {
+  local data_root
+  data_root="$(configured_value OPENSHELL_DATA_ROOT /var/lib/openshell)"
+  local jwt_dir="${data_root}/jwt"
+  local signing_key="${jwt_dir}/signing.pem"
+  local public_key="${jwt_dir}/public.pem"
+  local kid_file="${jwt_dir}/kid"
+
+  if [[ -f "${signing_key}" && -f "${public_key}" && -f "${kid_file}" ]]; then
+    return 0
+  fi
+
+  if ! command -v openssl >/dev/null 2>&1; then
+    echo "OpenShell compose mode requires openssl to generate gateway JWT keys." >&2
+    exit 2
+  fi
+
+  mkdir -p "${jwt_dir}"
+  chmod 700 "${jwt_dir}"
+  if [[ ! -f "${signing_key}" ]]; then
+    (
+      umask 077
+      openssl genpkey -algorithm Ed25519 -out "${signing_key}" >/dev/null 2>&1
+    )
+  fi
+  if [[ ! -f "${public_key}" ]]; then
+    openssl pkey -in "${signing_key}" -pubout -out "${public_key}" >/dev/null 2>&1
+  fi
+  if [[ ! -f "${kid_file}" ]]; then
+    openssl rand -hex 16 >"${kid_file}"
+  fi
+}
+
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --no-pull)
@@ -187,6 +220,7 @@ fi
 
 if [[ "${use_openshell}" == "true" ]]; then
   export AGENT_RUNTIME_FACTORY=sandbox
+  ensure_openshell_jwt_keys
   app_compose_files+=(
     -f docker-compose.openshell.yml
   )
