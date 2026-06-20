@@ -247,6 +247,32 @@ describe("readConfig", () => {
     ]);
   });
 
+  test("defaults sandbox start commands from the selected runtime engine", () => {
+    expect(
+      readConfig({
+        ...validEnv,
+        AGENT_RUNTIME_FACTORY: "sandbox",
+        AGENT_RUNTIME_ENGINE: "hermes"
+      }).agentRuntimeSandboxStartCommand
+    ).toEqual(["python", "/runtime/entrypoint.py"]);
+
+    expect(
+      readConfig({
+        ...validEnv,
+        AGENT_RUNTIME_FACTORY: "sandbox",
+        AGENT_RUNTIME_ENGINE: "burble-native"
+      }).agentRuntimeSandboxStartCommand
+    ).toEqual(["bun", "src/index.ts"]);
+
+    expect(
+      readConfig({
+        ...validEnv,
+        AGENT_RUNTIME_FACTORY: "sandbox",
+        AGENT_RUNTIME_ENGINE: "openclaw"
+      }).agentRuntimeSandboxStartCommand
+    ).toEqual(["bun", "src/index.ts"]);
+  });
+
   test("defaults to the Hermes runtime image for Hermes engine", () => {
     const config = readConfig({
       ...validEnv,

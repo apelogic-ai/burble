@@ -331,6 +331,11 @@ export function readConfig(env: Env): Config {
   const configuredAgentRuntimeImage =
     optionalSecretEnv(env, "AGENT_RUNTIME_IMAGE") ??
     optionalSecretEnv(env, "OPENCLAW_NEMOCLAW_IMAGE");
+  const agentRuntimeSandboxStartCommand =
+    optionalCommandEnv(env, "AGENT_RUNTIME_SANDBOX_START_COMMAND") ??
+    (agentRuntimeFactory === "sandbox"
+      ? defaultAgentRuntimeSandboxStartCommand(agentRuntimeEngine)
+      : null);
   const managedRuntimeUrl =
     optionalUrlEnv(env, "AGENT_RUNTIME_URL") ??
     optionalUrlEnv(env, "OPENCLAW_NEMOCLAW_URL");
@@ -409,10 +414,7 @@ export function readConfig(env: Env): Config {
       "AGENT_RUNTIME_SANDBOX_TRANSPORT",
       "grpc"
     ),
-    agentRuntimeSandboxStartCommand: optionalCommandEnv(
-      env,
-      "AGENT_RUNTIME_SANDBOX_START_COMMAND"
-    ),
+    agentRuntimeSandboxStartCommand,
     agentRuntimeOpenShellDialHost: optionalSecretEnv(
       env,
       "AGENT_RUNTIME_OPENSHELL_DIAL_HOST"
@@ -447,6 +449,14 @@ export function readConfig(env: Env): Config {
 
 export function defaultAgentRuntimeImage(engine: AgentRuntimeEngine): string {
   return defaultRuntimeImageForEngine(engine);
+}
+
+export function defaultAgentRuntimeSandboxStartCommand(
+  engine: AgentRuntimeEngine
+): string[] {
+  return engine === "hermes"
+    ? ["python", "/runtime/entrypoint.py"]
+    : ["bun", "src/index.ts"];
 }
 
 export function isDefaultAgentRuntimeImage(

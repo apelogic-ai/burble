@@ -243,13 +243,16 @@ For an externally managed OpenShell provider, set:
 AGENT_MODE=llm
 AGENT_RUNTIME=burble-runtime
 AGENT_RUNTIME_FACTORY=sandbox
-AGENT_RUNTIME_ENGINE=hermes
-AGENT_RUNTIME_IMAGE=burble-nemo-hermes:dev
 AGENT_RUNTIME_SANDBOX_URL=http://<openshell-host>:<port>
 AGENT_RUNTIME_SANDBOX_TOKEN=<shared-provider-token-if-required>
 AGENT_RUNTIME_SANDBOX_TRANSPORT=grpc
-AGENT_RUNTIME_SANDBOX_START_COMMAND='["python","/runtime/entrypoint.py"]'
 ```
+
+`AGENT_RUNTIME_ENGINE` and `AGENT_RUNTIME_IMAGE` keep their normal dynamic
+selection behavior. The sandbox start command defaults from the selected engine:
+Hermes uses `["python","/runtime/entrypoint.py"]`; Bun-based runtimes use
+`["bun","src/index.ts"]`. Set `AGENT_RUNTIME_SANDBOX_START_COMMAND` only for a
+custom runtime image whose entrypoint differs.
 
 For a compose-managed OpenShell gateway, leave `AGENT_RUNTIME_SANDBOX_URL`
 empty. The override starts `ghcr.io/nvidia/openshell/gateway` with OpenShell's
@@ -260,24 +263,19 @@ Docker compute driver, mounts the host Docker socket, and points Burble at
 AGENT_MODE=llm
 AGENT_RUNTIME=burble-runtime
 AGENT_RUNTIME_FACTORY=sandbox
-AGENT_RUNTIME_ENGINE=hermes
-AGENT_RUNTIME_IMAGE=burble-nemo-hermes:dev
 AGENT_RUNTIME_SANDBOX_URL=
 AGENT_RUNTIME_SANDBOX_TOKEN=<long-random-secret>
 AGENT_RUNTIME_SANDBOX_TRANSPORT=grpc
-AGENT_RUNTIME_SANDBOX_START_COMMAND='["python","/runtime/entrypoint.py"]'
 OPENSHELL_IMAGE_TAG=latest
 OPENSHELL_PORT=8080
 OPENSHELL_HEALTH_PORT=8081
 OPENSHELL_DATA_ROOT=/var/lib/openshell
 ```
 
-Use `AGENT_RUNTIME_SANDBOX_START_COMMAND='["bun","src/index.ts"]'` for the
-`burble-native` and `openclaw` Bun runtime images. `OPENSHELL_DATA_ROOT` must be
-an absolute host path that is also visible at the same path inside the OpenShell
-gateway container; the Docker driver bind-mounts its supervisor binary into
-sandbox containers through the host Docker daemon. The default
-`/var/lib/openshell` is recommended for the AWS compose testbed.
+`OPENSHELL_DATA_ROOT` must be an absolute host path that is also visible at the
+same path inside the OpenShell gateway container; the Docker driver bind-mounts
+its supervisor binary into sandbox containers through the host Docker daemon.
+The default `/var/lib/openshell` is recommended for the AWS compose testbed.
 
 Deploy it from `deploy/dev/compose` with:
 
@@ -413,29 +411,25 @@ starts `burble-app` without the Docker personal-runtime compose override:
 AGENT_MODE=llm
 AGENT_RUNTIME=burble-runtime
 AGENT_RUNTIME_FACTORY=sandbox
-AGENT_RUNTIME_ENGINE=hermes
-AGENT_RUNTIME_IMAGE=burble-nemo-hermes:dev
 AGENT_RUNTIME_TOKEN_SECRET=<long-random-secret>
 AGENT_RUNTIME_SANDBOX_URL=http://<openshell-host>:<port>
 AGENT_RUNTIME_SANDBOX_TOKEN=<openshell-token>
 AGENT_RUNTIME_SANDBOX_TRANSPORT=grpc
-AGENT_RUNTIME_SANDBOX_START_COMMAND='["python","/runtime/entrypoint.py"]'
 ```
 
 ```bash
 AGENT_RUNTIME=burble-runtime \
 AGENT_RUNTIME_FACTORY=sandbox \
-AGENT_RUNTIME_ENGINE=hermes \
-./deploy-personal-runtimes.sh --agentgateway
+./deploy-personal-runtimes.sh --agentgateway --openshell
 ```
 
 Use `AGENT_RUNTIME_ENGINE=openclaw` with
 `AGENT_RUNTIME_IMAGE=burble-openclaw-nemoclaw-openclaw-cli:dev` for the
 OpenClaw runtime image, or `AGENT_RUNTIME_ENGINE=burble-native` with
 `AGENT_RUNTIME_IMAGE=burble-native-runtime:dev` for the native runtime.
-`AGENT_RUNTIME_SANDBOX_START_COMMAND` must be the command OpenShell should run
-inside the sandbox to start the selected runtime HTTP server. Use
-`'["bun","src/index.ts"]'` for Bun-based runtime images.
+For default Burble runtime images, the sandbox start command is selected from
+the engine automatically. Override `AGENT_RUNTIME_SANDBOX_START_COMMAND` only
+for custom runtime images.
 
 After connecting Jira, a hand-test for the upstream MCP path is:
 
