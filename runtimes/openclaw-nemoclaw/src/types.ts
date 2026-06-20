@@ -1,3 +1,5 @@
+import type { RuntimeScheduledJobContext } from "@burble/runtime-sdk/scheduled-job-context";
+
 export type ToolClassification = "public" | "user_private" | "restricted";
 
 export type ConversationAttachment = {
@@ -82,29 +84,7 @@ export type RunRequest = {
       >;
       reasons: string[];
     };
-    scheduledJob?: {
-      jobId: string;
-      capabilityProfile: string;
-      allowedTools: string[];
-      routeId?: string;
-      runtimeType?:
-        | "deterministic"
-        | "openclaw"
-        | "openclaw-gateway"
-        | "burble-native"
-        | "hermes";
-      stateRefs: Array<{
-        provider: string;
-        kind: string;
-        id?: string;
-        name?: string;
-        purpose?: string;
-      }>;
-      visibilityPolicy: {
-        maxOutputVisibility?: ToolClassification;
-        allowPrivateToolDeclassification?: boolean;
-      };
-    };
+    scheduledJob?: RuntimeScheduledJobContext;
     attachments?: ConversationAttachment[];
     conversation?: {
       routeId?: string;
