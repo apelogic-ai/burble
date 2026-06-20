@@ -1,3 +1,4 @@
+import { runtimeConversationAttachmentSchema } from "@burble/runtime-sdk/runtime-contract";
 import type { RuntimeConfig } from "./config";
 import { createBurbleToolExecutor } from "./burble-tools";
 import { info } from "./logger";
@@ -221,38 +222,12 @@ function readNestedValue(body: unknown, ...path: string[]): unknown {
 function isConversationAttachmentArray(
   value: unknown
 ): value is ConversationAttachment[] {
-  return Array.isArray(value) && value.every(isConversationAttachment);
-}
-
-function isConversationAttachment(value: unknown): value is ConversationAttachment {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    return false;
-  }
-
-  const record = value as Record<string, unknown>;
   return (
-    typeof record.id === "string" &&
-    record.id.trim().length > 0 &&
-    (record.kind === "file" ||
-      record.kind === "image" ||
-      record.kind === "audio" ||
-      record.kind === "video") &&
-    typeof record.mimeType === "string" &&
-    record.mimeType.trim().length > 0 &&
-    (record.source === "slack" ||
-      record.source === "burble" ||
-      record.source === "agent") &&
-    optionalString(record.name) &&
-    (record.sizeBytes === undefined ||
-      (typeof record.sizeBytes === "number" &&
-        Number.isFinite(record.sizeBytes) &&
-        record.sizeBytes >= 0)) &&
-    optionalString(record.externalId)
+    Array.isArray(value) &&
+    value.every((attachment) =>
+      runtimeConversationAttachmentSchema.safeParse(attachment).success
+    )
   );
-}
-
-function optionalString(value: unknown): boolean {
-  return value === undefined || typeof value === "string";
 }
 
 async function readErrorDetail(response: Response): Promise<string> {
