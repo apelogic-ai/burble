@@ -1,17 +1,9 @@
-export type RuntimeToolGroup =
-  | "attachments"
-  | "conversation"
-  | "github"
-  | "google"
-  | "hubspot"
-  | "jira"
-  | "scheduler"
-  | "slack";
+import type {
+  RuntimeToolGroup,
+  RuntimeToolGroupSelection
+} from "@burble/runtime-sdk/runtime-contract";
 
-export type RuntimeToolGroupSelection = {
-  groups: RuntimeToolGroup[];
-  reasons: string[];
-};
+export type { RuntimeToolGroup, RuntimeToolGroupSelection };
 
 export type RuntimeToolGroupSelectionInput = {
   text: string;

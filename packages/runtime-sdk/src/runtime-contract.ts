@@ -9,7 +9,7 @@ export const toolClassificationSchema = z.enum([
 
 export const agentRuntimeEngineSchema = z.enum(runtimeEngines);
 
-export const runtimeToolGroupSchema = z.enum([
+export const runtimeToolGroups = [
   "attachments",
   "conversation",
   "github",
@@ -18,7 +18,16 @@ export const runtimeToolGroupSchema = z.enum([
   "jira",
   "scheduler",
   "slack"
-]);
+] as const;
+
+export const runtimeToolGroupSchema = z.enum(runtimeToolGroups);
+
+export const runtimeToolGroupSelectionSchema = z
+  .object({
+    groups: z.array(runtimeToolGroupSchema),
+    reasons: z.array(z.string())
+  })
+  .strict();
 
 export const runtimePrincipalSchema = z
   .object({
@@ -175,13 +184,7 @@ export const runtimeRunRequestSchema = z
     input: z
       .object({
         text: z.string().trim().min(1),
-        toolGroups: z
-          .object({
-            groups: z.array(runtimeToolGroupSchema),
-            reasons: z.array(z.string())
-          })
-          .strict()
-          .optional(),
+        toolGroups: runtimeToolGroupSelectionSchema.optional(),
         scheduledJob: scheduledJobContextSchema.optional(),
         attachments: z.array(runtimeConversationAttachmentSchema).optional(),
         conversation: z
@@ -356,6 +359,10 @@ export const runtimeCapabilityManifestSchema = z
 
 type ParsedRuntimeRunRequest = z.infer<typeof runtimeRunRequestSchema>;
 
+export type RuntimeToolGroup = z.infer<typeof runtimeToolGroupSchema>;
+export type RuntimeToolGroupSelection = z.infer<
+  typeof runtimeToolGroupSelectionSchema
+>;
 export type RuntimeRunRequest = Omit<
   ParsedRuntimeRunRequest,
   "executionMode"

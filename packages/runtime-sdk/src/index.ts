@@ -1,5 +1,7 @@
 export type {
   RuntimeCapabilityManifest,
+  RuntimeToolGroup,
+  RuntimeToolGroupSelection,
   RuntimeRunEvent,
   RuntimeRunRequest
 } from "./runtime-contract";

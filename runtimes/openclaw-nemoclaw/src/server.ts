@@ -8,7 +8,10 @@ import {
   createRuntimeContractServer,
   type RuntimeEventWebSocket
 } from "@burble/runtime-sdk/server";
-import { scheduledJobContextSchema } from "@burble/runtime-sdk/runtime-contract";
+import {
+  runtimeToolGroupSelectionSchema,
+  scheduledJobContextSchema
+} from "@burble/runtime-sdk/runtime-contract";
 import type {
   ConversationAttachment,
   RunEvent,
@@ -17,16 +20,6 @@ import type {
   ToolExecutor
 } from "./types";
 
-const runtimeToolGroups = new Set([
-  "attachments",
-  "conversation",
-  "github",
-  "google",
-  "hubspot",
-  "jira",
-  "scheduler",
-  "slack"
-]);
 const localScheduledJobRegisterCapabilityToolName =
   "scheduled_job_register_capability";
 
@@ -1025,19 +1018,7 @@ function isScheduledJobContext(
 function isRuntimeToolGroupSelection(
   value: unknown
 ): value is NonNullable<RunRequest["input"]["toolGroups"]> {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    return false;
-  }
-
-  const record = value as Record<string, unknown>;
-  return (
-    Array.isArray(record.groups) &&
-    record.groups.every(
-      (group) => typeof group === "string" && runtimeToolGroups.has(group)
-    ) &&
-    Array.isArray(record.reasons) &&
-    record.reasons.every((reason) => typeof reason === "string")
-  );
+  return runtimeToolGroupSelectionSchema.safeParse(value).success;
 }
 
 function hasVisibleText(value: string): boolean {
