@@ -367,6 +367,9 @@ export type ToolClassification = z.infer<typeof toolClassificationSchema>;
 export type RuntimeConversationAttachment = z.infer<
   typeof runtimeConversationAttachmentSchema
 >;
+export type RuntimeConnectionSummary = z.infer<
+  typeof runtimeConnectionSummarySchema
+>;
 export type RuntimeRunRequest = Omit<
   ParsedRuntimeRunRequest,
   "executionMode"

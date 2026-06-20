@@ -9,6 +9,7 @@ import {
   type RuntimeEventWebSocket
 } from "@burble/runtime-sdk/server";
 import {
+  runtimeConnectionSummarySchema,
   runtimeConversationAttachmentSchema,
   runtimeToolGroupSelectionSchema,
   scheduledJobContextSchema
@@ -1027,12 +1028,7 @@ function hasVisibleText(value: string): boolean {
 }
 
 function isConnectionSummary(value: unknown): boolean {
-  return (
-    typeof value === "object" &&
-    value !== null &&
-    "connected" in value &&
-    typeof value.connected === "boolean"
-  );
+  return runtimeConnectionSummarySchema.safeParse(value).success;
 }
 
 function isConversationSummary(

@@ -1,4 +1,5 @@
 import type {
+  RuntimeConnectionSummary,
   RuntimeConversationAttachment,
   RuntimeFinalResponse,
   RuntimeUsage,
@@ -106,31 +107,11 @@ export type RunRequest = {
       }>;
     };
     connections: {
-      github: {
-        connected: boolean;
-        email?: string;
-        providerLogin?: string;
-      };
-      google?: {
-        connected: boolean;
-        email?: string;
-        providerLogin?: string;
-      };
-      hubspot?: {
-        connected: boolean;
-        email?: string;
-        providerLogin?: string;
-      };
-      jira?: {
-        connected: boolean;
-        email?: string;
-        providerLogin?: string;
-      };
-      slack?: {
-        connected: boolean;
-        email?: string;
-        providerLogin?: string;
-      };
+      github: RuntimeConnectionSummary;
+      google?: RuntimeConnectionSummary;
+      hubspot?: RuntimeConnectionSummary;
+      jira?: RuntimeConnectionSummary;
+      slack?: RuntimeConnectionSummary;
     };
   };
 };

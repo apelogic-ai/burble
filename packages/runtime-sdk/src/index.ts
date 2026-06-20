@@ -1,4 +1,5 @@
 export type {
+  RuntimeConnectionSummary,
   RuntimeConversationAttachment,
   RuntimeCapabilityManifest,
   RuntimeFinalResponse,
