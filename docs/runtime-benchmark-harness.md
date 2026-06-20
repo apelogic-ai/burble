@@ -93,10 +93,9 @@ Burble sends HTTP requests to its local `/v1/responses` endpoint. This should
 remove some per-turn process startup overhead, but the request still goes
 through OpenClaw's gateway/agent machinery.
 
-`burble-direct` bypasses the OpenClaw agent process for planning and calls the
-selected model provider directly with Burble's prompt/tool-loop contract. It is
-a useful control when trying to isolate how much latency comes from OpenClaw
-itself versus model/provider/tool latency.
+`burble-native` bypasses the OpenClaw agent process and runs Burble's own runtime
+contract worker. It is the useful control when trying to isolate how much
+latency comes from OpenClaw itself versus model/provider/tool latency.
 
 Hermes is also resident: the container starts Hermes gateway once and injects
 Burble turns into it as platform messages. That is why Hermes can feel quicker:

@@ -330,8 +330,8 @@ Supported runtime engines:
 - `deterministic`: deployable bridge over the Burble tool gateway.
 - `openclaw`: invokes an OpenClaw CLI binary inside the runtime container.
 - `openclaw-gateway`: starts a private OpenClaw Gateway process.
-- `burble-direct`: uses Burble's prompt and MCP loop while sending model turns
-  directly to the configured provider.
+- `burble-native`: runs Burble's native runtime contract worker without the
+  OpenClaw agent process.
 
 ### Docker-Backed Personal Runtimes
 

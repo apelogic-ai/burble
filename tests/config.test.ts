@@ -396,7 +396,7 @@ describe("readConfig", () => {
     expect(() =>
       readConfig({ ...validEnv, OPENCLAW_NEMOCLAW_ENGINE: "magic" })
     ).toThrow(
-      "Environment variable OPENCLAW_NEMOCLAW_ENGINE must be one of deterministic, openclaw, openclaw-gateway, burble-direct, burble-native, hermes"
+      "Environment variable OPENCLAW_NEMOCLAW_ENGINE must be one of deterministic, openclaw, openclaw-gateway, burble-native, hermes"
     );
   });
 
@@ -404,7 +404,7 @@ describe("readConfig", () => {
     expect(() =>
       readConfig({ ...validEnv, AGENT_RUNTIME_ENGINE: "magic" })
     ).toThrow(
-      "Environment variable AGENT_RUNTIME_ENGINE must be one of deterministic, openclaw, openclaw-gateway, burble-direct, burble-native, hermes"
+      "Environment variable AGENT_RUNTIME_ENGINE must be one of deterministic, openclaw, openclaw-gateway, burble-native, hermes"
     );
   });
 

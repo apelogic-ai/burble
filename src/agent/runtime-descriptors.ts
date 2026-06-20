@@ -34,7 +34,7 @@ const openClawDefaultImages = [
   "burble-openclaw-nemoclaw:dev"
 ] as const;
 
-const directRuntimeDefaultImages = [
+const deterministicDefaultImages = [
   "burble-openclaw-nemoclaw:dev",
   "burble-openclaw-nemoclaw-openclaw-cli:dev"
 ] as const;
@@ -139,7 +139,7 @@ const runtimeDescriptors = {
     engine: "deterministic",
     family: "deterministic",
     selectable: true,
-    defaultImages: directRuntimeDefaultImages,
+    defaultImages: deterministicDefaultImages,
     healthCheckAttempts: 30,
     capabilities: openClawCapabilityManifest("deterministic"),
     container: openClawContainerProfile
@@ -160,16 +160,6 @@ const runtimeDescriptors = {
     defaultImages: openClawDefaultImages,
     healthCheckAttempts: 90,
     capabilities: openClawCapabilityManifest("openclaw-gateway"),
-    container: openClawContainerProfile
-  },
-  "burble-direct": {
-    engine: "burble-direct",
-    family: "burble-direct",
-    selectable: false,
-    unselectableReason: "deprecated; use burble-native",
-    defaultImages: directRuntimeDefaultImages,
-    healthCheckAttempts: 30,
-    capabilities: openClawCapabilityManifest("burble-direct"),
     container: openClawContainerProfile
   },
   "burble-native": {

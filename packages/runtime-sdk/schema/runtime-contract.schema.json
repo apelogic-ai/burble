@@ -49,7 +49,6 @@
                 "deterministic",
                 "openclaw",
                 "openclaw-gateway",
-                "burble-direct",
                 "burble-native",
                 "hermes"
               ]
@@ -371,7 +370,6 @@
                     "deterministic",
                     "openclaw",
                     "openclaw-gateway",
-                    "burble-direct",
                     "burble-native",
                     "hermes"
                   ]
@@ -970,7 +968,6 @@
             "deterministic",
             "openclaw",
             "openclaw-gateway",
-            "burble-direct",
             "burble-native",
             "hermes"
           ]

@@ -17,7 +17,8 @@ The useful abstraction is not "Burble supports OpenClaw and Hermes." It is:
 
 ### Burble Native Runtime
 
-This is the current `burble-direct` idea made explicit.
+This is the successor to the old `burble-direct` idea made explicit as a real
+runtime contract implementation.
 
 It would be the smallest reference implementation: provider call, tool loop,
 classification, visibility handling, Burble tool gateway calls, optional MCP

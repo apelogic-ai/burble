@@ -337,7 +337,6 @@ function normalizeRuntimeEngine(value: string): AgentRuntimeEngine {
   switch (value) {
     case "openclaw":
     case "openclaw-gateway":
-    case "burble-direct":
     case "burble-native":
     case "hermes":
       return value;

@@ -40,7 +40,7 @@ Burble separates the runtime lifecycle from the runtime implementation:
 - `AGENT_RUNTIME_ENGINE` labels the runtime implementation and drives
   per-engine runtime state/config isolation. Supported control-plane engine
   values are currently `deterministic`, `openclaw`, `openclaw-gateway`,
-  `burble-direct`, and `hermes`.
+  `burble-native`, and `hermes`.
 
 The legacy `OPENCLAW_NEMOCLAW_ENGINE` remains as a compatibility alias for
 existing OpenClaw/NemoClaw deployments. New deployments should prefer

@@ -2121,6 +2121,9 @@ function normalizeCapabilityProfile(value: string | null | undefined): string {
 function normalizeAgentRuntimeEngine(
   value: string | null | undefined
 ): AgentRuntimeEngine | null {
+  if (value === "burble-direct" || value === "direct-provider") {
+    return "burble-native";
+  }
   return isAgentRuntimeEngine(value) ? value : null;
 }
 

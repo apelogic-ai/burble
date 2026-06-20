@@ -345,14 +345,6 @@ describe("resolveRuntimeEngineForPrincipal", () => {
     });
   });
 
-  test("keeps legacy Burble direct parseable but not selectable", () => {
-    expect(runtimeEngineCompatibility("burble-direct")).toEqual({
-      engine: "burble-direct",
-      selectable: false,
-      reasons: ["deprecated; use burble-native"]
-    });
-  });
-
   test("normalizes stored Burble direct workspace policies to Burble Native", () => {
     const store = createTokenStore(":memory:");
     store.upsertWorkspacePolicy({

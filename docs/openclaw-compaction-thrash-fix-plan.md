@@ -180,7 +180,7 @@ server-side history under a stable cross-turn key. The others already follow the
 |---|---|---|---|
 | `openclaw` / `openclaw-gateway` | **per-turn** session key after step 1 (`buildBurbleChannelSessionKey` still routes the Burble channel independently) | ephemeral after step 1; previously accumulated under a stable channel key | Fixed by step 1; verify with E2E |
 | `nemo-hermes` | **per-run** `threadId` by default (`HERMES_BURBLE_SESSION_SCOPE="run"`, `entrypoint.py:506-516`) | ephemeral; none unless scope flipped | No (default) |
-| `burble-direct` | **stateless** single call (`buildDirectModelRequest`, `instructions`+`input`, no session) | none — Burble owns 100% via prompt | No |
+| `burble-native` | Burble-owned runtime contract worker | none — Burble owns 100% via request context | No |
 | `deterministic` | no LLM call | n/a | No |
 
 Key observations:
@@ -191,8 +191,8 @@ Key observations:
   accumulation. It even reports `memory: False` in its capability manifest.
   OpenClaw's `buildBurbleChannelSessionKey` is effectively hardwired to Hermes's
   *non-default* `scope="conversation"` mode — the one that *would* accumulate.
-- **`burble-direct` is the limit case** — fully stateless, Burble owns
-  everything via the prompt. No server-side history, no compaction, ever.
+- **`burble-native` is the limit case** — Burble owns the request context and
+  avoids framework-owned server-side conversation history.
 - **Latent footgun in Hermes:** setting `HERMES_BURBLE_SESSION_SCOPE=conversation`
   would reintroduce the same stable-thread accumulation. If that mode is ever
   used, Hermes needs the same history-bounding guard (it has no compaction of

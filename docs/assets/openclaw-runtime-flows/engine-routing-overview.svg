@@ -60,9 +60,9 @@
   <text class="small" x="760" y="482">OpenClaw plans</text>
 
   <rect class="box direct" x="1050" y="390" width="250" height="116"/>
-  <text class="label" x="1080" y="428">burble-direct</text>
-  <text class="small" x="1080" y="458">Calls provider directly</text>
-  <text class="small" x="1080" y="482">Burble plans prompt shape</text>
+  <text class="label" x="1080" y="428">burble-native</text>
+  <text class="small" x="1080" y="458">Burble runtime worker</text>
+  <text class="small" x="1080" y="482">No OpenClaw agent path</text>
 
   <path class="line" d="M620 280 C560 320, 260 325, 215 390"/>
   <path class="line" d="M650 280 C610 325, 550 335, 535 390"/>
