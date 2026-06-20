@@ -1019,7 +1019,7 @@ const runtimeEngines = new Set([
   "deterministic",
   "openclaw",
   "openclaw-gateway",
-  "burble-direct",
+  "burble-native",
   "hermes"
 ]);
 

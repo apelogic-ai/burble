@@ -91,7 +91,7 @@ export type RunRequest = {
         | "deterministic"
         | "openclaw"
         | "openclaw-gateway"
-        | "burble-direct"
+        | "burble-native"
         | "hermes";
       stateRefs: Array<{
         provider: string;

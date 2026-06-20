@@ -6,7 +6,6 @@ import { mkdir, readFile, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import type { RuntimeConfig } from "./config";
 import { readGatewayDiagnosticTextSince } from "./gateway-diagnostics";
-import { parseLlmModelId, type ParsedLlmModel } from "./llm-config";
 import { info, type RuntimeLogger } from "./logger";
 import { buildOpenClawProcessEnv } from "./process-env";
 import {
@@ -182,9 +181,7 @@ export async function runOpenClawCliRequest(
       ) {
         rejectedDirectResponses.push(rawText);
         logInfo(
-          config.engine === "burble-direct"
-            ? `Burble direct model retry runId=${request.runId ?? "unknown"} step=${step + 1} reason=bootstrap_response`
-            : `OpenClaw bootstrap retry runId=${request.runId ?? "unknown"} step=${step + 1} reason=bootstrap_response`
+          `OpenClaw bootstrap retry runId=${request.runId ?? "unknown"} step=${step + 1} reason=bootstrap_response`
         );
         continue;
       }
@@ -280,22 +277,6 @@ async function runOpenClawCommand(
     if (result.exitCode !== 0) {
       throw new Error(
         `OpenClaw Gateway HTTP request failed${result.stderr ? `: ${truncate(redactPreview(result.stderr), 300)}` : ""}`
-      );
-    }
-    return result;
-  }
-  if (config.engine === "burble-direct") {
-    const result = await runBurbleDirectProviderRequest(
-      request,
-      config,
-      prompt,
-      sessionId,
-      logInfo,
-      step
-    );
-    if (result.exitCode !== 0) {
-      throw new Error(
-        `Burble direct model request failed${result.stderr ? `: ${truncate(redactPreview(result.stderr), 300)}` : ""}`
       );
     }
     return result;
@@ -550,95 +531,6 @@ function isRetryableOpenClawGatewayTransportError(error: unknown): boolean {
   );
 }
 
-async function runBurbleDirectProviderRequest(
-  request: RunRequest,
-  config: RuntimeConfig,
-  prompt: string,
-  sessionId: string,
-  logInfo: RuntimeLogger,
-  step: number
-): Promise<CliCommandResult> {
-  const startedAt = Date.now();
-  const sessionKey = buildGatewayHttpSessionKey(config, sessionId);
-  const parsedModel = parseLlmModelId(config.llmModel);
-  logInfo(
-    `Burble direct model start runId=${request.runId ?? "unknown"} step=${step} provider=${parsedModel.provider} model=${parsedModel.model} timeoutMs=${config.openClawTimeoutMs}${summarizePromptForLog(prompt)} sessionKey=${sessionKey}`
-  );
-  logStreamDebug(config, logInfo, "prompt preview", {
-    runId: request.runId ?? "unknown",
-    promptHash: hashLogValue(prompt),
-    chars: prompt.length,
-    preview: prompt
-  });
-
-  let stdout = "";
-  let stderr = "";
-  try {
-    const response = await fetchDirectModelResponse(
-      config,
-      parsedModel,
-      prompt
-    );
-    const responseText = await response.text();
-    if (!response.ok) {
-      stderr = responseText;
-      const usageTelemetry = logOpenClawUsageFromOutput(
-        request,
-        step,
-        prompt,
-        stdout,
-        stderr,
-        null,
-        "",
-        sessionId,
-        logInfo,
-        startedAt
-      );
-      logInfo(
-        `Burble direct model error runId=${request.runId ?? "unknown"} step=${step} status=${response.status}${summarizeLogObject("bodyPreview", responseText)}`
-      );
-      return { exitCode: 1, stdout, stderr, ...usageTelemetry };
-    }
-
-    stdout =
-      extractDirectModelText(parsedModel.provider, responseText) ?? responseText;
-    const usageTelemetry = logOpenClawUsageFromOutput(
-      request,
-      step,
-      prompt,
-      [responseText, stdout].join("\n"),
-      stderr,
-      null,
-      "",
-      sessionId,
-      logInfo,
-      startedAt
-    );
-    logInfo(
-      `Burble direct model finish runId=${request.runId ?? "unknown"} step=${step} elapsedMs=${Date.now() - startedAt} status=${response.status} stdoutChars=${stdout.length} responseChars=${responseText.length}`
-    );
-    return { exitCode: 0, stdout, stderr, ...usageTelemetry };
-  } catch (error) {
-    stderr = error instanceof Error ? error.message : String(error);
-    const usageTelemetry = logOpenClawUsageFromOutput(
-      request,
-      step,
-      prompt,
-      stdout,
-      stderr,
-      null,
-      "",
-      sessionId,
-      logInfo,
-      startedAt
-    );
-    logInfo(
-      `Burble direct model error runId=${request.runId ?? "unknown"} step=${step}${summarizeLogObject("error", stderr)}`
-    );
-    return { exitCode: 1, stdout, stderr, ...usageTelemetry };
-  }
-}
-
 async function* collectOpenClawGatewayHttpResponse(
   request: RunRequest,
   config: RuntimeConfig,
@@ -664,25 +556,15 @@ async function* collectOpenClawGatewayHttpResponse(
     wakeDeltas?.();
     wakeDeltas = null;
   };
-  const resultPromise =
-    config.engine === "burble-direct"
-      ? runBurbleDirectProviderRequest(
-          request,
-          config,
-          prompt,
-          sessionId,
-          logInfo,
-          step
-        )
-      : runOpenClawGatewayHttpRequest(
-          request,
-          config,
-          prompt,
-          sessionId,
-          logInfo,
-          step,
-          emitDeltas ? pushDelta : undefined
-        );
+  const resultPromise = runOpenClawGatewayHttpRequest(
+    request,
+    config,
+    prompt,
+    sessionId,
+    logInfo,
+    step,
+    emitDeltas ? pushDelta : undefined
+  );
   let result: CliCommandResult | null = null;
 
   while (!result) {
@@ -745,7 +627,7 @@ async function* collectOpenClawGatewayHttpResponse(
 
   if (result.exitCode !== 0) {
     throw new Error(
-      `${config.engine === "burble-direct" ? "Burble direct model request" : "OpenClaw Gateway HTTP request"} failed${result.stderr ? `: ${truncate(redactPreview(result.stderr), 300)}` : ""}`
+      `OpenClaw Gateway HTTP request failed${result.stderr ? `: ${truncate(redactPreview(result.stderr), 300)}` : ""}`
     );
   }
 
@@ -779,26 +661,6 @@ function isGatewayHttpStreamingResponse(response: Response): boolean {
 function shouldEmitGatewayHttpDelta(stdout: string): boolean {
   const parsed = parseJsonObject(stdout.trim());
   return !(parsed && typeof parsed.tool_call === "object" && parsed.tool_call !== null);
-}
-
-async function fetchDirectModelResponse(
-  config: RuntimeConfig,
-  parsedModel: ParsedLlmModel,
-  prompt: string
-): Promise<Response> {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), config.openClawTimeoutMs);
-  try {
-    const request = buildDirectModelRequest(config, parsedModel, prompt);
-    return await fetch(request.endpoint, {
-      method: "POST",
-      headers: request.headers,
-      body: JSON.stringify(request.body),
-      signal: controller.signal
-    });
-  } finally {
-    clearTimeout(timeout);
-  }
 }
 
 async function fetchGatewayHttpResponse(
@@ -985,164 +847,6 @@ function appendStreamRecord(current: string, payload: string): string {
   return current ? `${current}\n${payload}` : payload;
 }
 
-type DirectModelRequest = {
-  endpoint: string;
-  headers: Record<string, string>;
-  body: Record<string, unknown>;
-};
-
-const directPlanningSystemPrompt = [
-  "You are Burble's direct planning model for Slack.",
-  "Follow the user prompt exactly.",
-  "The requester is already known through Burble's Slack and provider connections.",
-  "Words like me, my, and assign to me refer to the requesting Slack user, never to the assistant.",
-  "Return either concise Slack mrkdwn or the exact JSON tool_call object requested by the prompt.",
-  "Do not inspect files, mention bootstrap, ask who you are, ask who the user is, ask for vibe/persona/emoji setup, or ask for identity setup."
-].join(" ");
-
-function buildDirectModelRequest(
-  config: RuntimeConfig,
-  parsedModel: ParsedLlmModel,
-  prompt: string
-): DirectModelRequest {
-  if (parsedModel.provider === "openai") {
-    return {
-      endpoint: "https://api.openai.com/v1/responses",
-      headers: {
-        "authorization": `Bearer ${readProviderApiKey("OPENAI_API_KEY")}`,
-        "content-type": "application/json"
-      },
-      body: {
-        model: parsedModel.model,
-        instructions: directPlanningSystemPrompt,
-        input: prompt,
-        stream: false,
-        parallel_tool_calls: false
-      }
-    };
-  }
-
-  if (parsedModel.provider === "anthropic") {
-    return {
-      endpoint: "https://api.anthropic.com/v1/messages",
-      headers: {
-        "anthropic-version": "2023-06-01",
-        "content-type": "application/json",
-        "x-api-key": readProviderApiKey("ANTHROPIC_API_KEY")
-      },
-      body: {
-        model: parsedModel.model,
-        max_tokens: 2048,
-        system: directPlanningSystemPrompt,
-        messages: [{ role: "user", content: prompt }]
-      }
-    };
-  }
-
-  const baseUrl = config.ollamaBaseUrl.replace(/\/+$/, "");
-  const endpointBase = baseUrl.endsWith("/v1") ? baseUrl : `${baseUrl}/v1`;
-  return {
-    endpoint: `${endpointBase}/chat/completions`,
-    headers: {
-      "authorization": `Bearer ${readOllamaApiKey(baseUrl)}`,
-      "content-type": "application/json"
-    },
-    body: {
-      model: parsedModel.model,
-      messages: [
-        { role: "system", content: directPlanningSystemPrompt },
-        { role: "user", content: prompt }
-      ],
-      stream: false
-    }
-  };
-}
-
-function readProviderApiKey(name: string): string {
-  const value = process.env[name]?.trim();
-  if (!value) {
-    throw new Error(`Missing required environment variable: ${name}`);
-  }
-
-  return value;
-}
-
-function readOllamaApiKey(baseUrl: string): string {
-  if (isLocalOllamaBaseUrl(baseUrl)) {
-    return process.env.OLLAMA_API_KEY?.trim() || "ollama-local";
-  }
-
-  return readProviderApiKey("OLLAMA_API_KEY");
-}
-
-function isLocalOllamaBaseUrl(baseUrl: string): boolean {
-  try {
-    const parsed = new URL(baseUrl);
-    return ["localhost", "127.0.0.1", "::1"].includes(parsed.hostname);
-  } catch {
-    return false;
-  }
-}
-
-function extractDirectModelText(
-  provider: ParsedLlmModel["provider"],
-  responseText: string
-): string | null {
-  if (provider === "openai") {
-    return extractOpenResponsesText(responseText);
-  }
-
-  const parsed = parseJsonObject(responseText);
-  if (!parsed) {
-    return null;
-  }
-
-  if (provider === "anthropic") {
-    const content = parsed.content;
-    if (!Array.isArray(content)) {
-      return null;
-    }
-
-    const text = content
-      .map((part) =>
-        part &&
-        typeof part === "object" &&
-        !Array.isArray(part) &&
-        (part as Record<string, unknown>).type === "text" &&
-        typeof (part as Record<string, unknown>).text === "string"
-          ? String((part as Record<string, unknown>).text)
-          : null
-      )
-      .filter((part): part is string => Boolean(part?.trim()))
-      .join("\n\n")
-      .trim();
-    return text || null;
-  }
-
-  const choices = parsed.choices;
-  if (!Array.isArray(choices)) {
-    return null;
-  }
-
-  for (const choice of choices) {
-    if (!choice || typeof choice !== "object" || Array.isArray(choice)) {
-      continue;
-    }
-
-    const message = (choice as Record<string, unknown>).message;
-    if (!message || typeof message !== "object" || Array.isArray(message)) {
-      continue;
-    }
-
-    const content = (message as Record<string, unknown>).content;
-    if (typeof content === "string" && content.trim()) {
-      return content.trim();
-    }
-  }
-
-  return null;
-}
-
 function buildGatewayHttpSessionKey(
   config: RuntimeConfig,
   sessionId: string
@@ -1251,9 +955,7 @@ export async function* runOpenClawCliRequestStream(
       ) {
         rejectedDirectResponses.push(rawText);
         logInfo(
-          config.engine === "burble-direct"
-            ? `Burble direct model retry runId=${request.runId ?? "unknown"} step=${step + 1} reason=bootstrap_response`
-            : `OpenClaw bootstrap retry runId=${request.runId ?? "unknown"} step=${step + 1} reason=bootstrap_response`
+          `OpenClaw bootstrap retry runId=${request.runId ?? "unknown"} step=${step + 1} reason=bootstrap_response`
         );
         continue;
       }
@@ -1356,7 +1058,7 @@ async function* collectOpenClawStream(
   { stdout: string; usage?: RunUsage; telemetry?: RunTelemetry },
   void
 > {
-  if (config.engine === "openclaw-gateway" || config.engine === "burble-direct") {
+  if (config.engine === "openclaw-gateway") {
     return yield* collectOpenClawGatewayHttpResponse(
       request,
       config,
@@ -2849,15 +2551,6 @@ function buildPlanningPrompt(
   executedTools: ExecutedToolCall[] = [],
   rejectedDirectResponses: string[] = []
 ): string {
-  if (config.engine === "burble-direct") {
-    return buildBurbleDirectPrompt(
-      request,
-      toolContext,
-      executedTools,
-      rejectedDirectResponses
-    );
-  }
-
   return buildOpenClawPrompt(
     config,
     request,
@@ -3042,75 +2735,6 @@ function formatFinalInstruction(request: RunRequest): string {
   }
 
   return "Return either exactly one tool_call JSON object or the final Slack-ready answer.";
-}
-
-function buildBurbleDirectPrompt(
-  request: RunRequest,
-  toolContext: BurbleToolContext,
-  executedTools: ExecutedToolCall[] = [],
-  rejectedDirectResponses: string[] = []
-): string {
-  const sections = [
-    "Burble direct runtime instructions:",
-    [
-      "You are Burble, a Slack assistant running inside Burble's runtime.",
-      "The requesting Slack user is already authenticated through Burble connections; do not ask who you are, who the user is, what kind of assistant you are, what vibe you should have, or for an emoji/persona setup.",
-      "Interpret me, my, and assign to me as the requesting Slack user.",
-      "Use Recent Slack context to resolve pronouns and short follow-ups such as 'look him up'.",
-      "For requests about the current Slack channel or chat, answer from Recent Slack context when available. If channel history is unavailable, explain that Burble needs Slack bot history scopes and channel membership.",
-      "The Burble tool gateway injects the connected provider identity and credentials; do not include emails, tokens, or credentials in tool arguments.",
-      "For provider data or actions, return exactly one JSON object and no prose: {\"tool_call\":{\"name\":\"tool.name\",\"arguments\":{}}}.",
-      "Use only tool names listed in Available Burble tools.",
-      "For Jira assign-to-me requests, call jira.getAuthenticatedUser when you need the requester's Jira accountId, then call jira.editIssue with assigneeAccountId.",
-      "For Jira questions involving a named person, call jira.searchUsers with the exact name or email before asking who they are. If the current request uses him/her/them, use the most recent named person in Recent Slack context.",
-      "For Jira tickets assigned to a resolved person, call jira.searchIssues with that person's Jira accountId in JQL. If the user asks who they assigned to that person, state that the result reflects current visible assignee unless Jira changelog data is explicitly available.",
-      "For Slack questions about what someone said, call slack.searchMessages. For 'what did I say about X', pass the requesting Slack user ID as fromUserId. For named Slack people, call slack.searchUsers first if you need their Slack user ID.",
-      "For Google Drive, Calendar, Gmail, Slides, or Analytics questions, call the matching google.* Burble provider tool listed in Available Burble tools.",
-      "For HubSpot CRM questions about users, owners, contacts, companies, deals, or other scoped CRM objects, call the matching HubSpot tool. Use hubspot.listUsers for account users, hubspot.listOwners for assignable CRM owners, hubspot.searchCrmObjects for other CRM object types, and hubspot.readApiResource only for less common read-only HubSpot API resources with no first-class tool.",
-      "For final answers, return concise Slack mrkdwn."
-    ].join(" "),
-    "",
-    ...formatRuntimePolicyContext(request),
-    "",
-    "Available Burble tools:",
-    formatToolCatalog(toolContext.catalog),
-    "",
-    ...formatRecentSlackContext(request),
-    "",
-    `User request: ${request.input.text}`,
-    "",
-    "Burble baseline context:",
-    toolContext.baseline.response.text
-  ];
-
-  if (executedTools.length > 0) {
-    sections.push(
-      "",
-      "Burble executed tools:",
-      JSON.stringify(
-        executedTools.map((executedTool) => ({
-          tool_call: executedTool.toolCall,
-          result: executedTool.toolResult
-        }))
-      ),
-      "",
-      "Return either exactly one more tool_call JSON object if another provider action is required, or the final Slack-ready answer."
-    );
-  } else {
-    sections.push("", "Return either exactly one tool_call JSON object or the final Slack-ready answer.");
-  }
-
-  if (rejectedDirectResponses.length > 0) {
-    sections.push(
-      "",
-      "Rejected previous provider response:",
-      truncate(rejectedDirectResponses.at(-1), 600),
-      "",
-      "The rejected response asked for assistant/user bootstrap setup. That is invalid in Burble direct mode. Do not repeat it; return a valid tool_call JSON object or final Slack-ready answer."
-    );
-  }
-
-  return sections.join("\n");
 }
 
 function formatRecentSlackContext(request: RunRequest): string[] {

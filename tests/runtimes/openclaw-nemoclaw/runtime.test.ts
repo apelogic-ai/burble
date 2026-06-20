@@ -8,7 +8,7 @@ const config: RuntimeConfig = {
   internalToken: "secret",
   mcpGatewayUrl: null,
   runtimeJwt: null,
-  engine: "burble-direct",
+  engine: "openclaw",
   openClawCommand: "openclaw",
   openClawAgent: "main",
   openClawTimeoutMs: 60000,
@@ -30,7 +30,7 @@ const config: RuntimeConfig = {
 };
 
 describe("resolveRuntimeConfigForRequest", () => {
-  test("keeps the configured fast lane by default", () => {
+  test("keeps the configured engine by default", () => {
     expect(resolveRuntimeConfigForRequest(config, {})).toBe(config);
   });
 

@@ -219,15 +219,6 @@ This is the default deployable bridge. It calls the Burble tool gateway and
 formats the answer itself.
 
 ```env
-AGENT_RUNTIME_ENGINE=burble-direct
-AI_MODEL=openai:gpt-5.4
-OPENAI_API_KEY=sk-...
-```
-
-This is the low-latency LLM path for Slack. It uses Burble's prompt and MCP
-tool loop, and sends planning turns directly to the selected model provider.
-
-```env
 AGENT_RUNTIME_ENGINE=openclaw
 OPENCLAW_COMMAND=openclaw
 OPENCLAW_AGENT=main
@@ -286,11 +277,6 @@ provider and tool behavior.
 Set `OPENCLAW_RAW_STREAM_DEBUG=true` temporarily to ask OpenClaw for per-run
 raw stream JSONL under `/data/openclaw/state/raw-streams`; Burble parses those
 files for token usage and logs only the summarized counts.
-Use `AGENT_RUNTIME_ENGINE=burble-direct` for the low-latency Slack path:
-Burble keeps its own prompt and MCP tool loop, but sends planning turns directly
-to the selected provider from `AI_MODEL`. `/agent exec <task>` still asks the
-same private runtime container to use OpenClaw-native execution for that one
-request.
 Use `AGENT_RUNTIME_ENGINE=openclaw-gateway` only when you want the real
 OpenClaw Gateway agent path. In that mode the runtime starts a private
 `openclaw gateway run` process once at boot using `OPENCLAW_GATEWAY_PORT`,
