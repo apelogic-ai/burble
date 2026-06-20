@@ -328,6 +328,72 @@ describe("createTokenStore", () => {
     store.close();
   });
 
+  test("skips unrecognized idle runtime engines without poisoning the batch", () => {
+    const path = join(mkdtempSync(join(tmpdir(), "burble-db-")), "burble.db");
+    let store = createTokenStore(path);
+    store.close();
+
+    const db = new Database(path);
+    const insert = db.query(`
+      INSERT INTO agent_runtimes (
+        id,
+        workspace_id,
+        slack_user_id,
+        engine,
+        status,
+        endpoint_url,
+        auth_token_hash,
+        state_path,
+        config_path,
+        workspace_path,
+        sandbox_id,
+        policy_hash,
+        created_at,
+        last_seen_at,
+        last_used_at
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+    for (const [id, userId, engine] of [
+      ["rt_valid", "U100", "openclaw"],
+      ["rt_legacy_openclaw", "U101", "openclaw-cli"],
+      ["rt_unknown", "U102", "retired-engine"]
+    ]) {
+      insert.run(
+        id,
+        "T123",
+        userId,
+        engine,
+        "idle",
+        `http://${id}:8080`,
+        `hash-${id}`,
+        `/data/${id}/state`,
+        `/data/${id}/config.json`,
+        `/data/${id}/workspace`,
+        null,
+        null,
+        "2026-05-21T00:00:00.000Z",
+        "2026-05-21T00:00:00.000Z",
+        "2026-05-21T00:00:00.000Z"
+      );
+    }
+    db.close();
+
+    store = createTokenStore(path);
+
+    expect(store.getAgentRuntime("rt_unknown")).toBeNull();
+    expect(
+      store
+        .listIdleAgentRuntimes(new Date("2026-05-21T00:01:00.000Z"))
+        .map((runtime) => [runtime.id, runtime.engine])
+    ).toEqual([
+      ["rt_valid", "openclaw"],
+      ["rt_legacy_openclaw", "openclaw"]
+    ]);
+
+    store.close();
+  });
+
   test("updates agent runtime status and usage timestamps", () => {
     const store = createTokenStore(":memory:");
     const runtime = store.getOrCreateAgentRuntime({

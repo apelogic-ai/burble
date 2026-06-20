@@ -1392,12 +1392,9 @@ export function createTokenStore(path: string) {
     listIdleAgentRuntimes(idleBefore: Date): AgentRuntimeRecord[] {
       return listIdleAgentRuntimes
         .all(idleBefore.toISOString())
-        .map((runtime) => {
+        .flatMap((runtime) => {
           const record = toAgentRuntimeRecord(runtime);
-          if (!record) {
-            throw new Error("Failed to normalize idle agent runtime record");
-          }
-          return record;
+          return record ? [record] : [];
         });
     },
 
@@ -2071,7 +2068,7 @@ function toAgentRuntimeRecord(
   }
   const engine = normalizeAgentRuntimeEngine(row.engine);
   if (!engine) {
-    throw new Error(`Unknown stored agent runtime engine: ${row.engine}`);
+    return null;
   }
   return {
     ...row,
@@ -2170,6 +2167,9 @@ function normalizeAgentRuntimeEngine(
 ): AgentRuntimeEngine | null {
   if (value === "burble-direct" || value === "direct-provider") {
     return "burble-native";
+  }
+  if (value === "openclaw-cli") {
+    return "openclaw";
   }
   return isAgentRuntimeEngine(value) ? value : null;
 }
