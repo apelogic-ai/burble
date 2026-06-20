@@ -3,6 +3,10 @@ import {
   type RuntimeFinalResponse
 } from "@burble/runtime-sdk/runtime-contract";
 import {
+  formatRuntimeScheduledJobContext,
+  withTrustedScheduledJobId
+} from "@burble/runtime-sdk/scheduled-job-context";
+import {
   authorizeRuntimeBearerToken,
   createRuntimeContractServer,
   type RuntimeEventWebSocket
@@ -587,22 +591,8 @@ async function executeBurbleProviderTool(
   });
   return executeTool(
     toolCall.toolName,
-    scheduledToolInput(toolCall, request)
+    withTrustedScheduledJobId(toolCall.input, request.input.scheduledJob)
   );
-}
-
-function scheduledToolInput(
-  toolCall: OpenAiFunctionToolCall,
-  request: RunRequest
-): unknown {
-  const scheduledJob = request.input.scheduledJob;
-  if (!scheduledJob) {
-    return toolCall.input;
-  }
-  return {
-    ...(isRecord(toolCall.input) ? toolCall.input : {}),
-    jobId: scheduledJob.jobId
-  };
 }
 
 function sanitizeToolErrorMessage(error: unknown): string {
@@ -1028,28 +1018,11 @@ function formatScheduledJobContext(request: RunRequest): string {
   if (!scheduledJob) {
     return "";
   }
-  const allowedTools = [...new Set(scheduledJob.allowedTools)].sort().join(",");
-  const stateRefs = scheduledJob.stateRefs.map((stateRef) => {
-    const parts = [
-      `provider=${stateRef.provider}`,
-      `kind=${stateRef.kind}`,
-      ...(stateRef.id ? [`id=${stateRef.id}`] : []),
-      ...(stateRef.name ? [`name=${stateRef.name}`] : []),
-      ...(stateRef.purpose ? [`purpose=${stateRef.purpose}`] : [])
-    ];
-    return `- stateRef ${parts.join(" ")}`;
+  return formatRuntimeScheduledJobContext(scheduledJob, {
+    guidanceLines: [
+      "Use only the listed Available Burble tools for this scheduled job. Burble Native attaches the trusted jobId to scheduled provider calls; do not invent or override job identity."
+    ]
   });
-  return [
-    "Scheduled Burble job context:",
-    `- jobId=${scheduledJob.jobId}`,
-    `- capabilityProfile=${scheduledJob.capabilityProfile}`,
-    `- allowedTools=${allowedTools}`,
-    ...(scheduledJob.routeId ? [`- routeId=${scheduledJob.routeId}`] : []),
-    `- maxOutputVisibility=${scheduledJob.visibilityPolicy.maxOutputVisibility ?? "user_private"}`,
-    `- allowPrivateToolDeclassification=${scheduledJob.visibilityPolicy.allowPrivateToolDeclassification === true ? "true" : "false"}`,
-    ...stateRefs,
-    "Use only the listed Available Burble tools for this scheduled job. Burble Native attaches the trusted jobId to scheduled provider calls; do not invent or override job identity."
-  ].join("\n");
 }
 
 function formatRuntimeTool(tool: RuntimeRequestManifestTool): string {

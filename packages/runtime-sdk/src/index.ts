@@ -26,6 +26,13 @@ export {
   type RuntimeToolGatewayClient,
   type RuntimeToolGatewayFetch
 } from "./tool-gateway";
+export {
+  formatRuntimeScheduledJobContext,
+  formatRuntimeScheduledJobContextLines,
+  withTrustedScheduledJobId,
+  type RuntimeScheduledJobContext,
+  type RuntimeScheduledJobContextFormatOptions
+} from "./scheduled-job-context";
 export { stripRuntimeToolCallProtocolFragments } from "./runtime-text-protocol";
 export {
   authorizeRuntimeBearerToken,

@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
+import { formatRuntimeScheduledJobContextLines } from "@burble/runtime-sdk/scheduled-job-context";
 import { stripRuntimeToolCallProtocolFragments } from "@burble/runtime-sdk/runtime-text-protocol";
 import { readFileSync } from "node:fs";
 import { mkdir, readFile, unlink } from "node:fs/promises";
@@ -2976,37 +2977,9 @@ function formatScheduledJobContextInstruction(request: RunRequest): string[] {
   if (!scheduledJob) {
     return [];
   }
-
-  const allowedTools = [...new Set(scheduledJob.allowedTools)].sort().join(",");
-  const lines = [
-    "Scheduled Burble job context:",
-    `- jobId=${scheduledJob.jobId}`,
-    `- capabilityProfile=${scheduledJob.capabilityProfile}`,
-    `- allowedTools=${allowedTools}`,
-    ...(scheduledJob.routeId ? [`- routeId=${scheduledJob.routeId}`] : []),
-    ...(scheduledJob.runtimeType
-      ? [`- runtimeType=${scheduledJob.runtimeType}`]
-      : []),
-    `- maxOutputVisibility=${scheduledJob.visibilityPolicy.maxOutputVisibility ?? "user_private"}`,
-    `- allowPrivateToolDeclassification=${scheduledJob.visibilityPolicy.allowPrivateToolDeclassification === true ? "true" : "false"}`,
-    ...scheduledJob.stateRefs.map((stateRef) => {
-      const parts = [
-        `provider=${stateRef.provider}`,
-        `kind=${stateRef.kind}`,
-        ...(stateRef.id ? [`id=${stateRef.id}`] : []),
-        ...(stateRef.name ? [`name=${stateRef.name}`] : []),
-        ...(stateRef.purpose ? [`purpose=${stateRef.purpose}`] : [])
-      ];
-      return `- stateRef ${parts.join(" ")}`;
-    })
-  ];
-
-  lines.push(
-    "For this scheduled job, use only the listed allowedTools for Burble provider calls. Treat stateRefs as durable job state locations supplied by Burble.",
-    "Respect maxOutputVisibility when sending scheduled output. Do not publicly post private-tool-derived content; public channel delivery for authenticated provider read output requires an explicit declassification approval flow that is not implemented yet. Write-only provider state tools do not by themselves make public-source output private."
-  );
-
-  return lines;
+  return formatRuntimeScheduledJobContextLines(scheduledJob, {
+    includeRuntimeType: true
+  });
 }
 
 function formatScheduledProviderCapabilityInstruction(
