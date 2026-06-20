@@ -3,7 +3,7 @@ import type { AgentInput, AgentOutput, AgentRunEvent, AgentRunner } from "../typ
 import type { ToolClassification } from "../../conversation/types";
 import type { RuntimeFactory, RuntimeHandle } from "../runtime-factory";
 import type { ObservabilitySink } from "../../observability";
-import type { RuntimeCapabilityManifest } from "../runtime-contract";
+import type { RuntimeCapabilityManifest } from "@burble/runtime-sdk/runtime-contract";
 import {
   createAgentRunnerFromRuntimeAdapter,
   type RuntimeAdapter
@@ -12,7 +12,7 @@ import {
   createRuntimeContractWebSocket,
   createRuntimeContractHttpClient,
   RuntimeCapabilityDiscoveryError
-} from "../runtime-contract-http-client";
+} from "@burble/runtime-sdk/runtime-contract-http-client";
 import { runtimeCompatibilityFamily } from "../runtime-descriptors";
 import { sealRuntimeConversationAttachments } from "../../conversation/attachment-capabilities";
 import type { Config } from "../../config";

@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { createOpenClawNemoClawAgentRunner } from "../../src/agent/runners/openclaw-nemoclaw";
-import { parseRuntimeRunRequest } from "../../src/agent/runtime-contract";
-import type { RuntimeCapabilityManifest } from "../../src/agent/runtime-contract";
+import { parseRuntimeRunRequest } from "@burble/runtime-sdk/runtime-contract";
+import type { RuntimeCapabilityManifest } from "@burble/runtime-sdk/runtime-contract";
 import type { RuntimeManifest } from "../../src/agent/runtime-manifest";
 import { collectAgentRun } from "../../src/agent/types";
 import type { ProviderConnection } from "../../src/db";

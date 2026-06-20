@@ -4,7 +4,7 @@ import {
   parseRuntimeRunEvent,
   parseRuntimeRunRequest,
   runtimeRunEventSchema
-} from "../../src/agent/runtime-contract";
+} from "@burble/runtime-sdk/runtime-contract";
 
 const baseRunRequest = {
   runId: "run-123",

@@ -55,6 +55,10 @@ describe("runtime descriptors", () => {
   });
 
   test("exposes known capability manifests for policy selection", () => {
+    expect(runtimeDescriptor("burble-direct")).toMatchObject({
+      selectable: false,
+      unselectableReason: "deprecated; use burble-native"
+    });
     expect(runtimeDescriptor("openclaw").capabilities).toMatchObject({
       runtimeType: "openclaw",
       toolBridgeModes: ["tool_gateway", "mcp"],
@@ -78,7 +82,7 @@ describe("runtime descriptors", () => {
       toolCalls: true,
       usageReporting: "exact",
       nativeScheduler: false,
-      scheduledProviderCalls: false,
+      scheduledProviderCalls: true,
       multimodalInput: false,
       memory: false,
       durableWorkflowState: false,

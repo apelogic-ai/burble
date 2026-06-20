@@ -8,7 +8,7 @@ import {
 import { buildRuntimeManifest, type RuntimeManifest } from "./runtime-manifest";
 import type { PrincipalId } from "./runtime-factory";
 import type { RuntimeSelectionRequirements } from "./runtime-factory";
-import type { RuntimeCapabilityManifest } from "./runtime-contract";
+import type { RuntimeCapabilityManifest } from "@burble/runtime-sdk/runtime-contract";
 
 export const defaultWorkspaceRuntimePolicy = {
   memory: {
@@ -120,9 +120,17 @@ export function runtimeEngineCompatibility(
     requirements?: RuntimeSelectionRequirements;
   } = {}
 ): RuntimeEngineCompatibility {
+  const descriptor = runtimeDescriptor(engine);
+  if (!descriptor.selectable) {
+    return {
+      engine,
+      selectable: false,
+      reasons: [descriptor.unselectableReason ?? "runtime is not selectable"]
+    };
+  }
   return runtimeCapabilityManifestCompatibility(
     engine,
-    knownRuntimeCapabilityManifest(engine),
+    descriptor.capabilities,
     options
   );
 }
@@ -354,6 +362,9 @@ function normalizeRuntimeEngine(
     return null;
   }
   const normalized = value.trim().toLowerCase();
+  if (normalized === "burble-direct" || normalized === "direct-provider") {
+    return "burble-native";
+  }
   return isKnownRuntimeEngine(normalized)
     ? (normalized as RuntimeManifest["runtime"]["engine"])
     : null;

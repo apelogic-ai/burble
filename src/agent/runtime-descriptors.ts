@@ -2,8 +2,8 @@ import {
   isAgentRuntimeEngine,
   runtimeEngines,
   type AgentRuntimeEngine
-} from "../runtime-engines";
-import type { RuntimeCapabilityManifest } from "./runtime-contract";
+} from "@burble/runtime-sdk/runtime-engines";
+import type { RuntimeCapabilityManifest } from "@burble/runtime-sdk/runtime-contract";
 
 export { runtimeEngines };
 
@@ -21,6 +21,8 @@ export type RuntimeContainerProfile = {
 export type RuntimeDescriptor = {
   engine: AgentRuntimeEngine;
   family: string;
+  selectable: boolean;
+  unselectableReason?: string;
   defaultImages: readonly string[];
   healthCheckAttempts: number;
   capabilities: RuntimeCapabilityManifest;
@@ -119,7 +121,7 @@ const burbleNativeCapabilityManifest: RuntimeCapabilityManifest = {
   streaming: true,
   cancellation: false,
   nativeScheduler: false,
-  scheduledProviderCalls: false,
+  scheduledProviderCalls: true,
   toolCalls: true,
   toolBridgeModes: ["tool_gateway"],
   usageReporting: "exact",
@@ -136,6 +138,7 @@ const runtimeDescriptors = {
   deterministic: {
     engine: "deterministic",
     family: "deterministic",
+    selectable: true,
     defaultImages: directRuntimeDefaultImages,
     healthCheckAttempts: 30,
     capabilities: openClawCapabilityManifest("deterministic"),
@@ -144,6 +147,7 @@ const runtimeDescriptors = {
   openclaw: {
     engine: "openclaw",
     family: "openclaw",
+    selectable: true,
     defaultImages: openClawDefaultImages,
     healthCheckAttempts: 90,
     capabilities: openClawCapabilityManifest("openclaw"),
@@ -152,6 +156,7 @@ const runtimeDescriptors = {
   "openclaw-gateway": {
     engine: "openclaw-gateway",
     family: "openclaw",
+    selectable: true,
     defaultImages: openClawDefaultImages,
     healthCheckAttempts: 90,
     capabilities: openClawCapabilityManifest("openclaw-gateway"),
@@ -160,6 +165,8 @@ const runtimeDescriptors = {
   "burble-direct": {
     engine: "burble-direct",
     family: "burble-direct",
+    selectable: false,
+    unselectableReason: "deprecated; use burble-native",
     defaultImages: directRuntimeDefaultImages,
     healthCheckAttempts: 30,
     capabilities: openClawCapabilityManifest("burble-direct"),
@@ -168,6 +175,7 @@ const runtimeDescriptors = {
   "burble-native": {
     engine: "burble-native",
     family: "burble-native",
+    selectable: true,
     defaultImages: ["burble-native-runtime:dev"],
     healthCheckAttempts: 30,
     capabilities: burbleNativeCapabilityManifest,
@@ -176,6 +184,7 @@ const runtimeDescriptors = {
   hermes: {
     engine: "hermes",
     family: "hermes",
+    selectable: true,
     defaultImages: ["burble-nemo-hermes:dev"],
     healthCheckAttempts: 30,
     capabilities: hermesCapabilityManifest,

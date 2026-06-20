@@ -10,11 +10,11 @@ import {
 import {
   parseRuntimeRunEvent,
   type RuntimeRunEvent
-} from "../../src/agent/runtime-contract";
+} from "@burble/runtime-sdk/runtime-contract";
 import { runRuntimeConformanceCheck } from "../../src/agent/runtime-conformance-harness";
-import { createRuntimeContractHttpClient } from "../../src/agent/runtime-contract-http-client";
+import { createRuntimeContractHttpClient } from "@burble/runtime-sdk/runtime-contract-http-client";
 import { runRuntimeReadinessCheck } from "../../src/agent/runtime-readiness-harness";
-import type { RuntimeContractCheckName } from "../../src/agent/runtime-contract-harness";
+import type { RuntimeContractCheckName } from "@burble/runtime-sdk/runtime-contract-harness";
 
 const runtimeReadinessDescribe =
   Bun.env.BURBLE_E2E_RUNTIMES === "1" ? describe : describe.skip;

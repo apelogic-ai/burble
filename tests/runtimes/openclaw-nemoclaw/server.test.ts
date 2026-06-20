@@ -5,7 +5,7 @@ import {
 } from "../../../runtimes/openclaw-nemoclaw/src/server";
 import { buildBurbleConversationDeliveryTarget } from "../../../runtimes/openclaw-nemoclaw/src/burble-conversation-connector";
 import type { RuntimeConfig } from "../../../runtimes/openclaw-nemoclaw/src/config";
-import { parseRuntimeCapabilityManifest } from "../../../src/agent/runtime-contract";
+import { parseRuntimeCapabilityManifest } from "@burble/runtime-sdk/runtime-contract";
 
 class FakeRuntimeWebSocket {
   readonly messages: string[] = [];

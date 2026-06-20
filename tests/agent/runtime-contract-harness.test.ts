@@ -2,12 +2,12 @@ import { describe, expect, test } from "bun:test";
 import {
   runRuntimeContractSmokeTest,
   type RuntimeContractClient
-} from "../../src/agent/runtime-contract-harness";
+} from "@burble/runtime-sdk/runtime-contract-harness";
 import type {
   RuntimeCapabilityManifest,
   RuntimeRunEvent,
   RuntimeRunRequest
-} from "../../src/agent/runtime-contract";
+} from "@burble/runtime-sdk/runtime-contract";
 
 const manifest: RuntimeCapabilityManifest = {
   runtimeType: "hermes",

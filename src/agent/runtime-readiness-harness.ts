@@ -2,7 +2,7 @@ import type { AgentRuntimeEngine, TokenStore } from "../db";
 import {
   createRuntimeContractHttpClient,
   type RuntimeContractFetch
-} from "./runtime-contract-http-client";
+} from "@burble/runtime-sdk/runtime-contract-http-client";
 import type { PrincipalId, RuntimeFactory } from "./runtime-factory";
 import { runtimeCompatibilityFamily } from "./runtime-descriptors";
 import { runtimeCapabilityManifestCompatibility } from "./runtime-policy";

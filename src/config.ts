@@ -204,8 +204,8 @@ function optionalAgentRuntimeEngineEnv(
   const normalized =
     value === "openclaw-cli"
       ? "openclaw"
-      : value === "direct-provider"
-        ? "burble-direct"
+      : value === "direct-provider" || value === "burble-direct"
+        ? "burble-native"
         : value === "nemo-hermes"
           ? "hermes"
         : value;

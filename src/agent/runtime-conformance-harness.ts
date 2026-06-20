@@ -5,11 +5,11 @@ import {
   createRuntimeContractHttpClient,
   type RuntimeContractFetch,
   type RuntimeContractWebSocketFactory
-} from "./runtime-contract-http-client";
+} from "@burble/runtime-sdk/runtime-contract-http-client";
 import {
   runRuntimeContractSmokeTest,
   type RuntimeContractSmokeTestReport
-} from "./runtime-contract-harness";
+} from "@burble/runtime-sdk/runtime-contract-harness";
 import type { PrincipalId, RuntimeFactory, RuntimeHandle } from "./runtime-factory";
 
 export type RuntimeConformanceReport = RuntimeContractSmokeTestReport & {

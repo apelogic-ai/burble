@@ -4,8 +4,8 @@ import {
   handleRuntimeRequest as handleRuntimeRequestRaw
 } from "../../../runtimes/openclaw-nemoclaw/src/server";
 import type { RuntimeConfig } from "../../../runtimes/openclaw-nemoclaw/src/config";
-import { createRuntimeContractHttpClient } from "../../../src/agent/runtime-contract-http-client";
-import { runRuntimeContractSmokeTest } from "../../../src/agent/runtime-contract-harness";
+import { createRuntimeContractHttpClient } from "@burble/runtime-sdk/runtime-contract-http-client";
+import { runRuntimeContractSmokeTest } from "@burble/runtime-sdk/runtime-contract-harness";
 
 const config: RuntimeConfig = {
   port: 8080,

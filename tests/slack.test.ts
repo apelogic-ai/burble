@@ -94,11 +94,11 @@ const agentConfig: Config = {
   aiModel: "openai:gpt-5.4",
   managedRuntimeUrl: null,
   openClawNemoClawUrl: null,
-  agentRuntimeEngine: "burble-direct",
-  openClawNemoClawEngine: "burble-direct",
+  agentRuntimeEngine: "burble-native",
+  openClawNemoClawEngine: "burble-native",
   agentRuntimeDataRoot: "/data/runtimes",
   agentRuntimeDockerNetwork: "compose_default",
-  agentRuntimeImage: "burble-openclaw-nemoclaw:dev",
+  agentRuntimeImage: "burble-native-runtime:dev",
   agentRuntimeIdleTtlMs: 86400000,
   agentRuntimeReaperEnabled: true,
   agentRuntimeReaperIntervalMs: 60000,
@@ -1570,7 +1570,7 @@ describe("buildAppHomeView", () => {
     store.getOrCreateAgentRuntime({
       workspaceId: "T123",
       slackUserId: "U123",
-      engine: "burble-direct",
+      engine: "burble-native",
       endpointUrl: "http://runtime:8080",
       authTokenHash: "hash",
       statePath: "/data/state",
@@ -1655,7 +1655,7 @@ describe("buildAppHomeView", () => {
     store.upsertWorkspacePolicy({
       workspaceId: "T123",
       key: "runtime.allowedEngines",
-      value: ["burble-direct", "hermes"],
+      value: ["burble-native", "hermes"],
       updatedBySlackUserId: "UADMIN"
     });
     const agentSettings = buildAgentHomeSettings({
@@ -1683,8 +1683,59 @@ describe("buildAppHomeView", () => {
 
     expect(serialized).toContain("agent_runtime_engine_select");
     expect(serialized).toContain("Choose runtime");
-    expect(serialized).toContain("\"value\":\"burble-direct\"");
+    expect(serialized).toContain("\"value\":\"burble-native\"");
     expect(serialized).toContain("\"value\":\"hermes\"");
+    store.close();
+  });
+
+  test("normalizes legacy Burble direct runtime selections in App Home", () => {
+    const store = createTokenStore(":memory:");
+    store.upsertWorkspacePolicy({
+      workspaceId: "T123",
+      key: "runtime.allowedEngines",
+      value: ["burble-direct", "hermes"],
+      updatedBySlackUserId: "UADMIN"
+    });
+    store.upsertUserPreference({
+      workspaceId: "T123",
+      slackUserId: "U123",
+      key: "runtime.engine",
+      value: "burble-direct"
+    });
+    const agentSettings = buildAgentHomeSettings({
+      config: agentConfig,
+      store,
+      workspaceId: "T123",
+      slackUserId: "U123"
+    });
+    const view = buildAppHomeView({
+      githubUrl: "https://example.test/github",
+      googleUrl: "https://example.test/google",
+      hubspotUrl: "https://example.test/hubspot",
+      jiraUrl: "https://example.test/jira",
+      slackUrl: "https://example.test/slack",
+      connections: {
+        github: null,
+        google: null,
+        hubspot: null,
+        jira: null,
+        slack: null
+      },
+      agentSettings
+    });
+    const serialized = JSON.stringify(view);
+
+    expect(agentSettings.runtime.engine).toBe("burble-native");
+    expect(agentSettings.runtime.preferredEngine).toBe("burble-native");
+    expect(agentSettings.runtime.allowedEngines).toEqual([
+      "burble-native",
+      "hermes"
+    ]);
+    expect(serialized).toContain("agent_runtime_engine_select");
+    expect(serialized).toContain("\"initial_option\"");
+    expect(serialized).toContain("\"value\":\"burble-native\"");
+    expect(serialized).toContain("\"value\":\"hermes\"");
+    expect(serialized).not.toContain("burble-direct");
     store.close();
   });
 
@@ -1724,7 +1775,7 @@ describe("buildAppHomeView", () => {
     const runtime = store.getOrCreateAgentRuntime({
       workspaceId: "T123",
       slackUserId: "U123",
-      engine: "burble-direct",
+      engine: "burble-native",
       endpointUrl: "http://runtime:8080",
       authTokenHash: "hash",
       statePath: "/data/state",
@@ -1766,7 +1817,7 @@ describe("buildAppHomeView", () => {
     const runtime = store.getOrCreateAgentRuntime({
       workspaceId: "T123",
       slackUserId: "U123",
-      engine: "burble-direct",
+      engine: "burble-native",
       endpointUrl: "http://runtime:8080",
       authTokenHash: "hash",
       statePath: "/data/state",
@@ -1834,7 +1885,7 @@ describe("buildAppHomeView", () => {
     store.upsertWorkspacePolicy({
       workspaceId: "T123",
       key: "runtime.allowedEngines",
-      value: ["burble-direct", "deterministic"],
+      value: ["burble-native", "deterministic"],
       updatedBySlackUserId: "UADMIN"
     });
     const view = buildAgentConfigModalView({
@@ -1845,7 +1896,7 @@ describe("buildAppHomeView", () => {
     });
     const serialized = JSON.stringify(view);
 
-    expect(serialized).toContain("\"value\":\"burble-direct\"");
+    expect(serialized).toContain("\"value\":\"burble-native\"");
     expect(serialized).not.toContain("\"value\":\"deterministic\"");
     store.close();
   });
@@ -1855,7 +1906,7 @@ describe("buildAppHomeView", () => {
     const runtime = store.getOrCreateAgentRuntime({
       workspaceId: "T123",
       slackUserId: "U123",
-      engine: "burble-direct",
+      engine: "burble-native",
       endpointUrl: "http://runtime:8080",
       authTokenHash: "hash",
       statePath: "/data/state",
@@ -1893,7 +1944,7 @@ describe("buildAppHomeView", () => {
         started.push(`${principal.workspaceId}:${principal.slackUserId}`);
         return {
           id: `rt_${nextRuntimeId++}`,
-          engine: "burble-direct" as const,
+          engine: "burble-native" as const,
           endpointUrl: "http://runtime:8080",
           authToken: "token",
           status: "ready" as const,
@@ -1926,7 +1977,7 @@ describe("buildAppHomeView", () => {
     const runtime = store.getOrCreateAgentRuntime({
       workspaceId: "T123",
       slackUserId: "U123",
-      engine: "burble-direct",
+      engine: "burble-native",
       endpointUrl: "http://runtime:8080",
       authTokenHash: "hash",
       statePath: "/data/state",
@@ -1972,7 +2023,7 @@ describe("buildAppHomeView", () => {
     store.upsertWorkspacePolicy({
       workspaceId: "T123",
       key: "runtime.allowedEngines",
-      value: ["burble-direct", "hermes"],
+      value: ["burble-native", "hermes"],
       updatedBySlackUserId: "UADMIN"
     });
     store.upsertUserPreference({
@@ -2027,13 +2078,13 @@ describe("buildAppHomeView", () => {
     store.upsertWorkspacePolicy({
       workspaceId: "T123",
       key: "runtime.allowedEngines",
-      value: ["burble-direct", "hermes"],
+      value: ["burble-native", "hermes"],
       updatedBySlackUserId: "UADMIN"
     });
     const previousRuntime = store.getOrCreateAgentRuntime({
       workspaceId: "T123",
       slackUserId: "U123",
-      engine: "burble-direct",
+      engine: "burble-native",
       endpointUrl: "http://direct-runtime:8080",
       authTokenHash: "hash",
       statePath: "/data/state",
@@ -2173,7 +2224,7 @@ describe("buildAgentStatusResponse", () => {
     const blocks = JSON.stringify(response.blocks);
     expect(response.text).toBe("Agent status");
     expect(blocks).toContain("burble-runtime");
-    expect(blocks).toContain("burble-direct");
+    expect(blocks).toContain("burble-native");
     expect(blocks).toContain("openai:gpt-5.4");
     expect(blocks).toContain("No runtime record exists yet");
   });
@@ -2185,7 +2236,7 @@ describe("buildAgentStatusResponse", () => {
         id: "rt_123",
         workspaceId: "T123",
         slackUserId: "U123",
-        engine: "burble-direct",
+        engine: "burble-native",
         status: "ready",
         endpointUrl: "http://runtime:8080",
         authTokenHash: "hash",
@@ -2214,7 +2265,7 @@ describe("buildAgentStatusResponse", () => {
     store.upsertWorkspacePolicy({
       workspaceId: "T123",
       key: "runtime.allowedEngines",
-      value: ["burble-direct", "hermes"],
+      value: ["burble-native", "hermes"],
       updatedBySlackUserId: "UADMIN"
     });
     store.upsertUserPreference({
@@ -2253,9 +2304,9 @@ describe("buildAgentStatusResponse", () => {
 
     expect(settings.runtime.engine).toBe("hermes");
     expect(settings.runtime.preferredEngine).toBe("hermes");
-    expect(settings.runtime.allowedEngines).toEqual(["burble-direct", "hermes"]);
+    expect(settings.runtime.allowedEngines).toEqual(["burble-native", "hermes"]);
     expect(settings.runtime.selectableEngines).toEqual([
-      "burble-direct",
+      "burble-native",
       "hermes"
     ]);
     expect(blocks).toContain("http://hermes-runtime:8080");
@@ -2271,7 +2322,7 @@ describe("buildAgentConfigResponse", () => {
       id: "rt_123",
       workspaceId: "T123",
       slackUserId: "U123",
-      engine: "burble-direct" as const,
+      engine: "burble-native" as const,
       status: "ready" as const,
       endpointUrl: "http://runtime:8080",
       authTokenHash: "hash",
@@ -2319,7 +2370,7 @@ describe("buildAgentConfigResponse", () => {
       id: "rt_123",
       workspaceId: "T123",
       slackUserId: "U123",
-      engine: "burble-direct" as const,
+      engine: "burble-native" as const,
       status: "ready" as const,
       endpointUrl: "http://runtime:8080",
       authTokenHash: "hash",
@@ -2786,7 +2837,7 @@ describe("agent user config commands", () => {
     store.upsertWorkspacePolicy({
       workspaceId: "T123",
       key: "runtime.allowedEngines",
-      value: ["burble-direct", "hermes"],
+      value: ["burble-native", "hermes"],
       updatedBySlackUserId: "UADMIN"
     });
 
@@ -2822,10 +2873,11 @@ describe("agent user config commands", () => {
     };
     const openClawCliDefaultConfig = {
       ...agentConfig,
+      agentRuntimeEngine: "openclaw" as const,
       agentRuntimeImage: "burble-openclaw-nemoclaw-openclaw-cli:dev"
     };
 
-    expect(runtimeImageForEngine(customConfig, "burble-direct")).toBe(
+    expect(runtimeImageForEngine(customConfig, "burble-native")).toBe(
       "ghcr.io/acme/burble-runtime:prod"
     );
     expect(runtimeImageForEngine(customConfig, "hermes")).toBe(
@@ -2863,7 +2915,7 @@ describe("agent user config commands", () => {
     store.upsertWorkspacePolicy({
       workspaceId: "T123",
       key: "runtime.allowedEngines",
-      value: ["burble-direct", "deterministic"],
+      value: ["burble-native", "deterministic"],
       updatedBySlackUserId: "UADMIN"
     });
 
@@ -2889,7 +2941,7 @@ describe("agent user config commands", () => {
     store.upsertWorkspacePolicy({
       workspaceId: "T123",
       key: "runtime.allowedEngines",
-      value: ["burble-direct", "deterministic"],
+      value: ["burble-native", "deterministic"],
       updatedBySlackUserId: "UADMIN"
     });
     const selection = resolveRuntimeEngineForPrincipal({
@@ -2911,7 +2963,7 @@ describe("agent user config commands", () => {
       modalError: "Runtime engine deterministic is not selectable: missing usage reporting."
     });
     expect(
-      validateAgentRuntimeEngineSelection(selection, "burble-direct")
+      validateAgentRuntimeEngineSelection(selection, "burble-native")
     ).toBeNull();
     store.close();
   });
@@ -2965,7 +3017,7 @@ describe("agent user config commands", () => {
     const runtime = store.getOrCreateAgentRuntime({
       workspaceId: "T123",
       slackUserId: "U123",
-      engine: "burble-direct",
+      engine: "burble-native",
       endpointUrl: "http://runtime:8080",
       authTokenHash: "hash",
       statePath: "/data/state",
@@ -2985,7 +3037,7 @@ describe("agent user config commands", () => {
           started.push(`${principal.workspaceId}:${principal.slackUserId}`);
           return {
             id: "rt_fresh",
-            engine: "burble-direct",
+            engine: "burble-native",
             endpointUrl: "http://runtime:8080",
             authToken: "token",
             status: "ready",
@@ -3017,13 +3069,13 @@ describe("agent user config commands", () => {
     store.upsertWorkspacePolicy({
       workspaceId: "T123",
       key: "runtime.allowedEngines",
-      value: ["burble-direct", "hermes"],
+      value: ["burble-native", "hermes"],
       updatedBySlackUserId: "UADMIN"
     });
     const runtime = store.getOrCreateAgentRuntime({
       workspaceId: "T123",
       slackUserId: "U123",
-      engine: "burble-direct",
+      engine: "burble-native",
       endpointUrl: "http://runtime:8080",
       authTokenHash: "hash",
       statePath: "/data/state",
@@ -3064,7 +3116,7 @@ describe("agent user config commands", () => {
       principal: { workspaceId: "T123", slackUserId: "U123" },
       previousPolicyHash: "policy-old",
       nextPolicyHash: "policy-new",
-      previousEngine: "burble-direct"
+      previousEngine: "burble-native"
     });
 
     expect(restart).toEqual({
@@ -3080,7 +3132,7 @@ describe("agent user config commands", () => {
     store.getOrCreateAgentRuntime({
       workspaceId: "T123",
       slackUserId: "U123",
-      engine: "burble-direct",
+      engine: "burble-native",
       endpointUrl: "http://runtime:8080",
       authTokenHash: "hash",
       statePath: "/data/state",
