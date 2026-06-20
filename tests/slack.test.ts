@@ -1688,6 +1688,57 @@ describe("buildAppHomeView", () => {
     store.close();
   });
 
+  test("normalizes legacy Burble direct runtime selections in App Home", () => {
+    const store = createTokenStore(":memory:");
+    store.upsertWorkspacePolicy({
+      workspaceId: "T123",
+      key: "runtime.allowedEngines",
+      value: ["burble-direct", "hermes"],
+      updatedBySlackUserId: "UADMIN"
+    });
+    store.upsertUserPreference({
+      workspaceId: "T123",
+      slackUserId: "U123",
+      key: "runtime.engine",
+      value: "burble-direct"
+    });
+    const agentSettings = buildAgentHomeSettings({
+      config: agentConfig,
+      store,
+      workspaceId: "T123",
+      slackUserId: "U123"
+    });
+    const view = buildAppHomeView({
+      githubUrl: "https://example.test/github",
+      googleUrl: "https://example.test/google",
+      hubspotUrl: "https://example.test/hubspot",
+      jiraUrl: "https://example.test/jira",
+      slackUrl: "https://example.test/slack",
+      connections: {
+        github: null,
+        google: null,
+        hubspot: null,
+        jira: null,
+        slack: null
+      },
+      agentSettings
+    });
+    const serialized = JSON.stringify(view);
+
+    expect(agentSettings.runtime.engine).toBe("burble-native");
+    expect(agentSettings.runtime.preferredEngine).toBe("burble-native");
+    expect(agentSettings.runtime.allowedEngines).toEqual([
+      "burble-native",
+      "hermes"
+    ]);
+    expect(serialized).toContain("agent_runtime_engine_select");
+    expect(serialized).toContain("\"initial_option\"");
+    expect(serialized).toContain("\"value\":\"burble-native\"");
+    expect(serialized).toContain("\"value\":\"hermes\"");
+    expect(serialized).not.toContain("burble-direct");
+    store.close();
+  });
+
   test("shows first-time guidance before connections and runtime provisioning", () => {
     const store = createTokenStore(":memory:");
     const agentSettings = buildAgentHomeSettings({

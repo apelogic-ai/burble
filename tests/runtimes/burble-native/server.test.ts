@@ -812,6 +812,132 @@ describe("Burble Native runtime server", () => {
     });
   });
 
+  test("leaves scheduled tool authorization to the gateway beyond the prompt slice", async () => {
+    const requests: Array<{ url: string; init?: RequestInit }> = [];
+    const tools = Array.from({ length: 25 }, (_, index) => ({
+      name: `github_search_${String(index).padStart(2, "0")}`,
+      alias: `github.search${String(index).padStart(2, "0")}`,
+      provider: "github",
+      title: `GitHub search ${index}`,
+      description: "Search GitHub.",
+      enabled: true,
+      risk: "read",
+      routeRequired: true,
+      confirmation: "none",
+      retrySafe: true,
+      input: []
+    }));
+    const targetTool = {
+      name: "github_search_99",
+      alias: "github.search99",
+      provider: "github",
+      title: "GitHub search target",
+      description: "Search GitHub with a secondary alias.",
+      enabled: true,
+      risk: "read",
+      routeRequired: true,
+      confirmation: "none",
+      retrySafe: true,
+      input: []
+    };
+    const response = await handleRuntimeRequest(
+      new Request("http://runtime/runs", {
+        method: "POST",
+        headers: {
+          accept: "application/x-ndjson",
+          "content-type": "application/json"
+        },
+        body: JSON.stringify(
+          withRuntimeManifestTools(
+            withScheduledJob(nativeRunRequest("run the wide scheduled scan"), [
+              ...tools.map((tool) => tool.name),
+              targetTool.name
+            ]),
+            [...tools, targetTool]
+          )
+        )
+      }),
+      {
+        env: {
+          AI_MODEL: "openai:gpt-5.4",
+          OPENAI_API_KEY: "test-openai-key",
+          OPENAI_BASE_URL: "https://openai-compatible.example/v1",
+          BURBLE_TOOL_GATEWAY_URL: "http://burble-app:3000/internal/tools",
+          BURBLE_INTERNAL_TOKEN: "runtime-token",
+          BURBLE_NATIVE_TOOL_GATEWAY_RETRY_BASE_MS: "0"
+        },
+        fetch: async (url: string, init?: RequestInit) => {
+          requests.push({ url, init });
+          if (url.includes("/github.search99/execute")) {
+            return Response.json({
+              classification: "user_private",
+              content: { ok: true }
+            });
+          }
+          const providerRequestCount = requests.filter((request) =>
+            request.url.endsWith("/responses")
+          ).length;
+          if (providerRequestCount === 1) {
+            return new Response(
+              sseEvent({
+                type: "response.completed",
+                response: {
+                  output: [
+                    {
+                      type: "function_call",
+                      call_id: "scheduled_call_wide",
+                      name: "burble_provider_call",
+                      arguments: JSON.stringify({
+                        toolName: "github.search99",
+                        input: {}
+                      })
+                    }
+                  ],
+                  usage: {
+                    input_tokens: 100,
+                    output_tokens: 5,
+                    total_tokens: 105
+                  }
+                }
+              }),
+              { headers: { "content-type": "text/event-stream" } }
+            );
+          }
+          return new Response(
+            sseEvent({
+              type: "response.completed",
+              response: {
+                output_text: "Wide scan complete.",
+                usage: {
+                  input_tokens: 80,
+                  output_tokens: 4,
+                  total_tokens: 84
+                }
+              }
+            }),
+            { headers: { "content-type": "text/event-stream" } }
+          );
+        }
+      }
+    );
+
+    expect(response.status).toBe(200);
+    await response.text();
+    const firstProviderBody = JSON.parse(
+      String(
+        requests.filter((request) => request.url.endsWith("/responses"))[0].init
+          ?.body
+      )
+    );
+    expect(firstProviderBody.input[0].content).not.toContain("github.search99");
+    const toolRequest = requests.find((request) =>
+      request.url.includes("/github.search99/execute")
+    );
+    expect(JSON.parse(String(toolRequest?.init?.body))).toEqual({
+      jobId: "job-native-123"
+    });
+  });
+
   test("exposes current-turn attachments to the native tool loop", async () => {
     const requests: Array<{ url: string; init?: RequestInit }> = [];
     const baseRequest = nativeRunRequest("summarize the attached file");
@@ -1656,7 +1782,8 @@ function withRuntimeManifestTools<T extends ReturnType<typeof nativeRunRequest>>
 }
 
 function withScheduledJob<T extends ReturnType<typeof nativeRunRequest>>(
-  request: T
+  request: T,
+  allowedTools: string[] = ["github_search_issues"]
 ): T {
   return {
     ...request,
@@ -1665,7 +1792,7 @@ function withScheduledJob<T extends ReturnType<typeof nativeRunRequest>>(
       scheduledJob: {
         jobId: "job-native-123",
         capabilityProfile: "scheduled_job",
-        allowedTools: ["github_search_issues"],
+        allowedTools,
         runtimeType: "burble-native",
         routeId: "convrt_scheduled_native",
         stateRefs: [

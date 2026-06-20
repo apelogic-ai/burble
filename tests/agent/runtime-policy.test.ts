@@ -353,6 +353,59 @@ describe("resolveRuntimeEngineForPrincipal", () => {
     });
   });
 
+  test("normalizes stored Burble direct workspace policies to Burble Native", () => {
+    const store = createTokenStore(":memory:");
+    store.upsertWorkspacePolicy({
+      workspaceId: "T123",
+      key: "runtime.allowedEngines",
+      value: ["burble-direct"],
+      updatedBySlackUserId: "UADMIN"
+    });
+
+    const selection = resolveRuntimeEngineForPrincipal({
+      config,
+      store,
+      principal: {
+        workspaceId: "T123",
+        slackUserId: "U123"
+      }
+    });
+
+    expect(selection.allowedEngines).toEqual(["burble-native"]);
+    expect(selection.selectableEngines).toEqual(["burble-native"]);
+    expect(selection.effectiveEngine).toBe("burble-native");
+    store.close();
+  });
+
+  test("normalizes stored Burble direct user preferences to Burble Native", () => {
+    const store = createTokenStore(":memory:");
+    store.upsertWorkspacePolicy({
+      workspaceId: "T123",
+      key: "runtime.allowedEngines",
+      value: ["openclaw", "burble-native"],
+      updatedBySlackUserId: "UADMIN"
+    });
+    store.upsertUserPreference({
+      workspaceId: "T123",
+      slackUserId: "U123",
+      key: "runtime.engine",
+      value: "burble-direct"
+    });
+
+    const selection = resolveRuntimeEngineForPrincipal({
+      config,
+      store,
+      principal: {
+        workspaceId: "T123",
+        slackUserId: "U123"
+      }
+    });
+
+    expect(selection.preferredEngine).toBe("burble-native");
+    expect(selection.effectiveEngine).toBe("burble-native");
+    store.close();
+  });
+
   test("fails explicitly when policy leaves no selectable runtime engine", () => {
     const store = createTokenStore(":memory:");
     store.upsertWorkspacePolicy({

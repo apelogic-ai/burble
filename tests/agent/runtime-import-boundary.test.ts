@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { readdir, readFile } from "node:fs/promises";
+import { access, readdir, readFile } from "node:fs/promises";
 import { extname, join, relative, resolve, sep } from "node:path";
 
 const runtimeRoots = [
@@ -11,6 +11,12 @@ const runtimeRoots = [
 const sourceExtensions = new Set([".ts", ".js", ".mjs", ".cjs", ".py"]);
 const ignoredPathParts = new Set(["node_modules", "__pycache__"]);
 const allowedBurblePackages = new Set(["@burble/runtime-sdk"]);
+const retiredControlPlaneRuntimeShims = [
+  "src/agent/runtime-contract.ts",
+  "src/agent/runtime-contract-http-client.ts",
+  "src/agent/runtime-contract-harness.ts",
+  "src/runtime-engines.ts"
+] as const;
 
 describe("runtime import boundary", () => {
   test("runtime packages do not import Burble control-plane modules", async () => {
@@ -75,7 +81,27 @@ describe("runtime import boundary", () => {
 
     expect(violations).toEqual([]);
   });
+
+  test("control-plane runtime SDK shims stay removed", async () => {
+    const existing = [];
+    for (const file of retiredControlPlaneRuntimeShims) {
+      if (await pathExists(file)) {
+        existing.push(file);
+      }
+    }
+
+    expect(existing).toEqual([]);
+  });
 });
+
+async function pathExists(path: string): Promise<boolean> {
+  try {
+    await access(path);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 async function listRuntimeSourceFiles(root: string): Promise<string[]> {
   const files: string[] = [];

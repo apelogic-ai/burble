@@ -362,6 +362,9 @@ function normalizeRuntimeEngine(
     return null;
   }
   const normalized = value.trim().toLowerCase();
+  if (normalized === "burble-direct" || normalized === "direct-provider") {
+    return "burble-native";
+  }
   return isKnownRuntimeEngine(normalized)
     ? (normalized as RuntimeManifest["runtime"]["engine"])
     : null;

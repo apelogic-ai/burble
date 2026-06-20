@@ -599,14 +599,6 @@ function scheduledToolInput(
   if (!scheduledJob) {
     return toolCall.input;
   }
-  const selectedTool = selectedRuntimeTools(request).find(
-    (tool) => tool.name === toolCall.toolName || tool.alias === toolCall.toolName
-  );
-  if (!selectedTool) {
-    throw new Error(
-      `Tool ${toolCall.toolName} is not allowed for scheduled job ${scheduledJob.jobId}`
-    );
-  }
   return {
     ...(isRecord(toolCall.input) ? toolCall.input : {}),
     jobId: scheduledJob.jobId
