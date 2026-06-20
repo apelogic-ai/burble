@@ -363,6 +363,10 @@ export type RuntimeToolGroup = z.infer<typeof runtimeToolGroupSchema>;
 export type RuntimeToolGroupSelection = z.infer<
   typeof runtimeToolGroupSelectionSchema
 >;
+export type ToolClassification = z.infer<typeof toolClassificationSchema>;
+export type RuntimeConversationAttachment = z.infer<
+  typeof runtimeConversationAttachmentSchema
+>;
 export type RuntimeRunRequest = Omit<
   ParsedRuntimeRunRequest,
   "executionMode"

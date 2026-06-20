@@ -1,9 +1,13 @@
 export type {
+  RuntimeConversationAttachment,
   RuntimeCapabilityManifest,
+  RuntimeFinalResponse,
   RuntimeToolGroup,
   RuntimeToolGroupSelection,
   RuntimeRunEvent,
-  RuntimeRunRequest
+  RuntimeRunRequest,
+  RuntimeUsage,
+  ToolClassification
 } from "./runtime-contract";
 export {
   parseRuntimeCapabilityManifest,

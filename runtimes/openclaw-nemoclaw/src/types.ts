@@ -1,16 +1,14 @@
+import type {
+  RuntimeConversationAttachment,
+  RuntimeFinalResponse,
+  RuntimeUsage,
+  ToolClassification
+} from "@burble/runtime-sdk/runtime-contract";
 import type { RuntimeScheduledJobContext } from "@burble/runtime-sdk/scheduled-job-context";
 
-export type ToolClassification = "public" | "user_private" | "restricted";
+export type { ToolClassification };
 
-export type ConversationAttachment = {
-  id: string;
-  kind: "file" | "image" | "audio" | "video";
-  mimeType: string;
-  source: "slack" | "burble" | "agent";
-  name?: string;
-  sizeBytes?: number;
-  externalId?: string;
-};
+export type ConversationAttachment = RuntimeConversationAttachment;
 
 export type ToolResult<TContent = unknown> = {
   classification: ToolClassification;
@@ -138,23 +136,12 @@ export type RunRequest = {
 };
 
 export type RunResponse = {
-  response: {
-    classification: ToolClassification;
-    text: string;
-    attachments?: ConversationAttachment[];
-    usage?: RunUsage;
+  response: Omit<RuntimeFinalResponse, "telemetry"> & {
     telemetry?: RunTelemetry;
   };
 };
 
-export type RunUsage = {
-  inputTokens?: number;
-  outputTokens?: number;
-  totalTokens?: number;
-  cachedInputTokens?: number;
-  reasoningTokens?: number;
-  usageSource?: string;
-};
+export type RunUsage = RuntimeUsage;
 
 export type RunTelemetry = {
   promptChars?: number;
