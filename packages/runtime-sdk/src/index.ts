@@ -1,7 +1,16 @@
 export type {
+  RuntimeConnectionSummary,
+  RuntimeConversationAttachment,
+  RuntimeConversationSummary,
   RuntimeCapabilityManifest,
+  RuntimeFinalResponse,
+  RuntimeRequestContext,
+  RuntimeToolGroup,
+  RuntimeToolGroupSelection,
   RuntimeRunEvent,
-  RuntimeRunRequest
+  RuntimeRunRequest,
+  RuntimeUsage,
+  ToolClassification
 } from "./runtime-contract";
 export {
   parseRuntimeCapabilityManifest,
@@ -26,6 +35,13 @@ export {
   type RuntimeToolGatewayClient,
   type RuntimeToolGatewayFetch
 } from "./tool-gateway";
+export {
+  formatRuntimeScheduledJobContext,
+  formatRuntimeScheduledJobContextLines,
+  withTrustedScheduledJobId,
+  type RuntimeScheduledJobContext,
+  type RuntimeScheduledJobContextFormatOptions
+} from "./scheduled-job-context";
 export { stripRuntimeToolCallProtocolFragments } from "./runtime-text-protocol";
 export {
   authorizeRuntimeBearerToken,

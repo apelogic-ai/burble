@@ -36,16 +36,12 @@ Runtime engines:
   `--local` and starts a private `openclaw gateway run` process at runtime boot,
   preserving the same Burble runtime API while letting OpenClaw use its
   Gateway-backed execution path.
-- `AGENT_RUNTIME_ENGINE=burble-direct` uses Burble's prompt and MCP tool
-  loop, but sends planning turns directly to the selected model provider. This
-  avoids OpenClaw agent bootstrap and native tools in latency-sensitive Slack
-  flows.
 
 `OPENCLAW_NEMOCLAW_ENGINE` remains a legacy alias for this bundled runtime, but
 new deployment config should prefer the vendor-neutral `AGENT_RUNTIME_ENGINE`.
 
 Slack `/agent exec <task>` can opt a single request into OpenClaw-native
-execution even when the default engine is `burble-direct`. The same user runtime
+execution even when the default engine is `deterministic`. The same user runtime
 container and `/data/openclaw` state are reused; the runtime lazily prepares
 OpenClaw and starts a private Gateway process inside that container for the exec
 request.
@@ -56,7 +52,7 @@ OAuth, visibility, or deployment boundaries. Runtime events are normalized to
 status, tool lifecycle, answer delta, final, and error events before they reach
 Slack or any future messaging surface.
 
-For routing diagrams of the `openclaw-gateway` and `burble-direct` paths, see
+For routing diagrams of the OpenClaw runtime paths, see
 [OpenClaw Runtime Flows](../../docs/openclaw-runtime-flows.md).
 
 When `AGENT_RUNTIME_ENGINE=openclaw` or `openclaw-gateway`, runtime startup

@@ -143,6 +143,56 @@ describe("runtime contract schemas", () => {
     ]);
   });
 
+  test("normalizes legacy scheduled job runtime types", () => {
+    const request = parseRuntimeRunRequest({
+      ...baseRunRequest,
+      input: {
+        ...baseRunRequest.input,
+        scheduledJob: {
+          ...baseRunRequest.input.scheduledJob,
+          runtimeType: "burble-direct"
+        }
+      }
+    });
+
+    expect(request.input.scheduledJob?.runtimeType).toBe("burble-native");
+  });
+
+  test("keeps compatible attachment and connection payload leniency", () => {
+    const request = parseRuntimeRunRequest({
+      ...baseRunRequest,
+      input: {
+        ...baseRunRequest.input,
+        attachments: [
+          {
+            ...baseRunRequest.input.attachments[0],
+            sizeBytes: 1024.5,
+            metadata: { sourcePath: "/tmp/report.txt" }
+          }
+        ],
+        connections: {
+          ...baseRunRequest.input.connections,
+          github: {
+            connected: true,
+            email: null,
+            providerLogin: 123,
+            diagnostic: "present"
+          }
+        }
+      }
+    });
+
+    expect(request.input.attachments?.[0]).toMatchObject({
+      id: "att-1",
+      sizeBytes: 1024.5,
+      metadata: { sourcePath: "/tmp/report.txt" }
+    });
+    expect(request.input.connections.github).toMatchObject({
+      connected: true,
+      diagnostic: "present"
+    });
+  });
+
   test("defaults legacy runtime run manifests to streaming enabled", () => {
     const { streaming: _streaming, ...legacyManifest } =
       baseRunRequest.runtime.manifest;

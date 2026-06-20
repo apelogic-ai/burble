@@ -45,15 +45,13 @@ export type RuntimeFetch = (
 export type RuntimeEngine =
   | "deterministic"
   | "openclaw"
-  | "openclaw-gateway"
-  | "burble-direct";
+  | "openclaw-gateway";
 
 type Env = Record<string, string | undefined>;
 const runtimeEngines = [
   "deterministic",
   "openclaw",
-  "openclaw-gateway",
-  "burble-direct"
+  "openclaw-gateway"
 ] as const;
 
 export function readRuntimeConfig(env: Env): RuntimeConfig {
@@ -179,8 +177,8 @@ function readRuntimeEngine(value: string, name: string): RuntimeEngine {
   if (normalized === "openclaw-cli") {
     return "openclaw";
   }
-  if (normalized === "direct-provider") {
-    return "burble-direct";
+  if (normalized === "burble-direct" || normalized === "direct-provider") {
+    return "deterministic";
   }
 
   if (!runtimeEngines.includes(normalized as RuntimeEngine)) {

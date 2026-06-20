@@ -8,6 +8,14 @@ import {
   createRuntimeContractServer,
   type RuntimeEventWebSocket
 } from "@burble/runtime-sdk/server";
+import {
+  runtimeConnectionSummarySchema,
+  runtimeConversationAttachmentSchema,
+  runtimeConversationSummarySchema,
+  runtimeRequestContextSchema,
+  runtimeToolGroupSelectionSchema,
+  scheduledJobContextSchema
+} from "@burble/runtime-sdk/runtime-contract";
 import type {
   ConversationAttachment,
   RunEvent,
@@ -16,16 +24,6 @@ import type {
   ToolExecutor
 } from "./types";
 
-const runtimeToolGroups = new Set([
-  "attachments",
-  "conversation",
-  "github",
-  "google",
-  "hubspot",
-  "jira",
-  "scheduler",
-  "slack"
-]);
 const localScheduledJobRegisterCapabilityToolName =
   "scheduled_job_register_capability";
 
@@ -367,9 +365,7 @@ async function readLocalConversationMessageBody(
   }
 
   const record = body as Record<string, unknown>;
-  const attachments = isConversationAttachmentArray(record.attachments)
-    ? record.attachments
-    : undefined;
+  const attachments = conversationAttachmentsFrom(record.attachments) ?? undefined;
   if (
     typeof record.routeId !== "string" ||
     record.routeId.trim().length === 0 ||
@@ -803,9 +799,7 @@ async function readLocalBurbleChannelMessageBody(
   }
 
   const record = body as Record<string, unknown>;
-  const attachments = isConversationAttachmentArray(record.attachments)
-    ? record.attachments
-    : undefined;
+  const attachments = conversationAttachmentsFrom(record.attachments) ?? undefined;
   if (
     typeof record.text !== "string" ||
     ("attachments" in record &&
@@ -1015,93 +1009,16 @@ function isRunRequest(body: unknown): body is RunRequest {
   return true;
 }
 
-const runtimeEngines = new Set([
-  "deterministic",
-  "openclaw",
-  "openclaw-gateway",
-  "burble-direct",
-  "hermes"
-]);
-
 function isScheduledJobContext(
   value: unknown
 ): value is NonNullable<RunRequest["input"]["scheduledJob"]> {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    return false;
-  }
-
-  const record = value as Record<string, unknown>;
-  return (
-    typeof record.jobId === "string" &&
-    record.jobId.trim().length > 0 &&
-    typeof record.capabilityProfile === "string" &&
-    record.capabilityProfile.trim().length > 0 &&
-    Array.isArray(record.allowedTools) &&
-    record.allowedTools.length > 0 &&
-    record.allowedTools.every((toolName) => typeof toolName === "string") &&
-    (!("routeId" in record) ||
-      record.routeId === undefined ||
-      (typeof record.routeId === "string" &&
-        record.routeId.trim().length > 0)) &&
-    (!("runtimeType" in record) ||
-      record.runtimeType === undefined ||
-      (typeof record.runtimeType === "string" &&
-        runtimeEngines.has(record.runtimeType))) &&
-    Array.isArray(record.stateRefs) &&
-    record.stateRefs.every(isScheduledJobStateRef) &&
-    isScheduledJobVisibilityPolicy(record.visibilityPolicy)
-  );
-}
-
-function isScheduledJobStateRef(value: unknown): boolean {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    return false;
-  }
-  const record = value as Record<string, unknown>;
-  return (
-    typeof record.provider === "string" &&
-    record.provider.trim().length > 0 &&
-    typeof record.kind === "string" &&
-    record.kind.trim().length > 0 &&
-    optionalString(record.id) &&
-    optionalString(record.name) &&
-    optionalString(record.purpose)
-  );
-}
-
-function isScheduledJobVisibilityPolicy(value: unknown): boolean {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    return false;
-  }
-  const record = value as Record<string, unknown>;
-  return (
-    (!("maxOutputVisibility" in record) ||
-      record.maxOutputVisibility === undefined ||
-      record.maxOutputVisibility === "public" ||
-      record.maxOutputVisibility === "user_private" ||
-      record.maxOutputVisibility === "restricted") &&
-    (!("allowPrivateToolDeclassification" in record) ||
-      record.allowPrivateToolDeclassification === undefined ||
-      typeof record.allowPrivateToolDeclassification === "boolean")
-  );
+  return scheduledJobContextSchema.safeParse(value).success;
 }
 
 function isRuntimeToolGroupSelection(
   value: unknown
 ): value is NonNullable<RunRequest["input"]["toolGroups"]> {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    return false;
-  }
-
-  const record = value as Record<string, unknown>;
-  return (
-    Array.isArray(record.groups) &&
-    record.groups.every(
-      (group) => typeof group === "string" && runtimeToolGroups.has(group)
-    ) &&
-    Array.isArray(record.reasons) &&
-    record.reasons.every((reason) => typeof reason === "string")
-  );
+  return runtimeToolGroupSelectionSchema.safeParse(value).success;
 }
 
 function hasVisibleText(value: string): boolean {
@@ -1109,118 +1026,38 @@ function hasVisibleText(value: string): boolean {
 }
 
 function isConnectionSummary(value: unknown): boolean {
-  return (
-    typeof value === "object" &&
-    value !== null &&
-    "connected" in value &&
-    typeof value.connected === "boolean"
-  );
+  return runtimeConnectionSummarySchema.safeParse(value).success;
 }
 
 function isConversationSummary(
   conversation: unknown
 ): conversation is RunRequest["input"]["conversation"] {
-  return (
-    typeof conversation === "object" &&
-    conversation !== null &&
-    "source" in conversation &&
-    conversation.source === "slack" &&
-    (!("routeId" in conversation) ||
-      conversation.routeId === undefined ||
-      (typeof conversation.routeId === "string" &&
-        conversation.routeId.trim().length > 0)) &&
-    "workspaceId" in conversation &&
-    typeof conversation.workspaceId === "string" &&
-    conversation.workspaceId.trim().length > 0 &&
-    "channelId" in conversation &&
-    typeof conversation.channelId === "string" &&
-    conversation.channelId.trim().length > 0 &&
-    "rootId" in conversation &&
-    typeof conversation.rootId === "string" &&
-    conversation.rootId.trim().length > 0 &&
-    "isDirectMessage" in conversation &&
-    typeof conversation.isDirectMessage === "boolean"
-  );
+  return runtimeConversationSummarySchema.safeParse(conversation).success;
 }
 
 function isRequestContext(context: unknown): context is RunRequest["input"]["context"] {
-  if (
-    typeof context !== "object" ||
-    context === null ||
-    !("recentMessages" in context) ||
-    !Array.isArray(context.recentMessages)
-  ) {
-    return false;
-  }
-
-  if (
-    "currentChannel" in context &&
-    context.currentChannel !== undefined &&
-    !isCurrentChannelContext(context.currentChannel)
-  ) {
-    return false;
-  }
-
-  return context.recentMessages.every(
-    (message) =>
-      typeof message === "object" &&
-      message !== null &&
-      "author" in message &&
-      (message.author === "user" || message.author === "assistant") &&
-      (!("speaker" in message) ||
-        message.speaker === undefined ||
-        typeof message.speaker === "string") &&
-      "text" in message &&
-      typeof message.text === "string"
-  );
-}
-
-function isCurrentChannelContext(channel: unknown): boolean {
-  return (
-    typeof channel === "object" &&
-    channel !== null &&
-    "id" in channel &&
-    typeof channel.id === "string" &&
-    "isDirectMessage" in channel &&
-    typeof channel.isDirectMessage === "boolean" &&
-    "historyAvailable" in channel &&
-    typeof channel.historyAvailable === "boolean" &&
-    (!("historyError" in channel) ||
-      channel.historyError === undefined ||
-      typeof channel.historyError === "string")
-  );
+  return runtimeRequestContextSchema.safeParse(context).success;
 }
 
 function isConversationAttachmentArray(
   value: unknown
 ): value is ConversationAttachment[] {
-  return Array.isArray(value) && value.every(isConversationAttachment);
+  return (
+    Array.isArray(value) &&
+    value.every((attachment) =>
+      runtimeConversationAttachmentSchema.safeParse(attachment).success
+    )
+  );
 }
 
-function isConversationAttachment(value: unknown): value is ConversationAttachment {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    return false;
+function conversationAttachmentsFrom(
+  value: unknown
+): ConversationAttachment[] | null {
+  if (!Array.isArray(value)) {
+    return null;
   }
-
-  const record = value as Record<string, unknown>;
-  return (
-    typeof record.id === "string" &&
-    record.id.trim().length > 0 &&
-    (record.kind === "file" ||
-      record.kind === "image" ||
-      record.kind === "audio" ||
-      record.kind === "video") &&
-    typeof record.mimeType === "string" &&
-    record.mimeType.trim().length > 0 &&
-    (record.source === "slack" ||
-      record.source === "burble" ||
-      record.source === "agent") &&
-    optionalString(record.name) &&
-    (record.sizeBytes === undefined ||
-      (typeof record.sizeBytes === "number" &&
-        Number.isFinite(record.sizeBytes) &&
-        record.sizeBytes >= 0)) &&
-    optionalString(record.externalId)
+  return value.filter((attachment): attachment is ConversationAttachment =>
+    runtimeConversationAttachmentSchema.safeParse(attachment).success
   );
 }
 

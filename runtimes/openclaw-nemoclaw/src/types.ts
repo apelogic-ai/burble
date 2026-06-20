@@ -1,14 +1,17 @@
-export type ToolClassification = "public" | "user_private" | "restricted";
+import type {
+  RuntimeConnectionSummary,
+  RuntimeConversationAttachment,
+  RuntimeConversationSummary,
+  RuntimeFinalResponse,
+  RuntimeRequestContext,
+  RuntimeUsage,
+  ToolClassification
+} from "@burble/runtime-sdk/runtime-contract";
+import type { RuntimeScheduledJobContext } from "@burble/runtime-sdk/scheduled-job-context";
 
-export type ConversationAttachment = {
-  id: string;
-  kind: "file" | "image" | "audio" | "video";
-  mimeType: string;
-  source: "slack" | "burble" | "agent";
-  name?: string;
-  sizeBytes?: number;
-  externalId?: string;
-};
+export type { ToolClassification };
+
+export type ConversationAttachment = RuntimeConversationAttachment;
 
 export type ToolResult<TContent = unknown> = {
   classification: ToolClassification;
@@ -82,99 +85,27 @@ export type RunRequest = {
       >;
       reasons: string[];
     };
-    scheduledJob?: {
-      jobId: string;
-      capabilityProfile: string;
-      allowedTools: string[];
-      routeId?: string;
-      runtimeType?:
-        | "deterministic"
-        | "openclaw"
-        | "openclaw-gateway"
-        | "burble-direct"
-        | "hermes";
-      stateRefs: Array<{
-        provider: string;
-        kind: string;
-        id?: string;
-        name?: string;
-        purpose?: string;
-      }>;
-      visibilityPolicy: {
-        maxOutputVisibility?: ToolClassification;
-        allowPrivateToolDeclassification?: boolean;
-      };
-    };
+    scheduledJob?: RuntimeScheduledJobContext;
     attachments?: ConversationAttachment[];
-    conversation?: {
-      routeId?: string;
-      source: "slack";
-      workspaceId: string;
-      channelId: string;
-      rootId: string;
-      isDirectMessage: boolean;
-    };
-    context?: {
-      currentChannel?: {
-        id: string;
-        isDirectMessage: boolean;
-        historyAvailable: boolean;
-        historyError?: string;
-      };
-      recentMessages: Array<{
-        author: "user" | "assistant";
-        speaker?: string;
-        text: string;
-      }>;
-    };
+    conversation?: RuntimeConversationSummary;
+    context?: RuntimeRequestContext;
     connections: {
-      github: {
-        connected: boolean;
-        email?: string;
-        providerLogin?: string;
-      };
-      google?: {
-        connected: boolean;
-        email?: string;
-        providerLogin?: string;
-      };
-      hubspot?: {
-        connected: boolean;
-        email?: string;
-        providerLogin?: string;
-      };
-      jira?: {
-        connected: boolean;
-        email?: string;
-        providerLogin?: string;
-      };
-      slack?: {
-        connected: boolean;
-        email?: string;
-        providerLogin?: string;
-      };
+      github: RuntimeConnectionSummary;
+      google?: RuntimeConnectionSummary;
+      hubspot?: RuntimeConnectionSummary;
+      jira?: RuntimeConnectionSummary;
+      slack?: RuntimeConnectionSummary;
     };
   };
 };
 
 export type RunResponse = {
-  response: {
-    classification: ToolClassification;
-    text: string;
-    attachments?: ConversationAttachment[];
-    usage?: RunUsage;
+  response: Omit<RuntimeFinalResponse, "telemetry"> & {
     telemetry?: RunTelemetry;
   };
 };
 
-export type RunUsage = {
-  inputTokens?: number;
-  outputTokens?: number;
-  totalTokens?: number;
-  cachedInputTokens?: number;
-  reasoningTokens?: number;
-  usageSource?: string;
-};
+export type RunUsage = RuntimeUsage;
 
 export type RunTelemetry = {
   promptChars?: number;

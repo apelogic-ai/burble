@@ -106,7 +106,6 @@ describe("createStaticRuntimeFactory", () => {
 describe("nativeAgentConfigFileName", () => {
   test("uses the selected runtime engine config shape", () => {
     expect(nativeAgentConfigFileName("openclaw")).toBe("openclaw.json");
-    expect(nativeAgentConfigFileName("burble-direct")).toBe("openclaw.json");
     expect(nativeAgentConfigFileName("hermes")).toBe("hermes.json");
   });
 });

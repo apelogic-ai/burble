@@ -11,6 +11,7 @@
     "./runtime-contract-harness": "./src/runtime-contract-harness.ts",
     "./runtime-engines": "./src/runtime-engines.ts",
     "./runtime-text-protocol": "./src/runtime-text-protocol.ts",
+    "./scheduled-job-context": "./src/scheduled-job-context.ts",
     "./server": "./src/server.ts",
     "./tool-gateway": "./src/tool-gateway.ts"
   },

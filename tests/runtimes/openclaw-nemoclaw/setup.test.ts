@@ -84,63 +84,6 @@ describe("ensureOpenClawSetup", () => {
     expect(JSON.stringify(writtenConfig)).not.toContain("secret");
   });
 
-  test("skips setup for burble-direct engine", async () => {
-    let called = false;
-    const runtimeConfig = await configWithConfigFile({
-      engine: "burble-direct",
-      mcpGatewayUrl: "http://agentgateway:3000/mcp",
-      runtimeJwt: "runtime-jwt"
-    });
-
-    await ensureOpenClawSetup(
-      runtimeConfig,
-      async () => {
-        called = true;
-        return { exitCode: 0, stdout: "", stderr: "" };
-      }
-    );
-
-    expect(called).toBe(false);
-    const writtenConfig = JSON.parse(
-      await readFile(runtimeConfig.openClawConfigPath, "utf8")
-    );
-    expect(writtenConfig).toMatchObject({
-      agents: {
-        defaults: {
-          workspace: runtimeConfig.openClawWorkspaceDir,
-          model: {
-            primary: "openai/gpt-5.4"
-          },
-          skipBootstrap: true
-        },
-        list: [
-          {
-            id: runtimeConfig.openClawAgent,
-            default: true,
-            identity: {
-              name: "Burble",
-              theme: "Slack assistant",
-              emoji: ":robot_face:"
-            }
-          }
-        ]
-      },
-      messages: {
-        visibleReplies: "automatic",
-        groupChat: {
-          visibleReplies: "message_tool",
-          unmentionedInbound: "room_event"
-        }
-      }
-    });
-    expect(writtenConfig.mcp.servers.burble).toEqual({
-      url: `http://127.0.0.1:${runtimeConfig.port}/internal/burble/mcp`,
-      transport: "streamable-http"
-    });
-    expect(writtenConfig.runtime).toBeUndefined();
-    expect(JSON.stringify(writtenConfig)).not.toContain("runtime-jwt");
-  });
-
   test("skips setup command when setup is disabled", async () => {
     const calls: string[][] = [];
     const runtimeConfig = await configWithState({ openClawSetupOnStart: false });

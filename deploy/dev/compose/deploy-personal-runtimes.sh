@@ -81,7 +81,7 @@ runtime_image_family() {
     burble-native)
       echo "burble-native"
       ;;
-    ""|openclaw|openclaw-gateway|deterministic|burble-direct|direct-provider)
+    ""|openclaw|openclaw-gateway|deterministic)
       echo "openclaw"
       ;;
     *)
@@ -155,14 +155,14 @@ case "${runtime_engine}" in
     selected_runtime_image_service="burble-native-image"
     selected_runtime_image_label="$(runtime_image_family "${AGENT_RUNTIME_ENGINE}")"
     ;;
-  ""|openclaw|openclaw-gateway|deterministic|burble-direct|direct-provider)
+  ""|openclaw|openclaw-gateway|deterministic)
     select_runtime_image "burble-openclaw-nemoclaw-openclaw-cli:dev"
     selected_runtime_image_service="openclaw-nemoclaw-image"
     selected_runtime_image_label="$(runtime_image_family "${AGENT_RUNTIME_ENGINE:-openclaw}")"
     ;;
   *)
     echo "Unsupported AGENT_RUNTIME_ENGINE: ${runtime_engine}" >&2
-    echo "Expected openclaw, hermes, burble-native, deterministic, or burble-direct." >&2
+    echo "Expected openclaw, openclaw-gateway, hermes, burble-native, or deterministic." >&2
     exit 2
     ;;
 esac

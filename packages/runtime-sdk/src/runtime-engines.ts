@@ -2,7 +2,6 @@ export const runtimeEngines = [
   "deterministic",
   "openclaw",
   "openclaw-gateway",
-  "burble-direct",
   "burble-native",
   "hermes"
 ] as const;
