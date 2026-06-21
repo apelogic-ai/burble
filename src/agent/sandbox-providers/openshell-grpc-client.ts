@@ -660,18 +660,15 @@ function sandboxStatus(phase: unknown): OpenShellSandboxRecord["status"] {
 export function shellBackgroundCommand(argv: string[]): string {
   const command = argv.map(shellQuote).join(" ");
   return [
-    `(${command}) >/tmp/burble-runtime.log 2>&1 &`,
+    `(${command}) >/tmp/burble-runtime.log 2>&1 & :`,
     "pid=$!",
     "sleep 0.2",
-    'if kill -0 "$pid" 2>/dev/null; then',
-    '  echo "$pid" >/tmp/burble-runtime.pid',
-    "  exit 0",
-    "fi",
+    'if kill -0 "$pid" 2>/dev/null; then echo "$pid" >/tmp/burble-runtime.pid; exit 0; fi',
     'wait "$pid"',
     "status=$?",
     "cat /tmp/burble-runtime.log >&2 2>/dev/null || true",
     "exit $status"
-  ].join("\n");
+  ].join("; ");
 }
 
 function shellQuote(value: string): string {

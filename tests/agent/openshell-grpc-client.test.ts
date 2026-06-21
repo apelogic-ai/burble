@@ -31,7 +31,8 @@ describe("OpenShell gRPC exec events", () => {
     const command = shellBackgroundCommand(["python", "/runtime/entrypoint.py"]);
 
     expect(command).not.toContain("&;");
-    expect(command).toContain("&\npid=$!");
+    expect(command).not.toMatch(/[\r\n]/);
+    expect(command).toContain("& :; pid=$!");
     expect(
       Bun.spawnSync(["sh", "-n", "-c", command], {
         stdout: "pipe",
