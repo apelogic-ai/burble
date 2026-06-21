@@ -3,28 +3,70 @@ set -euo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(git -C "${script_dir}" rev-parse --show-toplevel)"
-compose_files=(
+image_compose_files=(
   -f docker-compose.yml
   -f docker-compose.personal-runtimes.yml
+)
+app_compose_files=(
+  -f docker-compose.yml
 )
 
 pull_latest=true
 recycle_runtimes=true
 use_agentgateway=false
+use_openshell=false
 runtime_build_images=()
 runtime_build_services=()
 runtime_build_labels=()
 previous_runtime_image_ids=()
 current_runtime_image_ids=()
 
+dotenv_value() {
+  local key="$1"
+  local env_file="${script_dir}/.env"
+  if [[ ! -f "${env_file}" ]]; then
+    return 0
+  fi
+  awk -F= -v key="${key}" '
+    $1 == key {
+      value = substr($0, length(key) + 2)
+      gsub(/\r$/, "", value)
+      print value
+      exit
+    }
+  ' "${env_file}"
+}
+
+configured_value() {
+  local key="$1"
+  local fallback="${2:-}"
+  local value="${!key:-}"
+  if [[ -n "${value}" ]]; then
+    echo "${value}"
+    return 0
+  fi
+  value="$(dotenv_value "${key}")"
+  if [[ -n "${value}" ]]; then
+    echo "${value}"
+    return 0
+  fi
+  echo "${fallback}"
+}
+
 usage() {
   cat <<'USAGE'
-Usage: ./deploy-personal-runtimes.sh [--no-pull] [--keep-runtimes] [--agentgateway]
+Usage: ./deploy-personal-runtimes.sh [--no-pull] [--keep-runtimes] [--agentgateway] [--openshell]
 
 Pulls the latest repo state, rebuilds Burble plus the default personal runtime
 images, and restarts Docker Compose. Runtime containers are recycled only when
 their image ID changes, and only for burble-rt-* containers from the matching
 runtime image family whose running image ID differs from the current image ID.
+Set AGENT_RUNTIME_FACTORY=sandbox to deploy Burble against an OpenShell-
+compatible sandbox provider instead of the local Docker runtime factory. Use
+--openshell to include the compose-managed OpenShell service, or set
+AGENT_RUNTIME_SANDBOX_URL to an externally managed provider. The selected
+runtime image is still built locally for same-host OpenShell testbeds, but the
+app is started without the Docker personal-runtime override.
 
 Select a runtime with AGENT_RUNTIME_ENGINE. Supported image build defaults:
   AGENT_RUNTIME_ENGINE=openclaw  -> burble-openclaw-nemoclaw-openclaw-cli:dev
@@ -39,6 +81,7 @@ Options:
   --keep-runtimes  Do not stop/remove existing burble-rt-* containers, even
                    when the selected runtime image changes
   --agentgateway    Include the agentgateway MCP compose override
+  --openshell       Include the compose-managed OpenShell sandbox provider
 USAGE
 }
 
@@ -95,6 +138,39 @@ container_runtime_engine() {
     awk -F= '$1 == "AGENT_RUNTIME_ENGINE" { print $2; exit }'
 }
 
+ensure_openshell_jwt_keys() {
+  local data_root
+  data_root="$(configured_value OPENSHELL_DATA_ROOT /var/lib/openshell)"
+  local jwt_dir="${data_root}/jwt"
+  local signing_key="${jwt_dir}/signing.pem"
+  local public_key="${jwt_dir}/public.pem"
+  local kid_file="${jwt_dir}/kid"
+
+  if [[ -f "${signing_key}" && -f "${public_key}" && -f "${kid_file}" ]]; then
+    return 0
+  fi
+
+  if ! command -v openssl >/dev/null 2>&1; then
+    echo "OpenShell compose mode requires openssl to generate gateway JWT keys." >&2
+    exit 2
+  fi
+
+  mkdir -p "${jwt_dir}"
+  chmod 700 "${jwt_dir}"
+  if [[ ! -f "${signing_key}" ]]; then
+    (
+      umask 077
+      openssl genpkey -algorithm Ed25519 -out "${signing_key}" >/dev/null 2>&1
+    )
+  fi
+  if [[ ! -f "${public_key}" ]]; then
+    openssl pkey -in "${signing_key}" -pubout -out "${public_key}" >/dev/null 2>&1
+  fi
+  if [[ ! -f "${kid_file}" ]]; then
+    openssl rand -hex 16 >"${kid_file}"
+  fi
+}
+
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --no-pull)
@@ -107,6 +183,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --agentgateway)
       use_agentgateway=true
+      shift
+      ;;
+    --openshell)
+      use_openshell=true
       shift
       ;;
     -h|--help)
@@ -130,13 +210,31 @@ fi
 cd "${script_dir}"
 
 if [[ "${use_agentgateway}" == "true" ]]; then
-  compose_files+=(
+  image_compose_files+=(
+    -f docker-compose.agentgateway.yml
+  )
+  app_compose_files+=(
     -f docker-compose.agentgateway.yml
   )
 fi
 
-runtime_engine="${AGENT_RUNTIME_ENGINE:-openclaw}"
-configured_runtime_image="${AGENT_RUNTIME_IMAGE:-}"
+if [[ "${use_openshell}" == "true" ]]; then
+  export AGENT_RUNTIME_FACTORY=sandbox
+  ensure_openshell_jwt_keys
+  app_compose_files+=(
+    -f docker-compose.openshell.yml
+  )
+fi
+
+runtime_factory="$(configured_value AGENT_RUNTIME_FACTORY docker)"
+if [[ "${runtime_factory}" != "sandbox" ]]; then
+  app_compose_files+=(
+    -f docker-compose.personal-runtimes.yml
+  )
+fi
+
+runtime_engine="$(configured_value AGENT_RUNTIME_ENGINE openclaw)"
+configured_runtime_image="$(configured_value AGENT_RUNTIME_IMAGE)"
 custom_runtime_image=false
 if [[ -n "${configured_runtime_image}" ]] && ! is_known_default_runtime_image "${configured_runtime_image}"; then
   custom_runtime_image=true
@@ -181,14 +279,14 @@ done
 
 for i in "${!runtime_build_images[@]}"; do
   echo "Building personal runtime image: ${runtime_build_images[$i]} (${runtime_build_labels[$i]}; ${runtime_build_services[$i]})"
-  AGENT_RUNTIME_IMAGE="${runtime_build_images[$i]}" docker compose "${compose_files[@]}" --profile runtime-image build "${runtime_build_services[$i]}"
+  AGENT_RUNTIME_IMAGE="${runtime_build_images[$i]}" docker compose "${image_compose_files[@]}" --profile runtime-image build "${runtime_build_services[$i]}"
   current_runtime_image_ids+=("$(image_id "${runtime_build_images[$i]}")")
 done
 
-docker compose "${compose_files[@]}" up -d --build
+docker compose "${app_compose_files[@]}" up -d --build
 
 if [[ "${use_agentgateway}" == "true" ]]; then
-  docker compose "${compose_files[@]}" up -d --force-recreate --no-deps agentgateway
+  docker compose "${app_compose_files[@]}" up -d --force-recreate --no-deps agentgateway
 fi
 
 if [[ "${recycle_runtimes}" == "true" ]]; then
@@ -237,7 +335,7 @@ else
   echo "Keeping existing burble-rt-* containers because --keep-runtimes was set."
 fi
 
-docker compose "${compose_files[@]}" ps
+docker compose "${app_compose_files[@]}" ps
 echo
 echo "Tail logs with:"
-echo "docker compose ${compose_files[*]} logs -f burble-app agentgateway"
+echo "docker compose ${app_compose_files[*]} logs -f burble-app agentgateway"

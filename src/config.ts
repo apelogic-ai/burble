@@ -47,7 +47,9 @@ export type Config = {
   agentRuntimeMcpAudience: string | null;
   agentRuntimeSandboxUrl: string | null;
   agentRuntimeSandboxToken: string | null;
+  agentRuntimeSandboxTransport?: AgentRuntimeSandboxTransport;
   agentRuntimeSandboxStartCommand: string[] | null;
+  agentRuntimeOpenShellDialHost?: string | null;
   agentRuntimeStreaming?: AgentRuntimeStreamingMode;
   atlassianMcpUrl: string;
   runtimeJwtIssuer: string;
@@ -66,11 +68,13 @@ export type AgentRuntime = "ai-sdk" | "burble-runtime";
 export type AgentRuntimeFactory = "static" | "docker" | "sandbox";
 export type OpenClawNemoClawEngine = AgentRuntimeEngine;
 export type AgentRuntimeStreamingMode = "off" | "basic" | "native";
+export type AgentRuntimeSandboxTransport = "grpc" | "http";
 const slackLogLevels = ["debug", "info", "warn", "error"] as const;
 const agentModes = ["deterministic", "llm"] as const;
 const agentRuntimes = ["ai-sdk", "burble-runtime"] as const;
 const agentRuntimeFactories = ["static", "docker", "sandbox"] as const;
 const agentRuntimeStreamingModes = ["off", "basic", "native"] as const;
+const agentRuntimeSandboxTransports = ["grpc", "http"] as const;
 export const agentRuntimeEngines = runtimeEngines;
 
 function requiredEnv(env: Env, name: string): string {
@@ -247,6 +251,27 @@ function optionalAgentRuntimeStreamingModeEnv(
   return normalized as AgentRuntimeStreamingMode;
 }
 
+function optionalAgentRuntimeSandboxTransportEnv(
+  env: Env,
+  name: string,
+  fallback: AgentRuntimeSandboxTransport
+): AgentRuntimeSandboxTransport {
+  const value = env[name]?.trim().toLowerCase();
+  if (!value) {
+    return fallback;
+  }
+  if (
+    !agentRuntimeSandboxTransports.includes(
+      value as AgentRuntimeSandboxTransport
+    )
+  ) {
+    throw new Error(
+      `Environment variable ${name} must be one of ${agentRuntimeSandboxTransports.join(", ")}`
+    );
+  }
+  return value as AgentRuntimeSandboxTransport;
+}
+
 function optionalUrlEnv(env: Env, name: string): string | null {
   const value = env[name]?.trim();
   return value ? value.replace(/\/+$/, "") : null;
@@ -306,6 +331,11 @@ export function readConfig(env: Env): Config {
   const configuredAgentRuntimeImage =
     optionalSecretEnv(env, "AGENT_RUNTIME_IMAGE") ??
     optionalSecretEnv(env, "OPENCLAW_NEMOCLAW_IMAGE");
+  const agentRuntimeSandboxStartCommand =
+    optionalCommandEnv(env, "AGENT_RUNTIME_SANDBOX_START_COMMAND") ??
+    (agentRuntimeFactory === "sandbox"
+      ? defaultAgentRuntimeSandboxStartCommand(agentRuntimeEngine)
+      : null);
   const managedRuntimeUrl =
     optionalUrlEnv(env, "AGENT_RUNTIME_URL") ??
     optionalUrlEnv(env, "OPENCLAW_NEMOCLAW_URL");
@@ -379,9 +409,15 @@ export function readConfig(env: Env): Config {
       env,
       "AGENT_RUNTIME_SANDBOX_TOKEN"
     ),
-    agentRuntimeSandboxStartCommand: optionalCommandEnv(
+    agentRuntimeSandboxTransport: optionalAgentRuntimeSandboxTransportEnv(
       env,
-      "AGENT_RUNTIME_SANDBOX_START_COMMAND"
+      "AGENT_RUNTIME_SANDBOX_TRANSPORT",
+      "grpc"
+    ),
+    agentRuntimeSandboxStartCommand,
+    agentRuntimeOpenShellDialHost: optionalSecretEnv(
+      env,
+      "AGENT_RUNTIME_OPENSHELL_DIAL_HOST"
     ),
     agentRuntimeStreaming: optionalAgentRuntimeStreamingModeEnv(
       env,
@@ -413,6 +449,14 @@ export function readConfig(env: Env): Config {
 
 export function defaultAgentRuntimeImage(engine: AgentRuntimeEngine): string {
   return defaultRuntimeImageForEngine(engine);
+}
+
+export function defaultAgentRuntimeSandboxStartCommand(
+  engine: AgentRuntimeEngine
+): string[] {
+  return engine === "hermes"
+    ? ["python", "/runtime/entrypoint.py"]
+    : ["bun", "src/index.ts"];
 }
 
 export function isDefaultAgentRuntimeImage(

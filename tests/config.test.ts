@@ -53,7 +53,9 @@ describe("readConfig", () => {
       agentRuntimeMcpAudience: null,
       agentRuntimeSandboxUrl: null,
       agentRuntimeSandboxToken: null,
+      agentRuntimeSandboxTransport: "grpc",
       agentRuntimeSandboxStartCommand: null,
+      agentRuntimeOpenShellDialHost: null,
       agentRuntimeStreaming: "native",
       atlassianMcpUrl: "https://mcp.atlassian.com/v1/mcp",
       runtimeJwtIssuer: "https://example.ngrok-free.app",
@@ -214,7 +216,9 @@ describe("readConfig", () => {
       AGENT_RUNTIME_TOKEN_SECRET: "runtime-secret",
       AGENT_RUNTIME_SANDBOX_URL: "https://openshell.example.test/",
       AGENT_RUNTIME_SANDBOX_TOKEN: "sandbox-token",
-      AGENT_RUNTIME_SANDBOX_START_COMMAND: '["bun","src/index.ts"]'
+      AGENT_RUNTIME_SANDBOX_TRANSPORT: "http",
+      AGENT_RUNTIME_SANDBOX_START_COMMAND: '["bun","src/index.ts"]',
+      AGENT_RUNTIME_OPENSHELL_DIAL_HOST: "openshell"
     });
 
     expect(config.agentRuntimeFactory).toBe("sandbox");
@@ -222,6 +226,8 @@ describe("readConfig", () => {
     expect(config.agentRuntimeTokenSecret).toBe("runtime-secret");
     expect(config.agentRuntimeSandboxUrl).toBe("https://openshell.example.test");
     expect(config.agentRuntimeSandboxToken).toBe("sandbox-token");
+    expect(config.agentRuntimeSandboxTransport).toBe("http");
+    expect(config.agentRuntimeOpenShellDialHost).toBe("openshell");
     expect(config.agentRuntimeSandboxStartCommand).toEqual([
       "bun",
       "src/index.ts"
@@ -239,6 +245,32 @@ describe("readConfig", () => {
       "bun",
       "src/index.ts"
     ]);
+  });
+
+  test("defaults sandbox start commands from the selected runtime engine", () => {
+    expect(
+      readConfig({
+        ...validEnv,
+        AGENT_RUNTIME_FACTORY: "sandbox",
+        AGENT_RUNTIME_ENGINE: "hermes"
+      }).agentRuntimeSandboxStartCommand
+    ).toEqual(["python", "/runtime/entrypoint.py"]);
+
+    expect(
+      readConfig({
+        ...validEnv,
+        AGENT_RUNTIME_FACTORY: "sandbox",
+        AGENT_RUNTIME_ENGINE: "burble-native"
+      }).agentRuntimeSandboxStartCommand
+    ).toEqual(["bun", "src/index.ts"]);
+
+    expect(
+      readConfig({
+        ...validEnv,
+        AGENT_RUNTIME_FACTORY: "sandbox",
+        AGENT_RUNTIME_ENGINE: "openclaw"
+      }).agentRuntimeSandboxStartCommand
+    ).toEqual(["bun", "src/index.ts"]);
   });
 
   test("defaults to the Hermes runtime image for Hermes engine", () => {

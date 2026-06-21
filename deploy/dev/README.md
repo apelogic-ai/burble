@@ -82,6 +82,21 @@ SLACK_REDIRECT_URI=
 AGENT_MODE=deterministic
 AGENT_FAST_TRACK=false
 AGENT_RUNTIME=ai-sdk
+AGENT_RUNTIME_FACTORY=static
+AGENT_RUNTIME_ENGINE=
+AGENT_RUNTIME_IMAGE=
+AGENT_RUNTIME_TOKEN_SECRET=
+AGENT_RUNTIME_MCP_GATEWAY_URL=
+AGENT_RUNTIME_MCP_AUDIENCE=
+AGENT_RUNTIME_SANDBOX_URL=
+AGENT_RUNTIME_SANDBOX_TOKEN=
+AGENT_RUNTIME_SANDBOX_TRANSPORT=grpc
+AGENT_RUNTIME_SANDBOX_START_COMMAND=
+AGENT_RUNTIME_OPENSHELL_DIAL_HOST=
+OPENSHELL_IMAGE_TAG=latest
+OPENSHELL_PORT=8080
+OPENSHELL_HEALTH_PORT=8081
+OPENSHELL_DATA_ROOT=/var/lib/openshell
 AI_MODEL=openai:gpt-5.4
 OPENCLAW_NEMOCLAW_URL=
 INTERNAL_API_TOKEN=
@@ -209,6 +224,70 @@ Burble platform adapter so inbound turns, normal replies, and cron/background
 delivery flow through Burble route IDs. Burble still owns provider OAuth, MCP
 policy, and final Slack transport delivery.
 
+## OpenShell Sandbox Factory
+
+The sandbox runtime factory replaces Burble's local Docker personal-runtime
+factory with an OpenShell-compatible control plane. Burble keeps Slack/OAuth,
+tool-gateway policy, runtime tokens, and model/tool context. OpenShell owns
+the sandbox lifecycle: create a sandbox for a workspace/user/runtime, apply the
+compiled filesystem/network/resource policy, bind credentials, start the
+selected runtime image, and return the runtime contract endpoint.
+
+Use one OpenShell service for the compose stack. It is a shared control plane,
+not one service per runtime. Each agent principal still gets its own sandbox
+behind that control plane.
+
+For an externally managed OpenShell provider, set:
+
+```env
+AGENT_MODE=llm
+AGENT_RUNTIME=burble-runtime
+AGENT_RUNTIME_FACTORY=sandbox
+AGENT_RUNTIME_SANDBOX_URL=http://<openshell-host>:<port>
+AGENT_RUNTIME_SANDBOX_TOKEN=<shared-provider-token-if-required>
+AGENT_RUNTIME_SANDBOX_TRANSPORT=grpc
+```
+
+`AGENT_RUNTIME_ENGINE` and `AGENT_RUNTIME_IMAGE` keep their normal dynamic
+selection behavior. The sandbox start command defaults from the selected engine:
+Hermes uses `["python","/runtime/entrypoint.py"]`; Bun-based runtimes use
+`["bun","src/index.ts"]`. Set `AGENT_RUNTIME_SANDBOX_START_COMMAND` only for a
+custom runtime image whose entrypoint differs.
+
+For a compose-managed OpenShell gateway, leave `AGENT_RUNTIME_SANDBOX_URL`
+empty. The override starts `ghcr.io/nvidia/openshell/gateway` with OpenShell's
+Docker compute driver, mounts the host Docker socket, and points Burble at
+`http://openshell:8080` inside the compose network:
+
+```env
+AGENT_MODE=llm
+AGENT_RUNTIME=burble-runtime
+AGENT_RUNTIME_FACTORY=sandbox
+AGENT_RUNTIME_SANDBOX_URL=
+AGENT_RUNTIME_SANDBOX_TOKEN=<long-random-secret>
+AGENT_RUNTIME_SANDBOX_TRANSPORT=grpc
+OPENSHELL_IMAGE_TAG=latest
+OPENSHELL_PORT=8080
+OPENSHELL_HEALTH_PORT=8081
+OPENSHELL_DATA_ROOT=/var/lib/openshell
+```
+
+`OPENSHELL_DATA_ROOT` must be an absolute host path that is also visible at the
+same path inside the OpenShell gateway container; the Docker driver bind-mounts
+its supervisor binary into sandbox containers through the host Docker daemon.
+The default `/var/lib/openshell` is recommended for the AWS compose testbed.
+
+Deploy it from `deploy/dev/compose` with:
+
+```bash
+./deploy-personal-runtimes.sh --agentgateway --openshell
+```
+
+The script still builds the selected runtime image locally, because same-host
+OpenShell Docker-driver testbeds need the runtime image available to the
+gateway. If the OpenShell service is remote, publish the runtime image to a
+registry and set `AGENT_RUNTIME_IMAGE` to that pullable image instead.
+
 The runtime supports these internal engines:
 
 ```env
@@ -322,6 +401,35 @@ Add `--agentgateway` when testing the MCP path:
 ```bash
 ./deploy-personal-runtimes.sh --agentgateway
 ```
+
+For the OpenShell-backed sandbox runtime path, use the same helper but select
+the sandbox factory in `.env` or on the command line. In sandbox mode the helper
+still builds the selected runtime image for same-host OpenShell testbeds, but it
+starts `burble-app` without the Docker personal-runtime compose override:
+
+```env
+AGENT_MODE=llm
+AGENT_RUNTIME=burble-runtime
+AGENT_RUNTIME_FACTORY=sandbox
+AGENT_RUNTIME_TOKEN_SECRET=<long-random-secret>
+AGENT_RUNTIME_SANDBOX_URL=http://<openshell-host>:<port>
+AGENT_RUNTIME_SANDBOX_TOKEN=<openshell-token>
+AGENT_RUNTIME_SANDBOX_TRANSPORT=grpc
+```
+
+```bash
+AGENT_RUNTIME=burble-runtime \
+AGENT_RUNTIME_FACTORY=sandbox \
+./deploy-personal-runtimes.sh --agentgateway --openshell
+```
+
+Use `AGENT_RUNTIME_ENGINE=openclaw` with
+`AGENT_RUNTIME_IMAGE=burble-openclaw-nemoclaw-openclaw-cli:dev` for the
+OpenClaw runtime image, or `AGENT_RUNTIME_ENGINE=burble-native` with
+`AGENT_RUNTIME_IMAGE=burble-native-runtime:dev` for the native runtime.
+For default Burble runtime images, the sandbox start command is selected from
+the engine automatically. Override `AGENT_RUNTIME_SANDBOX_START_COMMAND` only
+for custom runtime images.
 
 After connecting Jira, a hand-test for the upstream MCP path is:
 

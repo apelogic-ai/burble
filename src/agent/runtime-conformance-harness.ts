@@ -11,6 +11,8 @@ import {
   type RuntimeContractSmokeTestReport
 } from "@burble/runtime-sdk/runtime-contract-harness";
 import type { PrincipalId, RuntimeFactory, RuntimeHandle } from "./runtime-factory";
+import { routeRuntimeEndpointFetch } from "./runtime-endpoint-routing";
+import { createRoutedRuntimeWebSocketFactory } from "./runtime-websocket";
 
 export type RuntimeConformanceReport = RuntimeContractSmokeTestReport & {
   engine: AgentRuntimeEngine;
@@ -25,11 +27,14 @@ export async function runRuntimeConformanceCheck(input: {
   resolveBaseUrl?: (runtime: RuntimeHandle) => string | Promise<string>;
   fetch?: RuntimeContractFetch;
   webSocketFactory?: RuntimeContractWebSocketFactory;
+  openShellDialHost?: string | null;
   assertClaimedCapabilities?: boolean;
 }): Promise<RuntimeConformanceReport> {
   const runtime = await input.runtimeFactory.getOrCreateRuntime(input.principal);
   const baseUrl =
     (await input.resolveBaseUrl?.(runtime)) ?? runtime.endpointUrl;
+  const openShellDialHost =
+    input.openShellDialHost ?? inferOpenShellDialHost(baseUrl);
   const runtimeManifest = buildRuntimeManifest({
     principal: input.principal,
     runtime: {
@@ -47,8 +52,14 @@ export async function runRuntimeConformanceCheck(input: {
   const report = await runRuntimeContractSmokeTest({
     client: createRuntimeContractHttpClient({
       baseUrl,
-      fetch: input.fetch,
-      webSocketFactory: input.webSocketFactory,
+      fetch: openShellDialHost
+        ? routeRuntimeEndpointFetch(input.fetch ?? fetch, { openShellDialHost })
+        : input.fetch,
+      webSocketFactory:
+        input.webSocketFactory ??
+        (openShellDialHost
+          ? createRoutedRuntimeWebSocketFactory({ openShellDialHost })
+          : undefined),
       headers: {
         authorization: `Bearer ${runtime.authToken}`,
         "x-burble-runtime-id": runtime.id
@@ -94,4 +105,15 @@ export async function runRuntimeConformanceCheck(input: {
     runtimeId: runtime.id,
     endpointUrl: runtime.endpointUrl
   };
+}
+
+function inferOpenShellDialHost(endpointUrl: string): string | null {
+  try {
+    const url = new URL(endpointUrl);
+    return url.hostname.toLowerCase().endsWith(".openshell.localhost")
+      ? "openshell"
+      : null;
+  } catch {
+    return null;
+  }
 }

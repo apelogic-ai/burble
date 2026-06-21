@@ -16,6 +16,11 @@ import {
 import { runtimeCompatibilityFamily } from "../runtime-descriptors";
 import { sealRuntimeConversationAttachments } from "../../conversation/attachment-capabilities";
 import type { Config } from "../../config";
+import {
+  routeRuntimeEndpointWebSocket,
+  routeRuntimeEndpointFetch
+} from "../runtime-endpoint-routing";
+import { createRoutedRuntimeWebSocketFactory } from "../runtime-websocket";
 
 export type AgentRuntimeFetch = (
   input: string,
@@ -113,9 +118,20 @@ export function createManagedRuntimeAdapter(
   }
 
   const fallbackBaseUrl = deps.baseUrl?.replace(/\/+$/, "");
-  const requestFetch: AgentRuntimeFetch = deps.fetch ?? fetch;
-  const createWebSocket: AgentRuntimeWebSocketFactory =
-    deps.webSocketFactory ?? createRuntimeContractWebSocket;
+  const routedFetch = routeRuntimeEndpointFetch(
+    (url, init) => (deps.fetch ?? fetch)(url, init ?? {}),
+    { openShellDialHost: deps.config?.agentRuntimeOpenShellDialHost }
+  );
+  const requestFetch: AgentRuntimeFetch = (url, init) => routedFetch(url, init);
+  const routeOptions = {
+    openShellDialHost: deps.config?.agentRuntimeOpenShellDialHost
+  };
+  const createWebSocket: AgentRuntimeWebSocketFactory = deps.webSocketFactory
+    ? (url, options) => {
+        const routed = routeRuntimeEndpointWebSocket(url, options, routeOptions);
+        return deps.webSocketFactory!(routed.url, routed.options);
+      }
+    : createRoutedRuntimeWebSocketFactory(routeOptions);
   const logInfo = deps.logInfo ?? (() => undefined);
   const observability = deps.observability;
   const runtimeCapabilityCache: RuntimeCapabilityCache = new Map();
@@ -297,10 +313,7 @@ export function createManagedRuntimeAdapter(
 
           try {
             agentResponse = yield* readWebSocketRunResponse(
-              createWebSocket(
-                eventsUrl,
-                runtimeWebSocketOptions(runtime)
-              ),
+              createWebSocket(eventsUrl, runtimeWebSocketOptions(runtime)),
               runtimeMessageDeltasEnabled(runtime),
               (event) => {
                 logInfo(

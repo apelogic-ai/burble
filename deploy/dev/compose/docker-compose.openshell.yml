@@ -1,0 +1,40 @@
+# Optional NVIDIA OpenShell sandbox control plane.
+#
+# Starts the real OpenShell gateway with the Docker compute driver. Sandbox
+# containers are managed by OpenShell, not by this Compose file.
+# Start with:
+#   ./deploy-personal-runtimes.sh --agentgateway --openshell
+
+services:
+  openshell:
+    image: ghcr.io/nvidia/openshell/gateway:${OPENSHELL_IMAGE_TAG:-latest}
+    restart: unless-stopped
+    command: []
+    user: "0"
+    ports:
+      - "127.0.0.1:${OPENSHELL_PORT:-8080}:8080"
+      - "127.0.0.1:${OPENSHELL_HEALTH_PORT:-8081}:8081"
+    expose:
+      - "8080"
+    environment:
+      - OPENSHELL_GATEWAY_CONFIG=/etc/openshell/gateway.toml
+      - OPENSHELL_DB_URL=sqlite:/var/lib/openshell/gateway.db?mode=rwc
+      - XDG_DATA_HOME=/var/lib/openshell
+      - HOME=/var/lib/openshell
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+      - "host.openshell.internal:host-gateway"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ${OPENSHELL_DATA_ROOT:-/var/lib/openshell}:/var/lib/openshell
+      - ./openshell/gateway.toml:/etc/openshell/gateway.toml:ro
+
+  burble-app:
+    depends_on:
+      - openshell
+    environment:
+      - AGENT_RUNTIME_FACTORY=sandbox
+      - AGENT_RUNTIME_SANDBOX_TRANSPORT=grpc
+      - AGENT_RUNTIME_SANDBOX_URL=http://openshell:8080
+      - AGENT_RUNTIME_SANDBOX_TOKEN=${AGENT_RUNTIME_SANDBOX_TOKEN:-}
+      - AGENT_RUNTIME_OPENSHELL_DIAL_HOST=${AGENT_RUNTIME_OPENSHELL_DIAL_HOST:-openshell}

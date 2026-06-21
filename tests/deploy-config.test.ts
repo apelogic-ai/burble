@@ -13,12 +13,20 @@ const personalRuntimesCompose = await Bun.file(
 const agentGatewayCompose = await Bun.file(
   "deploy/dev/compose/docker-compose.agentgateway.yml"
 ).text();
+const openShellCompose = await Bun.file(
+  "deploy/dev/compose/docker-compose.openshell.yml"
+).text();
+const openShellGatewayConfig = await Bun.file(
+  "deploy/dev/compose/openshell/gateway.toml"
+).text();
 const agentGatewayConfig = await Bun.file(
   "deploy/dev/compose/agentgateway/config.yaml"
 ).text();
 const personalRuntimeDeployScript = await Bun.file(
   "deploy/dev/compose/deploy-personal-runtimes.sh"
 ).text();
+const rootEnvExample = await Bun.file(".env.example").text();
+const composeEnvExample = await Bun.file("deploy/dev/compose/.env.example").text();
 const caddyfile = await Bun.file("deploy/dev/compose/Caddyfile").text();
 const openClawOpenAiPatch = await Bun.file(
   "deploy/dev/compose/openclaw-patches/openai.json5"
@@ -70,7 +78,9 @@ describe("dev deploy config", () => {
       "AGENT_RUNTIME_MCP_AUDIENCE",
       "AGENT_RUNTIME_SANDBOX_URL",
       "AGENT_RUNTIME_SANDBOX_TOKEN",
+      "AGENT_RUNTIME_SANDBOX_TRANSPORT",
       "AGENT_RUNTIME_SANDBOX_START_COMMAND",
+      "AGENT_RUNTIME_OPENSHELL_DIAL_HOST",
       "AGENT_RUNTIME_CONFIG_PATCH_HOST_PATH",
       "ATLASSIAN_MCP_URL",
       "RUNTIME_JWT_ISSUER",
@@ -289,7 +299,9 @@ describe("dev deploy config", () => {
       "AGENT_RUNTIME_MCP_AUDIENCE",
       "AGENT_RUNTIME_SANDBOX_URL",
       "AGENT_RUNTIME_SANDBOX_TOKEN",
+      "AGENT_RUNTIME_SANDBOX_TRANSPORT",
       "AGENT_RUNTIME_SANDBOX_START_COMMAND",
+      "AGENT_RUNTIME_OPENSHELL_DIAL_HOST",
       "AGENT_RUNTIME_CONFIG_PATCH_HOST_PATH",
       "ATLASSIAN_MCP_URL",
       "RUNTIME_JWT_ISSUER",
@@ -425,10 +437,69 @@ describe("dev deploy config", () => {
     );
   });
 
+  test("provides an optional OpenShell sandbox provider override", () => {
+    expect(openShellCompose).toContain("openshell:");
+    expect(openShellCompose).toContain(
+      "ghcr.io/nvidia/openshell/gateway:${OPENSHELL_IMAGE_TAG:-latest}"
+    );
+    expect(openShellCompose).toContain(
+      "OPENSHELL_GATEWAY_CONFIG=/etc/openshell/gateway.toml"
+    );
+    expect(openShellCompose).toContain(
+      "OPENSHELL_DB_URL=sqlite:/var/lib/openshell/gateway.db?mode=rwc"
+    );
+    expect(openShellCompose).toContain("XDG_DATA_HOME=/var/lib/openshell");
+    expect(openShellCompose).toContain("/var/run/docker.sock:/var/run/docker.sock");
+    expect(openShellCompose).toContain(
+      "${OPENSHELL_DATA_ROOT:-/var/lib/openshell}:/var/lib/openshell"
+    );
+    expect(openShellCompose).toContain(
+      "./openshell/gateway.toml:/etc/openshell/gateway.toml:ro"
+    );
+    expect(openShellCompose).toContain("host.openshell.internal:host-gateway");
+    expect(openShellCompose).toContain("burble-app:");
+    expect(openShellCompose).toContain("AGENT_RUNTIME_FACTORY=sandbox");
+    expect(openShellCompose).toContain("AGENT_RUNTIME_SANDBOX_TRANSPORT=grpc");
+    expect(openShellCompose).toContain(
+      "AGENT_RUNTIME_SANDBOX_URL=http://openshell:8080"
+    );
+    expect(openShellCompose).toContain(
+      "AGENT_RUNTIME_SANDBOX_TOKEN=${AGENT_RUNTIME_SANDBOX_TOKEN:-}"
+    );
+    expect(openShellCompose).toContain(
+      "AGENT_RUNTIME_OPENSHELL_DIAL_HOST=${AGENT_RUNTIME_OPENSHELL_DIAL_HOST:-openshell}"
+    );
+    expect(openShellGatewayConfig).toContain('compute_drivers     = ["docker"]');
+    expect(openShellGatewayConfig).toContain("disable_tls         = true");
+    expect(openShellGatewayConfig).toContain("[openshell.gateway.gateway_jwt]");
+    expect(openShellGatewayConfig).toContain(
+      'signing_key_path = "/var/lib/openshell/jwt/signing.pem"'
+    );
+    expect(openShellGatewayConfig).toContain("allow_unauthenticated_users = true");
+    expect(openShellGatewayConfig).toContain(
+      'grpc_endpoint     = "http://host.openshell.internal:8080"'
+    );
+  });
+
   test("provides a personal runtime deployment helper", () => {
     expect(personalRuntimeDeployScript).toContain("git pull --ff-only");
     expect(personalRuntimeDeployScript).toContain("runtime_build_images=()");
     expect(personalRuntimeDeployScript).toContain("runtime_build_services=()");
+    expect(personalRuntimeDeployScript).toContain("dotenv_value()");
+    expect(personalRuntimeDeployScript).toContain(
+      "runtime_factory=\"$(configured_value AGENT_RUNTIME_FACTORY docker)\""
+    );
+    expect(personalRuntimeDeployScript).toContain(
+      "if [[ \"${runtime_factory}\" != \"sandbox\" ]]"
+    );
+    expect(personalRuntimeDeployScript).toContain(
+      "runtime_engine=\"$(configured_value AGENT_RUNTIME_ENGINE openclaw)\""
+    );
+    expect(personalRuntimeDeployScript).toContain(
+      "configured_runtime_image=\"$(configured_value AGENT_RUNTIME_IMAGE)\""
+    );
+    expect(personalRuntimeDeployScript).toContain("image_compose_files=(");
+    expect(personalRuntimeDeployScript).toContain("app_compose_files=(");
     expect(personalRuntimeDeployScript).toContain("selected_runtime_image_service=\"openclaw-nemoclaw-image\"");
     expect(personalRuntimeDeployScript).toContain("selected_runtime_image_service=\"nemo-hermes-image\"");
     expect(personalRuntimeDeployScript).toContain("selected_runtime_image_service=\"burble-native-image\"");
@@ -445,6 +516,9 @@ describe("dev deploy config", () => {
     expect(personalRuntimeDeployScript).toContain(
       "AGENT_RUNTIME_IMAGE=\"${runtime_build_images[$i]}\" docker compose"
     );
+    expect(personalRuntimeDeployScript).toContain(
+      "docker compose \"${app_compose_files[@]}\" up -d --build"
+    );
     expect(personalRuntimeDeployScript).toContain("--profile runtime-image build \"${runtime_build_services[$i]}\"");
     expect(personalRuntimeDeployScript).toContain("AGENT_RUNTIME_ENGINE=hermes");
     expect(personalRuntimeDeployScript).toContain("burble-nemo-hermes:dev");
@@ -452,7 +526,14 @@ describe("dev deploy config", () => {
     expect(personalRuntimeDeployScript).toContain("burble-native-runtime:dev");
     expect(personalRuntimeDeployScript).toContain("docker-compose.personal-runtimes.yml");
     expect(personalRuntimeDeployScript).toContain("--agentgateway");
+    expect(personalRuntimeDeployScript).toContain("--openshell");
+    expect(personalRuntimeDeployScript).toContain(
+      "export AGENT_RUNTIME_FACTORY=sandbox"
+    );
+    expect(personalRuntimeDeployScript).toContain("ensure_openshell_jwt_keys()");
+    expect(personalRuntimeDeployScript).toContain("openssl genpkey -algorithm Ed25519");
     expect(personalRuntimeDeployScript).toContain("docker-compose.agentgateway.yml");
+    expect(personalRuntimeDeployScript).toContain("docker-compose.openshell.yml");
     expect(personalRuntimeDeployScript).toContain("up -d --build");
     expect(personalRuntimeDeployScript).toContain(
       "up -d --force-recreate --no-deps agentgateway"
@@ -489,6 +570,30 @@ describe("dev deploy config", () => {
     expect(personalRuntimeDeployScript).toContain("docker stop");
     expect(personalRuntimeDeployScript).toContain("docker rm");
     expect(personalRuntimeDeployScript).toContain("--keep-runtimes");
+  });
+
+  test("documents sandbox runtime environment examples", () => {
+    for (const envExample of [rootEnvExample, composeEnvExample]) {
+      for (const name of [
+        "AGENT_RUNTIME_FACTORY",
+        "AGENT_RUNTIME_ENGINE",
+        "AGENT_RUNTIME_IMAGE",
+        "AGENT_RUNTIME_TOKEN_SECRET",
+        "AGENT_RUNTIME_MCP_GATEWAY_URL",
+        "AGENT_RUNTIME_MCP_AUDIENCE",
+        "AGENT_RUNTIME_SANDBOX_URL",
+        "AGENT_RUNTIME_SANDBOX_TOKEN",
+        "AGENT_RUNTIME_SANDBOX_TRANSPORT",
+        "AGENT_RUNTIME_SANDBOX_START_COMMAND",
+        "AGENT_RUNTIME_OPENSHELL_DIAL_HOST",
+        "OPENSHELL_IMAGE_TAG",
+        "OPENSHELL_PORT",
+        "OPENSHELL_HEALTH_PORT",
+        "OPENSHELL_DATA_ROOT"
+      ]) {
+        expect(envExample).toContain(name);
+      }
+    }
   });
 
   test("runs selectable runtime images in CI readiness and boots Burble Native", () => {

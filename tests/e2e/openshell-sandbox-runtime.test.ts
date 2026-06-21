@@ -26,6 +26,7 @@ describe("OpenShell sandbox runtime integration", () => {
       AGENT_RUNTIME_TOKEN_SECRET: "runtime-secret",
       AGENT_RUNTIME_SANDBOX_URL: `http://127.0.0.1:${openshell.port}`,
       AGENT_RUNTIME_SANDBOX_TOKEN: "openshell-token",
+      AGENT_RUNTIME_SANDBOX_TRANSPORT: "http",
       AGENT_RUNTIME_SANDBOX_START_COMMAND: '["runtime-entrypoint"]'
     });
     const provider = createConfiguredSandboxProvider(config);

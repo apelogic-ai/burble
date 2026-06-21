@@ -32,6 +32,7 @@ import {
   modelProviderUrlsForRuntimeModel,
   runtimeExtraAllowedUrlsFromEnv
 } from "./runtime-env";
+import { routeRuntimeEndpointFetch } from "./runtime-endpoint-routing";
 
 export type SandboxRuntimeFetch = (
   input: string,
@@ -68,6 +69,7 @@ export function createSandboxRuntimeFactory(input: {
   runtimeJwtTtlSeconds?: number;
   runtimeTokenSecret: string;
   fetch?: SandboxRuntimeFetch;
+  openShellDialHost?: string | null;
   healthCheckAttempts?: number;
   healthCheckIntervalMs?: number;
   idleTtlMs?: number;
@@ -78,7 +80,9 @@ export function createSandboxRuntimeFactory(input: {
 }): RuntimeFactory {
   assertSandboxProviderCapabilities(input.sandboxProvider);
   assertSandboxStartCommand(input.startCommand);
-  const requestFetch = input.fetch ?? fetch;
+  const requestFetch = routeRuntimeEndpointFetch(input.fetch ?? fetch, {
+    openShellDialHost: input.openShellDialHost
+  });
   const runtimeLocks = new Map<string, Promise<void>>();
 
   const stopRuntime = async (runtimeId: string): Promise<void> => {
