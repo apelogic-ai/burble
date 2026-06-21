@@ -16,6 +16,7 @@ RUN apt-get update \
     git \
     curl \
     ca-certificates \
+    iproute2 \
     nodejs \
     npm \
     chromium \

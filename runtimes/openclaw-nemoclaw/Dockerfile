@@ -1,6 +1,9 @@
 FROM oven/bun:1.2.21-alpine
 WORKDIR /runtime
 ENV NODE_ENV=production
+
+RUN apk add --no-cache iproute2
+
 COPY runtimes/openclaw-nemoclaw/package.json runtimes/openclaw-nemoclaw/tsconfig.json ./
 COPY runtimes/openclaw-nemoclaw/src ./src
 COPY runtimes/openclaw-nemoclaw/skills ./skills

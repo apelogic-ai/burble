@@ -2,6 +2,8 @@ FROM oven/bun:1.2.21-alpine
 WORKDIR /runtime
 ENV NODE_ENV=production
 
+RUN apk add --no-cache iproute2
+
 COPY runtimes/burble-native/package.json runtimes/burble-native/tsconfig.json ./
 COPY runtimes/burble-native/src ./src
 COPY packages/runtime-sdk /runtime/node_modules/@burble/runtime-sdk

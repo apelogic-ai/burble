@@ -4,7 +4,7 @@ ENV NODE_ENV=production
 
 ARG OPENCLAW_VERSION=2026.5.19
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends git openssh-client ca-certificates \
+  && apt-get install -y --no-install-recommends git openssh-client ca-certificates iproute2 \
   && rm -rf /var/lib/apt/lists/* \
   && npm install -g bun \
   && npm install -g "openclaw@${OPENCLAW_VERSION}" \

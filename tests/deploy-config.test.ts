@@ -36,6 +36,15 @@ const ansibleEnvTemplate = await Bun.file(
 ).text();
 const appDockerfile = await Bun.file("Dockerfile").text();
 const hermesDockerfile = await Bun.file("runtimes/nemo-hermes/Dockerfile").text();
+const burbleNativeDockerfile = await Bun.file(
+  "runtimes/burble-native/Dockerfile"
+).text();
+const openClawRuntimeDockerfile = await Bun.file(
+  "runtimes/openclaw-nemoclaw/Dockerfile"
+).text();
+const openClawCliDockerfile = await Bun.file(
+  "runtimes/openclaw-nemoclaw/Dockerfile.openclaw-cli"
+).text();
 const slackAppManifest = await Bun.file("deploy/dev/slack-app-manifest.yaml").text();
 const ciWorkflow = await Bun.file(".github/workflows/ci.yml").text();
 
@@ -617,6 +626,13 @@ describe("dev deploy config", () => {
     expect(ciWorkflow).toContain(
       "BURBLE_E2E_BURBLE_NATIVE_IMAGE: burble-native-runtime:dev"
     );
+  });
+
+  test("installs OpenShell network helper dependencies in runtime images", () => {
+    expect(hermesDockerfile).toContain("iproute2");
+    expect(burbleNativeDockerfile).toContain("apk add --no-cache iproute2");
+    expect(openClawRuntimeDockerfile).toContain("apk add --no-cache iproute2");
+    expect(openClawCliDockerfile).toContain("iproute2");
   });
 
   test("provides an optional OpenClaw CLI runtime build override", async () => {
