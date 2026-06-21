@@ -153,6 +153,7 @@ export function createOpenShellGrpcSandboxClient(
       );
       let exitCode: number | undefined;
       let output = "";
+      const eventSummaries: string[] = [];
       await new Promise<void>((resolve, reject) => {
         const stream = service.ExecSandbox(
           {
@@ -166,24 +167,31 @@ export function createOpenShellGrpcSandboxClient(
         );
         stream.on("data", (event) => {
           const record = objectRecord(event, "OpenShell exec event");
-          const stdout = isRecord(record.stdout) ? record.stdout : null;
-          const stderr = isRecord(record.stderr) ? record.stderr : null;
-          output = appendExecOutput(output, stdout);
-          output = appendExecOutput(output, stderr);
-          const exit = isRecord(record.exit) ? record.exit : null;
-          if (exit && typeof exit.exitCode === "number") {
-            exitCode = exit.exitCode;
+          const parsed = parseOpenShellExecEvent(record);
+          if (parsed.output) {
+            output = appendExecOutput(output, parsed.output);
+          }
+          if (parsed.summary) {
+            eventSummaries.push(parsed.summary);
+          }
+          if (typeof parsed.exitCode === "number") {
+            exitCode = parsed.exitCode;
           }
         });
         stream.on("error", reject);
         stream.on("end", resolve);
       });
+      const diagnosticOutput =
+        output.trim() ||
+        (exitCode && exitCode !== 0
+          ? `OpenShell exec stream produced no text output. Events: ${eventSummaries.join(", ") || "none"}`
+          : "");
 
       return {
         runId: `run-${input.sandboxId}`,
         status: exitCode === undefined || exitCode === 0 ? "running" : "failed",
         ...(exitCode === undefined || exitCode === 0 ? {} : { exitCode }),
-        ...(output.trim() ? { output: output.trim() } : {})
+        ...(diagnosticOutput ? { output: diagnosticOutput } : {})
       };
     },
 
@@ -460,24 +468,66 @@ function runtimeEngineFromLabel(
   }
 }
 
-function appendExecOutput(
-  current: string,
-  payload: Record<string, unknown> | null
-): string {
-  const data = payload?.data;
-  if (!data) {
-    return current;
-  }
-  const text =
-    typeof data === "string"
-      ? data
-      : data instanceof Uint8Array
-        ? Buffer.from(data).toString("utf8")
-        : "";
+export function parseOpenShellExecEvent(
+  event: Record<string, unknown>
+): { output: string; exitCode?: number; summary: string } {
+  const stdout = isRecord(event.stdout) ? event.stdout : null;
+  const stderr = isRecord(event.stderr) ? event.stderr : null;
+  const exit = isRecord(event.exit) ? event.exit : null;
+  const output = `${decodeExecData(stdout?.data)}${decodeExecData(stderr?.data)}`;
+  const exitCode =
+    typeof exit?.exitCode === "number"
+      ? exit.exitCode
+      : typeof exit?.exit_code === "number"
+        ? exit.exit_code
+        : undefined;
+  return {
+    output,
+    ...(exitCode === undefined ? {} : { exitCode }),
+    summary: summarizeExecEvent(event)
+  };
+}
+
+function appendExecOutput(current: string, text: string): string {
   if (!text) {
     return current;
   }
   return `${current}${text}`.slice(-4000);
+}
+
+function decodeExecData(data: unknown): string {
+  if (!data) {
+    return "";
+  }
+  if (typeof data === "string") {
+    return data;
+  }
+  if (data instanceof Uint8Array) {
+    return Buffer.from(data).toString("utf8");
+  }
+  if (data instanceof ArrayBuffer) {
+    return Buffer.from(data).toString("utf8");
+  }
+  if (Array.isArray(data) && data.every((value) => typeof value === "number")) {
+    return Buffer.from(data).toString("utf8");
+  }
+  if (isRecord(data) && Array.isArray(data.data)) {
+    return decodeExecData(data.data);
+  }
+  return "";
+}
+
+function summarizeExecEvent(event: Record<string, unknown>): string {
+  const keys = Object.keys(event).sort();
+  return keys
+    .map((key) => {
+      const value = event[key];
+      if (isRecord(value)) {
+        return `${key}{${Object.keys(value).sort().join(",")}}`;
+      }
+      return key;
+    })
+    .join("+");
 }
 
 function encodeOpenShellLabelValues(
