@@ -17,10 +17,10 @@ import { runtimeCompatibilityFamily } from "../runtime-descriptors";
 import { sealRuntimeConversationAttachments } from "../../conversation/attachment-capabilities";
 import type { Config } from "../../config";
 import {
-  isOpenShellVirtualEndpoint,
-  routeRuntimeEndpointFetch,
-  routeRuntimeEndpointWebSocket
+  routeRuntimeEndpointWebSocket,
+  routeRuntimeEndpointFetch
 } from "../runtime-endpoint-routing";
+import { createRoutedRuntimeWebSocketFactory } from "../runtime-websocket";
 
 export type AgentRuntimeFetch = (
   input: string,
@@ -123,8 +123,15 @@ export function createManagedRuntimeAdapter(
     { openShellDialHost: deps.config?.agentRuntimeOpenShellDialHost }
   );
   const requestFetch: AgentRuntimeFetch = (url, init) => routedFetch(url, init);
-  const createWebSocket: AgentRuntimeWebSocketFactory =
-    deps.webSocketFactory ?? createRuntimeContractWebSocket;
+  const routeOptions = {
+    openShellDialHost: deps.config?.agentRuntimeOpenShellDialHost
+  };
+  const createWebSocket: AgentRuntimeWebSocketFactory = deps.webSocketFactory
+    ? (url, options) => {
+        const routed = routeRuntimeEndpointWebSocket(url, options, routeOptions);
+        return deps.webSocketFactory!(routed.url, routed.options);
+      }
+    : createRoutedRuntimeWebSocketFactory(routeOptions);
   const logInfo = deps.logInfo ?? (() => undefined);
   const observability = deps.observability;
   const runtimeCapabilityCache: RuntimeCapabilityCache = new Map();
@@ -305,59 +312,32 @@ export function createManagedRuntimeAdapter(
           );
 
           try {
-            if (isOpenShellVirtualEndpoint(eventsUrl)) {
-              logInfo(
-                [
-                  "Managed runtime event socket skipped for OpenShell virtual host",
-                  `runId=${startedRunId}`,
-                  `runtimeId=${runtime?.id ?? "static"}`,
-                  "fallback=json"
-                ].join(" ")
-              );
-              const fallbackResponse = await getRuntimeRun(
-                requestFetch,
-                `${baseUrl}/runs/${encodeURIComponent(startedRunId)}`,
-                runtime
-              );
-              if (!fallbackResponse.ok) {
-                throw new Error(
-                  `Managed runtime returned HTTP ${fallbackResponse.status}`
+            agentResponse = yield* readWebSocketRunResponse(
+              createWebSocket(eventsUrl, runtimeWebSocketOptions(runtime)),
+              runtimeMessageDeltasEnabled(runtime),
+              (event) => {
+                logInfo(
+                  [
+                    "Managed runtime stream event",
+                    `runId=${startedRunId}`,
+                    `runtimeId=${runtime?.id ?? "static"}`,
+                    `elapsedMs=${Date.now() - runStartedAt}`,
+                    `type=${event.type}`
+                  ].join(" ")
                 );
+                observeRuntimeStreamEvent(event, {
+                  observability,
+                  runtimeFactory: deps.runtimeFactory,
+                  workspaceId: input.principal.workspaceId,
+                  principalId,
+                  runId,
+                  runtimeId,
+                  runtimeType,
+                  runtime,
+                  elapsedMs: Date.now() - runStartedAt
+                });
               }
-              agentResponse = await readJsonRunResponse(fallbackResponse);
-            } else {
-              const eventSocket = routeRuntimeEndpointWebSocket(
-                eventsUrl,
-                runtimeWebSocketOptions(runtime),
-                { openShellDialHost: deps.config?.agentRuntimeOpenShellDialHost }
-              );
-              agentResponse = yield* readWebSocketRunResponse(
-                createWebSocket(eventSocket.url, eventSocket.options),
-                runtimeMessageDeltasEnabled(runtime),
-                (event) => {
-                  logInfo(
-                    [
-                      "Managed runtime stream event",
-                      `runId=${startedRunId}`,
-                      `runtimeId=${runtime?.id ?? "static"}`,
-                      `elapsedMs=${Date.now() - runStartedAt}`,
-                      `type=${event.type}`
-                    ].join(" ")
-                  );
-                  observeRuntimeStreamEvent(event, {
-                    observability,
-                    runtimeFactory: deps.runtimeFactory,
-                    workspaceId: input.principal.workspaceId,
-                    principalId,
-                    runId,
-                    runtimeId,
-                    runtimeType,
-                    runtime,
-                    elapsedMs: Date.now() - runStartedAt
-                  });
-                }
-              );
-            }
+            );
           } catch (error) {
             if (!isRuntimeStreamClosedError(error)) {
               throw error;

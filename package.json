@@ -26,11 +26,13 @@
     "@slack/bolt": "^4.4.0",
     "ai": "^6.0.185",
     "eventsource-parser": "^3.0.8",
+    "ws": "^8.21.0",
     "yaml": "^2.9.0",
     "zod": "^4.4.3"
   },
   "devDependencies": {
     "@types/bun": "^1.2.21",
+    "@types/ws": "^8.18.1",
     "typescript": "^5.9.3"
   }
 }

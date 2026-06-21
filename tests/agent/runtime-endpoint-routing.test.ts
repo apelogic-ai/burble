@@ -70,18 +70,24 @@ describe("runtime endpoint routing", () => {
     ]);
   });
 
-  test("rejects OpenShell websocket virtual-host routing", () => {
-    expect(() =>
-      routeRuntimeEndpointWebSocket(
-        "ws://b-123--runtime.openshell.localhost:8080/runs/run-1/events",
-        {
-          headers: {
-            authorization: "Bearer runtime-token"
-          }
-        },
-        { openShellDialHost: "openshell" }
-      )
-    ).toThrow("OpenShell WebSocket virtual-host routing is not supported");
+  test("routes OpenShell websocket endpoints with the original host header", () => {
+    const routed = routeRuntimeEndpointWebSocket(
+      "ws://b-123--runtime.openshell.localhost:8080/runs/run-1/events",
+      {
+        headers: {
+          authorization: "Bearer runtime-token"
+        }
+      },
+      { openShellDialHost: "openshell" }
+    );
+
+    expect(routed.url).toBe("ws://openshell:8080/runs/run-1/events");
+    expect(new Headers(routed.options?.headers).get("host")).toBe(
+      "b-123--runtime.openshell.localhost:8080"
+    );
+    expect(new Headers(routed.options?.headers).get("authorization")).toBe(
+      "Bearer runtime-token"
+    );
   });
 
   test("detects OpenShell virtual endpoints", () => {

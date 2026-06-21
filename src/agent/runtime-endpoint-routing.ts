@@ -26,13 +26,17 @@ export function routeRuntimeEndpointWebSocket(
   options: RuntimeEndpointWebSocketOptions | undefined,
   routeOptions: RuntimeEndpointRouteOptions
 ): { url: string; options?: RuntimeEndpointWebSocketOptions } {
-  if (!isOpenShellVirtualEndpoint(url)) {
+  const routed = routeOpenShellVirtualHost(url, routeOptions.openShellDialHost);
+  if (!routed) {
     return { url, ...(options ? { options } : {}) };
   }
-
-  throw new Error(
-    "OpenShell WebSocket virtual-host routing is not supported because Bun cannot replace the Host header; use runtime snapshot polling for OpenShell endpoints"
-  );
+  return {
+    url: routed.url,
+    options: {
+      ...options,
+      headers: withHostHeader(options?.headers, routed.hostHeader)
+    }
+  };
 }
 
 export function isOpenShellVirtualEndpoint(url: string): boolean {

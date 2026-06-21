@@ -6,6 +6,8 @@ import {
 import type { PrincipalId, RuntimeFactory } from "./runtime-factory";
 import { runtimeCompatibilityFamily } from "./runtime-descriptors";
 import { runtimeCapabilityManifestCompatibility } from "./runtime-policy";
+import { routeRuntimeEndpointFetch } from "./runtime-endpoint-routing";
+import { createRoutedRuntimeWebSocketFactory } from "./runtime-websocket";
 
 export type RuntimeReadinessSignalName =
   | "runtime.created"
@@ -32,6 +34,7 @@ export async function runRuntimeReadinessCheck(input: {
   runtimeFactory: RuntimeFactory;
   store: TokenStore;
   fetch?: RuntimeContractFetch;
+  openShellDialHost?: string | null;
 }): Promise<RuntimeReadinessReport> {
   const signals: RuntimeReadinessSignal[] = [];
   const runtime = await input.runtimeFactory.getOrCreateRuntime(input.principal);
@@ -57,9 +60,21 @@ export async function runRuntimeReadinessCheck(input: {
   }
   signals.push({ name: "runtime.container_started", status: "ok" });
 
+  const openShellDialHost =
+    input.openShellDialHost ?? inferOpenShellDialHost(runtime.endpointUrl);
+  const requestFetch = openShellDialHost
+    ? routeRuntimeEndpointFetch(input.fetch ?? fetch, { openShellDialHost })
+    : input.fetch;
   const client = createRuntimeContractHttpClient({
     baseUrl: runtime.endpointUrl,
-    fetch: input.fetch,
+    fetch: requestFetch,
+    ...(openShellDialHost
+      ? {
+          webSocketFactory: createRoutedRuntimeWebSocketFactory({
+            openShellDialHost
+          })
+        }
+      : {}),
     headers: {
       authorization: `Bearer ${runtime.authToken}`,
       "x-burble-runtime-id": runtime.id
@@ -108,6 +123,17 @@ export async function runRuntimeReadinessCheck(input: {
     endpointUrl: runtime.endpointUrl,
     signals
   };
+}
+
+function inferOpenShellDialHost(endpointUrl: string): string | null {
+  try {
+    const url = new URL(endpointUrl);
+    return url.hostname.toLowerCase().endsWith(".openshell.localhost")
+      ? "openshell"
+      : null;
+  } catch {
+    return null;
+  }
 }
 
 function failSignal(name: RuntimeReadinessSignalName, detail?: string): never {

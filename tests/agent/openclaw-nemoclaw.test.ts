@@ -1117,9 +1117,10 @@ describe("createOpenClawNemoClawAgentRunner", () => {
     });
   });
 
-  test("uses snapshot polling instead of WebSocket for OpenShell virtual hosts", async () => {
+  test("routes OpenShell virtual-host WebSocket streams through the dial host", async () => {
     const calls: Array<{ url: string; method: string; host: string | null }> = [];
-    let webSocketCreated = false;
+    const sockets: FakeRuntimeWebSocket[] = [];
+    const webSocketCalls: Array<{ url: string; host: string | null }> = [];
     const runner = createOpenClawNemoClawAgentRunner({
       config: {
         agentRuntimeOpenShellDialHost: "openshell"
@@ -1156,30 +1157,35 @@ describe("createOpenClawNemoClawAgentRunner", () => {
             eventsUrl: "/runs/run-openshell/events"
           });
         }
-        if (String(url) === "http://openshell:8080/runs/run-openshell") {
-          return Response.json({
-            response: {
-              classification: "user_private",
-              text: "Final from snapshot"
-            }
-          });
-        }
         throw new Error(`Unexpected request ${url}`);
       },
-      webSocketFactory() {
-        webSocketCreated = true;
-        throw new Error("OpenShell virtual host should not create a WebSocket");
+      webSocketFactory(url, options) {
+        webSocketCalls.push({
+          url,
+          host: new Headers(options?.headers).get("host")
+        });
+        const socket = new FakeRuntimeWebSocket(url);
+        sockets.push(socket);
+        return socket;
       }
     });
 
-    const result = await collectAgentRun(runner, {
+    const resultPromise = collectAgentRun(runner, {
       principal,
       conversation,
       text: "summarize my GitHub work",
       connections: { github: connection }
     });
+    const socket = await waitForSocket(sockets);
+    socket.sendEvent({
+      type: "final",
+      response: {
+        classification: "user_private",
+        text: "Final from OpenShell WS"
+      }
+    });
+    const result = await resultPromise;
 
-    expect(webSocketCreated).toBe(false);
     expect(calls.map((call) => [call.method, call.url, call.host])).toEqual([
       [
         "GET",
@@ -1190,16 +1196,17 @@ describe("createOpenClawNemoClawAgentRunner", () => {
         "POST",
         "http://openshell:8080/runs",
         "b-123--runtime.openshell.localhost:8080"
-      ],
-      [
-        "GET",
-        "http://openshell:8080/runs/run-openshell",
-        "b-123--runtime.openshell.localhost:8080"
       ]
+    ]);
+    expect(webSocketCalls).toEqual([
+      {
+        url: "ws://openshell:8080/runs/run-openshell/events",
+        host: "b-123--runtime.openshell.localhost:8080"
+      }
     ]);
     expect(result).toEqual({
       classification: "user_private",
-      text: "Final from snapshot"
+      text: "Final from OpenShell WS"
     });
   });
 
