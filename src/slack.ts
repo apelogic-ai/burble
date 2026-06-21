@@ -2643,9 +2643,9 @@ function buildAgentRuntimeActionElements(settings: AgentHomeSettingsView) {
     });
   }
 
-  if (settings.runtime.factory !== "docker") {
+  if (!isRuntimeLifecycleManagedByBurble(settings.runtime.factory)) {
     // Static runtimes are shared externally managed services, so Burble cannot
-    // safely expose per-user container lifecycle actions for them.
+    // safely expose per-user lifecycle actions for them.
   } else if (isRuntimeStartable(settings.runtime.status)) {
     elements.push({
       type: "button",
@@ -2673,7 +2673,7 @@ function buildAgentRuntimeActionElements(settings: AgentHomeSettingsView) {
           },
           text: {
             type: "mrkdwn",
-            text: "This stops the current runtime container and may interrupt active autonomous work."
+            text: "This stops the current runtime instance and may interrupt active autonomous work."
           },
           confirm: {
             type: "plain_text",
@@ -2740,6 +2740,10 @@ function runtimeEngineHomeOptions(settings: AgentHomeSettingsView): string[] {
 
 function isRuntimeStartable(status: string): boolean {
   return status === "not provisioned" || status === "stopped" || status === "failed";
+}
+
+function isRuntimeLifecycleManagedByBurble(factory: string): boolean {
+  return factory === "docker" || factory === "sandbox";
 }
 
 function formatRuntimeHomeSummary(settings: AgentHomeSettingsView): string {

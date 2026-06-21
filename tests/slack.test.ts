@@ -1688,6 +1688,54 @@ describe("buildAppHomeView", () => {
     store.close();
   });
 
+  test("shows lifecycle controls for sandbox-managed runtimes", () => {
+    const store = createTokenStore(":memory:");
+    store.getOrCreateAgentRuntime({
+      workspaceId: "T123",
+      slackUserId: "U123",
+      engine: "hermes",
+      endpointUrl: "http://runtime.openshell.localhost:8080",
+      authTokenHash: "hash",
+      statePath: "/data/state",
+      configPath: "/data/config/runtime.json",
+      workspacePath: "/data/workspace",
+      sandboxId: "sandbox-123",
+      policyHash: "policy-home"
+    });
+    const agentSettings = buildAgentHomeSettings({
+      config: {
+        ...agentConfig,
+        agentRuntimeFactory: "sandbox",
+        agentRuntimeEngine: "hermes"
+      },
+      store,
+      workspaceId: "T123",
+      slackUserId: "U123"
+    });
+    const view = buildAppHomeView({
+      githubUrl: "https://example.test/github",
+      googleUrl: "https://example.test/google",
+      hubspotUrl: "https://example.test/hubspot",
+      jiraUrl: "https://example.test/jira",
+      slackUrl: "https://example.test/slack",
+      connections: {
+        github: null,
+        google: null,
+        hubspot: null,
+        jira: null,
+        slack: null
+      },
+      agentSettings
+    });
+    const serialized = JSON.stringify(view);
+
+    expect(serialized).toContain("Factory: `sandbox`");
+    expect(serialized).toContain("agent_runtime_pause");
+    expect(serialized).toContain("agent_runtime_restart");
+    expect(serialized).toContain("runtime instance");
+    store.close();
+  });
+
   test("normalizes legacy Burble direct runtime selections in App Home", () => {
     const store = createTokenStore(":memory:");
     store.upsertWorkspacePolicy({

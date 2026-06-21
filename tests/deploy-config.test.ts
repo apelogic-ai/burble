@@ -443,6 +443,9 @@ describe("dev deploy config", () => {
       "ghcr.io/nvidia/openshell/gateway:${OPENSHELL_IMAGE_TAG:-latest}"
     );
     expect(openShellCompose).toContain(
+      "${OPENSHELL_BIND_HOST:-0.0.0.0}:${OPENSHELL_PORT:-8080}:8080"
+    );
+    expect(openShellCompose).toContain(
       "OPENSHELL_GATEWAY_CONFIG=/etc/openshell/gateway.toml"
     );
     expect(openShellCompose).toContain(
@@ -477,7 +480,7 @@ describe("dev deploy config", () => {
     );
     expect(openShellGatewayConfig).toContain("allow_unauthenticated_users = true");
     expect(openShellGatewayConfig).toContain(
-      'grpc_endpoint     = "http://host.openshell.internal:8080"'
+      'grpc_endpoint     = "http://172.17.0.1:8080"'
     );
   });
 
@@ -587,6 +590,7 @@ describe("dev deploy config", () => {
         "AGENT_RUNTIME_SANDBOX_START_COMMAND",
         "AGENT_RUNTIME_OPENSHELL_DIAL_HOST",
         "OPENSHELL_IMAGE_TAG",
+        "OPENSHELL_BIND_HOST",
         "OPENSHELL_PORT",
         "OPENSHELL_HEALTH_PORT",
         "OPENSHELL_DATA_ROOT"

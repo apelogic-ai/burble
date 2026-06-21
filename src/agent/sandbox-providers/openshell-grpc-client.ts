@@ -6,6 +6,7 @@ import {
   type ServiceClientConstructor
 } from "@grpc/grpc-js";
 import { loadSync } from "@grpc/proto-loader";
+import { Buffer } from "node:buffer";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type {
@@ -64,6 +65,8 @@ const principalWorkspaceLabel = "burble.workspace_id";
 const principalUserLabel = "burble.user_id";
 const runtimeEngineLabel = "burble.runtime_engine";
 const runtimeImageLabel = "burble.runtime_image";
+const encodedLabelValuePrefix = "burble_b64.";
+const openShellLabelValuePattern = /^[A-Za-z0-9_.-]+$/;
 
 export function createOpenShellGrpcSandboxClient(
   options: OpenShellGrpcSandboxClientOptions
@@ -404,18 +407,18 @@ function runtimeLabels(
   principal: OpenShellSandboxRecord["principal"],
   runtime: OpenShellSandboxRecord["runtime"]
 ): Record<string, string> {
-  return {
+  return encodeOpenShellLabelValues({
     ...labels,
     [principalWorkspaceLabel]: principal.workspaceId,
     [principalUserLabel]: principal.userId,
     [runtimeEngineLabel]: runtime.engine,
     [runtimeImageLabel]: runtime.image
-  };
+  });
 }
 
 function sandboxLabels(sandbox: Record<string, unknown>): Record<string, string> {
   const metadata = isRecord(sandbox.metadata) ? sandbox.metadata : {};
-  return stringRecord(metadata.labels) ?? {};
+  return decodeOpenShellLabelValues(stringRecord(metadata.labels) ?? {});
 }
 
 function principalFromLabels(
@@ -449,6 +452,50 @@ function runtimeEngineFromLabel(
     default:
       return "openclaw";
   }
+}
+
+function encodeOpenShellLabelValues(
+  labels: Record<string, string>
+): Record<string, string> {
+  return Object.fromEntries(
+    Object.entries(labels).map(([key, value]) => [
+      key,
+      encodeOpenShellLabelValue(value)
+    ])
+  );
+}
+
+function decodeOpenShellLabelValues(
+  labels: Record<string, string>
+): Record<string, string> {
+  return Object.fromEntries(
+    Object.entries(labels).map(([key, value]) => [
+      key,
+      decodeOpenShellLabelValue(value)
+    ])
+  );
+}
+
+export function encodeOpenShellLabelValue(value: string): string {
+  if (
+    openShellLabelValuePattern.test(value) &&
+    !value.startsWith(encodedLabelValuePrefix)
+  ) {
+    return value;
+  }
+  return `${encodedLabelValuePrefix}${Buffer.from(value, "utf8").toString(
+    "base64url"
+  )}`;
+}
+
+export function decodeOpenShellLabelValue(value: string): string {
+  if (!value.startsWith(encodedLabelValuePrefix)) {
+    return value;
+  }
+  return Buffer.from(
+    value.slice(encodedLabelValuePrefix.length),
+    "base64url"
+  ).toString("utf8");
 }
 
 function toOpenShellGrpcPolicy(policy: SandboxPolicy): Record<string, unknown> {

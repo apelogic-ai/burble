@@ -94,6 +94,7 @@ AGENT_RUNTIME_SANDBOX_TRANSPORT=grpc
 AGENT_RUNTIME_SANDBOX_START_COMMAND=
 AGENT_RUNTIME_OPENSHELL_DIAL_HOST=
 OPENSHELL_IMAGE_TAG=latest
+OPENSHELL_BIND_HOST=0.0.0.0
 OPENSHELL_PORT=8080
 OPENSHELL_HEALTH_PORT=8081
 OPENSHELL_DATA_ROOT=/var/lib/openshell
@@ -267,10 +268,16 @@ AGENT_RUNTIME_SANDBOX_URL=
 AGENT_RUNTIME_SANDBOX_TOKEN=<long-random-secret>
 AGENT_RUNTIME_SANDBOX_TRANSPORT=grpc
 OPENSHELL_IMAGE_TAG=latest
+OPENSHELL_BIND_HOST=0.0.0.0
 OPENSHELL_PORT=8080
 OPENSHELL_HEALTH_PORT=8081
 OPENSHELL_DATA_ROOT=/var/lib/openshell
 ```
+
+`OPENSHELL_BIND_HOST=0.0.0.0` is intentional for the Docker-driver testbed:
+OpenShell-created sandbox containers must connect back to the gateway through
+the Docker host bridge to fetch policy. Keep port 8080/8081 closed in the EC2
+security group unless you intentionally expose OpenShell outside the host.
 
 `OPENSHELL_DATA_ROOT` must be an absolute host path that is also visible at the
 same path inside the OpenShell gateway container; the Docker driver bind-mounts
