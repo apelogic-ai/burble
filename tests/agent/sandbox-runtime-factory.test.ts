@@ -432,7 +432,11 @@ describe("createSandboxRuntimeFactory", () => {
   test("reports immediately exited sandbox start commands without waiting for health timeout", async () => {
     const store = createTokenStore(":memory:");
     const provider = createFakeRuntimeSandboxProvider();
-    provider.nextRun = { status: "finished", exitCode: 2 };
+    provider.nextRun = {
+      status: "finished",
+      exitCode: 2,
+      output: "runtime crashed during import"
+    };
     const healthUrls: string[] = [];
     const factory = createSandboxRuntimeFactory({
       store,
@@ -451,7 +455,7 @@ describe("createSandboxRuntimeFactory", () => {
     });
 
     await expect(factory.getOrCreateRuntime(principal)).rejects.toThrow(
-      "Sandbox runtime start exited: sandbox-1-run-1 (exit 2)"
+      "Sandbox runtime start exited: sandbox-1-run-1 (exit 2)\nruntime crashed during import"
     );
 
     expect(healthUrls).toEqual([]);
@@ -558,7 +562,11 @@ type FakeRuntimeSandboxProvider = SandboxProvider & {
   attachCalls: string[];
   terminated: string[];
   failNextRun: boolean;
-  nextRun?: { status: SandboxRunHandle["status"]; exitCode?: number };
+  nextRun?: {
+    status: SandboxRunHandle["status"];
+    exitCode?: number;
+    output?: string;
+  };
   provisionDelay?: Promise<void>;
 };
 
@@ -653,7 +661,8 @@ function createFakeRuntimeSandboxProvider(
           id: `${sandboxId}-run-1`,
           sandboxId,
           status: nextRun.status,
-          ...(nextRun.exitCode === undefined ? {} : { exitCode: nextRun.exitCode })
+          ...(nextRun.exitCode === undefined ? {} : { exitCode: nextRun.exitCode }),
+          ...(nextRun.output === undefined ? {} : { output: nextRun.output })
         };
       }
       sandboxes.set(
