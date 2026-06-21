@@ -657,7 +657,7 @@ function sandboxStatus(phase: unknown): OpenShellSandboxRecord["status"] {
   }
 }
 
-function shellBackgroundCommand(argv: string[]): string {
+export function shellBackgroundCommand(argv: string[]): string {
   const command = argv.map(shellQuote).join(" ");
   return [
     `(${command}) >/tmp/burble-runtime.log 2>&1 &`,
@@ -671,7 +671,7 @@ function shellBackgroundCommand(argv: string[]): string {
     "status=$?",
     "cat /tmp/burble-runtime.log >&2 2>/dev/null || true",
     "exit $status"
-  ].join("; ");
+  ].join("\n");
 }
 
 function shellQuote(value: string): string {

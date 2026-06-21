@@ -2,7 +2,8 @@ import { describe, expect, test } from "bun:test";
 import {
   decodeOpenShellLabelValue,
   encodeOpenShellLabelValue,
-  parseOpenShellExecEvent
+  parseOpenShellExecEvent,
+  shellBackgroundCommand
 } from "../../src/agent/sandbox-providers/openshell-grpc-client";
 
 describe("OpenShell gRPC client labels", () => {
@@ -26,6 +27,19 @@ describe("OpenShell gRPC client labels", () => {
 });
 
 describe("OpenShell gRPC exec events", () => {
+  test("generates shell syntax that can background the runtime command", async () => {
+    const command = shellBackgroundCommand(["python", "/runtime/entrypoint.py"]);
+
+    expect(command).not.toContain("&;");
+    expect(command).toContain("&\npid=$!");
+    expect(
+      Bun.spawnSync(["sh", "-n", "-c", command], {
+        stdout: "pipe",
+        stderr: "pipe"
+      }).exitCode
+    ).toBe(0);
+  });
+
   test("decodes byte output and snake-case exit codes", () => {
     expect(
       parseOpenShellExecEvent({
