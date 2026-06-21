@@ -257,10 +257,13 @@ export function createSandboxRuntimeFactory(input: {
         })
       });
       if (run.status === "failed" || run.status === "finished") {
+        const output = run.output?.trim();
         throw new Error(
           `Sandbox runtime start ${
             run.status === "finished" ? "exited" : "failed"
-          }: ${run.id}${run.exitCode === undefined ? "" : ` (exit ${run.exitCode})`}`
+          }: ${run.id}${run.exitCode === undefined ? "" : ` (exit ${run.exitCode})`}${
+            output ? `\n${output}` : ""
+          }`
         );
       }
       await waitForSandboxRuntimeHealth({

@@ -152,6 +152,7 @@ export function createOpenShellGrpcSandboxClient(
         metadata()
       );
       let exitCode: number | undefined;
+      let output = "";
       await new Promise<void>((resolve, reject) => {
         const stream = service.ExecSandbox(
           {
@@ -165,6 +166,10 @@ export function createOpenShellGrpcSandboxClient(
         );
         stream.on("data", (event) => {
           const record = objectRecord(event, "OpenShell exec event");
+          const stdout = isRecord(record.stdout) ? record.stdout : null;
+          const stderr = isRecord(record.stderr) ? record.stderr : null;
+          output = appendExecOutput(output, stdout);
+          output = appendExecOutput(output, stderr);
           const exit = isRecord(record.exit) ? record.exit : null;
           if (exit && typeof exit.exitCode === "number") {
             exitCode = exit.exitCode;
@@ -177,7 +182,8 @@ export function createOpenShellGrpcSandboxClient(
       return {
         runId: `run-${input.sandboxId}`,
         status: exitCode === undefined || exitCode === 0 ? "running" : "failed",
-        ...(exitCode === undefined || exitCode === 0 ? {} : { exitCode })
+        ...(exitCode === undefined || exitCode === 0 ? {} : { exitCode }),
+        ...(output.trim() ? { output: output.trim() } : {})
       };
     },
 
@@ -454,6 +460,26 @@ function runtimeEngineFromLabel(
   }
 }
 
+function appendExecOutput(
+  current: string,
+  payload: Record<string, unknown> | null
+): string {
+  const data = payload?.data;
+  if (!data) {
+    return current;
+  }
+  const text =
+    typeof data === "string"
+      ? data
+      : data instanceof Uint8Array
+        ? Buffer.from(data).toString("utf8")
+        : "";
+  if (!text) {
+    return current;
+  }
+  return `${current}${text}`.slice(-4000);
+}
+
 function encodeOpenShellLabelValues(
   labels: Record<string, string>
 ): Record<string, string> {
@@ -592,7 +618,9 @@ function shellBackgroundCommand(argv: string[]): string {
     "  exit 0",
     "fi",
     'wait "$pid"',
-    "exit $?"
+    "status=$?",
+    "cat /tmp/burble-runtime.log >&2 2>/dev/null || true",
+    "exit $status"
   ].join("; ");
 }
 

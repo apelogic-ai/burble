@@ -74,6 +74,7 @@ export type SandboxRunHandle = {
   sandboxId: string;
   status: "running" | "finished" | "failed";
   exitCode?: number;
+  output?: string;
 };
 
 export type SandboxEvent = {
