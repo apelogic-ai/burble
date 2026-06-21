@@ -296,6 +296,7 @@ describe("OpenShellSandboxProvider", () => {
 
   test("does not fetch after run because the run result is the authoritative result", async () => {
     const client = createFakeOpenShellClient();
+    client.nextRunOutput = "runtime crashed during import";
     const provider = createOpenShellSandboxProvider({ client });
     const sandbox = await provider.provision({
       principal: { workspaceId: "T123", userId: "U123" },
@@ -303,8 +304,9 @@ describe("OpenShellSandboxProvider", () => {
       labels: {}
     });
 
-    await provider.run(sandbox.id, { argv: ["true"] });
+    const run = await provider.run(sandbox.id, { argv: ["true"] });
 
+    expect(run.output).toBe("runtime crashed during import");
     expect(client.getSandboxCalls).toBe(0);
   });
 
@@ -500,6 +502,7 @@ type FakeOpenShellClient = OpenShellSandboxClient & {
   compiledPolicyCalls: OpenShellSandboxPolicyConfig[];
   compiledProviderCalls: OpenShellProviderBindingConfig[][];
   materializedCredentialCalls: SandboxCredentialBinding[][];
+  nextRunOutput?: string;
 };
 
 function createFakeOpenShellClient(options?: {
@@ -591,7 +594,10 @@ function createFakeOpenShellClient(options?: {
       return {
         runId: `${input.sandboxId}-run-1`,
         status: "finished",
-        exitCode: 0
+        exitCode: 0,
+        ...(client.nextRunOutput === undefined
+          ? {}
+          : { output: client.nextRunOutput })
       };
     },
     async getSandbox(input) {

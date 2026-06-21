@@ -58,6 +58,7 @@ export type OpenShellSandboxClient = {
     runId: string;
     status: SandboxRunHandle["status"];
     exitCode?: number;
+    output?: string;
   }>;
   getSandbox(input: { sandboxId: string }): Promise<OpenShellSandboxRecord>;
   events(input: { sandboxId: string }): AsyncIterable<SandboxEvent>;
@@ -131,7 +132,8 @@ export function createOpenShellSandboxProvider(input: {
         id: result.runId,
         sandboxId,
         status: result.status,
-        ...(result.exitCode === undefined ? {} : { exitCode: result.exitCode })
+        ...(result.exitCode === undefined ? {} : { exitCode: result.exitCode }),
+        ...(result.output === undefined ? {} : { output: result.output })
       };
     },
 
