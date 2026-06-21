@@ -10,7 +10,8 @@ import { buildBrokeredRuntimeSandboxPolicy } from "./sandbox-policy";
 import type {
   SandboxCredentialBinding,
   SandboxPolicy,
-  SandboxProvider
+  SandboxProvider,
+  SandboxRunHandle
 } from "./sandbox-provider";
 import {
   runtimeDescriptor,
@@ -257,14 +258,7 @@ export function createSandboxRuntimeFactory(input: {
         })
       });
       if (run.status === "failed" || run.status === "finished") {
-        const output = run.output?.trim();
-        throw new Error(
-          `Sandbox runtime start ${
-            run.status === "finished" ? "exited" : "failed"
-          }: ${run.id}${run.exitCode === undefined ? "" : ` (exit ${run.exitCode})`}${
-            output ? `\n${output}` : ""
-          }`
-        );
+        throw new Error(formatSandboxRuntimeStartFailure(run));
       }
       await waitForSandboxRuntimeHealth({
         endpointUrl: sandbox.endpointUrl,
@@ -394,6 +388,20 @@ export function createSandboxRuntimeFactory(input: {
       });
     }
   };
+}
+
+function formatSandboxRuntimeStartFailure(run: SandboxRunHandle): string {
+  const output = run.output?.trim();
+  const outputPreview = output ? singleLinePreview(output) : "";
+  return `Sandbox runtime start ${
+    run.status === "finished" ? "exited" : "failed"
+  }: ${run.id}${run.exitCode === undefined ? "" : ` (exit ${run.exitCode})`}${
+    outputPreview ? `; output: ${outputPreview}` : ""
+  }${output && output !== outputPreview ? `\n${output}` : ""}`;
+}
+
+function singleLinePreview(value: string): string {
+  return value.replace(/\s+/g, " ").trim().slice(0, 500);
 }
 
 function assertSandboxProviderCapabilities(provider: SandboxProvider): void {

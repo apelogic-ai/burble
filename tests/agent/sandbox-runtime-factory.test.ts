@@ -455,7 +455,7 @@ describe("createSandboxRuntimeFactory", () => {
     });
 
     await expect(factory.getOrCreateRuntime(principal)).rejects.toThrow(
-      "Sandbox runtime start exited: sandbox-1-run-1 (exit 2)\nruntime crashed during import"
+      "Sandbox runtime start exited: sandbox-1-run-1 (exit 2); output: runtime crashed during import"
     );
 
     expect(healthUrls).toEqual([]);
