@@ -38,22 +38,31 @@ function createWsPackageRuntimeWebSocket(
   url: string,
   options?: RuntimeContractWebSocketOptions
 ): RuntimeContractWebSocket {
+  // OpenShell routes sandbox services by HTTP Host. Bun's built-in WebSocket
+  // appends a supplied Host header instead of replacing it, so use `ws` only
+  // for the OpenShell virtual-host path where Host replacement is required.
   const socket = new WebSocket(url, {
     headers: toWsHeaders(options?.headers)
   });
   return {
     addEventListener(type, listener) {
-      if (type === "message") {
-        socket.on("message", (data) => {
-          listener({ data: data.toString() });
-        });
-        return;
+      switch (type) {
+        case "message":
+          socket.on("message", (data) => {
+            listener({ data: data.toString() });
+          });
+          return;
+        case "error":
+          socket.on("error", () => listener({}));
+          return;
+        case "close":
+          socket.on("close", () => listener({}));
+          return;
+        default: {
+          const exhaustive: never = type;
+          throw new Error(`Unsupported runtime WebSocket event: ${exhaustive}`);
+        }
       }
-      if (type === "error") {
-        socket.on("error", () => listener({}));
-        return;
-      }
-      socket.on("close", () => listener({}));
     },
     close() {
       socket.close();
