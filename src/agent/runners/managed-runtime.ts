@@ -17,6 +17,7 @@ import { runtimeCompatibilityFamily } from "../runtime-descriptors";
 import { sealRuntimeConversationAttachments } from "../../conversation/attachment-capabilities";
 import type { Config } from "../../config";
 import {
+  isOpenShellVirtualEndpoint,
   routeRuntimeEndpointFetch,
   routeRuntimeEndpointWebSocket
 } from "../runtime-endpoint-routing";
@@ -304,37 +305,59 @@ export function createManagedRuntimeAdapter(
           );
 
           try {
-            const eventSocket = routeRuntimeEndpointWebSocket(
-              eventsUrl,
-              runtimeWebSocketOptions(runtime),
-              { openShellDialHost: deps.config?.agentRuntimeOpenShellDialHost }
-            );
-            agentResponse = yield* readWebSocketRunResponse(
-              createWebSocket(eventSocket.url, eventSocket.options),
-              runtimeMessageDeltasEnabled(runtime),
-              (event) => {
-                logInfo(
-                  [
-                    "Managed runtime stream event",
-                    `runId=${startedRunId}`,
-                    `runtimeId=${runtime?.id ?? "static"}`,
-                    `elapsedMs=${Date.now() - runStartedAt}`,
-                    `type=${event.type}`
-                  ].join(" ")
+            if (isOpenShellVirtualEndpoint(eventsUrl)) {
+              logInfo(
+                [
+                  "Managed runtime event socket skipped for OpenShell virtual host",
+                  `runId=${startedRunId}`,
+                  `runtimeId=${runtime?.id ?? "static"}`,
+                  "fallback=json"
+                ].join(" ")
+              );
+              const fallbackResponse = await getRuntimeRun(
+                requestFetch,
+                `${baseUrl}/runs/${encodeURIComponent(startedRunId)}`,
+                runtime
+              );
+              if (!fallbackResponse.ok) {
+                throw new Error(
+                  `Managed runtime returned HTTP ${fallbackResponse.status}`
                 );
-                observeRuntimeStreamEvent(event, {
-                  observability,
-                  runtimeFactory: deps.runtimeFactory,
-                  workspaceId: input.principal.workspaceId,
-                  principalId,
-                  runId,
-                  runtimeId,
-                  runtimeType,
-                  runtime,
-                  elapsedMs: Date.now() - runStartedAt
-                });
               }
-            );
+              agentResponse = await readJsonRunResponse(fallbackResponse);
+            } else {
+              const eventSocket = routeRuntimeEndpointWebSocket(
+                eventsUrl,
+                runtimeWebSocketOptions(runtime),
+                { openShellDialHost: deps.config?.agentRuntimeOpenShellDialHost }
+              );
+              agentResponse = yield* readWebSocketRunResponse(
+                createWebSocket(eventSocket.url, eventSocket.options),
+                runtimeMessageDeltasEnabled(runtime),
+                (event) => {
+                  logInfo(
+                    [
+                      "Managed runtime stream event",
+                      `runId=${startedRunId}`,
+                      `runtimeId=${runtime?.id ?? "static"}`,
+                      `elapsedMs=${Date.now() - runStartedAt}`,
+                      `type=${event.type}`
+                    ].join(" ")
+                  );
+                  observeRuntimeStreamEvent(event, {
+                    observability,
+                    runtimeFactory: deps.runtimeFactory,
+                    workspaceId: input.principal.workspaceId,
+                    principalId,
+                    runId,
+                    runtimeId,
+                    runtimeType,
+                    runtime,
+                    elapsedMs: Date.now() - runStartedAt
+                  });
+                }
+              );
+            }
           } catch (error) {
             if (!isRuntimeStreamClosedError(error)) {
               throw error;

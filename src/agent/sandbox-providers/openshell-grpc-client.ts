@@ -1,4 +1,10 @@
-import { credentials, Metadata, type ServiceClientConstructor } from "@grpc/grpc-js";
+import {
+  credentials,
+  Metadata,
+  status as grpcStatus,
+  type CallOptions,
+  type ServiceClientConstructor
+} from "@grpc/grpc-js";
 import { loadSync } from "@grpc/proto-loader";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -19,12 +25,14 @@ import type {
 type GrpcUnary = (
   request: Record<string, unknown>,
   metadata: Metadata,
+  options: CallOptions,
   callback: (error: Error | null, response: unknown) => void
 ) => void;
 
 type GrpcServerStream = (
   request: Record<string, unknown>,
-  metadata: Metadata
+  metadata: Metadata,
+  options: CallOptions
 ) => {
   on(event: "data", listener: (event: unknown) => void): void;
   on(event: "error", listener: (error: Error) => void): void;
@@ -45,6 +53,7 @@ type OpenShellGrpcService = {
 export type OpenShellGrpcSandboxClientOptions = {
   endpoint: string;
   token?: string | null;
+  requestTimeoutMs?: number;
 };
 
 const protoDir = join(
@@ -60,6 +69,7 @@ export function createOpenShellGrpcSandboxClient(
   options: OpenShellGrpcSandboxClientOptions
 ): OpenShellSandboxClient {
   const service = createGrpcService(options);
+  const requestTimeoutMs = options.requestTimeoutMs ?? 30_000;
   const metadata = () => {
     const meta = new Metadata();
     const token = options.token?.trim();
@@ -147,7 +157,8 @@ export function createOpenShellGrpcSandboxClient(
             environment: input.request.env,
             workdir: "/runtime"
           },
-          metadata()
+          metadata(),
+          callOptions(requestTimeoutMs)
         );
         stream.on("data", (event) => {
           const record = objectRecord(event, "OpenShell exec event");
@@ -189,13 +200,10 @@ export function createOpenShellGrpcSandboxClient(
       });
     },
 
-    async *events(input): AsyncIterable<SandboxEvent> {
-      const record = await this.getSandbox(input);
-      yield {
-        sandboxId: input.sandboxId,
-        type: record.status === "running" ? "run_started" : "provisioned",
-        at: new Date().toISOString()
-      };
+    async *events(_input): AsyncIterable<SandboxEvent> {
+      throw new Error(
+        "OpenShell gRPC event streaming is not implemented; use sandbox status polling"
+      );
     },
 
     async terminate(input) {
@@ -205,13 +213,19 @@ export function createOpenShellGrpcSandboxClient(
 
   function unary(method: GrpcUnary, request: Record<string, unknown>): Promise<unknown> {
     return new Promise((resolve, reject) => {
-      method.call(service, request, metadata(), (error, response) => {
-        if (error) {
-          reject(error);
-          return;
+      method.call(
+        service,
+        request,
+        metadata(),
+        callOptions(requestTimeoutMs),
+        (error, response) => {
+          if (error) {
+            reject(error);
+            return;
+          }
+          resolve(response);
         }
-        resolve(response);
-      });
+      );
     });
   }
 }
@@ -247,13 +261,25 @@ function awaitlessGrpcLoad(packageDefinition: unknown): unknown {
 async function getRuntimeServiceUrl(
   service: OpenShellGrpcService,
   sandboxId: string,
-  metadata: Metadata
+  metadata: Metadata,
+  timeoutMs = 30_000
 ): Promise<string | null> {
-  const response = await new Promise<unknown>((resolve) => {
+  const response = await new Promise<unknown>((resolve, reject) => {
     service.GetService(
       { sandbox: sandboxId, service: "runtime" },
       metadata,
-      (_error, result) => resolve(result ?? null)
+      callOptions(timeoutMs),
+      (error, result) => {
+        if (error) {
+          if (grpcErrorCode(error) === grpcStatus.NOT_FOUND) {
+            resolve(null);
+            return;
+          }
+          reject(error);
+          return;
+        }
+        resolve(result ?? null);
+      }
     );
   });
   if (!response) {
@@ -265,13 +291,15 @@ async function getRuntimeServiceUrl(
 async function getSandboxObjectId(
   service: OpenShellGrpcService,
   sandboxName: string,
-  requestMetadata: Metadata
+  requestMetadata: Metadata,
+  timeoutMs = 30_000
 ): Promise<string> {
   const sandboxResponse = objectRecord(
     await new Promise<unknown>((resolve, reject) => {
       service.GetSandbox(
         { name: sandboxName },
         requestMetadata,
+        callOptions(timeoutMs),
         (error, result) => {
           if (error) {
             reject(error);
@@ -306,8 +334,13 @@ async function waitForSandboxReady(
     if (lastPhase === "SANDBOX_PHASE_RUNNING") {
       return sandbox;
     }
-    if (lastPhase === "SANDBOX_PHASE_FAILED") {
-      throw new Error(`OpenShell sandbox ${sandboxName} failed while provisioning`);
+    if (
+      lastPhase === "SANDBOX_PHASE_FAILED" ||
+      lastPhase === "SANDBOX_PHASE_SUCCEEDED"
+    ) {
+      throw new Error(
+        `OpenShell sandbox ${sandboxName} reached terminal phase ${String(lastPhase)} while provisioning`
+      );
     }
     await new Promise((resolve) => setTimeout(resolve, 500));
   }
@@ -319,13 +352,15 @@ async function waitForSandboxReady(
 async function getSandboxRecord(
   service: OpenShellGrpcService,
   sandboxName: string,
-  requestMetadata: Metadata
+  requestMetadata: Metadata,
+  timeoutMs = 30_000
 ): Promise<Record<string, unknown>> {
   const response = objectRecord(
     await new Promise<unknown>((resolve, reject) => {
       service.GetSandbox(
         { name: sandboxName },
         requestMetadata,
+        callOptions(timeoutMs),
         (error, result) => {
           if (error) {
             reject(error);
@@ -428,19 +463,27 @@ function toOpenShellGrpcPolicy(policy: SandboxPolicy): Record<string, unknown> {
       compatibility: "best_effort"
     },
     process: {},
-    networkPolicies:
-      policy.network.egress === "open"
-        ? {}
-        : {
-            burble_runtime: {
-              name: "burble_runtime",
-              endpoints:
-                policy.network.egress === "deny"
-                  ? []
-                  : policy.network.allowedHosts.map(toNetworkEndpoint),
-              binaries: []
-            }
-          }
+    networkPolicies: toOpenShellGrpcNetworkPolicies(policy)
+  };
+}
+
+function toOpenShellGrpcNetworkPolicies(
+  policy: SandboxPolicy
+): Record<string, unknown> {
+  if (policy.network.egress === "open") {
+    throw new Error(
+      "OpenShell gRPC policy does not support unrestricted egress; use an allowlist or deny policy"
+    );
+  }
+  return {
+    burble_runtime: {
+      name: "burble_runtime",
+      endpoints:
+        policy.network.egress === "deny"
+          ? []
+          : policy.network.allowedHosts.map(toNetworkEndpoint),
+      binaries: []
+    }
   };
 }
 
@@ -476,18 +519,34 @@ function emptySandboxPolicy(): SandboxPolicy {
 }
 
 function sandboxStatus(phase: unknown): OpenShellSandboxRecord["status"] {
-  if (phase === "SANDBOX_PHASE_FAILED") {
-    return "failed";
+  switch (phase) {
+    case "SANDBOX_PHASE_RUNNING":
+      return "running";
+    case "SANDBOX_PHASE_FAILED":
+    case "SANDBOX_PHASE_SUCCEEDED":
+    case "SANDBOX_PHASE_UNKNOWN":
+      return "failed";
+    case "SANDBOX_PHASE_PENDING":
+    case "SANDBOX_PHASE_UNSPECIFIED":
+      return "provisioning";
+    default:
+      return "failed";
   }
-  if (phase === "SANDBOX_PHASE_RUNNING") {
-    return "running";
-  }
-  return "ready";
 }
 
 function shellBackgroundCommand(argv: string[]): string {
   const command = argv.map(shellQuote).join(" ");
-  return `(${command}) >/tmp/burble-runtime.log 2>&1 &`;
+  return [
+    `(${command}) >/tmp/burble-runtime.log 2>&1 &`,
+    "pid=$!",
+    "sleep 0.2",
+    'if kill -0 "$pid" 2>/dev/null; then',
+    '  echo "$pid" >/tmp/burble-runtime.pid',
+    "  exit 0",
+    "fi",
+    'wait "$pid"',
+    "exit $?"
+  ].join("; ");
 }
 
 function shellQuote(value: string): string {
@@ -547,4 +606,17 @@ function stringRecord(value: unknown): Record<string, string> | null {
     }
   }
   return result;
+}
+
+function callOptions(timeoutMs: number): CallOptions {
+  return {
+    deadline: new Date(Date.now() + timeoutMs)
+  };
+}
+
+function grpcErrorCode(error: Error): number | undefined {
+  const code = (error as unknown as { code?: unknown }).code;
+  return typeof code === "number"
+    ? code
+    : undefined;
 }

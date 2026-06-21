@@ -26,17 +26,18 @@ export function routeRuntimeEndpointWebSocket(
   options: RuntimeEndpointWebSocketOptions | undefined,
   routeOptions: RuntimeEndpointRouteOptions
 ): { url: string; options?: RuntimeEndpointWebSocketOptions } {
-  const routed = routeOpenShellVirtualHost(url, routeOptions.openShellDialHost);
-  if (!routed) {
+  if (!isOpenShellVirtualEndpoint(url)) {
     return { url, ...(options ? { options } : {}) };
   }
-  return {
-    url: routed.url,
-    options: {
-      ...options,
-      headers: withHostHeader(options?.headers, routed.hostHeader)
-    }
-  };
+
+  throw new Error(
+    "OpenShell WebSocket virtual-host routing is not supported because Bun cannot replace the Host header; use runtime snapshot polling for OpenShell endpoints"
+  );
+}
+
+export function isOpenShellVirtualEndpoint(url: string): boolean {
+  const target = parseUrl(url);
+  return Boolean(target && isOpenShellVirtualHost(target.hostname));
 }
 
 function routeRuntimeEndpointRequest(
@@ -67,7 +68,9 @@ function routeOpenShellVirtualHost(
   }
   const dial = parseDialHost(dialHost, target.protocol, target.port);
   if (!dial) {
-    return null;
+    throw new Error(
+      "AGENT_RUNTIME_OPENSHELL_DIAL_HOST is required for OpenShell virtual-host runtime endpoints"
+    );
   }
 
   const originalHost = target.host;

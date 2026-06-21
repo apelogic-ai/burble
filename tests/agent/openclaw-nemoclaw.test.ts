@@ -1117,6 +1117,92 @@ describe("createOpenClawNemoClawAgentRunner", () => {
     });
   });
 
+  test("uses snapshot polling instead of WebSocket for OpenShell virtual hosts", async () => {
+    const calls: Array<{ url: string; method: string; host: string | null }> = [];
+    let webSocketCreated = false;
+    const runner = createOpenClawNemoClawAgentRunner({
+      config: {
+        agentRuntimeOpenShellDialHost: "openshell"
+      } as never,
+      runtimeFactory: {
+        async getOrCreateRuntime() {
+          return {
+            id: "rt_openshell",
+            engine: "openclaw",
+            endpointUrl: "http://b-123--runtime.openshell.localhost:8080",
+            authToken: "runtime-token",
+            status: "ready",
+            statePath: "/runtime/state",
+            configPath: "/runtime/config/openclaw.json",
+            workspacePath: "/runtime/workspace",
+            manifest: runtimeManifest()
+          };
+        },
+        async stopRuntime() {},
+        async reapIdleRuntimes() {}
+      },
+      fetch: async (url, init) => {
+        calls.push({
+          url: String(url),
+          method: init?.method ?? "GET",
+          host: new Headers(init?.headers).get("host")
+        });
+        if (String(url) === "http://openshell:8080/capabilities") {
+          return Response.json(openClawCapabilityManifest);
+        }
+        if (String(url) === "http://openshell:8080/runs") {
+          return Response.json({
+            runId: "run-openshell",
+            eventsUrl: "/runs/run-openshell/events"
+          });
+        }
+        if (String(url) === "http://openshell:8080/runs/run-openshell") {
+          return Response.json({
+            response: {
+              classification: "user_private",
+              text: "Final from snapshot"
+            }
+          });
+        }
+        throw new Error(`Unexpected request ${url}`);
+      },
+      webSocketFactory() {
+        webSocketCreated = true;
+        throw new Error("OpenShell virtual host should not create a WebSocket");
+      }
+    });
+
+    const result = await collectAgentRun(runner, {
+      principal,
+      conversation,
+      text: "summarize my GitHub work",
+      connections: { github: connection }
+    });
+
+    expect(webSocketCreated).toBe(false);
+    expect(calls.map((call) => [call.method, call.url, call.host])).toEqual([
+      [
+        "GET",
+        "http://openshell:8080/capabilities",
+        "b-123--runtime.openshell.localhost:8080"
+      ],
+      [
+        "POST",
+        "http://openshell:8080/runs",
+        "b-123--runtime.openshell.localhost:8080"
+      ],
+      [
+        "GET",
+        "http://openshell:8080/runs/run-openshell",
+        "b-123--runtime.openshell.localhost:8080"
+      ]
+    ]);
+    expect(result).toEqual({
+      classification: "user_private",
+      text: "Final from snapshot"
+    });
+  });
+
   test("suppresses WebSocket message deltas when runtime streaming is disabled", async () => {
     const sockets: FakeRuntimeWebSocket[] = [];
     const runner = createOpenClawNemoClawAgentRunner({

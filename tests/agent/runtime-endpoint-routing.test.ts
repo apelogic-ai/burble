@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
+  isOpenShellVirtualEndpoint,
   routeRuntimeEndpointFetch,
   routeRuntimeEndpointWebSocket
 } from "../../src/agent/runtime-endpoint-routing";
@@ -35,6 +36,17 @@ describe("runtime endpoint routing", () => {
     ]);
   });
 
+  test("throws clearly when an OpenShell virtual host is missing a dial host", async () => {
+    const routedFetch = routeRuntimeEndpointFetch(
+      async () => new Response("ok"),
+      {}
+    );
+
+    expect(() =>
+      routedFetch("http://b-123--runtime.openshell.localhost:8080/healthz")
+    ).toThrow("AGENT_RUNTIME_OPENSHELL_DIAL_HOST is required");
+  });
+
   test("leaves non-OpenShell endpoints untouched", async () => {
     const calls: Array<{ url: string; host: string | null }> = [];
     const routedFetch = routeRuntimeEndpointFetch(
@@ -58,21 +70,42 @@ describe("runtime endpoint routing", () => {
     ]);
   });
 
-  test("routes OpenShell websocket endpoints with the same host header", () => {
+  test("rejects OpenShell websocket virtual-host routing", () => {
+    expect(() =>
+      routeRuntimeEndpointWebSocket(
+        "ws://b-123--runtime.openshell.localhost:8080/runs/run-1/events",
+        {
+          headers: {
+            authorization: "Bearer runtime-token"
+          }
+        },
+        { openShellDialHost: "openshell" }
+      )
+    ).toThrow("OpenShell WebSocket virtual-host routing is not supported");
+  });
+
+  test("detects OpenShell virtual endpoints", () => {
+    expect(
+      isOpenShellVirtualEndpoint(
+        "http://b-123--runtime.openshell.localhost:8080/runs/run-1"
+      )
+    ).toBe(true);
+    expect(isOpenShellVirtualEndpoint("http://burble-rt-123:8080/runs/run-1"))
+      .toBe(false);
+  });
+
+  test("leaves non-OpenShell websocket endpoints untouched", () => {
     const routed = routeRuntimeEndpointWebSocket(
-      "ws://b-123--runtime.openshell.localhost:8080/runs/run-1/events",
+      "ws://burble-rt-123:8080/runs/run-1/events",
       {
         headers: {
           authorization: "Bearer runtime-token"
         }
       },
-      { openShellDialHost: "openshell" }
+      {}
     );
 
-    expect(routed.url).toBe("ws://openshell:8080/runs/run-1/events");
-    expect(new Headers(routed.options?.headers).get("host")).toBe(
-      "b-123--runtime.openshell.localhost:8080"
-    );
+    expect(routed.url).toBe("ws://burble-rt-123:8080/runs/run-1/events");
     expect(new Headers(routed.options?.headers).get("authorization")).toBe(
       "Bearer runtime-token"
     );
