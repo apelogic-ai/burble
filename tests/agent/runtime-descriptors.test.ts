@@ -75,6 +75,8 @@ describe("runtime descriptors", () => {
       "/usr/bin/node",
       "/usr/local/bin",
       "/usr/local/bin/node",
+      "/usr/local/lib",
+      "/usr/local/lib/node_modules/openclaw/openclaw.mjs",
       "/usr/local/lib/node_modules"
     ]);
   });
