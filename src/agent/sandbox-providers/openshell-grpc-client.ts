@@ -603,6 +603,7 @@ const openShellRuntimeNetworkBinaryPaths = [
   "/usr/bin/python",
   "/usr/local/bin/hermes",
   "/usr/local/bin/bun",
+  "/usr/local/lib/node_modules/bun/bin/bun.exe",
   "/usr/bin/bun",
   "/usr/local/bin/node",
   "/usr/bin/node"

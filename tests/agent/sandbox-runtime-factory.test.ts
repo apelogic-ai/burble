@@ -95,8 +95,11 @@ describe("createSandboxRuntimeFactory", () => {
       filesystem: {
         readOnlyPaths: [
           "/runtime",
+          "/usr/bin/env",
+          "/usr/bin/node",
           "/usr/local/bin",
-          "/usr/local/lib/node_modules/openclaw"
+          "/usr/local/bin/node",
+          "/usr/local/lib/node_modules"
         ],
         readWritePaths: [
           "/data/openclaw",
