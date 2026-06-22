@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
+  resolveOpenClawCliArgv,
   resolveOpenClawCliCommand,
   runOpenClawCliRequest,
   runOpenClawCliRequestStream
@@ -39,7 +40,19 @@ const config: RuntimeConfig = {
 };
 
 describe("OpenClaw CLI command resolution", () => {
-  test("uses the absolute OpenClaw binary inside sandboxed runtime images", () => {
+  test("uses explicit node argv inside sandboxed runtime images", () => {
+    const existingPaths = new Set([
+      "/usr/local/bin/openclaw",
+      "/usr/local/lib/node_modules/openclaw/openclaw.mjs"
+    ]);
+    const commandExists = (path: string) => existingPaths.has(path);
+
+    expect(resolveOpenClawCliArgv("openclaw", ["agent"], commandExists)).toEqual([
+      "/usr/bin/env",
+      "node",
+      "/usr/local/lib/node_modules/openclaw/openclaw.mjs",
+      "agent"
+    ]);
     expect(resolveOpenClawCliCommand("openclaw", () => true)).toBe(
       "/usr/local/bin/openclaw"
     );

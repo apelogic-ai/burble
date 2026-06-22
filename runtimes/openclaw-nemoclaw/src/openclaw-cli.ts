@@ -61,6 +61,10 @@ const defaultPreloadedRuntimeSkills = preloadedRuntimeSkillNames.map((name) => (
   version: "1",
   enabled: true
 }));
+const openClawCliShimPath = "/usr/local/bin/openclaw";
+const openClawCliScriptPath =
+  "/usr/local/lib/node_modules/openclaw/openclaw.mjs";
+const openClawCliEnvPath = "/usr/bin/env";
 
 export type CliCommandStreamEvent =
   | { type: "stdout"; text: string }
@@ -1366,32 +1370,58 @@ function spawnOpenClawCli(
   args: string[],
   env?: Record<string, string>
 ): CliSpawnProcess {
-  const resolvedCommand = resolveOpenClawCliCommand(command);
+  const argv = resolveOpenClawCliArgv(command, args);
   try {
-    return Bun.spawn([resolvedCommand, ...args], {
+    return Bun.spawn(argv, {
       stdout: "pipe",
       stderr: "pipe",
       env: buildOpenClawProcessEnv(env)
     }) as CliSpawnProcess;
   } catch (error) {
-    throw enrichOpenClawSpawnError(error, resolvedCommand);
+    throw enrichOpenClawSpawnError(error, argv);
   }
+}
+
+export function resolveOpenClawCliArgv(
+  command: string,
+  args: string[],
+  commandExists: (path: string) => boolean = existsSync
+): string[] {
+  if (command === "openclaw" && commandExists(openClawCliScriptPath)) {
+    return [openClawCliEnvPath, "node", openClawCliScriptPath, ...args];
+  }
+  return [resolveOpenClawCliCommand(command, commandExists), ...args];
 }
 
 export function resolveOpenClawCliCommand(
   command: string,
   commandExists: (path: string) => boolean = existsSync
 ): string {
-  return command === "openclaw" && commandExists("/usr/local/bin/openclaw")
-    ? "/usr/local/bin/openclaw"
+  return command === "openclaw" && commandExists(openClawCliShimPath)
+    ? openClawCliShimPath
     : command;
 }
 
-function enrichOpenClawSpawnError(error: unknown, command: string): Error {
+function enrichOpenClawSpawnError(error: unknown, argv: string[]): Error {
   const base = error instanceof Error ? error.message : String(error);
-  return new Error(`${base}\n${describeOpenClawSpawnTarget(command)}`, {
+  return new Error(`${base}\n${describeOpenClawSpawnTargets(argv)}`, {
     cause: error
   });
+}
+
+function describeOpenClawSpawnTargets(argv: string[]): string {
+  const paths = [
+    argv[0],
+    ...argv.filter((arg) => arg.startsWith("/")),
+    "/usr/bin/node",
+    "/usr/local/bin/node",
+    openClawCliShimPath
+  ].filter((path): path is string => Boolean(path));
+  const uniquePaths = [...new Set(paths)];
+  return [
+    `OpenClaw spawn argv diagnostics argv=${JSON.stringify(argv)}`,
+    ...uniquePaths.map(describeOpenClawSpawnTarget)
+  ].join("\n");
 }
 
 function describeOpenClawSpawnTarget(command: string): string {
