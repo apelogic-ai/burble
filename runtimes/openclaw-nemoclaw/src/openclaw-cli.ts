@@ -1,7 +1,14 @@
 import { createHash, randomUUID } from "node:crypto";
 import { formatRuntimeScheduledJobContextLines } from "@burble/runtime-sdk/scheduled-job-context";
 import { stripRuntimeToolCallProtocolFragments } from "@burble/runtime-sdk/runtime-text-protocol";
-import { existsSync, readFileSync } from "node:fs";
+import {
+  accessSync,
+  constants as fsConstants,
+  existsSync,
+  lstatSync,
+  readFileSync,
+  readlinkSync
+} from "node:fs";
 import { mkdir, readFile, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import type { RuntimeConfig } from "./config";
@@ -65,6 +72,13 @@ export type CliCommandStreamer = (
   args: string[],
   options: { timeoutMs: number; env?: Record<string, string> }
 ) => AsyncIterable<CliCommandStreamEvent>;
+
+type CliSpawnProcess = {
+  stdout: ReadableStream<Uint8Array>;
+  stderr: ReadableStream<Uint8Array>;
+  exited: Promise<number>;
+  kill: () => void;
+};
 
 const streamHeartbeatMs = 8_000;
 const maxPlannedToolCalls = 5;
@@ -1259,11 +1273,7 @@ export async function runCliCommand(
   args: string[],
   options: { timeoutMs: number; env?: Record<string, string> }
 ): Promise<CliCommandResult> {
-  const proc = Bun.spawn([resolveOpenClawCliCommand(command), ...args], {
-    stdout: "pipe",
-    stderr: "pipe",
-    env: buildOpenClawProcessEnv(options.env)
-  });
+  const proc = spawnOpenClawCli(command, args, options.env);
   let timedOut = false;
   const timer = setTimeout(() => {
     timedOut = true;
@@ -1292,11 +1302,7 @@ export async function* runCliCommandStream(
   args: string[],
   options: { timeoutMs: number; env?: Record<string, string> }
 ): AsyncIterable<CliCommandStreamEvent> {
-  const proc = Bun.spawn([resolveOpenClawCliCommand(command), ...args], {
-    stdout: "pipe",
-    stderr: "pipe",
-    env: buildOpenClawProcessEnv(options.env)
-  });
+  const proc = spawnOpenClawCli(command, args, options.env);
   let timedOut = false;
   const timer = setTimeout(() => {
     timedOut = true;
@@ -1355,6 +1361,23 @@ export async function* runCliCommandStream(
   }
 }
 
+function spawnOpenClawCli(
+  command: string,
+  args: string[],
+  env?: Record<string, string>
+): CliSpawnProcess {
+  const resolvedCommand = resolveOpenClawCliCommand(command);
+  try {
+    return Bun.spawn([resolvedCommand, ...args], {
+      stdout: "pipe",
+      stderr: "pipe",
+      env: buildOpenClawProcessEnv(env)
+    }) as CliSpawnProcess;
+  } catch (error) {
+    throw enrichOpenClawSpawnError(error, resolvedCommand);
+  }
+}
+
 export function resolveOpenClawCliCommand(
   command: string,
   commandExists: (path: string) => boolean = existsSync
@@ -1362,6 +1385,46 @@ export function resolveOpenClawCliCommand(
   return command === "openclaw" && commandExists("/usr/local/bin/openclaw")
     ? "/usr/local/bin/openclaw"
     : command;
+}
+
+function enrichOpenClawSpawnError(error: unknown, command: string): Error {
+  const base = error instanceof Error ? error.message : String(error);
+  return new Error(`${base}\n${describeOpenClawSpawnTarget(command)}`, {
+    cause: error
+  });
+}
+
+function describeOpenClawSpawnTarget(command: string): string {
+  const lines = [`OpenClaw spawn target diagnostics command=${command}`];
+  try {
+    const stat = lstatSync(command);
+    lines.push(
+      `target mode=${(stat.mode & 0o777).toString(8)} uid=${stat.uid} gid=${stat.gid} symlink=${stat.isSymbolicLink()}`
+    );
+    if (stat.isSymbolicLink()) {
+      lines.push(`target symlink=${readlinkSync(command)}`);
+    }
+  } catch (error) {
+    lines.push(`target stat error=${error instanceof Error ? error.message : String(error)}`);
+  }
+
+  try {
+    accessSync(command, fsConstants.X_OK);
+    lines.push("target executable=yes");
+  } catch (error) {
+    lines.push(
+      `target executable=no error=${error instanceof Error ? error.message : String(error)}`
+    );
+  }
+
+  try {
+    const firstLine = readFileSync(command, "utf8").split(/\r?\n/, 1)[0] ?? "";
+    lines.push(`target firstLine=${JSON.stringify(firstLine.slice(0, 160))}`);
+  } catch (error) {
+    lines.push(`target read error=${error instanceof Error ? error.message : String(error)}`);
+  }
+
+  return lines.join("\n");
 }
 
 type DecodedStreamChunk = {

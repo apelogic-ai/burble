@@ -78,6 +78,7 @@ export function createSandboxRuntimeFactory(input: {
   buildPolicy?: SandboxRuntimeFactoryPolicyBuilder;
   buildCredentials?: SandboxRuntimeFactoryCredentialBuilder;
   env?: Record<string, string | undefined>;
+  preserveFailedSandboxes?: boolean;
 }): RuntimeFactory {
   assertSandboxProviderCapabilities(input.sandboxProvider);
   assertSandboxStartCommand(input.startCommand);
@@ -282,13 +283,18 @@ export function createSandboxRuntimeFactory(input: {
       const failureReason =
         error instanceof Error ? error.message : "unknown error";
       let cleanupError: string | undefined;
-      try {
-        await input.sandboxProvider.terminate(sandbox.id);
-      } catch (terminateError) {
-        cleanupError =
-          terminateError instanceof Error
-            ? terminateError.message
-            : "unknown cleanup error";
+      const preserveFailedSandbox =
+        input.preserveFailedSandboxes ||
+        input.env?.AGENT_RUNTIME_SANDBOX_PRESERVE_FAILED === "true";
+      if (!preserveFailedSandbox) {
+        try {
+          await input.sandboxProvider.terminate(sandbox.id);
+        } catch (terminateError) {
+          cleanupError =
+            terminateError instanceof Error
+              ? terminateError.message
+              : "unknown cleanup error";
+        }
       }
       if (runtime) {
         input.store.updateAgentRuntimeStatus(runtime.id, {
@@ -301,6 +307,7 @@ export function createSandboxRuntimeFactory(input: {
           summary: {
             failureReason,
             sandboxId: sandbox.id,
+            ...(preserveFailedSandbox ? { preservedSandbox: true } : {}),
             ...(cleanupError ? { cleanupError } : {})
           }
         });

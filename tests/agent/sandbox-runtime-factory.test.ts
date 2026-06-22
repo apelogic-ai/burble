@@ -514,6 +514,43 @@ describe("createSandboxRuntimeFactory", () => {
     store.close();
   });
 
+  test("preserves failed provisioning sandboxes when diagnostics are enabled", async () => {
+    const store = createTokenStore(":memory:");
+    const provider = createFakeRuntimeSandboxProvider();
+    const factory = createSandboxRuntimeFactory({
+      store,
+      sandboxProvider: provider,
+      engine: "openclaw",
+      image: "burble-openclaw-nemoclaw:dev",
+      toolGatewayUrl: "http://burble-app:3000/internal/tools",
+      modelProviderUrls: ["https://api.openai.com/v1"],
+      runtimeTokenSecret: "runtime-secret",
+      startCommand: ["openclaw-entrypoint"],
+      healthCheckAttempts: 1,
+      fetch: async () => new Response("ok"),
+      env: {
+        AGENT_RUNTIME_SANDBOX_PRESERVE_FAILED: "true"
+      }
+    });
+
+    provider.failNextRun = true;
+    await expect(factory.getOrCreateRuntime(principal)).rejects.toThrow(
+      "Sandbox runtime start failed"
+    );
+
+    const runtimeId = `rt_${buildRuntimeDataId(principal, "openclaw")}`;
+    const events = store.listAgentRuntimeEvents(runtimeId);
+
+    expect(store.getAgentRuntime(runtimeId)).toMatchObject({
+      status: "failed",
+      sandboxId: "sandbox-1"
+    });
+    expect(provider.terminated).toEqual([]);
+    expect(events.at(-1)?.summaryJson).toContain('"preservedSandbox":true');
+
+    store.close();
+  });
+
   test("fails closed when the sandbox provider cannot enforce egress allowlists", () => {
     const store = createTokenStore(":memory:");
 
