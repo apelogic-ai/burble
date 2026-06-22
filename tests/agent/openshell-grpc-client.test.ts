@@ -34,7 +34,7 @@ describe("OpenShell gRPC exec events", () => {
     expect(command).not.toMatch(/[\r\n]/);
     expect(command).not.toContain("/dev/null");
     expect(command).toContain("& :; pid=$!");
-    expect(command).toContain("</tmp/burble-runtime.stdin");
+    expect(command).toContain("exec </tmp/burble-runtime.stdin");
     expect(
       Bun.spawnSync(["sh", "-n", "-c", command], {
         stdout: "pipe",

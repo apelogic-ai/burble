@@ -662,7 +662,8 @@ export function shellBackgroundCommand(argv: string[]): string {
   return [
     ": >/tmp/burble-runtime.log",
     ": >/tmp/burble-runtime.stdin",
-    `(${command}) </tmp/burble-runtime.stdin >/tmp/burble-runtime.log 2>&1 & :`,
+    "exec </tmp/burble-runtime.stdin",
+    `(${command}) >/tmp/burble-runtime.log 2>&1 & :`,
     "pid=$!",
     "sleep 0.2",
     'if kill -0 "$pid" 2>>/tmp/burble-runtime.log; then echo "$pid" >/tmp/burble-runtime.pid; exit 0; fi',
