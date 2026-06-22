@@ -151,6 +151,7 @@ export function createSandboxRuntimeFactory(input: {
         policyHash
       });
       await waitForSandboxRuntimeHealth({
+        sandboxId: attached.id,
         endpointUrl: attached.endpointUrl,
         fetch: requestFetch,
         attempts:
@@ -262,6 +263,7 @@ export function createSandboxRuntimeFactory(input: {
         throw new Error(formatSandboxRuntimeStartFailure(run));
       }
       await waitForSandboxRuntimeHealth({
+        sandboxId: sandbox.id,
         endpointUrl: sandbox.endpointUrl,
         fetch: requestFetch,
         attempts:
@@ -608,6 +610,7 @@ function sandboxRuntimePaths(
 }
 
 async function waitForSandboxRuntimeHealth(input: {
+  sandboxId: string;
   endpointUrl: string;
   fetch: SandboxRuntimeFetch;
   attempts: number;
@@ -629,7 +632,7 @@ async function waitForSandboxRuntimeHealth(input: {
     }
   }
   throw new Error(
-    `Runtime health check failed: ${
+    `Runtime health check failed for sandbox ${input.sandboxId} at ${input.endpointUrl}: ${
       lastError instanceof Error ? lastError.message : "unknown error"
     }`
   );
