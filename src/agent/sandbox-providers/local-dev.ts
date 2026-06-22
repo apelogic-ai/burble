@@ -69,6 +69,7 @@ export function createLocalDevSandboxProvider(): LocalDevSandboxProvider {
         principal: request.principal,
         runtime: request.runtime,
         labels: request.labels ?? {},
+        ...(request.policy ? { policy: cloneSandboxPolicy(request.policy) } : {}),
         credentials: []
       };
       const state: SandboxState = {

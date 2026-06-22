@@ -39,6 +39,7 @@ export type OpenShellSandboxClient = {
     principal: SandboxProvisionRequest["principal"];
     runtime: SandboxProvisionRequest["runtime"];
     labels: Record<string, string>;
+    policy?: SandboxPolicy;
   }): Promise<OpenShellSandboxRecord>;
   applyPolicy(input: {
     sandboxId: string;
@@ -83,7 +84,8 @@ export function createOpenShellSandboxProvider(input: {
       const record = await input.client.createSandbox({
         principal: request.principal,
         runtime: request.runtime,
-        labels: request.labels ?? {}
+        labels: request.labels ?? {},
+        ...(request.policy ? { policy: request.policy } : {})
       });
       const handle = handleFromRecord(record);
       return cloneHandle(handle);

@@ -557,6 +557,7 @@ function createFakeOpenShellClient(options?: {
         principal: input.principal,
         runtime: input.runtime,
         labels: input.labels,
+        ...(input.policy ? { policy: input.policy } : {}),
         credentials: []
       };
       save(sandbox);

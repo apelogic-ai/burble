@@ -87,6 +87,9 @@ describe("createSandboxRuntimeFactory", () => {
     expect(stored?.policyHash).toMatch(/^[0-9a-f]{64}$/);
     expect(stored?.policyHash).not.toBe("policy-hash");
     expect(provider.provisionCalls).toHaveLength(1);
+    expect(provider.provisionCalls[0].policy).toEqual(
+      provider.policyCalls[0].policy
+    );
     expect(provider.policyCalls).toEqual([
       {
         sandboxId: "sandbox-1",

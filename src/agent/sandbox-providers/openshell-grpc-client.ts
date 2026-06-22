@@ -96,7 +96,7 @@ export function createOpenShellGrpcSandboxClient(
               image: input.runtime.image,
               labels
             },
-            policy: toOpenShellGrpcPolicy(emptySandboxPolicy())
+            policy: toOpenShellGrpcPolicy(input.policy ?? emptySandboxPolicy())
           }
         }),
         "OpenShell CreateSandbox response"

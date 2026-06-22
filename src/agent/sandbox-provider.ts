@@ -14,6 +14,7 @@ export type SandboxProvisionRequest = {
   principal: SandboxPrincipal;
   runtime: SandboxRuntimeRequest;
   labels?: Record<string, string>;
+  policy?: SandboxPolicy;
 };
 
 export type SandboxNetworkPolicy =

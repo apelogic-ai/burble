@@ -190,6 +190,10 @@ export function createSandboxRuntimeFactory(input: {
             ttlSeconds: input.runtimeJwtTtlSeconds
           })
         : null;
+    const policy =
+      (await input.buildPolicy?.(context)) ??
+      buildDefaultSandboxPolicy(input, manifest);
+    const policyHash = sandboxRuntimePolicyHash(manifest, policy);
 
     const sandbox = await input.sandboxProvider.provision({
       principal: {
@@ -203,16 +207,13 @@ export function createSandboxRuntimeFactory(input: {
       labels: {
         runtimeDataId,
         engine: input.engine
-      }
+      },
+      policy
     });
     const paths = sandboxRuntimePaths(sandbox.workspacePath, input.engine);
     let runtime: AgentRuntimeRecord | null = null;
 
     try {
-      const policy =
-        (await input.buildPolicy?.(context)) ??
-        buildDefaultSandboxPolicy(input, manifest);
-      const policyHash = sandboxRuntimePolicyHash(manifest, policy);
       runtime = input.store.getOrCreateAgentRuntime({
         workspaceId: principal.workspaceId,
         slackUserId: principal.slackUserId,
