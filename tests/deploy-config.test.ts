@@ -19,6 +19,9 @@ const openShellCompose = await Bun.file(
 const openShellGatewayConfig = await Bun.file(
   "deploy/dev/compose/openshell/gateway.toml"
 ).text();
+const litellmGatewayConfig = await Bun.file(
+  "deploy/dev/compose/litellm/config.yaml"
+).text();
 const agentGatewayConfig = await Bun.file(
   "deploy/dev/compose/agentgateway/config.yaml"
 ).text();
@@ -85,6 +88,7 @@ describe("dev deploy config", () => {
       "AGENT_RUNTIME_TOOL_GATEWAY_URL",
       "AGENT_RUNTIME_MCP_GATEWAY_URL",
       "AGENT_RUNTIME_MCP_AUDIENCE",
+      "LLM_GW_BASE_URL",
       "AGENT_RUNTIME_SANDBOX_URL",
       "AGENT_RUNTIME_SANDBOX_TOKEN",
       "AGENT_RUNTIME_SANDBOX_TRANSPORT",
@@ -114,6 +118,27 @@ describe("dev deploy config", () => {
     ]) {
       expect(compose).toContain(name);
     }
+  });
+
+  test("runs a neutral LLM gateway service for sandbox inference", () => {
+    expect(compose).toContain("llm-gw:");
+    expect(compose).toContain("ghcr.io/berriai/litellm:main-latest");
+    expect(compose).toContain(
+      "LLM_GW_BASE_URL=${LLM_GW_BASE_URL:-http://llm-gw:4000/v1}"
+    );
+    expect(compose).toContain("./litellm/config.yaml:/app/config.yaml:ro");
+    expect(compose).not.toContain("LITELLM_BASE_URL");
+    expect(rootEnvExample).toContain("LLM_GW_BASE_URL=http://llm-gw:4000/v1");
+    expect(composeEnvExample).toContain("LLM_GW_BASE_URL=http://llm-gw:4000/v1");
+  });
+
+  test("configures the LLM gateway with provider-owned credentials", () => {
+    expect(litellmGatewayConfig).toContain("model_name: gpt-5.4");
+    expect(litellmGatewayConfig).toContain("model: openai/gpt-5.4");
+    expect(litellmGatewayConfig).toContain("model: anthropic/claude-sonnet-4");
+    expect(litellmGatewayConfig).toContain("os.environ/OPENAI_API_KEY");
+    expect(litellmGatewayConfig).toContain("os.environ/ANTHROPIC_API_KEY");
+    expect(litellmGatewayConfig).toContain("os.environ/OLLAMA_API_KEY");
   });
 
   test("documents the required Slack slash commands in the app manifest", () => {
@@ -628,6 +653,29 @@ describe("dev deploy config", () => {
     );
   });
 
+  test("runs both sandbox agents through real OpenShell in CI", () => {
+    expect(ciWorkflow).toContain("OpenShell runtime E2E");
+    expect(ciWorkflow).toContain("Start OpenShell testbed");
+    expect(ciWorkflow).toContain("bun run testbed:up");
+    expect(ciWorkflow).toContain("AGENT_RUNTIME_SANDBOX_TRANSPORT: cli");
+    expect(ciWorkflow).toContain("Run Hermes through OpenShell");
+    expect(ciWorkflow).toContain('BURBLE_E2E_OPENSHELL_RUN: "1"');
+    expect(ciWorkflow).toContain("BURBLE_E2E_RUNTIME_ENGINE: hermes");
+    expect(ciWorkflow).toContain(
+      "AGENT_RUNTIME_SANDBOX_START_COMMAND: '[\"python\",\"/runtime/entrypoint.py\"]'"
+    );
+    expect(ciWorkflow).toContain("Run OpenClaw through OpenShell");
+    expect(ciWorkflow).toContain("BURBLE_E2E_RUNTIME_ENGINE: openclaw");
+    expect(ciWorkflow).toContain(
+      "AGENT_RUNTIME_SANDBOX_START_COMMAND: '[\"bun\",\"src/index.ts\"]'"
+    );
+    expect(ciWorkflow).toContain("tests/e2e/openshell-sandbox-runtime.test.ts");
+    expect(ciWorkflow).toContain('BURBLE_RUNTIME_CONTRACT_PROBE: "1"');
+    expect(ciWorkflow).toContain("Dump OpenShell testbed logs");
+    expect(ciWorkflow).toContain('docker ps -aq --filter "name=openshell-b-"');
+    expect(ciWorkflow).toContain("bun run testbed:down");
+  });
+
   test("installs OpenShell network helper dependencies in runtime images", () => {
     expect(hermesDockerfile).toContain("iproute2");
     expect(burbleNativeDockerfile).toContain("apk add --no-cache iproute2");
@@ -661,7 +709,7 @@ describe("dev deploy config", () => {
     expect(openClawCliCompose).toContain(
       "burble-openclaw-nemoclaw-openclaw-cli:dev"
     );
-    expect(dockerfile).toContain("FROM node:22.19-bookworm-slim");
+    expect(dockerfile).toContain("FROM node:22.19-trixie-slim");
     expect(dockerfile).not.toContain("python");
     expect(dockerfile).toContain("npm install -g bun");
     expect(dockerfile).toContain("npm install -g \"openclaw@${OPENCLAW_VERSION}\"");

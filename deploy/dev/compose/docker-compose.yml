@@ -54,6 +54,7 @@ services:
       - AGENT_RUNTIME_TOOL_GATEWAY_URL=${AGENT_RUNTIME_TOOL_GATEWAY_URL:-http://burble-app:3000/internal/tools}
       - AGENT_RUNTIME_MCP_GATEWAY_URL=${AGENT_RUNTIME_MCP_GATEWAY_URL:-}
       - AGENT_RUNTIME_MCP_AUDIENCE=${AGENT_RUNTIME_MCP_AUDIENCE:-}
+      - LLM_GW_BASE_URL=${LLM_GW_BASE_URL:-http://llm-gw:4000/v1}
       - AGENT_RUNTIME_SANDBOX_URL=${AGENT_RUNTIME_SANDBOX_URL:-}
       - AGENT_RUNTIME_SANDBOX_TOKEN=${AGENT_RUNTIME_SANDBOX_TOKEN:-}
       - AGENT_RUNTIME_SANDBOX_TRANSPORT=${AGENT_RUNTIME_SANDBOX_TRANSPORT:-grpc}
@@ -99,6 +100,26 @@ services:
       timeout: 5s
       retries: 3
       start_period: 10s
+
+  llm-gw:
+    image: ghcr.io/berriai/litellm:main-latest
+    restart: unless-stopped
+    expose:
+      - "4000"
+    command:
+      - --config
+      - /app/config.yaml
+      - --host
+      - 0.0.0.0
+      - --port
+      - "4000"
+    environment:
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - OLLAMA_API_KEY=${OLLAMA_API_KEY:-}
+      - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-https://ollama.com}
+    volumes:
+      - ./litellm/config.yaml:/app/config.yaml:ro
 
 volumes:
   caddy_data:

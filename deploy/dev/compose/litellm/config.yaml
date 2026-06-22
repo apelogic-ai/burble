@@ -1,0 +1,28 @@
+model_list:
+  - model_name: gpt-5.4
+    litellm_params:
+      model: openai/gpt-5.4
+      api_key: os.environ/OPENAI_API_KEY
+  - model_name: gpt-5.4-mini
+    litellm_params:
+      model: openai/gpt-5.4-mini
+      api_key: os.environ/OPENAI_API_KEY
+  - model_name: claude-opus-4.6
+    litellm_params:
+      model: anthropic/claude-opus-4.6
+      api_key: os.environ/ANTHROPIC_API_KEY
+  - model_name: claude-sonnet-4
+    litellm_params:
+      model: anthropic/claude-sonnet-4
+      api_key: os.environ/ANTHROPIC_API_KEY
+  - model_name: qwen3-coder:30b-cloud
+    litellm_params:
+      model: openai/qwen3-coder:30b-cloud
+      api_base: os.environ/OLLAMA_BASE_URL
+      api_key: os.environ/OLLAMA_API_KEY
+
+litellm_settings:
+  drop_params: true
+
+general_settings:
+  store_model_in_db: false
