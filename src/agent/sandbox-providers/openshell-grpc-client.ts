@@ -735,30 +735,25 @@ export function openShellLaunchCommand(argv: string[]): string[] {
 // early crashes (config parse, missing module, denied path) so that a runtime
 // which starts and then dies surfaces its captured stderr through run().output
 // instead of slipping past into a logless health-check timeout.
+//
+// CRITICAL: OpenShell ExecSandbox rejects any command argument containing a
+// newline or carriage return, so each script MUST be a single line. The poll
+// loops below are written as single statements (a lazy generator / an inline
+// setInterval body) for that reason — do not reformat them across lines.
 const launcherSettleChecks = 15;
-const launcherSettleIntervalMs = 200;
+const launcherSettleIntervalSeconds = 0.2;
 
 const pythonLauncherScript = [
   "import subprocess, sys, time",
-  "argv = sys.argv[1:]",
-  "log = open('/tmp/burble-runtime.log', 'ab', buffering=0)",
-  "stdin = open('/tmp/burble-runtime.stdin', 'ab+')",
+  "argv=sys.argv[1:]",
+  "log=open('/tmp/burble-runtime.log','ab',buffering=0)",
+  "stdin=open('/tmp/burble-runtime.stdin','ab+')",
   "stdin.seek(0)",
-  "proc = subprocess.Popen(argv, stdin=stdin, stdout=log, stderr=subprocess.STDOUT, start_new_session=True)",
-  "code = None",
-  `for _ in range(${launcherSettleChecks}):`,
-  `    time.sleep(${(launcherSettleIntervalMs / 1000).toFixed(3)})`,
-  "    code = proc.poll()",
-  "    if code is not None:",
-  "        break",
-  "if code is None:",
-  "    open('/tmp/burble-runtime.pid', 'w').write(str(proc.pid))",
-  "    sys.exit(0)",
-  "log.close()",
-  "stdin.close()",
-  "sys.stderr.buffer.write(open('/tmp/burble-runtime.log', 'rb').read())",
-  "sys.exit(code)"
-].join("\n");
+  "proc=subprocess.Popen(argv, stdin=stdin, stdout=log, stderr=subprocess.STDOUT, start_new_session=True)",
+  `code=next((c for _ in range(${launcherSettleChecks}) for c in [(time.sleep(${launcherSettleIntervalSeconds}), proc.poll())[1]] if c is not None), None)`,
+  "open('/tmp/burble-runtime.pid','w').write(str(proc.pid)) if code is None else None",
+  "sys.exit(0) if code is None else (log.close(), stdin.close(), sys.stderr.buffer.write(open('/tmp/burble-runtime.log','rb').read()), sys.exit(code))"
+].join("; ");
 
 const bunLauncherScript = [
   "const fs=require('node:fs')",
@@ -769,19 +764,8 @@ const bunLauncherScript = [
   "const child=cp.spawn(argv[0],argv.slice(1),{detached:true,stdio:[input,log,log],env:process.env})",
   "child.unref()",
   "let checks=0",
-  "const timer=setInterval(()=>{",
-  "  if(child.exitCode!=null){",
-  "    clearInterval(timer)",
-  "    try{process.stderr.write(fs.readFileSync('/tmp/burble-runtime.log'))}catch{}",
-  "    process.exit(child.exitCode??1)",
-  "  }",
-  `  if(++checks>=${launcherSettleChecks}){`,
-  "    clearInterval(timer)",
-  "    fs.writeFileSync('/tmp/burble-runtime.pid',String(child.pid))",
-  "    process.exit(0)",
-  "  }",
-  `}, ${launcherSettleIntervalMs})`
-].join("\n");
+  `const timer=setInterval(()=>{if(child.exitCode!=null){clearInterval(timer);try{process.stderr.write(fs.readFileSync('/tmp/burble-runtime.log'))}catch{};process.exit(child.exitCode??1)}else if(++checks>=${launcherSettleChecks}){clearInterval(timer);fs.writeFileSync('/tmp/burble-runtime.pid',String(child.pid));process.exit(0)}}, ${Math.round(launcherSettleIntervalSeconds * 1000)})`
+].join("; ");
 
 function grpcTarget(endpoint: string): string {
   const url = new URL(endpoint);
