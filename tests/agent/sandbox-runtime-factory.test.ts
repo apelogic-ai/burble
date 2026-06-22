@@ -87,34 +87,23 @@ describe("createSandboxRuntimeFactory", () => {
     expect(stored?.policyHash).toMatch(/^[0-9a-f]{64}$/);
     expect(stored?.policyHash).not.toBe("policy-hash");
     expect(provider.provisionCalls).toHaveLength(1);
-    expect(provider.provisionCalls[0].policy).toEqual(
-      provider.policyCalls[0].policy
-    );
-    expect(provider.policyCalls).toEqual([
-      {
-        sandboxId: "sandbox-1",
-        policy: {
-          network: {
-            egress: "allowlist",
-            allowedHosts: [
-              "agentgateway:3000",
-              "api.openai.com",
-              "burble-app:3000"
-            ]
-          },
-          filesystem: {
-            readOnlyPaths: ["/runtime"],
-            readWritePaths: [
-              "/data/openclaw",
-              "/runtime/config",
-              "/runtime/state",
-              "/runtime/workspace",
-              "/tmp"
-            ]
-          }
-        }
+    expect(provider.provisionCalls[0].policy).toEqual({
+      network: {
+        egress: "allowlist",
+        allowedHosts: ["agentgateway:3000", "api.openai.com", "burble-app:3000"]
+      },
+      filesystem: {
+        readOnlyPaths: ["/runtime"],
+        readWritePaths: [
+          "/data/openclaw",
+          "/runtime/config",
+          "/runtime/state",
+          "/runtime/workspace",
+          "/tmp"
+        ]
       }
-    ]);
+    });
+    expect(provider.policyCalls).toEqual([]);
     expect(provider.runCalls).toHaveLength(1);
     expect(provider.runCalls[0].request).toMatchObject({
       argv: ["runtime-entrypoint"],
@@ -227,7 +216,7 @@ describe("createSandboxRuntimeFactory", () => {
 
     await factory.getOrCreateRuntime(principal);
 
-    expect(provider.policyCalls[0].policy.network).toEqual({
+    expect(provider.provisionCalls[0].policy?.network).toEqual({
       egress: "allowlist",
       allowedHosts: [
         "api.anthropic.com",
@@ -243,9 +232,9 @@ describe("createSandboxRuntimeFactory", () => {
       FIRECRAWL_API_URL: "https://firecrawl.internal/v1",
       HERMES_WEB_SEARCH_BACKEND: "exa"
     });
-    expect(provider.policyCalls[0].policy.network.allowedHosts).not.toContain(
-      "api.openai.com"
-    );
+    expect(
+      provider.provisionCalls[0].policy?.network.allowedHosts
+    ).not.toContain("api.openai.com");
 
     store.close();
   });
@@ -341,7 +330,7 @@ describe("createSandboxRuntimeFactory", () => {
     expect(provider.provisionCalls).toHaveLength(1);
     expect(provider.attachCalls).toEqual(["sandbox-1"]);
     expect(provider.runCalls).toHaveLength(1);
-    expect(provider.policyCalls).toHaveLength(2);
+    expect(provider.policyCalls).toHaveLength(1);
     expect(store.getAgentRuntime(first.id)?.policyHash).not.toBe(
       firstPolicyHash
     );
@@ -399,8 +388,8 @@ describe("createSandboxRuntimeFactory", () => {
 
     expect(second.id).toBe(first.id);
     expect(provider.provisionCalls).toHaveLength(1);
-    expect(provider.policyCalls).toHaveLength(2);
-    expect(provider.policyCalls[1].policy.network.allowedHosts).toContain(
+    expect(provider.policyCalls).toHaveLength(1);
+    expect(provider.policyCalls[0].policy.network.allowedHosts).toContain(
       "api.search.brave.com"
     );
     expect(secondPolicyHash).not.toBe(firstPolicyHash);

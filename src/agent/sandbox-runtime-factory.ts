@@ -241,7 +241,6 @@ export function createSandboxRuntimeFactory(input: {
       input.store.updateAgentRuntimeStatus(runtime.id, {
         status: "provisioning"
       });
-      await input.sandboxProvider.applyPolicy(sandbox.id, policy);
       if (credentials.length > 0) {
         await input.sandboxProvider.bindCredentials(sandbox.id, credentials);
       }
