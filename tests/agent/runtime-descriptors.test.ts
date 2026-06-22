@@ -70,6 +70,10 @@ describe("runtime descriptors", () => {
     expect(runtimeHealthCheckAttempts("openclaw")).toBe(90);
     expect(runtimeHealthCheckAttempts("openclaw-gateway")).toBe(90);
     expect(runtimeHealthCheckAttempts("hermes")).toBe(30);
+    expect(runtimeDescriptor("openclaw").container.sandboxReadOnlyPaths).toEqual([
+      "/usr/local/bin",
+      "/usr/local/lib/node_modules/openclaw"
+    ]);
   });
 
   test("exposes known capability manifests for policy selection", () => {

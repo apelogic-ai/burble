@@ -12,6 +12,7 @@ export type RuntimeContainerProfile = {
   configFileName: string;
   stateDir: string;
   workspaceDir: string;
+  sandboxReadOnlyPaths?: readonly string[];
   openClawCompatEnv: boolean;
   openClawConfigPatch: boolean;
   modelEnv: "generic" | "hermes";
@@ -45,6 +46,10 @@ const openClawContainerProfile: RuntimeContainerProfile = {
   configFileName: "openclaw.json",
   stateDir: "/data/openclaw/state",
   workspaceDir: "/data/openclaw/workspace",
+  sandboxReadOnlyPaths: [
+    "/usr/local/bin",
+    "/usr/local/lib/node_modules/openclaw"
+  ],
   openClawCompatEnv: true,
   openClawConfigPatch: true,
   modelEnv: "generic"

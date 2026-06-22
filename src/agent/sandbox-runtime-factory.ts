@@ -482,7 +482,7 @@ function defaultSandboxRuntimeFilesystemPolicy(
 > {
   const container = runtimeDescriptor(engine).container;
   return {
-    readOnlyPaths: ["/runtime"],
+    readOnlyPaths: ["/runtime", ...(container.sandboxReadOnlyPaths ?? [])],
     readWritePaths: [
       container.dataRootTarget,
       "/runtime/config",

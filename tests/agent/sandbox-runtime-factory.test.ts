@@ -93,7 +93,11 @@ describe("createSandboxRuntimeFactory", () => {
         allowedHosts: ["agentgateway:3000", "api.openai.com", "burble-app:3000"]
       },
       filesystem: {
-        readOnlyPaths: ["/runtime"],
+        readOnlyPaths: [
+          "/runtime",
+          "/usr/local/bin",
+          "/usr/local/lib/node_modules/openclaw"
+        ],
         readWritePaths: [
           "/data/openclaw",
           "/runtime/config",
