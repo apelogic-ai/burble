@@ -17,18 +17,32 @@ export type SandboxProvisionRequest = {
   policy?: SandboxPolicy;
 };
 
+export type SandboxEgressEndpoint = {
+  // Lowercased "hostname:port" — matches the entries in allowedHosts.
+  host: string;
+  // True when the endpoint is reached over a TLS scheme (https/wss). Egress
+  // proxies must not declare TLS passthrough for plaintext (http/ws) hosts.
+  tls: boolean;
+};
+
 export type SandboxNetworkPolicy =
   | {
       egress: "deny";
       allowedHosts?: never;
+      allowedEndpoints?: never;
     }
   | {
       egress: "allowlist";
       allowedHosts: string[];
+      // Optional per-host transport metadata. When present, it is kept in sync
+      // with allowedHosts (one entry per host) so providers can derive the
+      // correct TLS mode instead of assuming every endpoint is TLS.
+      allowedEndpoints?: SandboxEgressEndpoint[];
     }
   | {
       egress: "open";
       allowedHosts?: never;
+      allowedEndpoints?: never;
     };
 
 export type SandboxPolicy = {
@@ -131,7 +145,14 @@ export function cloneSandboxPolicy(policy: SandboxPolicy): SandboxPolicy {
       policy.network.egress === "allowlist"
         ? {
             egress: "allowlist",
-            allowedHosts: [...policy.network.allowedHosts]
+            allowedHosts: [...policy.network.allowedHosts],
+            ...(policy.network.allowedEndpoints
+              ? {
+                  allowedEndpoints: policy.network.allowedEndpoints.map(
+                    (endpoint) => ({ ...endpoint })
+                  )
+                }
+              : {})
           }
         : { egress: policy.network.egress }
   };

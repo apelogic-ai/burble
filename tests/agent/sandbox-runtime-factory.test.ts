@@ -90,7 +90,12 @@ describe("createSandboxRuntimeFactory", () => {
     expect(provider.provisionCalls[0].policy).toEqual({
       network: {
         egress: "allowlist",
-        allowedHosts: ["agentgateway:3000", "api.openai.com", "burble-app:3000"]
+        allowedHosts: ["agentgateway:3000", "api.openai.com", "burble-app:3000"],
+        allowedEndpoints: [
+          { host: "agentgateway:3000", tls: false },
+          { host: "api.openai.com", tls: true },
+          { host: "burble-app:3000", tls: false }
+        ]
       },
       filesystem: {
         readOnlyPaths: [
@@ -236,6 +241,12 @@ describe("createSandboxRuntimeFactory", () => {
         "api.exa.ai",
         "burble-app:3000",
         "firecrawl.internal"
+      ],
+      allowedEndpoints: [
+        { host: "api.anthropic.com", tls: true },
+        { host: "api.exa.ai", tls: true },
+        { host: "burble-app:3000", tls: false },
+        { host: "firecrawl.internal", tls: true }
       ]
     });
     expect(provider.runCalls[0].request.env).toMatchObject({

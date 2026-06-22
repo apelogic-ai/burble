@@ -34,6 +34,11 @@ describe("brokered runtime sandbox policy", () => {
           "agentgateway:3000",
           "api.openai.com",
           "burble-app:3000"
+        ],
+        allowedEndpoints: [
+          { host: "agentgateway:3000", tls: false },
+          { host: "api.openai.com", tls: true },
+          { host: "burble-app:3000", tls: false }
         ]
       },
       filesystem: {
@@ -114,6 +119,11 @@ describe("brokered runtime sandbox policy", () => {
         "agentgateway:3000",
         "api.openai.com",
         "burble-app:3000"
+      ],
+      allowedEndpoints: [
+        { host: "agentgateway:3000", tls: false },
+        { host: "api.openai.com", tls: true },
+        { host: "burble-app:3000", tls: false }
       ]
     });
     expect(compileOpenShellSandboxPolicy({ policy }).egress).toEqual({

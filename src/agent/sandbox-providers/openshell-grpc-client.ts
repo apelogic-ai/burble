@@ -635,13 +635,24 @@ function toOpenShellGrpcNetworkPolicies(
       "OpenShell gRPC policy does not support unrestricted egress; use an allowlist or deny policy"
     );
   }
+  const tlsByHost =
+    policy.network.egress === "allowlist"
+      ? new Map(
+          (policy.network.allowedEndpoints ?? []).map((endpoint) => [
+            endpoint.host,
+            endpoint.tls
+          ])
+        )
+      : new Map<string, boolean>();
   return {
     burble_runtime: {
       name: "burble_runtime",
       endpoints:
         policy.network.egress === "deny"
           ? []
-          : policy.network.allowedHosts.map(toNetworkEndpoint),
+          : policy.network.allowedHosts.map((host) =>
+              toNetworkEndpoint(host, tlsByHost)
+            ),
       binaries: openShellRuntimeNetworkBinaryPaths.map(toNetworkBinary)
     }
   };
@@ -651,13 +662,21 @@ function toNetworkBinary(path: string): Record<string, unknown> {
   return { path, harness: false };
 }
 
-function toNetworkEndpoint(host: string): Record<string, unknown> {
+function toNetworkEndpoint(
+  host: string,
+  tlsByHost: Map<string, boolean>
+): Record<string, unknown> {
   const { hostname, port } = splitHostPort(host);
+  // Default to TLS passthrough when transport metadata is absent (e.g. policies
+  // built outside the brokered builder) so the long-standing TLS egress path is
+  // unchanged. Plaintext hosts (the internal http:// tool/MCP gateway) must NOT
+  // be declared as TLS passthrough or the proxy fails to establish the hop.
+  const tls = tlsByHost.get(host) ?? true;
   return {
     host: hostname,
     ports: [port],
     protocol: "rest",
-    tls: "passthrough",
+    tls: tls ? "passthrough" : "none",
     enforcement: "enforce",
     access: "full"
   };
@@ -711,18 +730,35 @@ export function openShellLaunchCommand(argv: string[]): string[] {
   );
 }
 
+// The launcher backgrounds the real runtime and then watches it for a short
+// window before reporting success. The window must outlast process bind +
+// early crashes (config parse, missing module, denied path) so that a runtime
+// which starts and then dies surfaces its captured stderr through run().output
+// instead of slipping past into a logless health-check timeout.
+const launcherSettleChecks = 15;
+const launcherSettleIntervalMs = 200;
+
 const pythonLauncherScript = [
-  "import os, subprocess, sys, time",
-  "argv=sys.argv[1:]",
-  "log=open('/tmp/burble-runtime.log','ab',buffering=0)",
-  "stdin=open('/tmp/burble-runtime.stdin','ab+')",
+  "import subprocess, sys, time",
+  "argv = sys.argv[1:]",
+  "log = open('/tmp/burble-runtime.log', 'ab', buffering=0)",
+  "stdin = open('/tmp/burble-runtime.stdin', 'ab+')",
   "stdin.seek(0)",
-  "proc=subprocess.Popen(argv, stdin=stdin, stdout=log, stderr=subprocess.STDOUT, start_new_session=True)",
-  "time.sleep(0.2)",
-  "code=proc.poll()",
-  "open('/tmp/burble-runtime.pid','w').write(str(proc.pid)) if code is None else None",
-  "sys.exit(0) if code is None else (log.close(), stdin.close(), sys.stderr.buffer.write(open('/tmp/burble-runtime.log','rb').read()), sys.exit(code))"
-].join("; ");
+  "proc = subprocess.Popen(argv, stdin=stdin, stdout=log, stderr=subprocess.STDOUT, start_new_session=True)",
+  "code = None",
+  `for _ in range(${launcherSettleChecks}):`,
+  `    time.sleep(${(launcherSettleIntervalMs / 1000).toFixed(3)})`,
+  "    code = proc.poll()",
+  "    if code is not None:",
+  "        break",
+  "if code is None:",
+  "    open('/tmp/burble-runtime.pid', 'w').write(str(proc.pid))",
+  "    sys.exit(0)",
+  "log.close()",
+  "stdin.close()",
+  "sys.stderr.buffer.write(open('/tmp/burble-runtime.log', 'rb').read())",
+  "sys.exit(code)"
+].join("\n");
 
 const bunLauncherScript = [
   "const fs=require('node:fs')",
@@ -732,8 +768,20 @@ const bunLauncherScript = [
   "const input=fs.openSync('/tmp/burble-runtime.stdin','a+')",
   "const child=cp.spawn(argv[0],argv.slice(1),{detached:true,stdio:[input,log,log],env:process.env})",
   "child.unref()",
-  "setTimeout(()=>{if(child.exitCode==null){fs.writeFileSync('/tmp/burble-runtime.pid',String(child.pid));process.exit(0)};try{process.stderr.write(fs.readFileSync('/tmp/burble-runtime.log'))}catch{};process.exit(child.exitCode??1)},200)"
-].join("; ");
+  "let checks=0",
+  "const timer=setInterval(()=>{",
+  "  if(child.exitCode!=null){",
+  "    clearInterval(timer)",
+  "    try{process.stderr.write(fs.readFileSync('/tmp/burble-runtime.log'))}catch{}",
+  "    process.exit(child.exitCode??1)",
+  "  }",
+  `  if(++checks>=${launcherSettleChecks}){`,
+  "    clearInterval(timer)",
+  "    fs.writeFileSync('/tmp/burble-runtime.pid',String(child.pid))",
+  "    process.exit(0)",
+  "  }",
+  `}, ${launcherSettleIntervalMs})`
+].join("\n");
 
 function grpcTarget(endpoint: string): string {
   const url = new URL(endpoint);

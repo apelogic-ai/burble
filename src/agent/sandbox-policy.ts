@@ -1,4 +1,4 @@
-import type { SandboxPolicy } from "./sandbox-provider";
+import type { SandboxEgressEndpoint, SandboxPolicy } from "./sandbox-provider";
 import type { Config } from "../config";
 
 export type BrokeredRuntimeSandboxPolicyInput = {
@@ -20,15 +20,17 @@ export function buildBrokeredRuntimeSandboxPolicy(
   input: BrokeredRuntimeSandboxPolicyInput
 ): SandboxPolicy {
   assertRequiredUrls("modelProviderUrls", input.modelProviderUrls);
+  const endpoints = sandboxEgressEndpointsFromUrls([
+    input.toolGatewayUrl,
+    input.mcpGatewayUrl,
+    ...(input.modelProviderUrls ?? []),
+    ...(input.extraAllowedUrls ?? [])
+  ]);
   return {
     network: {
       egress: "allowlist",
-      allowedHosts: sandboxAllowedHostsFromUrls([
-        input.toolGatewayUrl,
-        input.mcpGatewayUrl,
-        ...(input.modelProviderUrls ?? []),
-        ...(input.extraAllowedUrls ?? [])
-      ])
+      allowedHosts: endpoints.map((endpoint) => endpoint.host),
+      allowedEndpoints: endpoints
     },
     ...(input.filesystem ? { filesystem: input.filesystem } : {}),
     ...(input.resources ? { resources: input.resources } : {}),
@@ -53,10 +55,32 @@ export function buildRuntimeSandboxPolicyFromConfig(
 export function sandboxAllowedHostsFromUrls(
   urls: Array<string | null | undefined>
 ): string[] {
-  return [...new Set(urls.flatMap(sandboxHostFromUrl))].sort();
+  return sandboxEgressEndpointsFromUrls(urls).map((endpoint) => endpoint.host);
 }
 
-function sandboxHostFromUrl(value: string | null | undefined): string[] {
+export function sandboxEgressEndpointsFromUrls(
+  urls: Array<string | null | undefined>
+): SandboxEgressEndpoint[] {
+  // A host is treated as TLS when any of its URLs uses a TLS scheme; mixing
+  // plaintext and TLS on one host:port does not happen in practice, but if it
+  // did the TLS (stricter, working) treatment wins.
+  const tlsByHost = new Map<string, boolean>();
+  for (const value of urls) {
+    for (const endpoint of sandboxEndpointFromUrl(value)) {
+      tlsByHost.set(
+        endpoint.host,
+        (tlsByHost.get(endpoint.host) ?? false) || endpoint.tls
+      );
+    }
+  }
+  return [...tlsByHost.entries()]
+    .map(([host, tls]) => ({ host, tls }))
+    .sort((left, right) => left.host.localeCompare(right.host));
+}
+
+function sandboxEndpointFromUrl(
+  value: string | null | undefined
+): SandboxEgressEndpoint[] {
   const trimmed = value?.trim();
   if (!trimmed) {
     return [];
@@ -77,7 +101,12 @@ function sandboxHostFromUrl(value: string | null | undefined): string[] {
   ) {
     throw new Error(`Sandbox egress URL must use http, https, ws, or wss: ${value}`);
   }
-  return [url.host.toLowerCase()];
+  return [
+    {
+      host: url.host.toLowerCase(),
+      tls: url.protocol === "https:" || url.protocol === "wss:"
+    }
+  ];
 }
 
 function assertRequiredUrls(

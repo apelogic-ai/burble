@@ -40,6 +40,7 @@ export type OpenShellSandboxClient = {
     runtime: SandboxProvisionRequest["runtime"];
     labels: Record<string, string>;
     policy?: SandboxPolicy;
+    compiledPolicy?: OpenShellSandboxPolicyConfig;
   }): Promise<OpenShellSandboxRecord>;
   applyPolicy(input: {
     sandboxId: string;
@@ -85,7 +86,18 @@ export function createOpenShellSandboxProvider(input: {
         principal: request.principal,
         runtime: request.runtime,
         labels: request.labels ?? {},
-        ...(request.policy ? { policy: request.policy } : {})
+        // Policy is applied at creation (parity with the gRPC transport, which
+        // compiles into the CreateSandbox spec). Send the compiled form so the
+        // sandbox is born with its egress/filesystem policy instead of relying
+        // on a follow-up applyPolicy call that fresh provisioning no longer makes.
+        ...(request.policy
+          ? {
+              policy: request.policy,
+              compiledPolicy: compileOpenShellSandboxPolicy({
+                policy: request.policy
+              })
+            }
+          : {})
       });
       const handle = handleFromRecord(record);
       return cloneHandle(handle);

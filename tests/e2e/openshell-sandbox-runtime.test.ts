@@ -66,7 +66,7 @@ describe("OpenShell sandbox runtime integration", () => {
       expect(openshell.requests.every((request) => request.authorized)).toBe(
         true
       );
-      expect(openshell.policy?.compiledPolicy.egress).toEqual({
+      expect(openshell.created?.compiledPolicy.egress).toEqual({
         default: "deny",
         allowHosts: ["api.openai.com", "burble-app:3000"]
       });
@@ -178,6 +178,7 @@ type FakeOpenShellRequest = {
 type FakeOpenShellServer = {
   port: number;
   requests: FakeOpenShellRequest[];
+  created: { policy: unknown; compiledPolicy: { egress: unknown } } | null;
   policy: { policy: unknown; compiledPolicy: { egress: unknown } } | null;
   credentials: {
     credentialBindings: SandboxCredentialBinding[];
@@ -193,6 +194,7 @@ function startFakeOpenShellServer(input: {
 }): FakeOpenShellServer {
   const requests: FakeOpenShellRequest[] = [];
   const state: Omit<FakeOpenShellServer, "port" | "requests" | "stop"> = {
+    created: null,
     policy: null,
     credentials: null,
     run: null
@@ -217,7 +219,13 @@ function startFakeOpenShellServer(input: {
           principal: unknown;
           runtime: unknown;
           labels: Record<string, string>;
+          policy?: unknown;
+          compiledPolicy?: { egress: unknown };
         };
+        state.created =
+          body.compiledPolicy === undefined
+            ? null
+            : { policy: body.policy, compiledPolicy: body.compiledPolicy };
         return Response.json({
           sandboxId: "openshell-sandbox-1",
           endpoint: input.runtimeEndpoint,
@@ -284,6 +292,9 @@ function startFakeOpenShellServer(input: {
       return server.port ?? 0;
     },
     requests,
+    get created() {
+      return state.created;
+    },
     get policy() {
       return state.policy;
     },

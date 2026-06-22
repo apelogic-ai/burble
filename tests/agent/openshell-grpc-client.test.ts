@@ -46,9 +46,17 @@ describe("OpenShell gRPC exec events", () => {
     expect(python[1]).toBe("-c");
     expect(bun[0]).toBe("bun");
     expect(bun[1]).toBe("-e");
-    expect(
-      [...python, ...bun].every((part) => !/[\r\n]/.test(part))
-    ).toBe(true);
+    // Only the inline launcher script (index 2) is multi-line; the interpreter,
+    // flag, and forwarded argv must never carry newlines that could split args.
+    const nonScript = [
+      python[0],
+      python[1],
+      ...python.slice(3),
+      bun[0],
+      bun[1],
+      ...bun.slice(3)
+    ];
+    expect(nonScript.every((part) => !/[\r\n]/.test(part))).toBe(true);
     expect([...python, ...bun].join(" ")).not.toContain("/dev/null");
     expect([...python, ...bun].join(" ")).not.toContain("sh -");
   });

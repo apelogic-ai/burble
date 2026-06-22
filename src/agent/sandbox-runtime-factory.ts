@@ -652,7 +652,7 @@ async function waitForSandboxRuntimeHealth(input: {
   throw new Error(
     `Runtime health check failed for sandbox ${input.sandboxId} at ${input.endpointUrl}: ${
       lastError instanceof Error ? lastError.message : "unknown error"
-    }`
+    }. The runtime process may have started and then exited (e.g. denied egress/filesystem path); inspect /tmp/burble-runtime.log inside the sandbox for its captured stderr.`
   );
 }
 
