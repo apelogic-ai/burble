@@ -164,6 +164,46 @@ describe("createManagedRuntimeFactory sandbox mode", () => {
 
     store.close();
   });
+
+  test("uses the selected engine's sandbox start command when users switch engines", async () => {
+    const store = createTokenStore(":memory:");
+    const sandboxProvider = createSlackRuntimeSandboxProvider();
+    store.upsertWorkspacePolicy({
+      workspaceId: "T123",
+      key: "runtime.allowedEngines",
+      value: ["hermes", "openclaw"],
+      updatedBySlackUserId: "UADMIN"
+    });
+    store.upsertUserPreference({
+      workspaceId: "T123",
+      slackUserId: "U123",
+      key: "runtime.engine",
+      value: "openclaw"
+    });
+    const runtimeFactory = createManagedRuntimeFactory(
+      {
+        ...agentConfig,
+        agentRuntimeFactory: "sandbox",
+        agentRuntimeEngine: "hermes",
+        openClawNemoClawEngine: "hermes",
+        agentRuntimeImage: "burble-nemo-hermes:dev"
+      },
+      store,
+      undefined,
+      {
+        sandboxProvider,
+        sandboxFetch: async () => new Response("ok")
+      }
+    );
+
+    await runtimeFactory?.getOrCreateRuntime({
+      workspaceId: "T123",
+      slackUserId: "U123"
+    });
+
+    expect(sandboxProvider.runCommands).toEqual([["bun", "src/index.ts"]]);
+    store.close();
+  });
 });
 
 describe("formatIssuesMessage", () => {
@@ -3434,6 +3474,9 @@ function createSlackRuntimeSandboxProvider(): SlackRuntimeSandboxProvider {
 
     async provision(request) {
       sequence += 1;
+      if (request.policy?.network.egress === "allowlist") {
+        policyHosts.push(...request.policy.network.allowedHosts);
+      }
       const sandbox: SandboxHandle = {
         id: `slack-sandbox-${sequence}`,
         provider: "slack-test-sandbox",

@@ -27,7 +27,9 @@ const slack = createSlackRuntime(
   config.agentRuntimeFactory === "sandbox"
     ? {
         sandboxProvider: createConfiguredSandboxProvider(config),
-        sandboxStartCommand: config.agentRuntimeSandboxStartCommand ?? []
+        ...(config.agentRuntimeSandboxStartCommand
+          ? { sandboxStartCommand: config.agentRuntimeSandboxStartCommand }
+          : {})
       }
     : {}
 );

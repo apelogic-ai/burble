@@ -24,6 +24,7 @@ export type RuntimeDescriptor = {
   selectable: boolean;
   unselectableReason?: string;
   defaultImages: readonly string[];
+  defaultSandboxStartCommand: readonly string[];
   healthCheckAttempts: number;
   capabilities: RuntimeCapabilityManifest;
   container: RuntimeContainerProfile;
@@ -140,6 +141,7 @@ const runtimeDescriptors = {
     family: "deterministic",
     selectable: true,
     defaultImages: deterministicDefaultImages,
+    defaultSandboxStartCommand: ["bun", "src/index.ts"],
     healthCheckAttempts: 30,
     capabilities: openClawCapabilityManifest("deterministic"),
     container: openClawContainerProfile
@@ -149,6 +151,7 @@ const runtimeDescriptors = {
     family: "openclaw",
     selectable: true,
     defaultImages: openClawDefaultImages,
+    defaultSandboxStartCommand: ["bun", "src/index.ts"],
     healthCheckAttempts: 90,
     capabilities: openClawCapabilityManifest("openclaw"),
     container: openClawContainerProfile
@@ -158,6 +161,7 @@ const runtimeDescriptors = {
     family: "openclaw",
     selectable: true,
     defaultImages: openClawDefaultImages,
+    defaultSandboxStartCommand: ["bun", "src/index.ts"],
     healthCheckAttempts: 90,
     capabilities: openClawCapabilityManifest("openclaw-gateway"),
     container: openClawContainerProfile
@@ -167,6 +171,7 @@ const runtimeDescriptors = {
     family: "burble-native",
     selectable: true,
     defaultImages: ["burble-native-runtime:dev"],
+    defaultSandboxStartCommand: ["bun", "src/index.ts"],
     healthCheckAttempts: 30,
     capabilities: burbleNativeCapabilityManifest,
     container: burbleNativeContainerProfile
@@ -176,6 +181,7 @@ const runtimeDescriptors = {
     family: "hermes",
     selectable: true,
     defaultImages: ["burble-nemo-hermes:dev"],
+    defaultSandboxStartCommand: ["python", "/runtime/entrypoint.py"],
     healthCheckAttempts: 30,
     capabilities: hermesCapabilityManifest,
     container: hermesContainerProfile
@@ -190,6 +196,12 @@ export function defaultRuntimeImageForEngine(
   engine: AgentRuntimeEngine
 ): string {
   return runtimeDescriptor(engine).defaultImages[0];
+}
+
+export function defaultSandboxStartCommandForEngine(
+  engine: AgentRuntimeEngine
+): string[] {
+  return [...runtimeDescriptor(engine).defaultSandboxStartCommand];
 }
 
 export function isKnownDefaultRuntimeImage(

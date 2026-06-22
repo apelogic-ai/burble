@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
+  defaultSandboxStartCommandForEngine,
   defaultRuntimeImageForEngine,
   isKnownDefaultRuntimeImage,
   runtimeCompatibilityFamily,
@@ -42,6 +43,25 @@ describe("runtime descriptors", () => {
     expect(
       isKnownDefaultRuntimeImage("hermes", "burble-openclaw-nemoclaw:dev")
     ).toBe(false);
+  });
+
+  test("keeps sandbox start commands with the engine descriptors", () => {
+    expect(defaultSandboxStartCommandForEngine("hermes")).toEqual([
+      "python",
+      "/runtime/entrypoint.py"
+    ]);
+    expect(defaultSandboxStartCommandForEngine("openclaw")).toEqual([
+      "bun",
+      "src/index.ts"
+    ]);
+    expect(defaultSandboxStartCommandForEngine("openclaw-gateway")).toEqual([
+      "bun",
+      "src/index.ts"
+    ]);
+    expect(defaultSandboxStartCommandForEngine("burble-native")).toEqual([
+      "bun",
+      "src/index.ts"
+    ]);
   });
 
   test("exposes runtime config shape and readiness policy", () => {

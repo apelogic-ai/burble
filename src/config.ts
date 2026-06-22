@@ -1,5 +1,6 @@
 import { validateAgentModelId } from "./agent/providers";
 import {
+  defaultSandboxStartCommandForEngine,
   defaultRuntimeImageForEngine,
   isKnownDefaultRuntimeImage,
   runtimeEngines
@@ -331,11 +332,10 @@ export function readConfig(env: Env): Config {
   const configuredAgentRuntimeImage =
     optionalSecretEnv(env, "AGENT_RUNTIME_IMAGE") ??
     optionalSecretEnv(env, "OPENCLAW_NEMOCLAW_IMAGE");
-  const agentRuntimeSandboxStartCommand =
-    optionalCommandEnv(env, "AGENT_RUNTIME_SANDBOX_START_COMMAND") ??
-    (agentRuntimeFactory === "sandbox"
-      ? defaultAgentRuntimeSandboxStartCommand(agentRuntimeEngine)
-      : null);
+  const agentRuntimeSandboxStartCommand = optionalCommandEnv(
+    env,
+    "AGENT_RUNTIME_SANDBOX_START_COMMAND"
+  );
   const managedRuntimeUrl =
     optionalUrlEnv(env, "AGENT_RUNTIME_URL") ??
     optionalUrlEnv(env, "OPENCLAW_NEMOCLAW_URL");
@@ -454,9 +454,7 @@ export function defaultAgentRuntimeImage(engine: AgentRuntimeEngine): string {
 export function defaultAgentRuntimeSandboxStartCommand(
   engine: AgentRuntimeEngine
 ): string[] {
-  return engine === "hermes"
-    ? ["python", "/runtime/entrypoint.py"]
-    : ["bun", "src/index.ts"];
+  return defaultSandboxStartCommandForEngine(engine);
 }
 
 export function isDefaultAgentRuntimeImage(

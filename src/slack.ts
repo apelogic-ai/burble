@@ -6,6 +6,7 @@ import { readFile } from "node:fs/promises";
 import {
   agentRuntimeEngines,
   defaultAgentRuntimeImage,
+  defaultAgentRuntimeSandboxStartCommand,
   isDefaultAgentRuntimeImage,
   type AgentRuntimeStreamingMode,
   type Config
@@ -1835,11 +1836,6 @@ export function createManagedRuntimeFactory(
         "AGENT_RUNTIME_FACTORY=sandbox requires an injected SandboxProvider"
       );
     }
-    if (!options.sandboxStartCommand?.length) {
-      throw new Error(
-        "AGENT_RUNTIME_FACTORY=sandbox requires a sandbox start command"
-      );
-    }
   }
   if (config.agentRuntimeFactory === "static" && !config.managedRuntimeUrl) {
     return undefined;
@@ -1893,7 +1889,9 @@ export function createManagedRuntimeFactory(
               runtimeJwtTtlSeconds: config.agentRuntimeJwtTtlSeconds,
               runtimeTokenSecret: config.agentRuntimeTokenSecret ?? "",
               idleTtlMs: config.agentRuntimeIdleTtlMs,
-              startCommand: options.sandboxStartCommand!,
+              startCommand:
+                options.sandboxStartCommand ??
+                defaultAgentRuntimeSandboxStartCommand(engine),
               fetch: options.sandboxFetch,
               openShellDialHost: config.agentRuntimeOpenShellDialHost,
               env: Bun.env,
