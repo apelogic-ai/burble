@@ -5,6 +5,7 @@ import contextlib
 import importlib.util
 import json
 import os
+import re
 import shutil
 import shlex
 import signal
@@ -1025,6 +1026,9 @@ class BurbleHermesRuntime:
             if text:
                 await waiter.emit({"type": event_type, "text": text})
             return web.json_response({"ok": True})
+        if is_hermes_progress_text(text):
+            await waiter.emit({"type": "status", "text": text})
+            return web.json_response({"ok": True})
         if not waiter.future.done():
             waiter.future.set_result(body)
         return web.json_response({"ok": True})
@@ -1513,6 +1517,15 @@ class BurbleHermesRuntime:
 
 def timestamp() -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
+
+def is_hermes_progress_text(text: str) -> bool:
+    normalized = text.strip()
+    return bool(
+        re.match(r"^Retrying in [0-9.]+s \(attempt \d+/\d+\)\.\.\.$", normalized)
+        or normalized.startswith(":hourglass_flowing_sand: Retrying in ")
+        or normalized.startswith("Agent has thought for ")
+    )
 
 
 if __name__ == "__main__":
