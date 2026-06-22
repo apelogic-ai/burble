@@ -95,8 +95,12 @@ describe("createSandboxRuntimeFactory", () => {
       filesystem: {
         readOnlyPaths: [
           "/runtime",
+          "/lib",
+          "/lib64",
           "/usr/bin/env",
           "/usr/bin/node",
+          "/usr/lib",
+          "/usr/libexec",
           "/usr/local/bin",
           "/usr/local/bin/node",
           "/usr/local/lib",

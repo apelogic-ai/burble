@@ -71,8 +71,12 @@ describe("runtime descriptors", () => {
     expect(runtimeHealthCheckAttempts("openclaw-gateway")).toBe(90);
     expect(runtimeHealthCheckAttempts("hermes")).toBe(30);
     expect(runtimeDescriptor("openclaw").container.sandboxReadOnlyPaths).toEqual([
+      "/lib",
+      "/lib64",
       "/usr/bin/env",
       "/usr/bin/node",
+      "/usr/lib",
+      "/usr/libexec",
       "/usr/local/bin",
       "/usr/local/bin/node",
       "/usr/local/lib",

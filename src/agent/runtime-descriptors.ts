@@ -47,8 +47,12 @@ const openClawContainerProfile: RuntimeContainerProfile = {
   stateDir: "/data/openclaw/state",
   workspaceDir: "/data/openclaw/workspace",
   sandboxReadOnlyPaths: [
+    "/lib",
+    "/lib64",
     "/usr/bin/env",
     "/usr/bin/node",
+    "/usr/lib",
+    "/usr/libexec",
     "/usr/local/bin",
     "/usr/local/bin/node",
     "/usr/local/lib",
