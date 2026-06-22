@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { formatRuntimeScheduledJobContextLines } from "@burble/runtime-sdk/scheduled-job-context";
 import { stripRuntimeToolCallProtocolFragments } from "@burble/runtime-sdk/runtime-text-protocol";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { mkdir, readFile, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import type { RuntimeConfig } from "./config";
@@ -1259,7 +1259,7 @@ export async function runCliCommand(
   args: string[],
   options: { timeoutMs: number; env?: Record<string, string> }
 ): Promise<CliCommandResult> {
-  const proc = Bun.spawn([command, ...args], {
+  const proc = Bun.spawn([resolveOpenClawCliCommand(command), ...args], {
     stdout: "pipe",
     stderr: "pipe",
     env: buildOpenClawProcessEnv(options.env)
@@ -1292,7 +1292,7 @@ export async function* runCliCommandStream(
   args: string[],
   options: { timeoutMs: number; env?: Record<string, string> }
 ): AsyncIterable<CliCommandStreamEvent> {
-  const proc = Bun.spawn([command, ...args], {
+  const proc = Bun.spawn([resolveOpenClawCliCommand(command), ...args], {
     stdout: "pipe",
     stderr: "pipe",
     env: buildOpenClawProcessEnv(options.env)
@@ -1353,6 +1353,15 @@ export async function* runCliCommandStream(
   } finally {
     clearTimeout(timer);
   }
+}
+
+export function resolveOpenClawCliCommand(
+  command: string,
+  commandExists: (path: string) => boolean = existsSync
+): string {
+  return command === "openclaw" && commandExists("/usr/local/bin/openclaw")
+    ? "/usr/local/bin/openclaw"
+    : command;
 }
 
 type DecodedStreamChunk = {

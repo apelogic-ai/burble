@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
+  resolveOpenClawCliCommand,
   runOpenClawCliRequest,
   runOpenClawCliRequestStream
 } from "../../../runtimes/openclaw-nemoclaw/src/openclaw-cli";
@@ -36,6 +37,18 @@ const config: RuntimeConfig = {
   llmModel: "openai:gpt-5.4",
   ollamaBaseUrl: "https://ollama.com"
 };
+
+describe("OpenClaw CLI command resolution", () => {
+  test("uses the absolute OpenClaw binary inside sandboxed runtime images", () => {
+    expect(resolveOpenClawCliCommand("openclaw", () => true)).toBe(
+      "/usr/local/bin/openclaw"
+    );
+    expect(resolveOpenClawCliCommand("openclaw", () => false)).toBe("openclaw");
+    expect(resolveOpenClawCliCommand("/custom/openclaw", () => true)).toBe(
+      "/custom/openclaw"
+    );
+  });
+});
 
 function readSessionIdArg(args: string[]): string {
   const index = args.indexOf("--session-id");
