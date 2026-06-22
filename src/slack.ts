@@ -2308,11 +2308,12 @@ type AgentHomeSettingsView = {
   disabledTools: string[];
   enabledSkills: string[];
   policyHash: string;
-  runtime: {
-    id: string | null;
-    status: string;
-    factory: string;
-    engine: string;
+    runtime: {
+      id: string | null;
+      sandboxId: string | null;
+      status: string;
+      factory: string;
+      engine: string;
     configuredEngine: string;
     preferredEngine: string | null;
     allowedEngines: string[];
@@ -2486,6 +2487,7 @@ export function buildAgentHomeSettings(input: {
     runtime: runtime
       ? {
           id: runtime.id,
+          sandboxId: runtime.sandboxId,
           status: runtime.status,
           factory: input.config.agentRuntimeFactory,
           engine: runtime.engine,
@@ -2500,6 +2502,7 @@ export function buildAgentHomeSettings(input: {
         }
       : {
           id: null,
+          sandboxId: null,
           status: "not provisioned",
           factory: input.config.agentRuntimeFactory,
           engine: selection.effectiveEngine,
@@ -2748,6 +2751,9 @@ function formatRuntimeHomeSummary(settings: AgentHomeSettingsView): string {
   const runtimeId = settings.runtime.id
     ? `\`${settings.runtime.id}\``
     : "`not provisioned yet`";
+  const sandboxId = settings.runtime.sandboxId
+    ? `\`${settings.runtime.sandboxId}\``
+    : "`none`";
   const lastUsed = settings.runtime.lastUsedAt ?? "never";
   return [
     `Status: \`${settings.runtime.status}\``,
@@ -2755,7 +2761,8 @@ function formatRuntimeHomeSummary(settings: AgentHomeSettingsView): string {
     `Engine: \`${settings.runtime.engine}\``,
     `Preferred engine: \`${settings.runtime.preferredEngine ?? "not set"}\``,
     `Selectable engines: \`${formatStringList(settings.runtime.selectableEngines)}\``,
-    `Runtime: ${runtimeId}`,
+    `Runtime ID: ${runtimeId}`,
+    `Sandbox: ${sandboxId}`,
     `Last used: ${lastUsed}`
   ].join("\n");
 }

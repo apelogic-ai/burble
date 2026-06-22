@@ -1616,7 +1616,7 @@ describe("buildAppHomeView", () => {
       statePath: "/data/state",
       configPath: "/data/config/runtime.json",
       workspacePath: "/data/workspace",
-        sandboxId: null,
+      sandboxId: "sandbox-home",
       policyHash: "policy-home"
     });
     const agentSettings = buildAgentHomeSettings({
@@ -1675,6 +1675,8 @@ describe("buildAppHomeView", () => {
     expect(serialized).toContain("Not connected");
     expect(serialized).toContain("https://example.test/google");
     expect(serialized).toContain("Agent runtime");
+    expect(serialized).toContain("Runtime ID");
+    expect(serialized).toContain("sandbox-home");
     expect(serialized).toContain("User auth");
     expect(serialized).toContain("Details");
     expect(serialized).toContain("agent_runtime_manage");
