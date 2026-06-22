@@ -66,6 +66,7 @@ export function resolveRuntimeEngineForPrincipal(input: {
   });
   const compatibility = allowedEngines.map((engine) =>
     runtimeEngineCompatibility(engine, {
+      factory: input.config.agentRuntimeFactory,
       requirements: input.requirements
     })
   );
@@ -116,6 +117,7 @@ export function resolveRuntimeEngineForPrincipal(input: {
 export function runtimeEngineCompatibility(
   engine: RuntimeManifest["runtime"]["engine"],
   options: {
+    factory?: Config["agentRuntimeFactory"];
     workload?: RuntimeEngineCompatibilityWorkload;
     requirements?: RuntimeSelectionRequirements;
   } = {}
@@ -126,6 +128,18 @@ export function runtimeEngineCompatibility(
       engine,
       selectable: false,
       reasons: [descriptor.unselectableReason ?? "runtime is not selectable"]
+    };
+  }
+  if (
+    options.factory === "sandbox" &&
+    (engine === "openclaw" || engine === "openclaw-gateway")
+  ) {
+    return {
+      engine,
+      selectable: false,
+      reasons: [
+        "requires OpenShell creation-time command launch; sandbox gRPC factory starts runtimes via ExecSandbox"
+      ]
     };
   }
   return runtimeCapabilityManifestCompatibility(

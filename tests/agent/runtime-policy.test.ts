@@ -169,6 +169,43 @@ describe("resolveRuntimeEngineForPrincipal", () => {
     store.close();
   });
 
+  test("falls back from OpenClaw under sandbox factory because it requires creation-time launch", () => {
+    const store = createTokenStore(":memory:");
+    store.upsertWorkspacePolicy({
+      workspaceId: "T123",
+      key: "runtime.allowedEngines",
+      value: ["openclaw", "hermes"],
+      updatedBySlackUserId: "UADMIN"
+    });
+    store.upsertUserPreference({
+      workspaceId: "T123",
+      slackUserId: "U123",
+      key: "runtime.engine",
+      value: "openclaw"
+    });
+
+    const selection = resolveRuntimeEngineForPrincipal({
+      config: { ...config, agentRuntimeFactory: "sandbox" },
+      store,
+      principal: {
+        workspaceId: "T123",
+        slackUserId: "U123"
+      }
+    });
+
+    expect(selection.preferredEngine).toBe("openclaw");
+    expect(selection.effectiveEngine).toBe("hermes");
+    expect(selection.selectableEngines).toEqual(["hermes"]);
+    expect(selection.compatibility).toContainEqual({
+      engine: "openclaw",
+      selectable: false,
+      reasons: [
+        "requires OpenShell creation-time command launch; sandbox gRPC factory starts runtimes via ExecSandbox"
+      ]
+    });
+    store.close();
+  });
+
   test("keeps an attachment-capable preferred runtime selected", () => {
     const store = createTokenStore(":memory:");
     store.upsertWorkspacePolicy({
@@ -434,6 +471,41 @@ describe("resolveRuntimeEngineForPrincipal", () => {
         selectableEngines: []
       });
       expect(String(error)).toContain("missing usage reporting");
+    }
+    store.close();
+  });
+
+  test("fails explicitly when sandbox policy only allows OpenClaw", () => {
+    const store = createTokenStore(":memory:");
+    store.upsertWorkspacePolicy({
+      workspaceId: "T123",
+      key: "runtime.allowedEngines",
+      value: ["openclaw"],
+      updatedBySlackUserId: "UADMIN"
+    });
+
+    expect(() =>
+      resolveRuntimeEngineForPrincipal({
+        config: { ...config, agentRuntimeFactory: "sandbox" },
+        store,
+        principal: {
+          workspaceId: "T123",
+          slackUserId: "U123"
+        }
+      })
+    ).toThrow(RuntimeEngineSelectionError);
+    try {
+      resolveRuntimeEngineForPrincipal({
+        config: { ...config, agentRuntimeFactory: "sandbox" },
+        store,
+        principal: {
+          workspaceId: "T123",
+          slackUserId: "U123"
+        }
+      });
+    } catch (error) {
+      expect(error).toBeInstanceOf(RuntimeEngineSelectionError);
+      expect(String(error)).toContain("creation-time command launch");
     }
     store.close();
   });
