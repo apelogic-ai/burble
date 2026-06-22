@@ -105,6 +105,7 @@ describe("createSandboxRuntimeFactory", () => {
           filesystem: {
             readOnlyPaths: ["/runtime"],
             readWritePaths: [
+              "/data/openclaw",
               "/runtime/config",
               "/runtime/state",
               "/runtime/workspace",

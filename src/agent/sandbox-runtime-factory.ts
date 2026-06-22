@@ -456,6 +456,7 @@ async function withRuntimeProvisionLock<T>(
 
 function buildDefaultSandboxPolicy(
   input: {
+    engine: AgentRuntimeEngine;
     toolGatewayUrl: string;
     mcpGatewayUrl?: string | null;
     modelProviderUrls: string[];
@@ -471,16 +472,20 @@ function buildDefaultSandboxPolicy(
       ? modelProviderUrlsForRuntimeModel(manifest.model, env)
       : input.modelProviderUrls,
     extraAllowedUrls: runtimeExtraAllowedUrlsFromEnv(env),
-    filesystem: defaultSandboxRuntimeFilesystemPolicy()
+    filesystem: defaultSandboxRuntimeFilesystemPolicy(input.engine)
   });
 }
 
-function defaultSandboxRuntimeFilesystemPolicy(): NonNullable<
+function defaultSandboxRuntimeFilesystemPolicy(
+  engine: AgentRuntimeEngine
+): NonNullable<
   SandboxPolicy["filesystem"]
 > {
+  const container = runtimeDescriptor(engine).container;
   return {
     readOnlyPaths: ["/runtime"],
     readWritePaths: [
+      container.dataRootTarget,
       "/runtime/config",
       "/runtime/state",
       "/runtime/workspace",

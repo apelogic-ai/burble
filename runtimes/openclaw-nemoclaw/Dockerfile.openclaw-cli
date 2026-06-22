@@ -19,5 +19,9 @@ COPY packages/runtime-sdk /runtime/node_modules/@burble/runtime-sdk
 RUN cd /runtime/node_modules/@burble/runtime-sdk && bun install --production
 RUN mkdir -p /runtime/openclaw-plugins/burble-channel/node_modules \
   && ln -s /usr/local/lib/node_modules/openclaw /runtime/openclaw-plugins/burble-channel/node_modules/openclaw
+RUN groupadd --gid 1000660000 sandbox \
+  && useradd --uid 1000660000 --gid 1000660000 --home-dir /runtime --shell /bin/sh sandbox \
+  && mkdir -p /runtime/config /runtime/state /runtime/workspace /data/openclaw/config /data/openclaw/state /data/openclaw/workspace /data/openclaw/logs \
+  && chown -R sandbox:sandbox /runtime /data/openclaw
 EXPOSE 8080
 CMD ["bun", "src/index.ts"]

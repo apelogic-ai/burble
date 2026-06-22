@@ -635,6 +635,17 @@ describe("dev deploy config", () => {
     expect(openClawCliDockerfile).toContain("iproute2");
   });
 
+  test("creates OpenShell-writable runtime data roots in runtime images", () => {
+    expect(hermesDockerfile).toContain("/data/openclaw/hermes");
+    expect(hermesDockerfile).toContain("chown -R sandbox:sandbox /runtime /data/openclaw");
+    expect(openClawRuntimeDockerfile).toContain("/data/openclaw/config");
+    expect(openClawRuntimeDockerfile).toContain("/data/openclaw/logs");
+    expect(openClawCliDockerfile).toContain("/data/openclaw/config");
+    expect(openClawCliDockerfile).toContain("/data/openclaw/logs");
+    expect(burbleNativeDockerfile).toContain("/data/burble-native/config");
+    expect(burbleNativeDockerfile).toContain("/data/burble-native/workspace");
+  });
+
   test("provides an optional OpenClaw CLI runtime build override", async () => {
     const dockerfile = await Bun.file(
       "runtimes/openclaw-nemoclaw/Dockerfile.openclaw-cli"
