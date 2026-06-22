@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   applyAgentRuntimeControl,
+  markAgentRuntimeControlInProgress,
   applyAgentUserConfigSet,
   buildAgentConfigRuntimeRestartFailureResponse,
   buildAgentConfigRuntimeRestartResponse,
@@ -3214,6 +3215,53 @@ describe("agent user config commands", () => {
       startedRuntimeId: "rt_hermes"
     });
     expect(stopped).toEqual([runtime.id]);
+    store.close();
+  });
+
+  test("marks the preferred runtime as provisioning before async start completes", () => {
+    const store = createTokenStore(":memory:");
+    store.upsertWorkspacePolicy({
+      workspaceId: "T123",
+      key: "runtime.allowedEngines",
+      value: ["burble-native", "hermes"],
+      updatedBySlackUserId: "UADMIN"
+    });
+    store.upsertUserPreference({
+      workspaceId: "T123",
+      slackUserId: "U123",
+      key: "runtime.engine",
+      value: "hermes"
+    });
+    const runtime = store.getOrCreateAgentRuntime({
+      workspaceId: "T123",
+      slackUserId: "U123",
+      engine: "hermes",
+      endpointUrl: "http://hermes-runtime:8080",
+      authTokenHash: "hash",
+      statePath: "/data/state",
+      configPath: "/data/config/hermes.json",
+      workspacePath: "/data/workspace",
+      sandboxId: "sandbox-old",
+      policyHash: "policy"
+    });
+    store.updateAgentRuntimeStatus(runtime.id, {
+      status: "failed",
+      failureReason: "previous start failed"
+    });
+
+    const markedRuntimeId = markAgentRuntimeControlInProgress({
+      config: agentConfig,
+      store,
+      workspaceId: "T123",
+      slackUserId: "U123"
+    });
+
+    expect(markedRuntimeId).toBe(runtime.id);
+    expect(store.getAgentRuntime(runtime.id)).toMatchObject({
+      status: "provisioning",
+      failureReason: null
+    });
+
     store.close();
   });
 

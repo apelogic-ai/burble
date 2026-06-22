@@ -502,14 +502,46 @@ export function createSlackRuntime(
     }
 
     try {
-      await applyAgentRuntimeControl({
-        config,
-        store,
-        runtimeFactory,
-        workspaceId: context.workspaceId,
-        slackUserId: context.slackUserId,
-        action
-      });
+      if (action === "start" || action === "restart") {
+        markAgentRuntimeControlInProgress({
+          config,
+          store,
+          workspaceId: context.workspaceId,
+          slackUserId: context.slackUserId
+        });
+        void applyAgentRuntimeControl({
+          config,
+          store,
+          runtimeFactory,
+          workspaceId: context.workspaceId,
+          slackUserId: context.slackUserId,
+          action
+        })
+          .then(() =>
+            publishHomeViewForUser({
+              client,
+              workspaceId: context.workspaceId,
+              slackUserId: context.slackUserId
+            })
+          )
+          .catch((error) => {
+            logger.error(formatLogError(error));
+            void publishHomeViewForUser({
+              client,
+              workspaceId: context.workspaceId,
+              slackUserId: context.slackUserId
+            }).catch((publishError) => logger.error(formatLogError(publishError)));
+          });
+      } else {
+        await applyAgentRuntimeControl({
+          config,
+          store,
+          runtimeFactory,
+          workspaceId: context.workspaceId,
+          slackUserId: context.slackUserId,
+          action
+        });
+      }
       await publishHomeViewForUser({
         client,
         workspaceId: context.workspaceId,
@@ -2919,6 +2951,39 @@ export function buildAgentRuntimeManageModalView(input: {
 }
 
 type AgentRuntimeControlAction = "start" | "pause" | "restart";
+
+export function markAgentRuntimeControlInProgress(input: {
+  config: Config;
+  store: TokenStore;
+  workspaceId: string;
+  slackUserId: string;
+}): string | null {
+  if (input.config.agentRuntime !== "burble-runtime") {
+    return null;
+  }
+  const principal = {
+    workspaceId: input.workspaceId,
+    slackUserId: input.slackUserId
+  };
+  const selection = resolveRuntimeEngineForPrincipal({
+    config: input.config,
+    store: input.store,
+    principal
+  });
+  const existing = input.store.getAgentRuntimeForPrincipal({
+    workspaceId: input.workspaceId,
+    slackUserId: input.slackUserId,
+    engine: selection.effectiveEngine
+  });
+  if (!existing) {
+    return null;
+  }
+  input.store.updateAgentRuntimeStatus(existing.id, {
+    status: "provisioning"
+  });
+  input.store.touchAgentRuntime(existing.id);
+  return existing.id;
+}
 
 export async function applyAgentRuntimeControl(input: {
   config: Config;
