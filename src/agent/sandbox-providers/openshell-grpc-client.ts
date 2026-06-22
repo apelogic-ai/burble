@@ -7,6 +7,7 @@ import {
 } from "@grpc/grpc-js";
 import { loadSync } from "@grpc/proto-loader";
 import { Buffer } from "node:buffer";
+import { createHash } from "node:crypto";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type {
@@ -66,6 +67,8 @@ const principalUserLabel = "burble.user_id";
 const runtimeEngineLabel = "burble.runtime_engine";
 const runtimeImageLabel = "burble.runtime_image";
 const encodedLabelValuePrefix = "burble_b64.";
+const hashedLabelValuePrefix = "burble_sha256.";
+const maxOpenShellLabelValueLength = 63;
 const openShellLabelValuePattern = /^[A-Za-z0-9_.-]+$/;
 
 export function createOpenShellGrpcSandboxClient(
@@ -213,7 +216,7 @@ export function createOpenShellGrpcSandboxClient(
         sandbox,
         endpoint: serviceEndpoint ?? "",
         principal: principalFromLabels(labels),
-        runtime: runtimeFromLabels(labels),
+        runtime: runtimeFromLabels(labels, sandbox),
         labels,
         credentials: []
       });
@@ -447,11 +450,12 @@ function principalFromLabels(
 }
 
 function runtimeFromLabels(
-  labels: Record<string, string>
+  labels: Record<string, string>,
+  sandbox?: Record<string, unknown>
 ): OpenShellSandboxRecord["runtime"] {
   return {
     engine: runtimeEngineFromLabel(labels[runtimeEngineLabel]),
-    image: labels[runtimeImageLabel] ?? ""
+    image: runtimeImageFromSandbox(sandbox) ?? labels[runtimeImageLabel] ?? ""
   };
 }
 
@@ -557,13 +561,22 @@ function decodeOpenShellLabelValues(
 export function encodeOpenShellLabelValue(value: string): string {
   if (
     openShellLabelValuePattern.test(value) &&
-    !value.startsWith(encodedLabelValuePrefix)
+    !value.startsWith(encodedLabelValuePrefix) &&
+    !value.startsWith(hashedLabelValuePrefix) &&
+    value.length <= maxOpenShellLabelValueLength
   ) {
     return value;
   }
-  return `${encodedLabelValuePrefix}${Buffer.from(value, "utf8").toString(
+  const encoded = `${encodedLabelValuePrefix}${Buffer.from(value, "utf8").toString(
     "base64url"
   )}`;
+  if (encoded.length <= maxOpenShellLabelValueLength) {
+    return encoded;
+  }
+  return `${hashedLabelValuePrefix}${createHash("sha256")
+    .update(value)
+    .digest("hex")
+    .slice(0, maxOpenShellLabelValueLength - hashedLabelValuePrefix.length)}`;
 }
 
 export function decodeOpenShellLabelValue(value: string): string {
@@ -574,6 +587,12 @@ export function decodeOpenShellLabelValue(value: string): string {
     value.slice(encodedLabelValuePrefix.length),
     "base64url"
   ).toString("utf8");
+}
+
+function runtimeImageFromSandbox(sandbox: Record<string, unknown> | undefined) {
+  const spec = isRecord(sandbox?.spec) ? sandbox.spec : {};
+  const template = isRecord(spec.template) ? spec.template : {};
+  return stringOrNull(template.image);
 }
 
 const openShellRuntimeNetworkBinaryPaths = [

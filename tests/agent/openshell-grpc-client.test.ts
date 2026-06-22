@@ -10,15 +10,25 @@ import {
 describe("OpenShell gRPC client labels", () => {
   test("encodes Docker image refs as OpenShell-safe label values", () => {
     const encoded = encodeOpenShellLabelValue(
-      "ghcr.io/apelogic-ai/burble-nemo-hermes:dev"
+      "burble-nemo-hermes:dev"
     );
 
     expect(encoded).toMatch(/^[A-Za-z0-9_.-]+$/);
+    expect(encoded.length).toBeLessThanOrEqual(63);
     expect(encoded).not.toContain(":");
     expect(encoded).not.toContain("/");
     expect(decodeOpenShellLabelValue(encoded)).toBe(
-      "ghcr.io/apelogic-ai/burble-nemo-hermes:dev"
+      "burble-nemo-hermes:dev"
     );
+  });
+
+  test("hashes oversized label values to satisfy OpenShell's 63 character cap", () => {
+    const encoded = encodeOpenShellLabelValue(
+      "burble-openclaw-nemoclaw-openclaw-cli:dev"
+    );
+
+    expect(encoded).toMatch(/^burble_sha256\.[a-f0-9]+$/);
+    expect(encoded.length).toBeLessThanOrEqual(63);
   });
 
   test("leaves already safe label values readable", () => {
