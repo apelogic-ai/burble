@@ -48,8 +48,7 @@ describe("OpenClaw CLI command resolution", () => {
     const commandExists = (path: string) => existingPaths.has(path);
 
     expect(resolveOpenClawCliArgv("openclaw", ["agent"], commandExists)).toEqual([
-      "/usr/bin/env",
-      "node",
+      "/usr/local/bin/node",
       "/usr/local/lib/node_modules/openclaw/openclaw.mjs",
       "agent"
     ]);

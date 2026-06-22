@@ -64,7 +64,7 @@ const defaultPreloadedRuntimeSkills = preloadedRuntimeSkillNames.map((name) => (
 const openClawCliShimPath = "/usr/local/bin/openclaw";
 const openClawCliScriptPath =
   "/usr/local/lib/node_modules/openclaw/openclaw.mjs";
-const openClawCliEnvPath = "/usr/bin/env";
+const openClawCliNodePath = "/usr/local/bin/node";
 
 export type CliCommandStreamEvent =
   | { type: "stdout"; text: string }
@@ -1388,7 +1388,7 @@ export function resolveOpenClawCliArgv(
   commandExists: (path: string) => boolean = existsSync
 ): string[] {
   if (command === "openclaw" && commandExists(openClawCliScriptPath)) {
-    return [openClawCliEnvPath, "node", openClawCliScriptPath, ...args];
+    return [openClawCliNodePath, openClawCliScriptPath, ...args];
   }
   return [resolveOpenClawCliCommand(command, commandExists), ...args];
 }
