@@ -2,8 +2,8 @@ import { describe, expect, test } from "bun:test";
 import {
   decodeOpenShellLabelValue,
   encodeOpenShellLabelValue,
+  openShellLaunchCommand,
   parseOpenShellExecEvent,
-  shellBackgroundCommand
 } from "../../src/agent/sandbox-providers/openshell-grpc-client";
 
 describe("OpenShell gRPC client labels", () => {
@@ -27,20 +27,36 @@ describe("OpenShell gRPC client labels", () => {
 });
 
 describe("OpenShell gRPC exec events", () => {
-  test("generates shell syntax that can background the runtime command", async () => {
-    const command = shellBackgroundCommand(["python", "/runtime/entrypoint.py"]);
+  test("generates a shell-free launcher command for default runtime entrypoints", () => {
+    const python = openShellLaunchCommand(["python", "/runtime/entrypoint.py"]);
+    const bun = openShellLaunchCommand(["bun", "src/index.ts"]);
 
-    expect(command).not.toContain("&;");
-    expect(command).not.toMatch(/[\r\n]/);
-    expect(command).not.toContain("/dev/null");
-    expect(command).toContain("& :; pid=$!");
-    expect(command).toContain("exec </tmp/burble-runtime.stdin");
+    expect(python[0]).toBe("python");
+    expect(python[1]).toBe("-c");
+    expect(bun[0]).toBe("bun");
+    expect(bun[1]).toBe("-e");
     expect(
-      Bun.spawnSync(["sh", "-n", "-c", command], {
-        stdout: "pipe",
-        stderr: "pipe"
-      }).exitCode
-    ).toBe(0);
+      [...python, ...bun].every((part) => !/[\r\n]/.test(part))
+    ).toBe(true);
+    expect([...python, ...bun].join(" ")).not.toContain("/dev/null");
+    expect([...python, ...bun].join(" ")).not.toContain("sh -");
+  });
+
+  test("python launcher reports immediate startup failure output", () => {
+    const command = openShellLaunchCommand([
+      "python3",
+      "-c",
+      "import sys; print('runtime crashed', file=sys.stderr); sys.exit(2)"
+    ]);
+    const result = Bun.spawnSync(command, {
+      stdout: "pipe",
+      stderr: "pipe"
+    });
+
+    expect(result.exitCode).toBe(2);
+    expect(new TextDecoder().decode(result.stderr)).toContain(
+      "runtime crashed"
+    );
   });
 
   test("decodes byte output and snake-case exit codes", () => {

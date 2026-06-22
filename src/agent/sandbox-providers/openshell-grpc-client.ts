@@ -145,7 +145,7 @@ export function createOpenShellGrpcSandboxClient(
     },
 
     async run(input) {
-      const command = shellBackgroundCommand(input.request.argv);
+      const command = openShellLaunchCommand(input.request.argv);
       const sandboxObjectId = await getSandboxObjectId(
         service,
         input.sandboxId,
@@ -158,7 +158,7 @@ export function createOpenShellGrpcSandboxClient(
         const stream = service.ExecSandbox(
           {
             sandboxId: sandboxObjectId,
-            command: ["sh", "-lc", command],
+            command,
             environment: input.request.env,
             workdir: "/runtime"
           },
@@ -657,26 +657,42 @@ function sandboxStatus(phase: unknown): OpenShellSandboxRecord["status"] {
   }
 }
 
-export function shellBackgroundCommand(argv: string[]): string {
-  const command = argv.map(shellQuote).join(" ");
-  return [
-    ": >/tmp/burble-runtime.log",
-    ": >/tmp/burble-runtime.stdin",
-    "exec </tmp/burble-runtime.stdin",
-    `(${command}) >/tmp/burble-runtime.log 2>&1 & :`,
-    "pid=$!",
-    "sleep 0.2",
-    'if kill -0 "$pid" 2>>/tmp/burble-runtime.log; then echo "$pid" >/tmp/burble-runtime.pid; exit 0; fi',
-    'wait "$pid"',
-    "status=$?",
-    "cat /tmp/burble-runtime.log >&2",
-    "exit $status"
-  ].join("; ");
+export function openShellLaunchCommand(argv: string[]): string[] {
+  const executable = argv[0]?.trim();
+  if (executable === "python" || executable === "python3") {
+    return [executable, "-c", pythonLauncherScript, ...argv];
+  }
+  if (executable === "bun") {
+    return ["bun", "-e", bunLauncherScript, ...argv];
+  }
+  throw new Error(
+    `OpenShell sandbox runtime start command ${JSON.stringify(executable)} is not supported; use a python/python3 or bun entrypoint`
+  );
 }
 
-function shellQuote(value: string): string {
-  return `'${value.replaceAll("'", "'\\''")}'`;
-}
+const pythonLauncherScript = [
+  "import os, subprocess, sys, time",
+  "argv=sys.argv[1:]",
+  "log=open('/tmp/burble-runtime.log','ab',buffering=0)",
+  "stdin=open('/tmp/burble-runtime.stdin','ab+')",
+  "stdin.seek(0)",
+  "proc=subprocess.Popen(argv, stdin=stdin, stdout=log, stderr=subprocess.STDOUT, start_new_session=True)",
+  "time.sleep(0.2)",
+  "code=proc.poll()",
+  "open('/tmp/burble-runtime.pid','w').write(str(proc.pid)) if code is None else None",
+  "sys.exit(0) if code is None else (log.close(), stdin.close(), sys.stderr.buffer.write(open('/tmp/burble-runtime.log','rb').read()), sys.exit(code))"
+].join("; ");
+
+const bunLauncherScript = [
+  "const fs=require('node:fs')",
+  "const cp=require('node:child_process')",
+  "const argv=process.argv.slice(1)",
+  "const log=fs.openSync('/tmp/burble-runtime.log','a')",
+  "const input=fs.openSync('/tmp/burble-runtime.stdin','a+')",
+  "const child=cp.spawn(argv[0],argv.slice(1),{detached:true,stdio:[input,log,log],env:process.env})",
+  "child.unref()",
+  "setTimeout(()=>{if(child.exitCode==null){fs.writeFileSync('/tmp/burble-runtime.pid',String(child.pid));process.exit(0)};try{process.stderr.write(fs.readFileSync('/tmp/burble-runtime.log'))}catch{};process.exit(child.exitCode??1)},200)"
+].join("; ");
 
 function grpcTarget(endpoint: string): string {
   const url = new URL(endpoint);
