@@ -84,9 +84,13 @@ async function withMockFetch<T>(
 }
 
 describe("handleRuntimeRequest", () => {
-  test("requires runtime bearer auth for contract endpoints", async () => {
+  test("requires runtime bearer auth for run endpoints", async () => {
     const response = await handleRuntimeRequestRaw(
-      new Request("http://runtime/capabilities"),
+      new Request("http://runtime/runs", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({})
+      }),
       config
     );
 

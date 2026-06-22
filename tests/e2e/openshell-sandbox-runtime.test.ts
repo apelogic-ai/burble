@@ -4,6 +4,7 @@ import { createTokenStore } from "../../src/db";
 import { createConfiguredSandboxProvider } from "../../src/agent/sandbox-providers/configured";
 import { createSandboxRuntimeFactory } from "../../src/agent/sandbox-runtime-factory";
 import { runRuntimeReadinessCheck } from "../../src/agent/runtime-readiness-harness";
+import { routeRuntimeEndpointFetch } from "../../src/agent/runtime-endpoint-routing";
 import type { SandboxCredentialBinding } from "../../src/agent/sandbox-provider";
 
 describe("OpenShell sandbox runtime integration", () => {
@@ -27,7 +28,8 @@ describe("OpenShell sandbox runtime integration", () => {
       AGENT_RUNTIME_SANDBOX_URL: `http://127.0.0.1:${openshell.port}`,
       AGENT_RUNTIME_SANDBOX_TOKEN: "openshell-token",
       AGENT_RUNTIME_SANDBOX_TRANSPORT: "http",
-      AGENT_RUNTIME_SANDBOX_START_COMMAND: '["runtime-entrypoint"]'
+      AGENT_RUNTIME_SANDBOX_START_COMMAND: '["runtime-entrypoint"]',
+      LLM_GW_BASE_URL: "http://llm-gw:4000/v1"
     });
     const provider = createConfiguredSandboxProvider(config);
     const factory = createSandboxRuntimeFactory({
@@ -38,6 +40,7 @@ describe("OpenShell sandbox runtime integration", () => {
       toolGatewayUrl: config.agentRuntimeToolGatewayUrl,
       mcpGatewayUrl: config.agentRuntimeMcpGatewayUrl,
       mcpAudience: config.agentRuntimeMcpAudience,
+      inferenceBaseUrl: config.agentRuntimeInferenceBaseUrl,
       modelProviderUrls: ["https://api.openai.com/v1"],
       runtimeTokenSecret: config.agentRuntimeTokenSecret ?? "",
       startCommand: config.agentRuntimeSandboxStartCommand ?? [],
@@ -68,10 +71,10 @@ describe("OpenShell sandbox runtime integration", () => {
       );
       expect(openshell.created?.compiledPolicy.egress).toEqual({
         default: "deny",
-        allowHosts: ["api.openai.com", "burble-app:3000"]
+        allowHosts: ["burble-app:3000", "llm-gw:4000"]
       });
-      expect(openshell.run?.argv).toEqual(["runtime-entrypoint"]);
-      expect(openshell.run?.env).toMatchObject({
+      expect(openshell.created?.start?.argv).toEqual(["runtime-entrypoint"]);
+      expect(openshell.created?.start?.env).toMatchObject({
         BURBLE_RUNTIME_ID: report.runtimeId,
         BURBLE_TOOL_GATEWAY_URL: "http://burble-app:3000/internal/tools",
         AGENT_RUNTIME_ENGINE: "hermes",
@@ -79,11 +82,16 @@ describe("OpenShell sandbox runtime integration", () => {
         AGENT_RUNTIME_CONFIG_PATH: "/data/openclaw/config/hermes.json",
         AGENT_RUNTIME_WORKSPACE_DIR: "/data/openclaw/workspace",
         HERMES_HOME: "/data/openclaw/hermes",
-        AI_MODEL: "openai:gpt-5.4"
+        AI_MODEL: "openai:gpt-5.4",
+        AGENT_RUNTIME_INFERENCE_BASE_URL: "http://llm-gw:4000/v1",
+        OPENAI_BASE_URL: "http://llm-gw:4000/v1",
+        OPENAI_API_KEY: "sk-BURBLE-INFERENCE-PROXY"
       });
-      const runtimeToken = openshell.run?.env.BURBLE_INTERNAL_TOKEN;
+      const runtimeToken = openshell.created?.start?.env.BURBLE_INTERNAL_TOKEN;
       expect(runtimeToken).toBeTruthy();
-      expect(JSON.stringify(openshell.run?.env)).not.toContain("runtime-secret");
+      expect(JSON.stringify(openshell.created?.start?.env)).not.toContain(
+        "runtime-secret"
+      );
       expect(store.getAgentRuntime(report.runtimeId)?.sandboxId).toBe(
         "openshell-sandbox-1"
       );
@@ -119,6 +127,10 @@ realOpenShellDescribe("real OpenShell sandbox runtime e2e", () => {
           Bun.env.BURBLE_E2E_RUNTIME_TOKEN_SECRET ?? "runtime-e2e-secret",
         AGENT_RUNTIME_SANDBOX_URL: requiredEnv("AGENT_RUNTIME_SANDBOX_URL"),
         AGENT_RUNTIME_SANDBOX_TOKEN: Bun.env.AGENT_RUNTIME_SANDBOX_TOKEN ?? "",
+        AGENT_RUNTIME_SANDBOX_TRANSPORT:
+          Bun.env.AGENT_RUNTIME_SANDBOX_TRANSPORT ?? "grpc",
+        AGENT_RUNTIME_OPENSHELL_CLI_BIN:
+          Bun.env.AGENT_RUNTIME_OPENSHELL_CLI_BIN ?? "",
         AGENT_RUNTIME_SANDBOX_START_COMMAND: requiredEnv(
           "AGENT_RUNTIME_SANDBOX_START_COMMAND"
         )
@@ -142,6 +154,7 @@ realOpenShellDescribe("real OpenShell sandbox runtime e2e", () => {
           Bun.env.BURBLE_E2E_HEALTH_INTERVAL_MS ?? "1000",
           10
         ),
+        openShellDialHost: Bun.env.AGENT_RUNTIME_OPENSHELL_DIAL_HOST ?? null,
         env: Bun.env
       });
       let runtimeId: string | null = null;
@@ -151,13 +164,22 @@ realOpenShellDescribe("real OpenShell sandbox runtime e2e", () => {
           engine: config.agentRuntimeEngine,
           principal,
           runtimeFactory: factory,
-          store
+          store,
+          openShellDialHost: Bun.env.AGENT_RUNTIME_OPENSHELL_DIAL_HOST ?? null
         });
         runtimeId = report.runtimeId;
         expect(report.signals.at(-1)).toEqual({
           name: "runtime.ready_recorded",
           status: "ok"
         });
+        if (Bun.env.BURBLE_E2E_OPENSHELL_RUN === "1") {
+          const runtime = await factory.getOrCreateRuntime(principal);
+          await assertRuntimeRunCompletes({
+            runtime,
+            principal,
+            openShellDialHost: Bun.env.AGENT_RUNTIME_OPENSHELL_DIAL_HOST ?? null
+          });
+        }
       } finally {
         if (runtimeId) {
           await factory.stopRuntime(runtimeId);
@@ -169,6 +191,57 @@ realOpenShellDescribe("real OpenShell sandbox runtime e2e", () => {
   );
 });
 
+async function assertRuntimeRunCompletes(input: {
+  runtime: {
+    id: string;
+    engine: string;
+    endpointUrl: string;
+    authToken: string;
+  };
+  principal: { workspaceId: string; slackUserId: string };
+  openShellDialHost?: string | null;
+}): Promise<void> {
+  const requestFetch = routeRuntimeEndpointFetch(fetch, {
+    openShellDialHost: input.openShellDialHost
+  });
+  const response = await requestFetch(`${input.runtime.endpointUrl}/runs`, {
+    method: "POST",
+    headers: {
+      accept: "application/json",
+      authorization: `Bearer ${input.runtime.authToken}`,
+      "content-type": "application/json",
+      "x-burble-runtime-id": input.runtime.id
+    },
+    body: JSON.stringify({
+      runId: `openshell-smoke-${crypto.randomUUID()}`,
+      principal: input.principal,
+      runtime: {
+        id: input.runtime.id,
+        engine: input.runtime.engine
+      },
+      input: {
+        text: "runtime contract probe",
+        conversation: {
+          routeId: "convrt_openshell_e2e",
+          source: "slack",
+          workspaceId: input.principal.workspaceId,
+          channelId: "D_E2E_OPENSHELL",
+          rootId: "dm:D_E2E_OPENSHELL",
+          isDirectMessage: true
+        },
+        connections: {}
+      }
+    })
+  });
+
+  expect(response.status).toBe(200);
+  const payload = (await response.json()) as {
+    response?: { classification?: string; text?: string };
+  };
+  expect(payload.response?.classification).toBe("user_private");
+  expect(payload.response?.text).toContain("Runtime contract probe response.");
+}
+
 type FakeOpenShellRequest = {
   method: string;
   pathname: string;
@@ -178,13 +251,16 @@ type FakeOpenShellRequest = {
 type FakeOpenShellServer = {
   port: number;
   requests: FakeOpenShellRequest[];
-  created: { policy: unknown; compiledPolicy: { egress: unknown } } | null;
+  created: {
+    policy: unknown;
+    compiledPolicy: { egress: unknown };
+    start?: { argv: string[]; env: Record<string, string> };
+  } | null;
   policy: { policy: unknown; compiledPolicy: { egress: unknown } } | null;
   credentials: {
     credentialBindings: SandboxCredentialBinding[];
     materializedCredentials: SandboxCredentialBinding[];
   } | null;
-  run: { argv: string[]; env: Record<string, string> } | null;
   stop(): void;
 };
 
@@ -197,7 +273,6 @@ function startFakeOpenShellServer(input: {
     created: null,
     policy: null,
     credentials: null,
-    run: null
   };
   const server = Bun.serve({
     port: 0,
@@ -221,11 +296,16 @@ function startFakeOpenShellServer(input: {
           labels: Record<string, string>;
           policy?: unknown;
           compiledPolicy?: { egress: unknown };
+          start?: { argv: string[]; env: Record<string, string> };
         };
         state.created =
           body.compiledPolicy === undefined
             ? null
-            : { policy: body.policy, compiledPolicy: body.compiledPolicy };
+            : {
+                policy: body.policy,
+                compiledPolicy: body.compiledPolicy,
+                start: body.start
+              };
         return Response.json({
           sandboxId: "openshell-sandbox-1",
           endpoint: input.runtimeEndpoint,
@@ -250,16 +330,6 @@ function startFakeOpenShellServer(input: {
       ) {
         state.credentials = (await request.json()) as typeof state.credentials;
         return Response.json({ ok: true });
-      }
-      if (
-        url.pathname === "/sandboxes/openshell-sandbox-1/runs" &&
-        request.method === "POST"
-      ) {
-        state.run = (await request.json()) as typeof state.run;
-        return Response.json({
-          runId: "openshell-run-1",
-          status: "running"
-        });
       }
       if (
         url.pathname === "/sandboxes/openshell-sandbox-1" &&
@@ -300,9 +370,6 @@ function startFakeOpenShellServer(input: {
     },
     get credentials() {
       return state.credentials;
-    },
-    get run() {
-      return state.run;
     },
     stop() {
       server.stop(true);

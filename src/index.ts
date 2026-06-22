@@ -7,9 +7,22 @@ import { formatLogError, formatLogLine, withUtcTimestamp } from "./logging";
 import { createRuntimeJwtIssuer } from "./runtime-jwt";
 import { createObservabilitySink } from "./observability";
 import { createConfiguredSandboxProvider } from "./agent/sandbox-providers/configured";
+import {
+  installSlackTestbed,
+  testbedUserId,
+  testbedWorkspaceId
+} from "./testbed/slack";
 
 const config = loadConfig();
 const store = createTokenStore(config.databasePath);
+if (config.testbed) {
+  store.upsertWorkspacePolicy({
+    workspaceId: testbedWorkspaceId,
+    key: "runtime.allowedEngines",
+    value: ["hermes", "openclaw"],
+    updatedBySlackUserId: testbedUserId
+  });
+}
 const observability = createObservabilitySink({
   path: config.observabilityJsonlPath,
   dir: config.observabilityJsonlDir,
@@ -26,14 +39,25 @@ const slack = createSlackRuntime(
   observability,
   config.agentRuntimeFactory === "sandbox"
     ? {
+        ...(config.testbed ? { testbed: true } : {}),
         sandboxProvider: createConfiguredSandboxProvider(config),
         ...(config.agentRuntimeSandboxStartCommand
           ? { sandboxStartCommand: config.agentRuntimeSandboxStartCommand }
           : {})
       }
-    : {}
+    : config.testbed
+      ? { testbed: true }
+      : {}
 );
-const server = startOAuthServer(config, store, slack, runtimeJwtIssuer, observability);
+const slackTestbed = config.testbed ? installSlackTestbed(slack) : undefined;
+const server = startOAuthServer(
+  config,
+  store,
+  slack,
+  runtimeJwtIssuer,
+  observability,
+  slackTestbed
+);
 const logDebug =
   config.slackLogLevel === "debug"
     ? (message: string) => console.debug(formatLogLine("debug", message))
@@ -64,12 +88,18 @@ process.on("SIGTERM", async () => {
   process.exit(0);
 });
 
-await slack.app.start();
-console.log(withUtcTimestamp("Slack Socket Mode app is running."));
+if (config.testbed) {
+  console.log(withUtcTimestamp("Burble local testbed is running."));
+} else {
+  await slack.app.start();
+  console.log(withUtcTimestamp("Slack Socket Mode app is running."));
+}
 
 async function shutdown(): Promise<void> {
   runtimeReaper?.stop();
   server.stop();
-  await slack.app.stop();
+  if (!config.testbed) {
+    await slack.app.stop();
+  }
   store.close();
 }

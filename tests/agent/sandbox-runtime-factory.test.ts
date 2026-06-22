@@ -31,6 +31,7 @@ describe("createSandboxRuntimeFactory", () => {
       toolGatewayUrl: "http://burble-app:3000/internal/tools",
       mcpGatewayUrl: "http://agentgateway:3000/mcp",
       mcpAudience: "http://agentgateway:3000/mcp",
+      inferenceBaseUrl: "http://llm-gw:4000/v1",
       modelProviderUrls: ["https://api.openai.com/v1"],
       runtimeTokenSecret: "runtime-secret",
       runtimeJwtIssuer: {
@@ -90,25 +91,15 @@ describe("createSandboxRuntimeFactory", () => {
     expect(provider.provisionCalls[0].policy).toEqual({
       network: {
         egress: "allowlist",
-        allowedHosts: ["agentgateway:3000", "api.openai.com", "burble-app:3000"],
+        allowedHosts: ["agentgateway:3000", "burble-app:3000", "llm-gw:4000"],
         allowedEndpoints: [
           { host: "agentgateway:3000", tls: false },
-          { host: "api.openai.com", tls: true },
-          { host: "burble-app:3000", tls: false }
+          { host: "burble-app:3000", tls: false },
+          { host: "llm-gw:4000", tls: false }
         ]
       },
       filesystem: {
-        readOnlyPaths: [
-          "/runtime",
-          "/app",
-          "/dev/urandom",
-          "/etc",
-          "/lib",
-          "/lib64",
-          "/proc",
-          "/usr",
-          "/var/log"
-        ],
+        readOnlyPaths: ["/"],
         readWritePaths: [
           "/data/openclaw",
           "/runtime/config",
@@ -120,8 +111,8 @@ describe("createSandboxRuntimeFactory", () => {
       }
     });
     expect(provider.policyCalls).toEqual([]);
-    expect(provider.runCalls).toHaveLength(1);
-    expect(provider.runCalls[0].request).toMatchObject({
+    expect(provider.runCalls).toHaveLength(0);
+    expect(provider.provisionCalls[0].start).toMatchObject({
       argv: ["runtime-entrypoint"],
       env: {
         BURBLE_TOOL_GATEWAY_URL: "http://burble-app:3000/internal/tools",
@@ -136,10 +127,13 @@ describe("createSandboxRuntimeFactory", () => {
         XDG_CACHE_HOME: "/tmp/openclaw-cache",
         npm_config_cache: "/tmp/npm-cache",
         JITI_FS_CACHE: "false",
-        AI_MODEL: "openai:gpt-5.4"
+        AI_MODEL: "openai:gpt-5.4",
+        AGENT_RUNTIME_INFERENCE_BASE_URL: "http://llm-gw:4000/v1",
+        OPENAI_BASE_URL: "http://llm-gw:4000/v1",
+        OPENAI_API_KEY: "sk-BURBLE-INFERENCE-PROXY"
       }
     });
-    expect(provider.runCalls[0].request.env?.BURBLE_RUNTIME_JWT).toContain(
+    expect(provider.provisionCalls[0].start?.env?.BURBLE_RUNTIME_JWT).toContain(
       `jwt:http://agentgateway:3000/mcp:${handle.id}:T123:U123:3600`
     );
     expect(healthUrls).toEqual(["http://sandbox-1.local:8080/healthz"]);
@@ -252,13 +246,13 @@ describe("createSandboxRuntimeFactory", () => {
         { host: "firecrawl.internal", tls: true }
       ]
     });
-    expect(provider.runCalls[0].request.env).toMatchObject({
+    expect(provider.provisionCalls[0].start?.env).toMatchObject({
       AI_MODEL: "anthropic:claude-sonnet-4",
       HERMES_INFERENCE_PROVIDER: "anthropic",
       FIRECRAWL_API_URL: "https://firecrawl.internal/v1",
       HERMES_WEB_SEARCH_BACKEND: "exa"
     });
-    expect(provider.runCalls[0].request.env?.EXA_API_KEY).toBeUndefined();
+    expect(provider.provisionCalls[0].start?.env?.EXA_API_KEY).toBeUndefined();
     expect(
       provider.provisionCalls[0].policy?.network.allowedHosts
     ).not.toContain("api.openai.com");
@@ -356,7 +350,7 @@ describe("createSandboxRuntimeFactory", () => {
     expect(second.endpointUrl).toBe(first.endpointUrl);
     expect(provider.provisionCalls).toHaveLength(1);
     expect(provider.attachCalls).toEqual(["sandbox-1"]);
-    expect(provider.runCalls).toHaveLength(1);
+    expect(provider.runCalls).toHaveLength(0);
     expect(provider.policyCalls).toHaveLength(1);
     expect(store.getAgentRuntime(first.id)?.policyHash).not.toBe(
       firstPolicyHash
@@ -458,14 +452,9 @@ describe("createSandboxRuntimeFactory", () => {
     store.close();
   });
 
-  test("reports immediately exited sandbox start commands without waiting for health timeout", async () => {
+  test("terminates the sandbox when create-time runtime launch never becomes healthy", async () => {
     const store = createTokenStore(":memory:");
     const provider = createFakeRuntimeSandboxProvider();
-    provider.nextRun = {
-      status: "finished",
-      exitCode: 2,
-      output: "runtime crashed during import"
-    };
     const healthUrls: string[] = [];
     const factory = createSandboxRuntimeFactory({
       store,
@@ -476,18 +465,22 @@ describe("createSandboxRuntimeFactory", () => {
       modelProviderUrls: ["https://api.openai.com/v1"],
       runtimeTokenSecret: "runtime-secret",
       startCommand: ["hermes-entrypoint"],
-      healthCheckAttempts: 5,
+      healthCheckAttempts: 2,
+      healthCheckIntervalMs: 0,
       fetch: async (url) => {
         healthUrls.push(url);
-        return new Response("ok");
+        return new Response("bad", { status: 502 });
       }
     });
 
     await expect(factory.getOrCreateRuntime(principal)).rejects.toThrow(
-      "Sandbox runtime start exited: sandbox-1-run-1 (exit 2); output: runtime crashed during import"
+      "Runtime health check failed for sandbox sandbox-1"
     );
 
-    expect(healthUrls).toEqual([]);
+    expect(healthUrls).toEqual([
+      "http://sandbox-1.local:8080/healthz",
+      "http://sandbox-1.local:8080/healthz"
+    ]);
     expect(provider.terminated).toEqual(["sandbox-1"]);
 
     store.close();
@@ -496,6 +489,8 @@ describe("createSandboxRuntimeFactory", () => {
   test("terminates failed provisioning sandboxes and reprovisions on retry", async () => {
     const store = createTokenStore(":memory:");
     const provider = createFakeRuntimeSandboxProvider();
+    let failHealth = true;
+    const healthUrls: string[] = [];
     const factory = createSandboxRuntimeFactory({
       store,
       sandboxProvider: provider,
@@ -506,12 +501,15 @@ describe("createSandboxRuntimeFactory", () => {
       runtimeTokenSecret: "runtime-secret",
       startCommand: ["hermes-entrypoint"],
       healthCheckAttempts: 1,
-      fetch: async () => new Response("ok")
+      fetch: async (url) => {
+        healthUrls.push(url);
+        return failHealth
+          ? new Response("bad", { status: 502 })
+          : new Response("ok");
+      }
     });
-
-    provider.failNextRun = true;
     await expect(factory.getOrCreateRuntime(principal)).rejects.toThrow(
-      "Sandbox runtime start failed"
+      "Runtime health check failed for sandbox sandbox-1"
     );
 
     const runtimeId = `rt_${buildRuntimeDataId(principal, "hermes")}`;
@@ -521,6 +519,7 @@ describe("createSandboxRuntimeFactory", () => {
     });
     expect(provider.terminated).toEqual(["sandbox-1"]);
 
+    failHealth = false;
     const retry = await factory.getOrCreateRuntime(principal);
 
     expect(retry.id).toBe(runtimeId);
@@ -530,6 +529,10 @@ describe("createSandboxRuntimeFactory", () => {
     });
     expect(provider.provisionCalls).toHaveLength(2);
     expect(provider.attachCalls).toEqual([]);
+    expect(healthUrls).toEqual([
+      "http://sandbox-1.local:8080/healthz",
+      "http://sandbox-2.local:8080/healthz"
+    ]);
 
     store.close();
   });
@@ -547,15 +550,16 @@ describe("createSandboxRuntimeFactory", () => {
       runtimeTokenSecret: "runtime-secret",
       startCommand: ["openclaw-entrypoint"],
       healthCheckAttempts: 1,
-      fetch: async () => new Response("ok"),
+      fetch: async () =>
+        failHealth ? new Response("bad", { status: 502 }) : new Response("ok"),
       env: {
         AGENT_RUNTIME_SANDBOX_PRESERVE_FAILED: "true"
       }
     });
 
-    provider.failNextRun = true;
+    let failHealth = true;
     await expect(factory.getOrCreateRuntime(principal)).rejects.toThrow(
-      "Sandbox runtime start failed"
+      "Runtime health check failed for sandbox sandbox-1"
     );
 
     const runtimeId = `rt_${buildRuntimeDataId(principal, "openclaw")}`;
@@ -675,12 +679,6 @@ type FakeRuntimeSandboxProvider = SandboxProvider & {
   runCalls: Array<{ sandboxId: string; request: SandboxRunRequest }>;
   attachCalls: string[];
   terminated: string[];
-  failNextRun: boolean;
-  nextRun?: {
-    status: SandboxRunHandle["status"];
-    exitCode?: number;
-    output?: string;
-  };
   provisionDelay?: Promise<void>;
 };
 
@@ -709,7 +707,6 @@ function createFakeRuntimeSandboxProvider(
     runCalls,
     attachCalls,
     terminated,
-    failNextRun: false,
 
     capabilities() {
       return {
@@ -759,26 +756,6 @@ function createFakeRuntimeSandboxProvider(
     async run(sandboxId, request): Promise<SandboxRunHandle> {
       const sandbox = load(sandboxId);
       runCalls.push({ sandboxId, request });
-      if (this.failNextRun) {
-        this.failNextRun = false;
-        return {
-          id: `${sandboxId}-run-1`,
-          sandboxId,
-          status: "failed",
-          exitCode: 1
-        };
-      }
-      if (this.nextRun) {
-        const nextRun = this.nextRun;
-        this.nextRun = undefined;
-        return {
-          id: `${sandboxId}-run-1`,
-          sandboxId,
-          status: nextRun.status,
-          ...(nextRun.exitCode === undefined ? {} : { exitCode: nextRun.exitCode }),
-          ...(nextRun.output === undefined ? {} : { output: nextRun.output })
-        };
-      }
       sandboxes.set(
         sandboxId,
         cloneSandboxHandle({ ...sandbox, status: "ready" })

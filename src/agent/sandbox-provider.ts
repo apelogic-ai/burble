@@ -15,6 +15,7 @@ export type SandboxProvisionRequest = {
   runtime: SandboxRuntimeRequest;
   labels?: Record<string, string>;
   policy?: SandboxPolicy;
+  start?: SandboxRunRequest;
 };
 
 export type SandboxEgressEndpoint = {

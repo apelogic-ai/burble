@@ -47,16 +47,7 @@ const openClawContainerProfile: RuntimeContainerProfile = {
   configFileName: "openclaw.json",
   stateDir: "/data/openclaw/state",
   workspaceDir: "/data/openclaw/workspace",
-  sandboxReadOnlyPaths: [
-    "/app",
-    "/dev/urandom",
-    "/etc",
-    "/lib",
-    "/lib64",
-    "/proc",
-    "/usr",
-    "/var/log"
-  ],
+  sandboxReadOnlyPaths: ["/"],
   sandboxReadWritePaths: ["/dev/pts"],
   openClawCompatEnv: true,
   openClawConfigPatch: true,

@@ -276,7 +276,6 @@ export function authorizeRuntimeBearerToken(
 
 function protectedRuntimeContractPath(pathname: string): boolean {
   return (
-    pathname === "/capabilities" ||
     pathname === "/runs" ||
     /^\/runs\/[^/]+(?:\/events)?$/.test(pathname)
   );

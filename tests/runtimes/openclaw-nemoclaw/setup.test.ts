@@ -29,6 +29,7 @@ const config: RuntimeConfig = {
   openClawGatewayBind: "loopback",
   openClawGatewayToken: "gateway-token",
   llmModel: "openai:gpt-5.4",
+  inferenceBaseUrl: null,
   ollamaBaseUrl: "https://ollama.com"
 };
 
@@ -570,6 +571,25 @@ describe("ensureOpenClawSetup", () => {
     expect(patch).toContain('"apiKey": "OLLAMA_API_KEY"');
     expect(patch).toContain('"allow": [');
     expect(patch).toContain('"ollama"');
+  });
+
+  test("writes proxy-backed OpenClaw provider config when inference gateway is configured", async () => {
+    const runtimeConfig = await configWithState({
+      llmModel: "openai:gpt-5.4",
+      inferenceBaseUrl: "http://llm-gw:4000/v1"
+    });
+
+    await ensureOpenClawSetup(runtimeConfig, async () => ({
+      exitCode: 0,
+      stdout: "",
+      stderr: ""
+    }));
+
+    const patch = await readFile(llmPatchPath(runtimeConfig), "utf8");
+    expect(patch).toContain('"primary": "openai/gpt-5.4"');
+    expect(patch).toContain('"baseUrl": "http://llm-gw:4000/v1"');
+    expect(patch).toContain('"apiKey": "OPENAI_API_KEY"');
+    expect(patch).not.toContain("sk-");
   });
 
   test("surfaces onboarding failures without leaking stderr", async () => {

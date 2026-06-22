@@ -166,6 +166,7 @@ function buildOpenClawNemoClawAgentConfig(
   const agentConfig = JSON.parse(
     buildOpenClawLlmPatch({
       modelId: config.llmModel,
+      inferenceBaseUrl: config.inferenceBaseUrl,
       ollamaBaseUrl: config.ollamaBaseUrl,
       agentId: config.openClawAgent,
       codeModeEnabled: config.openClawCodeMode,

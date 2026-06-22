@@ -77,6 +77,9 @@ export function createLocalDevSandboxProvider(): LocalDevSandboxProvider {
         events: []
       };
       recordEvent(state, "provisioned", { image: request.runtime.image });
+      if (request.start) {
+        recordEvent(state, "run_started", { argv: [...request.start.argv] });
+      }
       sandboxes.set(id, state);
       return cloneSandboxHandle(handle);
     },

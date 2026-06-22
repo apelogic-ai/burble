@@ -1,10 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import {
   compileOpenShellGrpcSandboxPolicy,
+  createOpenShellGrpcSandboxClient,
   decodeOpenShellLabelValue,
   encodeOpenShellLabelValue,
-  openShellLaunchCommand,
-  parseOpenShellExecEvent,
+  openShellCommandString
 } from "../../src/agent/sandbox-providers/openshell-grpc-client";
 
 describe("OpenShell gRPC client labels", () => {
@@ -37,66 +37,43 @@ describe("OpenShell gRPC client labels", () => {
   });
 });
 
-describe("OpenShell gRPC exec events", () => {
-  test("generates a shell-free launcher command for default runtime entrypoints", () => {
-    const python = openShellLaunchCommand(["python", "/runtime/entrypoint.py"]);
-    const bun = openShellLaunchCommand(["bun", "src/index.ts"]);
-
-    expect(python[0]).toBe("python");
-    expect(python[1]).toBe("-c");
-    expect(bun[0]).toBe("bun");
-    expect(bun[1]).toBe("-e");
-    // OpenShell ExecSandbox rejects any command argument containing a newline or
-    // carriage return ("command argument N contains newline ..."), so EVERY part
-    // — including the inline launcher script body — must be a single line.
-    expect(
-      [...python, ...bun].every((part) => !/[\r\n]/.test(part))
-    ).toBe(true);
-    expect([...python, ...bun].join(" ")).not.toContain("/dev/null");
-    expect([...python, ...bun].join(" ")).not.toContain("sh -");
-  });
-
-  test("python launcher reports immediate startup failure output", () => {
-    const command = openShellLaunchCommand([
-      "python3",
-      "-c",
-      "import sys; print('runtime crashed', file=sys.stderr); sys.exit(2)"
-    ]);
-    const result = Bun.spawnSync(command, {
-      stdout: "pipe",
-      stderr: "pipe"
-    });
-
-    expect(result.exitCode).toBe(2);
-    expect(new TextDecoder().decode(result.stderr)).toContain(
-      "runtime crashed"
+describe("OpenShell workload launch", () => {
+  test("formats supervised workload command strings for diagnostics", () => {
+    expect(openShellCommandString(["python", "/runtime/entrypoint.py"])).toBe(
+      "python /runtime/entrypoint.py"
+    );
+    expect(openShellCommandString(["bun", "src/index.ts"])).toBe(
+      "bun src/index.ts"
     );
   });
 
-  test("decodes byte output and snake-case exit codes", () => {
-    expect(
-      parseOpenShellExecEvent({
-        stderr: { data: Buffer.from("runtime crashed\n") },
-        exit: { exit_code: 2 }
-      })
-    ).toEqual({
-      output: "runtime crashed\n",
-      exitCode: 2,
-      summary: "exit{exit_code}+stderr{data}"
+  test("rejects gRPC create-time workload launch because OpenShell reserves OPENSHELL_* env", async () => {
+    const client = createOpenShellGrpcSandboxClient({
+      endpoint: "http://127.0.0.1:65535"
     });
+
+    await expect(
+      client.createSandbox({
+        principal: { workspaceId: "T123", userId: "U123" },
+        runtime: { engine: "hermes", image: "burble-nemo-hermes:dev" },
+        labels: {},
+        policy: {
+          network: { egress: "deny" },
+          filesystem: { readOnlyPaths: [], readWritePaths: [] }
+        },
+        start: {
+          argv: ["python", "/runtime/entrypoint.py"],
+          env: { BURBLE_RUNTIME_ID: "rt_123" }
+        }
+      })
+    ).rejects.toThrow("use AGENT_RUNTIME_SANDBOX_TRANSPORT=cli");
   });
 
-  test("summarizes event shape when no text output is decoded", () => {
-    expect(
-      parseOpenShellExecEvent({
-        stderr: { chunk: { bytes: 7 } },
-        exit: { exitCode: 2 }
-      })
-    ).toEqual({
-      output: "",
-      exitCode: 2,
-      summary: "exit{exitCode}+stderr{chunk}"
-    });
+  test("rejects blank supervised workload commands", () => {
+    expect(() => openShellCommandString([])).toThrow("must be non-empty");
+    expect(() => openShellCommandString(["bun", ""])).toThrow(
+      "must be non-empty"
+    );
   });
 });
 

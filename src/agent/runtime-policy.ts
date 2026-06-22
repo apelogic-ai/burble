@@ -130,18 +130,6 @@ export function runtimeEngineCompatibility(
       reasons: [descriptor.unselectableReason ?? "runtime is not selectable"]
     };
   }
-  if (
-    options.factory === "sandbox" &&
-    (engine === "openclaw" || engine === "openclaw-gateway")
-  ) {
-    return {
-      engine,
-      selectable: false,
-      reasons: [
-        "requires OpenShell creation-time command launch; sandbox gRPC factory starts runtimes via ExecSandbox"
-      ]
-    };
-  }
   return runtimeCapabilityManifestCompatibility(
     engine,
     descriptor.capabilities,

@@ -1,6 +1,7 @@
 import { writeFileSync } from "node:fs";
 
 const ciaoNetworkGuardPath = "/tmp/ciao-network-guard.cjs";
+const inferenceProxyApiKey = "sk-BURBLE-INFERENCE-PROXY";
 
 const ciaoNetworkGuardSource = `
 const os = require("node:os");
@@ -97,23 +98,27 @@ function appendNodeRequire(value: string | undefined, path: string): string {
 
 function filterEnv(
   env: Record<string, string | undefined>,
-  allow: (name: string) => boolean
+  allow: (name: string, value: string) => boolean
 ): Record<string, string> {
   const entries = Object.entries(env).filter(
     (entry): entry is [string, string] =>
-      Boolean(entry[1]) && allow(entry[0])
+      Boolean(entry[1]) && allow(entry[0], entry[1] ?? "")
   );
   return Object.fromEntries(entries);
 }
 
-function isAllowedOpenClawOverrideEnv(name: string): boolean {
+function isAllowedOpenClawOverrideEnv(name: string, value: string): boolean {
   return (
+    isInferenceProxyPlaceholderEnv(name, value) ||
     (name.startsWith("OPENCLAW_") && !forbiddenEnvPattern.test(name)) ||
-    isAllowedHostEnv(name)
+    isAllowedHostEnv(name, value)
   );
 }
 
-function isAllowedHostEnv(name: string): boolean {
+function isAllowedHostEnv(name: string, value: string): boolean {
+  if (isInferenceProxyPlaceholderEnv(name, value)) {
+    return true;
+  }
   if (commonProcessEnvNames.has(name) || proxyEnvNames.has(name)) {
     return true;
   }
@@ -123,4 +128,11 @@ function isAllowedHostEnv(name: string): boolean {
   }
 
   return !forbiddenEnvPattern.test(name);
+}
+
+function isInferenceProxyPlaceholderEnv(name: string, value: string): boolean {
+  return (
+    (name === "OPENAI_API_KEY" || name === "ANTHROPIC_API_KEY") &&
+    value === inferenceProxyApiKey
+  );
 }

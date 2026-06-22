@@ -10,8 +10,7 @@ import { buildBrokeredRuntimeSandboxPolicy } from "./sandbox-policy";
 import type {
   SandboxCredentialBinding,
   SandboxPolicy,
-  SandboxProvider,
-  SandboxRunHandle
+  SandboxProvider
 } from "./sandbox-provider";
 import {
   runtimeDescriptor,
@@ -31,6 +30,7 @@ import type { RuntimeManifest } from "./runtime-manifest";
 import {
   collectApprovedRuntimeEnv,
   modelProviderUrlsForRuntimeModel,
+  runtimeInferenceProxyApiKey,
   runtimeExtraAllowedUrlsFromEnv
 } from "./runtime-env";
 import { routeRuntimeEndpointFetch } from "./runtime-endpoint-routing";
@@ -63,6 +63,7 @@ export function createSandboxRuntimeFactory(input: {
   image: string;
   toolGatewayUrl: string;
   modelProviderUrls: string[];
+  inferenceBaseUrl?: string | null;
   startCommand: string[];
   mcpGatewayUrl?: string | null;
   mcpAudience?: string | null;
@@ -214,6 +215,17 @@ export function createSandboxRuntimeFactory(input: {
       (await input.buildPolicy?.(context)) ??
       buildDefaultSandboxPolicy(input, manifest);
     const policyHash = sandboxRuntimePolicyHash(manifest, policy);
+    const startEnv = buildSandboxRuntimeEnv({
+      engine: input.engine,
+      toolGatewayUrl: input.toolGatewayUrl,
+      mcpGatewayUrl: input.mcpGatewayUrl ?? null,
+      inferenceBaseUrl: input.inferenceBaseUrl ?? null,
+      runtimeToken: token,
+      runtimeId,
+      runtimeJwt,
+      manifest,
+      env: input.env ?? {}
+    });
 
     const sandbox = await input.sandboxProvider.provision({
       principal: {
@@ -228,7 +240,11 @@ export function createSandboxRuntimeFactory(input: {
         runtimeDataId,
         engine: input.engine
       },
-      policy
+      policy,
+      start: {
+        argv: input.startCommand,
+        env: startEnv
+      }
     });
     const paths = sandboxRuntimePaths(sandbox.workspacePath, input.engine);
     let runtime: AgentRuntimeRecord | null = null;
@@ -263,22 +279,6 @@ export function createSandboxRuntimeFactory(input: {
       });
       if (credentials.length > 0) {
         await input.sandboxProvider.bindCredentials(sandbox.id, credentials);
-      }
-      const run = await input.sandboxProvider.run(sandbox.id, {
-        argv: input.startCommand,
-        env: buildSandboxRuntimeEnv({
-          engine: input.engine,
-          toolGatewayUrl: input.toolGatewayUrl,
-          mcpGatewayUrl: input.mcpGatewayUrl ?? null,
-          runtimeToken: token,
-          runtimeId: runtime.id,
-          runtimeJwt,
-          manifest,
-          env: input.env ?? {}
-        })
-      });
-      if (run.status === "failed" || run.status === "finished") {
-        throw new Error(formatSandboxRuntimeStartFailure(run));
       }
       await waitForSandboxRuntimeHealth({
         sandboxId: sandbox.id,
@@ -417,20 +417,6 @@ export function createSandboxRuntimeFactory(input: {
   };
 }
 
-function formatSandboxRuntimeStartFailure(run: SandboxRunHandle): string {
-  const output = run.output?.trim();
-  const outputPreview = output ? singleLinePreview(output) : "";
-  return `Sandbox runtime start ${
-    run.status === "finished" ? "exited" : "failed"
-  }: ${run.id}${run.exitCode === undefined ? "" : ` (exit ${run.exitCode})`}${
-    outputPreview ? `; output: ${outputPreview}` : ""
-  }${output && output !== outputPreview ? `\n${output}` : ""}`;
-}
-
-function singleLinePreview(value: string): string {
-  return value.replace(/\s+/g, " ").trim().slice(0, 500);
-}
-
 function assertSandboxProviderCapabilities(provider: SandboxProvider): void {
   const capabilities = provider.capabilities();
   if (!capabilities.supportsEgressAllowlist) {
@@ -485,6 +471,7 @@ function buildDefaultSandboxPolicy(
     engine: AgentRuntimeEngine;
     toolGatewayUrl: string;
     mcpGatewayUrl?: string | null;
+    inferenceBaseUrl?: string | null;
     modelProviderUrls: string[];
     env?: Record<string, string | undefined>;
   },
@@ -495,7 +482,11 @@ function buildDefaultSandboxPolicy(
     toolGatewayUrl: input.toolGatewayUrl,
     mcpGatewayUrl: input.mcpGatewayUrl ?? null,
     modelProviderUrls: manifest?.model
-      ? modelProviderUrlsForRuntimeModel(manifest.model, env)
+      ? modelProviderUrlsForRuntimeModel(manifest.model, env, {
+          inferenceBaseUrl: input.inferenceBaseUrl
+        })
+      : input.inferenceBaseUrl
+        ? [input.inferenceBaseUrl]
       : input.modelProviderUrls,
     extraAllowedUrls: runtimeExtraAllowedUrlsFromEnv(env),
     filesystem: defaultSandboxRuntimeFilesystemPolicy(input.engine)
@@ -508,8 +499,11 @@ function defaultSandboxRuntimeFilesystemPolicy(
   SandboxPolicy["filesystem"]
 > {
   const container = runtimeDescriptor(engine).container;
+  const descriptorReadOnlyPaths = container.sandboxReadOnlyPaths ?? [];
   return {
-    readOnlyPaths: ["/runtime", ...(container.sandboxReadOnlyPaths ?? [])],
+    readOnlyPaths: descriptorReadOnlyPaths.includes("/")
+      ? ["/"]
+      : ["/runtime", ...descriptorReadOnlyPaths],
     readWritePaths: [
       container.dataRootTarget,
       "/runtime/config",
@@ -563,6 +557,7 @@ function buildSandboxRuntimeEnv(input: {
   engine: AgentRuntimeEngine;
   toolGatewayUrl: string;
   mcpGatewayUrl: string | null;
+  inferenceBaseUrl: string | null;
   runtimeToken: string;
   runtimeId: string;
   runtimeJwt: string | null;
@@ -608,6 +603,15 @@ function buildSandboxRuntimeEnv(input: {
   if (input.mcpGatewayUrl && input.runtimeJwt) {
     env.BURBLE_MCP_GATEWAY_URL = input.mcpGatewayUrl;
     env.BURBLE_RUNTIME_JWT = input.runtimeJwt;
+  }
+
+  if (input.inferenceBaseUrl?.trim()) {
+    const baseUrl = input.inferenceBaseUrl.trim().replace(/\/+$/, "");
+    env.AGENT_RUNTIME_INFERENCE_BASE_URL = baseUrl;
+    env.OPENAI_BASE_URL = baseUrl;
+    env.OPENAI_API_KEY = runtimeInferenceProxyApiKey;
+    env.ANTHROPIC_BASE_URL = baseUrl;
+    env.ANTHROPIC_API_KEY = runtimeInferenceProxyApiKey;
   }
 
   Object.assign(env, collectApprovedRuntimeEnv(input.env));

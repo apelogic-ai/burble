@@ -16,7 +16,7 @@ describe("buildOpenClawProcessEnv", () => {
         PATH: "/usr/local/bin:/usr/bin",
         HOME: "/data/openclaw",
         NODE_OPTIONS: "--max-old-space-size=2048",
-        OPENAI_API_KEY: "model-api-key",
+        OPENAI_API_KEY: "sk-BURBLE-INFERENCE-PROXY",
         ANTHROPIC_API_KEY: "anthropic-key",
         BURBLE_RUNTIME_JWT: "runtime-jwt",
         BURBLE_MCP_GATEWAY_URL: "http://agentgateway:3000/mcp",
@@ -33,12 +33,12 @@ describe("buildOpenClawProcessEnv", () => {
       PATH: "/usr/local/bin:/usr/bin",
       HOME: "/data/openclaw",
       NODE_OPTIONS: "--max-old-space-size=2048 --require /tmp/ciao-network-guard.cjs",
+      OPENAI_API_KEY: "sk-BURBLE-INFERENCE-PROXY",
       OPENCLAW_CONFIG_PATH: "/data/openclaw/config/openclaw.json",
       XDG_CACHE_HOME: "/tmp/openclaw-cache",
       npm_config_cache: "/tmp/npm-cache",
       JITI_FS_CACHE: "false"
     });
-    expect(env.OPENAI_API_KEY).toBeUndefined();
     expect(env.ANTHROPIC_API_KEY).toBeUndefined();
     expect(env.OPENCLAW_GATEWAY_TOKEN).toBeUndefined();
   });

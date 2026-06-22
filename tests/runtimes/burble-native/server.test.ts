@@ -31,9 +31,13 @@ function withRuntimeAuthorization(request: Request, token: string): Request {
 }
 
 describe("Burble Native runtime server", () => {
-  test("requires runtime bearer auth for contract endpoints", async () => {
+  test("requires runtime bearer auth for run endpoints", async () => {
     const response = await handleRuntimeRequestRaw(
-      new Request("http://runtime/capabilities"),
+      new Request("http://runtime/runs", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({})
+      }),
       {
         env: {
           BURBLE_INTERNAL_TOKEN: runtimeToken

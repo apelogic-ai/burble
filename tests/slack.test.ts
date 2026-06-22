@@ -159,7 +159,7 @@ describe("createManagedRuntimeFactory sandbox mode", () => {
     expect(store.getAgentRuntime(runtime?.id ?? "")?.sandboxId).toBe(
       "slack-sandbox-1"
     );
-    expect(sandboxProvider.runCommands).toEqual([["runtime-entrypoint"]]);
+    expect(sandboxProvider.startCommands).toEqual([["runtime-entrypoint"]]);
     expect(sandboxProvider.policyHosts).toContain("api.openai.com");
     expect(sandboxProvider.policyHosts).toContain("burble-app:3000");
 
@@ -202,7 +202,7 @@ describe("createManagedRuntimeFactory sandbox mode", () => {
       slackUserId: "U123"
     });
 
-    expect(sandboxProvider.runCommands).toEqual([["bun", "src/index.ts"]]);
+    expect(sandboxProvider.startCommands).toEqual([["bun", "src/index.ts"]]);
     store.close();
   });
 });
@@ -3491,13 +3491,13 @@ describe("buildReplyThreadTs", () => {
 
 type SlackRuntimeSandboxProvider = SandboxProvider & {
   policyHosts: string[];
-  runCommands: string[][];
+  startCommands: string[][];
 };
 
 function createSlackRuntimeSandboxProvider(): SlackRuntimeSandboxProvider {
   const sandboxes = new Map<string, SandboxHandle>();
   const policyHosts: string[] = [];
-  const runCommands: string[][] = [];
+  const startCommands: string[][] = [];
   let sequence = 0;
 
   const load = (sandboxId: string): SandboxHandle => {
@@ -3510,7 +3510,7 @@ function createSlackRuntimeSandboxProvider(): SlackRuntimeSandboxProvider {
 
   return {
     policyHosts,
-    runCommands,
+    startCommands,
 
     capabilities() {
       return {
@@ -3526,6 +3526,9 @@ function createSlackRuntimeSandboxProvider(): SlackRuntimeSandboxProvider {
       sequence += 1;
       if (request.policy?.network.egress === "allowlist") {
         policyHosts.push(...request.policy.network.allowedHosts);
+      }
+      if (request.start) {
+        startCommands.push(request.start.argv);
       }
       const sandbox: SandboxHandle = {
         id: `slack-sandbox-${sequence}`,
@@ -3561,7 +3564,6 @@ function createSlackRuntimeSandboxProvider(): SlackRuntimeSandboxProvider {
 
     async run(sandboxId, request): Promise<SandboxRunHandle> {
       const sandbox = load(sandboxId);
-      runCommands.push(request.argv);
       sandboxes.set(
         sandboxId,
         cloneSandboxHandle({ ...sandbox, status: "ready" })

@@ -1,5 +1,5 @@
 import type { Config } from "./config";
-import type { TokenStore } from "./db";
+import type { AgentRuntimeEngine, TokenStore } from "./db";
 import { exchangeGitHubCode, getGitHubUser } from "./providers/github/client";
 import { exchangeGoogleCode, getGoogleUser } from "./providers/google/client";
 import {
@@ -14,6 +14,8 @@ import { exchangeSlackCode } from "./providers/slack/client";
 import type { SlackRuntime } from "./slack";
 import { handleToolGatewayRequest } from "./tool-gateway";
 import type { ObservabilitySink } from "./observability";
+import type { SlackTestbed } from "./testbed/slack";
+import { summarizeSlackTestbed } from "./testbed/slack";
 import {
   isProviderDescriptorId,
   providerDescriptorIds,
@@ -77,7 +79,8 @@ export function startOAuthServer(
   store: TokenStore,
   slack: SlackRuntime,
   runtimeJwtIssuer: RuntimeJwtIssuer,
-  observability?: ObservabilitySink
+  observability?: ObservabilitySink,
+  testbed?: SlackTestbed
 ): ReturnType<typeof Bun.serve> {
   return Bun.serve({
     port: config.port,
@@ -90,6 +93,10 @@ export function startOAuthServer(
 
       if (url.pathname === "/oauth/jwks") {
         return jsonResponse(runtimeJwtIssuer.jwks());
+      }
+
+      if (config.testbed && testbed && url.pathname.startsWith("/__testbed")) {
+        return handleTestbedRequest(request, url, store, testbed);
       }
 
       const providerMcpMatch = url.pathname.match(providerMcpRoutePattern);
@@ -153,12 +160,128 @@ function providerMcpScopeFromPath(value: string | undefined): "all" | ProviderDe
   return value;
 }
 
-function jsonResponse(value: unknown): Response {
+function jsonResponse(value: unknown, init?: ResponseInit): Response {
   return new Response(JSON.stringify(value), {
+    ...init,
     headers: {
+      ...init?.headers,
       "Content-Type": "application/json; charset=utf-8"
     }
   });
+}
+
+async function handleTestbedRequest(
+  request: Request,
+  url: URL,
+  store: TokenStore,
+  testbed: SlackTestbed
+): Promise<Response> {
+  if (url.pathname === "/__testbed/reset" && request.method === "POST") {
+    testbed.reset();
+    return jsonResponse({ ok: true });
+  }
+
+  if (
+    url.pathname === "/__testbed/slack/events/message.im" &&
+    request.method === "POST"
+  ) {
+    const body = await readJsonObject(request);
+    await testbed.processMessage({
+      text: stringField(body, "text") ?? "",
+      user: stringField(body, "user"),
+      channel: stringField(body, "channel"),
+      team: stringField(body, "team"),
+      ts: stringField(body, "ts")
+    });
+    return jsonResponse({ ok: true, slack: summarizeSlackTestbed(testbed.state) });
+  }
+
+  if (
+    url.pathname === "/__testbed/slack/events/app_home_opened" &&
+    request.method === "POST"
+  ) {
+    const body = await readJsonObject(request);
+    await testbed.processAppHomeOpened({
+      user: stringField(body, "user"),
+      team: stringField(body, "team")
+    });
+    return jsonResponse({ ok: true, slack: summarizeSlackTestbed(testbed.state) });
+  }
+
+  if (url.pathname === "/__testbed/slack/actions" && request.method === "POST") {
+    const body = await readJsonObject(request);
+    const actionId = stringField(body, "actionId");
+    if (!actionId) {
+      return jsonResponse({ ok: false, error: "Missing actionId" }, { status: 400 });
+    }
+    await testbed.processBlockAction({
+      actionId,
+      value: stringField(body, "value"),
+      selectedValue: stringField(body, "selectedValue"),
+      user: stringField(body, "user"),
+      team: stringField(body, "team"),
+      triggerId: stringField(body, "triggerId")
+    });
+    return jsonResponse({ ok: true, slack: summarizeSlackTestbed(testbed.state) });
+  }
+
+  const channelMessagesMatch = url.pathname.match(
+    /^\/__testbed\/slack\/channels\/([^/]+)\/messages$/
+  );
+  if (channelMessagesMatch && request.method === "GET") {
+    const channel = decodeURIComponent(channelMessagesMatch[1]);
+    return jsonResponse({
+      ok: true,
+      messages: testbed.state.messages.filter(
+        (message) => message.channel === channel
+      )
+    });
+  }
+
+  const userHomeMatch = url.pathname.match(
+    /^\/__testbed\/slack\/users\/([^/]+)\/home$/
+  );
+  if (userHomeMatch && request.method === "GET") {
+    const user = decodeURIComponent(userHomeMatch[1]);
+    return jsonResponse({
+      ok: true,
+      home: testbed.state.homes[user] ?? null
+    });
+  }
+
+  if (url.pathname === "/__testbed/slack/state" && request.method === "GET") {
+    return jsonResponse({ ok: true, slack: summarizeSlackTestbed(testbed.state) });
+  }
+
+  if (url.pathname === "/__testbed/runtimes" && request.method === "GET") {
+    return jsonResponse({
+      ok: true,
+      runtimes: (["hermes", "openclaw", "burble-native"] as AgentRuntimeEngine[]).map((engine) =>
+        store.getAgentRuntimeForPrincipal({
+          workspaceId: "T_TESTBED",
+          slackUserId: "U_TESTBED",
+          engine
+        })
+      )
+    });
+  }
+
+  return new Response("Not found", { status: 404 });
+}
+
+async function readJsonObject(request: Request): Promise<Record<string, unknown>> {
+  const body = await request.json().catch(() => ({}));
+  return body && typeof body === "object" && !Array.isArray(body)
+    ? (body as Record<string, unknown>)
+    : {};
+}
+
+function stringField(
+  input: Record<string, unknown>,
+  field: string
+): string | undefined {
+  const value = input[field];
+  return typeof value === "string" ? value : undefined;
 }
 
 export async function handleGitHubCallback(

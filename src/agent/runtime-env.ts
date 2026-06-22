@@ -2,6 +2,7 @@ import type { RuntimeManifest } from "./runtime-manifest";
 
 export const approvedRuntimeForwardedEnv = new Set([
   "AI_MODEL",
+  "AGENT_RUNTIME_INFERENCE_BASE_URL",
   "OPENAI_BASE_URL",
   "OLLAMA_BASE_URL",
   "OLLAMA_OPENAI_BASE_URL",
@@ -47,6 +48,8 @@ export const approvedRuntimeForwardedEnv = new Set([
   "HERMES_BROWSER_CLOUD_PROVIDER"
 ]);
 
+export const runtimeInferenceProxyApiKey = "sk-BURBLE-INFERENCE-PROXY";
+
 const runtimeEnvSecretPattern =
   /(api[_-]?key|authorization|cookie|credential|jwt|oauth|password|refresh|secret|token)/i;
 
@@ -65,8 +68,16 @@ export function collectApprovedRuntimeEnv(
 
 export function modelProviderUrlsForRuntimeModel(
   model: RuntimeManifest["model"] | string,
-  env: Record<string, string | undefined> = {}
+  env: Record<string, string | undefined> = {},
+  options: { inferenceBaseUrl?: string | null } = {}
 ): string[] {
+  if (options.inferenceBaseUrl?.trim()) {
+    return [options.inferenceBaseUrl.trim()];
+  }
+  if (env.AGENT_RUNTIME_INFERENCE_BASE_URL?.trim()) {
+    return [env.AGENT_RUNTIME_INFERENCE_BASE_URL.trim()];
+  }
+
   const provider =
     typeof model === "string" ? model.split(":", 1)[0] : model.provider;
 

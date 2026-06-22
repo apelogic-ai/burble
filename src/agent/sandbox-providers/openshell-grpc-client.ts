@@ -31,16 +31,6 @@ type GrpcUnary = (
   callback: (error: Error | null, response: unknown) => void
 ) => void;
 
-type GrpcServerStream = (
-  request: Record<string, unknown>,
-  metadata: Metadata,
-  options: CallOptions
-) => {
-  on(event: "data", listener: (event: unknown) => void): void;
-  on(event: "error", listener: (error: Error) => void): void;
-  on(event: "end", listener: () => void): void;
-};
-
 type OpenShellGrpcService = {
   Health: GrpcUnary;
   CreateSandbox: GrpcUnary;
@@ -49,7 +39,6 @@ type OpenShellGrpcService = {
   UpdateConfig: GrpcUnary;
   ExposeService: GrpcUnary;
   GetService: GrpcUnary;
-  ExecSandbox: GrpcServerStream;
 };
 
 export type OpenShellGrpcSandboxClientOptions = {
@@ -87,6 +76,11 @@ export function createOpenShellGrpcSandboxClient(
 
   return {
     async createSandbox(input) {
+      if (input.start) {
+        throw new Error(
+          "OpenShell gRPC CreateSandbox cannot set the supervised workload command; use AGENT_RUNTIME_SANDBOX_TRANSPORT=cli"
+        );
+      }
       const sandboxName = shortSandboxName();
       const labels = runtimeLabels(input.labels, input.principal, input.runtime);
       objectRecord(
@@ -97,7 +91,8 @@ export function createOpenShellGrpcSandboxClient(
             environment: {},
             template: {
               image: input.runtime.image,
-              labels
+              labels,
+              environment: {}
             },
             policy: compileOpenShellGrpcSandboxPolicy(
               input.policy ?? emptySandboxPolicy()
@@ -149,55 +144,10 @@ export function createOpenShellGrpcSandboxClient(
       // provision OpenShell provider records, so there is nothing to attach here.
     },
 
-    async run(input) {
-      const command = openShellLaunchCommand(input.request.argv);
-      const sandboxObjectId = await getSandboxObjectId(
-        service,
-        input.sandboxId,
-        metadata()
+    async run(_input) {
+      throw new Error(
+        "OpenShell gRPC sandboxes must launch workloads at sandbox creation"
       );
-      let exitCode: number | undefined;
-      let output = "";
-      const eventSummaries: string[] = [];
-      await new Promise<void>((resolve, reject) => {
-        const stream = service.ExecSandbox(
-          {
-            sandboxId: sandboxObjectId,
-            command,
-            environment: input.request.env,
-            workdir: "/runtime"
-          },
-          metadata(),
-          callOptions(requestTimeoutMs)
-        );
-        stream.on("data", (event) => {
-          const record = objectRecord(event, "OpenShell exec event");
-          const parsed = parseOpenShellExecEvent(record);
-          if (parsed.output) {
-            output = appendExecOutput(output, parsed.output);
-          }
-          if (parsed.summary) {
-            eventSummaries.push(parsed.summary);
-          }
-          if (typeof parsed.exitCode === "number") {
-            exitCode = parsed.exitCode;
-          }
-        });
-        stream.on("error", reject);
-        stream.on("end", resolve);
-      });
-      const diagnosticOutput =
-        output.trim() ||
-        (exitCode && exitCode !== 0
-          ? `OpenShell exec stream produced no text output. Events: ${eventSummaries.join(", ") || "none"}`
-          : "");
-
-      return {
-        runId: `run-${input.sandboxId}`,
-        status: exitCode === undefined || exitCode === 0 ? "running" : "failed",
-        ...(exitCode === undefined || exitCode === 0 ? {} : { exitCode }),
-        ...(diagnosticOutput ? { output: diagnosticOutput } : {})
-      };
     },
 
     async getSandbox(input) {
@@ -421,7 +371,14 @@ function recordFromSandbox(input: {
   };
 }
 
-function runtimeLabels(
+export function openShellCommandString(argv: string[]): string {
+  if (argv.length === 0 || argv.some((part) => part.trim() === "")) {
+    throw new Error("OpenShell sandbox command must be non-empty");
+  }
+  return argv.join(" ");
+}
+
+export function runtimeLabels(
   labels: Record<string, string>,
   principal: OpenShellSandboxRecord["principal"],
   runtime: OpenShellSandboxRecord["runtime"]
@@ -472,68 +429,6 @@ function runtimeEngineFromLabel(
     default:
       return "openclaw";
   }
-}
-
-export function parseOpenShellExecEvent(
-  event: Record<string, unknown>
-): { output: string; exitCode?: number; summary: string } {
-  const stdout = isRecord(event.stdout) ? event.stdout : null;
-  const stderr = isRecord(event.stderr) ? event.stderr : null;
-  const exit = isRecord(event.exit) ? event.exit : null;
-  const output = `${decodeExecData(stdout?.data)}${decodeExecData(stderr?.data)}`;
-  const exitCode =
-    typeof exit?.exitCode === "number"
-      ? exit.exitCode
-      : typeof exit?.exit_code === "number"
-        ? exit.exit_code
-        : undefined;
-  return {
-    output,
-    ...(exitCode === undefined ? {} : { exitCode }),
-    summary: summarizeExecEvent(event)
-  };
-}
-
-function appendExecOutput(current: string, text: string): string {
-  if (!text) {
-    return current;
-  }
-  return `${current}${text}`.slice(-4000);
-}
-
-function decodeExecData(data: unknown): string {
-  if (!data) {
-    return "";
-  }
-  if (typeof data === "string") {
-    return data;
-  }
-  if (data instanceof Uint8Array) {
-    return Buffer.from(data).toString("utf8");
-  }
-  if (data instanceof ArrayBuffer) {
-    return Buffer.from(data).toString("utf8");
-  }
-  if (Array.isArray(data) && data.every((value) => typeof value === "number")) {
-    return Buffer.from(data).toString("utf8");
-  }
-  if (isRecord(data) && Array.isArray(data.data)) {
-    return decodeExecData(data.data);
-  }
-  return "";
-}
-
-function summarizeExecEvent(event: Record<string, unknown>): string {
-  const keys = Object.keys(event).sort();
-  return keys
-    .map((key) => {
-      const value = event[key];
-      if (isRecord(value)) {
-        return `${key}{${Object.keys(value).sort().join(",")}}`;
-      }
-      return key;
-    })
-    .join("+");
 }
 
 function encodeOpenShellLabelValues(
@@ -713,68 +608,18 @@ function sandboxStatus(phase: unknown): OpenShellSandboxRecord["status"] {
   }
 }
 
-export function openShellLaunchCommand(argv: string[]): string[] {
-  const executable = argv[0]?.trim();
-  if (executable === "python" || executable === "python3") {
-    return [executable, "-c", pythonLauncherScript, ...argv];
-  }
-  if (executable === "bun") {
-    return ["bun", "-e", bunLauncherScript, ...argv];
-  }
-  throw new Error(
-    `OpenShell sandbox runtime start command ${JSON.stringify(executable)} is not supported; use a python/python3 or bun entrypoint`
-  );
-}
-
-// The launcher backgrounds the real runtime and then watches it for a short
-// window before reporting success. The window must outlast process bind +
-// early crashes (config parse, missing module, denied path) so that a runtime
-// which starts and then dies surfaces its captured stderr through run().output
-// instead of slipping past into a logless health-check timeout.
-//
-// CRITICAL: OpenShell ExecSandbox rejects any command argument containing a
-// newline or carriage return, so each script MUST be a single line. The poll
-// loops below are written as single statements (a lazy generator / an inline
-// setInterval body) for that reason — do not reformat them across lines.
-const launcherSettleChecks = 15;
-const launcherSettleIntervalSeconds = 0.2;
-
-const pythonLauncherScript = [
-  "import subprocess, sys, time",
-  "argv=sys.argv[1:]",
-  "log=open('/tmp/burble-runtime.log','ab',buffering=0)",
-  "stdin=open('/tmp/burble-runtime.stdin','ab+')",
-  "stdin.seek(0)",
-  "proc=subprocess.Popen(argv, stdin=stdin, stdout=log, stderr=subprocess.STDOUT, start_new_session=True)",
-  `code=next((c for _ in range(${launcherSettleChecks}) for c in [(time.sleep(${launcherSettleIntervalSeconds}), proc.poll())[1]] if c is not None), None)`,
-  "open('/tmp/burble-runtime.pid','w').write(str(proc.pid)) if code is None else None",
-  "sys.exit(0) if code is None else (log.close(), stdin.close(), sys.stderr.buffer.write(open('/tmp/burble-runtime.log','rb').read()), sys.exit(code))"
-].join("; ");
-
-const bunLauncherScript = [
-  "const fs=require('node:fs')",
-  "const cp=require('node:child_process')",
-  "const argv=process.argv.slice(1)",
-  "const log=fs.openSync('/tmp/burble-runtime.log','a')",
-  "const input=fs.openSync('/tmp/burble-runtime.stdin','a+')",
-  "const child=cp.spawn(argv[0],argv.slice(1),{detached:true,stdio:[input,log,log],env:process.env})",
-  "child.unref()",
-  "let checks=0",
-  `const timer=setInterval(()=>{if(child.exitCode!=null){clearInterval(timer);try{process.stderr.write(fs.readFileSync('/tmp/burble-runtime.log'))}catch{};process.exit(child.exitCode??1)}else if(++checks>=${launcherSettleChecks}){clearInterval(timer);fs.writeFileSync('/tmp/burble-runtime.pid',String(child.pid));process.exit(0)}}, ${Math.round(launcherSettleIntervalSeconds * 1000)})`
-].join("; ");
-
 function grpcTarget(endpoint: string): string {
   const url = new URL(endpoint);
   return url.host;
 }
 
-function shortSandboxName(): string {
+export function shortSandboxName(): string {
   const bytes = new Uint8Array(8);
   crypto.getRandomValues(bytes);
   return `b-${[...bytes].map((byte) => byte.toString(16).padStart(2, "0")).join("")}`;
 }
 
-function rewriteLocalEndpoint(endpoint: string): string {
+export function rewriteLocalEndpoint(endpoint: string): string {
   if (!endpoint) {
     return endpoint;
   }

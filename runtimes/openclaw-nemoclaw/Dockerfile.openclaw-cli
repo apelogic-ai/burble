@@ -1,4 +1,4 @@
-FROM node:22.19-bookworm-slim
+FROM node:22.19-trixie-slim
 WORKDIR /runtime
 ENV NODE_ENV=production
 ENV OPENCLAW_COMMAND=/usr/local/bin/openclaw

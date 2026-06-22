@@ -150,7 +150,16 @@ export type SlackRuntimeOptions = {
   sandboxStartCommand?: string[];
   sandboxModelProviderUrls?: string[];
   sandboxFetch?: SandboxRuntimeFetch;
+  testbed?: boolean;
 };
+
+function createNoopSlackReceiver() {
+  return {
+    init: () => undefined,
+    start: async () => undefined,
+    stop: async () => undefined
+  };
+}
 
 type SlackDirectMessageEvent = {
   channel_type?: string;
@@ -263,8 +272,10 @@ export function createSlackRuntime(
 ): SlackRuntime {
   const app = new App({
     token: config.slackBotToken,
-    appToken: config.slackAppToken,
-    socketMode: true,
+    appToken: options.testbed ? undefined : config.slackAppToken,
+    socketMode: !options.testbed,
+    ...(options.testbed ? { receiver: createNoopSlackReceiver() } : {}),
+    tokenVerificationEnabled: !options.testbed,
     logLevel: toBoltLogLevel(config.slackLogLevel)
   });
 
@@ -1914,9 +1925,12 @@ export function createManagedRuntimeFactory(
               toolGatewayUrl: config.agentRuntimeToolGatewayUrl,
               mcpGatewayUrl: config.agentRuntimeMcpGatewayUrl,
               mcpAudience: config.agentRuntimeMcpAudience,
+              inferenceBaseUrl: config.agentRuntimeInferenceBaseUrl,
               modelProviderUrls:
                 options.sandboxModelProviderUrls ??
-                modelProviderUrlsForRuntimeModel(config.aiModel, Bun.env),
+                modelProviderUrlsForRuntimeModel(config.aiModel, Bun.env, {
+                  inferenceBaseUrl: config.agentRuntimeInferenceBaseUrl
+                }),
               runtimeJwtIssuer,
               runtimeJwtTtlSeconds: config.agentRuntimeJwtTtlSeconds,
               runtimeTokenSecret: config.agentRuntimeTokenSecret ?? "",

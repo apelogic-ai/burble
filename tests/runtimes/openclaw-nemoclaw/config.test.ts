@@ -36,6 +36,7 @@ describe("readRuntimeConfig", () => {
         BURBLE_RUNTIME_HEARTBEAT_INTERVAL_MS: "120000",
         BURBLE_RUNTIME_CONTRACT_PROBE: "true",
         AI_MODEL: "ollama:qwen3-coder:30b-cloud",
+        AGENT_RUNTIME_INFERENCE_BASE_URL: "http://llm-gw:4000/v1/",
         OLLAMA_BASE_URL: "https://ollama.com/"
       })
     ).toEqual({
@@ -70,6 +71,7 @@ describe("readRuntimeConfig", () => {
       openClawGatewayToken: "configured-gateway-token",
       runtimeHeartbeatIntervalMs: 120000,
       llmModel: "ollama:qwen3-coder:30b-cloud",
+      inferenceBaseUrl: "http://llm-gw:4000/v1",
       ollamaBaseUrl: "https://ollama.com"
     });
   });
@@ -101,6 +103,7 @@ describe("readRuntimeConfig", () => {
       openClawGatewayPort: 18789,
       openClawGatewayBind: "loopback",
       llmModel: "openai:gpt-5.4",
+      inferenceBaseUrl: null,
       ollamaBaseUrl: "https://ollama.com"
     });
   });

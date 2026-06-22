@@ -240,9 +240,13 @@ describe("runtime SDK contract server", () => {
     ).toBe(false);
   });
 
-  test("requires bearer auth for protected runtime contract endpoints", async () => {
+  test("requires bearer auth for runtime execution endpoints", async () => {
     const health = await authorizedServer.handleRequest(
       new Request("http://runtime/healthz"),
+      { suffix: "world" }
+    );
+    const capabilities = await authorizedServer.handleRequest(
+      new Request("http://runtime/capabilities"),
       { suffix: "world" }
     );
     const unauthorized = await authorizedServer.handleRequest(
@@ -266,6 +270,7 @@ describe("runtime SDK contract server", () => {
     );
 
     expect(health?.status).toBe(200);
+    expect(capabilities?.status).toBe(200);
     expect(unauthorized?.status).toBe(401);
     expect(unauthorized?.headers.get("www-authenticate")).toBe("Bearer");
     expect(authorized?.status).toBe(200);

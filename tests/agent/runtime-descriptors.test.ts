@@ -71,14 +71,7 @@ describe("runtime descriptors", () => {
     expect(runtimeHealthCheckAttempts("openclaw-gateway")).toBe(90);
     expect(runtimeHealthCheckAttempts("hermes")).toBe(30);
     expect(runtimeDescriptor("openclaw").container.sandboxReadOnlyPaths).toEqual([
-      "/app",
-      "/dev/urandom",
-      "/etc",
-      "/lib",
-      "/lib64",
-      "/proc",
-      "/usr",
-      "/var/log"
+      "/"
     ]);
     expect(runtimeDescriptor("openclaw").container.sandboxReadWritePaths).toEqual([
       "/dev/pts"

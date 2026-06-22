@@ -68,6 +68,7 @@ export function createOpenShellHttpSandboxClient(
       labels: Record<string, string>;
       policy?: SandboxPolicy;
       compiledPolicy?: unknown;
+      start?: SandboxProvisionRequest["start"];
     }): Promise<OpenShellSandboxRecord> {
       return coerceSandboxRecord(
         await requestJson("/sandboxes", {

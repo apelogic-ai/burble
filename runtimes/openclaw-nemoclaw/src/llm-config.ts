@@ -7,6 +7,7 @@ export type ParsedLlmModel = {
 
 type OpenClawPatchInput = {
   modelId: string;
+  inferenceBaseUrl?: string | null;
   ollamaBaseUrl: string;
   agentId?: string;
   codeModeEnabled?: boolean;
@@ -42,6 +43,7 @@ export function buildOpenClawLlmPatch(input: OpenClawPatchInput): string {
   const agentId = input.agentId ?? "main";
   const providerConfig = buildProviderConfig(
     parsed,
+    input.inferenceBaseUrl ?? null,
     input.ollamaBaseUrl,
     input.burbleChannelBaseUrl ?? "http://127.0.0.1:8080",
     input.burbleChannelPluginPath ?? BURBLE_OPENCLAW_CHANNEL_PLUGIN_PATH
@@ -167,10 +169,37 @@ function readObject(value: unknown): Record<string, unknown> {
 
 function buildProviderConfig(
   parsed: ParsedLlmModel,
+  inferenceBaseUrl: string | null,
   ollamaBaseUrl: string,
   burbleChannelBaseUrl: string,
   burbleChannelPluginPath: string
 ): Record<string, unknown> {
+  if (inferenceBaseUrl?.trim()) {
+    const baseUrl = inferenceBaseUrl.trim().replace(/\/+$/, "");
+    const provider = "openai";
+    return {
+      models: {
+        providers: {
+          [provider]: {
+            baseUrl,
+            apiKey: "OPENAI_API_KEY",
+            api: "openai",
+            timeoutSeconds: 300,
+            models: [
+              {
+                id: parsed.model,
+                name: parsed.model,
+                input: ["text"]
+              }
+            ]
+          }
+        }
+      },
+      ...burbleChannelConfig(),
+      plugins: pluginConfig(provider, burbleChannelPluginPath)
+    };
+  }
+
   if (parsed.provider === "ollama") {
     return {
       models: {

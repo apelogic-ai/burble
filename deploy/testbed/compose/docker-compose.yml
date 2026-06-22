@@ -1,0 +1,140 @@
+# Local full-stack testbed.
+#
+# This stack replaces real Slack Socket Mode with Burble's local fake Slack
+# endpoints while keeping the app, database, OpenShell gateway, and runtime
+# images local and reproducible.
+
+name: burble-testbed
+
+services:
+  burble-app-testbed:
+    build:
+      context: ../../..
+      dockerfile: Dockerfile
+    ports:
+      - "${BURBLE_TESTBED_PORT:-3000}:3000"
+    environment:
+      - NODE_ENV=test
+      - BURBLE_TESTBED=1
+      - PORT=3000
+      - BASE_URL=http://burble-app-testbed:3000
+      - DATABASE_PATH=/data/burble-testbed.db
+      - SLACK_BOT_TOKEN=${SLACK_BOT_TOKEN:-xoxb-testbed}
+      - SLACK_APP_TOKEN=${SLACK_APP_TOKEN:-xapp-testbed}
+      - SLACK_LOG_LEVEL=${SLACK_LOG_LEVEL:-info}
+      - GITHUB_CLIENT_ID=${GITHUB_CLIENT_ID:-github-testbed-client}
+      - GITHUB_CLIENT_SECRET=${GITHUB_CLIENT_SECRET:-github-testbed-secret}
+      - AGENT_MODE=${AGENT_MODE:-deterministic}
+      - AGENT_RUNTIME=${AGENT_RUNTIME:-burble-runtime}
+      - AGENT_RUNTIME_FACTORY=${AGENT_RUNTIME_FACTORY:-sandbox}
+      - AGENT_RUNTIME_ENGINE=${AGENT_RUNTIME_ENGINE:-hermes}
+      - AGENT_RUNTIME_IMAGE=${AGENT_RUNTIME_IMAGE:-burble-nemo-hermes:dev}
+      - AGENT_RUNTIME_SANDBOX_URL=${AGENT_RUNTIME_SANDBOX_URL:-http://openshell:8080}
+      - AGENT_RUNTIME_SANDBOX_TOKEN=${AGENT_RUNTIME_SANDBOX_TOKEN:-}
+      - AGENT_RUNTIME_SANDBOX_TRANSPORT=${AGENT_RUNTIME_SANDBOX_TRANSPORT:-cli}
+      - AGENT_RUNTIME_OPENSHELL_CLI_BIN=${AGENT_RUNTIME_OPENSHELL_CLI_BIN:-/opt/openshell-cli/openshell}
+      - AGENT_RUNTIME_OPENSHELL_DIAL_HOST=${AGENT_RUNTIME_OPENSHELL_DIAL_HOST:-openshell}
+      - AGENT_RUNTIME_TOKEN_SECRET=${AGENT_RUNTIME_TOKEN_SECRET:-testbed-runtime-secret}
+      - AGENT_RUNTIME_TOOL_GATEWAY_URL=${AGENT_RUNTIME_TOOL_GATEWAY_URL:-http://burble-app-testbed:3000/internal/tools}
+      - AGENT_RUNTIME_MCP_GATEWAY_URL=${AGENT_RUNTIME_MCP_GATEWAY_URL:-http://burble-app-testbed:3000/mcp}
+      - LLM_GW_BASE_URL=${LLM_GW_BASE_URL:-http://llm-gw:4000/v1}
+      - RUNTIME_JWT_ISSUER=${RUNTIME_JWT_ISSUER:-http://burble-app-testbed:3000}
+      - RUNTIME_JWT_PRIVATE_KEY_PATH=${RUNTIME_JWT_PRIVATE_KEY_PATH:-/data/runtime-jwt-private.pem}
+      - INTERNAL_API_TOKEN=${INTERNAL_API_TOKEN:-testbed-internal-token}
+      - AI_MODEL=${AI_MODEL:-openai:gpt-5.4}
+      - OPENAI_API_KEY=
+      - ANTHROPIC_API_KEY=
+      - JIRA_CLIENT_ID=
+      - JIRA_CLIENT_SECRET=
+      - GOOGLE_CLIENT_ID=
+      - GOOGLE_CLIENT_SECRET=
+      - HUBSPOT_CLIENT_ID=
+      - HUBSPOT_CLIENT_SECRET=
+    volumes:
+      - burble_testbed_data:/data
+      - ${OPENSHELL_CLI_BIN_HOST_PATH:?run bun run testbed:up}:/opt/openshell-cli/openshell:ro
+    depends_on:
+      - openshell
+      - llm-gw
+
+  llm-gw:
+    build:
+      context: ../../..
+      dockerfile: Dockerfile
+    command: ["bun", "src/testbed/llm-gw.ts"]
+    expose:
+      - "4000"
+    environment:
+      - PORT=4000
+
+  openshell:
+    image: ghcr.io/nvidia/openshell/gateway:${OPENSHELL_IMAGE_TAG:-latest}
+    restart: unless-stopped
+    command: []
+    user: "0"
+    ports:
+      - "${OPENSHELL_TESTBED_PORT:-8080}:8080"
+      - "${OPENSHELL_TESTBED_HEALTH_PORT:-8081}:8081"
+    environment:
+      - OPENSHELL_GATEWAY_CONFIG=/etc/openshell/gateway.toml
+      - OPENSHELL_DB_URL=sqlite:${OPENSHELL_DATA_HOST_DIR:?run bun run testbed:up}/gateway.db?mode=rwc
+      - XDG_DATA_HOME=${OPENSHELL_DATA_HOST_DIR:?run bun run testbed:up}
+      - HOME=${OPENSHELL_DATA_HOST_DIR:?run bun run testbed:up}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+      - "host.openshell.internal:host-gateway"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ${OPENSHELL_DATA_HOST_DIR:?run bun run testbed:up}:${OPENSHELL_DATA_HOST_DIR:?run bun run testbed:up}
+      - ${OPENSHELL_GATEWAY_CONFIG_HOST_PATH:?run bun run testbed:up}:/etc/openshell/gateway.toml:ro
+      - ${OPENSHELL_SUPERVISOR_BIN_HOST_PATH:?run bun run testbed:up}:${OPENSHELL_SUPERVISOR_BIN_HOST_PATH:?run bun run testbed:up}:ro
+    depends_on:
+      openshell-jwt-init:
+        condition: service_completed_successfully
+
+  openshell-jwt-init:
+    image: alpine:3.20
+    environment:
+      - OPENSHELL_DATA_DIR=${OPENSHELL_DATA_HOST_DIR:?run bun run testbed:up}
+    command:
+      - sh
+      - -lc
+      - |
+        apk add --no-cache openssl >/dev/null
+        mkdir -p "$$OPENSHELL_DATA_DIR/jwt"
+        chmod 700 "$$OPENSHELL_DATA_DIR/jwt"
+        if [ ! -f "$$OPENSHELL_DATA_DIR/jwt/signing.pem" ]; then
+          umask 077
+          openssl genpkey -algorithm Ed25519 -out "$$OPENSHELL_DATA_DIR/jwt/signing.pem" >/dev/null 2>&1
+        fi
+        if [ ! -f "$$OPENSHELL_DATA_DIR/jwt/public.pem" ]; then
+          openssl pkey -in "$$OPENSHELL_DATA_DIR/jwt/signing.pem" -pubout -out "$$OPENSHELL_DATA_DIR/jwt/public.pem" >/dev/null 2>&1
+        fi
+        if [ ! -f "$$OPENSHELL_DATA_DIR/jwt/kid" ]; then
+          openssl rand -hex 16 >"$$OPENSHELL_DATA_DIR/jwt/kid"
+        fi
+    volumes:
+      - ${OPENSHELL_DATA_HOST_DIR:?run bun run testbed:up}:${OPENSHELL_DATA_HOST_DIR:?run bun run testbed:up}
+
+  hermes-image:
+    profiles:
+      - runtime-image
+    image: burble-nemo-hermes:dev
+    build:
+      context: ../../..
+      dockerfile: runtimes/nemo-hermes/Dockerfile
+    command: ["python", "--version"]
+
+  openclaw-image:
+    profiles:
+      - runtime-image
+    image: burble-openclaw-nemoclaw-openclaw-cli:dev
+    build:
+      context: ../../..
+      dockerfile: runtimes/openclaw-nemoclaw/Dockerfile.openclaw-cli
+      args:
+        OPENCLAW_VERSION: ${OPENCLAW_VERSION:-2026.5.19}
+    command: ["bun", "--version"]
+
+volumes:
+  burble_testbed_data:
