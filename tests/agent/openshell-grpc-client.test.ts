@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
+  compileOpenShellGrpcSandboxPolicy,
   decodeOpenShellLabelValue,
   encodeOpenShellLabelValue,
   openShellLaunchCommand,
@@ -82,6 +83,40 @@ describe("OpenShell gRPC exec events", () => {
       output: "",
       exitCode: 2,
       summary: "exit{exitCode}+stderr{chunk}"
+    });
+  });
+});
+
+describe("OpenShell gRPC policy compiler", () => {
+  test("allows runtime interpreter binaries to use the egress allowlist", () => {
+    const policy = compileOpenShellGrpcSandboxPolicy({
+      network: {
+        egress: "allowlist",
+        allowedHosts: ["api.openai.com", "burble-app:3000"]
+      },
+      filesystem: {
+        readOnlyPaths: ["/runtime"],
+        readWritePaths: ["/data/openclaw/hermes", "/tmp"]
+      }
+    }) as {
+      networkPolicies: {
+        burble_runtime: {
+          binaries: Array<{ path: string; harness: boolean }>;
+        };
+      };
+    };
+
+    expect(policy.networkPolicies.burble_runtime.binaries).toContainEqual({
+      path: "/usr/local/bin/python3.11",
+      harness: false
+    });
+    expect(policy.networkPolicies.burble_runtime.binaries).toContainEqual({
+      path: "/usr/local/bin/hermes",
+      harness: false
+    });
+    expect(policy.networkPolicies.burble_runtime.binaries).toContainEqual({
+      path: "/usr/local/bin/bun",
+      harness: false
     });
   });
 });

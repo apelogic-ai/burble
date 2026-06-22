@@ -96,7 +96,9 @@ export function createOpenShellGrpcSandboxClient(
               image: input.runtime.image,
               labels
             },
-            policy: toOpenShellGrpcPolicy(input.policy ?? emptySandboxPolicy())
+            policy: compileOpenShellGrpcSandboxPolicy(
+              input.policy ?? emptySandboxPolicy()
+            )
           }
         }),
         "OpenShell CreateSandbox response"
@@ -128,7 +130,7 @@ export function createOpenShellGrpcSandboxClient(
     async applyPolicy(input) {
       await unary(service.UpdateConfig, {
         name: input.sandboxId,
-        policy: toOpenShellGrpcPolicy(input.policy),
+        policy: compileOpenShellGrpcSandboxPolicy(input.policy),
         global: false
       });
     },
@@ -574,7 +576,22 @@ export function decodeOpenShellLabelValue(value: string): string {
   ).toString("utf8");
 }
 
-function toOpenShellGrpcPolicy(policy: SandboxPolicy): Record<string, unknown> {
+const openShellRuntimeNetworkBinaryPaths = [
+  "/usr/local/bin/python3.11",
+  "/usr/local/bin/python3",
+  "/usr/local/bin/python",
+  "/usr/bin/python3",
+  "/usr/bin/python",
+  "/usr/local/bin/hermes",
+  "/usr/local/bin/bun",
+  "/usr/bin/bun",
+  "/usr/local/bin/node",
+  "/usr/bin/node"
+];
+
+export function compileOpenShellGrpcSandboxPolicy(
+  policy: SandboxPolicy
+): Record<string, unknown> {
   return {
     version: 1,
     filesystem: {
@@ -605,9 +622,13 @@ function toOpenShellGrpcNetworkPolicies(
         policy.network.egress === "deny"
           ? []
           : policy.network.allowedHosts.map(toNetworkEndpoint),
-      binaries: []
+      binaries: openShellRuntimeNetworkBinaryPaths.map(toNetworkBinary)
     }
   };
+}
+
+function toNetworkBinary(path: string): Record<string, unknown> {
+  return { path, harness: false };
 }
 
 function toNetworkEndpoint(host: string): Record<string, unknown> {
