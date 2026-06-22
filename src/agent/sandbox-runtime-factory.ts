@@ -123,51 +123,69 @@ export function createSandboxRuntimeFactory(input: {
       existing.status !== "stopped" &&
       existing.status !== "failed"
     ) {
-      const attached = await input.sandboxProvider.attach(existing.sandboxId);
-      const paths = sandboxRuntimePaths(attached.workspacePath, input.engine);
-      const policy =
-        (await input.buildPolicy?.({
-          principal,
+      try {
+        const attached = await input.sandboxProvider.attach(existing.sandboxId);
+        const paths = sandboxRuntimePaths(attached.workspacePath, input.engine);
+        const policy =
+          (await input.buildPolicy?.({
+            principal,
+            engine: input.engine,
+            runtimeId: existing.id,
+            runtimeDataId,
+            manifest
+          })) ??
+          buildDefaultSandboxPolicy(input, manifest);
+        const policyHash = sandboxRuntimePolicyHash(manifest, policy);
+        if (existing.policyHash !== policyHash) {
+          await input.sandboxProvider.applyPolicy(attached.id, policy);
+        }
+        const updated = input.store.getOrCreateAgentRuntime({
+          workspaceId: principal.workspaceId,
+          slackUserId: principal.slackUserId,
           engine: input.engine,
-          runtimeId: existing.id,
-          runtimeDataId,
+          endpointUrl: attached.endpointUrl,
+          authTokenHash: hashRuntimeToken(token),
+          statePath: paths.statePath,
+          configPath: paths.configPath,
+          workspacePath: attached.workspacePath,
+          sandboxId: attached.id,
+          policyHash
+        });
+        await waitForSandboxRuntimeHealth({
+          sandboxId: attached.id,
+          endpointUrl: attached.endpointUrl,
+          fetch: requestFetch,
+          attempts:
+            input.healthCheckAttempts ??
+            runtimeHealthCheckAttempts(input.engine),
+          intervalMs: input.healthCheckIntervalMs ?? 1000
+        });
+        input.store.touchAgentRuntime(existing.id);
+        if (existing.status === "provisioning") {
+          input.store.updateAgentRuntimeStatus(existing.id, { status: "ready" });
+        }
+        return toRuntimeHandle(
+          input.store.getAgentRuntime(existing.id) ?? updated,
+          token,
           manifest
-        })) ??
-        buildDefaultSandboxPolicy(input, manifest);
-      const policyHash = sandboxRuntimePolicyHash(manifest, policy);
-      if (existing.policyHash !== policyHash) {
-        await input.sandboxProvider.applyPolicy(attached.id, policy);
+        );
+      } catch (error) {
+        if (!isSandboxNotFoundError(error)) {
+          throw error;
+        }
+        input.store.updateAgentRuntimeStatus(existing.id, {
+          status: "stopped",
+          failureReason: `Sandbox ${existing.sandboxId} was not found`
+        });
+        input.store.recordAgentRuntimeEvent({
+          runtimeId: existing.id,
+          eventType: "runtime_stopped",
+          summary: {
+            reason: "sandbox_missing",
+            sandboxId: existing.sandboxId
+          }
+        });
       }
-      const updated = input.store.getOrCreateAgentRuntime({
-        workspaceId: principal.workspaceId,
-        slackUserId: principal.slackUserId,
-        engine: input.engine,
-        endpointUrl: attached.endpointUrl,
-        authTokenHash: hashRuntimeToken(token),
-        statePath: paths.statePath,
-        configPath: paths.configPath,
-        workspacePath: attached.workspacePath,
-        sandboxId: attached.id,
-        policyHash
-      });
-      await waitForSandboxRuntimeHealth({
-        sandboxId: attached.id,
-        endpointUrl: attached.endpointUrl,
-        fetch: requestFetch,
-        attempts:
-          input.healthCheckAttempts ??
-          runtimeHealthCheckAttempts(input.engine),
-        intervalMs: input.healthCheckIntervalMs ?? 1000
-      });
-      input.store.touchAgentRuntime(existing.id);
-      if (existing.status === "provisioning") {
-        input.store.updateAgentRuntimeStatus(existing.id, { status: "ready" });
-      }
-      return toRuntimeHandle(
-        input.store.getAgentRuntime(existing.id) ?? updated,
-        token,
-        manifest
-      );
     }
 
     const runtimeId = buildAgentRuntimeId(
@@ -636,6 +654,13 @@ async function waitForSandboxRuntimeHealth(input: {
       lastError instanceof Error ? lastError.message : "unknown error"
     }`
   );
+}
+
+function isSandboxNotFoundError(error: unknown): boolean {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+  return /\bNOT_FOUND\b/i.test(error.message) || /sandbox .*not found/i.test(error.message);
 }
 
 function toRuntimeHandle(

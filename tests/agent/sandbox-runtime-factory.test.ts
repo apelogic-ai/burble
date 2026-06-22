@@ -557,6 +557,54 @@ describe("createSandboxRuntimeFactory", () => {
     store.close();
   });
 
+  test("reprovisions when a stored sandbox binding no longer exists", async () => {
+    const store = createTokenStore(":memory:");
+    const provider = createFakeRuntimeSandboxProvider();
+    const stale = store.getOrCreateAgentRuntime({
+      workspaceId: principal.workspaceId,
+      slackUserId: principal.slackUserId,
+      engine: "openclaw",
+      endpointUrl: "http://missing-sandbox.local:8080",
+      authTokenHash: "old-hash",
+      statePath: "/missing/state",
+      configPath: "/missing/config/openclaw.json",
+      workspacePath: "/missing/workspace",
+      sandboxId: "missing-sandbox",
+      policyHash: "old-policy"
+    });
+    store.updateAgentRuntimeStatus(stale.id, { status: "provisioning" });
+    const factory = createSandboxRuntimeFactory({
+      store,
+      sandboxProvider: provider,
+      engine: "openclaw",
+      image: "burble-openclaw-nemoclaw:dev",
+      toolGatewayUrl: "http://burble-app:3000/internal/tools",
+      modelProviderUrls: ["https://api.openai.com/v1"],
+      runtimeTokenSecret: "runtime-secret",
+      startCommand: ["openclaw-entrypoint"],
+      healthCheckAttempts: 1,
+      fetch: async () => new Response("ok")
+    });
+
+    const runtime = await factory.getOrCreateRuntime(principal);
+    const events = store.listAgentRuntimeEvents(stale.id);
+
+    expect(runtime.id).toBe(stale.id);
+    expect(provider.attachCalls).toEqual(["missing-sandbox"]);
+    expect(provider.provisionCalls).toHaveLength(1);
+    expect(store.getAgentRuntime(stale.id)).toMatchObject({
+      status: "ready",
+      sandboxId: "sandbox-1",
+      endpointUrl: "http://sandbox-1.local:8080"
+    });
+    expect(events.map((event) => event.eventType)).toContain("runtime_stopped");
+    expect(events.map((event) => event.eventType)).toContain(
+      "runtime_provision_requested"
+    );
+
+    store.close();
+  });
+
   test("fails closed when the sandbox provider cannot enforce egress allowlists", () => {
     const store = createTokenStore(":memory:");
 
