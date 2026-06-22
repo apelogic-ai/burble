@@ -469,8 +469,23 @@ function buildDefaultSandboxPolicy(
     modelProviderUrls: manifest?.model
       ? modelProviderUrlsForRuntimeModel(manifest.model, env)
       : input.modelProviderUrls,
-    extraAllowedUrls: runtimeExtraAllowedUrlsFromEnv(env)
+    extraAllowedUrls: runtimeExtraAllowedUrlsFromEnv(env),
+    filesystem: defaultSandboxRuntimeFilesystemPolicy()
   });
+}
+
+function defaultSandboxRuntimeFilesystemPolicy(): NonNullable<
+  SandboxPolicy["filesystem"]
+> {
+  return {
+    readOnlyPaths: ["/runtime"],
+    readWritePaths: [
+      "/runtime/config",
+      "/runtime/state",
+      "/runtime/workspace",
+      "/tmp"
+    ]
+  };
 }
 
 function sandboxRuntimePolicyHash(

@@ -98,6 +98,15 @@ describe("createSandboxRuntimeFactory", () => {
               "api.openai.com",
               "burble-app:3000"
             ]
+          },
+          filesystem: {
+            readOnlyPaths: ["/runtime"],
+            readWritePaths: [
+              "/runtime/config",
+              "/runtime/state",
+              "/runtime/workspace",
+              "/tmp"
+            ]
           }
         }
       }
