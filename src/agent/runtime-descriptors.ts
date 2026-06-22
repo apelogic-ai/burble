@@ -13,6 +13,7 @@ export type RuntimeContainerProfile = {
   stateDir: string;
   workspaceDir: string;
   sandboxReadOnlyPaths?: readonly string[];
+  sandboxReadWritePaths?: readonly string[];
   openClawCompatEnv: boolean;
   openClawConfigPatch: boolean;
   modelEnv: "generic" | "hermes";
@@ -47,18 +48,16 @@ const openClawContainerProfile: RuntimeContainerProfile = {
   stateDir: "/data/openclaw/state",
   workspaceDir: "/data/openclaw/workspace",
   sandboxReadOnlyPaths: [
+    "/app",
+    "/dev/urandom",
+    "/etc",
     "/lib",
     "/lib64",
-    "/usr/bin/env",
-    "/usr/bin/node",
-    "/usr/lib",
-    "/usr/libexec",
-    "/usr/local/bin",
-    "/usr/local/bin/node",
-    "/usr/local/lib",
-    "/usr/local/lib/node_modules/openclaw/openclaw.mjs",
-    "/usr/local/lib/node_modules"
+    "/proc",
+    "/usr",
+    "/var/log"
   ],
+  sandboxReadWritePaths: ["/dev/pts"],
   openClawCompatEnv: true,
   openClawConfigPatch: true,
   modelEnv: "generic"

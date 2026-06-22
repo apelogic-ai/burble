@@ -132,4 +132,39 @@ describe("OpenShell gRPC policy compiler", () => {
       harness: false
     });
   });
+
+  test("uses valid TLS enum values for egress endpoints", () => {
+    const policy = compileOpenShellGrpcSandboxPolicy({
+      network: {
+        egress: "allowlist",
+        allowedHosts: ["api.openai.com", "burble-app:3000"],
+        allowedEndpoints: [
+          { host: "api.openai.com", tls: true },
+          { host: "burble-app:3000", tls: false }
+        ]
+      },
+      filesystem: {
+        readOnlyPaths: ["/runtime"],
+        readWritePaths: ["/tmp"]
+      }
+    }) as {
+      networkPolicies: {
+        burble_runtime: {
+          endpoints: Array<{ host: string; tls?: string }>;
+        };
+      };
+    };
+
+    expect(policy.networkPolicies.burble_runtime.endpoints).toContainEqual(
+      expect.objectContaining({ host: "api.openai.com" })
+    );
+    expect(
+      policy.networkPolicies.burble_runtime.endpoints.find(
+        (endpoint) => endpoint.host === "api.openai.com"
+      )?.tls
+    ).toBeUndefined();
+    expect(policy.networkPolicies.burble_runtime.endpoints).toContainEqual(
+      expect.objectContaining({ host: "burble-app", tls: "skip" })
+    );
+  });
 });

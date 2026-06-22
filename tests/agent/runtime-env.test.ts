@@ -15,10 +15,10 @@ describe("runtime env egress helpers", () => {
     };
 
     expect(collectApprovedRuntimeEnv(env)).toEqual({
-      BROWSER_USE_API_KEY: "browser-use-key",
-      BROWSERBASE_API_KEY: "browserbase-key",
       BROWSER_CDP_URL: "wss://Chrome.Example.Net:9222/devtools/browser/1"
     });
+    expect(collectApprovedRuntimeEnv(env).BROWSER_USE_API_KEY).toBeUndefined();
+    expect(collectApprovedRuntimeEnv(env).BROWSERBASE_API_KEY).toBeUndefined();
     expect(runtimeExtraAllowedUrlsFromEnv(env)).toEqual([
       "https://api.browserbase.com",
       "wss://connect.browserbase.com",

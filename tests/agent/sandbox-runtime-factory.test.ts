@@ -100,24 +100,22 @@ describe("createSandboxRuntimeFactory", () => {
       filesystem: {
         readOnlyPaths: [
           "/runtime",
+          "/app",
+          "/dev/urandom",
+          "/etc",
           "/lib",
           "/lib64",
-          "/usr/bin/env",
-          "/usr/bin/node",
-          "/usr/lib",
-          "/usr/libexec",
-          "/usr/local/bin",
-          "/usr/local/bin/node",
-          "/usr/local/lib",
-          "/usr/local/lib/node_modules/openclaw/openclaw.mjs",
-          "/usr/local/lib/node_modules"
+          "/proc",
+          "/usr",
+          "/var/log"
         ],
         readWritePaths: [
           "/data/openclaw",
           "/runtime/config",
           "/runtime/state",
           "/runtime/workspace",
-          "/tmp"
+          "/tmp",
+          "/dev/pts"
         ]
       }
     });
@@ -133,6 +131,11 @@ describe("createSandboxRuntimeFactory", () => {
         AGENT_RUNTIME_ENGINE: "openclaw",
         AGENT_RUNTIME_CONFIG_PATH: "/data/openclaw/config/openclaw.json",
         OPENCLAW_NEMOCLAW_ENGINE: "openclaw",
+        OPENCLAW_HOME: "/data/openclaw",
+        HOME: "/data/openclaw",
+        XDG_CACHE_HOME: "/tmp/openclaw-cache",
+        npm_config_cache: "/tmp/npm-cache",
+        JITI_FS_CACHE: "false",
         AI_MODEL: "openai:gpt-5.4"
       }
     });
@@ -252,10 +255,10 @@ describe("createSandboxRuntimeFactory", () => {
     expect(provider.runCalls[0].request.env).toMatchObject({
       AI_MODEL: "anthropic:claude-sonnet-4",
       HERMES_INFERENCE_PROVIDER: "anthropic",
-      EXA_API_KEY: "exa-key",
       FIRECRAWL_API_URL: "https://firecrawl.internal/v1",
       HERMES_WEB_SEARCH_BACKEND: "exa"
     });
+    expect(provider.runCalls[0].request.env?.EXA_API_KEY).toBeUndefined();
     expect(
       provider.provisionCalls[0].policy?.network.allowedHosts
     ).not.toContain("api.openai.com");

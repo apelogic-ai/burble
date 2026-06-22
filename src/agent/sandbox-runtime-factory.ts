@@ -515,7 +515,8 @@ function defaultSandboxRuntimeFilesystemPolicy(
       "/runtime/config",
       "/runtime/state",
       "/runtime/workspace",
-      "/tmp"
+      "/tmp",
+      ...(container.sandboxReadWritePaths ?? [])
     ]
   };
 }
@@ -586,9 +587,17 @@ function buildSandboxRuntimeEnv(input: {
   if (container.openClawCompatEnv) {
     Object.assign(env, {
       OPENCLAW_NEMOCLAW_ENGINE: input.engine,
+      OPENCLAW_HOME: container.dataRootTarget,
       OPENCLAW_STATE_DIR: container.stateDir,
       OPENCLAW_CONFIG_PATH: configPath,
-      OPENCLAW_WORKSPACE_DIR: container.workspaceDir
+      OPENCLAW_WORKSPACE_DIR: container.workspaceDir,
+      HOME: container.dataRootTarget,
+      TMPDIR: "/tmp",
+      XDG_CACHE_HOME: "/tmp/openclaw-cache",
+      XDG_CONFIG_HOME: "/tmp/openclaw-config",
+      XDG_DATA_HOME: "/tmp/openclaw-data",
+      npm_config_cache: "/tmp/npm-cache",
+      JITI_FS_CACHE: "false"
     });
   }
 

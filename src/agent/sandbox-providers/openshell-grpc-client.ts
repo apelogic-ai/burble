@@ -667,16 +667,12 @@ function toNetworkEndpoint(
   tlsByHost: Map<string, boolean>
 ): Record<string, unknown> {
   const { hostname, port } = splitHostPort(host);
-  // Default to TLS passthrough when transport metadata is absent (e.g. policies
-  // built outside the brokered builder) so the long-standing TLS egress path is
-  // unchanged. Plaintext hosts (the internal http:// tool/MCP gateway) must NOT
-  // be declared as TLS passthrough or the proxy fails to establish the hop.
-  const tls = tlsByHost.get(host) ?? true;
+  const tls = tlsByHost.get(host);
   return {
     host: hostname,
     ports: [port],
     protocol: "rest",
-    tls: tls ? "passthrough" : "none",
+    ...(tls === false ? { tls: "skip" } : {}),
     enforcement: "enforce",
     access: "full"
   };
