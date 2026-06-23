@@ -1588,6 +1588,16 @@ class BurbleHermesRuntime:
                     return web.json_response({"ok": True})
                 await waiter.emit({"type": event_type, "text": text})
             return web.json_response({"ok": True})
+        if text:
+            calling_provider_tool = extract_hermes_calling_provider_tool(text)
+            if calling_provider_tool:
+                await waiter.emit({"type": "status", "text": text})
+                self._schedule_provider_preview_recovery(
+                    run_id,
+                    waiter,
+                    calling_provider_tool,
+                )
+                return web.json_response({"ok": True})
         if is_hermes_progress_text(text):
             await waiter.emit({"type": "status", "text": text})
             return web.json_response({"ok": True})

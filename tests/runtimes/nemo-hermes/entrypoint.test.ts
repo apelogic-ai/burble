@@ -671,6 +671,27 @@ async def main():
     while not queue.empty():
         events.append(await queue.get())
 
+    status_waiter = mod.RunWaiter()
+    status_queue = asyncio.Queue()
+    status_waiter.queues.append(status_queue)
+    runtime.runs["run-status-preview"] = status_waiter
+    runtime.run_messages["run-status-preview"] = {
+        "originalText": "list my last companies in HubSpot",
+        "runtime": {"id": "rt_123"},
+    }
+
+    status_response = await runtime.handle_run_message(
+        FakeRequest(
+            "run-status-preview",
+            {"type": "status", "text": "Calling HubSpot search crm objects..."},
+        )
+    )
+    await asyncio.wait_for(status_waiter.future, timeout=1)
+
+    status_events = []
+    while not status_queue.empty():
+        status_events.append(await status_queue.get())
+
     bridge_waiter = mod.RunWaiter()
     bridge_queue = asyncio.Queue()
     bridge_waiter.queues.append(bridge_queue)
@@ -733,6 +754,9 @@ async def main():
         "response": response,
         "events": events,
         "result": waiter.future.result(),
+        "statusResponse": status_response,
+        "statusEvents": status_events,
+        "statusResult": status_waiter.future.result(),
         "bridgeResponse": bridge_response,
         "bridgeEvents": bridge_events,
         "bridgeResult": bridge_waiter.future.result(),
@@ -777,6 +801,40 @@ asyncio.run(main())
         }
       ],
       result: {
+        classification: "user_private",
+        text: "Latest HubSpot companies\n- ROKA STUDIO — renski.com"
+      },
+      statusResponse: { ok: true },
+      statusEvents: [
+        {
+          type: "status",
+          text: "Calling HubSpot search crm objects..."
+        },
+        {
+          type: "tool_call",
+          toolName: "hubspot_search_crm_objects",
+          callId: expect.any(String),
+          input: {
+            objectType: "companies",
+            limit: 10,
+            properties: ["name", "domain", "createdate", "hs_lastmodifieddate"]
+          }
+        },
+        {
+          type: "tool_result",
+          toolName: "hubspot_search_crm_objects",
+          callId: expect.any(String),
+          classification: "user_private",
+          content: [
+            { properties: { name: "ROKA STUDIO", domain: "renski.com" } }
+          ]
+        },
+        {
+          type: "message_delta",
+          text: "Latest HubSpot companies\n- ROKA STUDIO — renski.com"
+        }
+      ],
+      statusResult: {
         classification: "user_private",
         text: "Latest HubSpot companies\n- ROKA STUDIO — renski.com"
       },
@@ -836,6 +894,17 @@ asyncio.run(main())
         text: "Latest HubSpot companies\n- ROKA STUDIO — renski.com"
       },
       providerCalls: [
+        {
+          url:
+            "http://burble-app:3000/internal/tools/hubspot.searchCrmObjects/execute",
+          json: {
+            input: {
+              objectType: "companies",
+              limit: 10,
+              properties: ["name", "domain", "createdate", "hs_lastmodifieddate"]
+            }
+          }
+        },
         {
           url:
             "http://burble-app:3000/internal/tools/hubspot.searchCrmObjects/execute",
