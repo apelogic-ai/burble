@@ -89,6 +89,10 @@ HERMES_PROVIDER_TOOL_HINTS = load_hermes_provider_tool_hints(
     HERMES_PROVIDER_TOOL_HINTS_PATH
 )
 
+HERMES_PROVIDER_PROGRESS_RE = re.compile(
+    r"^(?::gear:|⚙️?|gear:)?\s*(?P<tool>burble_provider_call|(?:github|google|gmail|hubspot|jira|slack|atlassian|scheduled_job|conversation)_[a-z0-9_]+)(?:\.{3}|…)?$",
+    re.IGNORECASE,
+)
 DEFAULT_HERMES_PLATFORM_TOOLSETS = ["burble", "cronjob", "web"]
 REQUIRED_HERMES_SCHEDULED_PLATFORM_TOOLSETS = ["burble"]
 HERMES_STREAM_CURSOR = "[[BURBLE_STREAM_CURSOR]]"
@@ -493,6 +497,261 @@ def normalize_burble_provider_tool_name(name: str) -> str:
     return str(module.normalize_burble_tool_name(name))
 
 
+def provider_tool_hint_by_name(name: str) -> dict[str, Any] | None:
+    for hints in HERMES_PROVIDER_TOOL_HINTS.values():
+        for hint in hints:
+            if hint.get("name") == name:
+                return hint
+    return None
+
+
+def extract_hermes_provider_progress_tool(text: str) -> str | None:
+    normalized = " ".join(text.strip().split())
+    match = HERMES_PROVIDER_PROGRESS_RE.match(normalized)
+    if not match:
+        return None
+    return str(match.group("tool")).lower()
+
+
+def is_hermes_provider_tool_read_safe(tool_name: str) -> bool:
+    unsafe_terms = (
+        "_add_",
+        "_append_",
+        "_close_",
+        "_comment_",
+        "_create_",
+        "_delete_",
+        "_edit_",
+        "_fill_",
+        "_link_",
+        "_move_",
+        "_reopen_",
+        "_request_",
+        "_transition_",
+        "_update_",
+    )
+    return not any(term in tool_name for term in unsafe_terms)
+
+
+def derive_hermes_provider_marker_input(
+    tool_name: str,
+    original_text: str,
+) -> dict[str, Any] | None:
+    text = " ".join(original_text.lower().split())
+    if not is_hermes_provider_tool_read_safe(tool_name):
+        return None
+
+    if tool_name in {
+        "github_get_authenticated_user",
+        "github_list_assigned_issues",
+        "jira_get_authenticated_user",
+        "jira_list_accessible_resources",
+        "jira_list_assigned_issues",
+        "hubspot_get_authenticated_user",
+        "google_get_authenticated_user",
+    }:
+        return {}
+
+    if tool_name == "google_search_drive_files":
+        return {"limit": 1 if any(word in text for word in ("last", "latest", "recent")) else 10}
+
+    if tool_name == "hubspot_search_crm_objects":
+        object_type = infer_hubspot_object_type(text)
+        if not object_type:
+            return None
+        return {
+            "objectType": object_type,
+            "limit": 10,
+            **hubspot_default_properties(object_type),
+        }
+
+    if tool_name in {"hubspot_list_owners", "hubspot_list_users"}:
+        return {"limit": 10}
+
+    if tool_name in {
+        "google_search_calendar_events",
+        "google_search_mail_messages",
+        "google_slides_search_presentations",
+    }:
+        return {"limit": 10}
+
+    if tool_name == "github_list_my_pull_requests":
+        return {"state": "open", "sort": "updated", "order": "desc", "limit": 10}
+
+    if tool_name == "jira_list_visible_projects":
+        return {}
+
+    return None
+
+
+def infer_hubspot_object_type(text: str) -> str | None:
+    if any(word in text for word in ("company", "companies", "client", "clients", "account", "accounts")):
+        return "companies"
+    if "contact" in text or "contacts" in text:
+        return "contacts"
+    if "deal" in text or "deals" in text:
+        return "deals"
+    if any(word in text for word in ("user", "users", "owner", "owners")):
+        return "users"
+    return None
+
+
+def hubspot_default_properties(object_type: str) -> dict[str, Any]:
+    properties_by_type = {
+        "companies": ["name", "domain", "createdate", "hs_lastmodifieddate"],
+        "contacts": ["firstname", "lastname", "email", "createdate", "lastmodifieddate"],
+        "deals": ["dealname", "amount", "dealstage", "createdate", "hs_lastmodifieddate"],
+        "users": ["hs_name", "hs_email", "createdate", "hs_lastmodifieddate"],
+    }
+    properties = properties_by_type.get(object_type)
+    return {"properties": properties} if properties else {}
+
+
+async def call_burble_provider_tool(tool_name: str, tool_input: dict[str, Any]) -> Any:
+    module = load_burble_provider_tool_plugin()
+    raw_result = await module._burble_provider_call(
+        {"toolName": normalize_burble_provider_tool_name(tool_name), "input": tool_input}
+    )
+    try:
+        return json.loads(raw_result)
+    except Exception:
+        return raw_result
+
+
+def normalize_provider_content(content: Any) -> Any:
+    if isinstance(content, dict):
+        for key in (
+            "items",
+            "results",
+            "files",
+            "issues",
+            "companies",
+            "contacts",
+            "deals",
+            "users",
+            "owners",
+            "data",
+        ):
+            value = content.get(key)
+            if isinstance(value, list):
+                return value
+    return content
+
+
+def format_hermes_provider_recovery_text(
+    tool_name: str,
+    tool_input: dict[str, Any],
+    content: Any,
+) -> str:
+    if isinstance(content, dict) and content.get("error"):
+        message = content.get("message") or content.get("error")
+        return f"Provider tool failed: {message}"
+
+    records = normalize_provider_content(content)
+    if tool_name == "google_search_drive_files":
+        if isinstance(records, list) and records:
+            file = records[0]
+            if isinstance(file, dict):
+                name = first_string(file, "name", "title", "filename") or "unnamed file"
+                modified = first_string(
+                    file,
+                    "modifiedTime",
+                    "modified_time",
+                    "modified",
+                    "updatedAt",
+                    "updated_at",
+                )
+                lines = [f"Last edited Google Drive file: {name}"]
+                if modified:
+                    lines.append(f"modified: {modified}")
+                return "\n".join(lines)
+        return "No Google Drive files matched."
+
+    if tool_name == "hubspot_search_crm_objects":
+        object_type = str(tool_input.get("objectType") or "objects")
+        if isinstance(records, list) and records:
+            title = f"Latest HubSpot {object_type.replace('_', ' ')}"
+            return "\n".join([title, *[f"- {format_hubspot_record(record)}" for record in records[:10]]])
+        return f"No HubSpot {object_type.replace('_', ' ')} matched."
+
+    if tool_name == "github_list_assigned_issues":
+        return format_generic_record_list("Assigned GitHub issues", records)
+
+    if tool_name == "jira_list_assigned_issues":
+        return format_generic_record_list("Your open Jira tickets", records)
+
+    return format_generic_record_list(provider_tool_title(tool_name), records)
+
+
+def provider_tool_title(tool_name: str) -> str:
+    hint = provider_tool_hint_by_name(tool_name)
+    if hint and isinstance(hint.get("description"), str):
+        description = str(hint["description"]).rstrip(".")
+        if description:
+            return description
+    return tool_name.replace("_", " ").title()
+
+
+def format_generic_record_list(title: str, records: Any) -> str:
+    if isinstance(records, list):
+        if not records:
+            return f"{title}: none found."
+        return "\n".join([title, *[f"- {format_record(record)}" for record in records[:10]]])
+    if isinstance(records, dict):
+        return "\n".join([title, json.dumps(records, ensure_ascii=False, indent=2)])
+    return f"{title}: {records}"
+
+
+def format_hubspot_record(record: Any) -> str:
+    if not isinstance(record, dict):
+        return str(record)
+    props = record.get("properties") if isinstance(record.get("properties"), dict) else {}
+    name = (
+        first_string(props, "name", "dealname", "hs_name")
+        or " ".join(
+            part
+            for part in [
+                first_string(props, "firstname"),
+                first_string(props, "lastname"),
+            ]
+            if part
+        ).strip()
+        or first_string(props, "email", "hs_email", "domain")
+        or first_string(record, "name", "title", "id")
+        or "unnamed record"
+    )
+    domain = first_string(props, "domain", "website")
+    email = first_string(props, "email", "hs_email")
+    suffix = domain or email
+    return f"{name} — {suffix}" if suffix else name
+
+
+def format_record(record: Any) -> str:
+    if not isinstance(record, dict):
+        return str(record)
+    props = record.get("properties") if isinstance(record.get("properties"), dict) else {}
+    key = first_string(record, "key", "number", "id")
+    name = (
+        first_string(record, "title", "summary", "name")
+        or first_string(props, "summary", "name", "dealname", "email")
+        or json.dumps(record, ensure_ascii=False, separators=(",", ":"))
+    )
+    status = first_string(record, "status", "state") or first_string(props, "status", "dealstage")
+    prefix = f"{key} — " if key else ""
+    suffix = f" ({status})" if status else ""
+    return f"{prefix}{name}{suffix}"
+
+
+def first_string(source: dict[str, Any], *keys: str) -> str:
+    for key in keys:
+        value = source.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            return str(value)
+    return ""
+
+
 async def probe_hermes_provider_tool_reachability(
     tool: dict[str, Any],
     message: dict[str, Any],
@@ -890,6 +1149,7 @@ class BurbleHermesRuntime:
         self.platform_port = int_env("BURBLE_HERMES_PLATFORM_PORT", 8766)
         self.home = Path(env("HERMES_HOME", "/data/openclaw/hermes"))
         self.runs: dict[str, RunWaiter] = {}
+        self.run_messages: dict[str, dict[str, Any]] = {}
         self.gateway_process: subprocess.Popen[str] | None = None
 
     async def start(self) -> None:
@@ -952,30 +1212,28 @@ class BurbleHermesRuntime:
 
         os.environ["BURBLE_HOME_CHANNEL"] = route_id
         waiter = RunWaiter()
+        message = {
+            "runId": run_id,
+            "routeId": route_id,
+            "originalText": text,
+            "scheduledJob": input_body.get("scheduledJob"),
+            "attachments": input_body.get("attachments"),
+            "runtime": body.get("runtime"),
+            "text": build_hermes_turn_text(input_body),
+            "threadId": build_hermes_thread_id(run_id, conversation),
+            "actorId": principal.get("slackUserId"),
+            "actorName": principal.get("slackUserId"),
+            "slackUserId": principal.get("slackUserId"),
+            "isDirectMessage": conversation.get("isDirectMessage"),
+        }
         self.runs[run_id] = waiter
+        self.run_messages[run_id] = message
         print(
             f"[INFO] {timestamp()} Nemo Hermes run start runId={run_id} routeId={route_id} textChars={len(text)}",
             flush=True,
         )
         task = asyncio.create_task(
-            self._execute_run(
-                run_id,
-                waiter,
-                {
-                    "runId": run_id,
-                    "routeId": route_id,
-                    "originalText": text,
-                    "scheduledJob": input_body.get("scheduledJob"),
-                    "attachments": input_body.get("attachments"),
-                    "runtime": body.get("runtime"),
-                    "text": build_hermes_turn_text(input_body),
-                    "threadId": build_hermes_thread_id(run_id, conversation),
-                    "actorId": principal.get("slackUserId"),
-                    "actorName": principal.get("slackUserId"),
-                    "slackUserId": principal.get("slackUserId"),
-                    "isDirectMessage": conversation.get("isDirectMessage"),
-                },
-            )
+            self._execute_run(run_id, waiter, message)
         )
         if self._prefers_http_event_stream(request):
             return await self._stream_run_response(
@@ -1001,6 +1259,7 @@ class BurbleHermesRuntime:
             )
         finally:
             self.runs.pop(run_id, None)
+            self.run_messages.pop(run_id, None)
 
     async def handle_run_snapshot(self, request: web.Request) -> web.Response:
         run_id = request.match_info["run_id"]
@@ -1080,15 +1339,24 @@ class BurbleHermesRuntime:
             f"bodyKeys={','.join(sorted(str(key) for key in body.keys()))}",
             flush=True,
         )
-        if is_hermes_provider_progress_text(text):
+        provider_progress_tool = extract_hermes_provider_progress_tool(text)
+        if provider_progress_tool:
             print(
-                f"[WARN] {timestamp()} Nemo Hermes suppressed provider progress callback runId={run_id}",
+                f"[WARN] {timestamp()} Nemo Hermes suppressed provider progress callback "
+                f"runId={run_id} tool={provider_progress_tool}",
                 flush=True,
             )
             if event_type not in {"message_delta", "message_replace"}:
-                await waiter.fail(
-                    "Hermes returned a provider tool progress marker instead of invoking the Burble provider bridge."
+                recovered = await self._recover_provider_progress_marker(
+                    run_id,
+                    waiter,
+                    provider_progress_tool,
                 )
+                if not recovered:
+                    await waiter.fail(
+                        "Hermes returned a provider tool progress marker "
+                        f"({provider_progress_tool}) instead of invoking the Burble provider bridge."
+                    )
             return web.json_response({"ok": True})
         if event_type in {"message_delta", "message_replace"}:
             if "text" not in body:
@@ -1337,6 +1605,76 @@ class BurbleHermesRuntime:
                 progress_task.cancel()
                 with contextlib.suppress(asyncio.CancelledError):
                     await progress_task
+            self.run_messages.pop(run_id, None)
+
+    async def _recover_provider_progress_marker(
+        self,
+        run_id: str,
+        waiter: RunWaiter,
+        tool_name: str,
+    ) -> bool:
+        message = self.run_messages.get(run_id)
+        if not isinstance(message, dict):
+            print(
+                f"[ERROR] {timestamp()} Nemo Hermes provider marker recovery missing run message "
+                f"runId={run_id} tool={tool_name}",
+                file=sys.stderr,
+                flush=True,
+            )
+            return False
+
+        original_text = str(message.get("originalText") or message.get("text") or "")
+        tool_input = derive_hermes_provider_marker_input(tool_name, original_text)
+        if tool_input is None:
+            print(
+                f"[ERROR] {timestamp()} Nemo Hermes provider marker recovery could not derive input "
+                f"runId={run_id} tool={tool_name} textChars={len(original_text)}",
+                file=sys.stderr,
+                flush=True,
+            )
+            return False
+
+        call_id = f"hermes-provider-marker-{uuid.uuid4()}"
+        try:
+            print(
+                f"[WARN] {timestamp()} Nemo Hermes recovering provider marker "
+                f"runId={run_id} tool={tool_name} input={json.dumps(tool_input, ensure_ascii=False)}",
+                flush=True,
+            )
+            await waiter.emit({
+                "type": "tool_call",
+                "toolName": tool_name,
+                "callId": call_id,
+                "input": tool_input,
+            })
+            content = await call_burble_provider_tool(tool_name, tool_input)
+            await waiter.emit({
+                "type": "tool_result",
+                "toolName": tool_name,
+                "callId": call_id,
+                "classification": "user_private",
+                "content": content,
+            })
+            text = format_hermes_provider_recovery_text(tool_name, tool_input, content)
+            response = {"classification": "user_private", "text": text}
+            if text:
+                await waiter.emit({"type": "message_delta", "text": text})
+            if not waiter.future.done():
+                waiter.future.set_result(response)
+            print(
+                f"[WARN] {timestamp()} Nemo Hermes provider marker recovered "
+                f"runId={run_id} tool={tool_name} textChars={len(text)}",
+                flush=True,
+            )
+            return True
+        except Exception as error:
+            print(
+                f"[ERROR] {timestamp()} Nemo Hermes provider marker recovery failed "
+                f"runId={run_id} tool={tool_name} error={error}",
+                file=sys.stderr,
+                flush=True,
+            )
+            return False
 
     async def _emit_progress_until_finished(
         self,
@@ -1655,14 +1993,7 @@ def is_hermes_progress_text(text: str) -> bool:
 
 
 def is_hermes_provider_progress_text(text: str) -> bool:
-    normalized = " ".join(text.strip().split())
-    return bool(
-        re.match(
-            r"^(?::gear:|⚙️?|gear:)?\s*(?:burble_provider_call|(?:github|google|gmail|hubspot|jira|slack|atlassian|scheduled_job|conversation)_[a-z0-9_]+)(?:\.{3}|…)?$",
-            normalized,
-            re.IGNORECASE,
-        )
-    )
+    return extract_hermes_provider_progress_tool(text) is not None
 
 
 if __name__ == "__main__":
