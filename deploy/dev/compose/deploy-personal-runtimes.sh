@@ -59,8 +59,9 @@ Usage: ./deploy-personal-runtimes.sh [--no-pull] [--keep-runtimes] [--agentgatew
 
 Pulls the latest repo state, rebuilds Burble plus the default personal runtime
 images, and restarts Docker Compose. Runtime containers are recycled only when
-their image ID changes, and only for burble-rt-* containers from the matching
-runtime image family whose running image ID differs from the current image ID.
+their image ID changes, and only for burble-rt-* or openshell-b-* containers
+from the matching runtime image family whose running image ID differs from the
+current image ID.
 Set AGENT_RUNTIME_FACTORY=sandbox to deploy Burble against an OpenShell-
 compatible sandbox provider instead of the local Docker runtime factory. Use
 --openshell to include the compose-managed OpenShell service, or set
@@ -136,6 +137,13 @@ runtime_image_family() {
 container_runtime_engine() {
   docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$1" 2>/dev/null |
     awk -F= '$1 == "AGENT_RUNTIME_ENGINE" { print $2; exit }'
+}
+
+runtime_container_candidates() {
+  {
+    docker ps -aq --filter "name=burble-rt-"
+    docker ps -aq --filter "name=openshell-b-"
+  } | sort -u
 }
 
 ensure_openshell_jwt_keys() {
@@ -398,7 +406,7 @@ if [[ "${recycle_runtimes}" == "true" ]]; then
     runtime_images_changed=true
     runtime_image_family_label="$(runtime_image_family "${runtime_build_labels[$i]}")"
     mapfile -t runtime_containers < <(
-      docker ps -aq --filter "name=burble-rt-" |
+      runtime_container_candidates |
         while IFS= read -r container_id; do
           container_image_id="$(docker inspect --format '{{.Image}}' "${container_id}" 2>/dev/null || true)"
           container_engine="$(container_runtime_engine "${container_id}")"
@@ -419,17 +427,17 @@ if [[ "${recycle_runtimes}" == "true" ]]; then
       docker stop "${runtime_containers[@]}" >/dev/null || true
       docker rm "${runtime_containers[@]}" >/dev/null || true
     else
-      echo "Runtime image changed for ${runtime_build_images[$i]}, but no burble-rt-* containers use the previous image."
+      echo "Runtime image changed for ${runtime_build_images[$i]}, but no burble-rt-* or openshell-b-* containers use the previous image."
     fi
   done
 
   if [[ "${runtime_images_changed}" == "false" ]]; then
-    echo "Runtime images unchanged; keeping existing burble-rt-* containers."
+    echo "Runtime images unchanged; keeping existing burble-rt-* and openshell-b-* containers."
   else
     echo "Finished recycling changed runtime images."
   fi
 else
-  echo "Keeping existing burble-rt-* containers because --keep-runtimes was set."
+  echo "Keeping existing burble-rt-* and openshell-b-* containers because --keep-runtimes was set."
 fi
 
 docker compose "${app_compose_files[@]}" ps

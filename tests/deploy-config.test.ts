@@ -616,13 +616,15 @@ describe("dev deploy config", () => {
       "select_runtime_image \"burble-nemo-hermes:dev\""
     );
     expect(personalRuntimeDeployScript).toContain(
-      "Runtime images unchanged; keeping existing burble-rt-* containers."
+      "Runtime images unchanged; keeping existing burble-rt-* and openshell-b-* containers."
     );
     expect(personalRuntimeDeployScript).toContain(
       "Runtime image changed for ${runtime_build_images[$i]}; recycling"
     );
     expect(personalRuntimeDeployScript).toContain("Finished recycling changed runtime images.");
     expect(personalRuntimeDeployScript).toContain("docker ps -aq --filter \"name=burble-rt-\"");
+    expect(personalRuntimeDeployScript).toContain("docker ps -aq --filter \"name=openshell-b-\"");
+    expect(personalRuntimeDeployScript).toContain("runtime_container_candidates()");
     expect(personalRuntimeDeployScript).toContain("docker inspect --format '{{.Image}}'");
     expect(personalRuntimeDeployScript).toContain("docker stop");
     expect(personalRuntimeDeployScript).toContain("docker rm");
