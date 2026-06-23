@@ -274,6 +274,24 @@ export function authorizeRuntimeBearerToken(
   return timingSafeTokenEqual(actualToken, expectedToken);
 }
 
+export function authorizeRuntimeBearerOrHeaderToken(
+  request: Request,
+  expectedToken: string | null | undefined,
+  headerName = "x-burble-runtime-token"
+): boolean {
+  if (authorizeRuntimeBearerToken(request, expectedToken)) {
+    return true;
+  }
+  if (!expectedToken) {
+    return false;
+  }
+  const actualToken = request.headers.get(headerName)?.trim();
+  if (!actualToken) {
+    return false;
+  }
+  return timingSafeTokenEqual(actualToken, expectedToken);
+}
+
 function protectedRuntimeContractPath(pathname: string): boolean {
   return (
     pathname === "/runs" ||

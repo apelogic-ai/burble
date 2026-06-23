@@ -210,6 +210,7 @@ async function assertRuntimeRunCompletes(input: {
       accept: "application/json",
       authorization: `Bearer ${input.runtime.authToken}`,
       "content-type": "application/json",
+      "x-burble-runtime-token": input.runtime.authToken,
       "x-burble-runtime-id": input.runtime.id
     },
     body: JSON.stringify({

@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
+  authorizeRuntimeBearerOrHeaderToken,
   authorizeRuntimeBearerToken,
   buildRuntimeBearerHeaders,
   createRuntimeContractServer,
@@ -235,6 +236,26 @@ describe("runtime SDK contract server", () => {
     expect(
       authorizeRuntimeBearerToken(
         new Request("http://runtime/runs"),
+        "runtime-token"
+      )
+    ).toBe(false);
+    expect(
+      authorizeRuntimeBearerOrHeaderToken(
+        new Request("http://runtime/runs", {
+          headers: {
+            "x-burble-runtime-token": "runtime-token"
+          }
+        }),
+        "runtime-token"
+      )
+    ).toBe(true);
+    expect(
+      authorizeRuntimeBearerOrHeaderToken(
+        new Request("http://runtime/runs", {
+          headers: {
+            "x-burble-runtime-token": "runtime"
+          }
+        }),
         "runtime-token"
       )
     ).toBe(false);
