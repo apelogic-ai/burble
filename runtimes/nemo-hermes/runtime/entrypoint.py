@@ -303,7 +303,7 @@ def build_runtime_tool_bridge_modes() -> list[str]:
 
 def hermes_mcp_catalog_enabled() -> bool:
     return (
-        bool_env("BURBLE_HERMES_ENABLE_MCP_CATALOG", True)
+        bool_env("BURBLE_HERMES_ENABLE_MCP_CATALOG", False)
         and bool(env("BURBLE_MCP_GATEWAY_URL"))
         and bool(env("BURBLE_RUNTIME_JWT"))
     )

@@ -359,29 +359,30 @@ asyncio.run(main())
     });
   });
 
-  test("advertises MCP bridge support only when Hermes MCP env is configured", () => {
+  test("advertises Hermes MCP bridge support only with explicit opt-in", () => {
     const result = runHermesEntrypointProbe(`${importEntrypoint}
 import os
 default_modes = mod.build_runtime_capability_manifest()["toolBridgeModes"]
 os.environ["BURBLE_MCP_GATEWAY_URL"] = "http://burble-mcp"
 os.environ["BURBLE_RUNTIME_JWT"] = "runtime-jwt"
+configured_without_opt_in = mod.build_runtime_capability_manifest()["toolBridgeModes"]
+os.environ["BURBLE_HERMES_ENABLE_MCP_CATALOG"] = "true"
 print(json.dumps({
   "default": default_modes,
-  "configured": mod.build_runtime_capability_manifest()["toolBridgeModes"],
+  "configuredWithoutOptIn": configured_without_opt_in,
+  "configuredWithOptIn": mod.build_runtime_capability_manifest()["toolBridgeModes"],
 }))
 `);
 
     expect(result).toEqual({
       default: ["tool_gateway"],
-      configured: ["tool_gateway", "mcp"]
+      configuredWithoutOptIn: ["tool_gateway"],
+      configuredWithOptIn: ["tool_gateway", "mcp"]
     });
   });
 
   test("builds bounded Burble context for Hermes turns", () => {
     const result = runHermesEntrypointProbe(`${importEntrypoint}
-import os
-os.environ["BURBLE_MCP_GATEWAY_URL"] = "http://agentgateway:3000/mcp"
-os.environ["BURBLE_RUNTIME_JWT"] = "jwt"
 payload = {
     "text": "what changed?",
     "toolGroups": {
@@ -414,8 +415,8 @@ print(json.dumps({"text": mod.build_hermes_turn_text(payload)}))
     expect(text).toContain("what changed?");
     expect(text).toContain("Selected Burble tool groups: conversation, github");
     expect(text).toContain("Selected Burble provider tools");
-    expect(text).toContain("Use direct Burble MCP provider tools");
-    expect(text).toContain("Do not wrap a direct MCP provider call");
+    expect(text).toContain("Use Hermes tool burble_provider_call");
+    expect(text).not.toContain("Use direct Burble MCP provider tools");
     expect(text).toContain("Do not write `burble_provider_call`");
     expect(text).toContain("then write a final Slack-ready answer");
     expect(text).toContain("Do not call provider tools that are not listed here");
@@ -433,10 +434,12 @@ print(json.dumps({"text": mod.build_hermes_turn_text(payload)}))
     expect(text).not.toContain("x".repeat(350));
   });
 
-  test("falls back to native provider bridge instructions when Hermes MCP is disabled", () => {
+  test("uses direct MCP provider instructions only when Hermes MCP catalog is opted in", () => {
     const result = runHermesEntrypointProbe(`${importEntrypoint}
 import os
-os.environ["BURBLE_HERMES_ENABLE_MCP_CATALOG"] = "false"
+os.environ["BURBLE_MCP_GATEWAY_URL"] = "http://agentgateway:3000/mcp"
+os.environ["BURBLE_RUNTIME_JWT"] = "jwt"
+os.environ["BURBLE_HERMES_ENABLE_MCP_CATALOG"] = "true"
 payload = {
     "text": "what changed?",
     "toolGroups": {
@@ -448,8 +451,9 @@ print(json.dumps({"text": mod.build_hermes_turn_text(payload)}))
 `);
 
     const text = (result as { text: string }).text;
-    expect(text).toContain("Use Hermes tool burble_provider_call");
-    expect(text).not.toContain("Use direct Burble MCP provider tools");
+    expect(text).toContain("Use direct Burble MCP provider tools");
+    expect(text).toContain("Do not wrap a direct MCP provider call");
+    expect(text).not.toContain("Use Hermes tool burble_provider_call");
   });
 
   test("builds current attachment guidance for Hermes turns", () => {
@@ -1797,7 +1801,7 @@ print(json.dumps({
     });
   });
 
-  test("writes Hermes config with the Burble MCP catalog when the gateway is available", () => {
+  test("writes Hermes config with the Burble MCP catalog when explicitly enabled", () => {
     const result = runHermesEntrypointProbe(`${importEntrypoint}
 import os
 import tempfile
@@ -1806,6 +1810,7 @@ home = tempfile.mkdtemp()
 os.environ["HERMES_HOME"] = home
 os.environ["BURBLE_MCP_GATEWAY_URL"] = "http://agentgateway:3000/mcp"
 os.environ["BURBLE_RUNTIME_JWT"] = "jwt"
+os.environ["BURBLE_HERMES_ENABLE_MCP_CATALOG"] = "true"
 
 runtime = mod.BurbleHermesRuntime()
 runtime._ensure_gateway_config()
@@ -1832,7 +1837,7 @@ print(json.dumps({
     expect(config).toContain("Authorization: Bearer ${BURBLE_RUNTIME_JWT}");
   });
 
-  test("can disable the Hermes MCP catalog when falling back to native provider tools", () => {
+  test("omits the Hermes MCP catalog by default when falling back to native provider tools", () => {
     const result = runHermesEntrypointProbe(`${importEntrypoint}
 import os
 import tempfile
@@ -1841,7 +1846,6 @@ home = tempfile.mkdtemp()
 os.environ["HERMES_HOME"] = home
 os.environ["BURBLE_MCP_GATEWAY_URL"] = "http://agentgateway:3000/mcp"
 os.environ["BURBLE_RUNTIME_JWT"] = "jwt"
-os.environ["BURBLE_HERMES_ENABLE_MCP_CATALOG"] = "false"
 
 runtime = mod.BurbleHermesRuntime()
 runtime._ensure_gateway_config()
