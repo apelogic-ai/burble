@@ -1119,6 +1119,175 @@ describe("createOpenClawNemoClawAgentRunner", () => {
     });
   });
 
+  test("prefers NDJSON run events over WebSocket when the runtime advertises HTTP streaming", async () => {
+    const calls: Array<{ url: string; method: string; accept: string | null }> = [];
+    const webSocketCalls: string[] = [];
+    const runner = createOpenClawNemoClawAgentRunner({
+      runtimeFactory: {
+        async getOrCreateRuntime() {
+          return {
+            id: "rt_openclaw",
+            engine: "openclaw",
+            endpointUrl: "http://openclaw-runtime:8080",
+            authToken: "runtime-token",
+            status: "ready",
+            statePath: "/runtime/state",
+            configPath: "/runtime/config/openclaw.json",
+            workspacePath: "/runtime/workspace",
+            manifest: runtimeManifest()
+          };
+        },
+        async stopRuntime() {},
+        async reapIdleRuntimes() {}
+      },
+      fetch: async (url, init) => {
+        const headers = new Headers(init?.headers);
+        calls.push({
+          url: String(url),
+          method: init?.method ?? "GET",
+          accept: headers.get("accept")
+        });
+        if (String(url).endsWith("/capabilities")) {
+          return Response.json({
+            ...openClawCapabilityManifest,
+            transports: ["http", "ndjson", "websocket"]
+          });
+        }
+        return new Response(
+          [
+            JSON.stringify({ type: "status", text: "Loading context..." }),
+            JSON.stringify({
+              type: "tool_call",
+              toolName: "jira.searchIssues",
+              callId: "call-1"
+            }),
+            JSON.stringify({
+              type: "tool_result",
+              toolName: "jira.searchIssues",
+              callId: "call-1",
+              classification: "user_private"
+            }),
+            JSON.stringify({ type: "message_delta", text: "Partial answer" }),
+            JSON.stringify({
+              type: "final",
+              response: {
+                classification: "user_private",
+                text: "Final answer"
+              }
+            })
+          ].join("\n"),
+          {
+            headers: {
+              "content-type": "application/x-ndjson; charset=utf-8"
+            }
+          }
+        );
+      },
+      webSocketFactory: (url) => {
+        webSocketCalls.push(url);
+        throw new Error("unexpected WebSocket connection");
+      }
+    });
+    const events: string[] = [];
+
+    const result = await collectAgentRun(
+      runner,
+      {
+        principal,
+        conversation,
+        text: "summarize my GitHub work",
+        connections: { github: connection }
+      },
+      (event) => {
+        events.push(`${event.type}:${"text" in event ? event.text : ""}`);
+      }
+    );
+
+    expect(calls).toEqual([
+      {
+        url: "http://openclaw-runtime:8080/capabilities",
+        method: "GET",
+        accept: null
+      },
+      {
+        url: "http://openclaw-runtime:8080/runs",
+        method: "POST",
+        accept: "application/x-ndjson"
+      }
+    ]);
+    expect(webSocketCalls).toEqual([]);
+    expect(events).toEqual([
+      "status:Starting agent runtime...",
+      "status:Agent is thinking...",
+      "status:Loading context...",
+      "tool_call:",
+      "tool_result:",
+      "message_delta:Partial answer"
+    ]);
+    expect(result).toEqual({
+      classification: "user_private",
+      text: "Final answer"
+    });
+  });
+
+  test("accepts attachment-only final responses from managed runtimes", async () => {
+    const runner = createOpenClawNemoClawAgentRunner({
+      baseUrl: "http://openclaw-runtime:8080",
+      fetch: async (url) => {
+        if (String(url).endsWith("/capabilities")) {
+          return Response.json({
+            ...openClawCapabilityManifest,
+            transports: ["http", "ndjson", "websocket"]
+          });
+        }
+        return new Response(
+          JSON.stringify({
+            type: "final",
+            response: {
+              classification: "user_private",
+              text: "",
+              attachments: [
+                {
+                  id: "agent:report-1",
+                  kind: "file",
+                  mimeType: "text/plain",
+                  source: "agent",
+                  name: "report.txt"
+                }
+              ]
+            }
+          }),
+          {
+            headers: {
+              "content-type": "application/x-ndjson; charset=utf-8"
+            }
+          }
+        );
+      }
+    });
+
+    await expect(
+      collectAgentRun(runner, {
+        principal,
+        conversation,
+        text: "send report",
+        connections: { github: connection }
+      })
+    ).resolves.toEqual({
+      classification: "user_private",
+      text: "",
+      attachments: [
+        {
+          id: "agent:report-1",
+          kind: "file",
+          mimeType: "text/plain",
+          source: "agent",
+          name: "report.txt"
+        }
+      ]
+    });
+  });
+
   test("routes OpenShell virtual-host WebSocket streams through the dial host", async () => {
     const calls: Array<{ url: string; method: string; host: string | null }> = [];
     const sockets: FakeRuntimeWebSocket[] = [];

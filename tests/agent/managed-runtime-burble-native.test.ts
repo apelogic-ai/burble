@@ -135,6 +135,7 @@ describe("managed runtime Burble Native integration", () => {
       manifest: runtimeManifest(runtime.id)
     };
     const calls: string[] = [];
+    const runtimeRunHeaders: HeadersInit[] = [];
     const webSocketOptions: Array<{ headers?: HeadersInit } | undefined> = [];
 
     const fetchRouter = async (url: string, init?: RequestInit): Promise<Response> => {
@@ -142,6 +143,9 @@ describe("managed runtime Burble Native integration", () => {
       const parsed = new URL(url);
 
       if (parsed.hostname === "burble-native-runtime") {
+        if (parsed.pathname === "/runs") {
+          runtimeRunHeaders.push(init?.headers ?? {});
+        }
         return handleRuntimeRequest(
           new Request(url, init),
           {
@@ -285,15 +289,16 @@ describe("managed runtime Burble Native integration", () => {
     });
 
     expect(result.text).toBe("Authenticated as octocat.");
-    expect(webSocketOptions).toEqual([
+    expect(runtimeRunHeaders).toEqual([
       {
-        headers: {
-          authorization: `Bearer ${runtimeHandle.authToken}`,
-          "x-burble-runtime-token": runtimeHandle.authToken,
-          "x-burble-runtime-id": runtimeHandle.id
-        }
+        accept: "application/x-ndjson",
+        authorization: `Bearer ${runtimeHandle.authToken}`,
+        "content-type": "application/json",
+        "x-burble-runtime-id": runtimeHandle.id,
+        "x-burble-runtime-token": runtimeHandle.authToken
       }
     ]);
+    expect(webSocketOptions).toEqual([]);
     expect(calls).toContain(
       "POST http://burble-app:3000/internal/tools/github.getAuthenticatedUser/execute"
     );
