@@ -69,6 +69,50 @@ const localToolFastPaths: LocalToolFastPath[] = [
     }
   },
   {
+    id: "google.drive.latestEditedFile",
+    provider: "google",
+    isAvailable: (deps) => Boolean(deps.tools.google),
+    matches: (text) =>
+      /\b(last|latest|most recent|recent)\b/.test(text) &&
+      /\b(edited|modified|updated|touched|changed)\b/.test(text) &&
+      /\b(google drive|drive file|drive files|file)\b/.test(text),
+    missingConnectionText: "Connect Google first: `@Burble connect google`.",
+    async run({ deps, connection }) {
+      const result = await deps.tools.google!.searchDriveFiles.execute({
+        connection,
+        input: { limit: 1 }
+      });
+
+      if (!Array.isArray(result.content)) {
+        return {
+          classification: result.classification,
+          text: result.content.message
+        };
+      }
+
+      const [file] = result.content;
+      if (!file) {
+        return {
+          classification: result.classification,
+          text: "No Google Drive files were found."
+        };
+      }
+
+      const label = file.webViewLink
+        ? `<${file.webViewLink}|${file.name}>`
+        : file.name;
+      return {
+        classification: result.classification,
+        text: [
+          `Last edited Google Drive file: ${label}`,
+          ...(file.modifiedTime
+            ? [`modified: ${formatUtcTimestamp(file.modifiedTime)}`]
+            : [])
+        ].join("\n")
+      };
+    }
+  },
+  {
     id: "jira.issue.lastCreated",
     provider: "jira",
     isAvailable: (deps) => Boolean(deps.tools.jira),
@@ -176,4 +220,13 @@ export async function tryHandleLocalToolFastPath(
     },
     request
   );
+}
+
+function formatUtcTimestamp(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return value;
+  }
+
+  return date.toISOString().replace("T", " ").replace(/\.\d{3}Z$/, " UTC");
 }

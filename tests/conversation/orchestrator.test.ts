@@ -86,7 +86,15 @@ function createDeps(overrides: Partial<ConversationDeps> = {}): ConversationDeps
   };
   const googleTools = createGoogleTools({
     getGoogleUser: async () => ({ email: "person@example.com" }),
-    searchGoogleDriveFiles: async () => [],
+    searchGoogleDriveFiles: async () => [
+      {
+        id: "drive-file-1",
+        name: "apelogic-ai-open-prs-last-24h-seen.txt",
+        mimeType: "text/plain",
+        webViewLink: "https://drive.google.com/file/d/drive-file-1/view",
+        modifiedTime: "2026-06-21T19:02:13Z"
+      }
+    ],
     createGoogleDriveTextFile: async () => ({
       id: "file-1",
       name: "Test"
@@ -425,6 +433,33 @@ describe("handleConversation", () => {
     expect(response.visibility).toBe("ephemeral");
     expect(response.text).toContain("*Latest Gmail message:*");
     expect(response.text).toContain("Your OpenAI API account has been funded");
+  });
+
+  test("fast-paths latest edited Google Drive file requests before the LLM runner", async () => {
+    let called = false;
+    const response = await handleConversation(
+      { ...baseRequest, text: "list my last edited google drive file" },
+      createDeps({
+        agentMode: "llm",
+        agentFastTrack: true,
+        agentRunner: stubAgentRunner(() => {
+          called = true;
+          return {
+            classification: "public",
+            text: "unexpected"
+          };
+        })
+      })
+    );
+
+    expect(called).toBe(false);
+    expect(response.visibility).toBe("ephemeral");
+    expect(response.text).toBe(
+      [
+        "Last edited Google Drive file: <https://drive.google.com/file/d/drive-file-1/view|apelogic-ai-open-prs-last-24h-seen.txt>",
+        "modified: 2026-06-21 19:02:13 UTC"
+      ].join("\n")
+    );
   });
 
   test("fast-paths last-created Jira ticket requests before the LLM runner", async () => {
