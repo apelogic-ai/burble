@@ -27,6 +27,8 @@ services:
     restart: unless-stopped
     expose:
       - "3000"
+    ports:
+      - "127.0.0.1:3000:3000"
     environment:
       - NODE_ENV=production
       - PORT=3000
@@ -51,7 +53,7 @@ services:
       - AGENT_RUNTIME_REAPER_INTERVAL_MS=${AGENT_RUNTIME_REAPER_INTERVAL_MS:-60000}
       - AGENT_RUNTIME_JWT_TTL_SECONDS=${AGENT_RUNTIME_JWT_TTL_SECONDS:-604800}
       - AGENT_RUNTIME_TOKEN_SECRET=${AGENT_RUNTIME_TOKEN_SECRET:-}
-      - AGENT_RUNTIME_TOOL_GATEWAY_URL=${AGENT_RUNTIME_TOOL_GATEWAY_URL:-http://burble-app:3000/internal/tools}
+      - AGENT_RUNTIME_TOOL_GATEWAY_URL=${AGENT_RUNTIME_TOOL_GATEWAY_URL:-http://host.openshell.internal:3000/internal/tools}
       - AGENT_RUNTIME_MCP_GATEWAY_URL=${AGENT_RUNTIME_MCP_GATEWAY_URL:-}
       - AGENT_RUNTIME_MCP_AUDIENCE=${AGENT_RUNTIME_MCP_AUDIENCE:-}
       - LLM_GW_BASE_URL=${LLM_GW_BASE_URL:-http://host.openshell.internal:4000/v1}

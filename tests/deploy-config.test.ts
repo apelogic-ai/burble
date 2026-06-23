@@ -56,6 +56,7 @@ describe("dev deploy config", () => {
     expect(compose).toContain("burble-app:");
     expect(compose).toContain("dockerfile: Dockerfile");
     expect(compose).toContain('"3000"');
+    expect(compose).toContain('"127.0.0.1:3000:3000"');
     expect(compose).toContain("http://localhost:3000/healthz");
     expect(appDockerfile).toContain("apk add --no-cache docker-cli openssh-client");
     expect(appDockerfile).toContain("mkdir -p /data /opt/openshell-cli");
@@ -446,11 +447,12 @@ describe("dev deploy config", () => {
     );
     expect(agentGatewayCompose).toContain("--file");
     expect(agentGatewayCompose).toContain(
-      "AGENT_RUNTIME_MCP_GATEWAY_URL=http://agentgateway:3000/mcp"
+      "AGENT_RUNTIME_MCP_GATEWAY_URL=http://host.openshell.internal:3001/mcp"
     );
     expect(agentGatewayCompose).toContain(
-      "AGENT_RUNTIME_MCP_AUDIENCE=http://agentgateway:3000/mcp"
+      "AGENT_RUNTIME_MCP_AUDIENCE=http://host.openshell.internal:3001/mcp"
     );
+    expect(agentGatewayCompose).toContain('"127.0.0.1:3001:3000"');
     expect(agentGatewayCompose).toContain(
       "RUNTIME_JWT_ISSUER=http://burble-app:3000"
     );
@@ -458,6 +460,9 @@ describe("dev deploy config", () => {
       "RUNTIME_JWT_PRIVATE_KEY_PATH=/data/runtime-jwt-private.pem"
     );
     expect(agentGatewayConfig).toContain("issuer: http://burble-app:3000");
+    expect(agentGatewayConfig).toContain(
+      "http://host.openshell.internal:3001/mcp"
+    );
     expect(agentGatewayConfig).toContain(
       "url: http://burble-app:3000/oauth/jwks"
     );
@@ -474,7 +479,7 @@ describe("dev deploy config", () => {
     expect(agentGatewayConfig).toContain("backendAuth:");
     expect(agentGatewayConfig).toContain("passthrough: {}");
     expect(agentGatewayConfig).toContain(
-      "resource: http://agentgateway:3000/mcp"
+      "resource: http://host.openshell.internal:3001/mcp"
     );
   });
 

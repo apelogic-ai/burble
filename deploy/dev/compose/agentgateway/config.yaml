@@ -21,10 +21,11 @@ binds:
                 issuer: http://burble-app:3000
                 audiences:
                   - http://agentgateway:3000/mcp
+                  - http://host.openshell.internal:3001/mcp
                 jwks:
                   url: http://burble-app:3000/oauth/jwks
                 resourceMetadata:
-                  resource: http://agentgateway:3000/mcp
+                  resource: http://host.openshell.internal:3001/mcp
                   scopesSupported:
                     - read:all
                   bearerMethodsSupported:
