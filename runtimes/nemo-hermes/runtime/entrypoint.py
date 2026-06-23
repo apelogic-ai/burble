@@ -687,6 +687,35 @@ def derive_hermes_provider_marker_input(
     return None
 
 
+def infer_safe_hermes_provider_tool_from_text(original_text: str) -> str | None:
+    text = " ".join(original_text.lower().split())
+    if "hubspot" in text:
+        if infer_hubspot_object_type(text):
+            return "hubspot_search_crm_objects"
+        if any(word in text for word in ("owner", "owners")):
+            return "hubspot_list_owners"
+        if any(word in text for word in ("user", "users")):
+            return "hubspot_list_users"
+    if "jira" in text:
+        if any(word in text for word in ("ticket", "tickets", "issue", "issues", "assigned", "open")):
+            return "jira_list_assigned_issues"
+        if "project" in text or "projects" in text:
+            return "jira_list_visible_projects"
+    if "github" in text:
+        if any(word in text for word in ("issue", "issues", "assigned")):
+            return "github_list_assigned_issues"
+        if any(word in text for word in ("pull request", "pull requests", "prs", "pr ")):
+            return "github_list_my_pull_requests"
+    if "drive" in text or "google drive" in text:
+        if any(word in text for word in ("file", "files", "edited", "modified", "last", "latest", "recent")):
+            return "google_search_drive_files"
+    if "calendar" in text:
+        return "google_search_calendar_events"
+    if any(word in text for word in ("gmail", "mail", "email")):
+        return "google_search_mail_messages"
+    return None
+
+
 def infer_hubspot_object_type(text: str) -> str | None:
     if any(word in text for word in ("company", "companies", "client", "clients", "account", "accounts")):
         return "companies"
@@ -1486,6 +1515,33 @@ class BurbleHermesRuntime:
                     call_id,
                     tool_input,
                 )
+            else:
+                inferred_tool_name = self._infer_provider_tool_for_run(
+                    run_id,
+                    tool_name,
+                    tool_input,
+                )
+                if inferred_tool_name:
+                    print(
+                        f"[WARN] {timestamp()} Nemo Hermes provider tool call name was not recognized; "
+                        f"scheduling inferred recovery runId={run_id} "
+                        f"tool={tool_name} inferredTool={inferred_tool_name} callId={call_id}",
+                        flush=True,
+                    )
+                    self._schedule_provider_tool_call_recovery(
+                        run_id,
+                        waiter,
+                        inferred_tool_name,
+                        call_id,
+                        tool_input,
+                    )
+                else:
+                    self._schedule_stale_tool_call_failure(
+                        run_id,
+                        waiter,
+                        tool_name,
+                        call_id,
+                    )
             return web.json_response({"ok": True})
         if event_type == "tool_result":
             tool_name = canonical_hermes_provider_tool_name(hermes_tool_event_name(body))
@@ -1815,6 +1871,82 @@ class BurbleHermesRuntime:
                 delay_seconds,
             )
         )
+
+    def _infer_provider_tool_for_run(
+        self,
+        run_id: str,
+        tool_name: str,
+        tool_input: dict[str, Any] | None,
+    ) -> str | None:
+        if provider_tool_hint_by_name(tool_name):
+            return tool_name
+        if isinstance(tool_input, dict):
+            for key in ("toolName", "tool_name", "tool", "name"):
+                value = tool_input.get(key)
+                if isinstance(value, str) and value.strip():
+                    candidate = canonical_hermes_provider_tool_name(value)
+                    if provider_tool_hint_by_name(candidate):
+                        return candidate
+        message = self.run_messages.get(run_id)
+        original_text = (
+            str(message.get("originalText") or message.get("text") or "")
+            if isinstance(message, dict)
+            else ""
+        )
+        candidate = infer_safe_hermes_provider_tool_from_text(original_text)
+        return candidate if candidate and provider_tool_hint_by_name(candidate) else None
+
+    def _schedule_stale_tool_call_failure(
+        self,
+        run_id: str,
+        waiter: RunWaiter,
+        tool_name: str,
+        call_id: str,
+    ) -> None:
+        key = self._provider_tool_call_recovery_key(run_id, call_id)
+        if key in self.provider_tool_call_recovery_tasks:
+            return
+        delay_seconds = max(1, int_env("HERMES_TOOL_CALL_TIMEOUT_SECONDS", 60))
+        self.provider_tool_call_recovery_tasks[key] = asyncio.create_task(
+            self._fail_stale_tool_call_after_delay(
+                run_id,
+                waiter,
+                tool_name,
+                call_id,
+                delay_seconds,
+            )
+        )
+
+    async def _fail_stale_tool_call_after_delay(
+        self,
+        run_id: str,
+        waiter: RunWaiter,
+        tool_name: str,
+        call_id: str,
+        delay_seconds: int,
+    ) -> None:
+        try:
+            await asyncio.sleep(delay_seconds)
+            if waiter.completed or waiter.future.done():
+                return
+            message = (
+                "Hermes started tool "
+                f"({tool_name}) but did not produce a tool result or final answer."
+            )
+            print(
+                f"[ERROR] {timestamp()} Nemo Hermes stale tool call timeout "
+                f"runId={run_id} tool={tool_name} callId={call_id} "
+                f"delaySeconds={delay_seconds}",
+                file=sys.stderr,
+                flush=True,
+            )
+            await waiter.fail(message)
+        except asyncio.CancelledError:
+            raise
+        finally:
+            key = self._provider_tool_call_recovery_key(run_id, call_id)
+            if self.provider_tool_call_recovery_tasks.get(key) is asyncio.current_task():
+                self.provider_tool_call_recovery_tasks.pop(key, None)
 
     async def _recover_provider_tool_call_after_delay(
         self,
