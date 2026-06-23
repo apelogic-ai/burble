@@ -1639,14 +1639,171 @@ asyncio.run(main())
           }
         },
         {
-          type: "error",
-          message:
-            "Burble provider tool hubspot.searchCrmObjects timed out after 1s during Hermes recovery."
+          type: "tool_result",
+          toolName: "hubspot_search_crm_objects",
+          callId: expect.any(String),
+          classification: "user_private",
+          content: {
+            error: true,
+            message:
+              "Burble provider tool hubspot.searchCrmObjects timed out after 1s during Hermes recovery."
+          }
+        },
+        {
+          type: "message_delta",
+          text:
+            "Provider tool failed: Burble provider tool hubspot.searchCrmObjects timed out after 1s during Hermes recovery."
         }
       ],
-      completed: true,
-      futureError:
-        "Burble provider tool hubspot.searchCrmObjects timed out after 1s during Hermes recovery."
+      completed: false,
+      futureError: ""
+    });
+  });
+
+  test("recovers provider markers returned as Hermes final results", () => {
+    const result = runHermesEntrypointProbe(`${importEntrypoint}
+import asyncio
+import os
+
+os.environ["BURBLE_TOOL_GATEWAY_URL"] = "http://burble-app:3000/internal/tools"
+os.environ["BURBLE_INTERNAL_TOKEN"] = "token"
+os.environ["BURBLE_RUNTIME_ID"] = "rt_123"
+
+provider_calls = []
+
+class FakeProviderResponse:
+    status = 200
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        return False
+
+    async def json(self):
+        return {
+            "content": [
+                {
+                    "name": "apelogic-ai-open-prs-last-24h-seen.txt",
+                    "modifiedTime": "2026-06-21T19:02:13Z",
+                }
+            ]
+        }
+
+    async def text(self):
+        return json.dumps(await self.json())
+
+class FakeProviderSession:
+    def __init__(self, *args, **kwargs):
+        pass
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        return False
+
+    def post(self, url, *, json=None, headers=None):
+        provider_calls.append({"url": url, "json": json})
+        return FakeProviderResponse()
+
+provider_plugin = mod.load_burble_provider_tool_plugin()
+provider_plugin.ClientSession = FakeProviderSession
+provider_plugin.ClientTimeout = lambda total=None: None
+
+async def main():
+    runtime = mod.BurbleHermesRuntime()
+    waiter = mod.RunWaiter()
+    queue = asyncio.Queue()
+    waiter.queues.append(queue)
+    message = {
+        "runId": "run-final-provider-marker",
+        "routeId": "dm:D123",
+        "originalText": "list my last edited google drive file",
+        "runtime": {"id": "rt_123"},
+        "text": "list my last edited google drive file",
+    }
+    runtime.runs["run-final-provider-marker"] = waiter
+    runtime.run_messages["run-final-provider-marker"] = message
+
+    async def fake_inject(body):
+        runtime.runs[body["runId"]].future.set_result({
+            "classification": "user_private",
+            "text": ":gear: google_search_drive_files...",
+        })
+
+    runtime._inject_message = fake_inject
+    response = await runtime._execute_run(
+        "run-final-provider-marker",
+        waiter,
+        message,
+    )
+
+    events = []
+    while not queue.empty():
+        event = await queue.get()
+        if event is not None:
+            events.append(event)
+
+    print(json.dumps({
+        "response": response,
+        "events": events,
+        "providerCalls": provider_calls,
+    }))
+
+asyncio.run(main())
+`);
+
+    expect(result).toEqual({
+      response: {
+        classification: "user_private",
+        text:
+          "Last edited Google Drive file: apelogic-ai-open-prs-last-24h-seen.txt\nmodified: 2026-06-21T19:02:13Z"
+      },
+      events: [
+        {
+          type: "status",
+          text: "Burble accepted the turn."
+        },
+        {
+          type: "tool_call",
+          toolName: "google_search_drive_files",
+          callId: expect.any(String),
+          input: { limit: 1 }
+        },
+        {
+          type: "tool_result",
+          toolName: "google_search_drive_files",
+          callId: expect.any(String),
+          classification: "user_private",
+          content: [
+            {
+              name: "apelogic-ai-open-prs-last-24h-seen.txt",
+              modifiedTime: "2026-06-21T19:02:13Z"
+            }
+          ]
+        },
+        {
+          type: "message_delta",
+          text:
+            "Last edited Google Drive file: apelogic-ai-open-prs-last-24h-seen.txt\nmodified: 2026-06-21T19:02:13Z"
+        },
+        {
+          type: "final",
+          response: {
+            classification: "user_private",
+            text:
+              "Last edited Google Drive file: apelogic-ai-open-prs-last-24h-seen.txt\nmodified: 2026-06-21T19:02:13Z"
+          }
+        }
+      ],
+      providerCalls: [
+        {
+          url:
+            "http://burble-app:3000/internal/tools/google.searchDriveFiles/execute",
+          json: { input: { limit: 1 } }
+        }
+      ]
     });
   });
 

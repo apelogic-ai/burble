@@ -625,6 +625,8 @@ def is_hermes_provider_fallback_final(text: str) -> bool:
         "i can help" in normalized
         and "short profile" in normalized
         and "more useful" in normalized
+    ) or (
+        "could not handle that message" in normalized
     )
 
 
@@ -1838,7 +1840,15 @@ class BurbleHermesRuntime:
                 waiter.future,
                 timeout=int_env("HERMES_RUN_TIMEOUT_SECONDS", 180),
             )
-            response = build_runtime_response(result, str(message.get("text") or ""))
+            recovered_response = await self._recover_provider_final_result(
+                run_id,
+                waiter,
+                result,
+            )
+            response = build_runtime_response(
+                recovered_response or result,
+                str(message.get("text") or ""),
+            )
             await waiter.finish(response)
             print(
                 f"[INFO] {timestamp()} Nemo Hermes run finish runId={run_id} textChars={len(response['text'])}",
@@ -2138,6 +2148,34 @@ class BurbleHermesRuntime:
             emit_tool_call=True,
         )
 
+    async def _recover_provider_final_result(
+        self,
+        run_id: str,
+        waiter: RunWaiter,
+        result: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        text = str(result.get("text") or "")
+        if not text:
+            return None
+        tool_name = extract_hermes_provider_progress_tool(text)
+        if not tool_name:
+            tool_name = extract_hermes_calling_provider_tool(text)
+        if not tool_name and is_hermes_provider_fallback_final(text):
+            tool_name = self._infer_provider_tool_for_run(run_id, "", None)
+        if not tool_name:
+            return None
+        print(
+            f"[WARN] {timestamp()} Nemo Hermes returned provider-like final result; "
+            f"recovering runId={run_id} tool={tool_name} textChars={len(text)}",
+            flush=True,
+        )
+        recovered = await self._recover_provider_progress_marker(
+            run_id,
+            waiter,
+            tool_name,
+        )
+        return waiter.final_response if recovered and waiter.final_response else None
+
     def _has_provider_tool_event(self, waiter: RunWaiter) -> bool:
         for event in waiter.events:
             if event.get("type") not in {"tool_call", "tool_result"}:
@@ -2218,7 +2256,19 @@ class BurbleHermesRuntime:
                     file=sys.stderr,
                     flush=True,
                 )
-                await waiter.fail(message)
+                await waiter.emit({
+                    "type": "tool_result",
+                    "toolName": tool_name,
+                    "callId": call_id,
+                    "classification": "user_private",
+                    "content": {"error": True, "message": message},
+                })
+                text = f"Provider tool failed: {message}"
+                response = {"classification": "user_private", "text": text}
+                waiter.final_response = response
+                await waiter.emit({"type": "message_delta", "text": text})
+                if not waiter.future.done():
+                    waiter.future.set_result(response)
                 return True
             await waiter.emit({
                 "type": "tool_result",
@@ -2229,6 +2279,7 @@ class BurbleHermesRuntime:
             })
             text = format_hermes_provider_recovery_text(tool_name, effective_input, content)
             response = {"classification": "user_private", "text": text}
+            waiter.final_response = response
             if text:
                 await waiter.emit({"type": "message_delta", "text": text})
             if not waiter.future.done():
@@ -2246,7 +2297,21 @@ class BurbleHermesRuntime:
                 file=sys.stderr,
                 flush=True,
             )
-            return False
+            message = f"Burble provider tool {normalize_burble_provider_tool_name(tool_name)} failed during Hermes recovery."
+            await waiter.emit({
+                "type": "tool_result",
+                "toolName": tool_name,
+                "callId": call_id,
+                "classification": "user_private",
+                "content": {"error": True, "message": message},
+            })
+            text = f"Provider tool failed: {message}"
+            response = {"classification": "user_private", "text": text}
+            waiter.final_response = response
+            await waiter.emit({"type": "message_delta", "text": text})
+            if not waiter.future.done():
+                waiter.future.set_result(response)
+            return True
 
     async def _emit_progress_until_finished(
         self,
