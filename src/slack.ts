@@ -5841,6 +5841,13 @@ export function formatConversationFailureMessage(
       "Restart the runtime container or check `AGENT_RUNTIME_JWT_TTL_SECONDS` / MCP gateway routing."
     ].join(" ");
   }
+  if (isRuntimeFinalizationFailure(message)) {
+    return [
+      "Agent runtime started but did not return a final answer.",
+      "The runtime may still be stuck after tool or model calls.",
+      `Runtime detail: ${sanitizeRuntimeFailureDetail(message)}`
+    ].join(" ");
+  }
   if (
     error instanceof RuntimeEngineSelectionError &&
     message.includes("missing attachment support")
@@ -5853,6 +5860,16 @@ export function formatConversationFailureMessage(
   }
 
   return `I could not handle that ${target}.`;
+}
+
+function isRuntimeFinalizationFailure(message: string): boolean {
+  return /Managed runtime did not produce a final response|Runtime run finished without a final response|Runtime event socket closed before final/i.test(
+    message
+  );
+}
+
+function sanitizeRuntimeFailureDetail(message: string): string {
+  return message.replace(/\s+/g, " ").slice(0, 240);
 }
 
 function formatAgentExecResult(statusText: string, responseText: string): string {

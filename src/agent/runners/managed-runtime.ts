@@ -97,7 +97,7 @@ type RuntimeAttachment = {
 const maxRuntimeRecentMessages = 12;
 const maxRuntimeRecentMessageChars = 300;
 const runtimeCapabilityCacheTtlMs = 60_000;
-const defaultRunSnapshotTimeoutMs = 30_000;
+const defaultRunSnapshotTimeoutMs = 180_000;
 
 type RuntimeCapabilityCacheEntry = {
   expiresAt: number;

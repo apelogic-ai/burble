@@ -1386,6 +1386,17 @@ describe("formatConversationFailureMessage", () => {
     );
   });
 
+  test("surfaces managed runtime finalization failures", () => {
+    expect(
+      formatConversationFailureMessage(
+        new Error(
+          "Managed runtime did not produce a final response within 180000ms"
+        ),
+        "message"
+      )
+    ).toContain("Agent runtime started but did not return a final answer.");
+  });
+
   test("explains when attachment turns have no capable runtime", () => {
     const error = new RuntimeEngineSelectionError(
       "No selectable runtime engines are available for this workspace. hermes: missing attachment support",
