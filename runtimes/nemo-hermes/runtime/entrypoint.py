@@ -2199,7 +2199,27 @@ class BurbleHermesRuntime:
                     "callId": call_id,
                     "input": effective_input,
                 })
-            content = await call_burble_provider_tool(tool_name, effective_input)
+            recovery_timeout = max(1, int_env("HERMES_PROVIDER_RECOVERY_TIMEOUT_SECONDS", 20))
+            try:
+                content = await asyncio.wait_for(
+                    call_burble_provider_tool(tool_name, effective_input),
+                    timeout=recovery_timeout,
+                )
+            except asyncio.TimeoutError:
+                message = (
+                    "Burble provider tool "
+                    f"{normalize_burble_provider_tool_name(tool_name)} timed out "
+                    f"after {recovery_timeout}s during Hermes recovery."
+                )
+                print(
+                    f"[ERROR] {timestamp()} Nemo Hermes provider recovery timed out "
+                    f"runId={run_id} tool={tool_name} callId={call_id} "
+                    f"timeoutSeconds={recovery_timeout}",
+                    file=sys.stderr,
+                    flush=True,
+                )
+                await waiter.fail(message)
+                return True
             await waiter.emit({
                 "type": "tool_result",
                 "toolName": tool_name,

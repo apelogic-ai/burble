@@ -669,7 +669,9 @@ async def main():
 
     events = []
     while not queue.empty():
-        events.append(await queue.get())
+        event = await queue.get()
+        if event is not None:
+            events.append(event)
 
     status_waiter = mod.RunWaiter()
     status_queue = asyncio.Queue()
@@ -1029,7 +1031,9 @@ async def main():
 
     events = []
     while not queue.empty():
-        events.append(await queue.get())
+        event = await queue.get()
+        if event is not None:
+            events.append(event)
 
     print(json.dumps({
         "response": response,
@@ -1175,7 +1179,9 @@ async def main():
     )
     events = []
     while not queue.empty():
-        events.append(await queue.get())
+        event = await queue.get()
+        if event is not None:
+            events.append(event)
     completed_after_final = waiter.completed
     future_done_after_final = waiter.future.done()
     future_result = waiter.future.result()
@@ -1518,6 +1524,129 @@ asyncio.run(main())
       futureDone: true,
       futureError:
         "Hermes returned a provider tool progress marker (github_create_issue) instead of invoking the Burble provider bridge."
+    });
+  });
+
+  test("times out hanging Hermes provider preview recovery", () => {
+    const result = runHermesEntrypointProbe(`${importEntrypoint}
+import asyncio
+import os
+
+mod.web.json_response = lambda body, **kwargs: body
+
+os.environ["BURBLE_TOOL_GATEWAY_URL"] = "http://burble-app:3000/internal/tools"
+os.environ["BURBLE_INTERNAL_TOKEN"] = "token"
+os.environ["BURBLE_RUNTIME_ID"] = "rt_123"
+os.environ["HERMES_PROVIDER_RECOVERY_TIMEOUT_SECONDS"] = "1"
+
+class HangingProviderResponse:
+    status = 200
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        return False
+
+    async def json(self):
+        await asyncio.sleep(5)
+        return {"content": []}
+
+    async def text(self):
+        return "{}"
+
+class FakeProviderSession:
+    def __init__(self, *args, **kwargs):
+        pass
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        return False
+
+    def post(self, url, *, json=None, headers=None):
+        return HangingProviderResponse()
+
+provider_plugin = mod.load_burble_provider_tool_plugin()
+provider_plugin.ClientSession = FakeProviderSession
+provider_plugin.ClientTimeout = lambda total=None: None
+
+class FakeRequest:
+    def __init__(self, run_id, body):
+        self.match_info = {"run_id": run_id}
+        self._body = body
+
+    async def json(self):
+        return self._body
+
+async def main():
+    runtime = mod.BurbleHermesRuntime()
+    waiter = mod.RunWaiter()
+    queue = asyncio.Queue()
+    waiter.queues.append(queue)
+    runtime.runs["run-provider-timeout"] = waiter
+    runtime.run_messages["run-provider-timeout"] = {
+        "originalText": "list my last companies in HubSpot",
+        "runtime": {"id": "rt_123"},
+    }
+
+    response = await runtime.handle_run_message(
+        FakeRequest(
+            "run-provider-timeout",
+            {"type": "status", "text": "Calling HubSpot search crm objects..."},
+        )
+    )
+
+    events = []
+    while not queue.empty():
+        event = await queue.get()
+        if event is not None:
+            events.append(event)
+
+    try:
+        waiter.future.result()
+    except RuntimeError as error:
+        future_error = str(error)
+    else:
+        future_error = ""
+
+    print(json.dumps({
+        "response": response,
+        "events": events,
+        "completed": waiter.completed,
+        "futureError": future_error,
+    }))
+
+asyncio.run(main())
+`);
+
+    expect(result).toEqual({
+      response: { ok: true },
+      events: [
+        {
+          type: "status",
+          text: "Calling HubSpot search crm objects..."
+        },
+        {
+          type: "tool_call",
+          toolName: "hubspot_search_crm_objects",
+          callId: expect.any(String),
+          input: {
+            objectType: "companies",
+            limit: 10,
+            properties: ["name", "domain", "createdate", "hs_lastmodifieddate"]
+          }
+        },
+        {
+          type: "error",
+          message:
+            "Burble provider tool hubspot.searchCrmObjects timed out after 1s during Hermes recovery."
+        }
+      ],
+      completed: true,
+      futureError:
+        "Burble provider tool hubspot.searchCrmObjects timed out after 1s during Hermes recovery."
     });
   });
 
