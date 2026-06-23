@@ -289,7 +289,7 @@ def build_runtime_capability_manifest() -> dict[str, Any]:
     return {
         "runtimeType": "hermes",
         "version": "1",
-        "transports": ["http", "websocket"],
+        "transports": ["http", "sse", "ndjson", "websocket"],
         "streaming": True,
         "cancellation": False,
         "nativeScheduler": True,
@@ -843,6 +843,8 @@ class RunWaiter:
             await queue.put(None)
 
     async def fail(self, message: str) -> None:
+        if not self.future.done():
+            self.future.set_exception(RuntimeError(message))
         self.completed = True
         await self.emit({"type": "error", "message": message})
         for queue in list(self.queues):
@@ -942,6 +944,15 @@ class BurbleHermesRuntime:
                 },
             )
         )
+        if self._prefers_http_event_stream(request):
+            return await self._stream_run_response(
+                request,
+                run_id,
+                waiter,
+                task,
+                sse=self._prefers_sse(request),
+            )
+
         if self._prefers_async(request):
             task.add_done_callback(lambda done_task: self._on_async_run_done(run_id, done_task))
             return web.json_response(
@@ -1027,6 +1038,10 @@ class BurbleHermesRuntime:
                 f"[WARN] {timestamp()} Nemo Hermes suppressed provider progress callback runId={run_id}",
                 flush=True,
             )
+            if event_type not in {"message_delta", "message_replace"}:
+                await waiter.fail(
+                    "Hermes returned a provider tool progress marker instead of invoking the Burble provider bridge."
+                )
             return web.json_response({"ok": True})
         if event_type in {"message_delta", "message_replace"}:
             if "text" not in body:
@@ -1333,6 +1348,63 @@ class BurbleHermesRuntime:
             value.strip().lower() == "respond-async"
             for value in request.headers.get("prefer", "").split(",")
         )
+
+    def _prefers_http_event_stream(self, request: web.Request) -> bool:
+        accept = request.headers.get("accept", "").lower()
+        return "application/x-ndjson" in accept or "text/event-stream" in accept
+
+    def _prefers_sse(self, request: web.Request) -> bool:
+        return "text/event-stream" in request.headers.get("accept", "").lower()
+
+    async def _stream_run_response(
+        self,
+        request: web.Request,
+        run_id: str,
+        waiter: RunWaiter,
+        task: asyncio.Task[dict[str, Any]],
+        *,
+        sse: bool,
+    ) -> web.StreamResponse:
+        queue: asyncio.Queue[dict[str, Any] | None] = asyncio.Queue()
+        waiter.queues.append(queue)
+        await waiter.replay_to(queue)
+        response = web.StreamResponse(
+            status=200,
+            headers={
+                "cache-control": "no-store",
+                "content-type": "text/event-stream" if sse else "application/x-ndjson",
+            },
+        )
+        await response.prepare(request)
+        print(
+            f"[INFO] {timestamp()} Nemo Hermes run HTTP stream attached runId={run_id}",
+            flush=True,
+        )
+        try:
+            while True:
+                event = await queue.get()
+                if event is None:
+                    break
+                payload = json.dumps(event, ensure_ascii=False, separators=(",", ":"))
+                if sse:
+                    event_type = str(event.get("type") or "message")
+                    chunk = f"event: {event_type}\ndata: {payload}\n\n"
+                else:
+                    chunk = f"{payload}\n"
+                await response.write(chunk.encode("utf-8"))
+        finally:
+            if queue in waiter.queues:
+                waiter.queues.remove(queue)
+            with contextlib.suppress(Exception):
+                await task
+            self.runs.pop(run_id, None)
+            with contextlib.suppress(Exception):
+                await response.write_eof()
+            print(
+                f"[INFO] {timestamp()} Nemo Hermes run HTTP stream closed runId={run_id}",
+                flush=True,
+            )
+        return response
 
     def _install_plugin(self) -> None:
         plugins_dir = self.home / "plugins"

@@ -250,7 +250,7 @@ print(json.dumps(mod.build_runtime_capability_manifest()))
     expect(parseRuntimeCapabilityManifest(result)).toEqual({
       runtimeType: "hermes",
       version: expect.any(String),
-      transports: ["http", "websocket"],
+      transports: ["http", "sse", "ndjson", "websocket"],
       streaming: true,
       cancellation: false,
       nativeScheduler: true,
@@ -265,6 +265,97 @@ print(json.dumps(mod.build_runtime_capability_manifest()))
       attachments: true,
       conversationSend: true,
       jobScopedAuth: true
+    });
+  });
+
+  test("streams Hermes run events over HTTP NDJSON", () => {
+    const result = runHermesEntrypointProbe(`${importEntrypoint}
+import asyncio
+
+class FakeStreamResponse:
+    def __init__(self, status=200, headers=None):
+        self.status = status
+        self.headers = headers or {}
+        self.chunks = []
+        self.eof = False
+
+    async def prepare(self, request):
+        self.request = request
+
+    async def write(self, data):
+        self.chunks.append(data.decode("utf-8"))
+
+    async def write_eof(self):
+        self.eof = True
+
+class FakeRequest:
+    def __init__(self, body, headers=None):
+        self._body = body
+        self.headers = headers or {}
+
+    async def json(self):
+        return self._body
+
+async def main():
+    mod.web.StreamResponse = FakeStreamResponse
+    runtime = mod.BurbleHermesRuntime()
+
+    async def fake_execute(run_id, waiter, message):
+        await waiter.emit({"type": "status", "text": "Loading context..."})
+        await waiter.emit({"type": "message_delta", "text": "Done"})
+        response = {"classification": "user_private", "text": "Done"}
+        await waiter.finish(response)
+        return response
+
+    runtime._execute_run = fake_execute
+    response = await runtime.handle_run(FakeRequest(
+        {
+            "runId": "run-http-stream",
+            "principal": {"workspaceId": "T123", "slackUserId": "U123"},
+            "runtime": {"id": "rt_123", "engine": "hermes"},
+            "input": {
+                "text": "hello",
+                "conversation": {
+                    "routeId": "route-123",
+                    "source": "slack",
+                    "workspaceId": "T123",
+                    "channelId": "D123",
+                    "rootId": "dm:D123",
+                    "isDirectMessage": True,
+                },
+                "connections": {},
+            },
+        },
+        {"accept": "application/x-ndjson"},
+    ))
+
+    print(json.dumps({
+        "status": response.status,
+        "headers": response.headers,
+        "chunks": response.chunks,
+        "eof": response.eof,
+        "runRetained": "run-http-stream" in runtime.runs,
+    }))
+
+asyncio.run(main())
+`);
+
+    expect(result).toEqual({
+      status: 200,
+      headers: {
+        "cache-control": "no-store",
+        "content-type": "application/x-ndjson"
+      },
+      chunks: [
+        JSON.stringify({ type: "status", text: "Loading context..." }) + "\n",
+        JSON.stringify({ type: "message_delta", text: "Done" }) + "\n",
+        JSON.stringify({
+          type: "final",
+          response: { classification: "user_private", text: "Done" }
+        }) + "\n"
+      ],
+      eof: true,
+      runRetained: false
     });
   });
 
@@ -466,7 +557,7 @@ asyncio.run(main())
     });
   });
 
-  test("does not emit or finalize Hermes provider bridge progress callbacks", () => {
+  test("fails fast on marker-only Hermes provider bridge callbacks", () => {
     const result = runHermesEntrypointProbe(`${importEntrypoint}
 import asyncio
 
@@ -490,9 +581,23 @@ async def main():
     final_response = await runtime.handle_run_message(
         FakeRequest("run-provider-progress", {"text": ":gear: burble_provider_call..."})
     )
+    error_event = await asyncio.wait_for(queue.get(), timeout=1)
+    completed_after_final = waiter.completed
+    future_done_after_final = waiter.future.done()
+    try:
+        waiter.future.result()
+    except RuntimeError as error:
+        future_error = str(error)
+    else:
+        future_error = ""
+
+    waiter = mod.RunWaiter()
+    queue = asyncio.Queue()
+    waiter.queues.append(queue)
+    runtime.runs["run-provider-progress-stream"] = waiter
     stream_response = await runtime.handle_run_message(
         FakeRequest(
-            "run-provider-progress",
+            "run-provider-progress-stream",
             {"type": "message_delta", "text": ":gear: burble_provider_call..."},
         )
     )
@@ -506,9 +611,13 @@ async def main():
 
     print(json.dumps({
         "finalResponse": final_response,
+        "errorEvent": error_event,
+        "completedAfterFinal": completed_after_final,
+        "futureDoneAfterFinal": future_done_after_final,
+        "futureError": future_error,
         "streamResponse": stream_response,
         "emitted": emitted,
-        "completed": waiter.future.done(),
+        "streamCompleted": waiter.future.done(),
     }))
 
 asyncio.run(main())
@@ -516,9 +625,18 @@ asyncio.run(main())
 
     expect(result).toEqual({
       finalResponse: { ok: true },
+      errorEvent: {
+        type: "error",
+        message:
+          "Hermes returned a provider tool progress marker instead of invoking the Burble provider bridge."
+      },
+      completedAfterFinal: true,
+      futureDoneAfterFinal: true,
+      futureError:
+        "Hermes returned a provider tool progress marker instead of invoking the Burble provider bridge.",
       streamResponse: { ok: true },
       emitted: false,
-      completed: false
+      streamCompleted: false
     });
   });
 

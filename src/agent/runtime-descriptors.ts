@@ -102,7 +102,7 @@ function openClawCapabilityManifest(
 const hermesCapabilityManifest: RuntimeCapabilityManifest = {
   runtimeType: "hermes",
   version: "known",
-  transports: ["http", "websocket"],
+  transports: ["http", "sse", "ndjson", "websocket"],
   streaming: true,
   cancellation: false,
   nativeScheduler: true,

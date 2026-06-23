@@ -94,6 +94,7 @@ describe("runtime descriptors", () => {
     });
     expect(runtimeDescriptor("hermes").capabilities).toMatchObject({
       runtimeType: "hermes",
+      transports: ["http", "sse", "ndjson", "websocket"],
       toolBridgeModes: ["tool_gateway", "mcp"],
       usageReporting: "exact",
       multimodalInput: false,
