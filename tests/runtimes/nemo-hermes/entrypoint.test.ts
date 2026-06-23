@@ -359,24 +359,28 @@ asyncio.run(main())
     });
   });
 
-  test("advertises Hermes MCP bridge support only with explicit opt-in", () => {
+  test("advertises Hermes MCP bridge support when the gateway is wired", () => {
     const result = runHermesEntrypointProbe(`${importEntrypoint}
 import os
 default_modes = mod.build_runtime_capability_manifest()["toolBridgeModes"]
 os.environ["BURBLE_MCP_GATEWAY_URL"] = "http://burble-mcp"
 os.environ["BURBLE_RUNTIME_JWT"] = "runtime-jwt"
-configured_without_opt_in = mod.build_runtime_capability_manifest()["toolBridgeModes"]
+configured_with_gateway = mod.build_runtime_capability_manifest()["toolBridgeModes"]
+os.environ["BURBLE_HERMES_ENABLE_MCP_CATALOG"] = "false"
+configured_with_disable = mod.build_runtime_capability_manifest()["toolBridgeModes"]
 os.environ["BURBLE_HERMES_ENABLE_MCP_CATALOG"] = "true"
 print(json.dumps({
   "default": default_modes,
-  "configuredWithoutOptIn": configured_without_opt_in,
+  "configuredWithGateway": configured_with_gateway,
+  "configuredWithDisable": configured_with_disable,
   "configuredWithOptIn": mod.build_runtime_capability_manifest()["toolBridgeModes"],
 }))
 `);
 
     expect(result).toEqual({
       default: ["tool_gateway"],
-      configuredWithoutOptIn: ["tool_gateway"],
+      configuredWithGateway: ["tool_gateway", "mcp"],
+      configuredWithDisable: ["tool_gateway"],
       configuredWithOptIn: ["tool_gateway", "mcp"]
     });
   });
@@ -434,12 +438,11 @@ print(json.dumps({"text": mod.build_hermes_turn_text(payload)}))
     expect(text).not.toContain("x".repeat(350));
   });
 
-  test("uses direct MCP provider instructions only when Hermes MCP catalog is opted in", () => {
+  test("uses direct MCP provider instructions when Hermes MCP catalog is wired", () => {
     const result = runHermesEntrypointProbe(`${importEntrypoint}
 import os
 os.environ["BURBLE_MCP_GATEWAY_URL"] = "http://agentgateway:3000/mcp"
 os.environ["BURBLE_RUNTIME_JWT"] = "jwt"
-os.environ["BURBLE_HERMES_ENABLE_MCP_CATALOG"] = "true"
 payload = {
     "text": "what changed?",
     "toolGroups": {
@@ -1746,6 +1749,98 @@ asyncio.run(main())
     });
   });
 
+  test("cancels Hermes provider recovery when tool result call id differs", () => {
+    const result = runHermesEntrypointProbe(`${importEntrypoint}
+import asyncio
+import os
+
+mod.web.json_response = lambda body, **kwargs: body
+os.environ["HERMES_PROVIDER_TOOL_CALL_RECOVERY_SECONDS"] = "60"
+
+class FakeRequest:
+    def __init__(self, run_id, body):
+        self.match_info = {"run_id": run_id}
+        self._body = body
+
+    async def json(self):
+        return self._body
+
+async def main():
+    runtime = mod.BurbleHermesRuntime()
+    waiter = mod.RunWaiter()
+    queue = asyncio.Queue()
+    waiter.queues.append(queue)
+    runtime.runs["run-mismatched-call-id"] = waiter
+    runtime.run_messages["run-mismatched-call-id"] = {
+        "originalText": "list my last companies in HubSpot",
+        "runtime": {"id": "rt_123"},
+    }
+
+    call_response = await runtime.handle_run_message(
+        FakeRequest(
+            "run-mismatched-call-id",
+            {
+                "type": "tool_call",
+                "toolName": "hubspot_search_crm_objects",
+            },
+        )
+    )
+    pending_after_call = len(runtime.provider_tool_call_recovery_tasks)
+
+    result_response = await runtime.handle_run_message(
+        FakeRequest(
+            "run-mismatched-call-id",
+            {
+                "type": "tool_result",
+                "toolName": "hubspot_search_crm_objects",
+                "callId": "different-result-id",
+                "content": [{"properties": {"name": "ROKA STUDIO", "domain": "renski.com"}}],
+            },
+        )
+    )
+    await asyncio.sleep(0)
+
+    events = []
+    while not queue.empty():
+        events.append(await queue.get())
+
+    print(json.dumps({
+        "callResponse": call_response,
+        "resultResponse": result_response,
+        "pendingAfterCall": pending_after_call,
+        "pendingAfterResult": len(runtime.provider_tool_call_recovery_tasks),
+        "pendingToolMetadataAfterResult": len(runtime.provider_tool_call_recovery_tools),
+        "events": events,
+    }))
+
+asyncio.run(main())
+`);
+
+    expect(result).toEqual({
+      callResponse: { ok: true },
+      resultResponse: { ok: true },
+      pendingAfterCall: 1,
+      pendingAfterResult: 0,
+      pendingToolMetadataAfterResult: 0,
+      events: [
+        {
+          type: "tool_call",
+          toolName: "hubspot_search_crm_objects",
+          callId: "hermes-tool-call-hubspot_search_crm_objects"
+        },
+        {
+          type: "tool_result",
+          toolName: "hubspot_search_crm_objects",
+          callId: "different-result-id",
+          classification: "user_private",
+          content: [
+            { properties: { name: "ROKA STUDIO", domain: "renski.com" } }
+          ]
+        }
+      ]
+    });
+  });
+
   test("recovers provider markers returned as Hermes final results", () => {
     const result = runHermesEntrypointProbe(`${importEntrypoint}
 import asyncio
@@ -2424,7 +2519,7 @@ print(json.dumps({
     expect(config).toContain("Authorization: Bearer ${BURBLE_RUNTIME_JWT}");
   });
 
-  test("omits the Hermes MCP catalog by default when falling back to native provider tools", () => {
+  test("omits the Hermes MCP catalog when explicitly falling back to native provider tools", () => {
     const result = runHermesEntrypointProbe(`${importEntrypoint}
 import os
 import tempfile
@@ -2433,6 +2528,7 @@ home = tempfile.mkdtemp()
 os.environ["HERMES_HOME"] = home
 os.environ["BURBLE_MCP_GATEWAY_URL"] = "http://agentgateway:3000/mcp"
 os.environ["BURBLE_RUNTIME_JWT"] = "jwt"
+os.environ["BURBLE_HERMES_ENABLE_MCP_CATALOG"] = "false"
 
 runtime = mod.BurbleHermesRuntime()
 runtime._ensure_gateway_config()

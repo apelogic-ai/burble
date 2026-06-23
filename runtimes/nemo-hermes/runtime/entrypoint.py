@@ -303,7 +303,7 @@ def build_runtime_tool_bridge_modes() -> list[str]:
 
 def hermes_mcp_catalog_enabled() -> bool:
     return (
-        bool_env("BURBLE_HERMES_ENABLE_MCP_CATALOG", False)
+        bool_env("BURBLE_HERMES_ENABLE_MCP_CATALOG", True)
         and bool(env("BURBLE_MCP_GATEWAY_URL"))
         and bool(env("BURBLE_RUNTIME_JWT"))
     )
@@ -551,7 +551,7 @@ def hermes_tool_event_call_id(body: dict[str, Any], tool_name: str) -> str:
             value = source.get(key)
             if isinstance(value, str) and value.strip():
                 return value.strip()
-    return f"hermes-tool-call-{tool_name or 'unknown'}-{uuid.uuid4()}"
+    return f"hermes-tool-call-{tool_name or 'unknown'}"
 
 
 def hermes_tool_event_input(body: dict[str, Any]) -> dict[str, Any] | None:
@@ -1298,6 +1298,7 @@ class BurbleHermesRuntime:
         self.run_messages: dict[str, dict[str, Any]] = {}
         self.provider_preview_recovery_tasks: dict[str, asyncio.Task[None]] = {}
         self.provider_tool_call_recovery_tasks: dict[str, asyncio.Task[None]] = {}
+        self.provider_tool_call_recovery_tools: dict[str, str] = {}
         self.gateway_process: subprocess.Popen[str] | None = None
 
     async def start(self) -> None:
@@ -1495,12 +1496,15 @@ class BurbleHermesRuntime:
                 flush=True,
             )
             if event_type not in {"message_delta", "message_replace"}:
-                recovered = await self._recover_provider_progress_marker(
+                existing_response = await self._handle_provider_like_final_result(
                     run_id,
                     waiter,
                     provider_progress_tool,
+                    text,
                 )
-                if not recovered:
+                if existing_response:
+                    return web.json_response({"ok": True})
+                if not waiter.future.done():
                     await waiter.fail(
                         "Hermes returned a provider tool progress marker "
                         f"({provider_progress_tool}) instead of invoking the Burble provider bridge."
@@ -1563,6 +1567,7 @@ class BurbleHermesRuntime:
                 return web.Response(text="Hermes runtime tool_result requires toolName", status=400)
             call_id = hermes_tool_event_call_id(body, tool_name)
             self._cancel_provider_tool_call_recovery(run_id, call_id)
+            self._cancel_provider_tool_call_recovery_for_tool(run_id, tool_name)
             event = {
                 "type": "tool_result",
                 "toolName": tool_name,
@@ -1582,12 +1587,13 @@ class BurbleHermesRuntime:
                 calling_provider_tool = extract_hermes_calling_provider_tool(text)
                 if calling_provider_tool:
                     await waiter.emit({"type": "status", "text": text})
-                    recovered = await self._recover_provider_progress_marker(
+                    existing_response = await self._handle_provider_like_final_result(
                         run_id,
                         waiter,
                         calling_provider_tool,
+                        text,
                     )
-                    if not recovered:
+                    if not existing_response and not waiter.future.done():
                         self._schedule_provider_preview_recovery(
                             run_id,
                             waiter,
@@ -1600,12 +1606,13 @@ class BurbleHermesRuntime:
             calling_provider_tool = extract_hermes_calling_provider_tool(text)
             if calling_provider_tool:
                 await waiter.emit({"type": "status", "text": text})
-                recovered = await self._recover_provider_progress_marker(
+                existing_response = await self._handle_provider_like_final_result(
                     run_id,
                     waiter,
                     calling_provider_tool,
+                    text,
                 )
-                if not recovered:
+                if not existing_response and not waiter.future.done():
                     self._schedule_provider_preview_recovery(
                         run_id,
                         waiter,
@@ -1617,19 +1624,14 @@ class BurbleHermesRuntime:
             return web.json_response({"ok": True})
         if text and is_hermes_provider_fallback_final(text):
             inferred_tool_name = self._infer_provider_tool_for_run(run_id, "", None)
-            if inferred_tool_name and not self._has_provider_tool_event(waiter):
-                print(
-                    f"[WARN] {timestamp()} Nemo Hermes returned provider fallback final; "
-                    f"recovering runId={run_id} inferredTool={inferred_tool_name} "
-                    f"textChars={len(text)}",
-                    flush=True,
-                )
-                recovered = await self._recover_provider_progress_marker(
+            if inferred_tool_name:
+                existing_response = await self._handle_provider_like_final_result(
                     run_id,
                     waiter,
                     inferred_tool_name,
+                    text,
                 )
-                if recovered:
+                if existing_response:
                     return web.json_response({"ok": True})
         if not waiter.future.done():
             waiter.future.set_result(body)
@@ -1893,12 +1895,28 @@ class BurbleHermesRuntime:
         return f"{run_id}:{call_id}"
 
     def _cancel_provider_tool_call_recovery(self, run_id: str, call_id: str) -> None:
-        task = self.provider_tool_call_recovery_tasks.pop(
-            self._provider_tool_call_recovery_key(run_id, call_id),
-            None,
-        )
+        key = self._provider_tool_call_recovery_key(run_id, call_id)
+        self.provider_tool_call_recovery_tools.pop(key, None)
+        task = self.provider_tool_call_recovery_tasks.pop(key, None)
         if task and not task.done():
             task.cancel()
+
+    def _cancel_provider_tool_call_recovery_for_tool(
+        self,
+        run_id: str,
+        tool_name: str,
+    ) -> None:
+        prefix = f"{run_id}:"
+        canonical_tool_name = canonical_hermes_provider_tool_name(tool_name)
+        for key, pending_tool_name in list(self.provider_tool_call_recovery_tools.items()):
+            if not key.startswith(prefix):
+                continue
+            if canonical_hermes_provider_tool_name(pending_tool_name) != canonical_tool_name:
+                continue
+            self.provider_tool_call_recovery_tools.pop(key, None)
+            task = self.provider_tool_call_recovery_tasks.pop(key, None)
+            if task and not task.done():
+                task.cancel()
 
     def _cancel_provider_tool_call_recoveries_for_run(self, run_id: str) -> None:
         prefix = f"{run_id}:"
@@ -1906,6 +1924,7 @@ class BurbleHermesRuntime:
             if not key.startswith(prefix):
                 continue
             self.provider_tool_call_recovery_tasks.pop(key, None)
+            self.provider_tool_call_recovery_tools.pop(key, None)
             if task and not task.done():
                 task.cancel()
 
@@ -1920,6 +1939,7 @@ class BurbleHermesRuntime:
         key = self._provider_tool_call_recovery_key(run_id, call_id)
         if key in self.provider_tool_call_recovery_tasks:
             return
+        self.provider_tool_call_recovery_tools[key] = tool_name
         delay_seconds = max(0, int_env("HERMES_PROVIDER_TOOL_CALL_RECOVERY_SECONDS", 20))
         self.provider_tool_call_recovery_tasks[key] = asyncio.create_task(
             self._recover_provider_tool_call_after_delay(
@@ -1966,6 +1986,7 @@ class BurbleHermesRuntime:
         key = self._provider_tool_call_recovery_key(run_id, call_id)
         if key in self.provider_tool_call_recovery_tasks:
             return
+        self.provider_tool_call_recovery_tools[key] = tool_name
         delay_seconds = max(1, int_env("HERMES_TOOL_CALL_TIMEOUT_SECONDS", 60))
         self.provider_tool_call_recovery_tasks[key] = asyncio.create_task(
             self._fail_stale_tool_call_after_delay(
@@ -2007,6 +2028,7 @@ class BurbleHermesRuntime:
             key = self._provider_tool_call_recovery_key(run_id, call_id)
             if self.provider_tool_call_recovery_tasks.get(key) is asyncio.current_task():
                 self.provider_tool_call_recovery_tasks.pop(key, None)
+                self.provider_tool_call_recovery_tools.pop(key, None)
 
     async def _recover_provider_tool_call_after_delay(
         self,
@@ -2056,6 +2078,7 @@ class BurbleHermesRuntime:
             key = self._provider_tool_call_recovery_key(run_id, call_id)
             if self.provider_tool_call_recovery_tasks.get(key) is asyncio.current_task():
                 self.provider_tool_call_recovery_tasks.pop(key, None)
+                self.provider_tool_call_recovery_tools.pop(key, None)
 
     def _schedule_provider_preview_recovery(
         self,
@@ -2148,6 +2171,38 @@ class BurbleHermesRuntime:
             emit_tool_call=True,
         )
 
+    async def _handle_provider_like_final_result(
+        self,
+        run_id: str,
+        waiter: RunWaiter,
+        tool_name: str,
+        text: str,
+    ) -> dict[str, Any] | None:
+        has_provider_tool_event = self._has_provider_tool_event(waiter)
+        if has_provider_tool_event:
+            print(
+                f"[WARN] {timestamp()} Nemo Hermes provider contract violation after tool result; "
+                f"using existing tool result when available runId={run_id} tool={tool_name} "
+                f"textChars={len(text)}",
+                flush=True,
+            )
+            response = self._response_from_latest_provider_tool_result(waiter, tool_name)
+            if response:
+                waiter.final_response = response
+                if not waiter.future.done():
+                    waiter.future.set_result(response)
+                await waiter.emit({"type": "message_delta", "text": response["text"]})
+                return response
+            return None
+
+        print(
+            f"[WARN] {timestamp()} Nemo Hermes provider contract violation without tool call; "
+            f"recovering runId={run_id} tool={tool_name} textChars={len(text)}",
+            flush=True,
+        )
+        recovered = await self._recover_provider_progress_marker(run_id, waiter, tool_name)
+        return waiter.final_response if recovered and waiter.final_response else None
+
     async def _recover_provider_final_result(
         self,
         run_id: str,
@@ -2164,17 +2219,7 @@ class BurbleHermesRuntime:
             tool_name = self._infer_provider_tool_for_run(run_id, "", None)
         if not tool_name:
             return None
-        print(
-            f"[WARN] {timestamp()} Nemo Hermes returned provider-like final result; "
-            f"recovering runId={run_id} tool={tool_name} textChars={len(text)}",
-            flush=True,
-        )
-        recovered = await self._recover_provider_progress_marker(
-            run_id,
-            waiter,
-            tool_name,
-        )
-        return waiter.final_response if recovered and waiter.final_response else None
+        return await self._handle_provider_like_final_result(run_id, waiter, tool_name, text)
 
     def _has_provider_tool_event(self, waiter: RunWaiter) -> bool:
         for event in waiter.events:
@@ -2184,6 +2229,55 @@ class BurbleHermesRuntime:
             if tool_name == "burble_provider_call" or provider_tool_hint_by_name(tool_name):
                 return True
         return False
+
+    def _response_from_latest_provider_tool_result(
+        self,
+        waiter: RunWaiter,
+        tool_name: str,
+    ) -> dict[str, Any] | None:
+        target_tool_name = canonical_hermes_provider_tool_name(tool_name)
+        for event in reversed(waiter.events):
+            if event.get("type") != "tool_result":
+                continue
+            event_tool_name = canonical_hermes_provider_tool_name(str(event.get("toolName") or ""))
+            if not provider_tool_hint_by_name(event_tool_name):
+                continue
+            if target_tool_name and event_tool_name != target_tool_name:
+                continue
+            if "content" not in event:
+                continue
+            tool_input = self._tool_input_for_result_event(waiter, event)
+            text = format_hermes_provider_recovery_text(
+                event_tool_name,
+                tool_input,
+                event.get("content"),
+            )
+            return {
+                "classification": str(event.get("classification") or "user_private"),
+                "text": text,
+            }
+        return None
+
+    def _tool_input_for_result_event(
+        self,
+        waiter: RunWaiter,
+        result_event: dict[str, Any],
+    ) -> dict[str, Any]:
+        call_id = str(result_event.get("callId") or "")
+        result_tool_name = canonical_hermes_provider_tool_name(
+            str(result_event.get("toolName") or "")
+        )
+        for event in reversed(waiter.events):
+            if event.get("type") != "tool_call":
+                continue
+            event_tool_name = canonical_hermes_provider_tool_name(str(event.get("toolName") or ""))
+            if event_tool_name != result_tool_name:
+                continue
+            if call_id and str(event.get("callId") or "") != call_id:
+                continue
+            tool_input = event.get("input")
+            return tool_input if isinstance(tool_input, dict) else {}
+        return {}
 
     async def _recover_provider_tool(
         self,
