@@ -66,7 +66,12 @@ type RemoteRunStartResponse = {
 
 type RemoteRunEvent =
   | { type: "status"; text: string }
-  | { type: "tool_call"; toolName: string; callId: string }
+  | {
+      type: "tool_call";
+      toolName: string;
+      callId: string;
+      input?: Record<string, unknown>;
+    }
   | {
       type: "tool_result";
       toolName: string;
@@ -299,13 +304,24 @@ export function createManagedRuntimeAdapter(
         });
 
         const observeEvent = (event: AgentRunEvent) => {
+          const eventDetails =
+            event.type === "tool_call"
+              ? [
+                  `toolName=${event.toolName}`,
+                  `callId=${event.callId}`,
+                  `inputKeys=${Object.keys(event.input ?? {}).join(",") || "-"}`
+                ]
+              : event.type === "tool_result"
+                ? [`toolName=${event.toolName}`, `callId=${event.callId}`]
+                : [];
           logInfo(
             [
               "Managed runtime stream event",
               `runId=${runId}`,
               `runtimeId=${runtime?.id ?? "static"}`,
               `elapsedMs=${Date.now() - runStartedAt}`,
-              `type=${event.type}`
+              `type=${event.type}`,
+              ...eventDetails
             ].join(" ")
           );
           observeRuntimeStreamEvent(event, {
@@ -1336,10 +1352,20 @@ function validateRemoteRunEvent(payload: unknown): RemoteRunEvent | null {
     case "message_replace":
       return typeof event.text === "string" ? event : null;
     case "tool_call":
-      return typeof event.toolName === "string" &&
-        typeof event.callId === "string"
-        ? event
-        : null;
+      if (
+        typeof event.toolName !== "string" ||
+        typeof event.callId !== "string"
+      ) {
+        return null;
+      }
+      if ("input" in event && event.input !== undefined) {
+        return typeof event.input === "object" &&
+          event.input !== null &&
+          !Array.isArray(event.input)
+          ? event
+          : null;
+      }
+      return event;
     case "tool_result":
       return typeof event.toolName === "string" &&
         typeof event.callId === "string" &&
