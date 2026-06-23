@@ -1261,13 +1261,24 @@ const classifications: ReadonlySet<ToolClassification> = new Set([
   "restricted"
 ]);
 
+function isRuntimeProviderProgressMarker(text: string): boolean {
+  const normalized = text.trim().replace(/\s+/g, " ");
+  return /^(?::gear:|⚙️?|gear:)?\s*burble_provider_call(?:\.{3}|…)?$/i.test(
+    normalized
+  );
+}
+
 function validateRemoteRunResponse(payload: RemoteRunResponse): AgentOutput | null {
   const response = payload.response;
   if (!response) {
     return null;
   }
 
-  if (typeof response.text !== "string" || !classifications.has(response.classification)) {
+  if (
+    typeof response.text !== "string" ||
+    isRuntimeProviderProgressMarker(response.text) ||
+    !classifications.has(response.classification)
+  ) {
     return null;
   }
 

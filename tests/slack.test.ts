@@ -701,6 +701,112 @@ describe("formatAgentProgressEvent", () => {
     }
   });
 
+  test("finalizes non-streamed runtime answers in the progress message", async () => {
+    const updates: string[] = [];
+    const posts: string[] = [];
+    const originalNow = Date.now;
+    Date.now = () => 1_500;
+    try {
+      const progressMessage = {
+        channel: "D123",
+        ts: "123.456",
+        text: "Starting agent runtime...",
+        startedAtMs: 0,
+        toolStartedAtMs: {},
+        toolLinesByCallId: {},
+        toolCallOrder: []
+      };
+      const client = {
+        chat: {
+          update: async (input: { text: string }) => {
+            updates.push(input.text);
+            return {};
+          },
+          postMessage: async (input: { text: string }) => {
+            posts.push(input.text);
+            return {};
+          }
+        }
+      };
+
+      await postConversationResponse(client as never, {
+        response: {
+          visibility: "dm",
+          classification: "user_private",
+          text: "Last edited Google Drive file: notes.txt",
+          usage: {
+            inputTokens: 2,
+            outputTokens: 1,
+            totalTokens: 3,
+            usageSource: "provider-output"
+          }
+        },
+        channel: "D123",
+        user: "U123",
+        progressMessage
+      });
+
+      expect(updates).toEqual([
+        "Last edited Google Drive file: notes.txt\n\n_Final result in 1.5s (3 tokens)._"
+      ]);
+      expect(posts).toEqual([]);
+    } finally {
+      Date.now = originalNow;
+    }
+  });
+
+  test("does not preserve provider marker-only runtime text in progress finals", async () => {
+    const updates: string[] = [];
+    const posts: string[] = [];
+    const originalNow = Date.now;
+    Date.now = () => 1_500;
+    try {
+      const progressMessage = {
+        channel: "D123",
+        ts: "123.456",
+        text: "Starting agent runtime...",
+        startedAtMs: 0,
+        toolStartedAtMs: {},
+        toolLinesByCallId: {},
+        toolCallOrder: []
+      };
+      const client = {
+        chat: {
+          update: async (input: { text: string }) => {
+            updates.push(input.text);
+            return {};
+          },
+          postMessage: async (input: { text: string }) => {
+            posts.push(input.text);
+            return {};
+          }
+        }
+      };
+
+      await postConversationResponse(client as never, {
+        response: {
+          visibility: "dm",
+          classification: "user_private",
+          text: "⚙️ burble_provider_call...",
+          usage: {
+            inputTokens: 2,
+            outputTokens: 1,
+            totalTokens: 3,
+            usageSource: "provider-output"
+          }
+        },
+        channel: "D123",
+        user: "U123",
+        progressMessage
+      });
+
+      expect(updates).toEqual(["_Final result in 1.5s (3 tokens)._"]);
+      expect(posts).toEqual([]);
+    } finally {
+      Date.now = originalNow;
+    }
+  });
+
   test("strips Hermes stream cursor glyphs from final response text", async () => {
     const updates: string[] = [];
     const originalNow = Date.now;

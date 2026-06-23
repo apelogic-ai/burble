@@ -1610,10 +1610,13 @@ def is_hermes_progress_text(text: str) -> bool:
 
 
 def is_hermes_provider_progress_text(text: str) -> bool:
-    normalized = text.strip()
+    normalized = " ".join(text.strip().split())
     return bool(
-        normalized.startswith(":gear: burble_provider_call")
-        or normalized.startswith("burble_provider_call")
+        re.match(
+            r"^(?::gear:|⚙️?|gear:)?\s*burble_provider_call(?:\.{3}|…)?$",
+            normalized,
+            re.IGNORECASE,
+        )
     )
 
 

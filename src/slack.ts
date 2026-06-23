@@ -5407,6 +5407,23 @@ export async function postConversationResponse(
       return;
     }
 
+    const responseText = renderConversationResponseText(input.response).trim();
+    if (responseText) {
+      const finishedText = renderFinalProgressMessage(
+        input.progressMessage,
+        responseText,
+        finalProgressLine
+      );
+      input.progressMessage.text = finishedText;
+      await client.chat.update({
+        channel: input.progressMessage.channel,
+        ts: input.progressMessage.ts,
+        text: finishedText,
+        ...(responseBlocks ? { blocks: responseBlocks } : {})
+      });
+      return;
+    }
+
     const finishedText = renderProgressLines(input.progressMessage, [
       finalProgressLine
     ]);
@@ -5416,6 +5433,9 @@ export async function postConversationResponse(
       ts: input.progressMessage.ts,
       text: finishedText
     });
+    if (!responseText && !responseBlocks) {
+      return;
+    }
     await client.chat.postMessage({
       channel: input.response.visibility === "dm" ? input.user : input.channel,
       ...(input.threadTs && input.response.visibility !== "dm"
@@ -5976,6 +5996,7 @@ function sanitizeRuntimeStreamText(text: string): string {
   hermesRuntimeStreamCursorPattern.lastIndex = 0;
   const hasHermesCursor = hermesRuntimeStreamCursorPattern.test(text);
   let sanitized = stripRuntimeToolCallProtocolFragments(text);
+  sanitized = stripRuntimeProviderProgressMarkers(sanitized);
   if (hasHermesCursor) {
     hermesRuntimeStreamCursorPattern.lastIndex = 0;
     sanitized = sanitized
@@ -5985,6 +6006,24 @@ function sanitizeRuntimeStreamText(text: string): string {
   }
 
   return normalizeSlackMrkdwnLinks(sanitized);
+}
+
+function stripRuntimeProviderProgressMarkers(text: string): string {
+  const lines = text.split(/\r?\n/);
+  let removed = false;
+  const kept = lines.filter((line) => {
+    const marker = isRuntimeProviderProgressMarker(line);
+    removed ||= marker;
+    return !marker;
+  });
+  return removed ? kept.join("\n").trim() : text;
+}
+
+function isRuntimeProviderProgressMarker(text: string): boolean {
+  const normalized = text.trim().replace(/\s+/g, " ");
+  return /^(?::gear:|⚙️?|gear:)?\s*burble_provider_call(?:\.{3}|…)?$/i.test(
+    normalized
+  );
 }
 
 function normalizeSlackMrkdwnLinks(text: string): string {

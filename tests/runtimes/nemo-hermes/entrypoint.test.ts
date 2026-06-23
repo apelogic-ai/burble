@@ -598,7 +598,7 @@ async def main():
     stream_response = await runtime.handle_run_message(
         FakeRequest(
             "run-provider-progress-stream",
-            {"type": "message_delta", "text": ":gear: burble_provider_call..."},
+            {"type": "message_delta", "text": "⚙️ burble_provider_call..."},
         )
     )
 

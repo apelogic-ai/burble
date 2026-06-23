@@ -1917,4 +1917,25 @@ describe("createOpenClawNemoClawAgentRunner", () => {
       })
     ).rejects.toThrow("Managed runtime did not produce a final response");
   });
+
+  test("rejects provider progress markers as final remote runtime responses", async () => {
+    const runner = createOpenClawNemoClawAgentRunner({
+      baseUrl: "http://openclaw-runtime:8080",
+      fetch: async () =>
+        Response.json({
+          response: {
+            classification: "user_private",
+            text: "⚙️ burble_provider_call..."
+          }
+        })
+    });
+
+    await expect(
+      collectAgentRun(runner, {
+        principal,
+        text: "list my last edited google drive file",
+        connections: { github: null }
+      })
+    ).rejects.toThrow("Managed runtime returned an invalid response");
+  });
 });
