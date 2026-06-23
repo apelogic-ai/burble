@@ -466,7 +466,7 @@ asyncio.run(main())
     });
   });
 
-  test("does not treat Hermes provider bridge progress callbacks as final responses", () => {
+  test("does not emit or finalize Hermes provider bridge progress callbacks", () => {
     const result = runHermesEntrypointProbe(`${importEntrypoint}
 import asyncio
 
@@ -487,14 +487,27 @@ async def main():
     waiter.queues.append(queue)
     runtime.runs["run-provider-progress"] = waiter
 
-    response = await runtime.handle_run_message(
+    final_response = await runtime.handle_run_message(
         FakeRequest("run-provider-progress", {"text": ":gear: burble_provider_call..."})
     )
-    event = await asyncio.wait_for(queue.get(), timeout=1)
+    stream_response = await runtime.handle_run_message(
+        FakeRequest(
+            "run-provider-progress",
+            {"type": "message_delta", "text": ":gear: burble_provider_call..."},
+        )
+    )
+
+    emitted = False
+    try:
+        await asyncio.wait_for(queue.get(), timeout=0.05)
+        emitted = True
+    except asyncio.TimeoutError:
+        emitted = False
 
     print(json.dumps({
-        "response": response,
-        "event": event,
+        "finalResponse": final_response,
+        "streamResponse": stream_response,
+        "emitted": emitted,
         "completed": waiter.future.done(),
     }))
 
@@ -502,8 +515,9 @@ asyncio.run(main())
 `);
 
     expect(result).toEqual({
-      response: { ok: true },
-      event: { type: "status", text: ":gear: burble_provider_call..." },
+      finalResponse: { ok: true },
+      streamResponse: { ok: true },
+      emitted: false,
       completed: false
     });
   });

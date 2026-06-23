@@ -1022,6 +1022,12 @@ class BurbleHermesRuntime:
             flush=True,
         )
         event_type = str(body.get("type") or "")
+        if is_hermes_provider_progress_text(text):
+            print(
+                f"[WARN] {timestamp()} Nemo Hermes suppressed provider progress callback runId={run_id}",
+                flush=True,
+            )
+            return web.json_response({"ok": True})
         if event_type in {"message_delta", "message_replace"}:
             if "text" not in body:
                 return web.Response(text=f"Hermes runtime event {event_type} requires text", status=400)
@@ -1527,7 +1533,14 @@ def is_hermes_progress_text(text: str) -> bool:
         re.match(r"^Retrying in [0-9.]+s \(attempt \d+/\d+\)\.\.\.$", normalized)
         or normalized.startswith(":hourglass_flowing_sand: Retrying in ")
         or normalized.startswith("Agent has thought for ")
-        or normalized.startswith(":gear: burble_provider_call")
+        or is_hermes_provider_progress_text(normalized)
+    )
+
+
+def is_hermes_provider_progress_text(text: str) -> bool:
+    normalized = text.strip()
+    return bool(
+        normalized.startswith(":gear: burble_provider_call")
         or normalized.startswith("burble_provider_call")
     )
 
