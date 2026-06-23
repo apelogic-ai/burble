@@ -202,7 +202,9 @@ describe("createManagedRuntimeFactory sandbox mode", () => {
       slackUserId: "U123"
     });
 
-    expect(sandboxProvider.startCommands).toEqual([["bun", "src/index.ts"]]);
+    expect(sandboxProvider.startCommands).toEqual([
+      ["sh", "-lc", "cd /runtime && exec bun src/index.ts"]
+    ]);
     store.close();
   });
 });

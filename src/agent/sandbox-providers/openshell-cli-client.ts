@@ -166,6 +166,7 @@ function envArgs(env: Record<string, string>): string[] {
 
 function spawnCli(bin: string, args: string[]): RunningProcess {
   return Bun.spawn([bin, ...args], {
+    cwd: "/",
     stdout: "pipe",
     stderr: "pipe"
   });

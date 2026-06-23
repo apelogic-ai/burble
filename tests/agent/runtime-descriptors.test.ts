@@ -11,6 +11,12 @@ import {
 } from "../../src/agent/runtime-descriptors";
 
 describe("runtime descriptors", () => {
+  const bunRuntimeSandboxStartCommand = [
+    "sh",
+    "-lc",
+    "cd /runtime && exec bun src/index.ts"
+  ];
+
   test("enumerates supported runtime engines in one registry", () => {
     expect(runtimeEngines).toEqual([
       "deterministic",
@@ -51,16 +57,13 @@ describe("runtime descriptors", () => {
       "/runtime/entrypoint.py"
     ]);
     expect(defaultSandboxStartCommandForEngine("openclaw")).toEqual([
-      "bun",
-      "src/index.ts"
+      ...bunRuntimeSandboxStartCommand
     ]);
     expect(defaultSandboxStartCommandForEngine("openclaw-gateway")).toEqual([
-      "bun",
-      "src/index.ts"
+      ...bunRuntimeSandboxStartCommand
     ]);
     expect(defaultSandboxStartCommandForEngine("burble-native")).toEqual([
-      "bun",
-      "src/index.ts"
+      ...bunRuntimeSandboxStartCommand
     ]);
   });
 

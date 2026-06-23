@@ -27,6 +27,7 @@ describe("OpenShell CLI sandbox client", () => {
         'case "$*" in',
         '  *" service expose "*) echo "EXPOSE $*" >> "$log"; exit 0 ;;',
         "esac",
+        'echo "PWD $(pwd)" >> "$log"',
         'echo "CREATE $*" >> "$log"',
         'trap \'echo "TERM" >> "$log"; exit 0\' TERM',
         "while true; do sleep 1; done"
@@ -53,6 +54,7 @@ describe("OpenShell CLI sandbox client", () => {
     const beforeTerminate = await readFile(logPath, "utf8");
     expect(beforeTerminate).toContain("CREATE ");
     expect(beforeTerminate).toContain("EXPOSE ");
+    expect(beforeTerminate).toContain("PWD /");
     expect(beforeTerminate).not.toContain("TERM");
 
     await client.terminate({ sandboxId: sandbox.sandboxId });

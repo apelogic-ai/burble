@@ -133,7 +133,7 @@ describe("buildOpenClawLlmPatch", () => {
     expect(patch.models.providers.openai).toMatchObject({
       baseUrl: "http://llm-gw:4000/v1",
       apiKey: "OPENAI_API_KEY",
-      api: "openai"
+      api: "openai-responses"
     });
     expect(JSON.stringify(patch)).not.toContain("sk-");
   });

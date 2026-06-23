@@ -139,13 +139,19 @@ const burbleNativeCapabilityManifest: RuntimeCapabilityManifest = {
   jobScopedAuth: true
 };
 
+const bunRuntimeSandboxStartCommand = [
+  "sh",
+  "-lc",
+  "cd /runtime && exec bun src/index.ts"
+];
+
 const runtimeDescriptors = {
   deterministic: {
     engine: "deterministic",
     family: "deterministic",
     selectable: true,
     defaultImages: deterministicDefaultImages,
-    defaultSandboxStartCommand: ["bun", "src/index.ts"],
+    defaultSandboxStartCommand: bunRuntimeSandboxStartCommand,
     healthCheckAttempts: 30,
     capabilities: openClawCapabilityManifest("deterministic"),
     container: openClawContainerProfile
@@ -155,7 +161,7 @@ const runtimeDescriptors = {
     family: "openclaw",
     selectable: true,
     defaultImages: openClawDefaultImages,
-    defaultSandboxStartCommand: ["bun", "src/index.ts"],
+    defaultSandboxStartCommand: bunRuntimeSandboxStartCommand,
     healthCheckAttempts: 90,
     capabilities: openClawCapabilityManifest("openclaw"),
     container: openClawContainerProfile
@@ -165,7 +171,7 @@ const runtimeDescriptors = {
     family: "openclaw",
     selectable: true,
     defaultImages: openClawDefaultImages,
-    defaultSandboxStartCommand: ["bun", "src/index.ts"],
+    defaultSandboxStartCommand: bunRuntimeSandboxStartCommand,
     healthCheckAttempts: 90,
     capabilities: openClawCapabilityManifest("openclaw-gateway"),
     container: openClawContainerProfile
@@ -175,7 +181,7 @@ const runtimeDescriptors = {
     family: "burble-native",
     selectable: true,
     defaultImages: ["burble-native-runtime:dev"],
-    defaultSandboxStartCommand: ["bun", "src/index.ts"],
+    defaultSandboxStartCommand: bunRuntimeSandboxStartCommand,
     healthCheckAttempts: 30,
     capabilities: burbleNativeCapabilityManifest,
     container: burbleNativeContainerProfile

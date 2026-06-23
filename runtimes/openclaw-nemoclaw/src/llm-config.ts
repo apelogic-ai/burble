@@ -183,7 +183,7 @@ function buildProviderConfig(
           [provider]: {
             baseUrl,
             apiKey: "OPENAI_API_KEY",
-            api: "openai",
+            api: "openai-responses",
             timeoutSeconds: 300,
             models: [
               {

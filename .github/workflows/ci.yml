@@ -199,7 +199,7 @@ jobs:
           AGENT_RUNTIME_SANDBOX_TRANSPORT: cli
           AGENT_RUNTIME_OPENSHELL_CLI_BIN: ${{ github.workspace }}/deploy/testbed/.cache/openshell-linux
           AGENT_RUNTIME_OPENSHELL_DIAL_HOST: 127.0.0.1:8080
-          AGENT_RUNTIME_SANDBOX_START_COMMAND: '["bun","src/index.ts"]'
+          AGENT_RUNTIME_SANDBOX_START_COMMAND: '["sh","-lc","cd /runtime && exec bun src/index.ts"]'
           BURBLE_RUNTIME_CONTRACT_PROBE: "1"
         run: bun test tests/e2e/openshell-sandbox-runtime.test.ts
 

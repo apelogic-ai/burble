@@ -682,7 +682,7 @@ describe("dev deploy config", () => {
     expect(ciWorkflow).toContain("Run OpenClaw through OpenShell");
     expect(ciWorkflow).toContain("BURBLE_E2E_RUNTIME_ENGINE: openclaw");
     expect(ciWorkflow).toContain(
-      "AGENT_RUNTIME_SANDBOX_START_COMMAND: '[\"bun\",\"src/index.ts\"]'"
+      "AGENT_RUNTIME_SANDBOX_START_COMMAND: '[\"sh\",\"-lc\",\"cd /runtime && exec bun src/index.ts\"]'"
     );
     expect(ciWorkflow).toContain("tests/e2e/openshell-sandbox-runtime.test.ts");
     expect(ciWorkflow).toContain('BURBLE_RUNTIME_CONTRACT_PROBE: "1"');
