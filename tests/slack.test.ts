@@ -787,7 +787,7 @@ describe("formatAgentProgressEvent", () => {
         response: {
           visibility: "dm",
           classification: "user_private",
-          text: "⚙️ burble_provider_call...",
+          text: "⚙️ google_search_drive_files...\n:gear: hubspot_search_crm_objects...",
           usage: {
             inputTokens: 2,
             outputTokens: 1,

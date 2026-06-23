@@ -603,7 +603,7 @@ async def main():
     runtime.runs["run-provider-progress"] = waiter
 
     final_response = await runtime.handle_run_message(
-        FakeRequest("run-provider-progress", {"text": ":gear: burble_provider_call..."})
+        FakeRequest("run-provider-progress", {"text": ":gear: google_search_drive_files..."})
     )
     error_event = await asyncio.wait_for(queue.get(), timeout=1)
     completed_after_final = waiter.completed
@@ -622,7 +622,7 @@ async def main():
     stream_response = await runtime.handle_run_message(
         FakeRequest(
             "run-provider-progress-stream",
-            {"type": "message_delta", "text": "⚙️ burble_provider_call..."},
+            {"type": "message_delta", "text": "⚙️ hubspot_search_crm_objects..."},
         )
     )
 

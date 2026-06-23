@@ -1658,7 +1658,7 @@ def is_hermes_provider_progress_text(text: str) -> bool:
     normalized = " ".join(text.strip().split())
     return bool(
         re.match(
-            r"^(?::gear:|⚙️?|gear:)?\s*burble_provider_call(?:\.{3}|…)?$",
+            r"^(?::gear:|⚙️?|gear:)?\s*(?:burble_provider_call|(?:github|google|gmail|hubspot|jira|slack|atlassian|scheduled_job|conversation)_[a-z0-9_]+)(?:\.{3}|…)?$",
             normalized,
             re.IGNORECASE,
         )

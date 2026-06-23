@@ -1945,7 +1945,7 @@ describe("createOpenClawNemoClawAgentRunner", () => {
         Response.json({
           response: {
             classification: "user_private",
-            text: "⚙️ burble_provider_call..."
+            text: "⚙️ hubspot_search_crm_objects..."
           }
         })
     });

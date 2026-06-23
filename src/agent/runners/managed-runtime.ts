@@ -1288,9 +1288,7 @@ const classifications: ReadonlySet<ToolClassification> = new Set([
 
 function isRuntimeProviderProgressMarker(text: string): boolean {
   const normalized = text.trim().replace(/\s+/g, " ");
-  return /^(?::gear:|⚙️?|gear:)?\s*burble_provider_call(?:\.{3}|…)?$/i.test(
-    normalized
-  );
+  return /^(?::gear:|⚙️?|gear:)?\s*(?:burble_provider_call|(?:github|google|gmail|hubspot|jira|slack|atlassian|scheduled_job|conversation)_[a-z0-9_]+)(?:\.{3}|…)?$/i.test(normalized);
 }
 
 function validateRemoteRunResponse(payload: RemoteRunResponse): AgentOutput | null {
