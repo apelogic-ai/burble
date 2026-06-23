@@ -581,6 +581,152 @@ asyncio.run(main())
     });
   });
 
+  test("recovers Hermes provider preview callbacks that never finalize", () => {
+    const result = runHermesEntrypointProbe(`${importEntrypoint}
+import asyncio
+import os
+
+mod.web.json_response = lambda body, **kwargs: body
+
+os.environ["BURBLE_TOOL_GATEWAY_URL"] = "http://burble-app:3000/internal/tools"
+os.environ["BURBLE_INTERNAL_TOKEN"] = "token"
+os.environ["BURBLE_RUNTIME_ID"] = "rt_123"
+os.environ["HERMES_PROVIDER_PREVIEW_RECOVERY_SECONDS"] = "0"
+
+provider_calls = []
+
+class FakeProviderResponse:
+    status = 200
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        return False
+
+    async def json(self):
+        return {
+            "content": [
+                {"properties": {"name": "ROKA STUDIO", "domain": "renski.com"}},
+            ]
+        }
+
+    async def text(self):
+        return json.dumps(await self.json())
+
+class FakeProviderSession:
+    def __init__(self, *args, **kwargs):
+        pass
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        return False
+
+    def post(self, url, *, json=None, headers=None):
+        provider_calls.append({
+            "url": url,
+            "json": json,
+        })
+        return FakeProviderResponse()
+
+provider_plugin = mod.load_burble_provider_tool_plugin()
+provider_plugin.ClientSession = FakeProviderSession
+provider_plugin.ClientTimeout = lambda total=None: None
+
+class FakeRequest:
+    def __init__(self, run_id, body):
+        self.match_info = {"run_id": run_id}
+        self._body = body
+
+    async def json(self):
+        return self._body
+
+async def main():
+    runtime = mod.BurbleHermesRuntime()
+    waiter = mod.RunWaiter()
+    queue = asyncio.Queue()
+    waiter.queues.append(queue)
+    runtime.runs["run-preview"] = waiter
+    runtime.run_messages["run-preview"] = {
+        "originalText": "list my last companies in HubSpot",
+        "runtime": {"id": "rt_123"},
+    }
+
+    response = await runtime.handle_run_message(
+        FakeRequest(
+            "run-preview",
+            {"type": "message_delta", "text": "Calling HubSpot search crm objects..."},
+        )
+    )
+    await asyncio.wait_for(waiter.future, timeout=1)
+
+    events = []
+    while not queue.empty():
+        events.append(await queue.get())
+
+    print(json.dumps({
+        "response": response,
+        "events": events,
+        "result": waiter.future.result(),
+        "providerCalls": provider_calls,
+    }))
+
+asyncio.run(main())
+`);
+
+    expect(result).toEqual({
+      response: { ok: true },
+      events: [
+        {
+          type: "status",
+          text: "Calling HubSpot search crm objects..."
+        },
+        {
+          type: "tool_call",
+          toolName: "hubspot_search_crm_objects",
+          callId: expect.any(String),
+          input: {
+            objectType: "companies",
+            limit: 10,
+            properties: ["name", "domain", "createdate", "hs_lastmodifieddate"]
+          }
+        },
+        {
+          type: "tool_result",
+          toolName: "hubspot_search_crm_objects",
+          callId: expect.any(String),
+          classification: "user_private",
+          content: [
+            { properties: { name: "ROKA STUDIO", domain: "renski.com" } }
+          ]
+        },
+        {
+          type: "message_delta",
+          text: "Latest HubSpot companies\n- ROKA STUDIO — renski.com"
+        }
+      ],
+      result: {
+        classification: "user_private",
+        text: "Latest HubSpot companies\n- ROKA STUDIO — renski.com"
+      },
+      providerCalls: [
+        {
+          url:
+            "http://burble-app:3000/internal/tools/hubspot.searchCrmObjects/execute",
+          json: {
+            input: {
+              objectType: "companies",
+              limit: 10,
+              properties: ["name", "domain", "createdate", "hs_lastmodifieddate"]
+            }
+          }
+        }
+      ]
+    });
+  });
+
   test("recovers safe marker-only Hermes provider callbacks", () => {
     const result = runHermesEntrypointProbe(`${importEntrypoint}
 import asyncio

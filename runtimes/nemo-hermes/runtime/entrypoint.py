@@ -513,6 +513,22 @@ def extract_hermes_provider_progress_tool(text: str) -> str | None:
     return str(match.group("tool")).lower()
 
 
+def extract_hermes_calling_provider_tool(text: str) -> str | None:
+    normalized = " ".join(text.strip().split())
+    match = re.match(r"^Calling\s+(.+?)(?:\.{3}|…)?$", normalized, re.IGNORECASE)
+    if not match:
+        return None
+    display_name = match.group(1).strip().lower()
+    for hints in HERMES_PROVIDER_TOOL_HINTS.values():
+        for hint in hints:
+            name = str(hint.get("name") or "").strip()
+            if not name:
+                continue
+            if display_name == name.replace("_", " ").lower():
+                return name
+    return None
+
+
 def is_hermes_provider_tool_read_safe(tool_name: str) -> bool:
     unsafe_terms = (
         "_add_",
@@ -1150,6 +1166,7 @@ class BurbleHermesRuntime:
         self.home = Path(env("HERMES_HOME", "/data/openclaw/hermes"))
         self.runs: dict[str, RunWaiter] = {}
         self.run_messages: dict[str, dict[str, Any]] = {}
+        self.provider_preview_recovery_tasks: dict[str, asyncio.Task[None]] = {}
         self.gateway_process: subprocess.Popen[str] | None = None
 
     async def start(self) -> None:
@@ -1362,6 +1379,15 @@ class BurbleHermesRuntime:
             if "text" not in body:
                 return web.Response(text=f"Hermes runtime event {event_type} requires text", status=400)
             if text:
+                calling_provider_tool = extract_hermes_calling_provider_tool(text)
+                if calling_provider_tool:
+                    await waiter.emit({"type": "status", "text": text})
+                    self._schedule_provider_preview_recovery(
+                        run_id,
+                        waiter,
+                        calling_provider_tool,
+                    )
+                    return web.json_response({"ok": True})
                 await waiter.emit({"type": event_type, "text": text})
             return web.json_response({"ok": True})
         if is_hermes_progress_text(text):
@@ -1605,7 +1631,76 @@ class BurbleHermesRuntime:
                 progress_task.cancel()
                 with contextlib.suppress(asyncio.CancelledError):
                     await progress_task
+            provider_preview_task = self.provider_preview_recovery_tasks.pop(run_id, None)
+            if (
+                provider_preview_task
+                and provider_preview_task is not asyncio.current_task()
+                and not provider_preview_task.done()
+            ):
+                provider_preview_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await provider_preview_task
             self.run_messages.pop(run_id, None)
+
+    def _schedule_provider_preview_recovery(
+        self,
+        run_id: str,
+        waiter: RunWaiter,
+        tool_name: str,
+    ) -> None:
+        if run_id in self.provider_preview_recovery_tasks:
+            return
+        delay_seconds = max(0, int_env("HERMES_PROVIDER_PREVIEW_RECOVERY_SECONDS", 20))
+        self.provider_preview_recovery_tasks[run_id] = asyncio.create_task(
+            self._recover_provider_preview_after_delay(
+                run_id,
+                waiter,
+                tool_name,
+                delay_seconds,
+            )
+        )
+
+    async def _recover_provider_preview_after_delay(
+        self,
+        run_id: str,
+        waiter: RunWaiter,
+        tool_name: str,
+        delay_seconds: int,
+    ) -> None:
+        try:
+            await asyncio.sleep(delay_seconds)
+            if waiter.completed or waiter.future.done():
+                return
+            print(
+                f"[WARN] {timestamp()} Nemo Hermes provider preview timed out; recovering "
+                f"runId={run_id} tool={tool_name} delaySeconds={delay_seconds}",
+                flush=True,
+            )
+            recovered = await self._recover_provider_progress_marker(
+                run_id,
+                waiter,
+                tool_name,
+            )
+            if recovered or waiter.future.done():
+                return
+            await waiter.fail(
+                "Hermes started provider tool "
+                f"({tool_name}) but did not produce a final answer."
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception as error:
+            print(
+                f"[ERROR] {timestamp()} Nemo Hermes provider preview recovery failed "
+                f"runId={run_id} tool={tool_name} error={error}",
+                file=sys.stderr,
+                flush=True,
+            )
+            if not waiter.future.done():
+                await waiter.fail(str(error))
+        finally:
+            if self.provider_preview_recovery_tasks.get(run_id) is asyncio.current_task():
+                self.provider_preview_recovery_tasks.pop(run_id, None)
 
     async def _recover_provider_progress_marker(
         self,
