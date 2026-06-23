@@ -498,9 +498,13 @@ def normalize_burble_provider_tool_name(name: str) -> str:
 
 
 def provider_tool_hint_by_name(name: str) -> dict[str, Any] | None:
+    cleaned = str(name or "").strip()
+    normalized = ""
+    with contextlib.suppress(Exception):
+        normalized = normalize_burble_provider_tool_name(cleaned)
     for hints in HERMES_PROVIDER_TOOL_HINTS.values():
         for hint in hints:
-            if hint.get("name") == name:
+            if hint.get("name") in {cleaned, normalized} or hint.get("alias") in {cleaned, normalized}:
                 return hint
     return None
 
@@ -509,8 +513,9 @@ def canonical_hermes_provider_tool_name(name: str) -> str:
     cleaned = str(name or "").strip()
     if not cleaned:
         return cleaned
-    if provider_tool_hint_by_name(cleaned):
-        return cleaned
+    hint = provider_tool_hint_by_name(cleaned)
+    if hint:
+        return str(hint["name"])
     for hints in HERMES_PROVIDER_TOOL_HINTS.values():
         for hint in hints:
             if hint.get("alias") == cleaned:
@@ -1540,15 +1545,27 @@ class BurbleHermesRuntime:
                 event["input"] = tool_input
             await waiter.emit(event)
             if provider_tool_hint_by_name(tool_name):
-                if isinstance(tool_input, dict):
+                execution_input = tool_input if isinstance(tool_input, dict) else None
+                if execution_input is None:
+                    original_text = str(
+                        (self.run_messages.get(run_id) or {}).get("originalText") or ""
+                    )
+                    execution_input = derive_hermes_provider_marker_input(tool_name, original_text)
+                if isinstance(execution_input, dict):
                     self._schedule_provider_tool_call_execution(
                         run_id,
                         waiter,
                         tool_name,
                         call_id,
-                        tool_input,
+                        execution_input,
                     )
                 else:
+                    print(
+                        f"[WARN] {timestamp()} Nemo Hermes provider tool call has no executable input; "
+                        f"scheduling delayed recovery runId={run_id} tool={tool_name} "
+                        f"callId={call_id} inputType={type(tool_input).__name__}",
+                        flush=True,
+                    )
                     self._schedule_provider_tool_call_recovery(
                         run_id,
                         waiter,
