@@ -961,16 +961,15 @@ function isRunRequest(body: unknown): body is RunRequest {
   }
 
   const connections = input.connections;
-  if (
-    typeof connections !== "object" ||
-    connections === null ||
-    !("github" in connections)
-  ) {
+  if (typeof connections !== "object" || connections === null) {
     return false;
   }
 
-  const github = connections.github;
-  if (!isConnectionSummary(github)) {
+  if (
+    "github" in connections &&
+    connections.github !== undefined &&
+    !isConnectionSummary(connections.github)
+  ) {
     return false;
   }
 

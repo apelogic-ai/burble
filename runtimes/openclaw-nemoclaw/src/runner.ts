@@ -39,7 +39,7 @@ async function runGitHubRequest(
 ): Promise<RunResponse> {
   const text = request.input.text.trim();
   const github = request.input.connections.github;
-  if (!github.connected || !github.email) {
+  if (!github?.connected || !github.email) {
     return response("user_private", "Connect GitHub first: `@Burble connect github`.");
   }
 

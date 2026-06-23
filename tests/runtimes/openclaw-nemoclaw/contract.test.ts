@@ -87,6 +87,52 @@ describe("OpenClaw/NemoClaw runtime contract", () => {
       ]
     });
   });
+
+  test("accepts the shared contract probe request without provider connections", async () => {
+    const response = await handleRuntimeRequestRaw(
+      withRuntimeAuthorization(
+        new Request("http://runtime.local/runs", {
+          method: "POST",
+          headers: {
+            "content-type": "application/json"
+          },
+          body: JSON.stringify({
+            runId: "run-openclaw-empty-connections",
+            principal: {
+              workspaceId: "T123",
+              slackUserId: "U123"
+            },
+            runtime: {
+              id: "rt_openclaw_empty_connections",
+              engine: "deterministic"
+            },
+            input: {
+              text: "runtime contract probe",
+              conversation: {
+                routeId: "convrt_openclaw_empty_connections",
+                source: "slack",
+                workspaceId: "T123",
+                channelId: "D123",
+                rootId: "dm:D123",
+                isDirectMessage: true
+              },
+              connections: {}
+            }
+          })
+        }),
+        config.internalToken
+      ),
+      { ...config, contractProbeMode: true }
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      response: {
+        classification: "user_private",
+        text: "Runtime contract probe response."
+      }
+    });
+  });
 });
 
 function withRuntimeAuthorization(request: Request, token: string): Request {

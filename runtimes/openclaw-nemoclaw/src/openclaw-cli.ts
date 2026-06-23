@@ -137,7 +137,7 @@ export async function runOpenClawCliRequest(
   const baseline = toolContext.baseline;
   if (
     isSupportedGitHubRequest(request.input.text) &&
-    !request.input.connections.github.connected
+    !request.input.connections.github?.connected
   ) {
     logInfo("OpenClaw agent skipped githubConnected=false");
     return baseline;
@@ -905,7 +905,7 @@ export async function* runOpenClawCliRequestStream(
   const baseline = toolContext.baseline;
   if (
     isSupportedGitHubRequest(request.input.text) &&
-    !request.input.connections.github.connected
+    !request.input.connections.github?.connected
   ) {
     logInfo("OpenClaw agent skipped githubConnected=false");
     yield { type: "final", response: baseline.response };
@@ -1625,7 +1625,7 @@ async function buildToolCatalog(
   }
 
   const github = request.input.connections.github;
-  if (github.connected && github.email) {
+  if (github?.connected && github.email) {
     catalog.push(
       {
         name: "github.getAuthenticatedUser",
@@ -2360,8 +2360,10 @@ function isDiscoveredProviderToolAvailable(
   request: RunRequest
 ): boolean {
   if (toolName.startsWith("github.")) {
-    return request.input.connections.github.connected &&
-      Boolean(request.input.connections.github.email);
+    return Boolean(
+      request.input.connections.github?.connected &&
+        request.input.connections.github.email
+    );
   }
   if (toolName.startsWith("google.")) {
     return Boolean(
@@ -2393,7 +2395,7 @@ function isDiscoveredProviderToolAvailable(
 
 function hasConnectedProvider(request: RunRequest): boolean {
   return Boolean(
-    (request.input.connections.github.connected &&
+    (request.input.connections.github?.connected &&
       request.input.connections.github.email) ||
       (request.input.connections.google?.connected &&
         request.input.connections.google.email) ||
@@ -3156,7 +3158,7 @@ function hasPresentSchemaValue(
 
 function readToolEmail(toolName: string, request: RunRequest): string | null {
   if (toolName.startsWith("github.")) {
-    return request.input.connections.github.email ?? null;
+    return request.input.connections.github?.email ?? null;
   }
 
   if (toolName.startsWith("jira.") || toolName.startsWith("atlassian.")) {
@@ -4026,7 +4028,7 @@ function buildSessionRoot(request: RunRequest): string {
     )}`;
   }
 
-  const email = request.input.connections.github.email ?? "anonymous";
+  const email = request.input.connections.github?.email ?? "anonymous";
   return `burble-${email.replace(/[^a-zA-Z0-9_.-]/g, "_")}`;
 }
 

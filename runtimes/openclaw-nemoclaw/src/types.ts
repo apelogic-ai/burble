@@ -90,7 +90,7 @@ export type RunRequest = {
     conversation?: RuntimeConversationSummary;
     context?: RuntimeRequestContext;
     connections: {
-      github: RuntimeConnectionSummary;
+      github?: RuntimeConnectionSummary;
       google?: RuntimeConnectionSummary;
       hubspot?: RuntimeConnectionSummary;
       jira?: RuntimeConnectionSummary;
