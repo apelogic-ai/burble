@@ -512,7 +512,7 @@ describe("dev deploy config", () => {
       "AGENT_RUNTIME_OPENSHELL_DIAL_HOST=${AGENT_RUNTIME_OPENSHELL_DIAL_HOST:-openshell}"
     );
     expect(openShellCompose).toContain(
-      "source: ${OPENSHELL_CLI_BIN_HOST_PATH:?run ./deploy-personal-runtimes.sh --openshell}"
+      "source: ${OPENSHELL_CLI_BIN_HOST_PATH:-./.cache/openshell-linux}"
     );
     expect(openShellCompose).toContain("target: /opt/openshell-cli/openshell");
     expect(openShellCompose).toContain("create_host_path: false");

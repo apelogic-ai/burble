@@ -41,7 +41,7 @@ services:
       - AGENT_RUNTIME_OPENSHELL_DIAL_HOST=${AGENT_RUNTIME_OPENSHELL_DIAL_HOST:-openshell}
     volumes:
       - type: bind
-        source: ${OPENSHELL_CLI_BIN_HOST_PATH:?run ./deploy-personal-runtimes.sh --openshell}
+        source: ${OPENSHELL_CLI_BIN_HOST_PATH:-./.cache/openshell-linux}
         target: /opt/openshell-cli/openshell
         read_only: true
         bind:
