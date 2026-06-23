@@ -1642,6 +1642,53 @@ describe("createOpenClawNemoClawAgentRunner", () => {
     expect(requests[0].body?.runId).toBeString();
   });
 
+  test("times out the run snapshot fallback when the runtime never finalizes", async () => {
+    const observabilityEvents: ObservabilityEventInput[] = [];
+    const sockets: FakeRuntimeWebSocket[] = [];
+    const runner = createOpenClawNemoClawAgentRunner({
+      baseUrl: "http://openclaw-runtime:8080",
+      runSnapshotTimeoutMs: 5,
+      observability: {
+        emit: (event) => observabilityEvents.push(event)
+      },
+      fetch: async (_url, init) => {
+        if (init.method === "POST") {
+          return Response.json({
+            runId: "run-hung",
+            eventsUrl: "/runs/run-hung/events"
+          });
+        }
+
+        return new Promise<Response>(() => undefined);
+      },
+      webSocketFactory: (url) => {
+        const socket = new FakeRuntimeWebSocket(url);
+        sockets.push(socket);
+        return socket;
+      }
+    });
+
+    const resultPromise = collectAgentRun(runner, {
+      principal,
+      conversation,
+      text: "Use my GitHub connection and list my assigned GitHub issues.",
+      connections: { github: connection }
+    });
+    const socket = await waitForSocket(sockets);
+    socket.closeFromRuntime();
+
+    await expect(resultPromise).rejects.toThrow(
+      "Managed runtime did not produce a final response within 5ms"
+    );
+    expect(observabilityEvents.at(-1)).toMatchObject({
+      name: "runtime.run.failed",
+      status: "error",
+      error: {
+        message: "Managed runtime did not produce a final response within 5ms"
+      }
+    });
+  });
+
   test("reports remote runtime failures without leaking response bodies", async () => {
     const runner = createOpenClawNemoClawAgentRunner({
       baseUrl: "http://openclaw-runtime:8080",
@@ -1679,5 +1726,26 @@ describe("createOpenClawNemoClawAgentRunner", () => {
         connections: { github: null }
       })
     ).rejects.toThrow("Managed runtime returned an invalid response");
+  });
+
+  test("rejects blank final remote runtime responses", async () => {
+    const runner = createOpenClawNemoClawAgentRunner({
+      baseUrl: "http://openclaw-runtime:8080",
+      fetch: async () =>
+        Response.json({
+          response: {
+            classification: "user_private",
+            text: "   "
+          }
+        })
+    });
+
+    await expect(
+      collectAgentRun(runner, {
+        principal,
+        text: "hello",
+        connections: { github: null }
+      })
+    ).rejects.toThrow("Managed runtime did not produce a final response");
   });
 });

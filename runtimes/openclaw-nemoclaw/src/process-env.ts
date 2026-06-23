@@ -44,7 +44,11 @@ const commonProcessEnvNames = new Set([
   "XDG_CACHE_HOME",
   "XDG_CONFIG_HOME",
   "XDG_DATA_HOME",
-  "npm_config_cache"
+  "npm_config_audit",
+  "npm_config_cache",
+  "npm_config_fund",
+  "npm_config_offline",
+  "npm_config_update_notifier"
 ]);
 
 const proxyEnvNames = new Set([

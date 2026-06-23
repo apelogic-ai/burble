@@ -592,6 +592,10 @@ function buildSandboxRuntimeEnv(input: {
       XDG_CONFIG_HOME: "/tmp/openclaw-config",
       XDG_DATA_HOME: "/tmp/openclaw-data",
       npm_config_cache: "/tmp/npm-cache",
+      npm_config_audit: "false",
+      npm_config_fund: "false",
+      npm_config_update_notifier: "false",
+      npm_config_offline: "true",
       JITI_FS_CACHE: "false"
     });
   }

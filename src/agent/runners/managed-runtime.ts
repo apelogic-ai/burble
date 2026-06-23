@@ -50,6 +50,7 @@ export type ManagedRuntimeAgentRunnerDeps = {
   runtimeFactory?: RuntimeFactory;
   fetch?: AgentRuntimeFetch;
   webSocketFactory?: AgentRuntimeWebSocketFactory;
+  runSnapshotTimeoutMs?: number;
   logInfo?: (message: string) => void;
   observability?: ObservabilitySink;
 };
@@ -96,6 +97,7 @@ type RuntimeAttachment = {
 const maxRuntimeRecentMessages = 12;
 const maxRuntimeRecentMessageChars = 300;
 const runtimeCapabilityCacheTtlMs = 60_000;
+const defaultRunSnapshotTimeoutMs = 30_000;
 
 type RuntimeCapabilityCacheEntry = {
   expiresAt: number;
@@ -134,6 +136,8 @@ export function createManagedRuntimeAdapter(
     : createRoutedRuntimeWebSocketFactory(routeOptions);
   const logInfo = deps.logInfo ?? (() => undefined);
   const observability = deps.observability;
+  const runSnapshotTimeoutMs =
+    deps.runSnapshotTimeoutMs ?? defaultRunSnapshotTimeoutMs;
   const runtimeCapabilityCache: RuntimeCapabilityCache = new Map();
 
   return {
@@ -351,10 +355,11 @@ export function createManagedRuntimeAdapter(
                 "fallback=json"
               ].join(" ")
             );
-            const fallbackResponse = await getRuntimeRun(
+            const fallbackResponse = await getRuntimeRunWithTimeout(
               requestFetch,
               `${baseUrl}/runs/${encodeURIComponent(startedRunId)}`,
-              runtime
+              runtime,
+              runSnapshotTimeoutMs
             );
             if (!fallbackResponse.ok) {
               throw new Error(
@@ -367,6 +372,7 @@ export function createManagedRuntimeAdapter(
         if (!agentResponse) {
           throw new Error("Managed runtime returned an invalid response");
         }
+        assertManagedRuntimeFinalResponse(agentResponse);
       } catch (error) {
         recordRuntimeRunFailed({
           observability,
@@ -772,10 +778,12 @@ function postRuntimeRun(
 function getRuntimeRun(
   requestFetch: AgentRuntimeFetch,
   url: string,
-  runtime: RuntimeHandle | null
+  runtime: RuntimeHandle | null,
+  signal?: AbortSignal
 ): Promise<Response> {
   return requestFetch(url, {
     method: "GET",
+    ...(signal ? { signal } : {}),
     headers: {
       accept: "application/json",
       ...runtimeHeaders(runtime)
@@ -783,11 +791,47 @@ function getRuntimeRun(
   });
 }
 
+async function getRuntimeRunWithTimeout(
+  requestFetch: AgentRuntimeFetch,
+  url: string,
+  runtime: RuntimeHandle | null,
+  timeoutMs: number
+): Promise<Response> {
+  const controller = new AbortController();
+  const request = getRuntimeRun(requestFetch, url, runtime, controller.signal);
+  request.catch(() => undefined);
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  const timeoutPromise = new Promise<Response>((_, reject) => {
+    timeout = setTimeout(() => {
+      controller.abort();
+      reject(
+        new Error(
+          `Managed runtime did not produce a final response within ${timeoutMs}ms`
+        )
+      );
+    }, timeoutMs);
+  });
+
+  try {
+    return await Promise.race([request, timeoutPromise]);
+  } finally {
+    if (timeout) {
+      clearTimeout(timeout);
+    }
+  }
+}
+
 async function readJsonRunResponse(
   response: Response
 ): Promise<AgentOutput | null> {
   const payload = (await response.json()) as RemoteRunResponse;
   return validateRemoteRunResponse(payload);
+}
+
+function assertManagedRuntimeFinalResponse(response: AgentOutput): void {
+  if (!response.text.trim()) {
+    throw new Error("Managed runtime did not produce a final response");
+  }
 }
 
 async function* readWebSocketRunResponse(

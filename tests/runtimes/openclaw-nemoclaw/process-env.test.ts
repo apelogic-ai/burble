@@ -10,6 +10,10 @@ describe("buildOpenClawProcessEnv", () => {
         OPENCLAW_GATEWAY_TOKEN: "local-gateway-token",
         XDG_CACHE_HOME: "/tmp/openclaw-cache",
         npm_config_cache: "/tmp/npm-cache",
+        npm_config_audit: "false",
+        npm_config_fund: "false",
+        npm_config_update_notifier: "false",
+        npm_config_offline: "true",
         JITI_FS_CACHE: "false"
       },
       {
@@ -37,6 +41,10 @@ describe("buildOpenClawProcessEnv", () => {
       OPENCLAW_CONFIG_PATH: "/data/openclaw/config/openclaw.json",
       XDG_CACHE_HOME: "/tmp/openclaw-cache",
       npm_config_cache: "/tmp/npm-cache",
+      npm_config_audit: "false",
+      npm_config_fund: "false",
+      npm_config_update_notifier: "false",
+      npm_config_offline: "true",
       JITI_FS_CACHE: "false"
     });
     expect(env.ANTHROPIC_API_KEY).toBeUndefined();
