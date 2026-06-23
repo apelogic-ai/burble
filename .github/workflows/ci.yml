@@ -157,6 +157,14 @@ jobs:
           docker compose -f deploy/testbed/compose/docker-compose.yml logs --no-color openshell
           exit 1
 
+      - name: Verify app OpenShell CLI dependencies
+        run: |
+          docker compose -f deploy/testbed/compose/docker-compose.yml exec -T burble-app-testbed sh -lc '
+            test -x /opt/openshell-cli/openshell
+            command -v ssh >/dev/null
+            /opt/openshell-cli/openshell --gateway-endpoint http://openshell:8080 sandbox list >/dev/null
+          '
+
       - name: Run Hermes through OpenShell
         env:
           BURBLE_E2E_OPENSHELL: "1"

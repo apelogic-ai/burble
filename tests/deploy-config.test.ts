@@ -57,7 +57,7 @@ describe("dev deploy config", () => {
     expect(compose).toContain("dockerfile: Dockerfile");
     expect(compose).toContain('"3000"');
     expect(compose).toContain("http://localhost:3000/healthz");
-    expect(appDockerfile).toContain("apk add --no-cache docker-cli");
+    expect(appDockerfile).toContain("apk add --no-cache docker-cli openssh-client");
     expect(appDockerfile).toContain("mkdir -p /data /opt/openshell-cli");
     expect(appDockerfile).toContain(
       "COPY packages/runtime-sdk/package.json ./packages/runtime-sdk/package.json"
@@ -668,6 +668,11 @@ describe("dev deploy config", () => {
     expect(ciWorkflow).toContain("Start OpenShell testbed");
     expect(ciWorkflow).toContain("bun run testbed:up");
     expect(ciWorkflow).toContain("AGENT_RUNTIME_SANDBOX_TRANSPORT: cli");
+    expect(ciWorkflow).toContain("Verify app OpenShell CLI dependencies");
+    expect(ciWorkflow).toContain("command -v ssh >/dev/null");
+    expect(ciWorkflow).toContain(
+      "/opt/openshell-cli/openshell --gateway-endpoint http://openshell:8080 sandbox list"
+    );
     expect(ciWorkflow).toContain("Run Hermes through OpenShell");
     expect(ciWorkflow).toContain('BURBLE_E2E_OPENSHELL_RUN: "1"');
     expect(ciWorkflow).toContain("BURBLE_E2E_RUNTIME_ENGINE: hermes");

@@ -7,7 +7,7 @@ RUN bun install --frozen-lockfile
 FROM oven/bun:1.2.21-alpine
 WORKDIR /app
 ENV NODE_ENV=production
-RUN apk add --no-cache docker-cli
+RUN apk add --no-cache docker-cli openssh-client
 COPY --from=deps /app/node_modules ./node_modules
 COPY package.json bun.lock tsconfig.json ./
 COPY packages/runtime-sdk ./packages/runtime-sdk
