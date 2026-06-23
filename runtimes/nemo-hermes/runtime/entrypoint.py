@@ -505,6 +505,93 @@ def provider_tool_hint_by_name(name: str) -> dict[str, Any] | None:
     return None
 
 
+def canonical_hermes_provider_tool_name(name: str) -> str:
+    cleaned = str(name or "").strip()
+    if not cleaned:
+        return cleaned
+    if provider_tool_hint_by_name(cleaned):
+        return cleaned
+    for hints in HERMES_PROVIDER_TOOL_HINTS.values():
+        for hint in hints:
+            if hint.get("alias") == cleaned:
+                return str(hint["name"])
+    with contextlib.suppress(Exception):
+        normalized = normalize_burble_provider_tool_name(cleaned)
+        for hints in HERMES_PROVIDER_TOOL_HINTS.values():
+            for hint in hints:
+                if hint.get("alias") == normalized:
+                    return str(hint["name"])
+    return cleaned
+
+
+def hermes_tool_event_name(body: dict[str, Any]) -> str:
+    for source in (
+        body,
+        body.get("toolCall") if isinstance(body.get("toolCall"), dict) else {},
+        body.get("tool") if isinstance(body.get("tool"), dict) else {},
+    ):
+        if not isinstance(source, dict):
+            continue
+        for key in ("toolName", "tool_name", "name", "tool"):
+            value = source.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+    return ""
+
+
+def hermes_tool_event_call_id(body: dict[str, Any], tool_name: str) -> str:
+    for source in (
+        body,
+        body.get("toolCall") if isinstance(body.get("toolCall"), dict) else {},
+        body.get("tool") if isinstance(body.get("tool"), dict) else {},
+    ):
+        if not isinstance(source, dict):
+            continue
+        for key in ("callId", "call_id", "id", "toolCallId", "tool_call_id"):
+            value = source.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+    return f"hermes-tool-call-{tool_name or 'unknown'}-{uuid.uuid4()}"
+
+
+def hermes_tool_event_input(body: dict[str, Any]) -> dict[str, Any] | None:
+    for source in (
+        body,
+        body.get("toolCall") if isinstance(body.get("toolCall"), dict) else {},
+        body.get("tool") if isinstance(body.get("tool"), dict) else {},
+    ):
+        if not isinstance(source, dict):
+            continue
+        for key in ("input", "arguments", "args"):
+            value = source.get(key)
+            if isinstance(value, dict):
+                return value
+            if isinstance(value, str) and value.strip():
+                with contextlib.suppress(Exception):
+                    parsed = json.loads(value)
+                    if isinstance(parsed, dict):
+                        return parsed
+    return None
+
+
+def unwrap_hermes_provider_tool_call(
+    tool_name: str,
+    tool_input: dict[str, Any] | None,
+) -> tuple[str, dict[str, Any] | None]:
+    if tool_name not in {"burble_provider_call", "burble.providerCall"}:
+        return tool_name, tool_input
+    if not isinstance(tool_input, dict):
+        return tool_name, tool_input
+    inner_tool_name = tool_input.get("toolName") or tool_input.get("tool_name")
+    if not isinstance(inner_tool_name, str) or not inner_tool_name.strip():
+        return tool_name, tool_input
+    inner_input = tool_input.get("input")
+    return (
+        canonical_hermes_provider_tool_name(inner_tool_name),
+        inner_input if isinstance(inner_input, dict) else {},
+    )
+
+
 def extract_hermes_provider_progress_tool(text: str) -> str | None:
     normalized = " ".join(text.strip().split())
     match = HERMES_PROVIDER_PROGRESS_RE.match(normalized)
@@ -1167,6 +1254,7 @@ class BurbleHermesRuntime:
         self.runs: dict[str, RunWaiter] = {}
         self.run_messages: dict[str, dict[str, Any]] = {}
         self.provider_preview_recovery_tasks: dict[str, asyncio.Task[None]] = {}
+        self.provider_tool_call_recovery_tasks: dict[str, asyncio.Task[None]] = {}
         self.gateway_process: subprocess.Popen[str] | None = None
 
     async def start(self) -> None:
@@ -1374,6 +1462,48 @@ class BurbleHermesRuntime:
                         "Hermes returned a provider tool progress marker "
                         f"({provider_progress_tool}) instead of invoking the Burble provider bridge."
                     )
+            return web.json_response({"ok": True})
+        if event_type == "tool_call":
+            tool_name = canonical_hermes_provider_tool_name(hermes_tool_event_name(body))
+            if not tool_name:
+                return web.Response(text="Hermes runtime tool_call requires toolName", status=400)
+            call_id = hermes_tool_event_call_id(body, tool_name)
+            tool_input = hermes_tool_event_input(body)
+            tool_name, tool_input = unwrap_hermes_provider_tool_call(tool_name, tool_input)
+            event: dict[str, Any] = {
+                "type": "tool_call",
+                "toolName": tool_name,
+                "callId": call_id,
+            }
+            if tool_input is not None:
+                event["input"] = tool_input
+            await waiter.emit(event)
+            if provider_tool_hint_by_name(tool_name):
+                self._schedule_provider_tool_call_recovery(
+                    run_id,
+                    waiter,
+                    tool_name,
+                    call_id,
+                    tool_input,
+                )
+            return web.json_response({"ok": True})
+        if event_type == "tool_result":
+            tool_name = canonical_hermes_provider_tool_name(hermes_tool_event_name(body))
+            if not tool_name:
+                return web.Response(text="Hermes runtime tool_result requires toolName", status=400)
+            call_id = hermes_tool_event_call_id(body, tool_name)
+            self._cancel_provider_tool_call_recovery(run_id, call_id)
+            event = {
+                "type": "tool_result",
+                "toolName": tool_name,
+                "callId": call_id,
+                "classification": str(body.get("classification") or "user_private"),
+            }
+            for key in ("content", "result", "output"):
+                if key in body:
+                    event["content"] = body[key]
+                    break
+            await waiter.emit(event)
             return web.json_response({"ok": True})
         if event_type in {"message_delta", "message_replace"}:
             if "text" not in body:
@@ -1640,7 +1770,100 @@ class BurbleHermesRuntime:
                 provider_preview_task.cancel()
                 with contextlib.suppress(asyncio.CancelledError):
                     await provider_preview_task
+            self._cancel_provider_tool_call_recoveries_for_run(run_id)
             self.run_messages.pop(run_id, None)
+
+    def _provider_tool_call_recovery_key(self, run_id: str, call_id: str) -> str:
+        return f"{run_id}:{call_id}"
+
+    def _cancel_provider_tool_call_recovery(self, run_id: str, call_id: str) -> None:
+        task = self.provider_tool_call_recovery_tasks.pop(
+            self._provider_tool_call_recovery_key(run_id, call_id),
+            None,
+        )
+        if task and not task.done():
+            task.cancel()
+
+    def _cancel_provider_tool_call_recoveries_for_run(self, run_id: str) -> None:
+        prefix = f"{run_id}:"
+        for key, task in list(self.provider_tool_call_recovery_tasks.items()):
+            if not key.startswith(prefix):
+                continue
+            self.provider_tool_call_recovery_tasks.pop(key, None)
+            if task and not task.done():
+                task.cancel()
+
+    def _schedule_provider_tool_call_recovery(
+        self,
+        run_id: str,
+        waiter: RunWaiter,
+        tool_name: str,
+        call_id: str,
+        tool_input: dict[str, Any] | None,
+    ) -> None:
+        key = self._provider_tool_call_recovery_key(run_id, call_id)
+        if key in self.provider_tool_call_recovery_tasks:
+            return
+        delay_seconds = max(0, int_env("HERMES_PROVIDER_TOOL_CALL_RECOVERY_SECONDS", 20))
+        self.provider_tool_call_recovery_tasks[key] = asyncio.create_task(
+            self._recover_provider_tool_call_after_delay(
+                run_id,
+                waiter,
+                tool_name,
+                call_id,
+                tool_input,
+                delay_seconds,
+            )
+        )
+
+    async def _recover_provider_tool_call_after_delay(
+        self,
+        run_id: str,
+        waiter: RunWaiter,
+        tool_name: str,
+        call_id: str,
+        tool_input: dict[str, Any] | None,
+        delay_seconds: int,
+    ) -> None:
+        try:
+            await asyncio.sleep(delay_seconds)
+            if waiter.completed or waiter.future.done():
+                return
+            print(
+                f"[WARN] {timestamp()} Nemo Hermes provider tool call timed out; recovering "
+                f"runId={run_id} tool={tool_name} callId={call_id} "
+                f"delaySeconds={delay_seconds}",
+                flush=True,
+            )
+            recovered = await self._recover_provider_tool(
+                run_id,
+                waiter,
+                tool_name,
+                call_id,
+                tool_input,
+                emit_tool_call=False,
+            )
+            if recovered or waiter.future.done():
+                return
+            await waiter.fail(
+                "Hermes started provider tool "
+                f"({tool_name}) but did not produce a tool result or final answer."
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception as error:
+            print(
+                f"[ERROR] {timestamp()} Nemo Hermes provider tool call recovery failed "
+                f"runId={run_id} tool={tool_name} callId={call_id} error={error}",
+                file=sys.stderr,
+                flush=True,
+            )
+            if not waiter.future.done():
+                await waiter.fail(str(error))
+        finally:
+            key = self._provider_tool_call_recovery_key(run_id, call_id)
+            if self.provider_tool_call_recovery_tasks.get(key) is asyncio.current_task():
+                self.provider_tool_call_recovery_tasks.pop(key, None)
 
     def _schedule_provider_preview_recovery(
         self,
@@ -1708,41 +1931,68 @@ class BurbleHermesRuntime:
         waiter: RunWaiter,
         tool_name: str,
     ) -> bool:
+        return await self._recover_provider_tool(
+            run_id,
+            waiter,
+            tool_name,
+            f"hermes-provider-marker-{uuid.uuid4()}",
+            None,
+            emit_tool_call=True,
+        )
+
+    async def _recover_provider_tool(
+        self,
+        run_id: str,
+        waiter: RunWaiter,
+        tool_name: str,
+        call_id: str,
+        tool_input: dict[str, Any] | None,
+        *,
+        emit_tool_call: bool,
+    ) -> bool:
         message = self.run_messages.get(run_id)
         if not isinstance(message, dict):
             print(
-                f"[ERROR] {timestamp()} Nemo Hermes provider marker recovery missing run message "
-                f"runId={run_id} tool={tool_name}",
+                f"[ERROR] {timestamp()} Nemo Hermes provider recovery missing run message "
+                f"runId={run_id} tool={tool_name} callId={call_id}",
                 file=sys.stderr,
                 flush=True,
             )
             return False
 
         original_text = str(message.get("originalText") or message.get("text") or "")
-        tool_input = derive_hermes_provider_marker_input(tool_name, original_text)
-        if tool_input is None:
+        derived_input = derive_hermes_provider_marker_input(tool_name, original_text)
+        effective_input = (
+            tool_input
+            if isinstance(tool_input, dict)
+            and bool(tool_input)
+            and is_hermes_provider_tool_read_safe(tool_name)
+            else derived_input
+        )
+        if effective_input is None:
             print(
-                f"[ERROR] {timestamp()} Nemo Hermes provider marker recovery could not derive input "
-                f"runId={run_id} tool={tool_name} textChars={len(original_text)}",
+                f"[ERROR] {timestamp()} Nemo Hermes provider recovery could not derive safe input "
+                f"runId={run_id} tool={tool_name} callId={call_id} textChars={len(original_text)}",
                 file=sys.stderr,
                 flush=True,
             )
             return False
 
-        call_id = f"hermes-provider-marker-{uuid.uuid4()}"
         try:
             print(
-                f"[WARN] {timestamp()} Nemo Hermes recovering provider marker "
-                f"runId={run_id} tool={tool_name} input={json.dumps(tool_input, ensure_ascii=False)}",
+                f"[WARN] {timestamp()} Nemo Hermes recovering provider tool "
+                f"runId={run_id} tool={tool_name} callId={call_id} "
+                f"input={json.dumps(effective_input, ensure_ascii=False)}",
                 flush=True,
             )
-            await waiter.emit({
-                "type": "tool_call",
-                "toolName": tool_name,
-                "callId": call_id,
-                "input": tool_input,
-            })
-            content = await call_burble_provider_tool(tool_name, tool_input)
+            if emit_tool_call:
+                await waiter.emit({
+                    "type": "tool_call",
+                    "toolName": tool_name,
+                    "callId": call_id,
+                    "input": effective_input,
+                })
+            content = await call_burble_provider_tool(tool_name, effective_input)
             await waiter.emit({
                 "type": "tool_result",
                 "toolName": tool_name,
@@ -1750,22 +2000,22 @@ class BurbleHermesRuntime:
                 "classification": "user_private",
                 "content": content,
             })
-            text = format_hermes_provider_recovery_text(tool_name, tool_input, content)
+            text = format_hermes_provider_recovery_text(tool_name, effective_input, content)
             response = {"classification": "user_private", "text": text}
             if text:
                 await waiter.emit({"type": "message_delta", "text": text})
             if not waiter.future.done():
                 waiter.future.set_result(response)
             print(
-                f"[WARN] {timestamp()} Nemo Hermes provider marker recovered "
-                f"runId={run_id} tool={tool_name} textChars={len(text)}",
+                f"[WARN] {timestamp()} Nemo Hermes provider tool recovered "
+                f"runId={run_id} tool={tool_name} callId={call_id} textChars={len(text)}",
                 flush=True,
             )
             return True
         except Exception as error:
             print(
-                f"[ERROR] {timestamp()} Nemo Hermes provider marker recovery failed "
-                f"runId={run_id} tool={tool_name} error={error}",
+                f"[ERROR] {timestamp()} Nemo Hermes provider recovery failed "
+                f"runId={run_id} tool={tool_name} callId={call_id} error={error}",
                 file=sys.stderr,
                 flush=True,
             )
