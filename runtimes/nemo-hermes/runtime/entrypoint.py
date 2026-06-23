@@ -367,6 +367,8 @@ def build_hermes_turn_text(input_body: dict[str, Any]) -> str:
                     lines = [
                         "Selected Burble provider tools:",
                         "Use Hermes tool burble_provider_call with toolName set to one of these names and input set to that tool's arguments.",
+                        "Do not write `burble_provider_call`, `:gear: burble_provider_call...`, or any other tool-progress marker as chat text. Invoke the native Hermes tool, wait for its JSON result, then write a final Slack-ready answer from that result.",
+                        "If a provider tool returns an error object, explain the error in normal Slack text instead of stopping on a tool-progress marker.",
                         "Do not call provider tools that are not listed here for this turn. If the needed provider is not listed, say it is unavailable in this turn instead of discovering or calling unrelated provider tools.",
                         "For setup-time provider calls in the current user turn, do not include jobId.",
                         "For native scheduled/background jobs that will use Burble provider tools, first create the native job without an immediate/manual run, then call the dedicated scheduled provider registration tool scheduled_job_register_capability with the exact returned jobId and requiredTools, then include the returned scheduledPromptInstruction verbatim in the scheduled job prompt before enabling or triggering it.",
@@ -1525,6 +1527,8 @@ def is_hermes_progress_text(text: str) -> bool:
         re.match(r"^Retrying in [0-9.]+s \(attempt \d+/\d+\)\.\.\.$", normalized)
         or normalized.startswith(":hourglass_flowing_sand: Retrying in ")
         or normalized.startswith("Agent has thought for ")
+        or normalized.startswith(":gear: burble_provider_call")
+        or normalized.startswith("burble_provider_call")
     )
 
 

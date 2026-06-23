@@ -320,6 +320,8 @@ print(json.dumps({"text": mod.build_hermes_turn_text(payload)}))
     expect(text).toContain("what changed?");
     expect(text).toContain("Selected Burble tool groups: conversation, github");
     expect(text).toContain("Selected Burble provider tools");
+    expect(text).toContain("Do not write `burble_provider_call`");
+    expect(text).toContain("then write a final Slack-ready answer");
     expect(text).toContain("Do not call provider tools that are not listed here");
     expect(text).toContain("github_list_my_pull_requests");
     expect(text).not.toContain("google_search_drive_files");
@@ -460,6 +462,48 @@ asyncio.run(main())
     expect(result).toEqual({
       response: { ok: true },
       event: { type: "status", text: "Retrying in 2.5s (attempt 1/3)..." },
+      completed: false
+    });
+  });
+
+  test("does not treat Hermes provider bridge progress callbacks as final responses", () => {
+    const result = runHermesEntrypointProbe(`${importEntrypoint}
+import asyncio
+
+mod.web.json_response = lambda body, **kwargs: body
+
+class FakeRequest:
+    def __init__(self, run_id, body):
+        self.match_info = {"run_id": run_id}
+        self._body = body
+
+    async def json(self):
+        return self._body
+
+async def main():
+    runtime = mod.BurbleHermesRuntime()
+    waiter = mod.RunWaiter()
+    queue = asyncio.Queue()
+    waiter.queues.append(queue)
+    runtime.runs["run-provider-progress"] = waiter
+
+    response = await runtime.handle_run_message(
+        FakeRequest("run-provider-progress", {"text": ":gear: burble_provider_call..."})
+    )
+    event = await asyncio.wait_for(queue.get(), timeout=1)
+
+    print(json.dumps({
+        "response": response,
+        "event": event,
+        "completed": waiter.future.done(),
+    }))
+
+asyncio.run(main())
+`);
+
+    expect(result).toEqual({
+      response: { ok: true },
+      event: { type: "status", text: ":gear: burble_provider_call..." },
       completed: false
     });
   });
