@@ -58,6 +58,7 @@ describe("dev deploy config", () => {
     expect(compose).toContain('"3000"');
     expect(compose).toContain("http://localhost:3000/healthz");
     expect(appDockerfile).toContain("apk add --no-cache docker-cli");
+    expect(appDockerfile).toContain("mkdir -p /data /opt/openshell-cli");
     expect(appDockerfile).toContain(
       "COPY packages/runtime-sdk/package.json ./packages/runtime-sdk/package.json"
     );
@@ -511,8 +512,10 @@ describe("dev deploy config", () => {
       "AGENT_RUNTIME_OPENSHELL_DIAL_HOST=${AGENT_RUNTIME_OPENSHELL_DIAL_HOST:-openshell}"
     );
     expect(openShellCompose).toContain(
-      "${OPENSHELL_CLI_BIN_HOST_PATH:-./.cache/openshell-linux}:/opt/openshell-cli/openshell:ro"
+      "source: ${OPENSHELL_CLI_BIN_HOST_PATH:?run ./deploy-personal-runtimes.sh --openshell}"
     );
+    expect(openShellCompose).toContain("target: /opt/openshell-cli/openshell");
+    expect(openShellCompose).toContain("create_host_path: false");
     expect(openShellGatewayConfig).toContain('compute_drivers     = ["docker"]');
     expect(openShellGatewayConfig).toContain("disable_tls         = true");
     expect(openShellGatewayConfig).toContain("[openshell.gateway.gateway_jwt]");

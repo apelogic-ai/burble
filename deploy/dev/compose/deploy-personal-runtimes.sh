@@ -190,8 +190,8 @@ ensure_openshell_cli_binary() {
   local configured_cli_path
   configured_cli_path="$(configured_value OPENSHELL_CLI_BIN_HOST_PATH)"
   if [[ -n "${configured_cli_path}" ]]; then
-    if [[ ! -x "${configured_cli_path}" ]]; then
-      echo "Configured OPENSHELL_CLI_BIN_HOST_PATH is not executable: ${configured_cli_path}" >&2
+    if [[ ! -f "${configured_cli_path}" || ! -x "${configured_cli_path}" ]]; then
+      echo "Configured OPENSHELL_CLI_BIN_HOST_PATH is not an executable file: ${configured_cli_path}" >&2
       exit 2
     fi
     export OPENSHELL_CLI_BIN_HOST_PATH="${configured_cli_path}"
@@ -201,10 +201,14 @@ ensure_openshell_cli_binary() {
 
   local cache_dir="${script_dir}/.cache"
   local output="${cache_dir}/openshell-linux"
-  if [[ -x "${output}" ]]; then
+  if [[ -f "${output}" && -x "${output}" ]]; then
     export OPENSHELL_CLI_BIN_HOST_PATH="${output}"
     export AGENT_RUNTIME_OPENSHELL_CLI_BIN="${AGENT_RUNTIME_OPENSHELL_CLI_BIN:-/opt/openshell-cli/openshell}"
     return 0
+  fi
+  if [[ -e "${output}" && ! -f "${output}" ]]; then
+    echo "Removing invalid OpenShell CLI cache path: ${output}"
+    rm -rf "${output}"
   fi
 
   if ! command -v curl >/dev/null 2>&1; then

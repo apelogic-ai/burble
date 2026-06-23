@@ -12,6 +12,6 @@ COPY --from=deps /app/node_modules ./node_modules
 COPY package.json bun.lock tsconfig.json ./
 COPY packages/runtime-sdk ./packages/runtime-sdk
 COPY src ./src
-RUN mkdir -p /data
+RUN mkdir -p /data /opt/openshell-cli
 EXPOSE 3000
 CMD ["bun", "src/index.ts"]

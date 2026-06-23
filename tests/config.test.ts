@@ -54,7 +54,7 @@ describe("readConfig", () => {
       agentRuntimeInferenceBaseUrl: null,
       agentRuntimeSandboxUrl: null,
       agentRuntimeSandboxToken: null,
-      agentRuntimeSandboxTransport: "grpc",
+      agentRuntimeSandboxTransport: "cli",
       agentRuntimeOpenShellCliBin: null,
       agentRuntimeSandboxStartCommand: null,
       agentRuntimeOpenShellDialHost: null,
