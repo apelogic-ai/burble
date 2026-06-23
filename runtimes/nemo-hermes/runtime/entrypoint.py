@@ -139,6 +139,18 @@ def truthy_env(name: str) -> bool:
     return env(name).lower() in {"1", "true", "yes", "on"}
 
 
+def bool_env(name: str, default: bool = False) -> bool:
+    raw = env(name)
+    if not raw:
+        return default
+    normalized = raw.lower()
+    if normalized in {"1", "true", "yes", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "off"}:
+        return False
+    return default
+
+
 def yaml_string(value: str) -> str:
     return json.dumps(value, ensure_ascii=False)
 
@@ -1492,7 +1504,7 @@ class BurbleHermesRuntime:
             ]
         )
         if (
-            truthy_env("BURBLE_HERMES_ENABLE_MCP_CATALOG")
+            bool_env("BURBLE_HERMES_ENABLE_MCP_CATALOG", True)
             and env("BURBLE_MCP_GATEWAY_URL")
             and env("BURBLE_RUNTIME_JWT")
         ):

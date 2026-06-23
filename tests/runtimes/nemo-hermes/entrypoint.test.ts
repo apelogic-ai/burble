@@ -1135,7 +1135,7 @@ print(json.dumps({
     });
   });
 
-  test("writes Hermes config with compact Burble provider tool instead of full MCP catalog", () => {
+  test("writes Hermes config with the Burble MCP catalog when the gateway is available", () => {
     const result = runHermesEntrypointProbe(`${importEntrypoint}
 import os
 import tempfile
@@ -1165,6 +1165,31 @@ print(json.dumps({
     );
     expect(config).not.toContain("\u2063");
     expect(config).not.toContain("▉");
+    expect(config).toContain("mcp_servers:");
+    expect(config).toContain("url: ${BURBLE_MCP_GATEWAY_URL}");
+    expect(config).toContain("Authorization: Bearer ${BURBLE_RUNTIME_JWT}");
+  });
+
+  test("can disable the Hermes MCP catalog when falling back to native provider tools", () => {
+    const result = runHermesEntrypointProbe(`${importEntrypoint}
+import os
+import tempfile
+
+home = tempfile.mkdtemp()
+os.environ["HERMES_HOME"] = home
+os.environ["BURBLE_MCP_GATEWAY_URL"] = "http://agentgateway:3000/mcp"
+os.environ["BURBLE_RUNTIME_JWT"] = "jwt"
+os.environ["BURBLE_HERMES_ENABLE_MCP_CATALOG"] = "false"
+
+runtime = mod.BurbleHermesRuntime()
+runtime._ensure_gateway_config()
+print(json.dumps({
+    "config": (runtime.home / "config.yaml").read_text(),
+}))
+`);
+
+    const config = (result as { config: string }).config;
+    expect(config).toContain("burble-provider-tool");
     expect(config).not.toContain("mcp_servers:");
   });
 
@@ -1598,7 +1623,7 @@ print(json.dumps({
     expect(config).not.toContain("    - web");
   });
 
-  test("can opt Hermes back into full MCP catalog for debugging", () => {
+  test("keeps Hermes MCP catalog enabled with the legacy explicit opt-in env", () => {
     const result = runHermesEntrypointProbe(`${importEntrypoint}
 import os
 import tempfile
