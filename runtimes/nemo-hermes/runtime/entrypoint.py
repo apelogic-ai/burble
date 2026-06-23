@@ -616,6 +616,18 @@ def extract_hermes_calling_provider_tool(text: str) -> str | None:
     return None
 
 
+def is_hermes_provider_fallback_final(text: str) -> bool:
+    normalized = " ".join(text.lower().split())
+    return (
+        "burble here" in normalized
+        and "/help shows commands" in normalized
+    ) or (
+        "i can help" in normalized
+        and "short profile" in normalized
+        and "more useful" in normalized
+    )
+
+
 def is_hermes_provider_tool_read_safe(tool_name: str) -> bool:
     unsafe_terms = (
         "_add_",
@@ -1579,6 +1591,22 @@ class BurbleHermesRuntime:
         if is_hermes_progress_text(text):
             await waiter.emit({"type": "status", "text": text})
             return web.json_response({"ok": True})
+        if text and is_hermes_provider_fallback_final(text):
+            inferred_tool_name = self._infer_provider_tool_for_run(run_id, "", None)
+            if inferred_tool_name and not self._has_provider_tool_event(waiter):
+                print(
+                    f"[WARN] {timestamp()} Nemo Hermes returned provider fallback final; "
+                    f"recovering runId={run_id} inferredTool={inferred_tool_name} "
+                    f"textChars={len(text)}",
+                    flush=True,
+                )
+                recovered = await self._recover_provider_progress_marker(
+                    run_id,
+                    waiter,
+                    inferred_tool_name,
+                )
+                if recovered:
+                    return web.json_response({"ok": True})
         if not waiter.future.done():
             waiter.future.set_result(body)
         return web.json_response({"ok": True})
@@ -2063,6 +2091,22 @@ class BurbleHermesRuntime:
         waiter: RunWaiter,
         tool_name: str,
     ) -> bool:
+        if tool_name == "burble_provider_call":
+            inferred_tool_name = self._infer_provider_tool_for_run(run_id, tool_name, None)
+            if not inferred_tool_name:
+                print(
+                    f"[ERROR] {timestamp()} Nemo Hermes provider marker recovery could not infer "
+                    f"bridge target runId={run_id} tool={tool_name}",
+                    file=sys.stderr,
+                    flush=True,
+                )
+                return False
+            print(
+                f"[WARN] {timestamp()} Nemo Hermes provider marker inferred bridge target "
+                f"runId={run_id} tool={tool_name} inferredTool={inferred_tool_name}",
+                flush=True,
+            )
+            tool_name = inferred_tool_name
         return await self._recover_provider_tool(
             run_id,
             waiter,
@@ -2071,6 +2115,15 @@ class BurbleHermesRuntime:
             None,
             emit_tool_call=True,
         )
+
+    def _has_provider_tool_event(self, waiter: RunWaiter) -> bool:
+        for event in waiter.events:
+            if event.get("type") not in {"tool_call", "tool_result"}:
+                continue
+            tool_name = canonical_hermes_provider_tool_name(str(event.get("toolName") or ""))
+            if tool_name == "burble_provider_call" or provider_tool_hint_by_name(tool_name):
+                return True
+        return False
 
     async def _recover_provider_tool(
         self,

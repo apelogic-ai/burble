@@ -1130,6 +1130,46 @@ async def main():
         stream_events.append(await queue.get())
     stream_result = waiter.future.result()
 
+    waiter = mod.RunWaiter()
+    queue = asyncio.Queue()
+    waiter.queues.append(queue)
+    runtime.runs["run-provider-bridge-marker"] = waiter
+    runtime.run_messages["run-provider-bridge-marker"] = {
+        "originalText": "use burble_provider_call to list my last companies in HubSpot",
+        "runtime": {"id": "rt_123"},
+    }
+    bridge_marker_response = await runtime.handle_run_message(
+        FakeRequest(
+            "run-provider-bridge-marker",
+            {"text": ":gear: burble_provider_call..."},
+        )
+    )
+    bridge_marker_events = []
+    while not queue.empty():
+        bridge_marker_events.append(await queue.get())
+    bridge_marker_result = waiter.future.result()
+
+    waiter = mod.RunWaiter()
+    queue = asyncio.Queue()
+    waiter.queues.append(queue)
+    runtime.runs["run-provider-fallback-final"] = waiter
+    runtime.run_messages["run-provider-fallback-final"] = {
+        "originalText": "list my last companies in HubSpot",
+        "runtime": {"id": "rt_123"},
+    }
+    fallback_final_response = await runtime.handle_run_message(
+        FakeRequest(
+            "run-provider-fallback-final",
+            {
+                "text": "Burble here — I can help, and /help shows commands; if you want, I can also build a short profile of you later so I can be more useful."
+            },
+        )
+    )
+    fallback_final_events = []
+    while not queue.empty():
+        fallback_final_events.append(await queue.get())
+    fallback_final_result = waiter.future.result()
+
     print(json.dumps({
         "finalResponse": final_response,
         "events": events,
@@ -1139,6 +1179,12 @@ async def main():
         "streamResponse": stream_response,
         "streamEvents": stream_events,
         "streamResult": stream_result,
+        "bridgeMarkerResponse": bridge_marker_response,
+        "bridgeMarkerEvents": bridge_marker_events,
+        "bridgeMarkerResult": bridge_marker_result,
+        "fallbackFinalResponse": fallback_final_response,
+        "fallbackFinalEvents": fallback_final_events,
+        "fallbackFinalResult": fallback_final_result,
         "providerCalls": provider_calls,
     }))
 
@@ -1212,6 +1258,72 @@ asyncio.run(main())
         text:
           "Latest HubSpot companies\n- ROKA STUDIO — renski.com\n- example.com — example.com"
       },
+      bridgeMarkerResponse: { ok: true },
+      bridgeMarkerEvents: [
+        {
+          type: "tool_call",
+          toolName: "hubspot_search_crm_objects",
+          callId: expect.any(String),
+          input: {
+            objectType: "companies",
+            limit: 10,
+            properties: ["name", "domain", "createdate", "hs_lastmodifieddate"]
+          }
+        },
+        {
+          type: "tool_result",
+          toolName: "hubspot_search_crm_objects",
+          callId: expect.any(String),
+          classification: "user_private",
+          content: [
+            { properties: { name: "ROKA STUDIO", domain: "renski.com" } },
+            { properties: { name: "example.com", domain: "example.com" } }
+          ]
+        },
+        {
+          type: "message_delta",
+          text:
+            "Latest HubSpot companies\n- ROKA STUDIO — renski.com\n- example.com — example.com"
+        }
+      ],
+      bridgeMarkerResult: {
+        classification: "user_private",
+        text:
+          "Latest HubSpot companies\n- ROKA STUDIO — renski.com\n- example.com — example.com"
+      },
+      fallbackFinalResponse: { ok: true },
+      fallbackFinalEvents: [
+        {
+          type: "tool_call",
+          toolName: "hubspot_search_crm_objects",
+          callId: expect.any(String),
+          input: {
+            objectType: "companies",
+            limit: 10,
+            properties: ["name", "domain", "createdate", "hs_lastmodifieddate"]
+          }
+        },
+        {
+          type: "tool_result",
+          toolName: "hubspot_search_crm_objects",
+          callId: expect.any(String),
+          classification: "user_private",
+          content: [
+            { properties: { name: "ROKA STUDIO", domain: "renski.com" } },
+            { properties: { name: "example.com", domain: "example.com" } }
+          ]
+        },
+        {
+          type: "message_delta",
+          text:
+            "Latest HubSpot companies\n- ROKA STUDIO — renski.com\n- example.com — example.com"
+        }
+      ],
+      fallbackFinalResult: {
+        classification: "user_private",
+        text:
+          "Latest HubSpot companies\n- ROKA STUDIO — renski.com\n- example.com — example.com"
+      },
       providerCalls: [
         {
           url:
@@ -1223,6 +1335,40 @@ asyncio.run(main())
           },
           toolName: "google.searchDriveFiles",
           json: { input: { limit: 1 } }
+        },
+        {
+          url:
+            "http://burble-app:3000/internal/tools/hubspot.searchCrmObjects/execute",
+          headers: {
+            authorization: "Bearer token",
+            "content-type": "application/json",
+            "x-burble-runtime-id": "rt_123"
+          },
+          toolName: "hubspot.searchCrmObjects",
+          json: {
+            input: {
+              objectType: "companies",
+              limit: 10,
+              properties: ["name", "domain", "createdate", "hs_lastmodifieddate"]
+            }
+          }
+        },
+        {
+          url:
+            "http://burble-app:3000/internal/tools/hubspot.searchCrmObjects/execute",
+          headers: {
+            authorization: "Bearer token",
+            "content-type": "application/json",
+            "x-burble-runtime-id": "rt_123"
+          },
+          toolName: "hubspot.searchCrmObjects",
+          json: {
+            input: {
+              objectType: "companies",
+              limit: 10,
+              properties: ["name", "domain", "createdate", "hs_lastmodifieddate"]
+            }
+          }
         },
         {
           url:
