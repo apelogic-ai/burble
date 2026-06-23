@@ -1656,7 +1656,7 @@ describe("createOpenClawNemoClawAgentRunner", () => {
       status: "error",
       error: {
         name: "Error",
-        message: "Managed runtime returned HTTP 503"
+        message: "Managed runtime returned HTTP 503: unavailable"
       }
     });
     expect(runtimeEvents.at(-1)).toEqual({
@@ -1665,7 +1665,7 @@ describe("createOpenClawNemoClawAgentRunner", () => {
         status: "error",
         error: {
           name: "Error",
-          message: "Managed runtime returned HTTP 503"
+          message: "Managed runtime returned HTTP 503: unavailable"
         }
       }
     });
@@ -1874,6 +1874,26 @@ describe("createOpenClawNemoClawAgentRunner", () => {
         connections: { github: null }
       })
     ).rejects.toThrow("Managed runtime returned HTTP 500");
+  });
+
+  test("reports safe remote runtime failure details", async () => {
+    const runner = createOpenClawNemoClawAgentRunner({
+      baseUrl: "http://openclaw-runtime:8080",
+      fetch: async () =>
+        new Response("Run did not produce a final response", {
+          status: 500
+        })
+    });
+
+    await expect(
+      collectAgentRun(runner, {
+        principal,
+        text: "hello",
+        connections: { github: null }
+      })
+    ).rejects.toThrow(
+      "Managed runtime returned HTTP 500: Run did not produce a final response"
+    );
   });
 
   test("rejects malformed remote runtime responses", async () => {

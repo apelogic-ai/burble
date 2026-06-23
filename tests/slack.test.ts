@@ -1492,6 +1492,17 @@ describe("formatConversationFailureMessage", () => {
     );
   });
 
+  test("surfaces managed runtime HTTP failures with safe detail", () => {
+    expect(
+      formatConversationFailureMessage(
+        new Error(
+          "Managed runtime returned HTTP 500: Run did not produce a final response"
+        ),
+        "message"
+      )
+    ).toContain("Runtime detail: Managed runtime returned HTTP 500");
+  });
+
   test("surfaces managed runtime finalization failures", () => {
     expect(
       formatConversationFailureMessage(

@@ -273,7 +273,7 @@ export function createManagedRuntimeAdapter(
         );
 
         if (!response.ok) {
-          throw new Error(`Managed runtime returned HTTP ${response.status}`);
+          throw new Error(await managedRuntimeHttpErrorMessage(response));
         }
         logInfo(
           [
@@ -372,9 +372,7 @@ export function createManagedRuntimeAdapter(
                 runSnapshotTimeoutMs
               );
               if (!fallbackResponse.ok) {
-                throw new Error(
-                  `Managed runtime returned HTTP ${fallbackResponse.status}`
-                );
+                throw new Error(await managedRuntimeHttpErrorMessage(fallbackResponse));
               }
               agentResponse = await readJsonRunResponse(fallbackResponse);
             }
@@ -739,6 +737,33 @@ function toRuntimeObservabilityError(error: unknown): {
   return {
     message: String(error)
   };
+}
+
+async function managedRuntimeHttpErrorMessage(response: Response): Promise<string> {
+  const base = `Managed runtime returned HTTP ${response.status}`;
+  let body = "";
+  try {
+    body = await response.text();
+  } catch {
+    return base;
+  }
+  const safeBody = safeRuntimeHttpErrorBody(body);
+  return safeBody ? `${base}: ${safeBody}` : base;
+}
+
+function safeRuntimeHttpErrorBody(body: string): string | null {
+  const normalized = body.replace(/\s+/g, " ").trim();
+  if (!normalized) {
+    return null;
+  }
+
+  const redacted = normalized
+    .replace(/Bearer\s+[A-Za-z0-9._~+/=-]+/gi, "Bearer [redacted]")
+    .replace(/sk-[A-Za-z0-9_-]+/g, "[redacted-openai-key]");
+  if (/\b(token|secret|api[_-]?key|private[_-]?key|password)\b/i.test(redacted)) {
+    return null;
+  }
+  return redacted.slice(0, 240);
 }
 
 function isRuntimeCapabilitiesNotImplementedError(error: unknown): boolean {

@@ -5868,6 +5868,12 @@ export function formatConversationFailureMessage(
       `Runtime detail: ${sanitizeRuntimeFailureDetail(message)}`
     ].join(" ");
   }
+  if (isRuntimeRunFailure(message)) {
+    return [
+      "Agent runtime failed while handling that message.",
+      `Runtime detail: ${sanitizeRuntimeFailureDetail(message)}`
+    ].join(" ");
+  }
   if (
     error instanceof RuntimeEngineSelectionError &&
     message.includes("missing attachment support")
@@ -5886,6 +5892,10 @@ function isRuntimeFinalizationFailure(message: string): boolean {
   return /Managed runtime did not produce a final response|Runtime run finished without a final response|Runtime event socket closed before final/i.test(
     message
   );
+}
+
+function isRuntimeRunFailure(message: string): boolean {
+  return /Managed runtime returned HTTP \d+|Runtime run failed:/i.test(message);
 }
 
 function sanitizeRuntimeFailureDetail(message: string): string {

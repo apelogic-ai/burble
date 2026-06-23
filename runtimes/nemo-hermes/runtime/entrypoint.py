@@ -292,9 +292,17 @@ def build_runtime_response(result: dict[str, Any], prompt: str = "") -> dict[str
 
 def build_runtime_tool_bridge_modes() -> list[str]:
     modes = ["tool_gateway"]
-    if env("BURBLE_MCP_GATEWAY_URL") and env("BURBLE_RUNTIME_JWT"):
+    if hermes_mcp_catalog_enabled():
         modes.append("mcp")
     return modes
+
+
+def hermes_mcp_catalog_enabled() -> bool:
+    return (
+        bool_env("BURBLE_HERMES_ENABLE_MCP_CATALOG", True)
+        and bool(env("BURBLE_MCP_GATEWAY_URL"))
+        and bool(env("BURBLE_RUNTIME_JWT"))
+    )
 
 
 def build_runtime_capability_manifest() -> dict[str, Any]:
@@ -376,15 +384,28 @@ def build_hermes_turn_text(input_body: dict[str, Any]) -> str:
                     )
                 tool_hints = selected_hermes_provider_tool_hints(names)
                 if tool_hints:
-                    lines = [
-                        "Selected Burble provider tools:",
-                        "Use Hermes tool burble_provider_call with toolName set to one of these names and input set to that tool's arguments.",
-                        "Do not write `burble_provider_call`, `:gear: burble_provider_call...`, or any other tool-progress marker as chat text. Invoke the native Hermes tool, wait for its JSON result, then write a final Slack-ready answer from that result.",
-                        "If a provider tool returns an error object, explain the error in normal Slack text instead of stopping on a tool-progress marker.",
-                        "Do not call provider tools that are not listed here for this turn. If the needed provider is not listed, say it is unavailable in this turn instead of discovering or calling unrelated provider tools.",
-                        "For setup-time provider calls in the current user turn, do not include jobId.",
-                        "For native scheduled/background jobs that will use Burble provider tools, first create the native job without an immediate/manual run, then call the dedicated scheduled provider registration tool scheduled_job_register_capability with the exact returned jobId and requiredTools, then include the returned scheduledPromptInstruction verbatim in the scheduled job prompt before enabling or triggering it.",
-                    ]
+                    lines = ["Selected Burble provider tools:"]
+                    if hermes_mcp_catalog_enabled():
+                        lines.extend(
+                            [
+                                "Use direct Burble MCP provider tools with the listed underscored tool names when they are available in this Hermes session.",
+                                "Do not wrap a direct MCP provider call in burble_provider_call. Use burble_provider_call only if Hermes does not expose the listed direct tool.",
+                                "In that fallback, set toolName to the dotted alias in parentheses and input to that tool's arguments.",
+                            ]
+                        )
+                    else:
+                        lines.append(
+                            "Use Hermes tool burble_provider_call with toolName set to one of these names and input set to that tool's arguments."
+                        )
+                    lines.extend(
+                        [
+                            "Do not write `burble_provider_call`, `:gear: burble_provider_call...`, or any other tool-progress marker as chat text. Invoke the provider tool, wait for its JSON result, then write a final Slack-ready answer from that result.",
+                            "If a provider tool returns an error object, explain the error in normal Slack text instead of stopping on a tool-progress marker.",
+                            "Do not call provider tools that are not listed here for this turn. If the needed provider is not listed, say it is unavailable in this turn instead of discovering or calling unrelated provider tools.",
+                            "For setup-time provider calls in the current user turn, do not include jobId.",
+                            "For native scheduled/background jobs that will use Burble provider tools, first create the native job without an immediate/manual run, then call the dedicated scheduled provider registration tool scheduled_job_register_capability with the exact returned jobId and requiredTools, then include the returned scheduledPromptInstruction verbatim in the scheduled job prompt before enabling or triggering it.",
+                        ]
+                    )
                     for hint in tool_hints:
                         lines.append(format_hermes_provider_tool_hint(hint))
                     sections.append("\n".join(lines))
@@ -993,9 +1014,21 @@ class BurbleHermesRuntime:
                     timeout=int_env("HERMES_RUN_TIMEOUT_SECONDS", 180),
                 )
             except asyncio.TimeoutError:
+                print(
+                    f"[ERROR] {timestamp()} Nemo Hermes run snapshot timeout runId={run_id}",
+                    file=sys.stderr,
+                    flush=True,
+                )
                 await waiter.fail("Hermes did not produce a response before the run timeout.")
                 return web.Response(text="Run timed out", status=504)
         if not waiter.final_response:
+            print(
+                f"[ERROR] {timestamp()} Nemo Hermes run snapshot missing final response "
+                f"runId={run_id} completed={waiter.completed} "
+                f"events={len(waiter.events)} futureDone={waiter.future.done()}",
+                file=sys.stderr,
+                flush=True,
+            )
             return web.Response(text="Run did not produce a final response", status=500)
         return web.json_response(
             {"response": waiter.final_response},
@@ -1040,11 +1073,13 @@ class BurbleHermesRuntime:
             return web.json_response({"error": "run not found"}, status=404)
         body = await request.json()
         text = str(body.get("text") or "")
+        event_type = str(body.get("type") or "")
         print(
-            f"[INFO] {timestamp()} Nemo Hermes run callback runId={run_id} textChars={len(text)}",
+            f"[INFO] {timestamp()} Nemo Hermes run callback runId={run_id} "
+            f"eventType={event_type or 'final'} textChars={len(text)} "
+            f"bodyKeys={','.join(sorted(str(key) for key in body.keys()))}",
             flush=True,
         )
-        event_type = str(body.get("type") or "")
         if is_hermes_provider_progress_text(text):
             print(
                 f"[WARN] {timestamp()} Nemo Hermes suppressed provider progress callback runId={run_id}",
@@ -1504,9 +1539,7 @@ class BurbleHermesRuntime:
             ]
         )
         if (
-            bool_env("BURBLE_HERMES_ENABLE_MCP_CATALOG", True)
-            and env("BURBLE_MCP_GATEWAY_URL")
-            and env("BURBLE_RUNTIME_JWT")
+            hermes_mcp_catalog_enabled()
         ):
             lines.extend(
                 [

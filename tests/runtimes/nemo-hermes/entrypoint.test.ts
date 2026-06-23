@@ -379,6 +379,9 @@ print(json.dumps({
 
   test("builds bounded Burble context for Hermes turns", () => {
     const result = runHermesEntrypointProbe(`${importEntrypoint}
+import os
+os.environ["BURBLE_MCP_GATEWAY_URL"] = "http://agentgateway:3000/mcp"
+os.environ["BURBLE_RUNTIME_JWT"] = "jwt"
 payload = {
     "text": "what changed?",
     "toolGroups": {
@@ -411,6 +414,8 @@ print(json.dumps({"text": mod.build_hermes_turn_text(payload)}))
     expect(text).toContain("what changed?");
     expect(text).toContain("Selected Burble tool groups: conversation, github");
     expect(text).toContain("Selected Burble provider tools");
+    expect(text).toContain("Use direct Burble MCP provider tools");
+    expect(text).toContain("Do not wrap a direct MCP provider call");
     expect(text).toContain("Do not write `burble_provider_call`");
     expect(text).toContain("then write a final Slack-ready answer");
     expect(text).toContain("Do not call provider tools that are not listed here");
@@ -426,6 +431,25 @@ print(json.dumps({"text": mod.build_hermes_turn_text(payload)}))
     expect(text).not.toContain("old message should not be included");
     expect(text).toContain("recent message 20");
     expect(text).not.toContain("x".repeat(350));
+  });
+
+  test("falls back to native provider bridge instructions when Hermes MCP is disabled", () => {
+    const result = runHermesEntrypointProbe(`${importEntrypoint}
+import os
+os.environ["BURBLE_HERMES_ENABLE_MCP_CATALOG"] = "false"
+payload = {
+    "text": "what changed?",
+    "toolGroups": {
+        "groups": ["conversation", "github"],
+        "reasons": ["default:conversation", "keyword:github:github"],
+    },
+}
+print(json.dumps({"text": mod.build_hermes_turn_text(payload)}))
+`);
+
+    const text = (result as { text: string }).text;
+    expect(text).toContain("Use Hermes tool burble_provider_call");
+    expect(text).not.toContain("Use direct Burble MCP provider tools");
   });
 
   test("builds current attachment guidance for Hermes turns", () => {
