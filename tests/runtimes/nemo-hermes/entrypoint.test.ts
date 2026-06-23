@@ -1749,6 +1749,120 @@ asyncio.run(main())
     });
   });
 
+  test("executes structured Hermes provider tool calls immediately", () => {
+    const result = runHermesEntrypointProbe(`${importEntrypoint}
+import asyncio
+import os
+
+mod.web.json_response = lambda body, **kwargs: body
+os.environ["HERMES_PROVIDER_TOOL_CALL_RECOVERY_SECONDS"] = "60"
+
+provider_calls = []
+original_call_provider = mod.call_burble_provider_tool
+
+async def fake_call_provider(tool_name, tool_input):
+    provider_calls.append({"toolName": tool_name, "input": tool_input})
+    return [
+        {
+            "name": "apelogic-ai-open-prs-last-24h-seen.txt",
+            "modifiedTime": "2026-06-21T19:02:13Z",
+        }
+    ]
+
+class FakeRequest:
+    def __init__(self, run_id, body):
+        self.match_info = {"run_id": run_id}
+        self._body = body
+
+    async def json(self):
+        return self._body
+
+async def main():
+    mod.call_burble_provider_tool = fake_call_provider
+    try:
+        runtime = mod.BurbleHermesRuntime()
+        waiter = mod.RunWaiter()
+        queue = asyncio.Queue()
+        waiter.queues.append(queue)
+        runtime.runs["run-immediate-provider-call"] = waiter
+        runtime.run_messages["run-immediate-provider-call"] = {
+            "originalText": "list my last edited google drive file",
+            "runtime": {"id": "rt_123"},
+        }
+
+        response = await runtime.handle_run_message(
+            FakeRequest(
+                "run-immediate-provider-call",
+                {
+                    "type": "tool_call",
+                    "toolName": "google_search_drive_files",
+                    "input": {"limit": 1},
+                },
+            )
+        )
+
+        final = await asyncio.wait_for(waiter.future, timeout=1)
+        await asyncio.sleep(0)
+
+        events = []
+        while not queue.empty():
+            events.append(await queue.get())
+
+        print(json.dumps({
+            "response": response,
+            "final": final,
+            "providerCalls": provider_calls,
+            "pendingAfterFinal": len(runtime.provider_tool_call_recovery_tasks),
+            "events": events,
+        }))
+    finally:
+        mod.call_burble_provider_tool = original_call_provider
+
+asyncio.run(main())
+`);
+
+    expect(result).toEqual({
+      response: { ok: true },
+      final: {
+        classification: "user_private",
+        text:
+          "Last edited Google Drive file: apelogic-ai-open-prs-last-24h-seen.txt\nmodified: 2026-06-21T19:02:13Z"
+      },
+      providerCalls: [
+        {
+          toolName: "google_search_drive_files",
+          input: { limit: 1 }
+        }
+      ],
+      pendingAfterFinal: 0,
+      events: [
+        {
+          type: "tool_call",
+          toolName: "google_search_drive_files",
+          callId: "hermes-tool-call-google_search_drive_files-1",
+          input: { limit: 1 }
+        },
+        {
+          type: "tool_result",
+          toolName: "google_search_drive_files",
+          callId: "hermes-tool-call-google_search_drive_files-1",
+          classification: "user_private",
+          content: [
+            {
+              name: "apelogic-ai-open-prs-last-24h-seen.txt",
+              modifiedTime: "2026-06-21T19:02:13Z"
+            }
+          ]
+        },
+        {
+          type: "message_delta",
+          text:
+            "Last edited Google Drive file: apelogic-ai-open-prs-last-24h-seen.txt\nmodified: 2026-06-21T19:02:13Z"
+        }
+      ]
+    });
+  });
+
   test("cancels Hermes provider recovery when tool result call id differs", () => {
     const result = runHermesEntrypointProbe(`${importEntrypoint}
 import asyncio
