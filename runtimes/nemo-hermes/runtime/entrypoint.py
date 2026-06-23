@@ -551,7 +551,7 @@ def hermes_tool_event_call_id(body: dict[str, Any], tool_name: str) -> str:
             value = source.get(key)
             if isinstance(value, str) and value.strip():
                 return value.strip()
-    return f"hermes-tool-call-{tool_name or 'unknown'}"
+    return ""
 
 
 def hermes_tool_event_input(body: dict[str, Any]) -> dict[str, Any] | None:
@@ -1299,6 +1299,8 @@ class BurbleHermesRuntime:
         self.provider_preview_recovery_tasks: dict[str, asyncio.Task[None]] = {}
         self.provider_tool_call_recovery_tasks: dict[str, asyncio.Task[None]] = {}
         self.provider_tool_call_recovery_tools: dict[str, str] = {}
+        self.hermes_tool_call_ordinals: dict[str, int] = {}
+        self.hermes_pending_tool_call_ids: dict[str, list[str]] = {}
         self.gateway_process: subprocess.Popen[str] | None = None
 
     async def start(self) -> None:
@@ -1514,9 +1516,12 @@ class BurbleHermesRuntime:
             tool_name = canonical_hermes_provider_tool_name(hermes_tool_event_name(body))
             if not tool_name:
                 return web.Response(text="Hermes runtime tool_call requires toolName", status=400)
-            call_id = hermes_tool_event_call_id(body, tool_name)
             tool_input = hermes_tool_event_input(body)
             tool_name, tool_input = unwrap_hermes_provider_tool_call(tool_name, tool_input)
+            call_id = hermes_tool_event_call_id(body, tool_name)
+            if not call_id:
+                call_id = self._next_hermes_tool_call_id(run_id, tool_name)
+            self._remember_hermes_tool_call_id(run_id, tool_name, call_id)
             event: dict[str, Any] = {
                 "type": "tool_call",
                 "toolName": tool_name,
@@ -1565,9 +1570,14 @@ class BurbleHermesRuntime:
             tool_name = canonical_hermes_provider_tool_name(hermes_tool_event_name(body))
             if not tool_name:
                 return web.Response(text="Hermes runtime tool_result requires toolName", status=400)
-            call_id = hermes_tool_event_call_id(body, tool_name)
+            tool_input = hermes_tool_event_input(body)
+            tool_name, _tool_input = unwrap_hermes_provider_tool_call(tool_name, tool_input)
+            call_id = self._claim_hermes_tool_call_id(
+                run_id,
+                tool_name,
+                hermes_tool_event_call_id(body, tool_name),
+            )
             self._cancel_provider_tool_call_recovery(run_id, call_id)
-            self._cancel_provider_tool_call_recovery_for_tool(run_id, tool_name)
             event = {
                 "type": "tool_result",
                 "toolName": tool_name,
@@ -1889,7 +1899,58 @@ class BurbleHermesRuntime:
                 with contextlib.suppress(asyncio.CancelledError):
                     await provider_preview_task
             self._cancel_provider_tool_call_recoveries_for_run(run_id)
+            self._clear_hermes_tool_call_tracking_for_run(run_id)
             self.run_messages.pop(run_id, None)
+
+    def _hermes_tool_tracking_key(self, run_id: str, tool_name: str) -> str:
+        return f"{run_id}:{canonical_hermes_provider_tool_name(tool_name)}"
+
+    def _next_hermes_tool_call_id(self, run_id: str, tool_name: str) -> str:
+        canonical_tool_name = canonical_hermes_provider_tool_name(tool_name) or "unknown"
+        key = self._hermes_tool_tracking_key(run_id, canonical_tool_name)
+        ordinal = self.hermes_tool_call_ordinals.get(key, 0) + 1
+        self.hermes_tool_call_ordinals[key] = ordinal
+        return f"hermes-tool-call-{canonical_tool_name}-{ordinal}"
+
+    def _remember_hermes_tool_call_id(
+        self,
+        run_id: str,
+        tool_name: str,
+        call_id: str,
+    ) -> None:
+        key = self._hermes_tool_tracking_key(run_id, tool_name)
+        pending = self.hermes_pending_tool_call_ids.setdefault(key, [])
+        if call_id not in pending:
+            pending.append(call_id)
+
+    def _claim_hermes_tool_call_id(
+        self,
+        run_id: str,
+        tool_name: str,
+        call_id: str,
+    ) -> str:
+        key = self._hermes_tool_tracking_key(run_id, tool_name)
+        pending = self.hermes_pending_tool_call_ids.get(key)
+        if not pending:
+            return call_id or self._next_hermes_tool_call_id(run_id, tool_name)
+        if call_id and call_id in pending:
+            pending.remove(call_id)
+            if not pending:
+                self.hermes_pending_tool_call_ids.pop(key, None)
+            return call_id
+        claimed_call_id = pending.pop(0)
+        if not pending:
+            self.hermes_pending_tool_call_ids.pop(key, None)
+        return claimed_call_id
+
+    def _clear_hermes_tool_call_tracking_for_run(self, run_id: str) -> None:
+        prefix = f"{run_id}:"
+        for key in list(self.hermes_tool_call_ordinals):
+            if key.startswith(prefix):
+                self.hermes_tool_call_ordinals.pop(key, None)
+        for key in list(self.hermes_pending_tool_call_ids):
+            if key.startswith(prefix):
+                self.hermes_pending_tool_call_ids.pop(key, None)
 
     def _provider_tool_call_recovery_key(self, run_id: str, call_id: str) -> str:
         return f"{run_id}:{call_id}"
@@ -1900,23 +1961,6 @@ class BurbleHermesRuntime:
         task = self.provider_tool_call_recovery_tasks.pop(key, None)
         if task and not task.done():
             task.cancel()
-
-    def _cancel_provider_tool_call_recovery_for_tool(
-        self,
-        run_id: str,
-        tool_name: str,
-    ) -> None:
-        prefix = f"{run_id}:"
-        canonical_tool_name = canonical_hermes_provider_tool_name(tool_name)
-        for key, pending_tool_name in list(self.provider_tool_call_recovery_tools.items()):
-            if not key.startswith(prefix):
-                continue
-            if canonical_hermes_provider_tool_name(pending_tool_name) != canonical_tool_name:
-                continue
-            self.provider_tool_call_recovery_tools.pop(key, None)
-            task = self.provider_tool_call_recovery_tasks.pop(key, None)
-            if task and not task.done():
-                task.cancel()
 
     def _cancel_provider_tool_call_recoveries_for_run(self, run_id: str) -> None:
         prefix = f"{run_id}:"
@@ -2193,6 +2237,11 @@ class BurbleHermesRuntime:
                     waiter.future.set_result(response)
                 await waiter.emit({"type": "message_delta", "text": response["text"]})
                 return response
+            if not waiter.future.done():
+                await waiter.fail(
+                    "Hermes invoked a provider tool but did not return usable provider result content "
+                    "before finalizing on a provider progress marker."
+                )
             return None
 
         print(

@@ -1826,16 +1826,130 @@ asyncio.run(main())
         {
           type: "tool_call",
           toolName: "hubspot_search_crm_objects",
-          callId: "hermes-tool-call-hubspot_search_crm_objects"
+          callId: "hermes-tool-call-hubspot_search_crm_objects-1"
         },
         {
           type: "tool_result",
           toolName: "hubspot_search_crm_objects",
-          callId: "different-result-id",
+          callId: "hermes-tool-call-hubspot_search_crm_objects-1",
           classification: "user_private",
           content: [
             { properties: { name: "ROKA STUDIO", domain: "renski.com" } }
           ]
+        }
+      ]
+    });
+  });
+
+  test("keeps repeated Hermes provider calls to the same tool distinct", () => {
+    const result = runHermesEntrypointProbe(`${importEntrypoint}
+import asyncio
+import os
+
+mod.web.json_response = lambda body, **kwargs: body
+os.environ["HERMES_PROVIDER_TOOL_CALL_RECOVERY_SECONDS"] = "60"
+
+class FakeRequest:
+    def __init__(self, run_id, body):
+        self.match_info = {"run_id": run_id}
+        self._body = body
+
+    async def json(self):
+        return self._body
+
+async def main():
+    runtime = mod.BurbleHermesRuntime()
+    waiter = mod.RunWaiter()
+    queue = asyncio.Queue()
+    waiter.queues.append(queue)
+    runtime.runs["run-parallel-same-tool"] = waiter
+    runtime.run_messages["run-parallel-same-tool"] = {
+        "originalText": "list companies and contacts in HubSpot",
+        "runtime": {"id": "rt_123"},
+    }
+
+    for object_type in ("companies", "contacts"):
+        await runtime.handle_run_message(
+            FakeRequest(
+                "run-parallel-same-tool",
+                {
+                    "type": "tool_call",
+                    "toolName": "hubspot_search_crm_objects",
+                    "input": {"objectType": object_type, "limit": 1},
+                },
+            )
+        )
+
+    pending_after_calls = len(runtime.provider_tool_call_recovery_tasks)
+
+    await runtime.handle_run_message(
+        FakeRequest(
+            "run-parallel-same-tool",
+            {
+                "type": "tool_result",
+                "toolName": "hubspot_search_crm_objects",
+                "content": [{"properties": {"name": "ROKA STUDIO"}}],
+            },
+        )
+    )
+    pending_after_first_result = len(runtime.provider_tool_call_recovery_tasks)
+
+    await runtime.handle_run_message(
+        FakeRequest(
+            "run-parallel-same-tool",
+            {
+                "type": "tool_result",
+                "toolName": "hubspot_search_crm_objects",
+                "content": [{"properties": {"firstname": "Leo", "lastname": "Belyaev"}}],
+            },
+        )
+    )
+    await asyncio.sleep(0)
+
+    events = []
+    while not queue.empty():
+        events.append(await queue.get())
+
+    print(json.dumps({
+        "pendingAfterCalls": pending_after_calls,
+        "pendingAfterFirstResult": pending_after_first_result,
+        "pendingAfterSecondResult": len(runtime.provider_tool_call_recovery_tasks),
+        "events": events,
+    }))
+
+asyncio.run(main())
+`);
+
+    expect(result).toEqual({
+      pendingAfterCalls: 2,
+      pendingAfterFirstResult: 1,
+      pendingAfterSecondResult: 0,
+      events: [
+        {
+          type: "tool_call",
+          toolName: "hubspot_search_crm_objects",
+          callId: "hermes-tool-call-hubspot_search_crm_objects-1",
+          input: { objectType: "companies", limit: 1 }
+        },
+        {
+          type: "tool_call",
+          toolName: "hubspot_search_crm_objects",
+          callId: "hermes-tool-call-hubspot_search_crm_objects-2",
+          input: { objectType: "contacts", limit: 1 }
+        },
+        {
+          type: "tool_result",
+          toolName: "hubspot_search_crm_objects",
+          callId: "hermes-tool-call-hubspot_search_crm_objects-1",
+          classification: "user_private",
+          content: [{ properties: { name: "ROKA STUDIO" } }]
+        },
+        {
+          type: "tool_result",
+          toolName: "hubspot_search_crm_objects",
+          callId: "hermes-tool-call-hubspot_search_crm_objects-2",
+          classification: "user_private",
+          content: [{ properties: { firstname: "Leo", lastname: "Belyaev" } }]
         }
       ]
     });
