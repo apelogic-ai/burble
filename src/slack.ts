@@ -5895,7 +5895,9 @@ function isRuntimeFinalizationFailure(message: string): boolean {
 }
 
 function isRuntimeRunFailure(message: string): boolean {
-  return /Managed runtime returned HTTP \d+|Runtime run failed:/i.test(message);
+  return /Managed runtime returned HTTP \d+|Runtime run failed:|Hermes returned a provider tool progress marker/i.test(
+    message
+  );
 }
 
 function sanitizeRuntimeFailureDetail(message: string): string {

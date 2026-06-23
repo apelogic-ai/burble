@@ -1503,6 +1503,19 @@ describe("formatConversationFailureMessage", () => {
     ).toContain("Runtime detail: Managed runtime returned HTTP 500");
   });
 
+  test("surfaces Hermes provider marker runtime failures with safe detail", () => {
+    expect(
+      formatConversationFailureMessage(
+        new Error(
+          "Hermes returned a provider tool progress marker (hubspot_search_crm_objects) instead of invoking the Burble provider bridge."
+        ),
+        "message"
+      )
+    ).toContain(
+      "Runtime detail: Hermes returned a provider tool progress marker (hubspot_search_crm_objects)"
+    );
+  });
+
   test("surfaces managed runtime finalization failures", () => {
     expect(
       formatConversationFailureMessage(
