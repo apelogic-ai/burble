@@ -2237,7 +2237,7 @@ class BurbleHermesRuntime:
                     "callId": call_id,
                     "input": effective_input,
                 })
-            recovery_timeout = max(1, int_env("HERMES_PROVIDER_RECOVERY_TIMEOUT_SECONDS", 20))
+            recovery_timeout = max(1, int_env("HERMES_PROVIDER_RECOVERY_TIMEOUT_SECONDS", 120))
             try:
                 content = await asyncio.wait_for(
                     call_burble_provider_tool(tool_name, effective_input),

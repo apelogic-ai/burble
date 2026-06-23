@@ -1660,6 +1660,92 @@ asyncio.run(main())
     });
   });
 
+  test("uses the provider bridge timeout budget by default", () => {
+    const result = runHermesEntrypointProbe(`${importEntrypoint}
+import asyncio
+import inspect
+import os
+
+os.environ.pop("HERMES_PROVIDER_RECOVERY_TIMEOUT_SECONDS", None)
+
+observed_timeouts = []
+original_wait_for = mod.asyncio.wait_for
+
+async def fake_wait_for(coro, *, timeout):
+    observed_timeouts.append(timeout)
+    if inspect.iscoroutine(coro):
+        coro.close()
+    raise asyncio.TimeoutError()
+
+async def main():
+    mod.asyncio.wait_for = fake_wait_for
+    try:
+        runtime = mod.BurbleHermesRuntime()
+        waiter = mod.RunWaiter()
+        queue = asyncio.Queue()
+        waiter.queues.append(queue)
+        runtime.runs["run-provider-default-timeout"] = waiter
+        runtime.run_messages["run-provider-default-timeout"] = {
+            "originalText": "list my last edited google drive file",
+            "runtime": {"id": "rt_123"},
+        }
+
+        recovered = await runtime._recover_provider_tool(
+            "run-provider-default-timeout",
+            waiter,
+            "google_search_drive_files",
+            "call_default_timeout",
+            {"limit": 1},
+            emit_tool_call=True,
+        )
+
+        events = []
+        while not queue.empty():
+            event = await queue.get()
+            if event is not None:
+                events.append(event)
+
+        print(json.dumps({
+            "recovered": recovered,
+            "observedTimeouts": observed_timeouts,
+            "events": events,
+        }))
+    finally:
+        mod.asyncio.wait_for = original_wait_for
+
+asyncio.run(main())
+`);
+
+    expect(result).toEqual({
+      recovered: true,
+      observedTimeouts: [120],
+      events: [
+        {
+          type: "tool_call",
+          toolName: "google_search_drive_files",
+          callId: "call_default_timeout",
+          input: { limit: 1 }
+        },
+        {
+          type: "tool_result",
+          toolName: "google_search_drive_files",
+          callId: "call_default_timeout",
+          classification: "user_private",
+          content: {
+            error: true,
+            message:
+              "Burble provider tool google.searchDriveFiles timed out after 120s during Hermes recovery."
+          }
+        },
+        {
+          type: "message_delta",
+          text:
+            "Provider tool failed: Burble provider tool google.searchDriveFiles timed out after 120s during Hermes recovery."
+        }
+      ]
+    });
+  });
+
   test("recovers provider markers returned as Hermes final results", () => {
     const result = runHermesEntrypointProbe(`${importEntrypoint}
 import asyncio
