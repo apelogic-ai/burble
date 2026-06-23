@@ -54,7 +54,7 @@ services:
       - AGENT_RUNTIME_TOOL_GATEWAY_URL=${AGENT_RUNTIME_TOOL_GATEWAY_URL:-http://burble-app:3000/internal/tools}
       - AGENT_RUNTIME_MCP_GATEWAY_URL=${AGENT_RUNTIME_MCP_GATEWAY_URL:-}
       - AGENT_RUNTIME_MCP_AUDIENCE=${AGENT_RUNTIME_MCP_AUDIENCE:-}
-      - LLM_GW_BASE_URL=${LLM_GW_BASE_URL:-http://llm-gw:4000/v1}
+      - LLM_GW_BASE_URL=${LLM_GW_BASE_URL:-http://host.openshell.internal:4000/v1}
       - AGENT_RUNTIME_SANDBOX_URL=${AGENT_RUNTIME_SANDBOX_URL:-}
       - AGENT_RUNTIME_SANDBOX_TOKEN=${AGENT_RUNTIME_SANDBOX_TOKEN:-}
       - AGENT_RUNTIME_SANDBOX_TRANSPORT=${AGENT_RUNTIME_SANDBOX_TRANSPORT:-cli}
@@ -107,6 +107,8 @@ services:
     restart: unless-stopped
     expose:
       - "4000"
+    ports:
+      - "127.0.0.1:4000:4000"
     command:
       - --config
       - /app/config.yaml

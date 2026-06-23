@@ -126,12 +126,17 @@ describe("dev deploy config", () => {
     expect(compose).toContain("llm-gw:");
     expect(compose).toContain("ghcr.io/berriai/litellm:main-latest");
     expect(compose).toContain(
-      "LLM_GW_BASE_URL=${LLM_GW_BASE_URL:-http://llm-gw:4000/v1}"
+      "LLM_GW_BASE_URL=${LLM_GW_BASE_URL:-http://host.openshell.internal:4000/v1}"
     );
+    expect(compose).toContain('"127.0.0.1:4000:4000"');
     expect(compose).toContain("./litellm/config.yaml:/app/config.yaml:ro");
     expect(compose).not.toContain("LITELLM_BASE_URL");
-    expect(rootEnvExample).toContain("LLM_GW_BASE_URL=http://llm-gw:4000/v1");
-    expect(composeEnvExample).toContain("LLM_GW_BASE_URL=http://llm-gw:4000/v1");
+    expect(rootEnvExample).toContain(
+      "LLM_GW_BASE_URL=http://host.openshell.internal:4000/v1"
+    );
+    expect(composeEnvExample).toContain(
+      "LLM_GW_BASE_URL=http://host.openshell.internal:4000/v1"
+    );
   });
 
   test("configures the LLM gateway with provider-owned credentials", () => {
