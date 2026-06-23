@@ -324,6 +324,9 @@ fi
 if [[ "${use_openshell}" == "true" ]]; then
   export AGENT_RUNTIME_FACTORY=sandbox
   export AGENT_RUNTIME_SANDBOX_TRANSPORT=cli
+  if [[ -z "${AGENT_RUNTIME_TOOL_GATEWAY_URL:-}" ]]; then
+    export AGENT_RUNTIME_TOOL_GATEWAY_URL=http://host.openshell.internal:3000/internal/tools
+  fi
   ensure_openshell_jwt_keys
   ensure_openshell_cli_binary
   app_compose_files+=(

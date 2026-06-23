@@ -1841,6 +1841,96 @@ asyncio.run(main())
     });
   });
 
+  test("pairs wrapped bridge tool results that omit inner tool input", () => {
+    const result = runHermesEntrypointProbe(`${importEntrypoint}
+import asyncio
+import os
+
+mod.web.json_response = lambda body, **kwargs: body
+os.environ["HERMES_PROVIDER_TOOL_CALL_RECOVERY_SECONDS"] = "60"
+
+class FakeRequest:
+    def __init__(self, run_id, body):
+        self.match_info = {"run_id": run_id}
+        self._body = body
+
+    async def json(self):
+        return self._body
+
+async def main():
+    runtime = mod.BurbleHermesRuntime()
+    waiter = mod.RunWaiter()
+    queue = asyncio.Queue()
+    waiter.queues.append(queue)
+    runtime.runs["run-wrapped-result"] = waiter
+    runtime.run_messages["run-wrapped-result"] = {
+        "originalText": "list my last companies in HubSpot",
+        "runtime": {"id": "rt_123"},
+    }
+
+    await runtime.handle_run_message(
+        FakeRequest(
+            "run-wrapped-result",
+            {
+                "type": "tool_call",
+                "toolName": "burble_provider_call",
+                "input": {
+                    "toolName": "hubspot_search_crm_objects",
+                    "input": {"objectType": "companies", "limit": 1},
+                },
+            },
+        )
+    )
+    pending_after_call = len(runtime.provider_tool_call_recovery_tasks)
+
+    await runtime.handle_run_message(
+        FakeRequest(
+            "run-wrapped-result",
+            {
+                "type": "tool_result",
+                "toolName": "burble_provider_call",
+                "content": [{"properties": {"name": "ROKA STUDIO", "domain": "renski.com"}}],
+            },
+        )
+    )
+    await asyncio.sleep(0)
+
+    events = []
+    while not queue.empty():
+        events.append(await queue.get())
+
+    print(json.dumps({
+        "pendingAfterCall": pending_after_call,
+        "pendingAfterResult": len(runtime.provider_tool_call_recovery_tasks),
+        "events": events,
+    }))
+
+asyncio.run(main())
+`);
+
+    expect(result).toEqual({
+      pendingAfterCall: 1,
+      pendingAfterResult: 0,
+      events: [
+        {
+          type: "tool_call",
+          toolName: "hubspot_search_crm_objects",
+          callId: "hermes-tool-call-hubspot_search_crm_objects-1",
+          input: { objectType: "companies", limit: 1 }
+        },
+        {
+          type: "tool_result",
+          toolName: "hubspot_search_crm_objects",
+          callId: "hermes-tool-call-hubspot_search_crm_objects-1",
+          classification: "user_private",
+          content: [
+            { properties: { name: "ROKA STUDIO", domain: "renski.com" } }
+          ]
+        }
+      ]
+    });
+  });
+
   test("keeps repeated Hermes provider calls to the same tool distinct", () => {
     const result = runHermesEntrypointProbe(`${importEntrypoint}
 import asyncio

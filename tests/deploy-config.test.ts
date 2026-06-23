@@ -587,6 +587,9 @@ describe("dev deploy config", () => {
     expect(personalRuntimeDeployScript).toContain(
       "export AGENT_RUNTIME_FACTORY=sandbox"
     );
+    expect(personalRuntimeDeployScript).toContain(
+      "export AGENT_RUNTIME_TOOL_GATEWAY_URL=http://host.openshell.internal:3000/internal/tools"
+    );
     expect(personalRuntimeDeployScript).toContain("ensure_openshell_jwt_keys()");
     expect(personalRuntimeDeployScript).toContain("openssl genpkey -algorithm Ed25519");
     expect(personalRuntimeDeployScript).toContain("docker-compose.agentgateway.yml");

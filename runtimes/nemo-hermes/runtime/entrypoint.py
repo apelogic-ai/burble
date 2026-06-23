@@ -1521,6 +1521,15 @@ class BurbleHermesRuntime:
             call_id = hermes_tool_event_call_id(body, tool_name)
             if not call_id:
                 call_id = self._next_hermes_tool_call_id(run_id, tool_name)
+            elif self._has_pending_hermes_tool_call_id(run_id, tool_name, call_id):
+                replacement_call_id = self._next_hermes_tool_call_id(run_id, tool_name)
+                print(
+                    f"[WARN] {timestamp()} Nemo Hermes duplicate provider tool call id; "
+                    f"rekeying runId={run_id} tool={tool_name} "
+                    f"originalCallId={call_id} replacementCallId={replacement_call_id}",
+                    flush=True,
+                )
+                call_id = replacement_call_id
             self._remember_hermes_tool_call_id(run_id, tool_name, call_id)
             event: dict[str, Any] = {
                 "type": "tool_call",
@@ -1572,10 +1581,24 @@ class BurbleHermesRuntime:
                 return web.Response(text="Hermes runtime tool_result requires toolName", status=400)
             tool_input = hermes_tool_event_input(body)
             tool_name, _tool_input = unwrap_hermes_provider_tool_call(tool_name, tool_input)
+            explicit_call_id = hermes_tool_event_call_id(body, tool_name)
+            resolved_tool_name = self._resolve_hermes_tool_result_tool_name(
+                run_id,
+                tool_name,
+                explicit_call_id,
+            )
+            if resolved_tool_name != tool_name:
+                print(
+                    f"[WARN] {timestamp()} Nemo Hermes provider tool result rekeyed "
+                    f"runId={run_id} tool={tool_name} resolvedTool={resolved_tool_name} "
+                    f"callId={explicit_call_id or '-'}",
+                    flush=True,
+                )
+                tool_name = resolved_tool_name
             call_id = self._claim_hermes_tool_call_id(
                 run_id,
                 tool_name,
-                hermes_tool_event_call_id(body, tool_name),
+                explicit_call_id,
             )
             self._cancel_provider_tool_call_recovery(run_id, call_id)
             event = {
@@ -1920,8 +1943,60 @@ class BurbleHermesRuntime:
     ) -> None:
         key = self._hermes_tool_tracking_key(run_id, tool_name)
         pending = self.hermes_pending_tool_call_ids.setdefault(key, [])
-        if call_id not in pending:
-            pending.append(call_id)
+        pending.append(call_id)
+
+    def _has_pending_hermes_tool_call_id(
+        self,
+        run_id: str,
+        tool_name: str,
+        call_id: str,
+    ) -> bool:
+        key = self._hermes_tool_tracking_key(run_id, tool_name)
+        return call_id in self.hermes_pending_tool_call_ids.get(key, [])
+
+    def _pending_hermes_tool_name_for_call_id(
+        self,
+        run_id: str,
+        call_id: str,
+    ) -> str | None:
+        prefix = f"{run_id}:"
+        for key, pending in self.hermes_pending_tool_call_ids.items():
+            if not key.startswith(prefix) or call_id not in pending:
+                continue
+            return key[len(prefix):]
+        return None
+
+    def _pending_hermes_provider_tool_names_for_run(self, run_id: str) -> list[str]:
+        prefix = f"{run_id}:"
+        names: list[str] = []
+        for key, pending in self.hermes_pending_tool_call_ids.items():
+            if not key.startswith(prefix) or not pending:
+                continue
+            tool_name = key[len(prefix):]
+            if provider_tool_hint_by_name(tool_name):
+                names.append(tool_name)
+        return sorted(set(names))
+
+    def _resolve_hermes_tool_result_tool_name(
+        self,
+        run_id: str,
+        tool_name: str,
+        call_id: str,
+    ) -> str:
+        if call_id:
+            pending_tool_name = self._pending_hermes_tool_name_for_call_id(
+                run_id,
+                call_id,
+            )
+            if pending_tool_name:
+                return pending_tool_name
+
+        if tool_name in {"burble_provider_call", "burble.providerCall"}:
+            pending_tool_names = self._pending_hermes_provider_tool_names_for_run(run_id)
+            if len(pending_tool_names) == 1:
+                return pending_tool_names[0]
+
+        return tool_name
 
     def _claim_hermes_tool_call_id(
         self,
@@ -1932,12 +2007,27 @@ class BurbleHermesRuntime:
         key = self._hermes_tool_tracking_key(run_id, tool_name)
         pending = self.hermes_pending_tool_call_ids.get(key)
         if not pending:
-            return call_id or self._next_hermes_tool_call_id(run_id, tool_name)
+            if call_id:
+                return call_id
+            canonical_tool_name = canonical_hermes_provider_tool_name(tool_name) or "unknown"
+            orphan_call_id = f"hermes-orphan-tool-result-{canonical_tool_name}-{uuid.uuid4()}"
+            print(
+                f"[WARN] {timestamp()} Nemo Hermes orphan provider tool result "
+                f"runId={run_id} tool={tool_name} callId={orphan_call_id}",
+                flush=True,
+            )
+            return orphan_call_id
         if call_id and call_id in pending:
             pending.remove(call_id)
             if not pending:
                 self.hermes_pending_tool_call_ids.pop(key, None)
             return call_id
+        if not call_id and len(pending) > 1:
+            print(
+                f"[WARN] {timestamp()} Nemo Hermes provider tool result has no call id; "
+                f"using FIFO pairing runId={run_id} tool={tool_name} pending={len(pending)}",
+                flush=True,
+            )
         claimed_call_id = pending.pop(0)
         if not pending:
             self.hermes_pending_tool_call_ids.pop(key, None)
