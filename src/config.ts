@@ -418,7 +418,7 @@ export function readConfig(env: Env): Config {
     agentRuntimeSandboxTransport: optionalAgentRuntimeSandboxTransportEnv(
       env,
       "AGENT_RUNTIME_SANDBOX_TRANSPORT",
-      "grpc"
+      "cli"
     ),
     agentRuntimeOpenShellCliBin: optionalSecretEnv(
       env,

@@ -93,6 +93,7 @@ describe("dev deploy config", () => {
       "AGENT_RUNTIME_SANDBOX_TOKEN",
       "AGENT_RUNTIME_SANDBOX_TRANSPORT",
       "AGENT_RUNTIME_SANDBOX_START_COMMAND",
+      "AGENT_RUNTIME_OPENSHELL_CLI_BIN",
       "AGENT_RUNTIME_OPENSHELL_DIAL_HOST",
       "AGENT_RUNTIME_CONFIG_PATCH_HOST_PATH",
       "ATLASSIAN_MCP_URL",
@@ -496,7 +497,7 @@ describe("dev deploy config", () => {
     expect(openShellCompose).toContain("host.openshell.internal:host-gateway");
     expect(openShellCompose).toContain("burble-app:");
     expect(openShellCompose).toContain("AGENT_RUNTIME_FACTORY=sandbox");
-    expect(openShellCompose).toContain("AGENT_RUNTIME_SANDBOX_TRANSPORT=grpc");
+    expect(openShellCompose).toContain("AGENT_RUNTIME_SANDBOX_TRANSPORT=cli");
     expect(openShellCompose).toContain(
       "AGENT_RUNTIME_SANDBOX_URL=http://openshell:8080"
     );
@@ -504,7 +505,13 @@ describe("dev deploy config", () => {
       "AGENT_RUNTIME_SANDBOX_TOKEN=${AGENT_RUNTIME_SANDBOX_TOKEN:-}"
     );
     expect(openShellCompose).toContain(
+      "AGENT_RUNTIME_OPENSHELL_CLI_BIN=${AGENT_RUNTIME_OPENSHELL_CLI_BIN:-/opt/openshell-cli/openshell}"
+    );
+    expect(openShellCompose).toContain(
       "AGENT_RUNTIME_OPENSHELL_DIAL_HOST=${AGENT_RUNTIME_OPENSHELL_DIAL_HOST:-openshell}"
+    );
+    expect(openShellCompose).toContain(
+      "${OPENSHELL_CLI_BIN_HOST_PATH:-./.cache/openshell-linux}:/opt/openshell-cli/openshell:ro"
     );
     expect(openShellGatewayConfig).toContain('compute_drivers     = ["docker"]');
     expect(openShellGatewayConfig).toContain("disable_tls         = true");

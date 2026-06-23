@@ -90,8 +90,9 @@ AGENT_RUNTIME_MCP_GATEWAY_URL=
 AGENT_RUNTIME_MCP_AUDIENCE=
 AGENT_RUNTIME_SANDBOX_URL=
 AGENT_RUNTIME_SANDBOX_TOKEN=
-AGENT_RUNTIME_SANDBOX_TRANSPORT=grpc
+AGENT_RUNTIME_SANDBOX_TRANSPORT=cli
 AGENT_RUNTIME_SANDBOX_START_COMMAND=
+AGENT_RUNTIME_OPENSHELL_CLI_BIN=
 AGENT_RUNTIME_OPENSHELL_DIAL_HOST=
 OPENSHELL_IMAGE_TAG=latest
 OPENSHELL_BIND_HOST=0.0.0.0
@@ -246,7 +247,7 @@ AGENT_RUNTIME=burble-runtime
 AGENT_RUNTIME_FACTORY=sandbox
 AGENT_RUNTIME_SANDBOX_URL=http://<openshell-host>:<port>
 AGENT_RUNTIME_SANDBOX_TOKEN=<shared-provider-token-if-required>
-AGENT_RUNTIME_SANDBOX_TRANSPORT=grpc
+AGENT_RUNTIME_SANDBOX_TRANSPORT=cli
 ```
 
 `AGENT_RUNTIME_ENGINE` and `AGENT_RUNTIME_IMAGE` keep their normal dynamic
@@ -258,7 +259,9 @@ custom runtime image whose entrypoint differs.
 For a compose-managed OpenShell gateway, leave `AGENT_RUNTIME_SANDBOX_URL`
 empty. The override starts `ghcr.io/nvidia/openshell/gateway` with OpenShell's
 Docker compute driver, mounts the host Docker socket, and points Burble at
-`http://openshell:8080` inside the compose network:
+`http://openshell:8080` inside the compose network. The deploy script also
+downloads the matching Linux OpenShell CLI into `deploy/dev/compose/.cache` and
+mounts it into the app container for create-time workload launch:
 
 ```env
 AGENT_MODE=llm
@@ -266,7 +269,7 @@ AGENT_RUNTIME=burble-runtime
 AGENT_RUNTIME_FACTORY=sandbox
 AGENT_RUNTIME_SANDBOX_URL=
 AGENT_RUNTIME_SANDBOX_TOKEN=<long-random-secret>
-AGENT_RUNTIME_SANDBOX_TRANSPORT=grpc
+AGENT_RUNTIME_SANDBOX_TRANSPORT=cli
 OPENSHELL_IMAGE_TAG=latest
 OPENSHELL_BIND_HOST=0.0.0.0
 OPENSHELL_PORT=8080
@@ -421,7 +424,7 @@ AGENT_RUNTIME_FACTORY=sandbox
 AGENT_RUNTIME_TOKEN_SECRET=<long-random-secret>
 AGENT_RUNTIME_SANDBOX_URL=http://<openshell-host>:<port>
 AGENT_RUNTIME_SANDBOX_TOKEN=<openshell-token>
-AGENT_RUNTIME_SANDBOX_TRANSPORT=grpc
+AGENT_RUNTIME_SANDBOX_TRANSPORT=cli
 ```
 
 ```bash

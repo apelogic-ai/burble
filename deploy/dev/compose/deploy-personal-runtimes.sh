@@ -171,6 +171,82 @@ ensure_openshell_jwt_keys() {
   fi
 }
 
+normalize_openshell_arch() {
+  case "$1" in
+    aarch64|arm64)
+      echo "aarch64"
+      ;;
+    x86_64|amd64)
+      echo "x86_64"
+      ;;
+    *)
+      echo "Unsupported Docker architecture for OpenShell CLI: $1" >&2
+      exit 2
+      ;;
+  esac
+}
+
+ensure_openshell_cli_binary() {
+  local configured_cli_path
+  configured_cli_path="$(configured_value OPENSHELL_CLI_BIN_HOST_PATH)"
+  if [[ -n "${configured_cli_path}" ]]; then
+    if [[ ! -x "${configured_cli_path}" ]]; then
+      echo "Configured OPENSHELL_CLI_BIN_HOST_PATH is not executable: ${configured_cli_path}" >&2
+      exit 2
+    fi
+    export OPENSHELL_CLI_BIN_HOST_PATH="${configured_cli_path}"
+    export AGENT_RUNTIME_OPENSHELL_CLI_BIN="${AGENT_RUNTIME_OPENSHELL_CLI_BIN:-/opt/openshell-cli/openshell}"
+    return 0
+  fi
+
+  local cache_dir="${script_dir}/.cache"
+  local output="${cache_dir}/openshell-linux"
+  if [[ -x "${output}" ]]; then
+    export OPENSHELL_CLI_BIN_HOST_PATH="${output}"
+    export AGENT_RUNTIME_OPENSHELL_CLI_BIN="${AGENT_RUNTIME_OPENSHELL_CLI_BIN:-/opt/openshell-cli/openshell}"
+    return 0
+  fi
+
+  if ! command -v curl >/dev/null 2>&1; then
+    echo "OpenShell compose mode requires curl to download the OpenShell CLI." >&2
+    exit 2
+  fi
+  if ! command -v tar >/dev/null 2>&1; then
+    echo "OpenShell compose mode requires tar to extract the OpenShell CLI." >&2
+    exit 2
+  fi
+
+  local docker_arch
+  docker_arch="$(docker info --format '{{.Architecture}}')"
+  local openshell_arch
+  openshell_arch="$(normalize_openshell_arch "${docker_arch}")"
+  local version
+  version="$(configured_value OPENSHELL_VERSION 0.0.67)"
+  local tag="${version}"
+  if [[ "${tag}" != v* ]]; then
+    tag="v${tag}"
+  fi
+
+  mkdir -p "${cache_dir}"
+  local asset="openshell-${openshell_arch}-unknown-linux-musl.tar.gz"
+  local archive="${cache_dir}/${asset}"
+  local extract_dir="${cache_dir}/${asset%.tar.gz}-extract"
+  local url="https://github.com/NVIDIA/OpenShell/releases/download/${tag}/${asset}"
+
+  if [[ ! -f "${archive}" ]]; then
+    echo "Downloading OpenShell CLI ${tag} for ${openshell_arch}..."
+    curl -fsSL "${url}" -o "${archive}"
+  fi
+  rm -rf "${extract_dir}"
+  mkdir -p "${extract_dir}"
+  tar -xzf "${archive}" -C "${extract_dir}"
+  cp "${extract_dir}/openshell" "${output}"
+  chmod +x "${output}"
+
+  export OPENSHELL_CLI_BIN_HOST_PATH="${output}"
+  export AGENT_RUNTIME_OPENSHELL_CLI_BIN="${AGENT_RUNTIME_OPENSHELL_CLI_BIN:-/opt/openshell-cli/openshell}"
+}
+
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --no-pull)
@@ -220,7 +296,9 @@ fi
 
 if [[ "${use_openshell}" == "true" ]]; then
   export AGENT_RUNTIME_FACTORY=sandbox
+  export AGENT_RUNTIME_SANDBOX_TRANSPORT=cli
   ensure_openshell_jwt_keys
+  ensure_openshell_cli_binary
   app_compose_files+=(
     -f docker-compose.openshell.yml
   )
