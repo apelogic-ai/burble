@@ -7,7 +7,7 @@ export const dockerInternalAllowedIps = [
   "192.168.0.0/16"
 ];
 
-export const openShellHostAllowedIps = ["10.200.0.1/32"];
+export const openShellHostAllowedIps = ["10.200.0.1/32", "172.19.0.1/32"];
 
 export type BrokeredRuntimeSandboxPolicyInput = {
   toolGatewayUrl: string;
