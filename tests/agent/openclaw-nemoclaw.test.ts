@@ -524,6 +524,7 @@ describe("createOpenClawNemoClawAgentRunner", () => {
     expect(requests[0].url).toBe("http://runtime-u123:8080/capabilities");
     expect(requests[0].init.headers).toEqual({
       authorization: "Bearer runtime-token",
+      "x-burble-runtime-token": "runtime-token",
       "x-burble-runtime-id": "rt_u123"
     });
     expect(requests[1].url).toBe("http://runtime-u123:8080/runs");
@@ -532,6 +533,7 @@ describe("createOpenClawNemoClawAgentRunner", () => {
       authorization: "Bearer runtime-token",
       "content-type": "application/json",
       prefer: "respond-async",
+      "x-burble-runtime-token": "runtime-token",
       "x-burble-runtime-id": "rt_u123"
     });
     expect(JSON.parse(String(requests[1].init.body))).toMatchObject({

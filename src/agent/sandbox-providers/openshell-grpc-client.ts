@@ -539,6 +539,14 @@ function toOpenShellGrpcNetworkPolicies(
           ])
         )
       : new Map<string, boolean>();
+  const allowedIpsByHost =
+    policy.network.egress === "allowlist"
+      ? new Map(
+          (policy.network.allowedEndpoints ?? [])
+            .filter((endpoint) => endpoint.allowedIps?.length)
+            .map((endpoint) => [endpoint.host, endpoint.allowedIps ?? []])
+        )
+      : new Map<string, string[]>();
   return {
     burble_runtime: {
       name: "burble_runtime",
@@ -546,7 +554,7 @@ function toOpenShellGrpcNetworkPolicies(
         policy.network.egress === "deny"
           ? []
           : policy.network.allowedHosts.map((host) =>
-              toNetworkEndpoint(host, tlsByHost)
+              toNetworkEndpoint(host, tlsByHost, allowedIpsByHost)
             ),
       binaries: openShellRuntimeNetworkBinaryPaths.map(toNetworkBinary)
     }
@@ -559,15 +567,18 @@ function toNetworkBinary(path: string): Record<string, unknown> {
 
 function toNetworkEndpoint(
   host: string,
-  tlsByHost: Map<string, boolean>
+  tlsByHost: Map<string, boolean>,
+  allowedIpsByHost: Map<string, string[]>
 ): Record<string, unknown> {
   const { hostname, port } = splitHostPort(host);
   const tls = tlsByHost.get(host);
+  const allowedIps = allowedIpsByHost.get(host) ?? [];
   return {
     host: hostname,
     ports: [port],
     protocol: "rest",
     ...(tls === false ? { tls: "skip" } : {}),
+    ...(allowedIps.length ? { allowed_ips: allowedIps } : {}),
     enforcement: "enforce",
     access: "full"
   };

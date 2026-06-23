@@ -3,6 +3,7 @@ import { readConfig } from "../../src/config";
 import {
   buildBrokeredRuntimeSandboxPolicy,
   buildRuntimeSandboxPolicyFromConfig,
+  dockerInternalAllowedIps,
   sandboxAllowedHostsFromUrls
 } from "../../src/agent/sandbox-policy";
 import {
@@ -36,9 +37,17 @@ describe("brokered runtime sandbox policy", () => {
           "burble-app:3000"
         ],
         allowedEndpoints: [
-          { host: "agentgateway:3000", tls: false },
+          {
+            host: "agentgateway:3000",
+            tls: false,
+            allowedIps: dockerInternalAllowedIps
+          },
           { host: "api.openai.com", tls: true },
-          { host: "burble-app:3000", tls: false }
+          {
+            host: "burble-app:3000",
+            tls: false,
+            allowedIps: dockerInternalAllowedIps
+          }
         ]
       },
       filesystem: {
@@ -121,9 +130,17 @@ describe("brokered runtime sandbox policy", () => {
         "burble-app:3000"
       ],
       allowedEndpoints: [
-        { host: "agentgateway:3000", tls: false },
+        {
+          host: "agentgateway:3000",
+          tls: false,
+          allowedIps: dockerInternalAllowedIps
+        },
         { host: "api.openai.com", tls: true },
-        { host: "burble-app:3000", tls: false }
+        {
+          host: "burble-app:3000",
+          tls: false,
+          allowedIps: dockerInternalAllowedIps
+        }
       ]
     });
     expect(compileOpenShellSandboxPolicy({ policy }).egress).toEqual({

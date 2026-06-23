@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { createSandboxRuntimeFactory } from "../../src/agent/sandbox-runtime-factory";
+import { dockerInternalAllowedIps } from "../../src/agent/sandbox-policy";
 import { buildRuntimeDataId } from "../../src/agent/runtime-factory";
 import {
   cloneSandboxHandle,
@@ -93,9 +94,21 @@ describe("createSandboxRuntimeFactory", () => {
         egress: "allowlist",
         allowedHosts: ["agentgateway:3000", "burble-app:3000", "llm-gw:4000"],
         allowedEndpoints: [
-          { host: "agentgateway:3000", tls: false },
-          { host: "burble-app:3000", tls: false },
-          { host: "llm-gw:4000", tls: false }
+          {
+            host: "agentgateway:3000",
+            tls: false,
+            allowedIps: dockerInternalAllowedIps
+          },
+          {
+            host: "burble-app:3000",
+            tls: false,
+            allowedIps: dockerInternalAllowedIps
+          },
+          {
+            host: "llm-gw:4000",
+            tls: false,
+            allowedIps: dockerInternalAllowedIps
+          }
         ]
       },
       filesystem: {
@@ -242,8 +255,16 @@ describe("createSandboxRuntimeFactory", () => {
       allowedEndpoints: [
         { host: "api.anthropic.com", tls: true },
         { host: "api.exa.ai", tls: true },
-        { host: "burble-app:3000", tls: false },
-        { host: "firecrawl.internal", tls: true }
+        {
+          host: "burble-app:3000",
+          tls: false,
+          allowedIps: dockerInternalAllowedIps
+        },
+        {
+          host: "firecrawl.internal",
+          tls: true,
+          allowedIps: dockerInternalAllowedIps
+        }
       ]
     });
     expect(provider.provisionCalls[0].start?.env).toMatchObject({

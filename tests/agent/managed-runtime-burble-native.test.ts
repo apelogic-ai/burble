@@ -289,6 +289,7 @@ describe("managed runtime Burble Native integration", () => {
       {
         headers: {
           authorization: `Bearer ${runtimeHandle.authToken}`,
+          "x-burble-runtime-token": runtimeHandle.authToken,
           "x-burble-runtime-id": runtimeHandle.id
         }
       }

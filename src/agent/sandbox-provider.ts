@@ -24,6 +24,9 @@ export type SandboxEgressEndpoint = {
   // True when the endpoint is reached over a TLS scheme (https/wss). Egress
   // proxies must not declare TLS passthrough for plaintext (http/ws) hosts.
   tls: boolean;
+  // Optional private CIDR/IP allowlist for declared internal endpoints. OpenShell
+  // rejects private resolved IPs unless they are explicitly listed here.
+  allowedIps?: string[];
 };
 
 export type SandboxNetworkPolicy =
@@ -150,7 +153,12 @@ export function cloneSandboxPolicy(policy: SandboxPolicy): SandboxPolicy {
             ...(policy.network.allowedEndpoints
               ? {
                   allowedEndpoints: policy.network.allowedEndpoints.map(
-                    (endpoint) => ({ ...endpoint })
+                    (endpoint) => ({
+                      ...endpoint,
+                      ...(endpoint.allowedIps
+                        ? { allowedIps: [...endpoint.allowedIps] }
+                        : {})
+                    })
                   )
                 }
               : {})

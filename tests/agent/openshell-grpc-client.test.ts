@@ -6,6 +6,7 @@ import {
   encodeOpenShellLabelValue,
   openShellCommandString
 } from "../../src/agent/sandbox-providers/openshell-grpc-client";
+import { dockerInternalAllowedIps } from "../../src/agent/sandbox-policy";
 
 describe("OpenShell gRPC client labels", () => {
   test("encodes Docker image refs as OpenShell-safe label values", () => {
@@ -117,7 +118,11 @@ describe("OpenShell gRPC policy compiler", () => {
         allowedHosts: ["api.openai.com", "burble-app:3000"],
         allowedEndpoints: [
           { host: "api.openai.com", tls: true },
-          { host: "burble-app:3000", tls: false }
+          {
+            host: "burble-app:3000",
+            tls: false,
+            allowedIps: dockerInternalAllowedIps
+          }
         ]
       },
       filesystem: {
@@ -141,7 +146,11 @@ describe("OpenShell gRPC policy compiler", () => {
       )?.tls
     ).toBeUndefined();
     expect(policy.networkPolicies.burble_runtime.endpoints).toContainEqual(
-      expect.objectContaining({ host: "burble-app", tls: "skip" })
+      expect.objectContaining({
+        host: "burble-app",
+        tls: "skip",
+        allowed_ips: dockerInternalAllowedIps
+      })
     );
   });
 });
