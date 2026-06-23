@@ -7,6 +7,8 @@ export const dockerInternalAllowedIps = [
   "192.168.0.0/16"
 ];
 
+export const openShellHostAllowedIps = ["10.200.0.1/32"];
+
 export type BrokeredRuntimeSandboxPolicyInput = {
   toolGatewayUrl: string;
   mcpGatewayUrl?: string | null;
@@ -121,21 +123,27 @@ function sandboxEndpointFromUrl(
   ) {
     throw new Error(`Sandbox egress URL must use http, https, ws, or wss: ${value}`);
   }
+  const allowedIps = sandboxAllowedIpsForHostname(url.hostname);
   return [
     {
       host: url.host.toLowerCase(),
       tls: url.protocol === "https:" || url.protocol === "wss:",
-      ...(isInternalSandboxHostname(url.hostname)
-        ? { allowedIps: dockerInternalAllowedIps }
-        : {})
+      ...(allowedIps.length ? { allowedIps } : {})
     }
   ];
+}
+
+function sandboxAllowedIpsForHostname(hostname: string): string[] {
+  const normalized = hostname.trim().toLowerCase();
+  if (normalized === "host.openshell.internal") {
+    return openShellHostAllowedIps;
+  }
+  return isInternalSandboxHostname(normalized) ? dockerInternalAllowedIps : [];
 }
 
 function isInternalSandboxHostname(hostname: string): boolean {
   const normalized = hostname.trim().toLowerCase();
   return (
-    normalized === "host.openshell.internal" ||
     normalized.endsWith(".internal") ||
     (!normalized.includes(".") && normalized !== "localhost")
   );

@@ -56,7 +56,7 @@ describe("dev deploy config", () => {
     expect(compose).toContain("burble-app:");
     expect(compose).toContain("dockerfile: Dockerfile");
     expect(compose).toContain('"3000"');
-    expect(compose).toContain('"127.0.0.1:3000:3000"');
+    expect(compose).toContain('"3000:3000"');
     expect(compose).toContain("http://localhost:3000/healthz");
     expect(appDockerfile).toContain("apk add --no-cache docker-cli openssh-client");
     expect(appDockerfile).toContain("mkdir -p /data /opt/openshell-cli");
@@ -129,7 +129,7 @@ describe("dev deploy config", () => {
     expect(compose).toContain(
       "LLM_GW_BASE_URL=${LLM_GW_BASE_URL:-http://host.openshell.internal:4000/v1}"
     );
-    expect(compose).toContain('"127.0.0.1:4000:4000"');
+    expect(compose).toContain('"4000:4000"');
     expect(compose).toContain("./litellm/config.yaml:/app/config.yaml:ro");
     expect(compose).not.toContain("LITELLM_BASE_URL");
     expect(rootEnvExample).toContain(
@@ -452,7 +452,7 @@ describe("dev deploy config", () => {
     expect(agentGatewayCompose).toContain(
       "AGENT_RUNTIME_MCP_AUDIENCE=http://host.openshell.internal:3001/mcp"
     );
-    expect(agentGatewayCompose).toContain('"127.0.0.1:3001:3000"');
+    expect(agentGatewayCompose).toContain('"3001:3000"');
     expect(agentGatewayCompose).toContain(
       "RUNTIME_JWT_ISSUER=http://burble-app:3000"
     );
