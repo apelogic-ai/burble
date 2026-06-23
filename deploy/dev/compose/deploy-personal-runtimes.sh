@@ -208,7 +208,12 @@ ensure_openshell_cli_binary() {
   fi
   if [[ -e "${output}" && ! -f "${output}" ]]; then
     echo "Removing invalid OpenShell CLI cache path: ${output}"
-    rm -rf "${output}"
+    if ! rm -rf "${output}"; then
+      echo "Could not remove invalid OpenShell CLI cache path: ${output}" >&2
+      echo "It was probably created by an older Docker Compose bind mount as root." >&2
+      echo "Run: sudo rm -rf '${output}'" >&2
+      exit 2
+    fi
   fi
 
   if ! command -v curl >/dev/null 2>&1; then
@@ -231,7 +236,17 @@ ensure_openshell_cli_binary() {
     tag="v${tag}"
   fi
 
-  mkdir -p "${cache_dir}"
+  if ! mkdir -p "${cache_dir}"; then
+    echo "Could not create OpenShell CLI cache directory: ${cache_dir}" >&2
+    echo "Run: sudo rm -rf '${cache_dir}'" >&2
+    exit 2
+  fi
+  if [[ ! -w "${cache_dir}" ]]; then
+    echo "OpenShell CLI cache directory is not writable: ${cache_dir}" >&2
+    echo "It was probably created by an older Docker Compose bind mount as root." >&2
+    echo "Run: sudo chown -R $(id -un):$(id -gn) '${cache_dir}'" >&2
+    exit 2
+  fi
   local asset="openshell-${openshell_arch}-unknown-linux-musl.tar.gz"
   local archive="${cache_dir}/${asset}"
   local extract_dir="${cache_dir}/${asset%.tar.gz}-extract"
