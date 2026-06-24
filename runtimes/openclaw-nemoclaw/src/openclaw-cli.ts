@@ -192,18 +192,28 @@ export async function runOpenClawCliRequest(
 
     if (!plannedToolCall) {
       const lastToolResult = executedTools.at(-1)?.toolResult;
+      const openClawText = extractOpenClawText(result.stdout);
       const rawText =
-        extractOpenClawText(result.stdout) ||
+        openClawText ||
         (lastToolResult ? formatToolResult(lastToolResult) : baseline.response.text);
+      const rejectedReason = shouldRejectDirectOpenClawResponse(
+        rawText,
+        baseline.response.text,
+        Boolean(lastToolResult),
+        Boolean(openClawText)
+      );
       if (
         rejectedDirectResponses.length < maxBootstrapRetries &&
-        isBootstrapSetupAnswer(rawText)
+        rejectedReason
       ) {
         rejectedDirectResponses.push(rawText);
         logInfo(
-          `OpenClaw bootstrap retry runId=${request.runId ?? "unknown"} step=${step + 1} reason=bootstrap_response`
+          `OpenClaw bootstrap retry runId=${request.runId ?? "unknown"} step=${step + 1} reason=${rejectedReason}`
         );
         continue;
+      }
+      if (rejectedReason === "empty_response") {
+        throw new Error("OpenClaw Gateway returned no assistant text");
       }
       const text = sanitizeBootstrapFragments(rawText, baseline.response.text);
       logInfo(
@@ -375,7 +385,8 @@ async function runOpenClawGatewayHttpRequest(
   sessionId: string,
   logInfo: RuntimeLogger,
   step: number,
-  onDelta?: (delta: string) => void
+  onDelta?: (delta: string) => void,
+  suppressedBaselineText?: string
 ): Promise<CliCommandResult> {
   const startedAt = Date.now();
   const baseSessionKey = buildGatewayHttpSessionKey(config, sessionId);
@@ -457,7 +468,8 @@ async function runOpenClawGatewayHttpRequest(
             Math.min(
               config.openClawTimeoutMs,
               openClawGatewayStreamIdleTimeoutMs
-            )
+            ),
+            suppressedBaselineText
           )
         : {
             responseText: await response.text(),
@@ -605,7 +617,8 @@ async function* collectOpenClawGatewayHttpResponse(
   logInfo: RuntimeLogger,
   heartbeatMs: number,
   emitDeltas: boolean,
-  step: number
+  step: number,
+  suppressedBaselineText?: string
 ): AsyncGenerator<
   RunEvent,
   { stdout: string; usage?: RunUsage; telemetry?: RunTelemetry },
@@ -629,7 +642,8 @@ async function* collectOpenClawGatewayHttpResponse(
     sessionId,
     logInfo,
     step,
-    emitDeltas ? pushDelta : undefined
+    emitDeltas ? pushDelta : undefined,
+    suppressedBaselineText
   );
   let result: CliCommandResult | null = null;
 
@@ -675,7 +689,7 @@ async function* collectOpenClawGatewayHttpResponse(
   }
   while (deltas.length > 0) {
     const delta = deltas.shift();
-    if (delta) {
+    if (delta && shouldEmitDirectOpenClawDelta(delta, suppressedBaselineText)) {
       yield { type: "message_delta", text: delta };
     }
   }
@@ -700,7 +714,8 @@ async function* collectOpenClawGatewayHttpResponse(
   if (
     emitDeltas &&
     (result.deltaCount ?? 0) === 0 &&
-    shouldEmitGatewayHttpDelta(result.stdout)
+    shouldEmitGatewayHttpDelta(result.stdout) &&
+    shouldEmitDirectOpenClawDelta(result.stdout, suppressedBaselineText)
   ) {
     logStreamDebug(config, logInfo, "delta parsed", {
       runId: request.runId ?? "unknown",
@@ -727,6 +742,21 @@ function isGatewayHttpStreamingResponse(response: Response): boolean {
 function shouldEmitGatewayHttpDelta(stdout: string): boolean {
   const parsed = parseJsonObject(stdout.trim());
   return !(parsed && typeof parsed.tool_call === "object" && parsed.tool_call !== null);
+}
+
+function shouldEmitDirectOpenClawDelta(
+  text: string,
+  suppressedBaselineText?: string
+): boolean {
+  if (!text.trim()) {
+    return false;
+  }
+  if (isBootstrapSetupAnswer(text)) {
+    return false;
+  }
+  return !(
+    suppressedBaselineText && isBaselineEchoAnswer(text, suppressedBaselineText)
+  );
 }
 
 async function fetchGatewayHttpResponse(
@@ -759,7 +789,8 @@ async function fetchGatewayHttpResponse(
 async function readGatewayHttpStreamingResponse(
   response: Response,
   onDelta: (delta: string) => void,
-  idleTimeoutMs: number
+  idleTimeoutMs: number,
+  suppressedBaselineText?: string
 ): Promise<GatewayHttpResponseResult> {
   if (!response.body) {
     const responseText = await response.text();
@@ -774,7 +805,7 @@ async function readGatewayHttpStreamingResponse(
 
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
-  const gate = createGatewayHttpDeltaGate(onDelta);
+  const gate = createGatewayHttpDeltaGate(onDelta, suppressedBaselineText);
   let buffer = "";
   let responseText = "";
   let stdout = "";
@@ -857,10 +888,14 @@ async function readGatewayHttpStreamingResponse(
 }
 
 function createGatewayHttpDeltaGate(
-  onDelta: (delta: string) => void
+  onDelta: (delta: string) => void,
+  suppressedBaselineText?: string
 ): (delta: string) => void {
   let mode: "pending" | "emit" | "suppress" = "pending";
   let buffered = "";
+  const normalizedSuppressedBaseline = suppressedBaselineText
+    ? normalizeDirectResponseForComparison(suppressedBaselineText)
+    : "";
 
   return (delta: string) => {
     if (mode === "suppress") {
@@ -880,6 +915,16 @@ function createGatewayHttpDeltaGate(
     if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
       mode = "suppress";
       return;
+    }
+
+    if (normalizedSuppressedBaseline) {
+      const normalizedBuffered = normalizeDirectResponseForComparison(buffered);
+      if (
+        normalizedBuffered &&
+        normalizedSuppressedBaseline.startsWith(normalizedBuffered)
+      ) {
+        return;
+      }
     }
 
     mode = "emit";
@@ -1037,7 +1082,8 @@ export async function* runOpenClawCliRequestStream(
       logInfo,
       heartbeatMs,
       runtimeMessageDeltasEnabled(request),
-      step + 1
+      step + 1,
+      baseline.response.text
     );
     const plannedToolCall = normalizePlannedToolCall(
       readPlannedToolCall(result.stdout, toolContext.catalog)
@@ -1047,18 +1093,28 @@ export async function* runOpenClawCliRequestStream(
 
     if (!plannedToolCall) {
       const lastToolResult = executedTools.at(-1)?.toolResult;
+      const openClawText = extractOpenClawText(result.stdout);
       const rawText =
-        extractOpenClawText(result.stdout) ||
+        openClawText ||
         (lastToolResult ? formatToolResult(lastToolResult) : baseline.response.text);
+      const rejectedReason = shouldRejectDirectOpenClawResponse(
+        rawText,
+        baseline.response.text,
+        Boolean(lastToolResult),
+        Boolean(openClawText)
+      );
       if (
         rejectedDirectResponses.length < maxBootstrapRetries &&
-        isBootstrapSetupAnswer(rawText)
+        rejectedReason
       ) {
         rejectedDirectResponses.push(rawText);
         logInfo(
-          `OpenClaw bootstrap retry runId=${request.runId ?? "unknown"} step=${step + 1} reason=bootstrap_response`
+          `OpenClaw bootstrap retry runId=${request.runId ?? "unknown"} step=${step + 1} reason=${rejectedReason}`
         );
         continue;
+      }
+      if (rejectedReason === "empty_response") {
+        throw new Error("OpenClaw Gateway returned no assistant text");
       }
       const text = sanitizeBootstrapFragments(rawText, baseline.response.text);
       logInfo(
@@ -1153,7 +1209,8 @@ async function* collectOpenClawStream(
   logInfo: RuntimeLogger,
   heartbeatMs: number,
   emitDeltas: boolean,
-  step: number
+  step: number,
+  suppressedBaselineText?: string
 ): AsyncGenerator<
   RunEvent,
   { stdout: string; usage?: RunUsage; telemetry?: RunTelemetry },
@@ -1168,7 +1225,8 @@ async function* collectOpenClawStream(
       logInfo,
       heartbeatMs,
       emitDeltas,
-      step
+      step,
+      suppressedBaselineText
     );
   }
 
@@ -3002,6 +3060,38 @@ function isBootstrapSetupAnswer(text: string): boolean {
     /\bwhat kind of assistant\b/.test(normalized) ||
     /\bi just came online\b/.test(normalized)
   );
+}
+
+function shouldRejectDirectOpenClawResponse(
+  text: string,
+  baselineText: string,
+  hasToolResult: boolean,
+  hasOpenClawText: boolean
+): "bootstrap_response" | "baseline_echo" | "empty_response" | null {
+  if (!hasToolResult && !hasOpenClawText) {
+    return "empty_response";
+  }
+  if (isBootstrapSetupAnswer(text)) {
+    return "bootstrap_response";
+  }
+  if (!hasToolResult && isBaselineEchoAnswer(text, baselineText)) {
+    return "baseline_echo";
+  }
+  return null;
+}
+
+function isBaselineEchoAnswer(text: string, baselineText: string): boolean {
+  const normalizedText = normalizeDirectResponseForComparison(text);
+  const normalizedBaseline = normalizeDirectResponseForComparison(baselineText);
+  return Boolean(normalizedBaseline) && normalizedText === normalizedBaseline;
+}
+
+function normalizeDirectResponseForComparison(text: string): string {
+  return text
+    .trim()
+    .replace(/\s+/g, " ")
+    .replace(/[.!?]+$/g, "")
+    .toLowerCase();
 }
 
 function sanitizeBootstrapFragments(text: string, fallbackText: string = text): string {
