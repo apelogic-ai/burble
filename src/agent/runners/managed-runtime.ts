@@ -1189,32 +1189,26 @@ function resolveHermesProviderToolCall(event: Extract<AgentRunEvent, { type: "to
       toolInput: Record<string, unknown>;
     }
   | null {
+  if (event.toolName === "burble_provider_call") {
+    return null;
+  }
+
   const rawInput = isRecord(event.input) ? event.input : {};
-  const requestedToolName =
-    event.toolName === "burble_provider_call" &&
-    typeof rawInput.toolName === "string"
-      ? rawInput.toolName
-      : event.toolName;
+  const requestedToolName = event.toolName;
   const spec = providerToolCatalog.find(
     (tool) =>
       tool.name === requestedToolName ||
       tool.alias === requestedToolName ||
       (tool.aliases ?? []).includes(requestedToolName)
   );
-  if (!spec || spec.risk !== "read") {
+  if (!spec || (spec.risk && spec.risk !== "read")) {
     return null;
   }
 
-  const nestedInput =
-    event.toolName === "burble_provider_call" && isRecord(rawInput.input)
-      ? rawInput.input
-      : event.toolName === "burble_provider_call"
-        ? {}
-        : rawInput;
   return {
     providerToolName: spec.name,
     gatewayToolName: spec.alias,
-    toolInput: nestedInput
+    toolInput: rawInput
   };
 }
 
@@ -1265,14 +1259,15 @@ function formatHermesProviderToolResult(
 
   const records = normalizeProviderContent(content);
   if (providerToolName === "google_search_drive_files") {
-    if (Array.isArray(records) && records.length > 0) {
+    const files = Array.isArray(records) ? records.filter(isRecord) : [];
+    if (files.length > 0) {
       return [
-        records.length === 1
-          ? `Last edited Google Drive file: ${formatGoogleDriveFile(records[0])}`
+        files.length === 1
+          ? `Last edited Google Drive file: ${formatGoogleDriveFile(files[0])}`
           : "Last edited Google Drive files",
-        ...(records.length === 1
-          ? googleDriveFileMetadataLines(records[0])
-          : records.slice(0, 10).map((record) => `- ${formatGoogleDriveFile(record)}`))
+        ...(files.length === 1
+          ? googleDriveFileMetadataLines(files[0])
+          : files.slice(0, 10).map((record) => `- ${formatGoogleDriveFile(record)}`))
       ].join("\n");
     }
     return "No Google Drive files were found.";

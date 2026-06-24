@@ -747,8 +747,24 @@ export async function handleToolGatewayRequest(
     auth.kind === "runtime" &&
     runtimeCompatibilityFamily(auth.runtime.engine) === "hermes" &&
     providerToolSpec &&
+    providerToolSpec.risk &&
     providerToolSpec.risk !== "read"
   ) {
+    emitToolGatewayFailedBestEffort(
+      {
+        observability: deps.observability,
+        startedAt: toolStartedAt,
+        body
+      },
+      auth,
+      toolName,
+      {
+        message:
+          "Hermes provider tools may only execute read-only Burble provider calls through the runtime gateway.",
+        code: "provider_write_not_allowed",
+        retryable: false
+      }
+    );
     return jsonResponse(
       {
         classification: "user_private",

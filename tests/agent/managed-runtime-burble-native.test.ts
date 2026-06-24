@@ -305,7 +305,7 @@ describe("managed runtime Burble Native integration", () => {
     );
   });
 
-  test("executes Hermes client-side provider tool stream callbacks once", async () => {
+  test("executes direct Hermes provider tool stream callbacks once", async () => {
     const store = createTokenStore(":memory:");
     const runtimeToken = "runtime-token-u123";
     const runtime = store.getOrCreateAgentRuntime({
@@ -463,6 +463,143 @@ describe("managed runtime Burble Native integration", () => {
           "POST http://127.0.0.1:3000/internal/tools/google.searchDriveFiles/execute"
       )
     ).toHaveLength(1);
+  });
+
+  test("does not replay Hermes bridge provider tool stream callbacks", async () => {
+    const store = createTokenStore(":memory:");
+    const runtimeToken = "runtime-token-u123";
+    const runtime = store.getOrCreateAgentRuntime({
+      ...principal,
+      engine: "hermes",
+      endpointUrl: "http://hermes-runtime:8080",
+      authTokenHash: hashRuntimeToken(runtimeToken),
+      statePath: "/data/runtimes/rt_hermes/state",
+      configPath: "/data/runtimes/rt_hermes/config/hermes.json",
+      workspacePath: "/data/runtimes/rt_hermes/workspace",
+      policyHash: "policy-hermes"
+    });
+    store.upsertProviderConnection({
+      provider: "google",
+      email: "person@example.com",
+      slackUserId: principal.slackUserId,
+      providerLogin: "person@example.com",
+      accessToken: "google-token"
+    });
+
+    const runtimeHandle: RuntimeHandle = {
+      id: runtime.id,
+      engine: "hermes",
+      endpointUrl: runtime.endpointUrl,
+      authToken: runtimeToken,
+      status: "ready",
+      statePath: runtime.statePath,
+      configPath: runtime.configPath,
+      workspacePath: runtime.workspacePath,
+      manifest: runtimeManifest(runtime.id, "hermes")
+    };
+    const calls: string[] = [];
+    const events: string[] = [];
+
+    const fetchRouter = async (url: string, init?: RequestInit): Promise<Response> => {
+      calls.push(`${init?.method ?? "GET"} ${url}`);
+      const parsed = new URL(url);
+
+      if (parsed.hostname === "hermes-runtime") {
+        if (parsed.pathname === "/capabilities") {
+          return new Response("not implemented", { status: 404 });
+        }
+        if (parsed.pathname === "/runs") {
+          return new Response(
+            [
+              JSON.stringify({ type: "status", text: "Agent is thinking..." }),
+              JSON.stringify({
+                type: "tool_call",
+                toolName: "burble_provider_call",
+                callId: "hermes-bridge-provider-test",
+                input: {
+                  toolName: "google_search_drive_files",
+                  input: { limit: 1 }
+                }
+              }),
+              JSON.stringify({
+                type: "tool_result",
+                toolName: "burble_provider_call",
+                callId: "hermes-bridge-provider-test",
+                classification: "user_private"
+              }),
+              JSON.stringify({
+                type: "message_delta",
+                text: "The latest Drive file is already available from Hermes."
+              })
+            ].join("\n"),
+            { headers: { "content-type": "application/x-ndjson" } }
+          );
+        }
+      }
+
+      if (
+        (parsed.hostname === "burble-app" ||
+          (parsed.hostname === "127.0.0.1" && parsed.port === "3000")) &&
+        parsed.pathname.startsWith("/internal/tools/")
+      ) {
+        throw new Error(`Unexpected replayed provider gateway call ${url}`);
+      }
+
+      throw new Error(`Unexpected request ${url}`);
+    };
+
+    const runner = createManagedRuntimeAgentRunner({
+      config: baseConfig,
+      runtimeFactory: {
+        async getOrCreateRuntime() {
+          return runtimeHandle;
+        },
+        async stopRuntime() {},
+        async reapIdleRuntimes() {}
+      },
+      fetch: fetchRouter,
+      logInfo(message) {
+        events.push(message);
+      }
+    });
+
+    const result = await collectAgentRun(
+      runner,
+      {
+        principal,
+        conversation: {
+          source: "slack",
+          workspaceId: principal.workspaceId,
+          channelId: "D123",
+          rootId: "dm:D123",
+          isDirectMessage: true
+        },
+        text: "list my last edited google drive file",
+        toolGroups: {
+          groups: ["conversation", "google"],
+          reasons: ["default:conversation", "keyword:google:drive"]
+        },
+        connections: {
+          github: null,
+          google: {
+            provider: "google",
+            email: "person@example.com",
+            slackUserId: principal.slackUserId,
+            providerLogin: "person@example.com",
+            accessToken: "redacted",
+            connectedAt: "2026-06-08T00:00:00.000Z"
+          }
+        }
+      },
+      (event) => {
+        events.push(event.type);
+      }
+    );
+
+    expect(result.text).toBe("The latest Drive file is already available from Hermes.");
+    expect(events).toContain("tool_call");
+    expect(events).toContain("tool_result");
+    expect(calls.some((call) => call.includes("/internal/tools/"))).toBe(false);
   });
 
   test("does not auto-execute Hermes provider write tool stream callbacks", async () => {
