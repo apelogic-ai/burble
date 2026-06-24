@@ -1694,7 +1694,7 @@ asyncio.run(main())
     });
   });
 
-  test("emits structured Hermes provider tool calls for app-side execution", () => {
+  test("emits structured Hermes provider tool calls without runtime-side execution", () => {
     const result = runHermesEntrypointProbe(`${importEntrypoint}
 import asyncio
 import os

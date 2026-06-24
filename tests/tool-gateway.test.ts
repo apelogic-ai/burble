@@ -1020,6 +1020,41 @@ describe("handleToolGatewayRequest", () => {
     });
   });
 
+  test("rejects Hermes runtime provider write tools at the gateway", async () => {
+    const response = await handleToolGatewayRequest(
+      config,
+      createStore(connection, hermesRuntime),
+      "github.createIssue",
+      request(
+        "github.createIssue",
+        {
+          user: { email: "person@example.com" },
+          input: {
+            repo: "acme/app",
+            title: "Do not create this"
+          }
+        },
+        "runtime-token-u123",
+        "rt_hermes"
+      ),
+      {
+        createIssue: async () => {
+          throw new Error("Hermes runtime write should not reach provider client");
+        }
+      }
+    );
+
+    expect(response.status).toBe(403);
+    expect(await response.json()).toEqual({
+      classification: "user_private",
+      content: {
+        error: "provider_write_not_allowed",
+        message:
+          "Hermes provider tools may only execute read-only Burble provider calls through the runtime gateway."
+      }
+    });
+  });
+
   test("executes newer GitHub file tools through the HTTP fallback gateway", async () => {
     const response = await handleToolGatewayRequest(
       config,

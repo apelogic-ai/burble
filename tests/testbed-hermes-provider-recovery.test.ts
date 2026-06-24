@@ -44,7 +44,7 @@ spec.loader.exec_module(mod)
 `;
 
 describe("local Hermes provider testbed", () => {
-  test("emits MCP provider tool calls for app-side execution", () => {
+  test("executes MCP provider tool calls through the Hermes gateway plugin", () => {
     const result = runPythonProbe(`${importHermesEntrypoint}
 import asyncio
 import os

@@ -11,7 +11,10 @@ import type {
   ConversationAttachment,
   ToolClassification
 } from "./conversation/types";
-import { isKnownRuntimeEngine } from "./agent/runtime-descriptors";
+import {
+  isKnownRuntimeEngine,
+  runtimeCompatibilityFamily
+} from "./agent/runtime-descriptors";
 import { createHash, timingSafeEqual } from "node:crypto";
 import { connectionProviderForToolName } from "./providers/descriptors";
 import { providerToolCatalog } from "./providers/catalog";
@@ -737,6 +740,26 @@ export async function handleToolGatewayRequest(
         input: isOptionalObject(body.input) ? body.input : {}
       }
     });
+  }
+
+  const providerToolSpec = findProviderToolSpec(toolName);
+  if (
+    auth.kind === "runtime" &&
+    runtimeCompatibilityFamily(auth.runtime.engine) === "hermes" &&
+    providerToolSpec &&
+    providerToolSpec.risk !== "read"
+  ) {
+    return jsonResponse(
+      {
+        classification: "user_private",
+        content: {
+          error: "provider_write_not_allowed",
+          message:
+            "Hermes provider tools may only execute read-only Burble provider calls through the runtime gateway."
+        }
+      },
+      403
+    );
   }
 
   const inputCoercion = coerceProviderToolGatewayInput(toolName, body.input);
@@ -2358,17 +2381,23 @@ function readScheduledJobRegistrationTools(
 
 function requiredToolsUsePrivateReadSources(toolNames: string[]): boolean {
   return toolNames.some((toolName) => {
-    const tool = providerToolCatalog.find(
-      (tool) =>
-        tool.name === toolName ||
-        tool.alias === toolName ||
-        (tool.aliases ?? []).includes(toolName)
-    );
+    const tool = findProviderToolSpec(toolName);
     if (tool) {
       return providerToolUsesPrivateReadSource(tool);
     }
     return connectionProviderForToolName(toolName) !== null;
   });
+}
+
+function findProviderToolSpec(toolName: string): (typeof providerToolCatalog)[number] | null {
+  return (
+    providerToolCatalog.find(
+      (tool) =>
+        tool.name === toolName ||
+        tool.alias === toolName ||
+        (tool.aliases ?? []).includes(toolName)
+    ) ?? null
+  );
 }
 
 function providerToolUsesPrivateReadSource(tool: (typeof providerToolCatalog)[number]): boolean {
