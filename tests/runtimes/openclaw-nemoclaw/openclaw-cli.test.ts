@@ -2795,6 +2795,132 @@ describe("runOpenClawCliRequest", () => {
     });
   });
 
+  test("retries streamed OpenClaw gateway baseline echoes before finalizing", async () => {
+    const requests: Array<Record<string, unknown>> = [];
+    const events: Array<RunEvent> = [];
+    const logs: string[] = [];
+    const providerTexts = [
+      "No Burble tool context is needed for this request.",
+      "Hello!"
+    ];
+
+    await withMockFetch(
+      (async (_input, init) => {
+        requests.push(
+          JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>
+        );
+        const text = providerTexts.shift();
+        if (!text) {
+          throw new Error("unexpected gateway call");
+        }
+        return new Response(JSON.stringify(openResponsesText(text)), {
+          status: 200,
+          headers: { "content-type": "application/json" }
+        });
+      }) as typeof fetch,
+      async () => {
+        for await (const event of runOpenClawCliRequestStream(
+          {
+            runId: "run-stream-baseline-echo",
+            executionMode: "native-runtime",
+            input: {
+              text: "hello agent",
+              connections: {
+                github: { connected: false }
+              }
+            }
+          },
+          { ...config, engine: "openclaw-gateway" },
+          async () => ({
+            classification: "user_private",
+            content: []
+          }),
+          async function* () {
+            throw new Error("unexpected cli call");
+          },
+          (message) => logs.push(message)
+        )) {
+          events.push(event);
+        }
+      }
+    );
+
+    expect(requests).toHaveLength(2);
+    expect(events).not.toContainEqual(
+      expect.objectContaining({
+        type: "message_delta",
+        text: "No Burble tool context is needed for this request."
+      })
+    );
+    expect(events.at(-1)).toMatchObject({
+      type: "final",
+      response: {
+        classification: "user_private",
+        text: "Hello!"
+      }
+    });
+    expect(
+      logs.some((line) =>
+        line.includes(
+          "OpenClaw bootstrap retry runId=run-stream-baseline-echo step=1 reason=baseline_echo"
+        )
+      )
+    ).toBe(true);
+  });
+
+  test("fails streamed OpenClaw gateway empty responses instead of finalizing with baseline", async () => {
+    const requests: Array<Record<string, unknown>> = [];
+    const events: Array<RunEvent> = [];
+
+    await expect(
+      withMockFetch(
+        (async (_input, init) => {
+          requests.push(
+            JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>
+          );
+          return new Response(JSON.stringify(openResponsesText("")), {
+            status: 200,
+            headers: { "content-type": "application/json" }
+          });
+        }) as typeof fetch,
+        async () => {
+          for await (const event of runOpenClawCliRequestStream(
+            {
+              runId: "run-stream-empty-response",
+              executionMode: "native-runtime",
+              input: {
+                text: "hello agent",
+                connections: {
+                  github: { connected: false }
+                }
+              }
+            },
+            { ...config, engine: "openclaw-gateway" },
+            async () => ({
+              classification: "user_private",
+              content: []
+            }),
+            async function* () {
+              throw new Error("unexpected cli call");
+            },
+            () => undefined
+          )) {
+            events.push(event);
+          }
+        }
+      )
+    ).rejects.toThrow("OpenClaw Gateway returned no assistant text");
+
+    expect(requests).toHaveLength(2);
+    expect(events).not.toContainEqual(
+      expect.objectContaining({
+        type: "message_delta",
+        text: "No Burble tool context is needed for this request."
+      })
+    );
+    expect(events.some((event) => event.type === "final")).toBe(false);
+  });
+
   test("streams OpenClaw gateway HTTP response deltas before the final response", async () => {
     const requests: Array<Record<string, unknown>> = [];
     const events: Array<RunEvent> = [];
