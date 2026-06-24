@@ -1764,7 +1764,7 @@ asyncio.run(main())
       response: { ok: true },
       futureDone: false,
       providerCalls: [],
-      pendingAfterFinal: 0,
+      pendingAfterFinal: 1,
       events: [
         {
           type: "tool_call",
@@ -1836,7 +1836,90 @@ asyncio.run(main())
     expect(result).toEqual({
       futureDone: false,
       providerCalls: [],
-      pendingAfterFinal: 0
+      pendingAfterFinal: 1
+    });
+  });
+
+  test("fails stale recognized Hermes provider tool calls without waiting for run timeout", () => {
+    const result = runHermesEntrypointProbe(`${importEntrypoint}
+import asyncio
+import os
+
+mod.web.json_response = lambda body, **kwargs: body
+os.environ["HERMES_TOOL_CALL_TIMEOUT_SECONDS"] = "1"
+
+class FakeRequest:
+    def __init__(self, run_id, body):
+        self.match_info = {"run_id": run_id}
+        self._body = body
+
+    async def json(self):
+        return self._body
+
+async def main():
+    runtime = mod.BurbleHermesRuntime()
+    waiter = mod.RunWaiter()
+    queue = asyncio.Queue()
+    waiter.queues.append(queue)
+    runtime.runs["run-stale-provider-call"] = waiter
+    runtime.run_messages["run-stale-provider-call"] = {
+        "originalText": "list my last edited google drive file",
+        "runtime": {"id": "rt_123"},
+    }
+
+    response = await runtime.handle_run_message(
+        FakeRequest(
+            "run-stale-provider-call",
+            {
+                "type": "tool_call",
+                "toolName": "google_search_drive_files",
+                "input": {"limit": 1},
+            },
+        )
+    )
+    pending_after_call = len(runtime.provider_tool_call_recovery_tasks)
+    await asyncio.sleep(1.05)
+
+    events = []
+    while not queue.empty():
+        item = await queue.get()
+        if item is not None:
+            events.append(item)
+
+    print(json.dumps({
+        "response": response,
+        "pendingAfterCall": pending_after_call,
+        "pendingAfterTimeout": len(runtime.provider_tool_call_recovery_tasks),
+        "futureDone": waiter.future.done(),
+        "completed": waiter.completed,
+        "futureException": str(waiter.future.exception()),
+        "events": events,
+    }))
+
+asyncio.run(main())
+`);
+
+    expect(result).toEqual({
+      response: { ok: true },
+      pendingAfterCall: 1,
+      pendingAfterTimeout: 0,
+      futureDone: true,
+      completed: true,
+      futureException:
+        "Hermes started tool (google_search_drive_files) but did not produce a tool result or final answer.",
+      events: [
+        {
+          type: "tool_call",
+          toolName: "google_search_drive_files",
+          callId: "hermes-tool-call-google_search_drive_files-1",
+          input: { limit: 1 }
+        },
+        {
+          type: "error",
+          message:
+            "Hermes started tool (google_search_drive_files) but did not produce a tool result or final answer."
+        }
+      ]
     });
   });
 
@@ -1910,7 +1993,7 @@ asyncio.run(main())
     expect(result).toEqual({
       callResponse: { ok: true },
       resultResponse: { ok: true },
-      pendingAfterCall: 0,
+      pendingAfterCall: 1,
       pendingAfterResult: 0,
       pendingToolMetadataAfterResult: 0,
       events: [
@@ -2000,7 +2083,7 @@ asyncio.run(main())
 `);
 
     expect(result).toEqual({
-      pendingAfterCall: 0,
+      pendingAfterCall: 1,
       pendingAfterResult: 0,
       events: [
         {
@@ -2102,8 +2185,8 @@ asyncio.run(main())
 `);
 
     expect(result).toEqual({
-      pendingAfterCalls: 0,
-      pendingAfterFirstResult: 0,
+      pendingAfterCalls: 2,
+      pendingAfterFirstResult: 1,
       pendingAfterSecondResult: 0,
       events: [
         {

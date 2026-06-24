@@ -21,7 +21,6 @@ import {
   routeRuntimeEndpointFetch
 } from "../runtime-endpoint-routing";
 import { createRoutedRuntimeWebSocketFactory } from "../runtime-websocket";
-import { providerToolCatalog } from "../../providers/catalog";
 
 export type AgentRuntimeFetch = (
   input: string,
@@ -88,11 +87,6 @@ type ConnectionSummary = {
   connected: boolean;
   email?: string;
   providerLogin?: string;
-};
-
-type ToolGatewayResult = {
-  classification?: ToolClassification;
-  content?: unknown;
 };
 
 type RuntimeAttachment = {
@@ -347,16 +341,7 @@ export function createManagedRuntimeAdapter(
           agentResponse = yield* readStreamingRunResponse(
             response,
             runtimeMessageDeltasEnabled(runtime),
-            observeEvent,
-            createHermesProviderToolInterceptor({
-              config: deps.config,
-              requestFetch,
-              runtime,
-              runtimeType,
-              logInfo,
-              runId,
-              runtimeId
-            })
+            observeEvent
           );
         } else {
           const startPayload = (await response.json()) as RemoteRunResponse &
@@ -1001,16 +986,7 @@ function runtimeMessageDeltasEnabled(runtime: RuntimeHandle | null): boolean {
 async function* readStreamingRunResponse(
   response: Response,
   emitMessageDeltas = true,
-  onEvent?: (event: AgentRunEvent) => void,
-  interceptToolCall?: (
-    event: Extract<AgentRunEvent, { type: "tool_call" }>
-  ) => Promise<
-    | {
-        resultEvent: Extract<AgentRunEvent, { type: "tool_result" }>;
-        response: AgentOutput;
-      }
-    | null
-  >
+  onEvent?: (event: AgentRunEvent) => void
 ): AsyncIterable<AgentRunEvent, AgentOutput | null> {
   if (!response.body) {
     return null;
@@ -1049,15 +1025,6 @@ async function* readStreamingRunResponse(
 
       onEvent?.(event);
       yield event;
-
-      if (event.type === "tool_call" && interceptToolCall) {
-        const intercepted = await interceptToolCall(event);
-        if (intercepted) {
-          onEvent?.(intercepted.resultEvent);
-          yield intercepted.resultEvent;
-          return intercepted.response;
-        }
-      }
     }
   } catch (error) {
     if (streamedText.trim() && isRuntimeStreamClosedError(error)) {
@@ -1077,348 +1044,6 @@ async function* readStreamingRunResponse(
     };
   }
   return null;
-}
-
-function createHermesProviderToolInterceptor(input: {
-  config?: Config;
-  requestFetch: AgentRuntimeFetch;
-  runtime: RuntimeHandle | null;
-  runtimeType: string;
-  logInfo: (message: string) => void;
-  runId: string;
-  runtimeId: string;
-}):
-  | ((
-      event: Extract<AgentRunEvent, { type: "tool_call" }>
-    ) => Promise<
-      | {
-          resultEvent: Extract<AgentRunEvent, { type: "tool_result" }>;
-          response: AgentOutput;
-        }
-      | null
-    >)
-  | undefined {
-  if (
-    !input.config ||
-    !input.runtime ||
-    runtimeCompatibilityFamily(input.runtimeType) !== "hermes"
-  ) {
-    return undefined;
-  }
-  const config = input.config;
-  const runtime = input.runtime;
-
-  return async (event) => {
-    const providerCall = resolveHermesProviderToolCall(event);
-    if (!providerCall) {
-      return null;
-    }
-
-    const startedAt = Date.now();
-    input.logInfo(
-      [
-        "Managed runtime executing Hermes client-side provider tool call",
-        `runId=${input.runId}`,
-        `runtimeId=${input.runtimeId}`,
-        `toolName=${providerCall.providerToolName}`,
-        `gatewayToolName=${providerCall.gatewayToolName}`,
-        `callId=${event.callId}`
-      ].join(" ")
-    );
-
-    let result: ToolGatewayResult;
-    try {
-      result = await executeRuntimeToolGatewayCall({
-        config,
-        requestFetch: input.requestFetch,
-        runtime,
-        gatewayToolName: providerCall.gatewayToolName,
-        toolInput: providerCall.toolInput
-      });
-    } catch (error) {
-      result = {
-        classification: "user_private",
-        content: {
-          error: true,
-          message:
-            error instanceof Error
-              ? error.message
-              : "Hermes provider tool execution failed."
-        }
-      };
-    }
-    const classification = normalizeToolClassification(result.classification);
-    const response: AgentOutput = {
-      classification,
-      text: formatHermesProviderToolResult(
-        providerCall.providerToolName,
-        providerCall.toolInput,
-        result.content
-      )
-    };
-
-    input.logInfo(
-      [
-        "Managed runtime executed Hermes client-side provider tool call",
-        `runId=${input.runId}`,
-        `runtimeId=${input.runtimeId}`,
-        `toolName=${providerCall.providerToolName}`,
-        `gatewayToolName=${providerCall.gatewayToolName}`,
-        `callId=${event.callId}`,
-        `classification=${classification}`,
-        `elapsedMs=${Date.now() - startedAt}`
-      ].join(" ")
-    );
-
-    return {
-      resultEvent: {
-        type: "tool_result",
-        toolName: event.toolName,
-        callId: event.callId,
-        classification
-      },
-      response
-    };
-  };
-}
-
-function resolveHermesProviderToolCall(event: Extract<AgentRunEvent, { type: "tool_call" }>):
-  | {
-      providerToolName: string;
-      gatewayToolName: string;
-      toolInput: Record<string, unknown>;
-    }
-  | null {
-  if (event.toolName === "burble_provider_call") {
-    return null;
-  }
-
-  const rawInput = isRecord(event.input) ? event.input : {};
-  const requestedToolName = event.toolName;
-  const spec = providerToolCatalog.find(
-    (tool) =>
-      tool.name === requestedToolName ||
-      tool.alias === requestedToolName ||
-      (tool.aliases ?? []).includes(requestedToolName)
-  );
-  if (!spec || (spec.risk && spec.risk !== "read")) {
-    return null;
-  }
-
-  return {
-    providerToolName: spec.name,
-    gatewayToolName: spec.alias,
-    toolInput: rawInput
-  };
-}
-
-async function executeRuntimeToolGatewayCall(input: {
-  config: Config;
-  requestFetch: AgentRuntimeFetch;
-  runtime: RuntimeHandle;
-  gatewayToolName: string;
-  toolInput: Record<string, unknown>;
-}): Promise<ToolGatewayResult> {
-  const baseUrl = `http://127.0.0.1:${input.config.port}/internal/tools`;
-  const response = await input.requestFetch(
-    `${baseUrl}/${encodeURIComponent(input.gatewayToolName)}/execute`,
-    {
-      method: "POST",
-      headers: {
-        accept: "application/json",
-        "content-type": "application/json",
-        ...runtimeHeaders(input.runtime)
-      },
-      body: JSON.stringify({
-        input: input.toolInput
-      })
-    }
-  );
-  if (!response.ok) {
-    throw new Error(await managedRuntimeHttpErrorMessage(response));
-  }
-  return (await response.json()) as ToolGatewayResult;
-}
-
-function normalizeToolClassification(
-  classification: ToolGatewayResult["classification"]
-): ToolClassification {
-  return classification === "public" || classification === "restricted"
-    ? classification
-    : "user_private";
-}
-
-function formatHermesProviderToolResult(
-  providerToolName: string,
-  toolInput: Record<string, unknown>,
-  content: unknown
-): string {
-  if (isRecord(content) && typeof content.message === "string" && content.error) {
-    return `Provider tool failed: ${content.message}`;
-  }
-
-  const records = normalizeProviderContent(content);
-  if (providerToolName === "google_search_drive_files") {
-    const files = Array.isArray(records) ? records.filter(isRecord) : [];
-    if (files.length > 0) {
-      return [
-        files.length === 1
-          ? `Last edited Google Drive file: ${formatGoogleDriveFile(files[0])}`
-          : "Last edited Google Drive files",
-        ...(files.length === 1
-          ? googleDriveFileMetadataLines(files[0])
-          : files.slice(0, 10).map((record) => `- ${formatGoogleDriveFile(record)}`))
-      ].join("\n");
-    }
-    return "No Google Drive files were found.";
-  }
-
-  if (providerToolName === "hubspot_search_crm_objects") {
-    const objectType =
-      typeof toolInput.objectType === "string" && toolInput.objectType.trim()
-        ? toolInput.objectType.trim()
-        : "objects";
-    if (Array.isArray(records) && records.length > 0) {
-      return [
-        `Latest HubSpot ${objectType.replace(/_/g, " ")}`,
-        ...records.slice(0, 10).map((record) => `- ${formatHubSpotRecord(record)}`)
-      ].join("\n");
-    }
-    return `No HubSpot ${objectType.replace(/_/g, " ")} matched.`;
-  }
-
-  if (providerToolName === "github_list_assigned_issues") {
-    return formatGenericRecordList("Assigned GitHub issues", records);
-  }
-
-  if (providerToolName === "jira_list_assigned_issues") {
-    return formatGenericRecordList("Your open Jira tickets", records);
-  }
-
-  return formatGenericRecordList(providerToolName.replace(/_/g, " "), records);
-}
-
-function normalizeProviderContent(content: unknown): unknown {
-  if (isRecord(content)) {
-    for (const key of [
-      "items",
-      "results",
-      "files",
-      "issues",
-      "companies",
-      "contacts",
-      "deals",
-      "users",
-      "owners",
-      "data"
-    ]) {
-      const value = content[key];
-      if (Array.isArray(value)) {
-        return value;
-      }
-    }
-  }
-  return content;
-}
-
-function formatGoogleDriveFile(record: unknown): string {
-  if (!isRecord(record)) {
-    return String(record);
-  }
-  const name = firstDisplayString(record, "name", "title", "filename") || "unnamed file";
-  const link = firstDisplayString(record, "webViewLink", "url", "link");
-  return link ? `<${link}|${name}>` : name;
-}
-
-function googleDriveFileMetadataLines(record: unknown): string[] {
-  if (!isRecord(record)) {
-    return [];
-  }
-  const modified = firstDisplayString(
-    record,
-    "modifiedTime",
-    "modified_time",
-    "modified",
-    "updatedAt",
-    "updated_at"
-  );
-  return modified ? [`modified: ${formatUtcTimestamp(modified)}`] : [];
-}
-
-function formatGenericRecordList(title: string, records: unknown): string {
-  if (Array.isArray(records)) {
-    if (records.length === 0) {
-      return `${title}: none found.`;
-    }
-    return [
-      title,
-      ...records.slice(0, 10).map((record) => `- ${formatGenericRecord(record)}`)
-    ].join("\n");
-  }
-  if (isRecord(records)) {
-    return `${title}\n${JSON.stringify(records, null, 2)}`;
-  }
-  return `${title}: ${String(records ?? "none found.")}`;
-}
-
-function formatHubSpotRecord(record: unknown): string {
-  if (!isRecord(record)) {
-    return String(record);
-  }
-  const props = isRecord(record.properties) ? record.properties : {};
-  const name =
-    firstDisplayString(props, "name", "dealname", "hs_name") ||
-    [firstDisplayString(props, "firstname"), firstDisplayString(props, "lastname")]
-      .filter(Boolean)
-      .join(" ") ||
-    firstDisplayString(props, "email", "hs_email", "domain") ||
-    firstDisplayString(record, "name", "title", "id") ||
-    "unnamed record";
-  const suffix =
-    firstDisplayString(props, "domain", "website") ||
-    firstDisplayString(props, "email", "hs_email");
-  return suffix ? `${name} — ${suffix}` : name;
-}
-
-function formatGenericRecord(record: unknown): string {
-  if (!isRecord(record)) {
-    return String(record);
-  }
-  const props = isRecord(record.properties) ? record.properties : {};
-  const key = firstDisplayString(record, "key", "number", "id");
-  const name =
-    firstDisplayString(record, "title", "summary", "name") ||
-    firstDisplayString(props, "summary", "name", "dealname", "email") ||
-    JSON.stringify(record);
-  const status =
-    firstDisplayString(record, "status", "state") ||
-    firstDisplayString(props, "status", "dealstage");
-  return `${key ? `${key} — ` : ""}${name}${status ? ` (${status})` : ""}`;
-}
-
-function firstDisplayString(source: Record<string, unknown>, ...keys: string[]): string {
-  for (const key of keys) {
-    const value = source[key];
-    if (typeof value === "string" && value.trim()) {
-      return value.trim();
-    }
-    if (typeof value === "number" && Number.isFinite(value)) {
-      return String(value);
-    }
-  }
-  return "";
-}
-
-function formatUtcTimestamp(value: string): string {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return value;
-  }
-  return date.toISOString().replace("T", " ").replace(/\.\d{3}Z$/, " UTC");
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function readRuntimeEventStream(

@@ -305,7 +305,7 @@ describe("managed runtime Burble Native integration", () => {
     );
   });
 
-  test("executes direct Hermes provider tool stream callbacks once", async () => {
+  test("relays direct Hermes provider tool results to the model continuation", async () => {
     const store = createTokenStore(":memory:");
     const runtimeToken = "runtime-token-u123";
     const runtime = store.getOrCreateAgentRuntime({
@@ -358,7 +358,23 @@ describe("managed runtime Burble Native integration", () => {
                 callId: "hermes-provider-marker-test",
                 input: { limit: 1 }
               }),
-              JSON.stringify({ type: "status", text: "Agent has thought for 8s..." })
+              JSON.stringify({
+                type: "tool_result",
+                toolName: "google_search_drive_files",
+                callId: "hermes-provider-marker-test",
+                classification: "user_private"
+              }),
+              JSON.stringify({
+                type: "message_delta",
+                text: "Hermes synthesized the latest Drive file from the tool result."
+              }),
+              JSON.stringify({
+                type: "final",
+                response: {
+                  classification: "user_private",
+                  text: "Hermes synthesized the latest Drive file from the tool result."
+                }
+              })
             ].join("\n"),
             { headers: { "content-type": "application/x-ndjson" } }
           );
@@ -370,31 +386,7 @@ describe("managed runtime Burble Native integration", () => {
           (parsed.hostname === "127.0.0.1" && parsed.port === "3000")) &&
         parsed.pathname.startsWith("/internal/tools/")
       ) {
-        const toolName = decodeURIComponent(
-          parsed.pathname
-            .replace(/^\/internal\/tools\//, "")
-            .replace(/\/execute$/, "")
-        );
-        return handleToolGatewayRequest(
-          baseConfig,
-          store,
-          toolName,
-          new Request(url, init),
-          {
-            searchGoogleDriveFiles: async (token, input) => {
-              expect(token).toBe("google-token");
-              expect(input).toEqual({ limit: 1 });
-              return [
-                {
-                  id: "drive-file-1",
-                  name: "apelogic-ai-open-prs-last-24h-seen.txt",
-                  webViewLink: "https://drive.google.com/file/d/drive-file-1/view",
-                  modifiedTime: "2026-06-21T19:02:13.000Z"
-                }
-              ];
-            }
-          }
-        );
+        throw new Error(`Unexpected client-side provider gateway call ${url}`);
       }
 
       throw new Error(`Unexpected request ${url}`);
@@ -449,20 +441,13 @@ describe("managed runtime Burble Native integration", () => {
     );
 
     expect(result.text).toBe(
-      [
-        "Last edited Google Drive file: <https://drive.google.com/file/d/drive-file-1/view|apelogic-ai-open-prs-last-24h-seen.txt>",
-        "modified: 2026-06-21 19:02:13 UTC"
-      ].join("\n")
+      "Hermes synthesized the latest Drive file from the tool result."
     );
     expect(events).toContain("tool_call");
     expect(events).toContain("tool_result");
-    expect(
-      calls.filter(
-        (call) =>
-          call ===
-          "POST http://127.0.0.1:3000/internal/tools/google.searchDriveFiles/execute"
-      )
-    ).toHaveLength(1);
+    expect(events).toContain("message_delta");
+    expect(events.some((event) => event.includes("type=final"))).toBe(true);
+    expect(calls.some((call) => call.includes("/internal/tools/"))).toBe(false);
   });
 
   test("does not replay Hermes bridge provider tool stream callbacks", async () => {

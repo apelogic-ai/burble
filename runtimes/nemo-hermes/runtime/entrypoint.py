@@ -1547,9 +1547,15 @@ class BurbleHermesRuntime:
             if provider_tool_hint_by_name(tool_name):
                 print(
                     f"[INFO] {timestamp()} Nemo Hermes emitted provider tool call "
-                    f"for app-side execution runId={run_id} tool={tool_name} "
+                    f"runId={run_id} tool={tool_name} "
                     f"callId={call_id}",
                     flush=True,
+                )
+                self._schedule_stale_tool_call_failure(
+                    run_id,
+                    waiter,
+                    tool_name,
+                    call_id,
                 )
             else:
                 inferred_tool_name = self._infer_provider_tool_for_run(
