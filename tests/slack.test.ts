@@ -1543,6 +1543,17 @@ describe("formatConversationFailureMessage", () => {
     );
   });
 
+  test("surfaces managed runtime tool protocol leaks with safe detail", () => {
+    expect(
+      formatConversationFailureMessage(
+        new Error("Managed runtime final response leaked tool-call protocol text"),
+        "message"
+      )
+    ).toContain(
+      "Runtime detail: Managed runtime final response leaked tool-call protocol text"
+    );
+  });
+
   test("surfaces managed runtime finalization failures", () => {
     expect(
       formatConversationFailureMessage(

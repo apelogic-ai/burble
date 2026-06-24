@@ -370,6 +370,7 @@ def build_hermes_turn_text(input_body: dict[str, Any]) -> str:
                         "\n".join(
                             [
                                 "Provider-backed scheduled job repair:",
+                                'Do not write `cronjob: "create"`, `cronjob: "list"`, or any other cronjob tool marker as chat text. Invoke the native cronjob tool, wait for its result, then write a final Slack-ready answer from that result. If the native cronjob tool is unavailable, say scheduled jobs are unavailable in this runtime instead of printing a marker.',
                                 "Before manually triggering, enabling, or rescheduling an existing native job, inspect whether it uses provider-backed state or authenticated provider resources.",
                                 "Setup-time provider calls are not scheduled provider calls. If you need to create, find, read, or validate durable provider state during the current user turn, use ordinary Burble provider calls for the active conversation and do not include jobId.",
                                 "Never invent placeholder job ids for setup-time provider calls. jobId is only valid after the native scheduler has returned a stable job id and scheduled_job_register_capability has returned ok for that exact id.",

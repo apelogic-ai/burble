@@ -97,6 +97,15 @@ New PRs found.`)
     ).toBe(true);
   });
 
+  test("detects Hermes native cronjob markers", () => {
+    expect(
+      containsRuntimeToolCallProtocolFragments(`:alarm_clock: cronjob: "create"`)
+    ).toBe(true);
+    expect(containsRuntimeToolCallProtocolFragments(`cronjob: "list"`)).toBe(
+      true
+    );
+  });
+
   test("does not flag ordinary prose or non-protocol JSON", () => {
     expect(
       containsRuntimeToolCallProtocolFragments(
