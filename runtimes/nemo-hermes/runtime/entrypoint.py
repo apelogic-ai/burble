@@ -2453,6 +2453,55 @@ class BurbleHermesRuntime:
             return tool_input if isinstance(tool_input, dict) else {}
         return {}
 
+    async def _wait_for_external_provider_marker_result(
+        self,
+        waiter: RunWaiter,
+        tool_name: str,
+        call_id: str,
+        timeout_seconds: int,
+    ) -> dict[str, Any] | None:
+        deadline = time.monotonic() + timeout_seconds
+        target_tool_name = canonical_hermes_provider_tool_name(tool_name)
+        while time.monotonic() < deadline:
+            for event in reversed(waiter.events):
+                if event.get("type") != "tool_result":
+                    continue
+                if str(event.get("callId") or "") != call_id:
+                    continue
+                event_tool_name = canonical_hermes_provider_tool_name(
+                    str(event.get("toolName") or "")
+                )
+                if event_tool_name != target_tool_name:
+                    continue
+                return event
+            if waiter.completed or waiter.future.done():
+                return None
+            await asyncio.sleep(0.05)
+        return None
+
+    async def _finalize_provider_recovery_result(
+        self,
+        run_id: str,
+        waiter: RunWaiter,
+        tool_name: str,
+        call_id: str,
+        tool_input: dict[str, Any],
+        content: Any,
+    ) -> bool:
+        text = format_hermes_provider_recovery_text(tool_name, tool_input, content)
+        response = {"classification": "user_private", "text": text}
+        waiter.final_response = response
+        if text:
+            await waiter.emit({"type": "message_delta", "text": text})
+        if not waiter.future.done():
+            waiter.future.set_result(response)
+        print(
+            f"[WARN] {timestamp()} Nemo Hermes provider tool recovered "
+            f"runId={run_id} tool={tool_name} callId={call_id} textChars={len(text)}",
+            flush=True,
+        )
+        return True
+
     async def _recover_provider_tool(
         self,
         run_id: str,
@@ -2505,6 +2554,53 @@ class BurbleHermesRuntime:
                     "callId": call_id,
                     "input": effective_input,
                 })
+            if emit_tool_call and call_id.startswith("hermes-provider-marker-"):
+                marker_timeout = max(
+                    1,
+                    int_env("HERMES_PROVIDER_MARKER_RESULT_TIMEOUT_SECONDS", 15),
+                )
+                result_event = await self._wait_for_external_provider_marker_result(
+                    waiter,
+                    tool_name,
+                    call_id,
+                    marker_timeout,
+                )
+                if result_event and "content" in result_event:
+                    return await self._finalize_provider_recovery_result(
+                        run_id,
+                        waiter,
+                        tool_name,
+                        call_id,
+                        effective_input,
+                        result_event.get("content"),
+                    )
+                message = (
+                    "Burble provider tool "
+                    f"{normalize_burble_provider_tool_name(tool_name)} did not return "
+                    f"a host-executed marker result within {marker_timeout}s."
+                )
+                print(
+                    f"[ERROR] {timestamp()} Nemo Hermes provider marker result timed out "
+                    f"runId={run_id} tool={tool_name} callId={call_id} "
+                    f"timeoutSeconds={marker_timeout}",
+                    file=sys.stderr,
+                    flush=True,
+                )
+                await waiter.emit({
+                    "type": "tool_result",
+                    "toolName": tool_name,
+                    "callId": call_id,
+                    "classification": "user_private",
+                    "content": {"error": True, "message": message},
+                })
+                return await self._finalize_provider_recovery_result(
+                    run_id,
+                    waiter,
+                    tool_name,
+                    call_id,
+                    effective_input,
+                    {"error": True, "message": message},
+                )
             recovery_timeout = max(1, int_env("HERMES_PROVIDER_RECOVERY_TIMEOUT_SECONDS", 120))
             try:
                 content = await asyncio.wait_for(
@@ -2545,19 +2641,14 @@ class BurbleHermesRuntime:
                 "classification": "user_private",
                 "content": content,
             })
-            text = format_hermes_provider_recovery_text(tool_name, effective_input, content)
-            response = {"classification": "user_private", "text": text}
-            waiter.final_response = response
-            if text:
-                await waiter.emit({"type": "message_delta", "text": text})
-            if not waiter.future.done():
-                waiter.future.set_result(response)
-            print(
-                f"[WARN] {timestamp()} Nemo Hermes provider tool recovered "
-                f"runId={run_id} tool={tool_name} callId={call_id} textChars={len(text)}",
-                flush=True,
+            return await self._finalize_provider_recovery_result(
+                run_id,
+                waiter,
+                tool_name,
+                call_id,
+                effective_input,
+                content,
             )
-            return True
         except Exception as error:
             print(
                 f"[ERROR] {timestamp()} Nemo Hermes provider recovery failed "

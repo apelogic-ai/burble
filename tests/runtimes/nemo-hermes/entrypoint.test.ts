@@ -653,6 +653,23 @@ class FakeRequest:
 
 async def main():
     runtime = mod.BurbleHermesRuntime()
+    async def fake_external_marker_result(waiter, tool_name, call_id, timeout_seconds):
+        tool_input = {}
+        for event in reversed(waiter.events):
+            if event.get("type") == "tool_call" and event.get("callId") == call_id:
+                tool_input = event.get("input") if isinstance(event.get("input"), dict) else {}
+                break
+        content = await mod.call_burble_provider_tool(tool_name, tool_input)
+        result_event = {
+            "type": "tool_result",
+            "toolName": tool_name,
+            "callId": call_id,
+            "classification": "user_private",
+            "content": content,
+        }
+        await waiter.emit(result_event)
+        return result_event
+    runtime._wait_for_external_provider_marker_result = fake_external_marker_result
     waiter = mod.RunWaiter()
     queue = asyncio.Queue()
     waiter.queues.append(queue)
@@ -1113,6 +1130,23 @@ class FakeRequest:
 
 async def main():
     runtime = mod.BurbleHermesRuntime()
+    async def fake_external_marker_result(waiter, tool_name, call_id, timeout_seconds):
+        tool_input = {}
+        for event in reversed(waiter.events):
+            if event.get("type") == "tool_call" and event.get("callId") == call_id:
+                tool_input = event.get("input") if isinstance(event.get("input"), dict) else {}
+                break
+        content = await mod.call_burble_provider_tool(tool_name, tool_input)
+        result_event = {
+            "type": "tool_result",
+            "toolName": tool_name,
+            "callId": call_id,
+            "classification": "user_private",
+            "content": content,
+        }
+        await waiter.emit(result_event)
+        return result_event
+    runtime._wait_for_external_provider_marker_result = fake_external_marker_result
     waiter = mod.RunWaiter()
     queue = asyncio.Queue()
     waiter.queues.append(queue)
@@ -1485,7 +1519,7 @@ mod.web.json_response = lambda body, **kwargs: body
 os.environ["BURBLE_TOOL_GATEWAY_URL"] = "http://burble-app:3000/internal/tools"
 os.environ["BURBLE_INTERNAL_TOKEN"] = "token"
 os.environ["BURBLE_RUNTIME_ID"] = "rt_123"
-os.environ["HERMES_PROVIDER_RECOVERY_TIMEOUT_SECONDS"] = "1"
+os.environ["HERMES_PROVIDER_MARKER_RESULT_TIMEOUT_SECONDS"] = "1"
 
 class HangingProviderResponse:
     status = 200
@@ -1594,13 +1628,13 @@ asyncio.run(main())
           content: {
             error: true,
             message:
-              "Burble provider tool hubspot.searchCrmObjects timed out after 1s during Hermes recovery."
+              "Burble provider tool hubspot.searchCrmObjects did not return a host-executed marker result within 1s."
           }
         },
         {
           type: "message_delta",
           text:
-            "Provider tool failed: Burble provider tool hubspot.searchCrmObjects timed out after 1s during Hermes recovery."
+            "Provider tool failed: Burble provider tool hubspot.searchCrmObjects did not return a host-executed marker result within 1s."
         }
       ],
       completed: false,
@@ -2427,6 +2461,23 @@ provider_plugin.ClientTimeout = lambda total=None: None
 
 async def main():
     runtime = mod.BurbleHermesRuntime()
+    async def fake_external_marker_result(waiter, tool_name, call_id, timeout_seconds):
+        tool_input = {}
+        for event in reversed(waiter.events):
+            if event.get("type") == "tool_call" and event.get("callId") == call_id:
+                tool_input = event.get("input") if isinstance(event.get("input"), dict) else {}
+                break
+        content = await mod.call_burble_provider_tool(tool_name, tool_input)
+        result_event = {
+            "type": "tool_result",
+            "toolName": tool_name,
+            "callId": call_id,
+            "classification": "user_private",
+            "content": content,
+        }
+        await waiter.emit(result_event)
+        return result_event
+    runtime._wait_for_external_provider_marker_result = fake_external_marker_result
     waiter = mod.RunWaiter()
     queue = asyncio.Queue()
     waiter.queues.append(queue)

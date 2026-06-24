@@ -21,6 +21,7 @@ import {
   routeRuntimeEndpointFetch
 } from "../runtime-endpoint-routing";
 import { createRoutedRuntimeWebSocketFactory } from "../runtime-websocket";
+import { providerToolCatalog } from "../../providers/catalog";
 
 export type AgentRuntimeFetch = (
   input: string,
@@ -82,6 +83,11 @@ type RemoteRunEvent =
   | { type: "message_replace"; text: string }
   | { type: "final"; response: AgentOutput }
   | { type: "error"; message: string };
+
+type ToolGatewayResult = {
+  classification?: ToolClassification;
+  content?: unknown;
+};
 
 type ConnectionSummary = {
   connected: boolean;
@@ -336,12 +342,24 @@ export function createManagedRuntimeAdapter(
             elapsedMs: Date.now() - runStartedAt
           });
         };
+        const handleHermesProviderMarkerToolCall =
+          createHermesProviderMarkerToolBridge({
+            config: deps.config,
+            requestFetch,
+            runtime,
+            runtimeType,
+            baseUrl,
+            runId,
+            runtimeId,
+            logInfo
+          });
 
         if (isStreamingResponse(response)) {
           agentResponse = yield* readStreamingRunResponse(
             response,
             runtimeMessageDeltasEnabled(runtime),
-            observeEvent
+            observeEvent,
+            handleHermesProviderMarkerToolCall
           );
         } else {
           const startPayload = (await response.json()) as RemoteRunResponse &
@@ -366,7 +384,8 @@ export function createManagedRuntimeAdapter(
               agentResponse = yield* readWebSocketRunResponse(
                 createWebSocket(eventsUrl, runtimeWebSocketOptions(runtime)),
                 runtimeMessageDeltasEnabled(runtime),
-                observeEvent
+                observeEvent,
+                handleHermesProviderMarkerToolCall
               );
             } catch (error) {
               if (!isRuntimeStreamClosedError(error)) {
@@ -904,7 +923,10 @@ function assertManagedRuntimeFinalResponse(response: AgentOutput): void {
 async function* readWebSocketRunResponse(
   socket: AgentRuntimeWebSocket,
   emitMessageDeltas: boolean,
-  onEvent?: (event: AgentRunEvent) => void
+  onEvent?: (event: AgentRunEvent) => void,
+  onHermesProviderMarkerToolCall?: (
+    event: Extract<AgentRunEvent, { type: "tool_call" }>
+  ) => Promise<void>
 ): AsyncIterable<AgentRunEvent, AgentOutput | null> {
   const queue: unknown[] = [];
   let closed = false;
@@ -961,6 +983,10 @@ async function* readWebSocketRunResponse(
 
         onEvent?.(event);
         yield event;
+
+        if (event.type === "tool_call") {
+          await onHermesProviderMarkerToolCall?.(event);
+        }
       }
 
       if (failed) {
@@ -983,10 +1009,209 @@ function runtimeMessageDeltasEnabled(runtime: RuntimeHandle | null): boolean {
   return runtime?.manifest?.streaming.messageDeltasEnabled !== false;
 }
 
+function createHermesProviderMarkerToolBridge(input: {
+  config?: Config;
+  requestFetch: AgentRuntimeFetch;
+  runtime: RuntimeHandle | null;
+  runtimeType: string;
+  baseUrl: string;
+  logInfo: (message: string) => void;
+  runId: string;
+  runtimeId: string;
+}):
+  | ((
+      event: Extract<AgentRunEvent, { type: "tool_call" }>
+    ) => Promise<void>)
+  | undefined {
+  if (
+    !input.config ||
+    !input.runtime ||
+    runtimeCompatibilityFamily(input.runtimeType) !== "hermes"
+  ) {
+    return undefined;
+  }
+
+  const config = input.config;
+  const runtime = input.runtime;
+  const completedCallIds = new Set<string>();
+
+  return async (event) => {
+    if (!event.callId.startsWith("hermes-provider-marker-")) {
+      return;
+    }
+    if (completedCallIds.has(event.callId)) {
+      return;
+    }
+
+    const providerCall = resolveHermesProviderMarkerToolCall(event);
+    if (!providerCall) {
+      return;
+    }
+    completedCallIds.add(event.callId);
+
+    const startedAt = Date.now();
+    input.logInfo(
+      [
+        "Managed runtime executing Hermes provider marker tool call",
+        `runId=${input.runId}`,
+        `runtimeId=${input.runtimeId}`,
+        `toolName=${providerCall.providerToolName}`,
+        `gatewayToolName=${providerCall.gatewayToolName}`,
+        `callId=${event.callId}`
+      ].join(" ")
+    );
+
+    let result: ToolGatewayResult;
+    try {
+      result = await executeRuntimeToolGatewayCall({
+        config,
+        requestFetch: input.requestFetch,
+        runtime,
+        gatewayToolName: providerCall.gatewayToolName,
+        toolInput: providerCall.toolInput
+      });
+    } catch (error) {
+      result = {
+        classification: "user_private",
+        content: {
+          error: true,
+          message:
+            error instanceof Error
+              ? error.message
+              : "Hermes provider marker tool execution failed."
+        }
+      };
+    }
+
+    const classification = normalizeToolClassification(result.classification);
+    await postHermesProviderMarkerToolResult({
+      baseUrl: input.baseUrl,
+      requestFetch: input.requestFetch,
+      runtime,
+      runId: input.runId,
+      toolName: event.toolName,
+      callId: event.callId,
+      classification,
+      content: result.content
+    });
+
+    input.logInfo(
+      [
+        "Managed runtime executed Hermes provider marker tool call",
+        `runId=${input.runId}`,
+        `runtimeId=${input.runtimeId}`,
+        `toolName=${providerCall.providerToolName}`,
+        `gatewayToolName=${providerCall.gatewayToolName}`,
+        `callId=${event.callId}`,
+        `classification=${classification}`,
+        `elapsedMs=${Date.now() - startedAt}`
+      ].join(" ")
+    );
+  };
+}
+
+function resolveHermesProviderMarkerToolCall(
+  event: Extract<AgentRunEvent, { type: "tool_call" }>
+):
+  | {
+      providerToolName: string;
+      gatewayToolName: string;
+      toolInput: Record<string, unknown>;
+    }
+  | null {
+  const spec = providerToolCatalog.find(
+    (tool) =>
+      tool.name === event.toolName ||
+      tool.alias === event.toolName ||
+      (tool.aliases ?? []).includes(event.toolName)
+  );
+  if (!spec || spec.risk !== "read") {
+    return null;
+  }
+
+  return {
+    providerToolName: spec.name,
+    gatewayToolName: spec.alias,
+    toolInput: isRecord(event.input) ? event.input : {}
+  };
+}
+
+async function executeRuntimeToolGatewayCall(input: {
+  config: Config;
+  requestFetch: AgentRuntimeFetch;
+  runtime: RuntimeHandle;
+  gatewayToolName: string;
+  toolInput: Record<string, unknown>;
+}): Promise<ToolGatewayResult> {
+  const baseUrl = `http://127.0.0.1:${input.config.port}/internal/tools`;
+  const response = await input.requestFetch(
+    `${baseUrl}/${encodeURIComponent(input.gatewayToolName)}/execute`,
+    {
+      method: "POST",
+      headers: {
+        accept: "application/json",
+        "content-type": "application/json",
+        ...runtimeHeaders(input.runtime)
+      },
+      body: JSON.stringify({
+        input: input.toolInput
+      })
+    }
+  );
+  if (!response.ok) {
+    throw new Error(await managedRuntimeHttpErrorMessage(response));
+  }
+  return (await response.json()) as ToolGatewayResult;
+}
+
+async function postHermesProviderMarkerToolResult(input: {
+  baseUrl: string;
+  requestFetch: AgentRuntimeFetch;
+  runtime: RuntimeHandle;
+  runId: string;
+  toolName: string;
+  callId: string;
+  classification: ToolClassification;
+  content: unknown;
+}): Promise<void> {
+  const url = `${input.baseUrl}/internal/hermes/runs/${encodeURIComponent(
+    input.runId
+  )}/messages`;
+  const response = await input.requestFetch(url, {
+    method: "POST",
+    headers: {
+      accept: "application/json",
+      "content-type": "application/json",
+      ...runtimeHeaders(input.runtime)
+    },
+    body: JSON.stringify({
+      type: "tool_result",
+      toolName: input.toolName,
+      callId: input.callId,
+      classification: input.classification,
+      content: input.content
+    })
+  });
+  if (!response.ok) {
+    throw new Error(await managedRuntimeHttpErrorMessage(response));
+  }
+}
+
+function normalizeToolClassification(
+  classification: ToolGatewayResult["classification"]
+): ToolClassification {
+  return classification === "public" || classification === "restricted"
+    ? classification
+    : "user_private";
+}
+
 async function* readStreamingRunResponse(
   response: Response,
   emitMessageDeltas = true,
-  onEvent?: (event: AgentRunEvent) => void
+  onEvent?: (event: AgentRunEvent) => void,
+  onHermesProviderMarkerToolCall?: (
+    event: Extract<AgentRunEvent, { type: "tool_call" }>
+  ) => Promise<void>
 ): AsyncIterable<AgentRunEvent, AgentOutput | null> {
   if (!response.body) {
     return null;
@@ -1025,6 +1250,10 @@ async function* readStreamingRunResponse(
 
       onEvent?.(event);
       yield event;
+
+      if (event.type === "tool_call") {
+        await onHermesProviderMarkerToolCall?.(event);
+      }
     }
   } catch (error) {
     if (streamedText.trim() && isRuntimeStreamClosedError(error)) {
@@ -1541,4 +1770,8 @@ function isRuntimeAttachment(value: unknown): value is RuntimeAttachment {
 
 function optionalString(value: unknown): boolean {
   return value === undefined || typeof value === "string";
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
