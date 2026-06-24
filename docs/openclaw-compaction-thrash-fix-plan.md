@@ -82,6 +82,34 @@ defeats it across turns. This is effectively an accidental accumulation bug.
 
 ## Fix plan (ranked)
 
+### Scheduled task reliability addendum — 2026-06-24
+
+Live OpenShell/OpenClaw cron testing exposed separate reliability work needed
+before scheduled tasks are clean:
+
+- **Propagate OpenClaw model failures to Burble.** OpenClaw can log an OpenAI
+  Responses `server_error` / `FailoverError` while Burble keeps receiving only
+  status heartbeats. Burble must get a terminal runtime error instead of leaving
+  Slack in an indefinite "thinking" state.
+- **Bound the whole OpenClaw Gateway Responses stream.** The runtime timeout must
+  cover the streaming body, not only the initial response headers. Otherwise a
+  failed OpenClaw SSE body can stay open forever after the provider call has
+  already failed internally.
+- **Add OpenClaw LLM burst diagnostics.** Scheduled jobs should log model start
+  count, fetch start count, retry count, stream completion count, and provider
+  request IDs per Burble run/job. This lets us tell ordinary provider
+  instability apart from OpenClaw-generated request bursts.
+- **Limit scheduled-run model concurrency.** OpenClaw scheduled tasks should
+  start with a small per-runtime model concurrency cap and jittered cron wakeups
+  so hourly jobs do not cluster into provider bursts.
+- **Evaluate model/API fallback for scheduled jobs.** Consider a cheaper/faster
+  fallback model, such as `gpt-5.4-mini`, for scheduled setup or summary runs,
+  and verify whether OpenClaw's Responses path is less reliable than the path
+  Hermes uses.
+- **Keep startup/readiness separate.** OpenShell readiness probes can hit
+  OpenClaw before port 8080 is listening; fix the readiness signal, but do not
+  confuse that with the post-start model failure/hung-stream bug.
+
 ### 1. Ephemeral per-turn OpenClaw session — kills the thrash (primary) — DONE
 
 Make the session key unique per turn so history never accumulates across turns.
@@ -210,6 +238,12 @@ run-scope like Hermes, not channel-scope like OpenClaw.
 
 ## Open items
 
+- Keep regression coverage for OpenClaw Gateway SSE streams that fail internally
+  but never close, and ensure Burble receives a terminal error.
+- Add production diagnostics for OpenClaw model call count/retry count per run
+  and per scheduled job.
+- Decide where to enforce scheduled-run model concurrency and cron jitter:
+  OpenClaw runtime adapter, Burble scheduler/control plane, or both.
 - Confirm OpenClaw config keys for an explicit context/compaction budget
   (step 3) against the deployed package version.
 - Confirm no native-exec / scheduled-job path reads OpenClaw cross-turn session
