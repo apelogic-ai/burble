@@ -44,7 +44,7 @@ spec.loader.exec_module(mod)
 `;
 
 describe("local Hermes provider testbed", () => {
-  test("recovers an MCP provider tool call when Hermes never returns a tool result", () => {
+  test("emits MCP provider tool calls for app-side execution", () => {
     const result = runPythonProbe(`${importHermesEntrypoint}
 import asyncio
 import os
@@ -122,7 +122,7 @@ async def main():
             },
         )
     )
-    await asyncio.wait_for(waiter.future, timeout=1)
+    future_done = waiter.future.done()
 
     events = []
     while not queue.empty():
@@ -130,7 +130,7 @@ async def main():
 
     print(json.dumps({
         "events": events,
-        "result": waiter.future.result(),
+        "futureDone": future_done,
         "providerCalls": provider_calls,
     }))
 
@@ -143,38 +143,10 @@ asyncio.run(main())
           type: "tool_call",
           toolName: "hubspot_search_crm_objects",
           callId: "call_testbed_hubspot"
-        },
-        {
-          type: "tool_result",
-          toolName: "hubspot_search_crm_objects",
-          callId: "call_testbed_hubspot",
-          classification: "user_private",
-          content: [
-            { properties: { name: "ROKA STUDIO", domain: "renski.com" } }
-          ]
-        },
-        {
-          type: "message_delta",
-          text: "Latest HubSpot companies\n- ROKA STUDIO — renski.com"
         }
       ],
-      result: {
-        classification: "user_private",
-        text: "Latest HubSpot companies\n- ROKA STUDIO — renski.com"
-      },
-      providerCalls: [
-        {
-          url:
-            "http://burble-app:3000/internal/tools/hubspot.searchCrmObjects/execute",
-          json: {
-            input: {
-              objectType: "companies",
-              limit: 10,
-              properties: ["name", "domain", "createdate", "hs_lastmodifieddate"]
-            }
-          }
-        }
-      ]
+      futureDone: false,
+      providerCalls: []
     });
   });
 });

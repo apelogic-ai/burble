@@ -5,6 +5,7 @@ tools:
     implementation: getAuthenticatedUser
     title: GitHub authenticated user
     description: Return the GitHub identity connected to this Slack user.
+    risk: read
     input: {}
 
   - name: github_list_assigned_issues
@@ -12,6 +13,7 @@ tools:
     implementation: listAssignedIssues
     title: GitHub assigned issues
     description: List GitHub issues assigned to this Slack user.
+    risk: read
     input: {}
 
   - name: github_search_issues
@@ -19,6 +21,7 @@ tools:
     implementation: searchIssues
     title: GitHub issue search
     description: Search GitHub issues and pull requests visible to this Slack user's connected GitHub account.
+    risk: read
     input:
       query:
         type: string
@@ -30,6 +33,7 @@ tools:
     implementation: listMyPullRequests
     title: GitHub pull requests authored by me
     description: List GitHub pull requests authored by this Slack user's connected GitHub account. Defaults to open PRs sorted by most recently updated.
+    risk: read
     input:
       limit:
         type: number
@@ -104,6 +108,7 @@ tools:
     implementation: getIssue
     title: GitHub get issue
     description: Get a GitHub issue by repository and issue number. Use before editing issue metadata.
+    risk: read
     input:
       repo:
         type: string
@@ -120,6 +125,7 @@ tools:
     implementation: getPullRequest
     title: GitHub get pull request
     description: Get a GitHub pull request by repository and PR number. Use before editing PR metadata.
+    risk: read
     input:
       repo:
         type: string
@@ -385,6 +391,7 @@ tools:
     implementation: getFile
     title: GitHub get file
     description: Read a text file from a GitHub repository. Use before updating an existing file.
+    risk: read
     input:
       repo:
         type: string

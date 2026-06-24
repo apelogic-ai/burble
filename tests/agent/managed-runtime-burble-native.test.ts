@@ -456,9 +456,142 @@ describe("managed runtime Burble Native integration", () => {
     );
     expect(events).toContain("tool_call");
     expect(events).toContain("tool_result");
-    expect(calls).toContain(
-      "POST http://127.0.0.1:3000/internal/tools/google.searchDriveFiles/execute"
+    expect(
+      calls.filter(
+        (call) =>
+          call ===
+          "POST http://127.0.0.1:3000/internal/tools/google.searchDriveFiles/execute"
+      )
+    ).toHaveLength(1);
+  });
+
+  test("does not auto-execute Hermes provider write tool stream callbacks", async () => {
+    const store = createTokenStore(":memory:");
+    const runtimeToken = "runtime-token-u123";
+    const runtime = store.getOrCreateAgentRuntime({
+      ...principal,
+      engine: "hermes",
+      endpointUrl: "http://hermes-runtime:8080",
+      authTokenHash: hashRuntimeToken(runtimeToken),
+      statePath: "/data/runtimes/rt_hermes/state",
+      configPath: "/data/runtimes/rt_hermes/config/hermes.json",
+      workspacePath: "/data/runtimes/rt_hermes/workspace",
+      policyHash: "policy-hermes"
+    });
+    store.upsertProviderConnection({
+      provider: "github",
+      email: "person@example.com",
+      slackUserId: principal.slackUserId,
+      providerLogin: "person@example.com",
+      accessToken: "github-token"
+    });
+
+    const runtimeHandle: RuntimeHandle = {
+      id: runtime.id,
+      engine: "hermes",
+      endpointUrl: runtime.endpointUrl,
+      authToken: runtimeToken,
+      status: "ready",
+      statePath: runtime.statePath,
+      configPath: runtime.configPath,
+      workspacePath: runtime.workspacePath,
+      manifest: runtimeManifest(runtime.id, "hermes")
+    };
+    const calls: string[] = [];
+    const events: string[] = [];
+
+    const fetchRouter = async (url: string, init?: RequestInit): Promise<Response> => {
+      calls.push(`${init?.method ?? "GET"} ${url}`);
+      const parsed = new URL(url);
+
+      if (parsed.hostname === "hermes-runtime") {
+        if (parsed.pathname === "/capabilities") {
+          return new Response("not implemented", { status: 404 });
+        }
+        if (parsed.pathname === "/runs") {
+          return new Response(
+            [
+              JSON.stringify({ type: "status", text: "Agent is thinking..." }),
+              JSON.stringify({
+                type: "tool_call",
+                toolName: "github_create_issue",
+                callId: "hermes-write-tool-test",
+                input: { repo: "owner/repo", title: "Do not create this" }
+              }),
+              JSON.stringify({
+                type: "message_delta",
+                text: "I cannot create that issue without confirmation."
+              })
+            ].join("\n"),
+            { headers: { "content-type": "application/x-ndjson" } }
+          );
+        }
+      }
+
+      if (
+        (parsed.hostname === "burble-app" ||
+          (parsed.hostname === "127.0.0.1" && parsed.port === "3000")) &&
+        parsed.pathname.startsWith("/internal/tools/")
+      ) {
+        throw new Error(`Unexpected provider gateway write call ${url}`);
+      }
+
+      throw new Error(`Unexpected request ${url}`);
+    };
+
+    const runner = createManagedRuntimeAgentRunner({
+      config: baseConfig,
+      runtimeFactory: {
+        async getOrCreateRuntime() {
+          return runtimeHandle;
+        },
+        async stopRuntime() {},
+        async reapIdleRuntimes() {}
+      },
+      fetch: fetchRouter,
+      logInfo(message) {
+        events.push(message);
+      }
+    });
+
+    const result = await collectAgentRun(
+      runner,
+      {
+        principal,
+        conversation: {
+          source: "slack",
+          workspaceId: principal.workspaceId,
+          channelId: "D123",
+          rootId: "dm:D123",
+          isDirectMessage: true
+        },
+        text: "create a GitHub issue",
+        toolGroups: {
+          groups: ["conversation", "github"],
+          reasons: ["default:conversation", "keyword:github"]
+        },
+        connections: {
+          github: {
+            provider: "github",
+            email: "person@example.com",
+            slackUserId: principal.slackUserId,
+            providerLogin: "person@example.com",
+            accessToken: "redacted",
+            connectedAt: "2026-06-08T00:00:00.000Z"
+          }
+        }
+      },
+      (event) => {
+        events.push(event.type);
+      }
     );
+
+    expect(result.text).toBe("I cannot create that issue without confirmation.");
+    expect(events).toContain("tool_call");
+    expect(events).not.toContain("tool_result");
+    expect(
+      calls.filter((call) => call.includes("/internal/tools/github.createIssue/execute"))
+    ).toHaveLength(0);
   });
 
   test("seals Slack attachment ids before sending input to a runtime", async () => {

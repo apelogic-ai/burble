@@ -5,6 +5,7 @@ tools:
     implementation: getAuthenticatedUser
     title: Google authenticated user
     description: Return the Google identity connected to this Slack user.
+    risk: read
     input: {}
 
   - name: google_search_drive_files
@@ -12,6 +13,7 @@ tools:
     implementation: searchDriveFiles
     title: Google Drive file search
     description: Search Google Drive files visible to this Slack user's connected Google account.
+    risk: read
     input:
       query:
         type: string
@@ -52,6 +54,7 @@ tools:
     implementation: getDriveFile
     title: Google Drive get file
     description: Read Google Drive file metadata and, by default, text content for files accessible to the connected Google account and granted Drive scopes. Drive metadata search may find files whose content cannot be read or edited if the stored Google connection lacks the required Drive scope or the file is not shared with the connected account.
+    risk: read
     input:
       fileId:
         type: string
@@ -159,6 +162,7 @@ tools:
     implementation: searchCalendarEvents
     title: Google Calendar event search
     description: Search upcoming Google Calendar events visible to this Slack user's connected Google account.
+    risk: read
     input:
       query:
         type: string
@@ -266,6 +270,7 @@ tools:
     implementation: searchMailMessages
     title: Google Mail message search
     description: Search Gmail messages visible to this Slack user's connected Google account.
+    risk: read
     input:
       query:
         type: string
@@ -283,6 +288,7 @@ tools:
     implementation: searchSlidesPresentations
     title: Google Slides presentation search
     description: Search Google Slides presentations visible to this Slack user's connected Google account.
+    risk: read
     input:
       query:
         type: string
@@ -300,6 +306,7 @@ tools:
     implementation: getSlidesPresentation
     title: Google Slides presentation read
     description: Read sanitized structure, slide text, layout IDs, and placeholder metadata from a Google Slides presentation.
+    risk: read
     input:
       presentationId:
         type: string
@@ -315,6 +322,7 @@ tools:
     implementation: probeSlidesTemplate
     title: Google Slides template probe
     description: Probe a Google Slides presentation's layouts and placeholders into a manifest for future deterministic slide rendering.
+    risk: read
     input:
       presentationId:
         type: string
@@ -523,6 +531,7 @@ tools:
     implementation: listAnalyticsProperties
     title: Google Analytics property list
     description: List Google Analytics accounts and GA4 properties visible to this Slack user's connected Google account.
+    risk: read
     input:
       limit:
         type: number
@@ -536,6 +545,7 @@ tools:
     implementation: getAnalyticsMetadata
     title: Google Analytics metadata
     description: List available Google Analytics dimensions and metrics for a GA4 property, optionally filtered by search terms.
+    risk: read
     input:
       propertyId:
         type: string
@@ -561,6 +571,7 @@ tools:
     implementation: runAnalyticsReport
     title: Google Analytics run report
     description: Run a read-only GA4 report for a Google Analytics property using selected dimensions, metrics, and a date range of at most 366 days.
+    risk: read
     input:
       propertyId:
         type: string

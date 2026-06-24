@@ -5,6 +5,7 @@ tools:
     implementation: getAuthenticatedUser
     title: HubSpot authenticated account
     description: Return the HubSpot account and user connected to this Slack user.
+    risk: read
     input: {}
 
   - name: hubspot_search_contacts
@@ -12,6 +13,7 @@ tools:
     implementation: searchContacts
     title: HubSpot contact search
     description: Search HubSpot CRM contacts visible to this Slack user's connected HubSpot account.
+    risk: read
     input:
       query:
         type: string
@@ -30,6 +32,7 @@ tools:
     implementation: searchCompanies
     title: HubSpot company search
     description: Search HubSpot CRM companies visible to this Slack user's connected HubSpot account.
+    risk: read
     input:
       query:
         type: string
@@ -48,6 +51,7 @@ tools:
     implementation: searchDeals
     title: HubSpot deal search
     description: Search HubSpot CRM deals visible to this Slack user's connected HubSpot account.
+    risk: read
     input:
       query:
         type: string
@@ -66,6 +70,7 @@ tools:
     implementation: searchCrmObjects
     title: HubSpot CRM object search
     description: Search or list HubSpot CRM objects covered by the connected account's read scopes. Use this for HubSpot object types beyond contacts, companies and deals, and for recent CRM object requests without a keyword query.
+    risk: read
     input:
       objectType:
         type: enum
@@ -117,6 +122,7 @@ tools:
     implementation: listOwners
     title: HubSpot owner list
     description: List HubSpot CRM owners/users assignable to CRM records.
+    risk: read
     input:
       limit:
         type: number
@@ -136,6 +142,7 @@ tools:
     implementation: listUsers
     title: HubSpot user list
     description: List users in the connected HubSpot account when the account granted the settings.users.read scope.
+    risk: read
     input:
       limit:
         type: number
@@ -155,6 +162,7 @@ tools:
     implementation: readApiResource
     title: HubSpot scoped API read
     description: Read a HubSpot API resource with GET for less common read-only scopes when no first-class HubSpot tool exists. The path must be a HubSpot API path, for example /crm/v3/schemas/deals or /marketing/v3/campaigns.
+    risk: read
     input:
       path:
         type: string

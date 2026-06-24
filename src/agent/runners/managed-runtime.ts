@@ -1126,13 +1126,27 @@ function createHermesProviderToolInterceptor(input: {
       ].join(" ")
     );
 
-    const result = await executeRuntimeToolGatewayCall({
-      config,
-      requestFetch: input.requestFetch,
-      runtime,
-      gatewayToolName: providerCall.gatewayToolName,
-      toolInput: providerCall.toolInput
-    });
+    let result: ToolGatewayResult;
+    try {
+      result = await executeRuntimeToolGatewayCall({
+        config,
+        requestFetch: input.requestFetch,
+        runtime,
+        gatewayToolName: providerCall.gatewayToolName,
+        toolInput: providerCall.toolInput
+      });
+    } catch (error) {
+      result = {
+        classification: "user_private",
+        content: {
+          error: true,
+          message:
+            error instanceof Error
+              ? error.message
+              : "Hermes provider tool execution failed."
+        }
+      };
+    }
     const classification = normalizeToolClassification(result.classification);
     const response: AgentOutput = {
       classification,
@@ -1187,14 +1201,16 @@ function resolveHermesProviderToolCall(event: Extract<AgentRunEvent, { type: "to
       tool.alias === requestedToolName ||
       (tool.aliases ?? []).includes(requestedToolName)
   );
-  if (!spec || (spec.risk && spec.risk !== "read")) {
+  if (!spec || spec.risk !== "read") {
     return null;
   }
 
   const nestedInput =
     event.toolName === "burble_provider_call" && isRecord(rawInput.input)
       ? rawInput.input
-      : rawInput;
+      : event.toolName === "burble_provider_call"
+        ? {}
+        : rawInput;
   return {
     providerToolName: spec.name,
     gatewayToolName: spec.alias,

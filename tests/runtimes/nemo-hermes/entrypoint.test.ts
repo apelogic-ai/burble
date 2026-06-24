@@ -724,7 +724,7 @@ async def main():
             },
         )
     )
-    await asyncio.wait_for(bridge_waiter.future, timeout=1)
+    bridge_future_done = bridge_waiter.future.done()
 
     bridge_events = []
     while not bridge_queue.empty():
@@ -764,7 +764,7 @@ async def main():
         "statusResult": status_waiter.future.result(),
         "bridgeResponse": bridge_response,
         "bridgeEvents": bridge_events,
-        "bridgeResult": bridge_waiter.future.result(),
+        "bridgeFutureDone": bridge_future_done,
         "inferredResponse": inferred_response,
         "inferredEvents": inferred_events,
         "inferredResult": inferred_waiter.future.result(),
@@ -854,25 +854,9 @@ asyncio.run(main())
             limit: 1,
             properties: ["name", "domain"]
           }
-        },
-        {
-          type: "tool_result",
-          toolName: "hubspot_search_crm_objects",
-          callId: "call_bridge_hubspot_1",
-          classification: "user_private",
-          content: [
-            { properties: { name: "ROKA STUDIO", domain: "renski.com" } }
-          ]
-        },
-        {
-          type: "message_delta",
-          text: "Latest HubSpot companies\n- ROKA STUDIO — renski.com"
         }
       ],
-      bridgeResult: {
-        classification: "user_private",
-        text: "Latest HubSpot companies\n- ROKA STUDIO — renski.com"
-      },
+      bridgeFutureDone: false,
       inferredResponse: { ok: true },
       inferredEvents: [
         {
@@ -918,17 +902,6 @@ asyncio.run(main())
               objectType: "companies",
               limit: 10,
               properties: ["name", "domain", "createdate", "hs_lastmodifieddate"]
-            }
-          }
-        },
-        {
-          url:
-            "http://burble-app:3000/internal/tools/hubspot.searchCrmObjects/execute",
-          json: {
-            input: {
-              objectType: "companies",
-              limit: 1,
-              properties: ["name", "domain"]
             }
           }
         },
@@ -1030,7 +1003,7 @@ async def main():
             },
         )
     )
-    await asyncio.wait_for(waiter.future, timeout=1)
+    future_done = waiter.future.done()
 
     events = []
     while not queue.empty():
@@ -1041,7 +1014,7 @@ async def main():
     print(json.dumps({
         "response": response,
         "events": events,
-        "result": waiter.future.result(),
+        "futureDone": future_done,
         "providerCalls": provider_calls,
     }))
 
@@ -1055,38 +1028,10 @@ asyncio.run(main())
           type: "tool_call",
           toolName: "hubspot_search_crm_objects",
           callId: "call_hubspot_1"
-        },
-        {
-          type: "tool_result",
-          toolName: "hubspot_search_crm_objects",
-          callId: "call_hubspot_1",
-          classification: "user_private",
-          content: [
-            { properties: { name: "ROKA STUDIO", domain: "renski.com" } }
-          ]
-        },
-        {
-          type: "message_delta",
-          text: "Latest HubSpot companies\n- ROKA STUDIO — renski.com"
         }
       ],
-      result: {
-        classification: "user_private",
-        text: "Latest HubSpot companies\n- ROKA STUDIO — renski.com"
-      },
-      providerCalls: [
-        {
-          url:
-            "http://burble-app:3000/internal/tools/hubspot.searchCrmObjects/execute",
-          json: {
-            input: {
-              objectType: "companies",
-              limit: 10,
-              properties: ["name", "domain", "createdate", "hs_lastmodifieddate"]
-            }
-          }
-        }
-      ]
+      futureDone: false,
+      providerCalls: []
     });
   });
 
@@ -1749,7 +1694,7 @@ asyncio.run(main())
     });
   });
 
-  test("executes structured Hermes provider tool calls immediately", () => {
+  test("emits structured Hermes provider tool calls for app-side execution", () => {
     const result = runHermesEntrypointProbe(`${importEntrypoint}
 import asyncio
 import os
@@ -1762,12 +1707,7 @@ original_call_provider = mod.call_burble_provider_tool
 
 async def fake_call_provider(tool_name, tool_input):
     provider_calls.append({"toolName": tool_name, "input": tool_input})
-    return [
-        {
-            "name": "apelogic-ai-open-prs-last-24h-seen.txt",
-            "modifiedTime": "2026-06-21T19:02:13Z",
-        }
-    ]
+    raise AssertionError("Hermes runtime must not execute provider tool calls directly")
 
 class FakeRequest:
     def __init__(self, run_id, body):
@@ -1801,7 +1741,6 @@ async def main():
             )
         )
 
-        final = await asyncio.wait_for(waiter.future, timeout=1)
         await asyncio.sleep(0)
 
         events = []
@@ -1810,7 +1749,7 @@ async def main():
 
         print(json.dumps({
             "response": response,
-            "final": final,
+            "futureDone": waiter.future.done(),
             "providerCalls": provider_calls,
             "pendingAfterFinal": len(runtime.provider_tool_call_recovery_tasks),
             "events": events,
@@ -1823,17 +1762,8 @@ asyncio.run(main())
 
     expect(result).toEqual({
       response: { ok: true },
-      final: {
-        classification: "user_private",
-        text:
-          "Last edited Google Drive file: apelogic-ai-open-prs-last-24h-seen.txt\nmodified: 2026-06-21T19:02:13Z"
-      },
-      providerCalls: [
-        {
-          toolName: "google_search_drive_files",
-          input: { limit: 1 }
-        }
-      ],
+      futureDone: false,
+      providerCalls: [],
       pendingAfterFinal: 0,
       events: [
         {
@@ -1841,29 +1771,12 @@ asyncio.run(main())
           toolName: "google_search_drive_files",
           callId: "hermes-tool-call-google_search_drive_files-1",
           input: { limit: 1 }
-        },
-        {
-          type: "tool_result",
-          toolName: "google_search_drive_files",
-          callId: "hermes-tool-call-google_search_drive_files-1",
-          classification: "user_private",
-          content: [
-            {
-              name: "apelogic-ai-open-prs-last-24h-seen.txt",
-              modifiedTime: "2026-06-21T19:02:13Z"
-            }
-          ]
-        },
-        {
-          type: "message_delta",
-          text:
-            "Last edited Google Drive file: apelogic-ai-open-prs-last-24h-seen.txt\nmodified: 2026-06-21T19:02:13Z"
         }
       ]
     });
   });
 
-  test("executes recognized Hermes provider tool calls with inferred safe input", () => {
+  test("emits recognized Hermes provider tool calls without direct provider execution", () => {
     const result = runHermesEntrypointProbe(`${importEntrypoint}
 import asyncio
 import os
@@ -1876,12 +1789,7 @@ original_call_provider = mod.call_burble_provider_tool
 
 async def fake_call_provider(tool_name, tool_input):
     provider_calls.append({"toolName": tool_name, "input": tool_input})
-    return [
-        {
-            "name": "apelogic-ai-open-prs-last-24h-seen.txt",
-            "modifiedTime": "2026-06-21T19:02:13Z",
-        }
-    ]
+    raise AssertionError("Hermes runtime must not execute provider tool calls directly")
 
 class FakeRequest:
     def __init__(self, run_id, body):
@@ -1912,11 +1820,10 @@ async def main():
             )
         )
 
-        final = await asyncio.wait_for(waiter.future, timeout=1)
         await asyncio.sleep(0)
 
         print(json.dumps({
-            "final": final,
+            "futureDone": waiter.future.done(),
             "providerCalls": provider_calls,
             "pendingAfterFinal": len(runtime.provider_tool_call_recovery_tasks),
         }))
@@ -1927,17 +1834,8 @@ asyncio.run(main())
 `);
 
     expect(result).toEqual({
-      final: {
-        classification: "user_private",
-        text:
-          "Last edited Google Drive file: apelogic-ai-open-prs-last-24h-seen.txt\nmodified: 2026-06-21T19:02:13Z"
-      },
-      providerCalls: [
-        {
-          toolName: "google_search_drive_files",
-          input: { limit: 1 }
-        }
-      ],
+      futureDone: false,
+      providerCalls: [],
       pendingAfterFinal: 0
     });
   });
@@ -2012,7 +1910,7 @@ asyncio.run(main())
     expect(result).toEqual({
       callResponse: { ok: true },
       resultResponse: { ok: true },
-      pendingAfterCall: 1,
+      pendingAfterCall: 0,
       pendingAfterResult: 0,
       pendingToolMetadataAfterResult: 0,
       events: [
@@ -2102,7 +2000,7 @@ asyncio.run(main())
 `);
 
     expect(result).toEqual({
-      pendingAfterCall: 1,
+      pendingAfterCall: 0,
       pendingAfterResult: 0,
       events: [
         {
@@ -2204,8 +2102,8 @@ asyncio.run(main())
 `);
 
     expect(result).toEqual({
-      pendingAfterCalls: 2,
-      pendingAfterFirstResult: 1,
+      pendingAfterCalls: 0,
+      pendingAfterFirstResult: 0,
       pendingAfterSecondResult: 0,
       events: [
         {

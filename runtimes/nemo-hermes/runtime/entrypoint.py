@@ -1545,34 +1545,12 @@ class BurbleHermesRuntime:
                 event["input"] = tool_input
             await waiter.emit(event)
             if provider_tool_hint_by_name(tool_name):
-                execution_input = tool_input if isinstance(tool_input, dict) else None
-                if execution_input is None:
-                    original_text = str(
-                        (self.run_messages.get(run_id) or {}).get("originalText") or ""
-                    )
-                    execution_input = derive_hermes_provider_marker_input(tool_name, original_text)
-                if isinstance(execution_input, dict):
-                    self._schedule_provider_tool_call_execution(
-                        run_id,
-                        waiter,
-                        tool_name,
-                        call_id,
-                        execution_input,
-                    )
-                else:
-                    print(
-                        f"[WARN] {timestamp()} Nemo Hermes provider tool call has no executable input; "
-                        f"scheduling delayed recovery runId={run_id} tool={tool_name} "
-                        f"callId={call_id} inputType={type(tool_input).__name__}",
-                        flush=True,
-                    )
-                    self._schedule_provider_tool_call_recovery(
-                        run_id,
-                        waiter,
-                        tool_name,
-                        call_id,
-                        tool_input,
-                    )
+                print(
+                    f"[INFO] {timestamp()} Nemo Hermes emitted provider tool call "
+                    f"for app-side execution runId={run_id} tool={tool_name} "
+                    f"callId={call_id}",
+                    flush=True,
+                )
             else:
                 inferred_tool_name = self._infer_provider_tool_for_run(
                     run_id,
@@ -2111,105 +2089,6 @@ class BurbleHermesRuntime:
                 delay_seconds,
             )
         )
-
-    def _schedule_provider_tool_call_execution(
-        self,
-        run_id: str,
-        waiter: RunWaiter,
-        tool_name: str,
-        call_id: str,
-        tool_input: dict[str, Any],
-    ) -> None:
-        key = self._provider_tool_call_recovery_key(run_id, call_id)
-        if key in self.provider_tool_call_recovery_tasks:
-            return
-        self.provider_tool_call_recovery_tools[key] = tool_name
-        self.provider_tool_call_recovery_tasks[key] = asyncio.create_task(
-            self._execute_provider_tool_call(
-                run_id,
-                waiter,
-                tool_name,
-                call_id,
-                tool_input,
-            )
-        )
-
-    async def _execute_provider_tool_call(
-        self,
-        run_id: str,
-        waiter: RunWaiter,
-        tool_name: str,
-        call_id: str,
-        tool_input: dict[str, Any],
-    ) -> None:
-        try:
-            if waiter.completed or waiter.future.done():
-                return
-            print(
-                f"[INFO] {timestamp()} Nemo Hermes executing provider tool call "
-                f"runId={run_id} tool={tool_name} callId={call_id} "
-                f"input={json.dumps(tool_input, ensure_ascii=False)}",
-                flush=True,
-            )
-            timeout_seconds = max(
-                1,
-                int_env("HERMES_PROVIDER_TOOL_EXECUTION_TIMEOUT_SECONDS", 120),
-            )
-            try:
-                content = await asyncio.wait_for(
-                    call_burble_provider_tool(tool_name, tool_input),
-                    timeout=timeout_seconds,
-                )
-            except asyncio.TimeoutError:
-                message = (
-                    "Burble provider tool "
-                    f"{normalize_burble_provider_tool_name(tool_name)} timed out "
-                    f"after {timeout_seconds}s during Hermes tool execution."
-                )
-                print(
-                    f"[ERROR] {timestamp()} Nemo Hermes provider tool execution timed out "
-                    f"runId={run_id} tool={tool_name} callId={call_id} "
-                    f"timeoutSeconds={timeout_seconds}",
-                    file=sys.stderr,
-                    flush=True,
-                )
-                content = {"error": True, "message": message}
-
-            await waiter.emit({
-                "type": "tool_result",
-                "toolName": tool_name,
-                "callId": call_id,
-                "classification": "user_private",
-                "content": content,
-            })
-            text = format_hermes_provider_recovery_text(tool_name, tool_input, content)
-            response = {"classification": "user_private", "text": text}
-            waiter.final_response = response
-            if text:
-                await waiter.emit({"type": "message_delta", "text": text})
-            if not waiter.future.done():
-                waiter.future.set_result(response)
-            print(
-                f"[INFO] {timestamp()} Nemo Hermes provider tool executed "
-                f"runId={run_id} tool={tool_name} callId={call_id} textChars={len(text)}",
-                flush=True,
-            )
-        except asyncio.CancelledError:
-            raise
-        except Exception as error:
-            print(
-                f"[ERROR] {timestamp()} Nemo Hermes provider tool execution failed "
-                f"runId={run_id} tool={tool_name} callId={call_id} error={error}",
-                file=sys.stderr,
-                flush=True,
-            )
-            if not waiter.future.done():
-                await waiter.fail(str(error))
-        finally:
-            key = self._provider_tool_call_recovery_key(run_id, call_id)
-            if self.provider_tool_call_recovery_tasks.get(key) is asyncio.current_task():
-                self.provider_tool_call_recovery_tasks.pop(key, None)
-                self.provider_tool_call_recovery_tools.pop(key, None)
 
     def _infer_provider_tool_for_run(
         self,
