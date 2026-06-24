@@ -85,6 +85,7 @@ type CliSpawnProcess = {
 };
 
 const streamHeartbeatMs = 8_000;
+const openClawGatewayStreamIdleTimeoutMs = 12_000;
 const maxPlannedToolCalls = 5;
 const maxBootstrapRetries = 1;
 
@@ -449,7 +450,14 @@ async function runOpenClawGatewayHttpRequest(
       }
 
       const responseResult = onDelta && isGatewayHttpStreamingResponse(response)
-        ? await readGatewayHttpStreamingResponse(response, onDelta)
+        ? await readGatewayHttpStreamingResponse(
+            response,
+            onDelta,
+            Math.min(
+              config.openClawTimeoutMs,
+              openClawGatewayStreamIdleTimeoutMs
+            )
+          )
         : {
             responseText: await response.text(),
             stdout: "",
@@ -715,7 +723,8 @@ async function fetchGatewayHttpResponse(
 
 async function readGatewayHttpStreamingResponse(
   response: Response,
-  onDelta: (delta: string) => void
+  onDelta: (delta: string) => void,
+  idleTimeoutMs: number
 ): Promise<GatewayHttpResponseResult> {
   if (!response.body) {
     const responseText = await response.text();
@@ -735,7 +744,10 @@ async function readGatewayHttpStreamingResponse(
   let deltaCount = 0;
 
   while (true) {
-    const { value, done } = await reader.read();
+    const { value, done } = await readStreamChunkWithIdleTimeout(
+      reader,
+      idleTimeoutMs
+    );
     if (done) {
       break;
     }
@@ -829,6 +841,32 @@ function createGatewayHttpDeltaGate(
     onDelta(buffered);
     buffered = "";
   };
+}
+
+async function readStreamChunkWithIdleTimeout(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+  idleTimeoutMs: number
+) {
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      reader.read(),
+      new Promise<never>((_, reject) => {
+        timeout = setTimeout(() => {
+          reader.cancel().catch(() => undefined);
+          reject(
+            new Error(
+              `OpenClaw Gateway response stream stalled for ${idleTimeoutMs}ms`
+            )
+          );
+        }, idleTimeoutMs);
+      })
+    ]);
+  } finally {
+    if (timeout) {
+      clearTimeout(timeout);
+    }
+  }
 }
 
 function readCompleteSsePayloads(input: string): {
