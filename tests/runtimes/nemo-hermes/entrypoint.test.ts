@@ -2219,6 +2219,161 @@ asyncio.run(main())
     });
   });
 
+  test("does not fail a run when a provider tool result is present but a timer's exact call id never paired", () => {
+    const result = runHermesEntrypointProbe(`${importEntrypoint}
+import asyncio
+import os
+
+mod.web.json_response = lambda body, **kwargs: body
+os.environ["HERMES_TOOL_CALL_TIMEOUT_SECONDS"] = "1"
+
+class FakeRequest:
+    def __init__(self, run_id, body):
+        self.match_info = {"run_id": run_id}
+        self._body = body
+
+    async def json(self):
+        return self._body
+
+async def main():
+    runtime = mod.BurbleHermesRuntime()
+    waiter = mod.RunWaiter()
+    queue = asyncio.Queue()
+    waiter.queues.append(queue)
+    runtime.runs["run-progressing"] = waiter
+    runtime.run_messages["run-progressing"] = {
+        "originalText": "list companies and contacts in HubSpot",
+        "runtime": {"id": "rt_123"},
+    }
+
+    # Two provider tool calls arm two stale-failure timers (ids -1, -2).
+    for object_type in ("companies", "contacts"):
+        await runtime.handle_run_message(
+            FakeRequest(
+                "run-progressing",
+                {
+                    "type": "tool_call",
+                    "toolName": "hubspot_search_crm_objects",
+                    "input": {"objectType": object_type, "limit": 1},
+                },
+            )
+        )
+
+    # Only one result comes back. FIFO claims id -1 and cancels its timer; the
+    # timer for id -2 stays live with no result paired to its exact call id.
+    await runtime.handle_run_message(
+        FakeRequest(
+            "run-progressing",
+            {
+                "type": "tool_result",
+                "toolName": "hubspot_search_crm_objects",
+                "content": [{"properties": {"name": "ROKA STUDIO"}}],
+            },
+        )
+    )
+
+    # Let the surviving stale-failure timer fire. The run is still progressing
+    # (a tool_result for this tool exists), so it must NOT be failed.
+    await asyncio.sleep(1.3)
+
+    error_events = []
+    while not queue.empty():
+        event = await queue.get()
+        if event and event.get("type") == "error":
+            error_events.append(event)
+
+    print(json.dumps({
+        "futureDone": waiter.future.done(),
+        "errorEvents": error_events,
+        "pendingTimers": len(runtime.provider_tool_call_recovery_tasks),
+    }))
+
+asyncio.run(main())
+`);
+
+    expect(result).toEqual({
+      futureDone: false,
+      errorEvents: [],
+      pendingTimers: 0
+    });
+  });
+
+  test("fails loud when a provider tool call never produces a result", () => {
+    const result = runHermesEntrypointProbe(`${importEntrypoint}
+import asyncio
+import os
+
+mod.web.json_response = lambda body, **kwargs: body
+os.environ["HERMES_TOOL_CALL_TIMEOUT_SECONDS"] = "1"
+
+class FakeRequest:
+    def __init__(self, run_id, body):
+        self.match_info = {"run_id": run_id}
+        self._body = body
+
+    async def json(self):
+        return self._body
+
+async def main():
+    runtime = mod.BurbleHermesRuntime()
+    waiter = mod.RunWaiter()
+    queue = asyncio.Queue()
+    waiter.queues.append(queue)
+    runtime.runs["run-stuck"] = waiter
+    runtime.run_messages["run-stuck"] = {
+        "originalText": "list companies in HubSpot",
+        "runtime": {"id": "rt_123"},
+    }
+
+    await runtime.handle_run_message(
+        FakeRequest(
+            "run-stuck",
+            {
+                "type": "tool_call",
+                "toolName": "hubspot_search_crm_objects",
+                "input": {"objectType": "companies", "limit": 1},
+            },
+        )
+    )
+
+    # No tool_result, no final answer: the run is genuinely stuck and must fail.
+    await asyncio.sleep(1.3)
+
+    error_events = []
+    while not queue.empty():
+        event = await queue.get()
+        if event and event.get("type") == "error":
+            error_events.append(event)
+
+    failure_message = ""
+    if waiter.future.done() and waiter.future.exception() is not None:
+        failure_message = str(waiter.future.exception())
+
+    print(json.dumps({
+        "futureFailed": waiter.future.done(),
+        "failureMessage": failure_message,
+        "errorEvents": error_events,
+        "pendingTimers": len(runtime.provider_tool_call_recovery_tasks),
+    }))
+
+asyncio.run(main())
+`);
+
+    expect(result).toEqual({
+      futureFailed: true,
+      failureMessage:
+        "Hermes started tool (hubspot_search_crm_objects) but did not produce a tool result or final answer.",
+      errorEvents: [
+        {
+          type: "error",
+          message:
+            "Hermes started tool (hubspot_search_crm_objects) but did not produce a tool result or final answer."
+        }
+      ],
+      pendingTimers: 0
+    });
+  });
+
   test("recovers provider markers returned as Hermes final results", () => {
     const result = runHermesEntrypointProbe(`${importEntrypoint}
 import asyncio

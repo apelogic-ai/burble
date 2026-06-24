@@ -2062,6 +2062,27 @@ class BurbleHermesRuntime:
         if task and not task.done():
             task.cancel()
 
+    def _waiter_has_provider_tool_result(
+        self,
+        waiter: RunWaiter,
+        call_id: str,
+        tool_name: str,
+    ) -> bool:
+        # A scoped progress check for the stale-failure timer: did a tool_result
+        # for this specific call id or provider tool already arrive? Heartbeat
+        # status events are intentionally ignored so a genuinely stuck tool still
+        # fails loud, but a result that paired under a different id does not.
+        canonical_tool_name = canonical_hermes_provider_tool_name(tool_name)
+        for event in waiter.events:
+            if event.get("type") != "tool_result":
+                continue
+            if call_id and str(event.get("callId") or "") == call_id:
+                return True
+            event_tool_name = canonical_hermes_provider_tool_name(str(event.get("toolName") or ""))
+            if canonical_tool_name and event_tool_name == canonical_tool_name:
+                return True
+        return False
+
     def _cancel_provider_tool_call_recoveries_for_run(self, run_id: str) -> None:
         prefix = f"{run_id}:"
         for key, task in list(self.provider_tool_call_recovery_tasks.items()):
@@ -2131,7 +2152,7 @@ class BurbleHermesRuntime:
         if key in self.provider_tool_call_recovery_tasks:
             return
         self.provider_tool_call_recovery_tools[key] = tool_name
-        delay_seconds = max(1, int_env("HERMES_TOOL_CALL_TIMEOUT_SECONDS", 60))
+        delay_seconds = max(1, int_env("HERMES_TOOL_CALL_TIMEOUT_SECONDS", 120))
         self.provider_tool_call_recovery_tasks[key] = asyncio.create_task(
             self._fail_stale_tool_call_after_delay(
                 run_id,
@@ -2153,6 +2174,10 @@ class BurbleHermesRuntime:
         try:
             await asyncio.sleep(delay_seconds)
             if waiter.completed or waiter.future.done():
+                return
+            if self._waiter_has_provider_tool_result(waiter, call_id, tool_name):
+                # The tool produced a result (possibly paired under a different
+                # call id); the run is progressing, so do not fail it.
                 return
             message = (
                 "Hermes started tool "
