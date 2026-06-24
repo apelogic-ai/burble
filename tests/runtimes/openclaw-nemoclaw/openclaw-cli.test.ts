@@ -35,6 +35,8 @@ const config: RuntimeConfig = {
   openClawGatewayPort: 18789,
   openClawGatewayBind: "loopback",
   openClawGatewayToken: "gateway-token",
+  openClawGatewayRetryBaseMs: 1,
+  openClawGatewayRetryMaxMs: 2,
   llmModel: "openai:gpt-5.4",
   ollamaBaseUrl: "https://ollama.com"
 };
@@ -3228,6 +3230,14 @@ describe("runOpenClawCliRequest", () => {
       })
     );
     expect(events.filter((event) => event.type === "message_delta")).toHaveLength(0);
+    expect(events).toContainEqual({
+      type: "status",
+      text: "The LLM provider timed out. Retrying in 1s (2/3)..."
+    });
+    expect(events).toContainEqual({
+      type: "status",
+      text: "The LLM provider timed out. Retrying in 1s (3/3)..."
+    });
     expect(logs.join("\n")).toContain(
       "OpenClaw gateway http response_failed runId=run-gateway-response-failed"
     );

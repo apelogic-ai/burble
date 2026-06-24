@@ -33,6 +33,8 @@ export type RuntimeConfig = {
   openClawGatewayPort: number;
   openClawGatewayBind: string;
   openClawGatewayToken: string;
+  openClawGatewayRetryBaseMs?: number;
+  openClawGatewayRetryMaxMs?: number;
   llmModel: string;
   inferenceBaseUrl?: string | null;
   ollamaBaseUrl: string;
@@ -141,6 +143,14 @@ export function readRuntimeConfig(env: Env): RuntimeConfig {
     openClawGatewayBind: env.OPENCLAW_GATEWAY_BIND?.trim() || "loopback",
     openClawGatewayToken:
       env.OPENCLAW_GATEWAY_TOKEN?.trim() || randomUUID().replace(/-/g, ""),
+    openClawGatewayRetryBaseMs: readPositiveInt(
+      env.OPENCLAW_GATEWAY_RETRY_BASE_MS ?? "1500",
+      "OPENCLAW_GATEWAY_RETRY_BASE_MS"
+    ),
+    openClawGatewayRetryMaxMs: readPositiveInt(
+      env.OPENCLAW_GATEWAY_RETRY_MAX_MS ?? "10000",
+      "OPENCLAW_GATEWAY_RETRY_MAX_MS"
+    ),
     llmModel: validateLlmModelId(
       readOptionalEnv(env.AI_MODEL) ??
         readOptionalEnv(env.OPENCLAW_MODEL) ??
