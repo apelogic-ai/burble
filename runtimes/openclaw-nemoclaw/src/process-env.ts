@@ -60,6 +60,14 @@ const proxyEnvNames = new Set([
   "no_proxy"
 ]);
 
+const defaultOpenClawProcessEnv: Record<string, string> = {
+  npm_config_audit: "false",
+  npm_config_cache: "/tmp/npm-cache",
+  npm_config_fund: "false",
+  npm_config_offline: "true",
+  npm_config_update_notifier: "false"
+};
+
 const forbiddenEnvPrefixes = [
   "AGENT_RUNTIME_",
   "ATLASSIAN_",
@@ -81,6 +89,7 @@ export function buildOpenClawProcessEnv(
 ): Record<string, string> {
   ensureCiaoNetworkGuard();
   const env = {
+    ...defaultOpenClawProcessEnv,
     ...filterEnv(sourceEnv, isAllowedHostEnv),
     ...filterEnv(overrides, isAllowedOpenClawOverrideEnv)
   };
