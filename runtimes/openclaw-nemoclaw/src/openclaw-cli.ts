@@ -393,6 +393,8 @@ async function runOpenClawGatewayHttpRequest(
   const maxAttempts = 3;
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     const attemptStartedAt = Date.now();
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), config.openClawTimeoutMs);
     const attemptSessionId = buildGatewayHttpAttemptSessionId(
       sessionId,
       attempt
@@ -408,7 +410,8 @@ async function runOpenClawGatewayHttpRequest(
         request,
         attemptSessionKey,
         prompt,
-        Boolean(onDelta)
+        Boolean(onDelta),
+        controller.signal
       );
       if (!response.ok) {
         const responseText = await response.text();
@@ -512,6 +515,8 @@ async function runOpenClawGatewayHttpRequest(
         `OpenClaw gateway http error runId=${request.runId ?? "unknown"} step=${step}${summarizeLogObject("error", stderr)}`
       );
       return { exitCode: 1, stdout, stderr, ...usageTelemetry };
+    } finally {
+      clearTimeout(timeout);
     }
   }
   throw new Error("OpenClaw gateway HTTP retry loop exhausted unexpectedly");
@@ -687,30 +692,25 @@ async function fetchGatewayHttpResponse(
   request: RunRequest,
   sessionKey: string,
   prompt: string,
-  stream: boolean
+  stream: boolean,
+  signal: AbortSignal
 ): Promise<Response> {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), config.openClawTimeoutMs);
-  try {
-    return await fetch(endpoint, {
-      method: "POST",
-      headers: {
-        "authorization": `Bearer ${config.openClawGatewayToken}`,
-        "content-type": "application/json",
-        "x-openclaw-agent-id": config.openClawAgent,
-        "x-openclaw-message-channel": resolveGatewayHttpMessageChannel(request),
-        "x-openclaw-session-key": sessionKey
-      },
-      body: JSON.stringify({
-        model: `openclaw/${config.openClawAgent}`,
-        input: prompt,
-        stream
-      }),
-      signal: controller.signal
-    });
-  } finally {
-    clearTimeout(timeout);
-  }
+  return await fetch(endpoint, {
+    method: "POST",
+    headers: {
+      "authorization": `Bearer ${config.openClawGatewayToken}`,
+      "content-type": "application/json",
+      "x-openclaw-agent-id": config.openClawAgent,
+      "x-openclaw-message-channel": resolveGatewayHttpMessageChannel(request),
+      "x-openclaw-session-key": sessionKey
+    },
+    body: JSON.stringify({
+      model: `openclaw/${config.openClawAgent}`,
+      input: prompt,
+      stream
+    }),
+    signal
+  });
 }
 
 async function readGatewayHttpStreamingResponse(
@@ -3426,6 +3426,7 @@ function logOpenClawUsageFromOutput(
       `streamDone=${diagnostics.streamDone}`,
       `streamDoneElapsedMs=${formatNumberList(diagnostics.streamDoneElapsedMs)}`,
       `streamDoneEvents=${formatNumberList(diagnostics.streamDoneEvents)}`,
+      `providerRequestIds=${formatStringList(diagnostics.providerRequestIds)}`,
       `compactions=${diagnostics.compactions}`,
       `exactUsageFields=${diagnostics.exactUsageFields}`,
       `exactUsageAvailable=${diagnostics.exactUsageFields > 0 ? "true" : "false"}`,
@@ -3471,6 +3472,7 @@ function logOpenClawUsageFromOutput(
           streamDone: diagnostics.streamDone,
           streamDoneElapsedMs: diagnostics.streamDoneElapsedMs,
           streamDoneEvents: diagnostics.streamDoneEvents,
+          providerRequestIds: diagnostics.providerRequestIds,
           compactions: diagnostics.compactions,
           exactUsageFields: diagnostics.exactUsageFields,
           exactUsageAvailable: diagnostics.exactUsageFields > 0,
@@ -3721,6 +3723,7 @@ type ModelDiagnostics = {
   streamDone: number;
   streamDoneElapsedMs: number[];
   streamDoneEvents: number[];
+  providerRequestIds: string[];
   compactions: number;
   exactUsageFields: number;
 };
@@ -3740,9 +3743,15 @@ function summarizeModelDiagnostics(text: string): ModelDiagnostics {
     streamDoneEvents: streamDoneLines
       .map((line) => readFirstNumberField(line, ["events"]))
       .filter((value): value is number => typeof value === "number"),
+    providerRequestIds: readProviderRequestIds(text),
     compactions: countOccurrences(text, "[compaction-diag] start"),
     exactUsageFields: countUsageFieldOccurrences(text)
   };
+}
+
+function readProviderRequestIds(text: string): string[] {
+  const matches = text.match(/\breq_[A-Za-z0-9]+\b/g) ?? [];
+  return [...new Set(matches)].slice(0, 10);
 }
 
 function readNumberFieldTotal(text: string, fieldNames: string[]): number | undefined {
@@ -3805,6 +3814,10 @@ function formatUsageNumber(value: number | undefined): string {
 }
 
 function formatNumberList(values: number[]): string {
+  return values.length ? values.join(",") : "none";
+}
+
+function formatStringList(values: string[]): string {
   return values.length ? values.join(",") : "none";
 }
 

@@ -869,7 +869,7 @@ describe("runOpenClawCliRequest", () => {
       )
     ).toBe(true);
     expect(logs).toContain(
-      "OpenClaw model usage diagnostics runId=run-usage step=1 modelStarts=0 fetchStarts=0 streamDone=0 streamDoneElapsedMs=none streamDoneEvents=none compactions=0 exactUsageFields=5 exactUsageAvailable=true rawStreamBytes=0"
+      "OpenClaw model usage diagnostics runId=run-usage step=1 modelStarts=0 fetchStarts=0 streamDone=0 streamDoneElapsedMs=none streamDoneEvents=none providerRequestIds=none compactions=0 exactUsageFields=5 exactUsageAvailable=true rawStreamBytes=0"
     );
     expect(response.response.usage).toEqual({
       inputTokens: 1200,
@@ -1092,11 +1092,11 @@ describe("runOpenClawCliRequest", () => {
       async () => ({
         exitCode: 0,
         stdout: [
-          "[openai-transport] [responses] start provider=openai api=openai-responses model=gpt-5.4",
+          "[openai-transport] [responses] start provider=openai api=openai-responses model=gpt-5.4 requestId=req_first123",
           "[provider-transport-fetch] [model-fetch] start provider=openai api=openai-responses model=gpt-5.4",
           "[openai-transport] [responses] stream_done provider=openai api=openai-responses model=gpt-5.4 elapsedMs=3522 events=38",
           "[agent/embedded] [compaction-diag] start runId=session-1",
-          "[openai-transport] [responses] start provider=openai api=openai-responses model=gpt-5.4",
+          "[openai-transport] [responses] start provider=openai api=openai-responses model=gpt-5.4 requestId=req_second456",
           "[provider-transport-fetch] [model-fetch] start provider=openai api=openai-responses model=gpt-5.4",
           "[openai-transport] [responses] stream_done provider=openai api=openai-responses model=gpt-5.4 elapsedMs=29406 events=1731",
           JSON.stringify({ response: { text: "Done." } })
@@ -1116,7 +1116,7 @@ describe("runOpenClawCliRequest", () => {
       )
     ).toBe(true);
     expect(logs).toContain(
-      "OpenClaw model usage diagnostics runId=run-diagnostics step=1 modelStarts=2 fetchStarts=2 streamDone=2 streamDoneElapsedMs=3522,29406 streamDoneEvents=38,1731 compactions=1 exactUsageFields=0 exactUsageAvailable=false rawStreamBytes=0"
+      "OpenClaw model usage diagnostics runId=run-diagnostics step=1 modelStarts=2 fetchStarts=2 streamDone=2 streamDoneElapsedMs=3522,29406 streamDoneEvents=38,1731 providerRequestIds=req_first123,req_second456 compactions=1 exactUsageFields=0 exactUsageAvailable=false rawStreamBytes=0"
     );
     expect(response.response.usage).toBeUndefined();
     expect(response.response.telemetry).toMatchObject({
@@ -1130,6 +1130,7 @@ describe("runOpenClawCliRequest", () => {
             streamDone: 2,
             streamDoneElapsedMs: [3522, 29406],
             streamDoneEvents: [38, 1731],
+            providerRequestIds: ["req_first123", "req_second456"],
             compactions: 1,
             exactUsageFields: 0,
             exactUsageAvailable: false,
@@ -3686,6 +3687,95 @@ describe("runOpenClawCliRequest", () => {
       logs.some((line) =>
         line.includes(
           "OpenClaw gateway http retry runId=run-openclaw-transport-retry step=1 attempt=1 reason=transport_error"
+        )
+      )
+    ).toBe(true);
+  });
+
+  test("times out retryable OpenClaw Gateway streams that never finish", async () => {
+    const requests: Array<{
+      headers: Headers;
+      body: Record<string, unknown>;
+    }> = [];
+    const logs: string[] = [];
+    const encoder = new TextEncoder();
+
+    await expect(
+      withMockFetch(
+        (async (_input, init) => {
+          requests.push({
+            headers: new Headers(init?.headers),
+            body: JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>
+          });
+          const signal = init?.signal;
+          return new Response(
+            new ReadableStream<Uint8Array>({
+              start(controller) {
+                controller.enqueue(
+                  encoder.encode(
+                    `data: ${JSON.stringify({ type: "response.created" })}\n\n`
+                  )
+                );
+                signal?.addEventListener(
+                  "abort",
+                  () => controller.error(new Error("The operation timed out")),
+                  { once: true }
+                );
+              }
+            }),
+            {
+              status: 200,
+              headers: { "content-type": "text/event-stream" }
+            }
+          );
+        }) as typeof fetch,
+        async () =>
+          runOpenClawCliRequest(
+            {
+              runId: "run-openclaw-hung-stream",
+              input: {
+                text: "what can you do?",
+                connections: {
+                  github: { connected: false }
+                }
+              }
+            },
+            {
+              ...config,
+              engine: "openclaw-gateway",
+              openClawTimeoutMs: 5
+            },
+            async () => {
+              throw new Error("unexpected tool call");
+            },
+            async (_command, args) => {
+              throw new Error(`unexpected cli call: ${args.join(" ")}`);
+            },
+            (line) => logs.push(line)
+          )
+      )
+    ).rejects.toThrow("OpenClaw Gateway HTTP request failed");
+
+    expect(requests).toHaveLength(3);
+    expect(requests[0].body.input).toBe(requests[1].body.input);
+    expect(requests[1].body.input).toBe(requests[2].body.input);
+    expect(requests[0].headers.get("x-openclaw-session-key")).not.toBe(
+      requests[1].headers.get("x-openclaw-session-key")
+    );
+    expect(requests[1].headers.get("x-openclaw-session-key")).not.toBe(
+      requests[2].headers.get("x-openclaw-session-key")
+    );
+    expect(
+      logs.some((line) =>
+        line.includes(
+          "OpenClaw gateway http retry runId=run-openclaw-hung-stream step=1 attempt=1 reason=transport_error"
+        )
+      )
+    ).toBe(true);
+    expect(
+      logs.some((line) =>
+        line.includes(
+          "OpenClaw gateway http retry runId=run-openclaw-hung-stream step=1 attempt=2 reason=transport_error"
         )
       )
     ).toBe(true);
