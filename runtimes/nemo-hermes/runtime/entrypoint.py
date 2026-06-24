@@ -2860,6 +2860,7 @@ class BurbleHermesRuntime:
         runtime_env.setdefault("BURBLE_HERMES_PLATFORM_PORT", str(self.platform_port))
         runtime_env.setdefault("BURBLE_ALLOW_ALL_USERS", "true")
         runtime_env.setdefault("GATEWAY_ALLOW_ALL_USERS", "true")
+        runtime_env.setdefault("HERMES_GATEWAY_BUSY_ACK_ENABLED", "false")
 
         command = env("HERMES_GATEWAY_COMMAND", "hermes gateway run")
         self.gateway_process = subprocess.Popen(

@@ -3075,6 +3075,45 @@ print(json.dumps({
     expect(config).not.toContain("mcp_servers:");
   });
 
+  test("disables native Hermes busy acknowledgements for Burble runs by default", () => {
+    const result = runHermesEntrypointProbe(`${importEntrypoint}
+import os
+import tempfile
+
+home = tempfile.mkdtemp()
+os.environ["HERMES_HOME"] = home
+os.environ.pop("HERMES_GATEWAY_BUSY_ACK_ENABLED", None)
+
+captured = {}
+
+class FakeProcess:
+    pid = 123
+    def poll(self):
+        return None
+
+def fake_popen(command, cwd=None, env=None, text=None):
+    captured["command"] = command
+    captured["cwd"] = cwd
+    captured["env"] = env
+    captured["text"] = text
+    return FakeProcess()
+
+mod.subprocess.Popen = fake_popen
+runtime = mod.BurbleHermesRuntime()
+runtime._start_gateway()
+
+print(json.dumps({
+    "busyAck": captured["env"].get("HERMES_GATEWAY_BUSY_ACK_ENABLED"),
+    "platformPort": captured["env"].get("BURBLE_HERMES_PLATFORM_PORT"),
+}))
+`);
+
+    expect(result).toEqual({
+      busyAck: "false",
+      platformPort: "8766"
+    });
+  });
+
   test("streams Hermes platform edits as Burble runtime message deltas", () => {
     const result = runHermesEntrypointProbe(`${importBurblePlatformAdapter}
 import asyncio
@@ -3159,6 +3198,124 @@ asyncio.run(main())
 
     expect(result).toEqual({
       ok: true,
+      payloads: []
+    });
+  });
+
+  test("correlates Hermes platform callbacks by thread id before route id", () => {
+    const result = runHermesEntrypointProbe(`${importBurblePlatformAdapter}
+import asyncio
+import os
+
+os.environ["BURBLE_TOOL_GATEWAY_URL"] = "http://burble-app:3000/internal/tools"
+os.environ["BURBLE_INTERNAL_TOKEN"] = "token"
+os.environ["BURBLE_RUNTIME_ID"] = "rt_123"
+
+async def main():
+    adapter = mod.BurbleAdapter(
+        types.SimpleNamespace(
+            extra={
+                "runtime_callback_url": "http://runtime/internal/hermes/runs",
+            }
+        )
+    )
+    adapter._pending_runs["route-1"] = "run-new"
+    adapter._pending_runs_by_thread["run-new"] = "run-new"
+
+    await adapter.send(
+        "route-1",
+        "Older run output",
+        metadata={"thread_id": "run-old"},
+    )
+    await adapter.send(
+        "route-1",
+        "Current run output",
+        metadata={"thread_id": "run-new"},
+    )
+
+    print(json.dumps({
+        "pendingRuns": adapter._pending_runs,
+        "pendingRunsByThread": adapter._pending_runs_by_thread,
+        "payloads": posted_payloads,
+    }))
+
+asyncio.run(main())
+`);
+
+    expect(result).toEqual({
+      pendingRuns: {},
+      pendingRunsByThread: {},
+      payloads: [
+        {
+          url: "http://burble-app:3000/internal/tools/conversation.sendMessage/execute",
+          headers: {
+            authorization: "Bearer token",
+            "content-type": "application/json",
+            "x-burble-runtime-id": "rt_123"
+          },
+          json: {
+            input: {
+              routeId: "route-1",
+              text: "Older run output"
+            }
+          }
+        },
+        {
+          url: "http://runtime/internal/hermes/runs/run-new/messages",
+          json: {
+            routeId: "route-1",
+            text: "Current run output",
+            classification: "user_private"
+          }
+        }
+      ]
+    });
+  });
+
+  test("does not complete pending runs with Hermes busy acknowledgements", () => {
+    const result = runHermesEntrypointProbe(`${importBurblePlatformAdapter}
+import asyncio
+import os
+
+os.environ["BURBLE_TOOL_GATEWAY_URL"] = "http://burble-app:3000/internal/tools"
+os.environ["BURBLE_INTERNAL_TOKEN"] = "token"
+os.environ["BURBLE_RUNTIME_ID"] = "rt_123"
+
+async def main():
+    adapter = mod.BurbleAdapter(
+        types.SimpleNamespace(
+            extra={
+                "runtime_callback_url": "http://runtime/internal/hermes/runs",
+            }
+        )
+    )
+    adapter._pending_runs["route-1"] = "run-new"
+    adapter._pending_runs_by_thread["run-new"] = "run-new"
+
+    sent = await adapter.send(
+        "route-1",
+        "⚡ Interrupting current task (iteration 1/90, running: google_search_drive_files). I'll respond to your message shortly.",
+        metadata={"thread_id": "run-new"},
+    )
+
+    print(json.dumps({
+        "success": sent.success,
+        "pendingRuns": adapter._pending_runs,
+        "pendingRunsByThread": adapter._pending_runs_by_thread,
+        "payloads": posted_payloads,
+    }))
+
+asyncio.run(main())
+`);
+
+    expect(result).toEqual({
+      success: true,
+      pendingRuns: {
+        "route-1": "run-new"
+      },
+      pendingRunsByThread: {
+        "run-new": "run-new"
+      },
       payloads: []
     });
   });

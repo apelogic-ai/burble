@@ -72,6 +72,10 @@ def _is_burble_platform_notice(text: str) -> bool:
     return (
         "No home channel is set for Burble" in normalized
         or "Type /sethome to make this chat your home channel" in normalized
+        or "Interrupting current task" in normalized
+        or "Queued for the next turn" in normalized
+        or "Steered into current run" in normalized
+        or "First-time tip" in normalized
     )
 
 
@@ -223,6 +227,15 @@ def _pick_nested_int(source: Any, *paths: tuple[str, str]) -> Optional[int]:
                 value = _to_non_negative_int(value)
                 if value is not None:
                     return value
+    return None
+
+
+def _metadata_thread_id(metadata: Any) -> Optional[str]:
+    if not _keyed(metadata):
+        return None
+    value = _first_key(metadata, "thread_id", "threadId")
+    if isinstance(value, str) and value.strip():
+        return value.strip()
     return None
 
 
@@ -436,6 +449,7 @@ class BurbleAdapter(BasePlatformAdapter):
         ).rstrip("/")
         self._runner: Any = None
         self._pending_runs: dict[str, str] = {}
+        self._pending_runs_by_thread: dict[str, str] = {}
         self._pending_run_sources: dict[str, Any] = {}
         self._pending_usage_snapshots: dict[str, dict[str, int] | None] = {}
         self._stream_messages: dict[str, dict[str, Any]] = {}
@@ -501,9 +515,20 @@ class BurbleAdapter(BasePlatformAdapter):
                 flush=True,
             )
             return SendResult(success=True, message_id=f"burble-notice:{route_id}:{int(time.time() * 1000)}")
-        pending_run_id = self._pending_runs.pop(route_id, None)
+        metadata_thread_id = _metadata_thread_id(metadata)
+        pending_run_id = None
+        if metadata_thread_id:
+            pending_run_id = self._pending_runs_by_thread.pop(metadata_thread_id, None)
+            if pending_run_id and self._pending_runs.get(route_id) == pending_run_id:
+                self._pending_runs.pop(route_id, None)
+        if pending_run_id is None and not metadata_thread_id:
+            pending_run_id = self._pending_runs.pop(route_id, None)
+            if pending_run_id:
+                self._pending_runs_by_thread.pop(pending_run_id, None)
         print(
-            f"[INFO] Burble Hermes platform send routeId={route_id} textChars={len(text)} pendingRun={pending_run_id or 'none'}",
+            f"[INFO] Burble Hermes platform send routeId={route_id} "
+            f"threadId={metadata_thread_id or 'none'} textChars={len(text)} "
+            f"pendingRun={pending_run_id or 'none'}",
             flush=True,
         )
         if pending_run_id:
@@ -689,6 +714,9 @@ class BurbleAdapter(BasePlatformAdapter):
 
         if run_id:
             self._pending_runs[route_id] = run_id
+            thread_id = str(body.get("threadId") or "").strip()
+            if thread_id:
+                self._pending_runs_by_thread[thread_id] = run_id
 
         source = self.build_source(
             chat_id=route_id,
