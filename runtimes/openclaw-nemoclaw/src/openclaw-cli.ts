@@ -114,6 +114,7 @@ type GatewayHttpResponseResult = {
   stdout: string;
   responseText: string;
   deltaCount: number;
+  errorText?: string;
 };
 
 type BurbleToolContext = {
@@ -464,10 +465,40 @@ async function runOpenClawGatewayHttpRequest(
             deltaCount: 0
           };
       const responseText = responseResult.responseText;
-      stdout =
-        responseResult.stdout ||
-        extractOpenResponsesText(responseText) ||
-        responseText;
+      if (responseResult.errorText) {
+        stderr = responseResult.errorText;
+        if (
+          attempt < maxAttempts &&
+          isRetryableOpenClawGatewayProviderMessage(stderr)
+        ) {
+          const nextSessionKey = buildGatewayHttpSessionKey(
+            config,
+            buildGatewayHttpAttemptSessionId(sessionId, attempt + 1)
+          );
+          logInfo(
+            `OpenClaw gateway http retry runId=${request.runId ?? "unknown"} step=${step} attempt=${attempt} status=${response.status} reason=response_failed elapsedMs=${Date.now() - attemptStartedAt} nextSessionKey=${nextSessionKey}${summarizeLogObject("error", stderr)}`
+          );
+          continue;
+        }
+        const gatewayDiagnostics = readGatewayDiagnosticTextSince(startedAt);
+        const usageTelemetry = logOpenClawUsageFromOutput(
+          request,
+          step,
+          prompt,
+          responseText,
+          stderr,
+          null,
+          gatewayDiagnostics,
+          sessionId,
+          logInfo,
+          startedAt
+        );
+        logInfo(
+          `OpenClaw gateway http response_failed runId=${request.runId ?? "unknown"} step=${step} elapsedMs=${Date.now() - startedAt} status=${response.status}${summarizeLogObject("error", stderr)}`
+        );
+        return { exitCode: 1, stdout: "", stderr, ...usageTelemetry };
+      }
+      stdout = responseResult.stdout || extractOpenResponsesText(responseText) || "";
       const gatewayDiagnostics = readGatewayDiagnosticTextSince(startedAt);
       const usageTelemetry = logOpenClawUsageFromOutput(
         request,
@@ -537,6 +568,10 @@ function isRetryableOpenClawGatewayProviderError(
   if (status !== 408 && status < 500) {
     return false;
   }
+  return isRetryableOpenClawGatewayProviderMessage(responseText);
+}
+
+function isRetryableOpenClawGatewayProviderMessage(responseText: string): boolean {
   const normalized = responseText.toLowerCase();
   return (
     normalized.includes("upstream provider timeout") ||
@@ -728,10 +763,12 @@ async function readGatewayHttpStreamingResponse(
 ): Promise<GatewayHttpResponseResult> {
   if (!response.body) {
     const responseText = await response.text();
+    const errorText = extractOpenResponsesFailureText(responseText) ?? undefined;
     return {
       responseText,
-      stdout: extractOpenResponsesText(responseText) ?? responseText,
-      deltaCount: 0
+      stdout: errorText ? "" : extractOpenResponsesText(responseText) ?? "",
+      deltaCount: 0,
+      ...(errorText ? { errorText } : {})
     };
   }
 
@@ -763,6 +800,10 @@ async function readGatewayHttpStreamingResponse(
       if (!event) {
         continue;
       }
+      const failureText = extractOpenResponsesFailureEventText(event);
+      if (failureText) {
+        return { responseText, stdout: "", deltaCount, errorText: failureText };
+      }
       const completedText = extractOpenResponsesText(payload);
       if (completedText?.trim()) {
         stdout = completedText;
@@ -791,6 +832,10 @@ async function readGatewayHttpStreamingResponse(
     if (!event) {
       continue;
     }
+    const failureText = extractOpenResponsesFailureEventText(event);
+    if (failureText) {
+      return { responseText, stdout: "", deltaCount, errorText: failureText };
+    }
     const completedText = extractOpenResponsesText(payload);
     if (completedText?.trim()) {
       stdout = completedText;
@@ -806,7 +851,7 @@ async function readGatewayHttpStreamingResponse(
 
   return {
     responseText,
-    stdout: stdout || extractOpenResponsesText(responseText) || responseText,
+    stdout: stdout || extractOpenResponsesText(responseText) || "",
     deltaCount
   };
 }
@@ -4198,6 +4243,29 @@ function extractOpenResponsesText(responseText: string): string | null {
     .trim();
 
   return texts || null;
+}
+
+function extractOpenResponsesFailureText(responseText: string): string | null {
+  const parsed = parseJsonObject(responseText);
+  return parsed ? extractOpenResponsesFailureEventText(parsed) : null;
+}
+
+function extractOpenResponsesFailureEventText(
+  event: Record<string, unknown>
+): string | null {
+  const type = typeof event.type === "string" ? event.type : "";
+  const status = readNestedText(event, ["response", "status"]) ??
+    readNestedText(event, ["status"]);
+  if (type !== "response.failed" && status !== "failed") {
+    return null;
+  }
+
+  const code = readNestedText(event, ["response", "error", "code"]) ??
+    readNestedText(event, ["error", "code"]);
+  const message = readNestedText(event, ["response", "error", "message"]) ??
+    readNestedText(event, ["error", "message"]) ??
+    "OpenClaw Gateway response failed";
+  return code ? `${code}: ${message}` : message;
 }
 
 function readLastJsonResponseText(value: string): string | null {

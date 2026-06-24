@@ -2973,6 +2973,140 @@ describe("runOpenClawCliRequest", () => {
     });
   });
 
+  test("treats streamed OpenClaw gateway response failures as errors without leaking protocol JSON", async () => {
+    const events: Array<RunEvent> = [];
+    const logs: string[] = [];
+
+    await expect(
+      withMockFetch(
+        (async (_input, init) => {
+          const requestBody = JSON.parse(String(init?.body ?? "{}")) as Record<
+            string,
+            unknown
+          >;
+          expect(requestBody.stream).toBe(true);
+          const stream = new ReadableStream({
+            start(controller) {
+              const encoder = new TextEncoder();
+              for (const event of [
+                {
+                  type: "response.created",
+                  response: {
+                    id: "resp_5258f9f7-09c0-40f2-93e0-1cf441df0453",
+                    object: "response",
+                    created_at: 1782333954,
+                    status: "in_progress",
+                    model: "openclaw/main",
+                    output: [],
+                    usage: {
+                      input_tokens: 0,
+                      output_tokens: 0,
+                      total_tokens: 0
+                    }
+                  }
+                },
+                {
+                  type: "response.output_item.added",
+                  output_index: 0,
+                  item: {
+                    type: "message",
+                    id: "msg_76a6820c-9004-4fa0-a0fb-c4152299cc61",
+                    role: "assistant",
+                    content: [{ type: "output_text", text: "" }],
+                    status: "in_progress"
+                  }
+                },
+                {
+                  type: "response.failed",
+                  response: {
+                    id: "resp_5258f9f7-09c0-40f2-93e0-1cf441df0453",
+                    object: "response",
+                    created_at: 1782333961,
+                    status: "failed",
+                    model: "openclaw/main",
+                    output: [],
+                    usage: {
+                      input_tokens: 0,
+                      output_tokens: 0,
+                      total_tokens: 0
+                    },
+                    error: {
+                      code: "api_error",
+                      message: "upstream provider timeout"
+                    }
+                  }
+                }
+              ]) {
+                controller.enqueue(
+                  encoder.encode(`data: ${JSON.stringify(event)}\n\n`)
+                );
+              }
+              controller.close();
+            }
+          });
+          return new Response(stream, {
+            status: 200,
+            headers: { "content-type": "text/event-stream" }
+          });
+        }) as typeof fetch,
+        async () => {
+          for await (const event of runOpenClawCliRequestStream(
+            {
+              runId: "run-gateway-response-failed",
+              executionMode: "native-runtime",
+              runtime: {
+                id: "rt_123",
+                manifest: {
+                  version: "1",
+                  policyHash: "policy",
+                  skills: [],
+                  memory: {
+                    userMemoryEnabled: false,
+                    workspaceMemoryEnabled: false,
+                    jobMemoryEnabled: true
+                  },
+                  streaming: {
+                    messageDeltasEnabled: true
+                  }
+                }
+              },
+              input: {
+                text: "do we currently have any cron jobs?",
+                connections: {
+                  github: { connected: false }
+                }
+              }
+            },
+            { ...config, engine: "openclaw-gateway" },
+            async () => ({
+              classification: "user_private",
+              content: []
+            }),
+            async function* () {
+              throw new Error("unexpected cli call");
+            },
+            (line) => logs.push(line)
+          )) {
+            events.push(event);
+          }
+        }
+      )
+    ).rejects.toThrow(
+      "OpenClaw Gateway HTTP request failed: api_error: upstream provider timeout"
+    );
+
+    expect(events).not.toContainEqual(
+      expect.objectContaining({
+        type: "message_delta",
+        text: expect.stringContaining("response.failed")
+      })
+    );
+    expect(events.filter((event) => event.type === "message_delta")).toHaveLength(0);
+    expect(logs.join("\n")).toContain(
+      "OpenClaw gateway http response_failed runId=run-gateway-response-failed"
+    );
+  });
+
   test("buffers streamed OpenClaw gateway HTTP tool-call JSON instead of showing it", async () => {
     const events: Array<RunEvent> = [];
     const providerTexts = [
