@@ -5334,11 +5334,14 @@ function sanitizeRecentSlackText(text: string | undefined): string {
   return text?.replace(/\s+/g, " ").trim() ?? "";
 }
 
-function isProgressOnlyMessage(text: string): boolean {
+export function isProgressOnlyMessage(text: string): boolean {
   return (
     /^Starting agent runtime/i.test(text) ||
     /^Agent is /i.test(text) ||
     /^Calling /i.test(text) ||
+    /^:zap:\s*Interrupting current task\b/i.test(text) ||
+    /\bFirst-time tip\b.*\binterrupted my current task\b/i.test(text) ||
+    /\b\/busy (?:queue|steer|status)\b/i.test(text) ||
     /^_?Final result in /i.test(text) ||
     /completed in \d+(?:ms|s).*\bresult\)/i.test(text)
   );
