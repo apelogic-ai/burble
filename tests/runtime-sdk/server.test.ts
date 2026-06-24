@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
+  authorizeRuntimeBearerOrHeaderToken,
   authorizeRuntimeBearerToken,
   buildRuntimeBearerHeaders,
   createRuntimeContractServer,
@@ -238,11 +239,35 @@ describe("runtime SDK contract server", () => {
         "runtime-token"
       )
     ).toBe(false);
+    expect(
+      authorizeRuntimeBearerOrHeaderToken(
+        new Request("http://runtime/runs", {
+          headers: {
+            "x-burble-runtime-token": "runtime-token"
+          }
+        }),
+        "runtime-token"
+      )
+    ).toBe(true);
+    expect(
+      authorizeRuntimeBearerOrHeaderToken(
+        new Request("http://runtime/runs", {
+          headers: {
+            "x-burble-runtime-token": "runtime"
+          }
+        }),
+        "runtime-token"
+      )
+    ).toBe(false);
   });
 
-  test("requires bearer auth for protected runtime contract endpoints", async () => {
+  test("requires bearer auth for runtime execution endpoints", async () => {
     const health = await authorizedServer.handleRequest(
       new Request("http://runtime/healthz"),
+      { suffix: "world" }
+    );
+    const capabilities = await authorizedServer.handleRequest(
+      new Request("http://runtime/capabilities"),
       { suffix: "world" }
     );
     const unauthorized = await authorizedServer.handleRequest(
@@ -266,6 +291,7 @@ describe("runtime SDK contract server", () => {
     );
 
     expect(health?.status).toBe(200);
+    expect(capabilities?.status).toBe(200);
     expect(unauthorized?.status).toBe(401);
     expect(unauthorized?.headers.get("www-authenticate")).toBe("Bearer");
     expect(authorized?.status).toBe(200);

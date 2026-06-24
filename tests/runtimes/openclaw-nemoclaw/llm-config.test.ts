@@ -119,6 +119,25 @@ describe("buildOpenClawLlmPatch", () => {
     expect(JSON.stringify(patch)).not.toContain("runtime-jwt");
   });
 
+  test("routes provider traffic through an OpenAI-compatible inference gateway", () => {
+    const patch = JSON.parse(
+      buildOpenClawLlmPatch({
+        modelId: "openai:gpt-5.4",
+        inferenceBaseUrl: "http://llm-gw:4000/v1",
+        ollamaBaseUrl: "https://ollama.com"
+      })
+    );
+
+    expect(patch.agents.defaults.model.primary).toBe("openai/gpt-5.4");
+    expect(patch.plugins.allow).toEqual(["openai", "burble"]);
+    expect(patch.models.providers.openai).toMatchObject({
+      baseUrl: "http://llm-gw:4000/v1",
+      apiKey: "OPENAI_API_KEY",
+      api: "openai-responses"
+    });
+    expect(JSON.stringify(patch)).not.toContain("sk-");
+  });
+
   test("builds an Ollama cloud provider patch", () => {
     const patch = JSON.parse(
       buildOpenClawLlmPatch({

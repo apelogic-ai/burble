@@ -5,6 +5,7 @@ tools:
     implementation: listMcpTools
     title: Atlassian MCP tools
     description: List allowed tool metadata advertised by the upstream Atlassian MCP server for this Slack user's connected Jira account.
+    risk: read
     input: {}
 
   - name: atlassian_call_mcp_tool

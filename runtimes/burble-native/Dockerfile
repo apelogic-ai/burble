@@ -2,14 +2,16 @@ FROM oven/bun:1.2.21-alpine
 WORKDIR /runtime
 ENV NODE_ENV=production
 
+RUN apk add --no-cache iproute2
+
 COPY runtimes/burble-native/package.json runtimes/burble-native/tsconfig.json ./
 COPY runtimes/burble-native/src ./src
 COPY packages/runtime-sdk /runtime/node_modules/@burble/runtime-sdk
 RUN cd /runtime/node_modules/@burble/runtime-sdk && bun install --production
 RUN echo 'sandbox:x:1000660000:' >> /etc/group \
   && echo 'sandbox:x:1000660000:1000660000:OpenShell sandbox:/runtime:/bin/sh' >> /etc/passwd \
-  && mkdir -p /runtime/config /runtime/state /runtime/workspace \
-  && chown -R 1000660000:1000660000 /runtime
+  && mkdir -p /runtime/config /runtime/state /runtime/workspace /data/burble-native/config /data/burble-native/state /data/burble-native/workspace \
+  && chown -R 1000660000:1000660000 /runtime /data/burble-native
 
 EXPOSE 8080
 CMD ["bun", "src/index.ts"]

@@ -79,7 +79,12 @@ export type AgentTelemetry = {
 
 export type AgentRunEvent =
   | { type: "status"; text: string }
-  | { type: "tool_call"; toolName: string; callId: string }
+  | {
+      type: "tool_call";
+      toolName: string;
+      callId: string;
+      input?: Record<string, unknown>;
+    }
   | {
       type: "tool_result";
       toolName: string;

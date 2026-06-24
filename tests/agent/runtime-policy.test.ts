@@ -169,6 +169,41 @@ describe("resolveRuntimeEngineForPrincipal", () => {
     store.close();
   });
 
+  test("keeps OpenClaw selectable under sandbox factory with create-time launch", () => {
+    const store = createTokenStore(":memory:");
+    store.upsertWorkspacePolicy({
+      workspaceId: "T123",
+      key: "runtime.allowedEngines",
+      value: ["openclaw", "hermes"],
+      updatedBySlackUserId: "UADMIN"
+    });
+    store.upsertUserPreference({
+      workspaceId: "T123",
+      slackUserId: "U123",
+      key: "runtime.engine",
+      value: "openclaw"
+    });
+
+    const selection = resolveRuntimeEngineForPrincipal({
+      config: { ...config, agentRuntimeFactory: "sandbox" },
+      store,
+      principal: {
+        workspaceId: "T123",
+        slackUserId: "U123"
+      }
+    });
+
+    expect(selection.preferredEngine).toBe("openclaw");
+    expect(selection.effectiveEngine).toBe("openclaw");
+    expect(selection.selectableEngines).toEqual(["openclaw", "hermes"]);
+    expect(selection.compatibility).toContainEqual({
+      engine: "openclaw",
+      selectable: true,
+      reasons: []
+    });
+    store.close();
+  });
+
   test("keeps an attachment-capable preferred runtime selected", () => {
     const store = createTokenStore(":memory:");
     store.upsertWorkspacePolicy({
@@ -435,6 +470,34 @@ describe("resolveRuntimeEngineForPrincipal", () => {
       });
       expect(String(error)).toContain("missing usage reporting");
     }
+    store.close();
+  });
+
+  test("selects OpenClaw when sandbox policy only allows OpenClaw", () => {
+    const store = createTokenStore(":memory:");
+    store.upsertWorkspacePolicy({
+      workspaceId: "T123",
+      key: "runtime.allowedEngines",
+      value: ["openclaw"],
+      updatedBySlackUserId: "UADMIN"
+    });
+
+    const selection = resolveRuntimeEngineForPrincipal({
+      config: { ...config, agentRuntimeFactory: "sandbox" },
+      store,
+      principal: {
+        workspaceId: "T123",
+        slackUserId: "U123"
+      }
+    });
+
+    expect(selection.effectiveEngine).toBe("openclaw");
+    expect(selection.selectableEngines).toEqual(["openclaw"]);
+    expect(selection.compatibility).toContainEqual({
+      engine: "openclaw",
+      selectable: true,
+      reasons: []
+    });
     store.close();
   });
 });

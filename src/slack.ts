@@ -6,6 +6,7 @@ import { readFile } from "node:fs/promises";
 import {
   agentRuntimeEngines,
   defaultAgentRuntimeImage,
+  defaultAgentRuntimeSandboxStartCommand,
   isDefaultAgentRuntimeImage,
   type AgentRuntimeStreamingMode,
   type Config
@@ -149,7 +150,16 @@ export type SlackRuntimeOptions = {
   sandboxStartCommand?: string[];
   sandboxModelProviderUrls?: string[];
   sandboxFetch?: SandboxRuntimeFetch;
+  testbed?: boolean;
 };
+
+function createNoopSlackReceiver() {
+  return {
+    init: () => undefined,
+    start: async () => undefined,
+    stop: async () => undefined
+  };
+}
 
 type SlackDirectMessageEvent = {
   channel_type?: string;
@@ -262,8 +272,10 @@ export function createSlackRuntime(
 ): SlackRuntime {
   const app = new App({
     token: config.slackBotToken,
-    appToken: config.slackAppToken,
-    socketMode: true,
+    appToken: options.testbed ? undefined : config.slackAppToken,
+    socketMode: !options.testbed,
+    ...(options.testbed ? { receiver: createNoopSlackReceiver() } : {}),
+    tokenVerificationEnabled: !options.testbed,
     logLevel: toBoltLogLevel(config.slackLogLevel)
   });
 
@@ -501,14 +513,46 @@ export function createSlackRuntime(
     }
 
     try {
-      await applyAgentRuntimeControl({
-        config,
-        store,
-        runtimeFactory,
-        workspaceId: context.workspaceId,
-        slackUserId: context.slackUserId,
-        action
-      });
+      if (action === "start" || action === "restart") {
+        markAgentRuntimeControlInProgress({
+          config,
+          store,
+          workspaceId: context.workspaceId,
+          slackUserId: context.slackUserId
+        });
+        void applyAgentRuntimeControl({
+          config,
+          store,
+          runtimeFactory,
+          workspaceId: context.workspaceId,
+          slackUserId: context.slackUserId,
+          action
+        })
+          .then(() =>
+            publishHomeViewForUser({
+              client,
+              workspaceId: context.workspaceId,
+              slackUserId: context.slackUserId
+            })
+          )
+          .catch((error) => {
+            logger.error(formatLogError(error));
+            void publishHomeViewForUser({
+              client,
+              workspaceId: context.workspaceId,
+              slackUserId: context.slackUserId
+            }).catch((publishError) => logger.error(formatLogError(publishError)));
+          });
+      } else {
+        await applyAgentRuntimeControl({
+          config,
+          store,
+          runtimeFactory,
+          workspaceId: context.workspaceId,
+          slackUserId: context.slackUserId,
+          action
+        });
+      }
       await publishHomeViewForUser({
         client,
         workspaceId: context.workspaceId,
@@ -1835,11 +1879,6 @@ export function createManagedRuntimeFactory(
         "AGENT_RUNTIME_FACTORY=sandbox requires an injected SandboxProvider"
       );
     }
-    if (!options.sandboxStartCommand?.length) {
-      throw new Error(
-        "AGENT_RUNTIME_FACTORY=sandbox requires a sandbox start command"
-      );
-    }
   }
   if (config.agentRuntimeFactory === "static" && !config.managedRuntimeUrl) {
     return undefined;
@@ -1886,14 +1925,19 @@ export function createManagedRuntimeFactory(
               toolGatewayUrl: config.agentRuntimeToolGatewayUrl,
               mcpGatewayUrl: config.agentRuntimeMcpGatewayUrl,
               mcpAudience: config.agentRuntimeMcpAudience,
+              inferenceBaseUrl: config.agentRuntimeInferenceBaseUrl,
               modelProviderUrls:
                 options.sandboxModelProviderUrls ??
-                modelProviderUrlsForRuntimeModel(config.aiModel, Bun.env),
+                modelProviderUrlsForRuntimeModel(config.aiModel, Bun.env, {
+                  inferenceBaseUrl: config.agentRuntimeInferenceBaseUrl
+                }),
               runtimeJwtIssuer,
               runtimeJwtTtlSeconds: config.agentRuntimeJwtTtlSeconds,
               runtimeTokenSecret: config.agentRuntimeTokenSecret ?? "",
               idleTtlMs: config.agentRuntimeIdleTtlMs,
-              startCommand: options.sandboxStartCommand!,
+              startCommand:
+                options.sandboxStartCommand ??
+                defaultAgentRuntimeSandboxStartCommand(engine),
               fetch: options.sandboxFetch,
               openShellDialHost: config.agentRuntimeOpenShellDialHost,
               env: Bun.env,
@@ -2310,11 +2354,12 @@ type AgentHomeSettingsView = {
   disabledTools: string[];
   enabledSkills: string[];
   policyHash: string;
-  runtime: {
-    id: string | null;
-    status: string;
-    factory: string;
-    engine: string;
+    runtime: {
+      id: string | null;
+      sandboxId: string | null;
+      status: string;
+      factory: string;
+      engine: string;
     configuredEngine: string;
     preferredEngine: string | null;
     allowedEngines: string[];
@@ -2488,6 +2533,7 @@ export function buildAgentHomeSettings(input: {
     runtime: runtime
       ? {
           id: runtime.id,
+          sandboxId: runtime.sandboxId,
           status: runtime.status,
           factory: input.config.agentRuntimeFactory,
           engine: runtime.engine,
@@ -2502,6 +2548,7 @@ export function buildAgentHomeSettings(input: {
         }
       : {
           id: null,
+          sandboxId: null,
           status: "not provisioned",
           factory: input.config.agentRuntimeFactory,
           engine: selection.effectiveEngine,
@@ -2643,9 +2690,9 @@ function buildAgentRuntimeActionElements(settings: AgentHomeSettingsView) {
     });
   }
 
-  if (settings.runtime.factory !== "docker") {
+  if (!isRuntimeLifecycleManagedByBurble(settings.runtime.factory)) {
     // Static runtimes are shared externally managed services, so Burble cannot
-    // safely expose per-user container lifecycle actions for them.
+    // safely expose per-user lifecycle actions for them.
   } else if (isRuntimeStartable(settings.runtime.status)) {
     elements.push({
       type: "button",
@@ -2673,7 +2720,7 @@ function buildAgentRuntimeActionElements(settings: AgentHomeSettingsView) {
           },
           text: {
             type: "mrkdwn",
-            text: "This stops the current runtime container and may interrupt active autonomous work."
+            text: "This stops the current runtime instance and may interrupt active autonomous work."
           },
           confirm: {
             type: "plain_text",
@@ -2742,10 +2789,17 @@ function isRuntimeStartable(status: string): boolean {
   return status === "not provisioned" || status === "stopped" || status === "failed";
 }
 
+function isRuntimeLifecycleManagedByBurble(factory: string): boolean {
+  return factory === "docker" || factory === "sandbox";
+}
+
 function formatRuntimeHomeSummary(settings: AgentHomeSettingsView): string {
   const runtimeId = settings.runtime.id
     ? `\`${settings.runtime.id}\``
     : "`not provisioned yet`";
+  const sandboxId = settings.runtime.sandboxId
+    ? `\`${settings.runtime.sandboxId}\``
+    : "`none`";
   const lastUsed = settings.runtime.lastUsedAt ?? "never";
   return [
     `Status: \`${settings.runtime.status}\``,
@@ -2753,7 +2807,8 @@ function formatRuntimeHomeSummary(settings: AgentHomeSettingsView): string {
     `Engine: \`${settings.runtime.engine}\``,
     `Preferred engine: \`${settings.runtime.preferredEngine ?? "not set"}\``,
     `Selectable engines: \`${formatStringList(settings.runtime.selectableEngines)}\``,
-    `Runtime: ${runtimeId}`,
+    `Runtime ID: ${runtimeId}`,
+    `Sandbox: ${sandboxId}`,
     `Last used: ${lastUsed}`
   ].join("\n");
 }
@@ -2910,6 +2965,39 @@ export function buildAgentRuntimeManageModalView(input: {
 }
 
 type AgentRuntimeControlAction = "start" | "pause" | "restart";
+
+export function markAgentRuntimeControlInProgress(input: {
+  config: Config;
+  store: TokenStore;
+  workspaceId: string;
+  slackUserId: string;
+}): string | null {
+  if (input.config.agentRuntime !== "burble-runtime") {
+    return null;
+  }
+  const principal = {
+    workspaceId: input.workspaceId,
+    slackUserId: input.slackUserId
+  };
+  const selection = resolveRuntimeEngineForPrincipal({
+    config: input.config,
+    store: input.store,
+    principal
+  });
+  const existing = input.store.getAgentRuntimeForPrincipal({
+    workspaceId: input.workspaceId,
+    slackUserId: input.slackUserId,
+    engine: selection.effectiveEngine
+  });
+  if (!existing) {
+    return null;
+  }
+  input.store.updateAgentRuntimeStatus(existing.id, {
+    status: "provisioning"
+  });
+  input.store.touchAgentRuntime(existing.id);
+  return existing.id;
+}
 
 export async function applyAgentRuntimeControl(input: {
   config: Config;
@@ -5319,6 +5407,23 @@ export async function postConversationResponse(
       return;
     }
 
+    const responseText = renderConversationResponseText(input.response).trim();
+    if (responseText) {
+      const finishedText = renderFinalProgressMessage(
+        input.progressMessage,
+        responseText,
+        finalProgressLine
+      );
+      input.progressMessage.text = finishedText;
+      await client.chat.update({
+        channel: input.progressMessage.channel,
+        ts: input.progressMessage.ts,
+        text: finishedText,
+        ...(responseBlocks ? { blocks: responseBlocks } : {})
+      });
+      return;
+    }
+
     const finishedText = renderProgressLines(input.progressMessage, [
       finalProgressLine
     ]);
@@ -5328,6 +5433,9 @@ export async function postConversationResponse(
       ts: input.progressMessage.ts,
       text: finishedText
     });
+    if (!responseText && !responseBlocks) {
+      return;
+    }
     await client.chat.postMessage({
       channel: input.response.visibility === "dm" ? input.user : input.channel,
       ...(input.threadTs && input.response.visibility !== "dm"
@@ -5753,6 +5861,19 @@ export function formatConversationFailureMessage(
       "Restart the runtime container or check `AGENT_RUNTIME_JWT_TTL_SECONDS` / MCP gateway routing."
     ].join(" ");
   }
+  if (isRuntimeFinalizationFailure(message)) {
+    return [
+      "Agent runtime started but did not return a final answer.",
+      "The runtime may still be stuck after tool or model calls.",
+      `Runtime detail: ${sanitizeRuntimeFailureDetail(message)}`
+    ].join(" ");
+  }
+  if (isRuntimeRunFailure(message)) {
+    return [
+      "Agent runtime failed while handling that message.",
+      `Runtime detail: ${sanitizeRuntimeFailureDetail(message)}`
+    ].join(" ");
+  }
   if (
     error instanceof RuntimeEngineSelectionError &&
     message.includes("missing attachment support")
@@ -5765,6 +5886,22 @@ export function formatConversationFailureMessage(
   }
 
   return `I could not handle that ${target}.`;
+}
+
+function isRuntimeFinalizationFailure(message: string): boolean {
+  return /Managed runtime did not produce a final response|Runtime run finished without a final response|Runtime event socket closed before final/i.test(
+    message
+  );
+}
+
+function isRuntimeRunFailure(message: string): boolean {
+  return /Managed runtime returned HTTP \d+|Runtime run failed:|Hermes returned a provider tool progress marker/i.test(
+    message
+  );
+}
+
+function sanitizeRuntimeFailureDetail(message: string): string {
+  return message.replace(/\s+/g, " ").slice(0, 240);
 }
 
 function formatAgentExecResult(statusText: string, responseText: string): string {
@@ -5871,6 +6008,7 @@ function sanitizeRuntimeStreamText(text: string): string {
   hermesRuntimeStreamCursorPattern.lastIndex = 0;
   const hasHermesCursor = hermesRuntimeStreamCursorPattern.test(text);
   let sanitized = stripRuntimeToolCallProtocolFragments(text);
+  sanitized = stripRuntimeProviderProgressMarkers(sanitized);
   if (hasHermesCursor) {
     hermesRuntimeStreamCursorPattern.lastIndex = 0;
     sanitized = sanitized
@@ -5880,6 +6018,22 @@ function sanitizeRuntimeStreamText(text: string): string {
   }
 
   return normalizeSlackMrkdwnLinks(sanitized);
+}
+
+function stripRuntimeProviderProgressMarkers(text: string): string {
+  const lines = text.split(/\r?\n/);
+  let removed = false;
+  const kept = lines.filter((line) => {
+    const marker = isRuntimeProviderProgressMarker(line);
+    removed ||= marker;
+    return !marker;
+  });
+  return removed ? kept.join("\n").trim() : text;
+}
+
+function isRuntimeProviderProgressMarker(text: string): boolean {
+  const normalized = text.trim().replace(/\s+/g, " ");
+  return /^(?::gear:|⚙️?|gear:)?\s*(?:burble_provider_call|(?:github|google|gmail|hubspot|jira|slack|atlassian|scheduled_job|conversation)_[a-z0-9_]+)(?:\.{3}|…)?$/i.test(normalized);
 }
 
 function normalizeSlackMrkdwnLinks(text: string): string {

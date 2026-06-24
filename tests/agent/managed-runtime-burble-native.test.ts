@@ -135,6 +135,7 @@ describe("managed runtime Burble Native integration", () => {
       manifest: runtimeManifest(runtime.id)
     };
     const calls: string[] = [];
+    const runtimeRunHeaders: HeadersInit[] = [];
     const webSocketOptions: Array<{ headers?: HeadersInit } | undefined> = [];
 
     const fetchRouter = async (url: string, init?: RequestInit): Promise<Response> => {
@@ -142,6 +143,9 @@ describe("managed runtime Burble Native integration", () => {
       const parsed = new URL(url);
 
       if (parsed.hostname === "burble-native-runtime") {
+        if (parsed.pathname === "/runs") {
+          runtimeRunHeaders.push(init?.headers ?? {});
+        }
         return handleRuntimeRequest(
           new Request(url, init),
           {
@@ -210,7 +214,8 @@ describe("managed runtime Burble Native integration", () => {
       }
 
       if (
-        parsed.hostname === "burble-app" &&
+        (parsed.hostname === "burble-app" ||
+          (parsed.hostname === "127.0.0.1" && parsed.port === "3000")) &&
         parsed.pathname.startsWith("/internal/tools/")
       ) {
         const toolName = decodeURIComponent(
@@ -285,17 +290,430 @@ describe("managed runtime Burble Native integration", () => {
     });
 
     expect(result.text).toBe("Authenticated as octocat.");
-    expect(webSocketOptions).toEqual([
+    expect(runtimeRunHeaders).toEqual([
       {
-        headers: {
-          authorization: `Bearer ${runtimeHandle.authToken}`,
-          "x-burble-runtime-id": runtimeHandle.id
-        }
+        accept: "application/x-ndjson",
+        authorization: `Bearer ${runtimeHandle.authToken}`,
+        "content-type": "application/json",
+        "x-burble-runtime-id": runtimeHandle.id,
+        "x-burble-runtime-token": runtimeHandle.authToken
       }
     ]);
+    expect(webSocketOptions).toEqual([]);
     expect(calls).toContain(
       "POST http://burble-app:3000/internal/tools/github.getAuthenticatedUser/execute"
     );
+  });
+
+  test("relays direct Hermes provider tool results to the model continuation", async () => {
+    const store = createTokenStore(":memory:");
+    const runtimeToken = "runtime-token-u123";
+    const runtime = store.getOrCreateAgentRuntime({
+      ...principal,
+      engine: "hermes",
+      endpointUrl: "http://hermes-runtime:8080",
+      authTokenHash: hashRuntimeToken(runtimeToken),
+      statePath: "/data/runtimes/rt_hermes/state",
+      configPath: "/data/runtimes/rt_hermes/config/hermes.json",
+      workspacePath: "/data/runtimes/rt_hermes/workspace",
+      policyHash: "policy-hermes"
+    });
+    store.upsertProviderConnection({
+      provider: "google",
+      email: "person@example.com",
+      slackUserId: principal.slackUserId,
+      providerLogin: "person@example.com",
+      accessToken: "google-token"
+    });
+
+    const runtimeHandle: RuntimeHandle = {
+      id: runtime.id,
+      engine: "hermes",
+      endpointUrl: runtime.endpointUrl,
+      authToken: runtimeToken,
+      status: "ready",
+      statePath: runtime.statePath,
+      configPath: runtime.configPath,
+      workspacePath: runtime.workspacePath,
+      manifest: runtimeManifest(runtime.id, "hermes")
+    };
+    const calls: string[] = [];
+    const events: string[] = [];
+
+    const fetchRouter = async (url: string, init?: RequestInit): Promise<Response> => {
+      calls.push(`${init?.method ?? "GET"} ${url}`);
+      const parsed = new URL(url);
+
+      if (parsed.hostname === "hermes-runtime") {
+        if (parsed.pathname === "/capabilities") {
+          return new Response("not implemented", { status: 404 });
+        }
+        if (parsed.pathname === "/runs") {
+          return new Response(
+            [
+              JSON.stringify({ type: "status", text: "Agent is thinking..." }),
+              JSON.stringify({
+                type: "tool_call",
+                toolName: "google_search_drive_files",
+                callId: "hermes-provider-marker-test",
+                input: { limit: 1 }
+              }),
+              JSON.stringify({
+                type: "tool_result",
+                toolName: "google_search_drive_files",
+                callId: "hermes-provider-marker-test",
+                classification: "user_private"
+              }),
+              JSON.stringify({
+                type: "message_delta",
+                text: "Hermes synthesized the latest Drive file from the tool result."
+              }),
+              JSON.stringify({
+                type: "final",
+                response: {
+                  classification: "user_private",
+                  text: "Hermes synthesized the latest Drive file from the tool result."
+                }
+              })
+            ].join("\n"),
+            { headers: { "content-type": "application/x-ndjson" } }
+          );
+        }
+      }
+
+      if (
+        (parsed.hostname === "burble-app" ||
+          (parsed.hostname === "127.0.0.1" && parsed.port === "3000")) &&
+        parsed.pathname.startsWith("/internal/tools/")
+      ) {
+        throw new Error(`Unexpected client-side provider gateway call ${url}`);
+      }
+
+      throw new Error(`Unexpected request ${url}`);
+    };
+
+    const runner = createManagedRuntimeAgentRunner({
+      config: baseConfig,
+      runtimeFactory: {
+        async getOrCreateRuntime() {
+          return runtimeHandle;
+        },
+        async stopRuntime() {},
+        async reapIdleRuntimes() {}
+      },
+      fetch: fetchRouter,
+      logInfo(message) {
+        events.push(message);
+      }
+    });
+
+    const result = await collectAgentRun(
+      runner,
+      {
+        principal,
+        conversation: {
+          source: "slack",
+          workspaceId: principal.workspaceId,
+          channelId: "D123",
+          rootId: "dm:D123",
+          isDirectMessage: true
+        },
+        text: "list my last edited google drive file",
+        toolGroups: {
+          groups: ["conversation", "google"],
+          reasons: ["default:conversation", "keyword:google:drive"]
+        },
+        connections: {
+          github: null,
+          google: {
+            provider: "google",
+            email: "person@example.com",
+            slackUserId: principal.slackUserId,
+            providerLogin: "person@example.com",
+            accessToken: "redacted",
+            connectedAt: "2026-06-08T00:00:00.000Z"
+          }
+        }
+      },
+      (event) => {
+        events.push(event.type);
+      }
+    );
+
+    expect(result.text).toBe(
+      "Hermes synthesized the latest Drive file from the tool result."
+    );
+    expect(events).toContain("tool_call");
+    expect(events).toContain("tool_result");
+    expect(events).toContain("message_delta");
+    expect(events.some((event) => event.includes("type=final"))).toBe(true);
+    expect(calls.some((call) => call.includes("/internal/tools/"))).toBe(false);
+  });
+
+  test("does not replay Hermes bridge provider tool stream callbacks", async () => {
+    const store = createTokenStore(":memory:");
+    const runtimeToken = "runtime-token-u123";
+    const runtime = store.getOrCreateAgentRuntime({
+      ...principal,
+      engine: "hermes",
+      endpointUrl: "http://hermes-runtime:8080",
+      authTokenHash: hashRuntimeToken(runtimeToken),
+      statePath: "/data/runtimes/rt_hermes/state",
+      configPath: "/data/runtimes/rt_hermes/config/hermes.json",
+      workspacePath: "/data/runtimes/rt_hermes/workspace",
+      policyHash: "policy-hermes"
+    });
+    store.upsertProviderConnection({
+      provider: "google",
+      email: "person@example.com",
+      slackUserId: principal.slackUserId,
+      providerLogin: "person@example.com",
+      accessToken: "google-token"
+    });
+
+    const runtimeHandle: RuntimeHandle = {
+      id: runtime.id,
+      engine: "hermes",
+      endpointUrl: runtime.endpointUrl,
+      authToken: runtimeToken,
+      status: "ready",
+      statePath: runtime.statePath,
+      configPath: runtime.configPath,
+      workspacePath: runtime.workspacePath,
+      manifest: runtimeManifest(runtime.id, "hermes")
+    };
+    const calls: string[] = [];
+    const events: string[] = [];
+
+    const fetchRouter = async (url: string, init?: RequestInit): Promise<Response> => {
+      calls.push(`${init?.method ?? "GET"} ${url}`);
+      const parsed = new URL(url);
+
+      if (parsed.hostname === "hermes-runtime") {
+        if (parsed.pathname === "/capabilities") {
+          return new Response("not implemented", { status: 404 });
+        }
+        if (parsed.pathname === "/runs") {
+          return new Response(
+            [
+              JSON.stringify({ type: "status", text: "Agent is thinking..." }),
+              JSON.stringify({
+                type: "tool_call",
+                toolName: "burble_provider_call",
+                callId: "hermes-bridge-provider-test",
+                input: {
+                  toolName: "google_search_drive_files",
+                  input: { limit: 1 }
+                }
+              }),
+              JSON.stringify({
+                type: "tool_result",
+                toolName: "burble_provider_call",
+                callId: "hermes-bridge-provider-test",
+                classification: "user_private"
+              }),
+              JSON.stringify({
+                type: "message_delta",
+                text: "The latest Drive file is already available from Hermes."
+              })
+            ].join("\n"),
+            { headers: { "content-type": "application/x-ndjson" } }
+          );
+        }
+      }
+
+      if (
+        (parsed.hostname === "burble-app" ||
+          (parsed.hostname === "127.0.0.1" && parsed.port === "3000")) &&
+        parsed.pathname.startsWith("/internal/tools/")
+      ) {
+        throw new Error(`Unexpected replayed provider gateway call ${url}`);
+      }
+
+      throw new Error(`Unexpected request ${url}`);
+    };
+
+    const runner = createManagedRuntimeAgentRunner({
+      config: baseConfig,
+      runtimeFactory: {
+        async getOrCreateRuntime() {
+          return runtimeHandle;
+        },
+        async stopRuntime() {},
+        async reapIdleRuntimes() {}
+      },
+      fetch: fetchRouter,
+      logInfo(message) {
+        events.push(message);
+      }
+    });
+
+    const result = await collectAgentRun(
+      runner,
+      {
+        principal,
+        conversation: {
+          source: "slack",
+          workspaceId: principal.workspaceId,
+          channelId: "D123",
+          rootId: "dm:D123",
+          isDirectMessage: true
+        },
+        text: "list my last edited google drive file",
+        toolGroups: {
+          groups: ["conversation", "google"],
+          reasons: ["default:conversation", "keyword:google:drive"]
+        },
+        connections: {
+          github: null,
+          google: {
+            provider: "google",
+            email: "person@example.com",
+            slackUserId: principal.slackUserId,
+            providerLogin: "person@example.com",
+            accessToken: "redacted",
+            connectedAt: "2026-06-08T00:00:00.000Z"
+          }
+        }
+      },
+      (event) => {
+        events.push(event.type);
+      }
+    );
+
+    expect(result.text).toBe("The latest Drive file is already available from Hermes.");
+    expect(events).toContain("tool_call");
+    expect(events).toContain("tool_result");
+    expect(calls.some((call) => call.includes("/internal/tools/"))).toBe(false);
+  });
+
+  test("does not auto-execute Hermes provider write tool stream callbacks", async () => {
+    const store = createTokenStore(":memory:");
+    const runtimeToken = "runtime-token-u123";
+    const runtime = store.getOrCreateAgentRuntime({
+      ...principal,
+      engine: "hermes",
+      endpointUrl: "http://hermes-runtime:8080",
+      authTokenHash: hashRuntimeToken(runtimeToken),
+      statePath: "/data/runtimes/rt_hermes/state",
+      configPath: "/data/runtimes/rt_hermes/config/hermes.json",
+      workspacePath: "/data/runtimes/rt_hermes/workspace",
+      policyHash: "policy-hermes"
+    });
+    store.upsertProviderConnection({
+      provider: "github",
+      email: "person@example.com",
+      slackUserId: principal.slackUserId,
+      providerLogin: "person@example.com",
+      accessToken: "github-token"
+    });
+
+    const runtimeHandle: RuntimeHandle = {
+      id: runtime.id,
+      engine: "hermes",
+      endpointUrl: runtime.endpointUrl,
+      authToken: runtimeToken,
+      status: "ready",
+      statePath: runtime.statePath,
+      configPath: runtime.configPath,
+      workspacePath: runtime.workspacePath,
+      manifest: runtimeManifest(runtime.id, "hermes")
+    };
+    const calls: string[] = [];
+    const events: string[] = [];
+
+    const fetchRouter = async (url: string, init?: RequestInit): Promise<Response> => {
+      calls.push(`${init?.method ?? "GET"} ${url}`);
+      const parsed = new URL(url);
+
+      if (parsed.hostname === "hermes-runtime") {
+        if (parsed.pathname === "/capabilities") {
+          return new Response("not implemented", { status: 404 });
+        }
+        if (parsed.pathname === "/runs") {
+          return new Response(
+            [
+              JSON.stringify({ type: "status", text: "Agent is thinking..." }),
+              JSON.stringify({
+                type: "tool_call",
+                toolName: "github_create_issue",
+                callId: "hermes-write-tool-test",
+                input: { repo: "owner/repo", title: "Do not create this" }
+              }),
+              JSON.stringify({
+                type: "message_delta",
+                text: "I cannot create that issue without confirmation."
+              })
+            ].join("\n"),
+            { headers: { "content-type": "application/x-ndjson" } }
+          );
+        }
+      }
+
+      if (
+        (parsed.hostname === "burble-app" ||
+          (parsed.hostname === "127.0.0.1" && parsed.port === "3000")) &&
+        parsed.pathname.startsWith("/internal/tools/")
+      ) {
+        throw new Error(`Unexpected provider gateway write call ${url}`);
+      }
+
+      throw new Error(`Unexpected request ${url}`);
+    };
+
+    const runner = createManagedRuntimeAgentRunner({
+      config: baseConfig,
+      runtimeFactory: {
+        async getOrCreateRuntime() {
+          return runtimeHandle;
+        },
+        async stopRuntime() {},
+        async reapIdleRuntimes() {}
+      },
+      fetch: fetchRouter,
+      logInfo(message) {
+        events.push(message);
+      }
+    });
+
+    const result = await collectAgentRun(
+      runner,
+      {
+        principal,
+        conversation: {
+          source: "slack",
+          workspaceId: principal.workspaceId,
+          channelId: "D123",
+          rootId: "dm:D123",
+          isDirectMessage: true
+        },
+        text: "create a GitHub issue",
+        toolGroups: {
+          groups: ["conversation", "github"],
+          reasons: ["default:conversation", "keyword:github"]
+        },
+        connections: {
+          github: {
+            provider: "github",
+            email: "person@example.com",
+            slackUserId: principal.slackUserId,
+            providerLogin: "person@example.com",
+            accessToken: "redacted",
+            connectedAt: "2026-06-08T00:00:00.000Z"
+          }
+        }
+      },
+      (event) => {
+        events.push(event.type);
+      }
+    );
+
+    expect(result.text).toBe("I cannot create that issue without confirmation.");
+    expect(events).toContain("tool_call");
+    expect(events).not.toContain("tool_result");
+    expect(
+      calls.filter((call) => call.includes("/internal/tools/github.createIssue/execute"))
+    ).toHaveLength(0);
   });
 
   test("seals Slack attachment ids before sending input to a runtime", async () => {
@@ -397,12 +815,15 @@ describe("managed runtime Burble Native integration", () => {
   });
 });
 
-function runtimeManifest(runtimeId: string): RuntimeManifest {
+function runtimeManifest(
+  runtimeId: string,
+  engine: RuntimeManifest["runtime"]["engine"] = "burble-native"
+): RuntimeManifest {
   return {
     version: "1",
     principal,
     runtime: {
-      engine: "burble-native",
+      engine,
       factory: "docker",
       ttlMs: 86400000,
       reaperEnabled: true

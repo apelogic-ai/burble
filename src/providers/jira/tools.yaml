@@ -5,6 +5,7 @@ tools:
     implementation: getAuthenticatedUser
     title: Jira authenticated user
     description: Return the Jira identity connected to this Slack user.
+    risk: read
     input: {}
 
   - name: jira_list_assigned_issues
@@ -12,6 +13,7 @@ tools:
     implementation: listAssignedIssues
     title: Jira assigned issues
     description: List Jira issues assigned to this Slack user.
+    risk: read
     input: {}
 
   - name: jira_list_accessible_resources
@@ -19,6 +21,7 @@ tools:
     implementation: listAccessibleResources
     title: Jira accessible resources
     description: List Atlassian resources visible to this Slack user's connected Jira account. Use the resource url as Jira MCP cloudId for the Atlassian Rovo MCP server.
+    risk: read
     input: {}
 
   - name: jira_list_visible_projects
@@ -26,6 +29,7 @@ tools:
     implementation: listVisibleProjects
     title: Jira visible projects
     description: List Jira projects visible to this Slack user's connected Jira account. Use query='DM', action='create', and expandIssueTypes=true to confirm create access and issue types before creating a Jira issue.
+    risk: read
     input:
       query:
         type: string
@@ -46,6 +50,7 @@ tools:
     implementation: searchUsers
     title: Jira user search
     description: Search Jira users visible to this Slack user's connected Jira account. Use this to resolve assignee account IDs from emails or names.
+    risk: read
     input:
       query:
         type: string
@@ -116,6 +121,7 @@ tools:
     implementation: getIssue
     title: Jira get issue
     description: Get a Jira issue by key, including summary, status, labels, and text description.
+    risk: read
     input:
       issueKey:
         type: string
@@ -301,6 +307,7 @@ tools:
     implementation: searchIssues
     title: Jira issue search
     description: Search Jira issues visible to this Slack user's connected Jira account.
+    risk: read
     input:
       jql:
         type: string

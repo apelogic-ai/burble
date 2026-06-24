@@ -27,6 +27,8 @@ services:
     restart: unless-stopped
     expose:
       - "3000"
+    ports:
+      - "3000:3000"
     environment:
       - NODE_ENV=production
       - PORT=3000
@@ -51,13 +53,16 @@ services:
       - AGENT_RUNTIME_REAPER_INTERVAL_MS=${AGENT_RUNTIME_REAPER_INTERVAL_MS:-60000}
       - AGENT_RUNTIME_JWT_TTL_SECONDS=${AGENT_RUNTIME_JWT_TTL_SECONDS:-604800}
       - AGENT_RUNTIME_TOKEN_SECRET=${AGENT_RUNTIME_TOKEN_SECRET:-}
-      - AGENT_RUNTIME_TOOL_GATEWAY_URL=${AGENT_RUNTIME_TOOL_GATEWAY_URL:-http://burble-app:3000/internal/tools}
+      - AGENT_RUNTIME_TOOL_GATEWAY_URL=${AGENT_RUNTIME_TOOL_GATEWAY_URL:-http://host.openshell.internal:3000/internal/tools}
       - AGENT_RUNTIME_MCP_GATEWAY_URL=${AGENT_RUNTIME_MCP_GATEWAY_URL:-}
       - AGENT_RUNTIME_MCP_AUDIENCE=${AGENT_RUNTIME_MCP_AUDIENCE:-}
+      - LLM_GW_BASE_URL=${LLM_GW_BASE_URL:-http://host.openshell.internal:4000/v1}
       - AGENT_RUNTIME_SANDBOX_URL=${AGENT_RUNTIME_SANDBOX_URL:-}
       - AGENT_RUNTIME_SANDBOX_TOKEN=${AGENT_RUNTIME_SANDBOX_TOKEN:-}
-      - AGENT_RUNTIME_SANDBOX_TRANSPORT=${AGENT_RUNTIME_SANDBOX_TRANSPORT:-grpc}
+      - AGENT_RUNTIME_SANDBOX_TRANSPORT=${AGENT_RUNTIME_SANDBOX_TRANSPORT:-cli}
       - AGENT_RUNTIME_SANDBOX_START_COMMAND=${AGENT_RUNTIME_SANDBOX_START_COMMAND:-}
+      - AGENT_RUNTIME_SANDBOX_PRESERVE_FAILED=${AGENT_RUNTIME_SANDBOX_PRESERVE_FAILED:-false}
+      - AGENT_RUNTIME_OPENSHELL_CLI_BIN=${AGENT_RUNTIME_OPENSHELL_CLI_BIN:-}
       - AGENT_RUNTIME_OPENSHELL_DIAL_HOST=${AGENT_RUNTIME_OPENSHELL_DIAL_HOST:-}
       - AGENT_RUNTIME_CONFIG_PATCH_HOST_PATH=${AGENT_RUNTIME_CONFIG_PATCH_HOST_PATH:-${OPENCLAW_CONFIG_PATCH_HOST_PATH:-}}
       - ATLASSIAN_MCP_URL=${ATLASSIAN_MCP_URL:-https://mcp.atlassian.com/v1/mcp}
@@ -98,6 +103,28 @@ services:
       timeout: 5s
       retries: 3
       start_period: 10s
+
+  llm-gw:
+    image: ghcr.io/berriai/litellm:main-latest
+    restart: unless-stopped
+    expose:
+      - "4000"
+    ports:
+      - "4000:4000"
+    command:
+      - --config
+      - /app/config.yaml
+      - --host
+      - 0.0.0.0
+      - --port
+      - "4000"
+    environment:
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - OLLAMA_API_KEY=${OLLAMA_API_KEY:-}
+      - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-https://ollama.com}
+    volumes:
+      - ./litellm/config.yaml:/app/config.yaml:ro
 
 volumes:
   caddy_data:

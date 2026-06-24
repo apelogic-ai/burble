@@ -16,6 +16,7 @@ RUN apt-get update \
     git \
     curl \
     ca-certificates \
+    iproute2 \
     nodejs \
     npm \
     chromium \
@@ -40,8 +41,8 @@ COPY runtimes/nemo-hermes/runtime/provider-tool-hints.json /runtime/provider-too
 COPY packages/runtime-sdk/schema/runtime-contract.schema.json /runtime/runtime-contract.schema.json
 RUN groupadd --gid 1000660000 sandbox \
   && useradd --uid 1000660000 --gid 1000660000 --home-dir /runtime --shell /bin/sh sandbox \
-  && mkdir -p /runtime/config /runtime/state /runtime/workspace \
-  && chown -R sandbox:sandbox /runtime
+  && mkdir -p /runtime/config /runtime/state /runtime/workspace /data/openclaw/hermes \
+  && chown -R sandbox:sandbox /runtime /data/openclaw
 
 EXPOSE 8080 8766
 

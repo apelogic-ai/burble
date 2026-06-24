@@ -2,13 +2,8 @@ import type { RuntimeManifest } from "./runtime-manifest";
 
 export const approvedRuntimeForwardedEnv = new Set([
   "AI_MODEL",
-  "OPENAI_API_KEY",
+  "AGENT_RUNTIME_INFERENCE_BASE_URL",
   "OPENAI_BASE_URL",
-  "OPENROUTER_API_KEY",
-  "GOOGLE_API_KEY",
-  "GEMINI_API_KEY",
-  "ANTHROPIC_API_KEY",
-  "OLLAMA_API_KEY",
   "OLLAMA_BASE_URL",
   "OLLAMA_OPENAI_BASE_URL",
   "BURBLE_RUNTIME_CONTRACT_PROBE",
@@ -24,7 +19,6 @@ export const approvedRuntimeForwardedEnv = new Set([
   "OPENCLAW_RAW_STREAM_DEBUG",
   "OPENCLAW_GATEWAY_PORT",
   "OPENCLAW_GATEWAY_BIND",
-  "OPENCLAW_GATEWAY_TOKEN",
   "HERMES_GATEWAY_COMMAND",
   "HERMES_INFERENCE_MODEL",
   "HERMES_MODEL",
@@ -35,23 +29,16 @@ export const approvedRuntimeForwardedEnv = new Set([
   "HERMES_WEB_SEARCH_BACKEND",
   "HERMES_WEB_EXTRACT_BACKEND",
   "WEB_TOOLS_DEBUG",
-  "EXA_API_KEY",
-  "PARALLEL_API_KEY",
   "PARALLEL_SEARCH_MODE",
-  "TAVILY_API_KEY",
-  "FIRECRAWL_API_KEY",
   "FIRECRAWL_API_URL",
   "FIRECRAWL_GATEWAY_URL",
   "SEARXNG_URL",
-  "BRAVE_SEARCH_API_KEY",
   "AGENT_BROWSER_ENGINE",
   "AGENT_BROWSER_ARGS",
   "AGENT_BROWSER_EXECUTABLE_PATH",
   "AGENT_BROWSER_IDLE_TIMEOUT_MS",
   "BROWSER_INACTIVITY_TIMEOUT",
   "BROWSER_CDP_URL",
-  "BROWSER_USE_API_KEY",
-  "BROWSERBASE_API_KEY",
   "BROWSERBASE_PROJECT_ID",
   "BROWSERBASE_PROXIES",
   "BROWSERBASE_ADVANCED_STEALTH",
@@ -61,13 +48,18 @@ export const approvedRuntimeForwardedEnv = new Set([
   "HERMES_BROWSER_CLOUD_PROVIDER"
 ]);
 
+export const runtimeInferenceProxyApiKey = "sk-BURBLE-INFERENCE-PROXY";
+
+const runtimeEnvSecretPattern =
+  /(api[_-]?key|authorization|cookie|credential|jwt|oauth|password|refresh|secret|token)/i;
+
 export function collectApprovedRuntimeEnv(
   source: Record<string, string | undefined>
 ): Record<string, string> {
   const env: Record<string, string> = {};
   for (const key of approvedRuntimeForwardedEnv) {
     const value = source[key]?.trim();
-    if (value) {
+    if (value && !runtimeEnvSecretPattern.test(key)) {
       env[key] = value;
     }
   }
@@ -76,8 +68,16 @@ export function collectApprovedRuntimeEnv(
 
 export function modelProviderUrlsForRuntimeModel(
   model: RuntimeManifest["model"] | string,
-  env: Record<string, string | undefined> = {}
+  env: Record<string, string | undefined> = {},
+  options: { inferenceBaseUrl?: string | null } = {}
 ): string[] {
+  if (options.inferenceBaseUrl?.trim()) {
+    return [options.inferenceBaseUrl.trim()];
+  }
+  if (env.AGENT_RUNTIME_INFERENCE_BASE_URL?.trim()) {
+    return [env.AGENT_RUNTIME_INFERENCE_BASE_URL.trim()];
+  }
+
   const provider =
     typeof model === "string" ? model.split(":", 1)[0] : model.provider;
 

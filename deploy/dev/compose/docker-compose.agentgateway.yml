@@ -14,8 +14,8 @@
 services:
   burble-app:
     environment:
-      - AGENT_RUNTIME_MCP_GATEWAY_URL=http://agentgateway:3000/mcp
-      - AGENT_RUNTIME_MCP_AUDIENCE=http://agentgateway:3000/mcp
+      - AGENT_RUNTIME_MCP_GATEWAY_URL=http://host.openshell.internal:3001/mcp
+      - AGENT_RUNTIME_MCP_AUDIENCE=http://host.openshell.internal:3001/mcp
       - RUNTIME_JWT_ISSUER=http://burble-app:3000
       - RUNTIME_JWT_PRIVATE_KEY_PATH=/data/runtime-jwt-private.pem
 
@@ -24,6 +24,8 @@ services:
     restart: unless-stopped
     expose:
       - "3000"
+    ports:
+      - "3001:3000"
     volumes:
       - ./agentgateway/config.yaml:/etc/agentgateway/config.yaml:ro
     command:

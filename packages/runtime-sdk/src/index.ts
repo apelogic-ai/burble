@@ -44,6 +44,7 @@ export {
 } from "./scheduled-job-context";
 export { stripRuntimeToolCallProtocolFragments } from "./runtime-text-protocol";
 export {
+  authorizeRuntimeBearerOrHeaderToken,
   authorizeRuntimeBearerToken,
   createRuntimeContractServer,
   type RuntimeContractAuthorizer,

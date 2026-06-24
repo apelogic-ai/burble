@@ -12,6 +12,8 @@ export type RuntimeContainerProfile = {
   configFileName: string;
   stateDir: string;
   workspaceDir: string;
+  sandboxReadOnlyPaths?: readonly string[];
+  sandboxReadWritePaths?: readonly string[];
   openClawCompatEnv: boolean;
   openClawConfigPatch: boolean;
   modelEnv: "generic" | "hermes";
@@ -24,6 +26,7 @@ export type RuntimeDescriptor = {
   selectable: boolean;
   unselectableReason?: string;
   defaultImages: readonly string[];
+  defaultSandboxStartCommand: readonly string[];
   healthCheckAttempts: number;
   capabilities: RuntimeCapabilityManifest;
   container: RuntimeContainerProfile;
@@ -44,6 +47,8 @@ const openClawContainerProfile: RuntimeContainerProfile = {
   configFileName: "openclaw.json",
   stateDir: "/data/openclaw/state",
   workspaceDir: "/data/openclaw/workspace",
+  sandboxReadOnlyPaths: ["/"],
+  sandboxReadWritePaths: ["/dev/pts"],
   openClawCompatEnv: true,
   openClawConfigPatch: true,
   modelEnv: "generic"
@@ -97,7 +102,7 @@ function openClawCapabilityManifest(
 const hermesCapabilityManifest: RuntimeCapabilityManifest = {
   runtimeType: "hermes",
   version: "known",
-  transports: ["http", "websocket"],
+  transports: ["http", "sse", "ndjson", "websocket"],
   streaming: true,
   cancellation: false,
   nativeScheduler: true,
@@ -134,12 +139,19 @@ const burbleNativeCapabilityManifest: RuntimeCapabilityManifest = {
   jobScopedAuth: true
 };
 
+const bunRuntimeSandboxStartCommand = [
+  "sh",
+  "-lc",
+  "cd /runtime && exec bun src/index.ts"
+];
+
 const runtimeDescriptors = {
   deterministic: {
     engine: "deterministic",
     family: "deterministic",
     selectable: true,
     defaultImages: deterministicDefaultImages,
+    defaultSandboxStartCommand: bunRuntimeSandboxStartCommand,
     healthCheckAttempts: 30,
     capabilities: openClawCapabilityManifest("deterministic"),
     container: openClawContainerProfile
@@ -149,6 +161,7 @@ const runtimeDescriptors = {
     family: "openclaw",
     selectable: true,
     defaultImages: openClawDefaultImages,
+    defaultSandboxStartCommand: bunRuntimeSandboxStartCommand,
     healthCheckAttempts: 90,
     capabilities: openClawCapabilityManifest("openclaw"),
     container: openClawContainerProfile
@@ -158,6 +171,7 @@ const runtimeDescriptors = {
     family: "openclaw",
     selectable: true,
     defaultImages: openClawDefaultImages,
+    defaultSandboxStartCommand: bunRuntimeSandboxStartCommand,
     healthCheckAttempts: 90,
     capabilities: openClawCapabilityManifest("openclaw-gateway"),
     container: openClawContainerProfile
@@ -167,6 +181,7 @@ const runtimeDescriptors = {
     family: "burble-native",
     selectable: true,
     defaultImages: ["burble-native-runtime:dev"],
+    defaultSandboxStartCommand: bunRuntimeSandboxStartCommand,
     healthCheckAttempts: 30,
     capabilities: burbleNativeCapabilityManifest,
     container: burbleNativeContainerProfile
@@ -176,6 +191,7 @@ const runtimeDescriptors = {
     family: "hermes",
     selectable: true,
     defaultImages: ["burble-nemo-hermes:dev"],
+    defaultSandboxStartCommand: ["python", "/runtime/entrypoint.py"],
     healthCheckAttempts: 30,
     capabilities: hermesCapabilityManifest,
     container: hermesContainerProfile
@@ -190,6 +206,12 @@ export function defaultRuntimeImageForEngine(
   engine: AgentRuntimeEngine
 ): string {
   return runtimeDescriptor(engine).defaultImages[0];
+}
+
+export function defaultSandboxStartCommandForEngine(
+  engine: AgentRuntimeEngine
+): string[] {
+  return [...runtimeDescriptor(engine).defaultSandboxStartCommand];
 }
 
 export function isKnownDefaultRuntimeImage(

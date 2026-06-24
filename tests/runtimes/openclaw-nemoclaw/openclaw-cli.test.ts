@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
+  resolveOpenClawCliArgv,
+  resolveOpenClawCliCommand,
   runOpenClawCliRequest,
   runOpenClawCliRequestStream
 } from "../../../runtimes/openclaw-nemoclaw/src/openclaw-cli";
@@ -36,6 +38,29 @@ const config: RuntimeConfig = {
   llmModel: "openai:gpt-5.4",
   ollamaBaseUrl: "https://ollama.com"
 };
+
+describe("OpenClaw CLI command resolution", () => {
+  test("uses explicit node argv inside sandboxed runtime images", () => {
+    const existingPaths = new Set([
+      "/usr/local/bin/openclaw",
+      "/usr/local/lib/node_modules/openclaw/openclaw.mjs"
+    ]);
+    const commandExists = (path: string) => existingPaths.has(path);
+
+    expect(resolveOpenClawCliArgv("openclaw", ["agent"], commandExists)).toEqual([
+      "/usr/local/bin/node",
+      "/usr/local/lib/node_modules/openclaw/openclaw.mjs",
+      "agent"
+    ]);
+    expect(resolveOpenClawCliCommand("openclaw", () => true)).toBe(
+      "/usr/local/bin/openclaw"
+    );
+    expect(resolveOpenClawCliCommand("openclaw", () => false)).toBe("openclaw");
+    expect(resolveOpenClawCliCommand("/custom/openclaw", () => true)).toBe(
+      "/custom/openclaw"
+    );
+  });
+});
 
 function readSessionIdArg(args: string[]): string {
   const index = args.indexOf("--session-id");

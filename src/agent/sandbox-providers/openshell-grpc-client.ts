@@ -6,6 +6,8 @@ import {
   type ServiceClientConstructor
 } from "@grpc/grpc-js";
 import { loadSync } from "@grpc/proto-loader";
+import { Buffer } from "node:buffer";
+import { createHash } from "node:crypto";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type {
@@ -29,16 +31,6 @@ type GrpcUnary = (
   callback: (error: Error | null, response: unknown) => void
 ) => void;
 
-type GrpcServerStream = (
-  request: Record<string, unknown>,
-  metadata: Metadata,
-  options: CallOptions
-) => {
-  on(event: "data", listener: (event: unknown) => void): void;
-  on(event: "error", listener: (error: Error) => void): void;
-  on(event: "end", listener: () => void): void;
-};
-
 type OpenShellGrpcService = {
   Health: GrpcUnary;
   CreateSandbox: GrpcUnary;
@@ -47,7 +39,6 @@ type OpenShellGrpcService = {
   UpdateConfig: GrpcUnary;
   ExposeService: GrpcUnary;
   GetService: GrpcUnary;
-  ExecSandbox: GrpcServerStream;
 };
 
 export type OpenShellGrpcSandboxClientOptions = {
@@ -64,6 +55,10 @@ const principalWorkspaceLabel = "burble.workspace_id";
 const principalUserLabel = "burble.user_id";
 const runtimeEngineLabel = "burble.runtime_engine";
 const runtimeImageLabel = "burble.runtime_image";
+const encodedLabelValuePrefix = "burble_b64.";
+const hashedLabelValuePrefix = "burble_sha256.";
+const maxOpenShellLabelValueLength = 63;
+const openShellLabelValuePattern = /^[A-Za-z0-9_.-]+$/;
 
 export function createOpenShellGrpcSandboxClient(
   options: OpenShellGrpcSandboxClientOptions
@@ -81,6 +76,11 @@ export function createOpenShellGrpcSandboxClient(
 
   return {
     async createSandbox(input) {
+      if (input.start) {
+        throw new Error(
+          "OpenShell gRPC CreateSandbox cannot set the supervised workload command; use AGENT_RUNTIME_SANDBOX_TRANSPORT=cli"
+        );
+      }
       const sandboxName = shortSandboxName();
       const labels = runtimeLabels(input.labels, input.principal, input.runtime);
       objectRecord(
@@ -91,9 +91,12 @@ export function createOpenShellGrpcSandboxClient(
             environment: {},
             template: {
               image: input.runtime.image,
-              labels
+              labels,
+              environment: {}
             },
-            policy: toOpenShellGrpcPolicy(emptySandboxPolicy())
+            policy: compileOpenShellGrpcSandboxPolicy(
+              input.policy ?? emptySandboxPolicy()
+            )
           }
         }),
         "OpenShell CreateSandbox response"
@@ -125,7 +128,7 @@ export function createOpenShellGrpcSandboxClient(
     async applyPolicy(input) {
       await unary(service.UpdateConfig, {
         name: input.sandboxId,
-        policy: toOpenShellGrpcPolicy(input.policy),
+        policy: compileOpenShellGrpcSandboxPolicy(input.policy),
         global: false
       });
     },
@@ -141,41 +144,10 @@ export function createOpenShellGrpcSandboxClient(
       // provision OpenShell provider records, so there is nothing to attach here.
     },
 
-    async run(input) {
-      const command = shellBackgroundCommand(input.request.argv);
-      const sandboxObjectId = await getSandboxObjectId(
-        service,
-        input.sandboxId,
-        metadata()
+    async run(_input) {
+      throw new Error(
+        "OpenShell gRPC sandboxes must launch workloads at sandbox creation"
       );
-      let exitCode: number | undefined;
-      await new Promise<void>((resolve, reject) => {
-        const stream = service.ExecSandbox(
-          {
-            sandboxId: sandboxObjectId,
-            command: ["sh", "-lc", command],
-            environment: input.request.env,
-            workdir: "/runtime"
-          },
-          metadata(),
-          callOptions(requestTimeoutMs)
-        );
-        stream.on("data", (event) => {
-          const record = objectRecord(event, "OpenShell exec event");
-          const exit = isRecord(record.exit) ? record.exit : null;
-          if (exit && typeof exit.exitCode === "number") {
-            exitCode = exit.exitCode;
-          }
-        });
-        stream.on("error", reject);
-        stream.on("end", resolve);
-      });
-
-      return {
-        runId: `run-${input.sandboxId}`,
-        status: exitCode === undefined || exitCode === 0 ? "running" : "failed",
-        ...(exitCode === undefined || exitCode === 0 ? {} : { exitCode })
-      };
     },
 
     async getSandbox(input) {
@@ -194,7 +166,7 @@ export function createOpenShellGrpcSandboxClient(
         sandbox,
         endpoint: serviceEndpoint ?? "",
         principal: principalFromLabels(labels),
-        runtime: runtimeFromLabels(labels),
+        runtime: runtimeFromLabels(labels, sandbox),
         labels,
         credentials: []
       });
@@ -399,23 +371,30 @@ function recordFromSandbox(input: {
   };
 }
 
-function runtimeLabels(
+export function openShellCommandString(argv: string[]): string {
+  if (argv.length === 0 || argv.some((part) => part.trim() === "")) {
+    throw new Error("OpenShell sandbox command must be non-empty");
+  }
+  return argv.join(" ");
+}
+
+export function runtimeLabels(
   labels: Record<string, string>,
   principal: OpenShellSandboxRecord["principal"],
   runtime: OpenShellSandboxRecord["runtime"]
 ): Record<string, string> {
-  return {
+  return encodeOpenShellLabelValues({
     ...labels,
     [principalWorkspaceLabel]: principal.workspaceId,
     [principalUserLabel]: principal.userId,
     [runtimeEngineLabel]: runtime.engine,
     [runtimeImageLabel]: runtime.image
-  };
+  });
 }
 
 function sandboxLabels(sandbox: Record<string, unknown>): Record<string, string> {
   const metadata = isRecord(sandbox.metadata) ? sandbox.metadata : {};
-  return stringRecord(metadata.labels) ?? {};
+  return decodeOpenShellLabelValues(stringRecord(metadata.labels) ?? {});
 }
 
 function principalFromLabels(
@@ -428,11 +407,12 @@ function principalFromLabels(
 }
 
 function runtimeFromLabels(
-  labels: Record<string, string>
+  labels: Record<string, string>,
+  sandbox?: Record<string, unknown>
 ): OpenShellSandboxRecord["runtime"] {
   return {
     engine: runtimeEngineFromLabel(labels[runtimeEngineLabel]),
-    image: labels[runtimeImageLabel] ?? ""
+    image: runtimeImageFromSandbox(sandbox) ?? labels[runtimeImageLabel] ?? ""
   };
 }
 
@@ -451,7 +431,82 @@ function runtimeEngineFromLabel(
   }
 }
 
-function toOpenShellGrpcPolicy(policy: SandboxPolicy): Record<string, unknown> {
+function encodeOpenShellLabelValues(
+  labels: Record<string, string>
+): Record<string, string> {
+  return Object.fromEntries(
+    Object.entries(labels).map(([key, value]) => [
+      key,
+      encodeOpenShellLabelValue(value)
+    ])
+  );
+}
+
+function decodeOpenShellLabelValues(
+  labels: Record<string, string>
+): Record<string, string> {
+  return Object.fromEntries(
+    Object.entries(labels).map(([key, value]) => [
+      key,
+      decodeOpenShellLabelValue(value)
+    ])
+  );
+}
+
+export function encodeOpenShellLabelValue(value: string): string {
+  if (
+    openShellLabelValuePattern.test(value) &&
+    !value.startsWith(encodedLabelValuePrefix) &&
+    !value.startsWith(hashedLabelValuePrefix) &&
+    value.length <= maxOpenShellLabelValueLength
+  ) {
+    return value;
+  }
+  const encoded = `${encodedLabelValuePrefix}${Buffer.from(value, "utf8").toString(
+    "base64url"
+  )}`;
+  if (encoded.length <= maxOpenShellLabelValueLength) {
+    return encoded;
+  }
+  return `${hashedLabelValuePrefix}${createHash("sha256")
+    .update(value)
+    .digest("hex")
+    .slice(0, maxOpenShellLabelValueLength - hashedLabelValuePrefix.length)}`;
+}
+
+export function decodeOpenShellLabelValue(value: string): string {
+  if (!value.startsWith(encodedLabelValuePrefix)) {
+    return value;
+  }
+  return Buffer.from(
+    value.slice(encodedLabelValuePrefix.length),
+    "base64url"
+  ).toString("utf8");
+}
+
+function runtimeImageFromSandbox(sandbox: Record<string, unknown> | undefined) {
+  const spec = isRecord(sandbox?.spec) ? sandbox.spec : {};
+  const template = isRecord(spec.template) ? spec.template : {};
+  return stringOrNull(template.image);
+}
+
+const openShellRuntimeNetworkBinaryPaths = [
+  "/usr/local/bin/python3.11",
+  "/usr/local/bin/python3",
+  "/usr/local/bin/python",
+  "/usr/bin/python3",
+  "/usr/bin/python",
+  "/usr/local/bin/hermes",
+  "/usr/local/bin/bun",
+  "/usr/local/lib/node_modules/bun/bin/bun.exe",
+  "/usr/bin/bun",
+  "/usr/local/bin/node",
+  "/usr/bin/node"
+];
+
+export function compileOpenShellGrpcSandboxPolicy(
+  policy: SandboxPolicy
+): Record<string, unknown> {
   return {
     version: 1,
     filesystem: {
@@ -475,25 +530,55 @@ function toOpenShellGrpcNetworkPolicies(
       "OpenShell gRPC policy does not support unrestricted egress; use an allowlist or deny policy"
     );
   }
+  const tlsByHost =
+    policy.network.egress === "allowlist"
+      ? new Map(
+          (policy.network.allowedEndpoints ?? []).map((endpoint) => [
+            endpoint.host,
+            endpoint.tls
+          ])
+        )
+      : new Map<string, boolean>();
+  const allowedIpsByHost =
+    policy.network.egress === "allowlist"
+      ? new Map(
+          (policy.network.allowedEndpoints ?? [])
+            .filter((endpoint) => endpoint.allowedIps?.length)
+            .map((endpoint) => [endpoint.host, endpoint.allowedIps ?? []])
+        )
+      : new Map<string, string[]>();
   return {
     burble_runtime: {
       name: "burble_runtime",
       endpoints:
         policy.network.egress === "deny"
           ? []
-          : policy.network.allowedHosts.map(toNetworkEndpoint),
-      binaries: []
+          : policy.network.allowedHosts.map((host) =>
+              toNetworkEndpoint(host, tlsByHost, allowedIpsByHost)
+            ),
+      binaries: openShellRuntimeNetworkBinaryPaths.map(toNetworkBinary)
     }
   };
 }
 
-function toNetworkEndpoint(host: string): Record<string, unknown> {
+function toNetworkBinary(path: string): Record<string, unknown> {
+  return { path, harness: false };
+}
+
+function toNetworkEndpoint(
+  host: string,
+  tlsByHost: Map<string, boolean>,
+  allowedIpsByHost: Map<string, string[]>
+): Record<string, unknown> {
   const { hostname, port } = splitHostPort(host);
+  const tls = tlsByHost.get(host);
+  const allowedIps = allowedIpsByHost.get(host) ?? [];
   return {
     host: hostname,
     ports: [port],
     protocol: "rest",
-    tls: "passthrough",
+    ...(tls === false ? { tls: "skip" } : {}),
+    ...(allowedIps.length ? { allowed_ips: allowedIps } : {}),
     enforcement: "enforce",
     access: "full"
   };
@@ -534,37 +619,18 @@ function sandboxStatus(phase: unknown): OpenShellSandboxRecord["status"] {
   }
 }
 
-function shellBackgroundCommand(argv: string[]): string {
-  const command = argv.map(shellQuote).join(" ");
-  return [
-    `(${command}) >/tmp/burble-runtime.log 2>&1 &`,
-    "pid=$!",
-    "sleep 0.2",
-    'if kill -0 "$pid" 2>/dev/null; then',
-    '  echo "$pid" >/tmp/burble-runtime.pid',
-    "  exit 0",
-    "fi",
-    'wait "$pid"',
-    "exit $?"
-  ].join("; ");
-}
-
-function shellQuote(value: string): string {
-  return `'${value.replaceAll("'", "'\\''")}'`;
-}
-
 function grpcTarget(endpoint: string): string {
   const url = new URL(endpoint);
   return url.host;
 }
 
-function shortSandboxName(): string {
+export function shortSandboxName(): string {
   const bytes = new Uint8Array(8);
   crypto.getRandomValues(bytes);
   return `b-${[...bytes].map((byte) => byte.toString(16).padStart(2, "0")).join("")}`;
 }
 
-function rewriteLocalEndpoint(endpoint: string): string {
+export function rewriteLocalEndpoint(endpoint: string): string {
   if (!endpoint) {
     return endpoint;
   }

@@ -1,5 +1,6 @@
 import { validateAgentModelId } from "./agent/providers";
 import {
+  defaultSandboxStartCommandForEngine,
   defaultRuntimeImageForEngine,
   isKnownDefaultRuntimeImage,
   runtimeEngines
@@ -45,9 +46,11 @@ export type Config = {
   agentRuntimeToolGatewayUrl: string;
   agentRuntimeMcpGatewayUrl: string | null;
   agentRuntimeMcpAudience: string | null;
+  agentRuntimeInferenceBaseUrl?: string | null;
   agentRuntimeSandboxUrl: string | null;
   agentRuntimeSandboxToken: string | null;
   agentRuntimeSandboxTransport?: AgentRuntimeSandboxTransport;
+  agentRuntimeOpenShellCliBin?: string | null;
   agentRuntimeSandboxStartCommand: string[] | null;
   agentRuntimeOpenShellDialHost?: string | null;
   agentRuntimeStreaming?: AgentRuntimeStreamingMode;
@@ -59,6 +62,7 @@ export type Config = {
   observabilityJsonlPath: string | null;
   observabilityJsonlDir: string | null;
   observabilityIncludeContent: boolean;
+  testbed?: boolean;
 };
 
 type Env = Record<string, string | undefined>;
@@ -68,13 +72,13 @@ export type AgentRuntime = "ai-sdk" | "burble-runtime";
 export type AgentRuntimeFactory = "static" | "docker" | "sandbox";
 export type OpenClawNemoClawEngine = AgentRuntimeEngine;
 export type AgentRuntimeStreamingMode = "off" | "basic" | "native";
-export type AgentRuntimeSandboxTransport = "grpc" | "http";
+export type AgentRuntimeSandboxTransport = "grpc" | "http" | "cli";
 const slackLogLevels = ["debug", "info", "warn", "error"] as const;
 const agentModes = ["deterministic", "llm"] as const;
 const agentRuntimes = ["ai-sdk", "burble-runtime"] as const;
 const agentRuntimeFactories = ["static", "docker", "sandbox"] as const;
 const agentRuntimeStreamingModes = ["off", "basic", "native"] as const;
-const agentRuntimeSandboxTransports = ["grpc", "http"] as const;
+const agentRuntimeSandboxTransports = ["grpc", "http", "cli"] as const;
 export const agentRuntimeEngines = runtimeEngines;
 
 function requiredEnv(env: Env, name: string): string {
@@ -331,11 +335,10 @@ export function readConfig(env: Env): Config {
   const configuredAgentRuntimeImage =
     optionalSecretEnv(env, "AGENT_RUNTIME_IMAGE") ??
     optionalSecretEnv(env, "OPENCLAW_NEMOCLAW_IMAGE");
-  const agentRuntimeSandboxStartCommand =
-    optionalCommandEnv(env, "AGENT_RUNTIME_SANDBOX_START_COMMAND") ??
-    (agentRuntimeFactory === "sandbox"
-      ? defaultAgentRuntimeSandboxStartCommand(agentRuntimeEngine)
-      : null);
+  const agentRuntimeSandboxStartCommand = optionalCommandEnv(
+    env,
+    "AGENT_RUNTIME_SANDBOX_START_COMMAND"
+  );
   const managedRuntimeUrl =
     optionalUrlEnv(env, "AGENT_RUNTIME_URL") ??
     optionalUrlEnv(env, "OPENCLAW_NEMOCLAW_URL");
@@ -404,6 +407,9 @@ export function readConfig(env: Env): Config {
     agentRuntimeMcpAudience:
       optionalUrlEnv(env, "AGENT_RUNTIME_MCP_AUDIENCE") ??
       agentRuntimeMcpGatewayUrl,
+    agentRuntimeInferenceBaseUrl:
+      optionalUrlEnv(env, "LLM_GW_BASE_URL") ??
+      optionalUrlEnv(env, "AGENT_RUNTIME_INFERENCE_BASE_URL"),
     agentRuntimeSandboxUrl: optionalUrlEnv(env, "AGENT_RUNTIME_SANDBOX_URL"),
     agentRuntimeSandboxToken: optionalSecretEnv(
       env,
@@ -412,7 +418,11 @@ export function readConfig(env: Env): Config {
     agentRuntimeSandboxTransport: optionalAgentRuntimeSandboxTransportEnv(
       env,
       "AGENT_RUNTIME_SANDBOX_TRANSPORT",
-      "grpc"
+      "cli"
+    ),
+    agentRuntimeOpenShellCliBin: optionalSecretEnv(
+      env,
+      "AGENT_RUNTIME_OPENSHELL_CLI_BIN"
     ),
     agentRuntimeSandboxStartCommand,
     agentRuntimeOpenShellDialHost: optionalSecretEnv(
@@ -443,7 +453,8 @@ export function readConfig(env: Env): Config {
       env,
       "OBSERVABILITY_INCLUDE_CONTENT",
       false
-    )
+    ),
+    testbed: optionalBoolEnv(env, "BURBLE_TESTBED", false)
   };
 }
 
@@ -454,9 +465,7 @@ export function defaultAgentRuntimeImage(engine: AgentRuntimeEngine): string {
 export function defaultAgentRuntimeSandboxStartCommand(
   engine: AgentRuntimeEngine
 ): string[] {
-  return engine === "hermes"
-    ? ["python", "/runtime/entrypoint.py"]
-    : ["bun", "src/index.ts"];
+  return defaultSandboxStartCommandForEngine(engine);
 }
 
 export function isDefaultAgentRuntimeImage(

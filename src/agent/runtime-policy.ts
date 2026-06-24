@@ -66,6 +66,7 @@ export function resolveRuntimeEngineForPrincipal(input: {
   });
   const compatibility = allowedEngines.map((engine) =>
     runtimeEngineCompatibility(engine, {
+      factory: input.config.agentRuntimeFactory,
       requirements: input.requirements
     })
   );
@@ -116,6 +117,7 @@ export function resolveRuntimeEngineForPrincipal(input: {
 export function runtimeEngineCompatibility(
   engine: RuntimeManifest["runtime"]["engine"],
   options: {
+    factory?: Config["agentRuntimeFactory"];
     workload?: RuntimeEngineCompatibilityWorkload;
     requirements?: RuntimeSelectionRequirements;
   } = {}

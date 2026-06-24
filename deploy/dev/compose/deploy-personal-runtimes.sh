@@ -59,8 +59,9 @@ Usage: ./deploy-personal-runtimes.sh [--no-pull] [--keep-runtimes] [--agentgatew
 
 Pulls the latest repo state, rebuilds Burble plus the default personal runtime
 images, and restarts Docker Compose. Runtime containers are recycled only when
-their image ID changes, and only for burble-rt-* containers from the matching
-runtime image family whose running image ID differs from the current image ID.
+their image ID changes, and only for burble-rt-* or openshell-b-* containers
+from the matching runtime image family whose running image ID differs from the
+current image ID.
 Set AGENT_RUNTIME_FACTORY=sandbox to deploy Burble against an OpenShell-
 compatible sandbox provider instead of the local Docker runtime factory. Use
 --openshell to include the compose-managed OpenShell service, or set
@@ -138,6 +139,13 @@ container_runtime_engine() {
     awk -F= '$1 == "AGENT_RUNTIME_ENGINE" { print $2; exit }'
 }
 
+runtime_container_candidates() {
+  {
+    docker ps -aq --filter "name=burble-rt-"
+    docker ps -aq --filter "name=openshell-b-"
+  } | sort -u
+}
+
 ensure_openshell_jwt_keys() {
   local data_root
   data_root="$(configured_value OPENSHELL_DATA_ROOT /var/lib/openshell)"
@@ -169,6 +177,101 @@ ensure_openshell_jwt_keys() {
   if [[ ! -f "${kid_file}" ]]; then
     openssl rand -hex 16 >"${kid_file}"
   fi
+}
+
+normalize_openshell_arch() {
+  case "$1" in
+    aarch64|arm64)
+      echo "aarch64"
+      ;;
+    x86_64|amd64)
+      echo "x86_64"
+      ;;
+    *)
+      echo "Unsupported Docker architecture for OpenShell CLI: $1" >&2
+      exit 2
+      ;;
+  esac
+}
+
+ensure_openshell_cli_binary() {
+  local configured_cli_path
+  configured_cli_path="$(configured_value OPENSHELL_CLI_BIN_HOST_PATH)"
+  if [[ -n "${configured_cli_path}" ]]; then
+    if [[ ! -f "${configured_cli_path}" || ! -x "${configured_cli_path}" ]]; then
+      echo "Configured OPENSHELL_CLI_BIN_HOST_PATH is not an executable file: ${configured_cli_path}" >&2
+      exit 2
+    fi
+    export OPENSHELL_CLI_BIN_HOST_PATH="${configured_cli_path}"
+    export AGENT_RUNTIME_OPENSHELL_CLI_BIN="${AGENT_RUNTIME_OPENSHELL_CLI_BIN:-/opt/openshell-cli/openshell}"
+    return 0
+  fi
+
+  local cache_dir="${script_dir}/.cache"
+  local output="${cache_dir}/openshell-linux"
+  if [[ -f "${output}" && -x "${output}" ]]; then
+    export OPENSHELL_CLI_BIN_HOST_PATH="${output}"
+    export AGENT_RUNTIME_OPENSHELL_CLI_BIN="${AGENT_RUNTIME_OPENSHELL_CLI_BIN:-/opt/openshell-cli/openshell}"
+    return 0
+  fi
+  if [[ -e "${output}" && ! -f "${output}" ]]; then
+    echo "Removing invalid OpenShell CLI cache path: ${output}"
+    if ! rm -rf "${output}"; then
+      echo "Could not remove invalid OpenShell CLI cache path: ${output}" >&2
+      echo "It was probably created by an older Docker Compose bind mount as root." >&2
+      echo "Run: sudo rm -rf '${output}'" >&2
+      exit 2
+    fi
+  fi
+
+  if ! command -v curl >/dev/null 2>&1; then
+    echo "OpenShell compose mode requires curl to download the OpenShell CLI." >&2
+    exit 2
+  fi
+  if ! command -v tar >/dev/null 2>&1; then
+    echo "OpenShell compose mode requires tar to extract the OpenShell CLI." >&2
+    exit 2
+  fi
+
+  local docker_arch
+  docker_arch="$(docker info --format '{{.Architecture}}')"
+  local openshell_arch
+  openshell_arch="$(normalize_openshell_arch "${docker_arch}")"
+  local version
+  version="$(configured_value OPENSHELL_VERSION 0.0.67)"
+  local tag="${version}"
+  if [[ "${tag}" != v* ]]; then
+    tag="v${tag}"
+  fi
+
+  if ! mkdir -p "${cache_dir}"; then
+    echo "Could not create OpenShell CLI cache directory: ${cache_dir}" >&2
+    echo "Run: sudo rm -rf '${cache_dir}'" >&2
+    exit 2
+  fi
+  if [[ ! -w "${cache_dir}" ]]; then
+    echo "OpenShell CLI cache directory is not writable: ${cache_dir}" >&2
+    echo "It was probably created by an older Docker Compose bind mount as root." >&2
+    echo "Run: sudo chown -R $(id -un):$(id -gn) '${cache_dir}'" >&2
+    exit 2
+  fi
+  local asset="openshell-${openshell_arch}-unknown-linux-musl.tar.gz"
+  local archive="${cache_dir}/${asset}"
+  local extract_dir="${cache_dir}/${asset%.tar.gz}-extract"
+  local url="https://github.com/NVIDIA/OpenShell/releases/download/${tag}/${asset}"
+
+  if [[ ! -f "${archive}" ]]; then
+    echo "Downloading OpenShell CLI ${tag} for ${openshell_arch}..."
+    curl -fsSL "${url}" -o "${archive}"
+  fi
+  rm -rf "${extract_dir}"
+  mkdir -p "${extract_dir}"
+  tar -xzf "${archive}" -C "${extract_dir}"
+  cp "${extract_dir}/openshell" "${output}"
+  chmod +x "${output}"
+
+  export OPENSHELL_CLI_BIN_HOST_PATH="${output}"
+  export AGENT_RUNTIME_OPENSHELL_CLI_BIN="${AGENT_RUNTIME_OPENSHELL_CLI_BIN:-/opt/openshell-cli/openshell}"
 }
 
 while [[ $# -gt 0 ]]; do
@@ -220,7 +323,12 @@ fi
 
 if [[ "${use_openshell}" == "true" ]]; then
   export AGENT_RUNTIME_FACTORY=sandbox
+  export AGENT_RUNTIME_SANDBOX_TRANSPORT=cli
+  if [[ -z "${AGENT_RUNTIME_TOOL_GATEWAY_URL:-}" ]]; then
+    export AGENT_RUNTIME_TOOL_GATEWAY_URL=http://host.openshell.internal:3000/internal/tools
+  fi
   ensure_openshell_jwt_keys
+  ensure_openshell_cli_binary
   app_compose_files+=(
     -f docker-compose.openshell.yml
   )
@@ -301,7 +409,7 @@ if [[ "${recycle_runtimes}" == "true" ]]; then
     runtime_images_changed=true
     runtime_image_family_label="$(runtime_image_family "${runtime_build_labels[$i]}")"
     mapfile -t runtime_containers < <(
-      docker ps -aq --filter "name=burble-rt-" |
+      runtime_container_candidates |
         while IFS= read -r container_id; do
           container_image_id="$(docker inspect --format '{{.Image}}' "${container_id}" 2>/dev/null || true)"
           container_engine="$(container_runtime_engine "${container_id}")"
@@ -322,17 +430,17 @@ if [[ "${recycle_runtimes}" == "true" ]]; then
       docker stop "${runtime_containers[@]}" >/dev/null || true
       docker rm "${runtime_containers[@]}" >/dev/null || true
     else
-      echo "Runtime image changed for ${runtime_build_images[$i]}, but no burble-rt-* containers use the previous image."
+      echo "Runtime image changed for ${runtime_build_images[$i]}, but no burble-rt-* or openshell-b-* containers use the previous image."
     fi
   done
 
   if [[ "${runtime_images_changed}" == "false" ]]; then
-    echo "Runtime images unchanged; keeping existing burble-rt-* containers."
+    echo "Runtime images unchanged; keeping existing burble-rt-* and openshell-b-* containers."
   else
     echo "Finished recycling changed runtime images."
   fi
 else
-  echo "Keeping existing burble-rt-* containers because --keep-runtimes was set."
+  echo "Keeping existing burble-rt-* and openshell-b-* containers because --keep-runtimes was set."
 fi
 
 docker compose "${app_compose_files[@]}" ps

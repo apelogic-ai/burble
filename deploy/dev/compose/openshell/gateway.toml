@@ -27,4 +27,7 @@ default_image     = "ghcr.io/nvidia/openshell-community/sandboxes/base:latest"
 supervisor_image  = "ghcr.io/nvidia/openshell/supervisor:latest"
 image_pull_policy = "IfNotPresent"
 sandbox_namespace = "openshell"
-grpc_endpoint     = "http://host.openshell.internal:8080"
+# This URL is consumed from sandbox containers created by the Docker driver,
+# not from the compose-managed gateway container. Those containers do not
+# inherit compose extra_hosts entries, so use the Docker host bridge address.
+grpc_endpoint     = "http://172.17.0.1:8080"

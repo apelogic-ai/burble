@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   applyAgentRuntimeControl,
+  markAgentRuntimeControlInProgress,
   applyAgentUserConfigSet,
   buildAgentConfigRuntimeRestartFailureResponse,
   buildAgentConfigRuntimeRestartResponse,
@@ -158,10 +159,52 @@ describe("createManagedRuntimeFactory sandbox mode", () => {
     expect(store.getAgentRuntime(runtime?.id ?? "")?.sandboxId).toBe(
       "slack-sandbox-1"
     );
-    expect(sandboxProvider.runCommands).toEqual([["runtime-entrypoint"]]);
+    expect(sandboxProvider.startCommands).toEqual([["runtime-entrypoint"]]);
     expect(sandboxProvider.policyHosts).toContain("api.openai.com");
     expect(sandboxProvider.policyHosts).toContain("burble-app:3000");
 
+    store.close();
+  });
+
+  test("uses the selected engine's sandbox start command when users switch engines", async () => {
+    const store = createTokenStore(":memory:");
+    const sandboxProvider = createSlackRuntimeSandboxProvider();
+    store.upsertWorkspacePolicy({
+      workspaceId: "T123",
+      key: "runtime.allowedEngines",
+      value: ["hermes", "openclaw"],
+      updatedBySlackUserId: "UADMIN"
+    });
+    store.upsertUserPreference({
+      workspaceId: "T123",
+      slackUserId: "U123",
+      key: "runtime.engine",
+      value: "openclaw"
+    });
+    const runtimeFactory = createManagedRuntimeFactory(
+      {
+        ...agentConfig,
+        agentRuntimeFactory: "sandbox",
+        agentRuntimeEngine: "hermes",
+        openClawNemoClawEngine: "hermes",
+        agentRuntimeImage: "burble-nemo-hermes:dev"
+      },
+      store,
+      undefined,
+      {
+        sandboxProvider,
+        sandboxFetch: async () => new Response("ok")
+      }
+    );
+
+    await runtimeFactory?.getOrCreateRuntime({
+      workspaceId: "T123",
+      slackUserId: "U123"
+    });
+
+    expect(sandboxProvider.startCommands).toEqual([
+      ["sh", "-lc", "cd /runtime && exec bun src/index.ts"]
+    ]);
     store.close();
   });
 });
@@ -653,6 +696,112 @@ describe("formatAgentProgressEvent", () => {
           "_Final result in 1.5s (3 tokens)._"
         ].join("\n")
       );
+    } finally {
+      Date.now = originalNow;
+    }
+  });
+
+  test("finalizes non-streamed runtime answers in the progress message", async () => {
+    const updates: string[] = [];
+    const posts: string[] = [];
+    const originalNow = Date.now;
+    Date.now = () => 1_500;
+    try {
+      const progressMessage = {
+        channel: "D123",
+        ts: "123.456",
+        text: "Starting agent runtime...",
+        startedAtMs: 0,
+        toolStartedAtMs: {},
+        toolLinesByCallId: {},
+        toolCallOrder: []
+      };
+      const client = {
+        chat: {
+          update: async (input: { text: string }) => {
+            updates.push(input.text);
+            return {};
+          },
+          postMessage: async (input: { text: string }) => {
+            posts.push(input.text);
+            return {};
+          }
+        }
+      };
+
+      await postConversationResponse(client as never, {
+        response: {
+          visibility: "dm",
+          classification: "user_private",
+          text: "Last edited Google Drive file: notes.txt",
+          usage: {
+            inputTokens: 2,
+            outputTokens: 1,
+            totalTokens: 3,
+            usageSource: "provider-output"
+          }
+        },
+        channel: "D123",
+        user: "U123",
+        progressMessage
+      });
+
+      expect(updates).toEqual([
+        "Last edited Google Drive file: notes.txt\n\n_Final result in 1.5s (3 tokens)._"
+      ]);
+      expect(posts).toEqual([]);
+    } finally {
+      Date.now = originalNow;
+    }
+  });
+
+  test("does not preserve provider marker-only runtime text in progress finals", async () => {
+    const updates: string[] = [];
+    const posts: string[] = [];
+    const originalNow = Date.now;
+    Date.now = () => 1_500;
+    try {
+      const progressMessage = {
+        channel: "D123",
+        ts: "123.456",
+        text: "Starting agent runtime...",
+        startedAtMs: 0,
+        toolStartedAtMs: {},
+        toolLinesByCallId: {},
+        toolCallOrder: []
+      };
+      const client = {
+        chat: {
+          update: async (input: { text: string }) => {
+            updates.push(input.text);
+            return {};
+          },
+          postMessage: async (input: { text: string }) => {
+            posts.push(input.text);
+            return {};
+          }
+        }
+      };
+
+      await postConversationResponse(client as never, {
+        response: {
+          visibility: "dm",
+          classification: "user_private",
+          text: "⚙️ google_search_drive_files...\n:gear: hubspot_search_crm_objects...",
+          usage: {
+            inputTokens: 2,
+            outputTokens: 1,
+            totalTokens: 3,
+            usageSource: "provider-output"
+          }
+        },
+        channel: "D123",
+        user: "U123",
+        progressMessage
+      });
+
+      expect(updates).toEqual(["_Final result in 1.5s (3 tokens)._"]);
+      expect(posts).toEqual([]);
     } finally {
       Date.now = originalNow;
     }
@@ -1343,6 +1492,41 @@ describe("formatConversationFailureMessage", () => {
     );
   });
 
+  test("surfaces managed runtime HTTP failures with safe detail", () => {
+    expect(
+      formatConversationFailureMessage(
+        new Error(
+          "Managed runtime returned HTTP 500: Run did not produce a final response"
+        ),
+        "message"
+      )
+    ).toContain("Runtime detail: Managed runtime returned HTTP 500");
+  });
+
+  test("surfaces Hermes provider marker runtime failures with safe detail", () => {
+    expect(
+      formatConversationFailureMessage(
+        new Error(
+          "Hermes returned a provider tool progress marker (hubspot_search_crm_objects) instead of invoking the Burble provider bridge."
+        ),
+        "message"
+      )
+    ).toContain(
+      "Runtime detail: Hermes returned a provider tool progress marker (hubspot_search_crm_objects)"
+    );
+  });
+
+  test("surfaces managed runtime finalization failures", () => {
+    expect(
+      formatConversationFailureMessage(
+        new Error(
+          "Managed runtime did not produce a final response within 180000ms"
+        ),
+        "message"
+      )
+    ).toContain("Agent runtime started but did not return a final answer.");
+  });
+
   test("explains when attachment turns have no capable runtime", () => {
     const error = new RuntimeEngineSelectionError(
       "No selectable runtime engines are available for this workspace. hermes: missing attachment support",
@@ -1576,7 +1760,7 @@ describe("buildAppHomeView", () => {
       statePath: "/data/state",
       configPath: "/data/config/runtime.json",
       workspacePath: "/data/workspace",
-        sandboxId: null,
+      sandboxId: "sandbox-home",
       policyHash: "policy-home"
     });
     const agentSettings = buildAgentHomeSettings({
@@ -1635,6 +1819,8 @@ describe("buildAppHomeView", () => {
     expect(serialized).toContain("Not connected");
     expect(serialized).toContain("https://example.test/google");
     expect(serialized).toContain("Agent runtime");
+    expect(serialized).toContain("Runtime ID");
+    expect(serialized).toContain("sandbox-home");
     expect(serialized).toContain("User auth");
     expect(serialized).toContain("Details");
     expect(serialized).toContain("agent_runtime_manage");
@@ -1685,6 +1871,54 @@ describe("buildAppHomeView", () => {
     expect(serialized).toContain("Choose runtime");
     expect(serialized).toContain("\"value\":\"burble-native\"");
     expect(serialized).toContain("\"value\":\"hermes\"");
+    store.close();
+  });
+
+  test("shows lifecycle controls for sandbox-managed runtimes", () => {
+    const store = createTokenStore(":memory:");
+    store.getOrCreateAgentRuntime({
+      workspaceId: "T123",
+      slackUserId: "U123",
+      engine: "hermes",
+      endpointUrl: "http://runtime.openshell.localhost:8080",
+      authTokenHash: "hash",
+      statePath: "/data/state",
+      configPath: "/data/config/runtime.json",
+      workspacePath: "/data/workspace",
+      sandboxId: "sandbox-123",
+      policyHash: "policy-home"
+    });
+    const agentSettings = buildAgentHomeSettings({
+      config: {
+        ...agentConfig,
+        agentRuntimeFactory: "sandbox",
+        agentRuntimeEngine: "hermes"
+      },
+      store,
+      workspaceId: "T123",
+      slackUserId: "U123"
+    });
+    const view = buildAppHomeView({
+      githubUrl: "https://example.test/github",
+      googleUrl: "https://example.test/google",
+      hubspotUrl: "https://example.test/hubspot",
+      jiraUrl: "https://example.test/jira",
+      slackUrl: "https://example.test/slack",
+      connections: {
+        github: null,
+        google: null,
+        hubspot: null,
+        jira: null,
+        slack: null
+      },
+      agentSettings
+    });
+    const serialized = JSON.stringify(view);
+
+    expect(serialized).toContain("Factory: `sandbox`");
+    expect(serialized).toContain("agent_runtime_pause");
+    expect(serialized).toContain("agent_runtime_restart");
+    expect(serialized).toContain("runtime instance");
     store.close();
   });
 
@@ -3127,6 +3361,53 @@ describe("agent user config commands", () => {
     store.close();
   });
 
+  test("marks the preferred runtime as provisioning before async start completes", () => {
+    const store = createTokenStore(":memory:");
+    store.upsertWorkspacePolicy({
+      workspaceId: "T123",
+      key: "runtime.allowedEngines",
+      value: ["burble-native", "hermes"],
+      updatedBySlackUserId: "UADMIN"
+    });
+    store.upsertUserPreference({
+      workspaceId: "T123",
+      slackUserId: "U123",
+      key: "runtime.engine",
+      value: "hermes"
+    });
+    const runtime = store.getOrCreateAgentRuntime({
+      workspaceId: "T123",
+      slackUserId: "U123",
+      engine: "hermes",
+      endpointUrl: "http://hermes-runtime:8080",
+      authTokenHash: "hash",
+      statePath: "/data/state",
+      configPath: "/data/config/hermes.json",
+      workspacePath: "/data/workspace",
+      sandboxId: "sandbox-old",
+      policyHash: "policy"
+    });
+    store.updateAgentRuntimeStatus(runtime.id, {
+      status: "failed",
+      failureReason: "previous start failed"
+    });
+
+    const markedRuntimeId = markAgentRuntimeControlInProgress({
+      config: agentConfig,
+      store,
+      workspaceId: "T123",
+      slackUserId: "U123"
+    });
+
+    expect(markedRuntimeId).toBe(runtime.id);
+    expect(store.getAgentRuntime(runtime.id)).toMatchObject({
+      status: "provisioning",
+      failureReason: null
+    });
+
+    store.close();
+  });
+
   test("does not stop runtime when user config keeps the same manifest hash", async () => {
     const store = createTokenStore(":memory:");
     store.getOrCreateAgentRuntime({
@@ -3353,13 +3634,13 @@ describe("buildReplyThreadTs", () => {
 
 type SlackRuntimeSandboxProvider = SandboxProvider & {
   policyHosts: string[];
-  runCommands: string[][];
+  startCommands: string[][];
 };
 
 function createSlackRuntimeSandboxProvider(): SlackRuntimeSandboxProvider {
   const sandboxes = new Map<string, SandboxHandle>();
   const policyHosts: string[] = [];
-  const runCommands: string[][] = [];
+  const startCommands: string[][] = [];
   let sequence = 0;
 
   const load = (sandboxId: string): SandboxHandle => {
@@ -3372,7 +3653,7 @@ function createSlackRuntimeSandboxProvider(): SlackRuntimeSandboxProvider {
 
   return {
     policyHosts,
-    runCommands,
+    startCommands,
 
     capabilities() {
       return {
@@ -3386,6 +3667,12 @@ function createSlackRuntimeSandboxProvider(): SlackRuntimeSandboxProvider {
 
     async provision(request) {
       sequence += 1;
+      if (request.policy?.network.egress === "allowlist") {
+        policyHosts.push(...request.policy.network.allowedHosts);
+      }
+      if (request.start) {
+        startCommands.push(request.start.argv);
+      }
       const sandbox: SandboxHandle = {
         id: `slack-sandbox-${sequence}`,
         provider: "slack-test-sandbox",
@@ -3420,7 +3707,6 @@ function createSlackRuntimeSandboxProvider(): SlackRuntimeSandboxProvider {
 
     async run(sandboxId, request): Promise<SandboxRunHandle> {
       const sandbox = load(sandboxId);
-      runCommands.push(request.argv);
       sandboxes.set(
         sandboxId,
         cloneSandboxHandle({ ...sandbox, status: "ready" })

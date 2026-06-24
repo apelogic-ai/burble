@@ -14,20 +14,39 @@ export type SandboxProvisionRequest = {
   principal: SandboxPrincipal;
   runtime: SandboxRuntimeRequest;
   labels?: Record<string, string>;
+  policy?: SandboxPolicy;
+  start?: SandboxRunRequest;
+};
+
+export type SandboxEgressEndpoint = {
+  // Lowercased "hostname:port" — matches the entries in allowedHosts.
+  host: string;
+  // True when the endpoint is reached over a TLS scheme (https/wss). Egress
+  // proxies must not declare TLS passthrough for plaintext (http/ws) hosts.
+  tls: boolean;
+  // Optional private CIDR/IP allowlist for declared internal endpoints. OpenShell
+  // rejects private resolved IPs unless they are explicitly listed here.
+  allowedIps?: string[];
 };
 
 export type SandboxNetworkPolicy =
   | {
       egress: "deny";
       allowedHosts?: never;
+      allowedEndpoints?: never;
     }
   | {
       egress: "allowlist";
       allowedHosts: string[];
+      // Optional per-host transport metadata. When present, it is kept in sync
+      // with allowedHosts (one entry per host) so providers can derive the
+      // correct TLS mode instead of assuming every endpoint is TLS.
+      allowedEndpoints?: SandboxEgressEndpoint[];
     }
   | {
       egress: "open";
       allowedHosts?: never;
+      allowedEndpoints?: never;
     };
 
 export type SandboxPolicy = {
@@ -74,6 +93,7 @@ export type SandboxRunHandle = {
   sandboxId: string;
   status: "running" | "finished" | "failed";
   exitCode?: number;
+  output?: string;
 };
 
 export type SandboxEvent = {
@@ -129,7 +149,19 @@ export function cloneSandboxPolicy(policy: SandboxPolicy): SandboxPolicy {
       policy.network.egress === "allowlist"
         ? {
             egress: "allowlist",
-            allowedHosts: [...policy.network.allowedHosts]
+            allowedHosts: [...policy.network.allowedHosts],
+            ...(policy.network.allowedEndpoints
+              ? {
+                  allowedEndpoints: policy.network.allowedEndpoints.map(
+                    (endpoint) => ({
+                      ...endpoint,
+                      ...(endpoint.allowedIps
+                        ? { allowedIps: [...endpoint.allowedIps] }
+                        : {})
+                    })
+                  )
+                }
+              : {})
           }
         : { egress: policy.network.egress }
   };

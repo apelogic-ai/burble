@@ -1,6 +1,7 @@
 import type { Config } from "../../config";
 import type { SandboxProvider } from "../sandbox-provider";
 import { createOpenShellSandboxProvider } from "./openshell";
+import { createOpenShellCliSandboxClient } from "./openshell-cli-client";
 import {
   createOpenShellHttpSandboxClient,
   type OpenShellHttpFetch
@@ -29,6 +30,12 @@ export function createConfiguredSandboxProvider(
             token: config.agentRuntimeSandboxToken,
             fetch: options.fetch
           })
+        : config.agentRuntimeSandboxTransport === "cli"
+          ? createOpenShellCliSandboxClient({
+              gatewayEndpoint: config.agentRuntimeSandboxUrl,
+              openshellBin: config.agentRuntimeOpenShellCliBin,
+              token: config.agentRuntimeSandboxToken
+            })
         : createOpenShellGrpcSandboxClient({
             endpoint: config.agentRuntimeSandboxUrl,
             token: config.agentRuntimeSandboxToken

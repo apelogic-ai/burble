@@ -50,6 +50,7 @@ export type ManagedRuntimeAgentRunnerDeps = {
   runtimeFactory?: RuntimeFactory;
   fetch?: AgentRuntimeFetch;
   webSocketFactory?: AgentRuntimeWebSocketFactory;
+  runSnapshotTimeoutMs?: number;
   logInfo?: (message: string) => void;
   observability?: ObservabilitySink;
 };
@@ -65,7 +66,12 @@ type RemoteRunStartResponse = {
 
 type RemoteRunEvent =
   | { type: "status"; text: string }
-  | { type: "tool_call"; toolName: string; callId: string }
+  | {
+      type: "tool_call";
+      toolName: string;
+      callId: string;
+      input?: Record<string, unknown>;
+    }
   | {
       type: "tool_result";
       toolName: string;
@@ -96,6 +102,7 @@ type RuntimeAttachment = {
 const maxRuntimeRecentMessages = 12;
 const maxRuntimeRecentMessageChars = 300;
 const runtimeCapabilityCacheTtlMs = 60_000;
+const defaultRunSnapshotTimeoutMs = 180_000;
 
 type RuntimeCapabilityCacheEntry = {
   expiresAt: number;
@@ -134,6 +141,8 @@ export function createManagedRuntimeAdapter(
     : createRoutedRuntimeWebSocketFactory(routeOptions);
   const logInfo = deps.logInfo ?? (() => undefined);
   const observability = deps.observability;
+  const runSnapshotTimeoutMs =
+    deps.runSnapshotTimeoutMs ?? defaultRunSnapshotTimeoutMs;
   const runtimeCapabilityCache: RuntimeCapabilityCache = new Map();
 
   return {
@@ -258,17 +267,18 @@ export function createManagedRuntimeAdapter(
       let agentResponse: AgentOutput | null;
       try {
         const postStartedAt = Date.now();
+        const preferredStreamingAccept = selectHttpStreamingAccept(capabilityManifest);
         const response = await postRuntimeRun(
           requestFetch,
           runUrl,
           runtime,
           runBody,
-          "application/json",
-          "respond-async"
+          preferredStreamingAccept ?? "application/json",
+          preferredStreamingAccept ? undefined : "respond-async"
         );
 
         if (!response.ok) {
-          throw new Error(`Managed runtime returned HTTP ${response.status}`);
+          throw new Error(await managedRuntimeHttpErrorMessage(response));
         }
         logInfo(
           [
@@ -293,80 +303,101 @@ export function createManagedRuntimeAdapter(
           }
         });
 
-        const startPayload = (await response.json()) as RemoteRunResponse &
-          RemoteRunStartResponse;
-        const legacyResponse = validateRemoteRunResponse(startPayload);
-        if (legacyResponse) {
-          agentResponse = legacyResponse;
-        } else {
-          const startedRunId = validateRemoteRunStartResponse(startPayload);
-          if (!startedRunId) {
-            throw new Error("Managed runtime returned an invalid response");
-          }
-
-          const eventsUrl = toWebSocketUrl(
-            new URL(
-              startPayload.eventsUrl ?? `/runs/${encodeURIComponent(startedRunId)}/events`,
-              `${baseUrl}/`
-            ).toString()
+        const observeEvent = (event: AgentRunEvent) => {
+          const eventDetails =
+            event.type === "tool_call"
+              ? [
+                  `toolName=${event.toolName}`,
+                  `callId=${event.callId}`,
+                  `inputKeys=${Object.keys(event.input ?? {}).join(",") || "-"}`
+                ]
+              : event.type === "tool_result"
+                ? [`toolName=${event.toolName}`, `callId=${event.callId}`]
+                : [];
+          logInfo(
+            [
+              "Managed runtime stream event",
+              `runId=${runId}`,
+              `runtimeId=${runtime?.id ?? "static"}`,
+              `elapsedMs=${Date.now() - runStartedAt}`,
+              `type=${event.type}`,
+              ...eventDetails
+            ].join(" ")
           );
+          observeRuntimeStreamEvent(event, {
+            observability,
+            runtimeFactory: deps.runtimeFactory,
+            workspaceId: input.principal.workspaceId,
+            principalId,
+            runId,
+            runtimeId,
+            runtimeType,
+            runtime,
+            elapsedMs: Date.now() - runStartedAt
+          });
+        };
 
-          try {
-            agentResponse = yield* readWebSocketRunResponse(
-              createWebSocket(eventsUrl, runtimeWebSocketOptions(runtime)),
-              runtimeMessageDeltasEnabled(runtime),
-              (event) => {
-                logInfo(
-                  [
-                    "Managed runtime stream event",
-                    `runId=${startedRunId}`,
-                    `runtimeId=${runtime?.id ?? "static"}`,
-                    `elapsedMs=${Date.now() - runStartedAt}`,
-                    `type=${event.type}`
-                  ].join(" ")
-                );
-                observeRuntimeStreamEvent(event, {
-                  observability,
-                  runtimeFactory: deps.runtimeFactory,
-                  workspaceId: input.principal.workspaceId,
-                  principalId,
-                  runId,
-                  runtimeId,
-                  runtimeType,
-                  runtime,
-                  elapsedMs: Date.now() - runStartedAt
-                });
-              }
-            );
-          } catch (error) {
-            if (!isRuntimeStreamClosedError(error)) {
-              throw error;
+        if (isStreamingResponse(response)) {
+          agentResponse = yield* readStreamingRunResponse(
+            response,
+            runtimeMessageDeltasEnabled(runtime),
+            observeEvent
+          );
+        } else {
+          const startPayload = (await response.json()) as RemoteRunResponse &
+            RemoteRunStartResponse;
+          const legacyResponse = validateRemoteRunResponse(startPayload);
+          if (legacyResponse) {
+            agentResponse = legacyResponse;
+          } else {
+            const startedRunId = validateRemoteRunStartResponse(startPayload);
+            if (!startedRunId) {
+              throw new Error("Managed runtime returned an invalid response");
             }
 
-            logInfo(
-              [
-                "Managed runtime event socket closed before final",
-                `runId=${startedRunId}`,
-                `runtimeId=${runtime?.id ?? "static"}`,
-                "fallback=json"
-              ].join(" ")
+            const eventsUrl = toWebSocketUrl(
+              new URL(
+                startPayload.eventsUrl ?? `/runs/${encodeURIComponent(startedRunId)}/events`,
+                `${baseUrl}/`
+              ).toString()
             );
-            const fallbackResponse = await getRuntimeRun(
-              requestFetch,
-              `${baseUrl}/runs/${encodeURIComponent(startedRunId)}`,
-              runtime
-            );
-            if (!fallbackResponse.ok) {
-              throw new Error(
-                `Managed runtime returned HTTP ${fallbackResponse.status}`
+
+            try {
+              agentResponse = yield* readWebSocketRunResponse(
+                createWebSocket(eventsUrl, runtimeWebSocketOptions(runtime)),
+                runtimeMessageDeltasEnabled(runtime),
+                observeEvent
               );
+            } catch (error) {
+              if (!isRuntimeStreamClosedError(error)) {
+                throw error;
+              }
+
+              logInfo(
+                [
+                  "Managed runtime event socket closed before final",
+                  `runId=${startedRunId}`,
+                  `runtimeId=${runtime?.id ?? "static"}`,
+                  "fallback=json"
+                ].join(" ")
+              );
+              const fallbackResponse = await getRuntimeRunWithTimeout(
+                requestFetch,
+                `${baseUrl}/runs/${encodeURIComponent(startedRunId)}`,
+                runtime,
+                runSnapshotTimeoutMs
+              );
+              if (!fallbackResponse.ok) {
+                throw new Error(await managedRuntimeHttpErrorMessage(fallbackResponse));
+              }
+              agentResponse = await readJsonRunResponse(fallbackResponse);
             }
-            agentResponse = await readJsonRunResponse(fallbackResponse);
           }
         }
         if (!agentResponse) {
           throw new Error("Managed runtime returned an invalid response");
         }
+        assertManagedRuntimeFinalResponse(agentResponse);
       } catch (error) {
         recordRuntimeRunFailed({
           observability,
@@ -724,6 +755,33 @@ function toRuntimeObservabilityError(error: unknown): {
   };
 }
 
+async function managedRuntimeHttpErrorMessage(response: Response): Promise<string> {
+  const base = `Managed runtime returned HTTP ${response.status}`;
+  let body = "";
+  try {
+    body = await response.text();
+  } catch {
+    return base;
+  }
+  const safeBody = safeRuntimeHttpErrorBody(body);
+  return safeBody ? `${base}: ${safeBody}` : base;
+}
+
+function safeRuntimeHttpErrorBody(body: string): string | null {
+  const normalized = body.replace(/\s+/g, " ").trim();
+  if (!normalized) {
+    return null;
+  }
+
+  const redacted = normalized
+    .replace(/Bearer\s+[A-Za-z0-9._~+/=-]+/gi, "Bearer [redacted]")
+    .replace(/sk-[A-Za-z0-9_-]+/g, "[redacted-openai-key]");
+  if (/\b(token|secret|api[_-]?key|private[_-]?key|password)\b/i.test(redacted)) {
+    return null;
+  }
+  return redacted.slice(0, 240);
+}
+
 function isRuntimeCapabilitiesNotImplementedError(error: unknown): boolean {
   return (
     error instanceof RuntimeCapabilityDiscoveryError &&
@@ -769,13 +827,27 @@ function postRuntimeRun(
   });
 }
 
+function selectHttpStreamingAccept(
+  manifest: RuntimeCapabilityManifest | null
+): string | null {
+  if (manifest?.transports.includes("ndjson")) {
+    return "application/x-ndjson";
+  }
+  if (manifest?.transports.includes("sse")) {
+    return "text/event-stream";
+  }
+  return null;
+}
+
 function getRuntimeRun(
   requestFetch: AgentRuntimeFetch,
   url: string,
-  runtime: RuntimeHandle | null
+  runtime: RuntimeHandle | null,
+  signal?: AbortSignal
 ): Promise<Response> {
   return requestFetch(url, {
     method: "GET",
+    ...(signal ? { signal } : {}),
     headers: {
       accept: "application/json",
       ...runtimeHeaders(runtime)
@@ -783,11 +855,50 @@ function getRuntimeRun(
   });
 }
 
+async function getRuntimeRunWithTimeout(
+  requestFetch: AgentRuntimeFetch,
+  url: string,
+  runtime: RuntimeHandle | null,
+  timeoutMs: number
+): Promise<Response> {
+  const controller = new AbortController();
+  const request = getRuntimeRun(requestFetch, url, runtime, controller.signal);
+  request.catch(() => undefined);
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  const timeoutPromise = new Promise<Response>((_, reject) => {
+    timeout = setTimeout(() => {
+      controller.abort();
+      reject(
+        new Error(
+          `Managed runtime did not produce a final response within ${timeoutMs}ms`
+        )
+      );
+    }, timeoutMs);
+  });
+
+  try {
+    return await Promise.race([request, timeoutPromise]);
+  } finally {
+    if (timeout) {
+      clearTimeout(timeout);
+    }
+  }
+}
+
 async function readJsonRunResponse(
   response: Response
 ): Promise<AgentOutput | null> {
   const payload = (await response.json()) as RemoteRunResponse;
   return validateRemoteRunResponse(payload);
+}
+
+function assertManagedRuntimeFinalResponse(response: AgentOutput): void {
+  if (
+    !response.text.trim() &&
+    (!response.attachments || response.attachments.length === 0)
+  ) {
+    throw new Error("Managed runtime did not produce a final response");
+  }
 }
 
 async function* readWebSocketRunResponse(
@@ -873,7 +984,9 @@ function runtimeMessageDeltasEnabled(runtime: RuntimeHandle | null): boolean {
 }
 
 async function* readStreamingRunResponse(
-  response: Response
+  response: Response,
+  emitMessageDeltas = true,
+  onEvent?: (event: AgentRunEvent) => void
 ): AsyncIterable<AgentRunEvent, AgentOutput | null> {
   if (!response.body) {
     return null;
@@ -892,6 +1005,7 @@ async function* readStreamingRunResponse(
       }
 
       if (event.type === "final") {
+        onEvent?.(event);
         return event.response;
       }
 
@@ -901,6 +1015,15 @@ async function* readStreamingRunResponse(
         streamedText = event.text;
       }
 
+      if (
+        (event.type === "message_delta" ||
+          event.type === "message_replace") &&
+        !emitMessageDeltas
+      ) {
+        continue;
+      }
+
+      onEvent?.(event);
       yield event;
     }
   } catch (error) {
@@ -1059,6 +1182,7 @@ function runtimeHeaders(runtime: RuntimeHandle | null): Record<string, string> {
 
   return {
     authorization: `Bearer ${runtime.authToken}`,
+    "x-burble-runtime-token": runtime.authToken,
     "x-burble-runtime-id": runtime.id
   };
 }
@@ -1178,13 +1302,22 @@ const classifications: ReadonlySet<ToolClassification> = new Set([
   "restricted"
 ]);
 
+function isRuntimeProviderProgressMarker(text: string): boolean {
+  const normalized = text.trim().replace(/\s+/g, " ");
+  return /^(?::gear:|⚙️?|gear:)?\s*(?:burble_provider_call|(?:github|google|gmail|hubspot|jira|slack|atlassian|scheduled_job|conversation)_[a-z0-9_]+)(?:\.{3}|…)?$/i.test(normalized);
+}
+
 function validateRemoteRunResponse(payload: RemoteRunResponse): AgentOutput | null {
   const response = payload.response;
   if (!response) {
     return null;
   }
 
-  if (typeof response.text !== "string" || !classifications.has(response.classification)) {
+  if (
+    typeof response.text !== "string" ||
+    isRuntimeProviderProgressMarker(response.text) ||
+    !classifications.has(response.classification)
+  ) {
     return null;
   }
 
@@ -1219,10 +1352,20 @@ function validateRemoteRunEvent(payload: unknown): RemoteRunEvent | null {
     case "message_replace":
       return typeof event.text === "string" ? event : null;
     case "tool_call":
-      return typeof event.toolName === "string" &&
-        typeof event.callId === "string"
-        ? event
-        : null;
+      if (
+        typeof event.toolName !== "string" ||
+        typeof event.callId !== "string"
+      ) {
+        return null;
+      }
+      if ("input" in event && event.input !== undefined) {
+        return typeof event.input === "object" &&
+          event.input !== null &&
+          !Array.isArray(event.input)
+          ? event
+          : null;
+      }
+      return event;
     case "tool_result":
       return typeof event.toolName === "string" &&
         typeof event.callId === "string" &&

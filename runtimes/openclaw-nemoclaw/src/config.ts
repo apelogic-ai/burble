@@ -34,6 +34,7 @@ export type RuntimeConfig = {
   openClawGatewayBind: string;
   openClawGatewayToken: string;
   llmModel: string;
+  inferenceBaseUrl?: string | null;
   ollamaBaseUrl: string;
 };
 
@@ -145,6 +146,7 @@ export function readRuntimeConfig(env: Env): RuntimeConfig {
         readOptionalEnv(env.OPENCLAW_MODEL) ??
         "openai:gpt-5.4"
     ),
+    inferenceBaseUrl: readOptionalUrlEnv(env.AGENT_RUNTIME_INFERENCE_BASE_URL),
     ollamaBaseUrl:
       readOptionalUrlEnv(env.OLLAMA_BASE_URL) ?? "https://ollama.com"
   };

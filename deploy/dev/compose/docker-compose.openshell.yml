@@ -12,8 +12,8 @@ services:
     command: []
     user: "0"
     ports:
-      - "127.0.0.1:${OPENSHELL_PORT:-8080}:8080"
-      - "127.0.0.1:${OPENSHELL_HEALTH_PORT:-8081}:8081"
+      - "${OPENSHELL_BIND_HOST:-0.0.0.0}:${OPENSHELL_PORT:-8080}:8080"
+      - "${OPENSHELL_BIND_HOST:-0.0.0.0}:${OPENSHELL_HEALTH_PORT:-8081}:8081"
     expose:
       - "8080"
     environment:
@@ -34,7 +34,15 @@ services:
       - openshell
     environment:
       - AGENT_RUNTIME_FACTORY=sandbox
-      - AGENT_RUNTIME_SANDBOX_TRANSPORT=grpc
+      - AGENT_RUNTIME_SANDBOX_TRANSPORT=cli
       - AGENT_RUNTIME_SANDBOX_URL=http://openshell:8080
       - AGENT_RUNTIME_SANDBOX_TOKEN=${AGENT_RUNTIME_SANDBOX_TOKEN:-}
+      - AGENT_RUNTIME_OPENSHELL_CLI_BIN=${AGENT_RUNTIME_OPENSHELL_CLI_BIN:-/opt/openshell-cli/openshell}
       - AGENT_RUNTIME_OPENSHELL_DIAL_HOST=${AGENT_RUNTIME_OPENSHELL_DIAL_HOST:-openshell}
+    volumes:
+      - type: bind
+        source: ${OPENSHELL_CLI_BIN_HOST_PATH:-./.cache/openshell-linux}
+        target: /opt/openshell-cli/openshell
+        read_only: true
+        bind:
+          create_host_path: false

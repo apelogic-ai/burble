@@ -13,7 +13,10 @@
     "test": "bun test",
     "provider-tools:generate-hints": "bun src/providers/generate-runtime-tool-hints.ts",
     "runtime-sdk:generate-schema": "bun packages/runtime-sdk/scripts/generate-json-schema.ts",
-    "test:e2e:runtime-readiness": "BURBLE_E2E_RUNTIMES=1 bun test tests/e2e/runtime-readiness.test.ts"
+    "test:e2e:runtime-readiness": "BURBLE_E2E_RUNTIMES=1 bun test tests/e2e/runtime-readiness.test.ts",
+    "testbed:up": "bun scripts/testbed-up.ts",
+    "testbed:down": "bun scripts/testbed-down.ts",
+    "test:e2e:testbed": "bun test tests/testbed-slack.test.ts tests/testbed-hermes-provider-recovery.test.ts"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^3.0.78",

@@ -1,7 +1,14 @@
 import { createHash, randomUUID } from "node:crypto";
 import { formatRuntimeScheduledJobContextLines } from "@burble/runtime-sdk/scheduled-job-context";
 import { stripRuntimeToolCallProtocolFragments } from "@burble/runtime-sdk/runtime-text-protocol";
-import { readFileSync } from "node:fs";
+import {
+  accessSync,
+  constants as fsConstants,
+  existsSync,
+  lstatSync,
+  readFileSync,
+  readlinkSync
+} from "node:fs";
 import { mkdir, readFile, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import type { RuntimeConfig } from "./config";
@@ -54,6 +61,10 @@ const defaultPreloadedRuntimeSkills = preloadedRuntimeSkillNames.map((name) => (
   version: "1",
   enabled: true
 }));
+const openClawCliShimPath = "/usr/local/bin/openclaw";
+const openClawCliScriptPath =
+  "/usr/local/lib/node_modules/openclaw/openclaw.mjs";
+const openClawCliNodePath = "/usr/local/bin/node";
 
 export type CliCommandStreamEvent =
   | { type: "stdout"; text: string }
@@ -65,6 +76,13 @@ export type CliCommandStreamer = (
   args: string[],
   options: { timeoutMs: number; env?: Record<string, string> }
 ) => AsyncIterable<CliCommandStreamEvent>;
+
+type CliSpawnProcess = {
+  stdout: ReadableStream<Uint8Array>;
+  stderr: ReadableStream<Uint8Array>;
+  exited: Promise<number>;
+  kill: () => void;
+};
 
 const streamHeartbeatMs = 8_000;
 const maxPlannedToolCalls = 5;
@@ -119,7 +137,7 @@ export async function runOpenClawCliRequest(
   const baseline = toolContext.baseline;
   if (
     isSupportedGitHubRequest(request.input.text) &&
-    !request.input.connections.github.connected
+    !request.input.connections.github?.connected
   ) {
     logInfo("OpenClaw agent skipped githubConnected=false");
     return baseline;
@@ -887,7 +905,7 @@ export async function* runOpenClawCliRequestStream(
   const baseline = toolContext.baseline;
   if (
     isSupportedGitHubRequest(request.input.text) &&
-    !request.input.connections.github.connected
+    !request.input.connections.github?.connected
   ) {
     logInfo("OpenClaw agent skipped githubConnected=false");
     yield { type: "final", response: baseline.response };
@@ -1259,11 +1277,7 @@ export async function runCliCommand(
   args: string[],
   options: { timeoutMs: number; env?: Record<string, string> }
 ): Promise<CliCommandResult> {
-  const proc = Bun.spawn([command, ...args], {
-    stdout: "pipe",
-    stderr: "pipe",
-    env: buildOpenClawProcessEnv(options.env)
-  });
+  const proc = spawnOpenClawCli(command, args, options.env);
   let timedOut = false;
   const timer = setTimeout(() => {
     timedOut = true;
@@ -1292,11 +1306,7 @@ export async function* runCliCommandStream(
   args: string[],
   options: { timeoutMs: number; env?: Record<string, string> }
 ): AsyncIterable<CliCommandStreamEvent> {
-  const proc = Bun.spawn([command, ...args], {
-    stdout: "pipe",
-    stderr: "pipe",
-    env: buildOpenClawProcessEnv(options.env)
-  });
+  const proc = spawnOpenClawCli(command, args, options.env);
   let timedOut = false;
   const timer = setTimeout(() => {
     timedOut = true;
@@ -1353,6 +1363,98 @@ export async function* runCliCommandStream(
   } finally {
     clearTimeout(timer);
   }
+}
+
+function spawnOpenClawCli(
+  command: string,
+  args: string[],
+  env?: Record<string, string>
+): CliSpawnProcess {
+  const argv = resolveOpenClawCliArgv(command, args);
+  try {
+    return Bun.spawn(argv, {
+      stdout: "pipe",
+      stderr: "pipe",
+      env: buildOpenClawProcessEnv(env)
+    }) as CliSpawnProcess;
+  } catch (error) {
+    throw enrichOpenClawSpawnError(error, argv);
+  }
+}
+
+export function resolveOpenClawCliArgv(
+  command: string,
+  args: string[],
+  commandExists: (path: string) => boolean = existsSync
+): string[] {
+  if (command === "openclaw" && commandExists(openClawCliScriptPath)) {
+    return [openClawCliNodePath, openClawCliScriptPath, ...args];
+  }
+  return [resolveOpenClawCliCommand(command, commandExists), ...args];
+}
+
+export function resolveOpenClawCliCommand(
+  command: string,
+  commandExists: (path: string) => boolean = existsSync
+): string {
+  return command === "openclaw" && commandExists(openClawCliShimPath)
+    ? openClawCliShimPath
+    : command;
+}
+
+function enrichOpenClawSpawnError(error: unknown, argv: string[]): Error {
+  const base = error instanceof Error ? error.message : String(error);
+  return new Error(`${base}\n${describeOpenClawSpawnTargets(argv)}`, {
+    cause: error
+  });
+}
+
+function describeOpenClawSpawnTargets(argv: string[]): string {
+  const paths = [
+    argv[0],
+    ...argv.filter((arg) => arg.startsWith("/")),
+    "/usr/bin/node",
+    "/usr/local/bin/node",
+    openClawCliShimPath
+  ].filter((path): path is string => Boolean(path));
+  const uniquePaths = [...new Set(paths)];
+  return [
+    `OpenClaw spawn argv diagnostics argv=${JSON.stringify(argv)}`,
+    ...uniquePaths.map(describeOpenClawSpawnTarget)
+  ].join("\n");
+}
+
+function describeOpenClawSpawnTarget(command: string): string {
+  const lines = [`OpenClaw spawn target diagnostics command=${command}`];
+  try {
+    const stat = lstatSync(command);
+    lines.push(
+      `target mode=${(stat.mode & 0o777).toString(8)} uid=${stat.uid} gid=${stat.gid} symlink=${stat.isSymbolicLink()}`
+    );
+    if (stat.isSymbolicLink()) {
+      lines.push(`target symlink=${readlinkSync(command)}`);
+    }
+  } catch (error) {
+    lines.push(`target stat error=${error instanceof Error ? error.message : String(error)}`);
+  }
+
+  try {
+    accessSync(command, fsConstants.X_OK);
+    lines.push("target executable=yes");
+  } catch (error) {
+    lines.push(
+      `target executable=no error=${error instanceof Error ? error.message : String(error)}`
+    );
+  }
+
+  try {
+    const firstLine = readFileSync(command, "utf8").split(/\r?\n/, 1)[0] ?? "";
+    lines.push(`target firstLine=${JSON.stringify(firstLine.slice(0, 160))}`);
+  } catch (error) {
+    lines.push(`target read error=${error instanceof Error ? error.message : String(error)}`);
+  }
+
+  return lines.join("\n");
 }
 
 type DecodedStreamChunk = {
@@ -1523,7 +1625,7 @@ async function buildToolCatalog(
   }
 
   const github = request.input.connections.github;
-  if (github.connected && github.email) {
+  if (github?.connected && github.email) {
     catalog.push(
       {
         name: "github.getAuthenticatedUser",
@@ -2258,8 +2360,10 @@ function isDiscoveredProviderToolAvailable(
   request: RunRequest
 ): boolean {
   if (toolName.startsWith("github.")) {
-    return request.input.connections.github.connected &&
-      Boolean(request.input.connections.github.email);
+    return Boolean(
+      request.input.connections.github?.connected &&
+        request.input.connections.github.email
+    );
   }
   if (toolName.startsWith("google.")) {
     return Boolean(
@@ -2291,7 +2395,7 @@ function isDiscoveredProviderToolAvailable(
 
 function hasConnectedProvider(request: RunRequest): boolean {
   return Boolean(
-    (request.input.connections.github.connected &&
+    (request.input.connections.github?.connected &&
       request.input.connections.github.email) ||
       (request.input.connections.google?.connected &&
         request.input.connections.google.email) ||
@@ -3054,7 +3158,7 @@ function hasPresentSchemaValue(
 
 function readToolEmail(toolName: string, request: RunRequest): string | null {
   if (toolName.startsWith("github.")) {
-    return request.input.connections.github.email ?? null;
+    return request.input.connections.github?.email ?? null;
   }
 
   if (toolName.startsWith("jira.") || toolName.startsWith("atlassian.")) {
@@ -3924,7 +4028,7 @@ function buildSessionRoot(request: RunRequest): string {
     )}`;
   }
 
-  const email = request.input.connections.github.email ?? "anonymous";
+  const email = request.input.connections.github?.email ?? "anonymous";
   return `burble-${email.replace(/[^a-zA-Z0-9_.-]/g, "_")}`;
 }
 

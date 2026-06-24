@@ -130,13 +130,7 @@ describe("buildContainerRuntimeSpec", () => {
       OPENCLAW_NEMOCLAW_ENGINE: "openclaw",
       OPENCLAW_CONFIG_PATH: "/data/openclaw/config/openclaw.json",
       AI_MODEL: "openai:gpt-5.4",
-      OPENAI_API_KEY: "openai-key",
       OPENAI_BASE_URL: "https://openai-compatible.example/v1",
-      OPENROUTER_API_KEY: "openrouter-key",
-      GOOGLE_API_KEY: "google-key",
-      GEMINI_API_KEY: "gemini-key",
-      ANTHROPIC_API_KEY: "anthropic-key",
-      OLLAMA_API_KEY: "ollama-key",
       OLLAMA_BASE_URL: "https://ollama.com",
       OLLAMA_OPENAI_BASE_URL: "https://ollama.com/v1",
       BURBLE_RUNTIME_CONTRACT_PROBE: "1",
@@ -152,7 +146,6 @@ describe("buildContainerRuntimeSpec", () => {
       OPENCLAW_RAW_STREAM_DEBUG: "true",
       OPENCLAW_GATEWAY_PORT: "18790",
       OPENCLAW_GATEWAY_BIND: "loopback",
-      OPENCLAW_GATEWAY_TOKEN: "gateway-token",
       HERMES_INFERENCE_MODEL: "openai:gpt-5.4",
       HERMES_INFERENCE_PROVIDER: "openai-api",
       HERMES_RUN_TIMEOUT_SECONDS: "240",
@@ -161,23 +154,16 @@ describe("buildContainerRuntimeSpec", () => {
       HERMES_WEB_SEARCH_BACKEND: "ddgs",
       HERMES_WEB_EXTRACT_BACKEND: "firecrawl",
       WEB_TOOLS_DEBUG: "true",
-      EXA_API_KEY: "exa-key",
-      PARALLEL_API_KEY: "parallel-key",
       PARALLEL_SEARCH_MODE: "web",
-      TAVILY_API_KEY: "tavily-key",
-      FIRECRAWL_API_KEY: "firecrawl-key",
       FIRECRAWL_API_URL: "https://firecrawl.example",
       FIRECRAWL_GATEWAY_URL: "https://firecrawl-gateway.example",
       SEARXNG_URL: "https://searxng.example",
-      BRAVE_SEARCH_API_KEY: "brave-key",
       AGENT_BROWSER_ENGINE: "chrome",
       AGENT_BROWSER_ARGS: "--no-sandbox",
       AGENT_BROWSER_EXECUTABLE_PATH: "/usr/bin/chromium",
       AGENT_BROWSER_IDLE_TIMEOUT_MS: "300000",
       BROWSER_INACTIVITY_TIMEOUT: "300",
       BROWSER_CDP_URL: "ws://browser.example/devtools/browser/1",
-      BROWSER_USE_API_KEY: "browser-use-key",
-      BROWSERBASE_API_KEY: "browserbase-key",
       BROWSERBASE_PROJECT_ID: "browserbase-project",
       BROWSERBASE_PROXIES: "false",
       BROWSERBASE_ADVANCED_STEALTH: "true",
@@ -186,6 +172,24 @@ describe("buildContainerRuntimeSpec", () => {
       HERMES_BROWSER_ENGINE: "chrome",
       HERMES_BROWSER_CLOUD_PROVIDER: "browser-use"
     });
+    for (const secretName of [
+      "OPENAI_API_KEY",
+      "OPENROUTER_API_KEY",
+      "GOOGLE_API_KEY",
+      "GEMINI_API_KEY",
+      "ANTHROPIC_API_KEY",
+      "OLLAMA_API_KEY",
+      "OPENCLAW_GATEWAY_TOKEN",
+      "EXA_API_KEY",
+      "PARALLEL_API_KEY",
+      "TAVILY_API_KEY",
+      "FIRECRAWL_API_KEY",
+      "BRAVE_SEARCH_API_KEY",
+      "BROWSER_USE_API_KEY",
+      "BROWSERBASE_API_KEY"
+    ]) {
+      expect(spec.env[secretName]).toBeUndefined();
+    }
     expect(spec.env.GITHUB_TOKEN).toBeUndefined();
     expect(spec.env.SLACK_BOT_TOKEN).toBeUndefined();
     expect(spec.volumes).toContainEqual({
@@ -399,7 +403,7 @@ describe("createDockerRuntimeFactory", () => {
       "inspect",
       "run"
     ]);
-    expect(commands[1].args).toContain("OPENAI_API_KEY=openai-key");
+    expect(commands[1].args).not.toContain("OPENAI_API_KEY=openai-key");
     expect(commands[1].args).toContain("AI_MODEL=openai:gpt-5.4");
     expect(commands[1].args).toContain("BURBLE_MCP_GATEWAY_URL=http://agentgateway:3000/mcp");
     expect(commands[1].args.join(" ")).toContain(`BURBLE_RUNTIME_JWT=jwt:http://agentgateway:3000/mcp:${handle.id}:T123:U123:86400`);

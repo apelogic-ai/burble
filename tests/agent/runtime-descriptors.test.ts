@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
+  defaultSandboxStartCommandForEngine,
   defaultRuntimeImageForEngine,
   isKnownDefaultRuntimeImage,
   runtimeCompatibilityFamily,
@@ -10,6 +11,12 @@ import {
 } from "../../src/agent/runtime-descriptors";
 
 describe("runtime descriptors", () => {
+  const bunRuntimeSandboxStartCommand = [
+    "sh",
+    "-lc",
+    "cd /runtime && exec bun src/index.ts"
+  ];
+
   test("enumerates supported runtime engines in one registry", () => {
     expect(runtimeEngines).toEqual([
       "deterministic",
@@ -44,12 +51,34 @@ describe("runtime descriptors", () => {
     ).toBe(false);
   });
 
+  test("keeps sandbox start commands with the engine descriptors", () => {
+    expect(defaultSandboxStartCommandForEngine("hermes")).toEqual([
+      "python",
+      "/runtime/entrypoint.py"
+    ]);
+    expect(defaultSandboxStartCommandForEngine("openclaw")).toEqual([
+      ...bunRuntimeSandboxStartCommand
+    ]);
+    expect(defaultSandboxStartCommandForEngine("openclaw-gateway")).toEqual([
+      ...bunRuntimeSandboxStartCommand
+    ]);
+    expect(defaultSandboxStartCommandForEngine("burble-native")).toEqual([
+      ...bunRuntimeSandboxStartCommand
+    ]);
+  });
+
   test("exposes runtime config shape and readiness policy", () => {
     expect(runtimeConfigFileName("burble-native")).toBe("burble-native.json");
     expect(runtimeConfigFileName("hermes")).toBe("hermes.json");
     expect(runtimeHealthCheckAttempts("openclaw")).toBe(90);
     expect(runtimeHealthCheckAttempts("openclaw-gateway")).toBe(90);
     expect(runtimeHealthCheckAttempts("hermes")).toBe(30);
+    expect(runtimeDescriptor("openclaw").container.sandboxReadOnlyPaths).toEqual([
+      "/"
+    ]);
+    expect(runtimeDescriptor("openclaw").container.sandboxReadWritePaths).toEqual([
+      "/dev/pts"
+    ]);
   });
 
   test("exposes known capability manifests for policy selection", () => {
@@ -65,6 +94,7 @@ describe("runtime descriptors", () => {
     });
     expect(runtimeDescriptor("hermes").capabilities).toMatchObject({
       runtimeType: "hermes",
+      transports: ["http", "sse", "ndjson", "websocket"],
       toolBridgeModes: ["tool_gateway", "mcp"],
       usageReporting: "exact",
       multimodalInput: false,

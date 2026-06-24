@@ -69,6 +69,7 @@ export function createLocalDevSandboxProvider(): LocalDevSandboxProvider {
         principal: request.principal,
         runtime: request.runtime,
         labels: request.labels ?? {},
+        ...(request.policy ? { policy: cloneSandboxPolicy(request.policy) } : {}),
         credentials: []
       };
       const state: SandboxState = {
@@ -76,6 +77,9 @@ export function createLocalDevSandboxProvider(): LocalDevSandboxProvider {
         events: []
       };
       recordEvent(state, "provisioned", { image: request.runtime.image });
+      if (request.start) {
+        recordEvent(state, "run_started", { argv: [...request.start.argv] });
+      }
       sandboxes.set(id, state);
       return cloneSandboxHandle(handle);
     },

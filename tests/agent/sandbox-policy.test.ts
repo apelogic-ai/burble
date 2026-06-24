@@ -3,6 +3,8 @@ import { readConfig } from "../../src/config";
 import {
   buildBrokeredRuntimeSandboxPolicy,
   buildRuntimeSandboxPolicyFromConfig,
+  dockerInternalAllowedIps,
+  openShellHostAllowedIps,
   sandboxAllowedHostsFromUrls
 } from "../../src/agent/sandbox-policy";
 import {
@@ -34,6 +36,19 @@ describe("brokered runtime sandbox policy", () => {
           "agentgateway:3000",
           "api.openai.com",
           "burble-app:3000"
+        ],
+        allowedEndpoints: [
+          {
+            host: "agentgateway:3000",
+            tls: false,
+            allowedIps: dockerInternalAllowedIps
+          },
+          { host: "api.openai.com", tls: true },
+          {
+            host: "burble-app:3000",
+            tls: false,
+            allowedIps: dockerInternalAllowedIps
+          }
         ]
       },
       filesystem: {
@@ -80,6 +95,32 @@ describe("brokered runtime sandbox policy", () => {
     );
   });
 
+  test("uses the OpenShell host veth IP for host-routed gateways", () => {
+    const policy = buildBrokeredRuntimeSandboxPolicy({
+      toolGatewayUrl: "http://host.openshell.internal:3000/internal/tools",
+      mcpGatewayUrl: "http://host.openshell.internal:3001/mcp",
+      modelProviderUrls: ["http://host.openshell.internal:4000/v1"]
+    });
+
+    expect(policy.network.allowedEndpoints).toEqual([
+      {
+        host: "host.openshell.internal:3000",
+        tls: false,
+        allowedIps: openShellHostAllowedIps
+      },
+      {
+        host: "host.openshell.internal:3001",
+        tls: false,
+        allowedIps: openShellHostAllowedIps
+      },
+      {
+        host: "host.openshell.internal:4000",
+        tls: false,
+        allowedIps: openShellHostAllowedIps
+      }
+    ]);
+  });
+
   test("requires the model provider URL before building brokered egress", () => {
     expect(() =>
       buildBrokeredRuntimeSandboxPolicy({
@@ -114,6 +155,19 @@ describe("brokered runtime sandbox policy", () => {
         "agentgateway:3000",
         "api.openai.com",
         "burble-app:3000"
+      ],
+      allowedEndpoints: [
+        {
+          host: "agentgateway:3000",
+          tls: false,
+          allowedIps: dockerInternalAllowedIps
+        },
+        { host: "api.openai.com", tls: true },
+        {
+          host: "burble-app:3000",
+          tls: false,
+          allowedIps: dockerInternalAllowedIps
+        }
       ]
     });
     expect(compileOpenShellSandboxPolicy({ policy }).egress).toEqual({

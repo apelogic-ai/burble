@@ -5,6 +5,7 @@ tools:
     implementation: searchUsers
     title: Slack user search
     description: Search Slack users by display name, real name, username, or Slack user ID.
+    risk: read
     input:
       query:
         type: string
@@ -16,6 +17,7 @@ tools:
     implementation: searchMessages
     title: Slack message search
     description: Search Slack messages visible to this Slack user's connected Slack search token.
+    risk: read
     input:
       query:
         type: string

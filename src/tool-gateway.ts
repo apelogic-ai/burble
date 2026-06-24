@@ -11,7 +11,10 @@ import type {
   ConversationAttachment,
   ToolClassification
 } from "./conversation/types";
-import { isKnownRuntimeEngine } from "./agent/runtime-descriptors";
+import {
+  isKnownRuntimeEngine,
+  runtimeCompatibilityFamily
+} from "./agent/runtime-descriptors";
 import { createHash, timingSafeEqual } from "node:crypto";
 import { connectionProviderForToolName } from "./providers/descriptors";
 import { providerToolCatalog } from "./providers/catalog";
@@ -737,6 +740,42 @@ export async function handleToolGatewayRequest(
         input: isOptionalObject(body.input) ? body.input : {}
       }
     });
+  }
+
+  const providerToolSpec = findProviderToolSpec(toolName);
+  if (
+    auth.kind === "runtime" &&
+    runtimeCompatibilityFamily(auth.runtime.engine) === "hermes" &&
+    providerToolSpec &&
+    providerToolSpec.risk &&
+    providerToolSpec.risk !== "read"
+  ) {
+    emitToolGatewayFailedBestEffort(
+      {
+        observability: deps.observability,
+        startedAt: toolStartedAt,
+        body
+      },
+      auth,
+      toolName,
+      {
+        message:
+          "Hermes provider tools may only execute read-only Burble provider calls through the runtime gateway.",
+        code: "provider_write_not_allowed",
+        retryable: false
+      }
+    );
+    return jsonResponse(
+      {
+        classification: "user_private",
+        content: {
+          error: "provider_write_not_allowed",
+          message:
+            "Hermes provider tools may only execute read-only Burble provider calls through the runtime gateway."
+        }
+      },
+      403
+    );
   }
 
   const inputCoercion = coerceProviderToolGatewayInput(toolName, body.input);
@@ -2358,17 +2397,23 @@ function readScheduledJobRegistrationTools(
 
 function requiredToolsUsePrivateReadSources(toolNames: string[]): boolean {
   return toolNames.some((toolName) => {
-    const tool = providerToolCatalog.find(
-      (tool) =>
-        tool.name === toolName ||
-        tool.alias === toolName ||
-        (tool.aliases ?? []).includes(toolName)
-    );
+    const tool = findProviderToolSpec(toolName);
     if (tool) {
       return providerToolUsesPrivateReadSource(tool);
     }
     return connectionProviderForToolName(toolName) !== null;
   });
+}
+
+function findProviderToolSpec(toolName: string): (typeof providerToolCatalog)[number] | null {
+  return (
+    providerToolCatalog.find(
+      (tool) =>
+        tool.name === toolName ||
+        tool.alias === toolName ||
+        (tool.aliases ?? []).includes(toolName)
+    ) ?? null
+  );
 }
 
 function providerToolUsesPrivateReadSource(tool: (typeof providerToolCatalog)[number]): boolean {
@@ -4779,6 +4824,18 @@ function emitToolGatewayStarted(
   body: ToolGatewayBody | null
 ): void {
   try {
+    if (auth.kind === "runtime") {
+      console.info(
+        [
+          "Tool gateway started",
+          `runtimeId=${auth.runtime.id}`,
+          `runtimeType=${auth.runtime.engine}`,
+          `toolName=${toolName}`,
+          `provider=${readToolProviderForTelemetry(toolName)}`,
+          `hasUserEmail=${typeof body?.user?.email === "string"}`
+        ].join(" ")
+      );
+    }
     observability?.emit({
       name: "tool.gateway.started",
       ...toolGatewayIdentityFields(auth),
@@ -4803,12 +4860,27 @@ function emitToolGatewayCompleted(
   result: ToolResult<unknown>
 ): void {
   try {
+    const durationMs = context ? Date.now() - context.startedAt : null;
+    if (auth.kind === "runtime") {
+      console.info(
+        [
+          "Tool gateway completed",
+          `runtimeId=${auth.runtime.id}`,
+          `runtimeType=${auth.runtime.engine}`,
+          `toolName=${toolName}`,
+          `provider=${readToolProviderForTelemetry(toolName)}`,
+          `classification=${result.classification}`,
+          ...(durationMs !== null ? [`durationMs=${durationMs}`] : []),
+          `itemCount=${Array.isArray(result.content) ? result.content.length : "null"}`
+        ].join(" ")
+      );
+    }
     context?.observability?.emit({
       name: "tool.gateway.completed",
       ...toolGatewayIdentityFields(auth),
       toolName,
       classification: result.classification,
-      durationMs: Date.now() - context.startedAt,
+      durationMs: durationMs ?? 0,
       status: "ok",
       attributes: {
         authKind: auth.kind,
@@ -4830,11 +4902,27 @@ function emitToolGatewayFailedBestEffort(
   error: ConversationDeliveryFailure
 ): void {
   try {
+    const durationMs = context ? Date.now() - context.startedAt : null;
+    if (auth.kind === "runtime") {
+      console.warn(
+        [
+          "Tool gateway failed",
+          `runtimeId=${auth.runtime.id}`,
+          `runtimeType=${auth.runtime.engine}`,
+          `toolName=${toolName}`,
+          `provider=${readToolProviderForTelemetry(toolName)}`,
+          ...(durationMs !== null ? [`durationMs=${durationMs}`] : []),
+          ...(error.code ? [`code=${error.code}`] : []),
+          `retryable=${error.retryable}`,
+          `message=${formatToolGatewayErrorMessage(error.message)}`
+        ].join(" ")
+      );
+    }
     context?.observability?.emit({
       name: "tool.gateway.failed",
       ...toolGatewayIdentityFields(auth),
       toolName,
-      durationMs: Date.now() - context.startedAt,
+      durationMs: durationMs ?? 0,
       status: "error",
       attributes: {
         authKind: auth.kind,
