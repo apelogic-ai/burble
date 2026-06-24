@@ -3016,6 +3016,8 @@ print(json.dumps({"text": mod.build_hermes_turn_text(payload)}))
 
     const text = (result as { text: string }).text;
     expect(text).toContain("Provider-backed scheduled job repair:");
+    expect(text).toContain('Do not write `cronjob: "create"`');
+    expect(text).toContain("If the native cronjob tool is unavailable");
     expect(text).toContain("Before manually triggering");
     expect(text).toContain("Setup-time provider calls are not scheduled provider calls");
     expect(text).toContain("use ordinary Burble provider calls");
@@ -3442,6 +3444,34 @@ New open apelogic-ai PRs in the last 24h
     sent = await adapter.send(
         "convrt_abc123",
         content,
+        metadata={"jobId": "job-123"},
+    )
+    print(json.dumps({"success": sent.success, "error": sent.error, "payloads": posted_payloads}))
+
+asyncio.run(main())
+`);
+
+    expect(result).toEqual({
+      success: false,
+      error: "Hermes produced tool-call protocol text instead of structured tool calls; refusing to publish untrusted assistant content",
+      payloads: []
+    });
+  });
+
+  test("refuses Hermes native cronjob markers from scheduled route sends", () => {
+    const result = runHermesEntrypointProbe(`${importBurblePlatformAdapter}
+import asyncio
+import os
+
+os.environ["BURBLE_TOOL_GATEWAY_URL"] = "http://burble-app:3000/internal/tools"
+os.environ["BURBLE_INTERNAL_TOKEN"] = "token"
+os.environ["BURBLE_RUNTIME_ID"] = "rt_123"
+
+async def main():
+    adapter = mod.BurbleAdapter(types.SimpleNamespace(extra={}))
+    sent = await adapter.send(
+        "convrt_abc123",
+        ':alarm_clock: cronjob: "create"',
         metadata={"jobId": "job-123"},
     )
     print(json.dumps({"success": sent.success, "error": sent.error, "payloads": posted_payloads}))

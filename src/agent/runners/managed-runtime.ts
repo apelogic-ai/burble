@@ -13,6 +13,7 @@ import {
   createRuntimeContractHttpClient,
   RuntimeCapabilityDiscoveryError
 } from "@burble/runtime-sdk/runtime-contract-http-client";
+import { containsRuntimeToolCallProtocolFragments } from "@burble/runtime-sdk/runtime-text-protocol";
 import { runtimeCompatibilityFamily } from "../runtime-descriptors";
 import { sealRuntimeConversationAttachments } from "../../conversation/attachment-capabilities";
 import type { Config } from "../../config";
@@ -917,6 +918,11 @@ function assertManagedRuntimeFinalResponse(response: AgentOutput): void {
     (!response.attachments || response.attachments.length === 0)
   ) {
     throw new Error("Managed runtime did not produce a final response");
+  }
+  if (containsRuntimeToolCallProtocolFragments(response.text)) {
+    throw new Error(
+      "Managed runtime final response leaked tool-call protocol text"
+    );
   }
 }
 

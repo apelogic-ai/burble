@@ -764,6 +764,70 @@ describe("managed runtime Burble Native integration", () => {
     expect(calls.some((call) => call.includes("/internal/tools/"))).toBe(false);
   });
 
+  test("rejects Hermes native cronjob markers as final answers", async () => {
+    const runtimeToken = "runtime-token-u123";
+    const runtimeHandle: RuntimeHandle = {
+      id: "rt_hermes",
+      engine: "hermes",
+      endpointUrl: "http://hermes-runtime:8080",
+      authToken: runtimeToken,
+      status: "ready",
+      statePath: "/data/runtimes/rt_hermes/state",
+      configPath: "/data/runtimes/rt_hermes/config/hermes.json",
+      workspacePath: "/data/runtimes/rt_hermes/workspace",
+      manifest: runtimeManifest("rt_hermes", "hermes")
+    };
+
+    const runner = createManagedRuntimeAgentRunner({
+      runtimeFactory: {
+        async getOrCreateRuntime() {
+          return runtimeHandle;
+        },
+        async stopRuntime() {},
+        async reapIdleRuntimes() {}
+      },
+      fetch: async (url) => {
+        const parsed = new URL(url);
+        if (parsed.hostname === "hermes-runtime") {
+          if (parsed.pathname === "/capabilities") {
+            return new Response("not implemented", { status: 404 });
+          }
+          if (parsed.pathname === "/runs") {
+            return Response.json({
+              response: {
+                classification: "user_private",
+                text: ':alarm_clock: cronjob: "create"'
+              }
+            });
+          }
+        }
+
+        throw new Error(`Unexpected request ${url}`);
+      }
+    });
+
+    await expect(
+      collectAgentRun(runner, {
+        principal,
+        conversation: {
+          source: "slack",
+          workspaceId: principal.workspaceId,
+          channelId: "D123",
+          rootId: "dm:D123",
+          isDirectMessage: true
+        },
+        text: "create an hourly cron job to look for AI news",
+        toolGroups: {
+          groups: ["conversation", "scheduler"],
+          reasons: ["default:conversation", "keyword:scheduler:cron"]
+        },
+        connections: { github: null }
+      })
+    ).rejects.toThrow(
+      "Managed runtime final response leaked tool-call protocol text"
+    );
+  });
+
   test("does not auto-execute Hermes provider write tool stream callbacks", async () => {
     const store = createTokenStore(":memory:");
     const runtimeToken = "runtime-token-u123";

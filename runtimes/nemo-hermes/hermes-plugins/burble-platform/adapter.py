@@ -4,6 +4,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import time
 from collections.abc import Mapping
 from typing import Any, Dict, Optional
@@ -85,7 +86,19 @@ def _looks_like_hermes_tool_protocol_line(text: str) -> bool:
         return False
     if value.startswith(("to=", "recipient=", "<tool", "</tool>")):
         return True
+    if _looks_like_hermes_native_tool_marker_line(value):
+        return True
     return False
+
+
+def _looks_like_hermes_native_tool_marker_line(text: str) -> bool:
+    return bool(
+        re.match(
+            r'^(?::alarm_clock:|⏰)?\s*cronjob\s*:\s*"(?:create|list|run|update|modify|delete|remove|enable|disable)"\s*$',
+            text,
+            re.IGNORECASE,
+        )
+    )
 
 
 def _looks_like_hermes_tool_json_line(text: str) -> bool:
@@ -136,7 +149,12 @@ def _starts_hermes_tool_json_block(text: str) -> bool:
 
 def _strip_hermes_tool_protocol(text: str) -> tuple[str, bool]:
     value = str(text or "")
-    if "to=" not in value and "recipient=" not in value and "<tool" not in value:
+    if (
+        "to=" not in value
+        and "recipient=" not in value
+        and "<tool" not in value
+        and "cronjob" not in value.lower()
+    ):
         return value, False
 
     kept: list[str] = []

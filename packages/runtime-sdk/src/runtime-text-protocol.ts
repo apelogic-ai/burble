@@ -111,7 +111,14 @@ function isRuntimeToolProtocolLine(value: string): boolean {
     value.startsWith("to=") ||
     value.startsWith("recipient=") ||
     value.startsWith("<tool") ||
-    value.startsWith("</tool>")
+    value.startsWith("</tool>") ||
+    isHermesNativeToolMarkerLine(value)
+  );
+}
+
+function isHermesNativeToolMarkerLine(value: string): boolean {
+  return /^(?::alarm_clock:|⏰)?\s*cronjob\s*:\s*"(?:create|list|run|update|modify|delete|remove|enable|disable)"\s*$/i.test(
+    value
   );
 }
 
