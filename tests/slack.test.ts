@@ -41,6 +41,7 @@ import {
   formatWorkingMessage,
   formatIssuesMessage,
   formatMentionWorkingMessage,
+  isProgressOnlyMessage,
   isDirectMessageSlashCommand,
   isDestinationGrantSlashCommandChannel,
   parseAgentCommand,
@@ -260,6 +261,32 @@ describe("formatWorkingMessage", () => {
 describe("formatMentionWorkingMessage", () => {
   test("formats the LLM mention progress state", () => {
     expect(formatMentionWorkingMessage()).toBe("Starting agent runtime...");
+  });
+});
+
+describe("isProgressOnlyMessage", () => {
+  test("filters operational Slack messages from agent context", () => {
+    expect(isProgressOnlyMessage("Calling google search drive files...")).toBe(
+      true
+    );
+    expect(
+      isProgressOnlyMessage(
+        "google search drive files completed in 512ms (user-private result)."
+      )
+    ).toBe(true);
+    expect(
+      isProgressOnlyMessage(
+        ":zap: Interrupting current task (iteration 1/90, running: google_search_drive_files). I'll respond to your message shortly."
+      )
+    ).toBe(true);
+    expect(
+      isProgressOnlyMessage(
+        ":bulb: First-time tip — I just interrupted my current task to answer you. Send /busy queue to queue follow-ups for after the current task instead."
+      )
+    ).toBe(true);
+    expect(isProgressOnlyMessage("Last edited Google Drive file: report.txt")).toBe(
+      false
+    );
   });
 });
 
