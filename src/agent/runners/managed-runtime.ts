@@ -1209,7 +1209,7 @@ async function executeRuntimeToolGatewayCall(input: {
   gatewayToolName: string;
   toolInput: Record<string, unknown>;
 }): Promise<ToolGatewayResult> {
-  const baseUrl = input.config.agentRuntimeToolGatewayUrl.replace(/\/+$/, "");
+  const baseUrl = `http://127.0.0.1:${input.config.port}/internal/tools`;
   const response = await input.requestFetch(
     `${baseUrl}/${encodeURIComponent(input.gatewayToolName)}/execute`,
     {

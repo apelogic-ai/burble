@@ -214,7 +214,8 @@ describe("managed runtime Burble Native integration", () => {
       }
 
       if (
-        parsed.hostname === "burble-app" &&
+        (parsed.hostname === "burble-app" ||
+          (parsed.hostname === "127.0.0.1" && parsed.port === "3000")) &&
         parsed.pathname.startsWith("/internal/tools/")
       ) {
         const toolName = decodeURIComponent(
@@ -365,7 +366,8 @@ describe("managed runtime Burble Native integration", () => {
       }
 
       if (
-        parsed.hostname === "burble-app" &&
+        (parsed.hostname === "burble-app" ||
+          (parsed.hostname === "127.0.0.1" && parsed.port === "3000")) &&
         parsed.pathname.startsWith("/internal/tools/")
       ) {
         const toolName = decodeURIComponent(
@@ -455,7 +457,7 @@ describe("managed runtime Burble Native integration", () => {
     expect(events).toContain("tool_call");
     expect(events).toContain("tool_result");
     expect(calls).toContain(
-      "POST http://burble-app:3000/internal/tools/google.searchDriveFiles/execute"
+      "POST http://127.0.0.1:3000/internal/tools/google.searchDriveFiles/execute"
     );
   });
 
