@@ -4,7 +4,7 @@ import { parseRuntimeCapabilityManifest } from "@burble/runtime-sdk/runtime-cont
 function runHermesEntrypointProbe(source: string): unknown {
   const proc = Bun.spawnSync(["python3", "-c", source], {
     stdout: "pipe",
-    stderr: "pipe"
+    stderr: "pipe",
   });
   const stdout = new TextDecoder().decode(proc.stdout);
   const stderr = new TextDecoder().decode(proc.stderr);
@@ -180,7 +180,7 @@ print(json.dumps({
     expect(result).toEqual({
       manifestType: "hermes",
       eventType: "message_delta",
-      invalidEvent: expect.stringContaining("additional property extra")
+      invalidEvent: expect.stringContaining("additional property extra"),
     });
   });
 
@@ -201,7 +201,7 @@ print(json.dumps({"invalidRequest": invalid_request}))
 `);
 
     expect(result).toEqual({
-      invalidRequest: expect.stringContaining("input.connections")
+      invalidRequest: expect.stringContaining("input.connections"),
     });
   });
 
@@ -264,7 +264,7 @@ print(json.dumps(mod.build_runtime_capability_manifest()))
       durableWorkflowState: true,
       attachments: true,
       conversationSend: true,
-      jobScopedAuth: true
+      jobScopedAuth: true,
     });
   });
 
@@ -344,18 +344,18 @@ asyncio.run(main())
       status: 200,
       headers: {
         "cache-control": "no-store",
-        "content-type": "application/x-ndjson"
+        "content-type": "application/x-ndjson",
       },
       chunks: [
         JSON.stringify({ type: "status", text: "Loading context..." }) + "\n",
         JSON.stringify({ type: "message_delta", text: "Done" }) + "\n",
         JSON.stringify({
           type: "final",
-          response: { classification: "user_private", text: "Done" }
-        }) + "\n"
+          response: { classification: "user_private", text: "Done" },
+        }) + "\n",
       ],
       eof: true,
-      runRetained: false
+      runRetained: false,
     });
   });
 
@@ -381,7 +381,7 @@ print(json.dumps({
       default: ["tool_gateway"],
       configuredWithGateway: ["tool_gateway", "mcp"],
       configuredWithDisable: ["tool_gateway"],
-      configuredWithOptIn: ["tool_gateway", "mcp"]
+      configuredWithOptIn: ["tool_gateway", "mcp"],
     });
   });
 
@@ -423,7 +423,9 @@ print(json.dumps({"text": mod.build_hermes_turn_text(payload)}))
     expect(text).not.toContain("Use direct Burble MCP provider tools");
     expect(text).toContain("Do not write `burble_provider_call`");
     expect(text).toContain("then write a final Slack-ready answer");
-    expect(text).toContain("Do not call provider tools that are not listed here");
+    expect(text).toContain(
+      "Do not call provider tools that are not listed here",
+    );
     expect(text).toContain("github_list_my_pull_requests");
     expect(text).not.toContain("google_search_drive_files");
     expect(text).toContain("scheduled_job_register_capability");
@@ -541,8 +543,8 @@ asyncio.run(main())
       finalResponse: { ok: true },
       finalBody: {
         text: "Hello world",
-        classification: "user_private"
-      }
+        classification: "user_private",
+      },
     });
   });
 
@@ -584,64 +586,17 @@ asyncio.run(main())
     expect(result).toEqual({
       response: { ok: true },
       event: { type: "status", text: "Retrying in 2.5s (attempt 1/3)..." },
-      completed: false
+      completed: false,
     });
   });
 
-  test("recovers Hermes provider preview callbacks that never finalize", () => {
+  test("retries marker-only Hermes provider callbacks through the agent loop", () => {
     const result = runHermesEntrypointProbe(`${importEntrypoint}
 import asyncio
 import os
 
 mod.web.json_response = lambda body, **kwargs: body
-
-os.environ["BURBLE_TOOL_GATEWAY_URL"] = "http://burble-app:3000/internal/tools"
-os.environ["BURBLE_INTERNAL_TOKEN"] = "token"
-os.environ["BURBLE_RUNTIME_ID"] = "rt_123"
-os.environ["HERMES_PROVIDER_PREVIEW_RECOVERY_SECONDS"] = "0"
-os.environ["HERMES_PROVIDER_TOOL_CALL_RECOVERY_SECONDS"] = "0"
-
-provider_calls = []
-
-class FakeProviderResponse:
-    status = 200
-
-    async def __aenter__(self):
-        return self
-
-    async def __aexit__(self, exc_type, exc, tb):
-        return False
-
-    async def json(self):
-        return {
-            "content": [
-                {"properties": {"name": "ROKA STUDIO", "domain": "renski.com"}},
-            ]
-        }
-
-    async def text(self):
-        return json.dumps(await self.json())
-
-class FakeProviderSession:
-    def __init__(self, *args, **kwargs):
-        pass
-
-    async def __aenter__(self):
-        return self
-
-    async def __aexit__(self, exc_type, exc, tb):
-        return False
-
-    def post(self, url, *, json=None, headers=None):
-        provider_calls.append({
-            "url": url,
-            "json": json,
-        })
-        return FakeProviderResponse()
-
-provider_plugin = mod.load_burble_provider_tool_plugin()
-provider_plugin.ClientSession = FakeProviderSession
-provider_plugin.ClientTimeout = lambda total=None: None
+os.environ["HERMES_PROVIDER_PROTOCOL_RETRY_ATTEMPTS"] = "1"
 
 class FakeRequest:
     def __init__(self, run_id, body):
@@ -656,19 +611,54 @@ async def main():
     waiter = mod.RunWaiter()
     queue = asyncio.Queue()
     waiter.queues.append(queue)
-    runtime.runs["run-preview"] = waiter
-    runtime.run_messages["run-preview"] = {
-        "originalText": "list my last companies in HubSpot",
+    runtime.runs["run-provider-progress"] = waiter
+    runtime.run_messages["run-provider-progress"] = {
+        "runId": "run-provider-progress",
+        "routeId": "dm:D123",
+        "originalText": "list my last edited google drive file",
+        "text": "list my last edited google drive file",
         "runtime": {"id": "rt_123"},
     }
+    injected = []
 
-    response = await runtime.handle_run_message(
-        FakeRequest(
-            "run-preview",
-            {"type": "message_delta", "text": "Calling HubSpot search crm objects..."},
+    async def fake_inject(body):
+        injected.append(body)
+        await runtime.handle_run_message(
+            FakeRequest(
+                "run-provider-progress",
+                {
+                    "type": "tool_call",
+                    "toolName": "google_search_drive_files",
+                    "callId": "call_drive_1",
+                    "input": {"limit": 1},
+                },
+            )
         )
+        await runtime.handle_run_message(
+            FakeRequest(
+                "run-provider-progress",
+                {
+                    "type": "tool_result",
+                    "toolName": "google_search_drive_files",
+                    "callId": "call_drive_1",
+                    "content": [{"name": "apelogic-ai-open-prs-last-24h-seen.txt"}],
+                },
+            )
+        )
+        await runtime.handle_run_message(
+            FakeRequest(
+                "run-provider-progress",
+                {
+                    "classification": "user_private",
+                    "text": "Last edited Google Drive file: apelogic-ai-open-prs-last-24h-seen.txt",
+                },
+            )
+        )
+
+    runtime._inject_message = fake_inject
+    response = await runtime.handle_run_message(
+        FakeRequest("run-provider-progress", {"text": ":gear: google_search_drive_files..."})
     )
-    await asyncio.wait_for(waiter.future, timeout=1)
 
     events = []
     while not queue.empty():
@@ -676,99 +666,101 @@ async def main():
         if event is not None:
             events.append(event)
 
-    status_waiter = mod.RunWaiter()
-    status_queue = asyncio.Queue()
-    status_waiter.queues.append(status_queue)
-    runtime.runs["run-status-preview"] = status_waiter
-    runtime.run_messages["run-status-preview"] = {
+    print(json.dumps({
+        "response": response,
+        "injectedCount": len(injected),
+        "retryText": injected[0]["text"],
+        "events": events,
+        "futureResult": waiter.future.result(),
+    }))
+
+asyncio.run(main())
+`);
+
+    expect(result).toEqual({
+      response: { ok: true },
+      injectedCount: 1,
+      retryText: expect.stringContaining(
+        "invoke the real structured Burble provider tool `google_search_drive_files`",
+      ),
+      events: [
+        {
+          type: "status",
+          text: "Retrying provider tool call with structured Hermes tool protocol.",
+        },
+        {
+          type: "tool_call",
+          toolName: "google_search_drive_files",
+          callId: "call_drive_1",
+          input: { limit: 1 },
+        },
+        {
+          type: "tool_result",
+          toolName: "google_search_drive_files",
+          callId: "call_drive_1",
+          classification: "user_private",
+          content: [{ name: "apelogic-ai-open-prs-last-24h-seen.txt" }],
+        },
+      ],
+      futureResult: {
+        classification: "user_private",
+        text: "Last edited Google Drive file: apelogic-ai-open-prs-last-24h-seen.txt",
+      },
+    });
+  });
+
+  test("fails loud when Hermes repeats provider marker prose after retry", () => {
+    const result = runHermesEntrypointProbe(`${importEntrypoint}
+import asyncio
+import os
+
+mod.web.json_response = lambda body, **kwargs: body
+os.environ["HERMES_PROVIDER_PROTOCOL_RETRY_ATTEMPTS"] = "1"
+
+class FakeRequest:
+    def __init__(self, run_id, body):
+        self.match_info = {"run_id": run_id}
+        self._body = body
+
+    async def json(self):
+        return self._body
+
+async def main():
+    runtime = mod.BurbleHermesRuntime()
+    waiter = mod.RunWaiter()
+    queue = asyncio.Queue()
+    waiter.queues.append(queue)
+    runtime.runs["run-provider-repeat"] = waiter
+    runtime.run_messages["run-provider-repeat"] = {
+        "runId": "run-provider-repeat",
+        "routeId": "dm:D123",
         "originalText": "list my last companies in HubSpot",
+        "text": "list my last companies in HubSpot",
         "runtime": {"id": "rt_123"},
     }
 
-    status_response = await runtime.handle_run_message(
-        FakeRequest(
-            "run-status-preview",
-            {"type": "status", "text": "Calling HubSpot search crm objects..."},
+    async def fake_inject(_body):
+        await runtime.handle_run_message(
+            FakeRequest("run-provider-repeat", {"text": ":gear: hubspot_search_crm_objects..."})
         )
+
+    runtime._inject_message = fake_inject
+    response = await runtime.handle_run_message(
+        FakeRequest("run-provider-repeat", {"text": ":gear: hubspot_search_crm_objects..."})
     )
-    await asyncio.wait_for(status_waiter.future, timeout=1)
 
-    status_events = []
-    while not status_queue.empty():
-        status_events.append(await status_queue.get())
-
-    bridge_waiter = mod.RunWaiter()
-    bridge_queue = asyncio.Queue()
-    bridge_waiter.queues.append(bridge_queue)
-    runtime.runs["run-bridge-tool-call-hang"] = bridge_waiter
-    runtime.run_messages["run-bridge-tool-call-hang"] = {
-        "originalText": "list my last companies in HubSpot",
-        "runtime": {"id": "rt_123"},
-    }
-
-    bridge_response = await runtime.handle_run_message(
-        FakeRequest(
-            "run-bridge-tool-call-hang",
-            {
-                "type": "tool_call",
-                "toolName": "burble_provider_call",
-                "callId": "call_bridge_hubspot_1",
-                "input": {
-                    "toolName": "hubspot.searchCrmObjects",
-                    "input": {
-                        "objectType": "companies",
-                        "limit": 1,
-                        "properties": ["name", "domain"],
-                    },
-                },
-            },
-        )
-    )
-    bridge_future_done = bridge_waiter.future.done()
-
-    bridge_events = []
-    while not bridge_queue.empty():
-        bridge_events.append(await bridge_queue.get())
-
-    inferred_waiter = mod.RunWaiter()
-    inferred_queue = asyncio.Queue()
-    inferred_waiter.queues.append(inferred_queue)
-    runtime.runs["run-inferred-tool-call-hang"] = inferred_waiter
-    runtime.run_messages["run-inferred-tool-call-hang"] = {
-        "originalText": "list my last companies in HubSpot",
-        "runtime": {"id": "rt_123"},
-    }
-
-    inferred_response = await runtime.handle_run_message(
-        FakeRequest(
-            "run-inferred-tool-call-hang",
-            {
-                "type": "tool_call",
-                "toolName": "mcp_tool_call",
-                "callId": "call_inferred_hubspot_1",
-            },
-        )
-    )
-    await asyncio.wait_for(inferred_waiter.future, timeout=1)
-
-    inferred_events = []
-    while not inferred_queue.empty():
-        inferred_events.append(await inferred_queue.get())
+    events = []
+    while not queue.empty():
+        event = await queue.get()
+        if event is not None:
+            events.append(event)
+    future_error = str(waiter.future.exception())
 
     print(json.dumps({
         "response": response,
         "events": events,
-        "result": waiter.future.result(),
-        "statusResponse": status_response,
-        "statusEvents": status_events,
-        "statusResult": status_waiter.future.result(),
-        "bridgeResponse": bridge_response,
-        "bridgeEvents": bridge_events,
-        "bridgeFutureDone": bridge_future_done,
-        "inferredResponse": inferred_response,
-        "inferredEvents": inferred_events,
-        "inferredResult": inferred_waiter.future.result(),
-        "providerCalls": provider_calls,
+        "completed": waiter.completed,
+        "futureError": future_error,
     }))
 
 asyncio.run(main())
@@ -779,148 +771,193 @@ asyncio.run(main())
       events: [
         {
           type: "status",
-          text: "Calling HubSpot search crm objects..."
+          text: "Retrying provider tool call with structured Hermes tool protocol.",
         },
         {
-          type: "tool_call",
-          toolName: "hubspot_search_crm_objects",
-          callId: expect.any(String),
-          input: {
-            objectType: "companies",
-            limit: 10,
-            properties: ["name", "domain", "createdate", "hs_lastmodifieddate"]
-          }
+          type: "error",
+          message:
+            "Hermes returned provider-tool intent as assistant text instead of invoking the structured Burble provider tool (hubspot_search_crm_objects) after retrying.",
         },
-        {
-          type: "tool_result",
-          toolName: "hubspot_search_crm_objects",
-          callId: expect.any(String),
-          classification: "user_private",
-          content: [
-            { properties: { name: "ROKA STUDIO", domain: "renski.com" } }
-          ]
-        },
-        {
-          type: "message_delta",
-          text: "Latest HubSpot companies\n- ROKA STUDIO — renski.com"
-        }
       ],
-      result: {
-        classification: "user_private",
-        text: "Latest HubSpot companies\n- ROKA STUDIO — renski.com"
-      },
-      statusResponse: { ok: true },
-      statusEvents: [
-        {
-          type: "status",
-          text: "Calling HubSpot search crm objects..."
-        },
-        {
-          type: "tool_call",
-          toolName: "hubspot_search_crm_objects",
-          callId: expect.any(String),
-          input: {
-            objectType: "companies",
-            limit: 10,
-            properties: ["name", "domain", "createdate", "hs_lastmodifieddate"]
-          }
-        },
-        {
-          type: "tool_result",
-          toolName: "hubspot_search_crm_objects",
-          callId: expect.any(String),
-          classification: "user_private",
-          content: [
-            { properties: { name: "ROKA STUDIO", domain: "renski.com" } }
-          ]
-        },
-        {
-          type: "message_delta",
-          text: "Latest HubSpot companies\n- ROKA STUDIO — renski.com"
-        }
-      ],
-      statusResult: {
-        classification: "user_private",
-        text: "Latest HubSpot companies\n- ROKA STUDIO — renski.com"
-      },
-      bridgeResponse: { ok: true },
-      bridgeEvents: [
-        {
-          type: "tool_call",
-          toolName: "hubspot_search_crm_objects",
-          callId: "call_bridge_hubspot_1",
-          input: {
-            objectType: "companies",
-            limit: 1,
-            properties: ["name", "domain"]
-          }
-        }
-      ],
-      bridgeFutureDone: false,
-      inferredResponse: { ok: true },
-      inferredEvents: [
-        {
-          type: "tool_call",
-          toolName: "mcp_tool_call",
-          callId: "call_inferred_hubspot_1"
-        },
-        {
-          type: "tool_result",
-          toolName: "hubspot_search_crm_objects",
-          callId: "call_inferred_hubspot_1",
-          classification: "user_private",
-          content: [
-            { properties: { name: "ROKA STUDIO", domain: "renski.com" } }
-          ]
-        },
-        {
-          type: "message_delta",
-          text: "Latest HubSpot companies\n- ROKA STUDIO — renski.com"
-        }
-      ],
-      inferredResult: {
-        classification: "user_private",
-        text: "Latest HubSpot companies\n- ROKA STUDIO — renski.com"
-      },
-      providerCalls: [
-        {
-          url:
-            "http://burble-app:3000/internal/tools/hubspot.searchCrmObjects/execute",
-          json: {
-            input: {
-              objectType: "companies",
-              limit: 10,
-              properties: ["name", "domain", "createdate", "hs_lastmodifieddate"]
-            }
-          }
-        },
-        {
-          url:
-            "http://burble-app:3000/internal/tools/hubspot.searchCrmObjects/execute",
-          json: {
-            input: {
-              objectType: "companies",
-              limit: 10,
-              properties: ["name", "domain", "createdate", "hs_lastmodifieddate"]
-            }
-          }
-        },
-        {
-          url:
-            "http://burble-app:3000/internal/tools/hubspot.searchCrmObjects/execute",
-          json: {
-            input: {
-              objectType: "companies",
-              limit: 10,
-              properties: ["name", "domain", "createdate", "hs_lastmodifieddate"]
-            }
-          }
-        }
-      ]
+      completed: true,
+      futureError:
+        "Hermes returned provider-tool intent as assistant text instead of invoking the structured Burble provider tool (hubspot_search_crm_objects) after retrying.",
     });
   });
 
-  test("recovers Hermes provider tool calls that never produce tool results", () => {
+  test("retries hanging provider preview through the agent loop", () => {
+    const result = runHermesEntrypointProbe(`${importEntrypoint}
+import asyncio
+import os
+
+mod.web.json_response = lambda body, **kwargs: body
+os.environ["HERMES_PROVIDER_PREVIEW_RECOVERY_SECONDS"] = "0"
+os.environ["HERMES_PROVIDER_PROTOCOL_RETRY_ATTEMPTS"] = "1"
+
+class FakeRequest:
+    def __init__(self, run_id, body):
+        self.match_info = {"run_id": run_id}
+        self._body = body
+
+    async def json(self):
+        return self._body
+
+async def main():
+    runtime = mod.BurbleHermesRuntime()
+    waiter = mod.RunWaiter()
+    queue = asyncio.Queue()
+    waiter.queues.append(queue)
+    runtime.runs["run-provider-preview"] = waiter
+    runtime.run_messages["run-provider-preview"] = {
+        "runId": "run-provider-preview",
+        "routeId": "dm:D123",
+        "originalText": "list my last companies in HubSpot",
+        "text": "list my last companies in HubSpot",
+        "runtime": {"id": "rt_123"},
+    }
+    injected = []
+
+    async def fake_inject(body):
+        injected.append(body)
+
+    runtime._inject_message = fake_inject
+    response = await runtime.handle_run_message(
+        FakeRequest(
+            "run-provider-preview",
+            {"type": "message_delta", "text": "Calling HubSpot search crm objects..."},
+        )
+    )
+    for _ in range(10):
+        if injected:
+            break
+        await asyncio.sleep(0)
+
+    events = []
+    while not queue.empty():
+        event = await queue.get()
+        if event is not None:
+            events.append(event)
+
+    print(json.dumps({
+        "response": response,
+        "events": events,
+        "injectedCount": len(injected),
+        "retryText": injected[0]["text"],
+        "futureDone": waiter.future.done(),
+    }))
+
+asyncio.run(main())
+`);
+
+    expect(result).toEqual({
+      response: { ok: true },
+      events: [
+        {
+          type: "status",
+          text: "Calling HubSpot search crm objects...",
+        },
+        {
+          type: "status",
+          text: "Retrying provider tool call with structured Hermes tool protocol.",
+        },
+      ],
+      injectedCount: 1,
+      retryText: expect.stringContaining(
+        "invoke the real structured Burble provider tool `hubspot_search_crm_objects`",
+      ),
+      futureDone: false,
+    });
+  });
+
+  test("retries provider markers returned as Hermes final results", () => {
+    const result = runHermesEntrypointProbe(`${importEntrypoint}
+import asyncio
+import os
+
+os.environ["HERMES_PROVIDER_PROTOCOL_RETRY_ATTEMPTS"] = "1"
+
+async def main():
+    runtime = mod.BurbleHermesRuntime()
+    waiter = mod.RunWaiter()
+    queue = asyncio.Queue()
+    waiter.queues.append(queue)
+    message = {
+        "runId": "run-final-provider-marker",
+        "routeId": "dm:D123",
+        "originalText": "list my last edited google drive file",
+        "runtime": {"id": "rt_123"},
+        "text": "list my last edited google drive file",
+    }
+    runtime.runs["run-final-provider-marker"] = waiter
+    runtime.run_messages["run-final-provider-marker"] = message
+    injected = []
+
+    async def fake_inject(body):
+        injected.append(body)
+        if body.get("protocolRetryAttempt"):
+            waiter.future.set_result({
+                "classification": "user_private",
+                "text": "Last edited Google Drive file: apelogic-ai-open-prs-last-24h-seen.txt",
+            })
+        else:
+            waiter.future.set_result({
+                "classification": "user_private",
+                "text": ":gear: google_search_drive_files...",
+            })
+
+    runtime._inject_message = fake_inject
+    response = await runtime._execute_run(
+        "run-final-provider-marker",
+        waiter,
+        message,
+    )
+
+    events = []
+    while not queue.empty():
+        event = await queue.get()
+        if event is not None:
+            events.append(event)
+
+    print(json.dumps({
+        "response": response,
+        "events": events,
+        "injectedCount": len(injected),
+        "retryText": injected[1]["text"],
+    }))
+
+asyncio.run(main())
+`);
+
+    expect(result).toEqual({
+      response: {
+        classification: "user_private",
+        text: "Last edited Google Drive file: apelogic-ai-open-prs-last-24h-seen.txt",
+      },
+      events: [
+        {
+          type: "status",
+          text: "Burble accepted the turn.",
+        },
+        {
+          type: "status",
+          text: "Retrying provider tool call with structured Hermes tool protocol.",
+        },
+        {
+          type: "final",
+          response: {
+            classification: "user_private",
+            text: "Last edited Google Drive file: apelogic-ai-open-prs-last-24h-seen.txt",
+          },
+        },
+      ],
+      injectedCount: 2,
+      retryText: expect.stringContaining(
+        "invoke the real structured Burble provider tool `google_search_drive_files`",
+      ),
+    });
+  });
+
+  test("emits provider tool calls without runtime-side fallback execution", () => {
     const result = runHermesEntrypointProbe(`${importEntrypoint}
 import asyncio
 import os
@@ -1027,670 +1064,11 @@ asyncio.run(main())
         {
           type: "tool_call",
           toolName: "hubspot_search_crm_objects",
-          callId: "call_hubspot_1"
-        }
+          callId: "call_hubspot_1",
+        },
       ],
       futureDone: false,
-      providerCalls: []
-    });
-  });
-
-  test("recovers safe marker-only Hermes provider callbacks", () => {
-    const result = runHermesEntrypointProbe(`${importEntrypoint}
-import asyncio
-import os
-
-mod.web.json_response = lambda body, **kwargs: body
-
-os.environ["BURBLE_TOOL_GATEWAY_URL"] = "http://burble-app:3000/internal/tools"
-os.environ["BURBLE_INTERNAL_TOKEN"] = "token"
-os.environ["BURBLE_RUNTIME_ID"] = "rt_123"
-
-provider_calls = []
-
-class FakeProviderResponse:
-    status = 200
-
-    async def __aenter__(self):
-        return self
-
-    async def __aexit__(self, exc_type, exc, tb):
-        return False
-
-    async def json(self):
-        tool_name = provider_calls[-1]["toolName"]
-        if tool_name == "google.searchDriveFiles":
-            return {
-                "content": [
-                    {
-                        "name": "apelogic-ai-open-prs-last-24h-seen.txt",
-                        "modifiedTime": "2026-06-21T19:02:13Z",
-                    }
-                ]
-            }
-        if tool_name == "hubspot.searchCrmObjects":
-            return {
-                "content": [
-                    {"properties": {"name": "ROKA STUDIO", "domain": "renski.com"}},
-                    {"properties": {"name": "example.com", "domain": "example.com"}},
-                ]
-            }
-        return {"content": []}
-
-    async def text(self):
-        return json.dumps(await self.json())
-
-class FakeProviderSession:
-    def __init__(self, *args, **kwargs):
-        pass
-
-    async def __aenter__(self):
-        return self
-
-    async def __aexit__(self, exc_type, exc, tb):
-        return False
-
-    def post(self, url, *, json=None, headers=None):
-        provider_calls.append({
-            "url": url,
-            "headers": headers,
-            "toolName": url.rsplit("/", 2)[-2],
-            "json": json,
-        })
-        return FakeProviderResponse()
-
-provider_plugin = mod.load_burble_provider_tool_plugin()
-provider_plugin.ClientSession = FakeProviderSession
-provider_plugin.ClientTimeout = lambda total=None: None
-
-class FakeRequest:
-    def __init__(self, run_id, body):
-        self.match_info = {"run_id": run_id}
-        self._body = body
-
-    async def json(self):
-        return self._body
-
-async def main():
-    runtime = mod.BurbleHermesRuntime()
-    waiter = mod.RunWaiter()
-    queue = asyncio.Queue()
-    waiter.queues.append(queue)
-    runtime.runs["run-provider-progress"] = waiter
-    runtime.run_messages["run-provider-progress"] = {
-        "originalText": "list my last edited google drive file",
-        "runtime": {"id": "rt_123"},
-    }
-
-    final_response = await runtime.handle_run_message(
-        FakeRequest("run-provider-progress", {"text": ":gear: google_search_drive_files..."})
-    )
-    events = []
-    while not queue.empty():
-        event = await queue.get()
-        if event is not None:
-            events.append(event)
-    completed_after_final = waiter.completed
-    future_done_after_final = waiter.future.done()
-    future_result = waiter.future.result()
-
-    waiter = mod.RunWaiter()
-    queue = asyncio.Queue()
-    waiter.queues.append(queue)
-    runtime.runs["run-provider-progress-stream"] = waiter
-    runtime.run_messages["run-provider-progress-stream"] = {
-        "originalText": "list my last companies in HubSpot",
-        "runtime": {"id": "rt_123"},
-    }
-    stream_response = await runtime.handle_run_message(
-        FakeRequest(
-            "run-provider-progress-stream",
-            {"text": "⚙️ hubspot_search_crm_objects..."},
-        )
-    )
-    stream_events = []
-    while not queue.empty():
-        stream_events.append(await queue.get())
-    stream_result = waiter.future.result()
-
-    waiter = mod.RunWaiter()
-    queue = asyncio.Queue()
-    waiter.queues.append(queue)
-    runtime.runs["run-provider-bridge-marker"] = waiter
-    runtime.run_messages["run-provider-bridge-marker"] = {
-        "originalText": "use burble_provider_call to list my last companies in HubSpot",
-        "runtime": {"id": "rt_123"},
-    }
-    bridge_marker_response = await runtime.handle_run_message(
-        FakeRequest(
-            "run-provider-bridge-marker",
-            {"text": ":gear: burble_provider_call..."},
-        )
-    )
-    bridge_marker_events = []
-    while not queue.empty():
-        bridge_marker_events.append(await queue.get())
-    bridge_marker_result = waiter.future.result()
-
-    waiter = mod.RunWaiter()
-    queue = asyncio.Queue()
-    waiter.queues.append(queue)
-    runtime.runs["run-provider-fallback-final"] = waiter
-    runtime.run_messages["run-provider-fallback-final"] = {
-        "originalText": "list my last companies in HubSpot",
-        "runtime": {"id": "rt_123"},
-    }
-    fallback_final_response = await runtime.handle_run_message(
-        FakeRequest(
-            "run-provider-fallback-final",
-            {
-                "text": "Burble here — I can help, and /help shows commands; if you want, I can also build a short profile of you later so I can be more useful."
-            },
-        )
-    )
-    fallback_final_events = []
-    while not queue.empty():
-        fallback_final_events.append(await queue.get())
-    fallback_final_result = waiter.future.result()
-
-    print(json.dumps({
-        "finalResponse": final_response,
-        "events": events,
-        "completedAfterFinal": completed_after_final,
-        "futureDoneAfterFinal": future_done_after_final,
-        "futureResult": future_result,
-        "streamResponse": stream_response,
-        "streamEvents": stream_events,
-        "streamResult": stream_result,
-        "bridgeMarkerResponse": bridge_marker_response,
-        "bridgeMarkerEvents": bridge_marker_events,
-        "bridgeMarkerResult": bridge_marker_result,
-        "fallbackFinalResponse": fallback_final_response,
-        "fallbackFinalEvents": fallback_final_events,
-        "fallbackFinalResult": fallback_final_result,
-        "providerCalls": provider_calls,
-    }))
-
-asyncio.run(main())
-`);
-
-    expect(result).toEqual({
-      finalResponse: { ok: true },
-      events: [
-        {
-          type: "tool_call",
-          toolName: "google_search_drive_files",
-          callId: expect.any(String),
-          input: { limit: 1 }
-        },
-        {
-          type: "tool_result",
-          toolName: "google_search_drive_files",
-          callId: expect.any(String),
-          classification: "user_private",
-          content: [
-            {
-              name: "apelogic-ai-open-prs-last-24h-seen.txt",
-              modifiedTime: "2026-06-21T19:02:13Z"
-            }
-          ]
-        },
-        {
-          type: "message_delta",
-          text:
-            "Last edited Google Drive file: apelogic-ai-open-prs-last-24h-seen.txt\nmodified: 2026-06-21T19:02:13Z"
-        }
-      ],
-      completedAfterFinal: false,
-      futureDoneAfterFinal: true,
-      futureResult: {
-        classification: "user_private",
-        text:
-          "Last edited Google Drive file: apelogic-ai-open-prs-last-24h-seen.txt\nmodified: 2026-06-21T19:02:13Z"
-      },
-      streamResponse: { ok: true },
-      streamEvents: [
-        {
-          type: "tool_call",
-          toolName: "hubspot_search_crm_objects",
-          callId: expect.any(String),
-          input: {
-            objectType: "companies",
-            limit: 10,
-            properties: ["name", "domain", "createdate", "hs_lastmodifieddate"]
-          }
-        },
-        {
-          type: "tool_result",
-          toolName: "hubspot_search_crm_objects",
-          callId: expect.any(String),
-          classification: "user_private",
-          content: [
-            { properties: { name: "ROKA STUDIO", domain: "renski.com" } },
-            { properties: { name: "example.com", domain: "example.com" } }
-          ]
-        },
-        {
-          type: "message_delta",
-          text:
-            "Latest HubSpot companies\n- ROKA STUDIO — renski.com\n- example.com — example.com"
-        }
-      ],
-      streamResult: {
-        classification: "user_private",
-        text:
-          "Latest HubSpot companies\n- ROKA STUDIO — renski.com\n- example.com — example.com"
-      },
-      bridgeMarkerResponse: { ok: true },
-      bridgeMarkerEvents: [
-        {
-          type: "tool_call",
-          toolName: "hubspot_search_crm_objects",
-          callId: expect.any(String),
-          input: {
-            objectType: "companies",
-            limit: 10,
-            properties: ["name", "domain", "createdate", "hs_lastmodifieddate"]
-          }
-        },
-        {
-          type: "tool_result",
-          toolName: "hubspot_search_crm_objects",
-          callId: expect.any(String),
-          classification: "user_private",
-          content: [
-            { properties: { name: "ROKA STUDIO", domain: "renski.com" } },
-            { properties: { name: "example.com", domain: "example.com" } }
-          ]
-        },
-        {
-          type: "message_delta",
-          text:
-            "Latest HubSpot companies\n- ROKA STUDIO — renski.com\n- example.com — example.com"
-        }
-      ],
-      bridgeMarkerResult: {
-        classification: "user_private",
-        text:
-          "Latest HubSpot companies\n- ROKA STUDIO — renski.com\n- example.com — example.com"
-      },
-      fallbackFinalResponse: { ok: true },
-      fallbackFinalEvents: [
-        {
-          type: "tool_call",
-          toolName: "hubspot_search_crm_objects",
-          callId: expect.any(String),
-          input: {
-            objectType: "companies",
-            limit: 10,
-            properties: ["name", "domain", "createdate", "hs_lastmodifieddate"]
-          }
-        },
-        {
-          type: "tool_result",
-          toolName: "hubspot_search_crm_objects",
-          callId: expect.any(String),
-          classification: "user_private",
-          content: [
-            { properties: { name: "ROKA STUDIO", domain: "renski.com" } },
-            { properties: { name: "example.com", domain: "example.com" } }
-          ]
-        },
-        {
-          type: "message_delta",
-          text:
-            "Latest HubSpot companies\n- ROKA STUDIO — renski.com\n- example.com — example.com"
-        }
-      ],
-      fallbackFinalResult: {
-        classification: "user_private",
-        text:
-          "Latest HubSpot companies\n- ROKA STUDIO — renski.com\n- example.com — example.com"
-      },
-      providerCalls: [
-        {
-          url:
-            "http://burble-app:3000/internal/tools/google.searchDriveFiles/execute",
-          headers: {
-            authorization: "Bearer token",
-            "content-type": "application/json",
-            "x-burble-runtime-id": "rt_123"
-          },
-          toolName: "google.searchDriveFiles",
-          json: { input: { limit: 1 } }
-        },
-        {
-          url:
-            "http://burble-app:3000/internal/tools/hubspot.searchCrmObjects/execute",
-          headers: {
-            authorization: "Bearer token",
-            "content-type": "application/json",
-            "x-burble-runtime-id": "rt_123"
-          },
-          toolName: "hubspot.searchCrmObjects",
-          json: {
-            input: {
-              objectType: "companies",
-              limit: 10,
-              properties: ["name", "domain", "createdate", "hs_lastmodifieddate"]
-            }
-          }
-        },
-        {
-          url:
-            "http://burble-app:3000/internal/tools/hubspot.searchCrmObjects/execute",
-          headers: {
-            authorization: "Bearer token",
-            "content-type": "application/json",
-            "x-burble-runtime-id": "rt_123"
-          },
-          toolName: "hubspot.searchCrmObjects",
-          json: {
-            input: {
-              objectType: "companies",
-              limit: 10,
-              properties: ["name", "domain", "createdate", "hs_lastmodifieddate"]
-            }
-          }
-        },
-        {
-          url:
-            "http://burble-app:3000/internal/tools/hubspot.searchCrmObjects/execute",
-          headers: {
-            authorization: "Bearer token",
-            "content-type": "application/json",
-            "x-burble-runtime-id": "rt_123"
-          },
-          toolName: "hubspot.searchCrmObjects",
-          json: {
-            input: {
-              objectType: "companies",
-              limit: 10,
-              properties: ["name", "domain", "createdate", "hs_lastmodifieddate"]
-            }
-          }
-        }
-      ]
-    });
-  });
-
-  test("fails unsafe marker-only Hermes provider callbacks", () => {
-    const result = runHermesEntrypointProbe(`${importEntrypoint}
-import asyncio
-
-mod.web.json_response = lambda body, **kwargs: body
-
-class FakeRequest:
-    def __init__(self, run_id, body):
-        self.match_info = {"run_id": run_id}
-        self._body = body
-
-    async def json(self):
-        return self._body
-
-async def main():
-    runtime = mod.BurbleHermesRuntime()
-    waiter = mod.RunWaiter()
-    queue = asyncio.Queue()
-    waiter.queues.append(queue)
-    runtime.runs["run-provider-progress"] = waiter
-    runtime.run_messages["run-provider-progress"] = {
-        "originalText": "create a GitHub issue",
-        "runtime": {"id": "rt_123"},
-    }
-
-    response = await runtime.handle_run_message(
-        FakeRequest("run-provider-progress", {"text": ":gear: github_create_issue..."})
-    )
-    error_event = await asyncio.wait_for(queue.get(), timeout=1)
-    try:
-        waiter.future.result()
-    except RuntimeError as error:
-        future_error = str(error)
-    else:
-        future_error = ""
-
-    print(json.dumps({
-        "response": response,
-        "errorEvent": error_event,
-        "completed": waiter.completed,
-        "futureDone": waiter.future.done(),
-        "futureError": future_error,
-    }))
-
-asyncio.run(main())
-`);
-
-    expect(result).toEqual({
-      response: { ok: true },
-      errorEvent: {
-        type: "error",
-        message:
-          "Hermes returned a provider tool progress marker (github_create_issue) instead of invoking the Burble provider bridge."
-      },
-      completed: true,
-      futureDone: true,
-      futureError:
-        "Hermes returned a provider tool progress marker (github_create_issue) instead of invoking the Burble provider bridge."
-    });
-  });
-
-  test("times out hanging Hermes provider preview recovery", () => {
-    const result = runHermesEntrypointProbe(`${importEntrypoint}
-import asyncio
-import os
-
-mod.web.json_response = lambda body, **kwargs: body
-
-os.environ["BURBLE_TOOL_GATEWAY_URL"] = "http://burble-app:3000/internal/tools"
-os.environ["BURBLE_INTERNAL_TOKEN"] = "token"
-os.environ["BURBLE_RUNTIME_ID"] = "rt_123"
-os.environ["HERMES_PROVIDER_RECOVERY_TIMEOUT_SECONDS"] = "1"
-
-class HangingProviderResponse:
-    status = 200
-
-    async def __aenter__(self):
-        return self
-
-    async def __aexit__(self, exc_type, exc, tb):
-        return False
-
-    async def json(self):
-        await asyncio.sleep(5)
-        return {"content": []}
-
-    async def text(self):
-        return "{}"
-
-class FakeProviderSession:
-    def __init__(self, *args, **kwargs):
-        pass
-
-    async def __aenter__(self):
-        return self
-
-    async def __aexit__(self, exc_type, exc, tb):
-        return False
-
-    def post(self, url, *, json=None, headers=None):
-        return HangingProviderResponse()
-
-provider_plugin = mod.load_burble_provider_tool_plugin()
-provider_plugin.ClientSession = FakeProviderSession
-provider_plugin.ClientTimeout = lambda total=None: None
-
-class FakeRequest:
-    def __init__(self, run_id, body):
-        self.match_info = {"run_id": run_id}
-        self._body = body
-
-    async def json(self):
-        return self._body
-
-async def main():
-    runtime = mod.BurbleHermesRuntime()
-    waiter = mod.RunWaiter()
-    queue = asyncio.Queue()
-    waiter.queues.append(queue)
-    runtime.runs["run-provider-timeout"] = waiter
-    runtime.run_messages["run-provider-timeout"] = {
-        "originalText": "list my last companies in HubSpot",
-        "runtime": {"id": "rt_123"},
-    }
-
-    response = await runtime.handle_run_message(
-        FakeRequest(
-            "run-provider-timeout",
-            {"type": "status", "text": "Calling HubSpot search crm objects..."},
-        )
-    )
-
-    events = []
-    while not queue.empty():
-        event = await queue.get()
-        if event is not None:
-            events.append(event)
-
-    try:
-        waiter.future.result()
-    except RuntimeError as error:
-        future_error = str(error)
-    else:
-        future_error = ""
-
-    print(json.dumps({
-        "response": response,
-        "events": events,
-        "completed": waiter.completed,
-        "futureError": future_error,
-    }))
-
-asyncio.run(main())
-`);
-
-    expect(result).toEqual({
-      response: { ok: true },
-      events: [
-        {
-          type: "status",
-          text: "Calling HubSpot search crm objects..."
-        },
-        {
-          type: "tool_call",
-          toolName: "hubspot_search_crm_objects",
-          callId: expect.any(String),
-          input: {
-            objectType: "companies",
-            limit: 10,
-            properties: ["name", "domain", "createdate", "hs_lastmodifieddate"]
-          }
-        },
-        {
-          type: "tool_result",
-          toolName: "hubspot_search_crm_objects",
-          callId: expect.any(String),
-          classification: "user_private",
-          content: {
-            error: true,
-            message:
-              "Burble provider tool hubspot.searchCrmObjects timed out after 1s during Hermes recovery."
-          }
-        },
-        {
-          type: "message_delta",
-          text:
-            "Provider tool failed: Burble provider tool hubspot.searchCrmObjects timed out after 1s during Hermes recovery."
-        }
-      ],
-      completed: false,
-      futureError: ""
-    });
-  });
-
-  test("uses the provider bridge timeout budget by default", () => {
-    const result = runHermesEntrypointProbe(`${importEntrypoint}
-import asyncio
-import inspect
-import os
-
-os.environ.pop("HERMES_PROVIDER_RECOVERY_TIMEOUT_SECONDS", None)
-
-observed_timeouts = []
-original_wait_for = mod.asyncio.wait_for
-
-async def fake_wait_for(coro, *, timeout):
-    observed_timeouts.append(timeout)
-    if inspect.iscoroutine(coro):
-        coro.close()
-    raise asyncio.TimeoutError()
-
-async def main():
-    mod.asyncio.wait_for = fake_wait_for
-    try:
-        runtime = mod.BurbleHermesRuntime()
-        waiter = mod.RunWaiter()
-        queue = asyncio.Queue()
-        waiter.queues.append(queue)
-        runtime.runs["run-provider-default-timeout"] = waiter
-        runtime.run_messages["run-provider-default-timeout"] = {
-            "originalText": "list my last edited google drive file",
-            "runtime": {"id": "rt_123"},
-        }
-
-        recovered = await runtime._recover_provider_tool(
-            "run-provider-default-timeout",
-            waiter,
-            "google_search_drive_files",
-            "call_default_timeout",
-            {"limit": 1},
-            emit_tool_call=True,
-        )
-
-        events = []
-        while not queue.empty():
-            event = await queue.get()
-            if event is not None:
-                events.append(event)
-
-        print(json.dumps({
-            "recovered": recovered,
-            "observedTimeouts": observed_timeouts,
-            "events": events,
-        }))
-    finally:
-        mod.asyncio.wait_for = original_wait_for
-
-asyncio.run(main())
-`);
-
-    expect(result).toEqual({
-      recovered: true,
-      observedTimeouts: [120],
-      events: [
-        {
-          type: "tool_call",
-          toolName: "google_search_drive_files",
-          callId: "call_default_timeout",
-          input: { limit: 1 }
-        },
-        {
-          type: "tool_result",
-          toolName: "google_search_drive_files",
-          callId: "call_default_timeout",
-          classification: "user_private",
-          content: {
-            error: true,
-            message:
-              "Burble provider tool google.searchDriveFiles timed out after 120s during Hermes recovery."
-          }
-        },
-        {
-          type: "message_delta",
-          text:
-            "Provider tool failed: Burble provider tool google.searchDriveFiles timed out after 120s during Hermes recovery."
-        }
-      ]
+      providerCalls: [],
     });
   });
 
@@ -1702,13 +1080,6 @@ import os
 mod.web.json_response = lambda body, **kwargs: body
 os.environ["HERMES_PROVIDER_TOOL_CALL_RECOVERY_SECONDS"] = "60"
 
-provider_calls = []
-original_call_provider = mod.call_burble_provider_tool
-
-async def fake_call_provider(tool_name, tool_input):
-    provider_calls.append({"toolName": tool_name, "input": tool_input})
-    raise AssertionError("Hermes runtime must not execute provider tool calls directly")
-
 class FakeRequest:
     def __init__(self, run_id, body):
         self.match_info = {"run_id": run_id}
@@ -1718,44 +1089,39 @@ class FakeRequest:
         return self._body
 
 async def main():
-    mod.call_burble_provider_tool = fake_call_provider
-    try:
-        runtime = mod.BurbleHermesRuntime()
-        waiter = mod.RunWaiter()
-        queue = asyncio.Queue()
-        waiter.queues.append(queue)
-        runtime.runs["run-immediate-provider-call"] = waiter
-        runtime.run_messages["run-immediate-provider-call"] = {
-            "originalText": "list my last edited google drive file",
-            "runtime": {"id": "rt_123"},
-        }
+    runtime = mod.BurbleHermesRuntime()
+    waiter = mod.RunWaiter()
+    queue = asyncio.Queue()
+    waiter.queues.append(queue)
+    runtime.runs["run-immediate-provider-call"] = waiter
+    runtime.run_messages["run-immediate-provider-call"] = {
+        "originalText": "list my last edited google drive file",
+        "runtime": {"id": "rt_123"},
+    }
 
-        response = await runtime.handle_run_message(
-            FakeRequest(
-                "run-immediate-provider-call",
-                {
-                    "type": "tool_call",
-                    "toolName": "google_search_drive_files",
-                    "input": {"limit": 1},
-                },
-            )
+    response = await runtime.handle_run_message(
+        FakeRequest(
+            "run-immediate-provider-call",
+            {
+                "type": "tool_call",
+                "toolName": "google_search_drive_files",
+                "input": {"limit": 1},
+            },
         )
+    )
 
-        await asyncio.sleep(0)
+    await asyncio.sleep(0)
 
-        events = []
-        while not queue.empty():
-            events.append(await queue.get())
+    events = []
+    while not queue.empty():
+        events.append(await queue.get())
 
-        print(json.dumps({
-            "response": response,
-            "futureDone": waiter.future.done(),
-            "providerCalls": provider_calls,
-            "pendingAfterFinal": len(runtime.provider_tool_call_recovery_tasks),
-            "events": events,
-        }))
-    finally:
-        mod.call_burble_provider_tool = original_call_provider
+    print(json.dumps({
+        "response": response,
+        "futureDone": waiter.future.done(),
+        "pendingAfterFinal": len(runtime.provider_tool_call_recovery_tasks),
+        "events": events,
+    }))
 
 asyncio.run(main())
 `);
@@ -1763,16 +1129,15 @@ asyncio.run(main())
     expect(result).toEqual({
       response: { ok: true },
       futureDone: false,
-      providerCalls: [],
       pendingAfterFinal: 1,
       events: [
         {
           type: "tool_call",
           toolName: "google_search_drive_files",
           callId: "hermes-tool-call-google_search_drive_files-1",
-          input: { limit: 1 }
-        }
-      ]
+          input: { limit: 1 },
+        },
+      ],
     });
   });
 
@@ -1784,13 +1149,6 @@ import os
 mod.web.json_response = lambda body, **kwargs: body
 os.environ["HERMES_PROVIDER_TOOL_CALL_RECOVERY_SECONDS"] = "60"
 
-provider_calls = []
-original_call_provider = mod.call_burble_provider_tool
-
-async def fake_call_provider(tool_name, tool_input):
-    provider_calls.append({"toolName": tool_name, "input": tool_input})
-    raise AssertionError("Hermes runtime must not execute provider tool calls directly")
-
 class FakeRequest:
     def __init__(self, run_id, body):
         self.match_info = {"run_id": run_id}
@@ -1800,43 +1158,37 @@ class FakeRequest:
         return self._body
 
 async def main():
-    mod.call_burble_provider_tool = fake_call_provider
-    try:
-        runtime = mod.BurbleHermesRuntime()
-        waiter = mod.RunWaiter()
-        runtime.runs["run-inferred-provider-call"] = waiter
-        runtime.run_messages["run-inferred-provider-call"] = {
-            "originalText": "list my last edited google drive file",
-            "runtime": {"id": "rt_123"},
-        }
+    runtime = mod.BurbleHermesRuntime()
+    waiter = mod.RunWaiter()
+    runtime.runs["run-inferred-provider-call"] = waiter
+    runtime.run_messages["run-inferred-provider-call"] = {
+        "originalText": "list my last edited google drive file",
+        "runtime": {"id": "rt_123"},
+    }
 
-        await runtime.handle_run_message(
-            FakeRequest(
-                "run-inferred-provider-call",
-                {
-                    "type": "tool_call",
-                    "toolName": "google.searchDriveFiles",
-                },
-            )
+    await runtime.handle_run_message(
+        FakeRequest(
+            "run-inferred-provider-call",
+            {
+                "type": "tool_call",
+                "toolName": "google.searchDriveFiles",
+            },
         )
+    )
 
-        await asyncio.sleep(0)
+    await asyncio.sleep(0)
 
-        print(json.dumps({
-            "futureDone": waiter.future.done(),
-            "providerCalls": provider_calls,
-            "pendingAfterFinal": len(runtime.provider_tool_call_recovery_tasks),
-        }))
-    finally:
-        mod.call_burble_provider_tool = original_call_provider
+    print(json.dumps({
+        "futureDone": waiter.future.done(),
+        "pendingAfterFinal": len(runtime.provider_tool_call_recovery_tasks),
+    }))
 
 asyncio.run(main())
 `);
 
     expect(result).toEqual({
       futureDone: false,
-      providerCalls: [],
-      pendingAfterFinal: 1
+      pendingAfterFinal: 1,
     });
   });
 
@@ -1912,18 +1264,18 @@ asyncio.run(main())
           type: "tool_call",
           toolName: "google_search_drive_files",
           callId: "hermes-tool-call-google_search_drive_files-1",
-          input: { limit: 1 }
+          input: { limit: 1 },
         },
         {
           type: "error",
           message:
-            "Hermes started tool (google_search_drive_files) but did not produce a tool result or final answer."
-        }
-      ]
+            "Hermes started tool (google_search_drive_files) but did not produce a tool result or final answer.",
+        },
+      ],
     });
   });
 
-  test("cancels Hermes provider recovery when tool result call id differs", () => {
+  test("cancels Hermes provider watchdog when tool result call id differs", () => {
     const result = runHermesEntrypointProbe(`${importEntrypoint}
 import asyncio
 import os
@@ -1983,7 +1335,6 @@ async def main():
         "resultResponse": result_response,
         "pendingAfterCall": pending_after_call,
         "pendingAfterResult": len(runtime.provider_tool_call_recovery_tasks),
-        "pendingToolMetadataAfterResult": len(runtime.provider_tool_call_recovery_tools),
         "events": events,
     }))
 
@@ -1995,12 +1346,11 @@ asyncio.run(main())
       resultResponse: { ok: true },
       pendingAfterCall: 1,
       pendingAfterResult: 0,
-      pendingToolMetadataAfterResult: 0,
       events: [
         {
           type: "tool_call",
           toolName: "hubspot_search_crm_objects",
-          callId: "hermes-tool-call-hubspot_search_crm_objects-1"
+          callId: "hermes-tool-call-hubspot_search_crm_objects-1",
         },
         {
           type: "tool_result",
@@ -2008,10 +1358,10 @@ asyncio.run(main())
           callId: "hermes-tool-call-hubspot_search_crm_objects-1",
           classification: "user_private",
           content: [
-            { properties: { name: "ROKA STUDIO", domain: "renski.com" } }
-          ]
-        }
-      ]
+            { properties: { name: "ROKA STUDIO", domain: "renski.com" } },
+          ],
+        },
+      ],
     });
   });
 
@@ -2090,7 +1440,7 @@ asyncio.run(main())
           type: "tool_call",
           toolName: "hubspot_search_crm_objects",
           callId: "hermes-tool-call-hubspot_search_crm_objects-1",
-          input: { objectType: "companies", limit: 1 }
+          input: { objectType: "companies", limit: 1 },
         },
         {
           type: "tool_result",
@@ -2098,10 +1448,10 @@ asyncio.run(main())
           callId: "hermes-tool-call-hubspot_search_crm_objects-1",
           classification: "user_private",
           content: [
-            { properties: { name: "ROKA STUDIO", domain: "renski.com" } }
-          ]
-        }
-      ]
+            { properties: { name: "ROKA STUDIO", domain: "renski.com" } },
+          ],
+        },
+      ],
     });
   });
 
@@ -2193,176 +1543,29 @@ asyncio.run(main())
           type: "tool_call",
           toolName: "hubspot_search_crm_objects",
           callId: "hermes-tool-call-hubspot_search_crm_objects-1",
-          input: { objectType: "companies", limit: 1 }
+          input: { objectType: "companies", limit: 1 },
         },
         {
           type: "tool_call",
           toolName: "hubspot_search_crm_objects",
           callId: "hermes-tool-call-hubspot_search_crm_objects-2",
-          input: { objectType: "contacts", limit: 1 }
+          input: { objectType: "contacts", limit: 1 },
         },
         {
           type: "tool_result",
           toolName: "hubspot_search_crm_objects",
           callId: "hermes-tool-call-hubspot_search_crm_objects-1",
           classification: "user_private",
-          content: [{ properties: { name: "ROKA STUDIO" } }]
+          content: [{ properties: { name: "ROKA STUDIO" } }],
         },
         {
           type: "tool_result",
           toolName: "hubspot_search_crm_objects",
           callId: "hermes-tool-call-hubspot_search_crm_objects-2",
           classification: "user_private",
-          content: [{ properties: { firstname: "Leo", lastname: "Belyaev" } }]
-        }
-      ]
-    });
-  });
-
-  test("recovers provider markers returned as Hermes final results", () => {
-    const result = runHermesEntrypointProbe(`${importEntrypoint}
-import asyncio
-import os
-
-os.environ["BURBLE_TOOL_GATEWAY_URL"] = "http://burble-app:3000/internal/tools"
-os.environ["BURBLE_INTERNAL_TOKEN"] = "token"
-os.environ["BURBLE_RUNTIME_ID"] = "rt_123"
-
-provider_calls = []
-
-class FakeProviderResponse:
-    status = 200
-
-    async def __aenter__(self):
-        return self
-
-    async def __aexit__(self, exc_type, exc, tb):
-        return False
-
-    async def json(self):
-        return {
-            "content": [
-                {
-                    "name": "apelogic-ai-open-prs-last-24h-seen.txt",
-                    "modifiedTime": "2026-06-21T19:02:13Z",
-                }
-            ]
-        }
-
-    async def text(self):
-        return json.dumps(await self.json())
-
-class FakeProviderSession:
-    def __init__(self, *args, **kwargs):
-        pass
-
-    async def __aenter__(self):
-        return self
-
-    async def __aexit__(self, exc_type, exc, tb):
-        return False
-
-    def post(self, url, *, json=None, headers=None):
-        provider_calls.append({"url": url, "json": json})
-        return FakeProviderResponse()
-
-provider_plugin = mod.load_burble_provider_tool_plugin()
-provider_plugin.ClientSession = FakeProviderSession
-provider_plugin.ClientTimeout = lambda total=None: None
-
-async def main():
-    runtime = mod.BurbleHermesRuntime()
-    waiter = mod.RunWaiter()
-    queue = asyncio.Queue()
-    waiter.queues.append(queue)
-    message = {
-        "runId": "run-final-provider-marker",
-        "routeId": "dm:D123",
-        "originalText": "list my last edited google drive file",
-        "runtime": {"id": "rt_123"},
-        "text": "list my last edited google drive file",
-    }
-    runtime.runs["run-final-provider-marker"] = waiter
-    runtime.run_messages["run-final-provider-marker"] = message
-
-    async def fake_inject(body):
-        runtime.runs[body["runId"]].future.set_result({
-            "classification": "user_private",
-            "text": ":gear: google_search_drive_files...",
-        })
-
-    runtime._inject_message = fake_inject
-    response = await runtime._execute_run(
-        "run-final-provider-marker",
-        waiter,
-        message,
-    )
-
-    events = []
-    while not queue.empty():
-        event = await queue.get()
-        if event is not None:
-            events.append(event)
-
-    print(json.dumps({
-        "response": response,
-        "events": events,
-        "providerCalls": provider_calls,
-    }))
-
-asyncio.run(main())
-`);
-
-    expect(result).toEqual({
-      response: {
-        classification: "user_private",
-        text:
-          "Last edited Google Drive file: apelogic-ai-open-prs-last-24h-seen.txt\nmodified: 2026-06-21T19:02:13Z"
-      },
-      events: [
-        {
-          type: "status",
-          text: "Burble accepted the turn."
+          content: [{ properties: { firstname: "Leo", lastname: "Belyaev" } }],
         },
-        {
-          type: "tool_call",
-          toolName: "google_search_drive_files",
-          callId: expect.any(String),
-          input: { limit: 1 }
-        },
-        {
-          type: "tool_result",
-          toolName: "google_search_drive_files",
-          callId: expect.any(String),
-          classification: "user_private",
-          content: [
-            {
-              name: "apelogic-ai-open-prs-last-24h-seen.txt",
-              modifiedTime: "2026-06-21T19:02:13Z"
-            }
-          ]
-        },
-        {
-          type: "message_delta",
-          text:
-            "Last edited Google Drive file: apelogic-ai-open-prs-last-24h-seen.txt\nmodified: 2026-06-21T19:02:13Z"
-        },
-        {
-          type: "final",
-          response: {
-            classification: "user_private",
-            text:
-              "Last edited Google Drive file: apelogic-ai-open-prs-last-24h-seen.txt\nmodified: 2026-06-21T19:02:13Z"
-          }
-        }
       ],
-      providerCalls: [
-        {
-          url:
-            "http://burble-app:3000/internal/tools/google.searchDriveFiles/execute",
-          json: { input: { limit: 1 } }
-        }
-      ]
     });
   });
 
@@ -2404,8 +1607,8 @@ asyncio.run(main())
           inputTokens: 1,
           outputTokens: 1,
           totalTokens: 2,
-          usageSource: "contract-probe"
-        }
+          usageSource: "contract-probe",
+        },
       },
       events: [
         { type: "status", text: "Runtime contract probe accepted." },
@@ -2419,11 +1622,11 @@ asyncio.run(main())
               inputTokens: 1,
               outputTokens: 1,
               totalTokens: 2,
-              usageSource: "contract-probe"
-            }
-          }
-        }
-      ]
+              usageSource: "contract-probe",
+            },
+          },
+        },
+      ],
     });
   });
 
@@ -2536,19 +1739,19 @@ asyncio.run(main())
     expect(typed.toolEvents).toContainEqual({
       type: "tool_call",
       toolName: "runtime.conformance.echo",
-      callId: "contract-tool-probe"
+      callId: "contract-tool-probe",
     });
     expect(typed.toolEvents).toContainEqual({
       type: "tool_result",
       toolName: "runtime.conformance.echo",
       callId: "contract-tool-probe",
-      classification: "user_private"
+      classification: "user_private",
     });
     expect(typed.reachabilityEvents).toContainEqual({
       type: "tool_call",
       toolName: "github.getAuthenticatedUser",
       callId: "contract-tool-reachability-0",
-      input: {}
+      input: {},
     });
     expect(typed.reachabilityEvents).toContainEqual({
       type: "tool_result",
@@ -2558,22 +1761,22 @@ asyncio.run(main())
       content: {
         ok: true,
         toolName: "github.getAuthenticatedUser",
-        input: {}
-      }
+        input: {},
+      },
     });
     expect(JSON.stringify(typed.reachabilityEvents)).not.toContain(
-      "github.createIssue"
+      "github.createIssue",
     );
     expect(typed.scheduledEvents).toContainEqual({
       type: "tool_call",
       toolName: "scheduledJob.registerCapability",
-      callId: "contract-scheduled-provider-probe"
+      callId: "contract-scheduled-provider-probe",
     });
     expect(typed.scheduledEvents).toContainEqual({
       type: "tool_result",
       toolName: "scheduledJob.registerCapability",
       callId: "contract-scheduled-provider-probe",
-      classification: "user_private"
+      classification: "user_private",
     });
     expect(typed.scheduledEvents).toContainEqual({
       type: "tool_call",
@@ -2583,9 +1786,9 @@ asyncio.run(main())
         toolName: "runtime.conformance.echo",
         input: {
           jobId: "contract-scheduled-job",
-          message: "scheduled provider bridge probe"
-        }
-      }
+          message: "scheduled provider bridge probe",
+        },
+      },
     });
     expect(typed.scheduledEvents).toContainEqual({
       type: "tool_result",
@@ -2597,22 +1800,22 @@ asyncio.run(main())
         toolName: "runtime.conformance.echo",
         input: {
           jobId: "contract-scheduled-job",
-          message: "scheduled provider bridge probe"
-        }
-      }
+          message: "scheduled provider bridge probe",
+        },
+      },
     });
     expect(typed.attachmentEvents).toContainEqual({
       type: "tool_call",
       toolName: "conversation.getAttachment",
       callId: "contract-attachment-probe",
-      input: { attachmentId: "attcap_contract_probe" }
+      input: { attachmentId: "attcap_contract_probe" },
     });
     expect(typed.attachmentEvents).toContainEqual({
       type: "tool_result",
       toolName: "conversation.getAttachment",
       callId: "contract-attachment-probe",
       classification: "user_private",
-      content: { text: "contract attachment content" }
+      content: { text: "contract attachment content" },
     });
   });
 
@@ -2648,19 +1851,19 @@ asyncio.run(main())
     expect(events).toContainEqual({
       type: "tool_call",
       toolName: "runtime.conformance.echo",
-      callId: "contract-tool-probe"
+      callId: "contract-tool-probe",
     });
     expect(events).toContainEqual({
       type: "tool_result",
       toolName: "runtime.conformance.echo",
       callId: "contract-tool-probe",
-      classification: "user_private"
+      classification: "user_private",
     });
     expect(events.at(-1)).toMatchObject({
       type: "final",
       response: {
-        text: "Runtime contract tool capability response."
-      }
+        text: "Runtime contract tool capability response.",
+      },
     });
   });
 
@@ -2677,7 +1880,9 @@ print(json.dumps({"text": mod.build_hermes_turn_text(payload)}))
 `);
 
     const text = (result as { text: string }).text;
-    expect(text).toContain("Selected Burble tool groups: conversation, hubspot");
+    expect(text).toContain(
+      "Selected Burble tool groups: conversation, hubspot",
+    );
     expect(text).toContain("hubspot_get_authenticated_user");
     expect(text).toContain("hubspot_search_contacts");
     expect(text).toContain("hubspot_search_companies");
@@ -2715,14 +1920,13 @@ print(json.dumps({"text": mod.build_hermes_turn_text(payload)}))
     expect(text).toContain("input schema");
     expect(text).toContain('"replacements":{"optional":true');
     expect(text).toContain(
-      '"placeholderType":{"description":"Google Slides placeholder type such as TITLE, SUBTITLE, BODY, CENTERED_TITLE, or SLIDE_NUMBER."'
+      '"placeholderType":{"description":"Google Slides placeholder type such as TITLE, SUBTITLE, BODY, CENTERED_TITLE, or SLIDE_NUMBER."',
     );
     expect(text).toContain("google_analytics_list_properties");
     expect(text).toContain("google_analytics_get_metadata");
     expect(text).toContain("google_analytics_run_report");
     expect(text).not.toContain("hubspot_search_contacts");
   });
-
 
   test("adds scheduled job context to Hermes turns", () => {
     const result = runHermesEntrypointProbe(`${importEntrypoint}
@@ -2761,7 +1965,7 @@ print(json.dumps({"text": mod.build_hermes_turn_text(payload)}))
     expect(text).toMatch(/currentUtc=\d{4}-\d{2}-\d{2}T/);
     expect(text).toContain("capabilityProfile=scheduled_job");
     expect(text).toContain(
-      "allowedTools=google_append_drive_text_file,google_get_drive_file"
+      "allowedTools=google_append_drive_text_file,google_get_drive_file",
     );
     expect(text).toContain("routeId=convrt_abc123");
     expect(text).toContain("runtimeType=hermes");
@@ -2769,14 +1973,18 @@ print(json.dumps({"text": mod.build_hermes_turn_text(payload)}))
     expect(text).toContain("maxOutputVisibility=public");
     expect(text).toContain("allowPrivateToolDeclassification=false");
     expect(text).toContain(
-      "stateRef provider=google kind=drive_file id=file-123 purpose=dedupe_state"
+      "stateRef provider=google kind=drive_file id=file-123 purpose=dedupe_state",
     );
     expect(text).toContain(
-      "burble_provider_call is exposed through the native Burble toolset"
+      "burble_provider_call is exposed through the native Burble toolset",
     );
-    expect(text).toContain("Use currentUtc for scheduled time-window calculations");
+    expect(text).toContain(
+      "Use currentUtc for scheduled time-window calculations",
+    );
     expect(text).toContain("Do not call shell, terminal, or time tools");
-    expect(text).not.toContain("Do not run provider-backed scheduled jobs with only web enabled");
+    expect(text).not.toContain(
+      "Do not run provider-backed scheduled jobs with only web enabled",
+    );
   });
 
   test("formats deterministic scheduled run time context", () => {
@@ -2793,7 +2001,9 @@ print(json.dumps({"text": mod.format_scheduled_job_context(payload, now_utc="202
     const text = (result as { text: string }).text;
     expect(text).toContain("currentUtc=2026-06-17T19:00:00Z");
     expect(text).toContain("allowedTools=github_search_issues");
-    expect(text).toContain("Use currentUtc for scheduled time-window calculations");
+    expect(text).toContain(
+      "Use currentUtc for scheduled time-window calculations",
+    );
   });
 
   test("adds provider-backed scheduled job repair guidance to scheduler-only Hermes turns", () => {
@@ -2811,29 +2021,33 @@ print(json.dumps({"text": mod.build_hermes_turn_text(payload)}))
     const text = (result as { text: string }).text;
     expect(text).toContain("Provider-backed scheduled job repair:");
     expect(text).toContain("Before manually triggering");
-    expect(text).toContain("Setup-time provider calls are not scheduled provider calls");
+    expect(text).toContain(
+      "Setup-time provider calls are not scheduled provider calls",
+    );
     expect(text).toContain("use ordinary Burble provider calls");
     expect(text).toContain("Never invent placeholder job ids");
     expect(text).toContain("do not request an immediate/manual run");
-    expect(text).toContain("After the native scheduler returns the stable job id");
-    expect(text).toContain("If registration does not return ok, do not trigger");
     expect(text).toContain(
-      'visibilityPolicy {"maxOutputVisibility":"public"}'
+      "After the native scheduler returns the stable job id",
     );
+    expect(text).toContain(
+      "If registration does not return ok, do not trigger",
+    );
+    expect(text).toContain('visibilityPolicy {"maxOutputVisibility":"public"}');
     expect(text).toContain("Slack channel labels are not route ids");
     expect(text).toContain("use the Burble platform delivery target");
     expect(text).toContain("burble:<returned routeId>");
     expect(text).toContain("Never use slack:<channelId>");
-    expect(text).toContain(
-      "do not register a Slack channel destination"
-    );
+    expect(text).toContain("do not register a Slack channel destination");
     expect(text).toContain("explicit declassification approval flow");
     expect(text).toContain("Only after the job prompt has been updated");
     expect(text).toContain("scheduled_job_register_capability");
     expect(text).toContain(
-      "Scheduled provider tool calls must include the returned jobId"
+      "Scheduled provider tool calls must include the returned jobId",
     );
-    expect(text).toContain("must not use direct web/browser access to provider URLs");
+    expect(text).toContain(
+      "must not use direct web/browser access to provider URLs",
+    );
     expect(text).not.toContain("Example Drive scratchpad registration input");
     expect(text).not.toContain("Drive scratchpad");
     expect(text).not.toContain("Google Drive scratchpad");
@@ -2857,7 +2071,7 @@ print(json.dumps({
 
     expect(result).toEqual({
       run: "run-123",
-      conversation: "dm:D123"
+      conversation: "dm:D123",
     });
   });
 
@@ -2887,8 +2101,8 @@ print(json.dumps({
         "streaming:",
         "  enabled: true",
         "  transport: edit",
-        '  cursor: "[[BURBLE_STREAM_CURSOR]]"'
-      ].join("\n")
+        '  cursor: "[[BURBLE_STREAM_CURSOR]]"',
+      ].join("\n"),
     );
     expect(config).not.toContain("\u2063");
     expect(config).not.toContain("▉");
@@ -2961,8 +2175,8 @@ asyncio.run(main())
             type: "message_delta",
             routeId: "route-1",
             text: "Hello",
-            classification: "user_private"
-          }
+            classification: "user_private",
+          },
         },
         {
           url: "http://runtime/internal/hermes/runs/run-1/messages",
@@ -2970,18 +2184,18 @@ asyncio.run(main())
             type: "message_delta",
             routeId: "route-1",
             text: " world",
-            classification: "user_private"
-          }
+            classification: "user_private",
+          },
         },
         {
           url: "http://runtime/internal/hermes/runs/run-1/messages",
           json: {
             routeId: "route-1",
             text: "Hello world",
-            classification: "user_private"
-          }
-        }
-      ]
+            classification: "user_private",
+          },
+        },
+      ],
     });
   });
 
@@ -3004,7 +2218,7 @@ asyncio.run(main())
 
     expect(result).toEqual({
       ok: true,
-      payloads: []
+      payloads: [],
     });
   });
 
@@ -3037,20 +2251,20 @@ asyncio.run(main())
           headers: {
             authorization: "Bearer token",
             "content-type": "application/json",
-            "x-burble-runtime-id": "rt_123"
+            "x-burble-runtime-id": "rt_123",
           },
           json: {
             scheduledJob: {
-              jobId: "job-123"
+              jobId: "job-123",
             },
             input: {
               routeId: "convrt_abc123",
               text: "Scheduled report",
-              jobId: "job-123"
-            }
-          }
-        }
-      ]
+              jobId: "job-123",
+            },
+          },
+        },
+      ],
     });
   });
 
@@ -3088,8 +2302,9 @@ asyncio.run(main())
 
     expect(result).toEqual({
       success: false,
-      error: "Hermes produced tool-call protocol text instead of structured tool calls; refusing to publish untrusted assistant content",
-      payloads: []
+      error:
+        "Hermes produced tool-call protocol text instead of structured tool calls; refusing to publish untrusted assistant content",
+      payloads: [],
     });
   });
 
@@ -3128,7 +2343,9 @@ asyncio.run(main())
     expect(result.success).toBe(true);
     expect(result.error).toBeNull();
     expect(result.payloads).toHaveLength(1);
-    expect(result.payloads[0].json.input.text).toContain("burble_provider_call");
+    expect(result.payloads[0].json.input.text).toContain(
+      "burble_provider_call",
+    );
   });
 
   test("strips Hermes stream cursors even when embedded in cumulative text", () => {
@@ -3178,8 +2395,8 @@ asyncio.run(main())
             type: "message_delta",
             routeId: "route-1",
             text: "I could",
-            classification: "user_private"
-          }
+            classification: "user_private",
+          },
         },
         {
           url: "http://runtime/internal/hermes/runs/run-1/messages",
@@ -3187,18 +2404,18 @@ asyncio.run(main())
             type: "message_delta",
             routeId: "route-1",
             text: "n’t list your \n\nGoogle Analytics properties right now.",
-            classification: "user_private"
-          }
+            classification: "user_private",
+          },
         },
         {
           url: "http://runtime/internal/hermes/runs/run-1/messages",
           json: {
             routeId: "route-1",
             text: "I couldn’t list your \n\nGoogle Analytics properties right now.",
-            classification: "user_private"
-          }
-        }
-      ]
+            classification: "user_private",
+          },
+        },
+      ],
     });
   });
 
@@ -3240,8 +2457,8 @@ asyncio.run(main())
             type: "message_delta",
             routeId: "route-1",
             text: "Hello wrld",
-            classification: "user_private"
-          }
+            classification: "user_private",
+          },
         },
         {
           url: "http://runtime/internal/hermes/runs/run-1/messages",
@@ -3249,18 +2466,18 @@ asyncio.run(main())
             type: "message_replace",
             routeId: "route-1",
             text: "Hello world",
-            classification: "user_private"
-          }
+            classification: "user_private",
+          },
         },
         {
           url: "http://runtime/internal/hermes/runs/run-1/messages",
           json: {
             routeId: "route-1",
             text: "Hello world",
-            classification: "user_private"
-          }
-        }
-      ]
+            classification: "user_private",
+          },
+        },
+      ],
     });
   });
 
@@ -3280,7 +2497,7 @@ print(json.dumps(mod.normalize_usage({
       outputTokens: 23,
       totalTokens: 22588,
       cachedInputTokens: 20864,
-      reasoningTokens: 85
+      reasoningTokens: 85,
     });
   });
 
@@ -3300,7 +2517,7 @@ print(json.dumps(mod._normalize_usage({
       outputTokens: 23,
       totalTokens: 22588,
       cachedInputTokens: 20864,
-      reasoningTokens: 85
+      reasoningTokens: 85,
     });
   });
 
@@ -3320,8 +2537,12 @@ print(json.dumps({
 `);
 
     const config = (result as { config: string }).config;
-    expect(config).toContain("memory:\n  memory_enabled: false\n  user_profile_enabled: false");
-    expect(config).toContain("platform_toolsets:\n  burble:\n    - burble\n    - cronjob\n    - web");
+    expect(config).toContain(
+      "memory:\n  memory_enabled: false\n  user_profile_enabled: false",
+    );
+    expect(config).toContain(
+      "platform_toolsets:\n  burble:\n    - burble\n    - cronjob\n    - web",
+    );
     expect(config).toContain("  disabled_toolsets:");
     expect(config).toContain("    - skills");
     expect(config).toContain("    - memory");
@@ -3404,7 +2625,7 @@ print(json.dumps({
       jira: "jira.listAssignedIssues",
       job: "scheduledJob.registerCapability",
       attachment: "conversation.getAttachment",
-      dotted: "google.searchDriveFiles"
+      dotted: "google.searchDriveFiles",
     });
   });
 
@@ -3451,83 +2672,87 @@ print(json.dumps(list(ctx.tools_by_name.values())))
       expect.objectContaining({
         name: "burble_provider_call",
         toolset: "burble",
-        is_async: true
-      })
+        is_async: true,
+      }),
     );
     expect(result).toContainEqual(
       expect.objectContaining({
         name: "google_get_drive_file",
         toolset: "burble",
-        is_async: true
-      })
+        is_async: true,
+      }),
     );
     expect(result).toContainEqual(
       expect.objectContaining({
         name: "google_append_to_drive_text_file",
         toolset: "burble",
-        is_async: true
-      })
+        is_async: true,
+      }),
     );
     expect(result).toContainEqual(
       expect.objectContaining({
         name: "hubspot_search_contacts",
         toolset: "burble",
-        is_async: true
-      })
+        is_async: true,
+      }),
     );
     expect(result).toContainEqual(
       expect.objectContaining({
         name: "scheduled_job_register_capability",
         toolset: "burble",
-        is_async: true
-      })
+        is_async: true,
+      }),
     );
     const scheduledJobTool = result.find(
       (tool: { name?: string }) =>
-        tool.name === "scheduled_job_register_capability"
+        tool.name === "scheduled_job_register_capability",
     );
     expect(
-      scheduledJobTool?.schema?.parameters?.properties?.destination?.description
+      scheduledJobTool?.schema?.parameters?.properties?.destination
+        ?.description,
     ).toContain("/agent grant here");
     expect(
-      scheduledJobTool?.schema?.parameters?.properties?.destination?.description
+      scheduledJobTool?.schema?.parameters?.properties?.destination
+        ?.description,
     ).toContain("instead of using them as route ids");
     expect(
-      scheduledJobTool?.schema?.parameters?.properties?.visibilityPolicy?.description
+      scheduledJobTool?.schema?.parameters?.properties?.visibilityPolicy
+        ?.description,
     ).toContain('"maxOutputVisibility":"public"');
     expect(
-      scheduledJobTool?.schema?.parameters?.properties?.visibilityPolicy?.description
+      scheduledJobTool?.schema?.parameters?.properties?.visibilityPolicy
+        ?.description,
     ).toContain("Do not set allowPrivateToolDeclassification automatically");
     expect(
       scheduledJobTool?.schema?.parameters?.properties?.visibilityPolicy
-        ?.properties?.maxOutputVisibility?.enum
+        ?.properties?.maxOutputVisibility?.enum,
     ).toEqual(["public", "user_private", "restricted"]);
     expect(
       scheduledJobTool?.schema?.parameters?.properties?.visibilityPolicy
-        ?.properties?.allowPrivateToolDeclassification?.type
+        ?.properties?.allowPrivateToolDeclassification?.type,
     ).toBe("boolean");
     expect(
       scheduledJobTool?.schema?.parameters?.properties?.visibilityPolicy
-        ?.additionalProperties
+        ?.additionalProperties,
     ).toBe(false);
     expect(result).toContainEqual(
       expect.objectContaining({
         name: "conversation_get_attachment",
         toolset: "burble",
-        is_async: true
-      })
+        is_async: true,
+      }),
     );
     expect(result).not.toContainEqual(
       expect.objectContaining({
         name: "google_get_drive_file",
-        toolset: "web"
-      })
+        toolset: "web",
+      }),
     );
     expect(result).not.toContainEqual(
       expect.objectContaining({
         name: "atlassian_list_mcp_tools",
-        toolset: "web"
-      })
+        toolset: "web",
+      }),
     );
     const tools = result as Array<{
       name?: string;
@@ -3540,26 +2765,25 @@ print(json.dumps(list(ctx.tools_by_name.values())))
       };
     }>;
     const registrationTool = tools.find(
-      (tool: { name?: string }) => tool.name === "scheduled_job_register_capability"
+      (tool: { name?: string }) =>
+        tool.name === "scheduled_job_register_capability",
     );
-    expect(registrationTool?.schema?.parameters?.required).toEqual([
-      "jobId"
-    ]);
+    expect(registrationTool?.schema?.parameters?.required).toEqual(["jobId"]);
     expect(registrationTool?.schema?.parameters?.anyOf).toEqual([
       { required: ["requiredTools"] },
       { required: ["allowedTools"] },
       { required: ["required_tools"] },
       { required: ["allowed_tools"] },
-      { required: ["tools"] }
+      { required: ["tools"] },
     ]);
     expect(
-      registrationTool?.schema?.parameters?.properties?.requiredTools?.items
+      registrationTool?.schema?.parameters?.properties?.requiredTools?.items,
     ).toEqual({ type: "string" });
     expect(
-      registrationTool?.schema?.parameters?.properties?.allowedTools?.items
+      registrationTool?.schema?.parameters?.properties?.allowedTools?.items,
     ).toEqual({ type: "string" });
     expect(
-      registrationTool?.schema?.parameters?.properties?.tools?.items
+      registrationTool?.schema?.parameters?.properties?.tools?.items,
     ).toEqual({ type: "string" });
   });
 
@@ -3624,19 +2848,19 @@ asyncio.run(main())
           json: {
             input: {
               fileId: "file-123",
-              jobId: "job-123"
+              jobId: "job-123",
             },
             scheduledJob: {
-              jobId: "job-123"
-            }
+              jobId: "job-123",
+            },
           },
           headers: {
             authorization: "Bearer runtime-secret",
             "content-type": "application/json",
-            "x-burble-runtime-id": "rt_u123"
-          }
-        }
-      ]
+            "x-burble-runtime-id": "rt_u123",
+          },
+        },
+      ],
     });
   });
 
@@ -3738,16 +2962,18 @@ asyncio.run(main())
     expect(typed.result).toMatchObject({
       ok: true,
       scheduledJob: {
-        nativeToolsets: ["burble"]
-      }
+        nativeToolsets: ["burble"],
+      },
     });
     expect(typed.calls[0]?.url).toBe(
-      "http://burble-app:3000/internal/tools/scheduledJob.registerCapability/execute"
+      "http://burble-app:3000/internal/tools/scheduledJob.registerCapability/execute",
     );
-    expect(typed.jobs.find((job) => job.id === "9f32de992914")?.enabled_toolsets).toEqual([
-      "burble"
-    ]);
-    expect(typed.jobs.find((job) => job.id === "plain")?.enabled_toolsets).toBeNull();
+    expect(
+      typed.jobs.find((job) => job.id === "9f32de992914")?.enabled_toolsets,
+    ).toEqual(["burble"]);
+    expect(
+      typed.jobs.find((job) => job.id === "plain")?.enabled_toolsets,
+    ).toBeNull();
   });
 
   test("unwraps nested Hermes provider bridge envelopes", () => {
@@ -3808,19 +3034,19 @@ asyncio.run(main())
           json: {
             input: {
               fileId: "file-123",
-              jobId: "job-123"
+              jobId: "job-123",
             },
             scheduledJob: {
-              jobId: "job-123"
-            }
+              jobId: "job-123",
+            },
           },
           headers: {
             authorization: "Bearer runtime-secret",
             "content-type": "application/json",
-            "x-burble-runtime-id": "rt_u123"
-          }
-        }
-      ]
+            "x-burble-runtime-id": "rt_u123",
+          },
+        },
+      ],
     });
   });
 
@@ -3848,7 +3074,7 @@ asyncio.run(main())
 
     expect(result).toEqual({
       error: true,
-      message: "burble_provider_call requires toolName"
+      message: "burble_provider_call requires toolName",
     });
   });
 
@@ -3905,7 +3131,7 @@ print(json.dumps({
     expect(result.pr_monitor).not.toContain("burble_provider_call");
     expect(result.registered).toContainEqual({
       name: "burble_provider_call",
-      toolset: "burble"
+      toolset: "burble",
     });
   });
 
@@ -3975,9 +3201,9 @@ asyncio.run(main())
           url: "https://example.com/news",
           title: "AI News",
           content: expect.stringContaining("Public update"),
-          error: null
-        })
-      ]
+          error: null,
+        }),
+      ],
     });
   });
 
@@ -4036,9 +3262,9 @@ asyncio.run(main())
         expect.objectContaining({
           url: "http://metadata.attacker.test/latest",
           content: "",
-          error: "Blocked: URL targets a private or internal network address"
-        })
-      ]
+          error: "Blocked: URL targets a private or internal network address",
+        }),
+      ],
     });
   });
 
@@ -4086,7 +3312,8 @@ asyncio.run(main())
 `);
 
     expect(result).toEqual({
-      error: "configured web_extract backend failed: backend policy rejected URL"
+      error:
+        "configured web_extract backend failed: backend policy rejected URL",
     });
   });
 });
