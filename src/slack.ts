@@ -84,6 +84,7 @@ import type {
 } from "./db";
 import { handleConversation } from "./conversation/orchestrator";
 import { normalizeMentionText } from "./conversation/normalize";
+import { createSchedulerControlPlane } from "./scheduler/control-plane";
 import type {
   ConversationAttachment,
   ConversationRequest,
@@ -356,6 +357,7 @@ export function createSlackRuntime(
     searchSlackUsers,
     searchSlackMessages
   });
+  const schedulerControl = createSchedulerControlPlane(store);
   const runtimeFactory = createManagedRuntimeFactory(
     config,
     store,
@@ -876,6 +878,7 @@ export function createSlackRuntime(
             jira: jiraTools,
             slack: slackTools
           },
+          schedulerControl,
           agentMode: config.agentMode,
           agentFastTrack: config.agentFastTrack,
           observability,
@@ -1062,6 +1065,7 @@ export function createSlackRuntime(
             jira: jiraTools,
             slack: slackTools
           },
+          schedulerControl,
           agentMode: config.agentMode,
           agentFastTrack: config.agentFastTrack,
           observability,

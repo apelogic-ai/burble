@@ -401,9 +401,9 @@ function classifySchedulerControlIntent(text: string): SchedulerControlIntent {
     new RegExp(`\\b(?:do we have|are there)\\b.*\\b${jobNoun}\\b`).test(
       normalized
     ) ||
-    new RegExp(`\\b(?:list|show)\\b\\s+(?:my|our|the|all)?\\s*${jobNoun}\\b`).test(
-      normalized
-    ) ||
+    new RegExp(
+      `\\b(?:list|show)\\b\\s+(?:(?:my|our|the|all|current|configured|existing)\\s+)*${jobNoun}\\b`
+    ).test(normalized) ||
     new RegExp(`\\bwhat\\b.*\\b${jobNoun}\\b.*\\bconfigured\\b`).test(
       normalized
     )
