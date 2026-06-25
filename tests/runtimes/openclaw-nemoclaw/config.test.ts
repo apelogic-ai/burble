@@ -68,6 +68,8 @@ describe("readRuntimeConfig", () => {
       openClawRawStreamDebug: true,
       openClawGatewayPort: 18790,
       openClawGatewayBind: "loopback",
+      openClawGatewayRetryBaseMs: 1500,
+      openClawGatewayRetryMaxMs: 10000,
       openClawGatewayToken: "configured-gateway-token",
       runtimeHeartbeatIntervalMs: 120000,
       llmModel: "ollama:qwen3-coder:30b-cloud",
