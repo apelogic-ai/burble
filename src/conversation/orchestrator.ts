@@ -351,66 +351,171 @@ type SchedulerControlIntent =
   | null;
 
 function classifySchedulerControlIntent(text: string): SchedulerControlIntent {
-  const normalized = text.toLowerCase().replace(/\s+/g, " ").trim();
-  const jobNoun = "(?:cron\\s*jobs?|cronjobs?|scheduled\\s+jobs?|jobs?)";
-  if (
-    /\b(?:did|has)\b.*\b(?:manual\s+)?(?:cron|job|scheduled\s+job)\b.*\b(?:run|execution)\b.*\b(?:finish|complete|succeed|fail|status)\b/.test(
-      normalized
-    ) ||
-    /\b(?:latest|last|recent)\b.*\b(?:cron|job|scheduled\s+job)\b.*\b(?:run|execution|status)\b/.test(
-      normalized
-    ) ||
-    /\b(?:status|state)\b.*\b(?:cron|job|scheduled\s+job)\b.*\b(?:run|execution)?\b/.test(
-      normalized
-    )
-  ) {
-    return "latest_run_status";
-  }
-  if (
-    /\b(?:manually\s+run|manual\s+run|trigger|start)\b.*\b(?:cron|job|scheduled\s+job)\b/.test(
-      normalized
-    ) ||
-    /\brun\b.*\b(?:existing|that|this|the|our|my)\b.*\b(?:cron|job|scheduled\s+job)\b/.test(
-      normalized
-    )
-  ) {
-    return "trigger_job";
-  }
-  if (
-    /\b(?:pause|disable|stop)\b.*\b(?:cron|job|scheduled\s+job)\b/.test(
-      normalized
-    )
-  ) {
-    return "pause_job";
-  }
-  if (
-    /\b(?:resume|enable|unpause)\b.*\b(?:cron|job|scheduled\s+job)\b/.test(
-      normalized
-    )
-  ) {
-    return "resume_job";
-  }
-  if (
-    /\b(?:delete|remove|cancel)\b.*\b(?:cron|job|scheduled\s+job)\b/.test(
-      normalized
-    )
-  ) {
-    return "delete_job";
-  }
-  if (
-    new RegExp(`\\b(?:do we have|are there)\\b.*\\b${jobNoun}\\b`).test(
-      normalized
-    ) ||
-    new RegExp(
-      `\\b(?:list|show)\\b\\s+(?:(?:my|our|the|all|current|configured|existing)\\s+)*${jobNoun}\\b`
-    ).test(normalized) ||
-    new RegExp(`\\bwhat\\b.*\\b${jobNoun}\\b.*\\bconfigured\\b`).test(
-      normalized
-    )
-  ) {
+  const tokens = tokenizeSchedulerControlText(text);
+
+  if (isSchedulerListIntent(tokens) && hasSchedulerListReference(tokens)) {
     return "list_jobs";
   }
+  if (!hasSchedulerActionReference(tokens)) {
+    return null;
+  }
+  if (isSchedulerRunStatusIntent(tokens)) {
+    return "latest_run_status";
+  }
+  if (hasAnyToken(tokens, ["pause", "disable", "stop"])) {
+    return "pause_job";
+  }
+  if (hasAnyToken(tokens, ["resume", "enable", "unpause"])) {
+    return "resume_job";
+  }
+  if (hasAnyToken(tokens, ["delete", "remove", "cancel"])) {
+    return "delete_job";
+  }
+  if (isSchedulerTriggerIntent(tokens)) {
+    return "trigger_job";
+  }
   return null;
+}
+
+function tokenizeSchedulerControlText(text: string): string[] {
+  return text
+    .toLowerCase()
+    .replace(/cronjobs?/g, "cron jobs")
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+}
+
+function hasSchedulerListReference(tokens: string[]): boolean {
+  if (hasAnyToken(tokens, ["cron"])) {
+    return true;
+  }
+  if (hasScheduledJobReference(tokens)) {
+    return true;
+  }
+  return (
+    tokens.includes("jobs") &&
+    hasAnyToken(tokens, ["current", "configured", "existing"])
+  );
+}
+
+function hasSchedulerActionReference(tokens: string[]): boolean {
+  if (hasSchedulerListReference(tokens)) {
+    return true;
+  }
+  return (
+    tokens.includes("job") &&
+    hasAnyToken(tokens, [
+      "this",
+      "that",
+      "existing",
+      "current",
+      "manual",
+      "manually",
+      "our",
+      "my",
+      "the"
+    ])
+  );
+}
+
+function hasScheduledJobReference(tokens: string[]): boolean {
+  return (
+    hasAdjacentTokens(tokens, "scheduled", "job") ||
+    hasAdjacentTokens(tokens, "scheduled", "jobs")
+  );
+}
+
+function isSchedulerListIntent(tokens: string[]): boolean {
+  if (hasAnyToken(tokens, ["list", "show", "display", "view"])) {
+    return true;
+  }
+  if (
+    hasAnyToken(tokens, ["configured", "existing", "current"]) &&
+    hasAnyToken(tokens, ["what", "which", "any", "have", "there"])
+  ) {
+    return true;
+  }
+  return (
+    hasSequence(tokens, ["set", "up"]) && hasAnyToken(tokens, ["what", "which"])
+  );
+}
+
+function isSchedulerRunStatusIntent(tokens: string[]): boolean {
+  if (hasAnyToken(tokens, ["status", "state"])) {
+    return true;
+  }
+  return (
+    hasAnyToken(tokens, [
+      "finish",
+      "finished",
+      "complete",
+      "completed",
+      "succeed",
+      "succeeded",
+      "fail",
+      "failed"
+    ]) &&
+    hasAnyToken(tokens, ["run", "execution", "manual", "manually"])
+  );
+}
+
+function isSchedulerTriggerIntent(tokens: string[]): boolean {
+  if (!hasAnyToken(tokens, ["run", "trigger", "start"])) {
+    return false;
+  }
+  if (looksLikeSchedulerCreationRequest(tokens)) {
+    return false;
+  }
+  return (
+    hasAnyToken(tokens, [
+      "manual",
+      "manually",
+      "now",
+      "this",
+      "that",
+      "existing",
+      "current",
+      "our",
+      "my",
+      "the"
+    ]) ||
+    hasAnyToken(tokens, ["trigger"])
+  );
+}
+
+function looksLikeSchedulerCreationRequest(tokens: string[]): boolean {
+  return (
+    hasAnyToken(tokens, ["create", "make", "schedule", "add"]) ||
+    hasAnyToken(tokens, ["every", "hourly", "daily", "weekly"]) ||
+    hasSequence(tokens, ["set", "up"])
+  );
+}
+
+function hasAnyToken(tokens: string[], candidates: string[]): boolean {
+  return candidates.some((candidate) => tokens.includes(candidate));
+}
+
+function hasAdjacentTokens(
+  tokens: string[],
+  first: string,
+  second: string
+): boolean {
+  return tokens.some(
+    (token, index) => token === first && tokens[index + 1] === second
+  );
+}
+
+function hasSequence(tokens: string[], sequence: string[]): boolean {
+  return tokens.some((token, index) => {
+    if (token !== sequence[0]) {
+      return false;
+    }
+    return sequence.every(
+      (sequenceToken, offset) => tokens[index + offset] === sequenceToken
+    );
+  });
 }
 
 function formatScheduledJobList(

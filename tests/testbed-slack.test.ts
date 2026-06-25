@@ -157,7 +157,7 @@ describe("local Slack testbed", () => {
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({
-            text: "list current cron jobs",
+            text: "show me current cron jobs",
             user: testbedUserId
           })
         }

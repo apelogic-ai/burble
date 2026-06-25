@@ -875,94 +875,142 @@ describe("handleConversation", () => {
   });
 
   test("lists scheduled jobs without invoking the LLM runner", async () => {
-    let called = false;
-    const response = await handleConversation(
-      {
-        ...baseRequest,
-        text: "do we have any cron jobs configured?"
-      },
-      createDeps({
-        agentMode: "llm",
-        schedulerControl: {
-          listJobs: () => [
-            {
-              jobId: "ai-news-hourly",
-              title: "Hourly AI news summary",
-              prompt: "look for fresh AI-related news and post a short summary",
-              schedule: {
-                kind: "interval",
-                every: { hours: 1 }
-              },
-              state: "scheduled",
-              runtimeType: "hermes",
-              requiredTools: ["google_search_drive_files"],
-              routeId: "convrt_123",
-              updatedAt: "2026-06-24T12:00:00.000Z"
-            }
-          ]
-        },
-        agentRunner: stubAgentRunner(() => {
-          called = true;
-          return {
-            classification: "public",
-            text: "unexpected"
-          };
-        })
-      })
-    );
+    const texts = [
+      "do we have any cron jobs configured?",
+      "show me current cron jobs",
+      "please show me the configured scheduled jobs",
+      "list our existing cronjobs",
+      "what cron jobs are set up?"
+    ];
 
-    expect(called).toBe(false);
-    expect(response.visibility).toBe("ephemeral");
-    expect(response.classification).toBe("user_private");
-    expect(response.text).toContain("Scheduled jobs");
-    expect(response.text).toContain("ai-news-hourly");
-    expect(response.text).toContain("Hourly AI news summary");
-    expect(response.text).toContain("state: scheduled");
-    expect(response.text).toContain("google_search_drive_files");
+    for (const text of texts) {
+      let called = false;
+      const response = await handleConversation(
+        {
+          ...baseRequest,
+          text
+        },
+        createDeps({
+          agentMode: "llm",
+          schedulerControl: {
+            listJobs: () => [
+              {
+                jobId: "ai-news-hourly",
+                title: "Hourly AI news summary",
+                prompt:
+                  "look for fresh AI-related news and post a short summary",
+                schedule: {
+                  kind: "interval",
+                  every: { hours: 1 }
+                },
+                state: "scheduled",
+                runtimeType: "hermes",
+                requiredTools: ["google_search_drive_files"],
+                routeId: "convrt_123",
+                updatedAt: "2026-06-24T12:00:00.000Z"
+              }
+            ]
+          },
+          agentRunner: stubAgentRunner(() => {
+            called = true;
+            return {
+              classification: "public",
+              text: "unexpected"
+            };
+          })
+        })
+      );
+
+      expect(called).toBe(false);
+      expect(response.visibility).toBe("ephemeral");
+      expect(response.classification).toBe("user_private");
+      expect(response.text).toContain("Scheduled jobs");
+      expect(response.text).toContain("ai-news-hourly");
+      expect(response.text).toContain("Hourly AI news summary");
+      expect(response.text).toContain("state: scheduled");
+      expect(response.text).toContain("google_search_drive_files");
+    }
   });
 
   test("manually triggers the only scheduled job without invoking the LLM runner", async () => {
-    let called = false;
+    const texts = [
+      "let's manually run our existing cron job",
+      "run this job manually now",
+      "please trigger the current scheduled job",
+      "start our cronjob"
+    ];
+
+    for (const text of texts) {
+      let called = false;
+      const response = await handleConversation(
+        {
+          ...baseRequest,
+          text
+        },
+        createDeps({
+          agentMode: "llm",
+          schedulerControl: {
+            listJobs: () => [],
+            triggerJob: () => ({
+              ok: true,
+              jobId: "ai-news-hourly",
+              run: {
+                runId: "jobrun-manual-1",
+                jobId: "ai-news-hourly",
+                workspaceId: "T123",
+                slackUserId: "U123",
+                triggerSource: "manual",
+                status: "queued",
+                failureReason: null,
+                createdAt: "2026-06-24T12:05:00.000Z",
+                updatedAt: "2026-06-24T12:05:00.000Z",
+                startedAt: null,
+                finishedAt: null
+              }
+            })
+          },
+          agentRunner: stubAgentRunner(() => {
+            called = true;
+            return {
+              classification: "public",
+              text: "unexpected"
+            };
+          })
+        })
+      );
+
+      expect(called).toBe(false);
+      expect(response.text).toContain("Triggered scheduled job ai-news-hourly");
+      expect(response.text).toContain("jobrun-manual-1");
+    }
+  });
+
+  test("does not treat generic job wording as scheduler control", async () => {
+    let calledWith = "";
     const response = await handleConversation(
       {
         ...baseRequest,
-        text: "let's manually run our existing cron job"
+        text: "show me my job title"
       },
       createDeps({
         agentMode: "llm",
         schedulerControl: {
-          listJobs: () => [],
-          triggerJob: () => ({
-            ok: true,
-            jobId: "ai-news-hourly",
-            run: {
-              runId: "jobrun-manual-1",
-              jobId: "ai-news-hourly",
-              workspaceId: "T123",
-              slackUserId: "U123",
-              triggerSource: "manual",
-              status: "queued",
-              failureReason: null,
-              createdAt: "2026-06-24T12:05:00.000Z",
-              updatedAt: "2026-06-24T12:05:00.000Z",
-              startedAt: null,
-              finishedAt: null
-            }
-          })
+          listJobs: () => {
+            throw new Error("unexpected scheduler control call");
+          }
         },
-        agentRunner: stubAgentRunner(() => {
-          called = true;
+        agentRunner: stubAgentRunner((input) => {
+          calledWith = input.text;
           return {
             classification: "public",
-            text: "unexpected"
+            text: "Agent handled generic job wording."
           };
         })
       })
     );
 
-    expect(called).toBe(false);
-    expect(response.text).toContain("Triggered scheduled job ai-news-hourly");
-    expect(response.text).toContain("jobrun-manual-1");
+    expect(calledWith).toBe("show me my job title");
+    expect(response.text).toBe("Agent handled generic job wording.");
   });
 
   test("reports latest scheduled run status without invoking the LLM runner", async () => {
