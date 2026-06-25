@@ -3,8 +3,9 @@ import type {
   AgentJobRunRecord,
   AgentRuntimeEngine,
   ScheduledJobRecord,
-  TokenStore
+  TokenStore,
 } from "../db";
+import { inferAllowedToolsForScheduledJob } from "./job-capabilities";
 
 export type SchedulerJobSummary = {
   jobId: string;
@@ -23,18 +24,18 @@ export type SchedulerControlPlane = {
     workspaceId: string;
     slackUserId: string;
   }): Promise<SchedulerJobSummary[]> | SchedulerJobSummary[];
-  createJob?(input: SchedulerCreateJobInput):
-    | Promise<SchedulerCreateJobResult>
-    | SchedulerCreateJobResult;
-  pauseJob?(input: SchedulerJobMutationInput):
-    | Promise<SchedulerJobMutationResult>
-    | SchedulerJobMutationResult;
-  resumeJob?(input: SchedulerJobMutationInput):
-    | Promise<SchedulerJobMutationResult>
-    | SchedulerJobMutationResult;
-  deleteJob?(input: SchedulerJobMutationInput):
-    | Promise<SchedulerJobDeleteResult>
-    | SchedulerJobDeleteResult;
+  createJob?(
+    input: SchedulerCreateJobInput,
+  ): Promise<SchedulerCreateJobResult> | SchedulerCreateJobResult;
+  pauseJob?(
+    input: SchedulerJobMutationInput,
+  ): Promise<SchedulerJobMutationResult> | SchedulerJobMutationResult;
+  resumeJob?(
+    input: SchedulerJobMutationInput,
+  ): Promise<SchedulerJobMutationResult> | SchedulerJobMutationResult;
+  deleteJob?(
+    input: SchedulerJobMutationInput,
+  ): Promise<SchedulerJobDeleteResult> | SchedulerJobDeleteResult;
   triggerJob?(input: {
     workspaceId: string;
     slackUserId: string;
@@ -53,11 +54,11 @@ export type SchedulerTriggerResult =
       jobId: string;
       run: AgentJobRunRecord;
     }
-    | {
-        ok: false;
-        reason: "no_jobs" | "not_found" | "ambiguous";
-        jobs: SchedulerJobSummary[];
-      };
+  | {
+      ok: false;
+      reason: "no_jobs" | "not_found" | "ambiguous";
+      jobs: SchedulerJobSummary[];
+    };
 
 export type SchedulerCreateJobInput = {
   workspaceId: string;
@@ -125,9 +126,10 @@ export function createSchedulerControlPlane(
     | "upsertScheduledJob"
     | "deleteScheduledJob"
     | "createAgentJobRun"
+    | "upsertAgentJobCapability"
     | "getLatestAgentJobRunForPrincipal"
   >,
-  options: SchedulerControlPlaneOptions = {}
+  options: SchedulerControlPlaneOptions = {},
 ): SchedulerControlPlane {
   const now = options.now ?? (() => new Date());
   const newJobId = options.newJobId ?? (() => `job_${randomUUID()}`);
@@ -144,20 +146,24 @@ export function createSchedulerControlPlane(
   return {
     listJobs,
     createJob(input) {
+      const jobId = newJobId();
+      const timestamp = now();
+      const job = store.upsertScheduledJob({
+        jobId,
+        workspaceId: input.workspaceId,
+        slackUserId: input.slackUserId,
+        title: input.title,
+        prompt: input.prompt,
+        schedule: input.schedule,
+        routeId: input.routeId,
+        runtimeType: input.runtimeType,
+        state: "scheduled",
+        now: timestamp,
+      });
+      ensureScheduledJobCapability(store, job, timestamp);
       return {
         ok: true,
-        job: store.upsertScheduledJob({
-          jobId: newJobId(),
-          workspaceId: input.workspaceId,
-          slackUserId: input.slackUserId,
-          title: input.title,
-          prompt: input.prompt,
-          schedule: input.schedule,
-          routeId: input.routeId,
-          runtimeType: input.runtimeType,
-          state: "scheduled",
-          now: now()
-        })
+        job,
       };
     },
     pauseJob(input) {
@@ -183,6 +189,13 @@ export function createSchedulerControlPlane(
       if (!job.ok) {
         return job;
       }
+      const timestamp = now();
+      const record = store
+        .listScheduledJobsForPrincipal(input.workspaceId, input.slackUserId)
+        .find((candidate) => candidate.jobId === job.job.jobId);
+      if (record) {
+        ensureScheduledJobCapability(store, record, timestamp);
+      }
 
       return {
         ok: true,
@@ -194,19 +207,38 @@ export function createSchedulerControlPlane(
           slackUserId: input.slackUserId,
           triggerSource: "manual",
           status: "queued",
-          now: now()
-        })
+          now: timestamp,
+        }),
       };
     },
     getLatestRunStatus(input) {
       const run = store.getLatestAgentJobRunForPrincipal(
         input.workspaceId,
         input.slackUserId,
-        input.jobId
+        input.jobId,
       );
       return run ? { ok: true, run } : { ok: false, reason: "no_runs" };
-    }
+    },
   };
+}
+
+function ensureScheduledJobCapability(
+  store: Pick<TokenStore, "upsertAgentJobCapability">,
+  job: ScheduledJobRecord,
+  now: Date,
+): void {
+  store.upsertAgentJobCapability({
+    jobId: job.jobId,
+    workspaceId: job.workspaceId,
+    slackUserId: job.slackUserId,
+    requiredTools: inferAllowedToolsForScheduledJob(job),
+    routeId: job.routeId,
+    runtimeType: job.runtimeType,
+    capabilityProfile: "scheduled_job",
+    stateRefs: [],
+    visibilityPolicy: {},
+    now,
+  });
 }
 
 function updateScheduledJobState(
@@ -216,11 +248,11 @@ function updateScheduledJobState(
   >,
   input: SchedulerJobMutationInput,
   state: "scheduled" | "paused",
-  now: Date
+  now: Date,
 ): SchedulerJobMutationResult {
   const records = store.listScheduledJobsForPrincipal(
     input.workspaceId,
-    input.slackUserId
+    input.slackUserId,
   );
   const jobs = records.map(summarizeScheduledJob);
   const selection = selectSchedulerJob(jobs, input.jobId);
@@ -243,12 +275,14 @@ function updateScheduledJobState(
       routeId: record.routeId,
       runtimeType: record.runtimeType,
       state,
-      now
-    })
+      now,
+    }),
   };
 }
 
-function summarizeScheduledJob(record: ScheduledJobRecord): SchedulerJobSummary {
+function summarizeScheduledJob(
+  record: ScheduledJobRecord,
+): SchedulerJobSummary {
   return {
     jobId: record.jobId,
     title: record.title,
@@ -258,13 +292,13 @@ function summarizeScheduledJob(record: ScheduledJobRecord): SchedulerJobSummary 
     runtimeType: record.runtimeType,
     requiredTools: [],
     routeId: record.routeId,
-    updatedAt: record.updatedAt
+    updatedAt: record.updatedAt,
   };
 }
 
 function selectSchedulerJob(
   jobs: SchedulerJobSummary[],
-  jobId?: string | null
+  jobId?: string | null,
 ):
   | { ok: true; job: SchedulerJobSummary }
   | {
@@ -275,9 +309,7 @@ function selectSchedulerJob(
   const normalizedJobId = jobId?.trim();
   if (normalizedJobId) {
     const job = jobs.find((candidate) => candidate.jobId === normalizedJobId);
-    return job
-      ? { ok: true, job }
-      : { ok: false, reason: "not_found", jobs };
+    return job ? { ok: true, job } : { ok: false, reason: "not_found", jobs };
   }
   if (jobs.length === 0) {
     return { ok: false, reason: "no_jobs", jobs };

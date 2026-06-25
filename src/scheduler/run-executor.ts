@@ -5,6 +5,7 @@ import {
   buildScheduledJobContext,
   type ScheduledJobContext,
 } from "../agent/scheduled-job-context";
+import { inferAllowedToolsForScheduledJob } from "./job-capabilities";
 import type {
   AgentJobRunRecord,
   AgentRuntimeEngine,
@@ -160,44 +161,6 @@ function scheduledJobContextForRun(
     stateRefs: [],
     visibilityPolicy: {},
   };
-}
-
-function inferAllowedToolsForScheduledJob(
-  job: ScheduledJobRecord,
-  toolGroups: string[],
-): string[] {
-  const tools = new Set<string>();
-  const groups = new Set(toolGroups);
-  const text = `${job.title}\n${job.prompt}`.toLocaleLowerCase();
-
-  if (groups.has("github")) {
-    tools.add("github_search_issues");
-  }
-  if (groups.has("google")) {
-    tools.add("google_search_drive_files");
-  }
-  if (groups.has("hubspot")) {
-    tools.add("hubspot_search_crm_objects");
-  }
-  if (groups.has("jira")) {
-    tools.add("jira_search_issues");
-  }
-  if (groups.has("slack")) {
-    tools.add("slack_search_messages");
-  }
-  if (
-    /\b(news|web|website|article|articles|public source|public sources|latest|fresh|current)\b/i.test(
-      text,
-    )
-  ) {
-    tools.add("web_extract");
-  }
-
-  if (tools.size === 0) {
-    tools.add("conversation.sendMessage");
-  }
-
-  return [...tools].sort();
 }
 
 function connectionForSlackUser(
