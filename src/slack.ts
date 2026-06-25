@@ -5395,7 +5395,9 @@ export async function postConversationResponse(
       input.progressMessage.nativeStreamTs &&
       !input.progressMessage.nativeStreamFallbackReason
     ) {
-      const pendingText = input.progressMessage.nativeStreamPendingText ?? "";
+      const pendingText = sanitizeRuntimeFinalProgressText(
+        input.progressMessage.nativeStreamPendingText ?? ""
+      );
       const finalStreamText = [pendingText, "", finalProgressLine].join("\n");
       try {
         await stopSlackNativeStream(client, input.progressMessage, {
@@ -5422,7 +5424,7 @@ export async function postConversationResponse(
     if (input.progressMessage.streamedText?.trim()) {
       const responseText =
         renderConversationResponseText(input.response).trim() ||
-        input.progressMessage.streamedText.trim();
+        sanitizeRuntimeFinalProgressText(input.progressMessage.streamedText);
       const finishedText = renderFinalProgressMessage(
         input.progressMessage,
         responseText,
@@ -5540,6 +5542,10 @@ function sanitizeRuntimeFinalResponseText(text: string): string {
   }
 
   return "The agent returned an internal runtime-control notice instead of an answer. Please retry your request.";
+}
+
+function sanitizeRuntimeFinalProgressText(text: string): string {
+  return sanitizeRuntimeFinalResponseText(sanitizeRuntimeStreamText(text)).trim();
 }
 
 function sanitizeConversationResponseBlocks(blocks: unknown[] | undefined): unknown[] | undefined {

@@ -834,6 +834,64 @@ describe("formatAgentProgressEvent", () => {
     }
   });
 
+  test("does not preserve streamed runtime interrupt notices in progress finals", async () => {
+    const updates: string[] = [];
+    const posts: string[] = [];
+    const originalNow = Date.now;
+    Date.now = () => 1_500;
+    try {
+      const progressMessage = {
+        channel: "D123",
+        ts: "123.456",
+        text: "Starting agent runtime...",
+        startedAtMs: 0,
+        toolStartedAtMs: {},
+        toolLinesByCallId: {},
+        toolCallOrder: []
+      };
+      const client = {
+        chat: {
+          update: async (input: { text: string }) => {
+            updates.push(input.text);
+            return {};
+          },
+          postMessage: async (input: { text: string }) => {
+            posts.push(input.text);
+            return {};
+          }
+        }
+      };
+
+      await updateAgentProgressMessage(client as never, progressMessage, {
+        type: "message_delta",
+        text: ":zap: Interrupting current task (iteration 1/90, running: google_search_drive_files). I'll respond to your message shortly."
+      });
+      await postConversationResponse(client as never, {
+        response: {
+          visibility: "dm",
+          classification: "user_private",
+          text: "",
+          usage: {
+            inputTokens: 2,
+            outputTokens: 1,
+            totalTokens: 3,
+            usageSource: "provider-output"
+          }
+        },
+        channel: "D123",
+        user: "U123",
+        progressMessage
+      });
+
+      expect(updates.at(-1)).toBe(
+        "The agent returned an internal runtime-control notice instead of an answer. Please retry your request.\n\n_Final result in 1.5s (3 tokens)._"
+      );
+      expect(posts).toEqual([]);
+    } finally {
+      Date.now = originalNow;
+    }
+  });
+
   test("does not preserve runtime interrupt notices in final answers", async () => {
     const posts: string[] = [];
     const client = {
