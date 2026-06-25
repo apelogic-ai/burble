@@ -85,6 +85,7 @@ import type {
 import { handleConversation } from "./conversation/orchestrator";
 import { normalizeMentionText } from "./conversation/normalize";
 import { createSchedulerControlPlane } from "./scheduler/control-plane";
+import { createSchedulerRunExecutor } from "./scheduler/run-executor";
 import type {
   ConversationAttachment,
   ConversationRequest,
@@ -384,6 +385,16 @@ export function createSlackRuntime(
           ...(runtimeFactory ? { runtimeFactory } : {}),
           observability,
           logInfo: (message) => app.logger.info(withUtcTimestamp(message))
+        })
+      : undefined;
+  const schedulerRunExecutor =
+    agentRunner && !options.testbed
+      ? createSchedulerRunExecutor({
+          store,
+          agentRunner,
+          slackClient: app.client,
+          logInfo: (message) => app.logger.info(withUtcTimestamp(message)),
+          logWarn: (message) => app.logger.warn(withUtcTimestamp(message))
         })
       : undefined;
   const agentExecTasks = new Map<string, AgentExecTask>();
@@ -884,6 +895,12 @@ export function createSlackRuntime(
             slack: slackTools
           },
           schedulerControl,
+          ...(schedulerRunExecutor
+            ? {
+                onSchedulerRunQueued: (run) =>
+                  schedulerRunExecutor.executeRun(run.runId)
+              }
+            : {}),
           agentMode: config.agentMode,
           agentFastTrack: config.agentFastTrack,
           agentRuntimeEngine: config.agentRuntimeEngine,
@@ -1069,6 +1086,12 @@ export function createSlackRuntime(
             slack: slackTools
           },
           schedulerControl,
+          ...(schedulerRunExecutor
+            ? {
+                onSchedulerRunQueued: (run) =>
+                  schedulerRunExecutor.executeRun(run.runId)
+              }
+            : {}),
           agentMode: config.agentMode,
           agentFastTrack: config.agentFastTrack,
           agentRuntimeEngine: config.agentRuntimeEngine,

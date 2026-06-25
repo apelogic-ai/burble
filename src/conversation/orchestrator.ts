@@ -165,6 +165,9 @@ async function handleConversationInternal(
       slackUserId: request.user.slackUserId,
       jobId: readSchedulerJobIdHint(request.text)
     });
+    if (result.ok) {
+      dispatchSchedulerRunQueued(deps, result.run);
+    }
     return {
       visibility: "ephemeral",
       classification: "user_private",
@@ -995,6 +998,20 @@ function shouldUseFastTrack(deps: ConversationDeps): boolean {
   }
 
   return deps.agentMode !== "llm" || !deps.agentRunner;
+}
+
+function dispatchSchedulerRunQueued(
+  deps: ConversationDeps,
+  run: Parameters<NonNullable<ConversationDeps["onSchedulerRunQueued"]>>[0]
+): void {
+  try {
+    const result = deps.onSchedulerRunQueued?.(run);
+    if (result) {
+      void Promise.resolve(result).catch(() => undefined);
+    }
+  } catch {
+    // The durable run is already queued; dispatch failures can be retried later.
+  }
 }
 
 function buildAgentConversation(request: ConversationRequest) {

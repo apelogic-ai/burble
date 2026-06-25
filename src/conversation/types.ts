@@ -1,4 +1,4 @@
-import type { Provider, ProviderConnection } from "../db";
+import type { AgentJobRunRecord, Provider, ProviderConnection } from "../db";
 import type { createGitHubTools } from "../tools/github";
 import type { createGoogleTools } from "../tools/google";
 import type { createHubSpotTools } from "../tools/hubspot";
@@ -84,6 +84,7 @@ export type ConversationDeps = {
   agentRunner?: AgentRunner;
   agentExecutionMode?: "default" | "native-runtime";
   schedulerControl?: SchedulerControlPlane;
+  onSchedulerRunQueued?: (run: AgentJobRunRecord) => void | Promise<void>;
   onAgentEvent?: AgentRunEventHandler;
   observability?: ObservabilitySink;
   traceId?: string;

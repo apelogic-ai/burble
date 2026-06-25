@@ -1008,6 +1008,7 @@ describe("handleConversation", () => {
 
     for (const text of texts) {
       let called = false;
+      const queuedRuns: string[] = [];
       const response = await handleConversation(
         {
           ...baseRequest,
@@ -1035,6 +1036,9 @@ describe("handleConversation", () => {
               }
             })
           },
+          onSchedulerRunQueued: (run) => {
+            queuedRuns.push(run.runId);
+          },
           agentRunner: stubAgentRunner(() => {
             called = true;
             return {
@@ -1046,6 +1050,7 @@ describe("handleConversation", () => {
       );
 
       expect(called).toBe(false);
+      expect(queuedRuns).toEqual(["jobrun-manual-1"]);
       expect(response.text).toContain("Triggered scheduled job ai-news-hourly");
       expect(response.text).toContain("jobrun-manual-1");
     }
