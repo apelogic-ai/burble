@@ -30,6 +30,9 @@ const localSchedulerControlTools: Record<string, string> = {
   scheduled_job_register_capability: "scheduledJob.registerCapability",
   scheduled_job_list: "scheduledJob.list",
   scheduled_job_create: "scheduledJob.create",
+  scheduled_job_pause: "scheduledJob.pause",
+  scheduled_job_resume: "scheduledJob.resume",
+  scheduled_job_delete: "scheduledJob.delete",
   scheduled_job_trigger: "scheduledJob.trigger",
   scheduled_job_latest_run_status: "scheduledJob.latestRunStatus"
 };
@@ -600,6 +603,9 @@ function addLocalBurbleMcpTools(tools: unknown[]): unknown[] {
     scheduledJobRegisterCapabilityMcpTool(),
     scheduledJobListMcpTool(),
     scheduledJobCreateMcpTool(),
+    scheduledJobLifecycleMcpTool("scheduled_job_pause", "Pause"),
+    scheduledJobLifecycleMcpTool("scheduled_job_resume", "Resume"),
+    scheduledJobLifecycleMcpTool("scheduled_job_delete", "Delete"),
     scheduledJobTriggerMcpTool(),
     scheduledJobLatestRunStatusMcpTool()
   ].filter((tool) => !names.has(String(tool.name)));
@@ -725,6 +731,26 @@ function scheduledJobCreateMcpTool(): Record<string, unknown> {
         }
       },
       required: ["title", "prompt", "schedule"]
+    }
+  };
+}
+
+function scheduledJobLifecycleMcpTool(
+  name: string,
+  verb: string
+): Record<string, unknown> {
+  return {
+    name,
+    description: `${verb} one existing Burble-controlled scheduled job. Pass jobId when multiple jobs may exist.`,
+    inputSchema: {
+      type: "object",
+      properties: {
+        jobId: {
+          type: "string",
+          minLength: 1,
+          description: `Optional scheduled job id to ${verb.toLowerCase()}.`
+        }
+      }
     }
   };
 }

@@ -183,4 +183,68 @@ describe("scheduler control plane", () => {
 
     store.close();
   });
+
+  test("pauses, resumes, and deletes Burble-owned scheduled jobs", async () => {
+    const store = createTokenStore(":memory:");
+    store.upsertScheduledJob({
+      jobId: "job-ai-news-hourly",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      title: "Hourly AI news summary",
+      prompt: "look for fresh AI-related news and post a short summary",
+      schedule: {
+        kind: "interval",
+        every: { hours: 1 }
+      },
+      routeId: "convrt_123",
+      runtimeType: "hermes",
+      now: new Date("2026-06-24T12:00:00.000Z")
+    });
+
+    const scheduler = createSchedulerControlPlane(store, {
+      now: () => new Date("2026-06-24T12:10:00.000Z")
+    });
+
+    expect(
+      await scheduler.pauseJob?.({
+        workspaceId: "T123",
+        slackUserId: "U123",
+        jobId: "job-ai-news-hourly"
+      })
+    ).toEqual({
+      ok: true,
+      job: expect.objectContaining({
+        jobId: "job-ai-news-hourly",
+        state: "paused",
+        updatedAt: "2026-06-24T12:10:00.000Z"
+      })
+    });
+    expect(
+      await scheduler.resumeJob?.({
+        workspaceId: "T123",
+        slackUserId: "U123",
+        jobId: "job-ai-news-hourly"
+      })
+    ).toEqual({
+      ok: true,
+      job: expect.objectContaining({
+        jobId: "job-ai-news-hourly",
+        state: "scheduled",
+        updatedAt: "2026-06-24T12:10:00.000Z"
+      })
+    });
+    expect(
+      await scheduler.deleteJob?.({
+        workspaceId: "T123",
+        slackUserId: "U123",
+        jobId: "job-ai-news-hourly"
+      })
+    ).toEqual({
+      ok: true,
+      jobId: "job-ai-news-hourly"
+    });
+    expect(store.getScheduledJob("job-ai-news-hourly")).toBeNull();
+
+    store.close();
+  });
 });

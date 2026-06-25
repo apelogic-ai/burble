@@ -2791,6 +2791,19 @@ print(json.dumps(list(ctx.tools_by_name.values())))
         is_async: true,
       }),
     );
+    for (const name of [
+      "scheduled_job_pause",
+      "scheduled_job_resume",
+      "scheduled_job_delete",
+    ]) {
+      expect(result).toContainEqual(
+        expect.objectContaining({
+          name,
+          toolset: "burble",
+          is_async: true,
+        }),
+      );
+    }
     expect(result).toContainEqual(
       expect.objectContaining({
         name: "scheduled_job_trigger",

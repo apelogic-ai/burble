@@ -1511,6 +1511,9 @@ describe("handleRuntimeRequest", () => {
     const toolNames = body.result.tools.map((entry: { name?: string }) => entry.name);
     expect(toolNames).toContain("scheduled_job_list");
     expect(toolNames).toContain("scheduled_job_create");
+    expect(toolNames).toContain("scheduled_job_pause");
+    expect(toolNames).toContain("scheduled_job_resume");
+    expect(toolNames).toContain("scheduled_job_delete");
     expect(toolNames).toContain("scheduled_job_trigger");
     expect(toolNames).toContain("scheduled_job_latest_run_status");
   });

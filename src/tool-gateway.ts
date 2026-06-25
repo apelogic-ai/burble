@@ -639,6 +639,32 @@ export async function handleToolGatewayRequest(
     });
   }
 
+  if (
+    toolName === "scheduledJob.pause" ||
+    toolName === "scheduledJob.resume" ||
+    toolName === "scheduledJob.delete"
+  ) {
+    if (auth.kind !== "runtime") {
+      return new Response("Runtime auth required", { status: 403 });
+    }
+    const schedulerControl = createSchedulerControlPlane(store);
+    const input = {
+      workspaceId: auth.runtime.workspaceId,
+      slackUserId: auth.runtime.slackUserId,
+      jobId: readSchedulerControlJobId(body.input)
+    };
+    const result =
+      toolName === "scheduledJob.pause"
+        ? await schedulerControl.pauseJob?.(input)
+        : toolName === "scheduledJob.resume"
+          ? await schedulerControl.resumeJob?.(input)
+          : await schedulerControl.deleteJob?.(input);
+    return respondWithAudit({
+      classification: "user_private",
+      content: result ?? { ok: false, reason: "unavailable" }
+    });
+  }
+
   if (toolName === "scheduledJob.trigger") {
     if (auth.kind !== "runtime") {
       return new Response("Runtime auth required", { status: 403 });
@@ -1983,6 +2009,9 @@ function isKnownTool(toolName: string): boolean {
     toolName === "scheduledJob.registerCapability" ||
     toolName === "scheduledJob.list" ||
     toolName === "scheduledJob.create" ||
+    toolName === "scheduledJob.pause" ||
+    toolName === "scheduledJob.resume" ||
+    toolName === "scheduledJob.delete" ||
     toolName === "scheduledJob.trigger" ||
     toolName === "scheduledJob.latestRunStatus" ||
     toolName === "runtime.heartbeat" ||
