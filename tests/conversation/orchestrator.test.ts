@@ -1006,6 +1006,100 @@ describe("handleConversation", () => {
     expect(response.text).toContain("status: queued");
   });
 
+  test("pauses, resumes, and deletes scheduled jobs without invoking the LLM runner", async () => {
+    const cases = [
+      {
+        text: "pause the existing cron job",
+        expected: "Paused scheduled job ai-news-hourly."
+      },
+      {
+        text: "resume the existing cron job",
+        expected: "Resumed scheduled job ai-news-hourly."
+      },
+      {
+        text: "delete the existing cron job",
+        expected: "Deleted scheduled job ai-news-hourly."
+      }
+    ];
+
+    for (const item of cases) {
+      let called = false;
+      let schedulerCalledWith: unknown = null;
+      const response = await handleConversation(
+        {
+          ...baseRequest,
+          text: item.text
+        },
+        createDeps({
+          agentMode: "llm",
+          schedulerControl: {
+            listJobs: () => [],
+            pauseJob: (input) => {
+              schedulerCalledWith = input;
+              return {
+                ok: true,
+                job: {
+                  jobId: "ai-news-hourly",
+                  workspaceId: "T123",
+                  slackUserId: "U123",
+                  title: "Hourly AI news summary",
+                  prompt: "Find fresh AI news and summarize it.",
+                  schedule: { kind: "interval", every: { hours: 1 } },
+                  routeId: "convrt_123",
+                  state: "paused",
+                  runtimeType: "hermes",
+                  createdAt: "2026-06-24T12:00:00.000Z",
+                  updatedAt: "2026-06-24T12:10:00.000Z"
+                }
+              };
+            },
+            resumeJob: (input) => {
+              schedulerCalledWith = input;
+              return {
+                ok: true,
+                job: {
+                  jobId: "ai-news-hourly",
+                  workspaceId: "T123",
+                  slackUserId: "U123",
+                  title: "Hourly AI news summary",
+                  prompt: "Find fresh AI news and summarize it.",
+                  schedule: { kind: "interval", every: { hours: 1 } },
+                  routeId: "convrt_123",
+                  state: "scheduled",
+                  runtimeType: "hermes",
+                  createdAt: "2026-06-24T12:00:00.000Z",
+                  updatedAt: "2026-06-24T12:10:00.000Z"
+                }
+              };
+            },
+            deleteJob: (input) => {
+              schedulerCalledWith = input;
+              return {
+                ok: true,
+                jobId: "ai-news-hourly"
+              };
+            }
+          },
+          agentRunner: stubAgentRunner(() => {
+            called = true;
+            return {
+              classification: "public",
+              text: "unexpected"
+            };
+          })
+        })
+      );
+
+      expect(called).toBe(false);
+      expect(schedulerCalledWith).toEqual({
+        workspaceId: "T123",
+        slackUserId: "U123",
+        jobId: null
+      });
+      expect(response.text).toBe(item.expected);
+    }
+  });
+
   test("delegates explicit agent, task, and subagent requests before GitHub fast-paths", async () => {
     for (const text of [
       "ask agent to list my open GitHub PRs",

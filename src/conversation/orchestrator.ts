@@ -6,6 +6,8 @@ import { parseGitHubPullRequestListInput } from "../github-query";
 import { tryHandleLocalToolFastPath } from "./local-tool-fast-paths";
 import { enforceVisibility } from "./visibility";
 import type {
+  SchedulerJobDeleteResult,
+  SchedulerJobMutationResult,
   SchedulerRunStatusResult,
   SchedulerTriggerResult
 } from "../scheduler/control-plane";
@@ -152,6 +154,54 @@ async function handleConversationInternal(
   }
 
   if (
+    schedulerControlIntent === "pause_job" &&
+    deps.schedulerControl?.pauseJob
+  ) {
+    const result = await deps.schedulerControl.pauseJob({
+      workspaceId: request.workspaceId,
+      slackUserId: request.user.slackUserId,
+      jobId: readSchedulerJobIdHint(request.text)
+    });
+    return {
+      visibility: "ephemeral",
+      classification: "user_private",
+      text: formatScheduledJobMutationResult("Paused", result)
+    };
+  }
+
+  if (
+    schedulerControlIntent === "resume_job" &&
+    deps.schedulerControl?.resumeJob
+  ) {
+    const result = await deps.schedulerControl.resumeJob({
+      workspaceId: request.workspaceId,
+      slackUserId: request.user.slackUserId,
+      jobId: readSchedulerJobIdHint(request.text)
+    });
+    return {
+      visibility: "ephemeral",
+      classification: "user_private",
+      text: formatScheduledJobMutationResult("Resumed", result)
+    };
+  }
+
+  if (
+    schedulerControlIntent === "delete_job" &&
+    deps.schedulerControl?.deleteJob
+  ) {
+    const result = await deps.schedulerControl.deleteJob({
+      workspaceId: request.workspaceId,
+      slackUserId: request.user.slackUserId,
+      jobId: readSchedulerJobIdHint(request.text)
+    });
+    return {
+      visibility: "ephemeral",
+      classification: "user_private",
+      text: formatScheduledJobDeleteResult(result)
+    };
+  }
+
+  if (
     schedulerControlIntent === "latest_run_status" &&
     deps.schedulerControl?.getLatestRunStatus
   ) {
@@ -294,6 +344,9 @@ async function handleConversationInternal(
 type SchedulerControlIntent =
   | "list_jobs"
   | "trigger_job"
+  | "pause_job"
+  | "resume_job"
+  | "delete_job"
   | "latest_run_status"
   | null;
 
@@ -322,6 +375,27 @@ function classifySchedulerControlIntent(text: string): SchedulerControlIntent {
     )
   ) {
     return "trigger_job";
+  }
+  if (
+    /\b(?:pause|disable|stop)\b.*\b(?:cron|job|scheduled\s+job)\b/.test(
+      normalized
+    )
+  ) {
+    return "pause_job";
+  }
+  if (
+    /\b(?:resume|enable|unpause)\b.*\b(?:cron|job|scheduled\s+job)\b/.test(
+      normalized
+    )
+  ) {
+    return "resume_job";
+  }
+  if (
+    /\b(?:delete|remove|cancel)\b.*\b(?:cron|job|scheduled\s+job)\b/.test(
+      normalized
+    )
+  ) {
+    return "delete_job";
   }
   if (
     new RegExp(`\\b(?:do we have|are there)\\b.*\\b${jobNoun}\\b`).test(
@@ -376,6 +450,42 @@ function formatScheduledJobTriggerResult(
     ].join("\n");
   }
 
+  if (result.reason === "no_jobs") {
+    return "No scheduled jobs are configured.";
+  }
+  if (result.reason === "not_found") {
+    return "I could not find that scheduled job.";
+  }
+  return [
+    "Multiple scheduled jobs are configured. Please specify the job id.",
+    ...result.jobs.map((job) => `- ${job.jobId}`)
+  ].join("\n");
+}
+
+function formatScheduledJobMutationResult(
+  verb: "Paused" | "Resumed",
+  result: SchedulerJobMutationResult
+): string {
+  if (result.ok) {
+    return `${verb} scheduled job ${result.job.jobId}.`;
+  }
+  return formatScheduledJobSelectionFailure(result);
+}
+
+function formatScheduledJobDeleteResult(
+  result: SchedulerJobDeleteResult
+): string {
+  if (result.ok) {
+    return `Deleted scheduled job ${result.jobId}.`;
+  }
+  return formatScheduledJobSelectionFailure(result);
+}
+
+function formatScheduledJobSelectionFailure(
+  result:
+    | Extract<SchedulerJobMutationResult, { ok: false }>
+    | Extract<SchedulerJobDeleteResult, { ok: false }>
+): string {
   if (result.reason === "no_jobs") {
     return "No scheduled jobs are configured.";
   }
