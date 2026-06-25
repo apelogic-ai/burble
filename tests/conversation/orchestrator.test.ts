@@ -1005,6 +1005,7 @@ describe("handleConversation", () => {
       "run cron job",
       "run this job manually now",
       "please trigger the current scheduled job",
+      "you can help by test running the scheduled cron job",
       "start our cronjob"
     ];
 

@@ -492,7 +492,7 @@ function isSchedulerRunStatusIntent(tokens: string[]): boolean {
 }
 
 function isSchedulerTriggerIntent(tokens: string[]): boolean {
-  if (!hasAnyToken(tokens, ["run", "trigger", "start"])) {
+  if (!hasAnyToken(tokens, ["run", "running", "trigger", "start"])) {
     return false;
   }
   if (looksLikeSchedulerCreationRequest(tokens)) {
