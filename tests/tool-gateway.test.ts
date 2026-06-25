@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import type { Config } from "../src/config";
 import type {
   AgentJobCapabilityRecord,
+  AgentJobRunRecord,
   AgentRuntimeRecord,
   ConversationRouteRecord,
   ProviderConnection,
@@ -154,7 +155,11 @@ function createStore(
     upserts?: unknown[];
   } = {},
   routeRevocations: unknown[] = [],
-  routeUpserts: unknown[] | null = null
+  routeUpserts: unknown[] | null = null,
+  jobRuns: {
+    created?: AgentJobRunRecord[];
+    latest?: AgentJobRunRecord | null;
+  } = {}
 ): TokenStore {
   let route = foundRoute;
   return {
@@ -284,12 +289,27 @@ function createStore(
     getAgentJobState: () => null,
     listAgentJobStatesForPrincipal: () => [],
     deleteAgentJobState: () => undefined,
-    createAgentJobRun: () => {
-      throw new Error("unexpected agent job run write");
+    createAgentJobRun: (input) => {
+      const now = (input.now ?? new Date("2026-06-24T12:00:00.000Z")).toISOString();
+      const record: AgentJobRunRecord = {
+        runId: input.runId?.trim() || "jobrun_test",
+        jobId: input.jobId,
+        workspaceId: input.workspaceId,
+        slackUserId: input.slackUserId,
+        triggerSource: input.triggerSource,
+        status: input.status ?? "queued",
+        failureReason: input.failureReason ?? null,
+        createdAt: now,
+        updatedAt: now,
+        startedAt: input.startedAt ?? null,
+        finishedAt: input.finishedAt ?? null
+      };
+      jobRuns.created?.push(record);
+      return record;
     },
     getAgentJobRun: () => null,
     listAgentJobRunsForJob: () => [],
-    getLatestAgentJobRunForPrincipal: () => null,
+    getLatestAgentJobRunForPrincipal: () => jobRuns.latest ?? null,
     upsertAgentJobCapability: (input) => {
       jobCapabilities.upserts?.push(input);
       return {
@@ -1697,6 +1717,164 @@ describe("handleToolGatewayRequest", () => {
       nativeToolsets: ["burble", "web"],
       allowedTools: ["web_extract"]
     });
+  });
+
+  test("lets a runtime list scheduled jobs through the control plane", async () => {
+    const capability: AgentJobCapabilityRecord = {
+      jobId: "ai-news-hourly",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      requiredTools: ["web_extract"],
+      routeId: "convrt_abcdefabcdefabcdefabcdef",
+      policyHash: "policy-hash",
+      capabilityProfile: "scheduled_job",
+      runtimeType: "hermes",
+      stateRefs: [],
+      visibilityPolicy: {},
+      createdAt: "2026-06-24T11:00:00.000Z",
+      updatedAt: "2026-06-24T11:05:00.000Z"
+    };
+
+    const response = await handleToolGatewayRequest(
+      config,
+      createStore(null, runtime, [], null, [], { list: [capability] }),
+      "scheduledJob.list",
+      request(
+        "scheduledJob.list",
+        { input: {} },
+        "runtime-token-u123",
+        "rt_u123"
+      )
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      classification: "user_private",
+      content: {
+        jobs: [
+          {
+            jobId: "ai-news-hourly",
+            runtimeType: "hermes",
+            requiredTools: ["web_extract"],
+            routeId: "convrt_abcdefabcdefabcdefabcdef",
+            updatedAt: "2026-06-24T11:05:00.000Z"
+          }
+        ]
+      }
+    });
+  });
+
+  test("lets a runtime trigger a scheduled job through the control plane", async () => {
+    const capability: AgentJobCapabilityRecord = {
+      jobId: "ai-news-hourly",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      requiredTools: ["web_extract"],
+      routeId: null,
+      policyHash: "policy-hash",
+      capabilityProfile: "scheduled_job",
+      runtimeType: "openclaw",
+      stateRefs: [],
+      visibilityPolicy: {},
+      createdAt: "2026-06-24T11:00:00.000Z",
+      updatedAt: "2026-06-24T11:05:00.000Z"
+    };
+    const runs: AgentJobRunRecord[] = [];
+
+    const response = await handleToolGatewayRequest(
+      config,
+      createStore(
+        null,
+        runtime,
+        [],
+        null,
+        [],
+        { list: [capability] },
+        [],
+        null,
+        { created: runs }
+      ),
+      "scheduledJob.trigger",
+      request(
+        "scheduledJob.trigger",
+        { input: { jobId: "ai-news-hourly" } },
+        "runtime-token-u123",
+        "rt_u123"
+      )
+    );
+
+    expect(response.status).toBe(200);
+    expect(runs).toEqual([
+      expect.objectContaining({
+        runId: expect.stringMatching(/^jobrun_/),
+        jobId: "ai-news-hourly",
+        workspaceId: "T123",
+        slackUserId: "U123",
+        triggerSource: "manual",
+        status: "queued"
+      })
+    ]);
+    const body = await response.json();
+    expect(body.content).toMatchObject({
+      ok: true,
+      jobId: "ai-news-hourly",
+      run: {
+        jobId: "ai-news-hourly",
+        triggerSource: "manual",
+        status: "queued"
+      }
+    });
+  });
+
+  test("lets a runtime read the latest scheduled job run status", async () => {
+    const latest: AgentJobRunRecord = {
+      runId: "jobrun_latest",
+      jobId: "ai-news-hourly",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      triggerSource: "manual",
+      status: "succeeded",
+      failureReason: null,
+      createdAt: "2026-06-24T12:00:00.000Z",
+      updatedAt: "2026-06-24T12:01:00.000Z",
+      startedAt: "2026-06-24T12:00:01.000Z",
+      finishedAt: "2026-06-24T12:01:00.000Z"
+    };
+
+    const response = await handleToolGatewayRequest(
+      config,
+      createStore(null, runtime, [], null, [], {}, [], null, {
+        latest
+      }),
+      "scheduledJob.latestRunStatus",
+      request(
+        "scheduledJob.latestRunStatus",
+        { input: { jobId: "ai-news-hourly" } },
+        "runtime-token-u123",
+        "rt_u123"
+      )
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      classification: "user_private",
+      content: {
+        ok: true,
+        run: latest
+      }
+    });
+  });
+
+  test("requires runtime auth for scheduler control tools", async () => {
+    const response = await handleToolGatewayRequest(
+      config,
+      createStore(null, runtime),
+      "scheduledJob.list",
+      request("scheduledJob.list", { input: {} })
+    );
+
+    expect(response.status).toBe(403);
+    expect(await response.text()).toBe("Runtime auth required");
   });
 
   test("binds channel destination routes to the scheduled job during registration", async () => {

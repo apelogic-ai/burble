@@ -15,6 +15,7 @@ import {
   isKnownRuntimeEngine,
   runtimeCompatibilityFamily
 } from "./agent/runtime-descriptors";
+import { createSchedulerControlPlane } from "./scheduler/control-plane";
 import { createHash, timingSafeEqual } from "node:crypto";
 import { connectionProviderForToolName } from "./providers/descriptors";
 import { providerToolCatalog } from "./providers/catalog";
@@ -588,6 +589,53 @@ export async function handleToolGatewayRequest(
 
   if (!body) {
     return new Response("Invalid tool input", { status: 400 });
+  }
+
+  if (toolName === "scheduledJob.list") {
+    if (auth.kind !== "runtime") {
+      return new Response("Runtime auth required", { status: 403 });
+    }
+    const schedulerControl = createSchedulerControlPlane(store);
+    const jobs = await schedulerControl.listJobs({
+      workspaceId: auth.runtime.workspaceId,
+      slackUserId: auth.runtime.slackUserId
+    });
+    return respondWithAudit({
+      classification: "user_private",
+      content: { jobs }
+    });
+  }
+
+  if (toolName === "scheduledJob.trigger") {
+    if (auth.kind !== "runtime") {
+      return new Response("Runtime auth required", { status: 403 });
+    }
+    const schedulerControl = createSchedulerControlPlane(store);
+    const result = await schedulerControl.triggerJob?.({
+      workspaceId: auth.runtime.workspaceId,
+      slackUserId: auth.runtime.slackUserId,
+      jobId: readSchedulerControlJobId(body.input)
+    });
+    return respondWithAudit({
+      classification: "user_private",
+      content: result ?? { ok: false, reason: "unavailable" }
+    });
+  }
+
+  if (toolName === "scheduledJob.latestRunStatus") {
+    if (auth.kind !== "runtime") {
+      return new Response("Runtime auth required", { status: 403 });
+    }
+    const schedulerControl = createSchedulerControlPlane(store);
+    const result = await schedulerControl.getLatestRunStatus?.({
+      workspaceId: auth.runtime.workspaceId,
+      slackUserId: auth.runtime.slackUserId,
+      jobId: readSchedulerControlJobId(body.input)
+    });
+    return respondWithAudit({
+      classification: "user_private",
+      content: result ?? { ok: false, reason: "unavailable" }
+    });
   }
 
   if (toolName === "scheduledJob.registerCapability") {
@@ -1900,6 +1948,9 @@ function isKnownTool(toolName: string): boolean {
     toolName === "conversation.sendMessage" ||
     toolName === "conversation.getAttachment" ||
     toolName === "scheduledJob.registerCapability" ||
+    toolName === "scheduledJob.list" ||
+    toolName === "scheduledJob.trigger" ||
+    toolName === "scheduledJob.latestRunStatus" ||
     toolName === "runtime.heartbeat" ||
     toolName === "runtime.conformance.echo" ||
     toolName === "atlassian.listMcpTools" ||
@@ -2207,6 +2258,19 @@ function describeScheduledJobRegisterCapabilityInput(
         .sort()
     : [];
   return { receivedKeys, nestedKeys, normalizedKeys };
+}
+
+function readSchedulerControlJobId(input: unknown): string | null {
+  if (!isOptionalObject(input)) {
+    return null;
+  }
+  for (const key of ["jobId", "scheduledJobId", "job_id", "scheduled_job_id"]) {
+    const value = input[key];
+    if (typeof value === "string" && value.trim()) {
+      return value.trim();
+    }
+  }
+  return null;
 }
 
 type ScheduledJobRegistrationInput = {
