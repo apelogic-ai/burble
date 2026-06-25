@@ -196,6 +196,74 @@ describe("scheduler control plane", () => {
     store.close();
   });
 
+  test("lists job runs independently from scheduled task specs", async () => {
+    const store = createTokenStore(":memory:");
+    store.upsertScheduledJob({
+      jobId: "ai-news-hourly",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      title: "Hourly AI news summary",
+      prompt: "look for fresh AI-related news and post a short summary",
+      schedule: {
+        kind: "interval",
+        every: { hours: 1 },
+      },
+      runtimeType: "openclaw",
+      now: new Date("2026-06-24T12:00:00.000Z"),
+    });
+    store.createAgentJobRun({
+      runId: "jobrun-first",
+      jobId: "ai-news-hourly",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      triggerSource: "manual",
+      status: "succeeded",
+      now: new Date("2026-06-24T12:05:00.000Z"),
+      startedAt: "2026-06-24T12:05:01.000Z",
+      finishedAt: "2026-06-24T12:05:10.000Z",
+    });
+    store.createAgentJobRun({
+      runId: "jobrun-second",
+      jobId: "ai-news-hourly",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      triggerSource: "schedule",
+      status: "queued",
+      now: new Date("2026-06-24T12:10:00.000Z"),
+    });
+
+    const scheduler = createSchedulerControlPlane(store);
+
+    expect(
+      (
+        await scheduler.listJobs({ workspaceId: "T123", slackUserId: "U123" })
+      ).map((job) => job.jobId),
+    ).toEqual(["ai-news-hourly"]);
+    expect(
+      await scheduler.listJobRuns?.({
+        workspaceId: "T123",
+        slackUserId: "U123",
+      }),
+    ).toEqual({
+      runs: [
+        expect.objectContaining({
+          runId: "jobrun-second",
+          jobId: "ai-news-hourly",
+          status: "queued",
+          triggerSource: "schedule",
+        }),
+        expect.objectContaining({
+          runId: "jobrun-first",
+          jobId: "ai-news-hourly",
+          status: "succeeded",
+          triggerSource: "manual",
+        }),
+      ],
+    });
+
+    store.close();
+  });
+
   test("does not treat capability-only registrations as current scheduled jobs", async () => {
     const store = createTokenStore(":memory:");
     store.upsertAgentJobCapability({

@@ -171,7 +171,7 @@ describe("local Slack testbed", () => {
           response.json() as Promise<{ messages: Array<{ text: string }> }>
       );
       const text = transcript.messages.map((message) => message.text).join("\n");
-      expect(text).toContain("Scheduled jobs");
+      expect(text).toContain("Scheduled tasks");
       expect(text).toContain("ai-news-hourly");
       expect(text).toContain("Hourly AI news summary");
       expect(text).toContain("state: scheduled");

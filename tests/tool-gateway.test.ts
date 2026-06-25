@@ -352,6 +352,7 @@ function createStore(
     },
     getAgentJobRun: () => null,
     listAgentJobRunsForJob: () => [],
+    listAgentJobRunsForPrincipal: () => jobRuns.created ?? [],
     getLatestAgentJobRunForPrincipal: () => jobRuns.latest ?? null,
     listQueuedAgentJobRuns: () => [],
     claimAgentJobRun: () => null,

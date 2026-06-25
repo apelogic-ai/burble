@@ -6,9 +6,16 @@ import type { createJiraTools } from "../tools/jira";
 import type { createSlackTools } from "../tools/slack";
 import type { AgentMode } from "../config";
 import type { AgentRuntimeEngine } from "@burble/runtime-sdk/runtime-engines";
-import type { AgentRunEventHandler, AgentRunner, AgentUsage } from "../agent/types";
+import type {
+  AgentRunEventHandler,
+  AgentRunner,
+  AgentUsage,
+} from "../agent/types";
 import type { ObservabilitySink } from "../observability";
-import type { SchedulerControlPlane } from "../scheduler/control-plane";
+import type {
+  SchedulerControlPlane,
+  SchedulerJobSummary,
+} from "../scheduler/control-plane";
 
 export type ResponseVisibility = "public" | "ephemeral" | "dm";
 export type ToolClassification = "public" | "user_private" | "restricted";
@@ -70,13 +77,38 @@ export type ConversationToolCatalog = {
   slack?: ReturnType<typeof createSlackTools>;
 };
 
+export type SchedulerControlIntent =
+  | "list_jobs"
+  | "list_job_runs"
+  | "trigger_job"
+  | "pause_job"
+  | "resume_job"
+  | "delete_job"
+  | "latest_run_status"
+  | null;
+
+export type SchedulerIntentResolverResult = {
+  intent: Exclude<SchedulerControlIntent, null> | "none";
+  confidence: number;
+  jobId?: string | null;
+};
+
+export type SchedulerIntentResolver = (input: {
+  text: string;
+  recentMessages: string[];
+  jobs: SchedulerJobSummary[];
+}) => Promise<SchedulerIntentResolverResult>;
+
 export type ConversationDeps = {
   createGitHubOAuthUrl: (slackUserId: string) => string;
   createJiraOAuthUrl?: (slackUserId: string) => string;
   createSlackOAuthUrl?: (slackUserId: string) => string;
   createGoogleOAuthUrl?: (slackUserId: string) => string;
   createHubSpotOAuthUrl?: (slackUserId: string) => string;
-  getConnection: (provider: Provider, email: string) => ProviderConnection | null;
+  getConnection: (
+    provider: Provider,
+    email: string,
+  ) => ProviderConnection | null;
   tools: ConversationToolCatalog;
   agentMode?: AgentMode;
   agentFastTrack?: boolean;
@@ -84,6 +116,7 @@ export type ConversationDeps = {
   agentRunner?: AgentRunner;
   agentExecutionMode?: "default" | "native-runtime";
   schedulerControl?: SchedulerControlPlane;
+  schedulerIntentResolver?: SchedulerIntentResolver;
   onSchedulerRunQueued?: (run: AgentJobRunRecord) => void | Promise<void>;
   onAgentEvent?: AgentRunEventHandler;
   observability?: ObservabilitySink;

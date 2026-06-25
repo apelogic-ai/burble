@@ -24,6 +24,9 @@ export type SchedulerControlPlane = {
     workspaceId: string;
     slackUserId: string;
   }): Promise<SchedulerJobSummary[]> | SchedulerJobSummary[];
+  listJobRuns?(
+    input: SchedulerListJobRunsInput,
+  ): Promise<SchedulerJobRunListResult> | SchedulerJobRunListResult;
   createJob?(
     input: SchedulerCreateJobInput,
   ): Promise<SchedulerCreateJobResult> | SchedulerCreateJobResult;
@@ -59,6 +62,17 @@ export type SchedulerTriggerResult =
       reason: "no_jobs" | "not_found" | "ambiguous";
       jobs: SchedulerJobSummary[];
     };
+
+export type SchedulerListJobRunsInput = {
+  workspaceId: string;
+  slackUserId: string;
+  jobId?: string | null;
+  limit?: number | null;
+};
+
+export type SchedulerJobRunListResult = {
+  runs: AgentJobRunRecord[];
+};
 
 export type SchedulerCreateJobInput = {
   workspaceId: string;
@@ -126,6 +140,7 @@ export function createSchedulerControlPlane(
     | "upsertScheduledJob"
     | "deleteScheduledJob"
     | "createAgentJobRun"
+    | "listAgentJobRunsForPrincipal"
     | "upsertAgentJobCapability"
     | "getLatestAgentJobRunForPrincipal"
   >,
@@ -145,6 +160,16 @@ export function createSchedulerControlPlane(
 
   return {
     listJobs,
+    listJobRuns(input) {
+      return {
+        runs: store.listAgentJobRunsForPrincipal(
+          input.workspaceId,
+          input.slackUserId,
+          input.jobId,
+          input.limit ?? 10,
+        ),
+      };
+    },
     createJob(input) {
       const jobId = newJobId();
       const timestamp = now();

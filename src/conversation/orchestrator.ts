@@ -1,5 +1,8 @@
 import { formatConnectGitHubMessage } from "../formatting";
-import { formatGitHubIdentityMessage, formatIssuesMessage } from "../formatting";
+import {
+  formatGitHubIdentityMessage,
+  formatIssuesMessage,
+} from "../formatting";
 import { collectAgentRun, type AgentRunEvent } from "../agent/types";
 import { selectRuntimeToolGroups } from "../agent/tool-groups";
 import { parseGitHubPullRequestListInput } from "../github-query";
@@ -10,17 +13,19 @@ import type {
   SchedulerJobDeleteResult,
   SchedulerJobMutationResult,
   SchedulerRunStatusResult,
-  SchedulerTriggerResult
+  SchedulerTriggerResult,
 } from "../scheduler/control-plane";
 import type {
   ConversationDeps,
   ConversationRequest,
-  ConversationResponse
+  ConversationResponse,
+  SchedulerControlIntent,
+  SchedulerIntentResolverResult,
 } from "./types";
 
 export async function handleConversation(
   request: ConversationRequest,
-  deps: ConversationDeps
+  deps: ConversationDeps,
 ): Promise<ConversationResponse> {
   const traceId = deps.traceId ?? crypto.randomUUID();
   const startedAt = Date.now();
@@ -28,7 +33,7 @@ export async function handleConversation(
   try {
     const response = await handleConversationInternal(request, {
       ...deps,
-      traceId
+      traceId,
     });
     emitConversationCompleted(traceId, request, response, deps, startedAt);
     return response;
@@ -40,17 +45,23 @@ export async function handleConversation(
 
 async function handleConversationInternal(
   request: ConversationRequest,
-  deps: ConversationDeps
+  deps: ConversationDeps,
 ): Promise<ConversationResponse> {
   const intent = classifyDeterministicIntent(request.text);
   const forceAgent = shouldForceAgentDelegation(request.text);
   const fastTrackEnabled = shouldUseFastTrack(deps);
-  const schedulerControlIntent = classifySchedulerControlIntent(request.text);
+  const schedulerResolution = await resolveSchedulerControlIntent(
+    request,
+    deps,
+  );
+  const schedulerControlIntent = schedulerResolution.intent;
+  const schedulerJobIdHint =
+    schedulerResolution.jobId ?? readSchedulerJobIdHint(request.text);
   const schedulerCreateRequest = parseSchedulerCreateRequest(request.text);
   const toolGroups = selectRuntimeToolGroups({
     text: request.text,
     attachmentCount: request.attachments?.length ?? 0,
-    contextTexts: recentConversationTexts(request)
+    contextTexts: recentConversationTexts(request),
   });
 
   if (intent === "connect_github") {
@@ -58,8 +69,8 @@ async function handleConversationInternal(
       visibility: "ephemeral",
       classification: "user_private",
       text: formatConnectGitHubMessage(
-        deps.createGitHubOAuthUrl(request.user.slackUserId)
-      )
+        deps.createGitHubOAuthUrl(request.user.slackUserId),
+      ),
     };
   }
 
@@ -68,14 +79,14 @@ async function handleConversationInternal(
       return {
         visibility: "ephemeral",
         classification: "user_private",
-        text: "Jira OAuth is not configured."
+        text: "Jira OAuth is not configured.",
       };
     }
 
     return {
       visibility: "ephemeral",
       classification: "user_private",
-      text: `<${deps.createJiraOAuthUrl(request.user.slackUserId)}|Connect your Jira account>`
+      text: `<${deps.createJiraOAuthUrl(request.user.slackUserId)}|Connect your Jira account>`,
     };
   }
 
@@ -84,14 +95,14 @@ async function handleConversationInternal(
       return {
         visibility: "ephemeral",
         classification: "user_private",
-        text: "Slack OAuth is not configured."
+        text: "Slack OAuth is not configured.",
       };
     }
 
     return {
       visibility: "ephemeral",
       classification: "user_private",
-      text: `<${deps.createSlackOAuthUrl(request.user.slackUserId)}|Connect Slack search>`
+      text: `<${deps.createSlackOAuthUrl(request.user.slackUserId)}|Connect Slack search>`,
     };
   }
 
@@ -100,14 +111,14 @@ async function handleConversationInternal(
       return {
         visibility: "ephemeral",
         classification: "user_private",
-        text: "Google OAuth is not configured."
+        text: "Google OAuth is not configured.",
       };
     }
 
     return {
       visibility: "ephemeral",
       classification: "user_private",
-      text: `<${deps.createGoogleOAuthUrl(request.user.slackUserId)}|Connect your Google account>`
+      text: `<${deps.createGoogleOAuthUrl(request.user.slackUserId)}|Connect your Google account>`,
     };
   }
 
@@ -116,26 +127,43 @@ async function handleConversationInternal(
       return {
         visibility: "ephemeral",
         classification: "user_private",
-        text: "HubSpot OAuth is not configured."
+        text: "HubSpot OAuth is not configured.",
       };
     }
 
     return {
       visibility: "ephemeral",
       classification: "user_private",
-      text: `<${deps.createHubSpotOAuthUrl(request.user.slackUserId)}|Connect your HubSpot account>`
+      text: `<${deps.createHubSpotOAuthUrl(request.user.slackUserId)}|Connect your HubSpot account>`,
     };
   }
 
   if (schedulerControlIntent === "list_jobs" && deps.schedulerControl) {
     const jobs = await deps.schedulerControl.listJobs({
       workspaceId: request.workspaceId,
-      slackUserId: request.user.slackUserId
+      slackUserId: request.user.slackUserId,
     });
     return {
       visibility: "ephemeral",
       classification: "user_private",
-      text: formatScheduledJobList(jobs)
+      text: formatScheduledJobList(jobs),
+    };
+  }
+
+  if (
+    schedulerControlIntent === "list_job_runs" &&
+    deps.schedulerControl?.listJobRuns
+  ) {
+    const result = await deps.schedulerControl.listJobRuns({
+      workspaceId: request.workspaceId,
+      slackUserId: request.user.slackUserId,
+      jobId: schedulerJobIdHint,
+      limit: 10,
+    });
+    return {
+      visibility: "ephemeral",
+      classification: "user_private",
+      text: formatScheduledJobRunList(result.runs),
     };
   }
 
@@ -147,12 +175,12 @@ async function handleConversationInternal(
       prompt: schedulerCreateRequest.prompt,
       schedule: schedulerCreateRequest.schedule,
       routeId: request.conversationRouteId,
-      runtimeType: deps.agentRuntimeEngine
+      runtimeType: deps.agentRuntimeEngine,
     });
     return {
       visibility: "ephemeral",
       classification: "user_private",
-      text: formatScheduledJobCreateResult(result)
+      text: formatScheduledJobCreateResult(result),
     };
   }
 
@@ -163,7 +191,7 @@ async function handleConversationInternal(
     const result = await deps.schedulerControl.triggerJob({
       workspaceId: request.workspaceId,
       slackUserId: request.user.slackUserId,
-      jobId: readSchedulerJobIdHint(request.text)
+      jobId: schedulerJobIdHint,
     });
     if (result.ok) {
       dispatchSchedulerRunQueued(deps, result.run);
@@ -171,7 +199,7 @@ async function handleConversationInternal(
     return {
       visibility: "ephemeral",
       classification: "user_private",
-      text: formatScheduledJobTriggerResult(result)
+      text: formatScheduledJobTriggerResult(result),
     };
   }
 
@@ -182,12 +210,12 @@ async function handleConversationInternal(
     const result = await deps.schedulerControl.pauseJob({
       workspaceId: request.workspaceId,
       slackUserId: request.user.slackUserId,
-      jobId: readSchedulerJobIdHint(request.text)
+      jobId: schedulerJobIdHint,
     });
     return {
       visibility: "ephemeral",
       classification: "user_private",
-      text: formatScheduledJobMutationResult("Paused", result)
+      text: formatScheduledJobMutationResult("Paused", result),
     };
   }
 
@@ -198,12 +226,12 @@ async function handleConversationInternal(
     const result = await deps.schedulerControl.resumeJob({
       workspaceId: request.workspaceId,
       slackUserId: request.user.slackUserId,
-      jobId: readSchedulerJobIdHint(request.text)
+      jobId: schedulerJobIdHint,
     });
     return {
       visibility: "ephemeral",
       classification: "user_private",
-      text: formatScheduledJobMutationResult("Resumed", result)
+      text: formatScheduledJobMutationResult("Resumed", result),
     };
   }
 
@@ -214,12 +242,12 @@ async function handleConversationInternal(
     const result = await deps.schedulerControl.deleteJob({
       workspaceId: request.workspaceId,
       slackUserId: request.user.slackUserId,
-      jobId: readSchedulerJobIdHint(request.text)
+      jobId: schedulerJobIdHint,
     });
     return {
       visibility: "ephemeral",
       classification: "user_private",
-      text: formatScheduledJobDeleteResult(result)
+      text: formatScheduledJobDeleteResult(result),
     };
   }
 
@@ -230,12 +258,12 @@ async function handleConversationInternal(
     const result = await deps.schedulerControl.getLatestRunStatus({
       workspaceId: request.workspaceId,
       slackUserId: request.user.slackUserId,
-      jobId: readSchedulerJobIdHint(request.text)
+      jobId: schedulerJobIdHint,
     });
     return {
       visibility: "ephemeral",
       classification: "user_private",
-      text: formatScheduledRunStatusResult(result)
+      text: formatScheduledRunStatusResult(result),
     };
   }
 
@@ -246,24 +274,26 @@ async function handleConversationInternal(
     }
   }
 
-  if (!forceAgent && fastTrackEnabled && (
-    intent === "github_identity" ||
-    intent === "github_issues" ||
-    intent === "github_issue_search" ||
-    intent === "github_pull_requests"
-  )) {
+  if (
+    !forceAgent &&
+    fastTrackEnabled &&
+    (intent === "github_identity" ||
+      intent === "github_issues" ||
+      intent === "github_issue_search" ||
+      intent === "github_pull_requests")
+  ) {
     const connection = deps.getConnection("github", request.user.email);
     if (!connection) {
       return {
         visibility: "ephemeral",
         classification: "user_private",
-        text: "Connect GitHub first: `@Burble connect github`."
+        text: "Connect GitHub first: `@Burble connect github`.",
       };
     }
 
     if (intent === "github_identity") {
       const result = await deps.tools.github.getAuthenticatedUser.execute({
-        connection
+        connection,
       });
       return enforceVisibility(
         {
@@ -271,10 +301,10 @@ async function handleConversationInternal(
           classification: result.classification,
           text: formatGitHubIdentityMessage(
             result.content.login,
-            request.user.email
-          )
+            request.user.email,
+          ),
         },
-        request
+        request,
       );
     }
 
@@ -282,15 +312,15 @@ async function handleConversationInternal(
       intent === "github_pull_requests"
         ? await deps.tools.github.listMyPullRequests.execute({
             connection,
-            input: parseGitHubPullRequestListInput(request.text)
+            input: parseGitHubPullRequestListInput(request.text),
           })
         : intent === "github_issue_search"
           ? await deps.tools.github.searchIssues.execute({
               connection,
-              input: { query: buildIssueSearchQuery(request.text) }
+              input: { query: buildIssueSearchQuery(request.text) },
             })
           : await deps.tools.github.listAssignedIssues.execute({
-              connection
+              connection,
             });
 
     return enforceVisibility(
@@ -300,11 +330,11 @@ async function handleConversationInternal(
         text: formatIssuesMessage(
           result.content.map((issue) => ({
             title: issue.title,
-            html_url: issue.url
-          }))
-        )
+            html_url: issue.url,
+          })),
+        ),
       },
-      request
+      request,
     );
   }
 
@@ -314,7 +344,7 @@ async function handleConversationInternal(
       {
         principal: {
           workspaceId: request.workspaceId,
-          slackUserId: request.user.slackUserId
+          slackUserId: request.user.slackUserId,
         },
         ...(deps.agentExecutionMode
           ? { executionMode: deps.agentExecutionMode }
@@ -329,13 +359,18 @@ async function handleConversationInternal(
           google: deps.getConnection("google", request.user.email),
           hubspot: deps.getConnection("hubspot", request.user.email),
           jira: deps.getConnection("jira", request.user.email),
-          slack: deps.getConnection("slack", request.user.email)
-        }
+          slack: deps.getConnection("slack", request.user.email),
+        },
       },
       async (event) => {
-        emitAgentEvent(deps.traceId ?? crypto.randomUUID(), request, deps, event);
+        emitAgentEvent(
+          deps.traceId ?? crypto.randomUUID(),
+          request,
+          deps,
+          event,
+        );
         await deps.onAgentEvent?.(event);
-      }
+      },
     );
 
     return enforceVisibility(
@@ -345,9 +380,9 @@ async function handleConversationInternal(
         text: result.text,
         ...(result.attachments ? { attachments: result.attachments } : {}),
         ...(result.blocks ? { blocks: result.blocks } : {}),
-        ...(result.usage ? { usage: result.usage } : {})
+        ...(result.usage ? { usage: result.usage } : {}),
       },
-      request
+      request,
     );
   }
 
@@ -358,23 +393,17 @@ async function handleConversationInternal(
       "Try one of these:",
       "`@Burble connect github`",
       "`@Burble who am I on GitHub?`",
-      "`@Burble what issues are assigned to me?`"
-    ].join("\n")
+      "`@Burble what issues are assigned to me?`",
+    ].join("\n"),
   };
 }
-
-type SchedulerControlIntent =
-  | "list_jobs"
-  | "trigger_job"
-  | "pause_job"
-  | "resume_job"
-  | "delete_job"
-  | "latest_run_status"
-  | null;
 
 function classifySchedulerControlIntent(text: string): SchedulerControlIntent {
   const tokens = tokenizeSchedulerControlText(text);
 
+  if (isSchedulerJobRunListIntent(tokens)) {
+    return "list_job_runs";
+  }
   if (isSchedulerListIntent(tokens) && hasSchedulerListReference(tokens)) {
     return "list_jobs";
   }
@@ -399,6 +428,171 @@ function classifySchedulerControlIntent(text: string): SchedulerControlIntent {
   return null;
 }
 
+async function resolveSchedulerControlIntent(
+  request: ConversationRequest,
+  deps: ConversationDeps,
+): Promise<{ intent: SchedulerControlIntent; jobId: string | null }> {
+  const fallbackIntent =
+    classifySchedulerControlIntent(request.text) ??
+    classifyExplicitSchedulerJobIdIntent(request.text);
+  const fallbackJobId = readSchedulerJobIdHint(request.text);
+  if (
+    looksLikeSchedulerCreationRequest(
+      tokenizeSchedulerControlText(request.text),
+    )
+  ) {
+    return { intent: fallbackIntent, jobId: fallbackJobId };
+  }
+  if (
+    fallbackIntent &&
+    !shouldUseSemanticSchedulerResolver(
+      request.text,
+      fallbackIntent,
+      fallbackJobId,
+    )
+  ) {
+    return {
+      intent: fallbackIntent,
+      jobId: fallbackJobId,
+    };
+  }
+  if (
+    !deps.schedulerIntentResolver ||
+    !looksLikeSchedulerControlCandidate(request.text)
+  ) {
+    return { intent: fallbackIntent, jobId: null };
+  }
+
+  try {
+    const jobs = deps.schedulerControl
+      ? await deps.schedulerControl.listJobs({
+          workspaceId: request.workspaceId,
+          slackUserId: request.user.slackUserId,
+        })
+      : [];
+    const resolved = await deps.schedulerIntentResolver({
+      text: request.text,
+      recentMessages: recentConversationTexts(request),
+      jobs,
+    });
+    const intent = normalizeResolvedSchedulerIntent(resolved);
+    if (intent) {
+      return {
+        intent,
+        jobId: sanitizeSchedulerJobId(resolved.jobId),
+      };
+    }
+  } catch {
+    // Resolver failures should not make scheduler control less reliable.
+  }
+
+  return { intent: fallbackIntent, jobId: null };
+}
+
+function shouldUseSemanticSchedulerResolver(
+  text: string,
+  fallbackIntent: SchedulerControlIntent,
+  jobId: string | null,
+): boolean {
+  if (jobId || fallbackIntent !== "trigger_job") {
+    return false;
+  }
+  const tokens = tokenizeSchedulerControlText(text);
+  return tokens.some((token) => !genericSchedulerTriggerTokens.has(token));
+}
+
+const genericSchedulerTriggerTokens = new Set([
+  "a",
+  "an",
+  "and",
+  "by",
+  "can",
+  "cron",
+  "current",
+  "existing",
+  "help",
+  "job",
+  "jobs",
+  "manually",
+  "me",
+  "my",
+  "now",
+  "our",
+  "please",
+  "run",
+  "running",
+  "schedule",
+  "scheduled",
+  "start",
+  "test",
+  "that",
+  "the",
+  "this",
+  "trigger",
+  "you",
+]);
+
+function classifyExplicitSchedulerJobIdIntent(
+  text: string,
+): SchedulerControlIntent {
+  if (!readSchedulerJobIdHint(text)) {
+    return null;
+  }
+  const tokens = tokenizeSchedulerControlText(text);
+  if (isSchedulerRunStatusIntent(tokens)) {
+    return "latest_run_status";
+  }
+  if (hasAnyToken(tokens, ["pause", "disable", "stop"])) {
+    return "pause_job";
+  }
+  if (hasAnyToken(tokens, ["resume", "enable", "unpause"])) {
+    return "resume_job";
+  }
+  if (hasAnyToken(tokens, ["delete", "remove", "cancel"])) {
+    return "delete_job";
+  }
+  if (hasAnyToken(tokens, ["run", "running", "trigger", "start", "test"])) {
+    return "trigger_job";
+  }
+  return null;
+}
+
+function looksLikeSchedulerControlCandidate(text: string): boolean {
+  return /\b(cron|cronjob|cronjobs|schedule|scheduled|scheduler|automation|background|job|jobs)\b/i.test(
+    text,
+  );
+}
+
+function normalizeResolvedSchedulerIntent(
+  result: SchedulerIntentResolverResult,
+): Exclude<SchedulerControlIntent, null> | null {
+  if (result.confidence < 0.7 || result.intent === "none") {
+    return null;
+  }
+  if (
+    result.intent === "list_jobs" ||
+    result.intent === "list_job_runs" ||
+    result.intent === "trigger_job" ||
+    result.intent === "pause_job" ||
+    result.intent === "resume_job" ||
+    result.intent === "delete_job" ||
+    result.intent === "latest_run_status"
+  ) {
+    return result.intent;
+  }
+  return null;
+}
+
+function sanitizeSchedulerJobId(
+  value: string | null | undefined,
+): string | null {
+  const trimmed = value?.trim();
+  if (!trimmed || !/^[a-z0-9][a-z0-9_.-]{2,}$/i.test(trimmed)) {
+    return null;
+  }
+  return trimmed;
+}
+
 function tokenizeSchedulerControlText(text: string): string[] {
   return text
     .toLowerCase()
@@ -411,6 +605,9 @@ function tokenizeSchedulerControlText(text: string): string[] {
 
 function hasSchedulerListReference(tokens: string[]): boolean {
   if (hasAnyToken(tokens, ["cron"])) {
+    return true;
+  }
+  if (hasAnyToken(tokens, ["task", "tasks"])) {
     return true;
   }
   if (hasScheduledJobReference(tokens)) {
@@ -437,7 +634,7 @@ function hasSchedulerActionReference(tokens: string[]): boolean {
       "manually",
       "our",
       "my",
-      "the"
+      "the",
     ])
   );
 }
@@ -485,9 +682,24 @@ function isSchedulerRunStatusIntent(tokens: string[]): boolean {
       "succeed",
       "succeeded",
       "fail",
-      "failed"
-    ]) &&
-    hasAnyToken(tokens, ["run", "execution", "manual", "manually"])
+      "failed",
+    ]) && hasAnyToken(tokens, ["run", "execution", "manual", "manually"])
+  );
+}
+
+function isSchedulerJobRunListIntent(tokens: string[]): boolean {
+  if (!hasAnyToken(tokens, ["list", "show", "display", "view", "recent"])) {
+    return false;
+  }
+  if (hasAnyToken(tokens, ["cron", "task", "tasks", "scheduled"])) {
+    return false;
+  }
+  return (
+    hasAnyToken(tokens, ["run", "runs", "execution", "executions"]) ||
+    hasAdjacentTokens(tokens, "job", "history") ||
+    hasAdjacentTokens(tokens, "job", "runs") ||
+    hasAdjacentTokens(tokens, "jobs", "history") ||
+    hasAnyToken(tokens, ["jobs"])
   );
 }
 
@@ -498,7 +710,11 @@ function isSchedulerTriggerIntent(tokens: string[]): boolean {
   if (looksLikeSchedulerCreationRequest(tokens)) {
     return false;
   }
-  if (hasAnyToken(tokens, ["cron"]) || hasScheduledJobReference(tokens)) {
+  if (
+    hasAnyToken(tokens, ["cron"]) ||
+    hasScheduledJobReference(tokens) ||
+    tokens.some((token) => /^job[_-][a-z0-9_.-]{2,}$/i.test(token))
+  ) {
     return true;
   }
   return (
@@ -512,9 +728,8 @@ function isSchedulerTriggerIntent(tokens: string[]): boolean {
       "current",
       "our",
       "my",
-      "the"
-    ]) ||
-    hasAnyToken(tokens, ["trigger"])
+      "the",
+    ]) || hasAnyToken(tokens, ["trigger"])
   );
 }
 
@@ -534,7 +749,7 @@ type ParsedSchedulerCreateRequest = {
 };
 
 function parseSchedulerCreateRequest(
-  text: string
+  text: string,
 ): ParsedSchedulerCreateRequest | null {
   const tokens = tokenizeSchedulerControlText(text);
   if (!looksLikeSchedulerCreationRequest(tokens)) {
@@ -561,41 +776,39 @@ function parseSchedulerCreateRequest(
     title: inferScheduledJobTitle(prompt, schedule.label),
     prompt,
     schedule: schedule.value,
-    scheduleLabel: schedule.label
+    scheduleLabel: schedule.label,
   };
 }
 
 function parseExplicitIntervalSchedule(
-  text: string
+  text: string,
 ): { value: unknown; label: string } | null {
   const normalized = text.toLowerCase();
   if (
     /\bhourly\b|\bevery\s+(?:1\s+)?hours?\b|\bevery\s+60\s*(?:m|min|mins|minutes?)\b/.test(
-      normalized
+      normalized,
     )
   ) {
     return {
       value: { kind: "interval", every: { hours: 1 } },
-      label: "every 60m"
+      label: "every 60m",
     };
   }
   if (/\bdaily\b|\bevery\s+(?:1\s+)?days?\b/.test(normalized)) {
     return {
       value: { kind: "interval", every: { days: 1 } },
-      label: "every 1d"
+      label: "every 1d",
     };
   }
   if (/\bweekly\b|\bevery\s+(?:1\s+)?weeks?\b/.test(normalized)) {
     return {
       value: { kind: "interval", every: { weeks: 1 } },
-      label: "every 1w"
+      label: "every 1w",
     };
   }
 
   const everyMatch =
-    /\bevery\s+(\d+)\s*(minutes?|mins?|m|hours?|hrs?|h|days?|d)\b/i.exec(
-      text
-    );
+    /\bevery\s+(\d+)\s*(minutes?|mins?|m|hours?|hrs?|h|days?|d)\b/i.exec(text);
   if (!everyMatch) {
     return null;
   }
@@ -608,19 +821,19 @@ function parseExplicitIntervalSchedule(
   if (["minute", "minutes", "min", "mins", "m"].includes(unit)) {
     return {
       value: { kind: "interval", every: { minutes: amount } },
-      label: `every ${amount}m`
+      label: `every ${amount}m`,
     };
   }
   if (["hour", "hours", "hr", "hrs", "h"].includes(unit)) {
     return {
       value: { kind: "interval", every: { hours: amount } },
-      label: `every ${amount}h`
+      label: `every ${amount}h`,
     };
   }
   if (["day", "days", "d"].includes(unit)) {
     return {
       value: { kind: "interval", every: { days: amount } },
-      label: `every ${amount}d`
+      label: `every ${amount}d`,
     };
   }
   return null;
@@ -631,7 +844,7 @@ function extractScheduledTaskPrompt(text: string): string {
     .trim()
     .replace(
       /^\s*(?:please\s+)?(?:create|add|make|schedule|set\s+up)\s+(?:an?\s+)?(?:(?:hourly|daily|weekly)\s+|every\s+\d+\s*(?:minutes?|mins?|m|hours?|hrs?|h|days?|d|weeks?|w)\s+)?(?:cron\s+job|cronjob|scheduled\s+job|job)\s+(?:to|that|which|for)?\s*/i,
-      ""
+      "",
     )
     .trim()
     .replace(/[.。]\s*$/, "")
@@ -670,10 +883,10 @@ function hasAnyToken(tokens: string[], candidates: string[]): boolean {
 function hasAdjacentTokens(
   tokens: string[],
   first: string,
-  second: string
+  second: string,
 ): boolean {
   return tokens.some(
-    (token, index) => token === first && tokens[index + 1] === second
+    (token, index) => token === first && tokens[index + 1] === second,
   );
 }
 
@@ -683,7 +896,7 @@ function hasSequence(tokens: string[], sequence: string[]): boolean {
       return false;
     }
     return sequence.every(
-      (sequenceToken, offset) => tokens[index + offset] === sequenceToken
+      (sequenceToken, offset) => tokens[index + offset] === sequenceToken,
     );
   });
 }
@@ -697,59 +910,89 @@ function formatScheduledJobList(
     requiredTools: string[];
     routeId: string | null;
     updatedAt: string;
-  }>
+  }>,
 ): string {
   if (jobs.length === 0) {
-    return "No scheduled jobs are configured.";
+    return "No scheduled tasks are configured.";
   }
 
-  const lines = ["Scheduled jobs"];
+  const lines = ["Scheduled tasks"];
   for (const job of jobs) {
     const details = [
       job.title ? job.title : null,
       `state: ${job.state}`,
       job.runtimeType ? `runtime: ${job.runtimeType}` : null,
-      job.requiredTools.length ? `tools: ${job.requiredTools.join(", ")}` : null,
+      job.requiredTools.length
+        ? `tools: ${job.requiredTools.join(", ")}`
+        : null,
       job.routeId ? `route: ${job.routeId}` : null,
-      `updated: ${job.updatedAt}`
+      `updated: ${job.updatedAt}`,
     ].filter((value): value is string => Boolean(value));
     lines.push(`- ${job.jobId} - ${details.join("; ")}`);
   }
   return lines.join("\n");
 }
 
+function formatScheduledJobRunList(
+  runs: Array<{
+    runId: string;
+    jobId: string;
+    status: string;
+    triggerSource: string;
+    updatedAt: string;
+    failureReason: string | null;
+  }>,
+): string {
+  if (runs.length === 0) {
+    return "No job runs have been recorded yet.";
+  }
+
+  const lines = ["Job runs"];
+  for (const run of runs) {
+    const details = [
+      `task: ${run.jobId}`,
+      `status: ${run.status}`,
+      `triggered: ${run.triggerSource}`,
+      `updated: ${run.updatedAt}`,
+      run.failureReason ? `failure: ${run.failureReason}` : null,
+    ].filter((value): value is string => Boolean(value));
+    lines.push(`- ${run.runId} - ${details.join("; ")}`);
+  }
+  return lines.join("\n");
+}
+
 function formatScheduledJobTriggerResult(
-  result: SchedulerTriggerResult
+  result: SchedulerTriggerResult,
 ): string {
   if (result.ok) {
     return [
       `Triggered scheduled job ${result.jobId}.`,
       `Run ID: ${result.run.runId}`,
-      `Status: ${result.run.status}`
+      `Status: ${result.run.status}`,
     ].join("\n");
   }
 
   if (result.reason === "no_jobs") {
-    return "No scheduled jobs are configured.";
+    return "No scheduled tasks are configured.";
   }
   if (result.reason === "not_found") {
     return "I could not find that scheduled job.";
   }
   return [
     "Multiple scheduled jobs are configured. Please specify the job id.",
-    ...result.jobs.map((job) => `- ${job.jobId}`)
+    ...result.jobs.map((job) => `- ${job.jobId}`),
   ].join("\n");
 }
 
 function formatScheduledJobCreateResult(
-  result: SchedulerCreateJobResult
+  result: SchedulerCreateJobResult,
 ): string {
   return [
     `Created scheduled job ${result.job.jobId}.`,
     `- name: ${result.job.title}`,
     `- state: ${result.job.state}`,
     result.job.runtimeType ? `- runtime: ${result.job.runtimeType}` : null,
-    result.job.routeId ? `- delivery: this conversation` : null
+    result.job.routeId ? `- delivery: this conversation` : null,
   ]
     .filter((line): line is string => Boolean(line))
     .join("\n");
@@ -757,7 +1000,7 @@ function formatScheduledJobCreateResult(
 
 function formatScheduledJobMutationResult(
   verb: "Paused" | "Resumed",
-  result: SchedulerJobMutationResult
+  result: SchedulerJobMutationResult,
 ): string {
   if (result.ok) {
     return `${verb} scheduled job ${result.job.jobId}.`;
@@ -766,7 +1009,7 @@ function formatScheduledJobMutationResult(
 }
 
 function formatScheduledJobDeleteResult(
-  result: SchedulerJobDeleteResult
+  result: SchedulerJobDeleteResult,
 ): string {
   if (result.ok) {
     return `Deleted scheduled job ${result.jobId}.`;
@@ -777,22 +1020,22 @@ function formatScheduledJobDeleteResult(
 function formatScheduledJobSelectionFailure(
   result:
     | Extract<SchedulerJobMutationResult, { ok: false }>
-    | Extract<SchedulerJobDeleteResult, { ok: false }>
+    | Extract<SchedulerJobDeleteResult, { ok: false }>,
 ): string {
   if (result.reason === "no_jobs") {
-    return "No scheduled jobs are configured.";
+    return "No scheduled tasks are configured.";
   }
   if (result.reason === "not_found") {
     return "I could not find that scheduled job.";
   }
   return [
     "Multiple scheduled jobs are configured. Please specify the job id.",
-    ...result.jobs.map((job) => `- ${job.jobId}`)
+    ...result.jobs.map((job) => `- ${job.jobId}`),
   ].join("\n");
 }
 
 function formatScheduledRunStatusResult(
-  result: SchedulerRunStatusResult
+  result: SchedulerRunStatusResult,
 ): string {
   if (!result.ok) {
     return "No scheduled job runs have been recorded yet.";
@@ -807,17 +1050,20 @@ function formatScheduledRunStatusResult(
     `- updated: ${result.run.updatedAt}`,
     ...(result.run.failureReason
       ? [`- failure: ${result.run.failureReason}`]
-      : [])
+      : []),
   ].join("\n");
 }
 
 function readSchedulerJobIdHint(text: string): string | null {
   const match =
+    /\b(?:job|cron\s+job|scheduled\s+job)\s+(job_[a-z0-9_.-]{3,})\b/i.exec(
+      text,
+    ) ??
     /\b(?:job|cron\s+job|scheduled\s+job)\s+(?:id\s*)?(?:[:#]\s*|\bis\s+)([a-z0-9][a-z0-9_.-]{2,})\b/i.exec(
-      text
+      text,
     ) ??
     /\b(?:job|cron\s+job|scheduled\s+job)\s+id\s+([a-z0-9][a-z0-9_.-]{2,})\b/i.exec(
-      text
+      text,
     );
   return match?.[1] ?? null;
 }
@@ -825,7 +1071,7 @@ function readSchedulerJobIdHint(text: string): string | null {
 function emitConversationStarted(
   traceId: string,
   request: ConversationRequest,
-  deps: ConversationDeps
+  deps: ConversationDeps,
 ): void {
   deps.observability?.emit({
     name: "conversation.request.started",
@@ -843,25 +1089,26 @@ function emitConversationStarted(
       agentMode: deps.agentMode ?? "deterministic",
       fastTrackEnabled: shouldUseFastTrack(deps),
       hasAgentRunner: Boolean(deps.agentRunner),
-      ...toolGroupAttributes(request)
+      ...toolGroupAttributes(request),
     },
     content: {
-      text: request.text
-    }
+      text: request.text,
+    },
   });
 }
 
-function toolGroupAttributes(
-  request: ConversationRequest
-): { toolGroups: string[]; toolGroupReasons: string[] } {
+function toolGroupAttributes(request: ConversationRequest): {
+  toolGroups: string[];
+  toolGroupReasons: string[];
+} {
   const selection = selectRuntimeToolGroups({
     text: request.text,
     attachmentCount: request.attachments?.length ?? 0,
-    contextTexts: recentConversationTexts(request)
+    contextTexts: recentConversationTexts(request),
   });
   return {
     toolGroups: selection.groups,
-    toolGroupReasons: selection.reasons
+    toolGroupReasons: selection.reasons,
   };
 }
 
@@ -876,7 +1123,7 @@ function emitConversationCompleted(
   request: ConversationRequest,
   response: ConversationResponse,
   deps: ConversationDeps,
-  startedAt: number
+  startedAt: number,
 ): void {
   deps.observability?.emit({
     name: "conversation.response.completed",
@@ -893,11 +1140,11 @@ function emitConversationCompleted(
       visibility: response.visibility,
       textLength: response.text.length,
       attachmentCount: response.attachments?.length ?? 0,
-      blockCount: response.blocks?.length ?? 0
+      blockCount: response.blocks?.length ?? 0,
     },
     content: {
-      text: response.text
-    }
+      text: response.text,
+    },
   });
 }
 
@@ -906,7 +1153,7 @@ function emitConversationFailed(
   request: ConversationRequest,
   deps: ConversationDeps,
   startedAt: number,
-  error: unknown
+  error: unknown,
 ): void {
   deps.observability?.emit({
     name: "conversation.request.failed",
@@ -917,7 +1164,7 @@ function emitConversationFailed(
     sessionId: request.threadTs ?? request.messageTs,
     durationMs: Date.now() - startedAt,
     status: "error",
-    error: errorToObservabilityError(error)
+    error: errorToObservabilityError(error),
   });
 }
 
@@ -925,14 +1172,14 @@ function emitAgentEvent(
   traceId: string,
   request: ConversationRequest,
   deps: ConversationDeps,
-  event: AgentRunEvent
+  event: AgentRunEvent,
 ): void {
   const common = {
     traceId,
     workspaceId: request.workspaceId,
     principalId: principalId(request),
     routeId: request.conversationRouteId,
-    sessionId: request.threadTs ?? request.messageTs
+    sessionId: request.threadTs ?? request.messageTs,
   };
 
   if (event.type === "tool_call") {
@@ -940,7 +1187,7 @@ function emitAgentEvent(
       ...common,
       name: "tool.call.started",
       toolName: event.toolName,
-      callId: event.callId
+      callId: event.callId,
     });
     return;
   }
@@ -952,7 +1199,7 @@ function emitAgentEvent(
       toolName: event.toolName,
       callId: event.callId,
       classification: event.classification,
-      status: "ok"
+      status: "ok",
     });
     return;
   }
@@ -962,8 +1209,8 @@ function emitAgentEvent(
       ...common,
       name: "agent.status",
       attributes: {
-        text: event.text
-      }
+        text: event.text,
+      },
     });
     return;
   }
@@ -976,11 +1223,11 @@ function emitAgentEvent(
           ? "agent.message.replace"
           : "agent.message.delta",
       attributes: {
-        textLength: event.text.length
+        textLength: event.text.length,
       },
       content: {
-        text: event.text
-      }
+        text: event.text,
+      },
     });
   }
 }
@@ -996,7 +1243,7 @@ function errorToObservabilityError(error: unknown): {
   if (error instanceof Error) {
     return {
       name: error.name,
-      message: error.message
+      message: error.message,
     };
   }
 
@@ -1013,7 +1260,7 @@ function shouldUseFastTrack(deps: ConversationDeps): boolean {
 
 function dispatchSchedulerRunQueued(
   deps: ConversationDeps,
-  run: Parameters<NonNullable<ConversationDeps["onSchedulerRunQueued"]>>[0]
+  run: Parameters<NonNullable<ConversationDeps["onSchedulerRunQueued"]>>[0],
 ): void {
   try {
     const result = deps.onSchedulerRunQueued?.(run);
@@ -1027,12 +1274,14 @@ function dispatchSchedulerRunQueued(
 
 function buildAgentConversation(request: ConversationRequest) {
   return {
-    ...(request.conversationRouteId ? { routeId: request.conversationRouteId } : {}),
+    ...(request.conversationRouteId
+      ? { routeId: request.conversationRouteId }
+      : {}),
     source: request.source,
     workspaceId: request.workspaceId,
     channelId: request.channelId,
     rootId: buildConversationRootId(request),
-    isDirectMessage: request.isDirectMessage
+    isDirectMessage: request.isDirectMessage,
   };
 }
 
@@ -1110,13 +1359,13 @@ export function shouldForceAgentDelegation(text: string): boolean {
     isProviderMutationRequest(normalized) ||
     /\bask\s+(the\s+)?(agent|subagent)\b/.test(normalized) ||
     /\b(agent|subagent)\s+(please\s+)?(create|make|schedule|run|list|show|tell|answer|post|send)\b/.test(
-      normalized
+      normalized,
     ) ||
     /\b(create|make|set|schedule|modify|update|delete|remove|list|run|start|add)\b.*\b(cron|job|task|subagent|scheduled job|schedule|reminder|background task)\b/.test(
-      normalized
+      normalized,
     ) ||
     /\b(one[-\s]?shot|every\s+\d+|in\s+\d+\s+(second|seconds|minute|minutes|hour|hours))\b.*\b(cron|job|task|scheduled|schedule|post|send|report)\b/.test(
-      normalized
+      normalized,
     )
   );
 }
@@ -1128,13 +1377,13 @@ function isProviderMutationRequest(normalizedText: string): boolean {
     "github|pull request|pr|issue|review|reviewer|label|comment|description|body";
   return (
     /\bopen\s+(?:a|an|new)\b.*\b(github|pull request|pr)\b/.test(
-      normalizedText
+      normalizedText,
     ) ||
     new RegExp(`\\b(${mutationVerb})\\b.*\\b(${providerObject})\\b`).test(
-      normalizedText
+      normalizedText,
     ) ||
     new RegExp(`\\b(${providerObject})\\b.*\\b(${mutationVerb})\\b`).test(
-      normalizedText
+      normalizedText,
     )
   );
 }
@@ -1145,7 +1394,5 @@ function buildIssueSearchQuery(text: string): string {
     .replace(/\s+/g, " ")
     .trim();
 
-  return normalized
-    ? `is:issue ${normalized}`
-    : "is:issue";
+  return normalized ? `is:issue ${normalized}` : "is:issue";
 }

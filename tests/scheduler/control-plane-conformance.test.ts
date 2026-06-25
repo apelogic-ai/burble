@@ -276,7 +276,7 @@ describe("scheduler control conformance", () => {
       },
       deps
     );
-    expect(finalListResponse.text).toBe("No scheduled jobs are configured.");
+    expect(finalListResponse.text).toBe("No scheduled tasks are configured.");
 
     store.close();
   });

@@ -84,6 +84,7 @@ import type {
 } from "./db";
 import { handleConversation } from "./conversation/orchestrator";
 import { normalizeMentionText } from "./conversation/normalize";
+import { createLlmSchedulerIntentResolver } from "./conversation/scheduler-intent-resolver";
 import { createSchedulerControlPlane } from "./scheduler/control-plane";
 import { createSchedulerRunExecutor } from "./scheduler/run-executor";
 import type {
@@ -364,6 +365,13 @@ export function createSlackRuntime(
     searchSlackMessages
   });
   const schedulerControl = createSchedulerControlPlane(store);
+  const schedulerIntentResolver =
+    config.agentMode === "llm"
+      ? createLlmSchedulerIntentResolver({
+          model: config.aiModel,
+          logWarn: (message) => app.logger.warn(withUtcTimestamp(message))
+        })
+      : undefined;
   const runtimeFactory = createManagedRuntimeFactory(
     config,
     store,
@@ -895,6 +903,7 @@ export function createSlackRuntime(
             slack: slackTools
           },
           schedulerControl,
+          ...(schedulerIntentResolver ? { schedulerIntentResolver } : {}),
           ...(schedulerRunExecutor
             ? {
                 onSchedulerRunQueued: (run) =>
@@ -1086,6 +1095,7 @@ export function createSlackRuntime(
             slack: slackTools
           },
           schedulerControl,
+          ...(schedulerIntentResolver ? { schedulerIntentResolver } : {}),
           ...(schedulerRunExecutor
             ? {
                 onSchedulerRunQueued: (run) =>
