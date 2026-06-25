@@ -912,6 +912,93 @@ describe("handleConversation", () => {
     expect(response.text).toContain("google_search_drive_files");
   });
 
+  test("manually triggers the only scheduled job without invoking the LLM runner", async () => {
+    let called = false;
+    const response = await handleConversation(
+      {
+        ...baseRequest,
+        text: "let's manually run our existing cron job"
+      },
+      createDeps({
+        agentMode: "llm",
+        schedulerControl: {
+          listJobs: () => [],
+          triggerJob: () => ({
+            ok: true,
+            jobId: "ai-news-hourly",
+            run: {
+              runId: "jobrun-manual-1",
+              jobId: "ai-news-hourly",
+              workspaceId: "T123",
+              slackUserId: "U123",
+              triggerSource: "manual",
+              status: "queued",
+              failureReason: null,
+              createdAt: "2026-06-24T12:05:00.000Z",
+              updatedAt: "2026-06-24T12:05:00.000Z",
+              startedAt: null,
+              finishedAt: null
+            }
+          })
+        },
+        agentRunner: stubAgentRunner(() => {
+          called = true;
+          return {
+            classification: "public",
+            text: "unexpected"
+          };
+        })
+      })
+    );
+
+    expect(called).toBe(false);
+    expect(response.text).toContain("Triggered scheduled job ai-news-hourly");
+    expect(response.text).toContain("jobrun-manual-1");
+  });
+
+  test("reports latest scheduled run status without invoking the LLM runner", async () => {
+    let called = false;
+    const response = await handleConversation(
+      {
+        ...baseRequest,
+        text: "did the manual cron job run finish?"
+      },
+      createDeps({
+        agentMode: "llm",
+        schedulerControl: {
+          listJobs: () => [],
+          getLatestRunStatus: () => ({
+            ok: true,
+            run: {
+              runId: "jobrun-manual-1",
+              jobId: "ai-news-hourly",
+              workspaceId: "T123",
+              slackUserId: "U123",
+              triggerSource: "manual",
+              status: "queued",
+              failureReason: null,
+              createdAt: "2026-06-24T12:05:00.000Z",
+              updatedAt: "2026-06-24T12:05:00.000Z",
+              startedAt: null,
+              finishedAt: null
+            }
+          })
+        },
+        agentRunner: stubAgentRunner(() => {
+          called = true;
+          return {
+            classification: "public",
+            text: "unexpected"
+          };
+        })
+      })
+    );
+
+    expect(called).toBe(false);
+    expect(response.text).toContain("Latest scheduled job run");
+    expect(response.text).toContain("status: queued");
+  });
+
   test("delegates explicit agent, task, and subagent requests before GitHub fast-paths", async () => {
     for (const text of [
       "ask agent to list my open GitHub PRs",

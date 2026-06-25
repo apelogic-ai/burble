@@ -6,6 +6,10 @@ import { parseGitHubPullRequestListInput } from "../github-query";
 import { tryHandleLocalToolFastPath } from "./local-tool-fast-paths";
 import { enforceVisibility } from "./visibility";
 import type {
+  SchedulerRunStatusResult,
+  SchedulerTriggerResult
+} from "../scheduler/control-plane";
+import type {
   ConversationDeps,
   ConversationRequest,
   ConversationResponse
@@ -128,6 +132,38 @@ async function handleConversationInternal(
       visibility: "ephemeral",
       classification: "user_private",
       text: formatScheduledJobList(jobs)
+    };
+  }
+
+  if (
+    schedulerControlIntent === "trigger_job" &&
+    deps.schedulerControl?.triggerJob
+  ) {
+    const result = await deps.schedulerControl.triggerJob({
+      workspaceId: request.workspaceId,
+      slackUserId: request.user.slackUserId,
+      jobId: readSchedulerJobIdHint(request.text)
+    });
+    return {
+      visibility: "ephemeral",
+      classification: "user_private",
+      text: formatScheduledJobTriggerResult(result)
+    };
+  }
+
+  if (
+    schedulerControlIntent === "latest_run_status" &&
+    deps.schedulerControl?.getLatestRunStatus
+  ) {
+    const result = await deps.schedulerControl.getLatestRunStatus({
+      workspaceId: request.workspaceId,
+      slackUserId: request.user.slackUserId,
+      jobId: readSchedulerJobIdHint(request.text)
+    });
+    return {
+      visibility: "ephemeral",
+      classification: "user_private",
+      text: formatScheduledRunStatusResult(result)
     };
   }
 
@@ -255,11 +291,38 @@ async function handleConversationInternal(
   };
 }
 
-type SchedulerControlIntent = "list_jobs" | null;
+type SchedulerControlIntent =
+  | "list_jobs"
+  | "trigger_job"
+  | "latest_run_status"
+  | null;
 
 function classifySchedulerControlIntent(text: string): SchedulerControlIntent {
   const normalized = text.toLowerCase().replace(/\s+/g, " ").trim();
   const jobNoun = "(?:cron\\s*jobs?|cronjobs?|scheduled\\s+jobs?|jobs?)";
+  if (
+    /\b(?:did|has)\b.*\b(?:manual\s+)?(?:cron|job|scheduled\s+job)\b.*\b(?:run|execution)\b.*\b(?:finish|complete|succeed|fail|status)\b/.test(
+      normalized
+    ) ||
+    /\b(?:latest|last|recent)\b.*\b(?:cron|job|scheduled\s+job)\b.*\b(?:run|execution|status)\b/.test(
+      normalized
+    ) ||
+    /\b(?:status|state)\b.*\b(?:cron|job|scheduled\s+job)\b.*\b(?:run|execution)?\b/.test(
+      normalized
+    )
+  ) {
+    return "latest_run_status";
+  }
+  if (
+    /\b(?:manually\s+run|manual\s+run|trigger|start)\b.*\b(?:cron|job|scheduled\s+job)\b/.test(
+      normalized
+    ) ||
+    /\brun\b.*\b(?:existing|that|this|the|our|my)\b.*\b(?:cron|job|scheduled\s+job)\b/.test(
+      normalized
+    )
+  ) {
+    return "trigger_job";
+  }
   if (
     new RegExp(`\\b(?:do we have|are there)\\b.*\\b${jobNoun}\\b`).test(
       normalized
@@ -300,6 +363,60 @@ function formatScheduledJobList(
     lines.push(`- ${job.jobId} - ${details.join("; ")}`);
   }
   return lines.join("\n");
+}
+
+function formatScheduledJobTriggerResult(
+  result: SchedulerTriggerResult
+): string {
+  if (result.ok) {
+    return [
+      `Triggered scheduled job ${result.jobId}.`,
+      `Run ID: ${result.run.runId}`,
+      `Status: ${result.run.status}`
+    ].join("\n");
+  }
+
+  if (result.reason === "no_jobs") {
+    return "No scheduled jobs are configured.";
+  }
+  if (result.reason === "not_found") {
+    return "I could not find that scheduled job.";
+  }
+  return [
+    "Multiple scheduled jobs are configured. Please specify the job id.",
+    ...result.jobs.map((job) => `- ${job.jobId}`)
+  ].join("\n");
+}
+
+function formatScheduledRunStatusResult(
+  result: SchedulerRunStatusResult
+): string {
+  if (!result.ok) {
+    return "No scheduled job runs have been recorded yet.";
+  }
+
+  return [
+    "Latest scheduled job run",
+    `- job: ${result.run.jobId}`,
+    `- run: ${result.run.runId}`,
+    `- status: ${result.run.status}`,
+    `- triggered: ${result.run.triggerSource}`,
+    `- updated: ${result.run.updatedAt}`,
+    ...(result.run.failureReason
+      ? [`- failure: ${result.run.failureReason}`]
+      : [])
+  ].join("\n");
+}
+
+function readSchedulerJobIdHint(text: string): string | null {
+  const match =
+    /\b(?:job|cron\s+job|scheduled\s+job)\s+(?:id\s*)?(?:[:#]\s*|\bis\s+)([a-z0-9][a-z0-9_.-]{2,})\b/i.exec(
+      text
+    ) ??
+    /\b(?:job|cron\s+job|scheduled\s+job)\s+id\s+([a-z0-9][a-z0-9_.-]{2,})\b/i.exec(
+      text
+    );
+  return match?.[1] ?? null;
 }
 
 function emitConversationStarted(

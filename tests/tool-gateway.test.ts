@@ -284,6 +284,12 @@ function createStore(
     getAgentJobState: () => null,
     listAgentJobStatesForPrincipal: () => [],
     deleteAgentJobState: () => undefined,
+    createAgentJobRun: () => {
+      throw new Error("unexpected agent job run write");
+    },
+    getAgentJobRun: () => null,
+    listAgentJobRunsForJob: () => [],
+    getLatestAgentJobRunForPrincipal: () => null,
     upsertAgentJobCapability: (input) => {
       jobCapabilities.upserts?.push(input);
       return {

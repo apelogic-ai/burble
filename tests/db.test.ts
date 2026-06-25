@@ -1277,6 +1277,57 @@ describe("createTokenStore", () => {
     store.close();
   });
 
+  test("records scheduled job runs by principal and job", () => {
+    const store = createTokenStore(":memory:");
+
+    const run = store.createAgentJobRun({
+      runId: "jobrun-123",
+      jobId: "ai-news-hourly",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      triggerSource: "manual",
+      status: "queued",
+      now: new Date("2026-06-24T12:00:00.000Z")
+    });
+    store.createAgentJobRun({
+      runId: "jobrun-other",
+      jobId: "other-job",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      triggerSource: "schedule",
+      status: "succeeded",
+      now: new Date("2026-06-24T12:01:00.000Z")
+    });
+
+    expect(run).toEqual({
+      runId: "jobrun-123",
+      jobId: "ai-news-hourly",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      triggerSource: "manual",
+      status: "queued",
+      failureReason: null,
+      createdAt: "2026-06-24T12:00:00.000Z",
+      updatedAt: "2026-06-24T12:00:00.000Z",
+      startedAt: null,
+      finishedAt: null
+    });
+    expect(store.getAgentJobRun("jobrun-123")).toEqual(run);
+    expect(
+      store
+        .listAgentJobRunsForJob("ai-news-hourly")
+        .map((record) => record.runId)
+    ).toEqual(["jobrun-123"]);
+    expect(
+      store.getLatestAgentJobRunForPrincipal("T123", "U123", "ai-news-hourly")
+    ).toEqual(run);
+    expect(
+      store.getLatestAgentJobRunForPrincipal("T123", "U123", null)?.runId
+    ).toBe("jobrun-other");
+
+    store.close();
+  });
+
   test("stores skill catalog and workspace/user skill enablement", () => {
     const store = createTokenStore(":memory:");
 

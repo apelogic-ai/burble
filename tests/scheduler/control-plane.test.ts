@@ -39,4 +39,69 @@ describe("scheduler control plane", () => {
 
     store.close();
   });
+
+  test("creates manual trigger runs and reports latest status", async () => {
+    const store = createTokenStore(":memory:");
+    store.upsertAgentJobCapability({
+      jobId: "ai-news-hourly",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      requiredTools: ["google_search_drive_files"],
+      runtimeType: "hermes",
+      now: new Date("2026-06-24T12:00:00.000Z")
+    });
+
+    const scheduler = createSchedulerControlPlane(store, {
+      now: () => new Date("2026-06-24T12:05:00.000Z"),
+      newRunId: () => "jobrun-manual-1"
+    });
+
+    expect(
+      await scheduler.triggerJob?.({
+        workspaceId: "T123",
+        slackUserId: "U123",
+        jobId: "ai-news-hourly"
+      })
+    ).toEqual({
+      ok: true,
+      jobId: "ai-news-hourly",
+      run: {
+        runId: "jobrun-manual-1",
+        jobId: "ai-news-hourly",
+        workspaceId: "T123",
+        slackUserId: "U123",
+        triggerSource: "manual",
+        status: "queued",
+        failureReason: null,
+        createdAt: "2026-06-24T12:05:00.000Z",
+        updatedAt: "2026-06-24T12:05:00.000Z",
+        startedAt: null,
+        finishedAt: null
+      }
+    });
+    expect(
+      await scheduler.getLatestRunStatus?.({
+        workspaceId: "T123",
+        slackUserId: "U123",
+        jobId: "ai-news-hourly"
+      })
+    ).toEqual({
+      ok: true,
+      run: {
+        runId: "jobrun-manual-1",
+        jobId: "ai-news-hourly",
+        workspaceId: "T123",
+        slackUserId: "U123",
+        triggerSource: "manual",
+        status: "queued",
+        failureReason: null,
+        createdAt: "2026-06-24T12:05:00.000Z",
+        updatedAt: "2026-06-24T12:05:00.000Z",
+        startedAt: null,
+        finishedAt: null
+      }
+    });
+
+    store.close();
+  });
 });
