@@ -4,6 +4,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import time
 from collections.abc import Mapping
 from typing import Any, Dict, Optional
@@ -81,7 +82,19 @@ def _looks_like_hermes_tool_protocol_line(text: str) -> bool:
         return False
     if value.startswith(("to=", "recipient=", "<tool", "</tool>")):
         return True
+    if _looks_like_hermes_native_tool_marker_line(value):
+        return True
     return False
+
+
+def _looks_like_hermes_native_tool_marker_line(text: str) -> bool:
+    return bool(
+        re.match(
+            r'^(?::alarm_clock:|⏰)?\s*cronjob\s*:\s*"(?:create|list|run|update|modify|delete|remove|enable|disable)"\s*$',
+            text,
+            re.IGNORECASE,
+        )
+    )
 
 
 def _looks_like_hermes_tool_json_line(text: str) -> bool:
@@ -132,7 +145,12 @@ def _starts_hermes_tool_json_block(text: str) -> bool:
 
 def _strip_hermes_tool_protocol(text: str) -> tuple[str, bool]:
     value = str(text or "")
-    if "to=" not in value and "recipient=" not in value and "<tool" not in value:
+    if (
+        "to=" not in value
+        and "recipient=" not in value
+        and "<tool" not in value
+        and "cronjob" not in value.lower()
+    ):
         return value, False
 
     kept: list[str] = []
@@ -334,6 +352,100 @@ def _job_id_from_metadata(metadata: Optional[Dict[str, Any]]) -> Optional[str]:
                 return job_id
 
     return None
+
+
+async def _send_to_burble_route(
+    route_id: str,
+    text: str,
+    job_id: Optional[str] = None,
+) -> SendResult:
+    tool_gateway_url = _env("BURBLE_TOOL_GATEWAY_URL").rstrip("/")
+    internal_token = _env("BURBLE_INTERNAL_TOKEN")
+    runtime_id = _env("BURBLE_RUNTIME_ID")
+    if not tool_gateway_url or not internal_token or not runtime_id:
+        return SendResult(
+            success=False,
+            error=(
+                "BURBLE_TOOL_GATEWAY_URL, BURBLE_INTERNAL_TOKEN, and "
+                "BURBLE_RUNTIME_ID are required"
+            ),
+            retryable=False,
+        )
+
+    url = (
+        f"{tool_gateway_url}/"
+        f"{quote('conversation.sendMessage', safe='')}/execute"
+    )
+    input_body: dict[str, Any] = {"routeId": route_id, "text": text}
+    if job_id:
+        input_body["jobId"] = job_id
+    async with ClientSession(timeout=ClientTimeout(total=60)) as session:
+        async with session.post(
+            url,
+            headers={
+                "authorization": f"Bearer {internal_token}",
+                "content-type": "application/json",
+                "x-burble-runtime-id": runtime_id,
+            },
+            json={
+                "input": input_body,
+                **({"scheduledJob": {"jobId": job_id}} if job_id else {}),
+            },
+        ) as response:
+            body = await response.text()
+            if response.status >= 400:
+                return SendResult(
+                    success=False,
+                    error=f"Burble conversation gateway returned {response.status}: {body[:200]}",
+                    retryable=response.status >= 500,
+                )
+    raw_response: dict[str, Any]
+    try:
+        parsed_body = json.loads(body)
+        raw_response = parsed_body if isinstance(parsed_body, dict) else {"body": parsed_body}
+    except json.JSONDecodeError:
+        raw_response = {"body": body}
+    return SendResult(
+        success=True,
+        message_id=f"burble:{route_id}:{int(time.time() * 1000)}",
+        raw_response=raw_response,
+    )
+
+
+async def _standalone_send(
+    _pconfig: Any,
+    chat_id: str,
+    message: str,
+    *,
+    thread_id: Optional[str] = None,
+    media_files: Optional[list[str]] = None,
+    force_document: bool = False,
+) -> dict[str, Any]:
+    del thread_id, media_files, force_document
+    route_id = str(chat_id or "").strip()
+    text, removed_tool_protocol = _strip_hermes_tool_protocol(str(message or ""))
+    if not route_id:
+        return {"error": "Burble route id is required"}
+    if removed_tool_protocol:
+        return {
+            "error": (
+                "Hermes produced tool-call protocol text instead of structured tool calls; "
+                "refusing to publish untrusted assistant content"
+            )
+        }
+    if not text.strip() or _is_burble_platform_notice(text):
+        return {"success": True, "message_id": f"burble-notice:{route_id}:{int(time.time() * 1000)}"}
+    result = await _send_to_burble_route(route_id, text)
+    if result.success:
+        return {
+            "success": True,
+            "message_id": result.message_id,
+            **({"raw_response": result.raw_response} if getattr(result, "raw_response", None) else {}),
+        }
+    return {
+        "error": result.error or "Burble conversation gateway send failed",
+        "retryable": getattr(result, "retryable", None),
+    }
 
 
 def _usage_snapshot(value: Any) -> Optional[dict[str, int]]:
@@ -789,44 +901,7 @@ class BurbleAdapter(BasePlatformAdapter):
     async def _send_to_burble_route(
         self, route_id: str, text: str, job_id: Optional[str] = None
     ) -> SendResult:
-        url = (
-            f"{self.tool_gateway_url}/"
-            f"{quote('conversation.sendMessage', safe='')}/execute"
-        )
-        input_body: dict[str, Any] = {"routeId": route_id, "text": text}
-        if job_id:
-            input_body["jobId"] = job_id
-        async with ClientSession(timeout=ClientTimeout(total=60)) as session:
-            async with session.post(
-                url,
-                headers={
-                    "authorization": f"Bearer {self.internal_token}",
-                    "content-type": "application/json",
-                    "x-burble-runtime-id": self.runtime_id,
-                },
-                json={
-                    "input": input_body,
-                    **({"scheduledJob": {"jobId": job_id}} if job_id else {}),
-                },
-            ) as response:
-                body = await response.text()
-                if response.status >= 400:
-                    return SendResult(
-                        success=False,
-                        error=f"Burble conversation gateway returned {response.status}: {body[:200]}",
-                        retryable=response.status >= 500,
-                    )
-        raw_response: dict[str, Any]
-        try:
-            parsed_body = json.loads(body)
-            raw_response = parsed_body if isinstance(parsed_body, dict) else {"body": parsed_body}
-        except json.JSONDecodeError:
-            raw_response = {"body": body}
-        return SendResult(
-            success=True,
-            message_id=f"burble:{route_id}:{int(time.time() * 1000)}",
-            raw_response=raw_response,
-        )
+        return await _send_to_burble_route(route_id, text, job_id)
 
 
 def register(ctx: Any) -> None:
@@ -845,6 +920,7 @@ def register(ctx: Any) -> None:
         install_hint="Bundled with the Burble Hermes runtime image",
         env_enablement_fn=_env_enabled,
         cron_deliver_env_var="BURBLE_HOME_ROUTE",
+        standalone_sender_fn=_standalone_send,
         allowed_users_env="BURBLE_ALLOWED_USERS",
         allow_all_env="BURBLE_ALLOW_ALL_USERS",
         max_message_length=4000,

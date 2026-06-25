@@ -85,6 +85,9 @@ type CliSpawnProcess = {
 };
 
 const streamHeartbeatMs = 8_000;
+const openClawGatewayStreamIdleTimeoutMs = 12_000;
+const defaultOpenClawGatewayRetryBaseMs = 1_500;
+const defaultOpenClawGatewayRetryMaxMs = 10_000;
 const maxPlannedToolCalls = 5;
 const maxBootstrapRetries = 1;
 
@@ -113,6 +116,7 @@ type GatewayHttpResponseResult = {
   stdout: string;
   responseText: string;
   deltaCount: number;
+  errorText?: string;
 };
 
 type BurbleToolContext = {
@@ -190,18 +194,28 @@ export async function runOpenClawCliRequest(
 
     if (!plannedToolCall) {
       const lastToolResult = executedTools.at(-1)?.toolResult;
+      const openClawText = extractOpenClawText(result.stdout);
       const rawText =
-        extractOpenClawText(result.stdout) ||
+        openClawText ||
         (lastToolResult ? formatToolResult(lastToolResult) : baseline.response.text);
+      const rejectedReason = shouldRejectDirectOpenClawResponse(
+        rawText,
+        baseline.response.text,
+        Boolean(lastToolResult),
+        Boolean(openClawText)
+      );
       if (
         rejectedDirectResponses.length < maxBootstrapRetries &&
-        isBootstrapSetupAnswer(rawText)
+        rejectedReason
       ) {
         rejectedDirectResponses.push(rawText);
         logInfo(
-          `OpenClaw bootstrap retry runId=${request.runId ?? "unknown"} step=${step + 1} reason=bootstrap_response`
+          `OpenClaw bootstrap retry runId=${request.runId ?? "unknown"} step=${step + 1} reason=${rejectedReason}`
         );
         continue;
+      }
+      if (rejectedReason === "empty_response") {
+        throw new Error("OpenClaw Gateway returned no assistant text");
       }
       const text = sanitizeBootstrapFragments(rawText, baseline.response.text);
       logInfo(
@@ -373,7 +387,9 @@ async function runOpenClawGatewayHttpRequest(
   sessionId: string,
   logInfo: RuntimeLogger,
   step: number,
-  onDelta?: (delta: string) => void
+  onDelta?: (delta: string) => void,
+  suppressedBaselineText?: string,
+  onStatus?: (status: string) => void
 ): Promise<CliCommandResult> {
   const startedAt = Date.now();
   const baseSessionKey = buildGatewayHttpSessionKey(config, sessionId);
@@ -393,6 +409,8 @@ async function runOpenClawGatewayHttpRequest(
   const maxAttempts = 3;
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     const attemptStartedAt = Date.now();
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), config.openClawTimeoutMs);
     const attemptSessionId = buildGatewayHttpAttemptSessionId(
       sessionId,
       attempt
@@ -408,7 +426,8 @@ async function runOpenClawGatewayHttpRequest(
         request,
         attemptSessionKey,
         prompt,
-        Boolean(onDelta)
+        Boolean(onDelta),
+        controller.signal
       );
       if (!response.ok) {
         const responseText = await response.text();
@@ -420,13 +439,22 @@ async function runOpenClawGatewayHttpRequest(
           attempt < maxAttempts &&
           isRetryableOpenClawGatewayProviderError(response.status, responseText)
         ) {
+          const retryDelayMs = openClawGatewayRetryDelayMs(config, attempt);
           const nextSessionKey = buildGatewayHttpSessionKey(
             config,
             buildGatewayHttpAttemptSessionId(sessionId, attempt + 1)
           );
-          logInfo(
-            `OpenClaw gateway http retry runId=${request.runId ?? "unknown"} step=${step} attempt=${attempt} status=${response.status} reason=upstream_provider_timeout elapsedMs=${Date.now() - attemptStartedAt} nextSessionKey=${nextSessionKey}`
+          const status = formatOpenClawGatewayRetryStatus(
+            retryDelayMs,
+            attempt + 1,
+            maxAttempts
           );
+          onStatus?.(status);
+          logInfo(
+            `OpenClaw gateway http retry runId=${request.runId ?? "unknown"} step=${step} attempt=${attempt} status=${response.status} reason=upstream_provider_timeout elapsedMs=${Date.now() - attemptStartedAt} retryDelayMs=${retryDelayMs} nextSessionKey=${nextSessionKey}`
+          );
+          clearTimeout(timeout);
+          await sleep(retryDelayMs);
           continue;
         }
         const gatewayDiagnostics = readGatewayDiagnosticTextSince(startedAt);
@@ -446,17 +474,64 @@ async function runOpenClawGatewayHttpRequest(
       }
 
       const responseResult = onDelta && isGatewayHttpStreamingResponse(response)
-        ? await readGatewayHttpStreamingResponse(response, onDelta)
+        ? await readGatewayHttpStreamingResponse(
+            response,
+            onDelta,
+            Math.min(
+              config.openClawTimeoutMs,
+              openClawGatewayStreamIdleTimeoutMs
+            ),
+            suppressedBaselineText
+          )
         : {
             responseText: await response.text(),
             stdout: "",
             deltaCount: 0
           };
       const responseText = responseResult.responseText;
-      stdout =
-        responseResult.stdout ||
-        extractOpenResponsesText(responseText) ||
-        responseText;
+      if (responseResult.errorText) {
+        stderr = responseResult.errorText;
+        if (
+          attempt < maxAttempts &&
+          isRetryableOpenClawGatewayProviderMessage(stderr)
+        ) {
+          const retryDelayMs = openClawGatewayRetryDelayMs(config, attempt);
+          const nextSessionKey = buildGatewayHttpSessionKey(
+            config,
+            buildGatewayHttpAttemptSessionId(sessionId, attempt + 1)
+          );
+          const status = formatOpenClawGatewayRetryStatus(
+            retryDelayMs,
+            attempt + 1,
+            maxAttempts
+          );
+          onStatus?.(status);
+          logInfo(
+            `OpenClaw gateway http retry runId=${request.runId ?? "unknown"} step=${step} attempt=${attempt} status=${response.status} reason=response_failed elapsedMs=${Date.now() - attemptStartedAt} retryDelayMs=${retryDelayMs} nextSessionKey=${nextSessionKey}${summarizeLogObject("error", stderr)}`
+          );
+          clearTimeout(timeout);
+          await sleep(retryDelayMs);
+          continue;
+        }
+        const gatewayDiagnostics = readGatewayDiagnosticTextSince(startedAt);
+        const usageTelemetry = logOpenClawUsageFromOutput(
+          request,
+          step,
+          prompt,
+          responseText,
+          stderr,
+          null,
+          gatewayDiagnostics,
+          sessionId,
+          logInfo,
+          startedAt
+        );
+        logInfo(
+          `OpenClaw gateway http response_failed runId=${request.runId ?? "unknown"} step=${step} elapsedMs=${Date.now() - startedAt} status=${response.status}${summarizeLogObject("error", stderr)}`
+        );
+        return { exitCode: 1, stdout: "", stderr, ...usageTelemetry };
+      }
+      stdout = responseResult.stdout || extractOpenResponsesText(responseText) || "";
       const gatewayDiagnostics = readGatewayDiagnosticTextSince(startedAt);
       const usageTelemetry = logOpenClawUsageFromOutput(
         request,
@@ -486,13 +561,22 @@ async function runOpenClawGatewayHttpRequest(
         attempt < maxAttempts &&
         isRetryableOpenClawGatewayTransportError(error)
       ) {
+        const retryDelayMs = openClawGatewayRetryDelayMs(config, attempt);
         const nextSessionKey = buildGatewayHttpSessionKey(
           config,
           buildGatewayHttpAttemptSessionId(sessionId, attempt + 1)
         );
-        logInfo(
-          `OpenClaw gateway http retry runId=${request.runId ?? "unknown"} step=${step} attempt=${attempt} reason=transport_error elapsedMs=${Date.now() - attemptStartedAt} nextSessionKey=${nextSessionKey}${summarizeLogObject("error", stderr)}`
+        const status = formatOpenClawGatewayRetryStatus(
+          retryDelayMs,
+          attempt + 1,
+          maxAttempts
         );
+        onStatus?.(status);
+        logInfo(
+          `OpenClaw gateway http retry runId=${request.runId ?? "unknown"} step=${step} attempt=${attempt} reason=transport_error elapsedMs=${Date.now() - attemptStartedAt} retryDelayMs=${retryDelayMs} nextSessionKey=${nextSessionKey}${summarizeLogObject("error", stderr)}`
+        );
+        clearTimeout(timeout);
+        await sleep(retryDelayMs);
         continue;
       }
       const gatewayDiagnostics = readGatewayDiagnosticTextSince(startedAt);
@@ -512,9 +596,30 @@ async function runOpenClawGatewayHttpRequest(
         `OpenClaw gateway http error runId=${request.runId ?? "unknown"} step=${step}${summarizeLogObject("error", stderr)}`
       );
       return { exitCode: 1, stdout, stderr, ...usageTelemetry };
+    } finally {
+      clearTimeout(timeout);
     }
   }
   throw new Error("OpenClaw gateway HTTP retry loop exhausted unexpectedly");
+}
+
+function openClawGatewayRetryDelayMs(
+  config: RuntimeConfig,
+  attempt: number
+): number {
+  const baseMs =
+    config.openClawGatewayRetryBaseMs ?? defaultOpenClawGatewayRetryBaseMs;
+  const maxMs = config.openClawGatewayRetryMaxMs ?? defaultOpenClawGatewayRetryMaxMs;
+  return Math.min(maxMs, baseMs * 2 ** Math.max(0, attempt - 1));
+}
+
+function formatOpenClawGatewayRetryStatus(
+  retryDelayMs: number,
+  nextAttempt: number,
+  maxAttempts: number
+): string {
+  const retrySeconds = Math.max(1, Math.ceil(retryDelayMs / 1000));
+  return `The LLM provider timed out. Retrying in ${retrySeconds}s (${nextAttempt}/${maxAttempts})...`;
 }
 
 function isRetryableOpenClawGatewayProviderError(
@@ -524,6 +629,10 @@ function isRetryableOpenClawGatewayProviderError(
   if (status !== 408 && status < 500) {
     return false;
   }
+  return isRetryableOpenClawGatewayProviderMessage(responseText);
+}
+
+function isRetryableOpenClawGatewayProviderMessage(responseText: string): boolean {
   const normalized = responseText.toLowerCase();
   return (
     normalized.includes("upstream provider timeout") ||
@@ -557,7 +666,8 @@ async function* collectOpenClawGatewayHttpResponse(
   logInfo: RuntimeLogger,
   heartbeatMs: number,
   emitDeltas: boolean,
-  step: number
+  step: number,
+  suppressedBaselineText?: string
 ): AsyncGenerator<
   RunEvent,
   { stdout: string; usage?: RunUsage; telemetry?: RunTelemetry },
@@ -565,7 +675,9 @@ async function* collectOpenClawGatewayHttpResponse(
 > {
   const startedAt = Date.now();
   const deltas: string[] = [];
+  const statuses: string[] = [];
   let wakeDeltas: (() => void) | null = null;
+  let wakeStatus: (() => void) | null = null;
   const pushDelta = (delta: string) => {
     const sanitizedDelta = stripRuntimeToolCallProtocolFragments(delta);
     if (sanitizedDelta.trim()) {
@@ -574,6 +686,11 @@ async function* collectOpenClawGatewayHttpResponse(
     wakeDeltas?.();
     wakeDeltas = null;
   };
+  const pushStatus = (status: string) => {
+    statuses.push(status);
+    wakeStatus?.();
+    wakeStatus = null;
+  };
   const resultPromise = runOpenClawGatewayHttpRequest(
     request,
     config,
@@ -581,7 +698,9 @@ async function* collectOpenClawGatewayHttpResponse(
     sessionId,
     logInfo,
     step,
-    emitDeltas ? pushDelta : undefined
+    emitDeltas ? pushDelta : undefined,
+    suppressedBaselineText,
+    pushStatus
   );
   let result: CliCommandResult | null = null;
 
@@ -590,6 +709,9 @@ async function* collectOpenClawGatewayHttpResponse(
       resultPromise.then((value) => ({ type: "result" as const, value })),
       new Promise<{ type: "delta" }>((resolve) => {
         wakeDeltas = () => resolve({ type: "delta" });
+      }),
+      new Promise<{ type: "status" }>((resolve) => {
+        wakeStatus = () => resolve({ type: "status" });
       }),
       sleep(heartbeatMs).then(() => ({ type: "heartbeat" as const }))
     ]);
@@ -601,6 +723,16 @@ async function* collectOpenClawGatewayHttpResponse(
           continue;
         }
         yield { type: "message_delta", text: delta };
+      }
+      continue;
+    }
+
+    if (raced.type === "status") {
+      while (statuses.length > 0) {
+        const status = statuses.shift();
+        if (status) {
+          yield { type: "status", text: status };
+        }
       }
       continue;
     }
@@ -625,9 +757,15 @@ async function* collectOpenClawGatewayHttpResponse(
 
     result = raced.value;
   }
+  while (statuses.length > 0) {
+    const status = statuses.shift();
+    if (status) {
+      yield { type: "status", text: status };
+    }
+  }
   while (deltas.length > 0) {
     const delta = deltas.shift();
-    if (delta) {
+    if (delta && shouldEmitDirectOpenClawDelta(delta, suppressedBaselineText)) {
       yield { type: "message_delta", text: delta };
     }
   }
@@ -652,7 +790,8 @@ async function* collectOpenClawGatewayHttpResponse(
   if (
     emitDeltas &&
     (result.deltaCount ?? 0) === 0 &&
-    shouldEmitGatewayHttpDelta(result.stdout)
+    shouldEmitGatewayHttpDelta(result.stdout) &&
+    shouldEmitDirectOpenClawDelta(result.stdout, suppressedBaselineText)
   ) {
     logStreamDebug(config, logInfo, "delta parsed", {
       runId: request.runId ?? "unknown",
@@ -681,61 +820,78 @@ function shouldEmitGatewayHttpDelta(stdout: string): boolean {
   return !(parsed && typeof parsed.tool_call === "object" && parsed.tool_call !== null);
 }
 
+function shouldEmitDirectOpenClawDelta(
+  text: string,
+  suppressedBaselineText?: string
+): boolean {
+  if (!text.trim()) {
+    return false;
+  }
+  if (isBootstrapSetupAnswer(text)) {
+    return false;
+  }
+  return !(
+    suppressedBaselineText && isBaselineEchoAnswer(text, suppressedBaselineText)
+  );
+}
+
 async function fetchGatewayHttpResponse(
   endpoint: string,
   config: RuntimeConfig,
   request: RunRequest,
   sessionKey: string,
   prompt: string,
-  stream: boolean
+  stream: boolean,
+  signal: AbortSignal
 ): Promise<Response> {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), config.openClawTimeoutMs);
-  try {
-    return await fetch(endpoint, {
-      method: "POST",
-      headers: {
-        "authorization": `Bearer ${config.openClawGatewayToken}`,
-        "content-type": "application/json",
-        "x-openclaw-agent-id": config.openClawAgent,
-        "x-openclaw-message-channel": resolveGatewayHttpMessageChannel(request),
-        "x-openclaw-session-key": sessionKey
-      },
-      body: JSON.stringify({
-        model: `openclaw/${config.openClawAgent}`,
-        input: prompt,
-        stream
-      }),
-      signal: controller.signal
-    });
-  } finally {
-    clearTimeout(timeout);
-  }
+  return await fetch(endpoint, {
+    method: "POST",
+    headers: {
+      "authorization": `Bearer ${config.openClawGatewayToken}`,
+      "content-type": "application/json",
+      "x-openclaw-agent-id": config.openClawAgent,
+      "x-openclaw-message-channel": resolveGatewayHttpMessageChannel(request),
+      "x-openclaw-session-key": sessionKey
+    },
+    body: JSON.stringify({
+      model: `openclaw/${config.openClawAgent}`,
+      input: prompt,
+      stream
+    }),
+    signal
+  });
 }
 
 async function readGatewayHttpStreamingResponse(
   response: Response,
-  onDelta: (delta: string) => void
+  onDelta: (delta: string) => void,
+  idleTimeoutMs: number,
+  suppressedBaselineText?: string
 ): Promise<GatewayHttpResponseResult> {
   if (!response.body) {
     const responseText = await response.text();
+    const errorText = extractOpenResponsesFailureText(responseText) ?? undefined;
     return {
       responseText,
-      stdout: extractOpenResponsesText(responseText) ?? responseText,
-      deltaCount: 0
+      stdout: errorText ? "" : extractOpenResponsesText(responseText) ?? "",
+      deltaCount: 0,
+      ...(errorText ? { errorText } : {})
     };
   }
 
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
-  const gate = createGatewayHttpDeltaGate(onDelta);
+  const gate = createGatewayHttpDeltaGate(onDelta, suppressedBaselineText);
   let buffer = "";
   let responseText = "";
   let stdout = "";
   let deltaCount = 0;
 
   while (true) {
-    const { value, done } = await reader.read();
+    const { value, done } = await readStreamChunkWithIdleTimeout(
+      reader,
+      idleTimeoutMs
+    );
     if (done) {
       break;
     }
@@ -750,6 +906,10 @@ async function readGatewayHttpStreamingResponse(
       const event = parseJsonObject(payload);
       if (!event) {
         continue;
+      }
+      const failureText = extractOpenResponsesFailureEventText(event);
+      if (failureText) {
+        return { responseText, stdout: "", deltaCount, errorText: failureText };
       }
       const completedText = extractOpenResponsesText(payload);
       if (completedText?.trim()) {
@@ -779,6 +939,10 @@ async function readGatewayHttpStreamingResponse(
     if (!event) {
       continue;
     }
+    const failureText = extractOpenResponsesFailureEventText(event);
+    if (failureText) {
+      return { responseText, stdout: "", deltaCount, errorText: failureText };
+    }
     const completedText = extractOpenResponsesText(payload);
     if (completedText?.trim()) {
       stdout = completedText;
@@ -794,16 +958,20 @@ async function readGatewayHttpStreamingResponse(
 
   return {
     responseText,
-    stdout: stdout || extractOpenResponsesText(responseText) || responseText,
+    stdout: stdout || extractOpenResponsesText(responseText) || "",
     deltaCount
   };
 }
 
 function createGatewayHttpDeltaGate(
-  onDelta: (delta: string) => void
+  onDelta: (delta: string) => void,
+  suppressedBaselineText?: string
 ): (delta: string) => void {
   let mode: "pending" | "emit" | "suppress" = "pending";
   let buffered = "";
+  const normalizedSuppressedBaseline = suppressedBaselineText
+    ? normalizeDirectResponseForComparison(suppressedBaselineText)
+    : "";
 
   return (delta: string) => {
     if (mode === "suppress") {
@@ -825,10 +993,46 @@ function createGatewayHttpDeltaGate(
       return;
     }
 
+    if (normalizedSuppressedBaseline) {
+      const normalizedBuffered = normalizeDirectResponseForComparison(buffered);
+      if (
+        normalizedBuffered &&
+        normalizedSuppressedBaseline.startsWith(normalizedBuffered)
+      ) {
+        return;
+      }
+    }
+
     mode = "emit";
     onDelta(buffered);
     buffered = "";
   };
+}
+
+async function readStreamChunkWithIdleTimeout(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+  idleTimeoutMs: number
+) {
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      reader.read(),
+      new Promise<never>((_, reject) => {
+        timeout = setTimeout(() => {
+          reader.cancel().catch(() => undefined);
+          reject(
+            new Error(
+              `OpenClaw Gateway response stream stalled for ${idleTimeoutMs}ms`
+            )
+          );
+        }, idleTimeoutMs);
+      })
+    ]);
+  } finally {
+    if (timeout) {
+      clearTimeout(timeout);
+    }
+  }
 }
 
 function readCompleteSsePayloads(input: string): {
@@ -954,7 +1158,8 @@ export async function* runOpenClawCliRequestStream(
       logInfo,
       heartbeatMs,
       runtimeMessageDeltasEnabled(request),
-      step + 1
+      step + 1,
+      baseline.response.text
     );
     const plannedToolCall = normalizePlannedToolCall(
       readPlannedToolCall(result.stdout, toolContext.catalog)
@@ -964,18 +1169,28 @@ export async function* runOpenClawCliRequestStream(
 
     if (!plannedToolCall) {
       const lastToolResult = executedTools.at(-1)?.toolResult;
+      const openClawText = extractOpenClawText(result.stdout);
       const rawText =
-        extractOpenClawText(result.stdout) ||
+        openClawText ||
         (lastToolResult ? formatToolResult(lastToolResult) : baseline.response.text);
+      const rejectedReason = shouldRejectDirectOpenClawResponse(
+        rawText,
+        baseline.response.text,
+        Boolean(lastToolResult),
+        Boolean(openClawText)
+      );
       if (
         rejectedDirectResponses.length < maxBootstrapRetries &&
-        isBootstrapSetupAnswer(rawText)
+        rejectedReason
       ) {
         rejectedDirectResponses.push(rawText);
         logInfo(
-          `OpenClaw bootstrap retry runId=${request.runId ?? "unknown"} step=${step + 1} reason=bootstrap_response`
+          `OpenClaw bootstrap retry runId=${request.runId ?? "unknown"} step=${step + 1} reason=${rejectedReason}`
         );
         continue;
+      }
+      if (rejectedReason === "empty_response") {
+        throw new Error("OpenClaw Gateway returned no assistant text");
       }
       const text = sanitizeBootstrapFragments(rawText, baseline.response.text);
       logInfo(
@@ -1070,7 +1285,8 @@ async function* collectOpenClawStream(
   logInfo: RuntimeLogger,
   heartbeatMs: number,
   emitDeltas: boolean,
-  step: number
+  step: number,
+  suppressedBaselineText?: string
 ): AsyncGenerator<
   RunEvent,
   { stdout: string; usage?: RunUsage; telemetry?: RunTelemetry },
@@ -1085,7 +1301,8 @@ async function* collectOpenClawStream(
       logInfo,
       heartbeatMs,
       emitDeltas,
-      step
+      step,
+      suppressedBaselineText
     );
   }
 
@@ -2921,6 +3138,38 @@ function isBootstrapSetupAnswer(text: string): boolean {
   );
 }
 
+function shouldRejectDirectOpenClawResponse(
+  text: string,
+  baselineText: string,
+  hasToolResult: boolean,
+  hasOpenClawText: boolean
+): "bootstrap_response" | "baseline_echo" | "empty_response" | null {
+  if (!hasToolResult && !hasOpenClawText) {
+    return "empty_response";
+  }
+  if (isBootstrapSetupAnswer(text)) {
+    return "bootstrap_response";
+  }
+  if (!hasToolResult && isBaselineEchoAnswer(text, baselineText)) {
+    return "baseline_echo";
+  }
+  return null;
+}
+
+function isBaselineEchoAnswer(text: string, baselineText: string): boolean {
+  const normalizedText = normalizeDirectResponseForComparison(text);
+  const normalizedBaseline = normalizeDirectResponseForComparison(baselineText);
+  return Boolean(normalizedBaseline) && normalizedText === normalizedBaseline;
+}
+
+function normalizeDirectResponseForComparison(text: string): string {
+  return text
+    .trim()
+    .replace(/\s+/g, " ")
+    .replace(/[.!?]+$/g, "")
+    .toLowerCase();
+}
+
 function sanitizeBootstrapFragments(text: string, fallbackText: string = text): string {
   if (!isBootstrapSetupAnswer(text)) {
     return text;
@@ -3426,6 +3675,7 @@ function logOpenClawUsageFromOutput(
       `streamDone=${diagnostics.streamDone}`,
       `streamDoneElapsedMs=${formatNumberList(diagnostics.streamDoneElapsedMs)}`,
       `streamDoneEvents=${formatNumberList(diagnostics.streamDoneEvents)}`,
+      `providerRequestIds=${formatStringList(diagnostics.providerRequestIds)}`,
       `compactions=${diagnostics.compactions}`,
       `exactUsageFields=${diagnostics.exactUsageFields}`,
       `exactUsageAvailable=${diagnostics.exactUsageFields > 0 ? "true" : "false"}`,
@@ -3471,6 +3721,7 @@ function logOpenClawUsageFromOutput(
           streamDone: diagnostics.streamDone,
           streamDoneElapsedMs: diagnostics.streamDoneElapsedMs,
           streamDoneEvents: diagnostics.streamDoneEvents,
+          providerRequestIds: diagnostics.providerRequestIds,
           compactions: diagnostics.compactions,
           exactUsageFields: diagnostics.exactUsageFields,
           exactUsageAvailable: diagnostics.exactUsageFields > 0,
@@ -3721,6 +3972,7 @@ type ModelDiagnostics = {
   streamDone: number;
   streamDoneElapsedMs: number[];
   streamDoneEvents: number[];
+  providerRequestIds: string[];
   compactions: number;
   exactUsageFields: number;
 };
@@ -3740,9 +3992,15 @@ function summarizeModelDiagnostics(text: string): ModelDiagnostics {
     streamDoneEvents: streamDoneLines
       .map((line) => readFirstNumberField(line, ["events"]))
       .filter((value): value is number => typeof value === "number"),
+    providerRequestIds: readProviderRequestIds(text),
     compactions: countOccurrences(text, "[compaction-diag] start"),
     exactUsageFields: countUsageFieldOccurrences(text)
   };
+}
+
+function readProviderRequestIds(text: string): string[] {
+  const matches = text.match(/\breq_[A-Za-z0-9]+\b/g) ?? [];
+  return [...new Set(matches)].slice(0, 10);
 }
 
 function readNumberFieldTotal(text: string, fieldNames: string[]): number | undefined {
@@ -3805,6 +4063,10 @@ function formatUsageNumber(value: number | undefined): string {
 }
 
 function formatNumberList(values: number[]): string {
+  return values.length ? values.join(",") : "none";
+}
+
+function formatStringList(values: string[]): string {
   return values.length ? values.join(",") : "none";
 }
 
@@ -4147,6 +4409,29 @@ function extractOpenResponsesText(responseText: string): string | null {
     .trim();
 
   return texts || null;
+}
+
+function extractOpenResponsesFailureText(responseText: string): string | null {
+  const parsed = parseJsonObject(responseText);
+  return parsed ? extractOpenResponsesFailureEventText(parsed) : null;
+}
+
+function extractOpenResponsesFailureEventText(
+  event: Record<string, unknown>
+): string | null {
+  const type = typeof event.type === "string" ? event.type : "";
+  const status = readNestedText(event, ["response", "status"]) ??
+    readNestedText(event, ["status"]);
+  if (type !== "response.failed" && status !== "failed") {
+    return null;
+  }
+
+  const code = readNestedText(event, ["response", "error", "code"]) ??
+    readNestedText(event, ["error", "code"]);
+  const message = readNestedText(event, ["response", "error", "message"]) ??
+    readNestedText(event, ["error", "message"]) ??
+    "OpenClaw Gateway response failed";
+  return code ? `${code}: ${message}` : message;
 }
 
 function readLastJsonResponseText(value: string): string | null {

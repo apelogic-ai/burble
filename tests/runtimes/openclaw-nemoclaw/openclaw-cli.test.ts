@@ -35,6 +35,8 @@ const config: RuntimeConfig = {
   openClawGatewayPort: 18789,
   openClawGatewayBind: "loopback",
   openClawGatewayToken: "gateway-token",
+  openClawGatewayRetryBaseMs: 1,
+  openClawGatewayRetryMaxMs: 2,
   llmModel: "openai:gpt-5.4",
   ollamaBaseUrl: "https://ollama.com"
 };
@@ -869,7 +871,7 @@ describe("runOpenClawCliRequest", () => {
       )
     ).toBe(true);
     expect(logs).toContain(
-      "OpenClaw model usage diagnostics runId=run-usage step=1 modelStarts=0 fetchStarts=0 streamDone=0 streamDoneElapsedMs=none streamDoneEvents=none compactions=0 exactUsageFields=5 exactUsageAvailable=true rawStreamBytes=0"
+      "OpenClaw model usage diagnostics runId=run-usage step=1 modelStarts=0 fetchStarts=0 streamDone=0 streamDoneElapsedMs=none streamDoneEvents=none providerRequestIds=none compactions=0 exactUsageFields=5 exactUsageAvailable=true rawStreamBytes=0"
     );
     expect(response.response.usage).toEqual({
       inputTokens: 1200,
@@ -1092,11 +1094,11 @@ describe("runOpenClawCliRequest", () => {
       async () => ({
         exitCode: 0,
         stdout: [
-          "[openai-transport] [responses] start provider=openai api=openai-responses model=gpt-5.4",
+          "[openai-transport] [responses] start provider=openai api=openai-responses model=gpt-5.4 requestId=req_first123",
           "[provider-transport-fetch] [model-fetch] start provider=openai api=openai-responses model=gpt-5.4",
           "[openai-transport] [responses] stream_done provider=openai api=openai-responses model=gpt-5.4 elapsedMs=3522 events=38",
           "[agent/embedded] [compaction-diag] start runId=session-1",
-          "[openai-transport] [responses] start provider=openai api=openai-responses model=gpt-5.4",
+          "[openai-transport] [responses] start provider=openai api=openai-responses model=gpt-5.4 requestId=req_second456",
           "[provider-transport-fetch] [model-fetch] start provider=openai api=openai-responses model=gpt-5.4",
           "[openai-transport] [responses] stream_done provider=openai api=openai-responses model=gpt-5.4 elapsedMs=29406 events=1731",
           JSON.stringify({ response: { text: "Done." } })
@@ -1116,7 +1118,7 @@ describe("runOpenClawCliRequest", () => {
       )
     ).toBe(true);
     expect(logs).toContain(
-      "OpenClaw model usage diagnostics runId=run-diagnostics step=1 modelStarts=2 fetchStarts=2 streamDone=2 streamDoneElapsedMs=3522,29406 streamDoneEvents=38,1731 compactions=1 exactUsageFields=0 exactUsageAvailable=false rawStreamBytes=0"
+      "OpenClaw model usage diagnostics runId=run-diagnostics step=1 modelStarts=2 fetchStarts=2 streamDone=2 streamDoneElapsedMs=3522,29406 streamDoneEvents=38,1731 providerRequestIds=req_first123,req_second456 compactions=1 exactUsageFields=0 exactUsageAvailable=false rawStreamBytes=0"
     );
     expect(response.response.usage).toBeUndefined();
     expect(response.response.telemetry).toMatchObject({
@@ -1130,6 +1132,7 @@ describe("runOpenClawCliRequest", () => {
             streamDone: 2,
             streamDoneElapsedMs: [3522, 29406],
             streamDoneEvents: [38, 1731],
+            providerRequestIds: ["req_first123", "req_second456"],
             compactions: 1,
             exactUsageFields: 0,
             exactUsageAvailable: false,
@@ -2794,6 +2797,132 @@ describe("runOpenClawCliRequest", () => {
     });
   });
 
+  test("retries streamed OpenClaw gateway baseline echoes before finalizing", async () => {
+    const requests: Array<Record<string, unknown>> = [];
+    const events: Array<RunEvent> = [];
+    const logs: string[] = [];
+    const providerTexts = [
+      "No Burble tool context is needed for this request.",
+      "Hello!"
+    ];
+
+    await withMockFetch(
+      (async (_input, init) => {
+        requests.push(
+          JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>
+        );
+        const text = providerTexts.shift();
+        if (!text) {
+          throw new Error("unexpected gateway call");
+        }
+        return new Response(JSON.stringify(openResponsesText(text)), {
+          status: 200,
+          headers: { "content-type": "application/json" }
+        });
+      }) as typeof fetch,
+      async () => {
+        for await (const event of runOpenClawCliRequestStream(
+          {
+            runId: "run-stream-baseline-echo",
+            executionMode: "native-runtime",
+            input: {
+              text: "hello agent",
+              connections: {
+                github: { connected: false }
+              }
+            }
+          },
+          { ...config, engine: "openclaw-gateway" },
+          async () => ({
+            classification: "user_private",
+            content: []
+          }),
+          async function* () {
+            throw new Error("unexpected cli call");
+          },
+          (message) => logs.push(message)
+        )) {
+          events.push(event);
+        }
+      }
+    );
+
+    expect(requests).toHaveLength(2);
+    expect(events).not.toContainEqual(
+      expect.objectContaining({
+        type: "message_delta",
+        text: "No Burble tool context is needed for this request."
+      })
+    );
+    expect(events.at(-1)).toMatchObject({
+      type: "final",
+      response: {
+        classification: "user_private",
+        text: "Hello!"
+      }
+    });
+    expect(
+      logs.some((line) =>
+        line.includes(
+          "OpenClaw bootstrap retry runId=run-stream-baseline-echo step=1 reason=baseline_echo"
+        )
+      )
+    ).toBe(true);
+  });
+
+  test("fails streamed OpenClaw gateway empty responses instead of finalizing with baseline", async () => {
+    const requests: Array<Record<string, unknown>> = [];
+    const events: Array<RunEvent> = [];
+
+    await expect(
+      withMockFetch(
+        (async (_input, init) => {
+          requests.push(
+            JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>
+          );
+          return new Response(JSON.stringify(openResponsesText("")), {
+            status: 200,
+            headers: { "content-type": "application/json" }
+          });
+        }) as typeof fetch,
+        async () => {
+          for await (const event of runOpenClawCliRequestStream(
+            {
+              runId: "run-stream-empty-response",
+              executionMode: "native-runtime",
+              input: {
+                text: "hello agent",
+                connections: {
+                  github: { connected: false }
+                }
+              }
+            },
+            { ...config, engine: "openclaw-gateway" },
+            async () => ({
+              classification: "user_private",
+              content: []
+            }),
+            async function* () {
+              throw new Error("unexpected cli call");
+            },
+            () => undefined
+          )) {
+            events.push(event);
+          }
+        }
+      )
+    ).rejects.toThrow("OpenClaw Gateway returned no assistant text");
+
+    expect(requests).toHaveLength(2);
+    expect(events).not.toContainEqual(
+      expect.objectContaining({
+        type: "message_delta",
+        text: "No Burble tool context is needed for this request."
+      })
+    );
+    expect(events.some((event) => event.type === "final")).toBe(false);
+  });
+
   test("streams OpenClaw gateway HTTP response deltas before the final response", async () => {
     const requests: Array<Record<string, unknown>> = [];
     const events: Array<RunEvent> = [];
@@ -2970,6 +3099,148 @@ describe("runOpenClawCliRequest", () => {
         text: "Buffered answer."
       }
     });
+  });
+
+  test("treats streamed OpenClaw gateway response failures as errors without leaking protocol JSON", async () => {
+    const events: Array<RunEvent> = [];
+    const logs: string[] = [];
+
+    await expect(
+      withMockFetch(
+        (async (_input, init) => {
+          const requestBody = JSON.parse(String(init?.body ?? "{}")) as Record<
+            string,
+            unknown
+          >;
+          expect(requestBody.stream).toBe(true);
+          const stream = new ReadableStream({
+            start(controller) {
+              const encoder = new TextEncoder();
+              for (const event of [
+                {
+                  type: "response.created",
+                  response: {
+                    id: "resp_5258f9f7-09c0-40f2-93e0-1cf441df0453",
+                    object: "response",
+                    created_at: 1782333954,
+                    status: "in_progress",
+                    model: "openclaw/main",
+                    output: [],
+                    usage: {
+                      input_tokens: 0,
+                      output_tokens: 0,
+                      total_tokens: 0
+                    }
+                  }
+                },
+                {
+                  type: "response.output_item.added",
+                  output_index: 0,
+                  item: {
+                    type: "message",
+                    id: "msg_76a6820c-9004-4fa0-a0fb-c4152299cc61",
+                    role: "assistant",
+                    content: [{ type: "output_text", text: "" }],
+                    status: "in_progress"
+                  }
+                },
+                {
+                  type: "response.failed",
+                  response: {
+                    id: "resp_5258f9f7-09c0-40f2-93e0-1cf441df0453",
+                    object: "response",
+                    created_at: 1782333961,
+                    status: "failed",
+                    model: "openclaw/main",
+                    output: [],
+                    usage: {
+                      input_tokens: 0,
+                      output_tokens: 0,
+                      total_tokens: 0
+                    },
+                    error: {
+                      code: "api_error",
+                      message: "upstream provider timeout"
+                    }
+                  }
+                }
+              ]) {
+                controller.enqueue(
+                  encoder.encode(`data: ${JSON.stringify(event)}\n\n`)
+                );
+              }
+              controller.close();
+            }
+          });
+          return new Response(stream, {
+            status: 200,
+            headers: { "content-type": "text/event-stream" }
+          });
+        }) as typeof fetch,
+        async () => {
+          for await (const event of runOpenClawCliRequestStream(
+            {
+              runId: "run-gateway-response-failed",
+              executionMode: "native-runtime",
+              runtime: {
+                id: "rt_123",
+                manifest: {
+                  version: "1",
+                  policyHash: "policy",
+                  skills: [],
+                  memory: {
+                    userMemoryEnabled: false,
+                    workspaceMemoryEnabled: false,
+                    jobMemoryEnabled: true
+                  },
+                  streaming: {
+                    messageDeltasEnabled: true
+                  }
+                }
+              },
+              input: {
+                text: "do we currently have any cron jobs?",
+                connections: {
+                  github: { connected: false }
+                }
+              }
+            },
+            { ...config, engine: "openclaw-gateway" },
+            async () => ({
+              classification: "user_private",
+              content: []
+            }),
+            async function* () {
+              throw new Error("unexpected cli call");
+            },
+            (line) => logs.push(line)
+          )) {
+            events.push(event);
+          }
+        }
+      )
+    ).rejects.toThrow(
+      "OpenClaw Gateway HTTP request failed: api_error: upstream provider timeout"
+    );
+
+    expect(events).not.toContainEqual(
+      expect.objectContaining({
+        type: "message_delta",
+        text: expect.stringContaining("response.failed")
+      })
+    );
+    expect(events.filter((event) => event.type === "message_delta")).toHaveLength(0);
+    expect(events).toContainEqual({
+      type: "status",
+      text: "The LLM provider timed out. Retrying in 1s (2/3)..."
+    });
+    expect(events).toContainEqual({
+      type: "status",
+      text: "The LLM provider timed out. Retrying in 1s (3/3)..."
+    });
+    expect(logs.join("\n")).toContain(
+      "OpenClaw gateway http response_failed runId=run-gateway-response-failed"
+    );
   });
 
   test("buffers streamed OpenClaw gateway HTTP tool-call JSON instead of showing it", async () => {
@@ -3686,6 +3957,95 @@ describe("runOpenClawCliRequest", () => {
       logs.some((line) =>
         line.includes(
           "OpenClaw gateway http retry runId=run-openclaw-transport-retry step=1 attempt=1 reason=transport_error"
+        )
+      )
+    ).toBe(true);
+  });
+
+  test("times out retryable OpenClaw Gateway streams that never finish", async () => {
+    const requests: Array<{
+      headers: Headers;
+      body: Record<string, unknown>;
+    }> = [];
+    const logs: string[] = [];
+    const encoder = new TextEncoder();
+
+    await expect(
+      withMockFetch(
+        (async (_input, init) => {
+          requests.push({
+            headers: new Headers(init?.headers),
+            body: JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>
+          });
+          const signal = init?.signal;
+          return new Response(
+            new ReadableStream<Uint8Array>({
+              start(controller) {
+                controller.enqueue(
+                  encoder.encode(
+                    `data: ${JSON.stringify({ type: "response.created" })}\n\n`
+                  )
+                );
+                signal?.addEventListener(
+                  "abort",
+                  () => controller.error(new Error("The operation timed out")),
+                  { once: true }
+                );
+              }
+            }),
+            {
+              status: 200,
+              headers: { "content-type": "text/event-stream" }
+            }
+          );
+        }) as typeof fetch,
+        async () =>
+          runOpenClawCliRequest(
+            {
+              runId: "run-openclaw-hung-stream",
+              input: {
+                text: "what can you do?",
+                connections: {
+                  github: { connected: false }
+                }
+              }
+            },
+            {
+              ...config,
+              engine: "openclaw-gateway",
+              openClawTimeoutMs: 5
+            },
+            async () => {
+              throw new Error("unexpected tool call");
+            },
+            async (_command, args) => {
+              throw new Error(`unexpected cli call: ${args.join(" ")}`);
+            },
+            (line) => logs.push(line)
+          )
+      )
+    ).rejects.toThrow("OpenClaw Gateway HTTP request failed");
+
+    expect(requests).toHaveLength(3);
+    expect(requests[0].body.input).toBe(requests[1].body.input);
+    expect(requests[1].body.input).toBe(requests[2].body.input);
+    expect(requests[0].headers.get("x-openclaw-session-key")).not.toBe(
+      requests[1].headers.get("x-openclaw-session-key")
+    );
+    expect(requests[1].headers.get("x-openclaw-session-key")).not.toBe(
+      requests[2].headers.get("x-openclaw-session-key")
+    );
+    expect(
+      logs.some((line) =>
+        line.includes(
+          "OpenClaw gateway http retry runId=run-openclaw-hung-stream step=1 attempt=1 reason=transport_error"
+        )
+      )
+    ).toBe(true);
+    expect(
+      logs.some((line) =>
+        line.includes(
+          "OpenClaw gateway http retry runId=run-openclaw-hung-stream step=1 attempt=2 reason=transport_error"
         )
       )
     ).toBe(true);

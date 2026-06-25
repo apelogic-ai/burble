@@ -2,6 +2,18 @@ import { describe, expect, test } from "bun:test";
 import { buildOpenClawProcessEnv } from "../../../runtimes/openclaw-nemoclaw/src/process-env";
 
 describe("buildOpenClawProcessEnv", () => {
+  test("defaults package manager network checks to offline", () => {
+    const env = buildOpenClawProcessEnv({}, {});
+
+    expect(env).toMatchObject({
+      npm_config_audit: "false",
+      npm_config_cache: "/tmp/npm-cache",
+      npm_config_fund: "false",
+      npm_config_update_notifier: "false",
+      npm_config_offline: "true"
+    });
+  });
+
   test("keeps Burble MCP credentials outside the OpenClaw process", () => {
     const env = buildOpenClawProcessEnv(
       {

@@ -124,6 +124,7 @@ export type RunTelemetryStep = {
     streamDone?: number;
     streamDoneElapsedMs?: number[];
     streamDoneEvents?: number[];
+    providerRequestIds?: string[];
     compactions?: number;
     exactUsageFields?: number;
     exactUsageAvailable?: boolean;
