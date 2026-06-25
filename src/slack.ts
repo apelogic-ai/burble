@@ -5483,7 +5483,9 @@ export async function postConversationResponse(
 }
 
 function renderConversationResponseText(response: ConversationResponse): string {
-  const responseText = sanitizeRuntimeStreamText(response.text);
+  const responseText = sanitizeRuntimeFinalResponseText(
+    sanitizeRuntimeStreamText(response.text)
+  );
   if (!response.attachments || response.attachments.length === 0) {
     return responseText;
   }
@@ -5496,6 +5498,25 @@ function renderConversationResponseText(response: ConversationResponse): string 
       return `- ${label} (${attachment.kind}, ${attachment.mimeType})`;
     })
   ].join("\n");
+}
+
+function sanitizeRuntimeFinalResponseText(text: string): string {
+  if (!text.trim()) {
+    return text;
+  }
+
+  const lines = text.split(/\r?\n/);
+  const kept = lines.filter((line) => !isProgressOnlyMessage(line.trim()));
+  if (kept.length === lines.length) {
+    return text;
+  }
+
+  const cleaned = kept.join("\n").trim();
+  if (cleaned) {
+    return cleaned;
+  }
+
+  return "The agent returned an internal runtime-control notice instead of an answer. Please retry your request.";
 }
 
 function sanitizeConversationResponseBlocks(blocks: unknown[] | undefined): unknown[] | undefined {

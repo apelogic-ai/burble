@@ -834,6 +834,38 @@ describe("formatAgentProgressEvent", () => {
     }
   });
 
+  test("does not preserve runtime interrupt notices in final answers", async () => {
+    const posts: string[] = [];
+    const client = {
+      chat: {
+        postMessage: async (input: { text: string }) => {
+          posts.push(input.text);
+          return {};
+        }
+      }
+    };
+
+    await postConversationResponse(client as never, {
+      response: {
+        visibility: "dm",
+        classification: "user_private",
+        text: [
+          ":zap: Interrupting current task (iteration 1/90, running: google_get_authenticated_user). I'll respond to your message shortly.",
+          "",
+          ":bulb: First-time tip — I just interrupted my current task to answer you. Send /busy queue to queue follow-ups for after the current task instead.",
+          "",
+          "Final result in 3.1s."
+        ].join("\n")
+      },
+      channel: "D123",
+      user: "U123"
+    });
+
+    expect(posts).toEqual([
+      "The agent returned an internal runtime-control notice instead of an answer. Please retry your request."
+    ]);
+  });
+
   test("strips Hermes stream cursor glyphs from final response text", async () => {
     const updates: string[] = [];
     const originalNow = Date.now;
