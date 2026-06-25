@@ -1796,6 +1796,61 @@ describe("handleToolGatewayRequest", () => {
     });
   });
 
+  test("lets a runtime create a Burble-owned scheduled job", async () => {
+    const upserts: unknown[] = [];
+    const response = await handleToolGatewayRequest(
+      config,
+      createStore(null, runtime, [], null, [], {}, [], null, {}, { upserts }),
+      "scheduledJob.create",
+      request(
+        "scheduledJob.create",
+        {
+          input: {
+            title: "Hourly AI news summary",
+            prompt: "look for fresh AI-related news and post a short summary",
+            schedule: {
+              kind: "interval",
+              every: { hours: 1 }
+            },
+            routeId: "convrt_abcdefabcdefabcdefabcdef"
+          }
+        },
+        "runtime-token-u123",
+        "rt_u123"
+      )
+    );
+
+    expect(response.status).toBe(200);
+    expect(upserts).toEqual([
+      expect.objectContaining({
+        jobId: expect.stringMatching(/^job_/),
+        workspaceId: "T123",
+        slackUserId: "U123",
+        title: "Hourly AI news summary",
+        prompt: "look for fresh AI-related news and post a short summary",
+        schedule: {
+          kind: "interval",
+          every: { hours: 1 }
+        },
+        routeId: "convrt_abcdefabcdefabcdefabcdef",
+        runtimeType: "openclaw",
+        state: "scheduled"
+      })
+    ]);
+    expect(await response.json()).toEqual({
+      classification: "user_private",
+      content: {
+        ok: true,
+        job: expect.objectContaining({
+          jobId: expect.stringMatching(/^job_/),
+          title: "Hourly AI news summary",
+          state: "scheduled",
+          runtimeType: "openclaw"
+        })
+      }
+    });
+  });
+
   test("lets a runtime trigger a scheduled job through the control plane", async () => {
     const capability: AgentJobCapabilityRecord = {
       jobId: "ai-news-hourly",

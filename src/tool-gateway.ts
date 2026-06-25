@@ -606,6 +606,39 @@ export async function handleToolGatewayRequest(
     });
   }
 
+  if (toolName === "scheduledJob.create") {
+    if (auth.kind !== "runtime") {
+      return new Response("Runtime auth required", { status: 403 });
+    }
+    const input = readScheduledJobCreateInput(body.input);
+    if (!input.ok) {
+      return jsonResponse(
+        {
+          classification: "user_private",
+          content: {
+            error: "invalid_scheduled_job_create_input",
+            message: input.message
+          }
+        },
+        400
+      );
+    }
+    const schedulerControl = createSchedulerControlPlane(store);
+    const result = await schedulerControl.createJob?.({
+      workspaceId: auth.runtime.workspaceId,
+      slackUserId: auth.runtime.slackUserId,
+      title: input.value.title,
+      prompt: input.value.prompt,
+      schedule: input.value.schedule,
+      routeId: input.value.routeId,
+      runtimeType: auth.runtime.engine
+    });
+    return respondWithAudit({
+      classification: "user_private",
+      content: result ?? { ok: false, reason: "unavailable" }
+    });
+  }
+
   if (toolName === "scheduledJob.trigger") {
     if (auth.kind !== "runtime") {
       return new Response("Runtime auth required", { status: 403 });
@@ -1949,6 +1982,7 @@ function isKnownTool(toolName: string): boolean {
     toolName === "conversation.getAttachment" ||
     toolName === "scheduledJob.registerCapability" ||
     toolName === "scheduledJob.list" ||
+    toolName === "scheduledJob.create" ||
     toolName === "scheduledJob.trigger" ||
     toolName === "scheduledJob.latestRunStatus" ||
     toolName === "runtime.heartbeat" ||
@@ -2271,6 +2305,59 @@ function readSchedulerControlJobId(input: unknown): string | null {
     }
   }
   return null;
+}
+
+function readScheduledJobCreateInput(input: unknown):
+  | {
+      ok: true;
+      value: {
+        title: string;
+        prompt: string;
+        schedule: unknown;
+        routeId: string | null;
+      };
+    }
+  | { ok: false; message: string } {
+  if (!isOptionalObject(input)) {
+    return {
+      ok: false,
+      message: "scheduledJob.create requires an object input."
+    };
+  }
+
+  const title = readStringAlias(input, ["title", "name"]);
+  if (!title) {
+    return {
+      ok: false,
+      message: "scheduledJob.create requires title or name."
+    };
+  }
+
+  const prompt = readStringAlias(input, ["prompt", "task", "instruction"]);
+  if (!prompt) {
+    return {
+      ok: false,
+      message: "scheduledJob.create requires prompt, task, or instruction."
+    };
+  }
+
+  const schedule = readUnknownAlias(input, ["schedule", "cron", "interval"]);
+  if (schedule === undefined || schedule === null || schedule === "") {
+    return {
+      ok: false,
+      message: "scheduledJob.create requires schedule, cron, or interval."
+    };
+  }
+
+  return {
+    ok: true,
+    value: {
+      title,
+      prompt,
+      schedule,
+      routeId: readStringAlias(input, ["routeId", "route_id"])
+    }
+  };
 }
 
 type ScheduledJobRegistrationInput = {
