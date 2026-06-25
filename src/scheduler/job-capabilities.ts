@@ -41,7 +41,6 @@ export function inferAllowedToolsForScheduledJob(
     )
   ) {
     tools.add("web_search");
-    tools.add("web_extract");
   }
 
   if (tools.size === 0) {

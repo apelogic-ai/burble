@@ -109,7 +109,7 @@ describe("scheduler control plane", () => {
       jobId: "job-created-1",
       workspaceId: "T123",
       slackUserId: "U123",
-      requiredTools: ["web_extract", "web_search"],
+      requiredTools: ["web_search"],
       routeId: "convrt_123",
       runtimeType: "hermes",
       capabilityProfile: "scheduled_job",
@@ -166,7 +166,7 @@ describe("scheduler control plane", () => {
       jobId: "ai-news-hourly",
       workspaceId: "T123",
       slackUserId: "U123",
-      requiredTools: ["web_extract", "web_search"],
+      requiredTools: ["web_search"],
       runtimeType: "hermes",
       capabilityProfile: "scheduled_job",
     });

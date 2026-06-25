@@ -406,6 +406,99 @@ describe("runOpenClawCliRequest", () => {
     expect(catalogText).not.toContain("jira.searchIssues");
   });
 
+  test("keeps scheduled web tools visible and hides disallowed provider tools", async () => {
+    const prompts: string[] = [];
+
+    const response = await runOpenClawCliRequest(
+      {
+        executionMode: "native-runtime",
+        runtime: {
+          id: "rt_test",
+          manifest: providerManifest()
+        },
+        input: {
+          text: "look for latest AI news, summarize in two paragraphs and post result in this channel",
+          toolGroups: {
+            groups: ["conversation"],
+            reasons: ["scheduled-job:text"]
+          },
+          scheduledJob: {
+            jobId: "job-ai-news",
+            capabilityProfile: "scheduled_job",
+            allowedTools: ["web_search"],
+            routeId: "convrt_abc123",
+            runtimeType: "openclaw",
+            stateRefs: [],
+            visibilityPolicy: {
+              maxOutputVisibility: "public",
+              allowPrivateToolDeclassification: false
+            }
+          },
+          connections: {
+            github: {
+              connected: true,
+              email: "person@example.com",
+              providerLogin: "octocat"
+            },
+            google: { connected: false },
+            hubspot: { connected: false },
+            jira: { connected: false },
+            slack: { connected: false }
+          }
+        }
+      },
+      {
+        ...config,
+        mcpGatewayUrl: "http://agentgateway:3000/mcp",
+        runtimeJwt: "runtime-jwt"
+      },
+      async (toolName) => {
+        if (toolName === "burble.mcp.listTools") {
+          return {
+            classification: "user_private",
+            content: [
+              {
+                name: "web_search",
+                description: "Search public web/news sources",
+                inputSchema: {}
+              },
+              {
+                name: "github_list_assigned_issues",
+                description: "Should be hidden for web-only scheduled jobs",
+                inputSchema: {}
+              }
+            ]
+          };
+        }
+
+        return {
+          classification: "user_private",
+          content: []
+        };
+      },
+      async (_command, args) => {
+        prompts.push(args[args.indexOf("--message") + 1] ?? "");
+        return {
+          exitCode: 0,
+          stdout: JSON.stringify({
+            response: {
+              text: "News summary posted."
+            }
+          }),
+          stderr: ""
+        };
+      },
+      () => undefined
+    );
+
+    expect(response.response.text).toBe("News summary posted.");
+    const catalogText =
+      prompts[0].split("Available Burble tools:\n")[1]?.split("\n\n")[0] ?? "";
+    expect(catalogText).toContain("web.search");
+    expect(catalogText).not.toContain("github.listAssignedIssues");
+    expect(prompts[0]).toContain("allowedTools=web_search");
+  });
+
   test("includes HubSpot tools in discovered and fallback catalogs", async () => {
     const discoveredPrompts: string[] = [];
     const fallbackPrompts: string[] = [];

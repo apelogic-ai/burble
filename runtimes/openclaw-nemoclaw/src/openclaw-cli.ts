@@ -2348,12 +2348,14 @@ function filterToolCatalogBySelectedGroups(
   const catalog = catalogBuild.catalog.filter((tool) =>
     isRouteScopedControlPlaneTool(tool.name) ||
     (request.input.scheduledJob && tool.name === "burble_provider_call") ||
+    isToolAllowedByScheduledJob(tool.name, request) ||
     isToolAllowedBySelectedGroups(tool.name, selectedGroups)
   );
   const allowedToolNames = new Set(catalog.map((tool) => tool.name));
   const upstreamMcpSchemas = Object.fromEntries(
     Object.entries(catalogBuild.upstreamMcpSchemas).filter(([name]) =>
       allowedToolNames.has(name) ||
+      isToolAllowedByScheduledJob(name, request) ||
       isToolAllowedBySelectedGroups(name, selectedGroups)
     )
   );
@@ -2388,6 +2390,29 @@ function isToolAllowedBySelectedGroups(
   return toolGroupsForToolName(toolName).some((group) =>
     selectedGroups.has(group)
   );
+}
+
+function isToolAllowedByScheduledJob(
+  toolName: string,
+  request: RunRequest
+): boolean {
+  const allowedTools = request.input.scheduledJob?.allowedTools;
+  if (!allowedTools?.length) {
+    return false;
+  }
+
+  const allowed = new Set(allowedTools);
+  if (allowed.has(toolName)) {
+    return true;
+  }
+
+  const manifestName = manifestBurbleToolNameToMcpToolName(toolName, request);
+  if (manifestName && allowed.has(manifestName)) {
+    return true;
+  }
+
+  const manifestAlias = manifestMcpToolNameToBurbleToolName(toolName, request);
+  return Boolean(manifestAlias && allowed.has(manifestAlias));
 }
 
 function toolGroupsForToolName(toolName: string): RuntimeToolGroup[] {
@@ -2554,6 +2579,23 @@ function mcpToolNameToBurbleToolName(
   return null;
 }
 
+function manifestBurbleToolNameToMcpToolName(
+  name: string,
+  request: RunRequest
+): string | null {
+  const tools = request.runtime?.manifest?.tools;
+  if (!tools) {
+    return null;
+  }
+
+  const tool = tools.find(
+    (entry) =>
+      entry.enabled !== false &&
+      (entry.name === name || entry.alias === name)
+  );
+  return tool?.name ?? null;
+}
+
 function manifestMcpToolNameToBurbleToolName(
   name: string,
   request: RunRequest
@@ -2576,6 +2618,9 @@ function isDiscoveredProviderToolAvailable(
   toolName: string,
   request: RunRequest
 ): boolean {
+  if (toolName.startsWith("web.") || toolName.startsWith("web_")) {
+    return true;
+  }
   if (toolName.startsWith("github.")) {
     return Boolean(
       request.input.connections.github?.connected &&
