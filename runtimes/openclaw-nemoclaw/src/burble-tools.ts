@@ -50,6 +50,7 @@ function createBurbleMcpToolExecutor(
     }
     if (
       actualToolName === "scheduledJob.list" ||
+      actualToolName === "scheduledJob.create" ||
       actualToolName === "scheduledJob.trigger" ||
       actualToolName === "scheduledJob.latestRunStatus"
     ) {

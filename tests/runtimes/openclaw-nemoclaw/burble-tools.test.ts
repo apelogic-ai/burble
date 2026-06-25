@@ -1255,6 +1255,67 @@ describe("createBurbleToolExecutor", () => {
     }
   });
 
+  test("creates scheduled jobs through the internal gateway", async () => {
+    const originalFetch = globalThis.fetch;
+    const requests: Request[] = [];
+    globalThis.fetch = (async (input, init) => {
+      const request = new Request(input, init);
+      requests.push(request);
+      return Response.json({
+        classification: "user_private",
+        content: {
+          ok: true,
+          job: {
+            jobId: "job-created-1",
+            title: "Hourly AI news summary"
+          }
+        }
+      });
+    }) as typeof fetch;
+
+    try {
+      const executor = createBurbleToolExecutor(config, "rt_u123");
+      const result = await executor("scheduledJob.create", {
+        input: {
+          title: "Hourly AI news summary",
+          prompt: "Find fresh AI news and summarize it.",
+          schedule: {
+            kind: "interval",
+            every: { hours: 1 }
+          }
+        }
+      });
+
+      expect(result.content).toEqual({
+        ok: true,
+        job: {
+          jobId: "job-created-1",
+          title: "Hourly AI news summary"
+        }
+      });
+      expect(requests).toHaveLength(1);
+      expect(requests[0].url).toBe(
+        "http://burble-app:3000/internal/tools/scheduledJob.create/execute"
+      );
+      expect(requests[0].headers.get("authorization")).toBe(
+        "Bearer runtime-secret"
+      );
+      expect(requests[0].headers.get("x-burble-runtime-id")).toBe("rt_u123");
+      expect(await requests[0].json()).toEqual({
+        input: {
+          title: "Hourly AI news summary",
+          prompt: "Find fresh AI news and summarize it.",
+          schedule: {
+            kind: "interval",
+            every: { hours: 1 }
+          }
+        }
+      });
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
   test("executes runtime conformance echo through the internal gateway", async () => {
     const originalFetch = globalThis.fetch;
     const requests: Request[] = [];

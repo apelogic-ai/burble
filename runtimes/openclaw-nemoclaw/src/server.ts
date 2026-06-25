@@ -29,6 +29,7 @@ const localScheduledJobRegisterCapabilityToolName =
 const localSchedulerControlTools: Record<string, string> = {
   scheduled_job_register_capability: "scheduledJob.registerCapability",
   scheduled_job_list: "scheduledJob.list",
+  scheduled_job_create: "scheduledJob.create",
   scheduled_job_trigger: "scheduledJob.trigger",
   scheduled_job_latest_run_status: "scheduledJob.latestRunStatus"
 };
@@ -598,6 +599,7 @@ function addLocalBurbleMcpTools(tools: unknown[]): unknown[] {
   const localTools = [
     scheduledJobRegisterCapabilityMcpTool(),
     scheduledJobListMcpTool(),
+    scheduledJobCreateMcpTool(),
     scheduledJobTriggerMcpTool(),
     scheduledJobLatestRunStatusMcpTool()
   ].filter((tool) => !names.has(String(tool.name)));
@@ -687,6 +689,42 @@ function scheduledJobListMcpTool(): Record<string, unknown> {
       type: "object",
       properties: {},
       additionalProperties: false
+    }
+  };
+}
+
+function scheduledJobCreateMcpTool(): Record<string, unknown> {
+  return {
+    name: "scheduled_job_create",
+    description:
+      "Create a Burble-controlled scheduled job. Use this for explicit create/add/schedule requests after deriving the schedule and durable task prompt.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        title: {
+          type: "string",
+          minLength: 1,
+          description: "Short human-readable scheduled job title."
+        },
+        prompt: {
+          type: "string",
+          minLength: 1,
+          description:
+            "Durable task prompt to run on each schedule, without transient chat-only wording."
+        },
+        schedule: {
+          description:
+            "Structured schedule object or cron expression supplied by the runtime after parsing the user's schedule request."
+        },
+        routeId: {
+          type: "string",
+          minLength: 1,
+          pattern: "^convrt_[0-9a-f]{24}$",
+          description:
+            "Optional durable Burble convrt_* conversation route for scheduled delivery. Never pass a Slack label, mention, channel id, run id, or guessed value here."
+        }
+      },
+      required: ["title", "prompt", "schedule"]
     }
   };
 }

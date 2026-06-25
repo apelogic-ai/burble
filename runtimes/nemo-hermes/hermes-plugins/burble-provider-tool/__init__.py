@@ -83,6 +83,7 @@ TOOL_NAME_ALIASES = {
     "atlassian_call_mcp_tool": "atlassian.callMcpTool",
     "scheduled_job_register_capability": "scheduledJob.registerCapability",
     "scheduled_job_list": "scheduledJob.list",
+    "scheduled_job_create": "scheduledJob.create",
     "scheduled_job_trigger": "scheduledJob.trigger",
     "scheduled_job_latest_run_status": "scheduledJob.latestRunStatus",
     "conversation_get_attachment": "conversation.getAttachment",

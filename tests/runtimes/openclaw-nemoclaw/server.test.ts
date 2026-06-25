@@ -1510,6 +1510,7 @@ describe("handleRuntimeRequest", () => {
     );
     const toolNames = body.result.tools.map((entry: { name?: string }) => entry.name);
     expect(toolNames).toContain("scheduled_job_list");
+    expect(toolNames).toContain("scheduled_job_create");
     expect(toolNames).toContain("scheduled_job_trigger");
     expect(toolNames).toContain("scheduled_job_latest_run_status");
   });
@@ -1650,6 +1651,73 @@ describe("handleRuntimeRequest", () => {
     expect(await requests[0].json()).toEqual({
       input: {
         jobId: "job-123"
+      }
+    });
+  });
+
+  test("executes scheduled job creation through local Burble MCP", async () => {
+    const requests: Request[] = [];
+    const response = await withMockFetch(
+      (async (input, init) => {
+        const request = new Request(input, init);
+        requests.push(request);
+        return Response.json({
+          classification: "user_private",
+          content: {
+            ok: true,
+            job: {
+              jobId: "job-created-1",
+              title: "Hourly AI news summary"
+            }
+          }
+        });
+      }) as typeof fetch,
+      () =>
+        handleRuntimeRequest(
+          new Request("http://runtime/internal/burble/mcp", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({
+              jsonrpc: "2.0",
+              id: 1,
+              method: "tools/call",
+              params: {
+                name: "scheduled_job_create",
+                arguments: {
+                  title: "Hourly AI news summary",
+                  prompt: "Find fresh AI news and summarize it.",
+                  schedule: {
+                    kind: "interval",
+                    every: { hours: 1 }
+                  }
+                }
+              }
+            })
+          }),
+          {
+            ...config,
+            runtimeId: "rt_u123",
+            mcpGatewayUrl: null,
+            runtimeJwt: null
+          }
+        )
+    );
+
+    expect(response.status).toBe(200);
+    const body = readMcpData(await response.text());
+    expect(body.result.content[0].text).toContain("job-created-1");
+    expect(requests).toHaveLength(1);
+    expect(requests[0].url).toBe(
+      "http://burble-app:3000/internal/tools/scheduledJob.create/execute"
+    );
+    expect(await requests[0].json()).toEqual({
+      input: {
+        title: "Hourly AI news summary",
+        prompt: "Find fresh AI news and summarize it.",
+        schedule: {
+          kind: "interval",
+          every: { hours: 1 }
+        }
       }
     });
   });

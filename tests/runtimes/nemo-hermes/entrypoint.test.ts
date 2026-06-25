@@ -2786,6 +2786,13 @@ print(json.dumps(list(ctx.tools_by_name.values())))
     );
     expect(result).toContainEqual(
       expect.objectContaining({
+        name: "scheduled_job_create",
+        toolset: "burble",
+        is_async: true,
+      }),
+    );
+    expect(result).toContainEqual(
+      expect.objectContaining({
         name: "scheduled_job_trigger",
         toolset: "burble",
         is_async: true,
@@ -3146,6 +3153,89 @@ asyncio.run(main())
       },
       scheduledJob: {
         jobId: "job-123",
+      },
+    });
+  });
+
+  test("routes Hermes scheduled job creation through the provider plugin", () => {
+    const result = runHermesEntrypointProbe(`${importProviderToolPlugin}
+import asyncio
+import os
+
+os.environ["BURBLE_TOOL_GATEWAY_URL"] = "http://burble-app:3000/internal/tools"
+os.environ["BURBLE_INTERNAL_TOKEN"] = "runtime-secret"
+os.environ["BURBLE_RUNTIME_ID"] = "rt_u123"
+
+calls = []
+
+class FakeResponse:
+    status = 200
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *_args):
+        return None
+
+    async def json(self):
+        return {
+            "classification": "user_private",
+            "content": {
+                "ok": True,
+                "job": {"jobId": "job-created-1"},
+            },
+        }
+
+class FakeSession:
+    def __init__(self, *args, **kwargs):
+        pass
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *_args):
+        return None
+
+    def post(self, url, json=None, headers=None):
+        calls.append({"url": url, "json": json, "headers": headers})
+        return FakeResponse()
+
+mod.ClientSession = FakeSession
+mod.ClientTimeout = lambda **_kwargs: None
+
+async def main():
+    result = await mod._burble_provider_call({
+        "toolName": "scheduled_job_create",
+        "input": {
+            "title": "Hourly AI news summary",
+            "prompt": "Find fresh AI news and summarize it.",
+            "schedule": {"kind": "interval", "every": {"hours": 1}},
+        },
+    })
+    print(json.dumps({
+        "result": json.loads(result),
+        "calls": calls,
+    }))
+
+asyncio.run(main())
+`);
+
+    const typed = result as {
+      result: { ok: boolean; job?: { jobId?: string } };
+      calls: Array<{ url: string; json: unknown }>;
+    };
+    expect(typed.result).toEqual({ ok: true, job: { jobId: "job-created-1" } });
+    expect(typed.calls[0]?.url).toBe(
+      "http://burble-app:3000/internal/tools/scheduledJob.create/execute",
+    );
+    expect(typed.calls[0]?.json).toEqual({
+      input: {
+        title: "Hourly AI news summary",
+        prompt: "Find fresh AI news and summarize it.",
+        schedule: {
+          kind: "interval",
+          every: { hours: 1 },
+        },
       },
     });
   });
