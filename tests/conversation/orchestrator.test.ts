@@ -1002,6 +1002,7 @@ describe("handleConversation", () => {
   test("manually triggers the only scheduled job without invoking the LLM runner", async () => {
     const texts = [
       "let's manually run our existing cron job",
+      "run cron job",
       "run this job manually now",
       "please trigger the current scheduled job",
       "start our cronjob"

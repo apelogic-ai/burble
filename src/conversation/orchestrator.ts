@@ -498,6 +498,9 @@ function isSchedulerTriggerIntent(tokens: string[]): boolean {
   if (looksLikeSchedulerCreationRequest(tokens)) {
     return false;
   }
+  if (hasAnyToken(tokens, ["cron"]) || hasScheduledJobReference(tokens)) {
+    return true;
+  }
   return (
     hasAnyToken(tokens, [
       "manual",
