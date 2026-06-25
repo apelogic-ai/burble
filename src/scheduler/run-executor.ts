@@ -1,12 +1,17 @@
 import type { AgentRunner } from "../agent/types";
 import { collectAgentRun } from "../agent/types";
 import { selectRuntimeToolGroups } from "../agent/tool-groups";
+import {
+  buildScheduledJobContext,
+  type ScheduledJobContext,
+} from "../agent/scheduled-job-context";
 import type {
   AgentJobRunRecord,
   AgentRuntimeEngine,
   ConversationRouteRecord,
   ProviderConnection,
-  TokenStore
+  ScheduledJobRecord,
+  TokenStore,
 } from "../db";
 
 type SlackPostClient = {
@@ -28,6 +33,7 @@ export function createSchedulerRunExecutor(input: {
     TokenStore,
     | "claimAgentJobRun"
     | "finishAgentJobRun"
+    | "getAgentJobCapability"
     | "getScheduledJob"
     | "getConversationRoute"
     | "getConnectionForSlackUser"
@@ -59,12 +65,17 @@ export function createSchedulerRunExecutor(input: {
         }
 
         input.logInfo?.(
-          `Scheduled job run start runId=${run.runId} jobId=${job.jobId}`
+          `Scheduled job run start runId=${run.runId} jobId=${job.jobId}`,
         );
+        const toolGroups = selectRuntimeToolGroups({
+          text: job.prompt,
+          attachmentCount: 0,
+          contextTexts: [],
+        });
         const result = await collectAgentRun(input.agentRunner, {
           principal: {
             workspaceId: run.workspaceId,
-            slackUserId: run.slackUserId
+            slackUserId: run.slackUserId,
           },
           executionMode: "native-runtime",
           ...(destination
@@ -75,34 +86,24 @@ export function createSchedulerRunExecutor(input: {
                   workspaceId: run.workspaceId,
                   channelId: destination.channelId,
                   rootId: destination.rootId ?? `scheduled:${job.jobId}`,
-                  isDirectMessage: destination.isDirectMessage
-                }
+                  isDirectMessage: destination.isDirectMessage,
+                },
               }
             : {}),
           text: job.prompt,
-          toolGroups: selectRuntimeToolGroups({
-            text: job.prompt,
-            attachmentCount: 0,
-            contextTexts: []
-          }),
-          scheduledJob: {
-            jobId: job.jobId,
-            capabilityProfile: "scheduled_job",
-            allowedTools: [],
-            ...(job.routeId ? { routeId: job.routeId } : {}),
-            ...(job.runtimeType
-              ? { runtimeType: job.runtimeType as AgentRuntimeEngine }
-              : {}),
-            stateRefs: [],
-            visibilityPolicy: {}
-          },
+          toolGroups,
+          scheduledJob: scheduledJobContextForRun(
+            input.store,
+            job,
+            toolGroups.groups,
+          ),
           connections: {
             github: connectionForSlackUser(input.store, "github", run),
             google: connectionForSlackUser(input.store, "google", run),
             hubspot: connectionForSlackUser(input.store, "hubspot", run),
             jira: connectionForSlackUser(input.store, "jira", run),
-            slack: connectionForSlackUser(input.store, "slack", run)
-          }
+            slack: connectionForSlackUser(input.store, "slack", run),
+          },
         });
 
         if (destination && result.text.trim()) {
@@ -111,16 +112,16 @@ export function createSchedulerRunExecutor(input: {
             text: result.text,
             ...(destination.threadTs && !destination.isDirectMessage
               ? { thread_ts: destination.threadTs }
-              : {})
+              : {}),
           });
         }
 
         input.store.finishAgentJobRun({
           runId: run.runId,
-          status: "succeeded"
+          status: "succeeded",
         });
         input.logInfo?.(
-          `Scheduled job run finish runId=${run.runId} jobId=${job.jobId}`
+          `Scheduled job run finish runId=${run.runId} jobId=${job.jobId}`,
         );
       } catch (error) {
         const message =
@@ -128,32 +129,91 @@ export function createSchedulerRunExecutor(input: {
         input.store.finishAgentJobRun({
           runId: run.runId,
           status: "failed",
-          failureReason: message.slice(0, 500)
+          failureReason: message.slice(0, 500),
         });
         input.logWarn?.(
-          `Scheduled job run failed runId=${run.runId} error=${message}`
+          `Scheduled job run failed runId=${run.runId} error=${message}`,
         );
       }
-    }
+    },
   };
+}
+
+function scheduledJobContextForRun(
+  store: Pick<TokenStore, "getAgentJobCapability">,
+  job: ScheduledJobRecord,
+  toolGroups: string[],
+): ScheduledJobContext {
+  const capability = store.getAgentJobCapability(job.jobId);
+  if (capability) {
+    return buildScheduledJobContext(capability);
+  }
+
+  return {
+    jobId: job.jobId,
+    capabilityProfile: "scheduled_job",
+    allowedTools: inferAllowedToolsForScheduledJob(job, toolGroups),
+    ...(job.routeId ? { routeId: job.routeId } : {}),
+    ...(job.runtimeType
+      ? { runtimeType: job.runtimeType as AgentRuntimeEngine }
+      : {}),
+    stateRefs: [],
+    visibilityPolicy: {},
+  };
+}
+
+function inferAllowedToolsForScheduledJob(
+  job: ScheduledJobRecord,
+  toolGroups: string[],
+): string[] {
+  const tools = new Set<string>();
+  const groups = new Set(toolGroups);
+  const text = `${job.title}\n${job.prompt}`.toLocaleLowerCase();
+
+  if (groups.has("github")) {
+    tools.add("github_search_issues");
+  }
+  if (groups.has("google")) {
+    tools.add("google_search_drive_files");
+  }
+  if (groups.has("hubspot")) {
+    tools.add("hubspot_search_crm_objects");
+  }
+  if (groups.has("jira")) {
+    tools.add("jira_search_issues");
+  }
+  if (groups.has("slack")) {
+    tools.add("slack_search_messages");
+  }
+  if (
+    /\b(news|web|website|article|articles|public source|public sources|latest|fresh|current)\b/i.test(
+      text,
+    )
+  ) {
+    tools.add("web_extract");
+  }
+
+  if (tools.size === 0) {
+    tools.add("conversation.sendMessage");
+  }
+
+  return [...tools].sort();
 }
 
 function connectionForSlackUser(
   store: Pick<TokenStore, "getConnectionForSlackUser">,
   provider: Parameters<TokenStore["getConnectionForSlackUser"]>[0],
-  run: AgentJobRunRecord
+  run: AgentJobRunRecord,
 ): ProviderConnection | null {
   return store.getConnectionForSlackUser(provider, run.slackUserId);
 }
 
-function readSlackRouteDestination(route: ConversationRouteRecord):
-  | {
-      channelId: string;
-      isDirectMessage: boolean;
-      rootId?: string;
-      threadTs?: string;
-    }
-  | null {
+function readSlackRouteDestination(route: ConversationRouteRecord): {
+  channelId: string;
+  isDirectMessage: boolean;
+  rootId?: string;
+  threadTs?: string;
+} | null {
   if (route.transport !== "slack" || route.revokedAt) {
     return null;
   }
@@ -168,7 +228,7 @@ function readSlackRouteDestination(route: ConversationRouteRecord):
       ...(typeof parsed.rootId === "string" ? { rootId: parsed.rootId } : {}),
       ...(typeof parsed.threadTs === "string"
         ? { threadTs: parsed.threadTs }
-        : {})
+        : {}),
     };
   } catch {
     return null;

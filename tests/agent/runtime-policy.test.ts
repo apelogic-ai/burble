@@ -6,7 +6,7 @@ import {
   RuntimeEngineSelectionError,
   runtimeCapabilityManifestCompatibility,
   resolveRuntimeEngineForPrincipal,
-  runtimeEngineCompatibility
+  runtimeEngineCompatibility,
 } from "../../src/agent/runtime-policy";
 
 const config: Config = {
@@ -57,7 +57,7 @@ const config: Config = {
   observabilityJsonlPath: null,
   observabilityJsonlDir: null,
   observabilityIncludeContent: false,
-  aiModel: "openai:gpt-5.4"
+  aiModel: "openai:gpt-5.4",
 };
 
 describe("buildRuntimeManifestForPrincipal", () => {
@@ -68,14 +68,14 @@ describe("buildRuntimeManifestForPrincipal", () => {
       skillId: "core",
       version: "1",
       enabled: true,
-      now: new Date("2026-05-28T00:00:00.000Z")
+      now: new Date("2026-05-28T00:00:00.000Z"),
     });
     store.upsertWorkspaceSkill({
       workspaceId: "T123",
       skillId: "github",
       version: "1",
       enabled: false,
-      now: new Date("2026-05-28T00:01:00.000Z")
+      now: new Date("2026-05-28T00:01:00.000Z"),
     });
     store.upsertUserSkill({
       workspaceId: "T123",
@@ -83,7 +83,7 @@ describe("buildRuntimeManifestForPrincipal", () => {
       skillId: "core",
       version: "1",
       enabled: true,
-      now: new Date("2026-05-28T00:02:00.000Z")
+      now: new Date("2026-05-28T00:02:00.000Z"),
     });
     store.upsertUserSkill({
       workspaceId: "T123",
@@ -91,7 +91,7 @@ describe("buildRuntimeManifestForPrincipal", () => {
       skillId: "github",
       version: "1",
       enabled: true,
-      now: new Date("2026-05-28T00:03:00.000Z")
+      now: new Date("2026-05-28T00:03:00.000Z"),
     });
 
     const manifest = buildRuntimeManifestForPrincipal({
@@ -99,12 +99,14 @@ describe("buildRuntimeManifestForPrincipal", () => {
       store,
       principal: {
         workspaceId: "T123",
-        slackUserId: "U123"
+        slackUserId: "U123",
       },
-      engine: "openclaw"
+      engine: "openclaw",
     });
 
-    expect(manifest.skills).toEqual([{ id: "core", version: "1", enabled: true }]);
+    expect(manifest.skills).toEqual([
+      { id: "core", version: "1", enabled: true },
+    ]);
     store.close();
   });
 });
@@ -117,8 +119,8 @@ describe("resolveRuntimeEngineForPrincipal", () => {
       store,
       principal: {
         workspaceId: "T123",
-        slackUserId: "U123"
-      }
+        slackUserId: "U123",
+      },
     });
 
     expect(selection).toEqual({
@@ -131,9 +133,9 @@ describe("resolveRuntimeEngineForPrincipal", () => {
         {
           engine: "openclaw",
           selectable: true,
-          reasons: []
-        }
-      ]
+          reasons: [],
+        },
+      ],
     });
     store.close();
   });
@@ -144,13 +146,13 @@ describe("resolveRuntimeEngineForPrincipal", () => {
       workspaceId: "T123",
       key: "runtime.allowedEngines",
       value: ["openclaw", "hermes"],
-      updatedBySlackUserId: "UADMIN"
+      updatedBySlackUserId: "UADMIN",
     });
     store.upsertUserPreference({
       workspaceId: "T123",
       slackUserId: "U123",
       key: "runtime.engine",
-      value: "hermes"
+      value: "hermes",
     });
 
     const selection = resolveRuntimeEngineForPrincipal({
@@ -158,8 +160,8 @@ describe("resolveRuntimeEngineForPrincipal", () => {
       store,
       principal: {
         workspaceId: "T123",
-        slackUserId: "U123"
-      }
+        slackUserId: "U123",
+      },
     });
 
     expect(selection.effectiveEngine).toBe("hermes");
@@ -175,13 +177,13 @@ describe("resolveRuntimeEngineForPrincipal", () => {
       workspaceId: "T123",
       key: "runtime.allowedEngines",
       value: ["openclaw", "hermes"],
-      updatedBySlackUserId: "UADMIN"
+      updatedBySlackUserId: "UADMIN",
     });
     store.upsertUserPreference({
       workspaceId: "T123",
       slackUserId: "U123",
       key: "runtime.engine",
-      value: "openclaw"
+      value: "openclaw",
     });
 
     const selection = resolveRuntimeEngineForPrincipal({
@@ -189,8 +191,8 @@ describe("resolveRuntimeEngineForPrincipal", () => {
       store,
       principal: {
         workspaceId: "T123",
-        slackUserId: "U123"
-      }
+        slackUserId: "U123",
+      },
     });
 
     expect(selection.preferredEngine).toBe("openclaw");
@@ -199,7 +201,7 @@ describe("resolveRuntimeEngineForPrincipal", () => {
     expect(selection.compatibility).toContainEqual({
       engine: "openclaw",
       selectable: true,
-      reasons: []
+      reasons: [],
     });
     store.close();
   });
@@ -210,13 +212,13 @@ describe("resolveRuntimeEngineForPrincipal", () => {
       workspaceId: "T123",
       key: "runtime.allowedEngines",
       value: ["openclaw", "burble-native"],
-      updatedBySlackUserId: "UADMIN"
+      updatedBySlackUserId: "UADMIN",
     });
     store.upsertUserPreference({
       workspaceId: "T123",
       slackUserId: "U123",
       key: "runtime.engine",
-      value: "burble-native"
+      value: "burble-native",
     });
 
     const selection = resolveRuntimeEngineForPrincipal({
@@ -224,14 +226,68 @@ describe("resolveRuntimeEngineForPrincipal", () => {
       store,
       principal: {
         workspaceId: "T123",
-        slackUserId: "U123"
+        slackUserId: "U123",
       },
-      requirements: { attachments: true }
+      requirements: { attachments: true },
     });
 
     expect(selection.effectiveEngine).toBe("burble-native");
     expect(selection.preferredEngine).toBe("burble-native");
     expect(selection.selectableEngines).toEqual(["openclaw", "burble-native"]);
+    store.close();
+  });
+
+  test("uses an explicit runtime requirement before user preference", () => {
+    const store = createTokenStore(":memory:");
+    store.upsertWorkspacePolicy({
+      workspaceId: "T123",
+      key: "runtime.allowedEngines",
+      value: ["openclaw", "hermes"],
+      updatedBySlackUserId: "UADMIN",
+    });
+    store.upsertUserPreference({
+      workspaceId: "T123",
+      slackUserId: "U123",
+      key: "runtime.engine",
+      value: "hermes",
+    });
+
+    const selection = resolveRuntimeEngineForPrincipal({
+      config,
+      store,
+      principal: {
+        workspaceId: "T123",
+        slackUserId: "U123",
+      },
+      requirements: { engine: "openclaw" },
+    });
+
+    expect(selection.effectiveEngine).toBe("openclaw");
+    expect(selection.preferredEngine).toBe("hermes");
+    expect(selection.selectableEngines).toEqual(["openclaw", "hermes"]);
+    store.close();
+  });
+
+  test("rejects an explicit runtime requirement that is not selectable", () => {
+    const store = createTokenStore(":memory:");
+    store.upsertWorkspacePolicy({
+      workspaceId: "T123",
+      key: "runtime.allowedEngines",
+      value: ["hermes"],
+      updatedBySlackUserId: "UADMIN",
+    });
+
+    expect(() =>
+      resolveRuntimeEngineForPrincipal({
+        config,
+        store,
+        principal: {
+          workspaceId: "T123",
+          slackUserId: "U123",
+        },
+        requirements: { engine: "openclaw" },
+      }),
+    ).toThrow(RuntimeEngineSelectionError);
     store.close();
   });
 
@@ -256,14 +312,14 @@ describe("resolveRuntimeEngineForPrincipal", () => {
           durableWorkflowState: false,
           attachments: false,
           conversationSend: true,
-          jobScopedAuth: true
+          jobScopedAuth: true,
         },
-        { requirements: { attachments: true } }
-      )
+        { requirements: { attachments: true } },
+      ),
     ).toEqual({
       engine: "burble-native",
       selectable: false,
-      reasons: ["missing attachment support"]
+      reasons: ["missing attachment support"],
     });
   });
 
@@ -273,13 +329,13 @@ describe("resolveRuntimeEngineForPrincipal", () => {
       workspaceId: "T123",
       key: "runtime.allowedEngines",
       value: ["openclaw"],
-      updatedBySlackUserId: "UADMIN"
+      updatedBySlackUserId: "UADMIN",
     });
     store.upsertUserPreference({
       workspaceId: "T123",
       slackUserId: "U123",
       key: "runtime.engine",
-      value: "hermes"
+      value: "hermes",
     });
 
     const selection = resolveRuntimeEngineForPrincipal({
@@ -287,8 +343,8 @@ describe("resolveRuntimeEngineForPrincipal", () => {
       store,
       principal: {
         workspaceId: "T123",
-        slackUserId: "U123"
-      }
+        slackUserId: "U123",
+      },
     });
 
     expect(selection.effectiveEngine).toBe("openclaw");
@@ -304,13 +360,13 @@ describe("resolveRuntimeEngineForPrincipal", () => {
       workspaceId: "T123",
       key: "runtime.allowedEngines",
       value: ["openclaw", "deterministic"],
-      updatedBySlackUserId: "UADMIN"
+      updatedBySlackUserId: "UADMIN",
     });
     store.upsertUserPreference({
       workspaceId: "T123",
       slackUserId: "U123",
       key: "runtime.engine",
-      value: "deterministic"
+      value: "deterministic",
     });
 
     const selection = resolveRuntimeEngineForPrincipal({
@@ -318,8 +374,8 @@ describe("resolveRuntimeEngineForPrincipal", () => {
       store,
       principal: {
         workspaceId: "T123",
-        slackUserId: "U123"
-      }
+        slackUserId: "U123",
+      },
     });
 
     expect(selection.effectiveEngine).toBe("openclaw");
@@ -329,7 +385,7 @@ describe("resolveRuntimeEngineForPrincipal", () => {
     expect(selection.compatibility).toContainEqual({
       engine: "deterministic",
       selectable: false,
-      reasons: ["missing usage reporting"]
+      reasons: ["missing usage reporting"],
     });
     store.close();
   });
@@ -340,13 +396,13 @@ describe("resolveRuntimeEngineForPrincipal", () => {
       workspaceId: "T123",
       key: "runtime.allowedEngines",
       value: ["openclaw", "burble-native"],
-      updatedBySlackUserId: "UADMIN"
+      updatedBySlackUserId: "UADMIN",
     });
     store.upsertUserPreference({
       workspaceId: "T123",
       slackUserId: "U123",
       key: "runtime.engine",
-      value: "burble-native"
+      value: "burble-native",
     });
 
     const selection = resolveRuntimeEngineForPrincipal({
@@ -354,8 +410,8 @@ describe("resolveRuntimeEngineForPrincipal", () => {
       store,
       principal: {
         workspaceId: "T123",
-        slackUserId: "U123"
-      }
+        slackUserId: "U123",
+      },
     });
 
     expect(selection.effectiveEngine).toBe("burble-native");
@@ -365,18 +421,18 @@ describe("resolveRuntimeEngineForPrincipal", () => {
     expect(selection.compatibility).toContainEqual({
       engine: "burble-native",
       selectable: true,
-      reasons: []
+      reasons: [],
     });
     store.close();
   });
 
   test("treats Burble Native as scheduled-workload compatible", () => {
     expect(
-      runtimeEngineCompatibility("burble-native", { workload: "scheduled" })
+      runtimeEngineCompatibility("burble-native", { workload: "scheduled" }),
     ).toEqual({
       engine: "burble-native",
       selectable: true,
-      reasons: []
+      reasons: [],
     });
   });
 
@@ -386,7 +442,7 @@ describe("resolveRuntimeEngineForPrincipal", () => {
       workspaceId: "T123",
       key: "runtime.allowedEngines",
       value: ["burble-direct"],
-      updatedBySlackUserId: "UADMIN"
+      updatedBySlackUserId: "UADMIN",
     });
 
     const selection = resolveRuntimeEngineForPrincipal({
@@ -394,8 +450,8 @@ describe("resolveRuntimeEngineForPrincipal", () => {
       store,
       principal: {
         workspaceId: "T123",
-        slackUserId: "U123"
-      }
+        slackUserId: "U123",
+      },
     });
 
     expect(selection.allowedEngines).toEqual(["burble-native"]);
@@ -410,13 +466,13 @@ describe("resolveRuntimeEngineForPrincipal", () => {
       workspaceId: "T123",
       key: "runtime.allowedEngines",
       value: ["openclaw", "burble-native"],
-      updatedBySlackUserId: "UADMIN"
+      updatedBySlackUserId: "UADMIN",
     });
     store.upsertUserPreference({
       workspaceId: "T123",
       slackUserId: "U123",
       key: "runtime.engine",
-      value: "burble-direct"
+      value: "burble-direct",
     });
 
     const selection = resolveRuntimeEngineForPrincipal({
@@ -424,8 +480,8 @@ describe("resolveRuntimeEngineForPrincipal", () => {
       store,
       principal: {
         workspaceId: "T123",
-        slackUserId: "U123"
-      }
+        slackUserId: "U123",
+      },
     });
 
     expect(selection.preferredEngine).toBe("burble-native");
@@ -439,7 +495,7 @@ describe("resolveRuntimeEngineForPrincipal", () => {
       workspaceId: "T123",
       key: "runtime.allowedEngines",
       value: ["deterministic"],
-      updatedBySlackUserId: "UADMIN"
+      updatedBySlackUserId: "UADMIN",
     });
 
     expect(() =>
@@ -448,9 +504,9 @@ describe("resolveRuntimeEngineForPrincipal", () => {
         store,
         principal: {
           workspaceId: "T123",
-          slackUserId: "U123"
-        }
-      })
+          slackUserId: "U123",
+        },
+      }),
     ).toThrow(RuntimeEngineSelectionError);
     try {
       resolveRuntimeEngineForPrincipal({
@@ -458,15 +514,15 @@ describe("resolveRuntimeEngineForPrincipal", () => {
         store,
         principal: {
           workspaceId: "T123",
-          slackUserId: "U123"
-        }
+          slackUserId: "U123",
+        },
       });
     } catch (error) {
       expect(error).toBeInstanceOf(RuntimeEngineSelectionError);
       expect((error as RuntimeEngineSelectionError).selection).toMatchObject({
         configuredEngine: "openclaw",
         allowedEngines: ["deterministic"],
-        selectableEngines: []
+        selectableEngines: [],
       });
       expect(String(error)).toContain("missing usage reporting");
     }
@@ -479,7 +535,7 @@ describe("resolveRuntimeEngineForPrincipal", () => {
       workspaceId: "T123",
       key: "runtime.allowedEngines",
       value: ["openclaw"],
-      updatedBySlackUserId: "UADMIN"
+      updatedBySlackUserId: "UADMIN",
     });
 
     const selection = resolveRuntimeEngineForPrincipal({
@@ -487,8 +543,8 @@ describe("resolveRuntimeEngineForPrincipal", () => {
       store,
       principal: {
         workspaceId: "T123",
-        slackUserId: "U123"
-      }
+        slackUserId: "U123",
+      },
     });
 
     expect(selection.effectiveEngine).toBe("openclaw");
@@ -496,7 +552,7 @@ describe("resolveRuntimeEngineForPrincipal", () => {
     expect(selection.compatibility).toContainEqual({
       engine: "openclaw",
       selectable: true,
-      reasons: []
+      reasons: [],
     });
     store.close();
   });

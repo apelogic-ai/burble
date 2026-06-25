@@ -4,7 +4,7 @@ import type {
   AgentRuntimeEngine,
   AgentRuntimeEventType,
   AgentRuntimeRecord,
-  TokenStore
+  TokenStore,
 } from "../db";
 import { runtimeConfigFileName } from "./runtime-descriptors";
 import type { RuntimeManifest } from "./runtime-manifest";
@@ -33,12 +33,13 @@ export type RuntimeConfigRead = {
 
 export type RuntimeSelectionRequirements = {
   attachments?: boolean;
+  engine?: AgentRuntimeEngine;
 };
 
 export type RuntimeFactory = {
   getOrCreateRuntime(
     principal: PrincipalId,
-    requirements?: RuntimeSelectionRequirements
+    requirements?: RuntimeSelectionRequirements,
   ): Promise<RuntimeHandle>;
   syncRuntimeStatus?(runtimeId: string): Promise<AgentRuntimeRecord | null>;
   readRuntimeConfig?(runtimeId: string): Promise<RuntimeConfigRead>;
@@ -49,12 +50,12 @@ export type RuntimeFactory = {
     input: {
       eventType: AgentRuntimeEventType;
       summary?: Record<string, unknown>;
-    }
+    },
   ) => void;
 };
 
 export type RuntimeManifestBuilder = (
-  principal: PrincipalId
+  principal: PrincipalId,
 ) => RuntimeManifest | Promise<RuntimeManifest>;
 
 export function createStaticRuntimeFactory(input: {
@@ -81,7 +82,7 @@ export function createStaticRuntimeFactory(input: {
         statePath: `${input.dataRoot}/${runtimeId}/state`,
         configPath: `${input.dataRoot}/${runtimeId}/config/${configFileName}`,
         workspacePath: `${input.dataRoot}/${runtimeId}/workspace`,
-        policyHash: manifest?.policyHash ?? null
+        policyHash: manifest?.policyHash ?? null,
       });
       input.store.touchAgentRuntime(runtime.id);
 
@@ -94,7 +95,7 @@ export function createStaticRuntimeFactory(input: {
         statePath: runtime.statePath,
         configPath: runtime.configPath,
         workspacePath: runtime.workspacePath,
-        ...(manifest ? { manifest } : {})
+        ...(manifest ? { manifest } : {}),
       };
     },
 
@@ -119,18 +120,18 @@ export function createStaticRuntimeFactory(input: {
       input.store.recordAgentRuntimeEvent({
         runtimeId,
         eventType: event.eventType,
-        summary: event.summary
+        summary: event.summary,
       });
-    }
+    },
   };
 }
 
 export async function readRuntimeConfigFromLocalFile(
-  runtime: AgentRuntimeRecord
+  runtime: AgentRuntimeRecord,
 ): Promise<RuntimeConfigRead> {
   return {
     path: runtime.configPath,
-    text: await readFile(runtime.configPath, "utf8")
+    text: await readFile(runtime.configPath, "utf8"),
   };
 }
 
@@ -144,7 +145,7 @@ function toHandleStatus(status: string): RuntimeHandle["status"] {
 
 export function buildRuntimeDataId(
   principal: PrincipalId,
-  engine: AgentRuntimeEngine
+  engine: AgentRuntimeEngine,
 ): string {
   return createHash("sha256")
     .update(`${principal.workspaceId}:${principal.slackUserId}:${engine}`)
@@ -163,7 +164,7 @@ export function deriveRuntimeToken(input: {
 }): string {
   const digest = createHmac("sha256", input.secret)
     .update(
-      `${input.principal.workspaceId}:${input.principal.slackUserId}:${input.engine}`
+      `${input.principal.workspaceId}:${input.principal.slackUserId}:${input.engine}`,
     )
     .digest("hex");
 

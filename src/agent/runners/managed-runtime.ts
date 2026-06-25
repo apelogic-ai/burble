@@ -1,17 +1,22 @@
 import { createParser } from "eventsource-parser";
-import type { AgentInput, AgentOutput, AgentRunEvent, AgentRunner } from "../types";
+import type {
+  AgentInput,
+  AgentOutput,
+  AgentRunEvent,
+  AgentRunner,
+} from "../types";
 import type { ToolClassification } from "../../conversation/types";
 import type { RuntimeFactory, RuntimeHandle } from "../runtime-factory";
 import type { ObservabilitySink } from "../../observability";
 import type { RuntimeCapabilityManifest } from "@burble/runtime-sdk/runtime-contract";
 import {
   createAgentRunnerFromRuntimeAdapter,
-  type RuntimeAdapter
+  type RuntimeAdapter,
 } from "../runtime-adapter";
 import {
   createRuntimeContractWebSocket,
   createRuntimeContractHttpClient,
-  RuntimeCapabilityDiscoveryError
+  RuntimeCapabilityDiscoveryError,
 } from "@burble/runtime-sdk/runtime-contract-http-client";
 import { containsRuntimeToolCallProtocolFragments } from "@burble/runtime-sdk/runtime-text-protocol";
 import { runtimeCompatibilityFamily } from "../runtime-descriptors";
@@ -19,19 +24,19 @@ import { sealRuntimeConversationAttachments } from "../../conversation/attachmen
 import type { Config } from "../../config";
 import {
   routeRuntimeEndpointWebSocket,
-  routeRuntimeEndpointFetch
+  routeRuntimeEndpointFetch,
 } from "../runtime-endpoint-routing";
 import { createRoutedRuntimeWebSocketFactory } from "../runtime-websocket";
 
 export type AgentRuntimeFetch = (
   input: string,
-  init: RequestInit
+  init: RequestInit,
 ) => Promise<Response>;
 
 export type AgentRuntimeWebSocket = {
   addEventListener: (
     type: "message" | "error" | "close",
-    listener: (event: { data?: unknown }) => void
+    listener: (event: { data?: unknown }) => void,
   ) => void;
   close: () => void;
 };
@@ -42,7 +47,7 @@ export type AgentRuntimeWebSocketOptions = {
 
 export type AgentRuntimeWebSocketFactory = (
   url: string,
-  options?: AgentRuntimeWebSocketOptions
+  options?: AgentRuntimeWebSocketOptions,
 ) => AgentRuntimeWebSocket;
 
 export type ManagedRuntimeAgentRunnerDeps = {
@@ -113,13 +118,13 @@ type RuntimeCapabilityCacheEntry = {
 type RuntimeCapabilityCache = Map<string, RuntimeCapabilityCacheEntry>;
 
 export function createManagedRuntimeAgentRunner(
-  deps: ManagedRuntimeAgentRunnerDeps
+  deps: ManagedRuntimeAgentRunnerDeps,
 ): AgentRunner {
   return createAgentRunnerFromRuntimeAdapter(createManagedRuntimeAdapter(deps));
 }
 
 export function createManagedRuntimeAdapter(
-  deps: ManagedRuntimeAgentRunnerDeps
+  deps: ManagedRuntimeAgentRunnerDeps,
 ): RuntimeAdapter {
   if (!deps.baseUrl && !deps.runtimeFactory) {
     throw new Error("managed runtime URL or runtimeFactory is required");
@@ -128,15 +133,19 @@ export function createManagedRuntimeAdapter(
   const fallbackBaseUrl = deps.baseUrl?.replace(/\/+$/, "");
   const routedFetch = routeRuntimeEndpointFetch(
     (url, init) => (deps.fetch ?? fetch)(url, init ?? {}),
-    { openShellDialHost: deps.config?.agentRuntimeOpenShellDialHost }
+    { openShellDialHost: deps.config?.agentRuntimeOpenShellDialHost },
   );
   const requestFetch: AgentRuntimeFetch = (url, init) => routedFetch(url, init);
   const routeOptions = {
-    openShellDialHost: deps.config?.agentRuntimeOpenShellDialHost
+    openShellDialHost: deps.config?.agentRuntimeOpenShellDialHost,
   };
   const createWebSocket: AgentRuntimeWebSocketFactory = deps.webSocketFactory
     ? (url, options) => {
-        const routed = routeRuntimeEndpointWebSocket(url, options, routeOptions);
+        const routed = routeRuntimeEndpointWebSocket(
+          url,
+          options,
+          routeOptions,
+        );
         return deps.webSocketFactory!(routed.url, routed.options);
       }
     : createRoutedRuntimeWebSocketFactory(routeOptions);
@@ -152,22 +161,26 @@ export function createManagedRuntimeAdapter(
       streaming: true,
       remote: true,
       requiresToolGateway: true,
-      toolEvents: true
+      toolEvents: true,
     },
     async *run(input: AgentInput): AsyncIterable<AgentRunEvent> {
       const runId = crypto.randomUUID();
       yield {
         type: "status",
-        text: "Starting agent runtime..."
+        text: "Starting agent runtime...",
       };
       const runtime = deps.runtimeFactory
         ? await deps.runtimeFactory.getOrCreateRuntime(input.principal, {
             ...(input.attachments && input.attachments.length > 0
               ? { attachments: true }
-              : {})
+              : {}),
+            ...(input.scheduledJob?.runtimeType
+              ? { engine: input.scheduledJob.runtimeType }
+              : {}),
           })
         : null;
-      const baseUrl = runtime?.endpointUrl.replace(/\/+$/, "") ?? fallbackBaseUrl;
+      const baseUrl =
+        runtime?.endpointUrl.replace(/\/+$/, "") ?? fallbackBaseUrl;
       if (!baseUrl) {
         throw new Error("Managed runtime endpoint is unavailable");
       }
@@ -189,7 +202,7 @@ export function createManagedRuntimeAdapter(
         workspaceId: input.principal.workspaceId,
         logInfo,
         observability,
-        cache: runtimeCapabilityCache
+        cache: runtimeCapabilityCache,
       });
       const capabilitySummary = capabilityManifest
         ? summarizeCapabilityManifest(capabilityManifest)
@@ -206,8 +219,8 @@ export function createManagedRuntimeAdapter(
           `githubConnected=${Boolean(input.connections.github)}`,
           `googleConnected=${Boolean(input.connections.google)}`,
           `jiraConnected=${Boolean(input.connections.jira)}`,
-          `slackConnected=${Boolean(input.connections.slack)}`
-        ].join(" ")
+          `slackConnected=${Boolean(input.connections.slack)}`,
+        ].join(" "),
       );
       observability?.emit({
         name: "runtime.run.started",
@@ -223,12 +236,14 @@ export function createManagedRuntimeAdapter(
           googleConnected: Boolean(input.connections.google),
           jiraConnected: Boolean(input.connections.jira),
           slackConnected: Boolean(input.connections.slack),
-          ...(scheduledJobSummary
-            ? { scheduledJob: scheduledJobSummary }
+          ...(scheduledJobSummary ? { scheduledJob: scheduledJobSummary } : {}),
+          ...(capabilitySummary
+            ? { runtimeCapabilities: capabilitySummary }
             : {}),
-          ...(capabilitySummary ? { runtimeCapabilities: capabilitySummary } : {}),
-          ...(runtime?.manifest ? { policyHash: runtime.manifest.policyHash } : {})
-        }
+          ...(runtime?.manifest
+            ? { policyHash: runtime.manifest.policyHash }
+            : {}),
+        },
       });
       if (runtime) {
         deps.runtimeFactory?.recordRuntimeEvent?.(runtime.id, {
@@ -248,8 +263,8 @@ export function createManagedRuntimeAdapter(
               : {}),
             ...(runtime.manifest
               ? { policyHash: runtime.manifest.policyHash }
-              : {})
-          }
+              : {}),
+          },
         });
       }
 
@@ -261,21 +276,22 @@ export function createManagedRuntimeAdapter(
         input: sanitizeAgentInput(input, {
           ...(deps.config ? { config: deps.config } : {}),
           ...(runtime?.id ? { runtimeId: runtime.id } : {}),
-          runId
-        })
+          runId,
+        }),
       };
       const runUrl = `${baseUrl}/runs`;
       let agentResponse: AgentOutput | null;
       try {
         const postStartedAt = Date.now();
-        const preferredStreamingAccept = selectHttpStreamingAccept(capabilityManifest);
+        const preferredStreamingAccept =
+          selectHttpStreamingAccept(capabilityManifest);
         const response = await postRuntimeRun(
           requestFetch,
           runUrl,
           runtime,
           runBody,
           preferredStreamingAccept ?? "application/json",
-          preferredStreamingAccept ? undefined : "respond-async"
+          preferredStreamingAccept ? undefined : "respond-async",
         );
 
         if (!response.ok) {
@@ -287,8 +303,8 @@ export function createManagedRuntimeAdapter(
             `runId=${runId}`,
             `runtimeId=${runtimeId}`,
             `elapsedMs=${Date.now() - postStartedAt}`,
-            `status=${response.status}`
-          ].join(" ")
+            `status=${response.status}`,
+          ].join(" "),
         );
         observability?.emit({
           name: "runtime.run.accepted",
@@ -300,8 +316,8 @@ export function createManagedRuntimeAdapter(
           durationMs: Date.now() - postStartedAt,
           status: "ok",
           attributes: {
-            httpStatus: response.status
-          }
+            httpStatus: response.status,
+          },
         });
 
         const observeEvent = (event: AgentRunEvent) => {
@@ -310,7 +326,7 @@ export function createManagedRuntimeAdapter(
               ? [
                   `toolName=${event.toolName}`,
                   `callId=${event.callId}`,
-                  `inputKeys=${Object.keys(event.input ?? {}).join(",") || "-"}`
+                  `inputKeys=${Object.keys(event.input ?? {}).join(",") || "-"}`,
                 ]
               : event.type === "tool_result"
                 ? [`toolName=${event.toolName}`, `callId=${event.callId}`]
@@ -322,8 +338,8 @@ export function createManagedRuntimeAdapter(
               `runtimeId=${runtime?.id ?? "static"}`,
               `elapsedMs=${Date.now() - runStartedAt}`,
               `type=${event.type}`,
-              ...eventDetails
-            ].join(" ")
+              ...eventDetails,
+            ].join(" "),
           );
           observeRuntimeStreamEvent(event, {
             observability,
@@ -334,7 +350,7 @@ export function createManagedRuntimeAdapter(
             runtimeId,
             runtimeType,
             runtime,
-            elapsedMs: Date.now() - runStartedAt
+            elapsedMs: Date.now() - runStartedAt,
           });
         };
 
@@ -342,7 +358,7 @@ export function createManagedRuntimeAdapter(
           agentResponse = yield* readStreamingRunResponse(
             response,
             runtimeMessageDeltasEnabled(runtime),
-            observeEvent
+            observeEvent,
           );
         } else {
           const startPayload = (await response.json()) as RemoteRunResponse &
@@ -358,16 +374,17 @@ export function createManagedRuntimeAdapter(
 
             const eventsUrl = toWebSocketUrl(
               new URL(
-                startPayload.eventsUrl ?? `/runs/${encodeURIComponent(startedRunId)}/events`,
-                `${baseUrl}/`
-              ).toString()
+                startPayload.eventsUrl ??
+                  `/runs/${encodeURIComponent(startedRunId)}/events`,
+                `${baseUrl}/`,
+              ).toString(),
             );
 
             try {
               agentResponse = yield* readWebSocketRunResponse(
                 createWebSocket(eventsUrl, runtimeWebSocketOptions(runtime)),
                 runtimeMessageDeltasEnabled(runtime),
-                observeEvent
+                observeEvent,
               );
             } catch (error) {
               if (!isRuntimeStreamClosedError(error)) {
@@ -379,17 +396,19 @@ export function createManagedRuntimeAdapter(
                   "Managed runtime event socket closed before final",
                   `runId=${startedRunId}`,
                   `runtimeId=${runtime?.id ?? "static"}`,
-                  "fallback=json"
-                ].join(" ")
+                  "fallback=json",
+                ].join(" "),
               );
               const fallbackResponse = await getRuntimeRunWithTimeout(
                 requestFetch,
                 `${baseUrl}/runs/${encodeURIComponent(startedRunId)}`,
                 runtime,
-                runSnapshotTimeoutMs
+                runSnapshotTimeoutMs,
               );
               if (!fallbackResponse.ok) {
-                throw new Error(await managedRuntimeHttpErrorMessage(fallbackResponse));
+                throw new Error(
+                  await managedRuntimeHttpErrorMessage(fallbackResponse),
+                );
               }
               agentResponse = await readJsonRunResponse(fallbackResponse);
             }
@@ -410,7 +429,7 @@ export function createManagedRuntimeAdapter(
           runtimeType,
           runtime,
           durationMs: Date.now() - runStartedAt,
-          error
+          error,
         });
         throw error;
       }
@@ -422,8 +441,8 @@ export function createManagedRuntimeAdapter(
           `runtimeId=${runtimeId}`,
           `classification=${agentResponse.classification}`,
           `textLength=${agentResponse.text.length}`,
-          `elapsedMs=${Date.now() - runStartedAt}`
-        ].join(" ")
+          `elapsedMs=${Date.now() - runStartedAt}`,
+        ].join(" "),
       );
       observability?.emit({
         name: "runtime.run.completed",
@@ -440,8 +459,8 @@ export function createManagedRuntimeAdapter(
           textLength: agentResponse.text.length,
           ...(agentResponse.telemetry
             ? { telemetry: agentResponse.telemetry }
-            : {})
-        }
+            : {}),
+        },
       });
       if (runtime) {
         deps.runtimeFactory?.recordRuntimeEvent?.(runtime.id, {
@@ -452,13 +471,13 @@ export function createManagedRuntimeAdapter(
             ...(agentResponse.usage ? { usage: agentResponse.usage } : {}),
             ...(agentResponse.telemetry
               ? { telemetry: agentResponse.telemetry }
-              : {})
-          }
+              : {}),
+          },
         });
       }
 
       yield { type: "final", response: agentResponse };
-    }
+    },
   };
 }
 
@@ -485,7 +504,7 @@ async function discoverRuntimeCapabilityManifest(input: {
     if (cached.manifest) {
       assertRuntimeCapabilityManifestMatchesRuntime(
         cached.manifest,
-        input.runtime
+        input.runtime,
       );
     }
     return cached.manifest;
@@ -500,14 +519,14 @@ async function discoverRuntimeCapabilityManifest(input: {
     manifest = await createRuntimeContractHttpClient({
       baseUrl: input.baseUrl,
       fetch: (url, init) => input.requestFetch(url, init ?? {}),
-      headers: runtimeHeaders(input.runtime)
+      headers: runtimeHeaders(input.runtime),
     }).getCapabilityManifest();
   } catch (error) {
     recordRuntimeCapabilitiesUnavailable(input, startedAt, error);
     if (isRuntimeCapabilitiesNotImplementedError(error)) {
       input.cache.set(cacheKey, {
         expiresAt: Date.now() + runtimeCapabilityCacheTtlMs,
-        manifest: null
+        manifest: null,
       });
     }
     return null;
@@ -517,7 +536,7 @@ async function discoverRuntimeCapabilityManifest(input: {
 
   input.cache.set(cacheKey, {
     expiresAt: Date.now() + runtimeCapabilityCacheTtlMs,
-    manifest
+    manifest,
   });
   input.logInfo(
     [
@@ -525,8 +544,8 @@ async function discoverRuntimeCapabilityManifest(input: {
       `runtimeId=${input.runtimeId}`,
       `runtimeType=${manifest.runtimeType}`,
       `transports=${manifest.transports.join(",")}`,
-      `toolBridgeModes=${manifest.toolBridgeModes.join(",")}`
-    ].join(" ")
+      `toolBridgeModes=${manifest.toolBridgeModes.join(",")}`,
+    ].join(" "),
   );
   input.observability?.emit({
     name: "runtime.capabilities.discovered",
@@ -546,29 +565,29 @@ async function discoverRuntimeCapabilityManifest(input: {
       usageReporting: manifest.usageReporting,
       multimodalInput: manifest.multimodalInput,
       attachments: manifest.attachments,
-      jobScopedAuth: manifest.jobScopedAuth
-    }
+      jobScopedAuth: manifest.jobScopedAuth,
+    },
   });
   return manifest;
 }
 
 function runtimeCapabilityCacheKey(
   runtime: RuntimeHandle,
-  baseUrl: string
+  baseUrl: string,
 ): string {
   return `${runtime.id}:${baseUrl}`;
 }
 
 function assertRuntimeCapabilityManifestMatchesRuntime(
   manifest: RuntimeCapabilityManifest,
-  runtime: RuntimeHandle
+  runtime: RuntimeHandle,
 ): void {
   if (
     runtimeCompatibilityFamily(manifest.runtimeType) !==
     runtimeCompatibilityFamily(runtime.engine)
   ) {
     throw new Error(
-      `Runtime capability manifest type ${manifest.runtimeType} does not match runtime engine ${runtime.engine}`
+      `Runtime capability manifest type ${manifest.runtimeType} does not match runtime engine ${runtime.engine}`,
     );
   }
 }
@@ -583,15 +602,15 @@ function recordRuntimeCapabilitiesUnavailable(
     observability?: ObservabilitySink;
   },
   startedAt: number,
-  error: unknown
+  error: unknown,
 ): void {
   input.logInfo(
     [
       "Managed runtime capabilities unavailable",
       `runtimeId=${input.runtimeId}`,
       `runtimeType=${input.runtimeType}`,
-      `reason=${error instanceof Error ? error.message : String(error)}`
-    ].join(" ")
+      `reason=${error instanceof Error ? error.message : String(error)}`,
+    ].join(" "),
   );
   input.observability?.emit({
     name: "runtime.capabilities.unavailable",
@@ -602,8 +621,8 @@ function recordRuntimeCapabilitiesUnavailable(
     durationMs: Date.now() - startedAt,
     status: "error",
     attributes: {
-      reason: error instanceof Error ? error.message : String(error)
-    }
+      reason: error instanceof Error ? error.message : String(error),
+    },
   });
 }
 
@@ -619,7 +638,7 @@ function observeRuntimeStreamEvent(
     runtimeType: string;
     runtime: RuntimeHandle | null;
     elapsedMs: number;
-  }
+  },
 ): void {
   const common = {
     runId: input.runId,
@@ -627,7 +646,7 @@ function observeRuntimeStreamEvent(
     principalId: input.principalId,
     runtimeId: input.runtimeId,
     runtimeType: input.runtimeType,
-    durationMs: input.elapsedMs
+    durationMs: input.elapsedMs,
   };
 
   if (event.type === "status") {
@@ -635,8 +654,8 @@ function observeRuntimeStreamEvent(
       ...common,
       name: "runtime.status",
       attributes: {
-        text: event.text
-      }
+        text: event.text,
+      },
     });
     return;
   }
@@ -649,11 +668,11 @@ function observeRuntimeStreamEvent(
           ? "runtime.message.replace"
           : "runtime.message.delta",
       attributes: {
-        textLength: event.text.length
+        textLength: event.text.length,
       },
       content: {
-        text: event.text
-      }
+        text: event.text,
+      },
     });
     return;
   }
@@ -663,7 +682,7 @@ function observeRuntimeStreamEvent(
       ...common,
       name: "runtime.tool.call.started",
       toolName: event.toolName,
-      callId: event.callId
+      callId: event.callId,
     });
     if (input.runtime) {
       input.runtimeFactory?.recordRuntimeEvent?.(input.runtime.id, {
@@ -671,8 +690,8 @@ function observeRuntimeStreamEvent(
         summary: {
           phase: "started",
           toolName: event.toolName,
-          callId: event.callId
-        }
+          callId: event.callId,
+        },
       });
     }
     return;
@@ -685,7 +704,7 @@ function observeRuntimeStreamEvent(
       toolName: event.toolName,
       callId: event.callId,
       classification: event.classification,
-      status: "ok"
+      status: "ok",
     });
     if (input.runtime) {
       input.runtimeFactory?.recordRuntimeEvent?.(input.runtime.id, {
@@ -694,8 +713,8 @@ function observeRuntimeStreamEvent(
           phase: "completed",
           toolName: event.toolName,
           callId: event.callId,
-          classification: event.classification
-        }
+          classification: event.classification,
+        },
       });
     }
     return;
@@ -728,15 +747,15 @@ function recordRuntimeRunFailed(input: {
     runtimeType: input.runtimeType,
     durationMs: input.durationMs,
     status: "error",
-    error
+    error,
   });
   if (input.runtime) {
     input.runtimeFactory?.recordRuntimeEvent?.(input.runtime.id, {
       eventType: "runtime_run_finished",
       summary: {
         status: "error",
-        error
-      }
+        error,
+      },
     });
   }
 }
@@ -748,15 +767,17 @@ function toRuntimeObservabilityError(error: unknown): {
   if (error instanceof Error) {
     return {
       name: error.name,
-      message: error.message
+      message: error.message,
     };
   }
   return {
-    message: String(error)
+    message: String(error),
   };
 }
 
-async function managedRuntimeHttpErrorMessage(response: Response): Promise<string> {
+async function managedRuntimeHttpErrorMessage(
+  response: Response,
+): Promise<string> {
   const base = `Managed runtime returned HTTP ${response.status}`;
   let body = "";
   try {
@@ -777,7 +798,9 @@ function safeRuntimeHttpErrorBody(body: string): string | null {
   const redacted = normalized
     .replace(/Bearer\s+[A-Za-z0-9._~+/=-]+/gi, "Bearer [redacted]")
     .replace(/sk-[A-Za-z0-9_-]+/g, "[redacted-openai-key]");
-  if (/\b(token|secret|api[_-]?key|private[_-]?key|password)\b/i.test(redacted)) {
+  if (
+    /\b(token|secret|api[_-]?key|private[_-]?key|password)\b/i.test(redacted)
+  ) {
     return null;
   }
   return redacted.slice(0, 240);
@@ -791,7 +814,7 @@ function isRuntimeCapabilitiesNotImplementedError(error: unknown): boolean {
 }
 
 function summarizeCapabilityManifest(
-  manifest: RuntimeCapabilityManifest
+  manifest: RuntimeCapabilityManifest,
 ): Record<string, unknown> {
   return {
     runtimeType: manifest.runtimeType,
@@ -804,7 +827,7 @@ function summarizeCapabilityManifest(
     usageReporting: manifest.usageReporting,
     multimodalInput: manifest.multimodalInput,
     attachments: manifest.attachments,
-    jobScopedAuth: manifest.jobScopedAuth
+    jobScopedAuth: manifest.jobScopedAuth,
   };
 }
 
@@ -814,7 +837,7 @@ function postRuntimeRun(
   runtime: RuntimeHandle | null,
   body: unknown,
   accept: string,
-  prefer?: string
+  prefer?: string,
 ): Promise<Response> {
   return requestFetch(url, {
     method: "POST",
@@ -822,14 +845,14 @@ function postRuntimeRun(
       accept,
       "content-type": "application/json",
       ...(prefer ? { prefer } : {}),
-      ...runtimeHeaders(runtime)
+      ...runtimeHeaders(runtime),
     },
-    body: JSON.stringify(body)
+    body: JSON.stringify(body),
   });
 }
 
 function selectHttpStreamingAccept(
-  manifest: RuntimeCapabilityManifest | null
+  manifest: RuntimeCapabilityManifest | null,
 ): string | null {
   if (manifest?.transports.includes("ndjson")) {
     return "application/x-ndjson";
@@ -844,15 +867,15 @@ function getRuntimeRun(
   requestFetch: AgentRuntimeFetch,
   url: string,
   runtime: RuntimeHandle | null,
-  signal?: AbortSignal
+  signal?: AbortSignal,
 ): Promise<Response> {
   return requestFetch(url, {
     method: "GET",
     ...(signal ? { signal } : {}),
     headers: {
       accept: "application/json",
-      ...runtimeHeaders(runtime)
-    }
+      ...runtimeHeaders(runtime),
+    },
   });
 }
 
@@ -860,7 +883,7 @@ async function getRuntimeRunWithTimeout(
   requestFetch: AgentRuntimeFetch,
   url: string,
   runtime: RuntimeHandle | null,
-  timeoutMs: number
+  timeoutMs: number,
 ): Promise<Response> {
   const controller = new AbortController();
   const request = getRuntimeRun(requestFetch, url, runtime, controller.signal);
@@ -871,8 +894,8 @@ async function getRuntimeRunWithTimeout(
       controller.abort();
       reject(
         new Error(
-          `Managed runtime did not produce a final response within ${timeoutMs}ms`
-        )
+          `Managed runtime did not produce a final response within ${timeoutMs}ms`,
+        ),
       );
     }, timeoutMs);
   });
@@ -887,7 +910,7 @@ async function getRuntimeRunWithTimeout(
 }
 
 async function readJsonRunResponse(
-  response: Response
+  response: Response,
 ): Promise<AgentOutput | null> {
   const payload = (await response.json()) as RemoteRunResponse;
   return validateRemoteRunResponse(payload);
@@ -902,7 +925,7 @@ function assertManagedRuntimeFinalResponse(response: AgentOutput): void {
   }
   if (containsRuntimeToolCallProtocolFragments(response.text)) {
     throw new Error(
-      "Managed runtime final response leaked tool-call protocol text"
+      "Managed runtime final response leaked tool-call protocol text",
     );
   }
 }
@@ -910,7 +933,7 @@ function assertManagedRuntimeFinalResponse(response: AgentOutput): void {
 async function* readWebSocketRunResponse(
   socket: AgentRuntimeWebSocket,
   emitMessageDeltas: boolean,
-  onEvent?: (event: AgentRunEvent) => void
+  onEvent?: (event: AgentRunEvent) => void,
 ): AsyncIterable<AgentRunEvent, AgentOutput | null> {
   const queue: unknown[] = [];
   let closed = false;
@@ -926,7 +949,8 @@ async function* readWebSocketRunResponse(
     try {
       queue.push(JSON.parse(String(event.data ?? "")));
     } catch (error) {
-      failed = error instanceof Error ? error : new Error("Invalid runtime event");
+      failed =
+        error instanceof Error ? error : new Error("Invalid runtime event");
     }
     wakeReader();
   });
@@ -992,7 +1016,7 @@ function runtimeMessageDeltasEnabled(runtime: RuntimeHandle | null): boolean {
 async function* readStreamingRunResponse(
   response: Response,
   emitMessageDeltas = true,
-  onEvent?: (event: AgentRunEvent) => void
+  onEvent?: (event: AgentRunEvent) => void,
 ): AsyncIterable<AgentRunEvent, AgentOutput | null> {
   if (!response.body) {
     return null;
@@ -1022,8 +1046,7 @@ async function* readStreamingRunResponse(
       }
 
       if (
-        (event.type === "message_delta" ||
-          event.type === "message_replace") &&
+        (event.type === "message_delta" || event.type === "message_replace") &&
         !emitMessageDeltas
       ) {
         continue;
@@ -1036,7 +1059,7 @@ async function* readStreamingRunResponse(
     if (streamedText.trim() && isRuntimeStreamClosedError(error)) {
       return {
         classification: "user_private",
-        text: streamedText.trim()
+        text: streamedText.trim(),
       };
     }
 
@@ -1046,15 +1069,13 @@ async function* readStreamingRunResponse(
   if (streamedText.trim()) {
     return {
       classification: "user_private",
-      text: streamedText.trim()
+      text: streamedText.trim(),
     };
   }
   return null;
 }
 
-function readRuntimeEventStream(
-  response: Response
-): AsyncIterable<unknown> {
+function readRuntimeEventStream(response: Response): AsyncIterable<unknown> {
   return isSseResponse(response)
     ? readSse(response.body!)
     : readNdjson(response.body!);
@@ -1076,12 +1097,12 @@ function isRuntimeStreamClosedError(error: unknown): boolean {
   }
 
   return /socket connection was closed|event socket closed before final|connection.*closed|stream.*closed|terminated|econnreset/i.test(
-    error.message
+    error.message,
   );
 }
 
 async function* readNdjson(
-  body: ReadableStream<Uint8Array>
+  body: ReadableStream<Uint8Array>,
 ): AsyncIterable<unknown> {
   const reader = body.getReader();
   const decoder = new TextDecoder();
@@ -1116,7 +1137,7 @@ async function* readNdjson(
 }
 
 async function* readSse(
-  body: ReadableStream<Uint8Array>
+  body: ReadableStream<Uint8Array>,
 ): AsyncIterable<unknown> {
   const reader = body.getReader();
   const decoder = new TextDecoder();
@@ -1128,7 +1149,7 @@ async function* readSse(
     },
     onError(error) {
       parseError = error;
-    }
+    },
   });
 
   try {
@@ -1189,18 +1210,18 @@ function runtimeHeaders(runtime: RuntimeHandle | null): Record<string, string> {
   return {
     authorization: `Bearer ${runtime.authToken}`,
     "x-burble-runtime-token": runtime.authToken,
-    "x-burble-runtime-id": runtime.id
+    "x-burble-runtime-id": runtime.id,
   };
 }
 
 function runtimeWebSocketOptions(
-  runtime: RuntimeHandle | null
+  runtime: RuntimeHandle | null,
 ): AgentRuntimeWebSocketOptions | undefined {
   if (!runtime) {
     return undefined;
   }
   return {
-    headers: runtimeHeaders(runtime)
+    headers: runtimeHeaders(runtime),
   };
 }
 
@@ -1226,12 +1247,14 @@ function summarizeScheduledJob(input: AgentInput):
     capabilityProfile: scheduledJob.capabilityProfile,
     allowedToolCount: scheduledJob.allowedTools.length,
     ...(scheduledJob.routeId ? { routeId: scheduledJob.routeId } : {}),
-    ...(scheduledJob.runtimeType ? { runtimeType: scheduledJob.runtimeType } : {}),
+    ...(scheduledJob.runtimeType
+      ? { runtimeType: scheduledJob.runtimeType }
+      : {}),
     stateRefCount: scheduledJob.stateRefs.length,
     maxOutputVisibility:
       scheduledJob.visibilityPolicy.maxOutputVisibility ?? "user_private",
     allowPrivateToolDeclassification:
-      scheduledJob.visibilityPolicy.allowPrivateToolDeclassification === true
+      scheduledJob.visibilityPolicy.allowPrivateToolDeclassification === true,
   };
 }
 
@@ -1295,25 +1318,29 @@ function sanitizeRuntimeHandle(runtime: RuntimeHandle): {
             tools: runtime.manifest.tools,
             memory: runtime.manifest.memory,
             streaming: runtime.manifest.streaming,
-            memoryContext: runtime.manifest.memoryContext
-          }
+            memoryContext: runtime.manifest.memoryContext,
+          },
         }
-      : {})
+      : {}),
   };
 }
 
 const classifications: ReadonlySet<ToolClassification> = new Set([
   "public",
   "user_private",
-  "restricted"
+  "restricted",
 ]);
 
 function isRuntimeProviderProgressMarker(text: string): boolean {
   const normalized = text.trim().replace(/\s+/g, " ");
-  return /^(?::gear:|⚙️?|gear:)?\s*(?:burble_provider_call|(?:github|google|gmail|hubspot|jira|slack|atlassian|scheduled_job|conversation)_[a-z0-9_]+)(?:\.{3}|…)?$/i.test(normalized);
+  return /^(?::gear:|⚙️?|gear:)?\s*(?:burble_provider_call|(?:github|google|gmail|hubspot|jira|slack|atlassian|scheduled_job|conversation)_[a-z0-9_]+)(?:\.{3}|…)?$/i.test(
+    normalized,
+  );
 }
 
-function validateRemoteRunResponse(payload: RemoteRunResponse): AgentOutput | null {
+function validateRemoteRunResponse(
+  payload: RemoteRunResponse,
+): AgentOutput | null {
   const response = payload.response;
   if (!response) {
     return null;
@@ -1339,7 +1366,7 @@ function validateRemoteRunResponse(payload: RemoteRunResponse): AgentOutput | nu
 }
 
 function validateRemoteRunStartResponse(
-  payload: RemoteRunStartResponse
+  payload: RemoteRunStartResponse,
 ): string | null {
   return typeof payload.runId === "string" && payload.runId.trim().length > 0
     ? payload.runId
@@ -1405,7 +1432,7 @@ function sanitizeAgentInput(
     config?: Config;
     runtimeId?: string;
     runId?: string;
-  }
+  },
 ): {
   text: string;
   attachments?: RuntimeAttachment[];
@@ -1432,7 +1459,7 @@ function sanitizeAgentInput(
       ? sealRuntimeConversationAttachments(options.config, {
           runtimeId: options.runtimeId,
           runId: options.runId,
-          attachments: input.attachments
+          attachments: input.attachments,
         })
       : input.attachments;
 
@@ -1448,53 +1475,53 @@ function sanitizeAgentInput(
         ? {
             connected: true,
             email: github.email,
-            providerLogin: github.providerLogin
+            providerLogin: github.providerLogin,
           }
         : {
-            connected: false
+            connected: false,
           },
       google: google
         ? {
             connected: true,
             email: google.email,
-            providerLogin: google.providerLogin
+            providerLogin: google.providerLogin,
           }
         : {
-            connected: false
+            connected: false,
           },
       hubspot: hubspot
         ? {
             connected: true,
             email: hubspot.email,
-            providerLogin: hubspot.providerLogin
+            providerLogin: hubspot.providerLogin,
           }
         : {
-            connected: false
+            connected: false,
           },
       jira: jira
         ? {
             connected: true,
             email: jira.email,
-            providerLogin: jira.providerLogin
+            providerLogin: jira.providerLogin,
           }
         : {
-            connected: false
+            connected: false,
           },
       slack: slack
         ? {
             connected: true,
             email: slack.email,
-            providerLogin: slack.providerLogin
+            providerLogin: slack.providerLogin,
           }
         : {
-            connected: false
-          }
-    }
+            connected: false,
+          },
+    },
   };
 }
 
 function compactRuntimeContext(
-  context: NonNullable<AgentInput["context"]>
+  context: NonNullable<AgentInput["context"]>,
 ): NonNullable<AgentInput["context"]> {
   return {
     currentChannel: context.currentChannel,
@@ -1502,8 +1529,8 @@ function compactRuntimeContext(
       .slice(-maxRuntimeRecentMessages)
       .map((message) => ({
         ...message,
-        text: truncateRuntimeText(message.text, maxRuntimeRecentMessageChars)
-      }))
+        text: truncateRuntimeText(message.text, maxRuntimeRecentMessageChars),
+      })),
   };
 }
 
@@ -1514,7 +1541,9 @@ function truncateRuntimeText(text: string, maxChars: number): string {
   return `${text.slice(0, Math.max(0, maxChars - 1))}…`;
 }
 
-function isRuntimeAttachmentArray(value: unknown): value is RuntimeAttachment[] {
+function isRuntimeAttachmentArray(
+  value: unknown,
+): value is RuntimeAttachment[] {
   return Array.isArray(value) && value.every(isRuntimeAttachment);
 }
 

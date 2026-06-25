@@ -1,10 +1,11 @@
 import type { Config } from "../config";
-import type { AgentRuntimeRecord, TokenStore, WorkspacePolicyRecord } from "../db";
+import type {
+  AgentRuntimeRecord,
+  TokenStore,
+  WorkspacePolicyRecord,
+} from "../db";
 import { providerToolCatalog } from "../providers/catalog";
-import {
-  isKnownRuntimeEngine,
-  runtimeDescriptor
-} from "./runtime-descriptors";
+import { isKnownRuntimeEngine, runtimeDescriptor } from "./runtime-descriptors";
 import { buildRuntimeManifest, type RuntimeManifest } from "./runtime-manifest";
 import type { PrincipalId } from "./runtime-factory";
 import type { RuntimeSelectionRequirements } from "./runtime-factory";
@@ -14,15 +15,15 @@ export const defaultWorkspaceRuntimePolicy = {
   memory: {
     user: { enabled: false },
     workspace: { enabled: false },
-    jobs: { enabled: true }
+    jobs: { enabled: true },
   },
   skills: {
     allowed: [
       { id: "core", version: "1" },
       { id: "github", version: "1" },
-      { id: "atlassian-jira", version: "1" }
-    ]
-  }
+      { id: "atlassian-jira", version: "1" },
+    ],
+  },
 } as const;
 
 export type RuntimeEngineSelection = {
@@ -45,7 +46,7 @@ export type RuntimeEngineCompatibilityWorkload = "interactive" | "scheduled";
 export class RuntimeEngineSelectionError extends Error {
   constructor(
     message: string,
-    readonly selection: Omit<RuntimeEngineSelection, "effectiveEngine">
+    readonly selection: Omit<RuntimeEngineSelection, "effectiveEngine">,
   ) {
     super(message);
     this.name = "RuntimeEngineSelectionError";
@@ -62,21 +63,22 @@ export function resolveRuntimeEngineForPrincipal(input: {
   const allowedEngines = readAllowedRuntimeEngines({
     config: input.config,
     store: input.store,
-    workspaceId: input.principal.workspaceId
+    workspaceId: input.principal.workspaceId,
   });
   const compatibility = allowedEngines.map((engine) =>
     runtimeEngineCompatibility(engine, {
       factory: input.config.agentRuntimeFactory,
-      requirements: input.requirements
-    })
+      requirements: input.requirements,
+    }),
   );
   const selectableEngines = compatibility
     .filter((entry) => entry.selectable)
     .map((entry) => entry.engine);
   const preferredEngine = readUserRuntimeEnginePreference({
     store: input.store,
-    principal: input.principal
+    principal: input.principal,
   });
+  const requestedEngine = input.requirements?.engine ?? null;
   const fallbackEngine = selectableEngines[0];
   if (!fallbackEngine) {
     throw new RuntimeEngineSelectionError(
@@ -86,23 +88,36 @@ export function resolveRuntimeEngineForPrincipal(input: {
           const reasons =
             entry.reasons.length > 0 ? entry.reasons.join(", ") : "unknown";
           return `${entry.engine}: ${reasons}`;
-        })
+        }),
       ].join(" "),
       {
         configuredEngine,
         preferredEngine,
         allowedEngines,
         selectableEngines,
-        compatibility
-      }
+        compatibility,
+      },
+    );
+  }
+  if (requestedEngine && !selectableEngines.includes(requestedEngine)) {
+    throw new RuntimeEngineSelectionError(
+      `Requested runtime engine ${requestedEngine} is not selectable for this workspace.`,
+      {
+        configuredEngine,
+        preferredEngine,
+        allowedEngines,
+        selectableEngines,
+        compatibility,
+      },
     );
   }
   const effectiveEngine =
-    preferredEngine && selectableEngines.includes(preferredEngine)
+    requestedEngine ??
+    (preferredEngine && selectableEngines.includes(preferredEngine)
       ? preferredEngine
       : selectableEngines.includes(configuredEngine)
         ? configuredEngine
-        : fallbackEngine;
+        : fallbackEngine);
 
   return {
     configuredEngine,
@@ -110,7 +125,7 @@ export function resolveRuntimeEngineForPrincipal(input: {
     preferredEngine,
     allowedEngines,
     selectableEngines,
-    compatibility
+    compatibility,
   };
 }
 
@@ -120,20 +135,20 @@ export function runtimeEngineCompatibility(
     factory?: Config["agentRuntimeFactory"];
     workload?: RuntimeEngineCompatibilityWorkload;
     requirements?: RuntimeSelectionRequirements;
-  } = {}
+  } = {},
 ): RuntimeEngineCompatibility {
   const descriptor = runtimeDescriptor(engine);
   if (!descriptor.selectable) {
     return {
       engine,
       selectable: false,
-      reasons: [descriptor.unselectableReason ?? "runtime is not selectable"]
+      reasons: [descriptor.unselectableReason ?? "runtime is not selectable"],
     };
   }
   return runtimeCapabilityManifestCompatibility(
     engine,
     descriptor.capabilities,
-    options
+    options,
   );
 }
 
@@ -143,7 +158,7 @@ export function runtimeCapabilityManifestCompatibility(
   options: {
     workload?: RuntimeEngineCompatibilityWorkload;
     requirements?: RuntimeSelectionRequirements;
-  } = {}
+  } = {},
 ): RuntimeEngineCompatibility {
   const workload = options.workload ?? "interactive";
   const reasons: string[] = [];
@@ -178,12 +193,12 @@ export function runtimeCapabilityManifestCompatibility(
   return {
     engine,
     selectable: reasons.length === 0,
-    reasons
+    reasons,
   };
 }
 
 export function knownRuntimeCapabilityManifest(
-  engine: RuntimeManifest["runtime"]["engine"]
+  engine: RuntimeManifest["runtime"]["engine"],
 ): RuntimeCapabilityManifest {
   return runtimeDescriptor(engine).capabilities;
 }
@@ -195,11 +210,11 @@ export function buildRuntimeManifestForPrincipal(input: {
   engine: RuntimeManifest["runtime"]["engine"];
 }): RuntimeManifest {
   const workspaceSkills = input.store.listWorkspaceSkills(
-    input.principal.workspaceId
+    input.principal.workspaceId,
   );
   const userSkills = input.store.listUserSkills(
     input.principal.workspaceId,
-    input.principal.slackUserId
+    input.principal.slackUserId,
   );
   return buildRuntimeManifest({
     principal: input.principal,
@@ -207,43 +222,48 @@ export function buildRuntimeManifestForPrincipal(input: {
       engine: input.engine,
       factory: input.config.agentRuntimeFactory,
       ttlMs: input.config.agentRuntimeIdleTtlMs,
-      reaperEnabled: input.config.agentRuntimeReaperEnabled
+      reaperEnabled: input.config.agentRuntimeReaperEnabled,
     },
     defaultModel: input.config.aiModel,
     defaultStreaming: input.config.agentRuntimeStreaming !== "off",
     workspacePolicy: [
       ...defaultWorkspacePolicyRecords(input.principal.workspaceId),
       ...input.store.listWorkspacePolicy(input.principal.workspaceId),
-      ...workspaceSkillPolicyRecords(input.principal.workspaceId, workspaceSkills)
+      ...workspaceSkillPolicyRecords(
+        input.principal.workspaceId,
+        workspaceSkills,
+      ),
     ],
-    userPreferences: input.store.listUserPreferences(
-      input.principal.workspaceId,
-      input.principal.slackUserId
-    ).concat(
-      userSkillPreferenceRecords(
+    userPreferences: input.store
+      .listUserPreferences(
         input.principal.workspaceId,
         input.principal.slackUserId,
-        userSkills
       )
-    ),
+      .concat(
+        userSkillPreferenceRecords(
+          input.principal.workspaceId,
+          input.principal.slackUserId,
+          userSkills,
+        ),
+      ),
     memoryRecords: [
       ...input.store.listAgentMemory({
         workspaceId: input.principal.workspaceId,
-        scope: "workspace"
+        scope: "workspace",
       }),
       ...input.store.listAgentMemory({
         workspaceId: input.principal.workspaceId,
         scope: "user",
-        ownerId: input.principal.slackUserId
-      })
+        ownerId: input.principal.slackUserId,
+      }),
     ],
-    toolCatalog: providerToolCatalog
+    toolCatalog: providerToolCatalog,
   });
 }
 
 function workspaceSkillPolicyRecords(
   workspaceId: string,
-  skills: ReturnType<TokenStore["listWorkspaceSkills"]>
+  skills: ReturnType<TokenStore["listWorkspaceSkills"]>,
 ): WorkspacePolicyRecord[] {
   if (skills.length === 0) {
     return [];
@@ -256,15 +276,15 @@ function workspaceSkillPolicyRecords(
         .filter((skill) => skill.enabled)
         .map((skill) => ({ id: skill.skillId, version: skill.version })),
       updatedBySlackUserId: null,
-      updatedAt: maxUpdatedAt(skills.map((skill) => skill.updatedAt))
-    }
+      updatedAt: maxUpdatedAt(skills.map((skill) => skill.updatedAt)),
+    },
   ];
 }
 
 function userSkillPreferenceRecords(
   workspaceId: string,
   slackUserId: string,
-  skills: ReturnType<TokenStore["listUserSkills"]>
+  skills: ReturnType<TokenStore["listUserSkills"]>,
 ) {
   if (skills.length === 0) {
     return [];
@@ -277,8 +297,8 @@ function userSkillPreferenceRecords(
       value: skills
         .filter((skill) => skill.enabled)
         .map((skill) => ({ id: skill.skillId, version: skill.version })),
-      updatedAt: maxUpdatedAt(skills.map((skill) => skill.updatedAt))
-    }
+      updatedAt: maxUpdatedAt(skills.map((skill) => skill.updatedAt)),
+    },
   ];
 }
 
@@ -287,7 +307,7 @@ function maxUpdatedAt(values: string[]): string {
 }
 
 function defaultWorkspacePolicyRecords(
-  workspaceId: string
+  workspaceId: string,
 ): WorkspacePolicyRecord[] {
   const updatedAt = "1970-01-01T00:00:00.000Z";
   return [
@@ -296,29 +316,29 @@ function defaultWorkspacePolicyRecords(
       key: "memory.user",
       value: defaultWorkspaceRuntimePolicy.memory.user,
       updatedBySlackUserId: null,
-      updatedAt
+      updatedAt,
     },
     {
       workspaceId,
       key: "memory.workspace",
       value: defaultWorkspaceRuntimePolicy.memory.workspace,
       updatedBySlackUserId: null,
-      updatedAt
+      updatedAt,
     },
     {
       workspaceId,
       key: "memory.jobs",
       value: defaultWorkspaceRuntimePolicy.memory.jobs,
       updatedBySlackUserId: null,
-      updatedAt
+      updatedAt,
     },
     {
       workspaceId,
       key: "skills.allowed",
       value: defaultWorkspaceRuntimePolicy.skills.allowed,
       updatedBySlackUserId: null,
-      updatedAt
-    }
+      updatedAt,
+    },
   ];
 }
 
@@ -341,24 +361,26 @@ function readUserRuntimeEnginePreference(input: {
   const value = input.store.getUserPreference(
     input.principal.workspaceId,
     input.principal.slackUserId,
-    "runtime.engine"
+    "runtime.engine",
   )?.value;
   return normalizeRuntimeEngine(value);
 }
 
 function normalizeRuntimeEngineList(
-  value: unknown
+  value: unknown,
 ): RuntimeManifest["runtime"]["engine"][] {
   const rawValues = Array.isArray(value)
     ? value
     : typeof value === "string"
       ? value.split(/[,\s]+/)
       : [];
-  return [...new Set(rawValues.map(normalizeRuntimeEngine).filter(Boolean))] as RuntimeManifest["runtime"]["engine"][];
+  return [
+    ...new Set(rawValues.map(normalizeRuntimeEngine).filter(Boolean)),
+  ] as RuntimeManifest["runtime"]["engine"][];
 }
 
 function normalizeRuntimeEngine(
-  value: unknown
+  value: unknown,
 ): RuntimeManifest["runtime"]["engine"] | null {
   if (typeof value !== "string") {
     return null;
@@ -382,16 +404,16 @@ export function buildRuntimeManifestForRecord(input: {
     store: input.store,
     principal: {
       workspaceId: input.runtime.workspaceId,
-      slackUserId: input.runtime.slackUserId
+      slackUserId: input.runtime.slackUserId,
     },
-    engine: input.runtime.engine
+    engine: input.runtime.engine,
   });
 }
 
 export function enabledManifestToolNames(
-  manifest: RuntimeManifest
+  manifest: RuntimeManifest,
 ): ReadonlySet<string> {
   return new Set(
-    manifest.tools.filter((tool) => tool.enabled).map((tool) => tool.name)
+    manifest.tools.filter((tool) => tool.enabled).map((tool) => tool.name),
   );
 }

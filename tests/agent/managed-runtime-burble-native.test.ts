@@ -1,6 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import { createManagedRuntimeAgentRunner } from "../../src/agent/runners/managed-runtime";
-import { hashRuntimeToken, type RuntimeHandle } from "../../src/agent/runtime-factory";
+import {
+  hashRuntimeToken,
+  type RuntimeHandle,
+} from "../../src/agent/runtime-factory";
 import type { RuntimeManifest } from "../../src/agent/runtime-manifest";
 import { collectAgentRun } from "../../src/agent/types";
 import type { Config } from "../../src/config";
@@ -8,12 +11,12 @@ import { createTokenStore } from "../../src/db";
 import { handleToolGatewayRequest } from "../../src/tool-gateway";
 import {
   attachRuntimeEventWebSocket,
-  handleRuntimeRequest
+  handleRuntimeRequest,
 } from "../../runtimes/burble-native/src/server";
 
 const principal = {
   workspaceId: "T123",
-  slackUserId: "U123"
+  slackUserId: "U123",
 };
 
 const baseConfig: Config = {
@@ -64,14 +67,14 @@ const baseConfig: Config = {
   observabilityJsonlPath: null,
   observabilityJsonlDir: null,
   observabilityIncludeContent: false,
-  aiModel: "openai:gpt-5.4"
+  aiModel: "openai:gpt-5.4",
 };
 
 class InProcessRuntimeWebSocket {
   readonly listeners = {
     message: [] as Array<(event: { data?: unknown }) => void>,
     error: [] as Array<(event: { data?: unknown }) => void>,
-    close: [] as Array<(event: { data?: unknown }) => void>
+    close: [] as Array<(event: { data?: unknown }) => void>,
   };
   closed = false;
 
@@ -79,7 +82,7 @@ class InProcessRuntimeWebSocket {
 
   addEventListener(
     type: "message" | "error" | "close",
-    listener: (event: { data?: unknown }) => void
+    listener: (event: { data?: unknown }) => void,
   ): void {
     this.listeners[type].push(listener);
   }
@@ -113,14 +116,14 @@ describe("managed runtime Burble Native integration", () => {
       statePath: "/data/runtimes/rt_native/state",
       configPath: "/data/runtimes/rt_native/config/burble-native.json",
       workspacePath: "/data/runtimes/rt_native/workspace",
-      policyHash: "policy-native"
+      policyHash: "policy-native",
     });
     store.upsertProviderConnection({
       provider: "github",
       email: "person@example.com",
       slackUserId: principal.slackUserId,
       providerLogin: "octocat",
-      accessToken: "github-token"
+      accessToken: "github-token",
     });
 
     const runtimeHandle: RuntimeHandle = {
@@ -132,13 +135,16 @@ describe("managed runtime Burble Native integration", () => {
       statePath: runtime.statePath,
       configPath: runtime.configPath,
       workspacePath: runtime.workspacePath,
-      manifest: runtimeManifest(runtime.id)
+      manifest: runtimeManifest(runtime.id),
     };
     const calls: string[] = [];
     const runtimeRunHeaders: HeadersInit[] = [];
     const webSocketOptions: Array<{ headers?: HeadersInit } | undefined> = [];
 
-    const fetchRouter = async (url: string, init?: RequestInit): Promise<Response> => {
+    const fetchRouter = async (
+      url: string,
+      init?: RequestInit,
+    ): Promise<Response> => {
       calls.push(`${init?.method ?? "GET"} ${url}`);
       const parsed = new URL(url);
 
@@ -146,24 +152,21 @@ describe("managed runtime Burble Native integration", () => {
         if (parsed.pathname === "/runs") {
           runtimeRunHeaders.push(init?.headers ?? {});
         }
-        return handleRuntimeRequest(
-          new Request(url, init),
-          {
-            env: {
-              AI_MODEL: "openai:gpt-5.4",
-              OPENAI_API_KEY: "test-openai-key",
-              OPENAI_BASE_URL: "https://openai-compatible.example/v1",
-              BURBLE_TOOL_GATEWAY_URL: "http://burble-app:3000/internal/tools",
-              BURBLE_INTERNAL_TOKEN: runtimeToken
-            },
-            fetch: fetchRouter
-          }
-        );
+        return handleRuntimeRequest(new Request(url, init), {
+          env: {
+            AI_MODEL: "openai:gpt-5.4",
+            OPENAI_API_KEY: "test-openai-key",
+            OPENAI_BASE_URL: "https://openai-compatible.example/v1",
+            BURBLE_TOOL_GATEWAY_URL: "http://burble-app:3000/internal/tools",
+            BURBLE_INTERNAL_TOKEN: runtimeToken,
+          },
+          fetch: fetchRouter,
+        });
       }
 
       if (parsed.hostname === "openai-compatible.example") {
         const providerRequestCount = calls.filter((call) =>
-          call.endsWith("https://openai-compatible.example/v1/responses")
+          call.endsWith("https://openai-compatible.example/v1/responses"),
         ).length;
         if (providerRequestCount === 1) {
           return new Response(
@@ -177,25 +180,25 @@ describe("managed runtime Burble Native integration", () => {
                     name: "burble_provider_call",
                     arguments: JSON.stringify({
                       toolName: "github.getAuthenticatedUser",
-                      input: {}
-                    })
-                  }
+                      input: {},
+                    }),
+                  },
                 ],
                 usage: {
                   input_tokens: 100,
                   output_tokens: 4,
-                  total_tokens: 104
-                }
-              }
+                  total_tokens: 104,
+                },
+              },
             }),
-            { headers: { "content-type": "text/event-stream" } }
+            { headers: { "content-type": "text/event-stream" } },
           );
         }
         return new Response(
           [
             sseEvent({
               type: "response.output_text.delta",
-              delta: "Authenticated as octocat."
+              delta: "Authenticated as octocat.",
             }),
             sseEvent({
               type: "response.completed",
@@ -204,12 +207,12 @@ describe("managed runtime Burble Native integration", () => {
                 usage: {
                   input_tokens: 80,
                   output_tokens: 7,
-                  total_tokens: 87
-                }
-              }
-            })
+                  total_tokens: 87,
+                },
+              },
+            }),
           ].join(""),
-          { headers: { "content-type": "text/event-stream" } }
+          { headers: { "content-type": "text/event-stream" } },
         );
       }
 
@@ -221,7 +224,7 @@ describe("managed runtime Burble Native integration", () => {
         const toolName = decodeURIComponent(
           parsed.pathname
             .replace(/^\/internal\/tools\//, "")
-            .replace(/\/execute$/, "")
+            .replace(/\/execute$/, ""),
         );
         return handleToolGatewayRequest(
           baseConfig,
@@ -232,8 +235,8 @@ describe("managed runtime Burble Native integration", () => {
             getGitHubUser: async (token) => {
               expect(token).toBe("github-token");
               return { login: "octocat" };
-            }
-          }
+            },
+          },
         );
       }
 
@@ -246,21 +249,21 @@ describe("managed runtime Burble Native integration", () => {
           return runtimeHandle;
         },
         async stopRuntime() {},
-        async reapIdleRuntimes() {}
+        async reapIdleRuntimes() {},
       },
       fetch: fetchRouter,
       webSocketFactory(url, options) {
         webSocketOptions.push(options);
         const socket = new InProcessRuntimeWebSocket(url);
         const runId = decodeURIComponent(
-          new URL(url).pathname.match(/^\/runs\/([^/]+)\/events$/)?.[1] ?? ""
+          new URL(url).pathname.match(/^\/runs\/([^/]+)\/events$/)?.[1] ?? "",
         );
         attachRuntimeEventWebSocket(runId, {
           send: (message) => socket.send(message),
-          close: () => socket.closeFromRuntime()
+          close: () => socket.closeFromRuntime(),
         });
         return socket;
-      }
+      },
     });
 
     const result = await collectAgentRun(runner, {
@@ -270,12 +273,12 @@ describe("managed runtime Burble Native integration", () => {
         workspaceId: principal.workspaceId,
         channelId: "D123",
         rootId: "dm:D123",
-        isDirectMessage: true
+        isDirectMessage: true,
       },
       text: "who am I on GitHub?",
       toolGroups: {
         groups: ["conversation", "github"],
-        reasons: ["default:conversation", "keyword:github:github"]
+        reasons: ["default:conversation", "keyword:github:github"],
       },
       connections: {
         github: {
@@ -284,9 +287,9 @@ describe("managed runtime Burble Native integration", () => {
           slackUserId: principal.slackUserId,
           providerLogin: "octocat",
           accessToken: "redacted",
-          connectedAt: "2026-06-08T00:00:00.000Z"
-        }
-      }
+          connectedAt: "2026-06-08T00:00:00.000Z",
+        },
+      },
     });
 
     expect(result.text).toBe("Authenticated as octocat.");
@@ -296,12 +299,12 @@ describe("managed runtime Burble Native integration", () => {
         authorization: `Bearer ${runtimeHandle.authToken}`,
         "content-type": "application/json",
         "x-burble-runtime-id": runtimeHandle.id,
-        "x-burble-runtime-token": runtimeHandle.authToken
-      }
+        "x-burble-runtime-token": runtimeHandle.authToken,
+      },
     ]);
     expect(webSocketOptions).toEqual([]);
     expect(calls).toContain(
-      "POST http://burble-app:3000/internal/tools/github.getAuthenticatedUser/execute"
+      "POST http://burble-app:3000/internal/tools/github.getAuthenticatedUser/execute",
     );
   });
 
@@ -316,14 +319,14 @@ describe("managed runtime Burble Native integration", () => {
       statePath: "/data/runtimes/rt_hermes/state",
       configPath: "/data/runtimes/rt_hermes/config/hermes.json",
       workspacePath: "/data/runtimes/rt_hermes/workspace",
-      policyHash: "policy-hermes"
+      policyHash: "policy-hermes",
     });
     store.upsertProviderConnection({
       provider: "google",
       email: "person@example.com",
       slackUserId: principal.slackUserId,
       providerLogin: "person@example.com",
-      accessToken: "google-token"
+      accessToken: "google-token",
     });
 
     const runtimeHandle: RuntimeHandle = {
@@ -335,12 +338,15 @@ describe("managed runtime Burble Native integration", () => {
       statePath: runtime.statePath,
       configPath: runtime.configPath,
       workspacePath: runtime.workspacePath,
-      manifest: runtimeManifest(runtime.id, "hermes")
+      manifest: runtimeManifest(runtime.id, "hermes"),
     };
     const calls: string[] = [];
     const events: string[] = [];
 
-    const fetchRouter = async (url: string, init?: RequestInit): Promise<Response> => {
+    const fetchRouter = async (
+      url: string,
+      init?: RequestInit,
+    ): Promise<Response> => {
       calls.push(`${init?.method ?? "GET"} ${url}`);
       const parsed = new URL(url);
 
@@ -356,27 +362,27 @@ describe("managed runtime Burble Native integration", () => {
                 type: "tool_call",
                 toolName: "google_search_drive_files",
                 callId: "hermes-provider-marker-test",
-                input: { limit: 1 }
+                input: { limit: 1 },
               }),
               JSON.stringify({
                 type: "tool_result",
                 toolName: "google_search_drive_files",
                 callId: "hermes-provider-marker-test",
-                classification: "user_private"
+                classification: "user_private",
               }),
               JSON.stringify({
                 type: "message_delta",
-                text: "Hermes synthesized the latest Drive file from the tool result."
+                text: "Hermes synthesized the latest Drive file from the tool result.",
               }),
               JSON.stringify({
                 type: "final",
                 response: {
                   classification: "user_private",
-                  text: "Hermes synthesized the latest Drive file from the tool result."
-                }
-              })
+                  text: "Hermes synthesized the latest Drive file from the tool result.",
+                },
+              }),
             ].join("\n"),
-            { headers: { "content-type": "application/x-ndjson" } }
+            { headers: { "content-type": "application/x-ndjson" } },
           );
         }
       }
@@ -399,12 +405,12 @@ describe("managed runtime Burble Native integration", () => {
           return runtimeHandle;
         },
         async stopRuntime() {},
-        async reapIdleRuntimes() {}
+        async reapIdleRuntimes() {},
       },
       fetch: fetchRouter,
       logInfo(message) {
         events.push(message);
-      }
+      },
     });
 
     const result = await collectAgentRun(
@@ -416,12 +422,12 @@ describe("managed runtime Burble Native integration", () => {
           workspaceId: principal.workspaceId,
           channelId: "D123",
           rootId: "dm:D123",
-          isDirectMessage: true
+          isDirectMessage: true,
         },
         text: "list my last edited google drive file",
         toolGroups: {
           groups: ["conversation", "google"],
-          reasons: ["default:conversation", "keyword:google:drive"]
+          reasons: ["default:conversation", "keyword:google:drive"],
         },
         connections: {
           github: null,
@@ -431,17 +437,17 @@ describe("managed runtime Burble Native integration", () => {
             slackUserId: principal.slackUserId,
             providerLogin: "person@example.com",
             accessToken: "redacted",
-            connectedAt: "2026-06-08T00:00:00.000Z"
-          }
-        }
+            connectedAt: "2026-06-08T00:00:00.000Z",
+          },
+        },
       },
       (event) => {
         events.push(event.type);
-      }
+      },
     );
 
     expect(result.text).toBe(
-      "Hermes synthesized the latest Drive file from the tool result."
+      "Hermes synthesized the latest Drive file from the tool result.",
     );
     expect(events).toContain("tool_call");
     expect(events).toContain("tool_result");
@@ -461,14 +467,14 @@ describe("managed runtime Burble Native integration", () => {
       statePath: "/data/runtimes/rt_hermes/state",
       configPath: "/data/runtimes/rt_hermes/config/hermes.json",
       workspacePath: "/data/runtimes/rt_hermes/workspace",
-      policyHash: "policy-hermes"
+      policyHash: "policy-hermes",
     });
     store.upsertProviderConnection({
       provider: "google",
       email: "person@example.com",
       slackUserId: principal.slackUserId,
       providerLogin: "person@example.com",
-      accessToken: "google-token"
+      accessToken: "google-token",
     });
 
     const runtimeHandle: RuntimeHandle = {
@@ -480,12 +486,15 @@ describe("managed runtime Burble Native integration", () => {
       statePath: runtime.statePath,
       configPath: runtime.configPath,
       workspacePath: runtime.workspacePath,
-      manifest: runtimeManifest(runtime.id, "hermes")
+      manifest: runtimeManifest(runtime.id, "hermes"),
     };
     const calls: string[] = [];
     const events: string[] = [];
 
-    const fetchRouter = async (url: string, init?: RequestInit): Promise<Response> => {
+    const fetchRouter = async (
+      url: string,
+      init?: RequestInit,
+    ): Promise<Response> => {
       calls.push(`${init?.method ?? "GET"} ${url}`);
       const parsed = new URL(url);
 
@@ -503,21 +512,21 @@ describe("managed runtime Burble Native integration", () => {
                 callId: "hermes-bridge-provider-test",
                 input: {
                   toolName: "google_search_drive_files",
-                  input: { limit: 1 }
-                }
+                  input: { limit: 1 },
+                },
               }),
               JSON.stringify({
                 type: "tool_result",
                 toolName: "burble_provider_call",
                 callId: "hermes-bridge-provider-test",
-                classification: "user_private"
+                classification: "user_private",
               }),
               JSON.stringify({
                 type: "message_delta",
-                text: "The latest Drive file is already available from Hermes."
-              })
+                text: "The latest Drive file is already available from Hermes.",
+              }),
             ].join("\n"),
-            { headers: { "content-type": "application/x-ndjson" } }
+            { headers: { "content-type": "application/x-ndjson" } },
           );
         }
       }
@@ -540,12 +549,12 @@ describe("managed runtime Burble Native integration", () => {
           return runtimeHandle;
         },
         async stopRuntime() {},
-        async reapIdleRuntimes() {}
+        async reapIdleRuntimes() {},
       },
       fetch: fetchRouter,
       logInfo(message) {
         events.push(message);
-      }
+      },
     });
 
     const result = await collectAgentRun(
@@ -557,12 +566,12 @@ describe("managed runtime Burble Native integration", () => {
           workspaceId: principal.workspaceId,
           channelId: "D123",
           rootId: "dm:D123",
-          isDirectMessage: true
+          isDirectMessage: true,
         },
         text: "list my last edited google drive file",
         toolGroups: {
           groups: ["conversation", "google"],
-          reasons: ["default:conversation", "keyword:google:drive"]
+          reasons: ["default:conversation", "keyword:google:drive"],
         },
         connections: {
           github: null,
@@ -572,16 +581,18 @@ describe("managed runtime Burble Native integration", () => {
             slackUserId: principal.slackUserId,
             providerLogin: "person@example.com",
             accessToken: "redacted",
-            connectedAt: "2026-06-08T00:00:00.000Z"
-          }
-        }
+            connectedAt: "2026-06-08T00:00:00.000Z",
+          },
+        },
       },
       (event) => {
         events.push(event.type);
-      }
+      },
     );
 
-    expect(result.text).toBe("The latest Drive file is already available from Hermes.");
+    expect(result.text).toBe(
+      "The latest Drive file is already available from Hermes.",
+    );
     expect(events).toContain("tool_call");
     expect(events).toContain("tool_result");
     expect(calls.some((call) => call.includes("/internal/tools/"))).toBe(false);
@@ -598,7 +609,7 @@ describe("managed runtime Burble Native integration", () => {
       statePath: "/data/runtimes/rt_hermes/state",
       configPath: "/data/runtimes/rt_hermes/config/hermes.json",
       workspacePath: "/data/runtimes/rt_hermes/workspace",
-      manifest: runtimeManifest("rt_hermes", "hermes")
+      manifest: runtimeManifest("rt_hermes", "hermes"),
     };
 
     const runner = createManagedRuntimeAgentRunner({
@@ -607,7 +618,7 @@ describe("managed runtime Burble Native integration", () => {
           return runtimeHandle;
         },
         async stopRuntime() {},
-        async reapIdleRuntimes() {}
+        async reapIdleRuntimes() {},
       },
       fetch: async (url) => {
         const parsed = new URL(url);
@@ -619,14 +630,14 @@ describe("managed runtime Burble Native integration", () => {
             return Response.json({
               response: {
                 classification: "user_private",
-                text: ':alarm_clock: cronjob: "create"'
-              }
+                text: ':alarm_clock: cronjob: "create"',
+              },
             });
           }
         }
 
         throw new Error(`Unexpected request ${url}`);
-      }
+      },
     });
 
     await expect(
@@ -637,17 +648,17 @@ describe("managed runtime Burble Native integration", () => {
           workspaceId: principal.workspaceId,
           channelId: "D123",
           rootId: "dm:D123",
-          isDirectMessage: true
+          isDirectMessage: true,
         },
         text: "create an hourly cron job to look for AI news",
         toolGroups: {
           groups: ["conversation", "scheduler"],
-          reasons: ["default:conversation", "keyword:scheduler:cron"]
+          reasons: ["default:conversation", "keyword:scheduler:cron"],
         },
-        connections: { github: null }
-      })
+        connections: { github: null },
+      }),
     ).rejects.toThrow(
-      "Managed runtime final response leaked tool-call protocol text"
+      "Managed runtime final response leaked tool-call protocol text",
     );
   });
 
@@ -662,14 +673,14 @@ describe("managed runtime Burble Native integration", () => {
       statePath: "/data/runtimes/rt_hermes/state",
       configPath: "/data/runtimes/rt_hermes/config/hermes.json",
       workspacePath: "/data/runtimes/rt_hermes/workspace",
-      policyHash: "policy-hermes"
+      policyHash: "policy-hermes",
     });
     store.upsertProviderConnection({
       provider: "github",
       email: "person@example.com",
       slackUserId: principal.slackUserId,
       providerLogin: "person@example.com",
-      accessToken: "github-token"
+      accessToken: "github-token",
     });
 
     const runtimeHandle: RuntimeHandle = {
@@ -681,12 +692,15 @@ describe("managed runtime Burble Native integration", () => {
       statePath: runtime.statePath,
       configPath: runtime.configPath,
       workspacePath: runtime.workspacePath,
-      manifest: runtimeManifest(runtime.id, "hermes")
+      manifest: runtimeManifest(runtime.id, "hermes"),
     };
     const calls: string[] = [];
     const events: string[] = [];
 
-    const fetchRouter = async (url: string, init?: RequestInit): Promise<Response> => {
+    const fetchRouter = async (
+      url: string,
+      init?: RequestInit,
+    ): Promise<Response> => {
       calls.push(`${init?.method ?? "GET"} ${url}`);
       const parsed = new URL(url);
 
@@ -702,14 +716,14 @@ describe("managed runtime Burble Native integration", () => {
                 type: "tool_call",
                 toolName: "github_create_issue",
                 callId: "hermes-write-tool-test",
-                input: { repo: "owner/repo", title: "Do not create this" }
+                input: { repo: "owner/repo", title: "Do not create this" },
               }),
               JSON.stringify({
                 type: "message_delta",
-                text: "I cannot create that issue without confirmation."
-              })
+                text: "I cannot create that issue without confirmation.",
+              }),
             ].join("\n"),
-            { headers: { "content-type": "application/x-ndjson" } }
+            { headers: { "content-type": "application/x-ndjson" } },
           );
         }
       }
@@ -732,12 +746,12 @@ describe("managed runtime Burble Native integration", () => {
           return runtimeHandle;
         },
         async stopRuntime() {},
-        async reapIdleRuntimes() {}
+        async reapIdleRuntimes() {},
       },
       fetch: fetchRouter,
       logInfo(message) {
         events.push(message);
-      }
+      },
     });
 
     const result = await collectAgentRun(
@@ -749,12 +763,12 @@ describe("managed runtime Burble Native integration", () => {
           workspaceId: principal.workspaceId,
           channelId: "D123",
           rootId: "dm:D123",
-          isDirectMessage: true
+          isDirectMessage: true,
         },
         text: "create a GitHub issue",
         toolGroups: {
           groups: ["conversation", "github"],
-          reasons: ["default:conversation", "keyword:github"]
+          reasons: ["default:conversation", "keyword:github"],
         },
         connections: {
           github: {
@@ -763,20 +777,24 @@ describe("managed runtime Burble Native integration", () => {
             slackUserId: principal.slackUserId,
             providerLogin: "person@example.com",
             accessToken: "redacted",
-            connectedAt: "2026-06-08T00:00:00.000Z"
-          }
-        }
+            connectedAt: "2026-06-08T00:00:00.000Z",
+          },
+        },
       },
       (event) => {
         events.push(event.type);
-      }
+      },
     );
 
-    expect(result.text).toBe("I cannot create that issue without confirmation.");
+    expect(result.text).toBe(
+      "I cannot create that issue without confirmation.",
+    );
     expect(events).toContain("tool_call");
     expect(events).not.toContain("tool_result");
     expect(
-      calls.filter((call) => call.includes("/internal/tools/github.createIssue/execute"))
+      calls.filter((call) =>
+        call.includes("/internal/tools/github.createIssue/execute"),
+      ),
     ).toHaveLength(0);
   });
 
@@ -791,7 +809,7 @@ describe("managed runtime Burble Native integration", () => {
       statePath: "/data/runtimes/rt_native/state",
       configPath: "/data/runtimes/rt_native/config/burble-native.json",
       workspacePath: "/data/runtimes/rt_native/workspace",
-      manifest: runtimeManifest("rt_native")
+      manifest: runtimeManifest("rt_native"),
     };
     let postedBody: unknown;
     let runtimeRequirements: unknown;
@@ -804,7 +822,7 @@ describe("managed runtime Burble Native integration", () => {
           return runtimeHandle;
         },
         async stopRuntime() {},
-        async reapIdleRuntimes() {}
+        async reapIdleRuntimes() {},
       },
       fetch: async (url, init) => {
         const parsed = new URL(url);
@@ -816,13 +834,13 @@ describe("managed runtime Burble Native integration", () => {
           return Response.json({
             response: {
               classification: "public",
-              text: "ok"
-            }
+              text: "ok",
+            },
           });
         }
 
         return new Response("not found", { status: 404 });
-      }
+      },
     });
 
     const result = await collectAgentRun(runner, {
@@ -832,12 +850,12 @@ describe("managed runtime Burble Native integration", () => {
         workspaceId: principal.workspaceId,
         channelId: "D123",
         rootId: "dm:D123",
-        isDirectMessage: true
+        isDirectMessage: true,
       },
       text: "summarize the file",
       toolGroups: {
         groups: ["attachments", "conversation"],
-        reasons: ["metadata:attachments", "default:conversation"]
+        reasons: ["metadata:attachments", "default:conversation"],
       },
       attachments: [
         {
@@ -847,12 +865,12 @@ describe("managed runtime Burble Native integration", () => {
           kind: "file",
           mimeType: "text/markdown",
           name: "scope.md",
-          sizeBytes: 12
-        }
+          sizeBytes: 12,
+        },
       ],
       connections: {
-        github: null
-      }
+        github: null,
+      },
     });
 
     expect(result.text).toBe("ok");
@@ -865,23 +883,90 @@ describe("managed runtime Burble Native integration", () => {
             kind: "file",
             mimeType: "text/markdown",
             name: "scope.md",
-            sizeBytes: 12
-          }
-        ]
-      }
+            sizeBytes: 12,
+          },
+        ],
+      },
     });
-    const attachment = (postedBody as {
-      input?: { attachments?: Array<Record<string, unknown>> };
-    }).input?.attachments?.[0];
+    const attachment = (
+      postedBody as {
+        input?: { attachments?: Array<Record<string, unknown>> };
+      }
+    ).input?.attachments?.[0];
     expect(attachment?.id).toStartWith("attcap_");
     expect(attachment).not.toHaveProperty("externalId");
     expect(JSON.stringify(postedBody)).not.toContain("F123");
+  });
+
+  test("requests the scheduled job runtime engine from the runtime factory", async () => {
+    const runtimeToken = "runtime-token-u123";
+    const runtimeHandle: RuntimeHandle = {
+      id: "rt_openclaw",
+      engine: "openclaw",
+      endpointUrl: "http://openclaw-runtime:8080",
+      authToken: runtimeToken,
+      status: "ready",
+      statePath: "/data/runtimes/rt_openclaw/state",
+      configPath: "/data/runtimes/rt_openclaw/config/openclaw.json",
+      workspacePath: "/data/runtimes/rt_openclaw/workspace",
+      manifest: runtimeManifest("rt_openclaw", "openclaw"),
+    };
+    let runtimeRequirements: unknown;
+
+    const runner = createManagedRuntimeAgentRunner({
+      config: baseConfig,
+      runtimeFactory: {
+        async getOrCreateRuntime(_principal, requirements) {
+          runtimeRequirements = requirements;
+          return runtimeHandle;
+        },
+        async stopRuntime() {},
+        async reapIdleRuntimes() {},
+      },
+      fetch: async (url) => {
+        const parsed = new URL(url);
+        if (
+          parsed.hostname === "openclaw-runtime" &&
+          parsed.pathname === "/runs"
+        ) {
+          return Response.json({
+            response: {
+              classification: "public",
+              text: "ok",
+            },
+          });
+        }
+
+        return new Response("not found", { status: 404 });
+      },
+    });
+
+    const result = await collectAgentRun(runner, {
+      principal,
+      executionMode: "native-runtime",
+      text: "Find fresh AI news and summarize it.",
+      scheduledJob: {
+        jobId: "job-ai-news",
+        capabilityProfile: "scheduled_job",
+        allowedTools: ["web_extract"],
+        routeId: "convrt_123",
+        runtimeType: "openclaw",
+        stateRefs: [],
+        visibilityPolicy: {},
+      },
+      connections: {
+        github: null,
+      },
+    });
+
+    expect(result.text).toBe("ok");
+    expect(runtimeRequirements).toEqual({ engine: "openclaw" });
   });
 });
 
 function runtimeManifest(
   runtimeId: string,
-  engine: RuntimeManifest["runtime"]["engine"] = "burble-native"
+  engine: RuntimeManifest["runtime"]["engine"] = "burble-native",
 ): RuntimeManifest {
   return {
     version: "1",
@@ -890,11 +975,11 @@ function runtimeManifest(
       engine,
       factory: "docker",
       ttlMs: 86400000,
-      reaperEnabled: true
+      reaperEnabled: true,
     },
     model: {
       provider: "openai",
-      model: "gpt-5.4"
+      model: "gpt-5.4",
     },
     tools: [
       {
@@ -908,21 +993,21 @@ function runtimeManifest(
         routeRequired: true,
         confirmation: "none",
         retrySafe: true,
-        input: []
-      }
+        input: [],
+      },
     ],
     skills: [],
     memory: {
       userMemoryEnabled: false,
       workspaceMemoryEnabled: false,
-      jobMemoryEnabled: false
+      jobMemoryEnabled: false,
     },
     streaming: {
-      messageDeltasEnabled: true
+      messageDeltasEnabled: true,
     },
     memoryContext: [],
     disabledTools: [],
-    policyHash: `policy-${runtimeId}`
+    policyHash: `policy-${runtimeId}`,
   };
 }
 
