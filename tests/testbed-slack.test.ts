@@ -176,6 +176,8 @@ describe("local Slack testbed", () => {
       expect(text).toContain("Hourly AI news summary");
       expect(text).toContain("state: scheduled");
       expect(text).not.toContain("Runtime detail");
+      expect(text).not.toContain("Starting agent runtime");
+      expect(text).not.toContain("Final result");
 
       const triggerResponse = await fetch(
         `${baseUrl}/__testbed/slack/events/message.im`,
@@ -201,6 +203,8 @@ describe("local Slack testbed", () => {
         .join("\n");
       expect(triggeredText).toContain("Triggered scheduled job ai-news-hourly");
       expect(triggeredText).not.toContain("Runtime detail");
+      expect(triggeredText).not.toContain("Starting agent runtime");
+      expect(triggeredText).not.toContain("Final result");
 
       const latestRun = store.getLatestAgentJobRunForPrincipal(
         testbedWorkspaceId,

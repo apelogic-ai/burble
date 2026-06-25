@@ -1763,8 +1763,23 @@ describe("handleToolGatewayRequest", () => {
   });
 
   test("lets a runtime list scheduled jobs through the control plane", async () => {
+    const jobs: ReturnType<TokenStore["listScheduledJobsForPrincipal"]> = [
+      {
+        jobId: "ai-news-hourly",
+        workspaceId: "T123",
+        slackUserId: "U123",
+        title: "Hourly AI news summary",
+        prompt: "Find fresh AI news and summarize it.",
+        schedule: { kind: "interval", every: { hours: 1 } },
+        routeId: "convrt_abcdefabcdefabcdefabcdef",
+        state: "scheduled",
+        runtimeType: "hermes",
+        createdAt: "2026-06-24T11:00:00.000Z",
+        updatedAt: "2026-06-24T11:05:00.000Z"
+      }
+    ];
     const capability: AgentJobCapabilityRecord = {
-      jobId: "ai-news-hourly",
+      jobId: "legacy-ai-news-hourly",
       workspaceId: "T123",
       slackUserId: "U123",
       requiredTools: ["web_extract"],
@@ -1780,7 +1795,18 @@ describe("handleToolGatewayRequest", () => {
 
     const response = await handleToolGatewayRequest(
       config,
-      createStore(null, runtime, [], null, [], { list: [capability] }),
+      createStore(
+        null,
+        runtime,
+        [],
+        null,
+        [],
+        { list: [capability] },
+        [],
+        null,
+        {},
+        { list: jobs }
+      ),
       "scheduledJob.list",
       request(
         "scheduledJob.list",
@@ -1797,12 +1823,12 @@ describe("handleToolGatewayRequest", () => {
         jobs: [
           {
             jobId: "ai-news-hourly",
-            title: null,
-            prompt: null,
-            schedule: null,
-            state: "registered",
+            title: "Hourly AI news summary",
+            prompt: "Find fresh AI news and summarize it.",
+            schedule: { kind: "interval", every: { hours: 1 } },
+            state: "scheduled",
             runtimeType: "hermes",
-            requiredTools: ["web_extract"],
+            requiredTools: [],
             routeId: "convrt_abcdefabcdefabcdefabcdef",
             updatedAt: "2026-06-24T11:05:00.000Z"
           }
@@ -1967,8 +1993,23 @@ describe("handleToolGatewayRequest", () => {
   });
 
   test("lets a runtime trigger a scheduled job through the control plane", async () => {
+    const jobs: ReturnType<TokenStore["listScheduledJobsForPrincipal"]> = [
+      {
+        jobId: "ai-news-hourly",
+        workspaceId: "T123",
+        slackUserId: "U123",
+        title: "Hourly AI news summary",
+        prompt: "Find fresh AI news and summarize it.",
+        schedule: { kind: "interval", every: { hours: 1 } },
+        routeId: null,
+        state: "scheduled",
+        runtimeType: "openclaw",
+        createdAt: "2026-06-24T11:00:00.000Z",
+        updatedAt: "2026-06-24T11:05:00.000Z"
+      }
+    ];
     const capability: AgentJobCapabilityRecord = {
-      jobId: "ai-news-hourly",
+      jobId: "legacy-ai-news-hourly",
       workspaceId: "T123",
       slackUserId: "U123",
       requiredTools: ["web_extract"],
@@ -1994,7 +2035,8 @@ describe("handleToolGatewayRequest", () => {
         { list: [capability] },
         [],
         null,
-        { created: runs }
+        { created: runs },
+        { list: jobs }
       ),
       "scheduledJob.trigger",
       request(

@@ -3,7 +3,7 @@ import { createTokenStore } from "../../src/db";
 import { createSchedulerControlPlane } from "../../src/scheduler/control-plane";
 
 describe("scheduler control plane", () => {
-  test("lists persisted scheduled job capabilities for a principal", async () => {
+  test("lists Burble-owned scheduled jobs for a principal", async () => {
     const store = createTokenStore(":memory:");
     store.upsertScheduledJob({
       jobId: "ai-news-hourly",
@@ -55,17 +55,6 @@ describe("scheduler control plane", () => {
         requiredTools: [],
         routeId: "convrt_123",
         updatedAt: "2026-06-24T12:02:00.000Z"
-      },
-      {
-        jobId: "legacy-ai-news-hourly",
-        title: null,
-        prompt: null,
-        schedule: null,
-        state: "registered",
-        runtimeType: "hermes",
-        requiredTools: ["google_search_drive_files"],
-        routeId: "convrt_123",
-        updatedAt: "2026-06-24T12:00:00.000Z"
       }
     ]);
 
@@ -121,11 +110,16 @@ describe("scheduler control plane", () => {
 
   test("creates manual trigger runs and reports latest status", async () => {
     const store = createTokenStore(":memory:");
-    store.upsertAgentJobCapability({
+    store.upsertScheduledJob({
       jobId: "ai-news-hourly",
       workspaceId: "T123",
       slackUserId: "U123",
-      requiredTools: ["google_search_drive_files"],
+      title: "Hourly AI news summary",
+      prompt: "look for fresh AI-related news and post a short summary",
+      schedule: {
+        kind: "interval",
+        every: { hours: 1 }
+      },
       runtimeType: "hermes",
       now: new Date("2026-06-24T12:00:00.000Z")
     });
@@ -179,6 +173,37 @@ describe("scheduler control plane", () => {
         startedAt: null,
         finishedAt: null
       }
+    });
+
+    store.close();
+  });
+
+  test("does not treat capability-only registrations as current scheduled jobs", async () => {
+    const store = createTokenStore(":memory:");
+    store.upsertAgentJobCapability({
+      jobId: "legacy-ai-news-hourly",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      requiredTools: ["google_search_drive_files"],
+      runtimeType: "hermes",
+      now: new Date("2026-06-24T12:00:00.000Z")
+    });
+
+    const scheduler = createSchedulerControlPlane(store);
+
+    expect(
+      await scheduler.listJobs({ workspaceId: "T123", slackUserId: "U123" })
+    ).toEqual([]);
+    expect(
+      await scheduler.triggerJob?.({
+        workspaceId: "T123",
+        slackUserId: "U123",
+        jobId: "legacy-ai-news-hourly"
+      })
+    ).toEqual({
+      ok: false,
+      reason: "not_found",
+      jobs: []
     });
 
     store.close();

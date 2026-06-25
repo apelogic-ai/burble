@@ -78,11 +78,13 @@ describe("scheduler control conformance", () => {
       workspacePath: "/data/runtimes/u123/workspace",
       policyHash: "policy-hash"
     });
-    store.upsertAgentJobCapability({
+    store.upsertScheduledJob({
       jobId: "ai-news-hourly",
       workspaceId: "T123",
       slackUserId: "U123",
-      requiredTools: ["web_extract"],
+      title: "Hourly AI news summary",
+      prompt: "Find fresh AI news and summarize it.",
+      schedule: { kind: "interval", every: { hours: 1 } },
       routeId: "convrt_abcdefabcdefabcdefabcdef",
       runtimeType: "openclaw",
       now: new Date("2026-06-24T12:00:00.000Z")

@@ -221,6 +221,11 @@ type SlackProgressMessage = {
   toolCallOrder: string[];
 };
 
+type LazyAgentProgressReporter = {
+  getProgressMessage: () => SlackProgressMessage | undefined;
+  onAgentEvent: (event: AgentRunEvent) => Promise<void>;
+};
+
 const minSlackProgressStreamUpdateIntervalMs = 1_000;
 const minSlackNativeStreamAppendIntervalMs = 500;
 const slackNativeStreamReplacementFallbackText =
@@ -750,6 +755,7 @@ export function createSlackRuntime(
     }
 
     let progressMessage: SlackProgressMessage | undefined;
+    let progressReporter: LazyAgentProgressReporter | undefined;
     try {
       if (config.agentMode === "llm") {
         const workspaceId = body.team_id ?? "";
@@ -759,7 +765,7 @@ export function createSlackRuntime(
           workspaceId,
           slackUserId: mention.user
         });
-        progressMessage = await postMentionWorkingState(client, {
+        progressReporter = createLazyAgentProgressReporter(client, {
           channel: mention.channel,
           user: mention.user,
           isDirectMessage:
@@ -814,7 +820,6 @@ export function createSlackRuntime(
           : null;
       logger.info(withUtcTimestamp("app_mention stage=route_ready"));
 
-      const activeProgressMessage = progressMessage;
       logger.info(withUtcTimestamp("app_mention stage=conversation_start"));
       const response = await handleConversation(
         {
@@ -886,14 +891,10 @@ export function createSlackRuntime(
             ? { agentExecutionMode: resolveAgentExecutionMode() }
             : {}),
           ...(agentRunner ? { agentRunner } : {}),
-          ...(activeProgressMessage
+          ...(progressReporter
             ? {
                 onAgentEvent: (event) => {
-                  return updateAgentProgressMessage(
-                    client,
-                    activeProgressMessage,
-                    event
-                  ).catch((error) => {
+                  return progressReporter!.onAgentEvent(event).catch((error) => {
                     logger.warn(formatLogError(error));
                   });
                 }
@@ -901,6 +902,7 @@ export function createSlackRuntime(
             : {})
         }
       );
+      progressMessage = progressReporter?.getProgressMessage();
 
       await postConversationResponse(client, {
         response,
@@ -941,6 +943,7 @@ export function createSlackRuntime(
     );
 
     let progressMessage: SlackProgressMessage | undefined;
+    let progressReporter: LazyAgentProgressReporter | undefined;
     try {
       if (config.agentMode === "llm") {
         const workspaceId = body.team_id ?? "";
@@ -950,7 +953,7 @@ export function createSlackRuntime(
           workspaceId,
           slackUserId: directMessage.user
         });
-        progressMessage = await postMentionWorkingState(client, {
+        progressReporter = createLazyAgentProgressReporter(client, {
           channel: directMessage.channel,
           user: directMessage.user,
           isDirectMessage: true,
@@ -1001,7 +1004,6 @@ export function createSlackRuntime(
           : null;
       logger.info(withUtcTimestamp("message.im stage=route_ready"));
 
-      const activeProgressMessage = progressMessage;
       logger.info(withUtcTimestamp("message.im stage=conversation_start"));
       const response = await handleConversation(
         {
@@ -1073,14 +1075,10 @@ export function createSlackRuntime(
             ? { agentExecutionMode: resolveAgentExecutionMode() }
             : {}),
           ...(agentRunner ? { agentRunner } : {}),
-          ...(activeProgressMessage
+          ...(progressReporter
             ? {
                 onAgentEvent: (event) => {
-                  return updateAgentProgressMessage(
-                    client,
-                    activeProgressMessage,
-                    event
-                  ).catch((error) => {
+                  return progressReporter!.onAgentEvent(event).catch((error) => {
                     logger.warn(formatLogError(error));
                   });
                 }
@@ -1088,6 +1086,7 @@ export function createSlackRuntime(
             : {})
         }
       );
+      progressMessage = progressReporter?.getProgressMessage();
 
       await postConversationResponse(client, {
         response,
@@ -5569,6 +5568,31 @@ async function postMentionWorkingState(
     text
   });
   return undefined;
+}
+
+function createLazyAgentProgressReporter(
+  client: App["client"],
+  input: {
+    channel: string;
+    user: string;
+    isDirectMessage: boolean;
+    threadTs?: string;
+    streamThreadTs?: string;
+    streamingMode: AgentRuntimeStreamingMode;
+  }
+): LazyAgentProgressReporter {
+  let progressMessage: SlackProgressMessage | undefined;
+
+  return {
+    getProgressMessage: () => progressMessage,
+    onAgentEvent: async (event) => {
+      progressMessage ??= await postMentionWorkingState(client, input);
+      if (!progressMessage) {
+        return;
+      }
+      await updateAgentProgressMessage(client, progressMessage, event);
+    }
+  };
 }
 
 export function resolveSlackProgressStreamingMode(input: {

@@ -1,6 +1,5 @@
 import { randomUUID } from "node:crypto";
 import type {
-  AgentJobCapabilityRecord,
   AgentJobRunRecord,
   AgentRuntimeEngine,
   ScheduledJobRecord,
@@ -12,7 +11,7 @@ export type SchedulerJobSummary = {
   title: string | null;
   prompt: string | null;
   schedule: unknown | null;
-  state: "scheduled" | "paused" | "registered";
+  state: "scheduled" | "paused";
   runtimeType: string | null;
   requiredTools: string[];
   routeId: string | null;
@@ -125,7 +124,6 @@ export function createSchedulerControlPlane(
     | "listScheduledJobsForPrincipal"
     | "upsertScheduledJob"
     | "deleteScheduledJob"
-    | "listAgentJobCapabilitiesForPrincipal"
     | "createAgentJobRun"
     | "getLatestAgentJobRunForPrincipal"
   >,
@@ -138,15 +136,9 @@ export function createSchedulerControlPlane(
     workspaceId: string;
     slackUserId: string;
   }): SchedulerJobSummary[] => {
-    const jobs = store
+    return store
       .listScheduledJobsForPrincipal(input.workspaceId, input.slackUserId)
       .map(summarizeScheduledJob);
-    const jobIds = new Set(jobs.map((job) => job.jobId));
-    const capabilityOnlyJobs = store
-      .listAgentJobCapabilitiesForPrincipal(input.workspaceId, input.slackUserId)
-      .filter((record) => !jobIds.has(record.jobId))
-      .map(summarizeJobCapability);
-    return [...jobs, ...capabilityOnlyJobs];
   };
 
   return {
@@ -265,22 +257,6 @@ function summarizeScheduledJob(record: ScheduledJobRecord): SchedulerJobSummary 
     state: record.state,
     runtimeType: record.runtimeType,
     requiredTools: [],
-    routeId: record.routeId,
-    updatedAt: record.updatedAt
-  };
-}
-
-function summarizeJobCapability(
-  record: AgentJobCapabilityRecord
-): SchedulerJobSummary {
-  return {
-    jobId: record.jobId,
-    title: null,
-    prompt: null,
-    schedule: null,
-    state: "registered",
-    runtimeType: record.runtimeType,
-    requiredTools: record.requiredTools,
     routeId: record.routeId,
     updatedAt: record.updatedAt
   };
