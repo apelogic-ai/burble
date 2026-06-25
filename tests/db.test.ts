@@ -1324,6 +1324,47 @@ describe("createTokenStore", () => {
     expect(
       store.getLatestAgentJobRunForPrincipal("T123", "U123", null)?.runId
     ).toBe("jobrun-other");
+    expect(store.listQueuedAgentJobRuns().map((record) => record.runId)).toEqual([
+      "jobrun-123"
+    ]);
+
+    const claimed = store.claimAgentJobRun(
+      "jobrun-123",
+      new Date("2026-06-24T12:02:00.000Z")
+    );
+    expect(claimed).toMatchObject({
+      runId: "jobrun-123",
+      status: "running",
+      startedAt: "2026-06-24T12:02:00.000Z",
+      updatedAt: "2026-06-24T12:02:00.000Z"
+    });
+    expect(
+      store.claimAgentJobRun(
+        "jobrun-123",
+        new Date("2026-06-24T12:03:00.000Z")
+      )
+    ).toBeNull();
+    expect(store.listQueuedAgentJobRuns()).toEqual([]);
+
+    const finished = store.finishAgentJobRun({
+      runId: "jobrun-123",
+      status: "succeeded",
+      now: new Date("2026-06-24T12:04:00.000Z")
+    });
+    expect(finished).toMatchObject({
+      runId: "jobrun-123",
+      status: "succeeded",
+      finishedAt: "2026-06-24T12:04:00.000Z",
+      updatedAt: "2026-06-24T12:04:00.000Z"
+    });
+    expect(
+      store.finishAgentJobRun({
+        runId: "jobrun-123",
+        status: "failed",
+        failureReason: "should not overwrite terminal runs",
+        now: new Date("2026-06-24T12:05:00.000Z")
+      })
+    ).toBeNull();
 
     store.close();
   });

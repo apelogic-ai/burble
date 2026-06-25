@@ -134,6 +134,9 @@ function createFakeStore() {
     getAgentJobRun: () => null,
     listAgentJobRunsForJob: () => [],
     getLatestAgentJobRunForPrincipal: () => null,
+    listQueuedAgentJobRuns: () => [],
+    claimAgentJobRun: () => null,
+    finishAgentJobRun: () => null,
     upsertAgentJobCapability: () => {
       throw new Error("unexpected agent job capability write");
     },

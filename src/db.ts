@@ -1190,6 +1190,42 @@ export function createTokenStore(path: string) {
     ORDER BY created_at DESC, run_id ASC
     LIMIT 1
   `);
+  const listQueuedAgentJobRuns = db.query<AgentJobRunRow, [number]>(`
+    SELECT
+      run_id AS runId,
+      job_id AS jobId,
+      workspace_id AS workspaceId,
+      slack_user_id AS slackUserId,
+      trigger_source AS triggerSource,
+      status,
+      failure_reason AS failureReason,
+      created_at AS createdAt,
+      updated_at AS updatedAt,
+      started_at AS startedAt,
+      finished_at AS finishedAt
+    FROM agent_job_runs
+    WHERE status = 'queued'
+    ORDER BY created_at ASC, run_id ASC
+    LIMIT ?
+  `);
+  const claimAgentJobRun = db.query(`
+    UPDATE agent_job_runs
+    SET status = 'running',
+        failure_reason = NULL,
+        updated_at = ?,
+        started_at = ?
+    WHERE run_id = ?
+      AND status = 'queued'
+  `);
+  const finishAgentJobRun = db.query(`
+    UPDATE agent_job_runs
+    SET status = ?,
+        failure_reason = ?,
+        updated_at = ?,
+        finished_at = ?
+    WHERE run_id = ?
+      AND status = 'running'
+  `);
   const upsertAgentJobCapability = db.query(`
     INSERT INTO agent_job_capabilities (
       job_id,
@@ -2080,6 +2116,45 @@ export function createTokenStore(path: string) {
         normalizedJobId,
         normalizedJobId
       );
+      return record ? toAgentJobRunRecord(record) : null;
+    },
+
+    listQueuedAgentJobRuns(limit = 25): AgentJobRunRecord[] {
+      const normalizedLimit =
+        Number.isSafeInteger(limit) && limit > 0 ? Math.min(limit, 100) : 25;
+      return listQueuedAgentJobRuns
+        .all(normalizedLimit)
+        .map(toAgentJobRunRecord);
+    },
+
+    claimAgentJobRun(runId: string, now = new Date()): AgentJobRunRecord | null {
+      const timestamp = now.toISOString();
+      const result = claimAgentJobRun.run(timestamp, timestamp, runId);
+      if (result.changes === 0) {
+        return null;
+      }
+      const record = getAgentJobRun.get(runId);
+      return record ? toAgentJobRunRecord(record) : null;
+    },
+
+    finishAgentJobRun(input: {
+      runId: string;
+      status: Extract<AgentJobRunStatus, "succeeded" | "failed">;
+      failureReason?: string | null;
+      now?: Date;
+    }): AgentJobRunRecord | null {
+      const timestamp = (input.now ?? new Date()).toISOString();
+      const result = finishAgentJobRun.run(
+        input.status,
+        input.failureReason ?? null,
+        timestamp,
+        timestamp,
+        input.runId
+      );
+      if (result.changes === 0) {
+        return null;
+      }
+      const record = getAgentJobRun.get(input.runId);
       return record ? toAgentJobRunRecord(record) : null;
     },
 
