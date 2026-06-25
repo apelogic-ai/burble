@@ -153,4 +153,129 @@ describe("scheduler control conformance", () => {
 
     store.close();
   });
+
+  test("runtime-created scheduler jobs are controlled by deterministic commands", async () => {
+    const store = createTokenStore(":memory:");
+    const runtimeToken = "runtime-token-u123";
+    const runtime = store.getOrCreateAgentRuntime({
+      workspaceId: "T123",
+      slackUserId: "U123",
+      engine: "hermes",
+      endpointUrl: "http://runtime-u123:8080",
+      authTokenHash: hashRuntimeToken(runtimeToken),
+      statePath: "/data/runtimes/u123/state",
+      configPath: "/data/runtimes/u123/config/hermes.json",
+      workspacePath: "/data/runtimes/u123/workspace",
+      policyHash: "policy-hash"
+    });
+
+    const createResponse = await handleToolGatewayRequest(
+      config,
+      store,
+      "scheduledJob.create",
+      runtimeRequest("scheduledJob.create", {
+        input: {
+          title: "Hourly AI news summary",
+          prompt: "Find fresh AI-related news and summarize it.",
+          schedule: { kind: "interval", every: { hours: 1 } }
+        }
+      }, runtime.id, runtimeToken)
+    );
+    expect(createResponse.status).toBe(200);
+    const createBody = await createResponse.json();
+    const jobId = createBody.content.job.jobId;
+    expect(jobId).toStartWith("job_");
+
+    const schedulerControl = createSchedulerControlPlane(store);
+    const deps = schedulerConversationDeps(schedulerControl);
+    const listResponse = await handleConversation(
+      {
+        source: "slack",
+        workspaceId: "T123",
+        channelId: "D123",
+        messageTs: "1710000000.000300",
+        isDirectMessage: true,
+        user: {
+          slackUserId: "U123",
+          email: "person@example.com"
+        },
+        text: "do we have any cron jobs configured?"
+      },
+      deps
+    );
+
+    expect(listResponse.text).toContain("Hourly AI news summary");
+    expect(listResponse.text).toContain("state: scheduled");
+
+    const pauseResponse = await handleToolGatewayRequest(
+      config,
+      store,
+      "scheduledJob.pause",
+      runtimeRequest("scheduledJob.pause", {
+        input: { jobId }
+      }, runtime.id, runtimeToken)
+    );
+    expect(pauseResponse.status).toBe(200);
+    expect(await pauseResponse.json()).toMatchObject({
+      content: {
+        ok: true,
+        job: {
+          jobId,
+          state: "paused"
+        }
+      }
+    });
+
+    const pausedListResponse = await handleConversation(
+      {
+        source: "slack",
+        workspaceId: "T123",
+        channelId: "D123",
+        messageTs: "1710000000.000400",
+        isDirectMessage: true,
+        user: {
+          slackUserId: "U123",
+          email: "person@example.com"
+        },
+        text: "show my cron jobs"
+      },
+      deps
+    );
+    expect(pausedListResponse.text).toContain("state: paused");
+
+    const deleteResponse = await handleToolGatewayRequest(
+      config,
+      store,
+      "scheduledJob.delete",
+      runtimeRequest("scheduledJob.delete", {
+        input: { jobId }
+      }, runtime.id, runtimeToken)
+    );
+    expect(deleteResponse.status).toBe(200);
+    expect(await deleteResponse.json()).toMatchObject({
+      content: {
+        ok: true,
+        jobId
+      }
+    });
+
+    const finalListResponse = await handleConversation(
+      {
+        source: "slack",
+        workspaceId: "T123",
+        channelId: "D123",
+        messageTs: "1710000000.000500",
+        isDirectMessage: true,
+        user: {
+          slackUserId: "U123",
+          email: "person@example.com"
+        },
+        text: "show my cron jobs"
+      },
+      deps
+    );
+    expect(finalListResponse.text).toBe("No scheduled jobs are configured.");
+
+    store.close();
+  });
 });

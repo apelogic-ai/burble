@@ -416,6 +416,8 @@ function classifySchedulerControlIntent(text: string): SchedulerControlIntent {
 function formatScheduledJobList(
   jobs: Array<{
     jobId: string;
+    title: string | null;
+    state: string;
     runtimeType: string | null;
     requiredTools: string[];
     routeId: string | null;
@@ -429,6 +431,8 @@ function formatScheduledJobList(
   const lines = ["Scheduled jobs"];
   for (const job of jobs) {
     const details = [
+      job.title ? job.title : null,
+      `state: ${job.state}`,
       job.runtimeType ? `runtime: ${job.runtimeType}` : null,
       job.requiredTools.length ? `tools: ${job.requiredTools.join(", ")}` : null,
       job.routeId ? `route: ${job.routeId}` : null,

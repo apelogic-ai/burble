@@ -916,6 +916,8 @@ describe("handleConversation", () => {
     expect(response.classification).toBe("user_private");
     expect(response.text).toContain("Scheduled jobs");
     expect(response.text).toContain("ai-news-hourly");
+    expect(response.text).toContain("Hourly AI news summary");
+    expect(response.text).toContain("state: scheduled");
     expect(response.text).toContain("google_search_drive_files");
   });
 
