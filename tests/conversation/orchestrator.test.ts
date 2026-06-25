@@ -874,6 +874,72 @@ describe("handleConversation", () => {
     }
   });
 
+  test("creates explicit interval scheduled jobs without invoking the LLM runner", async () => {
+    let called = false;
+    const created: unknown[] = [];
+    const response = await handleConversation(
+      {
+        ...baseRequest,
+        conversationRouteId: "convrt_123",
+        text:
+          "create hourly cron job to look for latest AI news, summarize them in one paragraph and post result in this channel"
+      },
+      createDeps({
+        agentMode: "llm",
+        agentRuntimeEngine: "hermes",
+        schedulerControl: {
+          listJobs: () => [],
+          createJob: (input) => {
+            created.push(input);
+            return {
+              ok: true,
+              job: {
+                jobId: "job-ai-news-hourly",
+                workspaceId: input.workspaceId,
+                slackUserId: input.slackUserId,
+                title: input.title,
+                prompt: input.prompt,
+                schedule: input.schedule,
+                routeId: input.routeId ?? null,
+                state: "scheduled",
+                runtimeType: input.runtimeType ?? null,
+                createdAt: "2026-06-25T17:14:00.000Z",
+                updatedAt: "2026-06-25T17:14:00.000Z"
+              }
+            };
+          }
+        },
+        agentRunner: stubAgentRunner(() => {
+          called = true;
+          return {
+            classification: "public",
+            text: "unexpected"
+          };
+        })
+      })
+    );
+
+    expect(called).toBe(false);
+    expect(created).toEqual([
+      {
+        workspaceId: "T123",
+        slackUserId: "U123",
+        title: "Hourly AI news summary",
+        prompt:
+          "look for latest AI news, summarize them in one paragraph and post result in this channel",
+        schedule: { kind: "interval", every: { hours: 1 } },
+        routeId: "convrt_123",
+        runtimeType: "hermes"
+      }
+    ]);
+    expect(response.visibility).toBe("ephemeral");
+    expect(response.classification).toBe("user_private");
+    expect(response.text).toContain("Created scheduled job job-ai-news-hourly.");
+    expect(response.text).toContain("Hourly AI news summary");
+    expect(response.text).toContain("runtime: hermes");
+    expect(response.text).toContain("delivery: this conversation");
+  });
+
   test("lists scheduled jobs without invoking the LLM runner", async () => {
     const texts = [
       "do we have any cron jobs configured?",

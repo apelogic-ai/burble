@@ -5,6 +5,7 @@ import type { createHubSpotTools } from "../tools/hubspot";
 import type { createJiraTools } from "../tools/jira";
 import type { createSlackTools } from "../tools/slack";
 import type { AgentMode } from "../config";
+import type { AgentRuntimeEngine } from "@burble/runtime-sdk/runtime-engines";
 import type { AgentRunEventHandler, AgentRunner, AgentUsage } from "../agent/types";
 import type { ObservabilitySink } from "../observability";
 import type { SchedulerControlPlane } from "../scheduler/control-plane";
@@ -79,6 +80,7 @@ export type ConversationDeps = {
   tools: ConversationToolCatalog;
   agentMode?: AgentMode;
   agentFastTrack?: boolean;
+  agentRuntimeEngine?: AgentRuntimeEngine;
   agentRunner?: AgentRunner;
   agentExecutionMode?: "default" | "native-runtime";
   schedulerControl?: SchedulerControlPlane;

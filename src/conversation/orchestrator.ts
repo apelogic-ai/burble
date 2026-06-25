@@ -6,6 +6,7 @@ import { parseGitHubPullRequestListInput } from "../github-query";
 import { tryHandleLocalToolFastPath } from "./local-tool-fast-paths";
 import { enforceVisibility } from "./visibility";
 import type {
+  SchedulerCreateJobResult,
   SchedulerJobDeleteResult,
   SchedulerJobMutationResult,
   SchedulerRunStatusResult,
@@ -45,6 +46,7 @@ async function handleConversationInternal(
   const forceAgent = shouldForceAgentDelegation(request.text);
   const fastTrackEnabled = shouldUseFastTrack(deps);
   const schedulerControlIntent = classifySchedulerControlIntent(request.text);
+  const schedulerCreateRequest = parseSchedulerCreateRequest(request.text);
   const toolGroups = selectRuntimeToolGroups({
     text: request.text,
     attachmentCount: request.attachments?.length ?? 0,
@@ -134,6 +136,23 @@ async function handleConversationInternal(
       visibility: "ephemeral",
       classification: "user_private",
       text: formatScheduledJobList(jobs)
+    };
+  }
+
+  if (schedulerCreateRequest && deps.schedulerControl?.createJob) {
+    const result = await deps.schedulerControl.createJob({
+      workspaceId: request.workspaceId,
+      slackUserId: request.user.slackUserId,
+      title: schedulerCreateRequest.title,
+      prompt: schedulerCreateRequest.prompt,
+      schedule: schedulerCreateRequest.schedule,
+      routeId: request.conversationRouteId,
+      runtimeType: deps.agentRuntimeEngine
+    });
+    return {
+      visibility: "ephemeral",
+      classification: "user_private",
+      text: formatScheduledJobCreateResult(result)
     };
   }
 
@@ -493,6 +512,143 @@ function looksLikeSchedulerCreationRequest(tokens: string[]): boolean {
   );
 }
 
+type ParsedSchedulerCreateRequest = {
+  title: string;
+  prompt: string;
+  schedule: unknown;
+  scheduleLabel: string;
+};
+
+function parseSchedulerCreateRequest(
+  text: string
+): ParsedSchedulerCreateRequest | null {
+  const tokens = tokenizeSchedulerControlText(text);
+  if (!looksLikeSchedulerCreationRequest(tokens)) {
+    return null;
+  }
+  if (
+    !hasAnyToken(tokens, ["cron", "job"]) &&
+    !hasScheduledJobReference(tokens)
+  ) {
+    return null;
+  }
+
+  const schedule = parseExplicitIntervalSchedule(text);
+  if (!schedule) {
+    return null;
+  }
+
+  const prompt = extractScheduledTaskPrompt(text);
+  if (!prompt) {
+    return null;
+  }
+
+  return {
+    title: inferScheduledJobTitle(prompt, schedule.label),
+    prompt,
+    schedule: schedule.value,
+    scheduleLabel: schedule.label
+  };
+}
+
+function parseExplicitIntervalSchedule(
+  text: string
+): { value: unknown; label: string } | null {
+  const normalized = text.toLowerCase();
+  if (
+    /\bhourly\b|\bevery\s+(?:1\s+)?hours?\b|\bevery\s+60\s*(?:m|min|mins|minutes?)\b/.test(
+      normalized
+    )
+  ) {
+    return {
+      value: { kind: "interval", every: { hours: 1 } },
+      label: "every 60m"
+    };
+  }
+  if (/\bdaily\b|\bevery\s+(?:1\s+)?days?\b/.test(normalized)) {
+    return {
+      value: { kind: "interval", every: { days: 1 } },
+      label: "every 1d"
+    };
+  }
+  if (/\bweekly\b|\bevery\s+(?:1\s+)?weeks?\b/.test(normalized)) {
+    return {
+      value: { kind: "interval", every: { weeks: 1 } },
+      label: "every 1w"
+    };
+  }
+
+  const everyMatch =
+    /\bevery\s+(\d+)\s*(minutes?|mins?|m|hours?|hrs?|h|days?|d)\b/i.exec(
+      text
+    );
+  if (!everyMatch) {
+    return null;
+  }
+
+  const amount = Number(everyMatch[1]);
+  if (!Number.isSafeInteger(amount) || amount <= 0) {
+    return null;
+  }
+  const unit = everyMatch[2].toLowerCase();
+  if (["minute", "minutes", "min", "mins", "m"].includes(unit)) {
+    return {
+      value: { kind: "interval", every: { minutes: amount } },
+      label: `every ${amount}m`
+    };
+  }
+  if (["hour", "hours", "hr", "hrs", "h"].includes(unit)) {
+    return {
+      value: { kind: "interval", every: { hours: amount } },
+      label: `every ${amount}h`
+    };
+  }
+  if (["day", "days", "d"].includes(unit)) {
+    return {
+      value: { kind: "interval", every: { days: amount } },
+      label: `every ${amount}d`
+    };
+  }
+  return null;
+}
+
+function extractScheduledTaskPrompt(text: string): string {
+  return text
+    .trim()
+    .replace(
+      /^\s*(?:please\s+)?(?:create|add|make|schedule|set\s+up)\s+(?:an?\s+)?(?:(?:hourly|daily|weekly)\s+|every\s+\d+\s*(?:minutes?|mins?|m|hours?|hrs?|h|days?|d|weeks?|w)\s+)?(?:cron\s+job|cronjob|scheduled\s+job|job)\s+(?:to|that|which|for)?\s*/i,
+      ""
+    )
+    .trim()
+    .replace(/[.。]\s*$/, "")
+    .trim();
+}
+
+function inferScheduledJobTitle(prompt: string, scheduleLabel: string): string {
+  const normalized = prompt.toLowerCase();
+  const prefix =
+    scheduleLabel === "every 60m"
+      ? "Hourly"
+      : scheduleLabel === "every 1d"
+        ? "Daily"
+        : scheduleLabel === "every 1w"
+          ? "Weekly"
+          : "Scheduled";
+  if (normalized.includes("ai") && normalized.includes("news")) {
+    return `${prefix} AI news summary`;
+  }
+  const words = prompt
+    .replace(/[^a-z0-9 ]+/gi, " ")
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 6);
+  if (words.length === 0) {
+    return `${prefix} scheduled job`;
+  }
+  return `${prefix} ${words.join(" ")}`;
+}
+
 function hasAnyToken(tokens: string[], candidates: string[]): boolean {
   return candidates.some((candidate) => tokens.includes(candidate));
 }
@@ -569,6 +725,20 @@ function formatScheduledJobTriggerResult(
     "Multiple scheduled jobs are configured. Please specify the job id.",
     ...result.jobs.map((job) => `- ${job.jobId}`)
   ].join("\n");
+}
+
+function formatScheduledJobCreateResult(
+  result: SchedulerCreateJobResult
+): string {
+  return [
+    `Created scheduled job ${result.job.jobId}.`,
+    `- name: ${result.job.title}`,
+    `- state: ${result.job.state}`,
+    result.job.runtimeType ? `- runtime: ${result.job.runtimeType}` : null,
+    result.job.routeId ? `- delivery: this conversation` : null
+  ]
+    .filter((line): line is string => Boolean(line))
+    .join("\n");
 }
 
 function formatScheduledJobMutationResult(

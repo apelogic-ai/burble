@@ -886,6 +886,7 @@ export function createSlackRuntime(
           schedulerControl,
           agentMode: config.agentMode,
           agentFastTrack: config.agentFastTrack,
+          agentRuntimeEngine: config.agentRuntimeEngine,
           observability,
           ...(resolveAgentExecutionMode()
             ? { agentExecutionMode: resolveAgentExecutionMode() }
@@ -1070,6 +1071,7 @@ export function createSlackRuntime(
           schedulerControl,
           agentMode: config.agentMode,
           agentFastTrack: config.agentFastTrack,
+          agentRuntimeEngine: config.agentRuntimeEngine,
           observability,
           ...(resolveAgentExecutionMode()
             ? { agentExecutionMode: resolveAgentExecutionMode() }

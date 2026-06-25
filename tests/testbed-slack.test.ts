@@ -219,4 +219,103 @@ describe("local Slack testbed", () => {
       store.close();
     }
   });
+
+  test("creates explicit scheduler DMs through Burble before the runtime", async () => {
+    const config = readConfig({
+      SLACK_BOT_TOKEN: "xoxb-test",
+      SLACK_APP_TOKEN: "xapp-test",
+      GITHUB_CLIENT_ID: "github-client-id",
+      GITHUB_CLIENT_SECRET: "github-client-secret",
+      BASE_URL: "http://127.0.0.1:3000",
+      PORT: "39189",
+      DATABASE_PATH: ":memory:",
+      BURBLE_TESTBED: "1",
+      AGENT_MODE: "llm",
+      AGENT_RUNTIME: "burble-runtime",
+      AGENT_RUNTIME_URL: "http://127.0.0.1:9",
+      AGENT_RUNTIME_ENGINE: "hermes"
+    });
+    const store = createTokenStore(":memory:");
+    const runtimeJwtIssuer = createRuntimeJwtIssuer({
+      issuer: config.runtimeJwtIssuer
+    });
+    const slack = createSlackRuntime(config, store, runtimeJwtIssuer, undefined, {
+      testbed: true
+    });
+    const testbed = installSlackTestbed(slack);
+    const server = startOAuthServer(
+      config,
+      store,
+      slack,
+      runtimeJwtIssuer,
+      undefined,
+      testbed
+    );
+    const baseUrl = `http://127.0.0.1:${server.port}`;
+
+    try {
+      const createResponse = await fetch(
+        `${baseUrl}/__testbed/slack/events/message.im`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            text:
+              "create hourly cron job to look for latest AI news, summarize them in one paragraph and post result in this channel",
+            user: testbedUserId
+          })
+        }
+      );
+      expect(createResponse.status).toBe(200);
+
+      const jobs = store.listScheduledJobsForPrincipal(
+        testbedWorkspaceId,
+        testbedUserId
+      );
+      expect(jobs).toHaveLength(1);
+      expect(jobs[0]).toMatchObject({
+        title: "Hourly AI news summary",
+        prompt:
+          "look for latest AI news, summarize them in one paragraph and post result in this channel",
+        schedule: { kind: "interval", every: { hours: 1 } },
+        runtimeType: "hermes"
+      });
+
+      const createTranscript = await fetch(
+        `${baseUrl}/__testbed/slack/channels/${testbedDirectChannelId}/messages`
+      ).then(
+        (response) =>
+          response.json() as Promise<{ messages: Array<{ text: string }> }>
+      );
+      const createText = createTranscript.messages
+        .map((message) => message.text)
+        .join("\n");
+      expect(createText).toContain("Created scheduled job");
+      expect(createText).toContain("Hourly AI news summary");
+      expect(createText).not.toContain("Starting agent runtime");
+      expect(createText).not.toContain("Runtime detail");
+
+      const triggerResponse = await fetch(
+        `${baseUrl}/__testbed/slack/events/message.im`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            text: "test-run this job now",
+            user: testbedUserId
+          })
+        }
+      );
+      expect(triggerResponse.status).toBe(200);
+      const latestRun = store.getLatestAgentJobRunForPrincipal(
+        testbedWorkspaceId,
+        testbedUserId,
+        jobs[0].jobId
+      );
+      expect(latestRun?.status).toBe("queued");
+    } finally {
+      server.stop();
+      store.close();
+    }
+  });
 });
