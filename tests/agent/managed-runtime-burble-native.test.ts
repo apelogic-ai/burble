@@ -948,7 +948,7 @@ describe("managed runtime Burble Native integration", () => {
       scheduledJob: {
         jobId: "job-ai-news",
         capabilityProfile: "scheduled_job",
-        allowedTools: ["web_extract"],
+        allowedTools: ["web_extract", "web_search"],
         routeId: "convrt_123",
         runtimeType: "openclaw",
         stateRefs: [],

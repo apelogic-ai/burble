@@ -80,7 +80,7 @@ describe("scheduler run executor", () => {
       text: "Find fresh AI news and summarize it.",
       scheduledJob: {
         jobId: "job-ai-news",
-        allowedTools: ["web_extract"],
+        allowedTools: ["web_extract", "web_search"],
         routeId: route.id,
         runtimeType: "openclaw",
       },

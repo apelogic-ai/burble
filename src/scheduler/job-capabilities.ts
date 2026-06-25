@@ -40,6 +40,7 @@ export function inferAllowedToolsForScheduledJob(
       text,
     )
   ) {
+    tools.add("web_search");
     tools.add("web_extract");
   }
 
