@@ -57,7 +57,10 @@ async function handleConversationInternal(
   const schedulerControlIntent = schedulerResolution.intent;
   const schedulerJobIdHint =
     schedulerResolution.jobId ?? readSchedulerJobIdHint(request.text);
-  const schedulerCreateRequest = parseSchedulerCreateRequest(request.text);
+  const schedulerCreateRequest =
+    schedulerControlIntent === "create_job"
+      ? parseSchedulerCreateRequest(request.text)
+      : null;
   const toolGroups = selectRuntimeToolGroups({
     text: request.text,
     attachmentCount: request.attachments?.length ?? 0,
@@ -432,105 +435,41 @@ async function resolveSchedulerControlIntent(
   request: ConversationRequest,
   deps: ConversationDeps,
 ): Promise<{ intent: SchedulerControlIntent; jobId: string | null }> {
-  const fallbackIntent =
-    classifySchedulerControlIntent(request.text) ??
-    classifyExplicitSchedulerJobIdIntent(request.text);
   const fallbackJobId = readSchedulerJobIdHint(request.text);
-  if (
-    looksLikeSchedulerCreationRequest(
-      tokenizeSchedulerControlText(request.text),
-    )
-  ) {
-    return { intent: fallbackIntent, jobId: fallbackJobId };
-  }
-  if (
-    fallbackIntent &&
-    !shouldUseSemanticSchedulerResolver(
-      request.text,
-      fallbackIntent,
-      fallbackJobId,
-    )
-  ) {
-    return {
-      intent: fallbackIntent,
-      jobId: fallbackJobId,
-    };
-  }
-  if (
-    !deps.schedulerIntentResolver ||
-    !looksLikeSchedulerControlCandidate(request.text)
-  ) {
-    return { intent: fallbackIntent, jobId: null };
-  }
 
-  try {
-    const jobs = deps.schedulerControl
-      ? await deps.schedulerControl.listJobs({
-          workspaceId: request.workspaceId,
-          slackUserId: request.user.slackUserId,
-        })
-      : [];
-    const resolved = await deps.schedulerIntentResolver({
-      text: request.text,
-      recentMessages: recentConversationTexts(request),
-      jobs,
-    });
-    const intent = normalizeResolvedSchedulerIntent(resolved);
-    if (intent) {
-      return {
-        intent,
-        jobId: sanitizeSchedulerJobId(resolved.jobId),
-      };
+  if (deps.schedulerIntentResolver) {
+    try {
+      const jobs = deps.schedulerControl
+        ? await deps.schedulerControl.listJobs({
+            workspaceId: request.workspaceId,
+            slackUserId: request.user.slackUserId,
+          })
+        : [];
+      const resolved = await deps.schedulerIntentResolver({
+        text: request.text,
+        recentMessages: recentConversationTexts(request),
+        jobs,
+      });
+      const intent = normalizeResolvedSchedulerIntent(resolved);
+      if (intent) {
+        return {
+          intent,
+          jobId: sanitizeSchedulerJobId(resolved.jobId),
+        };
+      }
+    } catch {
+      // Resolver failures should not make ordinary conversation turns fail.
     }
-  } catch {
-    // Resolver failures should not make scheduler control less reliable.
+
+    return { intent: null, jobId: fallbackJobId };
   }
 
+  const fallbackIntent =
+    classifyExplicitSchedulerJobIdIntent(request.text) ??
+    classifySchedulerControlIntent(request.text) ??
+    (parseSchedulerCreateRequest(request.text) ? "create_job" : null);
   return { intent: fallbackIntent, jobId: null };
 }
-
-function shouldUseSemanticSchedulerResolver(
-  text: string,
-  fallbackIntent: SchedulerControlIntent,
-  jobId: string | null,
-): boolean {
-  if (jobId || fallbackIntent !== "trigger_job") {
-    return false;
-  }
-  const tokens = tokenizeSchedulerControlText(text);
-  return tokens.some((token) => !genericSchedulerTriggerTokens.has(token));
-}
-
-const genericSchedulerTriggerTokens = new Set([
-  "a",
-  "an",
-  "and",
-  "by",
-  "can",
-  "cron",
-  "current",
-  "existing",
-  "help",
-  "job",
-  "jobs",
-  "manually",
-  "me",
-  "my",
-  "now",
-  "our",
-  "please",
-  "run",
-  "running",
-  "schedule",
-  "scheduled",
-  "start",
-  "test",
-  "that",
-  "the",
-  "this",
-  "trigger",
-  "you",
-]);
 
 function classifyExplicitSchedulerJobIdIntent(
   text: string,
@@ -557,12 +496,6 @@ function classifyExplicitSchedulerJobIdIntent(
   return null;
 }
 
-function looksLikeSchedulerControlCandidate(text: string): boolean {
-  return /\b(cron|cronjob|cronjobs|schedule|scheduled|scheduler|automation|background|job|jobs)\b/i.test(
-    text,
-  );
-}
-
 function normalizeResolvedSchedulerIntent(
   result: SchedulerIntentResolverResult,
 ): Exclude<SchedulerControlIntent, null> | null {
@@ -572,6 +505,7 @@ function normalizeResolvedSchedulerIntent(
   if (
     result.intent === "list_jobs" ||
     result.intent === "list_job_runs" ||
+    result.intent === "create_job" ||
     result.intent === "trigger_job" ||
     result.intent === "pause_job" ||
     result.intent === "resume_job" ||

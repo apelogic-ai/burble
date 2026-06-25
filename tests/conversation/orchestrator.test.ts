@@ -1233,6 +1233,81 @@ describe("handleConversation", () => {
     expect(response.text).toContain("jobrun-github-1");
   });
 
+  test("uses scheduler intent resolver instead of schedule words when trigger wording names a task", async () => {
+    let called = false;
+    let created = false;
+    let triggerJobId: string | null | undefined;
+    const response = await handleConversation(
+      {
+        ...baseRequest,
+        text: "test run hourly ai news summary job",
+      },
+      createDeps({
+        agentMode: "llm",
+        schedulerControl: {
+          listJobs: () => [
+            {
+              jobId: "job_ai_news",
+              title: "Hourly AI news summary",
+              prompt: "look for fresh AI-related news",
+              schedule: {
+                kind: "interval",
+                every: { hours: 1 },
+              },
+              state: "scheduled",
+              runtimeType: "openclaw",
+              requiredTools: ["web_search"],
+              routeId: "convrt_123",
+              updatedAt: "2026-06-24T12:00:00.000Z",
+            },
+          ],
+          createJob: () => {
+            created = true;
+            throw new Error("unexpected create");
+          },
+          triggerJob: (input) => {
+            triggerJobId = input.jobId;
+            return {
+              ok: true,
+              jobId: "job_ai_news",
+              run: {
+                runId: "jobrun-ai-news-1",
+                jobId: "job_ai_news",
+                workspaceId: "T123",
+                slackUserId: "U123",
+                triggerSource: "manual",
+                status: "queued",
+                failureReason: null,
+                createdAt: "2026-06-24T12:05:00.000Z",
+                updatedAt: "2026-06-24T12:05:00.000Z",
+                startedAt: null,
+                finishedAt: null,
+              },
+            };
+          },
+        },
+        schedulerIntentResolver: async () => ({
+          intent: "trigger_job",
+          confidence: 0.96,
+          jobId: "job_ai_news",
+        }),
+        agentRunner: stubAgentRunner(() => {
+          called = true;
+          return {
+            classification: "public",
+            text: "unexpected",
+          };
+        }),
+      }),
+    );
+
+    expect(called).toBe(false);
+    expect(created).toBe(false);
+    expect(triggerJobId).toBe("job_ai_news");
+    expect(response.text).toContain("Triggered scheduled job job_ai_news");
+    expect(response.text).toContain("jobrun-ai-news-1");
+  });
+
   test("triggers explicit scheduler job ids without invoking the LLM runner", async () => {
     let called = false;
     let triggerJobId: string | null | undefined;

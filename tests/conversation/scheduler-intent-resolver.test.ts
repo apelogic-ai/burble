@@ -41,6 +41,18 @@ describe("scheduler intent resolver", () => {
     });
   });
 
+  test("parses task creation intents", () => {
+    expect(
+      parseSchedulerIntentResponse(
+        '{"intent":"create_job","confidence":0.9,"jobId":null}',
+      ),
+    ).toEqual({
+      intent: "create_job",
+      confidence: 0.9,
+      jobId: null,
+    });
+  });
+
   test("rejects unsupported intents", () => {
     expect(
       parseSchedulerIntentResponse(

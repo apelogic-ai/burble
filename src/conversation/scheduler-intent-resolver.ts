@@ -81,10 +81,10 @@ function withTimeout<T>(
 const schedulerIntentSystemPrompt = [
   "You classify Slack messages for Burble's scheduled-job control plane.",
   "Return only one JSON object. Do not include markdown.",
-  "Valid intents: list_jobs, list_job_runs, trigger_job, pause_job, resume_job, delete_job, latest_run_status, none.",
+  "Valid intents: list_jobs, list_job_runs, create_job, trigger_job, pause_job, resume_job, delete_job, latest_run_status, none.",
   "Classify only scheduler/cron/background-job control requests.",
   "Task specs are configured scheduled tasks. Job runs are executions of task specs.",
-  "Examples of scheduler control: list cron jobs, list tasks, list job runs, run the existing scheduled job, test-run this job, did the manual job finish, pause the cron job.",
+  "Examples of scheduler control: list cron jobs, list tasks, list job runs, create an hourly news job, run the existing scheduled job, test-run this job, did the manual job finish, pause the cron job.",
   "Examples of none: what is my job title, help me find a job, explain what cron jobs are, write code for a scheduler.",
   "Use confidence from 0 to 1.",
   "Only include jobId when the user gives a job id or clearly refers to exactly one current job by title/prompt.",
@@ -145,6 +145,7 @@ export function parseSchedulerIntentResponse(
   if (
     intent !== "list_jobs" &&
     intent !== "list_job_runs" &&
+    intent !== "create_job" &&
     intent !== "trigger_job" &&
     intent !== "pause_job" &&
     intent !== "resume_job" &&
