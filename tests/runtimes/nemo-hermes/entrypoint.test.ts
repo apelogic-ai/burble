@@ -2268,6 +2268,50 @@ asyncio.run(main())
     });
   });
 
+  test("registers a standalone Hermes cron sender for Burble route delivery", () => {
+    const result = runHermesEntrypointProbe(`${importBurblePlatformAdapter}
+import asyncio
+import os
+
+os.environ["BURBLE_TOOL_GATEWAY_URL"] = "http://burble-app:3000/internal/tools"
+os.environ["BURBLE_INTERNAL_TOKEN"] = "token"
+os.environ["BURBLE_RUNTIME_ID"] = "rt_123"
+
+async def main():
+    sent = await mod._standalone_send(
+        types.SimpleNamespace(extra={}),
+        "convrt_abc123",
+        "Cron report",
+    )
+    print(json.dumps({"result": sent, "payloads": posted_payloads}))
+
+asyncio.run(main())
+`);
+
+    expect(result).toEqual({
+      result: {
+        success: true,
+        message_id: expect.stringContaining("burble:convrt_abc123:")
+      },
+      payloads: [
+        {
+          url: "http://burble-app:3000/internal/tools/conversation.sendMessage/execute",
+          headers: {
+            authorization: "Bearer token",
+            "content-type": "application/json",
+            "x-burble-runtime-id": "rt_123"
+          },
+          json: {
+            input: {
+              routeId: "convrt_abc123",
+              text: "Cron report"
+            }
+          }
+        }
+      ]
+    });
+  });
+
   test("refuses Hermes tool protocol from scheduled route sends", () => {
     const result = runHermesEntrypointProbe(`${importBurblePlatformAdapter}
 import asyncio
