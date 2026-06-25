@@ -3374,6 +3374,17 @@ async function executePlannedToolCall(
 
   const email = readToolEmail(toolCall.name, request);
   if (!email) {
+    if (isConnectionlessProviderTool(toolCall.name)) {
+      const validationError = validatePlannedToolCall(toolCall, toolContext);
+      if (validationError) {
+        return validationError;
+      }
+
+      return executeTool(toolCall.name, {
+        input: toolCall.arguments
+      });
+    }
+
     return {
       classification: "user_private",
       content: {
@@ -3392,6 +3403,10 @@ async function executePlannedToolCall(
     user: { email },
     input: toolCall.arguments
   });
+}
+
+function isConnectionlessProviderTool(toolName: string): boolean {
+  return toolName === "web.search" || toolName === "web_search";
 }
 
 function validatePlannedToolCall(
