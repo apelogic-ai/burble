@@ -5,6 +5,7 @@ import type { HubSpotToolDeps } from "../tools/hubspot";
 import type { JiraToolDeps } from "../tools/jira";
 import type { SlackToolDeps } from "../tools/slack";
 import type { ToolResult } from "../tools/types";
+import type { WebSearchDeps } from "../providers/web/client";
 import {
   providerDescriptor,
   type ProviderDescriptorId
@@ -17,6 +18,7 @@ export type ProviderMcpDeps = Partial<GitHubToolDeps> &
   Partial<GoogleToolDeps> &
   Partial<HubSpotToolDeps> &
   Partial<JiraToolDeps> &
+  Partial<WebSearchDeps> &
   Partial<SlackToolDeps> & {
     listAtlassianMcpTools?: (input: {
       url: string;

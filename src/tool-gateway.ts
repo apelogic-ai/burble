@@ -106,6 +106,7 @@ import {
   type UpstreamMcpToolResult
 } from "./mcp/upstream-http-client";
 import { searchSlackMessages, searchSlackUsers } from "./providers/slack/client";
+import { searchWeb, type WebSearchDeps } from "./providers/web/client";
 import {
   createGitHubTools,
   type GitHubPullRequestListInput
@@ -143,7 +144,9 @@ type ToolGatewayDeps = Partial<Parameters<typeof createGitHubTools>[0]> &
   Partial<GoogleToolDeps> &
   Partial<HubSpotToolDeps> &
   Partial<JiraToolDeps> &
+  Partial<WebSearchDeps> &
   Partial<SlackToolDeps> & {
+    searchWeb?: typeof searchWeb;
     fetchConversationAttachment?: (input: {
       attachment: ConversationAttachment;
       maxBytes: number;
@@ -274,7 +277,8 @@ const defaultDeps = {
   createJiraSubtask,
   searchJiraIssues,
   searchSlackMessages,
-  searchSlackUsers
+  searchSlackUsers,
+  searchWeb
 };
 
 type ToolGatewayAuth =
@@ -847,6 +851,24 @@ export async function handleToolGatewayRequest(
         input: isOptionalObject(body.input) ? body.input : {}
       }
     });
+  }
+
+  if (toolName === "web.search" || toolName === "web_search") {
+    const inputCoercion = coerceProviderToolGatewayInput(toolName, body.input);
+    if (!inputCoercion.ok) {
+      return new Response(`Invalid tool input: ${inputCoercion.error}`, {
+        status: 400
+      });
+    }
+    const searchInput = inputCoercion.input;
+    if (!isWebSearchInput(searchInput)) {
+      return new Response("Invalid tool input", { status: 400 });
+    }
+    return respondWithAudit(
+      await (deps.searchWeb ?? searchWeb)(searchInput, {
+        fetch: deps.fetch
+      })
+    );
   }
 
   const providerToolSpec = findProviderToolSpec(toolName);
@@ -2004,6 +2026,8 @@ function isKnownTool(toolName: string): boolean {
     toolName === "jira.searchIssues" ||
     toolName === "slack.searchUsers" ||
     toolName === "slack.searchMessages" ||
+    toolName === "web.search" ||
+    toolName === "web_search" ||
     toolName === "conversation.sendMessage" ||
     toolName === "conversation.getAttachment" ||
     toolName === "scheduledJob.registerCapability" ||
@@ -2597,6 +2621,9 @@ function findProviderToolSpec(toolName: string): (typeof providerToolCatalog)[nu
 }
 
 function providerToolUsesPrivateReadSource(tool: (typeof providerToolCatalog)[number]): boolean {
+  if (tool.provider === "web") {
+    return false;
+  }
   if (!tool.risk || tool.risk === "read") {
     return true;
   }
@@ -2790,6 +2817,19 @@ function isSearchIssuesInput(input: unknown): input is { query: string } {
     "query" in input &&
     typeof input.query === "string" &&
     input.query.trim().length > 0
+  );
+}
+
+function isWebSearchInput(
+  input: unknown
+): input is { query: string; limit?: number } {
+  return (
+    typeof input === "object" &&
+    input !== null &&
+    "query" in input &&
+    typeof input.query === "string" &&
+    input.query.trim().length > 0 &&
+    (!("limit" in input) || typeof input.limit === "number")
   );
 }
 
@@ -5165,6 +5205,9 @@ function readToolProviderForTelemetry(toolName: string): string {
   }
   if (toolName.startsWith("scheduledJob.")) {
     return "scheduled_job";
+  }
+  if (toolName === "web.search" || toolName === "web_search") {
+    return "web";
   }
   return readToolProvider(toolName);
 }

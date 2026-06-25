@@ -4,6 +4,7 @@ import { googleProviderToolSpecs } from "./google/tool-specs";
 import { hubspotProviderToolSpecs } from "./hubspot/tool-specs";
 import { jiraProviderToolSpecs } from "./jira/tool-specs";
 import { slackProviderToolSpecs } from "./slack/tool-specs";
+import { webProviderToolSpecs } from "./web/tool-specs";
 
 export const providerDescriptors = [
   {
@@ -76,6 +77,15 @@ export const providerDescriptors = [
     usage: "User search and message search through your Slack identity",
     toolAliasPrefixes: ["slack."],
     tools: slackProviderToolSpecs
+  },
+  {
+    id: "web",
+    title: "Web",
+    connectable: false,
+    connectionProvider: null,
+    missingConnectionText: "Web search is not configured.",
+    toolAliasPrefixes: ["web."],
+    tools: webProviderToolSpecs
   },
   {
     id: "atlassian",

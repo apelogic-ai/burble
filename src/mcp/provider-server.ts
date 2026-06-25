@@ -79,6 +79,7 @@ import {
   updateJiraIssue
 } from "../providers/jira/client";
 import { searchSlackMessages, searchSlackUsers } from "../providers/slack/client";
+import { searchWeb } from "../providers/web/client";
 import type { RuntimeJwtIssuer } from "../runtime-jwt";
 import type { RuntimeJwtClaims } from "../runtime-jwt";
 import {
@@ -102,6 +103,7 @@ import { registerGoogleMcpTools } from "./provider-google";
 import { registerHubSpotMcpTools } from "./provider-hubspot";
 import { registerJiraMcpTools } from "./provider-jira";
 import { registerSlackMcpTools } from "./provider-slack";
+import { registerWebMcpTools } from "./provider-web";
 
 export { isAllowedAtlassianMcpToolName, isReadOnlyAtlassianMcpToolName };
 
@@ -172,7 +174,8 @@ const defaultDeps = {
   createJiraSubtask,
   searchJiraIssues,
   searchSlackMessages,
-  searchSlackUsers
+  searchSlackUsers,
+  searchWeb
 };
 
 export async function handleProviderMcpRequest(
@@ -300,6 +303,9 @@ function createProviderMcpServer(
   }
   if (scope === "all" || scope === "slack") {
     registerSlackMcpTools({ server, store, runtime, deps: allDeps, policy });
+  }
+  if (scope === "all" || scope === "web") {
+    registerWebMcpTools({ server, deps: allDeps, policy });
   }
   if (scope === "all" || scope === "atlassian") {
     registerAtlassianMcpTools({

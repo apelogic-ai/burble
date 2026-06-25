@@ -508,6 +508,61 @@ describe("handleToolGatewayRequest", () => {
     });
   });
 
+  test("executes brokered public web search without a provider connection", async () => {
+    const response = await handleToolGatewayRequest(
+      config,
+      createStore(null, runtime),
+      "web.search",
+      request(
+        "web.search",
+        {
+          input: {
+            query: "latest AI news",
+            limit: 2
+          }
+        },
+        "runtime-token-u123",
+        "rt_u123"
+      ),
+      {
+        searchWeb: async (input) => {
+          expect(input).toEqual({
+            query: "latest AI news",
+            limit: 2
+          });
+          return {
+            classification: "public",
+            content: {
+              query: input.query,
+              results: [
+                {
+                  title: "AI research update",
+                  url: "https://example.com/ai",
+                  snippet: "A short public news summary."
+                }
+              ]
+            }
+          };
+        }
+      }
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      classification: "public",
+      content: {
+        query: "latest AI news",
+        results: [
+          {
+            title: "AI research update",
+            url: "https://example.com/ai",
+            snippet: "A short public news summary."
+          }
+        ]
+      }
+    });
+  });
+
   test("passes Google Analytics report inputs to the provider tool", async () => {
     const response = await handleToolGatewayRequest(
       config,
