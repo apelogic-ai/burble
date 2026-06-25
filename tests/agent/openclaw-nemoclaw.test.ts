@@ -1155,6 +1155,7 @@ describe("createOpenClawNemoClawAgentRunner", () => {
         }
         return new Response(
           [
+            "Sandbox startup diagnostics should not be parsed as a run event",
             JSON.stringify({ type: "status", text: "Loading context..." }),
             JSON.stringify({
               type: "tool_call",

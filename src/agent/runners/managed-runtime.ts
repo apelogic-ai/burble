@@ -1121,7 +1121,10 @@ async function* readNdjson(
       for (const line of lines) {
         const trimmed = line.trim();
         if (trimmed) {
-          yield JSON.parse(trimmed);
+          const parsed = parseNdjsonRuntimeEvent(trimmed);
+          if (parsed !== null) {
+            yield parsed;
+          }
         }
       }
     }
@@ -1129,11 +1132,21 @@ async function* readNdjson(
     buffer += decoder.decode();
     const trimmed = buffer.trim();
     if (trimmed) {
-      yield JSON.parse(trimmed);
+      const parsed = parseNdjsonRuntimeEvent(trimmed);
+      if (parsed !== null) {
+        yield parsed;
+      }
     }
   } finally {
     reader.releaseLock();
   }
+}
+
+function parseNdjsonRuntimeEvent(line: string): unknown | null {
+  if (!line.startsWith("{") && !line.startsWith("[")) {
+    return null;
+  }
+  return JSON.parse(line);
 }
 
 async function* readSse(
