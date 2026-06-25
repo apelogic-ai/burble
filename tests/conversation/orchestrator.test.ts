@@ -874,6 +874,44 @@ describe("handleConversation", () => {
     }
   });
 
+  test("lists scheduled jobs without invoking the LLM runner", async () => {
+    let called = false;
+    const response = await handleConversation(
+      {
+        ...baseRequest,
+        text: "do we have any cron jobs configured?"
+      },
+      createDeps({
+        agentMode: "llm",
+        schedulerControl: {
+          listJobs: () => [
+            {
+              jobId: "ai-news-hourly",
+              runtimeType: "hermes",
+              requiredTools: ["google_search_drive_files"],
+              routeId: "convrt_123",
+              updatedAt: "2026-06-24T12:00:00.000Z"
+            }
+          ]
+        },
+        agentRunner: stubAgentRunner(() => {
+          called = true;
+          return {
+            classification: "public",
+            text: "unexpected"
+          };
+        })
+      })
+    );
+
+    expect(called).toBe(false);
+    expect(response.visibility).toBe("ephemeral");
+    expect(response.classification).toBe("user_private");
+    expect(response.text).toContain("Scheduled jobs");
+    expect(response.text).toContain("ai-news-hourly");
+    expect(response.text).toContain("google_search_drive_files");
+  });
+
   test("delegates explicit agent, task, and subagent requests before GitHub fast-paths", async () => {
     for (const text of [
       "ask agent to list my open GitHub PRs",

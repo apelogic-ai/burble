@@ -7,6 +7,7 @@ import type { createSlackTools } from "../tools/slack";
 import type { AgentMode } from "../config";
 import type { AgentRunEventHandler, AgentRunner, AgentUsage } from "../agent/types";
 import type { ObservabilitySink } from "../observability";
+import type { SchedulerControlPlane } from "../scheduler/control-plane";
 
 export type ResponseVisibility = "public" | "ephemeral" | "dm";
 export type ToolClassification = "public" | "user_private" | "restricted";
@@ -80,6 +81,7 @@ export type ConversationDeps = {
   agentFastTrack?: boolean;
   agentRunner?: AgentRunner;
   agentExecutionMode?: "default" | "native-runtime";
+  schedulerControl?: SchedulerControlPlane;
   onAgentEvent?: AgentRunEventHandler;
   observability?: ObservabilitySink;
   traceId?: string;

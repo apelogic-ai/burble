@@ -38,6 +38,7 @@ async function handleConversationInternal(
   const intent = classifyDeterministicIntent(request.text);
   const forceAgent = shouldForceAgentDelegation(request.text);
   const fastTrackEnabled = shouldUseFastTrack(deps);
+  const schedulerControlIntent = classifySchedulerControlIntent(request.text);
   const toolGroups = selectRuntimeToolGroups({
     text: request.text,
     attachmentCount: request.attachments?.length ?? 0,
@@ -115,6 +116,18 @@ async function handleConversationInternal(
       visibility: "ephemeral",
       classification: "user_private",
       text: `<${deps.createHubSpotOAuthUrl(request.user.slackUserId)}|Connect your HubSpot account>`
+    };
+  }
+
+  if (schedulerControlIntent === "list_jobs" && deps.schedulerControl) {
+    const jobs = await deps.schedulerControl.listJobs({
+      workspaceId: request.workspaceId,
+      slackUserId: request.user.slackUserId
+    });
+    return {
+      visibility: "ephemeral",
+      classification: "user_private",
+      text: formatScheduledJobList(jobs)
     };
   }
 
@@ -240,6 +253,53 @@ async function handleConversationInternal(
       "`@Burble what issues are assigned to me?`"
     ].join("\n")
   };
+}
+
+type SchedulerControlIntent = "list_jobs" | null;
+
+function classifySchedulerControlIntent(text: string): SchedulerControlIntent {
+  const normalized = text.toLowerCase().replace(/\s+/g, " ").trim();
+  const jobNoun = "(?:cron\\s*jobs?|cronjobs?|scheduled\\s+jobs?|jobs?)";
+  if (
+    new RegExp(`\\b(?:do we have|are there)\\b.*\\b${jobNoun}\\b`).test(
+      normalized
+    ) ||
+    new RegExp(`\\b(?:list|show)\\b\\s+(?:my|our|the|all)?\\s*${jobNoun}\\b`).test(
+      normalized
+    ) ||
+    new RegExp(`\\bwhat\\b.*\\b${jobNoun}\\b.*\\bconfigured\\b`).test(
+      normalized
+    )
+  ) {
+    return "list_jobs";
+  }
+  return null;
+}
+
+function formatScheduledJobList(
+  jobs: Array<{
+    jobId: string;
+    runtimeType: string | null;
+    requiredTools: string[];
+    routeId: string | null;
+    updatedAt: string;
+  }>
+): string {
+  if (jobs.length === 0) {
+    return "No scheduled jobs are configured.";
+  }
+
+  const lines = ["Scheduled jobs"];
+  for (const job of jobs) {
+    const details = [
+      job.runtimeType ? `runtime: ${job.runtimeType}` : null,
+      job.requiredTools.length ? `tools: ${job.requiredTools.join(", ")}` : null,
+      job.routeId ? `route: ${job.routeId}` : null,
+      `updated: ${job.updatedAt}`
+    ].filter((value): value is string => Boolean(value));
+    lines.push(`- ${job.jobId} - ${details.join("; ")}`);
+  }
+  return lines.join("\n");
 }
 
 function emitConversationStarted(
