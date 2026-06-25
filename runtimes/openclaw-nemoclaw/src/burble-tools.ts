@@ -46,7 +46,14 @@ function createBurbleMcpToolExecutor(
       return getConversationAttachment(config, runtimeId, request, actualBody);
     }
     if (actualToolName === "scheduledJob.registerCapability") {
-      return registerScheduledJobCapability(config, runtimeId, actualBody);
+      return executeScheduledJobControlTool(config, runtimeId, actualToolName, actualBody);
+    }
+    if (
+      actualToolName === "scheduledJob.list" ||
+      actualToolName === "scheduledJob.trigger" ||
+      actualToolName === "scheduledJob.latestRunStatus"
+    ) {
+      return executeScheduledJobControlTool(config, runtimeId, actualToolName, actualBody);
     }
     if (actualToolName === "runtime.conformance.echo") {
       return executeRuntimeConformanceEcho(config, runtimeId, actualBody);
@@ -212,25 +219,26 @@ async function sendConversationMessage(
   return result;
 }
 
-async function registerScheduledJobCapability(
+async function executeScheduledJobControlTool(
   config: RuntimeConfig,
   runtimeId: string | undefined,
+  toolName: string,
   body: unknown
 ): Promise<ToolResult> {
   const fetchImpl = runtimeFetch(config);
   if (!runtimeId) {
-    throw new Error("scheduledJob.registerCapability requires a runtime id");
+    throw new Error(`${toolName} requires a runtime id`);
   }
-  const input = readNestedObject(body, "input");
-  if (!input) {
-    throw new Error("scheduledJob.registerCapability requires input");
+  const input = readNestedObject(body, "input") ?? {};
+  if (toolName === "scheduledJob.registerCapability" && !readNestedObject(body, "input")) {
+    throw new Error(`${toolName} requires input`);
   }
   info(
-    `Burble scheduled job tool start tool=scheduledJob.registerCapability${summarizeLogObject("input", input)}`
+    `Burble scheduled job tool start tool=${toolName}${summarizeLogObject("input", input)}`
   );
 
   const response = await fetchImpl(
-    `${config.toolGatewayUrl}/${encodeURIComponent("scheduledJob.registerCapability")}/execute`,
+    `${config.toolGatewayUrl}/${encodeURIComponent(toolName)}/execute`,
     {
       method: "POST",
       headers: {
@@ -246,7 +254,7 @@ async function registerScheduledJobCapability(
     const errorResult = await readToolGatewayErrorResult(response.clone());
     if (errorResult) {
       info(
-        `Burble scheduled job tool finish tool=scheduledJob.registerCapability status=${response.status} classification=${errorResult.classification}${summarizeLogObject("result", errorResult.content)}`
+        `Burble scheduled job tool finish tool=${toolName} status=${response.status} classification=${errorResult.classification}${summarizeLogObject("result", errorResult.content)}`
       );
       return errorResult;
     }
@@ -261,7 +269,7 @@ async function registerScheduledJobCapability(
   }
 
   info(
-    `Burble scheduled job tool finish tool=scheduledJob.registerCapability classification=${result.classification}${summarizeLogObject("result", result.content)}`
+    `Burble scheduled job tool finish tool=${toolName} classification=${result.classification}${summarizeLogObject("result", result.content)}`
   );
   return result;
 }
