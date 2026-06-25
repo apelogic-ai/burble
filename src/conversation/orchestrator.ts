@@ -450,6 +450,14 @@ function hasScheduledJobReference(tokens: string[]): boolean {
 }
 
 function isSchedulerListIntent(tokens: string[]): boolean {
+  if (
+    tokens.length <= 2 &&
+    (hasAdjacentTokens(tokens, "cron", "job") ||
+      hasAdjacentTokens(tokens, "cron", "jobs") ||
+      hasScheduledJobReference(tokens))
+  ) {
+    return true;
+  }
   if (hasAnyToken(tokens, ["list", "show", "display", "view"])) {
     return true;
   }

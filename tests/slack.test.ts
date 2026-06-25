@@ -327,6 +327,13 @@ describe("formatAgentProgressEvent", () => {
     ).toBe("Agent has thought for 24s...");
 
     expect(
+      formatAgentProgressEvent({
+        type: "status",
+        text: ":zap: Interrupting current task (iteration 1/90, running: google_search_drive_files). I'll respond to your message shortly."
+      })
+    ).toBe("Agent is thinking...");
+
+    expect(
       formatAgentProgressEvent(
         {
           type: "tool_call",

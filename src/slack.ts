@@ -6140,6 +6140,9 @@ function isAgentProgressPlaceholder(text: string): boolean {
 
 function normalizeAgentStatus(text: string): string {
   const trimmed = text.trim();
+  if (isRuntimeControlNotice(trimmed)) {
+    return "Agent is thinking...";
+  }
   const thoughtMatch = /(?:still running|agent has thought for)\s+(?:agent|openclaw)?\.{0,3}\s*(\d+)s/i.exec(
     trimmed
   );
@@ -6155,6 +6158,14 @@ function normalizeAgentStatus(text: string): string {
     .replace(/OpenClaw\/NemoClaw/gi, "agent")
     .replace(/OpenClaw/gi, "agent")
     .replace(/\bagent agent\b/gi, "agent");
+}
+
+function isRuntimeControlNotice(text: string): boolean {
+  return (
+    /^:zap:\s*Interrupting current task\b/i.test(text) ||
+    /\bFirst-time tip\b.*\binterrupted my current task\b/i.test(text) ||
+    /\b\/busy (?:queue|steer|status)\b/i.test(text)
+  );
 }
 
 function renderProgressLines(

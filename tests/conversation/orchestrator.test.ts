@@ -944,6 +944,7 @@ describe("handleConversation", () => {
     const texts = [
       "do we have any cron jobs configured?",
       "show me current cron jobs",
+      "cron job",
       "please show me the configured scheduled jobs",
       "list our existing cronjobs",
       "what cron jobs are set up?"
