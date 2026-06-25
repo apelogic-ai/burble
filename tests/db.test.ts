@@ -1397,4 +1397,68 @@ describe("createTokenStore", () => {
 
     store.close();
   });
+
+  test("stores Burble-owned scheduled job definitions", () => {
+    const store = createTokenStore(":memory:");
+
+    const job = store.upsertScheduledJob({
+      jobId: "job-ai-news-hourly",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      title: "Hourly AI news summary",
+      prompt: "look for fresh AI-related news and post a short summary",
+      schedule: {
+        kind: "interval",
+        every: { hours: 1 }
+      },
+      routeId: "convrt_123",
+      state: "scheduled",
+      runtimeType: "hermes",
+      now: new Date("2026-06-24T12:00:00.000Z")
+    });
+
+    expect(job).toEqual({
+      jobId: "job-ai-news-hourly",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      title: "Hourly AI news summary",
+      prompt: "look for fresh AI-related news and post a short summary",
+      schedule: {
+        kind: "interval",
+        every: { hours: 1 }
+      },
+      routeId: "convrt_123",
+      state: "scheduled",
+      runtimeType: "hermes",
+      createdAt: "2026-06-24T12:00:00.000Z",
+      updatedAt: "2026-06-24T12:00:00.000Z"
+    });
+    expect(store.getScheduledJob("job-ai-news-hourly")).toEqual(job);
+    expect(store.listScheduledJobsForPrincipal("T123", "U123")).toEqual([job]);
+
+    store.upsertScheduledJob({
+      jobId: "job-ai-news-hourly",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      title: "Hourly AI news brief",
+      prompt: job.prompt,
+      schedule: job.schedule,
+      routeId: "convrt_123",
+      state: "paused",
+      runtimeType: "hermes",
+      now: new Date("2026-06-24T12:05:00.000Z")
+    });
+
+    expect(store.getScheduledJob("job-ai-news-hourly")).toMatchObject({
+      title: "Hourly AI news brief",
+      state: "paused",
+      createdAt: "2026-06-24T12:00:00.000Z",
+      updatedAt: "2026-06-24T12:05:00.000Z"
+    });
+
+    store.deleteScheduledJob("job-ai-news-hourly");
+    expect(store.getScheduledJob("job-ai-news-hourly")).toBeNull();
+
+    store.close();
+  });
 });

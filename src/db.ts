@@ -145,6 +145,22 @@ export type AgentJobStateRecord = {
   updatedAt: string;
 };
 
+export type ScheduledJobState = "scheduled" | "paused";
+
+export type ScheduledJobRecord = {
+  jobId: string;
+  workspaceId: string;
+  slackUserId: string;
+  title: string;
+  prompt: string;
+  schedule: unknown;
+  routeId: string | null;
+  state: ScheduledJobState;
+  runtimeType: AgentRuntimeEngine | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
 export type AgentJobRunStatus =
   | "queued"
   | "running"
@@ -224,6 +240,11 @@ type AgentMemoryRow = Omit<AgentMemoryRecord, "value"> & {
 
 type AgentJobStateRow = Omit<AgentJobStateRecord, "state"> & {
   stateJson: string;
+};
+
+type ScheduledJobRow = Omit<ScheduledJobRecord, "schedule" | "runtimeType"> & {
+  scheduleJson: string;
+  runtimeType: string | null;
 };
 
 type AgentJobRunRow = AgentJobRunRecord;
@@ -388,6 +409,23 @@ export function createTokenStore(path: string) {
 
     CREATE INDEX IF NOT EXISTS idx_agent_job_state_principal
       ON agent_job_state (workspace_id, slack_user_id, updated_at);
+
+    CREATE TABLE IF NOT EXISTS scheduled_jobs (
+      job_id TEXT PRIMARY KEY,
+      workspace_id TEXT NOT NULL,
+      slack_user_id TEXT NOT NULL,
+      title TEXT NOT NULL,
+      prompt TEXT NOT NULL,
+      schedule_json TEXT NOT NULL,
+      route_id TEXT,
+      state TEXT NOT NULL,
+      runtime_type TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_scheduled_jobs_principal
+      ON scheduled_jobs (workspace_id, slack_user_id, updated_at);
 
     CREATE TABLE IF NOT EXISTS agent_job_runs (
       run_id TEXT PRIMARY KEY,
@@ -1012,6 +1050,72 @@ export function createTokenStore(path: string) {
   `);
   const deleteAgentJobState = db.query(`
     DELETE FROM agent_job_state
+    WHERE job_id = ?
+  `);
+  const upsertScheduledJob = db.query(`
+    INSERT INTO scheduled_jobs (
+      job_id,
+      workspace_id,
+      slack_user_id,
+      title,
+      prompt,
+      schedule_json,
+      route_id,
+      state,
+      runtime_type,
+      created_at,
+      updated_at
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(job_id) DO UPDATE SET
+      workspace_id = excluded.workspace_id,
+      slack_user_id = excluded.slack_user_id,
+      title = excluded.title,
+      prompt = excluded.prompt,
+      schedule_json = excluded.schedule_json,
+      route_id = excluded.route_id,
+      state = excluded.state,
+      runtime_type = excluded.runtime_type,
+      updated_at = excluded.updated_at
+  `);
+  const getScheduledJob = db.query<ScheduledJobRow, [string]>(`
+    SELECT
+      job_id AS jobId,
+      workspace_id AS workspaceId,
+      slack_user_id AS slackUserId,
+      title,
+      prompt,
+      schedule_json AS scheduleJson,
+      route_id AS routeId,
+      state,
+      runtime_type AS runtimeType,
+      created_at AS createdAt,
+      updated_at AS updatedAt
+    FROM scheduled_jobs
+    WHERE job_id = ?
+  `);
+  const listScheduledJobsForPrincipal = db.query<
+    ScheduledJobRow,
+    [string, string]
+  >(`
+    SELECT
+      job_id AS jobId,
+      workspace_id AS workspaceId,
+      slack_user_id AS slackUserId,
+      title,
+      prompt,
+      schedule_json AS scheduleJson,
+      route_id AS routeId,
+      state,
+      runtime_type AS runtimeType,
+      created_at AS createdAt,
+      updated_at AS updatedAt
+    FROM scheduled_jobs
+    WHERE workspace_id = ? AND slack_user_id = ?
+    ORDER BY updated_at DESC, job_id ASC
+  `);
+  const deleteScheduledJob = db.query(`
+    DELETE FROM scheduled_jobs
     WHERE job_id = ?
   `);
   const createAgentJobRun = db.query(`
@@ -1867,6 +1971,59 @@ export function createTokenStore(path: string) {
       deleteAgentJobState.run(jobId);
     },
 
+    upsertScheduledJob(input: {
+      jobId: string;
+      workspaceId: string;
+      slackUserId: string;
+      title: string;
+      prompt: string;
+      schedule: unknown;
+      routeId?: string | null;
+      state?: ScheduledJobState | null;
+      runtimeType?: AgentRuntimeEngine | null;
+      now?: Date;
+    }): ScheduledJobRecord {
+      const now = (input.now ?? new Date()).toISOString();
+      const existing = getScheduledJob.get(input.jobId);
+      upsertScheduledJob.run(
+        input.jobId,
+        input.workspaceId,
+        input.slackUserId,
+        input.title,
+        input.prompt,
+        stableJson(input.schedule),
+        input.routeId ?? null,
+        input.state ?? "scheduled",
+        input.runtimeType ?? null,
+        existing?.createdAt ?? now,
+        now
+      );
+
+      const record = getScheduledJob.get(input.jobId);
+      if (!record) {
+        throw new Error("Failed to store scheduled job");
+      }
+      return toScheduledJobRecord(record);
+    },
+
+    getScheduledJob(jobId: string): ScheduledJobRecord | null {
+      const record = getScheduledJob.get(jobId);
+      return record ? toScheduledJobRecord(record) : null;
+    },
+
+    listScheduledJobsForPrincipal(
+      workspaceId: string,
+      slackUserId: string
+    ): ScheduledJobRecord[] {
+      return listScheduledJobsForPrincipal
+        .all(workspaceId, slackUserId)
+        .map(toScheduledJobRecord);
+    },
+
+    deleteScheduledJob(jobId: string): void {
+      deleteScheduledJob.run(jobId);
+    },
+
     createAgentJobRun(input: {
       runId?: string | null;
       jobId: string;
@@ -2261,6 +2418,22 @@ function toAgentJobStateRecord(row: AgentJobStateRow): AgentJobStateRecord {
   };
 }
 
+function toScheduledJobRecord(row: ScheduledJobRow): ScheduledJobRecord {
+  return {
+    jobId: row.jobId,
+    workspaceId: row.workspaceId,
+    slackUserId: row.slackUserId,
+    title: row.title,
+    prompt: row.prompt,
+    schedule: parseStoredJson(row.scheduleJson),
+    routeId: row.routeId,
+    state: normalizeScheduledJobState(row.state),
+    runtimeType: normalizeAgentRuntimeEngine(row.runtimeType),
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt
+  };
+}
+
 function toAgentJobRunRecord(row: AgentJobRunRow): AgentJobRunRecord {
   return {
     runId: row.runId,
@@ -2294,6 +2467,10 @@ function toAgentJobCapabilityRecord(
     createdAt: row.createdAt,
     updatedAt: row.updatedAt
   };
+}
+
+function normalizeScheduledJobState(state: string): ScheduledJobState {
+  return state === "paused" ? "paused" : "scheduled";
 }
 
 function normalizeAgentJobRunStatus(status: string): AgentJobRunStatus {

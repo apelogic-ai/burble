@@ -2,11 +2,17 @@ import { randomUUID } from "node:crypto";
 import type {
   AgentJobCapabilityRecord,
   AgentJobRunRecord,
+  AgentRuntimeEngine,
+  ScheduledJobRecord,
   TokenStore
 } from "../db";
 
 export type SchedulerJobSummary = {
   jobId: string;
+  title: string | null;
+  prompt: string | null;
+  schedule: unknown | null;
+  state: "scheduled" | "paused" | "registered";
   runtimeType: string | null;
   requiredTools: string[];
   routeId: string | null;
@@ -18,6 +24,9 @@ export type SchedulerControlPlane = {
     workspaceId: string;
     slackUserId: string;
   }): Promise<SchedulerJobSummary[]> | SchedulerJobSummary[];
+  createJob?(input: SchedulerCreateJobInput):
+    | Promise<SchedulerCreateJobResult>
+    | SchedulerCreateJobResult;
   triggerJob?(input: {
     workspaceId: string;
     slackUserId: string;
@@ -36,11 +45,26 @@ export type SchedulerTriggerResult =
       jobId: string;
       run: AgentJobRunRecord;
     }
-  | {
-      ok: false;
-      reason: "no_jobs" | "not_found" | "ambiguous";
-      jobs: SchedulerJobSummary[];
-    };
+    | {
+        ok: false;
+        reason: "no_jobs" | "not_found" | "ambiguous";
+        jobs: SchedulerJobSummary[];
+      };
+
+export type SchedulerCreateJobInput = {
+  workspaceId: string;
+  slackUserId: string;
+  title: string;
+  prompt: string;
+  schedule: unknown;
+  routeId?: string | null;
+  runtimeType?: AgentRuntimeEngine | null;
+};
+
+export type SchedulerCreateJobResult = {
+  ok: true;
+  job: ScheduledJobRecord;
+};
 
 export type SchedulerRunStatusResult =
   | {
@@ -54,12 +78,15 @@ export type SchedulerRunStatusResult =
 
 type SchedulerControlPlaneOptions = {
   now?: () => Date;
+  newJobId?: () => string;
   newRunId?: () => string;
 };
 
 export function createSchedulerControlPlane(
   store: Pick<
     TokenStore,
+    | "listScheduledJobsForPrincipal"
+    | "upsertScheduledJob"
     | "listAgentJobCapabilitiesForPrincipal"
     | "createAgentJobRun"
     | "getLatestAgentJobRunForPrincipal"
@@ -67,23 +94,44 @@ export function createSchedulerControlPlane(
   options: SchedulerControlPlaneOptions = {}
 ): SchedulerControlPlane {
   const now = options.now ?? (() => new Date());
+  const newJobId = options.newJobId ?? (() => `job_${randomUUID()}`);
   const newRunId = options.newRunId ?? (() => `jobrun_${randomUUID()}`);
+  const listJobs = (input: {
+    workspaceId: string;
+    slackUserId: string;
+  }): SchedulerJobSummary[] => {
+    const jobs = store
+      .listScheduledJobsForPrincipal(input.workspaceId, input.slackUserId)
+      .map(summarizeScheduledJob);
+    const jobIds = new Set(jobs.map((job) => job.jobId));
+    const capabilityOnlyJobs = store
+      .listAgentJobCapabilitiesForPrincipal(input.workspaceId, input.slackUserId)
+      .filter((record) => !jobIds.has(record.jobId))
+      .map(summarizeJobCapability);
+    return [...jobs, ...capabilityOnlyJobs];
+  };
+
   return {
-    listJobs(input) {
-      return store
-        .listAgentJobCapabilitiesForPrincipal(
-          input.workspaceId,
-          input.slackUserId
-        )
-        .map(summarizeJobCapability);
+    listJobs,
+    createJob(input) {
+      return {
+        ok: true,
+        job: store.upsertScheduledJob({
+          jobId: newJobId(),
+          workspaceId: input.workspaceId,
+          slackUserId: input.slackUserId,
+          title: input.title,
+          prompt: input.prompt,
+          schedule: input.schedule,
+          routeId: input.routeId,
+          runtimeType: input.runtimeType,
+          state: "scheduled",
+          now: now()
+        })
+      };
     },
     triggerJob(input) {
-      const jobs = store
-        .listAgentJobCapabilitiesForPrincipal(
-          input.workspaceId,
-          input.slackUserId
-        )
-        .map(summarizeJobCapability);
+      const jobs = listJobs(input);
       const job = selectSchedulerJob(jobs, input.jobId);
       if (!job.ok) {
         return job;
@@ -114,11 +162,29 @@ export function createSchedulerControlPlane(
   };
 }
 
+function summarizeScheduledJob(record: ScheduledJobRecord): SchedulerJobSummary {
+  return {
+    jobId: record.jobId,
+    title: record.title,
+    prompt: record.prompt,
+    schedule: record.schedule,
+    state: record.state,
+    runtimeType: record.runtimeType,
+    requiredTools: [],
+    routeId: record.routeId,
+    updatedAt: record.updatedAt
+  };
+}
+
 function summarizeJobCapability(
   record: AgentJobCapabilityRecord
 ): SchedulerJobSummary {
   return {
     jobId: record.jobId,
+    title: null,
+    prompt: null,
+    schedule: null,
+    state: "registered",
     runtimeType: record.runtimeType,
     requiredTools: record.requiredTools,
     routeId: record.routeId,

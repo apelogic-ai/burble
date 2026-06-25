@@ -5,8 +5,22 @@ import { createSchedulerControlPlane } from "../../src/scheduler/control-plane";
 describe("scheduler control plane", () => {
   test("lists persisted scheduled job capabilities for a principal", async () => {
     const store = createTokenStore(":memory:");
-    store.upsertAgentJobCapability({
+    store.upsertScheduledJob({
       jobId: "ai-news-hourly",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      title: "Hourly AI news summary",
+      prompt: "look for fresh AI-related news and post a short summary",
+      schedule: {
+        kind: "interval",
+        every: { hours: 1 }
+      },
+      routeId: "convrt_123",
+      runtimeType: "hermes",
+      now: new Date("2026-06-24T12:02:00.000Z")
+    });
+    store.upsertAgentJobCapability({
+      jobId: "legacy-ai-news-hourly",
       workspaceId: "T123",
       slackUserId: "U123",
       requiredTools: ["google_search_drive_files"],
@@ -30,12 +44,77 @@ describe("scheduler control plane", () => {
     ).toEqual([
       {
         jobId: "ai-news-hourly",
+        title: "Hourly AI news summary",
+        prompt: "look for fresh AI-related news and post a short summary",
+        schedule: {
+          kind: "interval",
+          every: { hours: 1 }
+        },
+        state: "scheduled",
+        runtimeType: "hermes",
+        requiredTools: [],
+        routeId: "convrt_123",
+        updatedAt: "2026-06-24T12:02:00.000Z"
+      },
+      {
+        jobId: "legacy-ai-news-hourly",
+        title: null,
+        prompt: null,
+        schedule: null,
+        state: "registered",
         runtimeType: "hermes",
         requiredTools: ["google_search_drive_files"],
         routeId: "convrt_123",
         updatedAt: "2026-06-24T12:00:00.000Z"
       }
     ]);
+
+    store.close();
+  });
+
+  test("creates Burble-owned scheduled jobs", async () => {
+    const store = createTokenStore(":memory:");
+    const scheduler = createSchedulerControlPlane(store, {
+      now: () => new Date("2026-06-24T12:00:00.000Z"),
+      newJobId: () => "job-created-1"
+    });
+
+    expect(
+      await scheduler.createJob?.({
+        workspaceId: "T123",
+        slackUserId: "U123",
+        title: "Hourly AI news summary",
+        prompt: "look for fresh AI-related news and post a short summary",
+        schedule: {
+          kind: "interval",
+          every: { hours: 1 }
+        },
+        routeId: "convrt_123",
+        runtimeType: "hermes"
+      })
+    ).toEqual({
+      ok: true,
+      job: {
+        jobId: "job-created-1",
+        workspaceId: "T123",
+        slackUserId: "U123",
+        title: "Hourly AI news summary",
+        prompt: "look for fresh AI-related news and post a short summary",
+        schedule: {
+          kind: "interval",
+          every: { hours: 1 }
+        },
+        routeId: "convrt_123",
+        state: "scheduled",
+        runtimeType: "hermes",
+        createdAt: "2026-06-24T12:00:00.000Z",
+        updatedAt: "2026-06-24T12:00:00.000Z"
+      }
+    });
+    expect(
+      (await scheduler.listJobs({ workspaceId: "T123", slackUserId: "U123" }))
+        .map((job) => job.jobId)
+    ).toEqual(["job-created-1"]);
 
     store.close();
   });

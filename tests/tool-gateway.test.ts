@@ -159,6 +159,10 @@ function createStore(
   jobRuns: {
     created?: AgentJobRunRecord[];
     latest?: AgentJobRunRecord | null;
+  } = {},
+  scheduledJobs: {
+    list?: ReturnType<TokenStore["listScheduledJobsForPrincipal"]>;
+    upserts?: unknown[];
   } = {}
 ): TokenStore {
   let route = foundRoute;
@@ -289,6 +293,30 @@ function createStore(
     getAgentJobState: () => null,
     listAgentJobStatesForPrincipal: () => [],
     deleteAgentJobState: () => undefined,
+    upsertScheduledJob: (input) => {
+      scheduledJobs.upserts?.push(input);
+      const now = (input.now ?? new Date("2026-06-24T12:00:00.000Z")).toISOString();
+      return {
+        jobId: input.jobId,
+        workspaceId: input.workspaceId,
+        slackUserId: input.slackUserId,
+        title: input.title,
+        prompt: input.prompt,
+        schedule: input.schedule,
+        routeId: input.routeId ?? null,
+        state: input.state ?? "scheduled",
+        runtimeType: input.runtimeType ?? null,
+        createdAt: now,
+        updatedAt: now
+      };
+    },
+    getScheduledJob: () => null,
+    listScheduledJobsForPrincipal: (workspaceId, slackUserId) =>
+      (scheduledJobs.list ?? []).filter(
+        (job) =>
+          job.workspaceId === workspaceId && job.slackUserId === slackUserId
+      ),
+    deleteScheduledJob: () => undefined,
     createAgentJobRun: (input) => {
       const now = (input.now ?? new Date("2026-06-24T12:00:00.000Z")).toISOString();
       const record: AgentJobRunRecord = {
@@ -1754,6 +1782,10 @@ describe("handleToolGatewayRequest", () => {
         jobs: [
           {
             jobId: "ai-news-hourly",
+            title: null,
+            prompt: null,
+            schedule: null,
+            state: "registered",
             runtimeType: "hermes",
             requiredTools: ["web_extract"],
             routeId: "convrt_abcdefabcdefabcdefabcdef",

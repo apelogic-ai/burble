@@ -887,6 +887,13 @@ describe("handleConversation", () => {
           listJobs: () => [
             {
               jobId: "ai-news-hourly",
+              title: "Hourly AI news summary",
+              prompt: "look for fresh AI-related news and post a short summary",
+              schedule: {
+                kind: "interval",
+                every: { hours: 1 }
+              },
+              state: "scheduled",
               runtimeType: "hermes",
               requiredTools: ["google_search_drive_files"],
               routeId: "convrt_123",
