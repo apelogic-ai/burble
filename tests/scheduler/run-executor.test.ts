@@ -193,4 +193,95 @@ describe("scheduler run executor", () => {
 
     store.close();
   });
+
+  test("posts a terminal failure message when the runtime run fails", async () => {
+    const store = createTokenStore(":memory:");
+    const route = store.upsertConversationRoute({
+      workspaceId: "T123",
+      slackUserId: "U123",
+      transport: "slack",
+      destination: {
+        channelId: "C123",
+        isDirectMessage: false,
+        rootId: "slack:C123:1710000000.000000",
+        threadTs: "1710000000.000000",
+      },
+      now: new Date("2026-06-25T17:00:00.000Z"),
+    });
+    const job = store.upsertScheduledJob({
+      jobId: "job-ai-news",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      title: "Hourly AI news summary",
+      prompt: "Find fresh AI news and summarize it.",
+      schedule: { kind: "interval", every: { hours: 1 } },
+      routeId: route.id,
+      runtimeType: "openclaw",
+      state: "scheduled",
+      now: new Date("2026-06-25T17:01:00.000Z"),
+    });
+    const run = store.createAgentJobRun({
+      runId: "jobrun-ai-news",
+      jobId: job.jobId,
+      workspaceId: "T123",
+      slackUserId: "U123",
+      triggerSource: "manual",
+      status: "queued",
+      now: new Date("2026-06-25T17:02:00.000Z"),
+    });
+    const runner: AgentRunner = {
+      name: "test-runner",
+      capabilities: {
+        streaming: true,
+        toolEvents: true,
+        remote: true,
+      },
+      async *run() {
+        throw new Error(
+          "Runtime run failed: Tool github_list_my_pull_requests is not available to scheduled job job-ai-news",
+        );
+      },
+    };
+    const posts: Array<{ channel: string; text: string; thread_ts?: string }> =
+      [];
+    const warnings: string[] = [];
+    const executor = createSchedulerRunExecutor({
+      store,
+      agentRunner: runner,
+      slackClient: {
+        chat: {
+          postMessage: async (message) => {
+            posts.push(message);
+            return {};
+          },
+        },
+      },
+      logWarn: (message) => warnings.push(message),
+    });
+
+    await executor.executeRun(run.runId);
+
+    expect(store.getAgentJobRun(run.runId)).toMatchObject({
+      status: "failed",
+      failureReason:
+        "Runtime run failed: Tool github_list_my_pull_requests is not available to scheduled job job-ai-news",
+    });
+    expect(posts).toEqual([
+      {
+        channel: "C123",
+        thread_ts: "1710000000.000000",
+        text: [
+          "Scheduled job failed: Hourly AI news summary",
+          "Job ID: job-ai-news",
+          "Run ID: jobrun-ai-news",
+          "Reason: Runtime run failed: Tool github_list_my_pull_requests is not available to scheduled job job-ai-news",
+        ].join("\n"),
+      },
+    ]);
+    expect(warnings[0]).toContain(
+      "Scheduled job run failed runId=jobrun-ai-news",
+    );
+
+    store.close();
+  });
 });

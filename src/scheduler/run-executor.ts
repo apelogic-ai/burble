@@ -50,9 +50,11 @@ export function createSchedulerRunExecutor(input: {
       if (!run) {
         return;
       }
+      let job: ScheduledJobRecord | null = null;
+      let destination: ReturnType<typeof readSlackRouteDestination> = null;
 
       try {
-        const job = input.store.getScheduledJob(run.jobId);
+        job = input.store.getScheduledJob(run.jobId);
         if (!job) {
           throw new Error("Scheduled job not found");
         }
@@ -60,7 +62,7 @@ export function createSchedulerRunExecutor(input: {
         const route = job.routeId
           ? input.store.getConversationRoute(job.routeId)
           : null;
-        const destination = route ? readSlackRouteDestination(route) : null;
+        destination = route ? readSlackRouteDestination(route) : null;
         if (job.routeId && !destination) {
           throw new Error("Scheduled job delivery route is unavailable");
         }
@@ -135,6 +137,25 @@ export function createSchedulerRunExecutor(input: {
         input.logWarn?.(
           `Scheduled job run failed runId=${run.runId} error=${message}`,
         );
+        if (job && destination) {
+          try {
+            await input.slackClient.chat.postMessage({
+              channel: destination.channelId,
+              text: formatScheduledJobFailureMessage(job, run, message),
+              ...(destination.threadTs && !destination.isDirectMessage
+                ? { thread_ts: destination.threadTs }
+                : {}),
+            });
+          } catch (deliveryError) {
+            const deliveryMessage =
+              deliveryError instanceof Error
+                ? deliveryError.message
+                : "Scheduled job failure delivery failed";
+            input.logWarn?.(
+              `Scheduled job failure notification failed runId=${run.runId} error=${deliveryMessage}`,
+            );
+          }
+        }
       }
     },
   };
@@ -196,4 +217,18 @@ function readSlackRouteDestination(route: ConversationRouteRecord): {
   } catch {
     return null;
   }
+}
+
+function formatScheduledJobFailureMessage(
+  job: ScheduledJobRecord,
+  run: AgentJobRunRecord,
+  message: string,
+): string {
+  const title = job.title?.trim() || job.jobId;
+  return [
+    `Scheduled job failed: ${title}`,
+    `Job ID: ${job.jobId}`,
+    `Run ID: ${run.runId}`,
+    `Reason: ${message.slice(0, 500)}`,
+  ].join("\n");
 }
