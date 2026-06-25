@@ -271,6 +271,9 @@ describe("runOpenClawCliRequest", () => {
         runtimeJwt: "runtime-jwt"
       },
       async (toolName) => {
+        if (toolName !== "burble.mcp.listTools") {
+          throw new Error(`unexpected scheduled baseline tool call: ${toolName}`);
+        }
         if (toolName === "burble.mcp.listTools") {
           return {
             classification: "user_private",

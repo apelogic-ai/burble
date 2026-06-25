@@ -1741,7 +1741,9 @@ async function buildBurbleToolContext(
   const startedAt = Date.now();
   logInfo(`OpenClaw context start runId=${request.runId ?? "unknown"}`);
   const [baseline, catalogBuild] = await Promise.all([
-    runBurbleRequest(request, config, executeTool),
+    request.input.scheduledJob
+      ? scheduledJobBaselineResponse()
+      : runBurbleRequest(request, config, executeTool),
     buildToolCatalog(request, config, executeTool)
   ]);
   logInfo(
@@ -1752,6 +1754,15 @@ async function buildBurbleToolContext(
     baseline,
     catalog: catalogBuild.catalog,
     upstreamMcpSchemas: catalogBuild.upstreamMcpSchemas
+  };
+}
+
+function scheduledJobBaselineResponse(): RunResponse {
+  return {
+    response: {
+      classification: "user_private",
+      text: "No Burble baseline prefetch is needed for this scheduled job run."
+    }
   };
 }
 
