@@ -112,4 +112,44 @@ describe("scheduler timer", () => {
 
     store.close();
   });
+
+  test("ignores stale active runs when deciding whether a scheduled job is due", async () => {
+    const store = createTokenStore(":memory:");
+    store.upsertScheduledJob({
+      jobId: "job-ai-news",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      title: "Hourly AI news summary",
+      prompt: "Find fresh AI news and summarize it.",
+      schedule: { kind: "interval", every: { hours: 1 } },
+      runtimeType: "openclaw",
+      state: "scheduled",
+      now: new Date("2026-06-25T17:00:00.000Z"),
+    });
+    store.createAgentJobRun({
+      runId: "jobrun-stale",
+      jobId: "job-ai-news",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      triggerSource: "manual",
+      status: "queued",
+      now: new Date("2026-06-25T17:05:00.000Z"),
+    });
+    const executed: string[] = [];
+    const timer = createSchedulerTimer({
+      store,
+      now: () => new Date("2026-06-25T18:30:00.000Z"),
+      newRunId: () => "jobrun-timer-after-stale",
+      executeRun: async (runId) => {
+        executed.push(runId);
+      },
+    });
+
+    expect(await timer.tick()).toEqual({
+      queuedRunIds: ["jobrun-timer-after-stale"],
+    });
+    expect(executed).toEqual(["jobrun-timer-after-stale"]);
+
+    store.close();
+  });
 });

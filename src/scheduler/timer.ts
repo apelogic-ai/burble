@@ -21,18 +21,22 @@ export type SchedulerTimerTickResult = {
   queuedRunIds: string[];
 };
 
+const DEFAULT_ACTIVE_RUN_TTL_MS = 10 * 60_000;
+
 export function createSchedulerTimer(input: {
   store: SchedulerTimerStore;
   executeRun: (runId: string) => Promise<void> | void;
   now?: () => Date;
   newRunId?: () => string;
   intervalMs?: number;
+  activeRunTtlMs?: number;
   logInfo?: (message: string) => void;
   logWarn?: (message: string) => void;
 }): SchedulerTimer {
   const now = input.now ?? (() => new Date());
   const newRunId = input.newRunId ?? (() => `jobrun_${randomUUID()}`);
   const intervalMs = input.intervalMs ?? 60_000;
+  const activeRunTtlMs = input.activeRunTtlMs ?? DEFAULT_ACTIVE_RUN_TTL_MS;
   let timer: ReturnType<typeof setInterval> | undefined;
   let ticking = false;
 
@@ -49,11 +53,16 @@ export function createSchedulerTimer(input: {
         const principalKey = scheduledJobPrincipalKey(job);
         if (
           activePrincipals.has(principalKey) ||
-          hasActiveScheduledJobRunForPrincipal(job, input.store)
+          hasActiveScheduledJobRunForPrincipal(
+            job,
+            input.store,
+            timestamp,
+            activeRunTtlMs,
+          )
         ) {
           continue;
         }
-        if (!isScheduledJobDue(job, input.store, timestamp)) {
+        if (!isScheduledJobDue(job, input.store, timestamp, activeRunTtlMs)) {
           continue;
         }
         input.store.upsertAgentJobCapability({
@@ -127,6 +136,7 @@ function isScheduledJobDue(
   job: ScheduledJobRecord,
   store: Pick<TokenStore, "listAgentJobRunsForJob">,
   now: Date,
+  activeRunTtlMs: number,
 ): boolean {
   if (job.state !== "scheduled") {
     return false;
@@ -137,7 +147,7 @@ function isScheduledJobDue(
   }
   const runs = store.listAgentJobRunsForJob(job.jobId);
   const latestRun = runs[0];
-  if (latestRun && isActiveRun(latestRun)) {
+  if (latestRun && isActiveRun(latestRun, now, activeRunTtlMs)) {
     return false;
   }
   const anchor = latestRun?.createdAt ?? job.updatedAt ?? job.createdAt;
@@ -151,18 +161,31 @@ function isScheduledJobDue(
 function hasActiveScheduledJobRunForPrincipal(
   job: ScheduledJobRecord,
   store: Pick<TokenStore, "listAgentJobRunsForPrincipal">,
+  now: Date,
+  activeRunTtlMs: number,
 ): boolean {
   return store
     .listAgentJobRunsForPrincipal(job.workspaceId, job.slackUserId, null, 25)
-    .some(isActiveRun);
+    .some((run) => isActiveRun(run, now, activeRunTtlMs));
 }
 
 function scheduledJobPrincipalKey(job: ScheduledJobRecord): string {
   return `${job.workspaceId}:${job.slackUserId}`;
 }
 
-function isActiveRun(run: AgentJobRunRecord): boolean {
-  return run.status === "queued" || run.status === "running";
+function isActiveRun(
+  run: AgentJobRunRecord,
+  now: Date,
+  activeRunTtlMs: number,
+): boolean {
+  if (run.status !== "queued" && run.status !== "running") {
+    return false;
+  }
+  const updatedAtMs = Date.parse(run.updatedAt);
+  if (!Number.isFinite(updatedAtMs)) {
+    return true;
+  }
+  return now.getTime() - updatedAtMs <= activeRunTtlMs;
 }
 
 function scheduledJobIntervalMs(schedule: unknown): number | null {
