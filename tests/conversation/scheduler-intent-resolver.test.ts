@@ -53,6 +53,18 @@ describe("scheduler intent resolver", () => {
     });
   });
 
+  test("parses delivery update intents", () => {
+    expect(
+      parseSchedulerIntentResponse(
+        '{"intent":"update_job_delivery","confidence":0.88,"jobId":"job_ai_news"}',
+      ),
+    ).toEqual({
+      intent: "update_job_delivery",
+      confidence: 0.88,
+      jobId: "job_ai_news",
+    });
+  });
+
   test("rejects unsupported intents", () => {
     expect(
       parseSchedulerIntentResponse(

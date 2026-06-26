@@ -14,6 +14,7 @@ import type {
   SchedulerJobMutationResult,
   SchedulerRunStatusResult,
   SchedulerTriggerResult,
+  SchedulerUpdateJobDeliveryResult,
 } from "../scheduler/control-plane";
 import type {
   ConversationDeps,
@@ -60,6 +61,10 @@ async function handleConversationInternal(
   const schedulerCreateRequest =
     schedulerControlIntent === "create_job"
       ? parseSchedulerCreateRequest(request.text)
+      : null;
+  const schedulerDeliveryUpdateRequest =
+    schedulerControlIntent === "update_job_delivery"
+      ? parseSchedulerDeliveryUpdateRequest(request)
       : null;
   const toolGroups = selectRuntimeToolGroups({
     text: request.text,
@@ -255,6 +260,25 @@ async function handleConversationInternal(
   }
 
   if (
+    schedulerControlIntent === "update_job_delivery" &&
+    deps.schedulerControl?.updateJobDelivery
+  ) {
+    const result = await deps.schedulerControl.updateJobDelivery({
+      workspaceId: request.workspaceId,
+      slackUserId: request.user.slackUserId,
+      jobId: schedulerJobIdHint,
+      routeId: schedulerDeliveryUpdateRequest?.routeId ?? null,
+      channelId: schedulerDeliveryUpdateRequest?.channelId ?? null,
+      channelName: schedulerDeliveryUpdateRequest?.channelName ?? null,
+    });
+    return {
+      visibility: "ephemeral",
+      classification: "user_private",
+      text: formatScheduledJobDeliveryUpdateResult(result),
+    };
+  }
+
+  if (
     schedulerControlIntent === "latest_run_status" &&
     deps.schedulerControl?.getLatestRunStatus
   ) {
@@ -425,6 +449,9 @@ function classifySchedulerControlIntent(text: string): SchedulerControlIntent {
   if (hasAnyToken(tokens, ["delete", "remove", "cancel"])) {
     return "delete_job";
   }
+  if (isSchedulerDeliveryUpdateIntent(tokens)) {
+    return "update_job_delivery";
+  }
   if (isSchedulerTriggerIntent(tokens)) {
     return "trigger_job";
   }
@@ -436,6 +463,10 @@ async function resolveSchedulerControlIntent(
   deps: ConversationDeps,
 ): Promise<{ intent: SchedulerControlIntent; jobId: string | null }> {
   const fallbackJobId = readSchedulerJobIdHint(request.text);
+  const deterministicIntent =
+    classifyExplicitSchedulerJobIdIntent(request.text) ??
+    classifySchedulerControlIntent(request.text) ??
+    (parseSchedulerCreateRequest(request.text) ? "create_job" : null);
 
   if (deps.schedulerIntentResolver) {
     try {
@@ -466,14 +497,16 @@ async function resolveSchedulerControlIntent(
       // Resolver failures should not make ordinary conversation turns fail.
     }
 
-    return { intent: null, jobId: fallbackJobId };
+    return {
+      intent:
+        deterministicIntent === "update_job_delivery"
+          ? deterministicIntent
+          : null,
+      jobId: fallbackJobId,
+    };
   }
 
-  const fallbackIntent =
-    classifyExplicitSchedulerJobIdIntent(request.text) ??
-    classifySchedulerControlIntent(request.text) ??
-    (parseSchedulerCreateRequest(request.text) ? "create_job" : null);
-  return { intent: fallbackIntent, jobId: null };
+  return { intent: deterministicIntent, jobId: null };
 }
 
 function resolveSchedulerResolverJobId(
@@ -508,10 +541,7 @@ function resolveSchedulerResolverJobId(
 }
 
 function normalizeSchedulerJobTitle(title: string | null): string | null {
-  const normalized = title
-    ?.toLowerCase()
-    .replace(/\s+/g, " ")
-    .trim();
+  const normalized = title?.toLowerCase().replace(/\s+/g, " ").trim();
   return normalized || null;
 }
 
@@ -534,6 +564,9 @@ function classifyExplicitSchedulerJobIdIntent(
   if (hasAnyToken(tokens, ["delete", "remove", "cancel"])) {
     return "delete_job";
   }
+  if (isSchedulerDeliveryUpdateIntent(tokens)) {
+    return "update_job_delivery";
+  }
   if (hasAnyToken(tokens, ["run", "running", "trigger", "start", "test"])) {
     return "trigger_job";
   }
@@ -554,6 +587,7 @@ function normalizeResolvedSchedulerIntent(
     result.intent === "pause_job" ||
     result.intent === "resume_job" ||
     result.intent === "delete_job" ||
+    result.intent === "update_job_delivery" ||
     result.intent === "latest_run_status"
   ) {
     return result.intent;
@@ -711,6 +745,26 @@ function isSchedulerTriggerIntent(tokens: string[]): boolean {
   );
 }
 
+function isSchedulerDeliveryUpdateIntent(tokens: string[]): boolean {
+  if (looksLikeSchedulerCreationRequest(tokens)) {
+    return false;
+  }
+  if (!hasAnyToken(tokens, ["change", "modify", "move", "switch", "update"])) {
+    return false;
+  }
+  if (
+    !hasAnyToken(tokens, ["channel", "delivery", "deliver", "post", "send"])
+  ) {
+    return false;
+  }
+  return (
+    hasAnyToken(tokens, ["cron", "task", "tasks"]) ||
+    hasScheduledJobReference(tokens) ||
+    hasSchedulerActionReference(tokens) ||
+    tokens.some((token) => /^job[_-][a-z0-9_.-]{2,}$/i.test(token))
+  );
+}
+
 function looksLikeSchedulerCreationRequest(tokens: string[]): boolean {
   return (
     hasAnyToken(tokens, ["create", "make", "schedule", "add"]) ||
@@ -725,6 +779,49 @@ type ParsedSchedulerCreateRequest = {
   schedule: unknown;
   scheduleLabel: string;
 };
+
+type ParsedSchedulerDeliveryUpdateRequest = {
+  routeId: string | null;
+  channelId: string | null;
+  channelName: string | null;
+};
+
+function parseSchedulerDeliveryUpdateRequest(
+  request: ConversationRequest,
+): ParsedSchedulerDeliveryUpdateRequest {
+  const mention = /<#([A-Z0-9]+)(?:\|([^>]+))?>/.exec(request.text);
+  if (mention) {
+    return {
+      routeId: null,
+      channelId: mention[1],
+      channelName: normalizeSlackChannelName(mention[2] ?? null),
+    };
+  }
+
+  if (
+    /\b(?:this|current|here)\s+(?:channel|conversation|thread)\b/i.test(
+      request.text,
+    )
+  ) {
+    return {
+      routeId: request.conversationRouteId ?? null,
+      channelId: null,
+      channelName: null,
+    };
+  }
+
+  const channelName = /(^|\s)#([a-z0-9][a-z0-9_-]*)\b/i.exec(request.text);
+  return {
+    routeId: null,
+    channelId: null,
+    channelName: channelName ? normalizeSlackChannelName(channelName[2]) : null,
+  };
+}
+
+function normalizeSlackChannelName(value: string | null): string | null {
+  const normalized = value?.trim().replace(/^#/, "").toLowerCase();
+  return normalized || null;
+}
 
 function parseSchedulerCreateRequest(
   text: string,
@@ -995,10 +1092,40 @@ function formatScheduledJobDeleteResult(
   return formatScheduledJobSelectionFailure(result);
 }
 
+function formatScheduledJobDeliveryUpdateResult(
+  result: SchedulerUpdateJobDeliveryResult,
+): string {
+  if (result.ok) {
+    return [
+      `Updated scheduled job ${result.job.jobId} delivery.`,
+      `- route: ${result.routeId}`,
+    ].join("\n");
+  }
+  if (
+    result.reason === "no_jobs" ||
+    result.reason === "not_found" ||
+    result.reason === "ambiguous"
+  ) {
+    return formatScheduledJobSelectionFailure(result);
+  }
+  if (result.reason === "no_destination") {
+    return "I could not find a delivery destination in that request.";
+  }
+  if (result.reason === "unresolved_channel") {
+    const channel = result.channelName
+      ? `#${result.channelName}`
+      : "that channel";
+    return `I can’t resolve \`${channel}\` from this message. Mention the Slack channel directly, or grant Burble access from that channel and retry.`;
+  }
+  const channel = result.channelId ? `<#${result.channelId}>` : "that channel";
+  return `No scheduled-job delivery grant exists for ${channel}. Grant Burble access from that channel, then retry.`;
+}
+
 function formatScheduledJobSelectionFailure(
   result:
     | Extract<SchedulerJobMutationResult, { ok: false }>
-    | Extract<SchedulerJobDeleteResult, { ok: false }>,
+    | Extract<SchedulerJobDeleteResult, { ok: false }>
+    | Extract<SchedulerUpdateJobDeliveryResult, { ok: false }>,
 ): string {
   if (result.reason === "no_jobs") {
     return "No scheduled tasks are configured.";

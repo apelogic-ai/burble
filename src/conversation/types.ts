@@ -85,6 +85,7 @@ export type SchedulerControlIntent =
   | "pause_job"
   | "resume_job"
   | "delete_job"
+  | "update_job_delivery"
   | "latest_run_status"
   | null;
 

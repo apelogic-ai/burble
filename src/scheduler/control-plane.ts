@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import type {
   AgentJobRunRecord,
   AgentRuntimeEngine,
+  ConversationRouteRecord,
   ScheduledJobRecord,
   TokenStore,
 } from "../db";
@@ -39,6 +40,11 @@ export type SchedulerControlPlane = {
   deleteJob?(
     input: SchedulerJobMutationInput,
   ): Promise<SchedulerJobDeleteResult> | SchedulerJobDeleteResult;
+  updateJobDelivery?(
+    input: SchedulerUpdateJobDeliveryInput,
+  ):
+    | Promise<SchedulerUpdateJobDeliveryResult>
+    | SchedulerUpdateJobDeliveryResult;
   triggerJob?(input: {
     workspaceId: string;
     slackUserId: string;
@@ -95,6 +101,12 @@ export type SchedulerJobMutationInput = {
   jobId?: string | null;
 };
 
+export type SchedulerUpdateJobDeliveryInput = SchedulerJobMutationInput & {
+  routeId?: string | null;
+  channelId?: string | null;
+  channelName?: string | null;
+};
+
 export type SchedulerJobMutationResult =
   | {
       ok: true;
@@ -104,6 +116,26 @@ export type SchedulerJobMutationResult =
       ok: false;
       reason: "no_jobs" | "not_found" | "ambiguous";
       jobs: SchedulerJobSummary[];
+    };
+
+export type SchedulerUpdateJobDeliveryResult =
+  | {
+      ok: true;
+      job: ScheduledJobRecord;
+      routeId: string;
+    }
+  | {
+      ok: false;
+      reason:
+        | "no_jobs"
+        | "not_found"
+        | "ambiguous"
+        | "no_destination"
+        | "no_grant"
+        | "unresolved_channel";
+      jobs: SchedulerJobSummary[];
+      channelId?: string | null;
+      channelName?: string | null;
     };
 
 export type SchedulerJobDeleteResult =
@@ -143,6 +175,7 @@ export function createSchedulerControlPlane(
     | "listAgentJobRunsForPrincipal"
     | "upsertAgentJobCapability"
     | "getLatestAgentJobRunForPrincipal"
+    | "getConversationGrantRouteForSlackChannel"
   >,
   options: SchedulerControlPlaneOptions = {},
 ): SchedulerControlPlane {
@@ -208,6 +241,9 @@ export function createSchedulerControlPlane(
       store.deleteScheduledJob(selection.job.jobId);
       return { ok: true, jobId: selection.job.jobId };
     },
+    updateJobDelivery(input) {
+      return updateScheduledJobDelivery(store, input, now());
+    },
     triggerJob(input) {
       const jobs = listJobs(input);
       const job = selectSchedulerJob(jobs, input.jobId);
@@ -245,6 +281,91 @@ export function createSchedulerControlPlane(
       return run ? { ok: true, run } : { ok: false, reason: "no_runs" };
     },
   };
+}
+
+function updateScheduledJobDelivery(
+  store: Pick<
+    TokenStore,
+    | "listScheduledJobsForPrincipal"
+    | "upsertScheduledJob"
+    | "upsertAgentJobCapability"
+    | "getConversationGrantRouteForSlackChannel"
+  >,
+  input: SchedulerUpdateJobDeliveryInput,
+  now: Date,
+): SchedulerUpdateJobDeliveryResult {
+  const records = store.listScheduledJobsForPrincipal(
+    input.workspaceId,
+    input.slackUserId,
+  );
+  const jobs = records.map(summarizeScheduledJob);
+  const selection = selectSchedulerJob(jobs, input.jobId);
+  if (!selection.ok) {
+    return selection;
+  }
+  const record = records.find((job) => job.jobId === selection.job.jobId);
+  if (!record) {
+    return { ok: false, reason: "not_found", jobs };
+  }
+
+  const routeId = input.routeId?.trim();
+  const channelId = input.channelId?.trim();
+  const channelName = input.channelName?.trim();
+  let resolvedRouteId = routeId || null;
+
+  if (!resolvedRouteId && channelId) {
+    const route = activeGrantRoute(
+      store.getConversationGrantRouteForSlackChannel({
+        workspaceId: input.workspaceId,
+        slackUserId: input.slackUserId,
+        channelId,
+      }),
+    );
+    if (!route) {
+      return {
+        ok: false,
+        reason: "no_grant",
+        jobs,
+        channelId,
+        ...(channelName ? { channelName } : {}),
+      };
+    }
+    resolvedRouteId = route.id;
+  }
+
+  if (!resolvedRouteId && channelName) {
+    return {
+      ok: false,
+      reason: "unresolved_channel",
+      jobs,
+      channelName,
+    };
+  }
+
+  if (!resolvedRouteId) {
+    return { ok: false, reason: "no_destination", jobs };
+  }
+
+  const job = store.upsertScheduledJob({
+    jobId: record.jobId,
+    workspaceId: record.workspaceId,
+    slackUserId: record.slackUserId,
+    title: record.title,
+    prompt: record.prompt,
+    schedule: record.schedule,
+    routeId: resolvedRouteId,
+    runtimeType: record.runtimeType,
+    state: record.state,
+    now,
+  });
+  ensureScheduledJobCapability(store, job, now);
+  return { ok: true, job, routeId: resolvedRouteId };
+}
+
+function activeGrantRoute(
+  route: ConversationRouteRecord | null,
+): ConversationRouteRecord | null {
+  return route && !route.revokedAt ? route : null;
 }
 
 function ensureScheduledJobCapability(

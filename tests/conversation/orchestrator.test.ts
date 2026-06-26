@@ -1011,6 +1011,124 @@ describe("handleConversation", () => {
     expect(response.text).toContain("delivery: this conversation");
   });
 
+  test("updates scheduled job delivery from a Slack channel mention without invoking the LLM runner", async () => {
+    let called = false;
+    const updates: unknown[] = [];
+    const response = await handleConversation(
+      {
+        ...baseRequest,
+        text: "modify task to post in <#CNEWS|ai-news> channel instead of the current one",
+      },
+      createDeps({
+        agentMode: "llm",
+        schedulerControl: {
+          listJobs: () => [
+            {
+              jobId: "job-ai-news-hourly",
+              title: "Hourly AI news summary",
+              prompt: "look for fresh AI-related news and post a short summary",
+              schedule: { kind: "interval", every: { hours: 1 } },
+              state: "scheduled",
+              runtimeType: "openclaw",
+              requiredTools: [],
+              routeId: "convrt_old",
+              updatedAt: "2026-06-25T17:14:00.000Z",
+            },
+          ],
+          updateJobDelivery: (input) => {
+            updates.push(input);
+            return {
+              ok: true,
+              routeId: "convrt_news",
+              job: {
+                jobId: "job-ai-news-hourly",
+                workspaceId: input.workspaceId,
+                slackUserId: input.slackUserId,
+                title: "Hourly AI news summary",
+                prompt:
+                  "look for fresh AI-related news and post a short summary",
+                schedule: { kind: "interval", every: { hours: 1 } },
+                routeId: "convrt_news",
+                state: "scheduled",
+                runtimeType: "openclaw",
+                createdAt: "2026-06-25T17:14:00.000Z",
+                updatedAt: "2026-06-25T17:20:00.000Z",
+              },
+            };
+          },
+        },
+        agentRunner: stubAgentRunner(() => {
+          called = true;
+          return {
+            classification: "public",
+            text: "unexpected",
+          };
+        }),
+      }),
+    );
+
+    expect(called).toBe(false);
+    expect(updates).toEqual([
+      {
+        workspaceId: "T123",
+        slackUserId: "U123",
+        jobId: null,
+        routeId: null,
+        channelId: "CNEWS",
+        channelName: "ai-news",
+      },
+    ]);
+    expect(response.visibility).toBe("ephemeral");
+    expect(response.text).toContain(
+      "Updated scheduled job job-ai-news-hourly delivery.",
+    );
+  });
+
+  test("does not delegate unresolved scheduled job delivery updates to the LLM runner", async () => {
+    let called = false;
+    const response = await handleConversation(
+      {
+        ...baseRequest,
+        text: "modify task to post in #ai-news channel instead of the current one",
+      },
+      createDeps({
+        agentMode: "llm",
+        schedulerControl: {
+          listJobs: () => [
+            {
+              jobId: "job-ai-news-hourly",
+              title: "Hourly AI news summary",
+              prompt: "look for fresh AI-related news and post a short summary",
+              schedule: { kind: "interval", every: { hours: 1 } },
+              state: "scheduled",
+              runtimeType: "openclaw",
+              requiredTools: [],
+              routeId: "convrt_old",
+              updatedAt: "2026-06-25T17:14:00.000Z",
+            },
+          ],
+          updateJobDelivery: (input) => ({
+            ok: false,
+            reason: "unresolved_channel",
+            channelName: input.channelName ?? null,
+            jobs: [],
+          }),
+        },
+        agentRunner: stubAgentRunner(() => {
+          called = true;
+          return {
+            classification: "public",
+            text: "unexpected",
+          };
+        }),
+      }),
+    );
+
+    expect(called).toBe(false);
+    expect(response.visibility).toBe("ephemeral");
+    expect(response.text).toContain("I can’t resolve `#ai-news`");
+  });
+
   test("lists scheduled task specs without invoking the LLM runner", async () => {
     const texts = [
       "do we have any cron jobs configured?",

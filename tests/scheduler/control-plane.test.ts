@@ -358,4 +358,107 @@ describe("scheduler control plane", () => {
 
     store.close();
   });
+
+  test("updates scheduled job delivery to an existing Slack channel grant", async () => {
+    const store = createTokenStore(":memory:");
+    store.upsertScheduledJob({
+      jobId: "job-ai-news-hourly",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      title: "Hourly AI news summary",
+      prompt: "look for fresh AI-related news and post a short summary",
+      schedule: {
+        kind: "interval",
+        every: { hours: 1 },
+      },
+      routeId: "convrt_old",
+      runtimeType: "openclaw",
+      now: new Date("2026-06-24T12:00:00.000Z"),
+    });
+    const route = store.upsertConversationRoute({
+      workspaceId: "T123",
+      slackUserId: "U123",
+      transport: "slack",
+      kind: "grant",
+      grantedBySlackUserId: "U123",
+      destination: {
+        channelId: "CNEWS",
+        isDirectMessage: false,
+        rootId: "channel:CNEWS",
+      },
+      now: new Date("2026-06-24T12:01:00.000Z"),
+    });
+
+    const scheduler = createSchedulerControlPlane(store, {
+      now: () => new Date("2026-06-24T12:10:00.000Z"),
+    });
+
+    expect(
+      await scheduler.updateJobDelivery?.({
+        workspaceId: "T123",
+        slackUserId: "U123",
+        jobId: "job-ai-news-hourly",
+        channelId: "CNEWS",
+      }),
+    ).toEqual({
+      ok: true,
+      job: expect.objectContaining({
+        jobId: "job-ai-news-hourly",
+        routeId: route.id,
+        updatedAt: "2026-06-24T12:10:00.000Z",
+      }),
+      routeId: route.id,
+    });
+
+    expect(store.getScheduledJob("job-ai-news-hourly")?.routeId).toBe(route.id);
+
+    store.close();
+  });
+
+  test("does not update delivery for unresolved Slack channel names", async () => {
+    const store = createTokenStore(":memory:");
+    store.upsertScheduledJob({
+      jobId: "job-ai-news-hourly",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      title: "Hourly AI news summary",
+      prompt: "look for fresh AI-related news and post a short summary",
+      schedule: {
+        kind: "interval",
+        every: { hours: 1 },
+      },
+      routeId: "convrt_old",
+      runtimeType: "openclaw",
+      now: new Date("2026-06-24T12:00:00.000Z"),
+    });
+
+    const scheduler = createSchedulerControlPlane(store, {
+      now: () => new Date("2026-06-24T12:10:00.000Z"),
+    });
+
+    expect(
+      await scheduler.updateJobDelivery?.({
+        workspaceId: "T123",
+        slackUserId: "U123",
+        jobId: "job-ai-news-hourly",
+        channelName: "ai-news",
+      }),
+    ).toEqual({
+      ok: false,
+      reason: "unresolved_channel",
+      jobs: [
+        expect.objectContaining({
+          jobId: "job-ai-news-hourly",
+          routeId: "convrt_old",
+        }),
+      ],
+      channelName: "ai-news",
+    });
+
+    expect(store.getScheduledJob("job-ai-news-hourly")?.routeId).toBe(
+      "convrt_old",
+    );
+
+    store.close();
+  });
 });
