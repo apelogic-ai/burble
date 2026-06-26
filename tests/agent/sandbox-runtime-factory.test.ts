@@ -10,13 +10,13 @@ import {
   type SandboxProvider,
   type SandboxProviderCapabilities,
   type SandboxRunHandle,
-  type SandboxRunRequest
+  type SandboxRunRequest,
 } from "../../src/agent/sandbox-provider";
 import { createTokenStore } from "../../src/db";
 
 const principal = {
   workspaceId: "T123",
-  slackUserId: "U123"
+  slackUserId: "U123",
 };
 
 describe("createSandboxRuntimeFactory", () => {
@@ -43,7 +43,7 @@ describe("createSandboxRuntimeFactory", () => {
           slackUserId: string;
           ttlSeconds?: number;
         }) =>
-          `jwt:${claims.audience}:${claims.runtimeId}:${claims.workspaceId}:${claims.slackUserId}:${claims.ttlSeconds}`
+          `jwt:${claims.audience}:${claims.runtimeId}:${claims.workspaceId}:${claims.slackUserId}:${claims.ttlSeconds}`,
       } as never,
       runtimeJwtTtlSeconds: 3600,
       startCommand: ["runtime-entrypoint"],
@@ -60,7 +60,7 @@ describe("createSandboxRuntimeFactory", () => {
             engine: "openclaw",
             factory: "docker",
             ttlMs: 86400000,
-            reaperEnabled: true
+            reaperEnabled: true,
           },
           model: { provider: "openai", model: "gpt-5.4" },
           tools: [],
@@ -68,13 +68,13 @@ describe("createSandboxRuntimeFactory", () => {
           memory: {
             userMemoryEnabled: false,
             workspaceMemoryEnabled: false,
-            jobMemoryEnabled: true
+            jobMemoryEnabled: true,
           },
           streaming: { messageDeltasEnabled: true },
           memoryContext: [],
           disabledTools: [],
-          policyHash: "policy-hash"
-        }) as never
+          policyHash: "policy-hash",
+        }) as never,
     });
 
     const handle = await factory.getOrCreateRuntime(principal);
@@ -97,19 +97,19 @@ describe("createSandboxRuntimeFactory", () => {
           {
             host: "agentgateway:3000",
             tls: false,
-            allowedIps: dockerInternalAllowedIps
+            allowedIps: dockerInternalAllowedIps,
           },
           {
             host: "burble-app:3000",
             tls: false,
-            allowedIps: dockerInternalAllowedIps
+            allowedIps: dockerInternalAllowedIps,
           },
           {
             host: "llm-gw:4000",
             tls: false,
-            allowedIps: dockerInternalAllowedIps
-          }
-        ]
+            allowedIps: dockerInternalAllowedIps,
+          },
+        ],
       },
       filesystem: {
         readOnlyPaths: ["/"],
@@ -119,9 +119,9 @@ describe("createSandboxRuntimeFactory", () => {
           "/runtime/state",
           "/runtime/workspace",
           "/tmp",
-          "/dev/pts"
-        ]
-      }
+          "/dev/pts",
+        ],
+      },
     });
     expect(provider.policyCalls).toEqual([]);
     expect(provider.runCalls).toHaveLength(0);
@@ -147,16 +147,16 @@ describe("createSandboxRuntimeFactory", () => {
         AI_MODEL: "openai:gpt-5.4",
         AGENT_RUNTIME_INFERENCE_BASE_URL: "http://llm-gw:4000/v1",
         OPENAI_BASE_URL: "http://llm-gw:4000/v1",
-        OPENAI_API_KEY: "sk-BURBLE-INFERENCE-PROXY"
-      }
+        OPENAI_API_KEY: "sk-BURBLE-INFERENCE-PROXY",
+      },
     });
     expect(provider.provisionCalls[0].start?.env?.BURBLE_RUNTIME_JWT).toContain(
-      `jwt:http://agentgateway:3000/mcp:${handle.id}:T123:U123:3600`
+      `jwt:http://agentgateway:3000/mcp:${handle.id}:T123:U123:3600`,
     );
     expect(healthUrls).toEqual(["http://sandbox-1.local:8080/healthz"]);
     expect(events.map((event) => event.eventType)).toEqual([
       "runtime_provision_requested",
-      "runtime_provision_finished"
+      "runtime_provision_finished",
     ]);
     expect(events[0].summaryJson).toContain("sandbox-1");
 
@@ -164,6 +164,45 @@ describe("createSandboxRuntimeFactory", () => {
 
     expect(provider.terminated).toEqual(["sandbox-1"]);
     expect(store.getAgentRuntime(handle.id)?.status).toBe("stopped");
+
+    store.close();
+  });
+
+  test("treats missing sandboxes as already stopped", async () => {
+    const store = createTokenStore(":memory:");
+    const provider = createFakeRuntimeSandboxProvider();
+    const runtime = store.getOrCreateAgentRuntime({
+      workspaceId: principal.workspaceId,
+      slackUserId: principal.slackUserId,
+      engine: "openclaw",
+      endpointUrl: "http://missing-sandbox.local:8080",
+      authTokenHash: "old-hash",
+      statePath: "/missing/state",
+      configPath: "/missing/config/openclaw.json",
+      workspacePath: "/missing/workspace",
+      sandboxId: "missing-sandbox",
+      policyHash: "old-policy",
+    });
+    store.updateAgentRuntimeStatus(runtime.id, { status: "ready" });
+    const factory = createSandboxRuntimeFactory({
+      store,
+      sandboxProvider: provider,
+      engine: "openclaw",
+      image: "burble-openclaw-nemoclaw:dev",
+      toolGatewayUrl: "http://burble-app:3000/internal/tools",
+      modelProviderUrls: ["https://api.openai.com/v1"],
+      runtimeTokenSecret: "runtime-secret",
+      startCommand: ["openclaw-entrypoint"],
+      fetch: async () => new Response("ok"),
+    });
+
+    await factory.stopRuntime(runtime.id);
+
+    expect(store.getAgentRuntime(runtime.id)?.status).toBe("stopped");
+    expect(provider.terminated).toEqual([]);
+    expect(
+      store.listAgentRuntimeEvents(runtime.id).map((event) => event.eventType),
+    ).toContain("runtime_stopped");
 
     store.close();
   });
@@ -183,15 +222,15 @@ describe("createSandboxRuntimeFactory", () => {
       runtimeJwtIssuer: {
         issueRuntimeJwt: () => {
           throw new Error("jwt signer unavailable");
-        }
+        },
       } as never,
       startCommand: ["runtime-entrypoint"],
       healthCheckAttempts: 1,
-      fetch: async () => new Response("ok")
+      fetch: async () => new Response("ok"),
     });
 
     await expect(factory.getOrCreateRuntime(principal)).rejects.toThrow(
-      "jwt signer unavailable"
+      "jwt signer unavailable",
     );
 
     const runtimeId = `rt_${buildRuntimeDataId(principal, "openclaw")}`;
@@ -219,7 +258,7 @@ describe("createSandboxRuntimeFactory", () => {
       env: {
         EXA_API_KEY: "exa-key",
         FIRECRAWL_API_URL: "https://firecrawl.internal/v1",
-        HERMES_WEB_SEARCH_BACKEND: "exa"
+        HERMES_WEB_SEARCH_BACKEND: "exa",
       },
       buildManifest: (runtimePrincipal) =>
         ({
@@ -229,7 +268,7 @@ describe("createSandboxRuntimeFactory", () => {
             engine: "hermes",
             factory: "sandbox",
             ttlMs: 86400000,
-            reaperEnabled: true
+            reaperEnabled: true,
           },
           model: { provider: "anthropic", model: "claude-sonnet-4" },
           tools: [],
@@ -237,13 +276,13 @@ describe("createSandboxRuntimeFactory", () => {
           memory: {
             userMemoryEnabled: false,
             workspaceMemoryEnabled: false,
-            jobMemoryEnabled: true
+            jobMemoryEnabled: true,
           },
           streaming: { messageDeltasEnabled: true },
           memoryContext: [],
           disabledTools: [],
-          policyHash: "anthropic-policy"
-        }) as never
+          policyHash: "anthropic-policy",
+        }) as never,
     });
 
     await factory.getOrCreateRuntime(principal);
@@ -254,7 +293,7 @@ describe("createSandboxRuntimeFactory", () => {
         "api.anthropic.com",
         "api.exa.ai",
         "burble-app:3000",
-        "firecrawl.internal"
+        "firecrawl.internal",
       ],
       allowedEndpoints: [
         { host: "api.anthropic.com", tls: true },
@@ -262,24 +301,24 @@ describe("createSandboxRuntimeFactory", () => {
         {
           host: "burble-app:3000",
           tls: false,
-          allowedIps: dockerInternalAllowedIps
+          allowedIps: dockerInternalAllowedIps,
         },
         {
           host: "firecrawl.internal",
           tls: true,
-          allowedIps: dockerInternalAllowedIps
-        }
-      ]
+          allowedIps: dockerInternalAllowedIps,
+        },
+      ],
     });
     expect(provider.provisionCalls[0].start?.env).toMatchObject({
       AI_MODEL: "anthropic:claude-sonnet-4",
       HERMES_INFERENCE_PROVIDER: "anthropic",
       FIRECRAWL_API_URL: "https://firecrawl.internal/v1",
-      HERMES_WEB_SEARCH_BACKEND: "exa"
+      HERMES_WEB_SEARCH_BACKEND: "exa",
     });
     expect(provider.provisionCalls[0].start?.env?.EXA_API_KEY).toBeUndefined();
     expect(
-      provider.provisionCalls[0].policy?.network.allowedHosts
+      provider.provisionCalls[0].policy?.network.allowedHosts,
     ).not.toContain("api.openai.com");
 
     store.close();
@@ -305,10 +344,10 @@ describe("createSandboxRuntimeFactory", () => {
         return {
           network: {
             egress: "allowlist",
-            allowedHosts: ["api.openai.com", "burble-app:3000"]
-          }
+            allowedHosts: ["api.openai.com", "burble-app:3000"],
+          },
         };
-      }
+      },
     });
 
     const handle = await factory.getOrCreateRuntime(principal);
@@ -316,11 +355,11 @@ describe("createSandboxRuntimeFactory", () => {
 
     expect(seenRuntimeIds).toEqual([handle.id]);
     expect(store.getAgentRuntime(handle.id)?.policyHash).toMatch(
-      /^[0-9a-f]{64}$/
+      /^[0-9a-f]{64}$/,
     );
     expect(events.map((event) => event.eventType)).toEqual([
       "runtime_provision_requested",
-      "runtime_provision_finished"
+      "runtime_provision_finished",
     ]);
 
     store.close();
@@ -349,7 +388,7 @@ describe("createSandboxRuntimeFactory", () => {
             engine: "hermes",
             factory: "docker",
             ttlMs: 86400000,
-            reaperEnabled: true
+            reaperEnabled: true,
           },
           model: { provider: "openai", model: "gpt-5.4" },
           tools: [],
@@ -357,13 +396,13 @@ describe("createSandboxRuntimeFactory", () => {
           memory: {
             userMemoryEnabled: false,
             workspaceMemoryEnabled: false,
-            jobMemoryEnabled: true
+            jobMemoryEnabled: true,
           },
           streaming: { messageDeltasEnabled: true },
           memoryContext: [],
           disabledTools: [],
-          policyHash
-        }) as never
+          policyHash,
+        }) as never,
     });
 
     const first = await factory.getOrCreateRuntime(principal);
@@ -378,7 +417,7 @@ describe("createSandboxRuntimeFactory", () => {
     expect(provider.runCalls).toHaveLength(0);
     expect(provider.policyCalls).toHaveLength(1);
     expect(store.getAgentRuntime(first.id)?.policyHash).not.toBe(
-      firstPolicyHash
+      firstPolicyHash,
     );
 
     store.close();
@@ -408,7 +447,7 @@ describe("createSandboxRuntimeFactory", () => {
             engine: "hermes",
             factory: "sandbox",
             ttlMs: 86400000,
-            reaperEnabled: true
+            reaperEnabled: true,
           },
           model: { provider: "openai", model: "gpt-5.4" },
           tools: [],
@@ -416,13 +455,13 @@ describe("createSandboxRuntimeFactory", () => {
           memory: {
             userMemoryEnabled: false,
             workspaceMemoryEnabled: false,
-            jobMemoryEnabled: true
+            jobMemoryEnabled: true,
           },
           streaming: { messageDeltasEnabled: true },
           memoryContext: [],
           disabledTools: [],
-          policyHash: "same-policy"
-        }) as never
+          policyHash: "same-policy",
+        }) as never,
     });
 
     const first = await factory.getOrCreateRuntime(principal);
@@ -436,7 +475,7 @@ describe("createSandboxRuntimeFactory", () => {
     expect(provider.provisionCalls).toHaveLength(1);
     expect(provider.policyCalls).toHaveLength(1);
     expect(provider.policyCalls[0].policy.network.allowedHosts).toContain(
-      "api.search.brave.com"
+      "api.search.brave.com",
     );
     expect(secondPolicyHash).not.toBe(firstPolicyHash);
     expect(store.getAgentRuntime(first.id)?.policyHash).toBe(secondPolicyHash);
@@ -461,7 +500,7 @@ describe("createSandboxRuntimeFactory", () => {
       runtimeTokenSecret: "runtime-secret",
       startCommand: ["hermes-entrypoint"],
       healthCheckAttempts: 1,
-      fetch: async () => new Response("ok")
+      fetch: async () => new Response("ok"),
     });
 
     const first = factory.getOrCreateRuntime(principal);
@@ -495,16 +534,16 @@ describe("createSandboxRuntimeFactory", () => {
       fetch: async (url) => {
         healthUrls.push(url);
         return new Response("bad", { status: 502 });
-      }
+      },
     });
 
     await expect(factory.getOrCreateRuntime(principal)).rejects.toThrow(
-      "Runtime health check failed for sandbox sandbox-1"
+      "Runtime health check failed for sandbox sandbox-1",
     );
 
     expect(healthUrls).toEqual([
       "http://sandbox-1.local:8080/healthz",
-      "http://sandbox-1.local:8080/healthz"
+      "http://sandbox-1.local:8080/healthz",
     ]);
     expect(provider.terminated).toEqual(["sandbox-1"]);
 
@@ -531,16 +570,16 @@ describe("createSandboxRuntimeFactory", () => {
         return failHealth
           ? new Response("bad", { status: 502 })
           : new Response("ok");
-      }
+      },
     });
     await expect(factory.getOrCreateRuntime(principal)).rejects.toThrow(
-      "Runtime health check failed for sandbox sandbox-1"
+      "Runtime health check failed for sandbox sandbox-1",
     );
 
     const runtimeId = `rt_${buildRuntimeDataId(principal, "hermes")}`;
     expect(store.getAgentRuntime(runtimeId)).toMatchObject({
       status: "failed",
-      sandboxId: "sandbox-1"
+      sandboxId: "sandbox-1",
     });
     expect(provider.terminated).toEqual(["sandbox-1"]);
 
@@ -550,13 +589,13 @@ describe("createSandboxRuntimeFactory", () => {
     expect(retry.id).toBe(runtimeId);
     expect(store.getAgentRuntime(retry.id)).toMatchObject({
       status: "ready",
-      sandboxId: "sandbox-2"
+      sandboxId: "sandbox-2",
     });
     expect(provider.provisionCalls).toHaveLength(2);
     expect(provider.attachCalls).toEqual([]);
     expect(healthUrls).toEqual([
       "http://sandbox-1.local:8080/healthz",
-      "http://sandbox-2.local:8080/healthz"
+      "http://sandbox-2.local:8080/healthz",
     ]);
 
     store.close();
@@ -578,13 +617,13 @@ describe("createSandboxRuntimeFactory", () => {
       fetch: async () =>
         failHealth ? new Response("bad", { status: 502 }) : new Response("ok"),
       env: {
-        AGENT_RUNTIME_SANDBOX_PRESERVE_FAILED: "true"
-      }
+        AGENT_RUNTIME_SANDBOX_PRESERVE_FAILED: "true",
+      },
     });
 
     let failHealth = true;
     await expect(factory.getOrCreateRuntime(principal)).rejects.toThrow(
-      "Runtime health check failed for sandbox sandbox-1"
+      "Runtime health check failed for sandbox sandbox-1",
     );
 
     const runtimeId = `rt_${buildRuntimeDataId(principal, "openclaw")}`;
@@ -592,7 +631,7 @@ describe("createSandboxRuntimeFactory", () => {
 
     expect(store.getAgentRuntime(runtimeId)).toMatchObject({
       status: "failed",
-      sandboxId: "sandbox-1"
+      sandboxId: "sandbox-1",
     });
     expect(provider.terminated).toEqual([]);
     expect(events.at(-1)?.summaryJson).toContain('"preservedSandbox":true');
@@ -613,7 +652,7 @@ describe("createSandboxRuntimeFactory", () => {
       configPath: "/missing/config/openclaw.json",
       workspacePath: "/missing/workspace",
       sandboxId: "missing-sandbox",
-      policyHash: "old-policy"
+      policyHash: "old-policy",
     });
     store.updateAgentRuntimeStatus(stale.id, { status: "provisioning" });
     const factory = createSandboxRuntimeFactory({
@@ -626,7 +665,7 @@ describe("createSandboxRuntimeFactory", () => {
       runtimeTokenSecret: "runtime-secret",
       startCommand: ["openclaw-entrypoint"],
       healthCheckAttempts: 1,
-      fetch: async () => new Response("ok")
+      fetch: async () => new Response("ok"),
     });
 
     const runtime = await factory.getOrCreateRuntime(principal);
@@ -638,11 +677,11 @@ describe("createSandboxRuntimeFactory", () => {
     expect(store.getAgentRuntime(stale.id)).toMatchObject({
       status: "ready",
       sandboxId: "sandbox-1",
-      endpointUrl: "http://sandbox-1.local:8080"
+      endpointUrl: "http://sandbox-1.local:8080",
     });
     expect(events.map((event) => event.eventType)).toContain("runtime_stopped");
     expect(events.map((event) => event.eventType)).toContain(
-      "runtime_provision_requested"
+      "runtime_provision_requested",
     );
 
     store.close();
@@ -655,30 +694,30 @@ describe("createSandboxRuntimeFactory", () => {
       createSandboxRuntimeFactory({
         store,
         sandboxProvider: createFakeRuntimeSandboxProvider({
-          supportsEgressAllowlist: false
+          supportsEgressAllowlist: false,
         }),
         engine: "openclaw",
         image: "burble-openclaw-nemoclaw:dev",
         toolGatewayUrl: "http://burble-app:3000/internal/tools",
         modelProviderUrls: ["https://api.openai.com/v1"],
         runtimeTokenSecret: "runtime-secret",
-        startCommand: ["runtime-entrypoint"]
-      })
+        startCommand: ["runtime-entrypoint"],
+      }),
     ).toThrow("must support egress allowlists");
 
     expect(() =>
       createSandboxRuntimeFactory({
         store,
         sandboxProvider: createFakeRuntimeSandboxProvider({
-          supportsDurableSandboxes: false
+          supportsDurableSandboxes: false,
         }),
         engine: "openclaw",
         image: "burble-openclaw-nemoclaw:dev",
         toolGatewayUrl: "http://burble-app:3000/internal/tools",
         modelProviderUrls: ["https://api.openai.com/v1"],
         runtimeTokenSecret: "runtime-secret",
-        startCommand: ["runtime-entrypoint"]
-      })
+        startCommand: ["runtime-entrypoint"],
+      }),
     ).toThrow("must support durable sandboxes");
 
     expect(() =>
@@ -690,8 +729,8 @@ describe("createSandboxRuntimeFactory", () => {
         toolGatewayUrl: "http://burble-app:3000/internal/tools",
         modelProviderUrls: ["https://api.openai.com/v1"],
         runtimeTokenSecret: "runtime-secret",
-        startCommand: []
-      })
+        startCommand: [],
+      }),
     ).toThrow("start command must be non-empty");
 
     store.close();
@@ -708,7 +747,7 @@ type FakeRuntimeSandboxProvider = SandboxProvider & {
 };
 
 function createFakeRuntimeSandboxProvider(
-  capabilities?: Partial<SandboxProviderCapabilities>
+  capabilities?: Partial<SandboxProviderCapabilities>,
 ): FakeRuntimeSandboxProvider {
   const sandboxes = new Map<string, SandboxHandle>();
   const provisionCalls: Parameters<SandboxProvider["provision"]>[0][] = [];
@@ -740,7 +779,7 @@ function createFakeRuntimeSandboxProvider(
         supportsEgressAllowlist: true,
         supportsCredentialBinding: true,
         supportsDurableSandboxes: true,
-        ...capabilities
+        ...capabilities,
       };
     },
 
@@ -757,7 +796,7 @@ function createFakeRuntimeSandboxProvider(
         principal: request.principal,
         runtime: request.runtime,
         labels: request.labels ?? {},
-        credentials: []
+        credentials: [],
       };
       sandboxes.set(sandbox.id, cloneSandboxHandle(sandbox));
       return cloneSandboxHandle(sandbox);
@@ -783,12 +822,12 @@ function createFakeRuntimeSandboxProvider(
       runCalls.push({ sandboxId, request });
       sandboxes.set(
         sandboxId,
-        cloneSandboxHandle({ ...sandbox, status: "ready" })
+        cloneSandboxHandle({ ...sandbox, status: "ready" }),
       );
       return {
         id: `${sandboxId}-run-1`,
         sandboxId,
-        status: "running"
+        status: "running",
       };
     },
 
@@ -806,8 +845,8 @@ function createFakeRuntimeSandboxProvider(
       terminated.push(sandboxId);
       sandboxes.set(
         sandboxId,
-        cloneSandboxHandle({ ...sandbox, status: "terminated" })
+        cloneSandboxHandle({ ...sandbox, status: "terminated" }),
       );
-    }
+    },
   };
 }
