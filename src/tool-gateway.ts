@@ -820,7 +820,10 @@ export async function handleToolGatewayRequest(
       classification: "user_private",
       content: {
         ok: true,
-        scheduledJob,
+        scheduledJob: {
+          ...scheduledJob,
+          ...nativeToolsetsForScheduledJobCapability(record)
+        },
         scheduledPromptInstruction:
           buildScheduledJobPromptInstruction(scheduledJob)
       }
@@ -2798,6 +2801,22 @@ function buildScheduledJobPromptInstruction(
     "For every scheduled provider call, include this jobId in the tool input and use only the listed allowedTools."
   );
   return lines.join("\n");
+}
+
+function nativeToolsetsForScheduledJobCapability(
+  capability: AgentJobCapabilityRecord
+): { nativeToolsets?: string[] } {
+  if (capability.runtimeType !== "hermes") {
+    return {};
+  }
+
+  const toolsets = new Set(["burble"]);
+  for (const toolName of capability.requiredTools) {
+    if (toolName === "web_extract" || toolName === "web_search") {
+      toolsets.add("web");
+    }
+  }
+  return { nativeToolsets: [...toolsets].sort() };
 }
 
 async function readToolGatewayBody(

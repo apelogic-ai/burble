@@ -18,7 +18,6 @@ export type ScheduledJobContext = {
   jobId: string;
   capabilityProfile: string;
   allowedTools: string[];
-  nativeToolsets?: string[];
   routeId?: string;
   runtimeType?: AgentRuntimeEngine;
   stateRefs: ScheduledJobStateRef[];
@@ -26,34 +25,17 @@ export type ScheduledJobContext = {
 };
 
 export function buildScheduledJobContext(
-  capability: AgentJobCapabilityRecord
+  capability: AgentJobCapabilityRecord,
 ): ScheduledJobContext {
   return {
     jobId: capability.jobId,
     capabilityProfile: capability.capabilityProfile,
     allowedTools: [...new Set(capability.requiredTools)].sort(),
-    ...nativeToolsetsForScheduledJob(capability),
     ...(capability.routeId ? { routeId: capability.routeId } : {}),
     ...(capability.runtimeType ? { runtimeType: capability.runtimeType } : {}),
     stateRefs: normalizeStateRefs(capability.stateRefs),
-    visibilityPolicy: normalizeVisibilityPolicy(capability.visibilityPolicy)
+    visibilityPolicy: normalizeVisibilityPolicy(capability.visibilityPolicy),
   };
-}
-
-function nativeToolsetsForScheduledJob(
-  capability: AgentJobCapabilityRecord
-): Pick<ScheduledJobContext, "nativeToolsets"> {
-  if (capability.runtimeType !== "hermes") {
-    return {};
-  }
-
-  const toolsets = new Set(["burble"]);
-  for (const toolName of capability.requiredTools) {
-    if (toolName === "web_extract" || toolName === "web_search") {
-      toolsets.add("web");
-    }
-  }
-  return { nativeToolsets: [...toolsets].sort() };
 }
 
 function normalizeStateRefs(value: unknown): ScheduledJobStateRef[] {
@@ -66,7 +48,10 @@ function normalizeStateRefs(value: unknown): ScheduledJobStateRef[] {
       return [];
     }
     const record = entry as Record<string, unknown>;
-    if (typeof record.provider !== "string" || typeof record.kind !== "string") {
+    if (
+      typeof record.provider !== "string" ||
+      typeof record.kind !== "string"
+    ) {
       return [];
     }
 
@@ -76,14 +61,16 @@ function normalizeStateRefs(value: unknown): ScheduledJobStateRef[] {
         kind: record.kind,
         ...(typeof record.id === "string" ? { id: record.id } : {}),
         ...(typeof record.name === "string" ? { name: record.name } : {}),
-        ...(typeof record.purpose === "string" ? { purpose: record.purpose } : {})
-      }
+        ...(typeof record.purpose === "string"
+          ? { purpose: record.purpose }
+          : {}),
+      },
     ];
   });
 }
 
 function normalizeVisibilityPolicy(
-  value: unknown
+  value: unknown,
 ): ScheduledJobVisibilityPolicy {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return {};
@@ -96,16 +83,14 @@ function normalizeVisibilityPolicy(
     ...(typeof record.allowPrivateToolDeclassification === "boolean"
       ? {
           allowPrivateToolDeclassification:
-            record.allowPrivateToolDeclassification
+            record.allowPrivateToolDeclassification,
         }
-      : {})
+      : {}),
   };
 }
 
 function isToolClassification(value: unknown): value is ToolClassification {
   return (
-    value === "public" ||
-    value === "user_private" ||
-    value === "restricted"
+    value === "public" || value === "user_private" || value === "restricted"
   );
 }

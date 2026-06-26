@@ -1,4 +1,6 @@
 import { describe, expect, test } from "bun:test";
+import { parseRuntimeRunRequest } from "@burble/runtime-sdk/runtime-contract";
+import type { ScheduledJobContext } from "../../src/agent/scheduled-job-context";
 import { createTokenStore } from "../../src/db";
 import { createSchedulerRunExecutor } from "../../src/scheduler/run-executor";
 import type { AgentRunner } from "../../src/agent/types";
@@ -75,6 +77,10 @@ describe("scheduler run executor", () => {
     await executor.executeRun(run.runId);
 
     expect(runnerInputs).toHaveLength(1);
+    assertRuntimeContractScheduledJob(
+      (runnerInputs[0] as { scheduledJob?: ScheduledJobContext }).scheduledJob,
+      "openclaw",
+    );
     expect(runnerInputs[0]).toMatchObject({
       principal: { workspaceId: "T123", slackUserId: "U123" },
       text: "Find fresh AI news and summarize it.",
@@ -187,6 +193,10 @@ describe("scheduler run executor", () => {
         runtimeType: "hermes",
       },
     });
+    assertRuntimeContractScheduledJob(
+      (runnerInputs[0] as { scheduledJob?: ScheduledJobContext }).scheduledJob,
+      "hermes",
+    );
     expect(store.getAgentJobRun(run.runId)).toMatchObject({
       status: "succeeded",
     });
@@ -285,3 +295,24 @@ describe("scheduler run executor", () => {
     store.close();
   });
 });
+
+function assertRuntimeContractScheduledJob(
+  scheduledJob: ScheduledJobContext | undefined,
+  engine: "openclaw" | "hermes",
+): void {
+  expect(scheduledJob).toBeDefined();
+  const request = parseRuntimeRunRequest({
+    principal: { workspaceId: "T123", slackUserId: "U123" },
+    runtime: {
+      id: `rt_${engine}`,
+      engine,
+      status: "ready",
+    },
+    input: {
+      text: "scheduled job contract check",
+      scheduledJob,
+      connections: {},
+    },
+  });
+  expect(request.input.scheduledJob).toEqual(scheduledJob);
+}

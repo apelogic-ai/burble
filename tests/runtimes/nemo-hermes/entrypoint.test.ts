@@ -1941,7 +1941,6 @@ payload = {
         ],
         "routeId": "convrt_abc123",
         "runtimeType": "hermes",
-        "nativeToolsets": ["burble"],
         "stateRefs": [
             {
                 "provider": "google",
@@ -1969,7 +1968,7 @@ print(json.dumps({"text": mod.build_hermes_turn_text(payload)}))
     );
     expect(text).toContain("routeId=convrt_abc123");
     expect(text).toContain("runtimeType=hermes");
-    expect(text).toContain("nativeToolsets=burble");
+    expect(text).not.toContain("nativeToolsets=");
     expect(text).toContain("maxOutputVisibility=public");
     expect(text).toContain("allowPrivateToolDeclassification=false");
     expect(text).toContain(
@@ -2293,7 +2292,7 @@ asyncio.run(main())
     expect(result).toEqual({
       result: {
         success: true,
-        message_id: expect.stringContaining("burble:convrt_abc123:")
+        message_id: expect.stringContaining("burble:convrt_abc123:"),
       },
       payloads: [
         {
@@ -2301,16 +2300,16 @@ asyncio.run(main())
           headers: {
             authorization: "Bearer token",
             "content-type": "application/json",
-            "x-burble-runtime-id": "rt_123"
+            "x-burble-runtime-id": "rt_123",
           },
           json: {
             input: {
               routeId: "convrt_abc123",
-              text: "Cron report"
-            }
-          }
-        }
-      ]
+              text: "Cron report",
+            },
+          },
+        },
+      ],
     });
   });
 
@@ -2377,8 +2376,9 @@ asyncio.run(main())
 
     expect(result).toEqual({
       success: false,
-      error: "Hermes produced tool-call protocol text instead of structured tool calls; refusing to publish untrusted assistant content",
-      payloads: []
+      error:
+        "Hermes produced tool-call protocol text instead of structured tool calls; refusing to publish untrusted assistant content",
+      payloads: [],
     });
   });
 

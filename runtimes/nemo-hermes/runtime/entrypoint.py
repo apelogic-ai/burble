@@ -1066,13 +1066,6 @@ def format_scheduled_job_context(
     runtime_type = scheduled_job.get("runtimeType")
     if runtime_type:
         lines.append(f"- runtimeType={runtime_type}")
-    native_toolsets = scheduled_job.get("nativeToolsets")
-    if isinstance(native_toolsets, list):
-        native_toolset_text = ",".join(
-            sorted({str(toolset) for toolset in native_toolsets if str(toolset).strip()})
-        )
-        if native_toolset_text:
-            lines.append(f"- nativeToolsets={native_toolset_text}")
 
     lines.append(f"- maxOutputVisibility={max_visibility}")
     lines.append(f"- allowPrivateToolDeclassification={allow_declassification}")
