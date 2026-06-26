@@ -216,6 +216,7 @@ type SlackProgressMessage = {
   nativeStreamUpdatedAtMs?: number;
   nativeStreamStopped?: boolean;
   nativeStreamFallbackReason?: string;
+  suppressedRuntimeControlNotice?: boolean;
   startedAtMs: number;
   updatedAtMs?: number;
   toolStartedAtMs: Record<string, number>;
@@ -5377,7 +5378,7 @@ export function isProgressOnlyMessage(text: string): boolean {
     /^Starting agent runtime/i.test(text) ||
     /^Agent is /i.test(text) ||
     /^Calling /i.test(text) ||
-    /^:zap:\s*Interrupting current task\b/i.test(text) ||
+    isRuntimeInterruptNotice(text) ||
     /\bFirst-time tip\b.*\binterrupted my current task\b/i.test(text) ||
     /\b\/busy (?:queue|steer|status)\b/i.test(text) ||
     /^_?Final result in /i.test(text) ||
@@ -5467,6 +5468,21 @@ export async function postConversationResponse(
       return;
     }
 
+    if (input.progressMessage.suppressedRuntimeControlNotice) {
+      const finishedText = renderFinalProgressMessage(
+        input.progressMessage,
+        runtimeControlNoticeFallbackText(),
+        finalProgressLine
+      );
+      input.progressMessage.text = finishedText;
+      await client.chat.update({
+        channel: input.progressMessage.channel,
+        ts: input.progressMessage.ts,
+        text: finishedText
+      });
+      return;
+    }
+
     const finishedText = renderProgressLines(input.progressMessage, [
       finalProgressLine
     ]);
@@ -5551,6 +5567,10 @@ function sanitizeRuntimeFinalResponseText(text: string): string {
     return cleaned;
   }
 
+  return runtimeControlNoticeFallbackText();
+}
+
+function runtimeControlNoticeFallbackText(): string {
   return "The agent returned an internal runtime-control notice instead of an answer. Please retry your request.";
 }
 
@@ -5678,16 +5698,21 @@ export async function updateAgentProgressMessage(
     progressMessage.streamingMode === "native" &&
     !progressMessage.nativeStreamFallbackReason
   ) {
+    const cleanedText = sanitizeRuntimeStreamText(event.text);
+    if (isRuntimeControlNotice(cleanedText.trim())) {
+      progressMessage.suppressedRuntimeControlNotice = true;
+      return;
+    }
     progressMessage.streamedText =
       event.type === "message_replace"
-        ? sanitizeRuntimeStreamText(event.text)
-        : appendSlackStreamedText(progressMessage.streamedText ?? "", event.text);
+        ? cleanedText
+        : appendSlackStreamedText(progressMessage.streamedText ?? "", cleanedText);
     if (!progressMessage.streamedText.trim()) {
       return;
     }
     try {
       await updateSlackNativeStream(client, progressMessage, {
-        text: sanitizeRuntimeStreamText(event.text),
+        text: cleanedText,
         replace: event.type === "message_replace"
       });
       return;
@@ -6073,10 +6098,15 @@ export function formatAgentProgressMessage(
   }
 
   if (event.type === "message_delta" || event.type === "message_replace") {
+    const cleanedText = sanitizeRuntimeStreamText(event.text);
+    if (isRuntimeControlNotice(cleanedText.trim())) {
+      progressMessage.suppressedRuntimeControlNotice = true;
+      return undefined;
+    }
     progressMessage.streamedText =
       event.type === "message_replace"
-        ? sanitizeRuntimeStreamText(event.text)
-        : appendSlackStreamedText(progressMessage.streamedText ?? "", event.text);
+        ? cleanedText
+        : appendSlackStreamedText(progressMessage.streamedText ?? "", cleanedText);
     return progressMessage.streamedText.trim()
       ? renderProgressLines(progressMessage, [progressMessage.streamedText])
       : undefined;
@@ -6087,7 +6117,7 @@ export function formatAgentProgressMessage(
 
 function appendSlackStreamedText(currentText: string, delta: string): string {
   const cleanedDelta = sanitizeRuntimeStreamText(delta);
-  if (!cleanedDelta.trim()) {
+  if (!cleanedDelta.trim() || isRuntimeControlNotice(cleanedDelta.trim())) {
     return currentText;
   }
 
@@ -6172,10 +6202,14 @@ function normalizeAgentStatus(text: string): string {
 
 function isRuntimeControlNotice(text: string): boolean {
   return (
-    /^:zap:\s*Interrupting current task\b/i.test(text) ||
+    isRuntimeInterruptNotice(text) ||
     /\bFirst-time tip\b.*\binterrupted my current task\b/i.test(text) ||
     /\b\/busy (?:queue|steer|status)\b/i.test(text)
   );
+}
+
+function isRuntimeInterruptNotice(text: string): boolean {
+  return /^(?::zap:|⚡️?)?\s*Interrupting current task\b/i.test(text.trim());
 }
 
 function renderProgressLines(

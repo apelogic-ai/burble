@@ -931,6 +931,69 @@ describe("formatAgentProgressEvent", () => {
     ]);
   });
 
+  test("does not preserve unicode runtime interrupt notices in final answers", async () => {
+    const posts: string[] = [];
+    const client = {
+      chat: {
+        postMessage: async (input: { text: string }) => {
+          posts.push(input.text);
+          return {};
+        }
+      }
+    };
+
+    await postConversationResponse(client as never, {
+      response: {
+        visibility: "dm",
+        classification: "user_private",
+        text: [
+          "⚡ Interrupting current task (iteration 1/90, running: jira_list_assigned_issues). I'll respond to your message shortly.",
+          "",
+          "Final result in 1.5s."
+        ].join("\n")
+      },
+      channel: "D123",
+      user: "U123"
+    });
+
+    expect(posts).toEqual([
+      "The agent returned an internal runtime-control notice instead of an answer. Please retry your request."
+    ]);
+  });
+
+  test("drops runtime interrupt notices from streamed progress text", async () => {
+    const updates: string[] = [];
+    const progressMessage = {
+      channel: "D123",
+      ts: "123.456",
+      text: "Starting agent runtime...",
+      startedAtMs: 0,
+      toolStartedAtMs: {},
+      toolLinesByCallId: {},
+      toolCallOrder: []
+    };
+    const client = {
+      chat: {
+        update: async (input: { text: string }) => {
+          updates.push(input.text);
+          return {};
+        }
+      }
+    };
+
+    await updateAgentProgressMessage(client as never, progressMessage, {
+      type: "message_delta",
+      text: "Interrupting current task (iteration 1/90, running: google_search_drive_files). I'll respond to your message shortly."
+    });
+
+    expect((progressMessage as { streamedText?: string }).streamedText).toBeUndefined();
+    expect(
+      (progressMessage as { suppressedRuntimeControlNotice?: boolean })
+        .suppressedRuntimeControlNotice
+    ).toBe(true);
+    expect(updates).toEqual([]);
+  });
+
   test("strips Hermes stream cursor glyphs from final response text", async () => {
     const updates: string[] = [];
     const originalNow = Date.now;
