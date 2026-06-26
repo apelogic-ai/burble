@@ -454,7 +454,12 @@ async function resolveSchedulerControlIntent(
       if (intent) {
         return {
           intent,
-          jobId: sanitizeSchedulerJobId(resolved.jobId),
+          jobId: resolveSchedulerResolverJobId(
+            request.text,
+            resolved.jobId,
+            jobs,
+            fallbackJobId,
+          ),
         };
       }
     } catch {
@@ -469,6 +474,45 @@ async function resolveSchedulerControlIntent(
     classifySchedulerControlIntent(request.text) ??
     (parseSchedulerCreateRequest(request.text) ? "create_job" : null);
   return { intent: fallbackIntent, jobId: null };
+}
+
+function resolveSchedulerResolverJobId(
+  text: string,
+  resolvedJobId: string | null | undefined,
+  jobs: Array<{ jobId: string; title: string | null }>,
+  explicitJobId: string | null,
+): string | null {
+  if (explicitJobId) {
+    return explicitJobId;
+  }
+
+  const jobId = sanitizeSchedulerJobId(resolvedJobId);
+  if (!jobId) {
+    return null;
+  }
+
+  if (text.includes(jobId)) {
+    return jobId;
+  }
+
+  const selected = jobs.find((job) => job.jobId === jobId);
+  const selectedTitle = normalizeSchedulerJobTitle(selected?.title ?? null);
+  if (!selectedTitle) {
+    return jobId;
+  }
+
+  const matchingTitleCount = jobs.filter(
+    (job) => normalizeSchedulerJobTitle(job.title) === selectedTitle,
+  ).length;
+  return matchingTitleCount > 1 ? null : jobId;
+}
+
+function normalizeSchedulerJobTitle(title: string | null): string | null {
+  const normalized = title
+    ?.toLowerCase()
+    .replace(/\s+/g, " ")
+    .trim();
+  return normalized || null;
 }
 
 function classifyExplicitSchedulerJobIdIntent(

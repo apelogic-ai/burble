@@ -14,6 +14,7 @@ import { createGitHubTools } from "../../src/tools/github";
 import { createGoogleTools } from "../../src/tools/google";
 import { createJiraTools } from "../../src/tools/jira";
 import type { ObservabilityEventInput } from "../../src/observability";
+import type { SchedulerJobSummary } from "../../src/scheduler/control-plane";
 
 const baseRequest: ConversationRequest = {
   source: "slack",
@@ -1306,6 +1307,79 @@ describe("handleConversation", () => {
     expect(triggerJobId).toBe("job_ai_news");
     expect(response.text).toContain("Triggered scheduled job job_ai_news");
     expect(response.text).toContain("jobrun-ai-news-1");
+  });
+
+  test("does not accept resolver-selected job ids when duplicate titles make the natural-language reference ambiguous", async () => {
+    let called = false;
+    let triggerJobId: string | null | undefined = "unset";
+    const duplicateJobs: SchedulerJobSummary[] = [
+      {
+        jobId: "job_bad_ai_news",
+        title: "Hourly AI news summary",
+        prompt: "test run hourly ai news summary job",
+        schedule: {
+          kind: "interval" as const,
+          every: { hours: 1 },
+        },
+        state: "scheduled",
+        runtimeType: "openclaw",
+        requiredTools: ["web_search"],
+        routeId: "convrt_123",
+        updatedAt: "2026-06-24T13:00:00.000Z",
+      },
+      {
+        jobId: "job_good_ai_news",
+        title: "Hourly AI news summary",
+        prompt: "look for fresh AI-related news",
+        schedule: {
+          kind: "interval" as const,
+          every: { hours: 1 },
+        },
+        state: "scheduled",
+        runtimeType: "openclaw",
+        requiredTools: ["web_search"],
+        routeId: "convrt_123",
+        updatedAt: "2026-06-24T12:00:00.000Z",
+      },
+    ];
+    const response = await handleConversation(
+      {
+        ...baseRequest,
+        text: "test run hourly ai news summary job",
+      },
+      createDeps({
+        agentMode: "llm",
+        schedulerControl: {
+          listJobs: () => duplicateJobs,
+          triggerJob: (input) => {
+            triggerJobId = input.jobId;
+            return {
+              ok: false,
+              reason: "ambiguous",
+              jobs: duplicateJobs,
+            };
+          },
+        },
+        schedulerIntentResolver: async () => ({
+          intent: "trigger_job",
+          confidence: 0.96,
+          jobId: "job_bad_ai_news",
+        }),
+        agentRunner: stubAgentRunner(() => {
+          called = true;
+          return {
+            classification: "public",
+            text: "unexpected",
+          };
+        }),
+      }),
+    );
+
+    expect(called).toBe(false);
+    expect(triggerJobId).toBeNull();
+    expect(response.text).toContain("Multiple scheduled jobs are configured");
+    expect(response.text).toContain("job_bad_ai_news");
+    expect(response.text).toContain("job_good_ai_news");
   });
 
   test("triggers explicit scheduler job ids without invoking the LLM runner", async () => {
