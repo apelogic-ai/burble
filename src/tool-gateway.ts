@@ -4058,7 +4058,7 @@ async function resolveScheduledJobDestinationRoute(input: {
   return route ?? null;
 }
 
-async function defaultResolveSlackChannelIdByName(
+export async function defaultResolveSlackChannelIdByName(
   config: Config,
   input: { workspaceId: string; channelName: string }
 ): Promise<string | null> {

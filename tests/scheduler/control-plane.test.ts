@@ -461,4 +461,67 @@ describe("scheduler control plane", () => {
 
     store.close();
   });
+
+  test("resolves scheduled job delivery channel names through existing grants", async () => {
+    const store = createTokenStore(":memory:");
+    store.upsertScheduledJob({
+      jobId: "job-ai-news-hourly",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      title: "Hourly AI news summary",
+      prompt: "look for fresh AI-related news and post a short summary",
+      schedule: {
+        kind: "interval",
+        every: { hours: 1 },
+      },
+      routeId: "convrt_old",
+      runtimeType: "openclaw",
+      now: new Date("2026-06-24T12:00:00.000Z"),
+    });
+    const route = store.upsertConversationRoute({
+      workspaceId: "T123",
+      slackUserId: "U123",
+      transport: "slack",
+      kind: "grant",
+      grantedBySlackUserId: "U123",
+      destination: {
+        channelId: "CNEWS",
+        isDirectMessage: false,
+        rootId: "channel:CNEWS",
+      },
+      now: new Date("2026-06-24T12:01:00.000Z"),
+    });
+    const lookups: unknown[] = [];
+    const scheduler = createSchedulerControlPlane(store, {
+      now: () => new Date("2026-06-24T12:10:00.000Z"),
+      resolveSlackChannelIdByName: (input) => {
+        lookups.push(input);
+        return "CNEWS";
+      },
+    });
+
+    expect(
+      await scheduler.updateJobDelivery?.({
+        workspaceId: "T123",
+        slackUserId: "U123",
+        jobId: "job-ai-news-hourly",
+        channelName: "ai-news",
+      }),
+    ).toEqual({
+      ok: true,
+      job: expect.objectContaining({
+        jobId: "job-ai-news-hourly",
+        routeId: route.id,
+      }),
+      routeId: route.id,
+    });
+    expect(lookups).toEqual([
+      {
+        workspaceId: "T123",
+        channelName: "ai-news",
+      },
+    ]);
+
+    store.close();
+  });
 });

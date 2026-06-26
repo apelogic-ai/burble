@@ -163,6 +163,10 @@ type SchedulerControlPlaneOptions = {
   now?: () => Date;
   newJobId?: () => string;
   newRunId?: () => string;
+  resolveSlackChannelIdByName?: (input: {
+    workspaceId: string;
+    channelName: string;
+  }) => Promise<string | null> | string | null;
 };
 
 export function createSchedulerControlPlane(
@@ -242,7 +246,12 @@ export function createSchedulerControlPlane(
       return { ok: true, jobId: selection.job.jobId };
     },
     updateJobDelivery(input) {
-      return updateScheduledJobDelivery(store, input, now());
+      return updateScheduledJobDelivery(
+        store,
+        input,
+        now(),
+        options.resolveSlackChannelIdByName,
+      );
     },
     triggerJob(input) {
       const jobs = listJobs(input);
@@ -293,7 +302,13 @@ function updateScheduledJobDelivery(
   >,
   input: SchedulerUpdateJobDeliveryInput,
   now: Date,
-): SchedulerUpdateJobDeliveryResult {
+  resolveSlackChannelIdByName?: (input: {
+    workspaceId: string;
+    channelName: string;
+  }) => Promise<string | null> | string | null,
+):
+  | Promise<SchedulerUpdateJobDeliveryResult>
+  | SchedulerUpdateJobDeliveryResult {
   const records = store.listScheduledJobsForPrincipal(
     input.workspaceId,
     input.slackUserId,
@@ -334,6 +349,33 @@ function updateScheduledJobDelivery(
   }
 
   if (!resolvedRouteId && channelName) {
+    if (resolveSlackChannelIdByName) {
+      return Promise.resolve(
+        resolveSlackChannelIdByName({
+          workspaceId: input.workspaceId,
+          channelName,
+        }),
+      ).then((resolvedChannelId) => {
+        if (!resolvedChannelId) {
+          return {
+            ok: false,
+            reason: "unresolved_channel",
+            jobs,
+            channelName,
+          };
+        }
+        return updateScheduledJobDelivery(
+          store,
+          {
+            ...input,
+            channelId: resolvedChannelId,
+            channelName,
+          },
+          now,
+          undefined,
+        );
+      });
+    }
     return {
       ok: false,
       reason: "unresolved_channel",

@@ -86,6 +86,7 @@ import { handleConversation } from "./conversation/orchestrator";
 import { normalizeMentionText } from "./conversation/normalize";
 import { createLlmSchedulerIntentResolver } from "./conversation/scheduler-intent-resolver";
 import { createSchedulerControlPlane } from "./scheduler/control-plane";
+import { defaultResolveSlackChannelIdByName } from "./tool-gateway";
 import { createSchedulerRunExecutor } from "./scheduler/run-executor";
 import { createSchedulerTimer } from "./scheduler/timer";
 import type {
@@ -366,7 +367,10 @@ export function createSlackRuntime(
     searchSlackUsers,
     searchSlackMessages
   });
-  const schedulerControl = createSchedulerControlPlane(store);
+  const schedulerControl = createSchedulerControlPlane(store, {
+    resolveSlackChannelIdByName: (input) =>
+      defaultResolveSlackChannelIdByName(config, input)
+  });
   const schedulerIntentResolver =
     config.agentMode === "llm"
       ? createLlmSchedulerIntentResolver({
