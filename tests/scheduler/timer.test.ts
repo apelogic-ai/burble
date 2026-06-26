@@ -76,4 +76,40 @@ describe("scheduler timer", () => {
 
     store.close();
   });
+
+  test("queues at most one due interval job per principal while a scheduled run is active", async () => {
+    const store = createTokenStore(":memory:");
+    const createdAt = new Date("2026-06-25T17:00:00.000Z");
+    for (const jobId of ["job-ai-news", "job-pr-checker"]) {
+      store.upsertScheduledJob({
+        jobId,
+        workspaceId: "T123",
+        slackUserId: "U123",
+        title: jobId,
+        prompt: "Run the scheduled task.",
+        schedule: { kind: "interval", every: { hours: 1 } },
+        runtimeType: "openclaw",
+        state: "scheduled",
+        now: createdAt,
+      });
+    }
+    const executed: string[] = [];
+    let ordinal = 0;
+    const timer = createSchedulerTimer({
+      store,
+      now: () => new Date("2026-06-25T18:00:01.000Z"),
+      newRunId: () => `jobrun-timer-${++ordinal}`,
+      executeRun: async (runId) => {
+        executed.push(runId);
+      },
+    });
+
+    const result = await timer.tick();
+
+    expect(result.queuedRunIds).toEqual(["jobrun-timer-1"]);
+    expect(executed).toEqual(["jobrun-timer-1"]);
+    expect(store.getAgentJobRun("jobrun-timer-2")).toBeNull();
+
+    store.close();
+  });
 });

@@ -474,6 +474,56 @@ describe("handleConversation", () => {
     );
   });
 
+  test("fast-paths latest used Google Drive file requests before the LLM runner", async () => {
+    let called = false;
+    const response = await handleConversation(
+      {
+        ...baseRequest,
+        text: "sorry, what is my latest used google drive file",
+      },
+      createDeps({
+        agentMode: "llm",
+        agentFastTrack: true,
+        agentRunner: stubAgentRunner(() => {
+          called = true;
+          return {
+            classification: "public",
+            text: "unexpected",
+          };
+        }),
+      }),
+    );
+
+    expect(called).toBe(false);
+    expect(response.visibility).toBe("ephemeral");
+    expect(response.text).toContain("apelogic-ai-open-prs-last-24h-seen.txt");
+  });
+
+  test("fast-paths latest accessed Google Drive file requests before the LLM runner", async () => {
+    let called = false;
+    const response = await handleConversation(
+      {
+        ...baseRequest,
+        text: "what is my latest accessed google drive file",
+      },
+      createDeps({
+        agentMode: "llm",
+        agentFastTrack: true,
+        agentRunner: stubAgentRunner(() => {
+          called = true;
+          return {
+            classification: "public",
+            text: "unexpected",
+          };
+        }),
+      }),
+    );
+
+    expect(called).toBe(false);
+    expect(response.visibility).toBe("ephemeral");
+    expect(response.text).toContain("apelogic-ai-open-prs-last-24h-seen.txt");
+  });
+
   test("fast-paths last-created Jira ticket requests before the LLM runner", async () => {
     let called = false;
     const response = await handleConversation(

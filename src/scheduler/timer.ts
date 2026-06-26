@@ -6,6 +6,7 @@ type SchedulerTimerStore = Pick<
   TokenStore,
   | "listScheduledJobs"
   | "listAgentJobRunsForJob"
+  | "listAgentJobRunsForPrincipal"
   | "createAgentJobRun"
   | "upsertAgentJobCapability"
 >;
@@ -43,7 +44,15 @@ export function createSchedulerTimer(input: {
     try {
       const queuedRunIds: string[] = [];
       const timestamp = now();
+      const activePrincipals = new Set<string>();
       for (const job of input.store.listScheduledJobs()) {
+        const principalKey = scheduledJobPrincipalKey(job);
+        if (
+          activePrincipals.has(principalKey) ||
+          hasActiveScheduledJobRunForPrincipal(job, input.store)
+        ) {
+          continue;
+        }
         if (!isScheduledJobDue(job, input.store, timestamp)) {
           continue;
         }
@@ -69,6 +78,7 @@ export function createSchedulerTimer(input: {
           now: timestamp,
         });
         queuedRunIds.push(run.runId);
+        activePrincipals.add(principalKey);
         input.logInfo?.(
           `Scheduled job timer queued runId=${run.runId} jobId=${job.jobId}`,
         );
@@ -136,6 +146,19 @@ function isScheduledJobDue(
     return false;
   }
   return now.getTime() - anchorMs >= intervalMs;
+}
+
+function hasActiveScheduledJobRunForPrincipal(
+  job: ScheduledJobRecord,
+  store: Pick<TokenStore, "listAgentJobRunsForPrincipal">,
+): boolean {
+  return store
+    .listAgentJobRunsForPrincipal(job.workspaceId, job.slackUserId, null, 25)
+    .some(isActiveRun);
+}
+
+function scheduledJobPrincipalKey(job: ScheduledJobRecord): string {
+  return `${job.workspaceId}:${job.slackUserId}`;
 }
 
 function isActiveRun(run: AgentJobRunRecord): boolean {
