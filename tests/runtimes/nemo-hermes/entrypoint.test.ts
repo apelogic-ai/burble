@@ -957,6 +957,103 @@ asyncio.run(main())
     });
   });
 
+  test("retries scheduled runtime-control finals with an allowed provider tool", () => {
+    const result = runHermesEntrypointProbe(`${importEntrypoint}
+import asyncio
+import os
+
+os.environ["HERMES_PROVIDER_PROTOCOL_RETRY_ATTEMPTS"] = "1"
+
+async def main():
+    runtime = mod.BurbleHermesRuntime()
+    waiter = mod.RunWaiter()
+    queue = asyncio.Queue()
+    waiter.queues.append(queue)
+    message = {
+        "runId": "run-scheduled-progress-final",
+        "routeId": "convrt_abc123",
+        "originalText": "check new open PRs in https://github.com/apelogic-ai github org, report back to this channel",
+        "runtime": {"id": "rt_123"},
+        "scheduledJob": {
+            "jobId": "job-123",
+            "capabilityProfile": "scheduled_job",
+            "allowedTools": ["github_search_issues", "slack_search_messages"],
+            "routeId": "convrt_abc123",
+            "runtimeType": "hermes",
+            "stateRefs": [],
+            "visibilityPolicy": {"maxOutputVisibility": "user_private"},
+        },
+        "text": "check new open PRs in https://github.com/apelogic-ai github org, report back to this channel",
+    }
+    runtime.runs["run-scheduled-progress-final"] = waiter
+    runtime.run_messages["run-scheduled-progress-final"] = message
+    injected = []
+
+    async def fake_inject(body):
+        injected.append(body)
+        if body.get("protocolRetryAttempt"):
+            waiter.future.set_result({
+                "classification": "user_private",
+                "text": "No open apelogic-ai PRs found.",
+            })
+        else:
+            waiter.future.set_result({
+                "classification": "user_private",
+                "text": "Final result in 2.7s.",
+            })
+
+    runtime._inject_message = fake_inject
+    response = await runtime._execute_run(
+        "run-scheduled-progress-final",
+        waiter,
+        message,
+    )
+
+    events = []
+    while not queue.empty():
+        event = await queue.get()
+        if event is not None:
+            events.append(event)
+
+    print(json.dumps({
+        "response": response,
+        "events": events,
+        "injectedCount": len(injected),
+        "retryText": injected[1]["text"],
+    }))
+
+asyncio.run(main())
+`);
+
+    expect(result).toEqual({
+      response: {
+        classification: "user_private",
+        text: "No open apelogic-ai PRs found.",
+      },
+      events: [
+        {
+          type: "status",
+          text: "Burble accepted the turn.",
+        },
+        {
+          type: "status",
+          text: "Retrying provider tool call with structured Hermes tool protocol.",
+        },
+        {
+          type: "final",
+          response: {
+            classification: "user_private",
+            text: "No open apelogic-ai PRs found.",
+          },
+        },
+      ],
+      injectedCount: 2,
+      retryText: expect.stringContaining(
+        "invoke the real structured Burble provider tool `github_search_issues`",
+      ),
+    });
+  });
+
   test("emits provider tool calls without runtime-side fallback execution", () => {
     const result = runHermesEntrypointProbe(`${importEntrypoint}
 import asyncio
