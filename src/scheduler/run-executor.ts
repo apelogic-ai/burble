@@ -5,6 +5,7 @@ import {
   buildScheduledJobContext,
   type ScheduledJobContext,
 } from "../agent/scheduled-job-context";
+import { isRuntimeProgressOnlyResponseText } from "../agent/runtime-control-notices";
 import { inferAllowedToolsForScheduledJob } from "./job-capabilities";
 import type {
   AgentJobRunRecord,
@@ -109,14 +110,26 @@ export function createSchedulerRunExecutor(input: {
           },
         });
 
-        if (destination && result.text.trim()) {
+        const resultText = result.text.trim();
+        if (
+          destination &&
+          resultText &&
+          !isRuntimeProgressOnlyResponseText(resultText)
+        ) {
           await input.slackClient.chat.postMessage({
             channel: destination.channelId,
-            text: result.text,
+            text: resultText,
             ...(destination.threadTs && !destination.isDirectMessage
               ? { thread_ts: destination.threadTs }
               : {}),
           });
+        } else if (
+          resultText &&
+          isRuntimeProgressOnlyResponseText(resultText)
+        ) {
+          input.logWarn?.(
+            `Scheduled job run suppressed runtime-control output runId=${run.runId} jobId=${job.jobId}`,
+          );
         }
 
         input.store.finishAgentJobRun({

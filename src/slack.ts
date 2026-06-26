@@ -4,6 +4,11 @@ import type { View } from "@slack/types";
 import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import {
+  isRuntimeControlNotice,
+  isRuntimeProgressOnlyMessage,
+  runtimeControlNoticeFallbackText
+} from "./agent/runtime-control-notices";
+import {
   agentRuntimeEngines,
   defaultAgentRuntimeImage,
   defaultAgentRuntimeSandboxStartCommand,
@@ -5424,16 +5429,7 @@ function sanitizeRecentSlackText(text: string | undefined): string {
 }
 
 export function isProgressOnlyMessage(text: string): boolean {
-  return (
-    /^Starting agent runtime/i.test(text) ||
-    /^Agent is /i.test(text) ||
-    /^Calling /i.test(text) ||
-    isRuntimeInterruptNotice(text) ||
-    /\bFirst-time tip\b.*\binterrupted my current task\b/i.test(text) ||
-    /\b\/busy (?:queue|steer|status)\b/i.test(text) ||
-    /^_?Final result in /i.test(text) ||
-    /completed in \d+(?:ms|s).*\bresult\)/i.test(text)
-  );
+  return isRuntimeProgressOnlyMessage(text);
 }
 
 export async function postConversationResponse(
@@ -5618,10 +5614,6 @@ function sanitizeRuntimeFinalResponseText(text: string): string {
   }
 
   return runtimeControlNoticeFallbackText();
-}
-
-function runtimeControlNoticeFallbackText(): string {
-  return "The agent returned an internal runtime-control notice instead of an answer. Please retry your request.";
 }
 
 function sanitizeRuntimeFinalProgressText(text: string): string {
@@ -6248,18 +6240,6 @@ function normalizeAgentStatus(text: string): string {
     .replace(/OpenClaw\/NemoClaw/gi, "agent")
     .replace(/OpenClaw/gi, "agent")
     .replace(/\bagent agent\b/gi, "agent");
-}
-
-function isRuntimeControlNotice(text: string): boolean {
-  return (
-    isRuntimeInterruptNotice(text) ||
-    /\bFirst-time tip\b.*\binterrupted my current task\b/i.test(text) ||
-    /\b\/busy (?:queue|steer|status)\b/i.test(text)
-  );
-}
-
-function isRuntimeInterruptNotice(text: string): boolean {
-  return /^(?::zap:|⚡️?)?\s*Interrupting current task\b/i.test(text.trim());
 }
 
 function renderProgressLines(

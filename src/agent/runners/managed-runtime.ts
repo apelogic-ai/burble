@@ -20,6 +20,7 @@ import {
 } from "@burble/runtime-sdk/runtime-contract-http-client";
 import { containsRuntimeToolCallProtocolFragments } from "@burble/runtime-sdk/runtime-text-protocol";
 import { runtimeCompatibilityFamily } from "../runtime-descriptors";
+import { isRuntimeProgressOnlyResponseText } from "../runtime-control-notices";
 import { sealRuntimeConversationAttachments } from "../../conversation/attachment-capabilities";
 import type { Config } from "../../config";
 import {
@@ -926,6 +927,11 @@ function assertManagedRuntimeFinalResponse(response: AgentOutput): void {
   if (containsRuntimeToolCallProtocolFragments(response.text)) {
     throw new Error(
       "Managed runtime final response leaked tool-call protocol text",
+    );
+  }
+  if (isRuntimeProgressOnlyResponseText(response.text)) {
+    throw new Error(
+      "Managed runtime final response contained only runtime-control/progress text",
     );
   }
 }

@@ -204,6 +204,92 @@ describe("scheduler run executor", () => {
     store.close();
   });
 
+  test("does not deliver runtime-control notices as scheduled job output", async () => {
+    const store = createTokenStore(":memory:");
+    const route = store.upsertConversationRoute({
+      workspaceId: "T123",
+      slackUserId: "U123",
+      transport: "slack",
+      destination: {
+        channelId: "D123",
+        isDirectMessage: true,
+        rootId: "dm:D123",
+      },
+      now: new Date("2026-06-25T17:00:00.000Z"),
+    });
+    const job = store.upsertScheduledJob({
+      jobId: "job-pr-monitor",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      title: "Open PR monitor",
+      prompt: "Look for new open PRs.",
+      schedule: { kind: "interval", every: { minutes: 15 } },
+      routeId: route.id,
+      runtimeType: "hermes",
+      state: "scheduled",
+      now: new Date("2026-06-25T17:01:00.000Z"),
+    });
+    const run = store.createAgentJobRun({
+      runId: "jobrun-pr-monitor",
+      jobId: job.jobId,
+      workspaceId: "T123",
+      slackUserId: "U123",
+      triggerSource: "schedule",
+      status: "queued",
+      now: new Date("2026-06-25T17:02:00.000Z"),
+    });
+    const posts: Array<{ channel: string; text: string; thread_ts?: string }> =
+      [];
+    const warnings: string[] = [];
+    const runner: AgentRunner = {
+      name: "test-runner",
+      capabilities: {
+        streaming: true,
+        toolEvents: true,
+        remote: true,
+      },
+      async *run() {
+        yield {
+          type: "final",
+          response: {
+            classification: "user_private",
+            text: [
+              ":zap: Interrupting current task (iteration 1/90, running: github_list_my_pull_requests). I'll respond to your message shortly.",
+              "",
+              ":bulb: First-time tip — I just interrupted my current task to answer you. Send /busy queue to queue follow-ups for after the current task instead.",
+            ].join("\n"),
+          },
+        };
+      },
+    };
+    const executor = createSchedulerRunExecutor({
+      store,
+      agentRunner: runner,
+      slackClient: {
+        chat: {
+          postMessage: async (message) => {
+            posts.push(message);
+            return {};
+          },
+        },
+      },
+      logWarn: (message) => warnings.push(message),
+    });
+
+    await executor.executeRun(run.runId);
+
+    expect(posts).toEqual([]);
+    expect(warnings).toEqual([
+      "Scheduled job run suppressed runtime-control output runId=jobrun-pr-monitor jobId=job-pr-monitor",
+    ]);
+    expect(store.getAgentJobRun(run.runId)).toMatchObject({
+      runId: run.runId,
+      status: "succeeded",
+    });
+
+    store.close();
+  });
+
   test("posts a terminal failure message when the runtime run fails", async () => {
     const store = createTokenStore(":memory:");
     const route = store.upsertConversationRoute({
