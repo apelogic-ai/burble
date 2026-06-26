@@ -513,10 +513,7 @@ async function resolveSchedulerControlIntent(
     }
 
     return {
-      intent:
-        deterministicIntent === "update_job_delivery"
-          ? deterministicIntent
-          : null,
+      intent: deterministicIntent,
       jobId: fallbackJobId,
     };
   }
