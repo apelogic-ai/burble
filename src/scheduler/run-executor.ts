@@ -89,7 +89,7 @@ export function createSchedulerRunExecutor(input: {
                   source: "slack" as const,
                   workspaceId: run.workspaceId,
                   channelId: destination.channelId,
-                  rootId: destination.rootId ?? `scheduled:${job.jobId}`,
+                  rootId: scheduledRunConversationRoot(job, run),
                   isDirectMessage: destination.isDirectMessage,
                 },
               }
@@ -195,6 +195,13 @@ function scheduledJobContextForRun(
     stateRefs: [],
     visibilityPolicy: {},
   };
+}
+
+function scheduledRunConversationRoot(
+  job: ScheduledJobRecord,
+  run: AgentJobRunRecord,
+): string {
+  return `scheduled:${job.jobId}:${run.runId}`;
 }
 
 function connectionForSlackUser(

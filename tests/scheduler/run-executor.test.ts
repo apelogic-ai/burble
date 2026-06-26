@@ -93,7 +93,7 @@ describe("scheduler run executor", () => {
       conversation: {
         routeId: route.id,
         channelId: "D123",
-        rootId: "dm:D123",
+        rootId: "scheduled:job-ai-news:jobrun-ai-news",
         isDirectMessage: true,
       },
     });
@@ -191,6 +191,12 @@ describe("scheduler run executor", () => {
         allowedTools: ["google_get_drive_file", "google_search_drive_files"],
         routeId: route.id,
         runtimeType: "hermes",
+      },
+      conversation: {
+        routeId: route.id,
+        channelId: "D123",
+        rootId: "scheduled:job-drive-summary:jobrun-drive-summary",
+        isDirectMessage: true,
       },
     });
     assertRuntimeContractScheduledJob(
