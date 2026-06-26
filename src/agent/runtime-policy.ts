@@ -43,6 +43,8 @@ export type RuntimeEngineCompatibility = {
 
 export type RuntimeEngineCompatibilityWorkload = "interactive" | "scheduled";
 
+const activeRuntimeStatuses = new Set(["provisioning", "ready", "busy", "idle"]);
+
 export class RuntimeEngineSelectionError extends Error {
   constructor(
     message: string,
@@ -77,6 +79,11 @@ export function resolveRuntimeEngineForPrincipal(input: {
   const preferredEngine = readUserRuntimeEnginePreference({
     store: input.store,
     principal: input.principal,
+  });
+  const activeEngine = readActiveRuntimeEngineForPrincipal({
+    store: input.store,
+    principal: input.principal,
+    selectableEngines,
   });
   const requestedEngine = input.requirements?.engine ?? null;
   const fallbackEngine = selectableEngines[0];
@@ -113,6 +120,7 @@ export function resolveRuntimeEngineForPrincipal(input: {
   }
   const effectiveEngine =
     requestedEngine ??
+    activeEngine ??
     (preferredEngine && selectableEngines.includes(preferredEngine)
       ? preferredEngine
       : selectableEngines.includes(configuredEngine)
@@ -127,6 +135,10 @@ export function resolveRuntimeEngineForPrincipal(input: {
     selectableEngines,
     compatibility,
   };
+}
+
+export function isActiveAgentRuntime(runtime: AgentRuntimeRecord): boolean {
+  return activeRuntimeStatuses.has(runtime.status);
 }
 
 export function runtimeEngineCompatibility(
@@ -364,6 +376,24 @@ function readUserRuntimeEnginePreference(input: {
     "runtime.engine",
   )?.value;
   return normalizeRuntimeEngine(value);
+}
+
+function readActiveRuntimeEngineForPrincipal(input: {
+  store: TokenStore;
+  principal: PrincipalId;
+  selectableEngines: RuntimeManifest["runtime"]["engine"][];
+}): RuntimeManifest["runtime"]["engine"] | null {
+  const runtimes = input.store.listAgentRuntimesForPrincipal({
+    workspaceId: input.principal.workspaceId,
+    slackUserId: input.principal.slackUserId,
+  });
+  return (
+    runtimes.find(
+      (runtime) =>
+        isActiveAgentRuntime(runtime) &&
+        input.selectableEngines.includes(runtime.engine),
+    )?.engine ?? null
+  );
 }
 
 function normalizeRuntimeEngineList(

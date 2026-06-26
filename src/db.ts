@@ -692,6 +692,32 @@ export function createTokenStore(path: string) {
     FROM agent_runtimes
     WHERE workspace_id = ? AND slack_user_id = ? AND engine = ?
   `);
+  const listAgentRuntimesByPrincipal = db.query<
+    AgentRuntimeRow,
+    [string, string]
+  >(`
+    SELECT
+      id,
+      workspace_id AS workspaceId,
+      slack_user_id AS slackUserId,
+      engine,
+      status,
+      endpoint_url AS endpointUrl,
+      auth_token_hash AS authTokenHash,
+      state_path AS statePath,
+      config_path AS configPath,
+      workspace_path AS workspacePath,
+      sandbox_id AS sandboxId,
+      policy_hash AS policyHash,
+      created_at AS createdAt,
+      last_seen_at AS lastSeenAt,
+      last_used_at AS lastUsedAt,
+      stopped_at AS stoppedAt,
+      failure_reason AS failureReason
+    FROM agent_runtimes
+    WHERE workspace_id = ? AND slack_user_id = ?
+    ORDER BY last_used_at DESC, last_seen_at DESC, created_at DESC, id ASC
+  `);
   const listIdleAgentRuntimes = db.query<AgentRuntimeRow, [string]>(`
     SELECT
       id,
@@ -1683,6 +1709,18 @@ export function createTokenStore(path: string) {
           input.engine
         )
       );
+    },
+
+    listAgentRuntimesForPrincipal(input: {
+      workspaceId: string;
+      slackUserId: string;
+    }): AgentRuntimeRecord[] {
+      return listAgentRuntimesByPrincipal
+        .all(input.workspaceId, input.slackUserId)
+        .flatMap((runtime) => {
+          const record = toAgentRuntimeRecord(runtime);
+          return record ? [record] : [];
+        });
     },
 
     listIdleAgentRuntimes(idleBefore: Date): AgentRuntimeRecord[] {

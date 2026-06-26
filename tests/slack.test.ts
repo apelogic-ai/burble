@@ -208,6 +208,55 @@ describe("createManagedRuntimeFactory sandbox mode", () => {
     ]);
     store.close();
   });
+
+  test("stops another active runtime before switching engines for a user", async () => {
+    const store = createTokenStore(":memory:");
+    const sandboxProvider = createSlackRuntimeSandboxProvider();
+    store.upsertWorkspacePolicy({
+      workspaceId: "T123",
+      key: "runtime.allowedEngines",
+      value: ["hermes", "openclaw"],
+      updatedBySlackUserId: "UADMIN"
+    });
+    const runtimeFactory = createManagedRuntimeFactory(
+      {
+        ...agentConfig,
+        agentRuntimeFactory: "sandbox",
+        agentRuntimeEngine: "hermes",
+        openClawNemoClawEngine: "hermes",
+        agentRuntimeImage: "burble-nemo-hermes:dev"
+      },
+      store,
+      undefined,
+      {
+        sandboxProvider,
+        sandboxFetch: async () => new Response("ok")
+      }
+    );
+    const principal = {
+      workspaceId: "T123",
+      slackUserId: "U123"
+    };
+
+    const hermes = await runtimeFactory?.getOrCreateRuntime(principal);
+    const openclaw = await runtimeFactory?.getOrCreateRuntime(principal, {
+      engine: "openclaw"
+    });
+
+    expect(hermes?.engine).toBe("hermes");
+    expect(openclaw?.engine).toBe("openclaw");
+    expect(store.getAgentRuntime(hermes?.id ?? "")?.status).toBe("stopped");
+    expect(store.getAgentRuntime(openclaw?.id ?? "")?.status).toBe("ready");
+    expect(
+      store
+        .listAgentRuntimesForPrincipal(principal)
+        .filter((runtime) =>
+          ["provisioning", "ready", "busy", "idle"].includes(runtime.status)
+        )
+        .map((runtime) => runtime.engine)
+    ).toEqual(["openclaw"]);
+    store.close();
+  });
 });
 
 describe("formatIssuesMessage", () => {

@@ -186,7 +186,9 @@ async function handleConversationInternal(
       prompt: schedulerCreateRequest.prompt,
       schedule: schedulerCreateRequest.schedule,
       routeId: request.conversationRouteId,
-      runtimeType: scheduledJobRuntimeType(deps.agentRuntimeEngine),
+      runtimeType: scheduledJobRuntimeType(
+        deps.schedulerRuntimeEngine ?? deps.agentRuntimeEngine,
+      ),
     });
     return {
       visibility: "ephemeral",
@@ -931,7 +933,7 @@ function extractScheduledTaskPrompt(text: string): string {
   return text
     .trim()
     .replace(
-      /^\s*(?:please\s+)?(?:create|add|make|schedule|set\s+up)\s+(?:an?\s+)?(?:(?:hourly|daily|weekly)\s+|every\s+\d+\s*(?:minutes?|mins?|m|hours?|hrs?|h|days?|d|weeks?|w)\s+)?(?:(?:scheduled\s+)?(?:cron\s+job|cronjob|job|task))\s*[,;:-]?\s*(?:to|that|which|for)?\s*/i,
+      /^\s*(?:please\s+)?(?:create|add|make|schedule|set\s+up)\s+(?:an?\s+|new\s+)?(?:(?:hourly|daily|weekly)\s+|every\s+\d+\s*(?:minutes?|mins?|m|hours?|hrs?|h|days?|d|weeks?|w)\s+)?(?:(?:scheduled\s+)?(?:cron\s+job|cronjob|job|task))\s*[,;:-]?\s*(?:to|that|which|for)?\s*/i,
       "",
     )
     .trim()

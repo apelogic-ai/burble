@@ -1012,63 +1012,82 @@ describe("handleConversation", () => {
   });
 
   test("normalizes scheduled job runtime and prompt for scheduled cron wording", async () => {
-    let called = false;
-    const created: unknown[] = [];
-    const response = await handleConversation(
+    const cases = [
       {
-        ...baseRequest,
-        conversationRouteId: "convrt_123",
         text: "add scheduled cron job, to be run every hour, to look for new open PRs in https://github.com/apelogic-ai github org and report back to this channel",
-      },
-      createDeps({
-        agentMode: "llm",
-        agentRuntimeEngine: "openclaw-gateway",
-        schedulerControl: {
-          listJobs: () => [],
-          createJob: (input) => {
-            created.push(input);
-            return {
-              ok: true,
-              job: {
-                jobId: "job-github-prs-hourly",
-                workspaceId: input.workspaceId,
-                slackUserId: input.slackUserId,
-                title: input.title,
-                prompt: input.prompt,
-                schedule: input.schedule,
-                routeId: input.routeId ?? null,
-                state: "scheduled",
-                runtimeType: input.runtimeType ?? null,
-                createdAt: "2026-06-26T17:00:45.158Z",
-                updatedAt: "2026-06-26T17:00:45.158Z",
-              },
-            };
-          },
-        },
-        agentRunner: stubAgentRunner(() => {
-          called = true;
-          return {
-            classification: "public",
-            text: "unexpected",
-          };
-        }),
-      }),
-    );
-
-    expect(called).toBe(false);
-    expect(created).toEqual([
-      {
-        workspaceId: "T123",
-        slackUserId: "U123",
         title: "Hourly open PRs for apelogic-ai",
         prompt:
           "look for new open PRs in https://github.com/apelogic-ai github org and report back to this channel",
         schedule: { kind: "interval", every: { hours: 1 } },
-        routeId: "convrt_123",
-        runtimeType: "openclaw",
       },
-    ]);
-    expect(response.text).toContain("runtime: openclaw");
+      {
+        text: "add new job to be run every 15 min to check new open PRs in https://github.com/apelogic-ai github org, report back to this channel",
+        title: "Scheduled open PRs for apelogic-ai",
+        prompt:
+          "check new open PRs in https://github.com/apelogic-ai github org, report back to this channel",
+        schedule: { kind: "interval", every: { minutes: 15 } },
+      },
+    ] as const;
+
+    for (const testCase of cases) {
+      let called = false;
+      const created: unknown[] = [];
+      const response = await handleConversation(
+        {
+          ...baseRequest,
+          conversationRouteId: "convrt_123",
+          text: testCase.text,
+        },
+        createDeps({
+          agentMode: "llm",
+          agentRuntimeEngine: "openclaw-gateway",
+          schedulerRuntimeEngine: "hermes",
+          schedulerControl: {
+            listJobs: () => [],
+            createJob: (input) => {
+              created.push(input);
+              return {
+                ok: true,
+                job: {
+                  jobId: "job-github-prs-hourly",
+                  workspaceId: input.workspaceId,
+                  slackUserId: input.slackUserId,
+                  title: input.title,
+                  prompt: input.prompt,
+                  schedule: input.schedule,
+                  routeId: input.routeId ?? null,
+                  state: "scheduled",
+                  runtimeType: input.runtimeType ?? null,
+                  createdAt: "2026-06-26T17:00:45.158Z",
+                  updatedAt: "2026-06-26T17:00:45.158Z",
+                },
+              };
+            },
+          },
+          agentRunner: stubAgentRunner(() => {
+            called = true;
+            return {
+              classification: "public",
+              text: "unexpected",
+            };
+          }),
+        }),
+      );
+
+      expect(called).toBe(false);
+      expect(created).toEqual([
+        {
+          workspaceId: "T123",
+          slackUserId: "U123",
+          title: testCase.title,
+          prompt: testCase.prompt,
+          schedule: testCase.schedule,
+          routeId: "convrt_123",
+          runtimeType: "hermes",
+        },
+      ]);
+      expect(response.text).toContain("runtime: hermes");
+    }
   });
 
   test("updates scheduled job delivery from a Slack channel mention without invoking the LLM runner", async () => {

@@ -426,6 +426,51 @@ describe("createTokenStore", () => {
     store.close();
   });
 
+  test("lists principal runtimes newest active usage first", () => {
+    const store = createTokenStore(":memory:");
+    const openclaw = store.getOrCreateAgentRuntime({
+      workspaceId: "T123",
+      slackUserId: "U123",
+      engine: "openclaw",
+      endpointUrl: "http://runtime-openclaw:8080",
+      authTokenHash: "hash-openclaw",
+      statePath: "/data/runtimes/u123/openclaw/state",
+      configPath: "/data/runtimes/u123/openclaw/config.json",
+      workspacePath: "/data/runtimes/u123/openclaw/workspace",
+      now: new Date("2026-05-21T00:00:00.000Z")
+    });
+    const hermes = store.getOrCreateAgentRuntime({
+      workspaceId: "T123",
+      slackUserId: "U123",
+      engine: "hermes",
+      endpointUrl: "http://runtime-hermes:8080",
+      authTokenHash: "hash-hermes",
+      statePath: "/data/runtimes/u123/hermes/state",
+      configPath: "/data/runtimes/u123/hermes/config.json",
+      workspacePath: "/data/runtimes/u123/hermes/workspace",
+      now: new Date("2026-05-21T00:01:00.000Z")
+    });
+    store.updateAgentRuntimeStatus(openclaw.id, {
+      status: "stopped",
+      now: new Date("2026-05-21T00:02:00.000Z")
+    });
+    store.touchAgentRuntime(hermes.id, new Date("2026-05-21T00:03:00.000Z"));
+
+    expect(
+      store
+        .listAgentRuntimesForPrincipal({
+          workspaceId: "T123",
+          slackUserId: "U123"
+        })
+        .map((runtime) => [runtime.id, runtime.engine, runtime.status])
+    ).toEqual([
+      [hermes.id, "hermes", "ready"],
+      [openclaw.id, "openclaw", "stopped"]
+    ]);
+
+    store.close();
+  });
+
   test("lists stale ready and idle runtimes for reaping", () => {
     const store = createTokenStore(":memory:");
     const staleReady = store.getOrCreateAgentRuntime({

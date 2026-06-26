@@ -110,6 +110,7 @@ import type { SandboxProvider } from "./agent/sandbox-provider";
 import { modelProviderUrlsForRuntimeModel } from "./agent/runtime-env";
 import {
   buildRuntimeManifestForPrincipal,
+  isActiveAgentRuntime,
   RuntimeEngineSelectionError,
   resolveRuntimeEngineForPrincipal,
   type RuntimeEngineSelection
@@ -928,6 +929,14 @@ export function createSlackRuntime(
           agentMode: config.agentMode,
           agentFastTrack: config.agentFastTrack,
           agentRuntimeEngine: config.agentRuntimeEngine,
+          schedulerRuntimeEngine: resolveRuntimeEngineForPrincipal({
+            config,
+            store,
+            principal: {
+              workspaceId: body.team_id ?? "",
+              slackUserId: mention.user
+            }
+          }).effectiveEngine,
           observability,
           ...(resolveAgentExecutionMode()
             ? { agentExecutionMode: resolveAgentExecutionMode() }
@@ -1120,6 +1129,14 @@ export function createSlackRuntime(
           agentMode: config.agentMode,
           agentFastTrack: config.agentFastTrack,
           agentRuntimeEngine: config.agentRuntimeEngine,
+          schedulerRuntimeEngine: resolveRuntimeEngineForPrincipal({
+            config,
+            store,
+            principal: {
+              workspaceId: body.team_id ?? "",
+              slackUserId: directMessage.user
+            }
+          }).effectiveEngine,
           observability,
           ...(resolveAgentExecutionMode()
             ? { agentExecutionMode: resolveAgentExecutionMode() }
@@ -2017,10 +2034,26 @@ export function createManagedRuntimeFactory(
       principal,
       requirements
     }).effectiveEngine;
+  const stopOtherActiveRuntimes = async (
+    principal: { workspaceId: string; slackUserId: string },
+    selectedEngine: ReturnType<typeof resolveEngine>
+  ) => {
+    for (const runtime of store.listAgentRuntimesForPrincipal(principal)) {
+      if (
+        runtime.engine === selectedEngine ||
+        !isActiveAgentRuntime(runtime)
+      ) {
+        continue;
+      }
+      await delegateForEngine(runtime.engine).stopRuntime(runtime.id);
+    }
+  };
 
   return {
     async getOrCreateRuntime(principal, requirements) {
-      return delegateForEngine(resolveEngine(principal, requirements)).getOrCreateRuntime(
+      const engine = resolveEngine(principal, requirements);
+      await stopOtherActiveRuntimes(principal, engine);
+      return delegateForEngine(engine).getOrCreateRuntime(
         principal,
         requirements
       );
@@ -2088,11 +2121,13 @@ function buildRuntimeManifestForEffectiveEngine(input: {
   config: Config;
   store: TokenStore;
   principal: { workspaceId: string; slackUserId: string };
+  engine?: AgentRuntimeEngine;
 }) {
-  const selection = resolveRuntimeEngineForPrincipal(input);
+  const engine =
+    input.engine ?? resolveRuntimeEngineForPrincipal(input).effectiveEngine;
   return buildRuntimeManifestForPrincipal({
     ...input,
-    engine: selection.effectiveEngine
+    engine
   });
 }
 
@@ -4581,7 +4616,8 @@ export async function applyAgentRuntimeEngineSelection(input: {
   const nextPolicyHash = buildRuntimeManifestForEffectiveEngine({
     config: input.config,
     store: input.store,
-    principal: input.principal
+    principal: input.principal,
+    engine: input.engine
   }).policyHash;
   try {
     await input.afterPreferenceSaved?.();

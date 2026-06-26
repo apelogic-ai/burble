@@ -187,6 +187,8 @@ function createStore(
     },
     getAgentRuntime: (id) => (id === foundRuntime?.id ? foundRuntime : null),
     getAgentRuntimeForPrincipal: () => foundRuntime,
+    listAgentRuntimesForPrincipal: () =>
+      foundRuntime ? [foundRuntime] : [],
     listIdleAgentRuntimes: () => [],
     recordAgentRuntimeEvent: (event) => {
       runtimeEvents.push(event);

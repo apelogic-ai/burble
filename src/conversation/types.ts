@@ -115,6 +115,7 @@ export type ConversationDeps = {
   agentMode?: AgentMode;
   agentFastTrack?: boolean;
   agentRuntimeEngine?: AgentRuntimeEngine;
+  schedulerRuntimeEngine?: AgentRuntimeEngine | null;
   agentRunner?: AgentRunner;
   agentExecutionMode?: "default" | "native-runtime";
   schedulerControl?: SchedulerControlPlane;
