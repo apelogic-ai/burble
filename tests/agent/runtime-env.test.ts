@@ -13,11 +13,13 @@ describe("runtime env egress helpers", () => {
       BROWSER_USE_API_KEY: "browser-use-key",
       BROWSERBASE_API_KEY: "browserbase-key",
       BROWSER_CDP_URL: "wss://Chrome.Example.Net:9222/devtools/browser/1",
+      OPENCLAW_MODEL_API: "openai-completions",
       UNAPPROVED_SECRET: "nope"
     };
 
     expect(collectApprovedRuntimeEnv(env)).toEqual({
-      BROWSER_CDP_URL: "wss://Chrome.Example.Net:9222/devtools/browser/1"
+      BROWSER_CDP_URL: "wss://Chrome.Example.Net:9222/devtools/browser/1",
+      OPENCLAW_MODEL_API: "openai-completions"
     });
     expect(collectApprovedRuntimeEnv(env).OPENAI_API_KEY).toBeUndefined();
     expect(collectApprovedRuntimeEnv(env).ANTHROPIC_API_KEY).toBeUndefined();

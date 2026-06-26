@@ -5,6 +5,7 @@ import {
 } from "../formatting";
 import { collectAgentRun, type AgentRunEvent } from "../agent/types";
 import { selectRuntimeToolGroups } from "../agent/tool-groups";
+import { runtimeCompatibilityFamily } from "../agent/runtime-descriptors";
 import { parseGitHubPullRequestListInput } from "../github-query";
 import { tryHandleLocalToolFastPath } from "./local-tool-fast-paths";
 import { enforceVisibility } from "./visibility";
@@ -23,6 +24,8 @@ import type {
   SchedulerControlIntent,
   SchedulerIntentResolverResult,
 } from "./types";
+import type { AgentRuntimeEngine } from "../db";
+import { isAgentRuntimeEngine } from "@burble/runtime-sdk/runtime-engines";
 
 export async function handleConversation(
   request: ConversationRequest,
@@ -183,7 +186,7 @@ async function handleConversationInternal(
       prompt: schedulerCreateRequest.prompt,
       schedule: schedulerCreateRequest.schedule,
       routeId: request.conversationRouteId,
-      runtimeType: deps.agentRuntimeEngine,
+      runtimeType: scheduledJobRuntimeType(deps.agentRuntimeEngine),
     });
     return {
       visibility: "ephemeral",
@@ -423,6 +426,16 @@ async function handleConversationInternal(
       "`@Burble what issues are assigned to me?`",
     ].join("\n"),
   };
+}
+
+function scheduledJobRuntimeType(
+  engine: AgentRuntimeEngine | undefined,
+): AgentRuntimeEngine | null {
+  if (!engine) {
+    return null;
+  }
+  const family = runtimeCompatibilityFamily(engine);
+  return isAgentRuntimeEngine(family) ? family : engine;
 }
 
 function classifySchedulerControlIntent(text: string): SchedulerControlIntent {
@@ -918,7 +931,12 @@ function extractScheduledTaskPrompt(text: string): string {
   return text
     .trim()
     .replace(
-      /^\s*(?:please\s+)?(?:create|add|make|schedule|set\s+up)\s+(?:an?\s+)?(?:(?:hourly|daily|weekly)\s+|every\s+\d+\s*(?:minutes?|mins?|m|hours?|hrs?|h|days?|d|weeks?|w)\s+)?(?:cron\s+job|cronjob|scheduled\s+job|job)\s+(?:to|that|which|for)?\s*/i,
+      /^\s*(?:please\s+)?(?:create|add|make|schedule|set\s+up)\s+(?:an?\s+)?(?:(?:hourly|daily|weekly)\s+|every\s+\d+\s*(?:minutes?|mins?|m|hours?|hrs?|h|days?|d|weeks?|w)\s+)?(?:(?:scheduled\s+)?(?:cron\s+job|cronjob|job|task))\s*[,;:-]?\s*(?:to|that|which|for)?\s*/i,
+      "",
+    )
+    .trim()
+    .replace(
+      /^(?:to\s+)?(?:be\s+)?run\s+(?:hourly|daily|weekly|every\s+(?:\d+\s*)?(?:minutes?|mins?|m|hours?|hrs?|h|days?|d|weeks?|w))\s*[,;:-]?\s*(?:to\s+)?/i,
       "",
     )
     .trim()
@@ -938,6 +956,13 @@ function inferScheduledJobTitle(prompt: string, scheduleLabel: string): string {
           : "Scheduled";
   if (normalized.includes("ai") && normalized.includes("news")) {
     return `${prefix} AI news summary`;
+  }
+  if (
+    normalized.includes("github") &&
+    /\b(?:open\s+prs?|pull\s+requests?)\b/.test(normalized)
+  ) {
+    const org = /github\.com\/([a-z0-9_.-]+)/i.exec(prompt)?.[1];
+    return org ? `${prefix} open PRs for ${org}` : `${prefix} open PRs`;
   }
   const words = prompt
     .replace(/[^a-z0-9 ]+/gi, " ")

@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import type { OpenClawModelApi } from "./llm-config";
 
 export type RuntimeConfig = {
   port: number;
@@ -36,6 +37,7 @@ export type RuntimeConfig = {
   openClawGatewayRetryBaseMs?: number;
   openClawGatewayRetryMaxMs?: number;
   llmModel: string;
+  openClawModelApi?: OpenClawModelApi;
   inferenceBaseUrl?: string | null;
   ollamaBaseUrl: string;
 };
@@ -156,6 +158,9 @@ export function readRuntimeConfig(env: Env): RuntimeConfig {
         readOptionalEnv(env.OPENCLAW_MODEL) ??
         "openai:gpt-5.4"
     ),
+    openClawModelApi: validateOpenClawModelApi(
+      readOptionalEnv(env.OPENCLAW_MODEL_API) ?? "openai-responses"
+    ),
     inferenceBaseUrl: readOptionalUrlEnv(env.AGENT_RUNTIME_INFERENCE_BASE_URL),
     ollamaBaseUrl:
       readOptionalUrlEnv(env.OLLAMA_BASE_URL) ?? "https://ollama.com"
@@ -257,4 +262,15 @@ function validateLlmModelId(modelId: string): string {
   }
 
   return modelId;
+}
+
+function validateOpenClawModelApi(value: string): OpenClawModelApi {
+  const trimmed = value.trim();
+  if (trimmed === "openai-responses" || trimmed === "openai-completions") {
+    return trimmed;
+  }
+
+  throw new Error(
+    "Environment variable OPENCLAW_MODEL_API must be one of openai-responses, openai-completions"
+  );
 }
