@@ -127,6 +127,7 @@ function createFakeStore() {
     },
     getScheduledJob: () => null,
     listScheduledJobsForPrincipal: () => [],
+    listScheduledJobs: () => [],
     deleteScheduledJob: () => undefined,
     createAgentJobRun: () => {
       throw new Error("unexpected agent job run write");

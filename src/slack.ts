@@ -87,6 +87,7 @@ import { normalizeMentionText } from "./conversation/normalize";
 import { createLlmSchedulerIntentResolver } from "./conversation/scheduler-intent-resolver";
 import { createSchedulerControlPlane } from "./scheduler/control-plane";
 import { createSchedulerRunExecutor } from "./scheduler/run-executor";
+import { createSchedulerTimer } from "./scheduler/timer";
 import type {
   ConversationAttachment,
   ConversationRequest,
@@ -406,6 +407,15 @@ export function createSlackRuntime(
           logWarn: (message) => app.logger.warn(withUtcTimestamp(message))
         })
       : undefined;
+  const schedulerTimer = schedulerRunExecutor
+    ? createSchedulerTimer({
+        store,
+        executeRun: (runId) => schedulerRunExecutor.executeRun(runId),
+        logInfo: (message) => app.logger.info(withUtcTimestamp(message)),
+        logWarn: (message) => app.logger.warn(withUtcTimestamp(message))
+      })
+    : undefined;
+  schedulerTimer?.start();
   const agentExecTasks = new Map<string, AgentExecTask>();
 
   const resolveAgentExecutionMode = (): "native-runtime" | undefined =>

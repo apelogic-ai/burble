@@ -324,6 +324,7 @@ function createStore(
         (job) =>
           job.workspaceId === workspaceId && job.slackUserId === slackUserId
       ),
+    listScheduledJobs: () => scheduledJobs.list ?? [],
     deleteScheduledJob: (jobId) => {
       const index = (scheduledJobs.list ?? []).findIndex(
         (job) => job.jobId === jobId

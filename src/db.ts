@@ -1114,6 +1114,23 @@ export function createTokenStore(path: string) {
     WHERE workspace_id = ? AND slack_user_id = ?
     ORDER BY updated_at DESC, job_id ASC
   `);
+  const listScheduledJobs = db.query<ScheduledJobRow, [number]>(`
+    SELECT
+      job_id AS jobId,
+      workspace_id AS workspaceId,
+      slack_user_id AS slackUserId,
+      title,
+      prompt,
+      schedule_json AS scheduleJson,
+      route_id AS routeId,
+      state,
+      runtime_type AS runtimeType,
+      created_at AS createdAt,
+      updated_at AS updatedAt
+    FROM scheduled_jobs
+    ORDER BY updated_at ASC, job_id ASC
+    LIMIT ?
+  `);
   const deleteScheduledJob = db.query(`
     DELETE FROM scheduled_jobs
     WHERE job_id = ?
@@ -2077,6 +2094,12 @@ export function createTokenStore(path: string) {
       return listScheduledJobsForPrincipal
         .all(workspaceId, slackUserId)
         .map(toScheduledJobRecord);
+    },
+
+    listScheduledJobs(limit = 100): ScheduledJobRecord[] {
+      const normalizedLimit =
+        Number.isSafeInteger(limit) && limit > 0 ? Math.min(limit, 500) : 100;
+      return listScheduledJobs.all(normalizedLimit).map(toScheduledJobRecord);
     },
 
     deleteScheduledJob(jobId: string): void {
