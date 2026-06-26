@@ -171,7 +171,7 @@ describe("resolveRuntimeEngineForPrincipal", () => {
     store.close();
   });
 
-  test("uses the active user runtime before preference and configured default", () => {
+  test("uses the user runtime preference before an active runtime", () => {
     const store = createTokenStore(":memory:");
     store.upsertWorkspacePolicy({
       workspaceId: "T123",
@@ -206,8 +206,42 @@ describe("resolveRuntimeEngineForPrincipal", () => {
       },
     });
 
-    expect(selection.effectiveEngine).toBe("hermes");
+    expect(selection.effectiveEngine).toBe("openclaw");
     expect(selection.preferredEngine).toBe("openclaw");
+    store.close();
+  });
+
+  test("uses the active user runtime before the configured default", () => {
+    const store = createTokenStore(":memory:");
+    store.upsertWorkspacePolicy({
+      workspaceId: "T123",
+      key: "runtime.allowedEngines",
+      value: ["openclaw", "hermes"],
+      updatedBySlackUserId: "UADMIN",
+    });
+    store.getOrCreateAgentRuntime({
+      workspaceId: "T123",
+      slackUserId: "U123",
+      engine: "hermes",
+      endpointUrl: "http://hermes-runtime:8080",
+      authTokenHash: "hash-hermes",
+      statePath: "/data/runtimes/u123/hermes/state",
+      configPath: "/data/runtimes/u123/hermes/config.json",
+      workspacePath: "/data/runtimes/u123/hermes/workspace",
+      now: new Date("2026-06-26T17:00:00.000Z"),
+    });
+
+    const selection = resolveRuntimeEngineForPrincipal({
+      config,
+      store,
+      principal: {
+        workspaceId: "T123",
+        slackUserId: "U123",
+      },
+    });
+
+    expect(selection.effectiveEngine).toBe("hermes");
+    expect(selection.preferredEngine).toBeNull();
     store.close();
   });
 

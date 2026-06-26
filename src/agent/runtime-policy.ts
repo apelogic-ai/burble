@@ -43,7 +43,12 @@ export type RuntimeEngineCompatibility = {
 
 export type RuntimeEngineCompatibilityWorkload = "interactive" | "scheduled";
 
-const activeRuntimeStatuses = new Set(["provisioning", "ready", "busy", "idle"]);
+const activeRuntimeStatuses = new Set([
+  "provisioning",
+  "ready",
+  "busy",
+  "idle",
+]);
 
 export class RuntimeEngineSelectionError extends Error {
   constructor(
@@ -120,12 +125,13 @@ export function resolveRuntimeEngineForPrincipal(input: {
   }
   const effectiveEngine =
     requestedEngine ??
-    activeEngine ??
     (preferredEngine && selectableEngines.includes(preferredEngine)
       ? preferredEngine
-      : selectableEngines.includes(configuredEngine)
-        ? configuredEngine
-        : fallbackEngine);
+      : activeEngine
+        ? activeEngine
+        : selectableEngines.includes(configuredEngine)
+          ? configuredEngine
+          : fallbackEngine);
 
   return {
     configuredEngine,
