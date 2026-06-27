@@ -994,9 +994,8 @@ describe("handleConversation", () => {
         workspaceId: "T123",
         slackUserId: "U123",
         title: "Hourly AI news summary",
-        prompt:
-          "look for latest AI news, summarize them in one paragraph and post result in this channel",
-        schedule: { kind: "interval", every: { hours: 1 } },
+        prompt: "look for latest AI news, summarize them in one paragraph",
+        schedule: { kind: "cron", expression: "0 * * * *", timezone: "UTC" },
         routeId: "convrt_123",
         runtimeType: "hermes",
       },
@@ -1007,6 +1006,7 @@ describe("handleConversation", () => {
       "Created scheduled job job-ai-news-hourly.",
     );
     expect(response.text).toContain("Hourly AI news summary");
+    expect(response.text).toContain("schedule: cron 0 * * * * (UTC)");
     expect(response.text).toContain("runtime: hermes");
     expect(response.text).toContain("delivery: this conversation");
   });
@@ -1017,15 +1017,15 @@ describe("handleConversation", () => {
         text: "add scheduled cron job, to be run every hour, to look for new open PRs in https://github.com/apelogic-ai github org and report back to this channel",
         title: "Hourly open PRs for apelogic-ai",
         prompt:
-          "look for new open PRs in https://github.com/apelogic-ai github org and report back to this channel",
-        schedule: { kind: "interval", every: { hours: 1 } },
+          "look for new open PRs in https://github.com/apelogic-ai github org",
+        schedule: { kind: "cron", expression: "0 * * * *", timezone: "UTC" },
       },
       {
         text: "add new job to be run every 15 min to check new open PRs in https://github.com/apelogic-ai github org, report back to this channel",
         title: "Scheduled open PRs for apelogic-ai",
         prompt:
-          "check new open PRs in https://github.com/apelogic-ai github org, report back to this channel",
-        schedule: { kind: "interval", every: { minutes: 15 } },
+          "check new open PRs in https://github.com/apelogic-ai github org",
+        schedule: { kind: "cron", expression: "*/15 * * * *", timezone: "UTC" },
       },
     ] as const;
 
@@ -1088,6 +1088,57 @@ describe("handleConversation", () => {
       ]);
       expect(response.text).toContain("runtime: hermes");
     }
+  });
+
+  test("stores executable task text separately from schedule and delivery", async () => {
+    const created: unknown[] = [];
+    const response = await handleConversation(
+      {
+        ...baseRequest,
+        conversationRouteId: "convrt_heart",
+        text: "add scheduled job to output heart emoji every 15 min, to this channel",
+      },
+      createDeps({
+        agentMode: "llm",
+        schedulerRuntimeEngine: "hermes",
+        schedulerControl: {
+          listJobs: () => [],
+          createJob: (input) => {
+            created.push(input);
+            return {
+              ok: true,
+              job: {
+                jobId: "job-heart",
+                workspaceId: input.workspaceId,
+                slackUserId: input.slackUserId,
+                title: input.title,
+                prompt: input.prompt,
+                schedule: input.schedule,
+                routeId: input.routeId ?? null,
+                state: "scheduled",
+                runtimeType: input.runtimeType ?? null,
+                createdAt: "2026-06-27T01:10:52.803Z",
+                updatedAt: "2026-06-27T01:10:52.803Z",
+              },
+            };
+          },
+        },
+      }),
+    );
+
+    expect(created).toEqual([
+      {
+        workspaceId: "T123",
+        slackUserId: "U123",
+        title: "Scheduled heart emoji",
+        prompt: "Post exactly this message: ❤️",
+        schedule: { kind: "cron", expression: "*/15 * * * *", timezone: "UTC" },
+        routeId: "convrt_heart",
+        runtimeType: "hermes",
+      },
+    ]);
+    expect(response.text).toContain("schedule: cron */15 * * * * (UTC)");
+    expect(response.text).toContain("delivery: this conversation");
   });
 
   test("updates scheduled job delivery from a Slack channel mention without invoking the LLM runner", async () => {

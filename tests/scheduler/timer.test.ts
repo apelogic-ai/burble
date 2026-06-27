@@ -3,6 +3,65 @@ import { createTokenStore } from "../../src/db";
 import { createSchedulerTimer } from "../../src/scheduler/timer";
 
 describe("scheduler timer", () => {
+  test("queues cron jobs on schedule boundaries instead of creation-relative intervals", async () => {
+    const store = createTokenStore(":memory:");
+    store.upsertScheduledJob({
+      jobId: "job-heart",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      title: "Post heart",
+      prompt: "Post exactly this message: ❤️",
+      schedule: {
+        kind: "cron",
+        expression: "*/15 * * * *",
+        timezone: "UTC",
+      },
+      runtimeType: "hermes",
+      state: "scheduled",
+      now: new Date("2026-06-27T01:10:52.803Z"),
+    });
+    const executed: string[] = [];
+    const earlyTimer = createSchedulerTimer({
+      store,
+      now: () => new Date("2026-06-27T01:14:59.000Z"),
+      newRunId: () => "jobrun-too-early",
+      executeRun: async (runId) => {
+        executed.push(runId);
+      },
+    });
+
+    expect(await earlyTimer.tick()).toEqual({ queuedRunIds: [] });
+    expect(executed).toEqual([]);
+
+    const dueTimer = createSchedulerTimer({
+      store,
+      now: () => new Date("2026-06-27T01:15:00.000Z"),
+      newRunId: () => "jobrun-quarter-hour",
+      executeRun: async (runId) => {
+        executed.push(runId);
+      },
+    });
+
+    expect(await dueTimer.tick()).toEqual({
+      queuedRunIds: ["jobrun-quarter-hour"],
+    });
+    expect(executed).toEqual(["jobrun-quarter-hour"]);
+
+    const duplicateTimer = createSchedulerTimer({
+      store,
+      now: () => new Date("2026-06-27T01:15:30.000Z"),
+      newRunId: () => "jobrun-duplicate-slot",
+      executeRun: async (runId) => {
+        executed.push(runId);
+      },
+    });
+
+    expect(await duplicateTimer.tick()).toEqual({ queuedRunIds: [] });
+    expect(store.getAgentJobRun("jobrun-duplicate-slot")).toBeNull();
+
+    store.close();
+  });
+
   test("queues due interval jobs and hands them to the run executor", async () => {
     const store = createTokenStore(":memory:");
     store.upsertScheduledJob({

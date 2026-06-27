@@ -275,9 +275,8 @@ describe("local Slack testbed", () => {
       expect(jobs).toHaveLength(1);
       expect(jobs[0]).toMatchObject({
         title: "Hourly AI news summary",
-        prompt:
-          "look for latest AI news, summarize them in one paragraph and post result in this channel",
-        schedule: { kind: "interval", every: { hours: 1 } },
+        prompt: "look for latest AI news, summarize them in one paragraph",
+        schedule: { kind: "cron", expression: "0 * * * *", timezone: "UTC" },
         runtimeType: "hermes"
       });
 

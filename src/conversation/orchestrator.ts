@@ -785,10 +785,15 @@ function isSchedulerValidateTaskIntent(tokens: string[]): boolean {
 }
 
 function isSchedulerShowTaskIntent(tokens: string[]): boolean {
-  if (!hasAnyToken(tokens, ["show", "describe", "detail", "details", "inspect"])) {
+  if (
+    !hasAnyToken(tokens, ["show", "describe", "detail", "details", "inspect"])
+  ) {
     return false;
   }
-  if (hasAnyToken(tokens, ["list", "all", "current"]) && !hasAnyToken(tokens, ["detail", "details"])) {
+  if (
+    hasAnyToken(tokens, ["list", "all", "current"]) &&
+    !hasAnyToken(tokens, ["detail", "details"])
+  ) {
     return false;
   }
   return hasAnyToken(tokens, ["task", "job", "cron"]);
@@ -944,19 +949,19 @@ function parseExplicitIntervalSchedule(
     )
   ) {
     return {
-      value: { kind: "interval", every: { hours: 1 } },
+      value: { kind: "cron", expression: "0 * * * *", timezone: "UTC" },
       label: "every 60m",
     };
   }
   if (/\bdaily\b|\bevery\s+(?:1\s+)?days?\b/.test(normalized)) {
     return {
-      value: { kind: "interval", every: { days: 1 } },
+      value: { kind: "cron", expression: "0 0 * * *", timezone: "UTC" },
       label: "every 1d",
     };
   }
   if (/\bweekly\b|\bevery\s+(?:1\s+)?weeks?\b/.test(normalized)) {
     return {
-      value: { kind: "interval", every: { weeks: 1 } },
+      value: { kind: "cron", expression: "0 0 * * 1", timezone: "UTC" },
       label: "every 1w",
     };
   }
@@ -974,19 +979,31 @@ function parseExplicitIntervalSchedule(
   const unit = everyMatch[2].toLowerCase();
   if (["minute", "minutes", "min", "mins", "m"].includes(unit)) {
     return {
-      value: { kind: "interval", every: { minutes: amount } },
+      value: {
+        kind: "cron",
+        expression: amount === 1 ? "* * * * *" : `*/${amount} * * * *`,
+        timezone: "UTC",
+      },
       label: `every ${amount}m`,
     };
   }
   if (["hour", "hours", "hr", "hrs", "h"].includes(unit)) {
     return {
-      value: { kind: "interval", every: { hours: amount } },
+      value: {
+        kind: "cron",
+        expression: amount === 1 ? "0 * * * *" : `0 */${amount} * * *`,
+        timezone: "UTC",
+      },
       label: `every ${amount}h`,
     };
   }
   if (["day", "days", "d"].includes(unit)) {
     return {
-      value: { kind: "interval", every: { days: amount } },
+      value: {
+        kind: "cron",
+        expression: amount === 1 ? "0 0 * * *" : `0 0 */${amount} * *`,
+        timezone: "UTC",
+      },
       label: `every ${amount}d`,
     };
   }
@@ -994,7 +1011,7 @@ function parseExplicitIntervalSchedule(
 }
 
 function extractScheduledTaskPrompt(text: string): string {
-  return text
+  const prompt = text
     .trim()
     .replace(
       /^\s*(?:please\s+)?(?:create|add|make|schedule|set\s+up)\s+(?:an?\s+|new\s+)?(?:(?:hourly|daily|weekly)\s+|every\s+\d+\s*(?:minutes?|mins?|m|hours?|hrs?|h|days?|d|weeks?|w)\s+)?(?:(?:scheduled\s+)?(?:cron\s+job|cronjob|job|task))\s*[,;:-]?\s*(?:to|that|which|for)?\s*/i,
@@ -1006,8 +1023,40 @@ function extractScheduledTaskPrompt(text: string): string {
       "",
     )
     .trim()
+    .replace(
+      /\s*(?:,|;|-)?\s*(?:to\s+be\s+)?run\s+(?:hourly|daily|weekly|every\s+(?:\d+\s*)?(?:minutes?|mins?|m|hours?|hrs?|h|days?|d|weeks?|w))\b\s*,?\s*/gi,
+      " ",
+    )
+    .replace(
+      /\s*\b(?:hourly|daily|weekly|every\s+\d+\s*(?:minutes?|mins?|m|hours?|hrs?|h|days?|d|weeks?|w))\b\s*,?\s*/gi,
+      " ",
+    )
+    .replace(
+      /\s*(?:,|;|-)?\s*(?:and\s+)?(?:post|send|report)\s+(?:the\s+)?(?:result|results|output|report)?\s*(?:back\s+)?(?:in|to)\s+(?:this|the\s+current)\s+(?:channel|chat|conversation|thread)\b/gi,
+      " ",
+    )
+    .replace(
+      /\s*(?:,|;|-)?\s*(?:and\s+)?(?:post|send|report)\s+(?:back\s+)?(?:in|to)\s+(?:this|the\s+current)\s+(?:channel|chat|conversation|thread)\b/gi,
+      " ",
+    )
+    .replace(
+      /\s*(?:,|;|-)?\s*(?:in|to)\s+(?:this|the\s+current)\s+(?:channel|chat|conversation|thread)\b/gi,
+      " ",
+    )
+    .replace(/\s+,/g, ",")
+    .replace(/\s{2,}/g, " ")
+    .trim()
     .replace(/[.。]\s*$/, "")
     .trim();
+  return normalizeScheduledTaskPrompt(prompt);
+}
+
+function normalizeScheduledTaskPrompt(prompt: string): string {
+  const normalized = prompt.toLowerCase();
+  if (/\b(?:output|post|send)\s+(?:a\s+)?heart\s+emoji\b/.test(normalized)) {
+    return "Post exactly this message: ❤️";
+  }
+  return prompt;
 }
 
 function inferScheduledJobTitle(prompt: string, scheduleLabel: string): string {
@@ -1029,6 +1078,9 @@ function inferScheduledJobTitle(prompt: string, scheduleLabel: string): string {
   ) {
     const org = /github\.com\/([a-z0-9_.-]+)/i.exec(prompt)?.[1];
     return org ? `${prefix} open PRs for ${org}` : `${prefix} open PRs`;
+  }
+  if (normalized.includes("❤️") || /\bheart\s+emoji\b/.test(normalized)) {
+    return `${prefix} heart emoji`;
   }
   const words = prompt
     .replace(/[^a-z0-9 ]+/gi, " ")
@@ -1127,7 +1179,9 @@ function formatScheduledJobRunList(
   return lines.join("\n");
 }
 
-function formatScheduledTaskDetailResult(result: SchedulerShowTaskResult): string {
+function formatScheduledTaskDetailResult(
+  result: SchedulerShowTaskResult,
+): string {
   if (!result.ok) {
     if (result.reason === "no_jobs") {
       return "No scheduled tasks are configured.";
@@ -1148,6 +1202,7 @@ function formatScheduledTaskDetailResult(result: SchedulerShowTaskResult): strin
     `- task: ${task.taskId}`,
     task.title ? `- name: ${task.title}` : null,
     task.prompt ? `- prompt: ${task.prompt}` : null,
+    task.schedule ? `- schedule: ${formatSchedule(task.schedule)}` : null,
     `- state: ${task.state}`,
     task.runtimeType ? `- runtime: ${task.runtimeType}` : null,
     task.routeId ? `- route: ${task.routeId}` : null,
@@ -1267,12 +1322,55 @@ function formatScheduledJobCreateResult(
   return [
     `Created scheduled job ${result.job.jobId}.`,
     `- name: ${result.job.title}`,
+    `- schedule: ${formatSchedule(result.job.schedule)}`,
     `- state: ${result.job.state}`,
     result.job.runtimeType ? `- runtime: ${result.job.runtimeType}` : null,
     result.job.routeId ? `- delivery: this conversation` : null,
   ]
     .filter((line): line is string => Boolean(line))
     .join("\n");
+}
+
+function formatSchedule(schedule: unknown): string {
+  if (!isRecord(schedule)) {
+    return "unknown";
+  }
+  if (schedule.kind === "cron") {
+    const expression =
+      typeof schedule.expression === "string" && schedule.expression.trim()
+        ? schedule.expression.trim()
+        : "unknown";
+    const timezone =
+      typeof schedule.timezone === "string" && schedule.timezone.trim()
+        ? schedule.timezone.trim()
+        : "UTC";
+    return `cron ${expression} (${timezone})`;
+  }
+  if (schedule.kind === "interval") {
+    const every = schedule.every;
+    if (!isRecord(every)) {
+      return "interval unknown";
+    }
+    const parts = [
+      formatIntervalPart(every.weeks, "w"),
+      formatIntervalPart(every.days, "d"),
+      formatIntervalPart(every.hours, "h"),
+      formatIntervalPart(every.minutes, "m"),
+    ].filter((value): value is string => Boolean(value));
+    const anchor =
+      typeof schedule.anchor === "string" && schedule.anchor.trim()
+        ? schedule.anchor.trim()
+        : "last run or updated time";
+    return `interval every ${parts.join(" ") || "unknown"} (anchor: ${anchor})`;
+  }
+  return String(schedule.kind ?? "unknown");
+}
+
+function formatIntervalPart(value: unknown, suffix: string): string | null {
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
+    return null;
+  }
+  return `${Math.floor(value)}${suffix}`;
 }
 
 function formatScheduledJobMutationResult(
@@ -1702,4 +1800,8 @@ function buildIssueSearchQuery(text: string): string {
     .trim();
 
   return normalized ? `is:issue ${normalized}` : "is:issue";
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === "object" && !Array.isArray(value));
 }

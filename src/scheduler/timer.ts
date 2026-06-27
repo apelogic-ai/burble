@@ -141,6 +141,19 @@ function isScheduledJobDue(
   if (job.state !== "scheduled") {
     return false;
   }
+  const cronSlotMs = scheduledJobCronDueSlotMs(job.schedule, now);
+  if (cronSlotMs !== null) {
+    const latestRunAtMs = latestScheduledJobRunCreatedAtMs(job, store);
+    if (latestRunAtMs !== null && latestRunAtMs >= cronSlotMs) {
+      return false;
+    }
+    const createdAtMs = Date.parse(job.createdAt);
+    if (!Number.isFinite(createdAtMs) || cronSlotMs <= createdAtMs) {
+      return false;
+    }
+    return true;
+  }
+
   const intervalMs = scheduledJobIntervalMs(job.schedule);
   if (!intervalMs) {
     return false;
@@ -156,6 +169,18 @@ function isScheduledJobDue(
     return false;
   }
   return now.getTime() - anchorMs >= intervalMs;
+}
+
+function latestScheduledJobRunCreatedAtMs(
+  job: ScheduledJobRecord,
+  store: Pick<TokenStore, "listAgentJobRunsForJob">,
+): number | null {
+  const latestRun = store.listAgentJobRunsForJob(job.jobId)[0];
+  if (!latestRun) {
+    return null;
+  }
+  const createdAtMs = Date.parse(latestRun.createdAt);
+  return Number.isFinite(createdAtMs) ? createdAtMs : null;
 }
 
 function hasActiveScheduledJobRunForPrincipal(
@@ -202,6 +227,74 @@ function scheduledJobIntervalMs(schedule: unknown): number | null {
   totalMs += intervalPartMs(every.days, 24 * 60 * 60_000);
   totalMs += intervalPartMs(every.weeks, 7 * 24 * 60 * 60_000);
   return totalMs > 0 ? totalMs : null;
+}
+
+function scheduledJobCronDueSlotMs(
+  schedule: unknown,
+  now: Date,
+): number | null {
+  if (!isRecord(schedule) || schedule.kind !== "cron") {
+    return null;
+  }
+  if (schedule.timezone && schedule.timezone !== "UTC") {
+    return null;
+  }
+  if (typeof schedule.expression !== "string") {
+    return null;
+  }
+
+  const parts = schedule.expression.trim().split(/\s+/);
+  if (parts.length !== 5) {
+    return null;
+  }
+  const [minuteExpr, hourExpr, dayOfMonthExpr, monthExpr, dayOfWeekExpr] =
+    parts;
+  if (monthExpr !== "*") {
+    return null;
+  }
+
+  const slot = new Date(now);
+  slot.setUTCSeconds(0, 0);
+
+  for (let i = 0; i < 60 * 24 * 8; i += 1) {
+    if (
+      cronFieldMatches(slot.getUTCMinutes(), minuteExpr, 0, 59) &&
+      cronFieldMatches(slot.getUTCHours(), hourExpr, 0, 23) &&
+      cronFieldMatches(slot.getUTCDate(), dayOfMonthExpr, 1, 31) &&
+      cronFieldMatches(slot.getUTCDay(), dayOfWeekExpr, 0, 6)
+    ) {
+      return slot.getTime();
+    }
+    slot.setUTCMinutes(slot.getUTCMinutes() - 1);
+  }
+
+  return null;
+}
+
+function cronFieldMatches(
+  value: number,
+  expression: string,
+  min: number,
+  max: number,
+): boolean {
+  if (expression === "*") {
+    return true;
+  }
+  const step = /^\*\/(\d+)$/.exec(expression);
+  if (step) {
+    const interval = Number(step[1]);
+    return (
+      Number.isSafeInteger(interval) &&
+      interval > 0 &&
+      value >= min &&
+      value <= max &&
+      (value - min) % interval === 0
+    );
+  }
+  const exact = Number(expression);
+  return Number.isSafeInteger(exact) && exact >= min && exact <= max
+    ? value === exact
+    : false;
 }
 
 function intervalPartMs(value: unknown, multiplier: number): number {
