@@ -80,6 +80,7 @@ export type ConversationToolCatalog = {
 export type SchedulerControlIntent =
   | "list_jobs"
   | "list_job_runs"
+  | "validate_task"
   | "create_job"
   | "trigger_job"
   | "pause_job"

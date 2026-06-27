@@ -1268,6 +1268,70 @@ describe("handleConversation", () => {
     }
   });
 
+  test("validates scheduled task specs without invoking the LLM runner", async () => {
+    let called = false;
+    const response = await handleConversation(
+      {
+        ...baseRequest,
+        text: "validate task job_github_checker",
+      },
+      createDeps({
+        agentMode: "llm",
+        schedulerControl: {
+          listJobs: () => [],
+          validateTask: (input) => {
+            expect(input).toEqual({
+              workspaceId: "T123",
+              slackUserId: "U123",
+              taskId: "job_github_checker",
+            });
+            return {
+              ok: true,
+              taskId: "job_github_checker",
+              validation: {
+                ok: false,
+                expectedTools: ["github_search_issues"],
+                grantedTools: ["github_list_my_pull_requests"],
+                errors: [
+                  {
+                    code: "missing_required_tool",
+                    message:
+                      "Task requires github_search_issues but the grant does not include it.",
+                    tool: "github_search_issues",
+                  },
+                ],
+                warnings: [
+                  {
+                    code: "wrong_github_pr_scope",
+                    message:
+                      "github_list_my_pull_requests only lists the authenticated user's PRs; org-wide PR monitoring needs github_search_issues.",
+                    tool: "github_list_my_pull_requests",
+                    expectedTool: "github_search_issues",
+                  },
+                ],
+              },
+            };
+          },
+        },
+        agentRunner: stubAgentRunner(() => {
+          called = true;
+          return {
+            classification: "public",
+            text: "unexpected",
+          };
+        }),
+      }),
+    );
+
+    expect(called).toBe(false);
+    expect(response.visibility).toBe("ephemeral");
+    expect(response.classification).toBe("user_private");
+    expect(response.text).toContain("Task validation failed");
+    expect(response.text).toContain("job_github_checker");
+    expect(response.text).toContain("missing_required_tool");
+    expect(response.text).toContain("wrong_github_pr_scope");
+  });
+
   test("lists job runs independently from scheduled task specs without invoking the LLM runner", async () => {
     let called = false;
     const response = await handleConversation(

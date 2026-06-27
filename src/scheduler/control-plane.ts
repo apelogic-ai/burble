@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type {
+  AgentJobCapabilityRecord,
   AgentJobRunRecord,
   AgentRuntimeEngine,
   ConversationRouteRecord,
@@ -20,6 +21,25 @@ export type SchedulerJobSummary = {
   updatedAt: string;
 };
 
+export type SchedulerTaskSummary = SchedulerJobSummary & {
+  taskId: string;
+};
+
+export type SchedulerTaskValidationIssue = {
+  code: string;
+  message: string;
+  tool?: string;
+  expectedTool?: string;
+};
+
+export type SchedulerTaskValidation = {
+  ok: boolean;
+  expectedTools: string[];
+  grantedTools: string[];
+  errors: SchedulerTaskValidationIssue[];
+  warnings: SchedulerTaskValidationIssue[];
+};
+
 export type SchedulerControlPlane = {
   listJobs(input: {
     workspaceId: string;
@@ -28,6 +48,12 @@ export type SchedulerControlPlane = {
   listJobRuns?(
     input: SchedulerListJobRunsInput,
   ): Promise<SchedulerJobRunListResult> | SchedulerJobRunListResult;
+  listTasks?(
+    input: SchedulerListTasksInput,
+  ): Promise<SchedulerTaskSummary[]> | SchedulerTaskSummary[];
+  validateTask?(
+    input: SchedulerValidateTaskInput,
+  ): Promise<SchedulerValidateTaskResult> | SchedulerValidateTaskResult;
   createJob?(
     input: SchedulerCreateJobInput,
   ): Promise<SchedulerCreateJobResult> | SchedulerCreateJobResult;
@@ -76,9 +102,33 @@ export type SchedulerListJobRunsInput = {
   limit?: number | null;
 };
 
+export type SchedulerListTasksInput = {
+  workspaceId: string;
+  slackUserId: string;
+};
+
+export type SchedulerValidateTaskInput = {
+  workspaceId: string;
+  slackUserId: string;
+  taskId?: string | null;
+  jobId?: string | null;
+};
+
 export type SchedulerJobRunListResult = {
   runs: AgentJobRunRecord[];
 };
+
+export type SchedulerValidateTaskResult =
+  | {
+      ok: true;
+      taskId: string;
+      validation: SchedulerTaskValidation;
+    }
+  | {
+      ok: false;
+      reason: "no_jobs" | "not_found" | "ambiguous";
+      tasks: SchedulerTaskSummary[];
+    };
 
 export type SchedulerCreateJobInput = {
   workspaceId: string;
@@ -178,6 +228,7 @@ export function createSchedulerControlPlane(
     | "createAgentJobRun"
     | "listAgentJobRunsForPrincipal"
     | "upsertAgentJobCapability"
+    | "getAgentJobCapability"
     | "getLatestAgentJobRunForPrincipal"
     | "getConversationGrantRouteForSlackChannel"
   >,
@@ -194,6 +245,15 @@ export function createSchedulerControlPlane(
       .listScheduledJobsForPrincipal(input.workspaceId, input.slackUserId)
       .map(summarizeScheduledJob);
   };
+  const listTasks = (input: SchedulerListTasksInput): SchedulerTaskSummary[] =>
+    store
+      .listScheduledJobsForPrincipal(input.workspaceId, input.slackUserId)
+      .map((record) =>
+        summarizeScheduledTask(
+          record,
+          store.getAgentJobCapability(record.jobId),
+        ),
+      );
 
   return {
     listJobs,
@@ -204,6 +264,35 @@ export function createSchedulerControlPlane(
           input.slackUserId,
           input.jobId,
           input.limit ?? 10,
+        ),
+      };
+    },
+    listTasks,
+    validateTask(input) {
+      const records = store.listScheduledJobsForPrincipal(
+        input.workspaceId,
+        input.slackUserId,
+      );
+      const tasks = records.map((record) =>
+        summarizeScheduledTask(
+          record,
+          store.getAgentJobCapability(record.jobId),
+        ),
+      );
+      const selection = selectSchedulerJob(tasks, input.taskId ?? input.jobId);
+      if (!selection.ok) {
+        return { ok: false, reason: selection.reason, tasks };
+      }
+      const record = records.find((job) => job.jobId === selection.job.jobId);
+      if (!record) {
+        return { ok: false, reason: "not_found", tasks };
+      }
+      return {
+        ok: true,
+        taskId: record.jobId,
+        validation: validateScheduledTask(
+          record,
+          store.getAgentJobCapability(record.jobId),
         ),
       };
     },
@@ -481,6 +570,60 @@ function summarizeScheduledJob(
     requiredTools: [],
     routeId: record.routeId,
     updatedAt: record.updatedAt,
+  };
+}
+
+function summarizeScheduledTask(
+  record: ScheduledJobRecord,
+  capability: AgentJobCapabilityRecord | null,
+): SchedulerTaskSummary {
+  return {
+    ...summarizeScheduledJob(record),
+    taskId: record.jobId,
+    requiredTools: capability?.requiredTools ?? [],
+  };
+}
+
+function validateScheduledTask(
+  record: ScheduledJobRecord,
+  capability: AgentJobCapabilityRecord | null,
+): SchedulerTaskValidation {
+  const expectedTools = inferAllowedToolsForScheduledJob(record);
+  const grantedTools = [...(capability?.requiredTools ?? [])].sort();
+  const grantedToolSet = new Set(grantedTools);
+  const errors: SchedulerTaskValidationIssue[] = [];
+  const warnings: SchedulerTaskValidationIssue[] = [];
+
+  for (const tool of expectedTools) {
+    if (!grantedToolSet.has(tool)) {
+      errors.push({
+        code: "missing_required_tool",
+        message: `Task requires ${tool} but the grant does not include it.`,
+        tool,
+      });
+    }
+  }
+
+  if (
+    expectedTools.includes("github_search_issues") &&
+    grantedToolSet.has("github_list_my_pull_requests") &&
+    !grantedToolSet.has("github_search_issues")
+  ) {
+    warnings.push({
+      code: "wrong_github_pr_scope",
+      message:
+        "github_list_my_pull_requests only lists the authenticated user's PRs; org-wide PR monitoring needs github_search_issues.",
+      tool: "github_list_my_pull_requests",
+      expectedTool: "github_search_issues",
+    });
+  }
+
+  return {
+    ok: errors.length === 0,
+    expectedTools,
+    grantedTools,
+    errors,
+    warnings,
   };
 }
 

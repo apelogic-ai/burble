@@ -65,6 +65,18 @@ describe("scheduler intent resolver", () => {
     });
   });
 
+  test("parses task validation intents", () => {
+    expect(
+      parseSchedulerIntentResponse(
+        '{"intent":"validate_task","confidence":0.89,"jobId":"job_github_checker"}',
+      ),
+    ).toEqual({
+      intent: "validate_task",
+      confidence: 0.89,
+      jobId: "job_github_checker",
+    });
+  });
+
   test("rejects unsupported intents", () => {
     expect(
       parseSchedulerIntentResponse(

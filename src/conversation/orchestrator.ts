@@ -16,6 +16,7 @@ import type {
   SchedulerRunStatusResult,
   SchedulerTriggerResult,
   SchedulerUpdateJobDeliveryResult,
+  SchedulerValidateTaskResult,
 } from "../scheduler/control-plane";
 import type {
   ConversationDeps,
@@ -175,6 +176,22 @@ async function handleConversationInternal(
       visibility: "ephemeral",
       classification: "user_private",
       text: formatScheduledJobRunList(result.runs),
+    };
+  }
+
+  if (
+    schedulerControlIntent === "validate_task" &&
+    deps.schedulerControl?.validateTask
+  ) {
+    const result = await deps.schedulerControl.validateTask({
+      workspaceId: request.workspaceId,
+      slackUserId: request.user.slackUserId,
+      taskId: schedulerJobIdHint,
+    });
+    return {
+      visibility: "ephemeral",
+      classification: "user_private",
+      text: formatScheduledTaskValidationResult(result),
     };
   }
 
@@ -443,6 +460,9 @@ function scheduledJobRuntimeType(
 function classifySchedulerControlIntent(text: string): SchedulerControlIntent {
   const tokens = tokenizeSchedulerControlText(text);
 
+  if (isSchedulerValidateTaskIntent(tokens)) {
+    return "validate_task";
+  }
   if (isSchedulerJobRunListIntent(tokens)) {
     return "list_job_runs";
   }
@@ -454,6 +474,9 @@ function classifySchedulerControlIntent(text: string): SchedulerControlIntent {
   }
   if (isSchedulerRunStatusIntent(tokens)) {
     return "latest_run_status";
+  }
+  if (hasAnyToken(tokens, ["validate", "inspect"])) {
+    return "validate_task";
   }
   if (hasAnyToken(tokens, ["pause", "disable", "stop"])) {
     return "pause_job";
@@ -567,6 +590,9 @@ function classifyExplicitSchedulerJobIdIntent(
   if (isSchedulerRunStatusIntent(tokens)) {
     return "latest_run_status";
   }
+  if (hasAnyToken(tokens, ["validate", "inspect"])) {
+    return "validate_task";
+  }
   if (hasAnyToken(tokens, ["pause", "disable", "stop"])) {
     return "pause_job";
   }
@@ -600,6 +626,7 @@ function normalizeResolvedSchedulerIntent(
     result.intent === "resume_job" ||
     result.intent === "delete_job" ||
     result.intent === "update_job_delivery" ||
+    result.intent === "validate_task" ||
     result.intent === "latest_run_status"
   ) {
     return result.intent;
@@ -725,6 +752,13 @@ function isSchedulerJobRunListIntent(tokens: string[]): boolean {
     hasAdjacentTokens(tokens, "jobs", "history") ||
     hasAnyToken(tokens, ["jobs"])
   );
+}
+
+function isSchedulerValidateTaskIntent(tokens: string[]): boolean {
+  if (!hasAnyToken(tokens, ["validate", "inspect"])) {
+    return false;
+  }
+  return hasAnyToken(tokens, ["task", "tasks", "job", "jobs", "cron"]);
 }
 
 function isSchedulerTriggerIntent(tokens: string[]): boolean {
@@ -1060,6 +1094,51 @@ function formatScheduledJobRunList(
   return lines.join("\n");
 }
 
+function formatScheduledTaskValidationResult(
+  result: SchedulerValidateTaskResult,
+): string {
+  if (!result.ok) {
+    if (result.reason === "no_jobs") {
+      return "No scheduled tasks are configured.";
+    }
+    if (result.reason === "not_found") {
+      return "I could not find that scheduled task.";
+    }
+    return [
+      "Multiple scheduled tasks are configured. Please specify the task id.",
+      ...result.tasks.map((task) => `- ${task.taskId}`),
+    ].join("\n");
+  }
+
+  const validation = result.validation;
+  const lines = [
+    validation.ok ? "Task validation passed" : "Task validation failed",
+    `- task: ${result.taskId}`,
+    validation.expectedTools.length
+      ? `- expected tools: ${validation.expectedTools.join(", ")}`
+      : "- expected tools: none",
+    validation.grantedTools.length
+      ? `- granted tools: ${validation.grantedTools.join(", ")}`
+      : "- granted tools: none",
+  ];
+
+  if (validation.errors.length) {
+    lines.push("Errors");
+    for (const issue of validation.errors) {
+      lines.push(`- ${issue.code}: ${issue.message}`);
+    }
+  }
+
+  if (validation.warnings.length) {
+    lines.push("Warnings");
+    for (const issue of validation.warnings) {
+      lines.push(`- ${issue.code}: ${issue.message}`);
+    }
+  }
+
+  return lines.join("\n");
+}
+
 function formatScheduledJobTriggerResult(
   result: SchedulerTriggerResult,
 ): string {
@@ -1185,13 +1264,13 @@ function formatScheduledRunStatusResult(
 
 function readSchedulerJobIdHint(text: string): string | null {
   const match =
-    /\b(?:job|cron\s+job|scheduled\s+job)\s+(job_[a-z0-9_.-]{3,})\b/i.exec(
+    /\b(?:task|job|cron\s+job|scheduled\s+job)\s+(job_[a-z0-9_.-]{3,})\b/i.exec(
       text,
     ) ??
-    /\b(?:job|cron\s+job|scheduled\s+job)\s+(?:id\s*)?(?:[:#]\s*|\bis\s+)([a-z0-9][a-z0-9_.-]{2,})\b/i.exec(
+    /\b(?:task|job|cron\s+job|scheduled\s+job)\s+(?:id\s*)?(?:[:#]\s*|\bis\s+)([a-z0-9][a-z0-9_.-]{2,})\b/i.exec(
       text,
     ) ??
-    /\b(?:job|cron\s+job|scheduled\s+job)\s+id\s+([a-z0-9][a-z0-9_.-]{2,})\b/i.exec(
+    /\b(?:task|job|cron\s+job|scheduled\s+job)\s+id\s+([a-z0-9][a-z0-9_.-]{2,})\b/i.exec(
       text,
     );
   return match?.[1] ?? null;

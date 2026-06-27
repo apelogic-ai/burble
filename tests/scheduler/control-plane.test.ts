@@ -264,6 +264,197 @@ describe("scheduler control plane", () => {
     store.close();
   });
 
+  test("lists scheduled task specs independently from job runs", async () => {
+    const store = createTokenStore(":memory:");
+    store.upsertScheduledJob({
+      jobId: "github-pr-monitor",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      title: "Open PR monitor",
+      prompt:
+        "check for new open PRs in https://github.com/apelogic-ai github org",
+      schedule: {
+        kind: "interval",
+        every: { minutes: 15 },
+      },
+      routeId: "convrt_123",
+      runtimeType: "hermes",
+      now: new Date("2026-06-24T12:00:00.000Z"),
+    });
+    store.upsertAgentJobCapability({
+      jobId: "github-pr-monitor",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      requiredTools: ["github_search_issues"],
+      routeId: "convrt_123",
+      runtimeType: "hermes",
+      now: new Date("2026-06-24T12:01:00.000Z"),
+    });
+    store.createAgentJobRun({
+      runId: "jobrun-first",
+      jobId: "github-pr-monitor",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      triggerSource: "manual",
+      status: "queued",
+      now: new Date("2026-06-24T12:05:00.000Z"),
+    });
+
+    const scheduler = createSchedulerControlPlane(store);
+
+    expect(
+      await scheduler.listTasks?.({ workspaceId: "T123", slackUserId: "U123" }),
+    ).toEqual([
+      {
+        taskId: "github-pr-monitor",
+        jobId: "github-pr-monitor",
+        title: "Open PR monitor",
+        prompt:
+          "check for new open PRs in https://github.com/apelogic-ai github org",
+        schedule: {
+          kind: "interval",
+          every: { minutes: 15 },
+        },
+        state: "scheduled",
+        runtimeType: "hermes",
+        requiredTools: ["github_search_issues"],
+        routeId: "convrt_123",
+        updatedAt: "2026-06-24T12:00:00.000Z",
+      },
+    ]);
+    expect(
+      await scheduler.listJobRuns?.({
+        workspaceId: "T123",
+        slackUserId: "U123",
+      }),
+    ).toEqual({
+      runs: [
+        expect.objectContaining({
+          runId: "jobrun-first",
+          jobId: "github-pr-monitor",
+          status: "queued",
+        }),
+      ],
+    });
+
+    store.close();
+  });
+
+  test("validates scheduled task grants before execution", async () => {
+    const store = createTokenStore(":memory:");
+    store.upsertScheduledJob({
+      jobId: "github-pr-monitor",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      title: "Open PR monitor",
+      prompt:
+        "check for new open PRs in https://github.com/apelogic-ai github org",
+      schedule: {
+        kind: "interval",
+        every: { minutes: 15 },
+      },
+      routeId: "convrt_123",
+      runtimeType: "hermes",
+      now: new Date("2026-06-24T12:00:00.000Z"),
+    });
+    store.upsertAgentJobCapability({
+      jobId: "github-pr-monitor",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      requiredTools: ["github_list_my_pull_requests"],
+      routeId: "convrt_123",
+      runtimeType: "hermes",
+      now: new Date("2026-06-24T12:01:00.000Z"),
+    });
+
+    const scheduler = createSchedulerControlPlane(store);
+
+    expect(
+      await scheduler.validateTask?.({
+        workspaceId: "T123",
+        slackUserId: "U123",
+        taskId: "github-pr-monitor",
+      }),
+    ).toEqual({
+      ok: true,
+      taskId: "github-pr-monitor",
+      validation: {
+        ok: false,
+        expectedTools: ["github_search_issues"],
+        grantedTools: ["github_list_my_pull_requests"],
+        errors: [
+          {
+            code: "missing_required_tool",
+            message:
+              "Task requires github_search_issues but the grant does not include it.",
+            tool: "github_search_issues",
+          },
+        ],
+        warnings: [
+          {
+            code: "wrong_github_pr_scope",
+            message:
+              "github_list_my_pull_requests only lists the authenticated user's PRs; org-wide PR monitoring needs github_search_issues.",
+            tool: "github_list_my_pull_requests",
+            expectedTool: "github_search_issues",
+          },
+        ],
+      },
+    });
+
+    store.close();
+  });
+
+  test("passes validation for scheduled task grants that match inferred tools", async () => {
+    const store = createTokenStore(":memory:");
+    store.upsertScheduledJob({
+      jobId: "github-pr-monitor",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      title: "Open PR monitor",
+      prompt:
+        "check for new open PRs in https://github.com/apelogic-ai github org",
+      schedule: {
+        kind: "interval",
+        every: { minutes: 15 },
+      },
+      routeId: "convrt_123",
+      runtimeType: "hermes",
+      now: new Date("2026-06-24T12:00:00.000Z"),
+    });
+    store.upsertAgentJobCapability({
+      jobId: "github-pr-monitor",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      requiredTools: ["github_search_issues"],
+      routeId: "convrt_123",
+      runtimeType: "hermes",
+      now: new Date("2026-06-24T12:01:00.000Z"),
+    });
+
+    const scheduler = createSchedulerControlPlane(store);
+
+    expect(
+      await scheduler.validateTask?.({
+        workspaceId: "T123",
+        slackUserId: "U123",
+        taskId: "github-pr-monitor",
+      }),
+    ).toEqual({
+      ok: true,
+      taskId: "github-pr-monitor",
+      validation: {
+        ok: true,
+        expectedTools: ["github_search_issues"],
+        grantedTools: ["github_search_issues"],
+        errors: [],
+        warnings: [],
+      },
+    });
+
+    store.close();
+  });
+
   test("does not treat capability-only registrations as current scheduled jobs", async () => {
     const store = createTokenStore(":memory:");
     store.upsertAgentJobCapability({
