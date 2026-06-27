@@ -88,6 +88,7 @@ TOOL_NAME_ALIASES = {
     "scheduled_job_resume": "scheduledJob.resume",
     "scheduled_job_delete": "scheduledJob.delete",
     "scheduled_job_trigger": "scheduledJob.trigger",
+    "scheduled_job_validate": "scheduledJob.validate",
     "scheduled_job_latest_run_status": "scheduledJob.latestRunStatus",
     "conversation_get_attachment": "conversation.getAttachment",
 }

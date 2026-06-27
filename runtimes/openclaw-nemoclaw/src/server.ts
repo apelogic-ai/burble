@@ -34,6 +34,7 @@ const localSchedulerControlTools: Record<string, string> = {
   scheduled_job_resume: "scheduledJob.resume",
   scheduled_job_delete: "scheduledJob.delete",
   scheduled_job_trigger: "scheduledJob.trigger",
+  scheduled_job_validate: "scheduledJob.validate",
   scheduled_job_latest_run_status: "scheduledJob.latestRunStatus"
 };
 
@@ -607,6 +608,7 @@ function addLocalBurbleMcpTools(tools: unknown[]): unknown[] {
     scheduledJobLifecycleMcpTool("scheduled_job_resume", "Resume"),
     scheduledJobLifecycleMcpTool("scheduled_job_delete", "Delete"),
     scheduledJobTriggerMcpTool(),
+    scheduledJobValidateMcpTool(),
     scheduledJobLatestRunStatusMcpTool()
   ].filter((tool) => !names.has(String(tool.name)));
   return [...tools, ...localTools];
@@ -767,6 +769,24 @@ function scheduledJobTriggerMcpTool(): Record<string, unknown> {
           type: "string",
           minLength: 1,
           description: "Optional scheduled job id to trigger."
+        }
+      }
+    }
+  };
+}
+
+function scheduledJobValidateMcpTool(): Record<string, unknown> {
+  return {
+    name: "scheduled_job_validate",
+    description:
+      "Validate one existing Burble-controlled scheduled task before running it. Reports missing, mismatched, or suspicious tool grants.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        jobId: {
+          type: "string",
+          minLength: 1,
+          description: "Optional scheduled job id to validate."
         }
       }
     }

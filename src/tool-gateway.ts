@@ -701,6 +701,22 @@ export async function handleToolGatewayRequest(
     });
   }
 
+  if (toolName === "scheduledJob.validate") {
+    if (auth.kind !== "runtime") {
+      return new Response("Runtime auth required", { status: 403 });
+    }
+    const schedulerControl = createSchedulerControlPlane(store);
+    const result = await schedulerControl.validateTask?.({
+      workspaceId: auth.runtime.workspaceId,
+      slackUserId: auth.runtime.slackUserId,
+      taskId: readSchedulerControlJobId(body.input)
+    });
+    return respondWithAudit({
+      classification: "user_private",
+      content: result ?? { ok: false, reason: "unavailable" }
+    });
+  }
+
   if (toolName === "scheduledJob.registerCapability") {
     if (auth.kind !== "runtime") {
       return new Response("Runtime auth required", { status: 403 });
@@ -2040,6 +2056,7 @@ function isKnownTool(toolName: string): boolean {
     toolName === "scheduledJob.resume" ||
     toolName === "scheduledJob.delete" ||
     toolName === "scheduledJob.trigger" ||
+    toolName === "scheduledJob.validate" ||
     toolName === "scheduledJob.latestRunStatus" ||
     toolName === "runtime.heartbeat" ||
     toolName === "runtime.conformance.echo" ||
