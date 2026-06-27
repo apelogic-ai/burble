@@ -167,14 +167,18 @@ Task = reusable work definition
 Job  = one execution of a task, triggered manually or by a timer
 ```
 
-A Task is closer to a Burble-owned skill capsule than a loose prompt. It should
+A Task is closer to a Burble-owned skill capsule than a loose prompt. It is the
+thing the user wants done, not the timer and not the delivery route. It should
 carry:
 
 - the user-facing objective;
+- multimodal input parts, including text and attachment/file references;
 - the selected runtime profile;
 - the required provider/product tools;
 - task-local tool constraints or argument templates;
+- selected skill/plugin references and resolved skill instructions;
 - durable state references;
+- schedule definition, when the task is recurring;
 - output contract and delivery policy;
 - visibility and authorization policy.
 
@@ -204,6 +208,104 @@ The task-local tool surface may expose higher-level aliases, for example
 `check_open_prs()`, while Burble maps that alias to the concrete provider tool
 and argument template. That keeps the model's useful judgment on the content of
 the run, not on reconstructing Burble's product wiring.
+
+### Distilled Runtime Lessons
+
+The current OpenClaw and Hermes adapters already have useful pieces of the
+future shape:
+
+- `/runs` accepts `input.text`, `input.attachments`, `input.scheduledJob`,
+  selected tool groups, conversation context, and provider connection summaries;
+- both runtimes expose scheduled-job control tools through local Burble MCP or
+  provider-bridge plugins;
+- both runtimes inject scheduled-job context into the model prompt so the model
+  can see `jobId`, `allowedTools`, `routeId`, `stateRefs`, and visibility
+  policy;
+- both runtimes can fetch current-turn attachments through a Burble
+  conversation attachment tool instead of receiving raw Slack file URLs.
+
+The gap is that `scheduledJob` is currently a grant/runtime context, not a Task
+spec. Its schema contains job identity, allowed tools, route, state refs, and
+visibility. It does not contain the Task objective, schedule, delivery contract,
+input parts, selected skills, or task-local tool aliases/templates.
+
+That gap is exactly what caused the heart-emoji failure mode: creation text such
+as "every 15 min, to this channel" leaked into the durable executable prompt, so
+the scheduled run looked like another scheduling request instead of the actual
+work. The fix is structural:
+
+```text
+Task spec
+  objective: "Post exactly this message: ❤️"
+  schedule:  "*/15 * * * *" in UTC
+  delivery:  conversation route convrt_...
+  tools:     conversation.sendMessage or equivalent route delivery grant
+
+Job run
+  trigger:   schedule | manual
+  taskId:    job_...
+  input:     objective + multimodal parts
+  context:   grant-only scheduledJob context
+```
+
+Do not encode schedule cadence or Slack delivery wording inside the executable
+task text. The runtime may see them as structured context, but the model's
+primary instruction for the run should be the Task objective.
+
+Task prompt parity should match ordinary user turns. If a user can ask Burble
+with text plus files, a Task should be able to persist text plus file/capability
+references and replay them into a later run. Those references must be durable
+Burble capabilities, not raw Slack URLs or runtime-local file paths. At run
+time, Burble resolves them into the same attachment/tool surfaces a chat turn
+would receive.
+
+The target split is:
+
+```ts
+type TaskSpec = {
+  taskId: string;
+  title: string;
+  objective: string;
+  inputParts: Array<
+    | { type: "text"; text: string }
+    | { type: "attachment_ref"; attachmentId: string; purpose?: string }
+    | { type: "state_ref"; provider: string; kind: string; id?: string }
+  >;
+  schedule?: {
+    kind: "cron";
+    expression: string;
+    timezone: string;
+  };
+  runtimeProfile: string;
+  toolContracts: Array<{
+    alias: string;
+    providerTool: string;
+    required: boolean;
+    inputTemplate?: Record<string, unknown>;
+  }>;
+  skillRefs?: Array<{
+    id: string;
+    version: string;
+  }>;
+  delivery?: {
+    routeId: string;
+    visibilityDefault: "public" | "user_private" | "restricted";
+  };
+  visibilityPolicy: {
+    maxOutputVisibility?: "public" | "user_private" | "restricted";
+    allowPrivateToolDeclassification?: boolean;
+  };
+};
+```
+
+The existing `scheduledJob` run context should remain grant-focused:
+
+```text
+jobId, allowedTools, routeId, stateRefs, visibilityPolicy
+```
+
+Task details belong beside it in the Burble-owned run envelope, not inside that
+grant object and not buried in natural-language prompt suffixes.
 
 ### Recoverable Tool Errors
 
