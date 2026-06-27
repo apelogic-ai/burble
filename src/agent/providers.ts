@@ -3,6 +3,7 @@ import type { LanguageModel } from "ai";
 import { createAnthropic } from "@ai-sdk/anthropic";
 import { createOpenAI } from "@ai-sdk/openai";
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
+import { runtimeInferenceProxyApiKey } from "./runtime-env";
 
 const supportedProviders = ["openai", "anthropic", "ollama"] as const;
 type SupportedProvider = (typeof supportedProviders)[number];
@@ -45,6 +46,20 @@ export function parseAgentModelId(modelId: string): ParsedAgentModelId {
 }
 
 export function createDirectModelResolver(): ModelResolver {
+  const inferenceGatewayBaseUrl = readInferenceGatewayBaseUrl();
+  if (inferenceGatewayBaseUrl) {
+    const inferenceGateway = createOpenAICompatible({
+      name: "litellm",
+      baseURL: inferenceGatewayBaseUrl,
+      apiKey: readInferenceGatewayApiKey()
+    });
+
+    return (modelId: string) => {
+      const parsed = parseAgentModelId(modelId);
+      return inferenceGateway.chatModel(parsed.model) as DirectLanguageModel;
+    };
+  }
+
   const registry = createProviderRegistry({
     openai: createOpenAI(),
     anthropic: createAnthropic()
@@ -65,6 +80,23 @@ export function createDirectModelResolver(): ModelResolver {
       modelId as `openai:${string}` | `anthropic:${string}`
     ) as DirectLanguageModel;
   };
+}
+
+function readInferenceGatewayBaseUrl(): string | null {
+  const explicit =
+    Bun.env.BURBLE_INFERENCE_BASE_URL?.trim() ||
+    Bun.env.LLM_GW_BASE_URL?.trim() ||
+    Bun.env.AGENT_RUNTIME_INFERENCE_BASE_URL?.trim() ||
+    Bun.env.OPENAI_BASE_URL?.trim();
+  return explicit ? explicit.replace(/\/+$/, "") : null;
+}
+
+function readInferenceGatewayApiKey(): string {
+  return (
+    Bun.env.BURBLE_INFERENCE_API_KEY?.trim() ||
+    Bun.env.LITELLM_API_KEY?.trim() ||
+    runtimeInferenceProxyApiKey
+  );
 }
 
 function readOllamaOpenAiBaseUrl(): string {

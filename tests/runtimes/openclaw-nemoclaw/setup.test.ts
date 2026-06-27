@@ -576,7 +576,8 @@ describe("ensureOpenClawSetup", () => {
   test("writes proxy-backed OpenClaw provider config when inference gateway is configured", async () => {
     const runtimeConfig = await configWithState({
       llmModel: "openai:gpt-5.4",
-      inferenceBaseUrl: "http://llm-gw:4000/v1"
+      inferenceBaseUrl: "http://llm-gw:4000/v1",
+      openClawModelApi: "openai-completions"
     });
 
     await ensureOpenClawSetup(runtimeConfig, async () => ({
@@ -588,6 +589,7 @@ describe("ensureOpenClawSetup", () => {
     const patch = await readFile(llmPatchPath(runtimeConfig), "utf8");
     expect(patch).toContain('"primary": "openai/gpt-5.4"');
     expect(patch).toContain('"baseUrl": "http://llm-gw:4000/v1"');
+    expect(patch).toContain('"api": "openai-completions"');
     expect(patch).toContain('"apiKey": "OPENAI_API_KEY"');
     expect(patch).not.toContain("sk-");
   });

@@ -426,6 +426,51 @@ describe("createTokenStore", () => {
     store.close();
   });
 
+  test("lists principal runtimes newest active usage first", () => {
+    const store = createTokenStore(":memory:");
+    const openclaw = store.getOrCreateAgentRuntime({
+      workspaceId: "T123",
+      slackUserId: "U123",
+      engine: "openclaw",
+      endpointUrl: "http://runtime-openclaw:8080",
+      authTokenHash: "hash-openclaw",
+      statePath: "/data/runtimes/u123/openclaw/state",
+      configPath: "/data/runtimes/u123/openclaw/config.json",
+      workspacePath: "/data/runtimes/u123/openclaw/workspace",
+      now: new Date("2026-05-21T00:00:00.000Z")
+    });
+    const hermes = store.getOrCreateAgentRuntime({
+      workspaceId: "T123",
+      slackUserId: "U123",
+      engine: "hermes",
+      endpointUrl: "http://runtime-hermes:8080",
+      authTokenHash: "hash-hermes",
+      statePath: "/data/runtimes/u123/hermes/state",
+      configPath: "/data/runtimes/u123/hermes/config.json",
+      workspacePath: "/data/runtimes/u123/hermes/workspace",
+      now: new Date("2026-05-21T00:01:00.000Z")
+    });
+    store.updateAgentRuntimeStatus(openclaw.id, {
+      status: "stopped",
+      now: new Date("2026-05-21T00:02:00.000Z")
+    });
+    store.touchAgentRuntime(hermes.id, new Date("2026-05-21T00:03:00.000Z"));
+
+    expect(
+      store
+        .listAgentRuntimesForPrincipal({
+          workspaceId: "T123",
+          slackUserId: "U123"
+        })
+        .map((runtime) => [runtime.id, runtime.engine, runtime.status])
+    ).toEqual([
+      [hermes.id, "hermes", "ready"],
+      [openclaw.id, "openclaw", "stopped"]
+    ]);
+
+    store.close();
+  });
+
   test("lists stale ready and idle runtimes for reaping", () => {
     const store = createTokenStore(":memory:");
     const staleReady = store.getOrCreateAgentRuntime({
@@ -1277,6 +1322,98 @@ describe("createTokenStore", () => {
     store.close();
   });
 
+  test("records scheduled job runs by principal and job", () => {
+    const store = createTokenStore(":memory:");
+
+    const run = store.createAgentJobRun({
+      runId: "jobrun-123",
+      jobId: "ai-news-hourly",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      triggerSource: "manual",
+      status: "queued",
+      now: new Date("2026-06-24T12:00:00.000Z")
+    });
+    store.createAgentJobRun({
+      runId: "jobrun-other",
+      jobId: "other-job",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      triggerSource: "schedule",
+      status: "succeeded",
+      now: new Date("2026-06-24T12:01:00.000Z")
+    });
+
+    expect(run).toEqual({
+      runId: "jobrun-123",
+      jobId: "ai-news-hourly",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      triggerSource: "manual",
+      status: "queued",
+      failureReason: null,
+      createdAt: "2026-06-24T12:00:00.000Z",
+      updatedAt: "2026-06-24T12:00:00.000Z",
+      startedAt: null,
+      finishedAt: null
+    });
+    expect(store.getAgentJobRun("jobrun-123")).toEqual(run);
+    expect(
+      store
+        .listAgentJobRunsForJob("ai-news-hourly")
+        .map((record) => record.runId)
+    ).toEqual(["jobrun-123"]);
+    expect(
+      store.getLatestAgentJobRunForPrincipal("T123", "U123", "ai-news-hourly")
+    ).toEqual(run);
+    expect(
+      store.getLatestAgentJobRunForPrincipal("T123", "U123", null)?.runId
+    ).toBe("jobrun-other");
+    expect(store.listQueuedAgentJobRuns().map((record) => record.runId)).toEqual([
+      "jobrun-123"
+    ]);
+
+    const claimed = store.claimAgentJobRun(
+      "jobrun-123",
+      new Date("2026-06-24T12:02:00.000Z")
+    );
+    expect(claimed).toMatchObject({
+      runId: "jobrun-123",
+      status: "running",
+      startedAt: "2026-06-24T12:02:00.000Z",
+      updatedAt: "2026-06-24T12:02:00.000Z"
+    });
+    expect(
+      store.claimAgentJobRun(
+        "jobrun-123",
+        new Date("2026-06-24T12:03:00.000Z")
+      )
+    ).toBeNull();
+    expect(store.listQueuedAgentJobRuns()).toEqual([]);
+
+    const finished = store.finishAgentJobRun({
+      runId: "jobrun-123",
+      status: "succeeded",
+      now: new Date("2026-06-24T12:04:00.000Z")
+    });
+    expect(finished).toMatchObject({
+      runId: "jobrun-123",
+      status: "succeeded",
+      finishedAt: "2026-06-24T12:04:00.000Z",
+      updatedAt: "2026-06-24T12:04:00.000Z"
+    });
+    expect(
+      store.finishAgentJobRun({
+        runId: "jobrun-123",
+        status: "failed",
+        failureReason: "should not overwrite terminal runs",
+        now: new Date("2026-06-24T12:05:00.000Z")
+      })
+    ).toBeNull();
+
+    store.close();
+  });
+
   test("stores skill catalog and workspace/user skill enablement", () => {
     const store = createTokenStore(":memory:");
 
@@ -1343,6 +1480,70 @@ describe("createTokenStore", () => {
         updatedAt: "2026-05-28T00:02:00.000Z"
       }
     ]);
+
+    store.close();
+  });
+
+  test("stores Burble-owned scheduled job definitions", () => {
+    const store = createTokenStore(":memory:");
+
+    const job = store.upsertScheduledJob({
+      jobId: "job-ai-news-hourly",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      title: "Hourly AI news summary",
+      prompt: "look for fresh AI-related news and post a short summary",
+      schedule: {
+        kind: "interval",
+        every: { hours: 1 }
+      },
+      routeId: "convrt_123",
+      state: "scheduled",
+      runtimeType: "hermes",
+      now: new Date("2026-06-24T12:00:00.000Z")
+    });
+
+    expect(job).toEqual({
+      jobId: "job-ai-news-hourly",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      title: "Hourly AI news summary",
+      prompt: "look for fresh AI-related news and post a short summary",
+      schedule: {
+        kind: "interval",
+        every: { hours: 1 }
+      },
+      routeId: "convrt_123",
+      state: "scheduled",
+      runtimeType: "hermes",
+      createdAt: "2026-06-24T12:00:00.000Z",
+      updatedAt: "2026-06-24T12:00:00.000Z"
+    });
+    expect(store.getScheduledJob("job-ai-news-hourly")).toEqual(job);
+    expect(store.listScheduledJobsForPrincipal("T123", "U123")).toEqual([job]);
+
+    store.upsertScheduledJob({
+      jobId: "job-ai-news-hourly",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      title: "Hourly AI news brief",
+      prompt: job.prompt,
+      schedule: job.schedule,
+      routeId: "convrt_123",
+      state: "paused",
+      runtimeType: "hermes",
+      now: new Date("2026-06-24T12:05:00.000Z")
+    });
+
+    expect(store.getScheduledJob("job-ai-news-hourly")).toMatchObject({
+      title: "Hourly AI news brief",
+      state: "paused",
+      createdAt: "2026-06-24T12:00:00.000Z",
+      updatedAt: "2026-06-24T12:05:00.000Z"
+    });
+
+    store.deleteScheduledJob("job-ai-news-hourly");
+    expect(store.getScheduledJob("job-ai-news-hourly")).toBeNull();
 
     store.close();
   });

@@ -1741,7 +1741,9 @@ async function buildBurbleToolContext(
   const startedAt = Date.now();
   logInfo(`OpenClaw context start runId=${request.runId ?? "unknown"}`);
   const [baseline, catalogBuild] = await Promise.all([
-    runBurbleRequest(request, config, executeTool),
+    request.input.scheduledJob
+      ? scheduledJobBaselineResponse()
+      : runBurbleRequest(request, config, executeTool),
     buildToolCatalog(request, config, executeTool)
   ]);
   logInfo(
@@ -1752,6 +1754,15 @@ async function buildBurbleToolContext(
     baseline,
     catalog: catalogBuild.catalog,
     upstreamMcpSchemas: catalogBuild.upstreamMcpSchemas
+  };
+}
+
+function scheduledJobBaselineResponse(): RunResponse {
+  return {
+    response: {
+      classification: "user_private",
+      text: "No Burble baseline prefetch is needed for this scheduled job run."
+    }
   };
 }
 
@@ -2348,12 +2359,14 @@ function filterToolCatalogBySelectedGroups(
   const catalog = catalogBuild.catalog.filter((tool) =>
     isRouteScopedControlPlaneTool(tool.name) ||
     (request.input.scheduledJob && tool.name === "burble_provider_call") ||
+    isToolAllowedByScheduledJob(tool.name, request) ||
     isToolAllowedBySelectedGroups(tool.name, selectedGroups)
   );
   const allowedToolNames = new Set(catalog.map((tool) => tool.name));
   const upstreamMcpSchemas = Object.fromEntries(
     Object.entries(catalogBuild.upstreamMcpSchemas).filter(([name]) =>
       allowedToolNames.has(name) ||
+      isToolAllowedByScheduledJob(name, request) ||
       isToolAllowedBySelectedGroups(name, selectedGroups)
     )
   );
@@ -2388,6 +2401,29 @@ function isToolAllowedBySelectedGroups(
   return toolGroupsForToolName(toolName).some((group) =>
     selectedGroups.has(group)
   );
+}
+
+function isToolAllowedByScheduledJob(
+  toolName: string,
+  request: RunRequest
+): boolean {
+  const allowedTools = request.input.scheduledJob?.allowedTools;
+  if (!allowedTools?.length) {
+    return false;
+  }
+
+  const allowed = new Set(allowedTools);
+  if (allowed.has(toolName)) {
+    return true;
+  }
+
+  const manifestName = manifestBurbleToolNameToMcpToolName(toolName, request);
+  if (manifestName && allowed.has(manifestName)) {
+    return true;
+  }
+
+  const manifestAlias = manifestMcpToolNameToBurbleToolName(toolName, request);
+  return Boolean(manifestAlias && allowed.has(manifestAlias));
 }
 
 function toolGroupsForToolName(toolName: string): RuntimeToolGroup[] {
@@ -2554,6 +2590,23 @@ function mcpToolNameToBurbleToolName(
   return null;
 }
 
+function manifestBurbleToolNameToMcpToolName(
+  name: string,
+  request: RunRequest
+): string | null {
+  const tools = request.runtime?.manifest?.tools;
+  if (!tools) {
+    return null;
+  }
+
+  const tool = tools.find(
+    (entry) =>
+      entry.enabled !== false &&
+      (entry.name === name || entry.alias === name)
+  );
+  return tool?.name ?? null;
+}
+
 function manifestMcpToolNameToBurbleToolName(
   name: string,
   request: RunRequest
@@ -2576,6 +2629,9 @@ function isDiscoveredProviderToolAvailable(
   toolName: string,
   request: RunRequest
 ): boolean {
+  if (toolName.startsWith("web.") || toolName.startsWith("web_")) {
+    return true;
+  }
   if (toolName.startsWith("github.")) {
     return Boolean(
       request.input.connections.github?.connected &&
@@ -3318,6 +3374,17 @@ async function executePlannedToolCall(
 
   const email = readToolEmail(toolCall.name, request);
   if (!email) {
+    if (isConnectionlessProviderTool(toolCall.name)) {
+      const validationError = validatePlannedToolCall(toolCall, toolContext);
+      if (validationError) {
+        return validationError;
+      }
+
+      return executeTool(toolCall.name, {
+        input: toolCall.arguments
+      });
+    }
+
     return {
       classification: "user_private",
       content: {
@@ -3336,6 +3403,10 @@ async function executePlannedToolCall(
     user: { email },
     input: toolCall.arguments
   });
+}
+
+function isConnectionlessProviderTool(toolName: string): boolean {
+  return toolName === "web.search" || toolName === "web_search";
 }
 
 function validatePlannedToolCall(

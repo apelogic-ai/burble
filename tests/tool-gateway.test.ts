@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import type { Config } from "../src/config";
 import type {
   AgentJobCapabilityRecord,
+  AgentJobRunRecord,
   AgentRuntimeRecord,
   ConversationRouteRecord,
   ProviderConnection,
@@ -154,7 +155,15 @@ function createStore(
     upserts?: unknown[];
   } = {},
   routeRevocations: unknown[] = [],
-  routeUpserts: unknown[] | null = null
+  routeUpserts: unknown[] | null = null,
+  jobRuns: {
+    created?: AgentJobRunRecord[];
+    latest?: AgentJobRunRecord | null;
+  } = {},
+  scheduledJobs: {
+    list?: ReturnType<TokenStore["listScheduledJobsForPrincipal"]>;
+    upserts?: unknown[];
+  } = {}
 ): TokenStore {
   let route = foundRoute;
   return {
@@ -178,6 +187,8 @@ function createStore(
     },
     getAgentRuntime: (id) => (id === foundRuntime?.id ? foundRuntime : null),
     getAgentRuntimeForPrincipal: () => foundRuntime,
+    listAgentRuntimesForPrincipal: () =>
+      foundRuntime ? [foundRuntime] : [],
     listIdleAgentRuntimes: () => [],
     recordAgentRuntimeEvent: (event) => {
       runtimeEvents.push(event);
@@ -284,6 +295,71 @@ function createStore(
     getAgentJobState: () => null,
     listAgentJobStatesForPrincipal: () => [],
     deleteAgentJobState: () => undefined,
+    upsertScheduledJob: (input) => {
+      scheduledJobs.upserts?.push(input);
+      const now = (input.now ?? new Date("2026-06-24T12:00:00.000Z")).toISOString();
+      const existing = (scheduledJobs.list ?? []).find(
+        (job) => job.jobId === input.jobId
+      );
+      const record = {
+        jobId: input.jobId,
+        workspaceId: input.workspaceId,
+        slackUserId: input.slackUserId,
+        title: input.title,
+        prompt: input.prompt,
+        schedule: input.schedule,
+        routeId: input.routeId ?? null,
+        state: input.state ?? "scheduled",
+        runtimeType: input.runtimeType ?? null,
+        createdAt: existing?.createdAt ?? now,
+        updatedAt: now
+      };
+      if (existing && scheduledJobs.list) {
+        scheduledJobs.list.splice(scheduledJobs.list.indexOf(existing), 1, record);
+      }
+      return record;
+    },
+    getScheduledJob: (jobId) =>
+      (scheduledJobs.list ?? []).find((job) => job.jobId === jobId) ?? null,
+    listScheduledJobsForPrincipal: (workspaceId, slackUserId) =>
+      (scheduledJobs.list ?? []).filter(
+        (job) =>
+          job.workspaceId === workspaceId && job.slackUserId === slackUserId
+      ),
+    listScheduledJobs: () => scheduledJobs.list ?? [],
+    deleteScheduledJob: (jobId) => {
+      const index = (scheduledJobs.list ?? []).findIndex(
+        (job) => job.jobId === jobId
+      );
+      if (index >= 0) {
+        scheduledJobs.list?.splice(index, 1);
+      }
+    },
+    createAgentJobRun: (input) => {
+      const now = (input.now ?? new Date("2026-06-24T12:00:00.000Z")).toISOString();
+      const record: AgentJobRunRecord = {
+        runId: input.runId?.trim() || "jobrun_test",
+        jobId: input.jobId,
+        workspaceId: input.workspaceId,
+        slackUserId: input.slackUserId,
+        triggerSource: input.triggerSource,
+        status: input.status ?? "queued",
+        failureReason: input.failureReason ?? null,
+        createdAt: now,
+        updatedAt: now,
+        startedAt: input.startedAt ?? null,
+        finishedAt: input.finishedAt ?? null
+      };
+      jobRuns.created?.push(record);
+      return record;
+    },
+    getAgentJobRun: () => null,
+    listAgentJobRunsForJob: () => [],
+    listAgentJobRunsForPrincipal: () => jobRuns.created ?? [],
+    getLatestAgentJobRunForPrincipal: () => jobRuns.latest ?? null,
+    listQueuedAgentJobRuns: () => [],
+    claimAgentJobRun: () => null,
+    finishAgentJobRun: () => null,
     upsertAgentJobCapability: (input) => {
       jobCapabilities.upserts?.push(input);
       return {
@@ -433,6 +509,61 @@ describe("handleToolGatewayRequest", () => {
           url: "https://github.com/acme/app/pull/9"
         }
       ]
+    });
+  });
+
+  test("executes brokered public web search without a provider connection", async () => {
+    const response = await handleToolGatewayRequest(
+      config,
+      createStore(null, runtime),
+      "web.search",
+      request(
+        "web.search",
+        {
+          input: {
+            query: "latest AI news",
+            limit: 2
+          }
+        },
+        "runtime-token-u123",
+        "rt_u123"
+      ),
+      {
+        searchWeb: async (input) => {
+          expect(input).toEqual({
+            query: "latest AI news",
+            limit: 2
+          });
+          return {
+            classification: "public",
+            content: {
+              query: input.query,
+              results: [
+                {
+                  title: "AI research update",
+                  url: "https://example.com/ai",
+                  snippet: "A short public news summary."
+                }
+              ]
+            }
+          };
+        }
+      }
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      classification: "public",
+      content: {
+        query: "latest AI news",
+        results: [
+          {
+            title: "AI research update",
+            url: "https://example.com/ai",
+            snippet: "A short public news summary."
+          }
+        ]
+      }
     });
   });
 
@@ -1691,6 +1822,365 @@ describe("handleToolGatewayRequest", () => {
       nativeToolsets: ["burble", "web"],
       allowedTools: ["web_extract"]
     });
+  });
+
+  test("lets a runtime list scheduled jobs through the control plane", async () => {
+    const jobs: ReturnType<TokenStore["listScheduledJobsForPrincipal"]> = [
+      {
+        jobId: "ai-news-hourly",
+        workspaceId: "T123",
+        slackUserId: "U123",
+        title: "Hourly AI news summary",
+        prompt: "Find fresh AI news and summarize it.",
+        schedule: { kind: "interval", every: { hours: 1 } },
+        routeId: "convrt_abcdefabcdefabcdefabcdef",
+        state: "scheduled",
+        runtimeType: "hermes",
+        createdAt: "2026-06-24T11:00:00.000Z",
+        updatedAt: "2026-06-24T11:05:00.000Z"
+      }
+    ];
+    const capability: AgentJobCapabilityRecord = {
+      jobId: "legacy-ai-news-hourly",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      requiredTools: ["web_extract"],
+      routeId: "convrt_abcdefabcdefabcdefabcdef",
+      policyHash: "policy-hash",
+      capabilityProfile: "scheduled_job",
+      runtimeType: "hermes",
+      stateRefs: [],
+      visibilityPolicy: {},
+      createdAt: "2026-06-24T11:00:00.000Z",
+      updatedAt: "2026-06-24T11:05:00.000Z"
+    };
+
+    const response = await handleToolGatewayRequest(
+      config,
+      createStore(
+        null,
+        runtime,
+        [],
+        null,
+        [],
+        { list: [capability] },
+        [],
+        null,
+        {},
+        { list: jobs }
+      ),
+      "scheduledJob.list",
+      request(
+        "scheduledJob.list",
+        { input: {} },
+        "runtime-token-u123",
+        "rt_u123"
+      )
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      classification: "user_private",
+      content: {
+        jobs: [
+          {
+            jobId: "ai-news-hourly",
+            title: "Hourly AI news summary",
+            prompt: "Find fresh AI news and summarize it.",
+            schedule: { kind: "interval", every: { hours: 1 } },
+            state: "scheduled",
+            runtimeType: "hermes",
+            requiredTools: [],
+            routeId: "convrt_abcdefabcdefabcdefabcdef",
+            updatedAt: "2026-06-24T11:05:00.000Z"
+          }
+        ]
+      }
+    });
+  });
+
+  test("lets a runtime create a Burble-owned scheduled job", async () => {
+    const upserts: unknown[] = [];
+    const response = await handleToolGatewayRequest(
+      config,
+      createStore(null, runtime, [], null, [], {}, [], null, {}, { upserts }),
+      "scheduledJob.create",
+      request(
+        "scheduledJob.create",
+        {
+          input: {
+            title: "Hourly AI news summary",
+            prompt: "look for fresh AI-related news and post a short summary",
+            schedule: {
+              kind: "interval",
+              every: { hours: 1 }
+            },
+            routeId: "convrt_abcdefabcdefabcdefabcdef"
+          }
+        },
+        "runtime-token-u123",
+        "rt_u123"
+      )
+    );
+
+    expect(response.status).toBe(200);
+    expect(upserts).toEqual([
+      expect.objectContaining({
+        jobId: expect.stringMatching(/^job_/),
+        workspaceId: "T123",
+        slackUserId: "U123",
+        title: "Hourly AI news summary",
+        prompt: "look for fresh AI-related news and post a short summary",
+        schedule: {
+          kind: "interval",
+          every: { hours: 1 }
+        },
+        routeId: "convrt_abcdefabcdefabcdefabcdef",
+        runtimeType: "openclaw",
+        state: "scheduled"
+      })
+    ]);
+    expect(await response.json()).toEqual({
+      classification: "user_private",
+      content: {
+        ok: true,
+        job: expect.objectContaining({
+          jobId: expect.stringMatching(/^job_/),
+          title: "Hourly AI news summary",
+          state: "scheduled",
+          runtimeType: "openclaw"
+        })
+      }
+    });
+  });
+
+  test("lets a runtime pause, resume, and delete a Burble-owned scheduled job", async () => {
+    const jobs: ReturnType<TokenStore["listScheduledJobsForPrincipal"]> = [
+      {
+        jobId: "job-ai-news-hourly",
+        workspaceId: "T123",
+        slackUserId: "U123",
+        title: "Hourly AI news summary",
+        prompt: "Find fresh AI news and summarize it.",
+        schedule: {
+          kind: "interval",
+          every: { hours: 1 }
+        },
+        routeId: "convrt_abcdefabcdefabcdefabcdef",
+        state: "scheduled",
+        runtimeType: "openclaw",
+        createdAt: "2026-06-24T12:00:00.000Z",
+        updatedAt: "2026-06-24T12:00:00.000Z"
+      }
+    ];
+    const store = createStore(
+      null,
+      runtime,
+      [],
+      null,
+      [],
+      {},
+      [],
+      null,
+      {},
+      { list: jobs }
+    );
+
+    const pause = await handleToolGatewayRequest(
+      config,
+      store,
+      "scheduledJob.pause",
+      request(
+        "scheduledJob.pause",
+        { input: { jobId: "job-ai-news-hourly" } },
+        "runtime-token-u123",
+        "rt_u123"
+      )
+    );
+    expect(pause.status).toBe(200);
+    expect(await pause.json()).toMatchObject({
+      classification: "user_private",
+      content: {
+        ok: true,
+        job: {
+          jobId: "job-ai-news-hourly",
+          state: "paused"
+        }
+      }
+    });
+
+    const resume = await handleToolGatewayRequest(
+      config,
+      store,
+      "scheduledJob.resume",
+      request(
+        "scheduledJob.resume",
+        { input: { jobId: "job-ai-news-hourly" } },
+        "runtime-token-u123",
+        "rt_u123"
+      )
+    );
+    expect(resume.status).toBe(200);
+    expect(await resume.json()).toMatchObject({
+      classification: "user_private",
+      content: {
+        ok: true,
+        job: {
+          jobId: "job-ai-news-hourly",
+          state: "scheduled"
+        }
+      }
+    });
+
+    const deletion = await handleToolGatewayRequest(
+      config,
+      store,
+      "scheduledJob.delete",
+      request(
+        "scheduledJob.delete",
+        { input: { jobId: "job-ai-news-hourly" } },
+        "runtime-token-u123",
+        "rt_u123"
+      )
+    );
+    expect(deletion.status).toBe(200);
+    expect(await deletion.json()).toEqual({
+      classification: "user_private",
+      content: {
+        ok: true,
+        jobId: "job-ai-news-hourly"
+      }
+    });
+    expect(jobs).toEqual([]);
+  });
+
+  test("lets a runtime trigger a scheduled job through the control plane", async () => {
+    const jobs: ReturnType<TokenStore["listScheduledJobsForPrincipal"]> = [
+      {
+        jobId: "ai-news-hourly",
+        workspaceId: "T123",
+        slackUserId: "U123",
+        title: "Hourly AI news summary",
+        prompt: "Find fresh AI news and summarize it.",
+        schedule: { kind: "interval", every: { hours: 1 } },
+        routeId: null,
+        state: "scheduled",
+        runtimeType: "openclaw",
+        createdAt: "2026-06-24T11:00:00.000Z",
+        updatedAt: "2026-06-24T11:05:00.000Z"
+      }
+    ];
+    const capability: AgentJobCapabilityRecord = {
+      jobId: "legacy-ai-news-hourly",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      requiredTools: ["web_extract"],
+      routeId: null,
+      policyHash: "policy-hash",
+      capabilityProfile: "scheduled_job",
+      runtimeType: "openclaw",
+      stateRefs: [],
+      visibilityPolicy: {},
+      createdAt: "2026-06-24T11:00:00.000Z",
+      updatedAt: "2026-06-24T11:05:00.000Z"
+    };
+    const runs: AgentJobRunRecord[] = [];
+
+    const response = await handleToolGatewayRequest(
+      config,
+      createStore(
+        null,
+        runtime,
+        [],
+        null,
+        [],
+        { list: [capability] },
+        [],
+        null,
+        { created: runs },
+        { list: jobs }
+      ),
+      "scheduledJob.trigger",
+      request(
+        "scheduledJob.trigger",
+        { input: { jobId: "ai-news-hourly" } },
+        "runtime-token-u123",
+        "rt_u123"
+      )
+    );
+
+    expect(response.status).toBe(200);
+    expect(runs).toEqual([
+      expect.objectContaining({
+        runId: expect.stringMatching(/^jobrun_/),
+        jobId: "ai-news-hourly",
+        workspaceId: "T123",
+        slackUserId: "U123",
+        triggerSource: "manual",
+        status: "queued"
+      })
+    ]);
+    const body = await response.json();
+    expect(body.content).toMatchObject({
+      ok: true,
+      jobId: "ai-news-hourly",
+      run: {
+        jobId: "ai-news-hourly",
+        triggerSource: "manual",
+        status: "queued"
+      }
+    });
+  });
+
+  test("lets a runtime read the latest scheduled job run status", async () => {
+    const latest: AgentJobRunRecord = {
+      runId: "jobrun_latest",
+      jobId: "ai-news-hourly",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      triggerSource: "manual",
+      status: "succeeded",
+      failureReason: null,
+      createdAt: "2026-06-24T12:00:00.000Z",
+      updatedAt: "2026-06-24T12:01:00.000Z",
+      startedAt: "2026-06-24T12:00:01.000Z",
+      finishedAt: "2026-06-24T12:01:00.000Z"
+    };
+
+    const response = await handleToolGatewayRequest(
+      config,
+      createStore(null, runtime, [], null, [], {}, [], null, {
+        latest
+      }),
+      "scheduledJob.latestRunStatus",
+      request(
+        "scheduledJob.latestRunStatus",
+        { input: { jobId: "ai-news-hourly" } },
+        "runtime-token-u123",
+        "rt_u123"
+      )
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      classification: "user_private",
+      content: {
+        ok: true,
+        run: latest
+      }
+    });
+  });
+
+  test("requires runtime auth for scheduler control tools", async () => {
+    const response = await handleToolGatewayRequest(
+      config,
+      createStore(null, runtime),
+      "scheduledJob.list",
+      request("scheduledJob.list", { input: {} })
+    );
+
+    expect(response.status).toBe(403);
+    expect(await response.text()).toBe("Runtime auth required");
   });
 
   test("binds channel destination routes to the scheduled job during registration", async () => {

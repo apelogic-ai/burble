@@ -361,6 +361,85 @@ describe("handleProviderMcpRequest", () => {
     store.close();
   });
 
+  test("executes connectionless web search through provider MCP", async () => {
+    const issuer = createRuntimeJwtIssuer({ issuer: config.runtimeJwtIssuer });
+    const store = createTokenStore(":memory:");
+    const runtime = store.getOrCreateAgentRuntime({
+      workspaceId: "T123",
+      slackUserId: "U123",
+      engine: "openclaw",
+      endpointUrl: "http://runtime-u123:8080",
+      authTokenHash: "hash-u123",
+      statePath: "/data/runtimes/u123/state",
+      configPath: "/data/runtimes/u123/config/openclaw.json",
+      workspacePath: "/data/runtimes/u123/workspace"
+    });
+    const token = issuer.issueRuntimeJwt({
+      audience: "http://agentgateway:3000/mcp",
+      runtimeId: runtime.id,
+      workspaceId: "T123",
+      slackUserId: "U123"
+    });
+    const requestedUrls: string[] = [];
+
+    const response = await handleProviderMcpRequest(
+      config,
+      store,
+      issuer,
+      mcpRequest(
+        {
+          method: "tools/call",
+          params: {
+            name: "web_search",
+            arguments: {
+              query: "latest AI news",
+              limit: 1
+            }
+          }
+        },
+        token
+      ),
+      {
+        fetch: async (url) => {
+          requestedUrls.push(String(url));
+          return new Response(
+            `
+              <rss>
+                <channel>
+                  <item>
+                    <title>AI policy update</title>
+                    <link>https://example.com/ai-policy</link>
+                  </item>
+                </channel>
+              </rss>
+            `,
+            { status: 200 }
+          );
+        }
+      },
+      "web"
+    );
+    const body = readMcpBody(await response.text());
+    const toolResult = JSON.parse(body.result.content[0].text);
+
+    expect(response.status).toBe(200);
+    expect(requestedUrls[0]).toContain("q=latest+AI+news");
+    expect(toolResult).toEqual({
+      classification: "public",
+      content: {
+        query: "latest AI news",
+        results: [
+          {
+            title: "AI policy update",
+            url: "https://example.com/ai-policy"
+          }
+        ]
+      }
+    });
+
+    store.close();
+  });
+
   test("filters provider MCP tools through workspace provider policy", async () => {
     const issuer = createRuntimeJwtIssuer({ issuer: config.runtimeJwtIssuer });
     const store = createTokenStore(":memory:");

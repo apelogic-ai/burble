@@ -3,18 +3,18 @@ import {
   buildAgentRuntimeId,
   type AgentRuntimeEngine,
   type AgentRuntimeRecord,
-  type TokenStore
+  type TokenStore,
 } from "../db";
 import type { RuntimeJwtIssuer } from "../runtime-jwt";
 import { buildBrokeredRuntimeSandboxPolicy } from "./sandbox-policy";
 import type {
   SandboxCredentialBinding,
   SandboxPolicy,
-  SandboxProvider
+  SandboxProvider,
 } from "./sandbox-provider";
 import {
   runtimeDescriptor,
-  runtimeHealthCheckAttempts
+  runtimeHealthCheckAttempts,
 } from "./runtime-descriptors";
 import {
   buildRuntimeDataId,
@@ -24,20 +24,20 @@ import {
   type PrincipalId,
   type RuntimeFactory,
   type RuntimeHandle,
-  type RuntimeManifestBuilder
+  type RuntimeManifestBuilder,
 } from "./runtime-factory";
 import type { RuntimeManifest } from "./runtime-manifest";
 import {
   collectApprovedRuntimeEnv,
   modelProviderUrlsForRuntimeModel,
   runtimeInferenceProxyApiKey,
-  runtimeExtraAllowedUrlsFromEnv
+  runtimeExtraAllowedUrlsFromEnv,
 } from "./runtime-env";
 import { routeRuntimeEndpointFetch } from "./runtime-endpoint-routing";
 
 export type SandboxRuntimeFetch = (
   input: string,
-  init?: RequestInit
+  init?: RequestInit,
 ) => Promise<Response>;
 
 export type SandboxRuntimeFactoryPolicyBuilder = (input: {
@@ -84,7 +84,7 @@ export function createSandboxRuntimeFactory(input: {
   assertSandboxProviderCapabilities(input.sandboxProvider);
   assertSandboxStartCommand(input.startCommand);
   const requestFetch = routeRuntimeEndpointFetch(input.fetch ?? fetch, {
-    openShellDialHost: input.openShellDialHost
+    openShellDialHost: input.openShellDialHost,
   });
   const runtimeLocks = new Map<string, Promise<void>>();
 
@@ -94,29 +94,35 @@ export function createSandboxRuntimeFactory(input: {
       return;
     }
 
-    await input.sandboxProvider.terminate(runtime.sandboxId);
+    try {
+      await input.sandboxProvider.terminate(runtime.sandboxId);
+    } catch (error) {
+      if (!isSandboxNotFoundError(error)) {
+        throw error;
+      }
+    }
     input.store.updateAgentRuntimeStatus(runtimeId, { status: "stopped" });
     input.store.recordAgentRuntimeEvent({
       runtimeId,
       eventType: "runtime_stopped",
-      summary: { reason: "idle_or_requested", sandboxId: runtime.sandboxId }
+      summary: { reason: "idle_or_requested", sandboxId: runtime.sandboxId },
     });
   };
 
   const getOrCreateRuntimeLocked = async (
-    principal: PrincipalId
+    principal: PrincipalId,
   ): Promise<RuntimeHandle> => {
     const runtimeDataId = buildRuntimeDataId(principal, input.engine);
     const manifest = await input.buildManifest?.(principal);
     const token = deriveRuntimeToken({
       secret: input.runtimeTokenSecret,
       principal,
-      engine: input.engine
+      engine: input.engine,
     });
     const existing = input.store.getAgentRuntimeForPrincipal({
       workspaceId: principal.workspaceId,
       slackUserId: principal.slackUserId,
-      engine: input.engine
+      engine: input.engine,
     });
 
     if (
@@ -133,9 +139,8 @@ export function createSandboxRuntimeFactory(input: {
             engine: input.engine,
             runtimeId: existing.id,
             runtimeDataId,
-            manifest
-          })) ??
-          buildDefaultSandboxPolicy(input, manifest);
+            manifest,
+          })) ?? buildDefaultSandboxPolicy(input, manifest);
         const policyHash = sandboxRuntimePolicyHash(manifest, policy);
         if (existing.policyHash !== policyHash) {
           await input.sandboxProvider.applyPolicy(attached.id, policy);
@@ -150,7 +155,7 @@ export function createSandboxRuntimeFactory(input: {
           configPath: paths.configPath,
           workspacePath: attached.workspacePath,
           sandboxId: attached.id,
-          policyHash
+          policyHash,
         });
         await waitForSandboxRuntimeHealth({
           sandboxId: attached.id,
@@ -159,16 +164,18 @@ export function createSandboxRuntimeFactory(input: {
           attempts:
             input.healthCheckAttempts ??
             runtimeHealthCheckAttempts(input.engine),
-          intervalMs: input.healthCheckIntervalMs ?? 1000
+          intervalMs: input.healthCheckIntervalMs ?? 1000,
         });
         input.store.touchAgentRuntime(existing.id);
         if (existing.status === "provisioning") {
-          input.store.updateAgentRuntimeStatus(existing.id, { status: "ready" });
+          input.store.updateAgentRuntimeStatus(existing.id, {
+            status: "ready",
+          });
         }
         return toRuntimeHandle(
           input.store.getAgentRuntime(existing.id) ?? updated,
           token,
-          manifest
+          manifest,
         );
       } catch (error) {
         if (!isSandboxNotFoundError(error)) {
@@ -176,15 +183,15 @@ export function createSandboxRuntimeFactory(input: {
         }
         input.store.updateAgentRuntimeStatus(existing.id, {
           status: "stopped",
-          failureReason: `Sandbox ${existing.sandboxId} was not found`
+          failureReason: `Sandbox ${existing.sandboxId} was not found`,
         });
         input.store.recordAgentRuntimeEvent({
           runtimeId: existing.id,
           eventType: "runtime_stopped",
           summary: {
             reason: "sandbox_missing",
-            sandboxId: existing.sandboxId
-          }
+            sandboxId: existing.sandboxId,
+          },
         });
       }
     }
@@ -192,14 +199,14 @@ export function createSandboxRuntimeFactory(input: {
     const runtimeId = buildAgentRuntimeId(
       principal.workspaceId,
       principal.slackUserId,
-      input.engine
+      input.engine,
     );
     const context = {
       principal,
       engine: input.engine,
       runtimeId,
       runtimeDataId,
-      manifest
+      manifest,
     };
     const runtimeJwt =
       input.runtimeJwtIssuer && input.mcpGatewayUrl
@@ -208,7 +215,7 @@ export function createSandboxRuntimeFactory(input: {
             runtimeId,
             workspaceId: principal.workspaceId,
             slackUserId: principal.slackUserId,
-            ttlSeconds: input.runtimeJwtTtlSeconds
+            ttlSeconds: input.runtimeJwtTtlSeconds,
           })
         : null;
     const policy =
@@ -224,27 +231,27 @@ export function createSandboxRuntimeFactory(input: {
       runtimeId,
       runtimeJwt,
       manifest,
-      env: input.env ?? {}
+      env: input.env ?? {},
     });
 
     const sandbox = await input.sandboxProvider.provision({
       principal: {
         workspaceId: principal.workspaceId,
-        userId: principal.slackUserId
+        userId: principal.slackUserId,
       },
       runtime: {
         engine: input.engine,
-        image: input.image
+        image: input.image,
       },
       labels: {
         runtimeDataId,
-        engine: input.engine
+        engine: input.engine,
       },
       policy,
       start: {
         argv: input.startCommand,
-        env: startEnv
-      }
+        env: startEnv,
+      },
     });
     const paths = sandboxRuntimePaths(sandbox.workspacePath, input.engine);
     let runtime: AgentRuntimeRecord | null = null;
@@ -260,7 +267,7 @@ export function createSandboxRuntimeFactory(input: {
         configPath: paths.configPath,
         workspacePath: sandbox.workspacePath,
         sandboxId: sandbox.id,
-        policyHash
+        policyHash,
       });
       const credentials = (await input.buildCredentials?.(context)) ?? [];
 
@@ -271,11 +278,11 @@ export function createSandboxRuntimeFactory(input: {
           engine: input.engine,
           image: input.image,
           sandboxId: sandbox.id,
-          policyHash
-        }
+          policyHash,
+        },
       });
       input.store.updateAgentRuntimeStatus(runtime.id, {
-        status: "provisioning"
+        status: "provisioning",
       });
       if (credentials.length > 0) {
         await input.sandboxProvider.bindCredentials(sandbox.id, credentials);
@@ -285,9 +292,8 @@ export function createSandboxRuntimeFactory(input: {
         endpointUrl: sandbox.endpointUrl,
         fetch: requestFetch,
         attempts:
-          input.healthCheckAttempts ??
-          runtimeHealthCheckAttempts(input.engine),
-        intervalMs: input.healthCheckIntervalMs ?? 1000
+          input.healthCheckAttempts ?? runtimeHealthCheckAttempts(input.engine),
+        intervalMs: input.healthCheckIntervalMs ?? 1000,
       });
       input.store.updateAgentRuntimeStatus(runtime.id, { status: "ready" });
       input.store.recordAgentRuntimeEvent({
@@ -295,8 +301,8 @@ export function createSandboxRuntimeFactory(input: {
         eventType: "runtime_provision_finished",
         summary: {
           endpointUrl: sandbox.endpointUrl,
-          sandboxId: sandbox.id
-        }
+          sandboxId: sandbox.id,
+        },
       });
       input.store.touchAgentRuntime(runtime.id);
     } catch (error) {
@@ -319,7 +325,7 @@ export function createSandboxRuntimeFactory(input: {
       if (runtime) {
         input.store.updateAgentRuntimeStatus(runtime.id, {
           status: "failed",
-          failureReason
+          failureReason,
         });
         input.store.recordAgentRuntimeEvent({
           runtimeId: runtime.id,
@@ -328,8 +334,8 @@ export function createSandboxRuntimeFactory(input: {
             failureReason,
             sandboxId: sandbox.id,
             ...(preserveFailedSandbox ? { preservedSandbox: true } : {}),
-            ...(cleanupError ? { cleanupError } : {})
-          }
+            ...(cleanupError ? { cleanupError } : {}),
+          },
         });
       }
       throw error;
@@ -338,14 +344,17 @@ export function createSandboxRuntimeFactory(input: {
     return toRuntimeHandle(
       input.store.getAgentRuntime(runtime.id) ?? runtime,
       token,
-      manifest
+      manifest,
     );
   };
 
   return {
     async getOrCreateRuntime(principal) {
-      return withRuntimeProvisionLock(runtimeLocks, principal, input.engine, () =>
-        getOrCreateRuntimeLocked(principal)
+      return withRuntimeProvisionLock(
+        runtimeLocks,
+        principal,
+        input.engine,
+        () => getOrCreateRuntimeLocked(principal),
       );
     },
 
@@ -359,14 +368,14 @@ export function createSandboxRuntimeFactory(input: {
         const sandbox = await input.sandboxProvider.attach(runtime.sandboxId);
         if (sandbox.status === "terminated") {
           input.store.updateAgentRuntimeStatus(runtime.id, {
-            status: "stopped"
+            status: "stopped",
           });
           return input.store.getAgentRuntime(runtime.id);
         }
         if (sandbox.status === "failed") {
           input.store.updateAgentRuntimeStatus(runtime.id, {
             status: "failed",
-            failureReason: "Sandbox runtime failed"
+            failureReason: "Sandbox runtime failed",
           });
           return input.store.getAgentRuntime(runtime.id);
         }
@@ -375,7 +384,7 @@ export function createSandboxRuntimeFactory(input: {
           status: response.ok ? "ready" : "failed",
           failureReason: response.ok
             ? null
-            : `Runtime health check failed: HTTP ${response.status}`
+            : `Runtime health check failed: HTTP ${response.status}`,
         });
         return input.store.getAgentRuntime(runtime.id);
       } catch (error) {
@@ -384,7 +393,7 @@ export function createSandboxRuntimeFactory(input: {
           failureReason:
             error instanceof Error
               ? `Runtime health check failed: ${error.message}`
-              : "Runtime health check failed"
+              : "Runtime health check failed",
         });
         return input.store.getAgentRuntime(runtime.id);
       }
@@ -396,11 +405,13 @@ export function createSandboxRuntimeFactory(input: {
 
     async reapIdleRuntimes(now) {
       const idleBefore = new Date(
-        now.getTime() - (input.idleTtlMs ?? 30 * 60 * 1000)
+        now.getTime() - (input.idleTtlMs ?? 30 * 60 * 1000),
       );
       const staleRuntimes = input.store
         .listIdleAgentRuntimes(idleBefore)
-        .filter((runtime) => runtime.engine === input.engine && runtime.sandboxId);
+        .filter(
+          (runtime) => runtime.engine === input.engine && runtime.sandboxId,
+        );
 
       for (const runtime of staleRuntimes) {
         await stopRuntime(runtime.id);
@@ -411,9 +422,9 @@ export function createSandboxRuntimeFactory(input: {
       input.store.recordAgentRuntimeEvent({
         runtimeId,
         eventType: event.eventType,
-        summary: event.summary
+        summary: event.summary,
       });
-    }
+    },
   };
 }
 
@@ -421,12 +432,12 @@ function assertSandboxProviderCapabilities(provider: SandboxProvider): void {
   const capabilities = provider.capabilities();
   if (!capabilities.supportsEgressAllowlist) {
     throw new Error(
-      `Sandbox provider ${capabilities.provider} must support egress allowlists for runtime provisioning`
+      `Sandbox provider ${capabilities.provider} must support egress allowlists for runtime provisioning`,
     );
   }
   if (!capabilities.supportsDurableSandboxes) {
     throw new Error(
-      `Sandbox provider ${capabilities.provider} must support durable sandboxes for runtime provisioning`
+      `Sandbox provider ${capabilities.provider} must support durable sandboxes for runtime provisioning`,
     );
   }
 }
@@ -444,7 +455,7 @@ async function withRuntimeProvisionLock<T>(
   locks: Map<string, Promise<void>>,
   principal: PrincipalId,
   engine: AgentRuntimeEngine,
-  operation: () => Promise<T>
+  operation: () => Promise<T>,
 ): Promise<T> {
   const key = `${principal.workspaceId}:${principal.slackUserId}:${engine}`;
   const previous = locks.get(key) ?? Promise.resolve();
@@ -475,7 +486,7 @@ function buildDefaultSandboxPolicy(
     modelProviderUrls: string[];
     env?: Record<string, string | undefined>;
   },
-  manifest?: RuntimeManifest | null
+  manifest?: RuntimeManifest | null,
 ): SandboxPolicy {
   const env = input.env ?? {};
   return buildBrokeredRuntimeSandboxPolicy({
@@ -483,21 +494,19 @@ function buildDefaultSandboxPolicy(
     mcpGatewayUrl: input.mcpGatewayUrl ?? null,
     modelProviderUrls: manifest?.model
       ? modelProviderUrlsForRuntimeModel(manifest.model, env, {
-          inferenceBaseUrl: input.inferenceBaseUrl
+          inferenceBaseUrl: input.inferenceBaseUrl,
         })
       : input.inferenceBaseUrl
         ? [input.inferenceBaseUrl]
-      : input.modelProviderUrls,
+        : input.modelProviderUrls,
     extraAllowedUrls: runtimeExtraAllowedUrlsFromEnv(env),
-    filesystem: defaultSandboxRuntimeFilesystemPolicy(input.engine)
+    filesystem: defaultSandboxRuntimeFilesystemPolicy(input.engine),
   });
 }
 
 function defaultSandboxRuntimeFilesystemPolicy(
-  engine: AgentRuntimeEngine
-): NonNullable<
-  SandboxPolicy["filesystem"]
-> {
+  engine: AgentRuntimeEngine,
+): NonNullable<SandboxPolicy["filesystem"]> {
   const container = runtimeDescriptor(engine).container;
   const descriptorReadOnlyPaths = container.sandboxReadOnlyPaths ?? [];
   return {
@@ -510,14 +519,14 @@ function defaultSandboxRuntimeFilesystemPolicy(
       "/runtime/state",
       "/runtime/workspace",
       "/tmp",
-      ...(container.sandboxReadWritePaths ?? [])
-    ]
+      ...(container.sandboxReadWritePaths ?? []),
+    ],
   };
 }
 
 function sandboxRuntimePolicyHash(
   manifest: RuntimeManifest | null | undefined,
-  policy: SandboxPolicy
+  policy: SandboxPolicy,
 ): string {
   // Sandbox runtimes enforce egress outside the agent process, so env-derived
   // egress changes are part of the effective runtime policy. Scheduled
@@ -528,9 +537,9 @@ function sandboxRuntimePolicyHash(
       JSON.stringify(
         sortJson({
           manifestPolicyHash: manifest?.policyHash ?? null,
-          sandboxPolicy: policy
-        })
-      )
+          sandboxPolicy: policy,
+        }),
+      ),
     )
     .digest("hex");
 }
@@ -545,7 +554,7 @@ function sortJson(value: unknown): unknown {
   return Object.fromEntries(
     Object.entries(value)
       .sort(([left], [right]) => left.localeCompare(right))
-      .map(([key, entry]) => [key, sortJson(entry)])
+      .map(([key, entry]) => [key, sortJson(entry)]),
   );
 }
 
@@ -576,7 +585,7 @@ function buildSandboxRuntimeEnv(input: {
     AGENT_RUNTIME_ENGINE: input.engine,
     AGENT_RUNTIME_STATE_DIR: container.stateDir,
     AGENT_RUNTIME_CONFIG_PATH: configPath,
-    AGENT_RUNTIME_WORKSPACE_DIR: container.workspaceDir
+    AGENT_RUNTIME_WORKSPACE_DIR: container.workspaceDir,
   };
 
   if (container.openClawCompatEnv) {
@@ -596,7 +605,7 @@ function buildSandboxRuntimeEnv(input: {
       npm_config_fund: "false",
       npm_config_update_notifier: "false",
       npm_config_offline: "true",
-      JITI_FS_CACHE: "false"
+      JITI_FS_CACHE: "false",
     });
   }
 
@@ -636,11 +645,11 @@ function buildSandboxRuntimeEnv(input: {
 
 function sandboxRuntimePaths(
   workspacePath: string,
-  engine: AgentRuntimeEngine
+  engine: AgentRuntimeEngine,
 ): { statePath: string; configPath: string } {
   return {
     statePath: `${workspacePath}/state`,
-    configPath: `${workspacePath}/config/${nativeAgentConfigFileName(engine)}`
+    configPath: `${workspacePath}/config/${nativeAgentConfigFileName(engine)}`,
   };
 }
 
@@ -669,15 +678,24 @@ async function waitForSandboxRuntimeHealth(input: {
   throw new Error(
     `Runtime health check failed for sandbox ${input.sandboxId} at ${input.endpointUrl}: ${
       lastError instanceof Error ? lastError.message : "unknown error"
-    }. The runtime process may have started and then exited (e.g. denied egress/filesystem path); inspect /tmp/burble-runtime.log inside the sandbox for its captured stderr.`
+    }. The runtime process may have started and then exited (e.g. denied egress/filesystem path); inspect /tmp/burble-runtime.log inside the sandbox for its captured stderr.`,
   );
 }
 
 function isSandboxNotFoundError(error: unknown): boolean {
-  if (!(error instanceof Error)) {
-    return false;
+  const record = error as { code?: unknown; message?: unknown } | null;
+  if (record?.code === 5) {
+    return true;
   }
-  return /\bNOT_FOUND\b/i.test(error.message) || /sandbox .*not found/i.test(error.message);
+  const message =
+    error instanceof Error
+      ? error.message
+      : typeof record?.message === "string"
+        ? record.message
+        : typeof error === "string"
+          ? error
+          : "";
+  return /\bNOT_FOUND\b/i.test(message) || /sandbox .*not found/i.test(message);
 }
 
 function toRuntimeHandle(
@@ -691,7 +709,7 @@ function toRuntimeHandle(
     workspacePath: string;
   },
   authToken: string,
-  manifest?: RuntimeManifest | null
+  manifest?: RuntimeManifest | null,
 ): RuntimeHandle {
   return {
     id: runtime.id,
@@ -705,6 +723,6 @@ function toRuntimeHandle(
     statePath: runtime.statePath,
     configPath: runtime.configPath,
     workspacePath: runtime.workspacePath,
-    ...(manifest ? { manifest } : {})
+    ...(manifest ? { manifest } : {}),
   };
 }

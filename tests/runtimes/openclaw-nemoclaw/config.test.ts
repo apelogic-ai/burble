@@ -36,6 +36,7 @@ describe("readRuntimeConfig", () => {
         BURBLE_RUNTIME_HEARTBEAT_INTERVAL_MS: "120000",
         BURBLE_RUNTIME_CONTRACT_PROBE: "true",
         AI_MODEL: "ollama:qwen3-coder:30b-cloud",
+        OPENCLAW_MODEL_API: "openai-completions",
         AGENT_RUNTIME_INFERENCE_BASE_URL: "http://llm-gw:4000/v1/",
         OLLAMA_BASE_URL: "https://ollama.com/"
       })
@@ -73,6 +74,7 @@ describe("readRuntimeConfig", () => {
       openClawGatewayToken: "configured-gateway-token",
       runtimeHeartbeatIntervalMs: 120000,
       llmModel: "ollama:qwen3-coder:30b-cloud",
+      openClawModelApi: "openai-completions",
       inferenceBaseUrl: "http://llm-gw:4000/v1",
       ollamaBaseUrl: "https://ollama.com"
     });
@@ -105,6 +107,7 @@ describe("readRuntimeConfig", () => {
       openClawGatewayPort: 18789,
       openClawGatewayBind: "loopback",
       llmModel: "openai:gpt-5.4",
+      openClawModelApi: "openai-responses",
       inferenceBaseUrl: null,
       ollamaBaseUrl: "https://ollama.com"
     });
@@ -241,5 +244,17 @@ describe("readRuntimeConfig", () => {
     expect(() =>
       readRuntimeConfig({ BURBLE_TOOL_GATEWAY_URL: "http://burble-app" })
     ).toThrow("Missing required environment variable: BURBLE_INTERNAL_TOKEN");
+  });
+
+  test("rejects unsupported OpenClaw model API adapters", () => {
+    expect(() =>
+      readRuntimeConfig({
+        BURBLE_TOOL_GATEWAY_URL: "http://burble-app:3000/internal/tools",
+        BURBLE_INTERNAL_TOKEN: "secret",
+        OPENCLAW_MODEL_API: "openai"
+      })
+    ).toThrow(
+      "Environment variable OPENCLAW_MODEL_API must be one of openai-responses, openai-completions"
+    );
   });
 });

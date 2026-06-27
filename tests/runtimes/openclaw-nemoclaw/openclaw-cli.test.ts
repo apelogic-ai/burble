@@ -271,6 +271,9 @@ describe("runOpenClawCliRequest", () => {
         runtimeJwt: "runtime-jwt"
       },
       async (toolName) => {
+        if (toolName !== "burble.mcp.listTools") {
+          throw new Error(`unexpected scheduled baseline tool call: ${toolName}`);
+        }
         if (toolName === "burble.mcp.listTools") {
           return {
             classification: "user_private",
@@ -404,6 +407,99 @@ describe("runOpenClawCliRequest", () => {
     expect(catalogText).not.toContain("google.searchDriveFiles");
     expect(catalogText).not.toContain("hubspot.searchContacts");
     expect(catalogText).not.toContain("jira.searchIssues");
+  });
+
+  test("keeps scheduled web tools visible and hides disallowed provider tools", async () => {
+    const prompts: string[] = [];
+
+    const response = await runOpenClawCliRequest(
+      {
+        executionMode: "native-runtime",
+        runtime: {
+          id: "rt_test",
+          manifest: providerManifest()
+        },
+        input: {
+          text: "look for latest AI news, summarize in two paragraphs and post result in this channel",
+          toolGroups: {
+            groups: ["conversation"],
+            reasons: ["scheduled-job:text"]
+          },
+          scheduledJob: {
+            jobId: "job-ai-news",
+            capabilityProfile: "scheduled_job",
+            allowedTools: ["web_search"],
+            routeId: "convrt_abc123",
+            runtimeType: "openclaw",
+            stateRefs: [],
+            visibilityPolicy: {
+              maxOutputVisibility: "public",
+              allowPrivateToolDeclassification: false
+            }
+          },
+          connections: {
+            github: {
+              connected: true,
+              email: "person@example.com",
+              providerLogin: "octocat"
+            },
+            google: { connected: false },
+            hubspot: { connected: false },
+            jira: { connected: false },
+            slack: { connected: false }
+          }
+        }
+      },
+      {
+        ...config,
+        mcpGatewayUrl: "http://agentgateway:3000/mcp",
+        runtimeJwt: "runtime-jwt"
+      },
+      async (toolName) => {
+        if (toolName === "burble.mcp.listTools") {
+          return {
+            classification: "user_private",
+            content: [
+              {
+                name: "web_search",
+                description: "Search public web/news sources",
+                inputSchema: {}
+              },
+              {
+                name: "github_list_assigned_issues",
+                description: "Should be hidden for web-only scheduled jobs",
+                inputSchema: {}
+              }
+            ]
+          };
+        }
+
+        return {
+          classification: "user_private",
+          content: []
+        };
+      },
+      async (_command, args) => {
+        prompts.push(args[args.indexOf("--message") + 1] ?? "");
+        return {
+          exitCode: 0,
+          stdout: JSON.stringify({
+            response: {
+              text: "News summary posted."
+            }
+          }),
+          stderr: ""
+        };
+      },
+      () => undefined
+    );
+
+    expect(response.response.text).toBe("News summary posted.");
+    const catalogText =
+      prompts[0].split("Available Burble tools:\n")[1]?.split("\n\n")[0] ?? "";
+    expect(catalogText).toContain("web.search");
+    expect(catalogText).not.toContain("github.listAssignedIssues");
+    expect(prompts[0]).toContain("allowedTools=web_search");
   });
 
   test("includes HubSpot tools in discovered and fallback catalogs", async () => {
@@ -3463,6 +3559,154 @@ describe("runOpenClawCliRequest", () => {
     ]);
     expect(events[2]).toMatchObject({ type: "tool_call" });
     expect(events[3]).toMatchObject({ type: "tool_result" });
+  });
+
+  test("executes connectionless web search tool calls without a provider account", async () => {
+    const events: RunEvent[] = [];
+    const executedCalls: Array<{ toolName: string; payload: unknown }> = [];
+    let commandCount = 0;
+
+    for await (const event of runOpenClawCliRequestStream(
+      {
+        runtime: {
+          id: "rt_test",
+          manifest: providerManifest()
+        },
+        input: {
+          text: "look for latest AI news, summarize in two paragraphs and post result in this channel",
+          toolGroups: {
+            groups: ["conversation"],
+            reasons: ["scheduled-job:text"]
+          },
+          scheduledJob: {
+            jobId: "job-ai-news",
+            capabilityProfile: "scheduled_job",
+            allowedTools: ["web_search"],
+            routeId: "convrt_abc123",
+            runtimeType: "openclaw",
+            stateRefs: [],
+            visibilityPolicy: {
+              maxOutputVisibility: "public",
+              allowPrivateToolDeclassification: false
+            }
+          },
+          connections: {
+            github: {
+              connected: true,
+              email: "person@example.com",
+              providerLogin: "octocat"
+            },
+            google: { connected: false },
+            hubspot: { connected: false },
+            jira: { connected: false },
+            slack: { connected: false }
+          }
+        }
+      },
+      {
+        ...config,
+        mcpGatewayUrl: "http://agentgateway:3000/mcp",
+        runtimeJwt: "runtime-jwt"
+      },
+      async (toolName, payload) => {
+        executedCalls.push({ toolName, payload });
+        if (toolName === "burble.mcp.listTools") {
+          return {
+            classification: "user_private",
+            content: [
+              {
+                name: "web_search",
+                description: "Search public web/news sources",
+                inputSchema: {
+                  type: "object",
+                  required: ["query"],
+                  properties: {
+                    query: { type: "string" },
+                    limit: { type: "number" }
+                  }
+                }
+              }
+            ]
+          };
+        }
+        if (toolName === "web.search") {
+          return {
+            classification: "public",
+            content: {
+              query: "latest AI news",
+              results: [
+                {
+                  title: "AI news item",
+                  url: "https://example.com/ai-news",
+                  snippet: "A current AI news story."
+                }
+              ]
+            }
+          };
+        }
+        return {
+          classification: "user_private",
+          content: []
+        };
+      },
+      async function* () {
+        commandCount += 1;
+        if (commandCount === 1) {
+          yield {
+            type: "stdout" as const,
+            text:
+              JSON.stringify({
+                tool_call: {
+                  name: "web.search",
+                  arguments: { query: "latest AI news", limit: 5 }
+                }
+              }) + "\n"
+          };
+        } else {
+          yield {
+            type: "stdout" as const,
+            text: "Here are two paragraphs about current AI news."
+          };
+        }
+        yield { type: "exit" as const, exitCode: 0 };
+      },
+      () => undefined
+    )) {
+      events.push(event);
+    }
+
+    expect(executedCalls).toContainEqual({
+      toolName: "web.search",
+      payload: {
+        input: { query: "latest AI news", limit: 5 }
+      }
+    });
+    expect(events).toMatchObject([
+      { type: "status", text: "Loading Burble context..." },
+      { type: "status", text: "Agent is thinking..." },
+      {
+        type: "tool_call",
+        toolName: "web.search",
+        callId: expect.any(String)
+      },
+      {
+        type: "tool_result",
+        toolName: "web.search",
+        callId: expect.any(String),
+        classification: "public"
+      },
+      {
+        type: "message_delta",
+        text: "Here are two paragraphs about current AI news."
+      },
+      {
+        type: "final",
+        response: {
+          classification: "user_private",
+          text: "Here are two paragraphs about current AI news."
+        }
+      }
+    ]);
   });
 
   test("strips mixed OpenClaw gateway prose and tool-call JSON from Slack output", async () => {

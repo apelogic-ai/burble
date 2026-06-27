@@ -1,5 +1,5 @@
 import { Database } from "bun:sqlite";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import {
   isAgentRuntimeEngine,
   type AgentRuntimeEngine
@@ -145,6 +145,44 @@ export type AgentJobStateRecord = {
   updatedAt: string;
 };
 
+export type ScheduledJobState = "scheduled" | "paused";
+
+export type ScheduledJobRecord = {
+  jobId: string;
+  workspaceId: string;
+  slackUserId: string;
+  title: string;
+  prompt: string;
+  schedule: unknown;
+  routeId: string | null;
+  state: ScheduledJobState;
+  runtimeType: AgentRuntimeEngine | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type AgentJobRunStatus =
+  | "queued"
+  | "running"
+  | "succeeded"
+  | "failed";
+
+export type AgentJobRunTriggerSource = "manual" | "schedule";
+
+export type AgentJobRunRecord = {
+  runId: string;
+  jobId: string;
+  workspaceId: string;
+  slackUserId: string;
+  triggerSource: AgentJobRunTriggerSource;
+  status: AgentJobRunStatus;
+  failureReason: string | null;
+  createdAt: string;
+  updatedAt: string;
+  startedAt: string | null;
+  finishedAt: string | null;
+};
+
 export type AgentJobCapabilityRecord = {
   jobId: string;
   workspaceId: string;
@@ -203,6 +241,13 @@ type AgentMemoryRow = Omit<AgentMemoryRecord, "value"> & {
 type AgentJobStateRow = Omit<AgentJobStateRecord, "state"> & {
   stateJson: string;
 };
+
+type ScheduledJobRow = Omit<ScheduledJobRecord, "schedule" | "runtimeType"> & {
+  scheduleJson: string;
+  runtimeType: string | null;
+};
+
+type AgentJobRunRow = AgentJobRunRecord;
 
 type AgentJobCapabilityRow = Omit<
   AgentJobCapabilityRecord,
@@ -364,6 +409,43 @@ export function createTokenStore(path: string) {
 
     CREATE INDEX IF NOT EXISTS idx_agent_job_state_principal
       ON agent_job_state (workspace_id, slack_user_id, updated_at);
+
+    CREATE TABLE IF NOT EXISTS scheduled_jobs (
+      job_id TEXT PRIMARY KEY,
+      workspace_id TEXT NOT NULL,
+      slack_user_id TEXT NOT NULL,
+      title TEXT NOT NULL,
+      prompt TEXT NOT NULL,
+      schedule_json TEXT NOT NULL,
+      route_id TEXT,
+      state TEXT NOT NULL,
+      runtime_type TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_scheduled_jobs_principal
+      ON scheduled_jobs (workspace_id, slack_user_id, updated_at);
+
+    CREATE TABLE IF NOT EXISTS agent_job_runs (
+      run_id TEXT PRIMARY KEY,
+      job_id TEXT NOT NULL,
+      workspace_id TEXT NOT NULL,
+      slack_user_id TEXT NOT NULL,
+      trigger_source TEXT NOT NULL,
+      status TEXT NOT NULL,
+      failure_reason TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      started_at TEXT,
+      finished_at TEXT
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_agent_job_runs_job_created
+      ON agent_job_runs (job_id, created_at);
+
+    CREATE INDEX IF NOT EXISTS idx_agent_job_runs_principal_created
+      ON agent_job_runs (workspace_id, slack_user_id, created_at);
 
     CREATE TABLE IF NOT EXISTS agent_job_capabilities (
       job_id TEXT PRIMARY KEY,
@@ -609,6 +691,32 @@ export function createTokenStore(path: string) {
       failure_reason AS failureReason
     FROM agent_runtimes
     WHERE workspace_id = ? AND slack_user_id = ? AND engine = ?
+  `);
+  const listAgentRuntimesByPrincipal = db.query<
+    AgentRuntimeRow,
+    [string, string]
+  >(`
+    SELECT
+      id,
+      workspace_id AS workspaceId,
+      slack_user_id AS slackUserId,
+      engine,
+      status,
+      endpoint_url AS endpointUrl,
+      auth_token_hash AS authTokenHash,
+      state_path AS statePath,
+      config_path AS configPath,
+      workspace_path AS workspacePath,
+      sandbox_id AS sandboxId,
+      policy_hash AS policyHash,
+      created_at AS createdAt,
+      last_seen_at AS lastSeenAt,
+      last_used_at AS lastUsedAt,
+      stopped_at AS stoppedAt,
+      failure_reason AS failureReason
+    FROM agent_runtimes
+    WHERE workspace_id = ? AND slack_user_id = ?
+    ORDER BY last_used_at DESC, last_seen_at DESC, created_at DESC, id ASC
   `);
   const listIdleAgentRuntimes = db.query<AgentRuntimeRow, [string]>(`
     SELECT
@@ -969,6 +1077,220 @@ export function createTokenStore(path: string) {
   const deleteAgentJobState = db.query(`
     DELETE FROM agent_job_state
     WHERE job_id = ?
+  `);
+  const upsertScheduledJob = db.query(`
+    INSERT INTO scheduled_jobs (
+      job_id,
+      workspace_id,
+      slack_user_id,
+      title,
+      prompt,
+      schedule_json,
+      route_id,
+      state,
+      runtime_type,
+      created_at,
+      updated_at
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(job_id) DO UPDATE SET
+      workspace_id = excluded.workspace_id,
+      slack_user_id = excluded.slack_user_id,
+      title = excluded.title,
+      prompt = excluded.prompt,
+      schedule_json = excluded.schedule_json,
+      route_id = excluded.route_id,
+      state = excluded.state,
+      runtime_type = excluded.runtime_type,
+      updated_at = excluded.updated_at
+  `);
+  const getScheduledJob = db.query<ScheduledJobRow, [string]>(`
+    SELECT
+      job_id AS jobId,
+      workspace_id AS workspaceId,
+      slack_user_id AS slackUserId,
+      title,
+      prompt,
+      schedule_json AS scheduleJson,
+      route_id AS routeId,
+      state,
+      runtime_type AS runtimeType,
+      created_at AS createdAt,
+      updated_at AS updatedAt
+    FROM scheduled_jobs
+    WHERE job_id = ?
+  `);
+  const listScheduledJobsForPrincipal = db.query<
+    ScheduledJobRow,
+    [string, string]
+  >(`
+    SELECT
+      job_id AS jobId,
+      workspace_id AS workspaceId,
+      slack_user_id AS slackUserId,
+      title,
+      prompt,
+      schedule_json AS scheduleJson,
+      route_id AS routeId,
+      state,
+      runtime_type AS runtimeType,
+      created_at AS createdAt,
+      updated_at AS updatedAt
+    FROM scheduled_jobs
+    WHERE workspace_id = ? AND slack_user_id = ?
+    ORDER BY updated_at DESC, job_id ASC
+  `);
+  const listScheduledJobs = db.query<ScheduledJobRow, [number]>(`
+    SELECT
+      job_id AS jobId,
+      workspace_id AS workspaceId,
+      slack_user_id AS slackUserId,
+      title,
+      prompt,
+      schedule_json AS scheduleJson,
+      route_id AS routeId,
+      state,
+      runtime_type AS runtimeType,
+      created_at AS createdAt,
+      updated_at AS updatedAt
+    FROM scheduled_jobs
+    ORDER BY updated_at ASC, job_id ASC
+    LIMIT ?
+  `);
+  const deleteScheduledJob = db.query(`
+    DELETE FROM scheduled_jobs
+    WHERE job_id = ?
+  `);
+  const createAgentJobRun = db.query(`
+    INSERT INTO agent_job_runs (
+      run_id,
+      job_id,
+      workspace_id,
+      slack_user_id,
+      trigger_source,
+      status,
+      failure_reason,
+      created_at,
+      updated_at,
+      started_at,
+      finished_at
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+  const getAgentJobRun = db.query<AgentJobRunRow, [string]>(`
+    SELECT
+      run_id AS runId,
+      job_id AS jobId,
+      workspace_id AS workspaceId,
+      slack_user_id AS slackUserId,
+      trigger_source AS triggerSource,
+      status,
+      failure_reason AS failureReason,
+      created_at AS createdAt,
+      updated_at AS updatedAt,
+      started_at AS startedAt,
+      finished_at AS finishedAt
+    FROM agent_job_runs
+    WHERE run_id = ?
+  `);
+  const listAgentJobRunsForJob = db.query<AgentJobRunRow, [string]>(`
+    SELECT
+      run_id AS runId,
+      job_id AS jobId,
+      workspace_id AS workspaceId,
+      slack_user_id AS slackUserId,
+      trigger_source AS triggerSource,
+      status,
+      failure_reason AS failureReason,
+      created_at AS createdAt,
+      updated_at AS updatedAt,
+      started_at AS startedAt,
+      finished_at AS finishedAt
+    FROM agent_job_runs
+    WHERE job_id = ?
+    ORDER BY created_at DESC, run_id ASC
+  `);
+  const listAgentJobRunsForPrincipal = db.query<
+    AgentJobRunRow,
+    [string, string, string | null, string | null, number]
+  >(`
+    SELECT
+      run_id AS runId,
+      job_id AS jobId,
+      workspace_id AS workspaceId,
+      slack_user_id AS slackUserId,
+      trigger_source AS triggerSource,
+      status,
+      failure_reason AS failureReason,
+      created_at AS createdAt,
+      updated_at AS updatedAt,
+      started_at AS startedAt,
+      finished_at AS finishedAt
+    FROM agent_job_runs
+    WHERE workspace_id = ?
+      AND slack_user_id = ?
+      AND (? IS NULL OR job_id = ?)
+    ORDER BY created_at DESC, run_id ASC
+    LIMIT ?
+  `);
+  const getLatestAgentJobRunForPrincipal = db.query<
+    AgentJobRunRow,
+    [string, string, string | null, string | null]
+  >(`
+    SELECT
+      run_id AS runId,
+      job_id AS jobId,
+      workspace_id AS workspaceId,
+      slack_user_id AS slackUserId,
+      trigger_source AS triggerSource,
+      status,
+      failure_reason AS failureReason,
+      created_at AS createdAt,
+      updated_at AS updatedAt,
+      started_at AS startedAt,
+      finished_at AS finishedAt
+    FROM agent_job_runs
+    WHERE workspace_id = ?
+      AND slack_user_id = ?
+      AND (? IS NULL OR job_id = ?)
+    ORDER BY created_at DESC, run_id ASC
+    LIMIT 1
+  `);
+  const listQueuedAgentJobRuns = db.query<AgentJobRunRow, [number]>(`
+    SELECT
+      run_id AS runId,
+      job_id AS jobId,
+      workspace_id AS workspaceId,
+      slack_user_id AS slackUserId,
+      trigger_source AS triggerSource,
+      status,
+      failure_reason AS failureReason,
+      created_at AS createdAt,
+      updated_at AS updatedAt,
+      started_at AS startedAt,
+      finished_at AS finishedAt
+    FROM agent_job_runs
+    WHERE status = 'queued'
+    ORDER BY created_at ASC, run_id ASC
+    LIMIT ?
+  `);
+  const claimAgentJobRun = db.query(`
+    UPDATE agent_job_runs
+    SET status = 'running',
+        failure_reason = NULL,
+        updated_at = ?,
+        started_at = ?
+    WHERE run_id = ?
+      AND status = 'queued'
+  `);
+  const finishAgentJobRun = db.query(`
+    UPDATE agent_job_runs
+    SET status = ?,
+        failure_reason = ?,
+        updated_at = ?,
+        finished_at = ?
+    WHERE run_id = ?
+      AND status = 'running'
   `);
   const upsertAgentJobCapability = db.query(`
     INSERT INTO agent_job_capabilities (
@@ -1389,6 +1711,18 @@ export function createTokenStore(path: string) {
       );
     },
 
+    listAgentRuntimesForPrincipal(input: {
+      workspaceId: string;
+      slackUserId: string;
+    }): AgentRuntimeRecord[] {
+      return listAgentRuntimesByPrincipal
+        .all(input.workspaceId, input.slackUserId)
+        .flatMap((runtime) => {
+          const record = toAgentRuntimeRecord(runtime);
+          return record ? [record] : [];
+        });
+    },
+
     listIdleAgentRuntimes(idleBefore: Date): AgentRuntimeRecord[] {
       return listIdleAgentRuntimes
         .all(idleBefore.toISOString())
@@ -1751,6 +2085,183 @@ export function createTokenStore(path: string) {
       deleteAgentJobState.run(jobId);
     },
 
+    upsertScheduledJob(input: {
+      jobId: string;
+      workspaceId: string;
+      slackUserId: string;
+      title: string;
+      prompt: string;
+      schedule: unknown;
+      routeId?: string | null;
+      state?: ScheduledJobState | null;
+      runtimeType?: AgentRuntimeEngine | null;
+      now?: Date;
+    }): ScheduledJobRecord {
+      const now = (input.now ?? new Date()).toISOString();
+      const existing = getScheduledJob.get(input.jobId);
+      upsertScheduledJob.run(
+        input.jobId,
+        input.workspaceId,
+        input.slackUserId,
+        input.title,
+        input.prompt,
+        stableJson(input.schedule),
+        input.routeId ?? null,
+        input.state ?? "scheduled",
+        input.runtimeType ?? null,
+        existing?.createdAt ?? now,
+        now
+      );
+
+      const record = getScheduledJob.get(input.jobId);
+      if (!record) {
+        throw new Error("Failed to store scheduled job");
+      }
+      return toScheduledJobRecord(record);
+    },
+
+    getScheduledJob(jobId: string): ScheduledJobRecord | null {
+      const record = getScheduledJob.get(jobId);
+      return record ? toScheduledJobRecord(record) : null;
+    },
+
+    listScheduledJobsForPrincipal(
+      workspaceId: string,
+      slackUserId: string
+    ): ScheduledJobRecord[] {
+      return listScheduledJobsForPrincipal
+        .all(workspaceId, slackUserId)
+        .map(toScheduledJobRecord);
+    },
+
+    listScheduledJobs(limit = 100): ScheduledJobRecord[] {
+      const normalizedLimit =
+        Number.isSafeInteger(limit) && limit > 0 ? Math.min(limit, 500) : 100;
+      return listScheduledJobs.all(normalizedLimit).map(toScheduledJobRecord);
+    },
+
+    deleteScheduledJob(jobId: string): void {
+      deleteScheduledJob.run(jobId);
+    },
+
+    createAgentJobRun(input: {
+      runId?: string | null;
+      jobId: string;
+      workspaceId: string;
+      slackUserId: string;
+      triggerSource: AgentJobRunTriggerSource;
+      status?: AgentJobRunStatus | null;
+      failureReason?: string | null;
+      startedAt?: string | null;
+      finishedAt?: string | null;
+      now?: Date;
+    }): AgentJobRunRecord {
+      const now = (input.now ?? new Date()).toISOString();
+      const runId = input.runId?.trim() || `jobrun_${randomUUID()}`;
+      createAgentJobRun.run(
+        runId,
+        input.jobId,
+        input.workspaceId,
+        input.slackUserId,
+        input.triggerSource,
+        input.status ?? "queued",
+        input.failureReason ?? null,
+        now,
+        now,
+        input.startedAt ?? null,
+        input.finishedAt ?? null
+      );
+
+      const record = getAgentJobRun.get(runId);
+      if (!record) {
+        throw new Error("Failed to store agent job run");
+      }
+      return toAgentJobRunRecord(record);
+    },
+
+    getAgentJobRun(runId: string): AgentJobRunRecord | null {
+      const record = getAgentJobRun.get(runId);
+      return record ? toAgentJobRunRecord(record) : null;
+    },
+
+    listAgentJobRunsForJob(jobId: string): AgentJobRunRecord[] {
+      return listAgentJobRunsForJob.all(jobId).map(toAgentJobRunRecord);
+    },
+
+    listAgentJobRunsForPrincipal(
+      workspaceId: string,
+      slackUserId: string,
+      jobId?: string | null,
+      limit = 10
+    ): AgentJobRunRecord[] {
+      const normalizedJobId = jobId?.trim() || null;
+      const normalizedLimit =
+        Number.isSafeInteger(limit) && limit > 0 ? Math.min(limit, 100) : 10;
+      return listAgentJobRunsForPrincipal
+        .all(
+          workspaceId,
+          slackUserId,
+          normalizedJobId,
+          normalizedJobId,
+          normalizedLimit
+        )
+        .map(toAgentJobRunRecord);
+    },
+
+    getLatestAgentJobRunForPrincipal(
+      workspaceId: string,
+      slackUserId: string,
+      jobId?: string | null
+    ): AgentJobRunRecord | null {
+      const normalizedJobId = jobId?.trim() || null;
+      const record = getLatestAgentJobRunForPrincipal.get(
+        workspaceId,
+        slackUserId,
+        normalizedJobId,
+        normalizedJobId
+      );
+      return record ? toAgentJobRunRecord(record) : null;
+    },
+
+    listQueuedAgentJobRuns(limit = 25): AgentJobRunRecord[] {
+      const normalizedLimit =
+        Number.isSafeInteger(limit) && limit > 0 ? Math.min(limit, 100) : 25;
+      return listQueuedAgentJobRuns
+        .all(normalizedLimit)
+        .map(toAgentJobRunRecord);
+    },
+
+    claimAgentJobRun(runId: string, now = new Date()): AgentJobRunRecord | null {
+      const timestamp = now.toISOString();
+      const result = claimAgentJobRun.run(timestamp, timestamp, runId);
+      if (result.changes === 0) {
+        return null;
+      }
+      const record = getAgentJobRun.get(runId);
+      return record ? toAgentJobRunRecord(record) : null;
+    },
+
+    finishAgentJobRun(input: {
+      runId: string;
+      status: Extract<AgentJobRunStatus, "succeeded" | "failed">;
+      failureReason?: string | null;
+      now?: Date;
+    }): AgentJobRunRecord | null {
+      const timestamp = (input.now ?? new Date()).toISOString();
+      const result = finishAgentJobRun.run(
+        input.status,
+        input.failureReason ?? null,
+        timestamp,
+        timestamp,
+        input.runId
+      );
+      if (result.changes === 0) {
+        return null;
+      }
+      const record = getAgentJobRun.get(input.runId);
+      return record ? toAgentJobRunRecord(record) : null;
+    },
+
     upsertAgentJobCapability(input: {
       jobId: string;
       workspaceId: string;
@@ -2086,6 +2597,38 @@ function toAgentJobStateRecord(row: AgentJobStateRow): AgentJobStateRecord {
   };
 }
 
+function toScheduledJobRecord(row: ScheduledJobRow): ScheduledJobRecord {
+  return {
+    jobId: row.jobId,
+    workspaceId: row.workspaceId,
+    slackUserId: row.slackUserId,
+    title: row.title,
+    prompt: row.prompt,
+    schedule: parseStoredJson(row.scheduleJson),
+    routeId: row.routeId,
+    state: normalizeScheduledJobState(row.state),
+    runtimeType: normalizeAgentRuntimeEngine(row.runtimeType),
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt
+  };
+}
+
+function toAgentJobRunRecord(row: AgentJobRunRow): AgentJobRunRecord {
+  return {
+    runId: row.runId,
+    jobId: row.jobId,
+    workspaceId: row.workspaceId,
+    slackUserId: row.slackUserId,
+    triggerSource: normalizeAgentJobRunTriggerSource(row.triggerSource),
+    status: normalizeAgentJobRunStatus(row.status),
+    failureReason: row.failureReason,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+    startedAt: row.startedAt,
+    finishedAt: row.finishedAt
+  };
+}
+
 function toAgentJobCapabilityRecord(
   row: AgentJobCapabilityRow
 ): AgentJobCapabilityRecord {
@@ -2103,6 +2646,25 @@ function toAgentJobCapabilityRecord(
     createdAt: row.createdAt,
     updatedAt: row.updatedAt
   };
+}
+
+function normalizeScheduledJobState(state: string): ScheduledJobState {
+  return state === "paused" ? "paused" : "scheduled";
+}
+
+function normalizeAgentJobRunStatus(status: string): AgentJobRunStatus {
+  return status === "running" ||
+    status === "succeeded" ||
+    status === "failed" ||
+    status === "queued"
+    ? status
+    : "failed";
+}
+
+function normalizeAgentJobRunTriggerSource(
+  triggerSource: string
+): AgentJobRunTriggerSource {
+  return triggerSource === "schedule" ? "schedule" : "manual";
 }
 
 function toSkillCatalogRecord(row: SkillCatalogRow): SkillCatalogRecord {

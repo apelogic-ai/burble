@@ -446,7 +446,7 @@ def reachable_manifest_tools(message: dict[str, Any]) -> list[dict[str, Any]]:
             continue
         hint = hermes_provider_tool_hint(provider, name, alias)
         normalized = normalize_burble_provider_tool_name(name)
-        if normalized != alias:
+        if normalized not in {name, alias}:
             raise ValueError(
                 f"Hermes provider bridge normalized {name} to {normalized}, expected {alias}"
             )
@@ -663,6 +663,42 @@ def infer_safe_hermes_provider_tool_from_text(original_text: str) -> str | None:
     if any(word in text for word in ("gmail", "mail", "email")):
         return "google_search_mail_messages"
     return None
+
+
+def is_hermes_runtime_progress_only_text(text: str) -> bool:
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    return bool(lines) and all(
+        is_hermes_runtime_progress_only_line(line) for line in lines
+    )
+
+
+def is_hermes_runtime_progress_only_line(text: str) -> bool:
+    normalized = text.strip()
+    return bool(
+        normalized.lower().startswith("starting agent runtime")
+        or normalized.lower().startswith("agent is ")
+        or normalized.lower().startswith("calling ")
+        or normalized.lower().startswith("final result in ")
+        or normalized.lower().startswith("_final result in ")
+        or re.search(
+            r"\bcompleted in \d+(?:ms|s).*\bresult\)",
+            normalized,
+            re.IGNORECASE,
+        )
+        or is_hermes_progress_text(normalized)
+        or is_hermes_interrupt_notice(normalized)
+    )
+
+
+def is_hermes_interrupt_notice(text: str) -> bool:
+    return (
+        re.match(
+            r"^(?::zap:|⚡️?)?\s*Interrupting current task\b",
+            text.strip(),
+            re.IGNORECASE,
+        )
+        is not None
+    )
 
 
 def infer_hubspot_object_type(text: str) -> str | None:
@@ -1066,13 +1102,6 @@ def format_scheduled_job_context(
     runtime_type = scheduled_job.get("runtimeType")
     if runtime_type:
         lines.append(f"- runtimeType={runtime_type}")
-    native_toolsets = scheduled_job.get("nativeToolsets")
-    if isinstance(native_toolsets, list):
-        native_toolset_text = ",".join(
-            sorted({str(toolset) for toolset in native_toolsets if str(toolset).strip()})
-        )
-        if native_toolset_text:
-            lines.append(f"- nativeToolsets={native_toolset_text}")
 
     lines.append(f"- maxOutputVisibility={max_visibility}")
     lines.append(f"- allowPrivateToolDeclassification={allow_declassification}")
@@ -2015,8 +2044,100 @@ class BurbleHermesRuntime:
             if isinstance(message, dict)
             else ""
         )
+        scheduled_candidate = self._scheduled_provider_tool_for_run(
+            run_id,
+            original_text,
+        )
+        if scheduled_candidate:
+            return scheduled_candidate
         candidate = infer_safe_hermes_provider_tool_from_text(original_text)
         return candidate if candidate and provider_tool_hint_by_name(candidate) else None
+
+    def _scheduled_allowed_provider_tools_for_run(self, run_id: str) -> list[str]:
+        message = self.run_messages.get(run_id)
+        scheduled_job = (
+            message.get("scheduledJob")
+            if isinstance(message, dict)
+            and isinstance(message.get("scheduledJob"), dict)
+            else None
+        )
+        if not isinstance(scheduled_job, dict):
+            return []
+        allowed_tools = scheduled_job.get("allowedTools")
+        if not isinstance(allowed_tools, list):
+            return []
+        normalized: list[str] = []
+        for tool in allowed_tools:
+            tool_name = canonical_hermes_provider_tool_name(str(tool or ""))
+            if tool_name and provider_tool_hint_by_name(tool_name):
+                normalized.append(tool_name)
+        return sorted(set(normalized))
+
+    def _scheduled_provider_tool_for_run(
+        self,
+        run_id: str,
+        original_text: str,
+    ) -> str | None:
+        allowed_tools = self._scheduled_allowed_provider_tools_for_run(run_id)
+        if not allowed_tools:
+            return None
+
+        inferred = infer_safe_hermes_provider_tool_from_text(original_text)
+        if inferred in allowed_tools:
+            return inferred
+
+        text = " ".join(original_text.lower().split())
+        provider_preferences = [
+            (
+                "github",
+                [
+                    "github_search_issues",
+                    "github_list_my_pull_requests",
+                    "github_list_assigned_issues",
+                ],
+            ),
+            (
+                "google",
+                [
+                    "google_search_drive_files",
+                    "google_get_drive_file",
+                    "google_search_mail_messages",
+                    "google_search_calendar_events",
+                ],
+            ),
+            (
+                "drive",
+                [
+                    "google_search_drive_files",
+                    "google_get_drive_file",
+                ],
+            ),
+            (
+                "jira",
+                [
+                    "jira_list_assigned_issues",
+                    "jira_list_visible_projects",
+                ],
+            ),
+            (
+                "hubspot",
+                [
+                    "hubspot_search_crm_objects",
+                    "hubspot_list_owners",
+                    "hubspot_list_users",
+                ],
+            ),
+        ]
+        for keyword, candidates in provider_preferences:
+            if keyword not in text:
+                continue
+            for candidate in candidates:
+                if candidate in allowed_tools:
+                    return candidate
+
+        if len(allowed_tools) == 1:
+            return allowed_tools[0]
+        return None
 
     def _provider_protocol_retry_limit(self) -> int:
         return max(0, int_env("HERMES_PROVIDER_PROTOCOL_RETRY_ATTEMPTS", 1))
@@ -2373,6 +2494,8 @@ class BurbleHermesRuntime:
         if not tool_name:
             tool_name = extract_hermes_calling_provider_tool(text)
         if not tool_name and is_hermes_provider_fallback_final(text):
+            tool_name = self._infer_provider_tool_for_run(run_id, "", None)
+        if not tool_name and is_hermes_runtime_progress_only_text(text):
             tool_name = self._infer_provider_tool_for_run(run_id, "", None)
         if not tool_name:
             return None

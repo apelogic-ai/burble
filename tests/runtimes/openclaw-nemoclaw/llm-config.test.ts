@@ -138,6 +138,23 @@ describe("buildOpenClawLlmPatch", () => {
     expect(JSON.stringify(patch)).not.toContain("sk-");
   });
 
+  test("can route OpenAI-compatible inference gateway traffic through chat completions", () => {
+    const patch = JSON.parse(
+      buildOpenClawLlmPatch({
+        modelId: "openai:gpt-5.4",
+        inferenceBaseUrl: "http://llm-gw:4000/v1",
+        modelApi: "openai-completions",
+        ollamaBaseUrl: "https://ollama.com"
+      })
+    );
+
+    expect(patch.models.providers.openai).toMatchObject({
+      baseUrl: "http://llm-gw:4000/v1",
+      apiKey: "OPENAI_API_KEY",
+      api: "openai-completions"
+    });
+  });
+
   test("builds an Ollama cloud provider patch", () => {
     const patch = JSON.parse(
       buildOpenClawLlmPatch({

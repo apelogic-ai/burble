@@ -89,6 +89,7 @@ function createFakeStore() {
     },
     getAgentRuntime: () => null,
     getAgentRuntimeForPrincipal: () => null,
+    listAgentRuntimesForPrincipal: () => [],
     listIdleAgentRuntimes: () => [],
     recordAgentRuntimeEvent: () => undefined,
     listAgentRuntimeEvents: () => [],
@@ -122,6 +123,23 @@ function createFakeStore() {
     getAgentJobState: () => null,
     listAgentJobStatesForPrincipal: () => [],
     deleteAgentJobState: () => undefined,
+    upsertScheduledJob: () => {
+      throw new Error("unexpected scheduled job write");
+    },
+    getScheduledJob: () => null,
+    listScheduledJobsForPrincipal: () => [],
+    listScheduledJobs: () => [],
+    deleteScheduledJob: () => undefined,
+    createAgentJobRun: () => {
+      throw new Error("unexpected agent job run write");
+    },
+    getAgentJobRun: () => null,
+    listAgentJobRunsForJob: () => [],
+    listAgentJobRunsForPrincipal: () => [],
+    getLatestAgentJobRunForPrincipal: () => null,
+    listQueuedAgentJobRuns: () => [],
+    claimAgentJobRun: () => null,
+    finishAgentJobRun: () => null,
     upsertAgentJobCapability: () => {
       throw new Error("unexpected agent job capability write");
     },

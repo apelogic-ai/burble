@@ -5,9 +5,12 @@ export type ParsedLlmModel = {
   model: string;
 };
 
+export type OpenClawModelApi = "openai-responses" | "openai-completions";
+
 type OpenClawPatchInput = {
   modelId: string;
   inferenceBaseUrl?: string | null;
+  modelApi?: OpenClawModelApi;
   ollamaBaseUrl: string;
   agentId?: string;
   codeModeEnabled?: boolean;
@@ -44,6 +47,7 @@ export function buildOpenClawLlmPatch(input: OpenClawPatchInput): string {
   const providerConfig = buildProviderConfig(
     parsed,
     input.inferenceBaseUrl ?? null,
+    input.modelApi ?? "openai-responses",
     input.ollamaBaseUrl,
     input.burbleChannelBaseUrl ?? "http://127.0.0.1:8080",
     input.burbleChannelPluginPath ?? BURBLE_OPENCLAW_CHANNEL_PLUGIN_PATH
@@ -170,6 +174,7 @@ function readObject(value: unknown): Record<string, unknown> {
 function buildProviderConfig(
   parsed: ParsedLlmModel,
   inferenceBaseUrl: string | null,
+  modelApi: OpenClawModelApi,
   ollamaBaseUrl: string,
   burbleChannelBaseUrl: string,
   burbleChannelPluginPath: string
@@ -183,7 +188,7 @@ function buildProviderConfig(
           [provider]: {
             baseUrl,
             apiKey: "OPENAI_API_KEY",
-            api: "openai-responses",
+            api: modelApi,
             timeoutSeconds: 300,
             models: [
               {

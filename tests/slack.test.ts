@@ -208,6 +208,55 @@ describe("createManagedRuntimeFactory sandbox mode", () => {
     ]);
     store.close();
   });
+
+  test("stops another active runtime before switching engines for a user", async () => {
+    const store = createTokenStore(":memory:");
+    const sandboxProvider = createSlackRuntimeSandboxProvider();
+    store.upsertWorkspacePolicy({
+      workspaceId: "T123",
+      key: "runtime.allowedEngines",
+      value: ["hermes", "openclaw"],
+      updatedBySlackUserId: "UADMIN"
+    });
+    const runtimeFactory = createManagedRuntimeFactory(
+      {
+        ...agentConfig,
+        agentRuntimeFactory: "sandbox",
+        agentRuntimeEngine: "hermes",
+        openClawNemoClawEngine: "hermes",
+        agentRuntimeImage: "burble-nemo-hermes:dev"
+      },
+      store,
+      undefined,
+      {
+        sandboxProvider,
+        sandboxFetch: async () => new Response("ok")
+      }
+    );
+    const principal = {
+      workspaceId: "T123",
+      slackUserId: "U123"
+    };
+
+    const hermes = await runtimeFactory?.getOrCreateRuntime(principal);
+    const openclaw = await runtimeFactory?.getOrCreateRuntime(principal, {
+      engine: "openclaw"
+    });
+
+    expect(hermes?.engine).toBe("hermes");
+    expect(openclaw?.engine).toBe("openclaw");
+    expect(store.getAgentRuntime(hermes?.id ?? "")?.status).toBe("stopped");
+    expect(store.getAgentRuntime(openclaw?.id ?? "")?.status).toBe("ready");
+    expect(
+      store
+        .listAgentRuntimesForPrincipal(principal)
+        .filter((runtime) =>
+          ["provisioning", "ready", "busy", "idle"].includes(runtime.status)
+        )
+        .map((runtime) => runtime.engine)
+    ).toEqual(["openclaw"]);
+    store.close();
+  });
 });
 
 describe("formatIssuesMessage", () => {
@@ -325,6 +374,13 @@ describe("formatAgentProgressEvent", () => {
         "Sending task to your private agent runtime..."
       )
     ).toBe("Agent has thought for 24s...");
+
+    expect(
+      formatAgentProgressEvent({
+        type: "status",
+        text: ":zap: Interrupting current task (iteration 1/90, running: google_search_drive_files). I'll respond to your message shortly."
+      })
+    ).toBe("Agent is thinking...");
 
     expect(
       formatAgentProgressEvent(
@@ -832,6 +888,159 @@ describe("formatAgentProgressEvent", () => {
     } finally {
       Date.now = originalNow;
     }
+  });
+
+  test("does not preserve streamed runtime interrupt notices in progress finals", async () => {
+    const updates: string[] = [];
+    const posts: string[] = [];
+    const originalNow = Date.now;
+    Date.now = () => 1_500;
+    try {
+      const progressMessage = {
+        channel: "D123",
+        ts: "123.456",
+        text: "Starting agent runtime...",
+        startedAtMs: 0,
+        toolStartedAtMs: {},
+        toolLinesByCallId: {},
+        toolCallOrder: []
+      };
+      const client = {
+        chat: {
+          update: async (input: { text: string }) => {
+            updates.push(input.text);
+            return {};
+          },
+          postMessage: async (input: { text: string }) => {
+            posts.push(input.text);
+            return {};
+          }
+        }
+      };
+
+      await updateAgentProgressMessage(client as never, progressMessage, {
+        type: "message_delta",
+        text: ":zap: Interrupting current task (iteration 1/90, running: google_search_drive_files). I'll respond to your message shortly."
+      });
+      await postConversationResponse(client as never, {
+        response: {
+          visibility: "dm",
+          classification: "user_private",
+          text: "",
+          usage: {
+            inputTokens: 2,
+            outputTokens: 1,
+            totalTokens: 3,
+            usageSource: "provider-output"
+          }
+        },
+        channel: "D123",
+        user: "U123",
+        progressMessage
+      });
+
+      expect(updates.at(-1)).toBe(
+        "The agent returned an internal runtime-control notice instead of an answer. Please retry your request.\n\n_Final result in 1.5s (3 tokens)._"
+      );
+      expect(posts).toEqual([]);
+    } finally {
+      Date.now = originalNow;
+    }
+  });
+
+  test("does not preserve runtime interrupt notices in final answers", async () => {
+    const posts: string[] = [];
+    const client = {
+      chat: {
+        postMessage: async (input: { text: string }) => {
+          posts.push(input.text);
+          return {};
+        }
+      }
+    };
+
+    await postConversationResponse(client as never, {
+      response: {
+        visibility: "dm",
+        classification: "user_private",
+        text: [
+          ":zap: Interrupting current task (iteration 1/90, running: google_get_authenticated_user). I'll respond to your message shortly.",
+          "",
+          ":bulb: First-time tip — I just interrupted my current task to answer you. Send /busy queue to queue follow-ups for after the current task instead.",
+          "",
+          "Final result in 3.1s."
+        ].join("\n")
+      },
+      channel: "D123",
+      user: "U123"
+    });
+
+    expect(posts).toEqual([
+      "The agent returned an internal runtime-control notice instead of an answer. Please retry your request."
+    ]);
+  });
+
+  test("does not preserve unicode runtime interrupt notices in final answers", async () => {
+    const posts: string[] = [];
+    const client = {
+      chat: {
+        postMessage: async (input: { text: string }) => {
+          posts.push(input.text);
+          return {};
+        }
+      }
+    };
+
+    await postConversationResponse(client as never, {
+      response: {
+        visibility: "dm",
+        classification: "user_private",
+        text: [
+          "⚡ Interrupting current task (iteration 1/90, running: jira_list_assigned_issues). I'll respond to your message shortly.",
+          "",
+          "Final result in 1.5s."
+        ].join("\n")
+      },
+      channel: "D123",
+      user: "U123"
+    });
+
+    expect(posts).toEqual([
+      "The agent returned an internal runtime-control notice instead of an answer. Please retry your request."
+    ]);
+  });
+
+  test("drops runtime interrupt notices from streamed progress text", async () => {
+    const updates: string[] = [];
+    const progressMessage = {
+      channel: "D123",
+      ts: "123.456",
+      text: "Starting agent runtime...",
+      startedAtMs: 0,
+      toolStartedAtMs: {},
+      toolLinesByCallId: {},
+      toolCallOrder: []
+    };
+    const client = {
+      chat: {
+        update: async (input: { text: string }) => {
+          updates.push(input.text);
+          return {};
+        }
+      }
+    };
+
+    await updateAgentProgressMessage(client as never, progressMessage, {
+      type: "message_delta",
+      text: "Interrupting current task (iteration 1/90, running: google_search_drive_files). I'll respond to your message shortly."
+    });
+
+    expect((progressMessage as { streamedText?: string }).streamedText).toBeUndefined();
+    expect(
+      (progressMessage as { suppressedRuntimeControlNotice?: boolean })
+        .suppressedRuntimeControlNotice
+    ).toBe(true);
+    expect(updates).toEqual([]);
   });
 
   test("strips Hermes stream cursor glyphs from final response text", async () => {

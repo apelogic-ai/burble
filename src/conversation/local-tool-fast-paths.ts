@@ -4,7 +4,7 @@ import type {
   ConversationDeps,
   ConversationRequest,
   ConversationResponse,
-  ToolClassification
+  ToolClassification,
 } from "./types";
 
 type FastPathRunInput = {
@@ -40,13 +40,13 @@ const localToolFastPaths: LocalToolFastPath[] = [
     async run({ deps, connection }) {
       const result = await deps.tools.google!.searchMailMessages.execute({
         connection,
-        input: { query: "newer_than:30d", limit: 1 }
+        input: { query: "newer_than:30d", limit: 1 },
       });
 
       if (!Array.isArray(result.content)) {
         return {
           classification: result.classification,
-          text: result.content.message
+          text: result.content.message,
         };
       }
 
@@ -54,7 +54,7 @@ const localToolFastPaths: LocalToolFastPath[] = [
       if (!message) {
         return {
           classification: result.classification,
-          text: "No recent Gmail messages found."
+          text: "No recent Gmail messages found.",
         };
       }
 
@@ -63,10 +63,10 @@ const localToolFastPaths: LocalToolFastPath[] = [
         text: [
           "*Latest Gmail message:*",
           `- *Subject:* ${message.subject ?? "(no subject)"}`,
-          ...(message.snippet ? [`- *Snippet:* ${message.snippet}`] : [])
-        ].join("\n")
+          ...(message.snippet ? [`- *Snippet:* ${message.snippet}`] : []),
+        ].join("\n"),
       };
-    }
+    },
   },
   {
     id: "google.drive.latestEditedFile",
@@ -74,19 +74,21 @@ const localToolFastPaths: LocalToolFastPath[] = [
     isAvailable: (deps) => Boolean(deps.tools.google),
     matches: (text) =>
       /\b(last|latest|most recent|recent)\b/.test(text) &&
-      /\b(edited|modified|updated|touched|changed)\b/.test(text) &&
+      /\b(edited|modified|updated|touched|changed|used|accessed|opened|viewed)\b/.test(
+        text,
+      ) &&
       /\b(google drive|drive file|drive files|file)\b/.test(text),
     missingConnectionText: "Connect Google first: `@Burble connect google`.",
     async run({ deps, connection }) {
       const result = await deps.tools.google!.searchDriveFiles.execute({
         connection,
-        input: { limit: 1 }
+        input: { limit: 1 },
       });
 
       if (!Array.isArray(result.content)) {
         return {
           classification: result.classification,
-          text: result.content.message
+          text: result.content.message,
         };
       }
 
@@ -94,7 +96,7 @@ const localToolFastPaths: LocalToolFastPath[] = [
       if (!file) {
         return {
           classification: result.classification,
-          text: "No Google Drive files were found."
+          text: "No Google Drive files were found.",
         };
       }
 
@@ -107,10 +109,10 @@ const localToolFastPaths: LocalToolFastPath[] = [
           `Last edited Google Drive file: ${label}`,
           ...(file.modifiedTime
             ? [`modified: ${formatUtcTimestamp(file.modifiedTime)}`]
-            : [])
-        ].join("\n")
+            : []),
+        ].join("\n"),
       };
-    }
+    },
   },
   {
     id: "jira.issue.lastCreated",
@@ -124,13 +126,13 @@ const localToolFastPaths: LocalToolFastPath[] = [
     async run({ deps, connection }) {
       const result = await deps.tools.jira!.searchIssues.execute({
         connection,
-        input: { jql: "creator = currentUser() ORDER BY created DESC" }
+        input: { jql: "creator = currentUser() ORDER BY created DESC" },
       });
 
       if (!Array.isArray(result.content)) {
         return {
           classification: result.classification,
-          text: result.content.message
+          text: result.content.message,
         };
       }
 
@@ -138,15 +140,15 @@ const localToolFastPaths: LocalToolFastPath[] = [
       if (!issue) {
         return {
           classification: result.classification,
-          text: "No Jira tickets created by you were found."
+          text: "No Jira tickets created by you were found.",
         };
       }
 
       return {
         classification: result.classification,
-        text: `Your last created Jira ticket: <${issue.url}|${issue.key} - ${issue.title}>`
+        text: `Your last created Jira ticket: <${issue.url}|${issue.key} - ${issue.title}>`,
       };
-    }
+    },
   },
   {
     id: "jira.issue.latestAssigned",
@@ -159,13 +161,13 @@ const localToolFastPaths: LocalToolFastPath[] = [
     missingConnectionText: "Connect Jira first: `@Burble connect jira`.",
     async run({ deps, connection }) {
       const result = await deps.tools.jira!.listAssignedIssues.execute({
-        connection
+        connection,
       });
 
       if (!Array.isArray(result.content)) {
         return {
           classification: result.classification,
-          text: result.content.message
+          text: result.content.message,
         };
       }
 
@@ -173,26 +175,26 @@ const localToolFastPaths: LocalToolFastPath[] = [
       if (!issue) {
         return {
           classification: result.classification,
-          text: "No open Jira tickets assigned to you were found."
+          text: "No open Jira tickets assigned to you were found.",
         };
       }
 
       return {
         classification: result.classification,
-        text: `Your latest assigned Jira ticket: <${issue.url}|${issue.key} - ${issue.title}>`
+        text: `Your latest assigned Jira ticket: <${issue.url}|${issue.key} - ${issue.title}>`,
       };
-    }
-  }
+    },
+  },
 ];
 
 export async function tryHandleLocalToolFastPath(
   request: ConversationRequest,
-  deps: ConversationDeps
+  deps: ConversationDeps,
 ): Promise<ConversationResponse | null> {
   const normalizedText = request.text.toLowerCase();
   const fastPath = localToolFastPaths.find(
     (candidate) =>
-      candidate.isAvailable(deps) && candidate.matches(normalizedText, request)
+      candidate.isAvailable(deps) && candidate.matches(normalizedText, request),
   );
 
   if (!fastPath) {
@@ -205,9 +207,9 @@ export async function tryHandleLocalToolFastPath(
       {
         visibility: "public",
         classification: "user_private",
-        text: fastPath.missingConnectionText
+        text: fastPath.missingConnectionText,
       },
-      request
+      request,
     );
   }
 
@@ -216,9 +218,9 @@ export async function tryHandleLocalToolFastPath(
     {
       visibility: "public",
       classification: result.classification,
-      text: result.text
+      text: result.text,
     },
-    request
+    request,
   );
 }
 
@@ -228,5 +230,8 @@ function formatUtcTimestamp(value: string): string {
     return value;
   }
 
-  return date.toISOString().replace("T", " ").replace(/\.\d{3}Z$/, " UTC");
+  return date
+    .toISOString()
+    .replace("T", " ")
+    .replace(/\.\d{3}Z$/, " UTC");
 }

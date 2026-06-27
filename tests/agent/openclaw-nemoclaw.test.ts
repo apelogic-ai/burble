@@ -1155,6 +1155,7 @@ describe("createOpenClawNemoClawAgentRunner", () => {
         }
         return new Response(
           [
+            "Sandbox startup diagnostics should not be parsed as a run event",
             JSON.stringify({ type: "status", text: "Loading context..." }),
             JSON.stringify({
               type: "tool_call",
@@ -1957,5 +1958,34 @@ describe("createOpenClawNemoClawAgentRunner", () => {
         connections: { github: null }
       })
     ).rejects.toThrow("Managed runtime returned an invalid response");
+  });
+
+  test("rejects runtime interrupt notices as final remote runtime responses", async () => {
+    const runner = createOpenClawNemoClawAgentRunner({
+      baseUrl: "http://openclaw-runtime:8080",
+      fetch: async () =>
+        Response.json({
+          response: {
+            classification: "user_private",
+            text: [
+              ":zap: Interrupting current task (iteration 1/90, running: github_list_my_pull_requests). I'll respond to your message shortly.",
+              "",
+              ":bulb: First-time tip — I just interrupted my current task to answer you. Send /busy queue to queue follow-ups for after the current task instead.",
+              "",
+              "Final result in 1.3s."
+            ].join("\n")
+          }
+        })
+    });
+
+    await expect(
+      collectAgentRun(runner, {
+        principal,
+        text: "test run scheduled job",
+        connections: { github: null }
+      })
+    ).rejects.toThrow(
+      "Managed runtime final response contained only runtime-control/progress text"
+    );
   });
 });

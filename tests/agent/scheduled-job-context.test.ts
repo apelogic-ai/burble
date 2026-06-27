@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   buildScheduledJobContext,
-  type ScheduledJobContext
+  type ScheduledJobContext,
 } from "../../src/agent/scheduled-job-context";
 import type { AgentJobCapabilityRecord } from "../../src/db";
 
@@ -19,15 +19,15 @@ const capability: AgentJobCapabilityRecord = {
       provider: "google",
       kind: "drive_file",
       id: "file-123",
-      purpose: "dedupe_state"
-    }
+      purpose: "dedupe_state",
+    },
   ],
   visibilityPolicy: {
     maxOutputVisibility: "public",
-    allowPrivateToolDeclassification: false
+    allowPrivateToolDeclassification: false,
   },
   createdAt: "2026-06-01T00:00:00.000Z",
-  updatedAt: "2026-06-01T00:00:00.000Z"
+  updatedAt: "2026-06-01T00:00:00.000Z",
 };
 
 describe("buildScheduledJobContext", () => {
@@ -36,7 +36,6 @@ describe("buildScheduledJobContext", () => {
       jobId: "job-123",
       capabilityProfile: "scheduled_job",
       allowedTools: ["google_append_drive_text_file", "google_get_drive_file"],
-      nativeToolsets: ["burble"],
       routeId: "convrt_123",
       runtimeType: "hermes",
       stateRefs: [
@@ -44,13 +43,13 @@ describe("buildScheduledJobContext", () => {
           provider: "google",
           kind: "drive_file",
           id: "file-123",
-          purpose: "dedupe_state"
-        }
+          purpose: "dedupe_state",
+        },
       ],
       visibilityPolicy: {
         maxOutputVisibility: "public",
-        allowPrivateToolDeclassification: false
-      }
+        allowPrivateToolDeclassification: false,
+      },
     } satisfies ScheduledJobContext);
   });
 });

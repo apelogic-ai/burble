@@ -4,6 +4,11 @@ import type { View } from "@slack/types";
 import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import {
+  isRuntimeControlNotice,
+  isRuntimeProgressOnlyMessage,
+  runtimeControlNoticeFallbackText
+} from "./agent/runtime-control-notices";
+import {
   agentRuntimeEngines,
   defaultAgentRuntimeImage,
   defaultAgentRuntimeSandboxStartCommand,
@@ -84,6 +89,11 @@ import type {
 } from "./db";
 import { handleConversation } from "./conversation/orchestrator";
 import { normalizeMentionText } from "./conversation/normalize";
+import { createLlmSchedulerIntentResolver } from "./conversation/scheduler-intent-resolver";
+import { createSchedulerControlPlane } from "./scheduler/control-plane";
+import { defaultResolveSlackChannelIdByName } from "./tool-gateway";
+import { createSchedulerRunExecutor } from "./scheduler/run-executor";
+import { createSchedulerTimer } from "./scheduler/timer";
 import type {
   ConversationAttachment,
   ConversationRequest,
@@ -105,6 +115,7 @@ import type { SandboxProvider } from "./agent/sandbox-provider";
 import { modelProviderUrlsForRuntimeModel } from "./agent/runtime-env";
 import {
   buildRuntimeManifestForPrincipal,
+  isActiveAgentRuntime,
   RuntimeEngineSelectionError,
   resolveRuntimeEngineForPrincipal,
   type RuntimeEngineSelection
@@ -213,11 +224,17 @@ type SlackProgressMessage = {
   nativeStreamUpdatedAtMs?: number;
   nativeStreamStopped?: boolean;
   nativeStreamFallbackReason?: string;
+  suppressedRuntimeControlNotice?: boolean;
   startedAtMs: number;
   updatedAtMs?: number;
   toolStartedAtMs: Record<string, number>;
   toolLinesByCallId: Record<string, string>;
   toolCallOrder: string[];
+};
+
+type LazyAgentProgressReporter = {
+  getProgressMessage: () => SlackProgressMessage | undefined;
+  onAgentEvent: (event: AgentRunEvent) => Promise<void>;
 };
 
 const minSlackProgressStreamUpdateIntervalMs = 1_000;
@@ -356,6 +373,17 @@ export function createSlackRuntime(
     searchSlackUsers,
     searchSlackMessages
   });
+  const schedulerControl = createSchedulerControlPlane(store, {
+    resolveSlackChannelIdByName: (input) =>
+      defaultResolveSlackChannelIdByName(config, input)
+  });
+  const schedulerIntentResolver =
+    config.agentMode === "llm"
+      ? createLlmSchedulerIntentResolver({
+          model: config.aiModel,
+          logWarn: (message) => app.logger.warn(withUtcTimestamp(message))
+        })
+      : undefined;
   const runtimeFactory = createManagedRuntimeFactory(
     config,
     store,
@@ -379,6 +407,25 @@ export function createSlackRuntime(
           logInfo: (message) => app.logger.info(withUtcTimestamp(message))
         })
       : undefined;
+  const schedulerRunExecutor =
+    agentRunner && !options.testbed
+      ? createSchedulerRunExecutor({
+          store,
+          agentRunner,
+          slackClient: app.client,
+          logInfo: (message) => app.logger.info(withUtcTimestamp(message)),
+          logWarn: (message) => app.logger.warn(withUtcTimestamp(message))
+        })
+      : undefined;
+  const schedulerTimer = schedulerRunExecutor
+    ? createSchedulerTimer({
+        store,
+        executeRun: (runId) => schedulerRunExecutor.executeRun(runId),
+        logInfo: (message) => app.logger.info(withUtcTimestamp(message)),
+        logWarn: (message) => app.logger.warn(withUtcTimestamp(message))
+      })
+    : undefined;
+  schedulerTimer?.start();
   const agentExecTasks = new Map<string, AgentExecTask>();
 
   const resolveAgentExecutionMode = (): "native-runtime" | undefined =>
@@ -748,6 +795,7 @@ export function createSlackRuntime(
     }
 
     let progressMessage: SlackProgressMessage | undefined;
+    let progressReporter: LazyAgentProgressReporter | undefined;
     try {
       if (config.agentMode === "llm") {
         const workspaceId = body.team_id ?? "";
@@ -757,7 +805,7 @@ export function createSlackRuntime(
           workspaceId,
           slackUserId: mention.user
         });
-        progressMessage = await postMentionWorkingState(client, {
+        progressReporter = createLazyAgentProgressReporter(client, {
           channel: mention.channel,
           user: mention.user,
           isDirectMessage:
@@ -812,7 +860,6 @@ export function createSlackRuntime(
           : null;
       logger.info(withUtcTimestamp("app_mention stage=route_ready"));
 
-      const activeProgressMessage = progressMessage;
       logger.info(withUtcTimestamp("app_mention stage=conversation_start"));
       const response = await handleConversation(
         {
@@ -876,21 +923,34 @@ export function createSlackRuntime(
             jira: jiraTools,
             slack: slackTools
           },
+          schedulerControl,
+          ...(schedulerIntentResolver ? { schedulerIntentResolver } : {}),
+          ...(schedulerRunExecutor
+            ? {
+                onSchedulerRunQueued: (run) =>
+                  schedulerRunExecutor.executeRun(run.runId)
+              }
+            : {}),
           agentMode: config.agentMode,
           agentFastTrack: config.agentFastTrack,
+          agentRuntimeEngine: config.agentRuntimeEngine,
+          schedulerRuntimeEngine: resolveRuntimeEngineForPrincipal({
+            config,
+            store,
+            principal: {
+              workspaceId: body.team_id ?? "",
+              slackUserId: mention.user
+            }
+          }).effectiveEngine,
           observability,
           ...(resolveAgentExecutionMode()
             ? { agentExecutionMode: resolveAgentExecutionMode() }
             : {}),
           ...(agentRunner ? { agentRunner } : {}),
-          ...(activeProgressMessage
+          ...(progressReporter
             ? {
                 onAgentEvent: (event) => {
-                  return updateAgentProgressMessage(
-                    client,
-                    activeProgressMessage,
-                    event
-                  ).catch((error) => {
+                  return progressReporter!.onAgentEvent(event).catch((error) => {
                     logger.warn(formatLogError(error));
                   });
                 }
@@ -898,6 +958,7 @@ export function createSlackRuntime(
             : {})
         }
       );
+      progressMessage = progressReporter?.getProgressMessage();
 
       await postConversationResponse(client, {
         response,
@@ -938,6 +999,7 @@ export function createSlackRuntime(
     );
 
     let progressMessage: SlackProgressMessage | undefined;
+    let progressReporter: LazyAgentProgressReporter | undefined;
     try {
       if (config.agentMode === "llm") {
         const workspaceId = body.team_id ?? "";
@@ -947,7 +1009,7 @@ export function createSlackRuntime(
           workspaceId,
           slackUserId: directMessage.user
         });
-        progressMessage = await postMentionWorkingState(client, {
+        progressReporter = createLazyAgentProgressReporter(client, {
           channel: directMessage.channel,
           user: directMessage.user,
           isDirectMessage: true,
@@ -998,7 +1060,6 @@ export function createSlackRuntime(
           : null;
       logger.info(withUtcTimestamp("message.im stage=route_ready"));
 
-      const activeProgressMessage = progressMessage;
       logger.info(withUtcTimestamp("message.im stage=conversation_start"));
       const response = await handleConversation(
         {
@@ -1062,21 +1123,34 @@ export function createSlackRuntime(
             jira: jiraTools,
             slack: slackTools
           },
+          schedulerControl,
+          ...(schedulerIntentResolver ? { schedulerIntentResolver } : {}),
+          ...(schedulerRunExecutor
+            ? {
+                onSchedulerRunQueued: (run) =>
+                  schedulerRunExecutor.executeRun(run.runId)
+              }
+            : {}),
           agentMode: config.agentMode,
           agentFastTrack: config.agentFastTrack,
+          agentRuntimeEngine: config.agentRuntimeEngine,
+          schedulerRuntimeEngine: resolveRuntimeEngineForPrincipal({
+            config,
+            store,
+            principal: {
+              workspaceId: body.team_id ?? "",
+              slackUserId: directMessage.user
+            }
+          }).effectiveEngine,
           observability,
           ...(resolveAgentExecutionMode()
             ? { agentExecutionMode: resolveAgentExecutionMode() }
             : {}),
           ...(agentRunner ? { agentRunner } : {}),
-          ...(activeProgressMessage
+          ...(progressReporter
             ? {
                 onAgentEvent: (event) => {
-                  return updateAgentProgressMessage(
-                    client,
-                    activeProgressMessage,
-                    event
-                  ).catch((error) => {
+                  return progressReporter!.onAgentEvent(event).catch((error) => {
                     logger.warn(formatLogError(error));
                   });
                 }
@@ -1084,6 +1158,7 @@ export function createSlackRuntime(
             : {})
         }
       );
+      progressMessage = progressReporter?.getProgressMessage();
 
       await postConversationResponse(client, {
         response,
@@ -1964,10 +2039,26 @@ export function createManagedRuntimeFactory(
       principal,
       requirements
     }).effectiveEngine;
+  const stopOtherActiveRuntimes = async (
+    principal: { workspaceId: string; slackUserId: string },
+    selectedEngine: ReturnType<typeof resolveEngine>
+  ) => {
+    for (const runtime of store.listAgentRuntimesForPrincipal(principal)) {
+      if (
+        runtime.engine === selectedEngine ||
+        !isActiveAgentRuntime(runtime)
+      ) {
+        continue;
+      }
+      await delegateForEngine(runtime.engine).stopRuntime(runtime.id);
+    }
+  };
 
   return {
     async getOrCreateRuntime(principal, requirements) {
-      return delegateForEngine(resolveEngine(principal, requirements)).getOrCreateRuntime(
+      const engine = resolveEngine(principal, requirements);
+      await stopOtherActiveRuntimes(principal, engine);
+      return delegateForEngine(engine).getOrCreateRuntime(
         principal,
         requirements
       );
@@ -2035,11 +2126,13 @@ function buildRuntimeManifestForEffectiveEngine(input: {
   config: Config;
   store: TokenStore;
   principal: { workspaceId: string; slackUserId: string };
+  engine?: AgentRuntimeEngine;
 }) {
-  const selection = resolveRuntimeEngineForPrincipal(input);
+  const engine =
+    input.engine ?? resolveRuntimeEngineForPrincipal(input).effectiveEngine;
   return buildRuntimeManifestForPrincipal({
     ...input,
-    engine: selection.effectiveEngine
+    engine
   });
 }
 
@@ -4528,7 +4621,8 @@ export async function applyAgentRuntimeEngineSelection(input: {
   const nextPolicyHash = buildRuntimeManifestForEffectiveEngine({
     config: input.config,
     store: input.store,
-    principal: input.principal
+    principal: input.principal,
+    engine: input.engine
   }).policyHash;
   try {
     await input.afterPreferenceSaved?.();
@@ -5335,16 +5429,7 @@ function sanitizeRecentSlackText(text: string | undefined): string {
 }
 
 export function isProgressOnlyMessage(text: string): boolean {
-  return (
-    /^Starting agent runtime/i.test(text) ||
-    /^Agent is /i.test(text) ||
-    /^Calling /i.test(text) ||
-    /^:zap:\s*Interrupting current task\b/i.test(text) ||
-    /\bFirst-time tip\b.*\binterrupted my current task\b/i.test(text) ||
-    /\b\/busy (?:queue|steer|status)\b/i.test(text) ||
-    /^_?Final result in /i.test(text) ||
-    /completed in \d+(?:ms|s).*\bresult\)/i.test(text)
-  );
+  return isRuntimeProgressOnlyMessage(text);
 }
 
 export async function postConversationResponse(
@@ -5367,7 +5452,9 @@ export async function postConversationResponse(
       input.progressMessage.nativeStreamTs &&
       !input.progressMessage.nativeStreamFallbackReason
     ) {
-      const pendingText = input.progressMessage.nativeStreamPendingText ?? "";
+      const pendingText = sanitizeRuntimeFinalProgressText(
+        input.progressMessage.nativeStreamPendingText ?? ""
+      );
       const finalStreamText = [pendingText, "", finalProgressLine].join("\n");
       try {
         await stopSlackNativeStream(client, input.progressMessage, {
@@ -5394,7 +5481,7 @@ export async function postConversationResponse(
     if (input.progressMessage.streamedText?.trim()) {
       const responseText =
         renderConversationResponseText(input.response).trim() ||
-        input.progressMessage.streamedText.trim();
+        sanitizeRuntimeFinalProgressText(input.progressMessage.streamedText);
       const finishedText = renderFinalProgressMessage(
         input.progressMessage,
         responseText,
@@ -5423,6 +5510,21 @@ export async function postConversationResponse(
         ts: input.progressMessage.ts,
         text: finishedText,
         ...(responseBlocks ? { blocks: responseBlocks } : {})
+      });
+      return;
+    }
+
+    if (input.progressMessage.suppressedRuntimeControlNotice) {
+      const finishedText = renderFinalProgressMessage(
+        input.progressMessage,
+        runtimeControlNoticeFallbackText(),
+        finalProgressLine
+      );
+      input.progressMessage.text = finishedText;
+      await client.chat.update({
+        channel: input.progressMessage.channel,
+        ts: input.progressMessage.ts,
+        text: finishedText
       });
       return;
     }
@@ -5478,7 +5580,9 @@ export async function postConversationResponse(
 }
 
 function renderConversationResponseText(response: ConversationResponse): string {
-  const responseText = sanitizeRuntimeStreamText(response.text);
+  const responseText = sanitizeRuntimeFinalResponseText(
+    sanitizeRuntimeStreamText(response.text)
+  );
   if (!response.attachments || response.attachments.length === 0) {
     return responseText;
   }
@@ -5491,6 +5595,29 @@ function renderConversationResponseText(response: ConversationResponse): string 
       return `- ${label} (${attachment.kind}, ${attachment.mimeType})`;
     })
   ].join("\n");
+}
+
+function sanitizeRuntimeFinalResponseText(text: string): string {
+  if (!text.trim()) {
+    return text;
+  }
+
+  const lines = text.split(/\r?\n/);
+  const kept = lines.filter((line) => !isProgressOnlyMessage(line.trim()));
+  if (kept.length === lines.length) {
+    return text;
+  }
+
+  const cleaned = kept.join("\n").trim();
+  if (cleaned) {
+    return cleaned;
+  }
+
+  return runtimeControlNoticeFallbackText();
+}
+
+function sanitizeRuntimeFinalProgressText(text: string): string {
+  return sanitizeRuntimeFinalResponseText(sanitizeRuntimeStreamText(text)).trim();
 }
 
 function sanitizeConversationResponseBlocks(blocks: unknown[] | undefined): unknown[] | undefined {
@@ -5567,6 +5694,31 @@ async function postMentionWorkingState(
   return undefined;
 }
 
+function createLazyAgentProgressReporter(
+  client: App["client"],
+  input: {
+    channel: string;
+    user: string;
+    isDirectMessage: boolean;
+    threadTs?: string;
+    streamThreadTs?: string;
+    streamingMode: AgentRuntimeStreamingMode;
+  }
+): LazyAgentProgressReporter {
+  let progressMessage: SlackProgressMessage | undefined;
+
+  return {
+    getProgressMessage: () => progressMessage,
+    onAgentEvent: async (event) => {
+      progressMessage ??= await postMentionWorkingState(client, input);
+      if (!progressMessage) {
+        return;
+      }
+      await updateAgentProgressMessage(client, progressMessage, event);
+    }
+  };
+}
+
 export function resolveSlackProgressStreamingMode(input: {
   streamingMode: AgentRuntimeStreamingMode;
   streamThreadTs?: string;
@@ -5588,16 +5740,21 @@ export async function updateAgentProgressMessage(
     progressMessage.streamingMode === "native" &&
     !progressMessage.nativeStreamFallbackReason
   ) {
+    const cleanedText = sanitizeRuntimeStreamText(event.text);
+    if (isRuntimeControlNotice(cleanedText.trim())) {
+      progressMessage.suppressedRuntimeControlNotice = true;
+      return;
+    }
     progressMessage.streamedText =
       event.type === "message_replace"
-        ? sanitizeRuntimeStreamText(event.text)
-        : appendSlackStreamedText(progressMessage.streamedText ?? "", event.text);
+        ? cleanedText
+        : appendSlackStreamedText(progressMessage.streamedText ?? "", cleanedText);
     if (!progressMessage.streamedText.trim()) {
       return;
     }
     try {
       await updateSlackNativeStream(client, progressMessage, {
-        text: sanitizeRuntimeStreamText(event.text),
+        text: cleanedText,
         replace: event.type === "message_replace"
       });
       return;
@@ -5983,10 +6140,15 @@ export function formatAgentProgressMessage(
   }
 
   if (event.type === "message_delta" || event.type === "message_replace") {
+    const cleanedText = sanitizeRuntimeStreamText(event.text);
+    if (isRuntimeControlNotice(cleanedText.trim())) {
+      progressMessage.suppressedRuntimeControlNotice = true;
+      return undefined;
+    }
     progressMessage.streamedText =
       event.type === "message_replace"
-        ? sanitizeRuntimeStreamText(event.text)
-        : appendSlackStreamedText(progressMessage.streamedText ?? "", event.text);
+        ? cleanedText
+        : appendSlackStreamedText(progressMessage.streamedText ?? "", cleanedText);
     return progressMessage.streamedText.trim()
       ? renderProgressLines(progressMessage, [progressMessage.streamedText])
       : undefined;
@@ -5997,7 +6159,7 @@ export function formatAgentProgressMessage(
 
 function appendSlackStreamedText(currentText: string, delta: string): string {
   const cleanedDelta = sanitizeRuntimeStreamText(delta);
-  if (!cleanedDelta.trim()) {
+  if (!cleanedDelta.trim() || isRuntimeControlNotice(cleanedDelta.trim())) {
     return currentText;
   }
 
@@ -6060,6 +6222,9 @@ function isAgentProgressPlaceholder(text: string): boolean {
 
 function normalizeAgentStatus(text: string): string {
   const trimmed = text.trim();
+  if (isRuntimeControlNotice(trimmed)) {
+    return "Agent is thinking...";
+  }
   const thoughtMatch = /(?:still running|agent has thought for)\s+(?:agent|openclaw)?\.{0,3}\s*(\d+)s/i.exec(
     trimmed
   );

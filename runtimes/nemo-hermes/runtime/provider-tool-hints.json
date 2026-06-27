@@ -1918,6 +1918,32 @@
           }
         }
       ]
+    },
+    {
+      "provider": "web",
+      "tools": [
+        {
+          "name": "web_search",
+          "alias": "web.search",
+          "description": "Search public web/news sources for current information. Use this before web_extract when the user asks for latest, fresh, current, or news items and does not provide specific URLs.",
+          "input": {
+            "query": {
+              "description": "Public web/news search query.",
+              "type": "string",
+              "min": 1,
+              "max": 300
+            },
+            "limit": {
+              "optional": true,
+              "description": "Maximum number of search results. Defaults to 5.",
+              "type": "number",
+              "int": true,
+              "min": 1,
+              "max": 10
+            }
+          }
+        }
+      ]
     }
   ]
 }

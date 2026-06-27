@@ -18,6 +18,7 @@ describe("provider descriptors", () => {
       "hubspot",
       "jira",
       "slack",
+      "web",
       "atlassian"
     ]);
     expect(connectedProviderIds).toEqual([
@@ -57,6 +58,7 @@ describe("provider descriptors", () => {
     );
     expect(connectionProviderForToolName("jira.searchIssues")).toBe("jira");
     expect(connectionProviderForToolName("atlassian.callMcpTool")).toBe("jira");
+    expect(connectionProviderForToolName("web.search")).toBeNull();
     expect(connectionProviderForToolName("conversation.sendMessage")).toBeNull();
   });
 });

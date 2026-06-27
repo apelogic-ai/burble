@@ -26,6 +26,16 @@ import type {
 
 const localScheduledJobRegisterCapabilityToolName =
   "scheduled_job_register_capability";
+const localSchedulerControlTools: Record<string, string> = {
+  scheduled_job_register_capability: "scheduledJob.registerCapability",
+  scheduled_job_list: "scheduledJob.list",
+  scheduled_job_create: "scheduledJob.create",
+  scheduled_job_pause: "scheduledJob.pause",
+  scheduled_job_resume: "scheduledJob.resume",
+  scheduled_job_delete: "scheduledJob.delete",
+  scheduled_job_trigger: "scheduledJob.trigger",
+  scheduled_job_latest_run_status: "scheduledJob.latestRunStatus"
+};
 
 type RuntimeServerContext = {
   config: RuntimeConfig;
@@ -204,8 +214,13 @@ async function handleLocalBurbleMcpRequest(
   const bodyText = await request.text();
   const payload = readMcpJsonRpcPayload(bodyText);
   if (isMcpToolCall(payload)) {
-    if (isLocalScheduledJobRegisterCapabilityCall(payload)) {
-      return handleLocalScheduledJobRegisterCapabilityMcpCall(payload, config);
+    const localSchedulerToolName = readLocalSchedulerControlToolName(payload);
+    if (localSchedulerToolName) {
+      return handleLocalSchedulerControlMcpCall(
+        payload,
+        config,
+        localSchedulerToolName
+      );
     }
     const routeId = readMcpToolCallRouteId(payload);
     const jobId = readMcpToolCallJobId(payload);
@@ -451,11 +466,12 @@ function isMcpToolCall(
   );
 }
 
-function isLocalScheduledJobRegisterCapabilityCall(payload: {
+function readLocalSchedulerControlToolName(payload: {
   method: "tools/call";
   params?: unknown;
-}): boolean {
-  return readMcpToolCallName(payload) === localScheduledJobRegisterCapabilityToolName;
+}): string | null {
+  const name = readMcpToolCallName(payload);
+  return name ? localSchedulerControlTools[name] ?? null : null;
 }
 
 function readMcpToolCallName(payload: {
@@ -574,19 +590,26 @@ function addRouteIdToMcpToolsListPayload(payload: unknown): unknown {
 }
 
 function addLocalBurbleMcpTools(tools: unknown[]): unknown[] {
-  if (
-    tools.some(
-      (tool) =>
-        typeof tool === "object" &&
-        tool !== null &&
-        !Array.isArray(tool) &&
-        (tool as { name?: unknown }).name ===
-          localScheduledJobRegisterCapabilityToolName
-    )
-  ) {
-    return tools;
-  }
-  return [...tools, scheduledJobRegisterCapabilityMcpTool()];
+  const names = new Set(
+    tools
+      .map((tool) =>
+        typeof tool === "object" && tool !== null && !Array.isArray(tool)
+          ? (tool as { name?: unknown }).name
+          : null
+      )
+      .filter((name): name is string => typeof name === "string")
+  );
+  const localTools = [
+    scheduledJobRegisterCapabilityMcpTool(),
+    scheduledJobListMcpTool(),
+    scheduledJobCreateMcpTool(),
+    scheduledJobLifecycleMcpTool("scheduled_job_pause", "Pause"),
+    scheduledJobLifecycleMcpTool("scheduled_job_resume", "Resume"),
+    scheduledJobLifecycleMcpTool("scheduled_job_delete", "Delete"),
+    scheduledJobTriggerMcpTool(),
+    scheduledJobLatestRunStatusMcpTool()
+  ].filter((tool) => !names.has(String(tool.name)));
+  return [...tools, ...localTools];
 }
 
 function scheduledJobRegisterCapabilityMcpTool(): Record<string, unknown> {
@@ -663,6 +686,111 @@ function scheduledJobRegisterCapabilityMcpTool(): Record<string, unknown> {
   };
 }
 
+function scheduledJobListMcpTool(): Record<string, unknown> {
+  return {
+    name: "scheduled_job_list",
+    description:
+      "List Burble-controlled scheduled jobs for this workspace/user. Use this for questions like whether any cron jobs are configured.",
+    inputSchema: {
+      type: "object",
+      properties: {},
+      additionalProperties: false
+    }
+  };
+}
+
+function scheduledJobCreateMcpTool(): Record<string, unknown> {
+  return {
+    name: "scheduled_job_create",
+    description:
+      "Create a Burble-controlled scheduled job. Use this for explicit create/add/schedule requests after deriving the schedule and durable task prompt.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        title: {
+          type: "string",
+          minLength: 1,
+          description: "Short human-readable scheduled job title."
+        },
+        prompt: {
+          type: "string",
+          minLength: 1,
+          description:
+            "Durable task prompt to run on each schedule, without transient chat-only wording."
+        },
+        schedule: {
+          description:
+            "Structured schedule object or cron expression supplied by the runtime after parsing the user's schedule request."
+        },
+        routeId: {
+          type: "string",
+          minLength: 1,
+          pattern: "^convrt_[0-9a-f]{24}$",
+          description:
+            "Optional durable Burble convrt_* conversation route for scheduled delivery. Never pass a Slack label, mention, channel id, run id, or guessed value here."
+        }
+      },
+      required: ["title", "prompt", "schedule"]
+    }
+  };
+}
+
+function scheduledJobLifecycleMcpTool(
+  name: string,
+  verb: string
+): Record<string, unknown> {
+  return {
+    name,
+    description: `${verb} one existing Burble-controlled scheduled job. Pass jobId when multiple jobs may exist.`,
+    inputSchema: {
+      type: "object",
+      properties: {
+        jobId: {
+          type: "string",
+          minLength: 1,
+          description: `Optional scheduled job id to ${verb.toLowerCase()}.`
+        }
+      }
+    }
+  };
+}
+
+function scheduledJobTriggerMcpTool(): Record<string, unknown> {
+  return {
+    name: "scheduled_job_trigger",
+    description:
+      "Manually trigger one existing Burble-controlled scheduled job. Pass jobId when multiple jobs may exist.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        jobId: {
+          type: "string",
+          minLength: 1,
+          description: "Optional scheduled job id to trigger."
+        }
+      }
+    }
+  };
+}
+
+function scheduledJobLatestRunStatusMcpTool(): Record<string, unknown> {
+  return {
+    name: "scheduled_job_latest_run_status",
+    description:
+      "Read the latest recorded run status for a Burble-controlled scheduled job. Pass jobId when checking a specific job.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        jobId: {
+          type: "string",
+          minLength: 1,
+          description: "Optional scheduled job id whose latest run should be checked."
+        }
+      }
+    }
+  };
+}
+
 function addRouteIdToMcpToolSchema(tool: unknown): unknown {
   if (typeof tool !== "object" || tool === null || Array.isArray(tool)) {
     return tool;
@@ -709,9 +837,10 @@ function addRouteIdToMcpToolSchema(tool: unknown): unknown {
   };
 }
 
-async function handleLocalScheduledJobRegisterCapabilityMcpCall(
+async function handleLocalSchedulerControlMcpCall(
   payload: { id?: unknown; method: "tools/call"; params?: unknown },
-  config: RuntimeConfig
+  config: RuntimeConfig,
+  toolName: string
 ): Promise<Response> {
   if (!config.runtimeId) {
     return mcpJsonRpcErrorResponse(
@@ -722,7 +851,7 @@ async function handleLocalScheduledJobRegisterCapabilityMcpCall(
   }
   const executor = createBurbleToolExecutor(config, config.runtimeId);
   try {
-    const result = await executor("scheduledJob.registerCapability", {
+    const result = await executor(toolName, {
       input: readMcpToolCallArguments(payload)
     });
     return mcpJsonRpcResultResponse(readMcpJsonRpcId(payload), {

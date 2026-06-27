@@ -15,6 +15,7 @@ import {
   isKnownRuntimeEngine,
   runtimeCompatibilityFamily
 } from "./agent/runtime-descriptors";
+import { createSchedulerControlPlane } from "./scheduler/control-plane";
 import { createHash, timingSafeEqual } from "node:crypto";
 import { connectionProviderForToolName } from "./providers/descriptors";
 import { providerToolCatalog } from "./providers/catalog";
@@ -105,6 +106,7 @@ import {
   type UpstreamMcpToolResult
 } from "./mcp/upstream-http-client";
 import { searchSlackMessages, searchSlackUsers } from "./providers/slack/client";
+import { searchWeb, type WebSearchDeps } from "./providers/web/client";
 import {
   createGitHubTools,
   type GitHubPullRequestListInput
@@ -142,7 +144,9 @@ type ToolGatewayDeps = Partial<Parameters<typeof createGitHubTools>[0]> &
   Partial<GoogleToolDeps> &
   Partial<HubSpotToolDeps> &
   Partial<JiraToolDeps> &
+  Partial<WebSearchDeps> &
   Partial<SlackToolDeps> & {
+    searchWeb?: typeof searchWeb;
     fetchConversationAttachment?: (input: {
       attachment: ConversationAttachment;
       maxBytes: number;
@@ -273,7 +277,8 @@ const defaultDeps = {
   createJiraSubtask,
   searchJiraIssues,
   searchSlackMessages,
-  searchSlackUsers
+  searchSlackUsers,
+  searchWeb
 };
 
 type ToolGatewayAuth =
@@ -590,6 +595,112 @@ export async function handleToolGatewayRequest(
     return new Response("Invalid tool input", { status: 400 });
   }
 
+  if (toolName === "scheduledJob.list") {
+    if (auth.kind !== "runtime") {
+      return new Response("Runtime auth required", { status: 403 });
+    }
+    const schedulerControl = createSchedulerControlPlane(store);
+    const jobs = await schedulerControl.listJobs({
+      workspaceId: auth.runtime.workspaceId,
+      slackUserId: auth.runtime.slackUserId
+    });
+    return respondWithAudit({
+      classification: "user_private",
+      content: { jobs }
+    });
+  }
+
+  if (toolName === "scheduledJob.create") {
+    if (auth.kind !== "runtime") {
+      return new Response("Runtime auth required", { status: 403 });
+    }
+    const input = readScheduledJobCreateInput(body.input);
+    if (!input.ok) {
+      return jsonResponse(
+        {
+          classification: "user_private",
+          content: {
+            error: "invalid_scheduled_job_create_input",
+            message: input.message
+          }
+        },
+        400
+      );
+    }
+    const schedulerControl = createSchedulerControlPlane(store);
+    const result = await schedulerControl.createJob?.({
+      workspaceId: auth.runtime.workspaceId,
+      slackUserId: auth.runtime.slackUserId,
+      title: input.value.title,
+      prompt: input.value.prompt,
+      schedule: input.value.schedule,
+      routeId: input.value.routeId,
+      runtimeType: auth.runtime.engine
+    });
+    return respondWithAudit({
+      classification: "user_private",
+      content: result ?? { ok: false, reason: "unavailable" }
+    });
+  }
+
+  if (
+    toolName === "scheduledJob.pause" ||
+    toolName === "scheduledJob.resume" ||
+    toolName === "scheduledJob.delete"
+  ) {
+    if (auth.kind !== "runtime") {
+      return new Response("Runtime auth required", { status: 403 });
+    }
+    const schedulerControl = createSchedulerControlPlane(store);
+    const input = {
+      workspaceId: auth.runtime.workspaceId,
+      slackUserId: auth.runtime.slackUserId,
+      jobId: readSchedulerControlJobId(body.input)
+    };
+    const result =
+      toolName === "scheduledJob.pause"
+        ? await schedulerControl.pauseJob?.(input)
+        : toolName === "scheduledJob.resume"
+          ? await schedulerControl.resumeJob?.(input)
+          : await schedulerControl.deleteJob?.(input);
+    return respondWithAudit({
+      classification: "user_private",
+      content: result ?? { ok: false, reason: "unavailable" }
+    });
+  }
+
+  if (toolName === "scheduledJob.trigger") {
+    if (auth.kind !== "runtime") {
+      return new Response("Runtime auth required", { status: 403 });
+    }
+    const schedulerControl = createSchedulerControlPlane(store);
+    const result = await schedulerControl.triggerJob?.({
+      workspaceId: auth.runtime.workspaceId,
+      slackUserId: auth.runtime.slackUserId,
+      jobId: readSchedulerControlJobId(body.input)
+    });
+    return respondWithAudit({
+      classification: "user_private",
+      content: result ?? { ok: false, reason: "unavailable" }
+    });
+  }
+
+  if (toolName === "scheduledJob.latestRunStatus") {
+    if (auth.kind !== "runtime") {
+      return new Response("Runtime auth required", { status: 403 });
+    }
+    const schedulerControl = createSchedulerControlPlane(store);
+    const result = await schedulerControl.getLatestRunStatus?.({
+      workspaceId: auth.runtime.workspaceId,
+      slackUserId: auth.runtime.slackUserId,
+      jobId: readSchedulerControlJobId(body.input)
+    });
+    return respondWithAudit({
+      classification: "user_private",
+      content: result ?? { ok: false, reason: "unavailable" }
+    });
+  }
+
   if (toolName === "scheduledJob.registerCapability") {
     if (auth.kind !== "runtime") {
       return new Response("Runtime auth required", { status: 403 });
@@ -709,7 +820,10 @@ export async function handleToolGatewayRequest(
       classification: "user_private",
       content: {
         ok: true,
-        scheduledJob,
+        scheduledJob: {
+          ...scheduledJob,
+          ...nativeToolsetsForScheduledJobCapability(record)
+        },
         scheduledPromptInstruction:
           buildScheduledJobPromptInstruction(scheduledJob)
       }
@@ -740,6 +854,24 @@ export async function handleToolGatewayRequest(
         input: isOptionalObject(body.input) ? body.input : {}
       }
     });
+  }
+
+  if (toolName === "web.search" || toolName === "web_search") {
+    const inputCoercion = coerceProviderToolGatewayInput(toolName, body.input);
+    if (!inputCoercion.ok) {
+      return new Response(`Invalid tool input: ${inputCoercion.error}`, {
+        status: 400
+      });
+    }
+    const searchInput = inputCoercion.input;
+    if (!isWebSearchInput(searchInput)) {
+      return new Response("Invalid tool input", { status: 400 });
+    }
+    return respondWithAudit(
+      await (deps.searchWeb ?? searchWeb)(searchInput, {
+        fetch: deps.fetch
+      })
+    );
   }
 
   const providerToolSpec = findProviderToolSpec(toolName);
@@ -1897,9 +2029,18 @@ function isKnownTool(toolName: string): boolean {
     toolName === "jira.searchIssues" ||
     toolName === "slack.searchUsers" ||
     toolName === "slack.searchMessages" ||
+    toolName === "web.search" ||
+    toolName === "web_search" ||
     toolName === "conversation.sendMessage" ||
     toolName === "conversation.getAttachment" ||
     toolName === "scheduledJob.registerCapability" ||
+    toolName === "scheduledJob.list" ||
+    toolName === "scheduledJob.create" ||
+    toolName === "scheduledJob.pause" ||
+    toolName === "scheduledJob.resume" ||
+    toolName === "scheduledJob.delete" ||
+    toolName === "scheduledJob.trigger" ||
+    toolName === "scheduledJob.latestRunStatus" ||
     toolName === "runtime.heartbeat" ||
     toolName === "runtime.conformance.echo" ||
     toolName === "atlassian.listMcpTools" ||
@@ -2209,6 +2350,72 @@ function describeScheduledJobRegisterCapabilityInput(
   return { receivedKeys, nestedKeys, normalizedKeys };
 }
 
+function readSchedulerControlJobId(input: unknown): string | null {
+  if (!isOptionalObject(input)) {
+    return null;
+  }
+  for (const key of ["jobId", "scheduledJobId", "job_id", "scheduled_job_id"]) {
+    const value = input[key];
+    if (typeof value === "string" && value.trim()) {
+      return value.trim();
+    }
+  }
+  return null;
+}
+
+function readScheduledJobCreateInput(input: unknown):
+  | {
+      ok: true;
+      value: {
+        title: string;
+        prompt: string;
+        schedule: unknown;
+        routeId: string | null;
+      };
+    }
+  | { ok: false; message: string } {
+  if (!isOptionalObject(input)) {
+    return {
+      ok: false,
+      message: "scheduledJob.create requires an object input."
+    };
+  }
+
+  const title = readStringAlias(input, ["title", "name"]);
+  if (!title) {
+    return {
+      ok: false,
+      message: "scheduledJob.create requires title or name."
+    };
+  }
+
+  const prompt = readStringAlias(input, ["prompt", "task", "instruction"]);
+  if (!prompt) {
+    return {
+      ok: false,
+      message: "scheduledJob.create requires prompt, task, or instruction."
+    };
+  }
+
+  const schedule = readUnknownAlias(input, ["schedule", "cron", "interval"]);
+  if (schedule === undefined || schedule === null || schedule === "") {
+    return {
+      ok: false,
+      message: "scheduledJob.create requires schedule, cron, or interval."
+    };
+  }
+
+  return {
+    ok: true,
+    value: {
+      title,
+      prompt,
+      schedule,
+      routeId: readStringAlias(input, ["routeId", "route_id"])
+    }
+  };
+}
+
 type ScheduledJobRegistrationInput = {
   jobId?: unknown;
   requiredTools?: unknown;
@@ -2417,6 +2624,9 @@ function findProviderToolSpec(toolName: string): (typeof providerToolCatalog)[nu
 }
 
 function providerToolUsesPrivateReadSource(tool: (typeof providerToolCatalog)[number]): boolean {
+  if (tool.provider === "web") {
+    return false;
+  }
   if (!tool.risk || tool.risk === "read") {
     return true;
   }
@@ -2593,6 +2803,22 @@ function buildScheduledJobPromptInstruction(
   return lines.join("\n");
 }
 
+function nativeToolsetsForScheduledJobCapability(
+  capability: AgentJobCapabilityRecord
+): { nativeToolsets?: string[] } {
+  if (capability.runtimeType !== "hermes") {
+    return {};
+  }
+
+  const toolsets = new Set(["burble"]);
+  for (const toolName of capability.requiredTools) {
+    if (toolName === "web_extract" || toolName === "web_search") {
+      toolsets.add("web");
+    }
+  }
+  return { nativeToolsets: [...toolsets].sort() };
+}
+
 async function readToolGatewayBody(
   request: Request
 ): Promise<ToolGatewayBody | null> {
@@ -2610,6 +2836,19 @@ function isSearchIssuesInput(input: unknown): input is { query: string } {
     "query" in input &&
     typeof input.query === "string" &&
     input.query.trim().length > 0
+  );
+}
+
+function isWebSearchInput(
+  input: unknown
+): input is { query: string; limit?: number } {
+  return (
+    typeof input === "object" &&
+    input !== null &&
+    "query" in input &&
+    typeof input.query === "string" &&
+    input.query.trim().length > 0 &&
+    (!("limit" in input) || typeof input.limit === "number")
   );
 }
 
@@ -3838,7 +4077,7 @@ async function resolveScheduledJobDestinationRoute(input: {
   return route ?? null;
 }
 
-async function defaultResolveSlackChannelIdByName(
+export async function defaultResolveSlackChannelIdByName(
   config: Config,
   input: { workspaceId: string; channelName: string }
 ): Promise<string | null> {
@@ -4985,6 +5224,9 @@ function readToolProviderForTelemetry(toolName: string): string {
   }
   if (toolName.startsWith("scheduledJob.")) {
     return "scheduled_job";
+  }
+  if (toolName === "web.search" || toolName === "web_search") {
+    return "web";
   }
   return readToolProvider(toolName);
 }

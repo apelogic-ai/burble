@@ -957,6 +957,103 @@ asyncio.run(main())
     });
   });
 
+  test("retries scheduled runtime-control finals with an allowed provider tool", () => {
+    const result = runHermesEntrypointProbe(`${importEntrypoint}
+import asyncio
+import os
+
+os.environ["HERMES_PROVIDER_PROTOCOL_RETRY_ATTEMPTS"] = "1"
+
+async def main():
+    runtime = mod.BurbleHermesRuntime()
+    waiter = mod.RunWaiter()
+    queue = asyncio.Queue()
+    waiter.queues.append(queue)
+    message = {
+        "runId": "run-scheduled-progress-final",
+        "routeId": "convrt_abc123",
+        "originalText": "check new open PRs in https://github.com/apelogic-ai github org, report back to this channel",
+        "runtime": {"id": "rt_123"},
+        "scheduledJob": {
+            "jobId": "job-123",
+            "capabilityProfile": "scheduled_job",
+            "allowedTools": ["github_search_issues", "slack_search_messages"],
+            "routeId": "convrt_abc123",
+            "runtimeType": "hermes",
+            "stateRefs": [],
+            "visibilityPolicy": {"maxOutputVisibility": "user_private"},
+        },
+        "text": "check new open PRs in https://github.com/apelogic-ai github org, report back to this channel",
+    }
+    runtime.runs["run-scheduled-progress-final"] = waiter
+    runtime.run_messages["run-scheduled-progress-final"] = message
+    injected = []
+
+    async def fake_inject(body):
+        injected.append(body)
+        if body.get("protocolRetryAttempt"):
+            waiter.future.set_result({
+                "classification": "user_private",
+                "text": "No open apelogic-ai PRs found.",
+            })
+        else:
+            waiter.future.set_result({
+                "classification": "user_private",
+                "text": "Final result in 2.7s.",
+            })
+
+    runtime._inject_message = fake_inject
+    response = await runtime._execute_run(
+        "run-scheduled-progress-final",
+        waiter,
+        message,
+    )
+
+    events = []
+    while not queue.empty():
+        event = await queue.get()
+        if event is not None:
+            events.append(event)
+
+    print(json.dumps({
+        "response": response,
+        "events": events,
+        "injectedCount": len(injected),
+        "retryText": injected[1]["text"],
+    }))
+
+asyncio.run(main())
+`);
+
+    expect(result).toEqual({
+      response: {
+        classification: "user_private",
+        text: "No open apelogic-ai PRs found.",
+      },
+      events: [
+        {
+          type: "status",
+          text: "Burble accepted the turn.",
+        },
+        {
+          type: "status",
+          text: "Retrying provider tool call with structured Hermes tool protocol.",
+        },
+        {
+          type: "final",
+          response: {
+            classification: "user_private",
+            text: "No open apelogic-ai PRs found.",
+          },
+        },
+      ],
+      injectedCount: 2,
+      retryText: expect.stringContaining(
+        "invoke the real structured Burble provider tool `github_search_issues`",
+      ),
+    });
+  });
+
   test("emits provider tool calls without runtime-side fallback execution", () => {
     const result = runHermesEntrypointProbe(`${importEntrypoint}
 import asyncio
@@ -1692,6 +1789,19 @@ async def main():
                         "retrySafe": False,
                         "input": [],
                     },
+                    {
+                        "name": "web_search",
+                        "alias": "web.search",
+                        "provider": "web",
+                        "title": "Web search",
+                        "description": "Search public web sources.",
+                        "enabled": True,
+                        "risk": "read",
+                        "routeRequired": False,
+                        "confirmation": "none",
+                        "retrySafe": True,
+                        "input": [],
+                    },
                 ],
                 "memory": {
                     "userMemoryEnabled": False,
@@ -1941,7 +2051,6 @@ payload = {
         ],
         "routeId": "convrt_abc123",
         "runtimeType": "hermes",
-        "nativeToolsets": ["burble"],
         "stateRefs": [
             {
                 "provider": "google",
@@ -1969,7 +2078,7 @@ print(json.dumps({"text": mod.build_hermes_turn_text(payload)}))
     );
     expect(text).toContain("routeId=convrt_abc123");
     expect(text).toContain("runtimeType=hermes");
-    expect(text).toContain("nativeToolsets=burble");
+    expect(text).not.toContain("nativeToolsets=");
     expect(text).toContain("maxOutputVisibility=public");
     expect(text).toContain("allowPrivateToolDeclassification=false");
     expect(text).toContain(
@@ -2293,7 +2402,7 @@ asyncio.run(main())
     expect(result).toEqual({
       result: {
         success: true,
-        message_id: expect.stringContaining("burble:convrt_abc123:")
+        message_id: expect.stringContaining("burble:convrt_abc123:"),
       },
       payloads: [
         {
@@ -2301,16 +2410,16 @@ asyncio.run(main())
           headers: {
             authorization: "Bearer token",
             "content-type": "application/json",
-            "x-burble-runtime-id": "rt_123"
+            "x-burble-runtime-id": "rt_123",
           },
           json: {
             input: {
               routeId: "convrt_abc123",
-              text: "Cron report"
-            }
-          }
-        }
-      ]
+              text: "Cron report",
+            },
+          },
+        },
+      ],
     });
   });
 
@@ -2377,8 +2486,9 @@ asyncio.run(main())
 
     expect(result).toEqual({
       success: false,
-      error: "Hermes produced tool-call protocol text instead of structured tool calls; refusing to publish untrusted assistant content",
-      payloads: []
+      error:
+        "Hermes produced tool-call protocol text instead of structured tool calls; refusing to publish untrusted assistant content",
+      payloads: [],
     });
   });
 
@@ -2777,6 +2887,47 @@ print(json.dumps(list(ctx.tools_by_name.values())))
         is_async: true,
       }),
     );
+    expect(result).toContainEqual(
+      expect.objectContaining({
+        name: "scheduled_job_list",
+        toolset: "burble",
+        is_async: true,
+      }),
+    );
+    expect(result).toContainEqual(
+      expect.objectContaining({
+        name: "scheduled_job_create",
+        toolset: "burble",
+        is_async: true,
+      }),
+    );
+    for (const name of [
+      "scheduled_job_pause",
+      "scheduled_job_resume",
+      "scheduled_job_delete",
+    ]) {
+      expect(result).toContainEqual(
+        expect.objectContaining({
+          name,
+          toolset: "burble",
+          is_async: true,
+        }),
+      );
+    }
+    expect(result).toContainEqual(
+      expect.objectContaining({
+        name: "scheduled_job_trigger",
+        toolset: "burble",
+        is_async: true,
+      }),
+    );
+    expect(result).toContainEqual(
+      expect.objectContaining({
+        name: "scheduled_job_latest_run_status",
+        toolset: "burble",
+        is_async: true,
+      }),
+    );
     const scheduledJobTool = result.find(
       (tool: { name?: string }) =>
         tool.name === "scheduled_job_register_capability",
@@ -3048,6 +3199,168 @@ asyncio.run(main())
     expect(
       typed.jobs.find((job) => job.id === "plain")?.enabled_toolsets,
     ).toBeNull();
+  });
+
+  test("routes Hermes scheduled control tools through the provider plugin", () => {
+    const result = runHermesEntrypointProbe(`${importProviderToolPlugin}
+import asyncio
+import os
+
+os.environ["BURBLE_TOOL_GATEWAY_URL"] = "http://burble-app:3000/internal/tools"
+os.environ["BURBLE_INTERNAL_TOKEN"] = "runtime-secret"
+os.environ["BURBLE_RUNTIME_ID"] = "rt_u123"
+
+calls = []
+
+class FakeResponse:
+    status = 200
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *_args):
+        return None
+
+    async def json(self):
+        return {
+            "classification": "user_private",
+            "content": {
+                "ok": True,
+                "jobId": "job-123",
+            },
+        }
+
+class FakeSession:
+    def __init__(self, *args, **kwargs):
+        pass
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *_args):
+        return None
+
+    def post(self, url, json=None, headers=None):
+        calls.append({"url": url, "json": json, "headers": headers})
+        return FakeResponse()
+
+mod.ClientSession = FakeSession
+mod.ClientTimeout = lambda **_kwargs: None
+
+async def main():
+    result = await mod._burble_provider_call({
+        "toolName": "scheduled_job_trigger",
+        "input": {
+            "jobId": "job-123",
+        },
+    })
+    print(json.dumps({
+        "result": json.loads(result),
+        "calls": calls,
+    }))
+
+asyncio.run(main())
+`);
+
+    const typed = result as {
+      result: { ok: boolean; jobId?: string };
+      calls: Array<{ url: string; json: unknown }>;
+    };
+    expect(typed.result).toEqual({ ok: true, jobId: "job-123" });
+    expect(typed.calls[0]?.url).toBe(
+      "http://burble-app:3000/internal/tools/scheduledJob.trigger/execute",
+    );
+    expect(typed.calls[0]?.json).toEqual({
+      input: {
+        jobId: "job-123",
+      },
+      scheduledJob: {
+        jobId: "job-123",
+      },
+    });
+  });
+
+  test("routes Hermes scheduled job creation through the provider plugin", () => {
+    const result = runHermesEntrypointProbe(`${importProviderToolPlugin}
+import asyncio
+import os
+
+os.environ["BURBLE_TOOL_GATEWAY_URL"] = "http://burble-app:3000/internal/tools"
+os.environ["BURBLE_INTERNAL_TOKEN"] = "runtime-secret"
+os.environ["BURBLE_RUNTIME_ID"] = "rt_u123"
+
+calls = []
+
+class FakeResponse:
+    status = 200
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *_args):
+        return None
+
+    async def json(self):
+        return {
+            "classification": "user_private",
+            "content": {
+                "ok": True,
+                "job": {"jobId": "job-created-1"},
+            },
+        }
+
+class FakeSession:
+    def __init__(self, *args, **kwargs):
+        pass
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *_args):
+        return None
+
+    def post(self, url, json=None, headers=None):
+        calls.append({"url": url, "json": json, "headers": headers})
+        return FakeResponse()
+
+mod.ClientSession = FakeSession
+mod.ClientTimeout = lambda **_kwargs: None
+
+async def main():
+    result = await mod._burble_provider_call({
+        "toolName": "scheduled_job_create",
+        "input": {
+            "title": "Hourly AI news summary",
+            "prompt": "Find fresh AI news and summarize it.",
+            "schedule": {"kind": "interval", "every": {"hours": 1}},
+        },
+    })
+    print(json.dumps({
+        "result": json.loads(result),
+        "calls": calls,
+    }))
+
+asyncio.run(main())
+`);
+
+    const typed = result as {
+      result: { ok: boolean; job?: { jobId?: string } };
+      calls: Array<{ url: string; json: unknown }>;
+    };
+    expect(typed.result).toEqual({ ok: true, job: { jobId: "job-created-1" } });
+    expect(typed.calls[0]?.url).toBe(
+      "http://burble-app:3000/internal/tools/scheduledJob.create/execute",
+    );
+    expect(typed.calls[0]?.json).toEqual({
+      input: {
+        title: "Hourly AI news summary",
+        prompt: "Find fresh AI news and summarize it.",
+        schedule: {
+          kind: "interval",
+          every: { hours: 1 },
+        },
+      },
+    });
   });
 
   test("unwraps nested Hermes provider bridge envelopes", () => {

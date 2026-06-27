@@ -167,6 +167,7 @@ function buildOpenClawNemoClawAgentConfig(
     buildOpenClawLlmPatch({
       modelId: config.llmModel,
       inferenceBaseUrl: config.inferenceBaseUrl,
+      modelApi: config.openClawModelApi,
       ollamaBaseUrl: config.ollamaBaseUrl,
       agentId: config.openClawAgent,
       codeModeEnabled: config.openClawCodeMode,

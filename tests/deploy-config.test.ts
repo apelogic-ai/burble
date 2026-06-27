@@ -91,6 +91,7 @@ describe("dev deploy config", () => {
       "AGENT_RUNTIME_MCP_GATEWAY_URL",
       "AGENT_RUNTIME_MCP_AUDIENCE",
       "LLM_GW_BASE_URL",
+      "BURBLE_INFERENCE_BASE_URL",
       "AGENT_RUNTIME_SANDBOX_URL",
       "AGENT_RUNTIME_SANDBOX_TOKEN",
       "AGENT_RUNTIME_SANDBOX_TRANSPORT",
@@ -129,14 +130,23 @@ describe("dev deploy config", () => {
     expect(compose).toContain(
       "LLM_GW_BASE_URL=${LLM_GW_BASE_URL:-http://host.openshell.internal:4000/v1}"
     );
+    expect(compose).toContain(
+      "BURBLE_INFERENCE_BASE_URL=${BURBLE_INFERENCE_BASE_URL:-http://llm-gw:4000/v1}"
+    );
     expect(compose).toContain('"4000:4000"');
     expect(compose).toContain("./litellm/config.yaml:/app/config.yaml:ro");
     expect(compose).not.toContain("LITELLM_BASE_URL");
     expect(rootEnvExample).toContain(
       "LLM_GW_BASE_URL=http://host.openshell.internal:4000/v1"
     );
+    expect(rootEnvExample).toContain(
+      "BURBLE_INFERENCE_BASE_URL=http://llm-gw:4000/v1"
+    );
     expect(composeEnvExample).toContain(
       "LLM_GW_BASE_URL=http://host.openshell.internal:4000/v1"
+    );
+    expect(composeEnvExample).toContain(
+      "BURBLE_INFERENCE_BASE_URL=http://llm-gw:4000/v1"
     );
   });
 
@@ -268,6 +278,9 @@ describe("dev deploy config", () => {
       "OPENCLAW_FAST_MODE=${OPENCLAW_FAST_MODE:-false}"
     );
     expect(openClawCompose).toContain(
+      "OPENCLAW_MODEL_API=${OPENCLAW_MODEL_API:-openai-responses}"
+    );
+    expect(openClawCompose).toContain(
       "OPENCLAW_GATEWAY_PORT=${OPENCLAW_GATEWAY_PORT:-18789}"
     );
     expect(openClawCompose).toContain(
@@ -339,6 +352,7 @@ describe("dev deploy config", () => {
       "AGENT_RUNTIME_TOOL_GATEWAY_URL",
       "AGENT_RUNTIME_MCP_GATEWAY_URL",
       "AGENT_RUNTIME_MCP_AUDIENCE",
+      "BURBLE_INFERENCE_BASE_URL",
       "AGENT_RUNTIME_SANDBOX_URL",
       "AGENT_RUNTIME_SANDBOX_TOKEN",
       "AGENT_RUNTIME_SANDBOX_TRANSPORT",
@@ -433,6 +447,7 @@ describe("dev deploy config", () => {
     expect(personalRuntimesCompose).toContain("OPENCLAW_LOG_LEVEL");
     expect(personalRuntimesCompose).toContain("OPENCLAW_DEBUG_MODEL_PAYLOAD");
     expect(personalRuntimesCompose).toContain("OPENCLAW_DEBUG_CODE_MODE");
+    expect(personalRuntimesCompose).toContain("OPENCLAW_MODEL_API");
     expect(personalRuntimesCompose).toContain("OPENCLAW_FAST_MODE");
     expect(personalRuntimesCompose).toContain("OPENCLAW_RAW_STREAM_DEBUG");
     expect(personalRuntimesCompose).toContain("OPENCLAW_GATEWAY_PORT");
