@@ -40,6 +40,8 @@ export type SchedulerTaskValidation = {
   warnings: SchedulerTaskValidationIssue[];
 };
 
+type SchedulerTaskGrant = Pick<AgentJobCapabilityRecord, "requiredTools">;
+
 export type SchedulerControlPlane = {
   listJobs(input: {
     workspaceId: string;
@@ -96,6 +98,12 @@ export type SchedulerTriggerResult =
       ok: false;
       reason: "no_jobs" | "not_found" | "ambiguous";
       jobs: SchedulerJobSummary[];
+    }
+  | {
+      ok: false;
+      reason: "validation_failed";
+      task: SchedulerTaskSummary;
+      validation: SchedulerTaskValidation;
     };
 
 export type SchedulerListJobRunsInput = {
@@ -398,7 +406,23 @@ export function createSchedulerControlPlane(
         .listScheduledJobsForPrincipal(input.workspaceId, input.slackUserId)
         .find((candidate) => candidate.jobId === job.job.jobId);
       if (record) {
-        ensureScheduledJobCapability(store, record, timestamp);
+        let capability: SchedulerTaskGrant | null =
+          store.getAgentJobCapability(record.jobId);
+        if (!capability) {
+          ensureScheduledJobCapability(store, record, timestamp);
+          capability = {
+            requiredTools: inferAllowedToolsForScheduledJob(record),
+          };
+        }
+        const validation = validateScheduledTask(record, capability);
+        if (!validation.ok) {
+          return {
+            ok: false,
+            reason: "validation_failed",
+            task: summarizeScheduledTask(record, capability),
+            validation,
+          };
+        }
       }
 
       return {
@@ -620,7 +644,7 @@ function summarizeScheduledJob(
 
 function summarizeScheduledTask(
   record: ScheduledJobRecord,
-  capability: AgentJobCapabilityRecord | null,
+  capability: SchedulerTaskGrant | null,
 ): SchedulerTaskSummary {
   return {
     ...summarizeScheduledJob(record),
@@ -631,7 +655,7 @@ function summarizeScheduledTask(
 
 function validateScheduledTask(
   record: ScheduledJobRecord,
-  capability: AgentJobCapabilityRecord | null,
+  capability: SchedulerTaskGrant | null,
 ): SchedulerTaskValidation {
   const expectedTools = inferAllowedToolsForScheduledJob(record);
   const grantedTools = [...(capability?.requiredTools ?? [])].sort();

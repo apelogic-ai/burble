@@ -1240,6 +1240,21 @@ function formatScheduledJobTriggerResult(
   if (result.reason === "not_found") {
     return "I could not find that scheduled job.";
   }
+  if (result.reason === "validation_failed") {
+    return [
+      "Scheduled task validation failed; not triggering a run.",
+      `- task: ${result.task.taskId}`,
+      result.validation.expectedTools.length
+        ? `- expected tools: ${result.validation.expectedTools.join(", ")}`
+        : "- expected tools: none",
+      result.validation.grantedTools.length
+        ? `- granted tools: ${result.validation.grantedTools.join(", ")}`
+        : "- granted tools: none",
+      ...result.validation.errors.map(
+        (issue) => `- ${issue.code}: ${issue.message}`,
+      ),
+    ].join("\n");
+  }
   return [
     "Multiple scheduled jobs are configured. Please specify the job id.",
     ...result.jobs.map((job) => `- ${job.jobId}`),

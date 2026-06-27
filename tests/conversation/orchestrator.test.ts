@@ -1528,6 +1528,74 @@ describe("handleConversation", () => {
     }
   });
 
+  test("does not queue manual runs when scheduled task validation fails", async () => {
+    let called = false;
+    const queuedRuns: string[] = [];
+    const response = await handleConversation(
+      {
+        ...baseRequest,
+        text: "run job job_github_checker",
+      },
+      createDeps({
+        agentMode: "llm",
+        schedulerControl: {
+          listJobs: () => [],
+          triggerJob: () => ({
+            ok: false,
+            reason: "validation_failed",
+            task: {
+              taskId: "job_github_checker",
+              jobId: "job_github_checker",
+              title: "Open PR monitor",
+              prompt:
+                "check for new open PRs in https://github.com/apelogic-ai github org",
+              schedule: {
+                kind: "interval",
+                every: { minutes: 15 },
+              },
+              state: "scheduled",
+              runtimeType: "hermes",
+              requiredTools: ["github_list_my_pull_requests"],
+              routeId: "convrt_123",
+              updatedAt: "2026-06-24T12:00:00.000Z",
+            },
+            validation: {
+              ok: false,
+              expectedTools: ["github_search_issues"],
+              grantedTools: ["github_list_my_pull_requests"],
+              errors: [
+                {
+                  code: "missing_required_tool",
+                  message:
+                    "Task requires github_search_issues but the grant does not include it.",
+                  tool: "github_search_issues",
+                },
+              ],
+              warnings: [],
+            },
+          }),
+        },
+        onSchedulerRunQueued: (run) => {
+          queuedRuns.push(run.runId);
+        },
+        agentRunner: stubAgentRunner(() => {
+          called = true;
+          return {
+            classification: "public",
+            text: "unexpected",
+          };
+        }),
+      }),
+    );
+
+    expect(called).toBe(false);
+    expect(queuedRuns).toEqual([]);
+    expect(response.text).toContain("Scheduled task validation failed");
+    expect(response.text).toContain("job_github_checker");
+    expect(response.text).toContain("missing_required_tool");
+    expect(response.text).toContain("github_search_issues");
+  });
+
   test("uses scheduler intent resolver to trigger a named task without invoking the LLM runner", async () => {
     let called = false;
     let resolverSawJobs = 0;

@@ -437,6 +437,67 @@ describe("scheduler control plane", () => {
     store.close();
   });
 
+  test("does not trigger scheduled tasks with invalid grants", async () => {
+    const store = createTokenStore(":memory:");
+    store.upsertScheduledJob({
+      jobId: "github-pr-monitor",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      title: "Open PR monitor",
+      prompt:
+        "check for new open PRs in https://github.com/apelogic-ai github org",
+      schedule: {
+        kind: "interval",
+        every: { minutes: 15 },
+      },
+      routeId: "convrt_123",
+      runtimeType: "hermes",
+      now: new Date("2026-06-24T12:00:00.000Z"),
+    });
+    store.upsertAgentJobCapability({
+      jobId: "github-pr-monitor",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      requiredTools: ["github_list_my_pull_requests"],
+      routeId: "convrt_123",
+      runtimeType: "hermes",
+      now: new Date("2026-06-24T12:01:00.000Z"),
+    });
+
+    const scheduler = createSchedulerControlPlane(store, {
+      newRunId: () => "jobrun-should-not-exist",
+    });
+
+    expect(
+      await scheduler.triggerJob?.({
+        workspaceId: "T123",
+        slackUserId: "U123",
+        jobId: "github-pr-monitor",
+      }),
+    ).toMatchObject({
+      ok: false,
+      reason: "validation_failed",
+      task: {
+        taskId: "github-pr-monitor",
+        requiredTools: ["github_list_my_pull_requests"],
+      },
+      validation: {
+        ok: false,
+        expectedTools: ["github_search_issues"],
+        grantedTools: ["github_list_my_pull_requests"],
+        errors: [
+          {
+            code: "missing_required_tool",
+            tool: "github_search_issues",
+          },
+        ],
+      },
+    });
+    expect(store.listAgentJobRunsForPrincipal("T123", "U123")).toEqual([]);
+
+    store.close();
+  });
+
   test("passes validation for scheduled task grants that match inferred tools", async () => {
     const store = createTokenStore(":memory:");
     store.upsertScheduledJob({
