@@ -426,6 +426,13 @@ print(json.dumps({"text": mod.build_hermes_turn_text(payload)}))
     expect(text).toContain(
       "Do not call provider tools that are not listed here",
     );
+    expect(text).toContain("Provider execution skill:");
+    expect(text).toContain(
+      "If the user request requires provider data or provider state changes, invoke the needed structured provider tool before answering",
+    );
+    expect(text).toContain(
+      "A Slack progress marker such as `:gear: github_search_issues: ...` is not a tool call",
+    );
     expect(text).toContain("github_list_my_pull_requests");
     expect(text).not.toContain("google_search_drive_files");
     expect(text).toContain("scheduled_job_register_capability");
@@ -459,6 +466,33 @@ print(json.dumps({"text": mod.build_hermes_turn_text(payload)}))
     expect(text).toContain("Use direct Burble MCP provider tools");
     expect(text).toContain("Do not wrap a direct MCP provider call");
     expect(text).not.toContain("Use Hermes tool burble_provider_call");
+    expect(text).toContain("Provider execution skill:");
+    expect(text).toContain("Prefer direct underscored MCP tool names");
+  });
+
+  test("adds provider execution skill for multi-provider user turns", () => {
+    const result = runHermesEntrypointProbe(`${importEntrypoint}
+import os
+os.environ["BURBLE_MCP_GATEWAY_URL"] = "http://agentgateway:3000/mcp"
+os.environ["BURBLE_RUNTIME_JWT"] = "jwt"
+payload = {
+    "text": "look up my latest open PRs in github and create a google drive file with summary",
+    "toolGroups": {
+        "groups": ["conversation", "github", "google"],
+        "reasons": ["default:conversation", "keyword:github:github", "keyword:google:google"],
+    },
+}
+print(json.dumps({"text": mod.build_hermes_turn_text(payload)}))
+`);
+
+    const text = (result as { text: string }).text;
+    expect(text).toContain("Provider execution skill:");
+    expect(text).toContain("github_list_my_pull_requests");
+    expect(text).toContain("google_create_drive_text_file");
+    expect(text).toContain(
+      "After each structured tool result returns, continue reasoning normally. If another provider action is needed, invoke the next structured tool",
+    );
+    expect(text).toContain("A Slack progress marker");
   });
 
   test("builds current attachment guidance for Hermes turns", () => {
@@ -2210,6 +2244,37 @@ print(json.dumps({"text": mod.format_scheduled_job_context(payload, now_utc="202
     expect(text).toContain(
       "Use currentUtc for scheduled time-window calculations",
     );
+  });
+
+  test("adds scheduled provider execution skill from allowed tools", () => {
+    const result = runHermesEntrypointProbe(`${importEntrypoint}
+payload = {
+    "text": "check new open PRs in repos of https://github.com/apelogic-ai github org",
+    "scheduledJob": {
+        "jobId": "job-pr-monitor",
+        "capabilityProfile": "scheduled_job",
+        "allowedTools": ["github_search_issues"],
+        "routeId": "convrt_abc123",
+        "runtimeType": "hermes",
+        "stateRefs": [],
+        "visibilityPolicy": {"maxOutputVisibility": "user_private"},
+    },
+}
+print(json.dumps({"text": mod.build_hermes_turn_text(payload)}))
+`);
+
+    const text = (result as { text: string }).text;
+    expect(text).toContain("Scheduled provider execution skill:");
+    expect(text).toContain(
+      "allowed structured provider tools are: github_search_issues",
+    );
+    expect(text).toContain(
+      "invoke the needed allowed tool through the Hermes structured tool protocol",
+    );
+    expect(text).toContain("Do not answer with `:gear:`");
+    expect(text).toContain("Include jobId=job-pr-monitor");
+    expect(text).toContain("github_search_issues (github.searchIssues)");
+    expect(text).toContain("input schema");
   });
 
   test("adds provider-backed scheduled job repair guidance to scheduler-only Hermes turns", () => {

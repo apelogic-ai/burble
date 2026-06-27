@@ -411,13 +411,19 @@ def build_hermes_turn_text(input_body: dict[str, Any]) -> str:
                             "For native scheduled/background jobs that will use Burble provider tools, first create the native job without an immediate/manual run, then call the dedicated scheduled provider registration tool scheduled_job_register_capability with the exact returned jobId and requiredTools, then include the returned scheduledPromptInstruction verbatim in the scheduled job prompt before enabling or triggering it.",
                         ]
                     )
-                    for hint in tool_hints:
-                        lines.append(format_hermes_provider_tool_hint(hint))
+                    provider_execution_skill = format_provider_execution_skill(
+                        tool_hints
+                    )
+                    if provider_execution_skill:
+                        lines.append(provider_execution_skill)
                     sections.append("\n".join(lines))
 
     scheduled_job_context = format_scheduled_job_context(input_body)
     if scheduled_job_context:
         sections.append(scheduled_job_context)
+    scheduled_provider_skill = format_scheduled_provider_execution_skill(input_body)
+    if scheduled_provider_skill:
+        sections.append(scheduled_provider_skill)
 
     sections.append(f"User request:\n{text}")
     return "\n\n".join(sections)
@@ -1135,6 +1141,112 @@ def format_scheduled_job_context(
     lines.append(
         "Respect maxOutputVisibility when sending scheduled output. Do not publicly post private-tool-derived content; public channel delivery for authenticated provider read output requires an explicit declassification approval flow that is not implemented yet. Write-only provider state tools do not by themselves make public-source output private."
     )
+    return "\n".join(lines)
+
+
+def scheduled_allowed_provider_tool_names(
+    input_body: dict[str, Any],
+) -> list[str]:
+    scheduled_job = input_body.get("scheduledJob")
+    if not isinstance(scheduled_job, dict):
+        return []
+    allowed_tools = scheduled_job.get("allowedTools")
+    if not isinstance(allowed_tools, list):
+        return []
+    tool_names: list[str] = []
+    seen: set[str] = set()
+    for raw_tool in allowed_tools:
+        tool_name = canonical_hermes_provider_tool_name(str(raw_tool or ""))
+        if not tool_name or tool_name in seen:
+            continue
+        if provider_tool_hint_by_name(tool_name):
+            seen.add(tool_name)
+            tool_names.append(tool_name)
+    return sorted(tool_names)
+
+
+def scheduled_hermes_provider_tool_hints(
+    input_body: dict[str, Any],
+) -> list[dict[str, Any]]:
+    hints: list[dict[str, Any]] = []
+    for tool_name in scheduled_allowed_provider_tool_names(input_body):
+        hint = provider_tool_hint_by_name(tool_name)
+        if hint:
+            hints.append(hint)
+    return hints
+
+
+def format_scheduled_provider_execution_skill(
+    input_body: dict[str, Any],
+) -> str:
+    scheduled_job = input_body.get("scheduledJob")
+    if not isinstance(scheduled_job, dict):
+        return ""
+    hints = scheduled_hermes_provider_tool_hints(input_body)
+    if not hints:
+        return ""
+    job_id = str(scheduled_job.get("jobId") or "").strip()
+    allowed_tool_text = ", ".join(hint["name"] for hint in hints)
+    lines = [
+        "Scheduled provider execution skill:",
+        f"- This is a scheduled Burble job. Its allowed structured provider tools are: {allowed_tool_text}.",
+        "- You must invoke the needed allowed tool through the Hermes structured tool protocol before answering.",
+        "- Do not answer with `:gear:`, `Calling ...`, raw tool JSON, or a provider tool name as text.",
+        "- After the structured tool result returns, write a normal Slack-ready final answer based on that result.",
+        "- If the tool returns an error object, explain the error in normal Slack text.",
+    ]
+    if job_id:
+        lines.append(
+            f"- Include jobId={job_id} in each scheduled provider tool input."
+        )
+    if hermes_mcp_catalog_enabled():
+        lines.extend(
+            [
+                "- Prefer the direct underscored MCP tool name exactly as listed below.",
+                "- Use burble_provider_call only if the direct underscored tool is not exposed in this Hermes session.",
+            ]
+        )
+    else:
+        lines.append(
+            "- Use burble_provider_call with toolName set to the dotted alias in parentheses and input set to that tool's arguments."
+        )
+    lines.append("Allowed scheduled provider tool schemas:")
+    for hint in hints:
+        lines.append(format_hermes_provider_tool_hint(hint))
+    return "\n".join(lines)
+
+
+def format_provider_execution_skill(
+    hints: list[dict[str, Any]],
+    *,
+    title: str = "Provider execution skill:",
+) -> str:
+    if not hints:
+        return ""
+    tool_names = ", ".join(hint["name"] for hint in hints)
+    lines = [
+        title,
+        f"- Available structured provider tools for this turn: {tool_names}.",
+        "- If the user request requires provider data or provider state changes, invoke the needed structured provider tool before answering.",
+        "- A Slack progress marker such as `:gear: github_search_issues: ...` is not a tool call and is invalid as an answer.",
+        "- Do not answer with `:gear:`, `Calling ...`, raw tool JSON, or a provider tool name as text.",
+        "- After each structured tool result returns, continue reasoning normally. If another provider action is needed, invoke the next structured tool; otherwise write the final Slack-ready answer.",
+        "- If a provider tool returns an error object, explain the error in normal Slack text.",
+    ]
+    if hermes_mcp_catalog_enabled():
+        lines.extend(
+            [
+                "- Prefer direct underscored MCP tool names exactly as listed below.",
+                "- Use burble_provider_call only if the direct underscored tool is not exposed in this Hermes session.",
+            ]
+        )
+    else:
+        lines.append(
+            "- Use burble_provider_call with toolName set to the dotted alias in parentheses and input set to that tool's arguments."
+        )
+    lines.append("Provider tool schemas:")
+    for hint in hints:
+        lines.append(format_hermes_provider_tool_hint(hint))
     return "\n".join(lines)
 
 
