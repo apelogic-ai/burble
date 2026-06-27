@@ -292,7 +292,7 @@ describe("scheduler run executor", () => {
 
     expect(runnerInputs).toHaveLength(1);
     expect(runnerInputs[0]).toMatchObject({
-      text: "Post exactly this message: ❤️",
+      text: "Return exactly this message as your entire final answer, with no extra text. Do not call tools for delivery; Burble will deliver your final answer.\n\n❤️",
       conversation: {
         routeId: route.id,
         channelId: "C123",

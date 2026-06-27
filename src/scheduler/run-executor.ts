@@ -71,8 +71,9 @@ export function createSchedulerRunExecutor(input: {
         input.logInfo?.(
           `Scheduled job run start runId=${run.runId} jobId=${job.jobId}`,
         );
+        const runtimePrompt = runtimePromptForScheduledJob(job.prompt);
         const toolGroups = selectRuntimeToolGroups({
-          text: job.prompt,
+          text: runtimePrompt,
           attachmentCount: 0,
           contextTexts: [],
         });
@@ -99,7 +100,7 @@ export function createSchedulerRunExecutor(input: {
                 },
               }
             : {}),
-          text: job.prompt,
+          text: runtimePrompt,
           toolGroups,
           ...(scheduledJobContext ? { scheduledJob: scheduledJobContext } : {}),
           connections: {
@@ -210,6 +211,22 @@ function isDeliveryOnlyScheduledJobContext(
     context.allowedTools.length === 0 ||
     context.allowedTools.every((tool) => tool === "conversation.sendMessage")
   );
+}
+
+function runtimePromptForScheduledJob(prompt: string): string {
+  const literalMessage = readLiteralScheduledMessage(prompt);
+  if (!literalMessage) {
+    return prompt;
+  }
+  return `Return exactly this message as your entire final answer, with no extra text. Do not call tools for delivery; Burble will deliver your final answer.\n\n${literalMessage}`;
+}
+
+function readLiteralScheduledMessage(prompt: string): string | null {
+  const match = /^Post exactly this message:\s*(?<message>.+)$/isu.exec(
+    prompt.trim(),
+  );
+  const message = match?.groups?.message?.trim();
+  return message ? message : null;
 }
 
 function scheduledRunConversationRoot(
