@@ -88,6 +88,7 @@ export type SchedulerControlIntent =
   | "resume_job"
   | "delete_job"
   | "update_job_delivery"
+  | "update_job_schedule"
   | "latest_run_status"
   | null;
 
@@ -102,6 +103,7 @@ export type SchedulerIntentResolverResult = {
   confidence: number;
   jobId?: string | null;
   create?: SchedulerResolvedCreateJob | null;
+  schedule?: unknown;
 };
 
 export type SchedulerIntentResolver = (input: {

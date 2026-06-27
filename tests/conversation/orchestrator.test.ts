@@ -1006,7 +1006,7 @@ describe("handleConversation", () => {
       "Created scheduled job job-ai-news-hourly.",
     );
     expect(response.text).toContain("Hourly AI news summary");
-    expect(response.text).toContain("schedule: cron 0 * * * * (UTC)");
+    expect(response.text).toContain("schedule: `cron 0 * * * * (UTC)`");
     expect(response.text).toContain("runtime: hermes");
     expect(response.text).toContain("delivery: this conversation");
   });
@@ -1137,7 +1137,7 @@ describe("handleConversation", () => {
         runtimeType: "hermes",
       },
     ]);
-    expect(response.text).toContain("schedule: cron */15 * * * * (UTC)");
+    expect(response.text).toContain("schedule: `cron */15 * * * * (UTC)`");
     expect(response.text).toContain("delivery: this conversation");
   });
 
@@ -1312,6 +1312,97 @@ describe("handleConversation", () => {
         runtimeType: null,
       },
     ]);
+  });
+
+  test("updates an existing scheduler task schedule from semantic resolver output", async () => {
+    let called = false;
+    let created = false;
+    const updates: unknown[] = [];
+    const response = await handleConversation(
+      {
+        ...baseRequest,
+        conversationRouteId: "convrt_heart",
+        text: "modify heart emoji job to run every 45 min",
+      },
+      createDeps({
+        agentMode: "llm",
+        agentRuntimeEngine: "hermes",
+        schedulerControl: {
+          listJobs: () => [
+            {
+              jobId: "job_heart",
+              title: "Heart emoji every 30 min",
+              prompt: "Post exactly this message: ❤️",
+              schedule: {
+                kind: "cron",
+                expression: "*/30 * * * *",
+                timezone: "UTC",
+              },
+              state: "scheduled",
+              runtimeType: "hermes",
+              requiredTools: [],
+              routeId: "convrt_heart",
+              updatedAt: "2026-06-27T17:39:00.000Z",
+            },
+          ],
+          createJob: () => {
+            created = true;
+            throw new Error("unexpected create");
+          },
+          updateJobSchedule: (input) => {
+            updates.push(input);
+            return {
+              ok: true,
+              job: {
+                jobId: "job_heart",
+                workspaceId: input.workspaceId,
+                slackUserId: input.slackUserId,
+                title: "Heart emoji every 30 min",
+                prompt: "Post exactly this message: ❤️",
+                schedule: input.schedule,
+                routeId: "convrt_heart",
+                state: "scheduled",
+                runtimeType: "hermes",
+                createdAt: "2026-06-27T17:39:00.000Z",
+                updatedAt: "2026-06-27T17:40:00.000Z",
+              },
+            };
+          },
+        },
+        schedulerIntentResolver: async () => ({
+          intent: "update_job_schedule",
+          confidence: 0.96,
+          jobId: "job_heart",
+          schedule: {
+            kind: "cron",
+            expression: "*/45 * * * *",
+            timezone: "UTC",
+          },
+        }),
+        agentRunner: stubAgentRunner(() => {
+          called = true;
+          return {
+            classification: "public",
+            text: "unexpected",
+          };
+        }),
+      }),
+    );
+
+    expect(called).toBe(false);
+    expect(created).toBe(false);
+    expect(updates).toEqual([
+      {
+        workspaceId: "T123",
+        slackUserId: "U123",
+        jobId: "job_heart",
+        schedule: { kind: "cron", expression: "*/45 * * * *", timezone: "UTC" },
+      },
+    ]);
+    expect(response.text).toContain(
+      "Updated scheduled job job_heart schedule.",
+    );
+    expect(response.text).toContain("`cron */45 * * * * (UTC)`");
   });
 
   test("updates scheduled job delivery from a Slack channel mention without invoking the LLM runner", async () => {

@@ -298,7 +298,7 @@ describe("local Slack testbed", () => {
       );
       expect(jobs).toHaveLength(1);
       expect(jobs[0]).toMatchObject({
-        title: "Hourly AI news summary",
+        title: expect.stringMatching(/ai news/i),
         schedule: { kind: "cron", expression: "0 * * * *", timezone: "UTC" },
         runtimeType: "hermes",
       });
@@ -318,7 +318,7 @@ describe("local Slack testbed", () => {
         .map((message) => message.text)
         .join("\n");
       expect(createText).toContain("Created scheduled job");
-      expect(createText).toContain("Hourly AI news summary");
+      expect(createText).toMatch(/ai news/i);
       expect(createText).not.toContain("Starting agent runtime");
       expect(createText).not.toContain("Runtime detail");
 

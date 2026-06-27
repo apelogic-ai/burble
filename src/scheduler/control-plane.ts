@@ -76,6 +76,11 @@ export type SchedulerControlPlane = {
   ):
     | Promise<SchedulerUpdateJobDeliveryResult>
     | SchedulerUpdateJobDeliveryResult;
+  updateJobSchedule?(
+    input: SchedulerUpdateJobScheduleInput,
+  ):
+    | Promise<SchedulerUpdateJobScheduleResult>
+    | SchedulerUpdateJobScheduleResult;
   triggerJob?(input: {
     workspaceId: string;
     slackUserId: string;
@@ -182,6 +187,10 @@ export type SchedulerUpdateJobDeliveryInput = SchedulerJobMutationInput & {
   channelName?: string | null;
 };
 
+export type SchedulerUpdateJobScheduleInput = SchedulerJobMutationInput & {
+  schedule: unknown;
+};
+
 export type SchedulerJobMutationResult =
   | {
       ok: true;
@@ -212,6 +221,8 @@ export type SchedulerUpdateJobDeliveryResult =
       channelId?: string | null;
       channelName?: string | null;
     };
+
+export type SchedulerUpdateJobScheduleResult = SchedulerJobMutationResult;
 
 export type SchedulerJobDeleteResult =
   | {
@@ -395,6 +406,9 @@ export function createSchedulerControlPlane(
         options.resolveSlackChannelIdByName,
       );
     },
+    updateJobSchedule(input) {
+      return updateScheduledJobSchedule(store, input, now());
+    },
     triggerJob(input) {
       const jobs = listJobs(input);
       const job = selectSchedulerJob(jobs, input.jobId);
@@ -406,8 +420,9 @@ export function createSchedulerControlPlane(
         .listScheduledJobsForPrincipal(input.workspaceId, input.slackUserId)
         .find((candidate) => candidate.jobId === job.job.jobId);
       if (record) {
-        let capability: SchedulerTaskGrant | null =
-          store.getAgentJobCapability(record.jobId);
+        let capability: SchedulerTaskGrant | null = store.getAgentJobCapability(
+          record.jobId,
+        );
         if (!capability) {
           ensureScheduledJobCapability(store, record, timestamp);
           capability = {
@@ -450,6 +465,45 @@ export function createSchedulerControlPlane(
   };
 }
 
+function updateScheduledJobSchedule(
+  store: Pick<
+    TokenStore,
+    | "listScheduledJobsForPrincipal"
+    | "upsertScheduledJob"
+    | "upsertAgentJobCapability"
+  >,
+  input: SchedulerUpdateJobScheduleInput,
+  now: Date,
+): SchedulerUpdateJobScheduleResult {
+  const records = store.listScheduledJobsForPrincipal(
+    input.workspaceId,
+    input.slackUserId,
+  );
+  const jobs = records.map(summarizeScheduledJob);
+  const selection = selectSchedulerJob(jobs, input.jobId);
+  if (!selection.ok) {
+    return selection;
+  }
+  const record = records.find((job) => job.jobId === selection.job.jobId);
+  if (!record) {
+    return { ok: false, reason: "not_found", jobs };
+  }
+  const job = store.upsertScheduledJob({
+    jobId: record.jobId,
+    workspaceId: record.workspaceId,
+    slackUserId: record.slackUserId,
+    title: record.title,
+    prompt: record.prompt,
+    schedule: input.schedule,
+    routeId: record.routeId,
+    runtimeType: record.runtimeType,
+    state: record.state,
+    now,
+  });
+  ensureScheduledJobCapability(store, job, now);
+  return { ok: true, job };
+}
+
 function updateScheduledJobDelivery(
   store: Pick<
     TokenStore,
@@ -465,8 +519,7 @@ function updateScheduledJobDelivery(
     channelName: string;
   }) => Promise<string | null> | string | null,
 ):
-  | Promise<SchedulerUpdateJobDeliveryResult>
-  | SchedulerUpdateJobDeliveryResult {
+  Promise<SchedulerUpdateJobDeliveryResult> | SchedulerUpdateJobDeliveryResult {
   const records = store.listScheduledJobsForPrincipal(
     input.workspaceId,
     input.slackUserId,

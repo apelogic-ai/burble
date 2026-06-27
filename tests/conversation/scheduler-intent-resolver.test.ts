@@ -74,6 +74,23 @@ describe("scheduler intent resolver", () => {
     });
   });
 
+  test("parses schedule update intents", () => {
+    expect(
+      parseSchedulerIntentResponse(
+        '{"intent":"update_job_schedule","confidence":0.92,"jobId":"job_heart","schedule":{"kind":"cron","expression":"*/45 * * * *","timezone":"UTC"}}',
+      ),
+    ).toEqual({
+      intent: "update_job_schedule",
+      confidence: 0.92,
+      jobId: "job_heart",
+      schedule: {
+        kind: "cron",
+        expression: "*/45 * * * *",
+        timezone: "UTC",
+      },
+    });
+  });
+
   test("parses task validation intents", () => {
     expect(
       parseSchedulerIntentResponse(

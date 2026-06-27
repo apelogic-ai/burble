@@ -643,6 +643,59 @@ describe("scheduler control plane", () => {
     store.close();
   });
 
+  test("updates scheduled job schedule without creating a new job", async () => {
+    const store = createTokenStore(":memory:");
+    store.upsertScheduledJob({
+      jobId: "job-heart",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      title: "Heart emoji every 30 min",
+      prompt: "Post exactly this message: ❤️",
+      schedule: {
+        kind: "cron",
+        expression: "*/30 * * * *",
+        timezone: "UTC",
+      },
+      routeId: "convrt_heart",
+      runtimeType: "hermes",
+      now: new Date("2026-06-27T17:39:00.000Z"),
+    });
+    const scheduler = createSchedulerControlPlane(store, {
+      now: () => new Date("2026-06-27T17:40:00.000Z"),
+    });
+
+    expect(
+      await scheduler.updateJobSchedule?.({
+        workspaceId: "T123",
+        slackUserId: "U123",
+        jobId: "job-heart",
+        schedule: {
+          kind: "cron",
+          expression: "*/45 * * * *",
+          timezone: "UTC",
+        },
+      }),
+    ).toEqual({
+      ok: true,
+      job: expect.objectContaining({
+        jobId: "job-heart",
+        schedule: {
+          kind: "cron",
+          expression: "*/45 * * * *",
+          timezone: "UTC",
+        },
+        updatedAt: "2026-06-27T17:40:00.000Z",
+      }),
+    });
+    expect(
+      store
+        .listScheduledJobsForPrincipal("T123", "U123")
+        .map((job) => job.jobId),
+    ).toEqual(["job-heart"]);
+
+    store.close();
+  });
+
   test("updates scheduled job delivery to an existing Slack channel grant", async () => {
     const store = createTokenStore(":memory:");
     store.upsertScheduledJob({
