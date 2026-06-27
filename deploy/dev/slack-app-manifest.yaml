@@ -18,6 +18,16 @@ features:
       description: Show Burble commands and examples.
       url: https://example.com/slack/commands
       should_escape: false
+    - command: /tasks
+      description: Manage Burble scheduled tasks.
+      usage_hint: "[list|show|validate|create|run|pause|resume|delete|schedule|prompt]"
+      url: https://example.com/slack/commands
+      should_escape: false
+    - command: /jobs
+      description: Inspect Burble scheduled job runs.
+      usage_hint: "[list|status]"
+      url: https://example.com/slack/commands
+      should_escape: false
     - command: /agent
       description: Show or inspect your Burble agent runtime.
       usage_hint: "[status|config]"

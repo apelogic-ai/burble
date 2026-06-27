@@ -1337,7 +1337,7 @@ function hasSequence(tokens: string[], sequence: string[]): boolean {
   });
 }
 
-function formatScheduledJobList(
+export function formatScheduledJobList(
   jobs: Array<{
     jobId: string;
     title: string | null;
@@ -1369,7 +1369,7 @@ function formatScheduledJobList(
   return lines.join("\n");
 }
 
-function formatScheduledJobRunList(
+export function formatScheduledJobRunList(
   runs: Array<{
     runId: string;
     jobId: string;
@@ -1397,7 +1397,7 @@ function formatScheduledJobRunList(
   return lines.join("\n");
 }
 
-function formatScheduledTaskDetailResult(
+export function formatScheduledTaskDetailResult(
   result: SchedulerShowTaskResult,
 ): string {
   if (!result.ok) {
@@ -1453,7 +1453,7 @@ function formatScheduledTaskDetailResult(
   return lines.join("\n");
 }
 
-function formatScheduledTaskValidationResult(
+export function formatScheduledTaskValidationResult(
   result: SchedulerValidateTaskResult,
 ): string {
   if (!result.ok) {
@@ -1498,7 +1498,7 @@ function formatScheduledTaskValidationResult(
   return lines.join("\n");
 }
 
-function formatScheduledJobTriggerResult(
+export function formatScheduledJobTriggerResult(
   result: SchedulerTriggerResult,
 ): string {
   if (result.ok) {
@@ -1536,7 +1536,7 @@ function formatScheduledJobTriggerResult(
   ].join("\n");
 }
 
-function formatScheduledJobCreateResult(
+export function formatScheduledJobCreateResult(
   result: SchedulerCreateJobResult,
 ): string {
   return [
@@ -1604,7 +1604,7 @@ function formatIntervalPart(value: unknown, suffix: string): string | null {
   return `${Math.floor(value)}${suffix}`;
 }
 
-function formatScheduledJobMutationResult(
+export function formatScheduledJobMutationResult(
   verb: "Paused" | "Resumed",
   result: SchedulerJobMutationResult,
 ): string {
@@ -1614,7 +1614,7 @@ function formatScheduledJobMutationResult(
   return formatScheduledJobSelectionFailure(result);
 }
 
-function formatScheduledJobDeleteResult(
+export function formatScheduledJobDeleteResult(
   result: SchedulerJobDeleteResult,
 ): string {
   if (result.ok) {
@@ -1652,7 +1652,7 @@ function formatScheduledJobDeliveryUpdateResult(
   return `No scheduled-job delivery grant exists for ${channel}. Grant Burble access from that channel, then retry.`;
 }
 
-function formatScheduledJobScheduleUpdateResult(
+export function formatScheduledJobScheduleUpdateResult(
   result: SchedulerUpdateJobScheduleResult,
 ): string {
   if (result.ok) {
@@ -1664,7 +1664,7 @@ function formatScheduledJobScheduleUpdateResult(
   return formatScheduledJobSelectionFailure(result);
 }
 
-function formatScheduledJobPromptUpdateResult(
+export function formatScheduledJobPromptUpdateResult(
   result: SchedulerUpdateJobPromptResult,
 ): string {
   if (result.ok) {
@@ -1695,7 +1695,7 @@ function formatScheduledJobSelectionFailure(
   ].join("\n");
 }
 
-function formatScheduledRunStatusResult(
+export function formatScheduledRunStatusResult(
   result: SchedulerRunStatusResult,
 ): string {
   if (!result.ok) {
