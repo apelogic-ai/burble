@@ -6,6 +6,7 @@ import {
   type ScheduledJobContext,
 } from "../agent/scheduled-job-context";
 import { isRuntimeProgressOnlyResponseText } from "../agent/runtime-control-notices";
+import { containsRuntimeToolCallProtocolFragments } from "@burble/runtime-sdk/runtime-text-protocol";
 import { inferAllowedToolsForScheduledJob } from "./job-capabilities";
 import type {
   AgentJobRunRecord,
@@ -120,6 +121,11 @@ export function createSchedulerRunExecutor(input: {
         });
 
         const resultText = result.text.trim();
+        if (containsRuntimeToolCallProtocolFragments(resultText)) {
+          throw new Error(
+            "Managed runtime final response leaked tool-call protocol text",
+          );
+        }
         if (
           destination &&
           resultText &&

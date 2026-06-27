@@ -417,6 +417,103 @@ describe("scheduler run executor", () => {
     store.close();
   });
 
+  test("fails leaked provider markers with arguments instead of delivering them", async () => {
+    const store = createTokenStore(":memory:");
+    const route = store.upsertConversationRoute({
+      workspaceId: "T123",
+      slackUserId: "U123",
+      transport: "slack",
+      destination: {
+        channelId: "C123",
+        isDirectMessage: false,
+        rootId: "slack:C123:1710000000.000000",
+        threadTs: "1710000000.000000",
+      },
+      now: new Date("2026-06-25T17:00:00.000Z"),
+    });
+    const job = store.upsertScheduledJob({
+      jobId: "job-pr-monitor",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      title: "Check every 15 min for new PRs in apelogic-ai GitHub org",
+      prompt:
+        "check every 15 min for new PRs in repos of https://github.com/apelogic-ai github org, post in this channel",
+      schedule: { kind: "interval", every: { minutes: 15 } },
+      routeId: route.id,
+      runtimeType: "hermes",
+      state: "scheduled",
+      now: new Date("2026-06-25T17:01:00.000Z"),
+    });
+    const run = store.createAgentJobRun({
+      runId: "jobrun-pr-monitor",
+      jobId: job.jobId,
+      workspaceId: "T123",
+      slackUserId: "U123",
+      triggerSource: "schedule",
+      status: "queued",
+      now: new Date("2026-06-25T17:02:00.000Z"),
+    });
+    const runner: AgentRunner = {
+      name: "test-runner",
+      capabilities: {
+        streaming: true,
+        toolEvents: true,
+        remote: true,
+      },
+      async *run() {
+        yield {
+          type: "final",
+          response: {
+            classification: "user_private",
+            text: `:gear: github_search_issues: "org:apelogic-ai is:pr created:>=2026-06-27"`,
+          },
+        };
+      },
+    };
+    const posts: Array<{ channel: string; text: string; thread_ts?: string }> =
+      [];
+    const warnings: string[] = [];
+    const executor = createSchedulerRunExecutor({
+      store,
+      agentRunner: runner,
+      slackClient: {
+        chat: {
+          postMessage: async (message) => {
+            posts.push(message);
+            return {};
+          },
+        },
+      },
+      logWarn: (message) => warnings.push(message),
+    });
+
+    await executor.executeRun(run.runId);
+
+    expect(posts).toEqual([
+      {
+        channel: "C123",
+        thread_ts: "1710000000.000000",
+        text: [
+          "Scheduled job failed: Check every 15 min for new PRs in apelogic-ai GitHub org",
+          "Job ID: job-pr-monitor",
+          "Run ID: jobrun-pr-monitor",
+          "Reason: Managed runtime final response leaked tool-call protocol text",
+        ].join("\n"),
+      },
+    ]);
+    expect(warnings).toEqual([
+      "Scheduled job run failed runId=jobrun-pr-monitor error=Managed runtime final response leaked tool-call protocol text",
+    ]);
+    expect(store.getAgentJobRun(run.runId)).toMatchObject({
+      runId: run.runId,
+      status: "failed",
+      failureReason:
+        "Managed runtime final response leaked tool-call protocol text",
+    });
+
+    store.close();
+  });
+
   test("retries progress-only scheduled provider runs before any tool call", async () => {
     const store = createTokenStore(":memory:");
     const route = store.upsertConversationRoute({

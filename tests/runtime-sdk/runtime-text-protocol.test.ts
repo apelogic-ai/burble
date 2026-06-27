@@ -1,14 +1,14 @@
 import { describe, expect, test } from "bun:test";
 import {
   containsRuntimeToolCallProtocolFragments,
-  stripRuntimeToolCallProtocolFragments
+  stripRuntimeToolCallProtocolFragments,
 } from "@burble/runtime-sdk/runtime-text-protocol";
 
 describe("stripRuntimeToolCallProtocolFragments", () => {
   test("leaves ordinary prose unchanged", () => {
-    expect(stripRuntimeToolCallProtocolFragments("Done — I created the deck.")).toBe(
-      "Done — I created the deck."
-    );
+    expect(
+      stripRuntimeToolCallProtocolFragments("Done — I created the deck."),
+    ).toBe("Done — I created the deck.");
   });
 
   test("strips pure tool-call protocol text", () => {
@@ -17,10 +17,10 @@ describe("stripRuntimeToolCallProtocolFragments", () => {
         JSON.stringify({
           tool_call: {
             name: "google.slidesCreateSlide",
-            arguments: { presentationId: "deck-1" }
-          }
-        })
-      )
+            arguments: { presentationId: "deck-1" },
+          },
+        }),
+      ),
     ).toBe("");
   });
 
@@ -33,15 +33,17 @@ describe("stripRuntimeToolCallProtocolFragments", () => {
           replacements: [
             {
               placeholderType: "BODY",
-              text: "Nested {braces} inside a string are content."
-            }
-          ]
-        }
-      }
+              text: "Nested {braces} inside a string are content.",
+            },
+          ],
+        },
+      },
     });
 
     expect(
-      stripRuntimeToolCallProtocolFragments(`Done — I created the deck.\n\n${protocol}`)
+      stripRuntimeToolCallProtocolFragments(
+        `Done — I created the deck.\n\n${protocol}`,
+      ),
     ).toBe("Done — I created the deck.");
   });
 
@@ -56,7 +58,7 @@ to=burble_provider_call code
 {"tool":"github_search_issues","ok":true,"data":{"issues":[{"number":602}]}}
 
 New open PRs:
-- apelogic-ai/burble #61 - link`)
+- apelogic-ai/burble #61 - link`),
     ).toBe(`Checking the last 24h window.
 
 New open PRs:
@@ -66,12 +68,12 @@ New open PRs:
   test("keeps ordinary JSON that is not the runtime tool protocol", () => {
     const json = JSON.stringify({
       status: "ok",
-      tool: "google.slidesCreateSlide"
+      tool: "google.slidesCreateSlide",
     });
 
-    expect(stripRuntimeToolCallProtocolFragments(`Debug payload:\n${json}`)).toBe(
-      `Debug payload:\n${json}`
-    );
+    expect(
+      stripRuntimeToolCallProtocolFragments(`Debug payload:\n${json}`),
+    ).toBe(`Debug payload:\n${json}`);
   });
 
   test("detects JSON runtime tool-call protocol", () => {
@@ -80,10 +82,10 @@ New open PRs:
         JSON.stringify({
           tool_call: {
             name: "google.slidesCreateSlide",
-            arguments: { presentationId: "deck-1" }
-          }
-        })
-      )
+            arguments: { presentationId: "deck-1" },
+          },
+        }),
+      ),
     ).toBe(true);
   });
 
@@ -93,24 +95,39 @@ New open PRs:
 to=terminal_exec code
 {"command":"date -u","timeout_ms":120000}
 recipient=shell
-New PRs found.`)
+New PRs found.`),
     ).toBe(true);
   });
 
   test("detects Hermes native cronjob markers", () => {
     expect(
-      containsRuntimeToolCallProtocolFragments(`:alarm_clock: cronjob: "create"`)
+      containsRuntimeToolCallProtocolFragments(
+        `:alarm_clock: cronjob: "create"`,
+      ),
     ).toBe(true);
     expect(containsRuntimeToolCallProtocolFragments(`cronjob: "list"`)).toBe(
-      true
+      true,
     );
+  });
+
+  test("detects Hermes provider progress markers with arguments", () => {
+    expect(
+      containsRuntimeToolCallProtocolFragments(
+        `:gear: github_search_issues: "org:apelogic-ai is:pr created:>=2026-06-27"`,
+      ),
+    ).toBe(true);
+    expect(
+      stripRuntimeToolCallProtocolFragments(
+        `:gear: github_search_issues: "org:apelogic-ai is:pr created:>=2026-06-27"`,
+      ),
+    ).toBe("");
   });
 
   test("does not flag ordinary prose or non-protocol JSON", () => {
     expect(
       containsRuntimeToolCallProtocolFragments(
-        `Send this to=example note in prose.\n${JSON.stringify({ ok: true })}`
-      )
+        `Send this to=example note in prose.\n${JSON.stringify({ ok: true })}`,
+      ),
     ).toBe(false);
   });
 });

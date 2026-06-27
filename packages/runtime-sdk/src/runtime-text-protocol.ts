@@ -1,4 +1,6 @@
-export function containsRuntimeToolCallProtocolFragments(text: string): boolean {
+export function containsRuntimeToolCallProtocolFragments(
+  text: string,
+): boolean {
   if (containsRuntimeToolProtocolLine(text)) {
     return true;
   }
@@ -18,7 +20,11 @@ export function containsRuntimeToolCallProtocolFragments(text: string): boolean 
 
     const candidate = text.slice(index, end + 1);
     const parsed = parseJsonObject(candidate);
-    if (parsed && typeof parsed.tool_call === "object" && parsed.tool_call !== null) {
+    if (
+      parsed &&
+      typeof parsed.tool_call === "object" &&
+      parsed.tool_call !== null
+    ) {
       return true;
     }
 
@@ -51,7 +57,11 @@ export function stripRuntimeToolCallProtocolFragments(text: string): string {
 
     const candidate = source.slice(index, end + 1);
     const parsed = parseJsonObject(candidate);
-    if (parsed && typeof parsed.tool_call === "object" && parsed.tool_call !== null) {
+    if (
+      parsed &&
+      typeof parsed.tool_call === "object" &&
+      parsed.tool_call !== null
+    ) {
       removedProtocol = true;
       index = end + 1;
       continue;
@@ -103,7 +113,9 @@ function stripRuntimeToolTranscriptLines(text: string): {
     kept.push(line);
   }
 
-  return removed ? { text: kept.join("\n"), removed } : { text, removed: false };
+  return removed
+    ? { text: kept.join("\n"), removed }
+    : { text, removed: false };
 }
 
 function isRuntimeToolProtocolLine(value: string): boolean {
@@ -112,13 +124,20 @@ function isRuntimeToolProtocolLine(value: string): boolean {
     value.startsWith("recipient=") ||
     value.startsWith("<tool") ||
     value.startsWith("</tool>") ||
+    isHermesProviderToolMarkerLine(value) ||
     isHermesNativeToolMarkerLine(value)
+  );
+}
+
+function isHermesProviderToolMarkerLine(value: string): boolean {
+  return /^(?::gear:|⚙️?|gear:)?\s*(?:burble_provider_call|(?:github|google|gmail|hubspot|jira|slack|atlassian|scheduled_job|conversation)_[a-z0-9_]+)\s*(?::|\(|\{|$)/i.test(
+    value,
   );
 }
 
 function isHermesNativeToolMarkerLine(value: string): boolean {
   return /^(?::alarm_clock:|⏰)?\s*cronjob\s*:\s*"(?:create|list|run|update|modify|delete|remove|enable|disable)"\s*$/i.test(
-    value
+    value,
   );
 }
 
@@ -142,13 +161,13 @@ function findJsonObjectEnd(text: string, start: number): number | null {
         escaped = false;
       } else if (char === "\\") {
         escaped = true;
-      } else if (char === "\"") {
+      } else if (char === '"') {
         inString = false;
       }
       continue;
     }
 
-    if (char === "\"") {
+    if (char === '"') {
       inString = true;
       continue;
     }
