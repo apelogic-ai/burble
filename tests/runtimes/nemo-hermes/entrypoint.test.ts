@@ -2930,6 +2930,13 @@ print(json.dumps(list(ctx.tools_by_name.values())))
     );
     expect(result).toContainEqual(
       expect.objectContaining({
+        name: "scheduled_job_show",
+        toolset: "burble",
+        is_async: true,
+      }),
+    );
+    expect(result).toContainEqual(
+      expect.objectContaining({
         name: "scheduled_job_latest_run_status",
         toolset: "burble",
         is_async: true,

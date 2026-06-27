@@ -56,6 +56,7 @@ function createBurbleMcpToolExecutor(
       actualToolName === "scheduledJob.delete" ||
       actualToolName === "scheduledJob.trigger" ||
       actualToolName === "scheduledJob.validate" ||
+      actualToolName === "scheduledJob.show" ||
       actualToolName === "scheduledJob.latestRunStatus"
     ) {
       return executeScheduledJobControlTool(config, runtimeId, actualToolName, actualBody);

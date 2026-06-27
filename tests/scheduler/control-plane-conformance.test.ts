@@ -110,6 +110,31 @@ describe("scheduler control conformance", () => {
 
     expect(listResponse.text).toContain("ai-news-hourly");
 
+    const showResponse = await handleToolGatewayRequest(
+      config,
+      store,
+      "scheduledJob.show",
+      runtimeRequest("scheduledJob.show", {
+        input: { jobId: "ai-news-hourly" }
+      }, runtime.id, runtimeToken)
+    );
+
+    expect(showResponse.status).toBe(200);
+    const showBody = await showResponse.json();
+    expect(showBody.content).toMatchObject({
+      ok: true,
+      task: {
+        taskId: "ai-news-hourly",
+        jobId: "ai-news-hourly",
+        title: "Hourly AI news summary"
+      },
+      validation: {
+        ok: false,
+        expectedTools: ["web_search"],
+        grantedTools: []
+      }
+    });
+
     const validateResponse = await handleToolGatewayRequest(
       config,
       store,

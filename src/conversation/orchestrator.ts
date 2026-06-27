@@ -14,6 +14,7 @@ import type {
   SchedulerJobDeleteResult,
   SchedulerJobMutationResult,
   SchedulerRunStatusResult,
+  SchedulerShowTaskResult,
   SchedulerTriggerResult,
   SchedulerUpdateJobDeliveryResult,
   SchedulerValidateTaskResult,
@@ -176,6 +177,22 @@ async function handleConversationInternal(
       visibility: "ephemeral",
       classification: "user_private",
       text: formatScheduledJobRunList(result.runs),
+    };
+  }
+
+  if (
+    schedulerControlIntent === "show_task" &&
+    deps.schedulerControl?.showTask
+  ) {
+    const result = await deps.schedulerControl.showTask({
+      workspaceId: request.workspaceId,
+      slackUserId: request.user.slackUserId,
+      taskId: schedulerJobIdHint,
+    });
+    return {
+      visibility: "ephemeral",
+      classification: "user_private",
+      text: formatScheduledTaskDetailResult(result),
     };
   }
 
@@ -475,6 +492,9 @@ function classifySchedulerControlIntent(text: string): SchedulerControlIntent {
   if (isSchedulerRunStatusIntent(tokens)) {
     return "latest_run_status";
   }
+  if (isSchedulerShowTaskIntent(tokens)) {
+    return "show_task";
+  }
   if (hasAnyToken(tokens, ["validate", "inspect"])) {
     return "validate_task";
   }
@@ -589,6 +609,9 @@ function classifyExplicitSchedulerJobIdIntent(
   const tokens = tokenizeSchedulerControlText(text);
   if (isSchedulerRunStatusIntent(tokens)) {
     return "latest_run_status";
+  }
+  if (isSchedulerShowTaskIntent(tokens)) {
+    return "show_task";
   }
   if (hasAnyToken(tokens, ["validate", "inspect"])) {
     return "validate_task";
@@ -759,6 +782,16 @@ function isSchedulerValidateTaskIntent(tokens: string[]): boolean {
     return false;
   }
   return hasAnyToken(tokens, ["task", "tasks", "job", "jobs", "cron"]);
+}
+
+function isSchedulerShowTaskIntent(tokens: string[]): boolean {
+  if (!hasAnyToken(tokens, ["show", "describe", "detail", "details", "inspect"])) {
+    return false;
+  }
+  if (hasAnyToken(tokens, ["list", "all", "current"]) && !hasAnyToken(tokens, ["detail", "details"])) {
+    return false;
+  }
+  return hasAnyToken(tokens, ["task", "job", "cron"]);
 }
 
 function isSchedulerTriggerIntent(tokens: string[]): boolean {
@@ -1091,6 +1124,57 @@ function formatScheduledJobRunList(
     ].filter((value): value is string => Boolean(value));
     lines.push(`- ${run.runId} - ${details.join("; ")}`);
   }
+  return lines.join("\n");
+}
+
+function formatScheduledTaskDetailResult(result: SchedulerShowTaskResult): string {
+  if (!result.ok) {
+    if (result.reason === "no_jobs") {
+      return "No scheduled tasks are configured.";
+    }
+    if (result.reason === "not_found") {
+      return "I could not find that scheduled task.";
+    }
+    return [
+      "Multiple scheduled tasks are configured. Please specify the task id.",
+      ...result.tasks.map((task) => `- ${task.taskId}`),
+    ].join("\n");
+  }
+
+  const task = result.task;
+  const validation = result.validation;
+  const lines = [
+    "Scheduled task",
+    `- task: ${task.taskId}`,
+    task.title ? `- name: ${task.title}` : null,
+    task.prompt ? `- prompt: ${task.prompt}` : null,
+    `- state: ${task.state}`,
+    task.runtimeType ? `- runtime: ${task.runtimeType}` : null,
+    task.routeId ? `- route: ${task.routeId}` : null,
+    task.requiredTools.length
+      ? `- granted tools: ${task.requiredTools.join(", ")}`
+      : "- granted tools: none",
+    validation.expectedTools.length
+      ? `- expected tools: ${validation.expectedTools.join(", ")}`
+      : "- expected tools: none",
+    `- validation: ${validation.ok ? "passed" : "failed"}`,
+    `- updated: ${task.updatedAt}`,
+  ].filter((line): line is string => Boolean(line));
+
+  if (validation.errors.length) {
+    lines.push("Errors");
+    for (const issue of validation.errors) {
+      lines.push(`- ${issue.code}: ${issue.message}`);
+    }
+  }
+
+  if (validation.warnings.length) {
+    lines.push("Warnings");
+    for (const issue of validation.warnings) {
+      lines.push(`- ${issue.code}: ${issue.message}`);
+    }
+  }
+
   return lines.join("\n");
 }
 

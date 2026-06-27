@@ -77,6 +77,18 @@ describe("scheduler intent resolver", () => {
     });
   });
 
+  test("parses task detail intents", () => {
+    expect(
+      parseSchedulerIntentResponse(
+        '{"intent":"show_task","confidence":0.91,"jobId":"job_github_checker"}',
+      ),
+    ).toEqual({
+      intent: "show_task",
+      confidence: 0.91,
+      jobId: "job_github_checker",
+    });
+  });
+
   test("rejects unsupported intents", () => {
     expect(
       parseSchedulerIntentResponse(

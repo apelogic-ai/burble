@@ -51,6 +51,9 @@ export type SchedulerControlPlane = {
   listTasks?(
     input: SchedulerListTasksInput,
   ): Promise<SchedulerTaskSummary[]> | SchedulerTaskSummary[];
+  showTask?(
+    input: SchedulerShowTaskInput,
+  ): Promise<SchedulerShowTaskResult> | SchedulerShowTaskResult;
   validateTask?(
     input: SchedulerValidateTaskInput,
   ): Promise<SchedulerValidateTaskResult> | SchedulerValidateTaskResult;
@@ -113,6 +116,20 @@ export type SchedulerValidateTaskInput = {
   taskId?: string | null;
   jobId?: string | null;
 };
+
+export type SchedulerShowTaskInput = SchedulerValidateTaskInput;
+
+export type SchedulerShowTaskResult =
+  | {
+      ok: true;
+      task: SchedulerTaskSummary;
+      validation: SchedulerTaskValidation;
+    }
+  | {
+      ok: false;
+      reason: "no_jobs" | "not_found" | "ambiguous";
+      tasks: SchedulerTaskSummary[];
+    };
 
 export type SchedulerJobRunListResult = {
   runs: AgentJobRunRecord[];
@@ -268,6 +285,34 @@ export function createSchedulerControlPlane(
       };
     },
     listTasks,
+    showTask(input) {
+      const records = store.listScheduledJobsForPrincipal(
+        input.workspaceId,
+        input.slackUserId,
+      );
+      const tasks = records.map((record) =>
+        summarizeScheduledTask(
+          record,
+          store.getAgentJobCapability(record.jobId),
+        ),
+      );
+      const selection = selectSchedulerJob(tasks, input.taskId ?? input.jobId);
+      if (!selection.ok) {
+        return { ok: false, reason: selection.reason, tasks };
+      }
+      const record = records.find((job) => job.jobId === selection.job.jobId);
+      if (!record) {
+        return { ok: false, reason: "not_found", tasks };
+      }
+      return {
+        ok: true,
+        task: selection.job,
+        validation: validateScheduledTask(
+          record,
+          store.getAgentJobCapability(record.jobId),
+        ),
+      };
+    },
     validateTask(input) {
       const records = store.listScheduledJobsForPrincipal(
         input.workspaceId,
@@ -627,15 +672,15 @@ function validateScheduledTask(
   };
 }
 
-function selectSchedulerJob(
-  jobs: SchedulerJobSummary[],
+function selectSchedulerJob<T extends SchedulerJobSummary>(
+  jobs: T[],
   jobId?: string | null,
 ):
-  | { ok: true; job: SchedulerJobSummary }
+  | { ok: true; job: T }
   | {
       ok: false;
       reason: "no_jobs" | "not_found" | "ambiguous";
-      jobs: SchedulerJobSummary[];
+      jobs: T[];
     } {
   const normalizedJobId = jobId?.trim();
   if (normalizedJobId) {

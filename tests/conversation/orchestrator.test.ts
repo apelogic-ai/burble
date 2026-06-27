@@ -1332,6 +1332,79 @@ describe("handleConversation", () => {
     expect(response.text).toContain("wrong_github_pr_scope");
   });
 
+  test("shows scheduled task details without invoking the LLM runner", async () => {
+    let called = false;
+    const response = await handleConversation(
+      {
+        ...baseRequest,
+        text: "show task job_github_checker",
+      },
+      createDeps({
+        agentMode: "llm",
+        schedulerControl: {
+          listJobs: () => [],
+          showTask: (input) => {
+            expect(input).toEqual({
+              workspaceId: "T123",
+              slackUserId: "U123",
+              taskId: "job_github_checker",
+            });
+            return {
+              ok: true,
+              task: {
+                taskId: "job_github_checker",
+                jobId: "job_github_checker",
+                title: "Open PR monitor",
+                prompt:
+                  "check for new open PRs in https://github.com/apelogic-ai github org",
+                schedule: {
+                  kind: "interval",
+                  every: { minutes: 15 },
+                },
+                state: "scheduled",
+                runtimeType: "hermes",
+                requiredTools: ["github_list_my_pull_requests"],
+                routeId: "convrt_123",
+                updatedAt: "2026-06-24T12:00:00.000Z",
+              },
+              validation: {
+                ok: false,
+                expectedTools: ["github_search_issues"],
+                grantedTools: ["github_list_my_pull_requests"],
+                errors: [
+                  {
+                    code: "missing_required_tool",
+                    message:
+                      "Task requires github_search_issues but the grant does not include it.",
+                    tool: "github_search_issues",
+                  },
+                ],
+                warnings: [],
+              },
+            };
+          },
+        },
+        agentRunner: stubAgentRunner(() => {
+          called = true;
+          return {
+            classification: "public",
+            text: "unexpected",
+          };
+        }),
+      }),
+    );
+
+    expect(called).toBe(false);
+    expect(response.visibility).toBe("ephemeral");
+    expect(response.classification).toBe("user_private");
+    expect(response.text).toContain("Scheduled task");
+    expect(response.text).toContain("job_github_checker");
+    expect(response.text).toContain("Open PR monitor");
+    expect(response.text).toContain("github_list_my_pull_requests");
+    expect(response.text).toContain("github_search_issues");
+    expect(response.text).toContain("validation: failed");
+  });
+
   test("lists job runs independently from scheduled task specs without invoking the LLM runner", async () => {
     let called = false;
     const response = await handleConversation(

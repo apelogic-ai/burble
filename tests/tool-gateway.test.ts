@@ -2252,6 +2252,81 @@ describe("handleToolGatewayRequest", () => {
     });
   });
 
+  test("lets a runtime show a scheduled task through the control plane", async () => {
+    const capability: AgentJobCapabilityRecord = {
+      jobId: "github-pr-monitor",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      requiredTools: ["github_search_issues"],
+      routeId: "convrt_123",
+      policyHash: null,
+      capabilityProfile: "scheduled_job",
+      runtimeType: "hermes",
+      stateRefs: [],
+      visibilityPolicy: {},
+      createdAt: "2026-06-24T11:00:00.000Z",
+      updatedAt: "2026-06-24T11:05:00.000Z"
+    };
+    const jobs: ReturnType<TokenStore["listScheduledJobsForPrincipal"]> = [
+      {
+        jobId: "github-pr-monitor",
+        workspaceId: "T123",
+        slackUserId: "U123",
+        title: "Open PR monitor",
+        prompt:
+          "check for new open PRs in https://github.com/apelogic-ai github org",
+        schedule: { kind: "interval", every: { minutes: 15 } },
+        routeId: "convrt_123",
+        state: "scheduled",
+        runtimeType: "hermes",
+        createdAt: "2026-06-24T11:00:00.000Z",
+        updatedAt: "2026-06-24T11:05:00.000Z"
+      }
+    ];
+
+    const response = await handleToolGatewayRequest(
+      config,
+      createStore(
+        null,
+        runtime,
+        [],
+        null,
+        [],
+        { found: capability, list: [capability] },
+        [],
+        null,
+        {},
+        { list: jobs }
+      ),
+      "scheduledJob.show",
+      request(
+        "scheduledJob.show",
+        { input: { jobId: "github-pr-monitor" } },
+        "runtime-token-u123",
+        "rt_u123"
+      )
+    );
+
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.content).toMatchObject({
+      ok: true,
+      task: {
+        taskId: "github-pr-monitor",
+        jobId: "github-pr-monitor",
+        title: "Open PR monitor",
+        requiredTools: ["github_search_issues"]
+      },
+      validation: {
+        ok: true,
+        expectedTools: ["github_search_issues"],
+        grantedTools: ["github_search_issues"],
+        errors: [],
+        warnings: []
+      }
+    });
+  });
+
   test("requires runtime auth for scheduler control tools", async () => {
     const response = await handleToolGatewayRequest(
       config,

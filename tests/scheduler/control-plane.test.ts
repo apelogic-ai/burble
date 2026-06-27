@@ -323,6 +323,38 @@ describe("scheduler control plane", () => {
       },
     ]);
     expect(
+      await scheduler.showTask?.({
+        workspaceId: "T123",
+        slackUserId: "U123",
+        taskId: "github-pr-monitor",
+      }),
+    ).toEqual({
+      ok: true,
+      task: {
+        taskId: "github-pr-monitor",
+        jobId: "github-pr-monitor",
+        title: "Open PR monitor",
+        prompt:
+          "check for new open PRs in https://github.com/apelogic-ai github org",
+        schedule: {
+          kind: "interval",
+          every: { minutes: 15 },
+        },
+        state: "scheduled",
+        runtimeType: "hermes",
+        requiredTools: ["github_search_issues"],
+        routeId: "convrt_123",
+        updatedAt: "2026-06-24T12:00:00.000Z",
+      },
+      validation: {
+        ok: true,
+        expectedTools: ["github_search_issues"],
+        grantedTools: ["github_search_issues"],
+        errors: [],
+        warnings: [],
+      },
+    });
+    expect(
       await scheduler.listJobRuns?.({
         workspaceId: "T123",
         slackUserId: "U123",
