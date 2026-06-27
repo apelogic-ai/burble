@@ -446,7 +446,7 @@ def reachable_manifest_tools(message: dict[str, Any]) -> list[dict[str, Any]]:
             continue
         hint = hermes_provider_tool_hint(provider, name, alias)
         normalized = normalize_burble_provider_tool_name(name)
-        if normalized != alias:
+        if normalized not in {name, alias}:
             raise ValueError(
                 f"Hermes provider bridge normalized {name} to {normalized}, expected {alias}"
             )
