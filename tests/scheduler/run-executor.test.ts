@@ -210,6 +210,87 @@ describe("scheduler run executor", () => {
     store.close();
   });
 
+  test("delivers literal message scheduled jobs without invoking the runtime", async () => {
+    const store = createTokenStore(":memory:");
+    const route = store.upsertConversationRoute({
+      workspaceId: "T123",
+      slackUserId: "U123",
+      transport: "slack",
+      destination: {
+        channelId: "C123",
+        isDirectMessage: false,
+        rootId: "slack:C123:1710000000.000000",
+        threadTs: "1710000000.000000",
+      },
+      now: new Date("2026-06-25T17:00:00.000Z"),
+    });
+    const job = store.upsertScheduledJob({
+      jobId: "job-heart",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      title: "Heart emoji every 30 min",
+      prompt: "Post exactly this message: ❤️",
+      schedule: { kind: "cron", expression: "*/30 * * * *", timezone: "UTC" },
+      routeId: route.id,
+      runtimeType: "hermes",
+      state: "scheduled",
+      now: new Date("2026-06-25T17:01:00.000Z"),
+    });
+    const run = store.createAgentJobRun({
+      runId: "jobrun-heart",
+      jobId: job.jobId,
+      workspaceId: "T123",
+      slackUserId: "U123",
+      triggerSource: "manual",
+      status: "queued",
+      now: new Date("2026-06-25T17:02:00.000Z"),
+    });
+    let runnerCalled = false;
+    const runner: AgentRunner = {
+      name: "test-runner",
+      capabilities: {
+        streaming: true,
+        toolEvents: true,
+        remote: true,
+      },
+      async *run() {
+        runnerCalled = true;
+        throw new Error("runtime should not be called for literal delivery");
+      },
+    };
+    const posts: Array<{ channel: string; text: string; thread_ts?: string }> =
+      [];
+    const executor = createSchedulerRunExecutor({
+      store,
+      agentRunner: runner,
+      slackClient: {
+        chat: {
+          postMessage: async (message) => {
+            posts.push(message);
+            return {};
+          },
+        },
+      },
+    });
+
+    await executor.executeRun(run.runId);
+
+    expect(runnerCalled).toBe(false);
+    expect(posts).toEqual([
+      {
+        channel: "C123",
+        thread_ts: "1710000000.000000",
+        text: "❤️",
+      },
+    ]);
+    expect(store.getAgentJobRun(run.runId)).toMatchObject({
+      runId: run.runId,
+      status: "succeeded",
+    });
+
+    store.close();
+  });
+
   test("does not deliver runtime-control notices as scheduled job output", async () => {
     const store = createTokenStore(":memory:");
     const route = store.upsertConversationRoute({

@@ -71,6 +71,25 @@ export function createSchedulerRunExecutor(input: {
         input.logInfo?.(
           `Scheduled job run start runId=${run.runId} jobId=${job.jobId}`,
         );
+        const literalMessage = readLiteralScheduledMessage(job.prompt);
+        if (literalMessage && destination) {
+          await input.slackClient.chat.postMessage({
+            channel: destination.channelId,
+            text: literalMessage,
+            ...(destination.threadTs && !destination.isDirectMessage
+              ? { thread_ts: destination.threadTs }
+              : {}),
+          });
+          input.store.finishAgentJobRun({
+            runId: run.runId,
+            status: "succeeded",
+          });
+          input.logInfo?.(
+            `Scheduled job run finish runId=${run.runId} jobId=${job.jobId} mode=literal_delivery`,
+          );
+          return;
+        }
+
         const toolGroups = selectRuntimeToolGroups({
           text: job.prompt,
           attachmentCount: 0,
@@ -195,6 +214,14 @@ function scheduledJobContextForRun(
     stateRefs: [],
     visibilityPolicy: {},
   };
+}
+
+function readLiteralScheduledMessage(prompt: string): string | null {
+  const match = /^Post exactly this message:\s*(?<message>.+)$/isu.exec(
+    prompt.trim(),
+  );
+  const message = match?.groups?.message?.trim();
+  return message ? message : null;
 }
 
 function scheduledRunConversationRoot(
