@@ -392,14 +392,223 @@ describe("scheduler run executor", () => {
 
     await executor.executeRun(run.runId);
 
-    expect(posts).toEqual([]);
+    expect(posts).toEqual([
+      {
+        channel: "D123",
+        text: [
+          "Scheduled job failed: Open PR monitor",
+          "Job ID: job-pr-monitor",
+          "Run ID: jobrun-pr-monitor",
+          "Reason: Managed runtime final response contained only runtime-control/progress text after scheduled task retry",
+        ].join("\n"),
+      },
+    ]);
     expect(warnings).toEqual([
-      "Scheduled job run suppressed runtime-control output runId=jobrun-pr-monitor jobId=job-pr-monitor",
+      "Scheduled job runtime returned progress-only output before tool call; retrying run jobId=job-pr-monitor",
+      "Scheduled job run failed runId=jobrun-pr-monitor error=Managed runtime final response contained only runtime-control/progress text after scheduled task retry",
+    ]);
+    expect(store.getAgentJobRun(run.runId)).toMatchObject({
+      runId: run.runId,
+      status: "failed",
+      failureReason:
+        "Managed runtime final response contained only runtime-control/progress text after scheduled task retry",
+    });
+
+    store.close();
+  });
+
+  test("retries progress-only scheduled provider runs before any tool call", async () => {
+    const store = createTokenStore(":memory:");
+    const route = store.upsertConversationRoute({
+      workspaceId: "T123",
+      slackUserId: "U123",
+      transport: "slack",
+      destination: {
+        channelId: "C123",
+        isDirectMessage: false,
+        rootId: "slack:C123:1710000000.000000",
+        threadTs: "1710000000.000000",
+      },
+      now: new Date("2026-06-25T17:00:00.000Z"),
+    });
+    const job = store.upsertScheduledJob({
+      jobId: "job-pr-monitor",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      title: "Check every 15 min for new PRs in apelogic-ai GitHub org",
+      prompt:
+        "check every 15 min for new PRs in repos of https://github.com/apelogic-ai github org, post in this channel",
+      schedule: { kind: "interval", every: { minutes: 15 } },
+      routeId: route.id,
+      runtimeType: "hermes",
+      state: "scheduled",
+      now: new Date("2026-06-25T17:01:00.000Z"),
+    });
+    const run = store.createAgentJobRun({
+      runId: "jobrun-pr-monitor",
+      jobId: job.jobId,
+      workspaceId: "T123",
+      slackUserId: "U123",
+      triggerSource: "manual",
+      status: "queued",
+      now: new Date("2026-06-25T17:02:00.000Z"),
+    });
+    const runnerInputs: string[] = [];
+    const runner: AgentRunner = {
+      name: "test-runner",
+      capabilities: {
+        streaming: true,
+        toolEvents: true,
+        remote: true,
+      },
+      async *run(input) {
+        runnerInputs.push(input.text);
+        if (runnerInputs.length === 1) {
+          yield {
+            type: "final",
+            response: {
+              classification: "user_private",
+              text: "Calling github search issues...\n\nFinal result in 2.0s.",
+            },
+          };
+          return;
+        }
+        yield {
+          type: "final",
+          response: {
+            classification: "user_private",
+            text: "No open apelogic-ai PRs found.",
+          },
+        };
+      },
+    };
+    const posts: Array<{ channel: string; text: string; thread_ts?: string }> =
+      [];
+    const warnings: string[] = [];
+    const executor = createSchedulerRunExecutor({
+      store,
+      agentRunner: runner,
+      slackClient: {
+        chat: {
+          postMessage: async (message) => {
+            posts.push(message);
+            return {};
+          },
+        },
+      },
+      logWarn: (message) => warnings.push(message),
+    });
+
+    await executor.executeRun(run.runId);
+
+    expect(runnerInputs).toHaveLength(2);
+    expect(runnerInputs[1]).toContain(
+      "Protocol correction for this same scheduled task.",
+    );
+    expect(runnerInputs[1]).toContain(
+      "Allowed task tools: github_search_issues",
+    );
+    expect(posts).toEqual([
+      {
+        channel: "C123",
+        text: "No open apelogic-ai PRs found.",
+        thread_ts: "1710000000.000000",
+      },
+    ]);
+    expect(warnings).toEqual([
+      "Scheduled job runtime returned progress-only output before tool call; retrying run jobId=job-pr-monitor",
     ]);
     expect(store.getAgentJobRun(run.runId)).toMatchObject({
       runId: run.runId,
       status: "succeeded",
     });
+
+    store.close();
+  });
+
+  test("does not retry progress-only scheduled provider runs after a tool call", async () => {
+    const store = createTokenStore(":memory:");
+    const route = store.upsertConversationRoute({
+      workspaceId: "T123",
+      slackUserId: "U123",
+      transport: "slack",
+      destination: {
+        channelId: "C123",
+        isDirectMessage: false,
+        rootId: "slack:C123:1710000000.000000",
+      },
+      now: new Date("2026-06-25T17:00:00.000Z"),
+    });
+    const job = store.upsertScheduledJob({
+      jobId: "job-pr-monitor",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      title: "Check every 15 min for new PRs in apelogic-ai GitHub org",
+      prompt:
+        "check every 15 min for new PRs in repos of https://github.com/apelogic-ai github org, post in this channel",
+      schedule: { kind: "interval", every: { minutes: 15 } },
+      routeId: route.id,
+      runtimeType: "hermes",
+      state: "scheduled",
+      now: new Date("2026-06-25T17:01:00.000Z"),
+    });
+    const run = store.createAgentJobRun({
+      runId: "jobrun-pr-monitor",
+      jobId: job.jobId,
+      workspaceId: "T123",
+      slackUserId: "U123",
+      triggerSource: "manual",
+      status: "queued",
+      now: new Date("2026-06-25T17:02:00.000Z"),
+    });
+    let attempts = 0;
+    const runner: AgentRunner = {
+      name: "test-runner",
+      capabilities: {
+        streaming: true,
+        toolEvents: true,
+        remote: true,
+      },
+      async *run() {
+        attempts += 1;
+        yield {
+          type: "tool_call",
+          toolName: "github_search_issues",
+          callId: "call-1",
+        };
+        yield {
+          type: "final",
+          response: {
+            classification: "user_private",
+            text: "Calling github search issues...\n\nFinal result in 2.0s.",
+          },
+        };
+      },
+    };
+    const posts: Array<{ channel: string; text: string; thread_ts?: string }> =
+      [];
+    const warnings: string[] = [];
+    const executor = createSchedulerRunExecutor({
+      store,
+      agentRunner: runner,
+      slackClient: {
+        chat: {
+          postMessage: async (message) => {
+            posts.push(message);
+            return {};
+          },
+        },
+      },
+      logWarn: (message) => warnings.push(message),
+    });
+
+    await executor.executeRun(run.runId);
+
+    expect(attempts).toBe(1);
+    expect(posts).toEqual([]);
+    expect(warnings).toEqual([
+      "Scheduled job run suppressed runtime-control output runId=jobrun-pr-monitor jobId=job-pr-monitor",
+    ]);
 
     store.close();
   });
