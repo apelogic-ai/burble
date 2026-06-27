@@ -8,7 +8,7 @@ import {
   installSlackTestbed,
   testbedDirectChannelId,
   testbedUserId,
-  testbedWorkspaceId
+  testbedWorkspaceId,
 } from "../src/testbed/slack";
 
 describe("local Slack testbed", () => {
@@ -22,20 +22,26 @@ describe("local Slack testbed", () => {
       PORT: "39187",
       DATABASE_PATH: ":memory:",
       BURBLE_TESTBED: "1",
-      AGENT_MODE: "deterministic"
+      AGENT_MODE: "deterministic",
     });
     const store = createTokenStore(":memory:");
     store.upsertWorkspacePolicy({
       workspaceId: testbedWorkspaceId,
       key: "runtime.allowedEngines",
-      value: ["hermes", "openclaw"]
+      value: ["hermes", "openclaw"],
     });
     const runtimeJwtIssuer = createRuntimeJwtIssuer({
-      issuer: config.runtimeJwtIssuer
+      issuer: config.runtimeJwtIssuer,
     });
-    const slack = createSlackRuntime(config, store, runtimeJwtIssuer, undefined, {
-      testbed: true
-    });
+    const slack = createSlackRuntime(
+      config,
+      store,
+      runtimeJwtIssuer,
+      undefined,
+      {
+        testbed: true,
+      },
+    );
     const testbed = installSlackTestbed(slack);
     const server = startOAuthServer(
       config,
@@ -43,7 +49,7 @@ describe("local Slack testbed", () => {
       slack,
       runtimeJwtIssuer,
       undefined,
-      testbed
+      testbed,
     );
     const baseUrl = `http://127.0.0.1:${server.port}`;
 
@@ -53,29 +59,32 @@ describe("local Slack testbed", () => {
         {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ user: testbedUserId })
-        }
+          body: JSON.stringify({ user: testbedUserId }),
+        },
       );
       expect(homeResponse.status).toBe(200);
 
       const home = await fetch(
-        `${baseUrl}/__testbed/slack/users/${testbedUserId}/home`
+        `${baseUrl}/__testbed/slack/users/${testbedUserId}/home`,
       ).then((response) => response.json() as Promise<{ home: unknown }>);
       expect(JSON.stringify(home.home)).toContain("Agent runtime");
 
       for (const engine of ["hermes", "openclaw"]) {
-        const selectResponse = await fetch(`${baseUrl}/__testbed/slack/actions`, {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({
-            actionId: "agent_runtime_engine_select",
-            selectedValue: engine,
-            user: testbedUserId
-          })
-        });
+        const selectResponse = await fetch(
+          `${baseUrl}/__testbed/slack/actions`,
+          {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({
+              actionId: "agent_runtime_engine_select",
+              selectedValue: engine,
+              user: testbedUserId,
+            }),
+          },
+        );
         expect(selectResponse.status).toBe(200);
         const selectedHome = await fetch(
-          `${baseUrl}/__testbed/slack/users/${testbedUserId}/home`
+          `${baseUrl}/__testbed/slack/users/${testbedUserId}/home`,
         ).then((response) => response.json() as Promise<{ home: unknown }>);
         expect(JSON.stringify(selectedHome.home)).toContain(engine);
       }
@@ -85,19 +94,21 @@ describe("local Slack testbed", () => {
         {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ text: "hello agent", user: testbedUserId })
-        }
+          body: JSON.stringify({ text: "hello agent", user: testbedUserId }),
+        },
       );
       expect(messageResponse.status).toBe(200);
 
       const transcript = await fetch(
-        `${baseUrl}/__testbed/slack/channels/${testbedDirectChannelId}/messages`
+        `${baseUrl}/__testbed/slack/channels/${testbedDirectChannelId}/messages`,
       ).then(
         (response) =>
-          response.json() as Promise<{ messages: Array<{ text: string }> }>
+          response.json() as Promise<{ messages: Array<{ text: string }> }>,
       );
       expect(transcript.messages.length).toBeGreaterThan(0);
-      expect(transcript.messages.some((message) => message.text.trim())).toBe(true);
+      expect(transcript.messages.some((message) => message.text.trim())).toBe(
+        true,
+      );
     } finally {
       server.stop();
       store.close();
@@ -116,7 +127,7 @@ describe("local Slack testbed", () => {
       BURBLE_TESTBED: "1",
       AGENT_MODE: "llm",
       AGENT_RUNTIME: "burble-runtime",
-      AGENT_RUNTIME_URL: "http://127.0.0.1:9"
+      AGENT_RUNTIME_URL: "http://127.0.0.1:9",
     });
     const store = createTokenStore(":memory:");
     store.upsertScheduledJob({
@@ -127,18 +138,24 @@ describe("local Slack testbed", () => {
       prompt: "Pull latest AI-related news and summarize it.",
       schedule: {
         kind: "interval",
-        every: { hours: 1 }
+        every: { hours: 1 },
       },
       runtimeType: "hermes",
       state: "scheduled",
-      now: new Date("2026-06-25T16:00:00.000Z")
+      now: new Date("2026-06-25T16:00:00.000Z"),
     });
     const runtimeJwtIssuer = createRuntimeJwtIssuer({
-      issuer: config.runtimeJwtIssuer
+      issuer: config.runtimeJwtIssuer,
     });
-    const slack = createSlackRuntime(config, store, runtimeJwtIssuer, undefined, {
-      testbed: true
-    });
+    const slack = createSlackRuntime(
+      config,
+      store,
+      runtimeJwtIssuer,
+      undefined,
+      {
+        testbed: true,
+      },
+    );
     const testbed = installSlackTestbed(slack);
     const server = startOAuthServer(
       config,
@@ -146,7 +163,7 @@ describe("local Slack testbed", () => {
       slack,
       runtimeJwtIssuer,
       undefined,
-      testbed
+      testbed,
     );
     const baseUrl = `http://127.0.0.1:${server.port}`;
 
@@ -158,19 +175,21 @@ describe("local Slack testbed", () => {
           headers: { "content-type": "application/json" },
           body: JSON.stringify({
             text: "show me current cron jobs",
-            user: testbedUserId
-          })
-        }
+            user: testbedUserId,
+          }),
+        },
       );
       expect(messageResponse.status).toBe(200);
 
       const transcript = await fetch(
-        `${baseUrl}/__testbed/slack/channels/${testbedDirectChannelId}/messages`
+        `${baseUrl}/__testbed/slack/channels/${testbedDirectChannelId}/messages`,
       ).then(
         (response) =>
-          response.json() as Promise<{ messages: Array<{ text: string }> }>
+          response.json() as Promise<{ messages: Array<{ text: string }> }>,
       );
-      const text = transcript.messages.map((message) => message.text).join("\n");
+      const text = transcript.messages
+        .map((message) => message.text)
+        .join("\n");
       expect(text).toContain("Scheduled tasks");
       expect(text).toContain("ai-news-hourly");
       expect(text).toContain("Hourly AI news summary");
@@ -186,17 +205,17 @@ describe("local Slack testbed", () => {
           headers: { "content-type": "application/json" },
           body: JSON.stringify({
             text: "run this job manually now",
-            user: testbedUserId
-          })
-        }
+            user: testbedUserId,
+          }),
+        },
       );
       expect(triggerResponse.status).toBe(200);
 
       const triggeredTranscript = await fetch(
-        `${baseUrl}/__testbed/slack/channels/${testbedDirectChannelId}/messages`
+        `${baseUrl}/__testbed/slack/channels/${testbedDirectChannelId}/messages`,
       ).then(
         (response) =>
-          response.json() as Promise<{ messages: Array<{ text: string }> }>
+          response.json() as Promise<{ messages: Array<{ text: string }> }>,
       );
       const triggeredText = triggeredTranscript.messages
         .map((message) => message.text)
@@ -209,7 +228,7 @@ describe("local Slack testbed", () => {
       const latestRun = store.getLatestAgentJobRunForPrincipal(
         testbedWorkspaceId,
         testbedUserId,
-        "ai-news-hourly"
+        "ai-news-hourly",
       );
       expect(latestRun?.jobId).toBe("ai-news-hourly");
       expect(latestRun?.triggerSource).toBe("manual");
@@ -233,15 +252,21 @@ describe("local Slack testbed", () => {
       AGENT_MODE: "llm",
       AGENT_RUNTIME: "burble-runtime",
       AGENT_RUNTIME_URL: "http://127.0.0.1:9",
-      AGENT_RUNTIME_ENGINE: "hermes"
+      AGENT_RUNTIME_ENGINE: "hermes",
     });
     const store = createTokenStore(":memory:");
     const runtimeJwtIssuer = createRuntimeJwtIssuer({
-      issuer: config.runtimeJwtIssuer
+      issuer: config.runtimeJwtIssuer,
     });
-    const slack = createSlackRuntime(config, store, runtimeJwtIssuer, undefined, {
-      testbed: true
-    });
+    const slack = createSlackRuntime(
+      config,
+      store,
+      runtimeJwtIssuer,
+      undefined,
+      {
+        testbed: true,
+      },
+    );
     const testbed = installSlackTestbed(slack);
     const server = startOAuthServer(
       config,
@@ -249,7 +274,7 @@ describe("local Slack testbed", () => {
       slack,
       runtimeJwtIssuer,
       undefined,
-      testbed
+      testbed,
     );
     const baseUrl = `http://127.0.0.1:${server.port}`;
 
@@ -260,31 +285,34 @@ describe("local Slack testbed", () => {
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({
-            text:
-              "create hourly cron job to look for latest AI news, summarize them in one paragraph and post result in this channel",
-            user: testbedUserId
-          })
-        }
+            text: "create hourly cron job to look for latest AI news, summarize them in one paragraph and post result in this channel",
+            user: testbedUserId,
+          }),
+        },
       );
       expect(createResponse.status).toBe(200);
 
       const jobs = store.listScheduledJobsForPrincipal(
         testbedWorkspaceId,
-        testbedUserId
+        testbedUserId,
       );
       expect(jobs).toHaveLength(1);
       expect(jobs[0]).toMatchObject({
         title: "Hourly AI news summary",
-        prompt: "look for latest AI news, summarize them in one paragraph",
         schedule: { kind: "cron", expression: "0 * * * *", timezone: "UTC" },
-        runtimeType: "hermes"
+        runtimeType: "hermes",
       });
+      expect(jobs[0]?.prompt.toLowerCase()).toContain("latest ai news");
+      expect(jobs[0]?.prompt.toLowerCase()).toContain("summarize");
+      expect(jobs[0]?.prompt.toLowerCase()).toContain("one paragraph");
+      expect(jobs[0]?.prompt.toLowerCase()).not.toContain("this channel");
+      expect(jobs[0]?.prompt.toLowerCase()).not.toContain("post result");
 
       const createTranscript = await fetch(
-        `${baseUrl}/__testbed/slack/channels/${testbedDirectChannelId}/messages`
+        `${baseUrl}/__testbed/slack/channels/${testbedDirectChannelId}/messages`,
       ).then(
         (response) =>
-          response.json() as Promise<{ messages: Array<{ text: string }> }>
+          response.json() as Promise<{ messages: Array<{ text: string }> }>,
       );
       const createText = createTranscript.messages
         .map((message) => message.text)
@@ -301,15 +329,15 @@ describe("local Slack testbed", () => {
           headers: { "content-type": "application/json" },
           body: JSON.stringify({
             text: "test-run this job now",
-            user: testbedUserId
-          })
-        }
+            user: testbedUserId,
+          }),
+        },
       );
       expect(triggerResponse.status).toBe(200);
       const latestRun = store.getLatestAgentJobRunForPrincipal(
         testbedWorkspaceId,
         testbedUserId,
-        jobs[0].jobId
+        jobs[0].jobId,
       );
       expect(latestRun?.status).toBe("queued");
     } finally {

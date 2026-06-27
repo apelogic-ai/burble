@@ -733,6 +733,16 @@ reference-runtime work below, where they can be tested as first-class behavior.
 
 ### P0 — Block merge (correctness)
 
+0. **Make scheduler NL resolution the scheduler front door.** Scheduler CRUD must
+   route through a Burble-owned semantic resolver and validated control-plane
+   command before any agent runtime sees the message. The resolver may use an LLM,
+   but its output is constrained JSON: intent, confidence, selected task/job id,
+   and for create/update a validated spec with title, executable prompt,
+   schedule, and delivery target. If it recognizes scheduler CRUD but cannot
+   produce a complete spec, Burble asks for clarification or rejects the request;
+   it must not fall through to Hermes/OpenClaw native scheduler behavior. This is
+   the fix for prompts like "create new task to send heart emoji to this channel
+   every 30 min" being handled by Hermes as an internal cron job.
 1. **Stop reporting false success.** A suppressed/progress-only runtime result is
    currently recorded `status: "succeeded"` while delivering nothing
    (`src/scheduler/run-executor.ts`). Record a terminal `failed` (or a distinct
@@ -799,8 +809,9 @@ reference-runtime work below, where they can be tested as first-class behavior.
   **Sprint 2/Sprint 3**.
 - Native-runtime job migration / `needs_repair` → **Sprint 5**.
 - Usage/audit recording on scheduled runs (no column today) → **Sprint 5**.
-- Orchestrator decomposition (NL classifier + presenters out of `orchestrator.ts`)
-  → fast-follow cleanup, not blocking.
+- Orchestrator decomposition (presenters out of `orchestrator.ts`) →
+  fast-follow cleanup, not blocking. The scheduler NL classifier itself is P0
+  because it is the control-plane boundary, not presentation cleanup.
 - Gateway-IP allowlist → config (`openShellHostAllowedIps` hardcoded) → **Sprint 2**
   (folds into OpenShell packaging).
 - Cron/calendar schedules (interval-only today) → backlog.

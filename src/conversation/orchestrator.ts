@@ -25,6 +25,7 @@ import type {
   ConversationResponse,
   SchedulerControlIntent,
   SchedulerIntentResolverResult,
+  SchedulerResolvedCreateJob,
 } from "./types";
 import type { AgentRuntimeEngine } from "../db";
 import { isAgentRuntimeEngine } from "@burble/runtime-sdk/runtime-engines";
@@ -65,7 +66,8 @@ async function handleConversationInternal(
     schedulerResolution.jobId ?? readSchedulerJobIdHint(request.text);
   const schedulerCreateRequest =
     schedulerControlIntent === "create_job"
-      ? parseSchedulerCreateRequest(request.text)
+      ? (schedulerResolution.create ??
+        parseSchedulerCreateRequest(request.text))
       : null;
   const schedulerDeliveryUpdateRequest =
     schedulerControlIntent === "update_job_delivery"
@@ -228,6 +230,14 @@ async function handleConversationInternal(
       visibility: "ephemeral",
       classification: "user_private",
       text: formatScheduledJobCreateResult(result),
+    };
+  }
+
+  if (schedulerControlIntent === "create_job") {
+    return {
+      visibility: "ephemeral",
+      classification: "user_private",
+      text: formatUnresolvedScheduledJobCreate(),
     };
   }
 
@@ -519,12 +529,17 @@ function classifySchedulerControlIntent(text: string): SchedulerControlIntent {
 async function resolveSchedulerControlIntent(
   request: ConversationRequest,
   deps: ConversationDeps,
-): Promise<{ intent: SchedulerControlIntent; jobId: string | null }> {
+): Promise<{
+  intent: SchedulerControlIntent;
+  jobId: string | null;
+  create: SchedulerResolvedCreateJob | null;
+}> {
   const fallbackJobId = readSchedulerJobIdHint(request.text);
+  const fallbackCreate = parseSchedulerCreateRequest(request.text);
   const deterministicIntent =
     classifyExplicitSchedulerJobIdIntent(request.text) ??
     classifySchedulerControlIntent(request.text) ??
-    (parseSchedulerCreateRequest(request.text) ? "create_job" : null);
+    (fallbackCreate ? "create_job" : null);
 
   if (deps.schedulerIntentResolver) {
     try {
@@ -549,6 +564,10 @@ async function resolveSchedulerControlIntent(
             jobs,
             fallbackJobId,
           ),
+          create:
+            intent === "create_job"
+              ? (normalizeResolverCreateJob(resolved.create) ?? fallbackCreate)
+              : null,
         };
       }
     } catch {
@@ -558,10 +577,46 @@ async function resolveSchedulerControlIntent(
     return {
       intent: deterministicIntent,
       jobId: fallbackJobId,
+      create: fallbackCreate,
     };
   }
 
-  return { intent: deterministicIntent, jobId: null };
+  return { intent: deterministicIntent, jobId: null, create: fallbackCreate };
+}
+
+function normalizeResolverCreateJob(
+  create: SchedulerResolvedCreateJob | null | undefined,
+): ParsedSchedulerCreateRequest | null {
+  if (!create) {
+    return null;
+  }
+  const title = create.title.trim();
+  const prompt = normalizeScheduledTaskPrompt(create.prompt.trim());
+  if (!title || !prompt || !isValidResolvedSchedule(create.schedule)) {
+    return null;
+  }
+  return {
+    title,
+    prompt,
+    schedule: create.schedule,
+    scheduleLabel: formatSchedule(create.schedule),
+  };
+}
+
+function isValidResolvedSchedule(schedule: unknown): boolean {
+  if (!isRecord(schedule)) {
+    return false;
+  }
+  if (schedule.kind === "cron") {
+    return (
+      typeof schedule.expression === "string" &&
+      schedule.expression.trim().length > 0 &&
+      (schedule.timezone === undefined ||
+        (typeof schedule.timezone === "string" &&
+          schedule.timezone.trim().length > 0))
+    );
+  }
+  return false;
 }
 
 function resolveSchedulerResolverJobId(
@@ -1052,11 +1107,45 @@ function extractScheduledTaskPrompt(text: string): string {
 }
 
 function normalizeScheduledTaskPrompt(prompt: string): string {
-  const normalized = prompt.toLowerCase();
+  const stripped = stripScheduledTaskControlClauses(prompt);
+  const normalized = stripped.toLowerCase();
   if (/\b(?:output|post|send)\s+(?:a\s+)?heart\s+emoji\b/.test(normalized)) {
     return "Post exactly this message: ❤️";
   }
-  return prompt;
+  return stripped;
+}
+
+function stripScheduledTaskControlClauses(prompt: string): string {
+  return prompt
+    .replace(
+      /\s*(?:,|;|-)?\s*(?:and\s+)?(?:post|send|report)\s+(?:the\s+)?(?:result|results|output|report)?\s*(?:back\s+)?(?:in|to)\s+(?:this|the\s+current)\s+(?:channel|chat|conversation|thread)\b/gi,
+      " ",
+    )
+    .replace(
+      /\s*(?:,|;|-)?\s*(?:and\s+)?(?:post|send|report)\s+(?:back\s+)?(?:in|to)\s+(?:this|the\s+current)\s+(?:channel|chat|conversation|thread)\b/gi,
+      " ",
+    )
+    .replace(
+      /\s*(?:,|;|-)?\s*(?:in|to)\s+(?:this|the\s+current)\s+(?:channel|chat|conversation|thread)\b/gi,
+      " ",
+    )
+    .replace(
+      /\s*(?:,|;|-)?\s*(?:and\s+)?(?:post|send|report)\s+(?:the\s+)?(?:result|results|output|report)\b\s*$/gi,
+      " ",
+    )
+    .replace(
+      /\s*(?:,|;|-)?\s*(?:to\s+be\s+)?run\s+(?:hourly|daily|weekly|every\s+(?:\d+\s*)?(?:minutes?|mins?|m|hours?|hrs?|h|days?|d|weeks?|w))\b\s*,?\s*/gi,
+      " ",
+    )
+    .replace(
+      /\s*\b(?:hourly|daily|weekly|every\s+\d+\s*(?:minutes?|mins?|m|hours?|hrs?|h|days?|d|weeks?|w))\b\s*,?\s*/gi,
+      " ",
+    )
+    .replace(/\s+,/g, ",")
+    .replace(/\s{2,}/g, " ")
+    .trim()
+    .replace(/[.。]\s*$/, "")
+    .trim();
 }
 
 function inferScheduledJobTitle(prompt: string, scheduleLabel: string): string {
@@ -1329,6 +1418,13 @@ function formatScheduledJobCreateResult(
   ]
     .filter((line): line is string => Boolean(line))
     .join("\n");
+}
+
+function formatUnresolvedScheduledJobCreate(): string {
+  return [
+    "I can’t create that scheduled task yet because I could not resolve a complete task spec.",
+    "Please include what to run, how often to run it, and where to deliver the result.",
+  ].join("\n");
 }
 
 function formatSchedule(schedule: unknown): string {

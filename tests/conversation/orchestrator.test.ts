@@ -1141,6 +1141,179 @@ describe("handleConversation", () => {
     expect(response.text).toContain("delivery: this conversation");
   });
 
+  test("creates scheduler tasks from semantic resolver output without invoking the runtime", async () => {
+    let called = false;
+    const created: unknown[] = [];
+    const response = await handleConversation(
+      {
+        ...baseRequest,
+        conversationRouteId: "convrt_heart",
+        text: "create new task to send heart emoji to this channel every 30 min",
+      },
+      createDeps({
+        agentMode: "llm",
+        agentRuntimeEngine: "hermes",
+        schedulerControl: {
+          listJobs: () => [],
+          createJob: (input) => {
+            created.push(input);
+            return {
+              ok: true,
+              job: {
+                jobId: "job-heart-30m",
+                workspaceId: input.workspaceId,
+                slackUserId: input.slackUserId,
+                title: input.title,
+                prompt: input.prompt,
+                schedule: input.schedule,
+                routeId: input.routeId ?? null,
+                state: "scheduled",
+                runtimeType: input.runtimeType ?? null,
+                createdAt: "2026-06-27T17:34:21.452Z",
+                updatedAt: "2026-06-27T17:34:21.452Z",
+              },
+            };
+          },
+        },
+        schedulerIntentResolver: async () => ({
+          intent: "create_job",
+          confidence: 0.96,
+          jobId: null,
+          create: {
+            title: "Heart emoji every 30 min",
+            prompt: "Post exactly this message: ❤️",
+            schedule: {
+              kind: "cron",
+              expression: "*/30 * * * *",
+              timezone: "UTC",
+            },
+          },
+        }),
+        agentRunner: stubAgentRunner(() => {
+          called = true;
+          return {
+            classification: "public",
+            text: "unexpected",
+          };
+        }),
+      }),
+    );
+
+    expect(called).toBe(false);
+    expect(created).toEqual([
+      {
+        workspaceId: "T123",
+        slackUserId: "U123",
+        title: "Heart emoji every 30 min",
+        prompt: "Post exactly this message: ❤️",
+        schedule: { kind: "cron", expression: "*/30 * * * *", timezone: "UTC" },
+        routeId: "convrt_heart",
+        runtimeType: "hermes",
+      },
+    ]);
+    expect(response.visibility).toBe("ephemeral");
+    expect(response.text).toContain("Created scheduled job job-heart-30m.");
+  });
+
+  test("does not delegate unresolved semantic scheduler create intents to the runtime", async () => {
+    let called = false;
+    const response = await handleConversation(
+      {
+        ...baseRequest,
+        conversationRouteId: "convrt_heart",
+        text: "create a task to send a heart sometimes",
+      },
+      createDeps({
+        agentMode: "llm",
+        schedulerControl: {
+          listJobs: () => [],
+          createJob: () => {
+            throw new Error("unexpected create");
+          },
+        },
+        schedulerIntentResolver: async () => ({
+          intent: "create_job",
+          confidence: 0.91,
+          jobId: null,
+        }),
+        agentRunner: stubAgentRunner(() => {
+          called = true;
+          return {
+            classification: "public",
+            text: "unexpected",
+          };
+        }),
+      }),
+    );
+
+    expect(called).toBe(false);
+    expect(response.visibility).toBe("ephemeral");
+    expect(response.text).toContain("I can’t create that scheduled task yet");
+  });
+
+  test("strips resolver-leaked delivery clauses from scheduler task prompts", async () => {
+    const created: unknown[] = [];
+    await handleConversation(
+      {
+        ...baseRequest,
+        conversationRouteId: "convrt_ai_news",
+        text: "create hourly task to look for latest AI news, summarize in one paragraph, and post result in this channel",
+      },
+      createDeps({
+        agentMode: "llm",
+        schedulerControl: {
+          listJobs: () => [],
+          createJob: (input) => {
+            created.push(input);
+            return {
+              ok: true,
+              job: {
+                jobId: "job-ai-news",
+                workspaceId: input.workspaceId,
+                slackUserId: input.slackUserId,
+                title: input.title,
+                prompt: input.prompt,
+                schedule: input.schedule,
+                routeId: input.routeId ?? null,
+                state: "scheduled",
+                runtimeType: input.runtimeType ?? null,
+                createdAt: "2026-06-27T17:34:21.452Z",
+                updatedAt: "2026-06-27T17:34:21.452Z",
+              },
+            };
+          },
+        },
+        schedulerIntentResolver: async () => ({
+          intent: "create_job",
+          confidence: 0.94,
+          jobId: null,
+          create: {
+            title: "Hourly AI news summary",
+            prompt:
+              "Look for the latest AI news, summarize it in one paragraph, and post the result",
+            schedule: {
+              kind: "cron",
+              expression: "0 * * * *",
+              timezone: "UTC",
+            },
+          },
+        }),
+      }),
+    );
+
+    expect(created).toEqual([
+      {
+        workspaceId: "T123",
+        slackUserId: "U123",
+        title: "Hourly AI news summary",
+        prompt: "Look for the latest AI news, summarize it in one paragraph",
+        schedule: { kind: "cron", expression: "0 * * * *", timezone: "UTC" },
+        routeId: "convrt_ai_news",
+        runtimeType: null,
+      },
+    ]);
+  });
+
   test("updates scheduled job delivery from a Slack channel mention without invoking the LLM runner", async () => {
     let called = false;
     const updates: unknown[] = [];

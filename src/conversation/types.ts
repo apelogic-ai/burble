@@ -91,10 +91,17 @@ export type SchedulerControlIntent =
   | "latest_run_status"
   | null;
 
+export type SchedulerResolvedCreateJob = {
+  title: string;
+  prompt: string;
+  schedule: unknown;
+};
+
 export type SchedulerIntentResolverResult = {
   intent: Exclude<SchedulerControlIntent, null> | "none";
   confidence: number;
   jobId?: string | null;
+  create?: SchedulerResolvedCreateJob | null;
 };
 
 export type SchedulerIntentResolver = (input: {
