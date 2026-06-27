@@ -17,6 +17,7 @@ import type {
   SchedulerShowTaskResult,
   SchedulerTriggerResult,
   SchedulerUpdateJobDeliveryResult,
+  SchedulerUpdateJobPromptResult,
   SchedulerUpdateJobScheduleResult,
   SchedulerValidateTaskResult,
 } from "../scheduler/control-plane";
@@ -79,6 +80,10 @@ async function handleConversationInternal(
       ? (normalizeResolvedSchedule(schedulerResolution.schedule) ??
         parseExplicitIntervalSchedule(request.text)?.value ??
         null)
+      : null;
+  const schedulerPromptUpdateRequest =
+    schedulerControlIntent === "update_job_prompt"
+      ? normalizeResolvedPrompt(schedulerResolution.prompt)
       : null;
   const toolGroups = selectRuntimeToolGroups({
     text: request.text,
@@ -359,6 +364,30 @@ async function handleConversationInternal(
   }
 
   if (
+    schedulerControlIntent === "update_job_prompt" &&
+    deps.schedulerControl?.updateJobPrompt
+  ) {
+    if (!schedulerPromptUpdateRequest) {
+      return {
+        visibility: "ephemeral",
+        classification: "user_private",
+        text: "I can’t update that scheduled task yet because I could not resolve the new task prompt.",
+      };
+    }
+    const result = await deps.schedulerControl.updateJobPrompt({
+      workspaceId: request.workspaceId,
+      slackUserId: request.user.slackUserId,
+      jobId: schedulerJobIdHint,
+      prompt: schedulerPromptUpdateRequest,
+    });
+    return {
+      visibility: "ephemeral",
+      classification: "user_private",
+      text: formatScheduledJobPromptUpdateResult(result),
+    };
+  }
+
+  if (
     schedulerControlIntent === "latest_run_status" &&
     deps.schedulerControl?.getLatestRunStatus
   ) {
@@ -574,6 +603,7 @@ async function resolveSchedulerControlIntent(
   jobId: string | null;
   create: SchedulerResolvedCreateJob | null;
   schedule: unknown | null;
+  prompt: string | null;
 }> {
   const fallbackJobId = readSchedulerJobIdHint(request.text);
   const fallbackCreate = parseSchedulerCreateRequest(request.text);
@@ -613,6 +643,10 @@ async function resolveSchedulerControlIntent(
             intent === "update_job_schedule"
               ? normalizeResolvedSchedule(resolved.schedule)
               : null,
+          prompt:
+            intent === "update_job_prompt"
+              ? normalizeResolvedPrompt(resolved.prompt)
+              : null,
         };
       }
     } catch {
@@ -624,6 +658,7 @@ async function resolveSchedulerControlIntent(
       jobId: fallbackJobId,
       create: fallbackCreate,
       schedule: null,
+      prompt: null,
     };
   }
 
@@ -632,6 +667,7 @@ async function resolveSchedulerControlIntent(
     jobId: null,
     create: fallbackCreate,
     schedule: null,
+    prompt: null,
   };
 }
 
@@ -679,6 +715,13 @@ function normalizeResolvedSchedule(schedule: unknown): unknown | null {
     };
   }
   return null;
+}
+
+function normalizeResolvedPrompt(
+  prompt: string | null | undefined,
+): string | null {
+  const normalized = normalizeScheduledTaskPrompt(prompt?.trim() ?? "");
+  return normalized || null;
 }
 
 function resolveSchedulerResolverJobId(
@@ -770,6 +813,7 @@ function normalizeResolvedSchedulerIntent(
     result.intent === "delete_job" ||
     result.intent === "update_job_delivery" ||
     result.intent === "update_job_schedule" ||
+    result.intent === "update_job_prompt" ||
     result.intent === "validate_task" ||
     result.intent === "latest_run_status"
   ) {
@@ -1615,6 +1659,18 @@ function formatScheduledJobScheduleUpdateResult(
     return [
       `Updated scheduled job ${result.job.jobId} schedule.`,
       `- schedule: ${formatScheduleForSlack(result.job.schedule)}`,
+    ].join("\n");
+  }
+  return formatScheduledJobSelectionFailure(result);
+}
+
+function formatScheduledJobPromptUpdateResult(
+  result: SchedulerUpdateJobPromptResult,
+): string {
+  if (result.ok) {
+    return [
+      `Updated scheduled job ${result.job.jobId} task.`,
+      `- prompt: ${result.job.prompt}`,
     ].join("\n");
   }
   return formatScheduledJobSelectionFailure(result);

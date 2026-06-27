@@ -91,6 +91,19 @@ describe("scheduler intent resolver", () => {
     });
   });
 
+  test("parses task prompt update intents", () => {
+    expect(
+      parseSchedulerIntentResponse(
+        '{"intent":"update_job_prompt","confidence":0.93,"jobId":"job_heart","prompt":"Post exactly this message: ❤️❤️"}',
+      ),
+    ).toEqual({
+      intent: "update_job_prompt",
+      confidence: 0.93,
+      jobId: "job_heart",
+      prompt: "Post exactly this message: ❤️❤️",
+    });
+  });
+
   test("parses task validation intents", () => {
     expect(
       parseSchedulerIntentResponse(
