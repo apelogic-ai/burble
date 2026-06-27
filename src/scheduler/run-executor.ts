@@ -71,30 +71,16 @@ export function createSchedulerRunExecutor(input: {
         input.logInfo?.(
           `Scheduled job run start runId=${run.runId} jobId=${job.jobId}`,
         );
-        const literalMessage = readLiteralScheduledMessage(job.prompt);
-        if (literalMessage && destination) {
-          await input.slackClient.chat.postMessage({
-            channel: destination.channelId,
-            text: literalMessage,
-            ...(destination.threadTs && !destination.isDirectMessage
-              ? { thread_ts: destination.threadTs }
-              : {}),
-          });
-          input.store.finishAgentJobRun({
-            runId: run.runId,
-            status: "succeeded",
-          });
-          input.logInfo?.(
-            `Scheduled job run finish runId=${run.runId} jobId=${job.jobId} mode=literal_delivery`,
-          );
-          return;
-        }
-
         const toolGroups = selectRuntimeToolGroups({
           text: job.prompt,
           attachmentCount: 0,
           contextTexts: [],
         });
+        const scheduledJobContext = scheduledJobContextForRun(
+          input.store,
+          job,
+          toolGroups.groups,
+        );
         const result = await collectAgentRun(input.agentRunner, {
           principal: {
             workspaceId: run.workspaceId,
@@ -115,11 +101,7 @@ export function createSchedulerRunExecutor(input: {
             : {}),
           text: job.prompt,
           toolGroups,
-          scheduledJob: scheduledJobContextForRun(
-            input.store,
-            job,
-            toolGroups.groups,
-          ),
+          ...(scheduledJobContext ? { scheduledJob: scheduledJobContext } : {}),
           connections: {
             github: connectionForSlackUser(input.store, "github", run),
             google: connectionForSlackUser(input.store, "google", run),
@@ -197,16 +179,21 @@ function scheduledJobContextForRun(
   store: Pick<TokenStore, "getAgentJobCapability">,
   job: ScheduledJobRecord,
   toolGroups: string[],
-): ScheduledJobContext {
+): ScheduledJobContext | undefined {
   const capability = store.getAgentJobCapability(job.jobId);
   if (capability) {
-    return buildScheduledJobContext(capability);
+    const context = buildScheduledJobContext(capability);
+    return isDeliveryOnlyScheduledJobContext(context) ? undefined : context;
   }
 
+  const allowedTools = inferAllowedToolsForScheduledJob(job, toolGroups);
+  if (!allowedTools.length) {
+    return undefined;
+  }
   return {
     jobId: job.jobId,
     capabilityProfile: "scheduled_job",
-    allowedTools: inferAllowedToolsForScheduledJob(job, toolGroups),
+    allowedTools,
     ...(job.routeId ? { routeId: job.routeId } : {}),
     ...(job.runtimeType
       ? { runtimeType: job.runtimeType as AgentRuntimeEngine }
@@ -216,12 +203,13 @@ function scheduledJobContextForRun(
   };
 }
 
-function readLiteralScheduledMessage(prompt: string): string | null {
-  const match = /^Post exactly this message:\s*(?<message>.+)$/isu.exec(
-    prompt.trim(),
+function isDeliveryOnlyScheduledJobContext(
+  context: ScheduledJobContext,
+): boolean {
+  return (
+    context.allowedTools.length === 0 ||
+    context.allowedTools.every((tool) => tool === "conversation.sendMessage")
   );
-  const message = match?.groups?.message?.trim();
-  return message ? message : null;
 }
 
 function scheduledRunConversationRoot(

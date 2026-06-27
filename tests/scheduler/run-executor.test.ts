@@ -210,7 +210,7 @@ describe("scheduler run executor", () => {
     store.close();
   });
 
-  test("delivers literal message scheduled jobs without invoking the runtime", async () => {
+  test("executes literal message scheduled jobs through the runtime without a delivery-tool grant", async () => {
     const store = createTokenStore(":memory:");
     const route = store.upsertConversationRoute({
       workspaceId: "T123",
@@ -236,6 +236,15 @@ describe("scheduler run executor", () => {
       state: "scheduled",
       now: new Date("2026-06-25T17:01:00.000Z"),
     });
+    store.upsertAgentJobCapability({
+      jobId: job.jobId,
+      workspaceId: "T123",
+      slackUserId: "U123",
+      requiredTools: ["conversation.sendMessage"],
+      routeId: route.id,
+      runtimeType: "hermes",
+      now: new Date("2026-06-25T17:01:30.000Z"),
+    });
     const run = store.createAgentJobRun({
       runId: "jobrun-heart",
       jobId: job.jobId,
@@ -245,7 +254,7 @@ describe("scheduler run executor", () => {
       status: "queued",
       now: new Date("2026-06-25T17:02:00.000Z"),
     });
-    let runnerCalled = false;
+    const runnerInputs: unknown[] = [];
     const runner: AgentRunner = {
       name: "test-runner",
       capabilities: {
@@ -253,9 +262,15 @@ describe("scheduler run executor", () => {
         toolEvents: true,
         remote: true,
       },
-      async *run() {
-        runnerCalled = true;
-        throw new Error("runtime should not be called for literal delivery");
+      async *run(input) {
+        runnerInputs.push(input);
+        yield {
+          type: "final",
+          response: {
+            classification: "public",
+            text: "❤️",
+          },
+        };
       },
     };
     const posts: Array<{ channel: string; text: string; thread_ts?: string }> =
@@ -275,7 +290,19 @@ describe("scheduler run executor", () => {
 
     await executor.executeRun(run.runId);
 
-    expect(runnerCalled).toBe(false);
+    expect(runnerInputs).toHaveLength(1);
+    expect(runnerInputs[0]).toMatchObject({
+      text: "Post exactly this message: ❤️",
+      conversation: {
+        routeId: route.id,
+        channelId: "C123",
+        rootId: "scheduled:job-heart:jobrun-heart",
+        isDirectMessage: false,
+      },
+    });
+    expect(
+      (runnerInputs[0] as { scheduledJob?: ScheduledJobContext }).scheduledJob,
+    ).toBeUndefined();
     expect(posts).toEqual([
       {
         channel: "C123",
