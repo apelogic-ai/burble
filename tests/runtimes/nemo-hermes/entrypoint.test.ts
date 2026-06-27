@@ -2997,6 +2997,7 @@ print(json.dumps(list(ctx.tools_by_name.values())))
       name?: string;
       toolset?: string;
       is_async?: boolean;
+      description?: string;
       schema?: {
         parameters?: {
           properties?: {
@@ -3014,6 +3015,21 @@ print(json.dumps(list(ctx.tools_by_name.values())))
       };
     }>;
 
+    const bridgeTool = result.find(
+      (tool: { name?: string; description?: string }) =>
+        tool.name === "burble_provider_call",
+    );
+    const driveTool = result.find(
+      (tool: { name?: string; description?: string }) =>
+        tool.name === "google_get_drive_file",
+    );
+    expect(bridgeTool?.description).toContain("Structured Hermes tool");
+    expect(bridgeTool?.description).toContain("never write burble_provider_call");
+    expect(bridgeTool?.description).toContain("call any next needed provider tool");
+    expect(driveTool?.description).toContain("Structured Hermes tool");
+    expect(driveTool?.description).toContain("never write");
+    expect(driveTool?.description).toContain(":gear:");
+    expect(driveTool?.description).toContain("call any next needed provider tool");
     expect(result).toContainEqual(
       expect.objectContaining({
         name: "burble_provider_call",
