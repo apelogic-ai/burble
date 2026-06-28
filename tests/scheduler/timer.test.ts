@@ -253,7 +253,18 @@ describe("scheduler timer", () => {
     });
 
     expect(await timer.tick()).toEqual({ queuedRunIds: [] });
-    expect(store.getAgentJobRun("jobrun-invalid-grant")).toBeNull();
+    expect(store.getAgentJobRun("jobrun-invalid-grant")).toMatchObject({
+      runId: "jobrun-invalid-grant",
+      jobId: "job-open-prs",
+      triggerSource: "schedule",
+      status: "failed",
+    });
+    expect(store.getAgentJobRun("jobrun-invalid-grant")?.failureReason).toContain(
+      "Scheduled task validation failed: missing_required_tool",
+    );
+    expect(store.getAgentJobRun("jobrun-invalid-grant")?.failureReason).toContain(
+      "github_search_issues",
+    );
     expect(store.getAgentJobCapability("job-open-prs")?.requiredTools).toEqual([
       "github_list_my_pull_requests",
     ]);

@@ -80,9 +80,27 @@ export function createSchedulerTimer(input: {
         if (existingCapability) {
           const validation = validateScheduledTask(job, existingCapability);
           if (!validation.ok) {
+            const failureReason = [
+              "Scheduled task validation failed:",
+              validation.errors
+                .map((issue) => `${issue.code}: ${issue.message}`)
+                .join("; "),
+            ].join(" ");
+            const run = input.store.createAgentJobRun({
+              runId: newRunId(),
+              jobId: job.jobId,
+              workspaceId: job.workspaceId,
+              slackUserId: job.slackUserId,
+              triggerSource: "schedule",
+              status: "failed",
+              failureReason,
+              finishedAt: timestamp.toISOString(),
+              now: timestamp,
+            });
+            activePrincipals.add(principalKey);
             input.logWarn?.(
               [
-                `Scheduled job timer skipped invalid task jobId=${job.jobId}`,
+                `Scheduled job timer failed invalid task runId=${run.runId} jobId=${job.jobId}`,
                 ...validation.errors.map(
                   (issue) => `${issue.code}: ${issue.message}`,
                 ),
