@@ -56,6 +56,7 @@ export type TaskWorkflowPlanValidationError = {
   code:
     | "duplicate_step_id"
     | "tool_not_granted"
+    | "unknown_provider_tool"
     | "missing_idempotency_key"
     | "unbound_template_variable";
   stepId: string;
@@ -91,6 +92,7 @@ export function validateTaskWorkflowPlan(
     }
 
     validateToolGrant(step, grantedTools, errors);
+    validateProviderToolCatalog(step, errors);
     validateIdempotency(step, errors);
     validateTemplateBindings(step, scopedBindings, errors);
 
@@ -134,7 +136,7 @@ function validateIdempotency(
 
   if (
     step.kind === "provider_call" &&
-    isMutatingProviderTool(step.tool) &&
+    providerToolRequiresIdempotency(step.tool) &&
     !step.idempotencyKey?.trim()
   ) {
     errors.push({
@@ -145,9 +147,26 @@ function validateIdempotency(
   }
 }
 
-function isMutatingProviderTool(toolName: string): boolean {
+function validateProviderToolCatalog(
+  step: TaskWorkflowStep,
+  errors: TaskWorkflowPlanValidationError[],
+): void {
+  if (step.kind !== "provider_call") {
+    return;
+  }
+  if (findProviderToolSpec(step.tool)) {
+    return;
+  }
+  errors.push({
+    code: "unknown_provider_tool",
+    stepId: step.id,
+    message: `Workflow step ${step.id} uses unknown provider tool ${step.tool}.`,
+  });
+}
+
+function providerToolRequiresIdempotency(toolName: string): boolean {
   const spec = findProviderToolSpec(toolName);
-  return Boolean(spec?.risk && spec.risk !== "read");
+  return !spec || spec.risk !== "read";
 }
 
 function validateTemplateBindings(
@@ -155,7 +174,12 @@ function validateTemplateBindings(
   availableBindings: Set<string>,
   errors: TaskWorkflowPlanValidationError[],
 ): void {
-  for (const variable of templateVariables(step.input)) {
+  const valuesToScan: unknown[] = [step.input];
+  if ("idempotencyKey" in step && step.idempotencyKey) {
+    valuesToScan.push(step.idempotencyKey);
+  }
+
+  for (const variable of valuesToScan.flatMap(templateVariables)) {
     if (
       variable === "jobRunId" ||
       variable.startsWith("state.") ||

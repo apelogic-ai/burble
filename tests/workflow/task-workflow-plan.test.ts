@@ -180,6 +180,62 @@ describe("task workflow plan validation", () => {
     });
   });
 
+  test("rejects unknown provider tools even when granted", () => {
+    const result = validateTaskWorkflowPlan({
+      mode: "burble_workflow",
+      grants: { tools: ["custom_create_ticket"] },
+      steps: [
+        {
+          id: "write",
+          kind: "provider_call",
+          tool: "custom_create_ticket",
+          input: {},
+          idempotencyKey: "{jobRunId}:write",
+        },
+      ],
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      errors: [
+        {
+          code: "unknown_provider_tool",
+          stepId: "write",
+          message:
+            "Workflow step write uses unknown provider tool custom_create_ticket.",
+        },
+      ],
+    });
+  });
+
+  test("validates idempotency key template bindings", () => {
+    const result = validateTaskWorkflowPlan({
+      mode: "burble_workflow",
+      grants: { tools: ["conversation_send_message"] },
+      steps: [
+        {
+          id: "deliver",
+          kind: "delivery",
+          tool: "conversation_send_message",
+          input: { text: "done" },
+          idempotencyKey: "{missing.id}:deliver",
+        },
+      ],
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      errors: [
+        {
+          code: "unbound_template_variable",
+          stepId: "deliver",
+          message:
+            "Workflow step deliver references unbound template variable missing.id.",
+        },
+      ],
+    });
+  });
+
   test("rejects unbound template variables before execution", () => {
     const result = validateTaskWorkflowPlan({
       mode: "burble_workflow",
