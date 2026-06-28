@@ -2100,6 +2100,165 @@ describe("runOpenClawCliRequest", () => {
     expect(response.response.text).toContain("burble #75");
   });
 
+  test("hides scheduled web provider tools selected by group without a grant", async () => {
+    const prompts: string[] = [];
+    const toolCalls: Array<{ toolName: string; body: unknown }> = [];
+    const response = await runOpenClawCliRequest(
+      {
+        executionMode: "native-runtime",
+        runtime: {
+          id: "rt_test",
+          manifest: providerManifest()
+        },
+        input: {
+          text: "Search the web for fresh AI news.",
+          toolGroups: {
+            groups: ["web"],
+            reasons: ["scheduled-job:ungrounded-selection"]
+          },
+          scheduledJob: {
+            jobId: "job-ai-news",
+            capabilityProfile: "scheduled_job",
+            allowedTools: ["github_search_issues"],
+            routeId: "convrt_abc123",
+            runtimeType: "openclaw",
+            stateRefs: [],
+            visibilityPolicy: {
+              maxOutputVisibility: "public",
+              allowPrivateToolDeclassification: false
+            }
+          },
+          connections: {
+            github: { connected: false },
+            google: { connected: false },
+            hubspot: { connected: false },
+            jira: { connected: false },
+            slack: { connected: false }
+          }
+        }
+      },
+      {
+        ...config,
+        mcpGatewayUrl: "http://agentgateway:3000/mcp",
+        runtimeJwt: "runtime-jwt"
+      },
+      async (toolName, body) => {
+        toolCalls.push({ toolName, body });
+        if (toolName === "burble.mcp.listTools") {
+          return {
+            classification: "user_private",
+            content: [
+              {
+                name: "web_search",
+                description: "Search public web/news sources",
+                inputSchema: {}
+              },
+              {
+                name: "github_search_issues",
+                description: "Search GitHub issues and pull requests",
+                inputSchema: {}
+              }
+            ]
+          };
+        }
+
+        return {
+          classification: "public",
+          content: { results: [] }
+        };
+      },
+      async (_command, args) => {
+        const prompt = args[args.indexOf("--message") + 1];
+        prompts.push(prompt);
+        return {
+          exitCode: 0,
+          stdout: "I can only use the granted scheduled task tools.",
+          stderr: ""
+        };
+      },
+      () => undefined
+    );
+
+    expect(prompts).toHaveLength(1);
+    const catalogText =
+      prompts[0].split("Available Burble tools:\n")[1]?.split("\n\n")[0] ??
+      "";
+    expect(catalogText).not.toContain("web.search");
+    expect(catalogText).toContain("burble_provider_call");
+    expect(toolCalls).toEqual([{ toolName: "burble.mcp.listTools", body: {} }]);
+    expect(response.response.text).toContain("granted scheduled task tools");
+  });
+
+  test("denies scheduled bridge provider calls when the grant has no allowed tools", async () => {
+    const prompts: string[] = [];
+    const toolCalls: Array<{ toolName: string; body: unknown }> = [];
+    const response = await runOpenClawCliRequest(
+      {
+        executionMode: "native-runtime",
+        runtime: {
+          id: "rt_test",
+          manifest: providerManifest()
+        },
+        input: {
+          text: "Search GitHub for open PRs.",
+          toolGroups: {
+            groups: ["github"],
+            reasons: ["scheduled-job:empty-grant"]
+          },
+          scheduledJob: {
+            jobId: "job-empty-grant",
+            capabilityProfile: "scheduled_job",
+            allowedTools: [],
+            routeId: "convrt_abc123",
+            runtimeType: "openclaw",
+            stateRefs: [],
+            visibilityPolicy: {}
+          },
+          connections: {
+            github: { connected: true, email: "person@example.com", providerLogin: "person" },
+            google: { connected: false },
+            hubspot: { connected: false },
+            jira: { connected: false },
+            slack: { connected: false }
+          }
+        }
+      },
+      config,
+      async (toolName, body) => {
+        toolCalls.push({ toolName, body });
+        return {
+          classification: "user_private",
+          content: { items: [] }
+        };
+      },
+      async (_command, args) => {
+        const prompt = args[args.indexOf("--message") + 1];
+        prompts.push(prompt);
+        if (prompts.length === 1) {
+          return openClawToolCall("burble_provider_call", {
+            toolName: "github_search_issues",
+            input: {
+              jobId: "job-empty-grant",
+              query: "org:apelogic-ai is:pr is:open"
+            }
+          });
+        }
+        return {
+          exitCode: 0,
+          stdout: "No provider tools are allowed for this scheduled task.",
+          stderr: ""
+        };
+      },
+      () => undefined
+    );
+
+    expect(prompts).toHaveLength(2);
+    expect(prompts[1]).toContain("tool_not_allowed_for_task");
+    expect(prompts[1]).toContain("github_search_issues");
+    expect(toolCalls).toEqual([]);
+    expect(response.response.text).toContain("No provider tools are allowed");
+  });
+
   test("lets OpenClaw fetch current request attachments", async () => {
     const prompts: string[] = [];
     const toolCalls: Array<{ toolName: string; body: unknown }> = [];

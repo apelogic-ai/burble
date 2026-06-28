@@ -2390,6 +2390,8 @@ const providerRuntimeToolGroups: ReadonlySet<RuntimeToolGroup> = new Set([
   "hubspot",
   "jira",
   "slack",
+  "web",
+  "conversation",
 ]);
 
 function selectedRuntimeToolGroups(
@@ -2481,6 +2483,9 @@ function toolGroupsForToolName(toolName: string): RuntimeToolGroup[] {
   }
   if (toolName.startsWith("slack.") || toolName.startsWith("slack_")) {
     return ["slack"];
+  }
+  if (toolName.startsWith("web.") || toolName.startsWith("web_")) {
+    return ["web"];
   }
   if (
     toolName.startsWith("cron.") ||
@@ -3451,6 +3456,17 @@ function validatePlannedToolCall(
     return validateScheduledProviderBridgeToolCall(toolCall, request);
   }
 
+  if (
+    request.input.scheduledJob &&
+    isProviderToolName(toolCall.name) &&
+    !isToolAllowedByScheduledJob(toolCall.name, request)
+  ) {
+    return scheduledToolNotAllowedResult(
+      toolCall.name,
+      request.input.scheduledJob,
+    );
+  }
+
   if (toolCall.name !== "atlassian.callMcpTool") {
     return null;
   }
@@ -3496,7 +3512,7 @@ function validateScheduledProviderBridgeToolCall(
   request: RunRequest,
 ): ToolResult | null {
   const scheduledJob = request.input.scheduledJob;
-  if (!scheduledJob?.allowedTools.length) {
+  if (!scheduledJob) {
     return null;
   }
 
@@ -3512,6 +3528,13 @@ function validateScheduledProviderBridgeToolCall(
     return null;
   }
 
+  return scheduledToolNotAllowedResult(requestedTool, scheduledJob);
+}
+
+function scheduledToolNotAllowedResult(
+  requestedTool: string,
+  scheduledJob: NonNullable<RunRequest["input"]["scheduledJob"]>,
+): ToolResult {
   return {
     classification: "user_private",
     content: {
