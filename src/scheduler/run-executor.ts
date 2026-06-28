@@ -8,7 +8,7 @@ import {
 import { isRuntimeProgressOnlyResponseText } from "../agent/runtime-control-notices";
 import { containsRuntimeToolCallProtocolFragments } from "@burble/runtime-sdk/runtime-text-protocol";
 import { inferAllowedToolsForScheduledJob } from "./job-capabilities";
-import { providerToolCatalog } from "../providers/catalog";
+import { isProviderToolReadSafe } from "../providers/catalog";
 import type {
   AgentJobRunRecord,
   AgentRuntimeEngine,
@@ -261,21 +261,9 @@ function scheduledJobContextAllowsOnlyReadTools(
 ): boolean {
   return Boolean(
     scheduledJobContext?.allowedTools.length &&
-    scheduledJobContext.allowedTools.every((toolName) => {
-      const spec = findProviderToolSpec(toolName);
-      return spec?.risk === "read";
-    }),
-  );
-}
-
-function findProviderToolSpec(toolName: string) {
-  return (
-    providerToolCatalog.find(
-      (tool) =>
-        tool.name === toolName ||
-        tool.alias === toolName ||
-        tool.aliases?.includes(toolName),
-    ) ?? null
+    scheduledJobContext.allowedTools.every((toolName) =>
+      isProviderToolReadSafe(toolName),
+    ),
   );
 }
 

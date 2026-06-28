@@ -18,7 +18,8 @@ import {
 import { createSchedulerControlPlane } from "./scheduler/control-plane";
 import { createHash, timingSafeEqual } from "node:crypto";
 import { connectionProviderForToolName } from "./providers/descriptors";
-import { providerToolCatalog } from "./providers/catalog";
+import { findProviderToolSpec } from "./providers/catalog";
+import type { ProviderToolSpec } from "./providers/tool-specs";
 import { coerceProviderToolGatewayInput } from "./providers/tool-input-coercion";
 import {
   addGitHubIssueLabels,
@@ -2646,18 +2647,7 @@ function requiredToolsUsePrivateReadSources(toolNames: string[]): boolean {
   });
 }
 
-function findProviderToolSpec(toolName: string): (typeof providerToolCatalog)[number] | null {
-  return (
-    providerToolCatalog.find(
-      (tool) =>
-        tool.name === toolName ||
-        tool.alias === toolName ||
-        (tool.aliases ?? []).includes(toolName)
-    ) ?? null
-  );
-}
-
-function providerToolUsesPrivateReadSource(tool: (typeof providerToolCatalog)[number]): boolean {
+function providerToolUsesPrivateReadSource(tool: ProviderToolSpec): boolean {
   if (tool.provider === "web") {
     return false;
   }
