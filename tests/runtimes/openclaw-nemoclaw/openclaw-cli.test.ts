@@ -157,7 +157,7 @@ describe("runOpenClawCliRequest", () => {
       {
         runtime: {
           id: "rt_test",
-          manifest: providerManifest()
+          manifest: providerManifest(),
         },
         input: {
           text: "hello",
@@ -1994,6 +1994,110 @@ describe("runOpenClawCliRequest", () => {
     expect(prompts[0]).toContain(
       "For this scheduled job, use only the listed allowedTools"
     );
+  });
+
+  test("returns scheduled bridge tool denials as recoverable tool results", async () => {
+    const prompts: string[] = [];
+    const toolCalls: Array<{ toolName: string; body: unknown }> = [];
+    const response = await runOpenClawCliRequest(
+      {
+        executionMode: "native-runtime",
+        runtime: {
+          id: "rt_test",
+          manifest: providerManifest()
+        },
+        input: {
+          text: "Check for new PRs in the apelogic-ai GitHub org",
+          toolGroups: {
+            groups: ["github"],
+            reasons: ["scheduled-job:allowed-tools"],
+          },
+          scheduledJob: {
+            jobId: "job-pr-monitor",
+            capabilityProfile: "scheduled_job",
+            allowedTools: ["github_search_issues"],
+            routeId: "convrt_abc123",
+            runtimeType: "openclaw",
+            stateRefs: [],
+            visibilityPolicy: {},
+          },
+          connections: {
+            github: {
+              connected: true,
+              email: "person@example.com",
+              providerLogin: "person",
+            },
+          },
+        },
+      },
+      config,
+      async (toolName, body) => {
+        toolCalls.push({ toolName, body });
+        return {
+          classification: "user_private",
+          content: {
+            items: [
+              {
+                repo: "apelogic-ai/burble",
+                number: 75,
+                title: "[codex] Add scheduler task inspection and validation",
+              },
+            ],
+          },
+        };
+      },
+      async (_command, args) => {
+        const prompt = args[args.indexOf("--message") + 1];
+        prompts.push(prompt);
+        if (prompts.length === 1) {
+          return openClawToolCall("burble_provider_call", {
+            toolName: "github_list_my_pull_requests",
+            input: { jobId: "job-pr-monitor" },
+          });
+        }
+        if (prompts.length === 2) {
+          return openClawToolCall("burble_provider_call", {
+            toolName: "github_search_issues",
+            input: {
+              jobId: "job-pr-monitor",
+              query: "org:apelogic-ai is:pr is:open",
+            },
+          });
+        }
+        return {
+          exitCode: 0,
+          stdout:
+            "New PRs in apelogic-ai:\n\n- burble #75 - [codex] Add scheduler task inspection and validation",
+          stderr: "",
+        };
+      },
+      () => undefined,
+    );
+
+    expect(prompts).toHaveLength(3);
+    const catalogText =
+      prompts[0].split("Available Burble tools:\n")[1]?.split("\n\n")[0] ??
+      "";
+    expect(catalogText).toContain("github.searchIssues");
+    expect(catalogText).not.toContain("github.listMyPullRequests");
+    expect(prompts[1]).toContain("tool_not_allowed_for_task");
+    expect(prompts[1]).toContain("github_list_my_pull_requests");
+    expect(prompts[1]).toContain("github_search_issues");
+    expect(toolCalls).toEqual([
+      {
+        toolName: "burble_provider_call",
+        body: {
+          input: {
+            toolName: "github_search_issues",
+            input: {
+              jobId: "job-pr-monitor",
+              query: "org:apelogic-ai is:pr is:open",
+            },
+          },
+        },
+      },
+    ]);
+    expect(response.response.text).toContain("burble #75");
   });
 
   test("lets OpenClaw fetch current request attachments", async () => {

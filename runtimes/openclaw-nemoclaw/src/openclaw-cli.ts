@@ -2360,7 +2360,11 @@ function filterToolCatalogBySelectedGroups(
     isRouteScopedControlPlaneTool(tool.name) ||
     (request.input.scheduledJob && tool.name === "burble_provider_call") ||
     isToolAllowedByScheduledJob(tool.name, request) ||
-    isToolAllowedBySelectedGroups(tool.name, selectedGroups)
+    (!request.input.scheduledJob &&
+      isToolAllowedBySelectedGroups(tool.name, selectedGroups)) ||
+    (request.input.scheduledJob &&
+      !isProviderToolName(tool.name) &&
+      isToolAllowedBySelectedGroups(tool.name, selectedGroups))
   );
   const allowedToolNames = new Set(catalog.map((tool) => tool.name));
   const upstreamMcpSchemas = Object.fromEntries(
@@ -2373,6 +2377,20 @@ function filterToolCatalogBySelectedGroups(
 
   return { catalog, upstreamMcpSchemas };
 }
+
+function isProviderToolName(toolName: string): boolean {
+  return toolGroupsForToolName(toolName).some((group) =>
+    providerRuntimeToolGroups.has(group),
+  );
+}
+
+const providerRuntimeToolGroups: ReadonlySet<RuntimeToolGroup> = new Set([
+  "github",
+  "google",
+  "hubspot",
+  "jira",
+  "slack",
+]);
 
 function selectedRuntimeToolGroups(
   request: RunRequest
@@ -3362,7 +3380,11 @@ async function executePlannedToolCall(
     toolCall.name === "burble_provider_call" ||
     toolCall.name === "burble.providerCall"
   ) {
-    const validationError = validatePlannedToolCall(toolCall, toolContext);
+    const validationError = validatePlannedToolCall(
+      toolCall,
+      request,
+      toolContext,
+    );
     if (validationError) {
       return validationError;
     }
@@ -3375,7 +3397,11 @@ async function executePlannedToolCall(
   const email = readToolEmail(toolCall.name, request);
   if (!email) {
     if (isConnectionlessProviderTool(toolCall.name)) {
-      const validationError = validatePlannedToolCall(toolCall, toolContext);
+      const validationError = validatePlannedToolCall(
+        toolCall,
+        request,
+        toolContext,
+      );
       if (validationError) {
         return validationError;
       }
@@ -3394,7 +3420,11 @@ async function executePlannedToolCall(
     };
   }
 
-  const validationError = validatePlannedToolCall(toolCall, toolContext);
+  const validationError = validatePlannedToolCall(
+    toolCall,
+    request,
+    toolContext,
+  );
   if (validationError) {
     return validationError;
   }
@@ -3411,8 +3441,16 @@ function isConnectionlessProviderTool(toolName: string): boolean {
 
 function validatePlannedToolCall(
   toolCall: PlannedToolCall,
-  toolContext: BurbleToolContext
+  request: RunRequest,
+  toolContext: BurbleToolContext,
 ): ToolResult | null {
+  if (
+    toolCall.name === "burble_provider_call" ||
+    toolCall.name === "burble.providerCall"
+  ) {
+    return validateScheduledProviderBridgeToolCall(toolCall, request);
+  }
+
   if (toolCall.name !== "atlassian.callMcpTool") {
     return null;
   }
@@ -3451,6 +3489,54 @@ function validatePlannedToolCall(
       message: `The planned Atlassian MCP call \`${upstreamToolName}\` is missing required arguments: ${missing.join(", ")}. Use available lookup tools to resolve them, or ask one concise clarifying question before calling \`${upstreamToolName}\`.`
     }
   };
+}
+
+function validateScheduledProviderBridgeToolCall(
+  toolCall: PlannedToolCall,
+  request: RunRequest,
+): ToolResult | null {
+  const scheduledJob = request.input.scheduledJob;
+  if (!scheduledJob?.allowedTools.length) {
+    return null;
+  }
+
+  const requestedTool =
+    typeof toolCall.arguments.toolName === "string"
+      ? toolCall.arguments.toolName.trim()
+      : "";
+  if (!requestedTool) {
+    return null;
+  }
+
+  if (isToolAllowedByScheduledJob(requestedTool, request)) {
+    return null;
+  }
+
+  return {
+    classification: "user_private",
+    content: {
+      error: "tool_not_allowed_for_task",
+      code: "tool_not_allowed_for_task",
+      requestedTool,
+      allowedTools: scheduledJob.allowedTools,
+      message: `Tool ${requestedTool} is not allowed for scheduled job ${scheduledJob.jobId}. Use one of the allowed task tools instead.`,
+      hint: scheduledToolCorrectionHint(requestedTool, scheduledJob.allowedTools),
+    },
+  };
+}
+
+function scheduledToolCorrectionHint(
+  requestedTool: string,
+  allowedTools: string[],
+): string {
+  if (
+    requestedTool === "github_list_my_pull_requests" &&
+    allowedTools.includes("github_search_issues")
+  ) {
+    return "This task is for org-wide pull request search. Use github_search_issues with a GitHub search query such as org:apelogic-ai is:pr is:open.";
+  }
+
+  return `Allowed task tools: ${allowedTools.join(", ")}`;
 }
 
 function readRequiredSchemaFields(schema: unknown): string[] {

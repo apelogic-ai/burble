@@ -657,6 +657,8 @@ Minimum conformance tests:
 - chat run reaches a final response;
 - streaming emits valid event order;
 - one logical tool call produces one Burble gateway execution;
+- multi-provider chains continue through tool results and reach the model's
+  synthesized final answer;
 - denied tool calls fail closed;
 - scheduled-job envelope preserves `jobId`;
 - job-scoped credentials cannot be reused outside the job;
@@ -675,6 +677,11 @@ OpenClaw and Hermes should remain supported, but their role changes:
   policy;
 - adapter work should be prioritized by customer/runtime value, not by the need
   to make Burble's core path work.
+
+Until a runtime passes conformance for a capability, Burble should treat that
+capability as unavailable for that runtime. A runtime can remain usable for chat
+while being ineligible for scheduled provider-heavy Tasks, multi-provider chains,
+or other narrower capabilities.
 
 This avoids making Burble's architecture depend on successfully suppressing
 features in heavier orchestrators.
@@ -919,6 +926,65 @@ Slices:
 Exit: the suite is green against `burble-native`; capabilities are test-gated; the
 double-execution invariant is enforced against a real runtime, closing the
 fixtures-never-run-against-a-real-runtime gap.
+
+### P-burble — Runtime capability routing and Hermes boundary research
+
+Goal: keep Burble product behavior stable while Hermes is investigated. Runtime
+selection should follow observed conformance, not a configured default engine or
+prompt promises.
+
+Current evidence:
+
+- OpenClaw passed the live multi-provider chain: GitHub PR lookup, summary, and
+  Google Drive file creation.
+- OpenClaw also passed a scheduled GitHub PR checker Task in live Slack testing.
+- Hermes repeatedly failed equivalent interactive and scheduled provider tasks by
+  emitting runtime/tool protocol text, progress markers, or provider intent as
+  assistant text instead of completing the structured tool loop.
+- Upstream Hermes Agent has matching failure-class reports: text-bound tool-call
+  extraction requests (`NousResearch/hermes-agent#29115`), mode-specific tool
+  calls emitted as text (`#53234`, `#13031`), cron/MCP tool filtering mismatch
+  (`#53416`), and maintainer caution against broad parser salvage without raw
+  payload evidence (`#47472`).
+
+Slices:
+
+- **P-burble-a. Runtime capability routing.** Model runtime capabilities at the
+  level Burble actually needs: `structuredProviderChains`,
+  `scheduledProviderCalls`, `taskLocalToolSurface`, `protocolLeakageRejected`,
+  and `durableJobDelivery`. Provider-heavy scheduled Tasks may select only
+  runtimes with passing conformance for those capabilities. Today that means
+  OpenClaw can be eligible for the GitHub PR checker path; Hermes must not claim
+  that capability until it is green.
+- **P-burble-b. Live conformance probes.** Persist runtime evidence by
+  `(runtime engine, profile, model/provider, runtime commit, Burble commit)`:
+  prompt shape, allowed tools, structured tool events observed, gateway execution
+  count, final classification, run id, and failure reason. Selection reads this
+  evidence; it does not infer capability from runtime name.
+- **P-burble-c. Hermes raw-response capture.** Add debug-only, redacted capture of
+  the raw Hermes model/transport response and the normalized runtime events for
+  failing provider runs. Prove whether structured `tool_calls` are absent,
+  present-but-dropped, or text-bound in assistant content before writing any
+  extractor or adapter fix.
+- **P-burble-d. Hermes surface simplification experiments.** Test one execution
+  surface at a time: MCP-only, plugin-only, and bridge-disabled variants. Verify
+  the actual transport/API mode used by the Hermes gateway path, because upstream
+  failures show tool-call behavior can differ by surface even when the same tools
+  and model are configured.
+- **P-burble-e. No blind salvage.** Do not re-add app-side provider execution from
+  marker text. A parser/extractor is acceptable only inside a runtime adapter or
+  transport-normalization layer, backed by raw-payload fixtures and the invariant
+  that one logical tool call produces exactly one provider execution.
+- **P-burble-f. Product fallback.** If the selected runtime lacks the required
+  capability, Burble should either route to a conforming runtime profile or fail
+  with an explicit capability error. It should not silently run provider-heavy
+  Tasks on Hermes and hope the prompt holds.
+
+Exit: Burble selects runtimes from conformance-backed capabilities; OpenClaw's
+provider-heavy scheduled Task path is covered and remains green; Hermes has raw
+evidence and a concrete upstream-compatible fix candidate, or is marked
+unsupported for the affected capabilities; no provider marker/protocol text
+reaches user-visible output; no app-side marker executor returns.
 
 ### Sprint 4 — Make Hermes and OpenClaw conform
 
