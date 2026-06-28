@@ -406,4 +406,79 @@ describe("task workflow reducer", () => {
       },
     ]);
   });
+
+  test("counts delivery failures toward the task circuit breaker", () => {
+    let state = createInitialTaskWorkflowState({
+      failurePauseThreshold: 1,
+    });
+    state = reduceTaskWorkflowEvents(
+      [
+        {
+          type: "task_triggered",
+          taskId: "task-heart",
+          jobRunId: "jobrun-1",
+          triggerKey: "task-heart:manual:req-1",
+          source: "manual",
+          at: "2026-06-28T17:00:00.000Z",
+        },
+        {
+          type: "validation_passed",
+          taskId: "task-heart",
+          jobRunId: "jobrun-1",
+          at: "2026-06-28T17:00:01.000Z",
+        },
+        {
+          type: "attempt_succeeded",
+          taskId: "task-heart",
+          jobRunId: "jobrun-1",
+          attempt: 1,
+          outputDigest: "sha256:heart",
+          at: "2026-06-28T17:00:02.000Z",
+        },
+        {
+          type: "delivery_started",
+          taskId: "task-heart",
+          jobRunId: "jobrun-1",
+          deliveryKey: "jobrun-1:route-1:sha256:heart",
+          at: "2026-06-28T17:00:03.000Z",
+        },
+      ],
+      state,
+    );
+
+    const result = transitionTaskWorkflowEvent(state, {
+      type: "delivery_failed",
+      taskId: "task-heart",
+      jobRunId: "jobrun-1",
+      deliveryKey: "jobrun-1:route-1:sha256:heart",
+      reason: "Slack route unavailable",
+      at: "2026-06-28T17:00:04.000Z",
+    });
+
+    expect(result.state.failureCounts["task-heart:delivery_failed"]).toBe(1);
+    expect(result.state.tasks["task-heart"]).toEqual({
+      status: "needs_repair",
+      pausedReason: "Repeated delivery_failed failures",
+    });
+    expect(result.state.runs["jobrun-1"]).toMatchObject({
+      status: "paused_after_failures",
+      failureClass: "delivery_failed",
+      failureReason: "Slack route unavailable",
+      notificationPending: true,
+    });
+    expect(result.commands).toEqual([
+      {
+        type: "notify_failure",
+        taskId: "task-heart",
+        jobRunId: "jobrun-1",
+        failureClass: "delivery_failed",
+        reason: "Slack route unavailable",
+      },
+      {
+        type: "pause_task",
+        taskId: "task-heart",
+        reason: "Repeated delivery_failed failures",
+      },
+    ]);
+  });
 });

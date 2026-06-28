@@ -158,6 +158,14 @@ export type TaskWorkflowState = {
   runs: Record<string, TaskWorkflowRunState>;
 };
 
+type TaskWorkflowFailureInput = {
+  taskId: string;
+  jobRunId: string;
+  failureClass: string;
+  reason: string;
+  at: string;
+};
+
 export function createInitialTaskWorkflowState(input?: {
   failurePauseThreshold?: number;
 }): TaskWorkflowState {
@@ -285,26 +293,17 @@ export function transitionTaskWorkflowEvent(
       if (!canFinishDelivery(state, event.jobRunId, event.deliveryKey)) {
         return withCommands(state, []);
       }
-      return withCommands(
-        updateRun(state, event.jobRunId, event.at, (run) => ({
-          ...run,
+      return transitionRunFailure(
+        state,
+        {
+          ...event,
+          failureClass: "delivery_failed",
+        },
+        {
           status: "failed",
           deliveryKey: event.deliveryKey,
-          failureClass: "delivery_failed",
-          failureReason: event.reason,
           notificationPending: true,
-        })),
-        runExists(state, event.jobRunId)
-          ? [
-              {
-                type: "notify_failure",
-                taskId: event.taskId,
-                jobRunId: event.jobRunId,
-                failureClass: "delivery_failed",
-                reason: event.reason,
-              },
-            ]
-          : [],
+        },
       );
     case "delivery_succeeded":
       if (!canFinishDelivery(state, event.jobRunId, event.deliveryKey)) {
@@ -432,13 +431,10 @@ function transitionTaskTriggered(
 
 function transitionRunFailure(
   state: TaskWorkflowState,
-  event: Extract<
-    TaskWorkflowEvent,
-    { type: "validation_failed" | "attempt_failed" | "handler_failed" }
-  >,
+  event: TaskWorkflowFailureInput,
   failure: Pick<
     TaskWorkflowRunState,
-    "status" | "attempt" | "notificationPending"
+    "status" | "attempt" | "deliveryKey" | "notificationPending"
   >,
 ): TaskWorkflowTransitionResult {
   const shouldPause =
@@ -507,13 +503,10 @@ function runExists(state: TaskWorkflowState, jobRunId: string): boolean {
 
 function applyRunFailure(
   state: TaskWorkflowState,
-  event: Extract<
-    TaskWorkflowEvent,
-    { type: "validation_failed" | "attempt_failed" | "handler_failed" }
-  >,
+  event: TaskWorkflowFailureInput,
   failure: Pick<
     TaskWorkflowRunState,
-    "status" | "attempt" | "notificationPending"
+    "status" | "attempt" | "deliveryKey" | "notificationPending"
   >,
 ): TaskWorkflowState {
   const failureKey = `${event.taskId}:${event.failureClass}`;
