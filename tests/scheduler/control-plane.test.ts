@@ -231,6 +231,60 @@ describe("scheduler control plane", () => {
     store.close();
   });
 
+  test("does not create duplicate manual runs while a scheduled task is active", async () => {
+    const store = createTokenStore(":memory:");
+    store.upsertScheduledJob({
+      jobId: "ai-news-hourly",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      title: "Hourly AI news summary",
+      prompt: "look for fresh AI-related news and post a short summary",
+      schedule: {
+        kind: "interval",
+        every: { hours: 1 },
+      },
+      runtimeType: "hermes",
+      now: new Date("2026-06-24T12:00:00.000Z"),
+    });
+    store.createAgentJobRun({
+      runId: "jobrun-existing",
+      jobId: "ai-news-hourly",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      triggerSource: "manual",
+      status: "queued",
+      now: new Date("2026-06-24T12:04:00.000Z"),
+    });
+    const scheduler = createSchedulerControlPlane(store, {
+      now: () => new Date("2026-06-24T12:05:00.000Z"),
+      newRunId: () => "jobrun-duplicate",
+    });
+
+    expect(
+      await scheduler.triggerJob?.({
+        workspaceId: "T123",
+        slackUserId: "U123",
+        jobId: "ai-news-hourly",
+      }),
+    ).toEqual({
+      ok: false,
+      reason: "already_running",
+      jobId: "ai-news-hourly",
+      run: expect.objectContaining({
+        runId: "jobrun-existing",
+        status: "queued",
+      }),
+    });
+    expect(store.getAgentJobRun("jobrun-duplicate")).toBeNull();
+    expect(
+      store
+        .listAgentJobRunsForPrincipal("T123", "U123", "ai-news-hourly")
+        .map((run) => run.runId),
+    ).toEqual(["jobrun-existing"]);
+
+    store.close();
+  });
+
   test("lists job runs independently from scheduled task specs", async () => {
     const store = createTokenStore(":memory:");
     store.upsertScheduledJob({

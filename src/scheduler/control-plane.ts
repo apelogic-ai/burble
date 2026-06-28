@@ -107,6 +107,12 @@ export type SchedulerTriggerResult =
       reason: "validation_failed";
       task: SchedulerTaskSummary;
       validation: SchedulerTaskValidation;
+    }
+  | {
+      ok: false;
+      reason: "already_running";
+      jobId: string;
+      run: AgentJobRunRecord;
     };
 
 export type SchedulerListJobRunsInput = {
@@ -270,6 +276,8 @@ type SchedulerControlPlaneOptions = {
     channelName: string;
   }) => Promise<string | null> | string | null;
 };
+
+const DEFAULT_ACTIVE_RUN_TTL_MS = 10 * 60_000;
 
 export function createSchedulerControlPlane(
   store: Pick<
@@ -465,6 +473,21 @@ export function createSchedulerControlPlane(
             validation,
           };
         }
+      }
+      const activeRun = findActiveScheduledJobRun(
+        store,
+        input.workspaceId,
+        input.slackUserId,
+        job.job.jobId,
+        timestamp,
+      );
+      if (activeRun) {
+        return {
+          ok: false,
+          reason: "already_running",
+          jobId: job.job.jobId,
+          run: activeRun,
+        };
       }
 
       return {
@@ -713,6 +736,31 @@ function ensureScheduledJobCapability(
     visibilityPolicy: {},
     now,
   });
+}
+
+function findActiveScheduledJobRun(
+  store: Pick<TokenStore, "listAgentJobRunsForPrincipal">,
+  workspaceId: string,
+  slackUserId: string,
+  jobId: string,
+  now: Date,
+): AgentJobRunRecord | null {
+  return (
+    store
+      .listAgentJobRunsForPrincipal(workspaceId, slackUserId, jobId, 10)
+      .find((run) => isActiveScheduledJobRun(run, now)) ?? null
+  );
+}
+
+function isActiveScheduledJobRun(run: AgentJobRunRecord, now: Date): boolean {
+  if (run.status !== "queued" && run.status !== "running") {
+    return false;
+  }
+  const updatedAtMs = Date.parse(run.updatedAt);
+  if (!Number.isFinite(updatedAtMs)) {
+    return true;
+  }
+  return now.getTime() - updatedAtMs <= DEFAULT_ACTIVE_RUN_TTL_MS;
 }
 
 function updateScheduledJobState(

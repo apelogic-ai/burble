@@ -1530,6 +1530,13 @@ export function formatScheduledJobTriggerResult(
       ),
     ].join("\n");
   }
+  if (result.reason === "already_running") {
+    return [
+      `Scheduled job ${result.jobId} already has an active run.`,
+      `Run ID: ${result.run.runId}`,
+      `Status: ${result.run.status}`,
+    ].join("\n");
+  }
   return [
     "Multiple scheduled jobs are configured. Please specify the job id.",
     ...result.jobs.map((job) => `- ${job.jobId}`),
