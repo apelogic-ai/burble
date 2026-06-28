@@ -1,0 +1,113 @@
+import { describe, expect, test } from "bun:test";
+import { reconcileTaskWorkflowRuns } from "../../src/workflow/task-workflow-reconcile";
+import { createInMemoryTaskWorkflowEventStore } from "../../src/workflow/task-workflow-store";
+
+describe("task workflow reconciliation", () => {
+  test("ingests stale resumable runs as attempt_failed events", () => {
+    const store = createInMemoryTaskWorkflowEventStore();
+    store.appendEvent({
+      eventId: "evt-trigger",
+      recordedAt: "2026-06-28T17:00:00.000Z",
+      event: {
+        type: "task_triggered",
+        taskId: "task-heart",
+        jobRunId: "jobrun-1",
+        triggerKey: "task-heart:manual:req-1",
+        source: "manual",
+        at: "2026-06-28T17:00:00.000Z",
+      },
+    });
+    store.appendEvent({
+      eventId: "evt-attempt-started",
+      recordedAt: "2026-06-28T17:01:00.000Z",
+      event: {
+        type: "attempt_started",
+        taskId: "task-heart",
+        jobRunId: "jobrun-1",
+        attempt: 1,
+        mode: "agent",
+        at: "2026-06-28T17:01:00.000Z",
+      },
+    });
+
+    const result = reconcileTaskWorkflowRuns({
+      store,
+      now: new Date("2026-06-28T17:12:00.000Z"),
+      staleAfterMs: 10 * 60 * 1000,
+    });
+
+    expect(result.events).toMatchObject([
+      {
+        eventId: "stale_run:jobrun-1",
+        signalId: "stale_run:jobrun-1",
+        event: {
+          type: "attempt_failed",
+          taskId: "task-heart",
+          jobRunId: "jobrun-1",
+          attempt: 1,
+          failureClass: "stale_run_timeout",
+        },
+      },
+    ]);
+    expect(store.replayState().runs["jobrun-1"]).toMatchObject({
+      status: "failed",
+      failureClass: "stale_run_timeout",
+      notificationPending: true,
+    });
+  });
+
+  test("does not ingest events for fresh resumable runs", () => {
+    const store = createInMemoryTaskWorkflowEventStore();
+    store.appendEvent({
+      eventId: "evt-trigger",
+      recordedAt: "2026-06-28T17:00:00.000Z",
+      event: {
+        type: "task_triggered",
+        taskId: "task-heart",
+        jobRunId: "jobrun-1",
+        triggerKey: "task-heart:manual:req-1",
+        source: "manual",
+        at: "2026-06-28T17:00:00.000Z",
+      },
+    });
+
+    expect(
+      reconcileTaskWorkflowRuns({
+        store,
+        now: new Date("2026-06-28T17:09:59.000Z"),
+        staleAfterMs: 10 * 60 * 1000,
+      }),
+    ).toEqual({ events: [] });
+  });
+
+  test("uses stable event ids so repeated reconciliation is idempotent", () => {
+    const store = createInMemoryTaskWorkflowEventStore();
+    store.appendEvent({
+      eventId: "evt-trigger",
+      recordedAt: "2026-06-28T17:00:00.000Z",
+      event: {
+        type: "task_triggered",
+        taskId: "task-heart",
+        jobRunId: "jobrun-1",
+        triggerKey: "task-heart:manual:req-1",
+        source: "manual",
+        at: "2026-06-28T17:00:00.000Z",
+      },
+    });
+
+    const input = {
+      store,
+      now: new Date("2026-06-28T17:10:00.000Z"),
+      staleAfterMs: 10 * 60 * 1000,
+    };
+    const first = reconcileTaskWorkflowRuns(input);
+    const second = reconcileTaskWorkflowRuns(input);
+
+    expect(first.events).toHaveLength(1);
+    expect(second.events).toEqual([]);
+    expect(store.listEvents().map((event) => event.eventId)).toEqual([
+      "evt-trigger",
+      "stale_run:jobrun-1",
+    ]);
+  });
+});
