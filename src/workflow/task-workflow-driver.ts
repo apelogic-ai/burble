@@ -68,17 +68,22 @@ export async function runTaskWorkflowDriver(input: {
 
   let executedCommands = 0;
   while (pendingCommands.length > 0) {
-    if (executedCommands >= maxCommands) {
-      throw new Error(
-        `Task workflow driver exceeded maxCommands=${maxCommands}`,
-      );
-    }
-    executedCommands += 1;
-
     const command = pendingCommands.shift();
     if (!command) {
       continue;
     }
+
+    if (executedCommands >= maxCommands) {
+      const event = commandHandlerFailedEvent(
+        command,
+        new Error(`Task workflow driver exceeded maxCommands=${maxCommands}`),
+      );
+      if (event) {
+        applyEvent(event);
+      }
+      break;
+    }
+    executedCommands += 1;
 
     const result = await executeCommand(command, input.handlers, ctx);
     for (const event of normalizeCommandResult(result)) {

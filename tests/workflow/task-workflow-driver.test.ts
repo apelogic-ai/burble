@@ -179,29 +179,38 @@ describe("task workflow driver", () => {
     expect(observedCommands).toEqual(["notify_failure:handler_failed"]);
   });
 
-  test("stops command loops at maxCommands", async () => {
-    await expect(
-      runTaskWorkflowDriver({
-        maxCommands: 1,
-        initialEvent: {
-          type: "task_triggered",
-          taskId: "task-loop",
-          jobRunId: "jobrun-1",
-          triggerKey: "task-loop:manual:req-1",
-          source: "manual",
-          at: "2026-06-28T17:00:00.000Z",
-        },
-        handlers: {
-          validateTask: async (command) => ({
-            type: "validation_passed",
-            taskId: command.taskId,
-            jobRunId: command.jobRunId,
-            at: "2026-06-28T17:00:01.000Z",
-          }),
-          startAttempt: async () => null,
-          deliverOutput: async () => null,
-        },
-      }),
-    ).rejects.toThrow("Task workflow driver exceeded maxCommands=1");
+  test("records a workflow failure when maxCommands is exceeded", async () => {
+    const result = await runTaskWorkflowDriver({
+      maxCommands: 1,
+      initialEvent: {
+        type: "task_triggered",
+        taskId: "task-loop",
+        jobRunId: "jobrun-1",
+        triggerKey: "task-loop:manual:req-1",
+        source: "manual",
+        at: "2026-06-28T17:00:00.000Z",
+      },
+      handlers: {
+        validateTask: async (command) => ({
+          type: "validation_passed",
+          taskId: command.taskId,
+          jobRunId: command.jobRunId,
+          at: "2026-06-28T17:00:01.000Z",
+        }),
+        startAttempt: async () => null,
+        deliverOutput: async () => null,
+      },
+    });
+
+    expect(result.events.map((event) => event.type)).toEqual([
+      "task_triggered",
+      "validation_passed",
+      "handler_failed",
+    ]);
+    expect(result.state.runs["jobrun-1"]).toMatchObject({
+      status: "failed",
+      failureClass: "handler_failed",
+      failureReason: "Task workflow driver exceeded maxCommands=1",
+    });
   });
 });
