@@ -112,6 +112,10 @@ async function executeStep(input: {
   bindings: Record<string, unknown>;
   handlers: TaskWorkflowExecutionHandlers;
 }): Promise<unknown> {
+  if (input.step.kind === "provider_call" && input.step.foreach) {
+    return executeProviderCallForeach(input.step, input.bindings, input.handlers);
+  }
+
   const resolvedInput = resolveTemplateValue(input.step.input, input.bindings);
   switch (input.step.kind) {
     case "provider_call":
@@ -149,6 +153,33 @@ async function executeStep(input: {
         input: resolvedInput,
       });
   }
+}
+
+async function executeProviderCallForeach(
+  step: TaskWorkflowProviderCallStep,
+  bindings: Record<string, unknown>,
+  handlers: TaskWorkflowExecutionHandlers,
+): Promise<unknown[]> {
+  const collection = readBinding(bindings, step.foreach ?? "");
+  if (!Array.isArray(collection)) {
+    throw new Error(`Workflow foreach ${step.foreach} did not resolve to an array`);
+  }
+
+  const outputs: unknown[] = [];
+  for (const item of collection) {
+    const itemBindings = { ...bindings, item };
+    outputs.push(
+      await handlers.providerCall({
+        stepId: step.id,
+        tool: step.tool,
+        input: resolveTemplateValue(step.input, itemBindings),
+        idempotencyKey: step.idempotencyKey
+          ? resolveTemplateString(step.idempotencyKey, itemBindings)
+          : undefined,
+      }),
+    );
+  }
+  return outputs;
 }
 
 function resolveTemplateValue(

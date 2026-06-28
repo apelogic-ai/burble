@@ -153,6 +153,72 @@ describe("task workflow runner", () => {
     ]);
   });
 
+  test("executes foreach provider steps once per item", async () => {
+    const providerCalls: unknown[] = [];
+
+    const result = await executeTaskWorkflowPlan({
+      plan: {
+        mode: "burble_workflow",
+        grants: { tools: ["github_search_issues"] },
+        availableBindings: ["issues"],
+        steps: [
+          {
+            id: "github_prs",
+            kind: "provider_call",
+            foreach: "issues.items",
+            tool: "github_search_issues",
+            input: {
+              query: "org:apelogic-ai is:pr is:open {item.key}",
+            },
+            saveAs: "prs",
+          },
+        ],
+      },
+      initialBindings: {
+        issues: {
+          items: [{ key: "BUR-1" }, { key: "BUR-2" }],
+        },
+      },
+      handlers: {
+        providerCall: async (input) => {
+          providerCalls.push(input);
+          return { query: (input.input as { query: string }).query };
+        },
+        model: async () => ({}),
+        delivery: async () => ({}),
+      },
+    });
+
+    expect(result.ok).toBe(true);
+    expect(providerCalls).toEqual([
+      {
+        stepId: "github_prs",
+        tool: "github_search_issues",
+        input: {
+          query: "org:apelogic-ai is:pr is:open BUR-1",
+        },
+        idempotencyKey: undefined,
+      },
+      {
+        stepId: "github_prs",
+        tool: "github_search_issues",
+        input: {
+          query: "org:apelogic-ai is:pr is:open BUR-2",
+        },
+        idempotencyKey: undefined,
+      },
+    ]);
+    expect(result).toMatchObject({
+      ok: true,
+      bindings: {
+        prs: [
+          { query: "org:apelogic-ai is:pr is:open BUR-1" },
+          { query: "org:apelogic-ai is:pr is:open BUR-2" },
+        ],
+      },
+    });
+  });
+
   test("stops at the first handler failure", async () => {
     const result = await executeTaskWorkflowPlan({
       plan: {
