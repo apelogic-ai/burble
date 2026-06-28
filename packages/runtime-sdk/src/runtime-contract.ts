@@ -31,7 +31,8 @@ export const runtimeToolGroups = [
   "hubspot",
   "jira",
   "scheduler",
-  "slack"
+  "slack",
+  "web"
 ] as const;
 
 export const runtimeToolGroupSchema = z.enum(runtimeToolGroups);
