@@ -1,3 +1,7 @@
+import { isRuntimeProgressOnlyResponseText } from "../agent/runtime-control-notices";
+import { resolveWorkflowTemplateString } from "../workflow/template";
+import { containsRuntimeToolCallProtocolFragments } from "@burble/runtime-sdk/runtime-text-protocol";
+
 export type TaskOutputSpec =
   | {
       kind: "literal";
@@ -68,11 +72,10 @@ function renderItemTemplate(
   try {
     return {
       ok: true,
-      text: template.replace(
-        /\{(?<field>[A-Za-z0-9_.-]+)\}/g,
-        (_match: string, field: string) =>
-          String(readOutputItemField(item, field)),
-      ),
+      text: resolveWorkflowTemplateString(template, item, {
+        missingBindingMessage: (field) =>
+          `Output item is missing required field ${field}.`,
+      }),
     };
   } catch (error) {
     return {
@@ -83,26 +86,24 @@ function renderItemTemplate(
   }
 }
 
-function readOutputItemField(
-  item: Record<string, unknown>,
-  fieldPath: string,
-): unknown {
-  const parts = fieldPath.split(".");
-  let current: unknown = item;
-  for (const part of parts) {
-    if (!current || typeof current !== "object" || !(part in current)) {
-      throw new Error(`Output item is missing required field ${fieldPath}.`);
-    }
-    current = (current as Record<string, unknown>)[part];
-  }
-  return current;
-}
-
 function validateRenderedOutput(
   text: string,
   forbiddenContent: string[],
 ): TaskOutputRenderResult {
   const trimmed = text.trim();
+  if (isRuntimeProgressOnlyResponseText(trimmed)) {
+    return {
+      ok: false,
+      reason:
+        "Output contains runtime-control/progress text instead of user-visible content.",
+    };
+  }
+  if (containsRuntimeToolCallProtocolFragments(trimmed)) {
+    return {
+      ok: false,
+      reason: "Output contains tool-call protocol text.",
+    };
+  }
   for (const forbidden of forbiddenContent) {
     if (forbidden && trimmed.includes(forbidden)) {
       return {

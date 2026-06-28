@@ -7,6 +7,11 @@ import {
   type TaskWorkflowTransformStep,
   validateTaskWorkflowPlan,
 } from "./task-workflow-plan";
+import {
+  readWorkflowBinding,
+  resolveWorkflowTemplateString,
+  resolveWorkflowTemplateValue,
+} from "./template";
 
 export type TaskWorkflowExecutionHandlers = {
   providerCall(input: {
@@ -113,10 +118,17 @@ async function executeStep(input: {
   handlers: TaskWorkflowExecutionHandlers;
 }): Promise<unknown> {
   if (input.step.kind === "provider_call" && input.step.foreach) {
-    return executeProviderCallForeach(input.step, input.bindings, input.handlers);
+    return executeProviderCallForeach(
+      input.step,
+      input.bindings,
+      input.handlers,
+    );
   }
 
-  const resolvedInput = resolveTemplateValue(input.step.input, input.bindings);
+  const resolvedInput = resolveWorkflowTemplateValue(
+    input.step.input,
+    input.bindings,
+  );
   switch (input.step.kind) {
     case "provider_call":
       return input.handlers.providerCall({
@@ -124,7 +136,10 @@ async function executeStep(input: {
         tool: input.step.tool,
         input: resolvedInput,
         idempotencyKey: input.step.idempotencyKey
-          ? resolveTemplateString(input.step.idempotencyKey, input.bindings)
+          ? resolveWorkflowTemplateString(
+              input.step.idempotencyKey,
+              input.bindings,
+            )
           : undefined,
       });
     case "model":
@@ -138,7 +153,7 @@ async function executeStep(input: {
         stepId: input.step.id,
         tool: input.step.tool,
         input: resolvedInput,
-        idempotencyKey: resolveTemplateString(
+        idempotencyKey: resolveWorkflowTemplateString(
           input.step.idempotencyKey ?? "",
           input.bindings,
         ),
@@ -160,9 +175,11 @@ async function executeProviderCallForeach(
   bindings: Record<string, unknown>,
   handlers: TaskWorkflowExecutionHandlers,
 ): Promise<unknown[]> {
-  const collection = readBinding(bindings, step.foreach ?? "");
+  const collection = readWorkflowBinding(bindings, step.foreach ?? "");
   if (!Array.isArray(collection)) {
-    throw new Error(`Workflow foreach ${step.foreach} did not resolve to an array`);
+    throw new Error(
+      `Workflow foreach ${step.foreach} did not resolve to an array`,
+    );
   }
 
   const outputs: unknown[] = [];
@@ -172,60 +189,12 @@ async function executeProviderCallForeach(
       await handlers.providerCall({
         stepId: step.id,
         tool: step.tool,
-        input: resolveTemplateValue(step.input, itemBindings),
+        input: resolveWorkflowTemplateValue(step.input, itemBindings),
         idempotencyKey: step.idempotencyKey
-          ? resolveTemplateString(step.idempotencyKey, itemBindings)
+          ? resolveWorkflowTemplateString(step.idempotencyKey, itemBindings)
           : undefined,
       }),
     );
   }
   return outputs;
-}
-
-function resolveTemplateValue(
-  value: unknown,
-  bindings: Record<string, unknown>,
-): unknown {
-  if (typeof value === "string") {
-    const exactMatch = /^\{(?<name>[A-Za-z0-9_.-]+)\}$/.exec(value);
-    const exactName = exactMatch?.groups?.name;
-    if (exactName) {
-      return readBinding(bindings, exactName);
-    }
-    return resolveTemplateString(value, bindings);
-  }
-  if (Array.isArray(value)) {
-    return value.map((item) => resolveTemplateValue(item, bindings));
-  }
-  if (!value || typeof value !== "object") {
-    return value;
-  }
-  return Object.fromEntries(
-    Object.entries(value).map(([key, item]) => [
-      key,
-      resolveTemplateValue(item, bindings),
-    ]),
-  );
-}
-
-function resolveTemplateString(
-  value: string,
-  bindings: Record<string, unknown>,
-): string {
-  return value.replace(
-    /\{(?<name>[A-Za-z0-9_.-]+)\}/g,
-    (_match: string, name: string) => String(readBinding(bindings, name)),
-  );
-}
-
-function readBinding(bindings: Record<string, unknown>, path: string): unknown {
-  const parts = path.split(".");
-  let current: unknown = bindings;
-  for (const part of parts) {
-    if (!current || typeof current !== "object" || !(part in current)) {
-      throw new Error(`Unbound workflow value ${path}`);
-    }
-    current = (current as Record<string, unknown>)[part];
-  }
-  return current;
 }

@@ -14,6 +14,31 @@ describe("task output spec renderer", () => {
     });
   });
 
+  test("rejects literal runtime progress text", () => {
+    expect(
+      renderTaskOutputSpec({
+        kind: "literal",
+        text: "Calling github search issues...",
+      }),
+    ).toEqual({
+      ok: false,
+      reason:
+        "Output contains runtime-control/progress text instead of user-visible content.",
+    });
+  });
+
+  test("rejects literal tool-call protocol text", () => {
+    expect(
+      renderTaskOutputSpec({
+        kind: "literal",
+        text: ':gear: github_search_issues: "org:apelogic-ai is:pr"',
+      }),
+    ).toEqual({
+      ok: false,
+      reason: "Output contains tool-call protocol text.",
+    });
+  });
+
   test("renders a stable report with item templates", () => {
     expect(
       renderTaskOutputSpec({
@@ -103,6 +128,21 @@ describe("task output spec renderer", () => {
     ).toEqual({
       ok: false,
       reason: "Output item is missing required field title.",
+    });
+  });
+
+  test("fails when a template interpolates an object into text", () => {
+    expect(
+      renderTaskOutputSpec({
+        kind: "report",
+        title: "New PRs",
+        items: [{ repo: "burble", metadata: { number: 75 } }],
+        itemTemplate: "• {repo} — {metadata}",
+        emptyState: "No PRs.",
+      }),
+    ).toEqual({
+      ok: false,
+      reason: "Workflow value metadata cannot be interpolated as text.",
     });
   });
 

@@ -1,4 +1,8 @@
 import { findProviderToolSpec } from "../providers/catalog";
+import {
+  unsupportedWorkflowTemplateExpressions,
+  workflowTemplateVariables,
+} from "./template";
 
 export type TaskWorkflowPlanMode =
   "literal" | "burble_workflow" | "agent_tool_loop";
@@ -150,7 +154,10 @@ function isKnownStepKind(step: TaskWorkflowStep): step is TaskWorkflowStep {
 }
 
 function validateSaveAsBinding(
-  step: TaskWorkflowProviderCallStep | TaskWorkflowTransformStep | TaskWorkflowModelStep,
+  step:
+    | TaskWorkflowProviderCallStep
+    | TaskWorkflowTransformStep
+    | TaskWorkflowModelStep,
   availableBindings: Set<string>,
   errors: TaskWorkflowPlanValidationError[],
 ): void {
@@ -242,7 +249,9 @@ function validateTemplateBindings(
     valuesToScan.push(step.idempotencyKey);
   }
 
-  for (const expression of valuesToScan.flatMap(unsupportedTemplateExpressions)) {
+  for (const expression of valuesToScan.flatMap(
+    unsupportedWorkflowTemplateExpressions,
+  )) {
     errors.push({
       code: "unsupported_template_expression",
       stepId: step.id,
@@ -250,7 +259,7 @@ function validateTemplateBindings(
     });
   }
 
-  for (const variable of valuesToScan.flatMap(templateVariables)) {
+  for (const variable of valuesToScan.flatMap(workflowTemplateVariables)) {
     if (
       variable === "jobRunId" ||
       variable.startsWith("state.") ||
@@ -276,70 +285,4 @@ function hasAvailableBinding(
   return [...availableBindings].some((binding) =>
     variable.startsWith(`${binding}.`),
   );
-}
-
-function templateVariables(value: unknown): string[] {
-  const variables = new Set<string>();
-  visitTemplateValue(value, variables);
-  return [...variables].sort();
-}
-
-function unsupportedTemplateExpressions(value: unknown): string[] {
-  const expressions = new Set<string>();
-  visitUnsupportedTemplateExpressions(value, expressions);
-  return [...expressions].sort();
-}
-
-function visitUnsupportedTemplateExpressions(
-  value: unknown,
-  expressions: Set<string>,
-): void {
-  if (typeof value === "string") {
-    const matches = value.matchAll(/\{(?<body>[^{}]*)\}/g);
-    for (const match of matches) {
-      const body = match.groups?.body;
-      if (!body || /^[A-Za-z0-9_.-]+$/.test(body)) {
-        continue;
-      }
-      expressions.add(match[0]);
-    }
-    return;
-  }
-  if (Array.isArray(value)) {
-    for (const item of value) {
-      visitUnsupportedTemplateExpressions(item, expressions);
-    }
-    return;
-  }
-  if (!value || typeof value !== "object") {
-    return;
-  }
-  for (const item of Object.values(value)) {
-    visitUnsupportedTemplateExpressions(item, expressions);
-  }
-}
-
-function visitTemplateValue(value: unknown, variables: Set<string>): void {
-  if (typeof value === "string") {
-    const matches = value.matchAll(/\{(?<name>[A-Za-z0-9_.-]+)\}/g);
-    for (const match of matches) {
-      const name = match.groups?.name;
-      if (name) {
-        variables.add(name);
-      }
-    }
-    return;
-  }
-  if (Array.isArray(value)) {
-    for (const item of value) {
-      visitTemplateValue(item, variables);
-    }
-    return;
-  }
-  if (!value || typeof value !== "object") {
-    return;
-  }
-  for (const item of Object.values(value)) {
-    visitTemplateValue(item, variables);
-  }
 }
