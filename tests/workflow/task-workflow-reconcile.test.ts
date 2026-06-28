@@ -76,7 +76,7 @@ describe("task workflow reconciliation", () => {
     });
   });
 
-  test("does not time out running attempts without heartbeat evidence", () => {
+  test("falls back to updatedAt for running attempts without heartbeat evidence", () => {
     const store = createInMemoryTaskWorkflowEventStore();
     store.appendEvent({
       eventId: "evt-trigger",
@@ -113,13 +113,25 @@ describe("task workflow reconciliation", () => {
       },
     });
 
-    expect(
-      reconcileTaskWorkflowRuns({
-        store,
-        now: new Date("2026-06-28T17:30:00.000Z"),
-        staleAfterMs: 10 * 60 * 1000,
-      }),
-    ).toEqual({ events: [] });
+    const result = reconcileTaskWorkflowRuns({
+      store,
+      now: new Date("2026-06-28T17:30:00.000Z"),
+      staleAfterMs: 10 * 60 * 1000,
+    });
+
+    expect(result.events).toMatchObject([
+      {
+        event: {
+          type: "attempt_failed",
+          failureClass: "stale_run_timeout",
+          attempt: 1,
+        },
+      },
+    ]);
+    expect(store.replayState().runs["jobrun-1"]).toMatchObject({
+      status: "failed",
+      failureClass: "stale_run_timeout",
+    });
   });
 
   test("does not ingest events for fresh resumable runs", () => {
@@ -246,6 +258,127 @@ describe("task workflow reconciliation", () => {
       },
     });
     expect(state.failureCounts["task-heart:stale_run_timeout"]).toBeUndefined();
+    expect(state.tasks["task-heart"]).toEqual({ status: "active" });
+  });
+
+  test("fails stale delivering runs without a delivery key", () => {
+    const store = createInMemoryTaskWorkflowEventStore();
+    store.appendEvent({
+      eventId: "evt-trigger",
+      event: {
+        type: "task_triggered",
+        taskId: "task-heart",
+        jobRunId: "jobrun-1",
+        triggerKey: "task-heart:manual:req-1",
+        source: "manual",
+        at: "2026-06-28T17:00:00.000Z",
+      },
+    });
+    store.appendEvent({
+      eventId: "evt-validation",
+      event: {
+        type: "validation_passed",
+        taskId: "task-heart",
+        jobRunId: "jobrun-1",
+        at: "2026-06-28T17:00:30.000Z",
+      },
+    });
+    store.appendEvent({
+      eventId: "evt-attempt-success",
+      event: {
+        type: "attempt_succeeded",
+        taskId: "task-heart",
+        jobRunId: "jobrun-1",
+        attempt: 1,
+        outputDigest: "sha256:heart",
+        at: "2026-06-28T17:01:00.000Z",
+      },
+    });
+
+    const result = reconcileTaskWorkflowRuns({
+      store,
+      now: new Date("2026-06-28T17:12:00.000Z"),
+      staleAfterMs: 10 * 60 * 1000,
+    });
+
+    expect(result.events).toMatchObject([
+      {
+        event: {
+          type: "delivery_failed",
+          failureClass: "stale_delivery_timeout",
+        },
+      },
+    ]);
+    expect(store.replayState().runs["jobrun-1"]).toMatchObject({
+      status: "failed",
+      failureClass: "stale_delivery_timeout",
+    });
+  });
+
+  test("does not pause tasks after repeated stale delivery timeouts", () => {
+    const store = createInMemoryTaskWorkflowEventStore();
+    for (const runId of ["jobrun-1", "jobrun-2"]) {
+      store.appendEvent({
+        eventId: `evt-trigger-${runId}`,
+        event: {
+          type: "task_triggered",
+          taskId: "task-heart",
+          jobRunId: runId,
+          triggerKey: `task-heart:manual:${runId}`,
+          source: "manual",
+          at: "2026-06-28T17:00:00.000Z",
+        },
+      });
+      store.appendEvent({
+        eventId: `evt-validation-${runId}`,
+        event: {
+          type: "validation_passed",
+          taskId: "task-heart",
+          jobRunId: runId,
+          at: "2026-06-28T17:00:30.000Z",
+        },
+      });
+      store.appendEvent({
+        eventId: `evt-attempt-${runId}`,
+        event: {
+          type: "attempt_succeeded",
+          taskId: "task-heart",
+          jobRunId: runId,
+          attempt: 1,
+          outputDigest: "sha256:heart",
+          at: "2026-06-28T17:01:00.000Z",
+        },
+      });
+      store.appendEvent({
+        eventId: `evt-delivery-${runId}`,
+        event: {
+          type: "delivery_started",
+          taskId: "task-heart",
+          jobRunId: runId,
+          deliveryKey: `${runId}:route:sha256:heart`,
+          at: "2026-06-28T17:01:30.000Z",
+        },
+      });
+    }
+
+    reconcileTaskWorkflowRuns({
+      store,
+      now: new Date("2026-06-28T17:12:00.000Z"),
+      staleAfterMs: 10 * 60 * 1000,
+    });
+
+    const state = store.replayState({
+      initialState: {
+        failurePauseThreshold: 2,
+        triggerKeys: {},
+        failureCounts: {},
+        tasks: {},
+        runs: {},
+      },
+    });
+    expect(
+      state.failureCounts["task-heart:stale_delivery_timeout"],
+    ).toBeUndefined();
     expect(state.tasks["task-heart"]).toEqual({ status: "active" });
   });
 });

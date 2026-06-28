@@ -111,7 +111,8 @@ export type TaskWorkflowEvent =
       type: "delivery_failed";
       taskId: string;
       jobRunId: string;
-      deliveryKey: string;
+      deliveryKey?: string;
+      failureClass?: string;
       reason: string;
       at: string;
     }
@@ -308,14 +309,14 @@ export function transitionTaskWorkflowEvent(
         [],
       );
     case "delivery_failed":
-      if (!canFinishDelivery(state, event.jobRunId, event.deliveryKey)) {
+      if (!canFailDelivery(state, event.jobRunId, event.deliveryKey)) {
         return withCommands(state, []);
       }
       return transitionRunFailure(
         state,
         {
           ...event,
-          failureClass: "delivery_failed",
+          failureClass: event.failureClass ?? "delivery_failed",
         },
         {
           status: "failed",
@@ -419,6 +420,21 @@ function canFinishDelivery(
   const run = state.runs[jobRunId];
   return Boolean(
     run && run.status === "delivering" && run.deliveryKey === deliveryKey,
+  );
+}
+
+function canFailDelivery(
+  state: TaskWorkflowState,
+  jobRunId: string,
+  deliveryKey: string | undefined,
+): boolean {
+  const run = state.runs[jobRunId];
+  return Boolean(
+    run &&
+    run.status === "delivering" &&
+    (deliveryKey === undefined ||
+      run.deliveryKey === undefined ||
+      run.deliveryKey === deliveryKey),
   );
 }
 

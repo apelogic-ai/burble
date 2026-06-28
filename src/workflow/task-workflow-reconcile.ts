@@ -67,12 +67,13 @@ function staleRunFailedEvent(
     };
   }
 
-  if (run.status === "delivering" && run.deliveryKey) {
+  if (run.status === "delivering") {
     return {
       type: "delivery_failed",
       taskId: run.taskId,
       jobRunId: run.jobRunId,
-      deliveryKey: run.deliveryKey,
+      ...(run.deliveryKey ? { deliveryKey: run.deliveryKey } : {}),
+      failureClass: "stale_delivery_timeout",
       reason,
       at,
     };
@@ -95,7 +96,7 @@ function staleRunEventId(run: TaskWorkflowRunState): string {
 
 function staleReferenceAt(run: TaskWorkflowRunState): string | null {
   if (run.status === "running") {
-    return run.heartbeatAt ?? null;
+    return run.heartbeatAt ?? run.updatedAt;
   }
   return run.updatedAt;
 }
