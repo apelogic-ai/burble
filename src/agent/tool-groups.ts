@@ -64,7 +64,7 @@ const groupKeywords: Record<Exclude<RuntimeToolGroup, "attachments" | "conversat
   jira: ["jira", "atlassian", "ticket", "sprint", "project"],
   scheduler: ["cron", "schedule", "scheduled", "recurring", "reminder", "every"],
   slack: ["slack", "channel", "dm", "message history"],
-  web: ["web", "search", "news", "internet", "online", "latest"]
+  web: ["web", "search the web", "news", "internet", "online"]
 };
 
 const contextAnchorKeywords: Partial<
