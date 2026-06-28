@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { AgentJobRunRecord, ScheduledJobRecord, TokenStore } from "../db";
+import { DEFAULT_ACTIVE_RUN_TTL_MS } from "./active-run";
 import { inferAllowedToolsForScheduledJob } from "./job-capabilities";
 import { validateScheduledTask } from "./task-validation";
 
@@ -31,8 +32,6 @@ export type ScheduledJobScheduleValidation =
       ok: false;
       message: string;
     };
-
-const DEFAULT_ACTIVE_RUN_TTL_MS = 10 * 60_000;
 
 export function createSchedulerTimer(input: {
   store: SchedulerTimerStore;

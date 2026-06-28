@@ -14,6 +14,7 @@ import {
   type SchedulerTaskValidationIssue,
 } from "./task-validation";
 import { validateScheduledJobSchedule } from "./timer";
+import { DEFAULT_ACTIVE_RUN_TTL_MS } from "./active-run";
 
 export type {
   SchedulerTaskGrant,
@@ -276,8 +277,6 @@ type SchedulerControlPlaneOptions = {
     channelName: string;
   }) => Promise<string | null> | string | null;
 };
-
-const DEFAULT_ACTIVE_RUN_TTL_MS = 10 * 60_000;
 
 export function createSchedulerControlPlane(
   store: Pick<
