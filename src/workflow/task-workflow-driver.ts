@@ -1,0 +1,147 @@
+import {
+  type TaskWorkflowCommand,
+  type TaskWorkflowEvent,
+  type TaskWorkflowState,
+  createInitialTaskWorkflowState,
+  transitionTaskWorkflowEvent,
+} from "./task-workflow";
+
+export type TaskWorkflowDriverCommandResult =
+  | TaskWorkflowEvent
+  | TaskWorkflowEvent[]
+  | null
+  | undefined
+  | void;
+
+export type TaskWorkflowDriverContext = {
+  run<T>(name: string, fn: () => Promise<T>): Promise<T>;
+};
+
+export type TaskWorkflowDriverHandlers = {
+  validateTask(
+    command: Extract<TaskWorkflowCommand, { type: "validate_task" }>,
+    ctx: TaskWorkflowDriverContext,
+  ): Promise<TaskWorkflowDriverCommandResult>;
+  startAttempt(
+    command: Extract<TaskWorkflowCommand, { type: "start_attempt" }>,
+    ctx: TaskWorkflowDriverContext,
+  ): Promise<TaskWorkflowDriverCommandResult>;
+  deliverOutput(
+    command: Extract<TaskWorkflowCommand, { type: "deliver_output" }>,
+    ctx: TaskWorkflowDriverContext,
+  ): Promise<TaskWorkflowDriverCommandResult>;
+  notifyFailure?(
+    command: Extract<TaskWorkflowCommand, { type: "notify_failure" }>,
+    ctx: TaskWorkflowDriverContext,
+  ): Promise<TaskWorkflowDriverCommandResult>;
+  pauseTask?(
+    command: Extract<TaskWorkflowCommand, { type: "pause_task" }>,
+    ctx: TaskWorkflowDriverContext,
+  ): Promise<TaskWorkflowDriverCommandResult>;
+};
+
+export type RunTaskWorkflowDriverResult = {
+  state: TaskWorkflowState;
+  events: TaskWorkflowEvent[];
+  commands: TaskWorkflowCommand[];
+};
+
+export async function runTaskWorkflowDriver(input: {
+  initialEvent: TaskWorkflowEvent;
+  initialState?: TaskWorkflowState;
+  handlers: TaskWorkflowDriverHandlers;
+  ctx?: TaskWorkflowDriverContext;
+  maxCommands?: number;
+}): Promise<RunTaskWorkflowDriverResult> {
+  const ctx = input.ctx ?? createInProcessWorkflowDriverContext();
+  const maxCommands = input.maxCommands ?? 100;
+  const events: TaskWorkflowEvent[] = [];
+  const commands: TaskWorkflowCommand[] = [];
+  const pendingCommands: TaskWorkflowCommand[] = [];
+  let state = input.initialState ?? createInitialTaskWorkflowState();
+
+  const applyEvent = (event: TaskWorkflowEvent): void => {
+    const transition = transitionTaskWorkflowEvent(state, event);
+    state = transition.state;
+    events.push(event);
+    commands.push(...transition.commands);
+    pendingCommands.push(...transition.commands);
+  };
+
+  applyEvent(input.initialEvent);
+
+  let executedCommands = 0;
+  while (pendingCommands.length > 0) {
+    if (executedCommands >= maxCommands) {
+      throw new Error(
+        `Task workflow driver exceeded maxCommands=${maxCommands}`,
+      );
+    }
+    executedCommands += 1;
+
+    const command = pendingCommands.shift();
+    if (!command) {
+      continue;
+    }
+
+    const result = await executeCommand(command, input.handlers, ctx);
+    for (const event of normalizeCommandResult(result)) {
+      applyEvent(event);
+    }
+  }
+
+  return { state, events, commands };
+}
+
+export function createInProcessWorkflowDriverContext(): TaskWorkflowDriverContext {
+  return {
+    async run<T>(_name: string, fn: () => Promise<T>): Promise<T> {
+      return fn();
+    },
+  };
+}
+
+function normalizeCommandResult(
+  result: TaskWorkflowDriverCommandResult,
+): TaskWorkflowEvent[] {
+  if (!result) {
+    return [];
+  }
+  return Array.isArray(result) ? result : [result];
+}
+
+async function executeCommand(
+  command: TaskWorkflowCommand,
+  handlers: TaskWorkflowDriverHandlers,
+  ctx: TaskWorkflowDriverContext,
+): Promise<TaskWorkflowDriverCommandResult> {
+  return ctx.run(commandRunName(command), async () => {
+    switch (command.type) {
+      case "validate_task":
+        return handlers.validateTask(command, ctx);
+      case "start_attempt":
+        return handlers.startAttempt(command, ctx);
+      case "deliver_output":
+        return handlers.deliverOutput(command, ctx);
+      case "notify_failure":
+        return handlers.notifyFailure?.(command, ctx);
+      case "pause_task":
+        return handlers.pauseTask?.(command, ctx);
+    }
+  });
+}
+
+function commandRunName(command: TaskWorkflowCommand): string {
+  switch (command.type) {
+    case "validate_task":
+      return `${command.jobRunId}:validate_task`;
+    case "start_attempt":
+      return `${command.jobRunId}:attempt:${command.attempt}`;
+    case "deliver_output":
+      return `${command.jobRunId}:deliver:${command.outputDigest}`;
+    case "notify_failure":
+      return `${command.jobRunId}:notify_failure:${command.failureClass}`;
+    case "pause_task":
+      return `${command.taskId}:pause_task`;
+  }
+}
