@@ -726,7 +726,7 @@ describe("scheduler run executor", () => {
     store.close();
   });
 
-  test("treats conversation delivery plus read provider tools as retry-safe", async () => {
+  test("does not retry progress-only scheduled runs with delivery tool grants", async () => {
     const store = createTokenStore(":memory:");
     const route = store.upsertConversationRoute({
       workspaceId: "T123",
@@ -771,7 +771,7 @@ describe("scheduler run executor", () => {
       status: "queued",
       now: new Date("2026-06-25T17:02:00.000Z"),
     });
-    const runnerInputs: string[] = [];
+    let attempts = 0;
     const runner: AgentRunner = {
       name: "test-runner",
       capabilities: {
@@ -780,22 +780,12 @@ describe("scheduler run executor", () => {
         remote: true,
       },
       async *run(input) {
-        runnerInputs.push(input.text);
-        if (runnerInputs.length === 1) {
-          yield {
-            type: "final",
-            response: {
-              classification: "user_private",
-              text: "Calling github search issues...\n\nFinal result in 2.0s.",
-            },
-          };
-          return;
-        }
+        attempts += 1;
         yield {
           type: "final",
           response: {
             classification: "user_private",
-            text: "No open apelogic-ai PRs found.",
+            text: "Calling github search issues...\n\nFinal result in 2.0s.",
           },
         };
       },
@@ -819,20 +809,28 @@ describe("scheduler run executor", () => {
 
     await executor.executeRun(run.runId);
 
-    expect(runnerInputs).toHaveLength(2);
-    expect(runnerInputs[1]).toContain("Allowed task tools:");
-    expect(runnerInputs[1]).toContain("github_search_issues");
-    expect(runnerInputs[1]).toContain("conversation.sendMessage");
+    expect(attempts).toBe(1);
     expect(posts).toEqual([
       {
         channel: "C123",
-        text: "No open apelogic-ai PRs found.",
+        text: [
+          "Scheduled job failed: Check every 15 min for new PRs in apelogic-ai GitHub org",
+          "Job ID: job-pr-monitor",
+          "Run ID: jobrun-pr-monitor",
+          "Reason: Managed runtime final response contained only runtime-control/progress text",
+        ].join("\n"),
         thread_ts: "1710000000.000000",
       },
     ]);
     expect(warnings).toEqual([
-      "Scheduled job runtime returned progress-only output before tool call; retrying run jobId=job-pr-monitor",
+      "Scheduled job run failed runId=jobrun-pr-monitor error=Managed runtime final response contained only runtime-control/progress text",
     ]);
+    expect(store.getAgentJobRun(run.runId)).toMatchObject({
+      runId: run.runId,
+      status: "failed",
+      failureReason:
+        "Managed runtime final response contained only runtime-control/progress text",
+    });
 
     store.close();
   });
@@ -932,6 +930,107 @@ describe("scheduler run executor", () => {
     ]);
     expect(warnings).toEqual([
       "Scheduled job run failed runId=jobrun-create-drive-file error=Managed runtime final response contained only runtime-control/progress text",
+    ]);
+    expect(store.getAgentJobRun(run.runId)).toMatchObject({
+      runId: run.runId,
+      status: "failed",
+      failureReason:
+        "Managed runtime final response contained only runtime-control/progress text",
+    });
+
+    store.close();
+  });
+
+  test("does not retry progress-only scheduled runs with unknown tool grants", async () => {
+    const store = createTokenStore(":memory:");
+    const route = store.upsertConversationRoute({
+      workspaceId: "T123",
+      slackUserId: "U123",
+      transport: "slack",
+      destination: {
+        channelId: "C123",
+        isDirectMessage: false,
+        rootId: "slack:C123:1710000000.000000",
+      },
+      now: new Date("2026-06-25T17:00:00.000Z"),
+    });
+    const job = store.upsertScheduledJob({
+      jobId: "job-unknown-tool",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      title: "Unknown provider task",
+      prompt: "Use a custom provider tool and post the result.",
+      schedule: { kind: "interval", every: { hours: 1 } },
+      routeId: route.id,
+      runtimeType: "openclaw",
+      state: "scheduled",
+      now: new Date("2026-06-25T17:01:00.000Z"),
+    });
+    store.upsertAgentJobCapability({
+      jobId: job.jobId,
+      workspaceId: "T123",
+      slackUserId: "U123",
+      requiredTools: ["custom_unknown_write_tool"],
+      routeId: route.id,
+      runtimeType: "openclaw",
+      now: new Date("2026-06-25T17:01:30.000Z"),
+    });
+    const run = store.createAgentJobRun({
+      runId: "jobrun-unknown-tool",
+      jobId: job.jobId,
+      workspaceId: "T123",
+      slackUserId: "U123",
+      triggerSource: "schedule",
+      status: "queued",
+      now: new Date("2026-06-25T17:02:00.000Z"),
+    });
+    let attempts = 0;
+    const runner: AgentRunner = {
+      name: "test-runner",
+      capabilities: {
+        streaming: true,
+        toolEvents: true,
+        remote: true,
+      },
+      async *run() {
+        attempts += 1;
+        yield {
+          type: "final",
+          response: {
+            classification: "user_private",
+            text: "Calling custom unknown write tool...\n\nFinal result in 2.0s.",
+          },
+        };
+      },
+    };
+    const posts: Array<{ channel: string; text: string; thread_ts?: string }> =
+      [];
+    const executor = createSchedulerRunExecutor({
+      store,
+      agentRunner: runner,
+      slackClient: {
+        chat: {
+          postMessage: async (message) => {
+            posts.push(message);
+            return {};
+          },
+        },
+      },
+    });
+
+    await executor.executeRun(run.runId);
+
+    expect(attempts).toBe(1);
+    expect(posts).toEqual([
+      {
+        channel: "C123",
+        text: [
+          "Scheduled job failed: Unknown provider task",
+          "Job ID: job-unknown-tool",
+          "Run ID: jobrun-unknown-tool",
+          "Reason: Managed runtime final response contained only runtime-control/progress text",
+        ].join("\n"),
+      },
     ]);
     expect(store.getAgentJobRun(run.runId)).toMatchObject({
       runId: run.runId,
