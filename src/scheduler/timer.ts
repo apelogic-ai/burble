@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { AgentJobRunRecord, ScheduledJobRecord, TokenStore } from "../db";
 import { inferAllowedToolsForScheduledJob } from "./job-capabilities";
+import { validateScheduledTask } from "./task-validation";
 
 type SchedulerTimerStore = Pick<
   TokenStore,
@@ -9,6 +10,7 @@ type SchedulerTimerStore = Pick<
   | "listAgentJobRunsForPrincipal"
   | "createAgentJobRun"
   | "upsertAgentJobCapability"
+  | "getAgentJobCapability"
 >;
 
 export type SchedulerTimer = {
@@ -73,6 +75,21 @@ export function createSchedulerTimer(input: {
         }
         if (!isScheduledJobDue(job, input.store, timestamp, activeRunTtlMs)) {
           continue;
+        }
+        const existingCapability = input.store.getAgentJobCapability(job.jobId);
+        if (existingCapability) {
+          const validation = validateScheduledTask(job, existingCapability);
+          if (!validation.ok) {
+            input.logWarn?.(
+              [
+                `Scheduled job timer skipped invalid task jobId=${job.jobId}`,
+                ...validation.errors.map(
+                  (issue) => `${issue.code}: ${issue.message}`,
+                ),
+              ].join("; "),
+            );
+            continue;
+          }
         }
         input.store.upsertAgentJobCapability({
           jobId: job.jobId,

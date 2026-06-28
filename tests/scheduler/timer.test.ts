@@ -211,4 +211,54 @@ describe("scheduler timer", () => {
 
     store.close();
   });
+
+  test("does not queue due jobs with invalid persisted tool grants", async () => {
+    const store = createTokenStore(":memory:");
+    store.upsertScheduledJob({
+      jobId: "job-open-prs",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      title: "Check every 15 min for new PRs in apelogic-ai GitHub org",
+      prompt:
+        "Check every 15 min for new PRs in repos of https://github.com/apelogic-ai github org, post in this channel",
+      schedule: {
+        kind: "cron",
+        expression: "*/15 * * * *",
+        timezone: "UTC",
+      },
+      runtimeType: "openclaw",
+      state: "scheduled",
+      now: new Date("2026-06-27T17:10:00.000Z"),
+    });
+    store.upsertAgentJobCapability({
+      jobId: "job-open-prs",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      requiredTools: ["github_list_my_pull_requests"],
+      runtimeType: "openclaw",
+      capabilityProfile: "scheduled_job",
+      stateRefs: [],
+      visibilityPolicy: {},
+      now: new Date("2026-06-27T17:10:00.000Z"),
+    });
+    const warnings: string[] = [];
+    const timer = createSchedulerTimer({
+      store,
+      now: () => new Date("2026-06-27T17:15:00.000Z"),
+      newRunId: () => "jobrun-invalid-grant",
+      executeRun: async () => {
+        throw new Error("unexpected run execution");
+      },
+      logWarn: (message) => warnings.push(message),
+    });
+
+    expect(await timer.tick()).toEqual({ queuedRunIds: [] });
+    expect(store.getAgentJobRun("jobrun-invalid-grant")).toBeNull();
+    expect(store.getAgentJobCapability("job-open-prs")?.requiredTools).toEqual([
+      "github_list_my_pull_requests",
+    ]);
+    expect(warnings.join("\n")).toContain("missing_required_tool");
+
+    store.close();
+  });
 });
