@@ -104,6 +104,14 @@ describe("task workflow reducer", () => {
         at: "2026-06-28T17:00:00.500Z",
       },
       {
+        type: "attempt_started",
+        taskId: "task-heart",
+        jobRunId: "jobrun-1",
+        attempt: 1,
+        mode: "agent",
+        at: "2026-06-28T17:00:00.750Z",
+      },
+      {
         type: "attempt_failed",
         taskId: "task-heart",
         jobRunId: "jobrun-1",
@@ -351,7 +359,15 @@ describe("task workflow reducer", () => {
       },
     ]);
 
-    const attempt = transitionTaskWorkflowEvent(validation.state, {
+    const started = transitionTaskWorkflowEvent(validation.state, {
+      type: "attempt_started",
+      taskId: "task-heart",
+      jobRunId: "jobrun-1",
+      attempt: 1,
+      mode: "agent",
+      at: "2026-06-28T17:00:02.000Z",
+    });
+    const attempt = transitionTaskWorkflowEvent(started.state, {
       type: "attempt_succeeded",
       taskId: "task-heart",
       jobRunId: "jobrun-1",
@@ -367,6 +383,40 @@ describe("task workflow reducer", () => {
         outputDigest: "sha256:heart",
       },
     ]);
+  });
+
+  test("does not finish attempts before attempt_started", () => {
+    let state = createInitialTaskWorkflowState();
+    state = transitionTaskWorkflowEvent(state, {
+      type: "task_triggered",
+      taskId: "task-heart",
+      jobRunId: "jobrun-1",
+      triggerKey: "task-heart:manual:req-1",
+      source: "manual",
+      at: "2026-06-28T17:00:00.000Z",
+    }).state;
+    state = transitionTaskWorkflowEvent(state, {
+      type: "validation_passed",
+      taskId: "task-heart",
+      jobRunId: "jobrun-1",
+      at: "2026-06-28T17:00:01.000Z",
+    }).state;
+
+    const result = transitionTaskWorkflowEvent(state, {
+      type: "attempt_succeeded",
+      taskId: "task-heart",
+      jobRunId: "jobrun-1",
+      attempt: 1,
+      outputDigest: "sha256:heart",
+      at: "2026-06-28T17:00:02.000Z",
+    });
+
+    expect(result.commands).toEqual([]);
+    expect(result.state.runs["jobrun-1"]).toMatchObject({
+      status: "running",
+    });
+    expect(result.state.runs["jobrun-1"]?.attempt).toBeUndefined();
+    expect(result.state.runs["jobrun-1"]?.outputDigest).toBeUndefined();
   });
 
   test("emits notify and pause commands for repeated failures", () => {
@@ -426,6 +476,14 @@ describe("task workflow reducer", () => {
           taskId: "task-heart",
           jobRunId: "jobrun-1",
           at: "2026-06-28T17:00:01.000Z",
+        },
+        {
+          type: "attempt_started",
+          taskId: "task-heart",
+          jobRunId: "jobrun-1",
+          attempt: 1,
+          mode: "agent",
+          at: "2026-06-28T17:00:01.500Z",
         },
         {
           type: "attempt_succeeded",

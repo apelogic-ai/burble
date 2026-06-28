@@ -73,6 +73,7 @@ describe("task workflow driver", () => {
     expect(result.events.map((event) => event.type)).toEqual([
       "task_triggered",
       "validation_passed",
+      "attempt_started",
       "attempt_succeeded",
       "delivery_started",
       "delivery_succeeded",
@@ -168,6 +169,7 @@ describe("task workflow driver", () => {
     expect(result.events.map((event) => event.type)).toEqual([
       "task_triggered",
       "validation_passed",
+      "attempt_started",
       "handler_failed",
     ]);
     expect(result.state.runs["jobrun-1"]).toMatchObject({

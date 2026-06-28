@@ -58,6 +58,18 @@ describe("task workflow event store", () => {
       },
     });
     store.appendEvent({
+      eventId: "evt-attempt-started",
+      recordedAt: "2026-06-28T17:00:02.000Z",
+      event: {
+        type: "attempt_started",
+        taskId: "task-heart",
+        jobRunId: "jobrun-1",
+        attempt: 1,
+        mode: "agent",
+        at: "2026-06-28T17:00:02.000Z",
+      },
+    });
+    store.appendEvent({
       eventId: "evt-success",
       recordedAt: "2026-06-28T17:00:03.000Z",
       event: {
@@ -107,6 +119,17 @@ describe("task workflow event store", () => {
         taskId: "task-done",
         jobRunId: "jobrun-done",
         at: "2026-06-28T17:01:01.000Z",
+      },
+    });
+    store.appendEvent({
+      eventId: "evt-done-attempt-started",
+      event: {
+        type: "attempt_started",
+        taskId: "task-done",
+        jobRunId: "jobrun-done",
+        attempt: 1,
+        mode: "agent",
+        at: "2026-06-28T17:01:02.000Z",
       },
     });
     store.appendEvent({

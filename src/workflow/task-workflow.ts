@@ -413,11 +413,7 @@ function canFinishAttempt(
   attempt: number,
 ): boolean {
   const run = state.runs[jobRunId];
-  return Boolean(
-    run &&
-    run.status === "running" &&
-    (run.attempt === undefined || run.attempt === attempt),
-  );
+  return Boolean(run && run.status === "running" && run.attempt === attempt);
 }
 
 function canStartDelivery(
@@ -477,12 +473,25 @@ function canApplyHandlerFailure(
     case "validate_task":
       return canValidateRun(state, event.jobRunId);
     case "start_attempt":
-      return canFinishAttempt(state, event.jobRunId, event.attempt ?? 1);
+      return canFailStartAttempt(state, event.jobRunId, event.attempt ?? 1);
     case "deliver_output": {
       const run = state.runs[event.jobRunId];
       return Boolean(run && run.status === "delivering");
     }
   }
+}
+
+function canFailStartAttempt(
+  state: TaskWorkflowState,
+  jobRunId: string,
+  attempt: number,
+): boolean {
+  const run = state.runs[jobRunId];
+  return Boolean(
+    run &&
+    run.status === "running" &&
+    (run.attempt === undefined || run.attempt === attempt),
+  );
 }
 
 function transitionTaskTriggered(

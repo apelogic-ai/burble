@@ -284,6 +284,17 @@ describe("task workflow reconciliation", () => {
       },
     });
     store.appendEvent({
+      eventId: "evt-attempt-started",
+      event: {
+        type: "attempt_started",
+        taskId: "task-heart",
+        jobRunId: "jobrun-1",
+        attempt: 1,
+        mode: "agent",
+        at: "2026-06-28T17:00:45.000Z",
+      },
+    });
+    store.appendEvent({
       eventId: "evt-attempt-success",
       event: {
         type: "attempt_succeeded",
@@ -336,6 +347,17 @@ describe("task workflow reconciliation", () => {
           taskId: "task-heart",
           jobRunId: runId,
           at: "2026-06-28T17:00:30.000Z",
+        },
+      });
+      store.appendEvent({
+        eventId: `evt-attempt-started-${runId}`,
+        event: {
+          type: "attempt_started",
+          taskId: "task-heart",
+          jobRunId: runId,
+          attempt: 1,
+          mode: "agent",
+          at: "2026-06-28T17:00:45.000Z",
         },
       });
       store.appendEvent({
