@@ -21,6 +21,15 @@ export type SchedulerTimerTickResult = {
   queuedRunIds: string[];
 };
 
+export type ScheduledJobScheduleValidation =
+  | {
+      ok: true;
+    }
+  | {
+      ok: false;
+      message: string;
+    };
+
 const DEFAULT_ACTIVE_RUN_TTL_MS = 10 * 60_000;
 
 export function createSchedulerTimer(input: {
@@ -229,6 +238,89 @@ function scheduledJobIntervalMs(schedule: unknown): number | null {
   return totalMs > 0 ? totalMs : null;
 }
 
+export function validateScheduledJobSchedule(
+  schedule: unknown,
+): ScheduledJobScheduleValidation {
+  if (!isRecord(schedule)) {
+    return { ok: false, message: "schedule must be an object" };
+  }
+  if (schedule.kind === "interval") {
+    return validateScheduledJobInterval(schedule);
+  }
+  if (schedule.kind === "cron") {
+    return validateScheduledJobCron(schedule);
+  }
+  return {
+    ok: false,
+    message: "schedule kind must be interval or cron",
+  };
+}
+
+function validateScheduledJobInterval(
+  schedule: Record<string, unknown>,
+): ScheduledJobScheduleValidation {
+  const every = schedule.every;
+  if (!isRecord(every)) {
+    return { ok: false, message: "interval schedule must include every" };
+  }
+  const totalMs =
+    intervalPartMs(every.minutes, 60_000) +
+    intervalPartMs(every.hours, 60 * 60_000) +
+    intervalPartMs(every.days, 24 * 60 * 60_000) +
+    intervalPartMs(every.weeks, 7 * 24 * 60 * 60_000);
+  if (totalMs <= 0) {
+    return {
+      ok: false,
+      message: "interval schedule must include a positive interval",
+    };
+  }
+  return { ok: true };
+}
+
+function validateScheduledJobCron(
+  schedule: Record<string, unknown>,
+): ScheduledJobScheduleValidation {
+  if (schedule.timezone && schedule.timezone !== "UTC") {
+    return {
+      ok: false,
+      message: "cron schedules currently support UTC only",
+    };
+  }
+  if (typeof schedule.expression !== "string") {
+    return { ok: false, message: "cron schedule must include expression" };
+  }
+  const parts = schedule.expression.trim().split(/\s+/);
+  if (parts.length !== 5) {
+    return {
+      ok: false,
+      message: "cron schedule must use five fields",
+    };
+  }
+  const [minuteExpr, hourExpr, dayOfMonthExpr, monthExpr, dayOfWeekExpr] =
+    parts;
+  const supportedFields: Array<[string, string, number, number]> = [
+    ["minute", minuteExpr, 0, 59],
+    ["hour", hourExpr, 0, 23],
+    ["day of month", dayOfMonthExpr, 1, 31],
+    ["day of week", dayOfWeekExpr, 0, 6],
+  ];
+  for (const [label, expression, min, max] of supportedFields) {
+    if (!isSupportedCronFieldExpression(expression, min, max)) {
+      return {
+        ok: false,
+        message: `unsupported cron field ${label}: ${expression}`,
+      };
+    }
+  }
+  if (monthExpr !== "*") {
+    return {
+      ok: false,
+      message: `unsupported cron field month: ${monthExpr}`,
+    };
+  }
+  return { ok: true };
+}
+
 function scheduledJobCronDueSlotMs(
   schedule: unknown,
   now: Date,
@@ -277,6 +369,9 @@ function cronFieldMatches(
   min: number,
   max: number,
 ): boolean {
+  if (!isSupportedCronFieldExpression(expression, min, max)) {
+    return false;
+  }
   if (expression === "*") {
     return true;
   }
@@ -295,6 +390,23 @@ function cronFieldMatches(
   return Number.isSafeInteger(exact) && exact >= min && exact <= max
     ? value === exact
     : false;
+}
+
+function isSupportedCronFieldExpression(
+  expression: string,
+  min: number,
+  max: number,
+): boolean {
+  if (expression === "*") {
+    return true;
+  }
+  const step = /^\*\/(\d+)$/.exec(expression);
+  if (step) {
+    const interval = Number(step[1]);
+    return Number.isSafeInteger(interval) && interval > 0;
+  }
+  const exact = Number(expression);
+  return Number.isSafeInteger(exact) && exact >= min && exact <= max;
 }
 
 function intervalPartMs(value: unknown, multiplier: number): number {

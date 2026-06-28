@@ -8,6 +8,7 @@ import type {
   TokenStore,
 } from "../db";
 import { inferAllowedToolsForScheduledJob } from "./job-capabilities";
+import { validateScheduledJobSchedule } from "./timer";
 
 export type SchedulerJobSummary = {
   jobId: string;
@@ -173,10 +174,16 @@ export type SchedulerCreateJobInput = {
   runtimeType?: AgentRuntimeEngine | null;
 };
 
-export type SchedulerCreateJobResult = {
-  ok: true;
-  job: ScheduledJobRecord;
-};
+export type SchedulerCreateJobResult =
+  | {
+      ok: true;
+      job: ScheduledJobRecord;
+    }
+  | {
+      ok: false;
+      reason: "invalid_schedule";
+      message: string;
+    };
 
 export type SchedulerJobMutationInput = {
   workspaceId: string;
@@ -229,7 +236,14 @@ export type SchedulerUpdateJobDeliveryResult =
       channelName?: string | null;
     };
 
-export type SchedulerUpdateJobScheduleResult = SchedulerJobMutationResult;
+export type SchedulerUpdateJobScheduleResult =
+  | SchedulerJobMutationResult
+  | {
+      ok: false;
+      reason: "invalid_schedule";
+      message: string;
+      jobs: SchedulerJobSummary[];
+    };
 export type SchedulerUpdateJobPromptResult = SchedulerJobMutationResult;
 
 export type SchedulerJobDeleteResult =
@@ -369,6 +383,14 @@ export function createSchedulerControlPlane(
       };
     },
     createJob(input) {
+      const scheduleValidation = validateScheduledJobSchedule(input.schedule);
+      if (!scheduleValidation.ok) {
+        return {
+          ok: false,
+          reason: "invalid_schedule",
+          message: scheduleValidation.message,
+        };
+      }
       const jobId = newJobId();
       const timestamp = now();
       const job = store.upsertScheduledJob({
@@ -494,6 +516,15 @@ function updateScheduledJobSchedule(
   const selection = selectSchedulerJob(jobs, input.jobId);
   if (!selection.ok) {
     return selection;
+  }
+  const scheduleValidation = validateScheduledJobSchedule(input.schedule);
+  if (!scheduleValidation.ok) {
+    return {
+      ok: false,
+      reason: "invalid_schedule",
+      message: scheduleValidation.message,
+      jobs,
+    };
   }
   const record = records.find((job) => job.jobId === selection.job.jobId);
   if (!record) {

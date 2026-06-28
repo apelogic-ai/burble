@@ -1539,6 +1539,9 @@ export function formatScheduledJobTriggerResult(
 export function formatScheduledJobCreateResult(
   result: SchedulerCreateJobResult,
 ): string {
+  if (!result.ok) {
+    return `I can’t create that scheduled task because the schedule is unsupported: ${result.message}`;
+  }
   return [
     `Created scheduled job ${result.job.jobId}.`,
     `- name: ${result.job.title}`,
@@ -1660,6 +1663,9 @@ export function formatScheduledJobScheduleUpdateResult(
       `Updated scheduled job ${result.job.jobId} schedule.`,
       `- schedule: ${formatScheduleForSlack(result.job.schedule)}`,
     ].join("\n");
+  }
+  if (result.reason === "invalid_schedule") {
+    return `I can’t update that scheduled task schedule because it is unsupported: ${result.message}`;
   }
   return formatScheduledJobSelectionFailure(result);
 }
