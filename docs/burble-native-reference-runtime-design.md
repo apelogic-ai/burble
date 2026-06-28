@@ -307,6 +307,47 @@ jobId, allowedTools, routeId, stateRefs, visibilityPolicy
 Task details belong beside it in the Burble-owned run envelope, not inside that
 grant object and not buried in natural-language prompt suffixes.
 
+### Task And Job Output Contract
+
+Task execution output is a Burble boundary, not a runtime convention. A runtime
+returns a proposed final answer. Burble validates it, records the Job outcome,
+and delivers it through the approved route.
+
+The near-term contract is intentionally small:
+
+- the final answer must contain user-visible task output, not runtime-control
+  progress, tool-call markers, raw tool JSON, or debug/protocol transcript;
+- the final answer must not claim that a schedule, job, route, or next run was
+  created or modified unless the Task itself is a scheduler-management task;
+- delivery wording such as "posted to this channel" is not part of the
+  executable Task objective; Burble owns delivery;
+- literal-message Tasks return exactly the literal message as final output;
+- provider-derived links should be rendered as normal user-facing links with
+  enough surrounding context to explain what they are;
+- failures use a Burble-owned terminal envelope with task title, task id, run
+  id, and reason.
+
+This gives all runtimes the same target. OpenClaw, Hermes, and
+`burble-native` may phrase summaries differently, but they cannot substitute
+status/progress text for the final result or re-enter job-management prose when
+the Job is supposed to do the Task.
+
+The current enforcement point is the scheduled run executor:
+
+```text
+runtime final answer
+  -> trim and validate output contract
+  -> reject progress/protocol/empty output
+  -> record run status
+  -> deliver validated text through Burble route
+```
+
+Later workflow-FSM work should expand this into structured output artifacts:
+source records, citations/links, generated summaries, attachments, visibility
+taint, and delivery receipts. The immediate goal is simpler: prevent the
+runtime from turning a scheduled Job back into a scheduler command or leaking
+tool protocol into Slack.
+
 ### Recoverable Tool Errors
 
 Not every tool failure should terminate the run. A model selecting the wrong
@@ -1016,6 +1057,46 @@ Execution modes:
 - `agent_tool_loop`: hand the task to a runtime agent with allowed tools. Use only
   when the path cannot be reasonably known up front.
 
+FSM model:
+
+```text
+TaskDefinition
+  -> Trigger(schedule slot | manual trigger)
+  -> JobRun(created)
+  -> JobRun(validating)
+  -> JobRun(running)
+  -> Attempt(step_running | agent_running | model_running)
+  -> JobRun(delivering)
+  -> JobRun(succeeded | failed | paused_after_failures | needs_repair)
+```
+
+The FSM owns lifecycle and idempotency; the agent/runtime owns only the bounded
+reasoning step inside `agent_running` or `model_running`.
+
+Required transition keys:
+
+- `taskId + dueSlot` for timer fires;
+- `taskId + manualRequestId` for manual trigger;
+- `jobRunId + stepId + attempt` for provider/model execution;
+- `jobRunId + deliveryRouteId + outputDigest` for delivery;
+- `taskId + failureClass + failureWindow` for failure-cap decisions.
+
+These keys are the durable form of the fixes we discussed as "failure cap" and
+"atomic trigger idempotency". They should not be implemented twice as standalone
+scheduler patches if the workflow FSM is the target.
+
+Failure policy:
+
+- validation failures before execution create a terminal failed JobRun and notify
+  through the Task delivery route when available;
+- repeated validation failures for the same Task auto-pause after a small
+  configured threshold and mark the Task `needs_repair`;
+- transient provider/model failures retry at the step level with bounded backoff;
+- runtime contract failures retry only when the step is positively known
+  read-only and idempotent;
+- mutating steps never retry unless their idempotency key is accepted by the
+  tool gateway or provider adapter.
+
 Representative multi-step Task:
 
 ```json
@@ -1130,6 +1211,25 @@ Validation rules:
 - Mutating steps and delivery steps require idempotency keys.
 - The workflow can retry transient tool/model failures by step, but cannot widen
   its grants or change provider tools at runtime.
+
+Implementation slices:
+
+- **P-workflow-a. Reducer and event vocabulary.** Define `TaskWorkflowEvent`,
+  `TaskWorkflowState`, and pure transition tests for create, due slot, manual
+  trigger, validation failure, attempt success/failure, delivery success/failure,
+  auto-pause, and repair-needed states.
+- **P-workflow-b. Idempotent run creation.** Replace read-then-create trigger
+  guards with durable idempotency keys for timer and manual triggers. The same key
+  returns the existing active/terminal JobRun instead of minting another one.
+- **P-workflow-c. Step runner interface.** Introduce `WorkflowRunner` with
+  provider, transform, model, agent, and delivery command handlers. The first
+  implementation can run in process over the current scheduler store.
+- **P-workflow-d. Step artifacts and output contract.** Persist normalized step
+  outputs, final proposed output, delivery payload, failure reason, runtime id,
+  model id, and token/tool usage as workflow artifacts.
+- **P-workflow-e. Durable substrate adapter.** Add Restate/Temporal only behind
+  the runner interface after the reducer and in-process conformance tests are
+  stable.
 
 Exit: common scheduled jobs can run without giving the model the provider tool
 surface; multi-step provider workflows are inspectable before enabling; manual

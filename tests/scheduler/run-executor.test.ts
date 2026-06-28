@@ -83,7 +83,6 @@ describe("scheduler run executor", () => {
     );
     expect(runnerInputs[0]).toMatchObject({
       principal: { workspaceId: "T123", slackUserId: "U123" },
-      text: "Find fresh AI news and summarize it.",
       scheduledJob: {
         jobId: "job-ai-news",
         allowedTools: ["web_search"],
@@ -97,6 +96,16 @@ describe("scheduler run executor", () => {
         isDirectMessage: true,
       },
     });
+    expect((runnerInputs[0] as { text: string }).text).toContain(
+      "Return only the final user-visible result for this task.",
+    );
+    expect((runnerInputs[0] as { text: string }).text).toContain(
+      "Task:\nFind fresh AI news and summarize it.",
+    );
+    expect(
+      (runnerInputs[0] as { toolGroups: { groups: string[] } }).toolGroups
+        .groups,
+    ).not.toContain("scheduler");
     expect(posts).toEqual([
       {
         channel: "D123",
@@ -292,7 +301,6 @@ describe("scheduler run executor", () => {
 
     expect(runnerInputs).toHaveLength(1);
     expect(runnerInputs[0]).toMatchObject({
-      text: "Return exactly this message as your entire final answer, with no extra text. Do not call tools for delivery; Burble will deliver your final answer.\n\n❤️",
       conversation: {
         routeId: route.id,
         channelId: "C123",
@@ -300,6 +308,16 @@ describe("scheduler run executor", () => {
         isDirectMessage: false,
       },
     });
+    expect((runnerInputs[0] as { text: string }).text).toContain(
+      "The task is literal delivery. Return exactly this message as your entire final answer, with no extra text.",
+    );
+    expect((runnerInputs[0] as { text: string }).text.endsWith("❤️")).toBe(
+      true,
+    );
+    expect(
+      (runnerInputs[0] as { toolGroups: { groups: string[] } }).toolGroups
+        .groups,
+    ).not.toContain("scheduler");
     expect(
       (runnerInputs[0] as { scheduledJob?: ScheduledJobContext }).scheduledJob,
     ).toBeUndefined();
