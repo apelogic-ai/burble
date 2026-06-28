@@ -1954,6 +1954,41 @@ describe("handleToolGatewayRequest", () => {
     });
   });
 
+  test("rejects unsupported scheduled job create schedules with HTTP 400", async () => {
+    const response = await handleToolGatewayRequest(
+      config,
+      createStore(null, runtime, [], null, [], {}, [], null, {}),
+      "scheduledJob.create",
+      request(
+        "scheduledJob.create",
+        {
+          input: {
+            title: "Weekday AI news summary",
+            prompt: "look for fresh AI-related news and post a short summary",
+            schedule: {
+              kind: "cron",
+              expression: "1-5 9 * * mon-fri",
+              timezone: "UTC"
+            },
+            routeId: "convrt_abcdefabcdefabcdefabcdef"
+          }
+        },
+        "runtime-token-u123",
+        "rt_u123"
+      )
+    );
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({
+      classification: "user_private",
+      content: {
+        ok: false,
+        reason: "invalid_schedule",
+        message: expect.stringContaining("unsupported cron field")
+      }
+    });
+  });
+
   test("lets a runtime pause, resume, and delete a Burble-owned scheduled job", async () => {
     const jobs: ReturnType<TokenStore["listScheduledJobsForPrincipal"]> = [
       {

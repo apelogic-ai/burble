@@ -638,6 +638,15 @@ export async function handleToolGatewayRequest(
       routeId: input.value.routeId,
       runtimeType: auth.runtime.engine
     });
+    if (result && !result.ok && result.reason === "invalid_schedule") {
+      return jsonResponse(
+        {
+          classification: "user_private",
+          content: result
+        },
+        400
+      );
+    }
     return respondWithAudit({
       classification: "user_private",
       content: result ?? { ok: false, reason: "unavailable" }

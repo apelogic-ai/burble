@@ -534,6 +534,10 @@ function updateScheduledJobSchedule(
   if (!selection.ok) {
     return selection;
   }
+  const record = records.find((job) => job.jobId === selection.job.jobId);
+  if (!record) {
+    return { ok: false, reason: "not_found", jobs };
+  }
   const scheduleValidation = validateScheduledJobSchedule(input.schedule);
   if (!scheduleValidation.ok) {
     return {
@@ -542,10 +546,6 @@ function updateScheduledJobSchedule(
       message: scheduleValidation.message,
       jobs,
     };
-  }
-  const record = records.find((job) => job.jobId === selection.job.jobId);
-  if (!record) {
-    return { ok: false, reason: "not_found", jobs };
   }
   const job = store.upsertScheduledJob({
     jobId: record.jobId,
