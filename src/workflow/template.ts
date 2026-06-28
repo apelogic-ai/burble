@@ -27,13 +27,31 @@ export function unsupportedWorkflowTemplateExpressions(
     const matches = text.matchAll(TEMPLATE_EXPRESSION_RE);
     for (const match of matches) {
       const body = match.groups?.body;
-      if (!body || /^[A-Za-z0-9_.-]+$/.test(body)) {
+      if (body && /^[A-Za-z0-9_.-]+$/.test(body)) {
         continue;
       }
       expressions.add(match[0]);
     }
   });
   return [...expressions].sort();
+}
+
+export function embeddedWorkflowTemplateVariables(value: unknown): string[] {
+  const variables = new Set<string>();
+  visitTemplateValue(value, (text) => {
+    const exactMatch = /^\{(?<name>[A-Za-z0-9_.-]+)\}$/.exec(text);
+    if (exactMatch?.groups?.name) {
+      return;
+    }
+    const matches = text.matchAll(TEMPLATE_VARIABLE_RE);
+    for (const match of matches) {
+      const name = match.groups?.name;
+      if (name) {
+        variables.add(name);
+      }
+    }
+  });
+  return [...variables].sort();
 }
 
 export function resolveWorkflowTemplateValue(

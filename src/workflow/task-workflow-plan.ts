@@ -1,5 +1,6 @@
 import { findProviderToolSpec } from "../providers/catalog";
 import {
+  embeddedWorkflowTemplateVariables,
   unsupportedWorkflowTemplateExpressions,
   workflowTemplateVariables,
 } from "./template";
@@ -65,7 +66,9 @@ export type TaskWorkflowPlanValidationError = {
     | "tool_not_granted"
     | "unknown_provider_tool"
     | "missing_idempotency_key"
+    | "foreach_idempotency_key_not_item_scoped"
     | "unbound_template_variable"
+    | "embedded_structured_binding"
     | "unsupported_template_expression";
   stepId: string;
   message: string;
@@ -81,6 +84,7 @@ export function validateTaskWorkflowPlan(
   const errors: TaskWorkflowPlanValidationError[] = [];
   const grantedTools = new Set(plan.grants?.tools ?? []);
   const availableBindings = new Set(plan.availableBindings ?? []);
+  const saveAsBindings = new Set<string>();
   const seenStepIds = new Set<string>();
 
   for (const step of plan.steps ?? []) {
@@ -108,18 +112,19 @@ export function validateTaskWorkflowPlan(
 
     const scopedBindings = new Set(availableBindings);
     if ("foreach" in step && step.foreach) {
+      validateForeachSource(step, availableBindings, errors);
       scopedBindings.add("item");
-      scopedBindings.add("item.key");
     }
 
     validateToolGrant(step, grantedTools, errors);
     validateProviderToolCatalog(step, errors);
     validateIdempotency(step, errors);
-    validateTemplateBindings(step, scopedBindings, errors);
+    validateTemplateBindings(step, scopedBindings, saveAsBindings, errors);
 
     if ("saveAs" in step && step.saveAs) {
       validateSaveAsBinding(step, availableBindings, errors);
       availableBindings.add(step.saveAs);
+      saveAsBindings.add(step.saveAs);
     }
   }
 
@@ -171,6 +176,18 @@ function validateSaveAsBinding(
       stepId: step.id,
       message: `Workflow step ${step.id} saveAs binding ${binding} already exists.`,
     });
+    return;
+  }
+  if (
+    binding === "jobRunId" ||
+    binding === "item" ||
+    binding.startsWith("state.")
+  ) {
+    errors.push({
+      code: "binding_collision",
+      stepId: step.id,
+      message: `Workflow step ${step.id} saveAs binding ${binding} is reserved.`,
+    });
   }
 }
 
@@ -214,7 +231,42 @@ function validateIdempotency(
       stepId: step.id,
       message: `Workflow step ${step.id} uses a mutating tool and requires an idempotencyKey.`,
     });
+    return;
   }
+
+  if (
+    step.kind === "provider_call" &&
+    step.foreach &&
+    providerToolRequiresIdempotency(step.tool) &&
+    step.idempotencyKey?.trim() &&
+    !workflowTemplateVariables(step.idempotencyKey).some((variable) =>
+      variable.startsWith("item."),
+    )
+  ) {
+    errors.push({
+      code: "foreach_idempotency_key_not_item_scoped",
+      stepId: step.id,
+      message: `Workflow foreach step ${step.id} uses a mutating tool and its idempotencyKey must reference item.*.`,
+    });
+  }
+}
+
+function validateForeachSource(
+  step: TaskWorkflowStep,
+  availableBindings: Set<string>,
+  errors: TaskWorkflowPlanValidationError[],
+): void {
+  if (step.kind !== "provider_call" || !step.foreach) {
+    return;
+  }
+  if (hasAvailableBinding(availableBindings, step.foreach)) {
+    return;
+  }
+  errors.push({
+    code: "unbound_template_variable",
+    stepId: step.id,
+    message: `Workflow step ${step.id} references unbound foreach source ${step.foreach}.`,
+  });
 }
 
 function validateProviderToolCatalog(
@@ -242,6 +294,7 @@ function providerToolRequiresIdempotency(toolName: string): boolean {
 function validateTemplateBindings(
   step: TaskWorkflowStep,
   availableBindings: Set<string>,
+  saveAsBindings: Set<string>,
   errors: TaskWorkflowPlanValidationError[],
 ): void {
   const valuesToScan: unknown[] = [step.input];
@@ -271,6 +324,19 @@ function validateTemplateBindings(
       code: "unbound_template_variable",
       stepId: step.id,
       message: `Workflow step ${step.id} references unbound template variable ${variable}.`,
+    });
+  }
+
+  for (const variable of valuesToScan.flatMap(
+    embeddedWorkflowTemplateVariables,
+  )) {
+    if (!saveAsBindings.has(variable)) {
+      continue;
+    }
+    errors.push({
+      code: "embedded_structured_binding",
+      stepId: step.id,
+      message: `Workflow step ${step.id} embeds saveAs binding ${variable} in text; use an exact template or a scalar subfield.`,
     });
   }
 }

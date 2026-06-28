@@ -287,6 +287,39 @@ describe("task workflow plan validation", () => {
     });
   });
 
+  test("requires mutating foreach idempotency keys to include item scope", () => {
+    const result = validateTaskWorkflowPlan({
+      mode: "burble_workflow",
+      grants: { tools: ["github_add_labels"] },
+      availableBindings: ["issues"],
+      steps: [
+        {
+          id: "comment",
+          kind: "provider_call",
+          foreach: "issues.items",
+          tool: "github_add_labels",
+          input: {
+            issueNumber: "{item.number}",
+            body: "checked",
+          },
+          idempotencyKey: "{jobRunId}:comment",
+        },
+      ],
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      errors: [
+        {
+          code: "foreach_idempotency_key_not_item_scoped",
+          stepId: "comment",
+          message:
+            "Workflow foreach step comment uses a mutating tool and its idempotencyKey must reference item.*.",
+        },
+      ],
+    });
+  });
+
   test("rejects unbound template variables before execution", () => {
     const result = validateTaskWorkflowPlan({
       mode: "burble_workflow",
@@ -312,6 +345,36 @@ describe("task workflow plan validation", () => {
           stepId: "github_prs",
           message:
             "Workflow step github_prs references unbound template variable missingSince.",
+        },
+      ],
+    });
+  });
+
+  test("rejects unbound foreach sources before execution", () => {
+    const result = validateTaskWorkflowPlan({
+      mode: "burble_workflow",
+      grants: { tools: ["github_search_issues"] },
+      steps: [
+        {
+          id: "github_prs",
+          kind: "provider_call",
+          foreach: "issues.items",
+          tool: "github_search_issues",
+          input: {
+            query: "{item.key}",
+          },
+        },
+      ],
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      errors: [
+        {
+          code: "unbound_template_variable",
+          stepId: "github_prs",
+          message:
+            "Workflow step github_prs references unbound foreach source issues.items.",
         },
       ],
     });
@@ -347,6 +410,73 @@ describe("task workflow plan validation", () => {
     });
   });
 
+  test("rejects empty template expressions before execution", () => {
+    const result = validateTaskWorkflowPlan({
+      mode: "burble_workflow",
+      grants: { tools: ["conversation_send_message"] },
+      steps: [
+        {
+          id: "deliver",
+          kind: "delivery",
+          tool: "conversation_send_message",
+          input: {
+            text: "literal {} braces",
+          },
+          idempotencyKey: "{jobRunId}:deliver",
+        },
+      ],
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      errors: [
+        {
+          code: "unsupported_template_expression",
+          stepId: "deliver",
+          message:
+            "Workflow step deliver contains unsupported template expression {}.",
+        },
+      ],
+    });
+  });
+
+  test("rejects embedded interpolation of prior saveAs bindings", () => {
+    const result = validateTaskWorkflowPlan({
+      mode: "burble_workflow",
+      grants: { tools: ["github_search_issues", "conversation_send_message"] },
+      steps: [
+        {
+          id: "fetch",
+          kind: "provider_call",
+          tool: "github_search_issues",
+          input: {},
+          saveAs: "data",
+        },
+        {
+          id: "deliver",
+          kind: "delivery",
+          tool: "conversation_send_message",
+          input: {
+            text: "Summarize: {data}",
+          },
+          idempotencyKey: "{jobRunId}:deliver",
+        },
+      ],
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      errors: [
+        {
+          code: "embedded_structured_binding",
+          stepId: "deliver",
+          message:
+            "Workflow step deliver embeds saveAs binding data in text; use an exact template or a scalar subfield.",
+        },
+      ],
+    });
+  });
+
   test("rejects saveAs binding collisions", () => {
     const result = validateTaskWorkflowPlan({
       mode: "burble_workflow",
@@ -371,6 +501,34 @@ describe("task workflow plan validation", () => {
           stepId: "github_prs",
           message:
             "Workflow step github_prs saveAs binding issues already exists.",
+        },
+      ],
+    });
+  });
+
+  test("rejects saveAs shadowing reserved bindings", () => {
+    const result = validateTaskWorkflowPlan({
+      mode: "burble_workflow",
+      grants: { tools: ["github_search_issues"] },
+      steps: [
+        {
+          id: "github_prs",
+          kind: "provider_call",
+          tool: "github_search_issues",
+          input: {},
+          saveAs: "jobRunId",
+        },
+      ],
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      errors: [
+        {
+          code: "binding_collision",
+          stepId: "github_prs",
+          message:
+            "Workflow step github_prs saveAs binding jobRunId is reserved.",
         },
       ],
     });
