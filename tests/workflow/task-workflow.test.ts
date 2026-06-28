@@ -42,14 +42,17 @@ describe("task workflow reducer", () => {
   });
 
   test("emits validate command for a newly triggered task", () => {
-    const result = transitionTaskWorkflowEvent(createInitialTaskWorkflowState(), {
-      type: "task_triggered",
-      taskId: "task-pr-monitor",
-      jobRunId: "jobrun-1",
-      triggerKey: "task-pr-monitor:slot:2026-06-28T17:00Z",
-      source: "schedule",
-      at: "2026-06-28T17:00:00.000Z",
-    });
+    const result = transitionTaskWorkflowEvent(
+      createInitialTaskWorkflowState(),
+      {
+        type: "task_triggered",
+        taskId: "task-pr-monitor",
+        jobRunId: "jobrun-1",
+        triggerKey: "task-pr-monitor:slot:2026-06-28T17:00Z",
+        source: "schedule",
+        at: "2026-06-28T17:00:00.000Z",
+      },
+    );
 
     expect(result.commands).toEqual([
       {
@@ -81,6 +84,110 @@ describe("task workflow reducer", () => {
     });
 
     expect(result.commands).toEqual([]);
+  });
+
+  test("does not resurrect terminal failed runs with late success events", () => {
+    let state = createInitialTaskWorkflowState();
+    state = reduceTaskWorkflowEvents([
+      {
+        type: "task_triggered",
+        taskId: "task-heart",
+        jobRunId: "jobrun-1",
+        triggerKey: "task-heart:manual:req-1",
+        source: "manual",
+        at: "2026-06-28T17:00:00.000Z",
+      },
+      {
+        type: "validation_passed",
+        taskId: "task-heart",
+        jobRunId: "jobrun-1",
+        at: "2026-06-28T17:00:00.500Z",
+      },
+      {
+        type: "attempt_failed",
+        taskId: "task-heart",
+        jobRunId: "jobrun-1",
+        attempt: 1,
+        failureClass: "runtime_error",
+        reason: "runtime failed",
+        at: "2026-06-28T17:00:01.000Z",
+      },
+    ]);
+
+    const result = transitionTaskWorkflowEvent(state, {
+      type: "delivery_succeeded",
+      taskId: "task-heart",
+      jobRunId: "jobrun-1",
+      deliveryKey: "jobrun-1:route:sha256:heart",
+      at: "2026-06-28T17:00:02.000Z",
+    });
+
+    expect(result.commands).toEqual([]);
+    expect(result.state.runs["jobrun-1"]).toMatchObject({
+      status: "failed",
+      failureClass: "runtime_error",
+      notificationPending: true,
+    });
+  });
+
+  test("does not re-emit commands for duplicate advanced lifecycle events", () => {
+    let state = createInitialTaskWorkflowState();
+    state = reduceTaskWorkflowEvents([
+      {
+        type: "task_triggered",
+        taskId: "task-heart",
+        jobRunId: "jobrun-1",
+        triggerKey: "task-heart:manual:req-1",
+        source: "manual",
+        at: "2026-06-28T17:00:00.000Z",
+      },
+      {
+        type: "validation_passed",
+        taskId: "task-heart",
+        jobRunId: "jobrun-1",
+        at: "2026-06-28T17:00:01.000Z",
+      },
+    ]);
+
+    const duplicateValidation = transitionTaskWorkflowEvent(state, {
+      type: "validation_passed",
+      taskId: "task-heart",
+      jobRunId: "jobrun-1",
+      at: "2026-06-28T17:00:02.000Z",
+    });
+    expect(duplicateValidation.commands).toEqual([]);
+
+    state = reduceTaskWorkflowEvents(
+      [
+        {
+          type: "attempt_started",
+          taskId: "task-heart",
+          jobRunId: "jobrun-1",
+          attempt: 1,
+          mode: "agent",
+          at: "2026-06-28T17:00:03.000Z",
+        },
+        {
+          type: "attempt_succeeded",
+          taskId: "task-heart",
+          jobRunId: "jobrun-1",
+          attempt: 1,
+          outputDigest: "sha256:heart",
+          at: "2026-06-28T17:00:04.000Z",
+        },
+      ],
+      duplicateValidation.state,
+    );
+
+    const duplicateAttemptSuccess = transitionTaskWorkflowEvent(state, {
+      type: "attempt_succeeded",
+      taskId: "task-heart",
+      jobRunId: "jobrun-1",
+      attempt: 1,
+      outputDigest: "sha256:heart",
+      at: "2026-06-28T17:00:05.000Z",
+    });
+    expect(duplicateAttemptSuccess.commands).toEqual([]);
   });
 
   test("records validation failure as a terminal failed run with notification pending", () => {

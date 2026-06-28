@@ -186,6 +186,9 @@ export function transitionTaskWorkflowEvent(
     case "task_triggered":
       return transitionTaskTriggered(state, event);
     case "validation_passed":
+      if (!canValidateRun(state, event.jobRunId)) {
+        return withCommands(state, []);
+      }
       return withCommands(
         updateRun(state, event.jobRunId, event.at, (run) => ({
           ...run,
@@ -204,11 +207,17 @@ export function transitionTaskWorkflowEvent(
           : [],
       );
     case "validation_failed":
+      if (!canValidateRun(state, event.jobRunId)) {
+        return withCommands(state, []);
+      }
       return transitionRunFailure(state, event, {
         status: "failed",
         notificationPending: true,
       });
     case "attempt_started":
+      if (!canStartAttempt(state, event.jobRunId, event.attempt)) {
+        return withCommands(state, []);
+      }
       return withCommands(
         updateRun(state, event.jobRunId, event.at, (run) => ({
           ...run,
@@ -219,12 +228,18 @@ export function transitionTaskWorkflowEvent(
         [],
       );
     case "attempt_failed":
+      if (!canFinishAttempt(state, event.jobRunId, event.attempt)) {
+        return withCommands(state, []);
+      }
       return transitionRunFailure(state, event, {
         status: "failed",
         attempt: event.attempt,
         notificationPending: true,
       });
     case "attempt_succeeded":
+      if (!canFinishAttempt(state, event.jobRunId, event.attempt)) {
+        return withCommands(state, []);
+      }
       return withCommands(
         updateRun(state, event.jobRunId, event.at, (run) => ({
           ...run,
@@ -244,6 +259,9 @@ export function transitionTaskWorkflowEvent(
           : [],
       );
     case "delivery_started":
+      if (!canStartDelivery(state, event.jobRunId, event.deliveryKey)) {
+        return withCommands(state, []);
+      }
       return withCommands(
         updateRun(state, event.jobRunId, event.at, (run) => ({
           ...run,
@@ -253,6 +271,9 @@ export function transitionTaskWorkflowEvent(
         [],
       );
     case "delivery_failed":
+      if (!canFinishDelivery(state, event.jobRunId, event.deliveryKey)) {
+        return withCommands(state, []);
+      }
       return withCommands(
         updateRun(state, event.jobRunId, event.at, (run) => ({
           ...run,
@@ -275,6 +296,9 @@ export function transitionTaskWorkflowEvent(
           : [],
       );
     case "delivery_succeeded":
+      if (!canFinishDelivery(state, event.jobRunId, event.deliveryKey)) {
+        return withCommands(state, []);
+      }
       return withCommands(
         updateRun(state, event.jobRunId, event.at, (run) => ({
           ...run,
@@ -292,6 +316,63 @@ function withCommands(
   commands: TaskWorkflowCommand[],
 ): TaskWorkflowTransitionResult {
   return { state, commands };
+}
+
+function canValidateRun(state: TaskWorkflowState, jobRunId: string): boolean {
+  const run = state.runs[jobRunId];
+  return Boolean(
+    run && (run.status === "created" || run.status === "validating"),
+  );
+}
+
+function canStartAttempt(
+  state: TaskWorkflowState,
+  jobRunId: string,
+  attempt: number,
+): boolean {
+  const run = state.runs[jobRunId];
+  return Boolean(
+    run &&
+    run.status === "running" &&
+    (run.attempt === undefined || run.attempt < attempt),
+  );
+}
+
+function canFinishAttempt(
+  state: TaskWorkflowState,
+  jobRunId: string,
+  attempt: number,
+): boolean {
+  const run = state.runs[jobRunId];
+  return Boolean(
+    run &&
+    run.status === "running" &&
+    (run.attempt === undefined || run.attempt === attempt),
+  );
+}
+
+function canStartDelivery(
+  state: TaskWorkflowState,
+  jobRunId: string,
+  deliveryKey: string,
+): boolean {
+  const run = state.runs[jobRunId];
+  return Boolean(
+    run &&
+    run.status === "delivering" &&
+    (run.deliveryKey === undefined || run.deliveryKey === deliveryKey),
+  );
+}
+
+function canFinishDelivery(
+  state: TaskWorkflowState,
+  jobRunId: string,
+  deliveryKey: string,
+): boolean {
+  const run = state.runs[jobRunId];
+  return Boolean(
+    run && run.status === "delivering" && run.deliveryKey === deliveryKey,
+  );
 }
 
 function transitionTaskTriggered(
