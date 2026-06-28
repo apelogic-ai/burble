@@ -426,6 +426,13 @@ print(json.dumps({"text": mod.build_hermes_turn_text(payload)}))
     expect(text).toContain(
       "Do not call provider tools that are not listed here",
     );
+    expect(text).toContain("Provider execution skill:");
+    expect(text).toContain(
+      "If the user request requires provider data or provider state changes, invoke the needed structured provider tool before answering",
+    );
+    expect(text).toContain(
+      "A Slack progress marker such as `:gear: github_search_issues: ...` is not a tool call",
+    );
     expect(text).toContain("github_list_my_pull_requests");
     expect(text).not.toContain("google_search_drive_files");
     expect(text).toContain("scheduled_job_register_capability");
@@ -459,6 +466,33 @@ print(json.dumps({"text": mod.build_hermes_turn_text(payload)}))
     expect(text).toContain("Use direct Burble MCP provider tools");
     expect(text).toContain("Do not wrap a direct MCP provider call");
     expect(text).not.toContain("Use Hermes tool burble_provider_call");
+    expect(text).toContain("Provider execution skill:");
+    expect(text).toContain("Prefer direct underscored MCP tool names");
+  });
+
+  test("adds provider execution skill for multi-provider user turns", () => {
+    const result = runHermesEntrypointProbe(`${importEntrypoint}
+import os
+os.environ["BURBLE_MCP_GATEWAY_URL"] = "http://agentgateway:3000/mcp"
+os.environ["BURBLE_RUNTIME_JWT"] = "jwt"
+payload = {
+    "text": "look up my latest open PRs in github and create a google drive file with summary",
+    "toolGroups": {
+        "groups": ["conversation", "github", "google"],
+        "reasons": ["default:conversation", "keyword:github:github", "keyword:google:google"],
+    },
+}
+print(json.dumps({"text": mod.build_hermes_turn_text(payload)}))
+`);
+
+    const text = (result as { text: string }).text;
+    expect(text).toContain("Provider execution skill:");
+    expect(text).toContain("github_list_my_pull_requests");
+    expect(text).toContain("google_create_drive_text_file");
+    expect(text).toContain(
+      "After each structured tool result returns, continue reasoning normally. If another provider action is needed, invoke the next structured tool",
+    );
+    expect(text).toContain("A Slack progress marker");
   });
 
   test("builds current attachment guidance for Hermes turns", () => {
@@ -1005,6 +1039,103 @@ async def main():
     runtime._inject_message = fake_inject
     response = await runtime._execute_run(
         "run-scheduled-progress-final",
+        waiter,
+        message,
+    )
+
+    events = []
+    while not queue.empty():
+        event = await queue.get()
+        if event is not None:
+            events.append(event)
+
+    print(json.dumps({
+        "response": response,
+        "events": events,
+        "injectedCount": len(injected),
+        "retryText": injected[1]["text"],
+    }))
+
+asyncio.run(main())
+`);
+
+    expect(result).toEqual({
+      response: {
+        classification: "user_private",
+        text: "No open apelogic-ai PRs found.",
+      },
+      events: [
+        {
+          type: "status",
+          text: "Burble accepted the turn.",
+        },
+        {
+          type: "status",
+          text: "Retrying provider tool call with structured Hermes tool protocol.",
+        },
+        {
+          type: "final",
+          response: {
+            classification: "user_private",
+            text: "No open apelogic-ai PRs found.",
+          },
+        },
+      ],
+      injectedCount: 2,
+      retryText: expect.stringContaining(
+        "invoke the real structured Burble provider tool `github_search_issues`",
+      ),
+    });
+  });
+
+  test("retries scheduled calling/final-only provider progress with an allowed provider tool", () => {
+    const result = runHermesEntrypointProbe(`${importEntrypoint}
+import asyncio
+import os
+
+os.environ["HERMES_PROVIDER_PROTOCOL_RETRY_ATTEMPTS"] = "1"
+
+async def main():
+    runtime = mod.BurbleHermesRuntime()
+    waiter = mod.RunWaiter()
+    queue = asyncio.Queue()
+    waiter.queues.append(queue)
+    message = {
+        "runId": "run-scheduled-calling-final",
+        "routeId": "convrt_abc123",
+        "originalText": "check every 15 min for new PRs in repos of https://github.com/apelogic-ai github org, post in this channel",
+        "runtime": {"id": "rt_123"},
+        "scheduledJob": {
+            "jobId": "job-123",
+            "capabilityProfile": "scheduled_job",
+            "allowedTools": ["github_search_issues"],
+            "routeId": "convrt_abc123",
+            "runtimeType": "hermes",
+            "stateRefs": [],
+            "visibilityPolicy": {"maxOutputVisibility": "user_private"},
+        },
+        "text": "check every 15 min for new PRs in repos of https://github.com/apelogic-ai github org, post in this channel",
+    }
+    runtime.runs["run-scheduled-calling-final"] = waiter
+    runtime.run_messages["run-scheduled-calling-final"] = message
+    injected = []
+
+    async def fake_inject(body):
+        injected.append(body)
+        if body.get("protocolRetryAttempt"):
+            waiter.future.set_result({
+                "classification": "user_private",
+                "text": "No open apelogic-ai PRs found.",
+            })
+        else:
+            waiter.future.set_result({
+                "classification": "user_private",
+                "text": "Calling github search issues...\\n\\nFinal result in 2.0s.",
+            })
+
+    runtime._inject_message = fake_inject
+    response = await runtime._execute_run(
+        "run-scheduled-calling-final",
         waiter,
         message,
     )
@@ -2115,6 +2246,37 @@ print(json.dumps({"text": mod.format_scheduled_job_context(payload, now_utc="202
     );
   });
 
+  test("adds scheduled provider execution skill from allowed tools", () => {
+    const result = runHermesEntrypointProbe(`${importEntrypoint}
+payload = {
+    "text": "check new open PRs in repos of https://github.com/apelogic-ai github org",
+    "scheduledJob": {
+        "jobId": "job-pr-monitor",
+        "capabilityProfile": "scheduled_job",
+        "allowedTools": ["github_search_issues"],
+        "routeId": "convrt_abc123",
+        "runtimeType": "hermes",
+        "stateRefs": [],
+        "visibilityPolicy": {"maxOutputVisibility": "user_private"},
+    },
+}
+print(json.dumps({"text": mod.build_hermes_turn_text(payload)}))
+`);
+
+    const text = (result as { text: string }).text;
+    expect(text).toContain("Scheduled provider execution skill:");
+    expect(text).toContain(
+      "allowed structured provider tools are: github_search_issues",
+    );
+    expect(text).toContain(
+      "invoke the needed allowed tool through the Hermes structured tool protocol",
+    );
+    expect(text).toContain("Do not answer with `:gear:`");
+    expect(text).toContain("Include jobId=job-pr-monitor");
+    expect(text).toContain("github_search_issues (github.searchIssues)");
+    expect(text).toContain("input schema");
+  });
+
   test("adds provider-backed scheduled job repair guidance to scheduler-only Hermes turns", () => {
     const result = runHermesEntrypointProbe(`${importEntrypoint}
 payload = {
@@ -2835,6 +2997,7 @@ print(json.dumps(list(ctx.tools_by_name.values())))
       name?: string;
       toolset?: string;
       is_async?: boolean;
+      description?: string;
       schema?: {
         parameters?: {
           properties?: {
@@ -2852,6 +3015,21 @@ print(json.dumps(list(ctx.tools_by_name.values())))
       };
     }>;
 
+    const bridgeTool = result.find(
+      (tool: { name?: string; description?: string }) =>
+        tool.name === "burble_provider_call",
+    );
+    const driveTool = result.find(
+      (tool: { name?: string; description?: string }) =>
+        tool.name === "google_get_drive_file",
+    );
+    expect(bridgeTool?.description).toContain("Structured Hermes tool");
+    expect(bridgeTool?.description).toContain("never write burble_provider_call");
+    expect(bridgeTool?.description).toContain("call any next needed provider tool");
+    expect(driveTool?.description).toContain("Structured Hermes tool");
+    expect(driveTool?.description).toContain("never write");
+    expect(driveTool?.description).toContain(":gear:");
+    expect(driveTool?.description).toContain("call any next needed provider tool");
     expect(result).toContainEqual(
       expect.objectContaining({
         name: "burble_provider_call",
@@ -2917,6 +3095,20 @@ print(json.dumps(list(ctx.tools_by_name.values())))
     expect(result).toContainEqual(
       expect.objectContaining({
         name: "scheduled_job_trigger",
+        toolset: "burble",
+        is_async: true,
+      }),
+    );
+    expect(result).toContainEqual(
+      expect.objectContaining({
+        name: "scheduled_job_validate",
+        toolset: "burble",
+        is_async: true,
+      }),
+    );
+    expect(result).toContainEqual(
+      expect.objectContaining({
+        name: "scheduled_job_show",
         toolset: "burble",
         is_async: true,
       }),

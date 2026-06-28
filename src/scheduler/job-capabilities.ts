@@ -43,9 +43,5 @@ export function inferAllowedToolsForScheduledJob(
     tools.add("web_search");
   }
 
-  if (tools.size === 0) {
-    tools.add("conversation.sendMessage");
-  }
-
   return [...tools].sort();
 }

@@ -18,7 +18,8 @@ import {
 import { createSchedulerControlPlane } from "./scheduler/control-plane";
 import { createHash, timingSafeEqual } from "node:crypto";
 import { connectionProviderForToolName } from "./providers/descriptors";
-import { providerToolCatalog } from "./providers/catalog";
+import { findProviderToolSpec } from "./providers/catalog";
+import type { ProviderToolSpec } from "./providers/tool-specs";
 import { coerceProviderToolGatewayInput } from "./providers/tool-input-coercion";
 import {
   addGitHubIssueLabels,
@@ -637,6 +638,15 @@ export async function handleToolGatewayRequest(
       routeId: input.value.routeId,
       runtimeType: auth.runtime.engine
     });
+    if (result && !result.ok && result.reason === "invalid_schedule") {
+      return jsonResponse(
+        {
+          classification: "user_private",
+          content: result
+        },
+        400
+      );
+    }
     return respondWithAudit({
       classification: "user_private",
       content: result ?? { ok: false, reason: "unavailable" }
@@ -694,6 +704,38 @@ export async function handleToolGatewayRequest(
       workspaceId: auth.runtime.workspaceId,
       slackUserId: auth.runtime.slackUserId,
       jobId: readSchedulerControlJobId(body.input)
+    });
+    return respondWithAudit({
+      classification: "user_private",
+      content: result ?? { ok: false, reason: "unavailable" }
+    });
+  }
+
+  if (toolName === "scheduledJob.validate") {
+    if (auth.kind !== "runtime") {
+      return new Response("Runtime auth required", { status: 403 });
+    }
+    const schedulerControl = createSchedulerControlPlane(store);
+    const result = await schedulerControl.validateTask?.({
+      workspaceId: auth.runtime.workspaceId,
+      slackUserId: auth.runtime.slackUserId,
+      taskId: readSchedulerControlJobId(body.input)
+    });
+    return respondWithAudit({
+      classification: "user_private",
+      content: result ?? { ok: false, reason: "unavailable" }
+    });
+  }
+
+  if (toolName === "scheduledJob.show") {
+    if (auth.kind !== "runtime") {
+      return new Response("Runtime auth required", { status: 403 });
+    }
+    const schedulerControl = createSchedulerControlPlane(store);
+    const result = await schedulerControl.showTask?.({
+      workspaceId: auth.runtime.workspaceId,
+      slackUserId: auth.runtime.slackUserId,
+      taskId: readSchedulerControlJobId(body.input)
     });
     return respondWithAudit({
       classification: "user_private",
@@ -2040,6 +2082,8 @@ function isKnownTool(toolName: string): boolean {
     toolName === "scheduledJob.resume" ||
     toolName === "scheduledJob.delete" ||
     toolName === "scheduledJob.trigger" ||
+    toolName === "scheduledJob.validate" ||
+    toolName === "scheduledJob.show" ||
     toolName === "scheduledJob.latestRunStatus" ||
     toolName === "runtime.heartbeat" ||
     toolName === "runtime.conformance.echo" ||
@@ -2612,18 +2656,7 @@ function requiredToolsUsePrivateReadSources(toolNames: string[]): boolean {
   });
 }
 
-function findProviderToolSpec(toolName: string): (typeof providerToolCatalog)[number] | null {
-  return (
-    providerToolCatalog.find(
-      (tool) =>
-        tool.name === toolName ||
-        tool.alias === toolName ||
-        (tool.aliases ?? []).includes(toolName)
-    ) ?? null
-  );
-}
-
-function providerToolUsesPrivateReadSource(tool: (typeof providerToolCatalog)[number]): boolean {
+function providerToolUsesPrivateReadSource(tool: ProviderToolSpec): boolean {
   if (tool.provider === "web") {
     return false;
   }

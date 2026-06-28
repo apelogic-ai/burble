@@ -994,9 +994,8 @@ describe("handleConversation", () => {
         workspaceId: "T123",
         slackUserId: "U123",
         title: "Hourly AI news summary",
-        prompt:
-          "look for latest AI news, summarize them in one paragraph and post result in this channel",
-        schedule: { kind: "interval", every: { hours: 1 } },
+        prompt: "look for latest AI news, summarize them in one paragraph",
+        schedule: { kind: "cron", expression: "0 * * * *", timezone: "UTC" },
         routeId: "convrt_123",
         runtimeType: "hermes",
       },
@@ -1007,6 +1006,7 @@ describe("handleConversation", () => {
       "Created scheduled job job-ai-news-hourly.",
     );
     expect(response.text).toContain("Hourly AI news summary");
+    expect(response.text).toContain("schedule: `cron 0 * * * * (UTC)`");
     expect(response.text).toContain("runtime: hermes");
     expect(response.text).toContain("delivery: this conversation");
   });
@@ -1017,15 +1017,15 @@ describe("handleConversation", () => {
         text: "add scheduled cron job, to be run every hour, to look for new open PRs in https://github.com/apelogic-ai github org and report back to this channel",
         title: "Hourly open PRs for apelogic-ai",
         prompt:
-          "look for new open PRs in https://github.com/apelogic-ai github org and report back to this channel",
-        schedule: { kind: "interval", every: { hours: 1 } },
+          "look for new open PRs in https://github.com/apelogic-ai github org",
+        schedule: { kind: "cron", expression: "0 * * * *", timezone: "UTC" },
       },
       {
         text: "add new job to be run every 15 min to check new open PRs in https://github.com/apelogic-ai github org, report back to this channel",
         title: "Scheduled open PRs for apelogic-ai",
         prompt:
-          "check new open PRs in https://github.com/apelogic-ai github org, report back to this channel",
-        schedule: { kind: "interval", every: { minutes: 15 } },
+          "check new open PRs in https://github.com/apelogic-ai github org",
+        schedule: { kind: "cron", expression: "*/15 * * * *", timezone: "UTC" },
       },
     ] as const;
 
@@ -1088,6 +1088,428 @@ describe("handleConversation", () => {
       ]);
       expect(response.text).toContain("runtime: hermes");
     }
+  });
+
+  test("stores executable task text separately from schedule and delivery", async () => {
+    const created: unknown[] = [];
+    const response = await handleConversation(
+      {
+        ...baseRequest,
+        conversationRouteId: "convrt_heart",
+        text: "add scheduled job to output heart emoji every 15 min, to this channel",
+      },
+      createDeps({
+        agentMode: "llm",
+        schedulerRuntimeEngine: "hermes",
+        schedulerControl: {
+          listJobs: () => [],
+          createJob: (input) => {
+            created.push(input);
+            return {
+              ok: true,
+              job: {
+                jobId: "job-heart",
+                workspaceId: input.workspaceId,
+                slackUserId: input.slackUserId,
+                title: input.title,
+                prompt: input.prompt,
+                schedule: input.schedule,
+                routeId: input.routeId ?? null,
+                state: "scheduled",
+                runtimeType: input.runtimeType ?? null,
+                createdAt: "2026-06-27T01:10:52.803Z",
+                updatedAt: "2026-06-27T01:10:52.803Z",
+              },
+            };
+          },
+        },
+      }),
+    );
+
+    expect(created).toEqual([
+      {
+        workspaceId: "T123",
+        slackUserId: "U123",
+        title: "Scheduled heart emoji",
+        prompt: "Post exactly this message: ❤️",
+        schedule: { kind: "cron", expression: "*/15 * * * *", timezone: "UTC" },
+        routeId: "convrt_heart",
+        runtimeType: "hermes",
+      },
+    ]);
+    expect(response.text).toContain("schedule: `cron */15 * * * * (UTC)`");
+    expect(response.text).toContain("delivery: this conversation");
+  });
+
+  test("creates scheduler tasks from semantic resolver output without invoking the runtime", async () => {
+    let called = false;
+    const created: unknown[] = [];
+    const response = await handleConversation(
+      {
+        ...baseRequest,
+        conversationRouteId: "convrt_heart",
+        text: "create new task to send heart emoji to this channel every 30 min",
+      },
+      createDeps({
+        agentMode: "llm",
+        agentRuntimeEngine: "hermes",
+        schedulerControl: {
+          listJobs: () => [],
+          createJob: (input) => {
+            created.push(input);
+            return {
+              ok: true,
+              job: {
+                jobId: "job-heart-30m",
+                workspaceId: input.workspaceId,
+                slackUserId: input.slackUserId,
+                title: input.title,
+                prompt: input.prompt,
+                schedule: input.schedule,
+                routeId: input.routeId ?? null,
+                state: "scheduled",
+                runtimeType: input.runtimeType ?? null,
+                createdAt: "2026-06-27T17:34:21.452Z",
+                updatedAt: "2026-06-27T17:34:21.452Z",
+              },
+            };
+          },
+        },
+        schedulerIntentResolver: async () => ({
+          intent: "create_job",
+          confidence: 0.96,
+          jobId: null,
+          create: {
+            title: "Heart emoji every 30 min",
+            prompt: "Post exactly this message: ❤️",
+            schedule: {
+              kind: "cron",
+              expression: "*/30 * * * *",
+              timezone: "UTC",
+            },
+          },
+        }),
+        agentRunner: stubAgentRunner(() => {
+          called = true;
+          return {
+            classification: "public",
+            text: "unexpected",
+          };
+        }),
+      }),
+    );
+
+    expect(called).toBe(false);
+    expect(created).toEqual([
+      {
+        workspaceId: "T123",
+        slackUserId: "U123",
+        title: "Heart emoji every 30 min",
+        prompt: "Post exactly this message: ❤️",
+        schedule: { kind: "cron", expression: "*/30 * * * *", timezone: "UTC" },
+        routeId: "convrt_heart",
+        runtimeType: "hermes",
+      },
+    ]);
+    expect(response.visibility).toBe("ephemeral");
+    expect(response.text).toContain("Created scheduled job job-heart-30m.");
+  });
+
+  test("does not delegate unresolved semantic scheduler create intents to the runtime", async () => {
+    let called = false;
+    const response = await handleConversation(
+      {
+        ...baseRequest,
+        conversationRouteId: "convrt_heart",
+        text: "create a task to send a heart sometimes",
+      },
+      createDeps({
+        agentMode: "llm",
+        schedulerControl: {
+          listJobs: () => [],
+          createJob: () => {
+            throw new Error("unexpected create");
+          },
+        },
+        schedulerIntentResolver: async () => ({
+          intent: "create_job",
+          confidence: 0.91,
+          jobId: null,
+        }),
+        agentRunner: stubAgentRunner(() => {
+          called = true;
+          return {
+            classification: "public",
+            text: "unexpected",
+          };
+        }),
+      }),
+    );
+
+    expect(called).toBe(false);
+    expect(response.visibility).toBe("ephemeral");
+    expect(response.text).toContain("I can’t create that scheduled task yet");
+  });
+
+  test("strips resolver-leaked delivery clauses from scheduler task prompts", async () => {
+    const created: unknown[] = [];
+    await handleConversation(
+      {
+        ...baseRequest,
+        conversationRouteId: "convrt_ai_news",
+        text: "create hourly task to look for latest AI news, summarize in one paragraph, and post result in this channel",
+      },
+      createDeps({
+        agentMode: "llm",
+        schedulerControl: {
+          listJobs: () => [],
+          createJob: (input) => {
+            created.push(input);
+            return {
+              ok: true,
+              job: {
+                jobId: "job-ai-news",
+                workspaceId: input.workspaceId,
+                slackUserId: input.slackUserId,
+                title: input.title,
+                prompt: input.prompt,
+                schedule: input.schedule,
+                routeId: input.routeId ?? null,
+                state: "scheduled",
+                runtimeType: input.runtimeType ?? null,
+                createdAt: "2026-06-27T17:34:21.452Z",
+                updatedAt: "2026-06-27T17:34:21.452Z",
+              },
+            };
+          },
+        },
+        schedulerIntentResolver: async () => ({
+          intent: "create_job",
+          confidence: 0.94,
+          jobId: null,
+          create: {
+            title: "Hourly AI news summary",
+            prompt:
+              "Look for the latest AI news, summarize it in one paragraph, and post the result",
+            schedule: {
+              kind: "cron",
+              expression: "0 * * * *",
+              timezone: "UTC",
+            },
+          },
+        }),
+      }),
+    );
+
+    expect(created).toEqual([
+      {
+        workspaceId: "T123",
+        slackUserId: "U123",
+        title: "Hourly AI news summary",
+        prompt: "Look for the latest AI news, summarize it in one paragraph",
+        schedule: { kind: "cron", expression: "0 * * * *", timezone: "UTC" },
+        routeId: "convrt_ai_news",
+        runtimeType: null,
+      },
+    ]);
+  });
+
+  test("updates an existing scheduler task schedule from semantic resolver output", async () => {
+    let called = false;
+    let created = false;
+    const updates: unknown[] = [];
+    const response = await handleConversation(
+      {
+        ...baseRequest,
+        conversationRouteId: "convrt_heart",
+        text: "modify heart emoji job to run every 45 min",
+      },
+      createDeps({
+        agentMode: "llm",
+        agentRuntimeEngine: "hermes",
+        schedulerControl: {
+          listJobs: () => [
+            {
+              jobId: "job_heart",
+              title: "Heart emoji every 30 min",
+              prompt: "Post exactly this message: ❤️",
+              schedule: {
+                kind: "cron",
+                expression: "*/30 * * * *",
+                timezone: "UTC",
+              },
+              state: "scheduled",
+              runtimeType: "hermes",
+              requiredTools: [],
+              routeId: "convrt_heart",
+              updatedAt: "2026-06-27T17:39:00.000Z",
+            },
+          ],
+          createJob: () => {
+            created = true;
+            throw new Error("unexpected create");
+          },
+          updateJobSchedule: (input) => {
+            updates.push(input);
+            return {
+              ok: true,
+              job: {
+                jobId: "job_heart",
+                workspaceId: input.workspaceId,
+                slackUserId: input.slackUserId,
+                title: "Heart emoji every 30 min",
+                prompt: "Post exactly this message: ❤️",
+                schedule: input.schedule,
+                routeId: "convrt_heart",
+                state: "scheduled",
+                runtimeType: "hermes",
+                createdAt: "2026-06-27T17:39:00.000Z",
+                updatedAt: "2026-06-27T17:40:00.000Z",
+              },
+            };
+          },
+        },
+        schedulerIntentResolver: async () => ({
+          intent: "update_job_schedule",
+          confidence: 0.96,
+          jobId: "job_heart",
+          schedule: {
+            kind: "cron",
+            expression: "*/45 * * * *",
+            timezone: "UTC",
+          },
+        }),
+        agentRunner: stubAgentRunner(() => {
+          called = true;
+          return {
+            classification: "public",
+            text: "unexpected",
+          };
+        }),
+      }),
+    );
+
+    expect(called).toBe(false);
+    expect(created).toBe(false);
+    expect(updates).toEqual([
+      {
+        workspaceId: "T123",
+        slackUserId: "U123",
+        jobId: "job_heart",
+        schedule: { kind: "cron", expression: "*/45 * * * *", timezone: "UTC" },
+      },
+    ]);
+    expect(response.text).toContain(
+      "Updated scheduled job job_heart schedule.",
+    );
+    expect(response.text).toContain("`cron */45 * * * * (UTC)`");
+  });
+
+  test("updates an existing scheduler task prompt from semantic resolver output", async () => {
+    let called = false;
+    let created = false;
+    const updates: unknown[] = [];
+    const response = await handleConversation(
+      {
+        ...baseRequest,
+        conversationRouteId: "convrt_heart",
+        text: "modify the emoji job to send 2 hearts instead of one",
+      },
+      createDeps({
+        agentMode: "llm",
+        agentRuntimeEngine: "hermes",
+        schedulerControl: {
+          listJobs: () => [
+            {
+              jobId: "job_heart",
+              title: "Heart emoji every 30 min",
+              prompt: "Post exactly this message: ❤️",
+              schedule: {
+                kind: "cron",
+                expression: "*/30 * * * *",
+                timezone: "UTC",
+              },
+              state: "scheduled",
+              runtimeType: "hermes",
+              requiredTools: [],
+              routeId: "convrt_heart",
+              updatedAt: "2026-06-27T17:39:00.000Z",
+            },
+            {
+              jobId: "job_ai_news",
+              title: "Hourly AI news summary",
+              prompt: "look for fresh AI-related news",
+              schedule: {
+                kind: "cron",
+                expression: "0 * * * *",
+                timezone: "UTC",
+              },
+              state: "scheduled",
+              runtimeType: "openclaw",
+              requiredTools: ["web_search"],
+              routeId: "convrt_news",
+              updatedAt: "2026-06-27T17:39:00.000Z",
+            },
+          ],
+          createJob: () => {
+            created = true;
+            throw new Error("unexpected create");
+          },
+          updateJobPrompt: (input) => {
+            updates.push(input);
+            return {
+              ok: true,
+              job: {
+                jobId: "job_heart",
+                workspaceId: input.workspaceId,
+                slackUserId: input.slackUserId,
+                title: "Heart emoji every 30 min",
+                prompt: input.prompt,
+                schedule: {
+                  kind: "cron",
+                  expression: "*/30 * * * *",
+                  timezone: "UTC",
+                },
+                routeId: "convrt_heart",
+                state: "scheduled",
+                runtimeType: "hermes",
+                createdAt: "2026-06-27T17:39:00.000Z",
+                updatedAt: "2026-06-27T17:40:00.000Z",
+              },
+            };
+          },
+        },
+        schedulerIntentResolver: async (input) => {
+          expect(input.jobs).toHaveLength(2);
+          return {
+            intent: "update_job_prompt",
+            confidence: 0.96,
+            jobId: "job_heart",
+            prompt: "Post exactly this message: ❤️❤️",
+          };
+        },
+        agentRunner: stubAgentRunner(() => {
+          called = true;
+          return {
+            classification: "public",
+            text: "unexpected",
+          };
+        }),
+      }),
+    );
+
+    expect(called).toBe(false);
+    expect(created).toBe(false);
+    expect(updates).toEqual([
+      {
+        workspaceId: "T123",
+        slackUserId: "U123",
+        jobId: "job_heart",
+        prompt: "Post exactly this message: ❤️❤️",
+      },
+    ]);
+    expect(response.text).toContain("Updated scheduled job job_heart task.");
+    expect(response.text).toContain("Post exactly this message: ❤️❤️");
   });
 
   test("updates scheduled job delivery from a Slack channel mention without invoking the LLM runner", async () => {
@@ -1268,6 +1690,143 @@ describe("handleConversation", () => {
     }
   });
 
+  test("validates scheduled task specs without invoking the LLM runner", async () => {
+    let called = false;
+    const response = await handleConversation(
+      {
+        ...baseRequest,
+        text: "validate task job_github_checker",
+      },
+      createDeps({
+        agentMode: "llm",
+        schedulerControl: {
+          listJobs: () => [],
+          validateTask: (input) => {
+            expect(input).toEqual({
+              workspaceId: "T123",
+              slackUserId: "U123",
+              taskId: "job_github_checker",
+            });
+            return {
+              ok: true,
+              taskId: "job_github_checker",
+              validation: {
+                ok: false,
+                expectedTools: ["github_search_issues"],
+                grantedTools: ["github_list_my_pull_requests"],
+                errors: [
+                  {
+                    code: "missing_required_tool",
+                    message:
+                      "Task requires github_search_issues but the grant does not include it.",
+                    tool: "github_search_issues",
+                  },
+                ],
+                warnings: [
+                  {
+                    code: "wrong_github_pr_scope",
+                    message:
+                      "github_list_my_pull_requests only lists the authenticated user's PRs; org-wide PR monitoring needs github_search_issues.",
+                    tool: "github_list_my_pull_requests",
+                    expectedTool: "github_search_issues",
+                  },
+                ],
+              },
+            };
+          },
+        },
+        agentRunner: stubAgentRunner(() => {
+          called = true;
+          return {
+            classification: "public",
+            text: "unexpected",
+          };
+        }),
+      }),
+    );
+
+    expect(called).toBe(false);
+    expect(response.visibility).toBe("ephemeral");
+    expect(response.classification).toBe("user_private");
+    expect(response.text).toContain("Task validation failed");
+    expect(response.text).toContain("job_github_checker");
+    expect(response.text).toContain("missing_required_tool");
+    expect(response.text).toContain("wrong_github_pr_scope");
+  });
+
+  test("shows scheduled task details without invoking the LLM runner", async () => {
+    let called = false;
+    const response = await handleConversation(
+      {
+        ...baseRequest,
+        text: "show task job_github_checker",
+      },
+      createDeps({
+        agentMode: "llm",
+        schedulerControl: {
+          listJobs: () => [],
+          showTask: (input) => {
+            expect(input).toEqual({
+              workspaceId: "T123",
+              slackUserId: "U123",
+              taskId: "job_github_checker",
+            });
+            return {
+              ok: true,
+              task: {
+                taskId: "job_github_checker",
+                jobId: "job_github_checker",
+                title: "Open PR monitor",
+                prompt:
+                  "check for new open PRs in https://github.com/apelogic-ai github org",
+                schedule: {
+                  kind: "interval",
+                  every: { minutes: 15 },
+                },
+                state: "scheduled",
+                runtimeType: "hermes",
+                requiredTools: ["github_list_my_pull_requests"],
+                routeId: "convrt_123",
+                updatedAt: "2026-06-24T12:00:00.000Z",
+              },
+              validation: {
+                ok: false,
+                expectedTools: ["github_search_issues"],
+                grantedTools: ["github_list_my_pull_requests"],
+                errors: [
+                  {
+                    code: "missing_required_tool",
+                    message:
+                      "Task requires github_search_issues but the grant does not include it.",
+                    tool: "github_search_issues",
+                  },
+                ],
+                warnings: [],
+              },
+            };
+          },
+        },
+        agentRunner: stubAgentRunner(() => {
+          called = true;
+          return {
+            classification: "public",
+            text: "unexpected",
+          };
+        }),
+      }),
+    );
+
+    expect(called).toBe(false);
+    expect(response.visibility).toBe("ephemeral");
+    expect(response.classification).toBe("user_private");
+    expect(response.text).toContain("Scheduled task");
+    expect(response.text).toContain("job_github_checker");
+    expect(response.text).toContain("Open PR monitor");
+    expect(response.text).toContain("github_list_my_pull_requests");
+    expect(response.text).toContain("github_search_issues");
+    expect(response.text).toContain("validation: failed");
+  });
+
   test("lists job runs independently from scheduled task specs without invoking the LLM runner", async () => {
     let called = false;
     const response = await handleConversation(
@@ -1389,6 +1948,74 @@ describe("handleConversation", () => {
       expect(response.text).toContain("Triggered scheduled job ai-news-hourly");
       expect(response.text).toContain("jobrun-manual-1");
     }
+  });
+
+  test("does not queue manual runs when scheduled task validation fails", async () => {
+    let called = false;
+    const queuedRuns: string[] = [];
+    const response = await handleConversation(
+      {
+        ...baseRequest,
+        text: "run job job_github_checker",
+      },
+      createDeps({
+        agentMode: "llm",
+        schedulerControl: {
+          listJobs: () => [],
+          triggerJob: () => ({
+            ok: false,
+            reason: "validation_failed",
+            task: {
+              taskId: "job_github_checker",
+              jobId: "job_github_checker",
+              title: "Open PR monitor",
+              prompt:
+                "check for new open PRs in https://github.com/apelogic-ai github org",
+              schedule: {
+                kind: "interval",
+                every: { minutes: 15 },
+              },
+              state: "scheduled",
+              runtimeType: "hermes",
+              requiredTools: ["github_list_my_pull_requests"],
+              routeId: "convrt_123",
+              updatedAt: "2026-06-24T12:00:00.000Z",
+            },
+            validation: {
+              ok: false,
+              expectedTools: ["github_search_issues"],
+              grantedTools: ["github_list_my_pull_requests"],
+              errors: [
+                {
+                  code: "missing_required_tool",
+                  message:
+                    "Task requires github_search_issues but the grant does not include it.",
+                  tool: "github_search_issues",
+                },
+              ],
+              warnings: [],
+            },
+          }),
+        },
+        onSchedulerRunQueued: (run) => {
+          queuedRuns.push(run.runId);
+        },
+        agentRunner: stubAgentRunner(() => {
+          called = true;
+          return {
+            classification: "public",
+            text: "unexpected",
+          };
+        }),
+      }),
+    );
+
+    expect(called).toBe(false);
+    expect(queuedRuns).toEqual([]);
+    expect(response.text).toContain("Scheduled task validation failed");
+    expect(response.text).toContain("job_github_checker");
+    expect(response.text).toContain("missing_required_tool");
+    expect(response.text).toContain("github_search_issues");
   });
 
   test("uses scheduler intent resolver to trigger a named task without invoking the LLM runner", async () => {

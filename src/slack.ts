@@ -87,10 +87,26 @@ import type {
   ProviderConnection,
   TokenStore
 } from "./db";
-import { handleConversation } from "./conversation/orchestrator";
+import {
+  formatScheduledJobCreateResult,
+  formatScheduledJobDeleteResult,
+  formatScheduledJobList,
+  formatScheduledJobMutationResult,
+  formatScheduledJobPromptUpdateResult,
+  formatScheduledJobRunList,
+  formatScheduledJobScheduleUpdateResult,
+  formatScheduledJobTriggerResult,
+  formatScheduledRunStatusResult,
+  formatScheduledTaskDetailResult,
+  formatScheduledTaskValidationResult,
+  handleConversation
+} from "./conversation/orchestrator";
 import { normalizeMentionText } from "./conversation/normalize";
 import { createLlmSchedulerIntentResolver } from "./conversation/scheduler-intent-resolver";
-import { createSchedulerControlPlane } from "./scheduler/control-plane";
+import {
+  createSchedulerControlPlane,
+  type SchedulerControlPlane
+} from "./scheduler/control-plane";
 import { defaultResolveSlackChannelIdByName } from "./tool-gateway";
 import { createSchedulerRunExecutor } from "./scheduler/run-executor";
 import { createSchedulerTimer } from "./scheduler/timer";
@@ -98,6 +114,7 @@ import type {
   ConversationAttachment,
   ConversationRequest,
   ConversationResponse,
+  SchedulerIntentResolver,
   ToolClassification
 } from "./conversation/types";
 import { createConfiguredAgentRunner } from "./agent/runtime";
@@ -1299,6 +1316,86 @@ export function createSlackRuntime(
     }
   });
 
+  app.command("/tasks", async ({ ack, body, logger, respond }) => {
+    try {
+      logger.info(
+        withUtcTimestamp(`Received /tasks ${body.text} from ${body.user_id}`)
+      );
+      const action = parseTaskSlashCommand(body.text ?? "");
+      if (action.kind === "create") {
+        await ack({
+          response_type: "ephemeral",
+          text: "Resolving scheduled task..."
+        });
+        try {
+          const text = await handleTaskSlashCommand({
+            action,
+            body,
+            config,
+            store,
+            schedulerControl,
+            schedulerIntentResolver,
+            schedulerRunExecutor
+          });
+          await respond({
+            response_type: "ephemeral",
+            replace_original: true,
+            text
+          });
+        } catch (error) {
+          logger.error(formatLogError(error));
+          await respond({
+            response_type: "ephemeral",
+            replace_original: true,
+            text: "I could not handle that task command."
+          });
+        }
+        return;
+      }
+
+      await ack({
+        response_type: "ephemeral",
+        text: await handleTaskSlashCommand({
+          action,
+          body,
+          config,
+          store,
+          schedulerControl,
+          schedulerIntentResolver,
+          schedulerRunExecutor
+        })
+      });
+    } catch (error) {
+      logger.error(formatLogError(error));
+      await ack({
+        response_type: "ephemeral",
+        text: "I could not handle that task command."
+      });
+    }
+  });
+
+  app.command("/jobs", async ({ ack, body, logger }) => {
+    try {
+      logger.info(
+        withUtcTimestamp(`Received /jobs ${body.text} from ${body.user_id}`)
+      );
+      await ack({
+        response_type: "ephemeral",
+        text: await handleJobSlashCommand({
+          action: parseJobSlashCommand(body.text ?? ""),
+          body,
+          schedulerControl
+        })
+      });
+    } catch (error) {
+      logger.error(formatLogError(error));
+      await ack({
+        response_type: "ephemeral",
+        text: "I could not handle that job command."
+      });
+    }
+  });
+
   app.command("/agent", async ({ ack, body, client, logger, respond }) => {
     try {
       logger.info(
@@ -2422,6 +2519,361 @@ export function parseAgentCommand(text: string): AgentCommand {
   return { kind: "help" };
 }
 
+export type TaskSlashCommand =
+  | { kind: "help" }
+  | { kind: "list" }
+  | { kind: "show"; taskId: string }
+  | { kind: "validate"; taskId: string }
+  | { kind: "create"; description: string }
+  | { kind: "run"; taskId?: string }
+  | { kind: "pause"; taskId: string }
+  | { kind: "resume"; taskId: string }
+  | { kind: "delete"; taskId: string }
+  | { kind: "set_schedule"; taskId: string; schedule: string }
+  | { kind: "set_prompt"; taskId: string; prompt: string };
+
+export type JobSlashCommand =
+  | { kind: "help" }
+  | { kind: "list"; taskId?: string }
+  | { kind: "status"; taskId?: string };
+
+export function parseTaskSlashCommand(text: string): TaskSlashCommand {
+  const trimmed = text.trim();
+  if (!trimmed || trimmed === "help") {
+    return { kind: "help" };
+  }
+
+  const [command = "", ...rest] = trimmed.split(/\s+/);
+  const args = rest.join(" ").trim();
+  switch (command.toLowerCase()) {
+    case "list":
+      return { kind: "list" };
+    case "show":
+      return args ? { kind: "show", taskId: args } : { kind: "help" };
+    case "validate":
+      return args ? { kind: "validate", taskId: args } : { kind: "help" };
+    case "create":
+      return args ? { kind: "create", description: args } : { kind: "help" };
+    case "run":
+    case "trigger":
+      return args ? { kind: "run", taskId: args } : { kind: "run" };
+    case "pause":
+      return args ? { kind: "pause", taskId: args } : { kind: "help" };
+    case "resume":
+    case "unpause":
+      return args ? { kind: "resume", taskId: args } : { kind: "help" };
+    case "delete":
+    case "remove":
+      return args ? { kind: "delete", taskId: args } : { kind: "help" };
+    case "schedule": {
+      const parsed = parseTaskSlashIdAndValue(args);
+      return parsed
+        ? { kind: "set_schedule", taskId: parsed.id, schedule: parsed.value }
+        : { kind: "help" };
+    }
+    case "prompt": {
+      const parsed = parseTaskSlashIdAndValue(args);
+      return parsed
+        ? { kind: "set_prompt", taskId: parsed.id, prompt: parsed.value }
+        : { kind: "help" };
+    }
+    default:
+      return { kind: "help" };
+  }
+}
+
+export function parseJobSlashCommand(text: string): JobSlashCommand {
+  const trimmed = text.trim();
+  if (!trimmed || trimmed === "help") {
+    return { kind: "help" };
+  }
+
+  const [command = "", ...rest] = trimmed.split(/\s+/);
+  const args = rest.join(" ").trim();
+  switch (command.toLowerCase()) {
+    case "list":
+      return args ? { kind: "list", taskId: args } : { kind: "list" };
+    case "status":
+    case "latest":
+      return args ? { kind: "status", taskId: args } : { kind: "status" };
+    default:
+      return { kind: "help" };
+  }
+}
+
+function parseTaskSlashIdAndValue(
+  text: string
+): { id: string; value: string } | null {
+  const [id = "", ...rest] = text.trim().split(/\s+/);
+  const value = rest.join(" ").trim();
+  return id && value ? { id, value } : null;
+}
+
+type SchedulerSlashCommandBody = {
+  team_id?: string;
+  user_id: string;
+  channel_id?: string;
+  text?: string;
+};
+
+async function handleTaskSlashCommand(input: {
+  action: TaskSlashCommand;
+  body: SchedulerSlashCommandBody;
+  config: Config;
+  store: TokenStore;
+  schedulerControl: SchedulerControlPlane;
+  schedulerIntentResolver?: SchedulerIntentResolver;
+  schedulerRunExecutor?: { executeRun(runId: string): Promise<void> };
+}): Promise<string> {
+  const principal = readSchedulerSlashCommandPrincipal(input.body);
+  if (!principal) {
+    return "I could not identify the Slack workspace for this task command.";
+  }
+
+  switch (input.action.kind) {
+    case "help":
+      return formatTaskSlashHelp();
+    case "list": {
+      const tasks = input.schedulerControl.listTasks
+        ? await input.schedulerControl.listTasks(principal)
+        : (await input.schedulerControl.listJobs(principal)).map((job) => ({
+            ...job,
+            taskId: job.jobId
+          }));
+      return formatScheduledJobList(tasks);
+    }
+    case "show":
+      return formatScheduledTaskDetailResult(
+        input.schedulerControl.showTask
+          ? await input.schedulerControl.showTask({
+              ...principal,
+              taskId: input.action.taskId
+            })
+          : { ok: false, reason: "not_found", tasks: [] }
+      );
+    case "validate":
+      return formatScheduledTaskValidationResult(
+        input.schedulerControl.validateTask
+          ? await input.schedulerControl.validateTask({
+              ...principal,
+              taskId: input.action.taskId
+            })
+          : { ok: false, reason: "not_found", tasks: [] }
+      );
+    case "create":
+      return createScheduledTaskFromSlashDescription({
+        ...input,
+        principal,
+        description: input.action.description
+      });
+    case "run": {
+      if (!input.schedulerControl.triggerJob) {
+        return "Scheduled task runs are not available in this environment.";
+      }
+      const result = await input.schedulerControl.triggerJob({
+        ...principal,
+        jobId: input.action.taskId ?? null
+      });
+      if (result.ok) {
+        void input.schedulerRunExecutor
+          ?.executeRun(result.run.runId)
+          .catch(() => undefined);
+      }
+      return formatScheduledJobTriggerResult(result);
+    }
+    case "pause":
+      return formatScheduledJobMutationResult(
+        "Paused",
+        input.schedulerControl.pauseJob
+          ? await input.schedulerControl.pauseJob({
+              ...principal,
+              jobId: input.action.taskId
+            })
+          : { ok: false, reason: "not_found", jobs: [] }
+      );
+    case "resume":
+      return formatScheduledJobMutationResult(
+        "Resumed",
+        input.schedulerControl.resumeJob
+          ? await input.schedulerControl.resumeJob({
+              ...principal,
+              jobId: input.action.taskId
+            })
+          : { ok: false, reason: "not_found", jobs: [] }
+      );
+    case "delete":
+      return formatScheduledJobDeleteResult(
+        input.schedulerControl.deleteJob
+          ? await input.schedulerControl.deleteJob({
+              ...principal,
+              jobId: input.action.taskId
+            })
+          : { ok: false, reason: "not_found", jobs: [] }
+      );
+    case "set_schedule":
+      return formatScheduledJobScheduleUpdateResult(
+        input.schedulerControl.updateJobSchedule
+          ? await input.schedulerControl.updateJobSchedule({
+              ...principal,
+              jobId: input.action.taskId,
+              schedule: parseExplicitCronSchedule(input.action.schedule)
+            })
+          : { ok: false, reason: "not_found", jobs: [] }
+      );
+    case "set_prompt":
+      return formatScheduledJobPromptUpdateResult(
+        input.schedulerControl.updateJobPrompt
+          ? await input.schedulerControl.updateJobPrompt({
+              ...principal,
+              jobId: input.action.taskId,
+              prompt: input.action.prompt
+            })
+          : { ok: false, reason: "not_found", jobs: [] }
+      );
+  }
+}
+
+async function createScheduledTaskFromSlashDescription(input: {
+  description: string;
+  body: SchedulerSlashCommandBody;
+  principal: { workspaceId: string; slackUserId: string };
+  config: Config;
+  store: TokenStore;
+  schedulerControl: SchedulerControlPlane;
+  schedulerIntentResolver?: SchedulerIntentResolver;
+}): Promise<string> {
+  if (!input.schedulerControl.createJob) {
+    return "Scheduled task creation is not available in this environment.";
+  }
+  if (!input.schedulerIntentResolver) {
+    return "Scheduled task creation needs the semantic task resolver to be enabled.";
+  }
+
+  const jobs = await input.schedulerControl.listJobs(input.principal);
+  const resolved = await input.schedulerIntentResolver({
+    text: input.description,
+    recentMessages: [],
+    jobs
+  });
+  if (
+    resolved.intent !== "create_job" ||
+    resolved.confidence < 0.7 ||
+    !resolved.create
+  ) {
+    return [
+      "I could not resolve a complete scheduled task spec.",
+      "Use `/tasks create <what to do, schedule, and delivery>` with enough detail."
+    ].join("\n");
+  }
+
+  const route = input.body.channel_id
+    ? await createSlackConversationRoute({
+        store: input.store,
+        principal: input.principal,
+        channelId: input.body.channel_id,
+        isDirectMessage: input.body.channel_id.startsWith("D"),
+        rootId: `slash-tasks:${randomUUID()}`
+      })
+    : null;
+  const runtimeType = resolveRuntimeEngineForPrincipal({
+    config: input.config,
+    store: input.store,
+    principal: input.principal
+  }).effectiveEngine;
+
+  return formatScheduledJobCreateResult(
+    await input.schedulerControl.createJob({
+      ...input.principal,
+      title: resolved.create.title,
+      prompt: resolved.create.prompt,
+      schedule: resolved.create.schedule,
+      routeId: route?.id ?? null,
+      runtimeType
+    })
+  );
+}
+
+async function handleJobSlashCommand(input: {
+  action: JobSlashCommand;
+  body: SchedulerSlashCommandBody;
+  schedulerControl: SchedulerControlPlane;
+}): Promise<string> {
+  const principal = readSchedulerSlashCommandPrincipal(input.body);
+  if (!principal) {
+    return "I could not identify the Slack workspace for this job command.";
+  }
+
+  switch (input.action.kind) {
+    case "help":
+      return formatJobSlashHelp();
+    case "list":
+      return formatScheduledJobRunList(
+        input.schedulerControl.listJobRuns
+          ? (
+              await input.schedulerControl.listJobRuns({
+                ...principal,
+                jobId: input.action.taskId ?? null,
+                limit: 10
+              })
+            ).runs
+          : []
+      );
+    case "status":
+      return formatScheduledRunStatusResult(
+        input.schedulerControl.getLatestRunStatus
+          ? await input.schedulerControl.getLatestRunStatus({
+              ...principal,
+              jobId: input.action.taskId ?? null
+            })
+          : { ok: false, reason: "no_runs" }
+      );
+  }
+}
+
+function readSchedulerSlashCommandPrincipal(
+  body: SchedulerSlashCommandBody
+): { workspaceId: string; slackUserId: string } | null {
+  const workspaceId = body.team_id ?? "";
+  const slackUserId = body.user_id;
+  return workspaceId && slackUserId ? { workspaceId, slackUserId } : null;
+}
+
+function parseExplicitCronSchedule(expression: string): {
+  kind: "cron";
+  expression: string;
+  timezone: "UTC";
+} {
+  return {
+    kind: "cron",
+    expression: expression.trim().replace(/\s+/g, " "),
+    timezone: "UTC"
+  };
+}
+
+function formatTaskSlashHelp(): string {
+  return [
+    "Task commands",
+    "- `/tasks list`",
+    "- `/tasks show <task_id>`",
+    "- `/tasks validate <task_id>`",
+    "- `/tasks create <task description, schedule, and delivery>`",
+    "- `/tasks run [task_id]`",
+    "- `/tasks pause <task_id>`",
+    "- `/tasks resume <task_id>`",
+    "- `/tasks delete <task_id>`",
+    "- `/tasks schedule <task_id> <cron expression>`",
+    "- `/tasks prompt <task_id> <new prompt>`"
+  ].join("\n");
+}
+
+function formatJobSlashHelp(): string {
+  return [
+    "Job commands",
+    "- `/jobs list [task_id]`",
+    "- `/jobs status [task_id]`"
+  ].join("\n");
+}
+
 type ProviderConnectionViewInput = {
   githubUrl: string;
   googleUrl: string | null;
@@ -3276,6 +3728,10 @@ export function buildHelpResponse() {
             "• `/agent grant here` - authorize this channel for scheduled job output",
             "• `/agent ungrant here` - revoke this channel's scheduled job destination grants; any channel member can clean them up",
             "• `/agent exec <task>` - send an explicit task to your private agent runtime",
+            "• `/tasks list` - list scheduled task specs",
+            "• `/tasks create <description>` - create a scheduled task from a complete description",
+            "• `/tasks run [task_id]` - queue a task run",
+            "• `/jobs status [task_id]` - inspect the latest scheduled run",
             "• `/agent-status` - legacy alias for agent status",
             "• `/agent-config` - legacy alias for agent config",
             "• `/help` - show this help"

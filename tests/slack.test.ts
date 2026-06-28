@@ -45,6 +45,8 @@ import {
   isDirectMessageSlashCommand,
   isDestinationGrantSlashCommandChannel,
   parseAgentCommand,
+  parseJobSlashCommand,
+  parseTaskSlashCommand,
   parseAuthCommand,
   restartAgentRuntimeIfConfigChanged,
   runtimeImageForEngine,
@@ -1910,6 +1912,77 @@ describe("parseAgentCommand", () => {
   });
 });
 
+describe("task and job slash commands", () => {
+  test("parses explicit task management commands", () => {
+    expect(parseTaskSlashCommand("")).toEqual({ kind: "help" });
+    expect(parseTaskSlashCommand("list")).toEqual({ kind: "list" });
+    expect(parseTaskSlashCommand("show job_123")).toEqual({
+      kind: "show",
+      taskId: "job_123"
+    });
+    expect(parseTaskSlashCommand("validate job_123")).toEqual({
+      kind: "validate",
+      taskId: "job_123"
+    });
+    expect(parseTaskSlashCommand("run job_123")).toEqual({
+      kind: "run",
+      taskId: "job_123"
+    });
+    expect(parseTaskSlashCommand("run")).toEqual({ kind: "run" });
+    expect(parseTaskSlashCommand("pause job_123")).toEqual({
+      kind: "pause",
+      taskId: "job_123"
+    });
+    expect(parseTaskSlashCommand("resume job_123")).toEqual({
+      kind: "resume",
+      taskId: "job_123"
+    });
+    expect(parseTaskSlashCommand("delete job_123")).toEqual({
+      kind: "delete",
+      taskId: "job_123"
+    });
+  });
+
+  test("parses task create and update subcommands without interpreting prose", () => {
+    expect(
+      parseTaskSlashCommand(
+        "create check every 15 min for new PRs in repos of https://github.com/apelogic-ai github org"
+      )
+    ).toEqual({
+      kind: "create",
+      description:
+        "check every 15 min for new PRs in repos of https://github.com/apelogic-ai github org"
+    });
+    expect(parseTaskSlashCommand("schedule job_123 */15 * * * *")).toEqual({
+      kind: "set_schedule",
+      taskId: "job_123",
+      schedule: "*/15 * * * *"
+    });
+    expect(parseTaskSlashCommand("prompt job_123 Post exactly ❤️❤️")).toEqual({
+      kind: "set_prompt",
+      taskId: "job_123",
+      prompt: "Post exactly ❤️❤️"
+    });
+    expect(parseTaskSlashCommand("modify job_123 somehow")).toEqual({
+      kind: "help"
+    });
+  });
+
+  test("parses job execution commands", () => {
+    expect(parseJobSlashCommand("")).toEqual({ kind: "help" });
+    expect(parseJobSlashCommand("list")).toEqual({ kind: "list" });
+    expect(parseJobSlashCommand("list job_123")).toEqual({
+      kind: "list",
+      taskId: "job_123"
+    });
+    expect(parseJobSlashCommand("status")).toEqual({ kind: "status" });
+    expect(parseJobSlashCommand("status job_123")).toEqual({
+      kind: "status",
+      taskId: "job_123"
+    });
+  });
+});
+
 describe("buildAuthResponse", () => {
   test("builds a connections menu with GitHub and future providers", () => {
     const response = buildAuthResponse({
@@ -2662,6 +2735,10 @@ describe("buildHelpResponse", () => {
     expect(JSON.stringify(response.blocks)).toContain("/agent status");
     expect(JSON.stringify(response.blocks)).toContain("/agent grant here");
     expect(JSON.stringify(response.blocks)).toContain("/agent ungrant here");
+    expect(JSON.stringify(response.blocks)).toContain("/tasks list");
+    expect(JSON.stringify(response.blocks)).toContain("/tasks create");
+    expect(JSON.stringify(response.blocks)).toContain("/tasks run");
+    expect(JSON.stringify(response.blocks)).toContain("/jobs status");
     expect(JSON.stringify(response.blocks)).toContain("any channel member");
     expect(JSON.stringify(response.blocks)).toContain("/agent-config");
     expect(JSON.stringify(response.blocks)).toContain("/agent-status");

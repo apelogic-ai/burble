@@ -80,19 +80,32 @@ export type ConversationToolCatalog = {
 export type SchedulerControlIntent =
   | "list_jobs"
   | "list_job_runs"
+  | "show_task"
+  | "validate_task"
   | "create_job"
   | "trigger_job"
   | "pause_job"
   | "resume_job"
   | "delete_job"
   | "update_job_delivery"
+  | "update_job_schedule"
+  | "update_job_prompt"
   | "latest_run_status"
   | null;
+
+export type SchedulerResolvedCreateJob = {
+  title: string;
+  prompt: string;
+  schedule: unknown;
+};
 
 export type SchedulerIntentResolverResult = {
   intent: Exclude<SchedulerControlIntent, null> | "none";
   confidence: number;
   jobId?: string | null;
+  create?: SchedulerResolvedCreateJob | null;
+  schedule?: unknown;
+  prompt?: string | null;
 };
 
 export type SchedulerIntentResolver = (input: {

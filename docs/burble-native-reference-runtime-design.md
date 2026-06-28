@@ -167,14 +167,18 @@ Task = reusable work definition
 Job  = one execution of a task, triggered manually or by a timer
 ```
 
-A Task is closer to a Burble-owned skill capsule than a loose prompt. It should
+A Task is closer to a Burble-owned skill capsule than a loose prompt. It is the
+thing the user wants done, not the timer and not the delivery route. It should
 carry:
 
 - the user-facing objective;
+- multimodal input parts, including text and attachment/file references;
 - the selected runtime profile;
 - the required provider/product tools;
 - task-local tool constraints or argument templates;
+- selected skill/plugin references and resolved skill instructions;
 - durable state references;
+- schedule definition, when the task is recurring;
 - output contract and delivery policy;
 - visibility and authorization policy.
 
@@ -204,6 +208,104 @@ The task-local tool surface may expose higher-level aliases, for example
 `check_open_prs()`, while Burble maps that alias to the concrete provider tool
 and argument template. That keeps the model's useful judgment on the content of
 the run, not on reconstructing Burble's product wiring.
+
+### Distilled Runtime Lessons
+
+The current OpenClaw and Hermes adapters already have useful pieces of the
+future shape:
+
+- `/runs` accepts `input.text`, `input.attachments`, `input.scheduledJob`,
+  selected tool groups, conversation context, and provider connection summaries;
+- both runtimes expose scheduled-job control tools through local Burble MCP or
+  provider-bridge plugins;
+- both runtimes inject scheduled-job context into the model prompt so the model
+  can see `jobId`, `allowedTools`, `routeId`, `stateRefs`, and visibility
+  policy;
+- both runtimes can fetch current-turn attachments through a Burble
+  conversation attachment tool instead of receiving raw Slack file URLs.
+
+The gap is that `scheduledJob` is currently a grant/runtime context, not a Task
+spec. Its schema contains job identity, allowed tools, route, state refs, and
+visibility. It does not contain the Task objective, schedule, delivery contract,
+input parts, selected skills, or task-local tool aliases/templates.
+
+That gap is exactly what caused the heart-emoji failure mode: creation text such
+as "every 15 min, to this channel" leaked into the durable executable prompt, so
+the scheduled run looked like another scheduling request instead of the actual
+work. The fix is structural:
+
+```text
+Task spec
+  objective: "Post exactly this message: ❤️"
+  schedule:  "*/15 * * * *" in UTC
+  delivery:  conversation route convrt_...
+  tools:     conversation.sendMessage or equivalent route delivery grant
+
+Job run
+  trigger:   schedule | manual
+  taskId:    job_...
+  input:     objective + multimodal parts
+  context:   grant-only scheduledJob context
+```
+
+Do not encode schedule cadence or Slack delivery wording inside the executable
+task text. The runtime may see them as structured context, but the model's
+primary instruction for the run should be the Task objective.
+
+Task prompt parity should match ordinary user turns. If a user can ask Burble
+with text plus files, a Task should be able to persist text plus file/capability
+references and replay them into a later run. Those references must be durable
+Burble capabilities, not raw Slack URLs or runtime-local file paths. At run
+time, Burble resolves them into the same attachment/tool surfaces a chat turn
+would receive.
+
+The target split is:
+
+```ts
+type TaskSpec = {
+  taskId: string;
+  title: string;
+  objective: string;
+  inputParts: Array<
+    | { type: "text"; text: string }
+    | { type: "attachment_ref"; attachmentId: string; purpose?: string }
+    | { type: "state_ref"; provider: string; kind: string; id?: string }
+  >;
+  schedule?: {
+    kind: "cron";
+    expression: string;
+    timezone: string;
+  };
+  runtimeProfile: string;
+  toolContracts: Array<{
+    alias: string;
+    providerTool: string;
+    required: boolean;
+    inputTemplate?: Record<string, unknown>;
+  }>;
+  skillRefs?: Array<{
+    id: string;
+    version: string;
+  }>;
+  delivery?: {
+    routeId: string;
+    visibilityDefault: "public" | "user_private" | "restricted";
+  };
+  visibilityPolicy: {
+    maxOutputVisibility?: "public" | "user_private" | "restricted";
+    allowPrivateToolDeclassification?: boolean;
+  };
+};
+```
+
+The existing `scheduledJob` run context should remain grant-focused:
+
+```text
+jobId, allowedTools, routeId, stateRefs, visibilityPolicy
+```
+
+Task details belong beside it in the Burble-owned run envelope, not inside that
+grant object and not buried in natural-language prompt suffixes.
 
 ### Recoverable Tool Errors
 
@@ -555,6 +657,8 @@ Minimum conformance tests:
 - chat run reaches a final response;
 - streaming emits valid event order;
 - one logical tool call produces one Burble gateway execution;
+- multi-provider chains continue through tool results and reach the model's
+  synthesized final answer;
 - denied tool calls fail closed;
 - scheduled-job envelope preserves `jobId`;
 - job-scoped credentials cannot be reused outside the job;
@@ -573,6 +677,11 @@ OpenClaw and Hermes should remain supported, but their role changes:
   policy;
 - adapter work should be prioritized by customer/runtime value, not by the need
   to make Burble's core path work.
+
+Until a runtime passes conformance for a capability, Burble should treat that
+capability as unavailable for that runtime. A runtime can remain usable for chat
+while being ineligible for scheduled provider-heavy Tasks, multi-provider chains,
+or other narrower capabilities.
 
 This avoids making Burble's architecture depend on successfully suppressing
 features in heavier orchestrators.
@@ -631,6 +740,16 @@ reference-runtime work below, where they can be tested as first-class behavior.
 
 ### P0 — Block merge (correctness)
 
+0. **Make scheduler NL resolution the scheduler front door.** Scheduler CRUD must
+   route through a Burble-owned semantic resolver and validated control-plane
+   command before any agent runtime sees the message. The resolver may use an LLM,
+   but its output is constrained JSON: intent, confidence, selected task/job id,
+   and for create/update a validated spec with title, executable prompt,
+   schedule, and delivery target. If it recognizes scheduler CRUD but cannot
+   produce a complete spec, Burble asks for clarification or rejects the request;
+   it must not fall through to Hermes/OpenClaw native scheduler behavior. This is
+   the fix for prompts like "create new task to send heart emoji to this channel
+   every 30 min" being handled by Hermes as an internal cron job.
 1. **Stop reporting false success.** A suppressed/progress-only runtime result is
    currently recorded `status: "succeeded"` while delivering nothing
    (`src/scheduler/run-executor.ts`). Record a terminal `failed` (or a distinct
@@ -697,8 +816,9 @@ reference-runtime work below, where they can be tested as first-class behavior.
   **Sprint 2/Sprint 3**.
 - Native-runtime job migration / `needs_repair` → **Sprint 5**.
 - Usage/audit recording on scheduled runs (no column today) → **Sprint 5**.
-- Orchestrator decomposition (NL classifier + presenters out of `orchestrator.ts`)
-  → fast-follow cleanup, not blocking.
+- Orchestrator decomposition (presenters out of `orchestrator.ts`) →
+  fast-follow cleanup, not blocking. The scheduler NL classifier itself is P0
+  because it is the control-plane boundary, not presentation cleanup.
 - Gateway-IP allowlist → config (`openShellHostAllowedIps` hardcoded) → **Sprint 2**
   (folds into OpenShell packaging).
 - Cron/calendar schedules (interval-only today) → backlog.
@@ -806,6 +926,278 @@ Slices:
 Exit: the suite is green against `burble-native`; capabilities are test-gated; the
 double-execution invariant is enforced against a real runtime, closing the
 fixtures-never-run-against-a-real-runtime gap.
+
+### P-burble — Runtime capability routing and Hermes boundary research
+
+Goal: keep Burble product behavior stable while Hermes is investigated. Runtime
+selection should follow observed conformance, not a configured default engine or
+prompt promises.
+
+Current evidence:
+
+- OpenClaw passed the live multi-provider chain: GitHub PR lookup, summary, and
+  Google Drive file creation.
+- OpenClaw also passed a scheduled GitHub PR checker Task in live Slack testing.
+- Hermes repeatedly failed equivalent interactive and scheduled provider tasks by
+  emitting runtime/tool protocol text, progress markers, or provider intent as
+  assistant text instead of completing the structured tool loop.
+- Upstream Hermes Agent has matching failure-class reports: text-bound tool-call
+  extraction requests (`NousResearch/hermes-agent#29115`), mode-specific tool
+  calls emitted as text (`#53234`, `#13031`), cron/MCP tool filtering mismatch
+  (`#53416`), and maintainer caution against broad parser salvage without raw
+  payload evidence (`#47472`).
+
+Slices:
+
+- **P-burble-a. Runtime capability routing.** Model runtime capabilities at the
+  level Burble actually needs: `structuredProviderChains`,
+  `scheduledProviderCalls`, `taskLocalToolSurface`, `protocolLeakageRejected`,
+  and `durableJobDelivery`. Provider-heavy scheduled Tasks may select only
+  runtimes with passing conformance for those capabilities. Today that means
+  OpenClaw can be eligible for the GitHub PR checker path; Hermes must not claim
+  that capability until it is green.
+- **P-burble-b. Live conformance probes.** Persist runtime evidence by
+  `(runtime engine, profile, model/provider, runtime commit, Burble commit)`:
+  prompt shape, allowed tools, structured tool events observed, gateway execution
+  count, final classification, run id, and failure reason. Selection reads this
+  evidence; it does not infer capability from runtime name.
+- **P-burble-c. Hermes raw-response capture.** Add debug-only, redacted capture of
+  the raw Hermes model/transport response and the normalized runtime events for
+  failing provider runs. Prove whether structured `tool_calls` are absent,
+  present-but-dropped, or text-bound in assistant content before writing any
+  extractor or adapter fix.
+- **P-burble-d. Hermes surface simplification experiments.** Test one execution
+  surface at a time: MCP-only, plugin-only, and bridge-disabled variants. Verify
+  the actual transport/API mode used by the Hermes gateway path, because upstream
+  failures show tool-call behavior can differ by surface even when the same tools
+  and model are configured.
+- **P-burble-e. No blind salvage.** Do not re-add app-side provider execution from
+  marker text. A parser/extractor is acceptable only inside a runtime adapter or
+  transport-normalization layer, backed by raw-payload fixtures and the invariant
+  that one logical tool call produces exactly one provider execution.
+- **P-burble-f. Product fallback.** If the selected runtime lacks the required
+  capability, Burble should either route to a conforming runtime profile or fail
+  with an explicit capability error. It should not silently run provider-heavy
+  Tasks on Hermes and hope the prompt holds.
+
+Exit: Burble selects runtimes from conformance-backed capabilities; OpenClaw's
+provider-heavy scheduled Task path is covered and remains green; Hermes has raw
+evidence and a concrete upstream-compatible fix candidate, or is marked
+unsupported for the affected capabilities; no provider marker/protocol text
+reaches user-visible output; no app-side marker executor returns.
+
+### P-burble-workflow — Typed Burble workflow plans
+
+Goal: stop forcing every scheduled or manual Task into either brittle
+deterministic one-shot commands or a fully free agent loop. Burble-gated provider
+work should be expressible as typed multi-step workflows where Burble owns tool
+execution, auth, state, idempotency, and delivery, while LLMs are invoked only at
+explicit reasoning/rendering steps.
+
+Placement:
+
+- The **workflow contract lives in Burble**. It is product authority: grants,
+  provider calls, state references, retries, visibility, output contracts, and
+  delivery policy.
+- The **runner is an implementation detail** behind a Burble `WorkflowRunner`
+  interface. Start with an in-process event-sourced runner using the existing
+  scheduler/run store. Move to Restate, Temporal, or another durable runner only
+  when the workflow state machine needs crash-safe awaits, timers, retries, and
+  replay that exceed the in-process runner.
+- Restate is a good candidate for the durable execution substrate, but it should
+  not own the Task schema or product policy. Burble should be able to run the same
+  workflow spec on an in-process runner in tests and on Restate in production.
+
+Execution modes:
+
+- `literal`: no model and no provider calls; deliver exact output.
+- `burble_workflow`: typed steps. Burble executes provider/state/delivery steps;
+  LLM calls happen only at declared `model` steps.
+- `agent_tool_loop`: hand the task to a runtime agent with allowed tools. Use only
+  when the path cannot be reasonably known up front.
+
+Representative multi-step Task:
+
+```json
+{
+  "taskId": "task_priority_issue_pr_digest",
+  "title": "Priority Jira/GitHub digest",
+  "trigger": { "kind": "cron", "expression": "0 * * * *", "timezone": "UTC" },
+  "executionPlan": {
+    "mode": "burble_workflow",
+    "steps": [
+      {
+        "id": "jira_issues",
+        "kind": "provider_call",
+        "tool": "jira_search_issues",
+        "input": {
+          "jql": "project = ENG AND priority in (P0, P1) AND updated >= \"{lastRunAt}\" ORDER BY updated DESC",
+          "maxResults": 20
+        },
+        "saveAs": "issues"
+      },
+      {
+        "id": "github_prs_for_issue",
+        "kind": "provider_call",
+        "foreach": "issues.items",
+        "tool": "github_search_issues",
+        "input": {
+          "query": "org:apelogic-ai is:pr is:open \"{item.key}\""
+        },
+        "saveAs": "issuePrMatches"
+      },
+      {
+        "id": "seen_state",
+        "kind": "provider_call",
+        "tool": "google_get_drive_file",
+        "input": { "fileId": "{state.seenDriveFileId}" },
+        "saveAs": "seen"
+      },
+      {
+        "id": "dedupe",
+        "kind": "transform",
+        "operation": "filter_new",
+        "input": {
+          "items": "issuePrMatches",
+          "seenKeys": "seen.json.keys"
+        },
+        "saveAs": "newPairs"
+      },
+      {
+        "id": "render",
+        "kind": "model",
+        "modelProfile": "summary",
+        "input": {
+          "data": "newPairs",
+          "outputSpec": "{task.outputSpec}"
+        },
+        "saveAs": "message"
+      },
+      {
+        "id": "update_seen",
+        "kind": "provider_call",
+        "tool": "google_update_drive_text_file",
+        "input": {
+          "fileId": "{state.seenDriveFileId}",
+          "text": "{mergeSeen(seen, newPairs)}"
+        },
+        "idempotencyKey": "{jobRunId}:update_seen"
+      },
+      {
+        "id": "deliver",
+        "kind": "delivery",
+        "tool": "conversation_send_message",
+        "input": {
+          "routeId": "{delivery.routeId}",
+          "text": "{message.text}"
+        },
+        "idempotencyKey": "{jobRunId}:deliver"
+      }
+    ]
+  },
+  "grants": {
+    "tools": [
+      "jira_search_issues",
+      "github_search_issues",
+      "google_get_drive_file",
+      "google_update_drive_text_file",
+      "conversation_send_message"
+    ]
+  },
+  "state": {
+    "seenDriveFileId": "drive-file-id"
+  }
+}
+```
+
+LLM call policy:
+
+- Use a **direct LLM call through Burble's inference gateway/LiteLLM** for bounded
+  `model` steps: summarize normalized data, classify items, rewrite into
+  `outputSpec`, extract a typed spec from a creation prompt. These calls should
+  receive no provider credentials and no broad tool surface.
+- Use a **runtime agent** only when the model needs an actual loop: exploratory
+  tool choice, skills/plugins, current attachments, coding/debugging workspace
+  state, or multi-turn reasoning that cannot be represented as typed steps.
+- A `model` step returns typed output or final prose for validation. It does not
+  invoke provider tools directly.
+
+Validation rules:
+
+- Provider-call steps must validate against tool schemas before execution.
+- Template variables must be bound and non-empty before a step runs.
+- Step output shapes are normalized before later steps consume them.
+- Mutating steps and delivery steps require idempotency keys.
+- The workflow can retry transient tool/model failures by step, but cannot widen
+  its grants or change provider tools at runtime.
+
+Exit: common scheduled jobs can run without giving the model the provider tool
+surface; multi-step provider workflows are inspectable before enabling; manual
+and timer-triggered Jobs run the same workflow spec; LLM involvement is explicit
+and bounded; the runner can later move to Restate without changing Task specs.
+
+### P-burble-output — Task output contracts
+
+Goal: make scheduled/manual Task output stable at the product level. This is not
+just Slack mrkdwn formatting; it is the semantic contract for what content should
+appear, what should be omitted, how items are linked, whether summary prose is
+allowed, and how empty/error states are phrased.
+
+Problem evidence:
+
+- The same GitHub PR checker Task produced several valid-but-inconsistent shapes:
+  "New PRs in apelogic-ai", "New PR in apelogic-ai since 2026-06-27", and a
+  bare title-only bullet. Link inclusion and Slack unfurls also varied.
+- Literal delivery Tasks such as `:heart::heart:` should preserve exact content,
+  while report Tasks need stable item fields and empty states.
+- A later GitHub checker run used the correct granted tool but with malformed or
+  missing search arguments, then returned "Validation Failed" prose. That is a
+  task-local argument/template validation issue, not a useful user-facing report.
+
+Model:
+
+`Task = prompt + tool grants + runtime preference + outputSpec + deliveryPolicy`.
+
+`outputSpec` is a runtime-facing and Burble-validated contract. Examples:
+
+- `kind`: `literal`, `delta_report`, `summary_report`, `status_report`;
+- `title`: stable heading, or omitted for literal output;
+- `itemFields`: required fields such as `repo`, `title`, `url`;
+- `itemTemplate`: e.g. `• {repo} — {title}\n  {url}`;
+- `emptyState`: e.g. `No new PRs in apelogic-ai since {since}.`;
+- `summaryProse`: `none`, `brief`, or `required`;
+- `linkPolicy`: `plain_url`, `slack_mrkdwn_link`, or `none`;
+- `maxItems` and overflow wording;
+- `forbiddenContent`: job ids, run ids, tool names, setup commentary, raw JSON,
+  recommendations unless requested.
+
+Slices:
+
+- **P-output-a. Store outputSpec on Tasks.** Creation and update flows should
+  persist an inspectable `outputSpec` alongside prompt, schedule, tool grants, and
+  delivery. Existing Tasks without one get a conservative default by kind.
+- **P-output-b. Pass outputSpec into runtimes.** OpenClaw, Hermes, and
+  burble-native receive the same explicit output contract. The runtime owns
+  content synthesis, but not the product envelope.
+- **P-output-c. Validate and repair final output.** Burble validates required
+  fields, forbidden content, protocol leakage, literal preservation, and empty
+  states. Repairable violations get a bounded in-agent rewrite retry; hard leaks
+  fail loud.
+- **P-output-d. Delivery renderer controls.** Slack delivery applies transport
+  policy consistently: link/unfurl behavior, block vs text choice, truncation,
+  and attachment rendering. The same task output should not randomly produce
+  GitHub unfurls one run and plain bullets the next.
+- **P-output-e. Task-local tool argument templates.** For narrow Tasks such as
+  "new PRs in apelogic-ai", store or derive validated argument templates
+  (`github_search_issues` query shape, time window, sort/order). A runtime may
+  fill variables, but cannot call the granted tool with empty or malformed
+  required arguments.
+
+Exit: a rerun of the same scheduled Task has stable content shape across manual
+and timer-triggered Jobs; literal Tasks preserve exact output; provider report
+Tasks have stable item fields, empty states, and link policy; malformed
+task-local tool arguments are corrected or fail as validation errors before a
+generic provider "Validation Failed" message reaches the user.
 
 ### Sprint 4 — Make Hermes and OpenClaw conform
 

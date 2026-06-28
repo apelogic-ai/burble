@@ -110,6 +110,59 @@ describe("scheduler control conformance", () => {
 
     expect(listResponse.text).toContain("ai-news-hourly");
 
+    const showResponse = await handleToolGatewayRequest(
+      config,
+      store,
+      "scheduledJob.show",
+      runtimeRequest("scheduledJob.show", {
+        input: { jobId: "ai-news-hourly" }
+      }, runtime.id, runtimeToken)
+    );
+
+    expect(showResponse.status).toBe(200);
+    const showBody = await showResponse.json();
+    expect(showBody.content).toMatchObject({
+      ok: true,
+      task: {
+        taskId: "ai-news-hourly",
+        jobId: "ai-news-hourly",
+        title: "Hourly AI news summary"
+      },
+      validation: {
+        ok: false,
+        expectedTools: ["web_search"],
+        grantedTools: []
+      }
+    });
+
+    const validateResponse = await handleToolGatewayRequest(
+      config,
+      store,
+      "scheduledJob.validate",
+      runtimeRequest("scheduledJob.validate", {
+        input: { jobId: "ai-news-hourly" }
+      }, runtime.id, runtimeToken)
+    );
+
+    expect(validateResponse.status).toBe(200);
+    const validateBody = await validateResponse.json();
+    expect(validateBody.content).toMatchObject({
+      ok: true,
+      taskId: "ai-news-hourly",
+      validation: {
+        ok: false,
+        expectedTools: ["web_search"],
+        grantedTools: [],
+        errors: [
+          {
+            code: "missing_required_tool",
+            tool: "web_search"
+          }
+        ],
+        warnings: []
+      }
+    });
+
     const triggerResponse = await handleToolGatewayRequest(
       config,
       store,

@@ -88,6 +88,8 @@ TOOL_NAME_ALIASES = {
     "scheduled_job_resume": "scheduledJob.resume",
     "scheduled_job_delete": "scheduledJob.delete",
     "scheduled_job_trigger": "scheduledJob.trigger",
+    "scheduled_job_validate": "scheduledJob.validate",
+    "scheduled_job_show": "scheduledJob.show",
     "scheduled_job_latest_run_status": "scheduledJob.latestRunStatus",
     "conversation_get_attachment": "conversation.getAttachment",
 }
@@ -98,7 +100,14 @@ BRIDGE_TOOL_NAMES = {"burble_provider_call", "burble.providerCall"}
 
 
 BURBLE_PROVIDER_CALL_SCHEMA = {
-    "description": "Call one selected Burble provider tool through the runtime-scoped Burble tool gateway.",
+    "description": (
+        "Structured Hermes tool for calling one selected Burble provider tool "
+        "through the runtime-scoped Burble tool gateway. Invoke this tool through "
+        "the Hermes tool protocol; never write burble_provider_call, :gear:, "
+        "Calling ..., raw JSON, or a provider tool name as assistant text. After "
+        "the tool result returns, continue normally and call any next needed "
+        "provider tool before writing the final answer."
+    ),
     "parameters": {
         "type": "object",
         "properties": {
@@ -223,8 +232,13 @@ def _provider_alias_schema(alias: str, canonical_name: str) -> dict[str, Any]:
         }
     return {
         "description": (
-            f"Call Burble provider tool {canonical_name}. "
-            "Pass the provider tool arguments directly. For scheduled jobs, include jobId."
+            f"Structured Hermes tool for Burble provider tool {canonical_name}. "
+            "Invoke this tool through the Hermes tool protocol; never write "
+            "a :gear: progress marker, Calling ... line, raw JSON, or the tool "
+            "name as assistant text. Pass the provider tool arguments directly. "
+            "After the tool result returns, continue normally and call any next "
+            "needed provider tool before writing the final answer. For scheduled "
+            "jobs, include jobId."
         ),
         "parameters": {
             "type": "object",

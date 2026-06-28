@@ -1,4 +1,4 @@
-import type { AgentRunner } from "../agent/types";
+import type { AgentInput, AgentRunEvent, AgentRunner } from "../agent/types";
 import { collectAgentRun } from "../agent/types";
 import { selectRuntimeToolGroups } from "../agent/tool-groups";
 import {
@@ -6,7 +6,9 @@ import {
   type ScheduledJobContext,
 } from "../agent/scheduled-job-context";
 import { isRuntimeProgressOnlyResponseText } from "../agent/runtime-control-notices";
+import { containsRuntimeToolCallProtocolFragments } from "@burble/runtime-sdk/runtime-text-protocol";
 import { inferAllowedToolsForScheduledJob } from "./job-capabilities";
+import { findProviderToolSpec } from "../providers/catalog";
 import type {
   AgentJobRunRecord,
   AgentRuntimeEngine,
@@ -71,12 +73,18 @@ export function createSchedulerRunExecutor(input: {
         input.logInfo?.(
           `Scheduled job run start runId=${run.runId} jobId=${job.jobId}`,
         );
+        const runtimePrompt = runtimePromptForScheduledJob(job.prompt);
         const toolGroups = selectRuntimeToolGroups({
-          text: job.prompt,
+          text: runtimePrompt,
           attachmentCount: 0,
           contextTexts: [],
         });
-        const result = await collectAgentRun(input.agentRunner, {
+        const scheduledJobContext = scheduledJobContextForRun(
+          input.store,
+          job,
+          toolGroups.groups,
+        );
+        const agentInput: AgentInput = {
           principal: {
             workspaceId: run.workspaceId,
             slackUserId: run.slackUserId,
@@ -94,13 +102,9 @@ export function createSchedulerRunExecutor(input: {
                 },
               }
             : {}),
-          text: job.prompt,
+          text: runtimePrompt,
           toolGroups,
-          scheduledJob: scheduledJobContextForRun(
-            input.store,
-            job,
-            toolGroups.groups,
-          ),
+          ...(scheduledJobContext ? { scheduledJob: scheduledJobContext } : {}),
           connections: {
             github: connectionForSlackUser(input.store, "github", run),
             google: connectionForSlackUser(input.store, "google", run),
@@ -108,14 +112,27 @@ export function createSchedulerRunExecutor(input: {
             jira: connectionForSlackUser(input.store, "jira", run),
             slack: connectionForSlackUser(input.store, "slack", run),
           },
+        };
+        const result = await collectScheduledAgentRunWithProgressRetry({
+          runner: input.agentRunner,
+          agentInput,
+          job,
+          scheduledJobContext,
+          logWarn: input.logWarn,
         });
 
         const resultText = result.text.trim();
-        if (
-          destination &&
-          resultText &&
-          !isRuntimeProgressOnlyResponseText(resultText)
-        ) {
+        if (resultText && isRuntimeProgressOnlyResponseText(resultText)) {
+          throw new Error(
+            "Managed runtime final response contained only runtime-control/progress text",
+          );
+        }
+        if (containsRuntimeToolCallProtocolFragments(resultText)) {
+          throw new Error(
+            "Managed runtime final response leaked tool-call protocol text",
+          );
+        }
+        if (destination && resultText) {
           await input.slackClient.chat.postMessage({
             channel: destination.channelId,
             text: resultText,
@@ -123,13 +140,6 @@ export function createSchedulerRunExecutor(input: {
               ? { thread_ts: destination.threadTs }
               : {}),
           });
-        } else if (
-          resultText &&
-          isRuntimeProgressOnlyResponseText(resultText)
-        ) {
-          input.logWarn?.(
-            `Scheduled job run suppressed runtime-control output runId=${run.runId} jobId=${job.jobId}`,
-          );
         }
 
         input.store.finishAgentJobRun({
@@ -174,20 +184,162 @@ export function createSchedulerRunExecutor(input: {
   };
 }
 
+async function collectScheduledAgentRunWithProgressRetry(input: {
+  runner: AgentRunner;
+  agentInput: AgentInput;
+  job: ScheduledJobRecord;
+  scheduledJobContext: ScheduledJobContext | undefined;
+  logWarn?: (message: string) => void;
+}) {
+  const events: AgentRunEvent[] = [];
+  try {
+    const result = await collectAgentRun(
+      input.runner,
+      input.agentInput,
+      (event) => {
+        events.push(event);
+      },
+    );
+    const retryContext = progressOnlyScheduledRunRetryContext(
+      events,
+      input.scheduledJobContext,
+    );
+    if (isRuntimeProgressOnlyResponseText(result.text) && retryContext) {
+      return collectScheduledAgentRunProgressRetry({
+        ...input,
+        scheduledJobContext: retryContext,
+      });
+    }
+    if (
+      isRuntimeProgressOnlyResponseText(result.text) &&
+      shouldFailUnsafeProgressOnlyResult(events, input.scheduledJobContext)
+    ) {
+      throw new Error(
+        "Managed runtime final response contained only runtime-control/progress text",
+      );
+    }
+    return result;
+  } catch (error) {
+    const retryContext = progressOnlyScheduledRunRetryContext(
+      events,
+      input.scheduledJobContext,
+    );
+    if (!isProgressOnlyRuntimeFinalError(error) || !retryContext) {
+      throw error;
+    }
+    return collectScheduledAgentRunProgressRetry({
+      ...input,
+      scheduledJobContext: retryContext,
+    });
+  }
+}
+
+function progressOnlyScheduledRunRetryContext(
+  events: AgentRunEvent[],
+  scheduledJobContext: ScheduledJobContext | undefined,
+): ScheduledJobContext | null {
+  const canRetry =
+    !events.some((event) => event.type === "tool_call") &&
+    Boolean(scheduledJobContext?.allowedTools.length) &&
+    scheduledJobContextAllowsOnlyReadTools(scheduledJobContext);
+  return canRetry && scheduledJobContext ? scheduledJobContext : null;
+}
+
+function shouldFailUnsafeProgressOnlyResult(
+  events: AgentRunEvent[],
+  scheduledJobContext: ScheduledJobContext | undefined,
+): boolean {
+  return (
+    !events.some((event) => event.type === "tool_call") &&
+    Boolean(scheduledJobContext?.allowedTools.length) &&
+    !scheduledJobContextAllowsOnlyReadTools(scheduledJobContext)
+  );
+}
+
+function scheduledJobContextAllowsOnlyReadTools(
+  scheduledJobContext: ScheduledJobContext | undefined,
+): boolean {
+  return Boolean(
+    scheduledJobContext?.allowedTools.length &&
+    scheduledJobContext.allowedTools.every((toolName) =>
+      isPositiveReadOnlyProviderTool(toolName),
+    ),
+  );
+}
+
+function isPositiveReadOnlyProviderTool(toolName: string): boolean {
+  return findProviderToolSpec(toolName)?.risk === "read";
+}
+
+async function collectScheduledAgentRunProgressRetry(input: {
+  runner: AgentRunner;
+  agentInput: AgentInput;
+  job: ScheduledJobRecord;
+  scheduledJobContext: ScheduledJobContext;
+  logWarn?: (message: string) => void;
+}) {
+  input.logWarn?.(
+    `Scheduled job runtime returned progress-only output before tool call; retrying run jobId=${input.job.jobId}`,
+  );
+  const result = await collectAgentRun(input.runner, {
+    ...input.agentInput,
+    text: buildScheduledProgressRetryPrompt(
+      input.job.prompt,
+      input.scheduledJobContext.allowedTools,
+    ),
+  });
+  if (isRuntimeProgressOnlyResponseText(result.text)) {
+    throw new Error(
+      "Managed runtime final response contained only runtime-control/progress text after scheduled task retry",
+    );
+  }
+  return result;
+}
+
+function isProgressOnlyRuntimeFinalError(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    error.message ===
+      "Managed runtime final response contained only runtime-control/progress text"
+  );
+}
+
+function buildScheduledProgressRetryPrompt(
+  originalPrompt: string,
+  allowedTools: string[],
+): string {
+  return [
+    "Protocol correction for this same scheduled task.",
+    "",
+    "The previous runtime attempt returned only internal progress/control text and did not invoke a structured tool call.",
+    `Allowed task tools: ${allowedTools.join(", ")}`,
+    "",
+    "Run the scheduled task now. If the task needs provider data, invoke the appropriate allowed tool through the structured tool protocol. Then return a normal final answer for Burble to deliver.",
+    "",
+    "Scheduled task:",
+    originalPrompt,
+  ].join("\n");
+}
+
 function scheduledJobContextForRun(
   store: Pick<TokenStore, "getAgentJobCapability">,
   job: ScheduledJobRecord,
   toolGroups: string[],
-): ScheduledJobContext {
+): ScheduledJobContext | undefined {
   const capability = store.getAgentJobCapability(job.jobId);
   if (capability) {
-    return buildScheduledJobContext(capability);
+    const context = buildScheduledJobContext(capability);
+    return isDeliveryOnlyScheduledJobContext(context) ? undefined : context;
   }
 
+  const allowedTools = inferAllowedToolsForScheduledJob(job, toolGroups);
+  if (!allowedTools.length) {
+    return undefined;
+  }
   return {
     jobId: job.jobId,
     capabilityProfile: "scheduled_job",
-    allowedTools: inferAllowedToolsForScheduledJob(job, toolGroups),
+    allowedTools,
     ...(job.routeId ? { routeId: job.routeId } : {}),
     ...(job.runtimeType
       ? { runtimeType: job.runtimeType as AgentRuntimeEngine }
@@ -195,6 +347,31 @@ function scheduledJobContextForRun(
     stateRefs: [],
     visibilityPolicy: {},
   };
+}
+
+function isDeliveryOnlyScheduledJobContext(
+  context: ScheduledJobContext,
+): boolean {
+  return (
+    context.allowedTools.length === 0 ||
+    context.allowedTools.every((tool) => tool === "conversation.sendMessage")
+  );
+}
+
+function runtimePromptForScheduledJob(prompt: string): string {
+  const literalMessage = readLiteralScheduledMessage(prompt);
+  if (!literalMessage) {
+    return prompt;
+  }
+  return `Return exactly this message as your entire final answer, with no extra text. Do not call tools for delivery; Burble will deliver your final answer.\n\n${literalMessage}`;
+}
+
+function readLiteralScheduledMessage(prompt: string): string | null {
+  const match = /^Post exactly this message:\s*(?<message>.+)$/isu.exec(
+    prompt.trim(),
+  );
+  const message = match?.groups?.message?.trim();
+  return message ? message : null;
 }
 
 function scheduledRunConversationRoot(

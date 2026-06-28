@@ -1515,6 +1515,8 @@ describe("handleRuntimeRequest", () => {
     expect(toolNames).toContain("scheduled_job_resume");
     expect(toolNames).toContain("scheduled_job_delete");
     expect(toolNames).toContain("scheduled_job_trigger");
+    expect(toolNames).toContain("scheduled_job_validate");
+    expect(toolNames).toContain("scheduled_job_show");
     expect(toolNames).toContain("scheduled_job_latest_run_status");
   });
 
@@ -1651,6 +1653,123 @@ describe("handleRuntimeRequest", () => {
     );
     expect(requests[0].headers.get("authorization")).toBe("Bearer secret");
     expect(requests[0].headers.get("x-burble-runtime-id")).toBe("rt_u123");
+    expect(await requests[0].json()).toEqual({
+      input: {
+        jobId: "job-123"
+      }
+    });
+  });
+
+  test("executes scheduled task validation through local Burble MCP", async () => {
+    const requests: Request[] = [];
+    const response = await withMockFetch(
+      (async (input, init) => {
+        const request = new Request(input, init);
+        requests.push(request);
+        return Response.json({
+          classification: "user_private",
+          content: {
+            ok: true,
+            validation: {
+              ok: true,
+              expectedTools: ["github_search_issues"],
+              grantedTools: ["github_search_issues"],
+              errors: [],
+              warnings: []
+            }
+          }
+        });
+      }) as typeof fetch,
+      () =>
+        handleRuntimeRequest(
+          new Request("http://runtime/internal/burble/mcp", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({
+              jsonrpc: "2.0",
+              id: 1,
+              method: "tools/call",
+              params: {
+                name: "scheduled_job_validate",
+                arguments: {
+                  jobId: "job-123"
+                }
+              }
+            })
+          }),
+          {
+            ...config,
+            runtimeId: "rt_u123",
+            mcpGatewayUrl: null,
+            runtimeJwt: null
+          }
+        )
+    );
+
+    expect(response.status).toBe(200);
+    const body = readMcpData(await response.text());
+    expect(body.result.content[0].text).toContain('"validation"');
+    expect(requests).toHaveLength(1);
+    expect(requests[0].url).toBe(
+      "http://burble-app:3000/internal/tools/scheduledJob.validate/execute"
+    );
+    expect(await requests[0].json()).toEqual({
+      input: {
+        jobId: "job-123"
+      }
+    });
+  });
+
+  test("executes scheduled task detail reads through local Burble MCP", async () => {
+    const requests: Request[] = [];
+    const response = await withMockFetch(
+      (async (input, init) => {
+        const request = new Request(input, init);
+        requests.push(request);
+        return Response.json({
+          classification: "user_private",
+          content: {
+            ok: true,
+            task: {
+              taskId: "job-123",
+              title: "Open PR monitor"
+            }
+          }
+        });
+      }) as typeof fetch,
+      () =>
+        handleRuntimeRequest(
+          new Request("http://runtime/internal/burble/mcp", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({
+              jsonrpc: "2.0",
+              id: 1,
+              method: "tools/call",
+              params: {
+                name: "scheduled_job_show",
+                arguments: {
+                  jobId: "job-123"
+                }
+              }
+            })
+          }),
+          {
+            ...config,
+            runtimeId: "rt_u123",
+            mcpGatewayUrl: null,
+            runtimeJwt: null
+          }
+        )
+    );
+
+    expect(response.status).toBe(200);
+    const body = readMcpData(await response.text());
+    expect(body.result.content[0].text).toContain('"task"');
+    expect(requests).toHaveLength(1);
+    expect(requests[0].url).toBe(
+      "http://burble-app:3000/internal/tools/scheduledJob.show/execute"
+    );
     expect(await requests[0].json()).toEqual({
       input: {
         jobId: "job-123"

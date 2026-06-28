@@ -138,22 +138,32 @@ has a concrete need for that protocol.
 
 ## Practical Request Routing
 
-Simple scheduler commands should bypass LLM runtimes:
+Scheduler control-plane commands should bypass agent runtimes:
 
 - "do we have cron jobs configured?"
 - "list my jobs"
+- "create a task to post ❤️ here every 30 min"
 - "run the existing AI news job"
 - "did the manual run finish?"
 - "pause/delete/resume that job"
 
-Complex job authoring may use a runtime:
+Natural-language interpretation may use a constrained Burble-side resolver, but
+that resolver is not the task runtime. Its output is an untrusted JSON proposal
+for scheduler CRUD, validated by Burble before any record is created or mutated.
+If the resolver recognizes scheduler CRUD but cannot produce a complete spec,
+Burble asks for clarification or rejects the request; it must not fall through to
+Hermes/OpenClaw native scheduler behavior.
+
+Complex task drafting may use a runtime only as a proposal generator:
 
 - "create an hourly job that finds fresh AI news, summarizes it, and posts here"
 - "update that job to also check GitHub issues"
 - "repair the job so it uses the Drive scratchpad"
 
-In that flow, the runtime drafts the job body, required tools, destination, and
-visibility. Burble validates and persists the scheduler record.
+In that flow, the runtime drafts the task body, required tools, destination, and
+visibility. Burble validates the proposal and persists the scheduler record. The
+runtime never directly creates a durable job, chooses a timer, or owns delivery
+authority.
 
 When a job fires, Burble supplies a structured scheduled-job envelope. The
 runtime executes the task under that envelope. Burble enforces the envelope on
@@ -166,16 +176,19 @@ provider calls and delivery.
 This should start before the runtime-specific merge work because it fixes the
 currently broken user-visible path with the least runtime risk.
 
-Add conservative deterministic routing for unambiguous scheduler control-plane
-intents:
+Add a semantic scheduler resolver for scheduler control-plane intents. The
+resolver can be LLM-backed, but it must return constrained JSON and it lives in
+Burble, ahead of runtime dispatch:
 
 - list/get jobs;
+- create a job with title, executable prompt, schedule, and delivery target;
 - trigger an existing job;
 - check latest run status;
 - pause/resume/delete a job.
 
-The router must stay narrow. Ambiguous phrasing should fall through to the
-runtime rather than becoming another brittle prose parser.
+The router must stay narrow in authority, not brittle in language. Ambiguous
+phrasing should produce a clarification or low-confidence `none`; recognized
+scheduler CRUD with incomplete fields should not fall through to Hermes/OpenClaw.
 
 These commands should call the same scheduler/tool-gateway implementation that
 runtime tools call. There should not be separate Slack-command and runtime-tool

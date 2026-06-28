@@ -44,12 +44,21 @@ describe("scheduler intent resolver", () => {
   test("parses task creation intents", () => {
     expect(
       parseSchedulerIntentResponse(
-        '{"intent":"create_job","confidence":0.9,"jobId":null}',
+        '{"intent":"create_job","confidence":0.9,"jobId":null,"create":{"title":"Heart emoji every 30 min","prompt":"Post exactly this message: ❤️","schedule":{"kind":"cron","expression":"*/30 * * * *","timezone":"UTC"}}}',
       ),
     ).toEqual({
       intent: "create_job",
       confidence: 0.9,
       jobId: null,
+      create: {
+        title: "Heart emoji every 30 min",
+        prompt: "Post exactly this message: ❤️",
+        schedule: {
+          kind: "cron",
+          expression: "*/30 * * * *",
+          timezone: "UTC",
+        },
+      },
     });
   });
 
@@ -62,6 +71,60 @@ describe("scheduler intent resolver", () => {
       intent: "update_job_delivery",
       confidence: 0.88,
       jobId: "job_ai_news",
+    });
+  });
+
+  test("parses schedule update intents", () => {
+    expect(
+      parseSchedulerIntentResponse(
+        '{"intent":"update_job_schedule","confidence":0.92,"jobId":"job_heart","schedule":{"kind":"cron","expression":"*/45 * * * *","timezone":"UTC"}}',
+      ),
+    ).toEqual({
+      intent: "update_job_schedule",
+      confidence: 0.92,
+      jobId: "job_heart",
+      schedule: {
+        kind: "cron",
+        expression: "*/45 * * * *",
+        timezone: "UTC",
+      },
+    });
+  });
+
+  test("parses task prompt update intents", () => {
+    expect(
+      parseSchedulerIntentResponse(
+        '{"intent":"update_job_prompt","confidence":0.93,"jobId":"job_heart","prompt":"Post exactly this message: ❤️❤️"}',
+      ),
+    ).toEqual({
+      intent: "update_job_prompt",
+      confidence: 0.93,
+      jobId: "job_heart",
+      prompt: "Post exactly this message: ❤️❤️",
+    });
+  });
+
+  test("parses task validation intents", () => {
+    expect(
+      parseSchedulerIntentResponse(
+        '{"intent":"validate_task","confidence":0.89,"jobId":"job_github_checker"}',
+      ),
+    ).toEqual({
+      intent: "validate_task",
+      confidence: 0.89,
+      jobId: "job_github_checker",
+    });
+  });
+
+  test("parses task detail intents", () => {
+    expect(
+      parseSchedulerIntentResponse(
+        '{"intent":"show_task","confidence":0.91,"jobId":"job_github_checker"}',
+      ),
+    ).toEqual({
+      intent: "show_task",
+      confidence: 0.91,
+      jobId: "job_github_checker",
     });
   });
 
@@ -109,6 +172,8 @@ describe("scheduler intent resolver", () => {
     });
 
     expect(prompt).toContain("Current task/job specs");
+    expect(prompt).toContain('"create"');
+    expect(prompt).toContain('"schedule"');
     expect(prompt).toContain("job_github_checker");
     expect(prompt).toContain("GitHub PR checker");
     expect(result).toEqual({

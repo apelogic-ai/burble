@@ -3,6 +3,65 @@ import { createTokenStore } from "../../src/db";
 import { createSchedulerTimer } from "../../src/scheduler/timer";
 
 describe("scheduler timer", () => {
+  test("queues cron jobs on schedule boundaries instead of creation-relative intervals", async () => {
+    const store = createTokenStore(":memory:");
+    store.upsertScheduledJob({
+      jobId: "job-heart",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      title: "Post heart",
+      prompt: "Post exactly this message: ❤️",
+      schedule: {
+        kind: "cron",
+        expression: "*/15 * * * *",
+        timezone: "UTC",
+      },
+      runtimeType: "hermes",
+      state: "scheduled",
+      now: new Date("2026-06-27T01:10:52.803Z"),
+    });
+    const executed: string[] = [];
+    const earlyTimer = createSchedulerTimer({
+      store,
+      now: () => new Date("2026-06-27T01:14:59.000Z"),
+      newRunId: () => "jobrun-too-early",
+      executeRun: async (runId) => {
+        executed.push(runId);
+      },
+    });
+
+    expect(await earlyTimer.tick()).toEqual({ queuedRunIds: [] });
+    expect(executed).toEqual([]);
+
+    const dueTimer = createSchedulerTimer({
+      store,
+      now: () => new Date("2026-06-27T01:15:00.000Z"),
+      newRunId: () => "jobrun-quarter-hour",
+      executeRun: async (runId) => {
+        executed.push(runId);
+      },
+    });
+
+    expect(await dueTimer.tick()).toEqual({
+      queuedRunIds: ["jobrun-quarter-hour"],
+    });
+    expect(executed).toEqual(["jobrun-quarter-hour"]);
+
+    const duplicateTimer = createSchedulerTimer({
+      store,
+      now: () => new Date("2026-06-27T01:15:30.000Z"),
+      newRunId: () => "jobrun-duplicate-slot",
+      executeRun: async (runId) => {
+        executed.push(runId);
+      },
+    });
+
+    expect(await duplicateTimer.tick()).toEqual({ queuedRunIds: [] });
+    expect(store.getAgentJobRun("jobrun-duplicate-slot")).toBeNull();
+
+    store.close();
+  });
+
   test("queues due interval jobs and hands them to the run executor", async () => {
     const store = createTokenStore(":memory:");
     store.upsertScheduledJob({
@@ -149,6 +208,67 @@ describe("scheduler timer", () => {
       queuedRunIds: ["jobrun-timer-after-stale"],
     });
     expect(executed).toEqual(["jobrun-timer-after-stale"]);
+
+    store.close();
+  });
+
+  test("does not queue due jobs with invalid persisted tool grants", async () => {
+    const store = createTokenStore(":memory:");
+    store.upsertScheduledJob({
+      jobId: "job-open-prs",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      title: "Check every 15 min for new PRs in apelogic-ai GitHub org",
+      prompt:
+        "Check every 15 min for new PRs in repos of https://github.com/apelogic-ai github org, post in this channel",
+      schedule: {
+        kind: "cron",
+        expression: "*/15 * * * *",
+        timezone: "UTC",
+      },
+      runtimeType: "openclaw",
+      state: "scheduled",
+      now: new Date("2026-06-27T17:10:00.000Z"),
+    });
+    store.upsertAgentJobCapability({
+      jobId: "job-open-prs",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      requiredTools: ["github_list_my_pull_requests"],
+      runtimeType: "openclaw",
+      capabilityProfile: "scheduled_job",
+      stateRefs: [],
+      visibilityPolicy: {},
+      now: new Date("2026-06-27T17:10:00.000Z"),
+    });
+    const warnings: string[] = [];
+    const timer = createSchedulerTimer({
+      store,
+      now: () => new Date("2026-06-27T17:15:00.000Z"),
+      newRunId: () => "jobrun-invalid-grant",
+      executeRun: async () => {
+        throw new Error("unexpected run execution");
+      },
+      logWarn: (message) => warnings.push(message),
+    });
+
+    expect(await timer.tick()).toEqual({ queuedRunIds: [] });
+    expect(store.getAgentJobRun("jobrun-invalid-grant")).toMatchObject({
+      runId: "jobrun-invalid-grant",
+      jobId: "job-open-prs",
+      triggerSource: "schedule",
+      status: "failed",
+    });
+    expect(store.getAgentJobRun("jobrun-invalid-grant")?.failureReason).toContain(
+      "Scheduled task validation failed: missing_required_tool",
+    );
+    expect(store.getAgentJobRun("jobrun-invalid-grant")?.failureReason).toContain(
+      "github_search_issues",
+    );
+    expect(store.getAgentJobCapability("job-open-prs")?.requiredTools).toEqual([
+      "github_list_my_pull_requests",
+    ]);
+    expect(warnings.join("\n")).toContain("missing_required_tool");
 
     store.close();
   });

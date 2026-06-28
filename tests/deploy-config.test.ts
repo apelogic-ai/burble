@@ -163,6 +163,8 @@ describe("dev deploy config", () => {
     for (const command of [
       "/auth",
       "/help",
+      "/tasks",
+      "/jobs",
       "/agent",
       "/agent-status",
       "/agent-config"

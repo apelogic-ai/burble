@@ -82,6 +82,7 @@ export type RunRequest = {
         | "jira"
         | "scheduler"
         | "slack"
+        | "web"
       >;
       reasons: string[];
     };

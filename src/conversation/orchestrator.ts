@@ -14,8 +14,12 @@ import type {
   SchedulerJobDeleteResult,
   SchedulerJobMutationResult,
   SchedulerRunStatusResult,
+  SchedulerShowTaskResult,
   SchedulerTriggerResult,
   SchedulerUpdateJobDeliveryResult,
+  SchedulerUpdateJobPromptResult,
+  SchedulerUpdateJobScheduleResult,
+  SchedulerValidateTaskResult,
 } from "../scheduler/control-plane";
 import type {
   ConversationDeps,
@@ -23,6 +27,7 @@ import type {
   ConversationResponse,
   SchedulerControlIntent,
   SchedulerIntentResolverResult,
+  SchedulerResolvedCreateJob,
 } from "./types";
 import type { AgentRuntimeEngine } from "../db";
 import { isAgentRuntimeEngine } from "@burble/runtime-sdk/runtime-engines";
@@ -63,11 +68,22 @@ async function handleConversationInternal(
     schedulerResolution.jobId ?? readSchedulerJobIdHint(request.text);
   const schedulerCreateRequest =
     schedulerControlIntent === "create_job"
-      ? parseSchedulerCreateRequest(request.text)
+      ? (schedulerResolution.create ??
+        parseSchedulerCreateRequest(request.text))
       : null;
   const schedulerDeliveryUpdateRequest =
     schedulerControlIntent === "update_job_delivery"
       ? parseSchedulerDeliveryUpdateRequest(request)
+      : null;
+  const schedulerScheduleUpdateRequest =
+    schedulerControlIntent === "update_job_schedule"
+      ? (normalizeResolvedSchedule(schedulerResolution.schedule) ??
+        parseExplicitIntervalSchedule(request.text)?.value ??
+        null)
+      : null;
+  const schedulerPromptUpdateRequest =
+    schedulerControlIntent === "update_job_prompt"
+      ? normalizeResolvedPrompt(schedulerResolution.prompt)
       : null;
   const toolGroups = selectRuntimeToolGroups({
     text: request.text,
@@ -178,6 +194,38 @@ async function handleConversationInternal(
     };
   }
 
+  if (
+    schedulerControlIntent === "show_task" &&
+    deps.schedulerControl?.showTask
+  ) {
+    const result = await deps.schedulerControl.showTask({
+      workspaceId: request.workspaceId,
+      slackUserId: request.user.slackUserId,
+      taskId: schedulerJobIdHint,
+    });
+    return {
+      visibility: "ephemeral",
+      classification: "user_private",
+      text: formatScheduledTaskDetailResult(result),
+    };
+  }
+
+  if (
+    schedulerControlIntent === "validate_task" &&
+    deps.schedulerControl?.validateTask
+  ) {
+    const result = await deps.schedulerControl.validateTask({
+      workspaceId: request.workspaceId,
+      slackUserId: request.user.slackUserId,
+      taskId: schedulerJobIdHint,
+    });
+    return {
+      visibility: "ephemeral",
+      classification: "user_private",
+      text: formatScheduledTaskValidationResult(result),
+    };
+  }
+
   if (schedulerCreateRequest && deps.schedulerControl?.createJob) {
     const result = await deps.schedulerControl.createJob({
       workspaceId: request.workspaceId,
@@ -194,6 +242,14 @@ async function handleConversationInternal(
       visibility: "ephemeral",
       classification: "user_private",
       text: formatScheduledJobCreateResult(result),
+    };
+  }
+
+  if (schedulerControlIntent === "create_job") {
+    return {
+      visibility: "ephemeral",
+      classification: "user_private",
+      text: formatUnresolvedScheduledJobCreate(),
     };
   }
 
@@ -280,6 +336,54 @@ async function handleConversationInternal(
       visibility: "ephemeral",
       classification: "user_private",
       text: formatScheduledJobDeliveryUpdateResult(result),
+    };
+  }
+
+  if (
+    schedulerControlIntent === "update_job_schedule" &&
+    deps.schedulerControl?.updateJobSchedule
+  ) {
+    if (!schedulerScheduleUpdateRequest) {
+      return {
+        visibility: "ephemeral",
+        classification: "user_private",
+        text: "I can’t update that scheduled task yet because I could not resolve the new schedule.",
+      };
+    }
+    const result = await deps.schedulerControl.updateJobSchedule({
+      workspaceId: request.workspaceId,
+      slackUserId: request.user.slackUserId,
+      jobId: schedulerJobIdHint,
+      schedule: schedulerScheduleUpdateRequest,
+    });
+    return {
+      visibility: "ephemeral",
+      classification: "user_private",
+      text: formatScheduledJobScheduleUpdateResult(result),
+    };
+  }
+
+  if (
+    schedulerControlIntent === "update_job_prompt" &&
+    deps.schedulerControl?.updateJobPrompt
+  ) {
+    if (!schedulerPromptUpdateRequest) {
+      return {
+        visibility: "ephemeral",
+        classification: "user_private",
+        text: "I can’t update that scheduled task yet because I could not resolve the new task prompt.",
+      };
+    }
+    const result = await deps.schedulerControl.updateJobPrompt({
+      workspaceId: request.workspaceId,
+      slackUserId: request.user.slackUserId,
+      jobId: schedulerJobIdHint,
+      prompt: schedulerPromptUpdateRequest,
+    });
+    return {
+      visibility: "ephemeral",
+      classification: "user_private",
+      text: formatScheduledJobPromptUpdateResult(result),
     };
   }
 
@@ -443,17 +547,32 @@ function scheduledJobRuntimeType(
 function classifySchedulerControlIntent(text: string): SchedulerControlIntent {
   const tokens = tokenizeSchedulerControlText(text);
 
+  if (isSchedulerValidateTaskIntent(tokens)) {
+    return "validate_task";
+  }
   if (isSchedulerJobRunListIntent(tokens)) {
     return "list_job_runs";
   }
   if (isSchedulerListIntent(tokens) && hasSchedulerListReference(tokens)) {
     return "list_jobs";
   }
+  if (
+    isSchedulerScheduleUpdateIntent(tokens) &&
+    hasAnyToken(tokens, ["job", "jobs", "task", "tasks", "cron"])
+  ) {
+    return "update_job_schedule";
+  }
   if (!hasSchedulerActionReference(tokens)) {
     return null;
   }
   if (isSchedulerRunStatusIntent(tokens)) {
     return "latest_run_status";
+  }
+  if (isSchedulerShowTaskIntent(tokens)) {
+    return "show_task";
+  }
+  if (hasAnyToken(tokens, ["validate", "inspect"])) {
+    return "validate_task";
   }
   if (hasAnyToken(tokens, ["pause", "disable", "stop"])) {
     return "pause_job";
@@ -467,6 +586,9 @@ function classifySchedulerControlIntent(text: string): SchedulerControlIntent {
   if (isSchedulerDeliveryUpdateIntent(tokens)) {
     return "update_job_delivery";
   }
+  if (isSchedulerScheduleUpdateIntent(tokens)) {
+    return "update_job_schedule";
+  }
   if (isSchedulerTriggerIntent(tokens)) {
     return "trigger_job";
   }
@@ -476,12 +598,19 @@ function classifySchedulerControlIntent(text: string): SchedulerControlIntent {
 async function resolveSchedulerControlIntent(
   request: ConversationRequest,
   deps: ConversationDeps,
-): Promise<{ intent: SchedulerControlIntent; jobId: string | null }> {
+): Promise<{
+  intent: SchedulerControlIntent;
+  jobId: string | null;
+  create: SchedulerResolvedCreateJob | null;
+  schedule: unknown | null;
+  prompt: string | null;
+}> {
   const fallbackJobId = readSchedulerJobIdHint(request.text);
+  const fallbackCreate = parseSchedulerCreateRequest(request.text);
   const deterministicIntent =
     classifyExplicitSchedulerJobIdIntent(request.text) ??
     classifySchedulerControlIntent(request.text) ??
-    (parseSchedulerCreateRequest(request.text) ? "create_job" : null);
+    (fallbackCreate ? "create_job" : null);
 
   if (deps.schedulerIntentResolver) {
     try {
@@ -506,6 +635,18 @@ async function resolveSchedulerControlIntent(
             jobs,
             fallbackJobId,
           ),
+          create:
+            intent === "create_job"
+              ? (normalizeResolverCreateJob(resolved.create) ?? fallbackCreate)
+              : null,
+          schedule:
+            intent === "update_job_schedule"
+              ? normalizeResolvedSchedule(resolved.schedule)
+              : null,
+          prompt:
+            intent === "update_job_prompt"
+              ? normalizeResolvedPrompt(resolved.prompt)
+              : null,
         };
       }
     } catch {
@@ -515,10 +656,72 @@ async function resolveSchedulerControlIntent(
     return {
       intent: deterministicIntent,
       jobId: fallbackJobId,
+      create: fallbackCreate,
+      schedule: null,
+      prompt: null,
     };
   }
 
-  return { intent: deterministicIntent, jobId: null };
+  return {
+    intent: deterministicIntent,
+    jobId: null,
+    create: fallbackCreate,
+    schedule: null,
+    prompt: null,
+  };
+}
+
+function normalizeResolverCreateJob(
+  create: SchedulerResolvedCreateJob | null | undefined,
+): ParsedSchedulerCreateRequest | null {
+  if (!create) {
+    return null;
+  }
+  const title = create.title.trim();
+  const prompt = normalizeScheduledTaskPrompt(create.prompt.trim());
+  if (!title || !prompt || !isValidResolvedSchedule(create.schedule)) {
+    return null;
+  }
+  return {
+    title,
+    prompt,
+    schedule: create.schedule,
+    scheduleLabel: formatSchedule(create.schedule),
+  };
+}
+
+function isValidResolvedSchedule(schedule: unknown): boolean {
+  return normalizeResolvedSchedule(schedule) !== null;
+}
+
+function normalizeResolvedSchedule(schedule: unknown): unknown | null {
+  if (!isRecord(schedule)) {
+    return null;
+  }
+  if (schedule.kind === "cron") {
+    const expression =
+      typeof schedule.expression === "string" ? schedule.expression.trim() : "";
+    const timezone =
+      typeof schedule.timezone === "string" && schedule.timezone.trim()
+        ? schedule.timezone.trim()
+        : "UTC";
+    if (!expression) {
+      return null;
+    }
+    return {
+      kind: "cron",
+      expression,
+      timezone,
+    };
+  }
+  return null;
+}
+
+function normalizeResolvedPrompt(
+  prompt: string | null | undefined,
+): string | null {
+  const normalized = normalizeScheduledTaskPrompt(prompt?.trim() ?? "");
+  return normalized || null;
 }
 
 function resolveSchedulerResolverJobId(
@@ -567,6 +770,12 @@ function classifyExplicitSchedulerJobIdIntent(
   if (isSchedulerRunStatusIntent(tokens)) {
     return "latest_run_status";
   }
+  if (isSchedulerShowTaskIntent(tokens)) {
+    return "show_task";
+  }
+  if (hasAnyToken(tokens, ["validate", "inspect"])) {
+    return "validate_task";
+  }
   if (hasAnyToken(tokens, ["pause", "disable", "stop"])) {
     return "pause_job";
   }
@@ -578,6 +787,9 @@ function classifyExplicitSchedulerJobIdIntent(
   }
   if (isSchedulerDeliveryUpdateIntent(tokens)) {
     return "update_job_delivery";
+  }
+  if (isSchedulerScheduleUpdateIntent(tokens)) {
+    return "update_job_schedule";
   }
   if (hasAnyToken(tokens, ["run", "running", "trigger", "start", "test"])) {
     return "trigger_job";
@@ -600,6 +812,9 @@ function normalizeResolvedSchedulerIntent(
     result.intent === "resume_job" ||
     result.intent === "delete_job" ||
     result.intent === "update_job_delivery" ||
+    result.intent === "update_job_schedule" ||
+    result.intent === "update_job_prompt" ||
+    result.intent === "validate_task" ||
     result.intent === "latest_run_status"
   ) {
     return result.intent;
@@ -727,6 +942,28 @@ function isSchedulerJobRunListIntent(tokens: string[]): boolean {
   );
 }
 
+function isSchedulerValidateTaskIntent(tokens: string[]): boolean {
+  if (!hasAnyToken(tokens, ["validate", "inspect"])) {
+    return false;
+  }
+  return hasAnyToken(tokens, ["task", "tasks", "job", "jobs", "cron"]);
+}
+
+function isSchedulerShowTaskIntent(tokens: string[]): boolean {
+  if (
+    !hasAnyToken(tokens, ["show", "describe", "detail", "details", "inspect"])
+  ) {
+    return false;
+  }
+  if (
+    hasAnyToken(tokens, ["list", "all", "current"]) &&
+    !hasAnyToken(tokens, ["detail", "details"])
+  ) {
+    return false;
+  }
+  return hasAnyToken(tokens, ["task", "job", "cron"]);
+}
+
 function isSchedulerTriggerIntent(tokens: string[]): boolean {
   if (!hasAnyToken(tokens, ["run", "running", "trigger", "start"])) {
     return false;
@@ -773,6 +1010,25 @@ function isSchedulerDeliveryUpdateIntent(tokens: string[]): boolean {
     hasAnyToken(tokens, ["cron", "task", "tasks"]) ||
     hasScheduledJobReference(tokens) ||
     hasSchedulerActionReference(tokens) ||
+    tokens.some((token) => /^job[_-][a-z0-9_.-]{2,}$/i.test(token))
+  );
+}
+
+function isSchedulerScheduleUpdateIntent(tokens: string[]): boolean {
+  if (!hasAnyToken(tokens, ["change", "modify", "reschedule", "update"])) {
+    return false;
+  }
+  if (!(
+    hasAnyToken(tokens, ["hourly", "daily", "weekly"]) ||
+    hasAdjacentTokens(tokens, "every", "minute") ||
+    hasAdjacentTokens(tokens, "every", "minutes") ||
+    tokens.includes("every")
+  )) {
+    return false;
+  }
+  return (
+    hasAnyToken(tokens, ["cron", "job", "jobs", "task", "tasks"]) ||
+    hasScheduledJobReference(tokens) ||
     tokens.some((token) => /^job[_-][a-z0-9_.-]{2,}$/i.test(token))
   );
 }
@@ -877,19 +1133,19 @@ function parseExplicitIntervalSchedule(
     )
   ) {
     return {
-      value: { kind: "interval", every: { hours: 1 } },
+      value: { kind: "cron", expression: "0 * * * *", timezone: "UTC" },
       label: "every 60m",
     };
   }
   if (/\bdaily\b|\bevery\s+(?:1\s+)?days?\b/.test(normalized)) {
     return {
-      value: { kind: "interval", every: { days: 1 } },
+      value: { kind: "cron", expression: "0 0 * * *", timezone: "UTC" },
       label: "every 1d",
     };
   }
   if (/\bweekly\b|\bevery\s+(?:1\s+)?weeks?\b/.test(normalized)) {
     return {
-      value: { kind: "interval", every: { weeks: 1 } },
+      value: { kind: "cron", expression: "0 0 * * 1", timezone: "UTC" },
       label: "every 1w",
     };
   }
@@ -907,19 +1163,31 @@ function parseExplicitIntervalSchedule(
   const unit = everyMatch[2].toLowerCase();
   if (["minute", "minutes", "min", "mins", "m"].includes(unit)) {
     return {
-      value: { kind: "interval", every: { minutes: amount } },
+      value: {
+        kind: "cron",
+        expression: amount === 1 ? "* * * * *" : `*/${amount} * * * *`,
+        timezone: "UTC",
+      },
       label: `every ${amount}m`,
     };
   }
   if (["hour", "hours", "hr", "hrs", "h"].includes(unit)) {
     return {
-      value: { kind: "interval", every: { hours: amount } },
+      value: {
+        kind: "cron",
+        expression: amount === 1 ? "0 * * * *" : `0 */${amount} * * *`,
+        timezone: "UTC",
+      },
       label: `every ${amount}h`,
     };
   }
   if (["day", "days", "d"].includes(unit)) {
     return {
-      value: { kind: "interval", every: { days: amount } },
+      value: {
+        kind: "cron",
+        expression: amount === 1 ? "0 0 * * *" : `0 0 */${amount} * *`,
+        timezone: "UTC",
+      },
       label: `every ${amount}d`,
     };
   }
@@ -927,7 +1195,7 @@ function parseExplicitIntervalSchedule(
 }
 
 function extractScheduledTaskPrompt(text: string): string {
-  return text
+  const prompt = text
     .trim()
     .replace(
       /^\s*(?:please\s+)?(?:create|add|make|schedule|set\s+up)\s+(?:an?\s+|new\s+)?(?:(?:hourly|daily|weekly)\s+|every\s+\d+\s*(?:minutes?|mins?|m|hours?|hrs?|h|days?|d|weeks?|w)\s+)?(?:(?:scheduled\s+)?(?:cron\s+job|cronjob|job|task))\s*[,;:-]?\s*(?:to|that|which|for)?\s*/i,
@@ -938,6 +1206,72 @@ function extractScheduledTaskPrompt(text: string): string {
       /^(?:to\s+)?(?:be\s+)?run\s+(?:hourly|daily|weekly|every\s+(?:\d+\s*)?(?:minutes?|mins?|m|hours?|hrs?|h|days?|d|weeks?|w))\s*[,;:-]?\s*(?:to\s+)?/i,
       "",
     )
+    .trim()
+    .replace(
+      /\s*(?:,|;|-)?\s*(?:to\s+be\s+)?run\s+(?:hourly|daily|weekly|every\s+(?:\d+\s*)?(?:minutes?|mins?|m|hours?|hrs?|h|days?|d|weeks?|w))\b\s*,?\s*/gi,
+      " ",
+    )
+    .replace(
+      /\s*\b(?:hourly|daily|weekly|every\s+\d+\s*(?:minutes?|mins?|m|hours?|hrs?|h|days?|d|weeks?|w))\b\s*,?\s*/gi,
+      " ",
+    )
+    .replace(
+      /\s*(?:,|;|-)?\s*(?:and\s+)?(?:post|send|report)\s+(?:the\s+)?(?:result|results|output|report)?\s*(?:back\s+)?(?:in|to)\s+(?:this|the\s+current)\s+(?:channel|chat|conversation|thread)\b/gi,
+      " ",
+    )
+    .replace(
+      /\s*(?:,|;|-)?\s*(?:and\s+)?(?:post|send|report)\s+(?:back\s+)?(?:in|to)\s+(?:this|the\s+current)\s+(?:channel|chat|conversation|thread)\b/gi,
+      " ",
+    )
+    .replace(
+      /\s*(?:,|;|-)?\s*(?:in|to)\s+(?:this|the\s+current)\s+(?:channel|chat|conversation|thread)\b/gi,
+      " ",
+    )
+    .replace(/\s+,/g, ",")
+    .replace(/\s{2,}/g, " ")
+    .trim()
+    .replace(/[.。]\s*$/, "")
+    .trim();
+  return normalizeScheduledTaskPrompt(prompt);
+}
+
+function normalizeScheduledTaskPrompt(prompt: string): string {
+  const stripped = stripScheduledTaskControlClauses(prompt);
+  const normalized = stripped.toLowerCase();
+  if (/\b(?:output|post|send)\s+(?:a\s+)?heart\s+emoji\b/.test(normalized)) {
+    return "Post exactly this message: ❤️";
+  }
+  return stripped;
+}
+
+function stripScheduledTaskControlClauses(prompt: string): string {
+  return prompt
+    .replace(
+      /\s*(?:,|;|-)?\s*(?:and\s+)?(?:post|send|report)\s+(?:the\s+)?(?:result|results|output|report)?\s*(?:back\s+)?(?:in|to)\s+(?:this|the\s+current)\s+(?:channel|chat|conversation|thread)\b/gi,
+      " ",
+    )
+    .replace(
+      /\s*(?:,|;|-)?\s*(?:and\s+)?(?:post|send|report)\s+(?:back\s+)?(?:in|to)\s+(?:this|the\s+current)\s+(?:channel|chat|conversation|thread)\b/gi,
+      " ",
+    )
+    .replace(
+      /\s*(?:,|;|-)?\s*(?:in|to)\s+(?:this|the\s+current)\s+(?:channel|chat|conversation|thread)\b/gi,
+      " ",
+    )
+    .replace(
+      /\s*(?:,|;|-)?\s*(?:and\s+)?(?:post|send|report)\s+(?:the\s+)?(?:result|results|output|report)\b\s*$/gi,
+      " ",
+    )
+    .replace(
+      /\s*(?:,|;|-)?\s*(?:to\s+be\s+)?run\s+(?:hourly|daily|weekly|every\s+(?:\d+\s*)?(?:minutes?|mins?|m|hours?|hrs?|h|days?|d|weeks?|w))\b\s*,?\s*/gi,
+      " ",
+    )
+    .replace(
+      /\s*\b(?:hourly|daily|weekly|every\s+\d+\s*(?:minutes?|mins?|m|hours?|hrs?|h|days?|d|weeks?|w))\b\s*,?\s*/gi,
+      " ",
+    )
+    .replace(/\s+,/g, ",")
+    .replace(/\s{2,}/g, " ")
     .trim()
     .replace(/[.。]\s*$/, "")
     .trim();
@@ -962,6 +1296,9 @@ function inferScheduledJobTitle(prompt: string, scheduleLabel: string): string {
   ) {
     const org = /github\.com\/([a-z0-9_.-]+)/i.exec(prompt)?.[1];
     return org ? `${prefix} open PRs for ${org}` : `${prefix} open PRs`;
+  }
+  if (normalized.includes("❤️") || /\bheart\s+emoji\b/.test(normalized)) {
+    return `${prefix} heart emoji`;
   }
   const words = prompt
     .replace(/[^a-z0-9 ]+/gi, " ")
@@ -1000,7 +1337,7 @@ function hasSequence(tokens: string[], sequence: string[]): boolean {
   });
 }
 
-function formatScheduledJobList(
+export function formatScheduledJobList(
   jobs: Array<{
     jobId: string;
     title: string | null;
@@ -1032,7 +1369,7 @@ function formatScheduledJobList(
   return lines.join("\n");
 }
 
-function formatScheduledJobRunList(
+export function formatScheduledJobRunList(
   runs: Array<{
     runId: string;
     jobId: string;
@@ -1060,7 +1397,108 @@ function formatScheduledJobRunList(
   return lines.join("\n");
 }
 
-function formatScheduledJobTriggerResult(
+export function formatScheduledTaskDetailResult(
+  result: SchedulerShowTaskResult,
+): string {
+  if (!result.ok) {
+    if (result.reason === "no_jobs") {
+      return "No scheduled tasks are configured.";
+    }
+    if (result.reason === "not_found") {
+      return "I could not find that scheduled task.";
+    }
+    return [
+      "Multiple scheduled tasks are configured. Please specify the task id.",
+      ...result.tasks.map((task) => `- ${task.taskId}`),
+    ].join("\n");
+  }
+
+  const task = result.task;
+  const validation = result.validation;
+  const lines = [
+    "Scheduled task",
+    `- task: ${task.taskId}`,
+    task.title ? `- name: ${task.title}` : null,
+    task.prompt ? `- prompt: ${task.prompt}` : null,
+    task.schedule
+      ? `- schedule: ${formatScheduleForSlack(task.schedule)}`
+      : null,
+    `- state: ${task.state}`,
+    task.runtimeType ? `- runtime: ${task.runtimeType}` : null,
+    task.routeId ? `- route: ${task.routeId}` : null,
+    task.requiredTools.length
+      ? `- granted tools: ${task.requiredTools.join(", ")}`
+      : "- granted tools: none",
+    validation.expectedTools.length
+      ? `- expected tools: ${validation.expectedTools.join(", ")}`
+      : "- expected tools: none",
+    `- validation: ${validation.ok ? "passed" : "failed"}`,
+    `- updated: ${task.updatedAt}`,
+  ].filter((line): line is string => Boolean(line));
+
+  if (validation.errors.length) {
+    lines.push("Errors");
+    for (const issue of validation.errors) {
+      lines.push(`- ${issue.code}: ${issue.message}`);
+    }
+  }
+
+  if (validation.warnings.length) {
+    lines.push("Warnings");
+    for (const issue of validation.warnings) {
+      lines.push(`- ${issue.code}: ${issue.message}`);
+    }
+  }
+
+  return lines.join("\n");
+}
+
+export function formatScheduledTaskValidationResult(
+  result: SchedulerValidateTaskResult,
+): string {
+  if (!result.ok) {
+    if (result.reason === "no_jobs") {
+      return "No scheduled tasks are configured.";
+    }
+    if (result.reason === "not_found") {
+      return "I could not find that scheduled task.";
+    }
+    return [
+      "Multiple scheduled tasks are configured. Please specify the task id.",
+      ...result.tasks.map((task) => `- ${task.taskId}`),
+    ].join("\n");
+  }
+
+  const validation = result.validation;
+  const lines = [
+    validation.ok ? "Task validation passed" : "Task validation failed",
+    `- task: ${result.taskId}`,
+    validation.expectedTools.length
+      ? `- expected tools: ${validation.expectedTools.join(", ")}`
+      : "- expected tools: none",
+    validation.grantedTools.length
+      ? `- granted tools: ${validation.grantedTools.join(", ")}`
+      : "- granted tools: none",
+  ];
+
+  if (validation.errors.length) {
+    lines.push("Errors");
+    for (const issue of validation.errors) {
+      lines.push(`- ${issue.code}: ${issue.message}`);
+    }
+  }
+
+  if (validation.warnings.length) {
+    lines.push("Warnings");
+    for (const issue of validation.warnings) {
+      lines.push(`- ${issue.code}: ${issue.message}`);
+    }
+  }
+
+  return lines.join("\n");
+}
+
+export function formatScheduledJobTriggerResult(
   result: SchedulerTriggerResult,
 ): string {
   if (result.ok) {
@@ -1077,18 +1515,44 @@ function formatScheduledJobTriggerResult(
   if (result.reason === "not_found") {
     return "I could not find that scheduled job.";
   }
+  if (result.reason === "validation_failed") {
+    return [
+      "Scheduled task validation failed; not triggering a run.",
+      `- task: ${result.task.taskId}`,
+      result.validation.expectedTools.length
+        ? `- expected tools: ${result.validation.expectedTools.join(", ")}`
+        : "- expected tools: none",
+      result.validation.grantedTools.length
+        ? `- granted tools: ${result.validation.grantedTools.join(", ")}`
+        : "- granted tools: none",
+      ...result.validation.errors.map(
+        (issue) => `- ${issue.code}: ${issue.message}`,
+      ),
+    ].join("\n");
+  }
+  if (result.reason === "already_running") {
+    return [
+      `Scheduled job ${result.jobId} already has an active run.`,
+      `Run ID: ${result.run.runId}`,
+      `Status: ${result.run.status}`,
+    ].join("\n");
+  }
   return [
     "Multiple scheduled jobs are configured. Please specify the job id.",
     ...result.jobs.map((job) => `- ${job.jobId}`),
   ].join("\n");
 }
 
-function formatScheduledJobCreateResult(
+export function formatScheduledJobCreateResult(
   result: SchedulerCreateJobResult,
 ): string {
+  if (!result.ok) {
+    return `I can’t create that scheduled task because the schedule is unsupported: ${result.message}`;
+  }
   return [
     `Created scheduled job ${result.job.jobId}.`,
     `- name: ${result.job.title}`,
+    `- schedule: ${formatScheduleForSlack(result.job.schedule)}`,
     `- state: ${result.job.state}`,
     result.job.runtimeType ? `- runtime: ${result.job.runtimeType}` : null,
     result.job.routeId ? `- delivery: this conversation` : null,
@@ -1097,7 +1561,60 @@ function formatScheduledJobCreateResult(
     .join("\n");
 }
 
-function formatScheduledJobMutationResult(
+function formatUnresolvedScheduledJobCreate(): string {
+  return [
+    "I can’t create that scheduled task yet because I could not resolve a complete task spec.",
+    "Please include what to run, how often to run it, and where to deliver the result.",
+  ].join("\n");
+}
+
+function formatSchedule(schedule: unknown): string {
+  if (!isRecord(schedule)) {
+    return "unknown";
+  }
+  if (schedule.kind === "cron") {
+    const expression =
+      typeof schedule.expression === "string" && schedule.expression.trim()
+        ? schedule.expression.trim()
+        : "unknown";
+    const timezone =
+      typeof schedule.timezone === "string" && schedule.timezone.trim()
+        ? schedule.timezone.trim()
+        : "UTC";
+    return `cron ${expression} (${timezone})`;
+  }
+  if (schedule.kind === "interval") {
+    const every = schedule.every;
+    if (!isRecord(every)) {
+      return "interval unknown";
+    }
+    const parts = [
+      formatIntervalPart(every.weeks, "w"),
+      formatIntervalPart(every.days, "d"),
+      formatIntervalPart(every.hours, "h"),
+      formatIntervalPart(every.minutes, "m"),
+    ].filter((value): value is string => Boolean(value));
+    const anchor =
+      typeof schedule.anchor === "string" && schedule.anchor.trim()
+        ? schedule.anchor.trim()
+        : "last run or updated time";
+    return `interval every ${parts.join(" ") || "unknown"} (anchor: ${anchor})`;
+  }
+  return String(schedule.kind ?? "unknown");
+}
+
+function formatScheduleForSlack(schedule: unknown): string {
+  return `\`${formatSchedule(schedule)}\``;
+}
+
+function formatIntervalPart(value: unknown, suffix: string): string | null {
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
+    return null;
+  }
+  return `${Math.floor(value)}${suffix}`;
+}
+
+export function formatScheduledJobMutationResult(
   verb: "Paused" | "Resumed",
   result: SchedulerJobMutationResult,
 ): string {
@@ -1107,7 +1624,7 @@ function formatScheduledJobMutationResult(
   return formatScheduledJobSelectionFailure(result);
 }
 
-function formatScheduledJobDeleteResult(
+export function formatScheduledJobDeleteResult(
   result: SchedulerJobDeleteResult,
 ): string {
   if (result.ok) {
@@ -1145,11 +1662,39 @@ function formatScheduledJobDeliveryUpdateResult(
   return `No scheduled-job delivery grant exists for ${channel}. Grant Burble access from that channel, then retry.`;
 }
 
+export function formatScheduledJobScheduleUpdateResult(
+  result: SchedulerUpdateJobScheduleResult,
+): string {
+  if (result.ok) {
+    return [
+      `Updated scheduled job ${result.job.jobId} schedule.`,
+      `- schedule: ${formatScheduleForSlack(result.job.schedule)}`,
+    ].join("\n");
+  }
+  if (result.reason === "invalid_schedule") {
+    return `I can’t update that scheduled task schedule because it is unsupported: ${result.message}`;
+  }
+  return formatScheduledJobSelectionFailure(result);
+}
+
+export function formatScheduledJobPromptUpdateResult(
+  result: SchedulerUpdateJobPromptResult,
+): string {
+  if (result.ok) {
+    return [
+      `Updated scheduled job ${result.job.jobId} task.`,
+      `- prompt: ${result.job.prompt}`,
+    ].join("\n");
+  }
+  return formatScheduledJobSelectionFailure(result);
+}
+
 function formatScheduledJobSelectionFailure(
   result:
     | Extract<SchedulerJobMutationResult, { ok: false }>
     | Extract<SchedulerJobDeleteResult, { ok: false }>
-    | Extract<SchedulerUpdateJobDeliveryResult, { ok: false }>,
+    | Extract<SchedulerUpdateJobDeliveryResult, { ok: false }>
+    | Extract<SchedulerUpdateJobScheduleResult, { ok: false }>,
 ): string {
   if (result.reason === "no_jobs") {
     return "No scheduled tasks are configured.";
@@ -1163,7 +1708,7 @@ function formatScheduledJobSelectionFailure(
   ].join("\n");
 }
 
-function formatScheduledRunStatusResult(
+export function formatScheduledRunStatusResult(
   result: SchedulerRunStatusResult,
 ): string {
   if (!result.ok) {
@@ -1185,13 +1730,13 @@ function formatScheduledRunStatusResult(
 
 function readSchedulerJobIdHint(text: string): string | null {
   const match =
-    /\b(?:job|cron\s+job|scheduled\s+job)\s+(job_[a-z0-9_.-]{3,})\b/i.exec(
+    /\b(?:task|job|cron\s+job|scheduled\s+job)\s+(job_[a-z0-9_.-]{3,})\b/i.exec(
       text,
     ) ??
-    /\b(?:job|cron\s+job|scheduled\s+job)\s+(?:id\s*)?(?:[:#]\s*|\bis\s+)([a-z0-9][a-z0-9_.-]{2,})\b/i.exec(
+    /\b(?:task|job|cron\s+job|scheduled\s+job)\s+(?:id\s*)?(?:[:#]\s*|\bis\s+)([a-z0-9][a-z0-9_.-]{2,})\b/i.exec(
       text,
     ) ??
-    /\b(?:job|cron\s+job|scheduled\s+job)\s+id\s+([a-z0-9][a-z0-9_.-]{2,})\b/i.exec(
+    /\b(?:task|job|cron\s+job|scheduled\s+job)\s+id\s+([a-z0-9][a-z0-9_.-]{2,})\b/i.exec(
       text,
     );
   return match?.[1] ?? null;
@@ -1524,4 +2069,8 @@ function buildIssueSearchQuery(text: string): string {
     .trim();
 
   return normalized ? `is:issue ${normalized}` : "is:issue";
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === "object" && !Array.isArray(value));
 }

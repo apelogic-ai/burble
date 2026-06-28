@@ -63,7 +63,8 @@ const groupKeywords: Record<Exclude<RuntimeToolGroup, "attachments" | "conversat
   ],
   jira: ["jira", "atlassian", "ticket", "sprint", "project"],
   scheduler: ["cron", "schedule", "scheduled", "recurring", "reminder", "every"],
-  slack: ["slack", "channel", "dm", "message history"]
+  slack: ["slack", "channel", "dm", "message history"],
+  web: ["web", "search the web", "news", "internet", "online"]
 };
 
 const contextAnchorKeywords: Partial<
@@ -82,7 +83,8 @@ const contextAnchorKeywords: Partial<
   ],
   hubspot: ["hubspot", "crm"],
   jira: ["jira", "atlassian"],
-  slack: ["slack"]
+  slack: ["slack"],
+  web: ["web", "search", "news"]
 };
 
 const followUpKeywords: Partial<

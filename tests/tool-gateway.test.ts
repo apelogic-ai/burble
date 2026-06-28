@@ -1863,7 +1863,7 @@ describe("handleToolGatewayRequest", () => {
         [],
         null,
         [],
-        { list: [capability] },
+        { found: capability, list: [capability] },
         [],
         null,
         {},
@@ -1950,6 +1950,41 @@ describe("handleToolGatewayRequest", () => {
           state: "scheduled",
           runtimeType: "openclaw"
         })
+      }
+    });
+  });
+
+  test("rejects unsupported scheduled job create schedules with HTTP 400", async () => {
+    const response = await handleToolGatewayRequest(
+      config,
+      createStore(null, runtime, [], null, [], {}, [], null, {}),
+      "scheduledJob.create",
+      request(
+        "scheduledJob.create",
+        {
+          input: {
+            title: "Weekday AI news summary",
+            prompt: "look for fresh AI-related news and post a short summary",
+            schedule: {
+              kind: "cron",
+              expression: "1-5 9 * * mon-fri",
+              timezone: "UTC"
+            },
+            routeId: "convrt_abcdefabcdefabcdefabcdef"
+          }
+        },
+        "runtime-token-u123",
+        "rt_u123"
+      )
+    );
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({
+      classification: "user_private",
+      content: {
+        ok: false,
+        reason: "invalid_schedule",
+        message: expect.stringContaining("unsupported cron field")
       }
     });
   });
@@ -2094,7 +2129,7 @@ describe("handleToolGatewayRequest", () => {
         [],
         null,
         [],
-        { list: [capability] },
+        { found: capability, list: [capability] },
         [],
         null,
         { created: runs },
@@ -2167,6 +2202,162 @@ describe("handleToolGatewayRequest", () => {
       content: {
         ok: true,
         run: latest
+      }
+    });
+  });
+
+  test("lets a runtime validate a scheduled task through the control plane", async () => {
+    const capability: AgentJobCapabilityRecord = {
+      jobId: "github-pr-monitor",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      requiredTools: ["github_list_my_pull_requests"],
+      routeId: "convrt_123",
+      policyHash: null,
+      capabilityProfile: "scheduled_job",
+      runtimeType: "hermes",
+      stateRefs: [],
+      visibilityPolicy: {},
+      createdAt: "2026-06-24T11:00:00.000Z",
+      updatedAt: "2026-06-24T11:05:00.000Z"
+    };
+    const jobs: ReturnType<TokenStore["listScheduledJobsForPrincipal"]> = [
+      {
+        jobId: "github-pr-monitor",
+        workspaceId: "T123",
+        slackUserId: "U123",
+        title: "Open PR monitor",
+        prompt:
+          "check for new open PRs in https://github.com/apelogic-ai github org",
+        schedule: { kind: "interval", every: { minutes: 15 } },
+        routeId: "convrt_123",
+        state: "scheduled",
+        runtimeType: "hermes",
+        createdAt: "2026-06-24T11:00:00.000Z",
+        updatedAt: "2026-06-24T11:05:00.000Z"
+      }
+    ];
+
+    const response = await handleToolGatewayRequest(
+      config,
+      createStore(
+        null,
+        runtime,
+        [],
+        null,
+        [],
+        { found: capability, list: [capability] },
+        [],
+        null,
+        {},
+        { list: jobs }
+      ),
+      "scheduledJob.validate",
+      request(
+        "scheduledJob.validate",
+        { input: { jobId: "github-pr-monitor" } },
+        "runtime-token-u123",
+        "rt_u123"
+      )
+    );
+
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.content).toMatchObject({
+      ok: true,
+      taskId: "github-pr-monitor",
+      validation: {
+        ok: false,
+        expectedTools: ["github_search_issues"],
+        grantedTools: ["github_list_my_pull_requests"],
+        errors: [
+          {
+            code: "missing_required_tool",
+            tool: "github_search_issues"
+          }
+        ],
+        warnings: [
+          {
+            code: "wrong_github_pr_scope",
+            tool: "github_list_my_pull_requests",
+            expectedTool: "github_search_issues"
+          }
+        ]
+      }
+    });
+  });
+
+  test("lets a runtime show a scheduled task through the control plane", async () => {
+    const capability: AgentJobCapabilityRecord = {
+      jobId: "github-pr-monitor",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      requiredTools: ["github_search_issues"],
+      routeId: "convrt_123",
+      policyHash: null,
+      capabilityProfile: "scheduled_job",
+      runtimeType: "hermes",
+      stateRefs: [],
+      visibilityPolicy: {},
+      createdAt: "2026-06-24T11:00:00.000Z",
+      updatedAt: "2026-06-24T11:05:00.000Z"
+    };
+    const jobs: ReturnType<TokenStore["listScheduledJobsForPrincipal"]> = [
+      {
+        jobId: "github-pr-monitor",
+        workspaceId: "T123",
+        slackUserId: "U123",
+        title: "Open PR monitor",
+        prompt:
+          "check for new open PRs in https://github.com/apelogic-ai github org",
+        schedule: { kind: "interval", every: { minutes: 15 } },
+        routeId: "convrt_123",
+        state: "scheduled",
+        runtimeType: "hermes",
+        createdAt: "2026-06-24T11:00:00.000Z",
+        updatedAt: "2026-06-24T11:05:00.000Z"
+      }
+    ];
+
+    const response = await handleToolGatewayRequest(
+      config,
+      createStore(
+        null,
+        runtime,
+        [],
+        null,
+        [],
+        { found: capability, list: [capability] },
+        [],
+        null,
+        {},
+        { list: jobs }
+      ),
+      "scheduledJob.show",
+      request(
+        "scheduledJob.show",
+        { input: { jobId: "github-pr-monitor" } },
+        "runtime-token-u123",
+        "rt_u123"
+      )
+    );
+
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.content).toMatchObject({
+      ok: true,
+      task: {
+        taskId: "github-pr-monitor",
+        jobId: "github-pr-monitor",
+        title: "Open PR monitor",
+        requiredTools: ["github_search_issues"]
+      },
+      validation: {
+        ok: true,
+        expectedTools: ["github_search_issues"],
+        grantedTools: ["github_search_issues"],
+        errors: [],
+        warnings: []
       }
     });
   });
