@@ -123,6 +123,18 @@ New PRs found.`),
     ).toBe("");
   });
 
+  test("does not flag provider-prefixed ordinary answer lines", () => {
+    const answer = [
+      "Status:",
+      "jira_ticket_123: resolved",
+      "conversation_history: empty",
+      "google_drive_folder (shared)",
+    ].join("\n");
+
+    expect(containsRuntimeToolCallProtocolFragments(answer)).toBe(false);
+    expect(stripRuntimeToolCallProtocolFragments(answer)).toBe(answer);
+  });
+
   test("does not flag ordinary prose or non-protocol JSON", () => {
     expect(
       containsRuntimeToolCallProtocolFragments(

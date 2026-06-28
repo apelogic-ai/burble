@@ -130,9 +130,17 @@ function isRuntimeToolProtocolLine(value: string): boolean {
 }
 
 function isHermesProviderToolMarkerLine(value: string): boolean {
-  return /^(?::gear:|⚙️?|gear:)?\s*(?:burble_provider_call|(?:github|google|gmail|hubspot|jira|slack|atlassian|scheduled_job|conversation)_[a-z0-9_]+)\s*(?::|\(|\{|$)/i.test(
-    value,
+  const providerTool =
+    "(?:burble_provider_call|(?:github|google|gmail|hubspot|jira|slack|atlassian|scheduled_job|conversation)_[a-z0-9_]+)";
+  const explicitProgressMarker = new RegExp(
+    `^(?::gear:|⚙️?|gear:)\\s*${providerTool}(?:\\s*(?::|\\(|\\{).*)?$`,
+    "i",
   );
+  if (explicitProgressMarker.test(value)) {
+    return true;
+  }
+
+  return new RegExp(`^${providerTool}(?:\\.{3}|…)?$`, "i").test(value);
 }
 
 function isHermesNativeToolMarkerLine(value: string): boolean {
