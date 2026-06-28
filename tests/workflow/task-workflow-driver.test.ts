@@ -137,6 +137,48 @@ describe("task workflow driver", () => {
     ]);
   });
 
+  test("records handler throws as workflow failure events", async () => {
+    const observedCommands: string[] = [];
+    const result = await runTaskWorkflowDriver({
+      initialEvent: {
+        type: "task_triggered",
+        taskId: "task-heart",
+        jobRunId: "jobrun-1",
+        triggerKey: "task-heart:manual:req-1",
+        source: "manual",
+        at: "2026-06-28T17:00:00.000Z",
+      },
+      handlers: {
+        validateTask: async (command) => ({
+          type: "validation_passed",
+          taskId: command.taskId,
+          jobRunId: command.jobRunId,
+          at: "2026-06-28T17:00:01.000Z",
+        }),
+        startAttempt: async () => {
+          throw new Error("model provider timeout");
+        },
+        deliverOutput: async () => null,
+        notifyFailure: async (command) => {
+          observedCommands.push(`${command.type}:${command.failureClass}`);
+        },
+      },
+    });
+
+    expect(result.events.map((event) => event.type)).toEqual([
+      "task_triggered",
+      "validation_passed",
+      "handler_failed",
+    ]);
+    expect(result.state.runs["jobrun-1"]).toMatchObject({
+      status: "failed",
+      failureClass: "handler_failed",
+      failureReason: "model provider timeout",
+      notificationPending: true,
+    });
+    expect(observedCommands).toEqual(["notify_failure:handler_failed"]);
+  });
+
   test("stops command loops at maxCommands", async () => {
     await expect(
       runTaskWorkflowDriver({

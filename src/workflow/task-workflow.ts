@@ -115,6 +115,17 @@ export type TaskWorkflowEvent =
       jobRunId: string;
       deliveryKey: string;
       at: string;
+    }
+  | {
+      type: "handler_failed";
+      taskId: string;
+      jobRunId: string;
+      commandType: Exclude<TaskWorkflowCommand["type"], "pause_task">;
+      failureClass: "handler_failed";
+      reason: string;
+      at: string;
+      attempt?: number;
+      outputDigest?: string;
     };
 
 export type TaskWorkflowRunState = {
@@ -308,6 +319,15 @@ export function transitionTaskWorkflowEvent(
         })),
         [],
       );
+    case "handler_failed":
+      if (!canApplyHandlerFailure(state, event)) {
+        return withCommands(state, []);
+      }
+      return transitionRunFailure(state, event, {
+        status: "failed",
+        attempt: event.attempt,
+        notificationPending: true,
+      });
   }
 }
 
@@ -375,6 +395,24 @@ function canFinishDelivery(
   );
 }
 
+function canApplyHandlerFailure(
+  state: TaskWorkflowState,
+  event: Extract<TaskWorkflowEvent, { type: "handler_failed" }>,
+): boolean {
+  switch (event.commandType) {
+    case "validate_task":
+      return canValidateRun(state, event.jobRunId);
+    case "start_attempt":
+      return canFinishAttempt(state, event.jobRunId, event.attempt ?? 1);
+    case "deliver_output": {
+      const run = state.runs[event.jobRunId];
+      return Boolean(run && run.status === "delivering");
+    }
+    case "notify_failure":
+      return false;
+  }
+}
+
 function transitionTaskTriggered(
   state: TaskWorkflowState,
   event: Extract<TaskWorkflowEvent, { type: "task_triggered" }>,
@@ -396,7 +434,7 @@ function transitionRunFailure(
   state: TaskWorkflowState,
   event: Extract<
     TaskWorkflowEvent,
-    { type: "validation_failed" | "attempt_failed" }
+    { type: "validation_failed" | "attempt_failed" | "handler_failed" }
   >,
   failure: Pick<
     TaskWorkflowRunState,
@@ -471,7 +509,7 @@ function applyRunFailure(
   state: TaskWorkflowState,
   event: Extract<
     TaskWorkflowEvent,
-    { type: "validation_failed" | "attempt_failed" }
+    { type: "validation_failed" | "attempt_failed" | "handler_failed" }
   >,
   failure: Pick<
     TaskWorkflowRunState,

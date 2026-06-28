@@ -7,11 +7,7 @@ import {
 } from "./task-workflow";
 
 export type TaskWorkflowDriverCommandResult =
-  | TaskWorkflowEvent
-  | TaskWorkflowEvent[]
-  | null
-  | undefined
-  | void;
+  TaskWorkflowEvent | TaskWorkflowEvent[] | null | undefined | void;
 
 export type TaskWorkflowDriverContext = {
   run<T>(name: string, fn: () => Promise<T>): Promise<T>;
@@ -115,20 +111,24 @@ async function executeCommand(
   handlers: TaskWorkflowDriverHandlers,
   ctx: TaskWorkflowDriverContext,
 ): Promise<TaskWorkflowDriverCommandResult> {
-  return ctx.run(commandRunName(command), async () => {
-    switch (command.type) {
-      case "validate_task":
-        return handlers.validateTask(command, ctx);
-      case "start_attempt":
-        return handlers.startAttempt(command, ctx);
-      case "deliver_output":
-        return handlers.deliverOutput(command, ctx);
-      case "notify_failure":
-        return handlers.notifyFailure?.(command, ctx);
-      case "pause_task":
-        return handlers.pauseTask?.(command, ctx);
-    }
-  });
+  try {
+    return await ctx.run(commandRunName(command), async () => {
+      switch (command.type) {
+        case "validate_task":
+          return handlers.validateTask(command, ctx);
+        case "start_attempt":
+          return handlers.startAttempt(command, ctx);
+        case "deliver_output":
+          return handlers.deliverOutput(command, ctx);
+        case "notify_failure":
+          return handlers.notifyFailure?.(command, ctx);
+        case "pause_task":
+          return handlers.pauseTask?.(command, ctx);
+      }
+    });
+  } catch (error) {
+    return commandHandlerFailedEvent(command, error);
+  }
 }
 
 function commandRunName(command: TaskWorkflowCommand): string {
@@ -144,4 +144,35 @@ function commandRunName(command: TaskWorkflowCommand): string {
     case "pause_task":
       return `${command.taskId}:pause_task`;
   }
+}
+
+function commandHandlerFailedEvent(
+  command: TaskWorkflowCommand,
+  error: unknown,
+): TaskWorkflowEvent | null {
+  if (command.type === "pause_task") {
+    return null;
+  }
+
+  const event: TaskWorkflowEvent = {
+    type: "handler_failed",
+    taskId: command.taskId,
+    jobRunId: command.jobRunId,
+    commandType: command.type,
+    failureClass: "handler_failed",
+    reason: errorMessage(error),
+    at: new Date().toISOString(),
+    ...(command.type === "start_attempt" ? { attempt: command.attempt } : {}),
+    ...(command.type === "deliver_output"
+      ? { outputDigest: command.outputDigest }
+      : {}),
+  };
+  return event;
+}
+
+function errorMessage(error: unknown): string {
+  if (error instanceof Error && error.message) {
+    return error.message;
+  }
+  return String(error);
 }
