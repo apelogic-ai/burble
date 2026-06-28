@@ -14,6 +14,38 @@ export type TaskWorkflowTaskStatus = "active" | "needs_repair";
 export type TaskWorkflowAttemptMode =
   "provider" | "transform" | "model" | "agent";
 
+export type TaskWorkflowCommand =
+  | {
+      type: "validate_task";
+      taskId: string;
+      jobRunId: string;
+    }
+  | {
+      type: "start_attempt";
+      taskId: string;
+      jobRunId: string;
+      attempt: number;
+      mode: TaskWorkflowAttemptMode;
+    }
+  | {
+      type: "deliver_output";
+      taskId: string;
+      jobRunId: string;
+      outputDigest: string;
+    }
+  | {
+      type: "notify_failure";
+      taskId: string;
+      jobRunId: string;
+      failureClass: string;
+      reason: string;
+    }
+  | {
+      type: "pause_task";
+      taskId: string;
+      reason: string;
+    };
+
 export type TaskWorkflowEvent =
   | {
       type: "task_triggered";
@@ -138,62 +170,183 @@ export function applyTaskWorkflowEvent(
   state: TaskWorkflowState,
   event: TaskWorkflowEvent,
 ): TaskWorkflowState {
+  return transitionTaskWorkflowEvent(state, event).state;
+}
+
+export type TaskWorkflowTransitionResult = {
+  state: TaskWorkflowState;
+  commands: TaskWorkflowCommand[];
+};
+
+export function transitionTaskWorkflowEvent(
+  state: TaskWorkflowState,
+  event: TaskWorkflowEvent,
+): TaskWorkflowTransitionResult {
   switch (event.type) {
     case "task_triggered":
-      return applyTaskTriggered(state, event);
+      return transitionTaskTriggered(state, event);
     case "validation_passed":
-      return updateRun(state, event.jobRunId, event.at, (run) => ({
-        ...run,
-        status: "running",
-      }));
+      return withCommands(
+        updateRun(state, event.jobRunId, event.at, (run) => ({
+          ...run,
+          status: "running",
+        })),
+        runExists(state, event.jobRunId)
+          ? [
+              {
+                type: "start_attempt",
+                taskId: event.taskId,
+                jobRunId: event.jobRunId,
+                attempt: 1,
+                mode: "agent",
+              },
+            ]
+          : [],
+      );
     case "validation_failed":
-      return applyRunFailure(state, event, {
+      return transitionRunFailure(state, event, {
         status: "failed",
         notificationPending: true,
       });
     case "attempt_started":
-      return updateRun(state, event.jobRunId, event.at, (run) => ({
-        ...run,
-        status: "running",
-        attempt: event.attempt,
-        attemptMode: event.mode,
-      }));
+      return withCommands(
+        updateRun(state, event.jobRunId, event.at, (run) => ({
+          ...run,
+          status: "running",
+          attempt: event.attempt,
+          attemptMode: event.mode,
+        })),
+        [],
+      );
     case "attempt_failed":
-      return applyRunFailure(state, event, {
+      return transitionRunFailure(state, event, {
         status: "failed",
         attempt: event.attempt,
         notificationPending: true,
       });
     case "attempt_succeeded":
-      return updateRun(state, event.jobRunId, event.at, (run) => ({
-        ...run,
-        status: "delivering",
-        attempt: event.attempt,
-        outputDigest: event.outputDigest,
-      }));
+      return withCommands(
+        updateRun(state, event.jobRunId, event.at, (run) => ({
+          ...run,
+          status: "delivering",
+          attempt: event.attempt,
+          outputDigest: event.outputDigest,
+        })),
+        runExists(state, event.jobRunId)
+          ? [
+              {
+                type: "deliver_output",
+                taskId: event.taskId,
+                jobRunId: event.jobRunId,
+                outputDigest: event.outputDigest,
+              },
+            ]
+          : [],
+      );
     case "delivery_started":
-      return updateRun(state, event.jobRunId, event.at, (run) => ({
-        ...run,
-        status: "delivering",
-        deliveryKey: event.deliveryKey,
-      }));
+      return withCommands(
+        updateRun(state, event.jobRunId, event.at, (run) => ({
+          ...run,
+          status: "delivering",
+          deliveryKey: event.deliveryKey,
+        })),
+        [],
+      );
     case "delivery_failed":
-      return updateRun(state, event.jobRunId, event.at, (run) => ({
-        ...run,
-        status: "failed",
-        deliveryKey: event.deliveryKey,
-        failureClass: "delivery_failed",
-        failureReason: event.reason,
-        notificationPending: true,
-      }));
+      return withCommands(
+        updateRun(state, event.jobRunId, event.at, (run) => ({
+          ...run,
+          status: "failed",
+          deliveryKey: event.deliveryKey,
+          failureClass: "delivery_failed",
+          failureReason: event.reason,
+          notificationPending: true,
+        })),
+        runExists(state, event.jobRunId)
+          ? [
+              {
+                type: "notify_failure",
+                taskId: event.taskId,
+                jobRunId: event.jobRunId,
+                failureClass: "delivery_failed",
+                reason: event.reason,
+              },
+            ]
+          : [],
+      );
     case "delivery_succeeded":
-      return updateRun(state, event.jobRunId, event.at, (run) => ({
-        ...run,
-        status: "succeeded",
-        deliveryKey: event.deliveryKey,
-        notificationPending: false,
-      }));
+      return withCommands(
+        updateRun(state, event.jobRunId, event.at, (run) => ({
+          ...run,
+          status: "succeeded",
+          deliveryKey: event.deliveryKey,
+          notificationPending: false,
+        })),
+        [],
+      );
   }
+}
+
+function withCommands(
+  state: TaskWorkflowState,
+  commands: TaskWorkflowCommand[],
+): TaskWorkflowTransitionResult {
+  return { state, commands };
+}
+
+function transitionTaskTriggered(
+  state: TaskWorkflowState,
+  event: Extract<TaskWorkflowEvent, { type: "task_triggered" }>,
+): TaskWorkflowTransitionResult {
+  if (state.triggerKeys[event.triggerKey]) {
+    return withCommands(state, []);
+  }
+
+  return withCommands(applyTaskTriggered(state, event), [
+    {
+      type: "validate_task",
+      taskId: event.taskId,
+      jobRunId: event.jobRunId,
+    },
+  ]);
+}
+
+function transitionRunFailure(
+  state: TaskWorkflowState,
+  event: Extract<
+    TaskWorkflowEvent,
+    { type: "validation_failed" | "attempt_failed" }
+  >,
+  failure: Pick<
+    TaskWorkflowRunState,
+    "status" | "attempt" | "notificationPending"
+  >,
+): TaskWorkflowTransitionResult {
+  const shouldPause =
+    (state.failureCounts[`${event.taskId}:${event.failureClass}`] ?? 0) + 1 >=
+    state.failurePauseThreshold;
+  const nextState = applyRunFailure(state, event, failure);
+  if (!runExists(state, event.jobRunId)) {
+    return withCommands(nextState, []);
+  }
+
+  const commands: TaskWorkflowCommand[] = [
+    {
+      type: "notify_failure",
+      taskId: event.taskId,
+      jobRunId: event.jobRunId,
+      failureClass: event.failureClass,
+      reason: event.reason,
+    },
+  ];
+  if (shouldPause) {
+    commands.push({
+      type: "pause_task",
+      taskId: event.taskId,
+      reason: `Repeated ${event.failureClass} failures`,
+    });
+  }
+  return withCommands(nextState, commands);
 }
 
 function applyTaskTriggered(
@@ -227,6 +380,10 @@ function applyTaskTriggered(
       },
     },
   };
+}
+
+function runExists(state: TaskWorkflowState, jobRunId: string): boolean {
+  return Boolean(state.runs[jobRunId]);
 }
 
 function applyRunFailure(
