@@ -579,6 +579,73 @@ Rules:
 - Final output is a proposal. Burble still decides whether and where to post it.
 - Tool-call protocol leakage in final prose is a contract violation.
 
+## Workflow FSM And Aigile Borrow
+
+The Burble workflow layer should borrow Aigile's mechanics, not its coding
+domain. Aigile has already proven the useful macro pattern for long-running
+agent work:
+
+```text
+event log
+  -> pure reducer
+  -> { next state, commands }
+  -> driver executes commands
+  -> command result becomes another event
+  -> repeat until terminal state
+```
+
+Burble already has the piece Aigile does not: a typed micro-plan
+(`provider_call`, `model`, `transform`, `delivery`) with static validation,
+task grants, template checks, foreach, and idempotency keys. The next phase is
+to make the workflow reducer drive execution instead of merely projecting state.
+
+### Borrow
+
+- **Command-emitting reducer**: reshape task workflow reduction from
+  `state + event -> state` to `state + event -> { state, commands }`. Commands
+  are declarative decisions such as `validate_task`, `start_attempt`,
+  `deliver_output`, `notify_failure`, and `pause_task`.
+- **Driver loop**: add an in-process workflow driver that executes command
+  handlers and appends the resulting events back through the reducer. The
+  scheduler run executor should become a command-handler host, not the
+  orchestration authority.
+- **Durable-step bridge**: introduce a small `ctx.run(name, fn)`-style
+  interface for idempotent command execution. The first implementation can be
+  in-process. The same interface can later map to Restate or another durable
+  substrate without changing reducer semantics.
+- **Event-ingestion reconciliation**: stuck runs, external delivery failures,
+  or timer observations should become workflow events. Do not mark runs failed
+  imperatively in a side table; append an event and let the reducer decide
+  terminal state, retry, pause, or notification.
+- **Artifact provenance**: every final output/artifact should be able to carry
+  runtime id, runtime profile, model, token usage, command id, and relevant
+  checkpoint metadata. This is audit state, not model prose.
+- **Runtime profile registry**: keep the runtime selection indirection explicit
+  (`principal + runtime_profile -> runtime instance`) and treat external runtime
+  adapters as role/profile implementations behind the Burble boundary.
+
+### Do Not Borrow
+
+- Aigile's coding-domain states such as plan/develop/verify/review/merge.
+- Its JSON-file run store backend. Burble should use its SQLite-backed control
+  plane/event store.
+- Restate deployment details before the in-process driver proves the need.
+- A shared package yet. Pattern-share now; extract a common FSM kernel only
+  after Burble and Aigile both settle on stable interfaces.
+
+### Near-Term Workflow Sequence
+
+1. Keep `applyTaskWorkflowEvent` as a compatibility projection API, but add a
+   command-emitting transition API beside it.
+2. Add command types and tests for the existing lifecycle:
+   `task_triggered -> validate_task`, `validation_passed -> start_attempt`,
+   `attempt_succeeded -> deliver_output`, terminal failures ->
+   `notify_failure`, repeated failures -> `pause_task`.
+3. Add an in-process workflow driver that runs command handlers and feeds their
+   events back through the reducer.
+4. Wire the scheduler run executor through the driver in a later slice, after
+   the command API is tested in isolation.
+
 ## Implementation Options
 
 ### Option A: Direct Responses API Loop
