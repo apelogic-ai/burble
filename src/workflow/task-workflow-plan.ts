@@ -1,0 +1,354 @@
+import { findProviderToolSpec } from "../providers/catalog";
+import {
+  embeddedWorkflowTemplateVariables,
+  unsupportedWorkflowTemplateExpressions,
+  workflowTemplateVariables,
+} from "./template";
+
+export type TaskWorkflowPlanMode =
+  "literal" | "burble_workflow" | "agent_tool_loop";
+
+export type TaskWorkflowPlan = {
+  mode: TaskWorkflowPlanMode;
+  grants?: {
+    tools?: string[];
+  };
+  availableBindings?: string[];
+  steps?: TaskWorkflowStep[];
+};
+
+export type TaskWorkflowStep =
+  | TaskWorkflowProviderCallStep
+  | TaskWorkflowTransformStep
+  | TaskWorkflowModelStep
+  | TaskWorkflowDeliveryStep;
+
+export type TaskWorkflowProviderCallStep = {
+  id: string;
+  kind: "provider_call";
+  tool: string;
+  input: unknown;
+  foreach?: string;
+  saveAs?: string;
+  idempotencyKey?: string;
+};
+
+export type TaskWorkflowTransformStep = {
+  id: string;
+  kind: "transform";
+  operation?: string;
+  input: unknown;
+  saveAs?: string;
+};
+
+export type TaskWorkflowModelStep = {
+  id: string;
+  kind: "model";
+  modelProfile?: string;
+  input: unknown;
+  saveAs?: string;
+};
+
+export type TaskWorkflowDeliveryStep = {
+  id: string;
+  kind: "delivery";
+  tool: string;
+  input: unknown;
+  idempotencyKey?: string;
+};
+
+export type TaskWorkflowPlanValidationError = {
+  code:
+    | "duplicate_step_id"
+    | "invalid_step_id"
+    | "unknown_step_kind"
+    | "binding_collision"
+    | "tool_not_granted"
+    | "unknown_provider_tool"
+    | "missing_idempotency_key"
+    | "foreach_idempotency_key_not_item_scoped"
+    | "unbound_template_variable"
+    | "embedded_structured_binding"
+    | "unsupported_template_expression";
+  stepId: string;
+  message: string;
+};
+
+export type TaskWorkflowPlanValidationResult =
+  | { ok: true; errors: [] }
+  | { ok: false; errors: TaskWorkflowPlanValidationError[] };
+
+export function validateTaskWorkflowPlan(
+  plan: TaskWorkflowPlan,
+): TaskWorkflowPlanValidationResult {
+  const errors: TaskWorkflowPlanValidationError[] = [];
+  const grantedTools = new Set(plan.grants?.tools ?? []);
+  const availableBindings = new Set(plan.availableBindings ?? []);
+  const saveAsBindings = new Set<string>();
+  const seenStepIds = new Set<string>();
+
+  for (const step of plan.steps ?? []) {
+    const stepId = readStepId(step);
+    validateStepId(stepId, errors);
+    if (!isKnownStepKind(step)) {
+      errors.push({
+        code: "unknown_step_kind",
+        stepId,
+        message: `Workflow step ${stepId} has unsupported kind ${String(
+          (step as { kind?: unknown }).kind,
+        )}.`,
+      });
+      continue;
+    }
+
+    if (seenStepIds.has(step.id)) {
+      errors.push({
+        code: "duplicate_step_id",
+        stepId: step.id,
+        message: `Workflow step id ${step.id} is duplicated.`,
+      });
+    }
+    seenStepIds.add(step.id);
+
+    const scopedBindings = new Set(availableBindings);
+    if ("foreach" in step && step.foreach) {
+      validateForeachSource(step, availableBindings, errors);
+      scopedBindings.add("item");
+    }
+
+    validateToolGrant(step, grantedTools, errors);
+    validateProviderToolCatalog(step, errors);
+    validateIdempotency(step, errors);
+    validateTemplateBindings(step, scopedBindings, saveAsBindings, errors);
+
+    if ("saveAs" in step && step.saveAs) {
+      validateSaveAsBinding(step, availableBindings, errors);
+      availableBindings.add(step.saveAs);
+      saveAsBindings.add(step.saveAs);
+    }
+  }
+
+  return errors.length ? { ok: false, errors } : { ok: true, errors: [] };
+}
+
+function readStepId(step: TaskWorkflowStep): string {
+  return typeof step.id === "string" ? step.id : "";
+}
+
+function validateStepId(
+  stepId: string,
+  errors: TaskWorkflowPlanValidationError[],
+): void {
+  if (stepId.trim() && !stepId.includes(":")) {
+    return;
+  }
+  errors.push({
+    code: "invalid_step_id",
+    stepId,
+    message: `Workflow step id ${stepId} must be non-empty and cannot contain ':'.`,
+  });
+}
+
+function isKnownStepKind(step: TaskWorkflowStep): step is TaskWorkflowStep {
+  return (
+    step.kind === "provider_call" ||
+    step.kind === "transform" ||
+    step.kind === "model" ||
+    step.kind === "delivery"
+  );
+}
+
+function validateSaveAsBinding(
+  step:
+    | TaskWorkflowProviderCallStep
+    | TaskWorkflowTransformStep
+    | TaskWorkflowModelStep,
+  availableBindings: Set<string>,
+  errors: TaskWorkflowPlanValidationError[],
+): void {
+  const binding = step.saveAs;
+  if (!binding) {
+    return;
+  }
+  if (availableBindings.has(binding)) {
+    errors.push({
+      code: "binding_collision",
+      stepId: step.id,
+      message: `Workflow step ${step.id} saveAs binding ${binding} already exists.`,
+    });
+    return;
+  }
+  if (
+    binding === "jobRunId" ||
+    binding === "item" ||
+    binding.startsWith("state.")
+  ) {
+    errors.push({
+      code: "binding_collision",
+      stepId: step.id,
+      message: `Workflow step ${step.id} saveAs binding ${binding} is reserved.`,
+    });
+  }
+}
+
+function validateToolGrant(
+  step: TaskWorkflowStep,
+  grantedTools: Set<string>,
+  errors: TaskWorkflowPlanValidationError[],
+): void {
+  if (
+    (step.kind === "provider_call" || step.kind === "delivery") &&
+    !grantedTools.has(step.tool)
+  ) {
+    errors.push({
+      code: "tool_not_granted",
+      stepId: step.id,
+      message: `Workflow step ${step.id} uses ungranted tool ${step.tool}.`,
+    });
+  }
+}
+
+function validateIdempotency(
+  step: TaskWorkflowStep,
+  errors: TaskWorkflowPlanValidationError[],
+): void {
+  if (step.kind === "delivery" && !step.idempotencyKey?.trim()) {
+    errors.push({
+      code: "missing_idempotency_key",
+      stepId: step.id,
+      message: `Workflow delivery step ${step.id} requires an idempotencyKey.`,
+    });
+    return;
+  }
+
+  if (
+    step.kind === "provider_call" &&
+    providerToolRequiresIdempotency(step.tool) &&
+    !step.idempotencyKey?.trim()
+  ) {
+    errors.push({
+      code: "missing_idempotency_key",
+      stepId: step.id,
+      message: `Workflow step ${step.id} uses a mutating tool and requires an idempotencyKey.`,
+    });
+    return;
+  }
+
+  if (
+    step.kind === "provider_call" &&
+    step.foreach &&
+    providerToolRequiresIdempotency(step.tool) &&
+    step.idempotencyKey?.trim() &&
+    !workflowTemplateVariables(step.idempotencyKey).some((variable) =>
+      variable.startsWith("item."),
+    )
+  ) {
+    errors.push({
+      code: "foreach_idempotency_key_not_item_scoped",
+      stepId: step.id,
+      message: `Workflow foreach step ${step.id} uses a mutating tool and its idempotencyKey must reference item.*.`,
+    });
+  }
+}
+
+function validateForeachSource(
+  step: TaskWorkflowStep,
+  availableBindings: Set<string>,
+  errors: TaskWorkflowPlanValidationError[],
+): void {
+  if (step.kind !== "provider_call" || !step.foreach) {
+    return;
+  }
+  if (hasAvailableBinding(availableBindings, step.foreach)) {
+    return;
+  }
+  errors.push({
+    code: "unbound_template_variable",
+    stepId: step.id,
+    message: `Workflow step ${step.id} references unbound foreach source ${step.foreach}.`,
+  });
+}
+
+function validateProviderToolCatalog(
+  step: TaskWorkflowStep,
+  errors: TaskWorkflowPlanValidationError[],
+): void {
+  if (step.kind !== "provider_call") {
+    return;
+  }
+  if (findProviderToolSpec(step.tool)) {
+    return;
+  }
+  errors.push({
+    code: "unknown_provider_tool",
+    stepId: step.id,
+    message: `Workflow step ${step.id} uses unknown provider tool ${step.tool}.`,
+  });
+}
+
+function providerToolRequiresIdempotency(toolName: string): boolean {
+  const spec = findProviderToolSpec(toolName);
+  return !spec || spec.risk !== "read";
+}
+
+function validateTemplateBindings(
+  step: TaskWorkflowStep,
+  availableBindings: Set<string>,
+  saveAsBindings: Set<string>,
+  errors: TaskWorkflowPlanValidationError[],
+): void {
+  const valuesToScan: unknown[] = [step.input];
+  if ("idempotencyKey" in step && step.idempotencyKey) {
+    valuesToScan.push(step.idempotencyKey);
+  }
+
+  for (const expression of valuesToScan.flatMap(
+    unsupportedWorkflowTemplateExpressions,
+  )) {
+    errors.push({
+      code: "unsupported_template_expression",
+      stepId: step.id,
+      message: `Workflow step ${step.id} contains unsupported template expression ${expression}.`,
+    });
+  }
+
+  for (const variable of valuesToScan.flatMap(workflowTemplateVariables)) {
+    if (
+      variable === "jobRunId" ||
+      variable.startsWith("state.") ||
+      hasAvailableBinding(availableBindings, variable)
+    ) {
+      continue;
+    }
+    errors.push({
+      code: "unbound_template_variable",
+      stepId: step.id,
+      message: `Workflow step ${step.id} references unbound template variable ${variable}.`,
+    });
+  }
+
+  for (const variable of valuesToScan.flatMap(
+    embeddedWorkflowTemplateVariables,
+  )) {
+    if (!saveAsBindings.has(variable)) {
+      continue;
+    }
+    errors.push({
+      code: "embedded_structured_binding",
+      stepId: step.id,
+      message: `Workflow step ${step.id} embeds saveAs binding ${variable} in text; use an exact template or a scalar subfield.`,
+    });
+  }
+}
+
+function hasAvailableBinding(
+  availableBindings: Set<string>,
+  variable: string,
+): boolean {
+  if (availableBindings.has(variable)) {
+    return true;
+  }
+  return [...availableBindings].some((binding) =>
+    variable.startsWith(`${binding}.`),
+  );
+}
