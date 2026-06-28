@@ -95,6 +95,12 @@ export type TaskWorkflowEvent =
       at: string;
     }
   | {
+      type: "run_heartbeat";
+      taskId: string;
+      jobRunId: string;
+      at: string;
+    }
+  | {
       type: "delivery_started";
       taskId: string;
       jobRunId: string;
@@ -138,6 +144,7 @@ export type TaskWorkflowRunState = {
   updatedAt: string;
   attempt?: number;
   attemptMode?: TaskWorkflowAttemptMode;
+  heartbeatAt?: string;
   outputDigest?: string;
   deliveryKey?: string;
   failureClass?: string;
@@ -277,6 +284,17 @@ export function transitionTaskWorkflowEvent(
             ]
           : [],
       );
+    case "run_heartbeat":
+      if (!canHeartbeatRun(state, event.jobRunId)) {
+        return withCommands(state, []);
+      }
+      return withCommands(
+        updateRun(state, event.jobRunId, event.at, (run) => ({
+          ...run,
+          heartbeatAt: event.at,
+        })),
+        [],
+      );
     case "delivery_started":
       if (!canStartDelivery(state, event.jobRunId, event.deliveryKey)) {
         return withCommands(state, []);
@@ -383,6 +401,16 @@ function canStartDelivery(
   );
 }
 
+function canHeartbeatRun(state: TaskWorkflowState, jobRunId: string): boolean {
+  const run = state.runs[jobRunId];
+  return Boolean(
+    run &&
+    (run.status === "validating" ||
+      run.status === "running" ||
+      run.status === "delivering"),
+  );
+}
+
 function canFinishDelivery(
   state: TaskWorkflowState,
   jobRunId: string,
@@ -438,8 +466,9 @@ function transitionRunFailure(
   >,
 ): TaskWorkflowTransitionResult {
   const shouldPause =
+    failureCountsTowardPause(event.failureClass) &&
     (state.failureCounts[`${event.taskId}:${event.failureClass}`] ?? 0) + 1 >=
-    state.failurePauseThreshold;
+      state.failurePauseThreshold;
   const nextState = applyRunFailure(state, event, failure);
   if (!runExists(state, event.jobRunId)) {
     return withCommands(nextState, []);
@@ -510,8 +539,12 @@ function applyRunFailure(
   >,
 ): TaskWorkflowState {
   const failureKey = `${event.taskId}:${event.failureClass}`;
-  const failureCount = (state.failureCounts[failureKey] ?? 0) + 1;
-  const shouldPause = failureCount >= state.failurePauseThreshold;
+  const shouldCount = failureCountsTowardPause(event.failureClass);
+  const failureCount = shouldCount
+    ? (state.failureCounts[failureKey] ?? 0) + 1
+    : (state.failureCounts[failureKey] ?? 0);
+  const shouldPause =
+    shouldCount && failureCount >= state.failurePauseThreshold;
   const nextState = updateRun(state, event.jobRunId, event.at, (run) => ({
     ...run,
     ...failure,
@@ -522,10 +555,12 @@ function applyRunFailure(
 
   return {
     ...nextState,
-    failureCounts: {
-      ...nextState.failureCounts,
-      [failureKey]: failureCount,
-    },
+    failureCounts: shouldCount
+      ? {
+          ...nextState.failureCounts,
+          [failureKey]: failureCount,
+        }
+      : nextState.failureCounts,
     tasks: {
       ...nextState.tasks,
       [event.taskId]: shouldPause
@@ -536,6 +571,10 @@ function applyRunFailure(
         : (nextState.tasks[event.taskId] ?? { status: "active" }),
     },
   };
+}
+
+function failureCountsTowardPause(failureClass: string): boolean {
+  return !failureClass.startsWith("stale_");
 }
 
 function updateRun(

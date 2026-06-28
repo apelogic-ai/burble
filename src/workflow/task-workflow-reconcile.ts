@@ -1,7 +1,4 @@
-import type {
-  TaskWorkflowEvent,
-  TaskWorkflowRunState,
-} from "./task-workflow";
+import type { TaskWorkflowEvent, TaskWorkflowRunState } from "./task-workflow";
 import type {
   TaskWorkflowEventStore,
   TaskWorkflowStoredEvent,
@@ -42,25 +39,63 @@ function isStaleRun(
   nowMs: number,
   staleAfterMs: number,
 ): boolean {
-  const updatedAtMs = Date.parse(run.updatedAt);
-  return Number.isFinite(updatedAtMs) && nowMs - updatedAtMs >= staleAfterMs;
+  const referenceAt = staleReferenceAt(run);
+  if (!referenceAt) {
+    return false;
+  }
+  const referenceAtMs = Date.parse(referenceAt);
+  return (
+    Number.isFinite(referenceAtMs) && nowMs - referenceAtMs >= staleAfterMs
+  );
 }
 
 function staleRunFailedEvent(
   run: TaskWorkflowRunState,
   now: Date,
 ): TaskWorkflowEvent {
+  const reason = `Workflow run ${run.jobRunId} remained ${run.status} past the stale-run TTL.`;
+  const at = now.toISOString();
+
+  if (run.status === "created" || run.status === "validating") {
+    return {
+      type: "validation_failed",
+      taskId: run.taskId,
+      jobRunId: run.jobRunId,
+      failureClass: "stale_validation_timeout",
+      reason,
+      at,
+    };
+  }
+
+  if (run.status === "delivering" && run.deliveryKey) {
+    return {
+      type: "delivery_failed",
+      taskId: run.taskId,
+      jobRunId: run.jobRunId,
+      deliveryKey: run.deliveryKey,
+      reason,
+      at,
+    };
+  }
+
   return {
     type: "attempt_failed",
     taskId: run.taskId,
     jobRunId: run.jobRunId,
-    attempt: run.attempt ?? 0,
+    attempt: run.attempt ?? 1,
     failureClass: "stale_run_timeout",
-    reason: `Workflow run ${run.jobRunId} remained ${run.status} past the stale-run TTL.`,
-    at: now.toISOString(),
+    reason,
+    at,
   };
 }
 
 function staleRunEventId(run: TaskWorkflowRunState): string {
   return `stale_run:${run.jobRunId}`;
+}
+
+function staleReferenceAt(run: TaskWorkflowRunState): string | null {
+  if (run.status === "running") {
+    return run.heartbeatAt ?? null;
+  }
+  return run.updatedAt;
 }
