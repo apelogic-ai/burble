@@ -99,6 +99,57 @@ describe("task workflow plan validation", () => {
     });
   });
 
+  test("rejects invalid step ids before key generation", () => {
+    expect(
+      validateTaskWorkflowPlan({
+        mode: "burble_workflow",
+        grants: { tools: ["github_search_issues"] },
+        steps: [
+          {
+            id: "fetch:prs",
+            kind: "provider_call",
+            tool: "github_search_issues",
+            input: {},
+          },
+        ],
+      }),
+    ).toEqual({
+      ok: false,
+      errors: [
+        {
+          code: "invalid_step_id",
+          stepId: "fetch:prs",
+          message:
+            "Workflow step id fetch:prs must be non-empty and cannot contain ':'.",
+        },
+      ],
+    });
+  });
+
+  test("rejects unknown step kinds", () => {
+    expect(
+      validateTaskWorkflowPlan({
+        mode: "burble_workflow",
+        steps: [
+          {
+            id: "fetch",
+            kind: "http",
+            input: {},
+          } as never,
+        ],
+      }),
+    ).toEqual({
+      ok: false,
+      errors: [
+        {
+          code: "unknown_step_kind",
+          stepId: "fetch",
+          message: "Workflow step fetch has unsupported kind http.",
+        },
+      ],
+    });
+  });
+
   test("rejects provider and delivery tools not present in grants", () => {
     const result = validateTaskWorkflowPlan({
       mode: "burble_workflow",
@@ -261,6 +312,65 @@ describe("task workflow plan validation", () => {
           stepId: "github_prs",
           message:
             "Workflow step github_prs references unbound template variable missingSince.",
+        },
+      ],
+    });
+  });
+
+  test("rejects unsupported template expressions before execution", () => {
+    const result = validateTaskWorkflowPlan({
+      mode: "burble_workflow",
+      grants: { tools: ["conversation_send_message"] },
+      steps: [
+        {
+          id: "deliver",
+          kind: "delivery",
+          tool: "conversation_send_message",
+          input: {
+            text: "{mergeSeen(seen, newPairs)}",
+          },
+          idempotencyKey: "{jobRunId}:deliver",
+        },
+      ],
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      errors: [
+        {
+          code: "unsupported_template_expression",
+          stepId: "deliver",
+          message:
+            "Workflow step deliver contains unsupported template expression {mergeSeen(seen, newPairs)}.",
+        },
+      ],
+    });
+  });
+
+  test("rejects saveAs binding collisions", () => {
+    const result = validateTaskWorkflowPlan({
+      mode: "burble_workflow",
+      grants: { tools: ["github_search_issues"] },
+      availableBindings: ["issues"],
+      steps: [
+        {
+          id: "github_prs",
+          kind: "provider_call",
+          tool: "github_search_issues",
+          input: {},
+          saveAs: "issues",
+        },
+      ],
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      errors: [
+        {
+          code: "binding_collision",
+          stepId: "github_prs",
+          message:
+            "Workflow step github_prs saveAs binding issues already exists.",
         },
       ],
     });

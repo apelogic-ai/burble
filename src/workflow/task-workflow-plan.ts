@@ -55,10 +55,14 @@ export type TaskWorkflowDeliveryStep = {
 export type TaskWorkflowPlanValidationError = {
   code:
     | "duplicate_step_id"
+    | "invalid_step_id"
+    | "unknown_step_kind"
+    | "binding_collision"
     | "tool_not_granted"
     | "unknown_provider_tool"
     | "missing_idempotency_key"
-    | "unbound_template_variable";
+    | "unbound_template_variable"
+    | "unsupported_template_expression";
   stepId: string;
   message: string;
 };
@@ -76,6 +80,19 @@ export function validateTaskWorkflowPlan(
   const seenStepIds = new Set<string>();
 
   for (const step of plan.steps ?? []) {
+    const stepId = readStepId(step);
+    validateStepId(stepId, errors);
+    if (!isKnownStepKind(step)) {
+      errors.push({
+        code: "unknown_step_kind",
+        stepId,
+        message: `Workflow step ${stepId} has unsupported kind ${String(
+          (step as { kind?: unknown }).kind,
+        )}.`,
+      });
+      continue;
+    }
+
     if (seenStepIds.has(step.id)) {
       errors.push({
         code: "duplicate_step_id",
@@ -97,11 +114,57 @@ export function validateTaskWorkflowPlan(
     validateTemplateBindings(step, scopedBindings, errors);
 
     if ("saveAs" in step && step.saveAs) {
+      validateSaveAsBinding(step, availableBindings, errors);
       availableBindings.add(step.saveAs);
     }
   }
 
   return errors.length ? { ok: false, errors } : { ok: true, errors: [] };
+}
+
+function readStepId(step: TaskWorkflowStep): string {
+  return typeof step.id === "string" ? step.id : "";
+}
+
+function validateStepId(
+  stepId: string,
+  errors: TaskWorkflowPlanValidationError[],
+): void {
+  if (stepId.trim() && !stepId.includes(":")) {
+    return;
+  }
+  errors.push({
+    code: "invalid_step_id",
+    stepId,
+    message: `Workflow step id ${stepId} must be non-empty and cannot contain ':'.`,
+  });
+}
+
+function isKnownStepKind(step: TaskWorkflowStep): step is TaskWorkflowStep {
+  return (
+    step.kind === "provider_call" ||
+    step.kind === "transform" ||
+    step.kind === "model" ||
+    step.kind === "delivery"
+  );
+}
+
+function validateSaveAsBinding(
+  step: TaskWorkflowProviderCallStep | TaskWorkflowTransformStep | TaskWorkflowModelStep,
+  availableBindings: Set<string>,
+  errors: TaskWorkflowPlanValidationError[],
+): void {
+  const binding = step.saveAs;
+  if (!binding) {
+    return;
+  }
+  if (availableBindings.has(binding)) {
+    errors.push({
+      code: "binding_collision",
+      stepId: step.id,
+      message: `Workflow step ${step.id} saveAs binding ${binding} already exists.`,
+    });
+  }
 }
 
 function validateToolGrant(
@@ -179,6 +242,14 @@ function validateTemplateBindings(
     valuesToScan.push(step.idempotencyKey);
   }
 
+  for (const expression of valuesToScan.flatMap(unsupportedTemplateExpressions)) {
+    errors.push({
+      code: "unsupported_template_expression",
+      stepId: step.id,
+      message: `Workflow step ${step.id} contains unsupported template expression ${expression}.`,
+    });
+  }
+
   for (const variable of valuesToScan.flatMap(templateVariables)) {
     if (
       variable === "jobRunId" ||
@@ -211,6 +282,41 @@ function templateVariables(value: unknown): string[] {
   const variables = new Set<string>();
   visitTemplateValue(value, variables);
   return [...variables].sort();
+}
+
+function unsupportedTemplateExpressions(value: unknown): string[] {
+  const expressions = new Set<string>();
+  visitUnsupportedTemplateExpressions(value, expressions);
+  return [...expressions].sort();
+}
+
+function visitUnsupportedTemplateExpressions(
+  value: unknown,
+  expressions: Set<string>,
+): void {
+  if (typeof value === "string") {
+    const matches = value.matchAll(/\{(?<body>[^{}]*)\}/g);
+    for (const match of matches) {
+      const body = match.groups?.body;
+      if (!body || /^[A-Za-z0-9_.-]+$/.test(body)) {
+        continue;
+      }
+      expressions.add(match[0]);
+    }
+    return;
+  }
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      visitUnsupportedTemplateExpressions(item, expressions);
+    }
+    return;
+  }
+  if (!value || typeof value !== "object") {
+    return;
+  }
+  for (const item of Object.values(value)) {
+    visitUnsupportedTemplateExpressions(item, expressions);
+  }
 }
 
 function visitTemplateValue(value: unknown, variables: Set<string>): void {
