@@ -48,6 +48,16 @@ describe("task workflow event store", () => {
       },
     });
     store.appendEvent({
+      eventId: "evt-validation-passed",
+      recordedAt: "2026-06-28T17:00:01.000Z",
+      event: {
+        type: "validation_passed",
+        taskId: "task-heart",
+        jobRunId: "jobrun-1",
+        at: "2026-06-28T17:00:01.000Z",
+      },
+    });
+    store.appendEvent({
       eventId: "evt-success",
       recordedAt: "2026-06-28T17:00:03.000Z",
       event: {
@@ -88,6 +98,36 @@ describe("task workflow event store", () => {
         triggerKey: "task-done:manual:req-1",
         source: "manual",
         at: "2026-06-28T17:01:00.000Z",
+      },
+    });
+    store.appendEvent({
+      eventId: "evt-done-validation-passed",
+      event: {
+        type: "validation_passed",
+        taskId: "task-done",
+        jobRunId: "jobrun-done",
+        at: "2026-06-28T17:01:01.000Z",
+      },
+    });
+    store.appendEvent({
+      eventId: "evt-done-attempt-succeeded",
+      event: {
+        type: "attempt_succeeded",
+        taskId: "task-done",
+        jobRunId: "jobrun-done",
+        attempt: 1,
+        outputDigest: "sha256:done",
+        at: "2026-06-28T17:01:03.000Z",
+      },
+    });
+    store.appendEvent({
+      eventId: "evt-done-delivery-started",
+      event: {
+        type: "delivery_started",
+        taskId: "task-done",
+        jobRunId: "jobrun-done",
+        deliveryKey: "jobrun-done:route:sha256:done",
+        at: "2026-06-28T17:01:04.000Z",
       },
     });
     store.appendEvent({
