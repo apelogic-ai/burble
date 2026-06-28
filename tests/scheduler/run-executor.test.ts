@@ -318,6 +318,109 @@ describe("scheduler run executor", () => {
     store.close();
   });
 
+  test("fails literal scheduled jobs when the runtime returns only progress text", async () => {
+    const store = createTokenStore(":memory:");
+    const route = store.upsertConversationRoute({
+      workspaceId: "T123",
+      slackUserId: "U123",
+      transport: "slack",
+      destination: {
+        channelId: "C123",
+        isDirectMessage: false,
+        rootId: "slack:C123:1710000000.000000",
+      },
+      now: new Date("2026-06-25T17:00:00.000Z"),
+    });
+    const job = store.upsertScheduledJob({
+      jobId: "job-heart",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      title: "Heart emoji every 30 min",
+      prompt: "Post exactly this message: ❤️",
+      schedule: { kind: "cron", expression: "*/30 * * * *", timezone: "UTC" },
+      routeId: route.id,
+      runtimeType: "hermes",
+      state: "scheduled",
+      now: new Date("2026-06-25T17:01:00.000Z"),
+    });
+    store.upsertAgentJobCapability({
+      jobId: job.jobId,
+      workspaceId: "T123",
+      slackUserId: "U123",
+      requiredTools: ["conversation.sendMessage"],
+      routeId: route.id,
+      runtimeType: "hermes",
+      now: new Date("2026-06-25T17:01:30.000Z"),
+    });
+    const run = store.createAgentJobRun({
+      runId: "jobrun-heart",
+      jobId: job.jobId,
+      workspaceId: "T123",
+      slackUserId: "U123",
+      triggerSource: "schedule",
+      status: "queued",
+      now: new Date("2026-06-25T17:02:00.000Z"),
+    });
+    const runner: AgentRunner = {
+      name: "test-runner",
+      capabilities: {
+        streaming: true,
+        toolEvents: true,
+        remote: true,
+      },
+      async *run() {
+        yield {
+          type: "final",
+          response: {
+            classification: "user_private",
+            text: "Calling conversation send message...\n\nFinal result in 2.0s.",
+          },
+        };
+      },
+    };
+    const posts: Array<{ channel: string; text: string; thread_ts?: string }> =
+      [];
+    const warnings: string[] = [];
+    const executor = createSchedulerRunExecutor({
+      store,
+      agentRunner: runner,
+      slackClient: {
+        chat: {
+          postMessage: async (message) => {
+            posts.push(message);
+            return {};
+          },
+        },
+      },
+      logWarn: (message) => warnings.push(message),
+    });
+
+    await executor.executeRun(run.runId);
+
+    expect(posts).toEqual([
+      {
+        channel: "C123",
+        text: [
+          "Scheduled job failed: Heart emoji every 30 min",
+          "Job ID: job-heart",
+          "Run ID: jobrun-heart",
+          "Reason: Managed runtime final response contained only runtime-control/progress text",
+        ].join("\n"),
+      },
+    ]);
+    expect(warnings).toEqual([
+      "Scheduled job run failed runId=jobrun-heart error=Managed runtime final response contained only runtime-control/progress text",
+    ]);
+    expect(store.getAgentJobRun(run.runId)).toMatchObject({
+      runId: run.runId,
+      status: "failed",
+      failureReason:
+        "Managed runtime final response contained only runtime-control/progress text",
+    });
+
+    store.close();
+  });
+
   test("does not deliver runtime-control notices as scheduled job output", async () => {
     const store = createTokenStore(":memory:");
     const route = store.upsertConversationRoute({
@@ -729,7 +832,7 @@ describe("scheduler run executor", () => {
     store.close();
   });
 
-  test("does not retry progress-only scheduled provider runs after a tool call", async () => {
+  test("fails progress-only scheduled provider runs after a tool call without retrying", async () => {
     const store = createTokenStore(":memory:");
     const route = store.upsertConversationRoute({
       workspaceId: "T123",
@@ -808,10 +911,26 @@ describe("scheduler run executor", () => {
     await executor.executeRun(run.runId);
 
     expect(attempts).toBe(1);
-    expect(posts).toEqual([]);
-    expect(warnings).toEqual([
-      "Scheduled job run suppressed runtime-control output runId=jobrun-pr-monitor jobId=job-pr-monitor",
+    expect(posts).toEqual([
+      {
+        channel: "C123",
+        text: [
+          "Scheduled job failed: Check every 15 min for new PRs in apelogic-ai GitHub org",
+          "Job ID: job-pr-monitor",
+          "Run ID: jobrun-pr-monitor",
+          "Reason: Managed runtime final response contained only runtime-control/progress text",
+        ].join("\n"),
+      },
     ]);
+    expect(warnings).toEqual([
+      "Scheduled job run failed runId=jobrun-pr-monitor error=Managed runtime final response contained only runtime-control/progress text",
+    ]);
+    expect(store.getAgentJobRun(run.runId)).toMatchObject({
+      runId: run.runId,
+      status: "failed",
+      failureReason:
+        "Managed runtime final response contained only runtime-control/progress text",
+    });
 
     store.close();
   });

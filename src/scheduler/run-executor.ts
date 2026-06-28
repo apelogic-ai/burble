@@ -122,16 +122,17 @@ export function createSchedulerRunExecutor(input: {
         });
 
         const resultText = result.text.trim();
+        if (resultText && isRuntimeProgressOnlyResponseText(resultText)) {
+          throw new Error(
+            "Managed runtime final response contained only runtime-control/progress text",
+          );
+        }
         if (containsRuntimeToolCallProtocolFragments(resultText)) {
           throw new Error(
             "Managed runtime final response leaked tool-call protocol text",
           );
         }
-        if (
-          destination &&
-          resultText &&
-          !isRuntimeProgressOnlyResponseText(resultText)
-        ) {
+        if (destination && resultText) {
           await input.slackClient.chat.postMessage({
             channel: destination.channelId,
             text: resultText,
@@ -139,13 +140,6 @@ export function createSchedulerRunExecutor(input: {
               ? { thread_ts: destination.threadTs }
               : {}),
           });
-        } else if (
-          resultText &&
-          isRuntimeProgressOnlyResponseText(resultText)
-        ) {
-          input.logWarn?.(
-            `Scheduled job run suppressed runtime-control output runId=${run.runId} jobId=${job.jobId}`,
-          );
         }
 
         input.store.finishAgentJobRun({
