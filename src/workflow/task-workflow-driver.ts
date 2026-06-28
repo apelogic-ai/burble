@@ -154,9 +154,27 @@ function commandRunName(command: TaskWorkflowCommand): string {
 function commandHandlerFailedEvent(
   command: TaskWorkflowCommand,
   error: unknown,
-): TaskWorkflowEvent | null {
+): TaskWorkflowEvent {
+  if (command.type === "notify_failure") {
+    return {
+      type: "side_effect_failed",
+      taskId: command.taskId,
+      jobRunId: command.jobRunId,
+      commandType: command.type,
+      failureClass: command.failureClass,
+      reason: errorMessage(error),
+      at: new Date().toISOString(),
+    };
+  }
+
   if (command.type === "pause_task") {
-    return null;
+    return {
+      type: "side_effect_failed",
+      taskId: command.taskId,
+      commandType: command.type,
+      reason: errorMessage(error),
+      at: new Date().toISOString(),
+    };
   }
 
   const event: TaskWorkflowEvent = {

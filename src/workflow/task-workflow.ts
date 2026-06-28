@@ -127,12 +127,27 @@ export type TaskWorkflowEvent =
       type: "handler_failed";
       taskId: string;
       jobRunId: string;
-      commandType: Exclude<TaskWorkflowCommand["type"], "pause_task">;
+      commandType: Exclude<
+        TaskWorkflowCommand["type"],
+        "notify_failure" | "pause_task"
+      >;
       failureClass: "handler_failed";
       reason: string;
       at: string;
       attempt?: number;
       outputDigest?: string;
+    }
+  | {
+      type: "side_effect_failed";
+      taskId: string;
+      commandType: Extract<
+        TaskWorkflowCommand["type"],
+        "notify_failure" | "pause_task"
+      >;
+      reason: string;
+      at: string;
+      jobRunId?: string;
+      failureClass?: string;
     };
 
 export type TaskWorkflowRunState = {
@@ -158,10 +173,23 @@ export type TaskWorkflowTaskState = {
   pausedReason?: string;
 };
 
+export type TaskWorkflowSideEffectFailure = {
+  taskId: string;
+  commandType: Extract<
+    TaskWorkflowCommand["type"],
+    "notify_failure" | "pause_task"
+  >;
+  reason: string;
+  at: string;
+  jobRunId?: string;
+  failureClass?: string;
+};
+
 export type TaskWorkflowState = {
   failurePauseThreshold: number;
   triggerKeys: Record<string, string>;
   failureCounts: Record<string, number>;
+  sideEffectFailures?: Record<string, TaskWorkflowSideEffectFailure>;
   tasks: Record<string, TaskWorkflowTaskState>;
   runs: Record<string, TaskWorkflowRunState>;
 };
@@ -181,6 +209,7 @@ export function createInitialTaskWorkflowState(input?: {
     failurePauseThreshold: input?.failurePauseThreshold ?? 3,
     triggerKeys: {},
     failureCounts: {},
+    sideEffectFailures: {},
     tasks: {},
     runs: {},
   };
@@ -346,6 +375,8 @@ export function transitionTaskWorkflowEvent(
         attempt: event.attempt,
         notificationPending: true,
       });
+    case "side_effect_failed":
+      return withCommands(recordSideEffectFailure(state, event), []);
   }
 }
 
@@ -451,8 +482,6 @@ function canApplyHandlerFailure(
       const run = state.runs[event.jobRunId];
       return Boolean(run && run.status === "delivering");
     }
-    case "notify_failure":
-      return false;
   }
 }
 
@@ -610,6 +639,33 @@ function updateRun(
       [jobRunId]: {
         ...update(run),
         updatedAt: at,
+      },
+    },
+  };
+}
+
+function recordSideEffectFailure(
+  state: TaskWorkflowState,
+  event: Extract<TaskWorkflowEvent, { type: "side_effect_failed" }>,
+): TaskWorkflowState {
+  const key = [
+    event.commandType,
+    event.taskId,
+    event.jobRunId ?? "task",
+    event.failureClass ?? "none",
+    event.at,
+  ].join(":");
+  return {
+    ...state,
+    sideEffectFailures: {
+      ...(state.sideEffectFailures ?? {}),
+      [key]: {
+        taskId: event.taskId,
+        commandType: event.commandType,
+        reason: event.reason,
+        at: event.at,
+        ...(event.jobRunId ? { jobRunId: event.jobRunId } : {}),
+        ...(event.failureClass ? { failureClass: event.failureClass } : {}),
       },
     },
   };

@@ -179,6 +179,97 @@ describe("task workflow driver", () => {
     expect(observedCommands).toEqual(["notify_failure:handler_failed"]);
   });
 
+  test("records notify handler throws as side-effect failures", async () => {
+    const result = await runTaskWorkflowDriver({
+      initialEvent: {
+        type: "task_triggered",
+        taskId: "task-ai-news",
+        jobRunId: "jobrun-1",
+        triggerKey: "task-ai-news:manual:req-1",
+        source: "manual",
+        at: "2026-06-28T17:00:00.000Z",
+      },
+      handlers: {
+        validateTask: async (command) => ({
+          type: "validation_failed",
+          taskId: command.taskId,
+          jobRunId: command.jobRunId,
+          failureClass: "invalid_grant",
+          reason: "Missing required tool web_search",
+          at: "2026-06-28T17:00:01.000Z",
+        }),
+        startAttempt: async () => null,
+        deliverOutput: async () => null,
+        notifyFailure: async () => {
+          throw new Error("Slack post failed");
+        },
+      },
+    });
+
+    expect(result.events.map((event) => event.type)).toEqual([
+      "task_triggered",
+      "validation_failed",
+      "side_effect_failed",
+    ]);
+    expect(Object.values(result.state.sideEffectFailures ?? {})).toMatchObject([
+      {
+        taskId: "task-ai-news",
+        jobRunId: "jobrun-1",
+        commandType: "notify_failure",
+        failureClass: "invalid_grant",
+        reason: "Slack post failed",
+      },
+    ]);
+  });
+
+  test("records pause handler throws as side-effect failures", async () => {
+    const result = await runTaskWorkflowDriver({
+      initialEvent: {
+        type: "task_triggered",
+        taskId: "task-ai-news",
+        jobRunId: "jobrun-1",
+        triggerKey: "task-ai-news:manual:req-1",
+        source: "manual",
+        at: "2026-06-28T17:00:00.000Z",
+      },
+      initialState: {
+        failurePauseThreshold: 1,
+        triggerKeys: {},
+        failureCounts: {},
+        tasks: {},
+        runs: {},
+      },
+      handlers: {
+        validateTask: async (command) => ({
+          type: "validation_failed",
+          taskId: command.taskId,
+          jobRunId: command.jobRunId,
+          failureClass: "invalid_grant",
+          reason: "Missing required tool web_search",
+          at: "2026-06-28T17:00:01.000Z",
+        }),
+        startAttempt: async () => null,
+        deliverOutput: async () => null,
+        notifyFailure: async () => null,
+        pauseTask: async () => {
+          throw new Error("Pause API unavailable");
+        },
+      },
+    });
+
+    expect(result.state.tasks["task-ai-news"]).toEqual({
+      status: "needs_repair",
+      pausedReason: "Repeated invalid_grant failures",
+    });
+    expect(Object.values(result.state.sideEffectFailures ?? {})).toMatchObject([
+      {
+        taskId: "task-ai-news",
+        commandType: "pause_task",
+        reason: "Pause API unavailable",
+      },
+    ]);
+  });
+
   test("records a workflow failure when maxCommands is exceeded", async () => {
     const result = await runTaskWorkflowDriver({
       maxCommands: 1,
