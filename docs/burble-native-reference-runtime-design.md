@@ -986,6 +986,69 @@ evidence and a concrete upstream-compatible fix candidate, or is marked
 unsupported for the affected capabilities; no provider marker/protocol text
 reaches user-visible output; no app-side marker executor returns.
 
+### P-burble-output — Task output contracts
+
+Goal: make scheduled/manual Task output stable at the product level. This is not
+just Slack mrkdwn formatting; it is the semantic contract for what content should
+appear, what should be omitted, how items are linked, whether summary prose is
+allowed, and how empty/error states are phrased.
+
+Problem evidence:
+
+- The same GitHub PR checker Task produced several valid-but-inconsistent shapes:
+  "New PRs in apelogic-ai", "New PR in apelogic-ai since 2026-06-27", and a
+  bare title-only bullet. Link inclusion and Slack unfurls also varied.
+- Literal delivery Tasks such as `:heart::heart:` should preserve exact content,
+  while report Tasks need stable item fields and empty states.
+- A later GitHub checker run used the correct granted tool but with malformed or
+  missing search arguments, then returned "Validation Failed" prose. That is a
+  task-local argument/template validation issue, not a useful user-facing report.
+
+Model:
+
+`Task = prompt + tool grants + runtime preference + outputSpec + deliveryPolicy`.
+
+`outputSpec` is a runtime-facing and Burble-validated contract. Examples:
+
+- `kind`: `literal`, `delta_report`, `summary_report`, `status_report`;
+- `title`: stable heading, or omitted for literal output;
+- `itemFields`: required fields such as `repo`, `title`, `url`;
+- `itemTemplate`: e.g. `• {repo} — {title}\n  {url}`;
+- `emptyState`: e.g. `No new PRs in apelogic-ai since {since}.`;
+- `summaryProse`: `none`, `brief`, or `required`;
+- `linkPolicy`: `plain_url`, `slack_mrkdwn_link`, or `none`;
+- `maxItems` and overflow wording;
+- `forbiddenContent`: job ids, run ids, tool names, setup commentary, raw JSON,
+  recommendations unless requested.
+
+Slices:
+
+- **P-output-a. Store outputSpec on Tasks.** Creation and update flows should
+  persist an inspectable `outputSpec` alongside prompt, schedule, tool grants, and
+  delivery. Existing Tasks without one get a conservative default by kind.
+- **P-output-b. Pass outputSpec into runtimes.** OpenClaw, Hermes, and
+  burble-native receive the same explicit output contract. The runtime owns
+  content synthesis, but not the product envelope.
+- **P-output-c. Validate and repair final output.** Burble validates required
+  fields, forbidden content, protocol leakage, literal preservation, and empty
+  states. Repairable violations get a bounded in-agent rewrite retry; hard leaks
+  fail loud.
+- **P-output-d. Delivery renderer controls.** Slack delivery applies transport
+  policy consistently: link/unfurl behavior, block vs text choice, truncation,
+  and attachment rendering. The same task output should not randomly produce
+  GitHub unfurls one run and plain bullets the next.
+- **P-output-e. Task-local tool argument templates.** For narrow Tasks such as
+  "new PRs in apelogic-ai", store or derive validated argument templates
+  (`github_search_issues` query shape, time window, sort/order). A runtime may
+  fill variables, but cannot call the granted tool with empty or malformed
+  required arguments.
+
+Exit: a rerun of the same scheduled Task has stable content shape across manual
+and timer-triggered Jobs; literal Tasks preserve exact output; provider report
+Tasks have stable item fields, empty states, and link policy; malformed
+task-local tool arguments are corrected or fail as validation errors before a
+generic provider "Validation Failed" message reaches the user.
+
 ### Sprint 4 — Make Hermes and OpenClaw conform
 
 Goal: demote the heavy orchestrators to adapters; retire remaining band-aids
