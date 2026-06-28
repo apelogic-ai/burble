@@ -6,9 +6,13 @@ import {
   type ScheduledJobContext,
 } from "../agent/scheduled-job-context";
 import { isRuntimeProgressOnlyResponseText } from "../agent/runtime-control-notices";
-import { containsRuntimeToolCallProtocolFragments } from "@burble/runtime-sdk/runtime-text-protocol";
 import { inferAllowedToolsForScheduledJob } from "./job-capabilities";
 import { findProviderToolSpec } from "../providers/catalog";
+import {
+  formatScheduledJobFailureMessage,
+  scheduledTaskRuntimePrompt,
+  validateScheduledJobOutput,
+} from "./output-contract";
 import type {
   AgentJobRunRecord,
   AgentRuntimeEngine,
@@ -73,7 +77,7 @@ export function createSchedulerRunExecutor(input: {
         input.logInfo?.(
           `Scheduled job run start runId=${run.runId} jobId=${job.jobId}`,
         );
-        const runtimePrompt = runtimePromptForScheduledJob(job.prompt);
+        const runtimePrompt = scheduledTaskRuntimePrompt(job.prompt);
         const toolGroups = selectRuntimeToolGroups({
           text: runtimePrompt,
           attachmentCount: 0,
@@ -121,21 +125,14 @@ export function createSchedulerRunExecutor(input: {
           logWarn: input.logWarn,
         });
 
-        const resultText = result.text.trim();
-        if (resultText && isRuntimeProgressOnlyResponseText(resultText)) {
-          throw new Error(
-            "Managed runtime final response contained only runtime-control/progress text",
-          );
+        const output = validateScheduledJobOutput(result);
+        if (!output.ok) {
+          throw new Error(output.reason);
         }
-        if (containsRuntimeToolCallProtocolFragments(resultText)) {
-          throw new Error(
-            "Managed runtime final response leaked tool-call protocol text",
-          );
-        }
-        if (destination && resultText) {
+        if (destination) {
           await input.slackClient.chat.postMessage({
             channel: destination.channelId,
-            text: resultText,
+            text: output.text,
             ...(destination.threadTs && !destination.isDirectMessage
               ? { thread_ts: destination.threadTs }
               : {}),
@@ -358,25 +355,9 @@ function isDeliveryOnlyScheduledJobContext(
   );
 }
 
-function runtimePromptForScheduledJob(prompt: string): string {
-  const literalMessage = readLiteralScheduledMessage(prompt);
-  if (!literalMessage) {
-    return prompt;
-  }
-  return `Return exactly this message as your entire final answer, with no extra text. Do not call tools for delivery; Burble will deliver your final answer.\n\n${literalMessage}`;
-}
-
-function readLiteralScheduledMessage(prompt: string): string | null {
-  const match = /^Post exactly this message:\s*(?<message>.+)$/isu.exec(
-    prompt.trim(),
-  );
-  const message = match?.groups?.message?.trim();
-  return message ? message : null;
-}
-
 function scheduledRunConversationRoot(
   job: ScheduledJobRecord,
-  run: AgentJobRunRecord,
+  run: { runId: string },
 ): string {
   return `scheduled:${job.jobId}:${run.runId}`;
 }
@@ -414,18 +395,4 @@ function readSlackRouteDestination(route: ConversationRouteRecord): {
   } catch {
     return null;
   }
-}
-
-function formatScheduledJobFailureMessage(
-  job: ScheduledJobRecord,
-  run: AgentJobRunRecord,
-  message: string,
-): string {
-  const title = job.title?.trim() || job.jobId;
-  return [
-    `Scheduled job failed: ${title}`,
-    `Job ID: ${job.jobId}`,
-    `Run ID: ${run.runId}`,
-    `Reason: ${message.slice(0, 500)}`,
-  ].join("\n");
 }

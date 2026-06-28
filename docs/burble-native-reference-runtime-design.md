@@ -307,6 +307,47 @@ jobId, allowedTools, routeId, stateRefs, visibilityPolicy
 Task details belong beside it in the Burble-owned run envelope, not inside that
 grant object and not buried in natural-language prompt suffixes.
 
+### Task And Job Output Contract
+
+Task execution output is a Burble boundary, not a runtime convention. A runtime
+returns a proposed final answer. Burble validates it, records the Job outcome,
+and delivers it through the approved route.
+
+The near-term contract is intentionally small:
+
+- the final answer must contain user-visible task output, not runtime-control
+  progress, tool-call markers, raw tool JSON, or debug/protocol transcript;
+- the final answer must not claim that a schedule, job, route, or next run was
+  created or modified unless the Task itself is a scheduler-management task;
+- delivery wording such as "posted to this channel" is not part of the
+  executable Task objective; Burble owns delivery;
+- literal-message Tasks return exactly the literal message as final output;
+- provider-derived links should be rendered as normal user-facing links with
+  enough surrounding context to explain what they are;
+- failures use a Burble-owned terminal envelope with task title, task id, run
+  id, and reason.
+
+This gives all runtimes the same target. OpenClaw, Hermes, and
+`burble-native` may phrase summaries differently, but they cannot substitute
+status/progress text for the final result or re-enter job-management prose when
+the Job is supposed to do the Task.
+
+The current enforcement point is the scheduled run executor:
+
+```text
+runtime final answer
+  -> trim and validate output contract
+  -> reject progress/protocol/empty output
+  -> record run status
+  -> deliver validated text through Burble route
+```
+
+Later workflow-FSM work should expand this into structured output artifacts:
+source records, citations/links, generated summaries, attachments, visibility
+taint, and delivery receipts. The immediate goal is simpler: prevent the
+runtime from turning a scheduled Job back into a scheduler command or leaking
+tool protocol into Slack.
+
 ### Recoverable Tool Errors
 
 Not every tool failure should terminate the run. A model selecting the wrong
