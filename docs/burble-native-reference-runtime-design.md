@@ -986,6 +986,156 @@ evidence and a concrete upstream-compatible fix candidate, or is marked
 unsupported for the affected capabilities; no provider marker/protocol text
 reaches user-visible output; no app-side marker executor returns.
 
+### P-burble-workflow — Typed Burble workflow plans
+
+Goal: stop forcing every scheduled or manual Task into either brittle
+deterministic one-shot commands or a fully free agent loop. Burble-gated provider
+work should be expressible as typed multi-step workflows where Burble owns tool
+execution, auth, state, idempotency, and delivery, while LLMs are invoked only at
+explicit reasoning/rendering steps.
+
+Placement:
+
+- The **workflow contract lives in Burble**. It is product authority: grants,
+  provider calls, state references, retries, visibility, output contracts, and
+  delivery policy.
+- The **runner is an implementation detail** behind a Burble `WorkflowRunner`
+  interface. Start with an in-process event-sourced runner using the existing
+  scheduler/run store. Move to Restate, Temporal, or another durable runner only
+  when the workflow state machine needs crash-safe awaits, timers, retries, and
+  replay that exceed the in-process runner.
+- Restate is a good candidate for the durable execution substrate, but it should
+  not own the Task schema or product policy. Burble should be able to run the same
+  workflow spec on an in-process runner in tests and on Restate in production.
+
+Execution modes:
+
+- `literal`: no model and no provider calls; deliver exact output.
+- `burble_workflow`: typed steps. Burble executes provider/state/delivery steps;
+  LLM calls happen only at declared `model` steps.
+- `agent_tool_loop`: hand the task to a runtime agent with allowed tools. Use only
+  when the path cannot be reasonably known up front.
+
+Representative multi-step Task:
+
+```json
+{
+  "taskId": "task_priority_issue_pr_digest",
+  "title": "Priority Jira/GitHub digest",
+  "trigger": { "kind": "cron", "expression": "0 * * * *", "timezone": "UTC" },
+  "executionPlan": {
+    "mode": "burble_workflow",
+    "steps": [
+      {
+        "id": "jira_issues",
+        "kind": "provider_call",
+        "tool": "jira_search_issues",
+        "input": {
+          "jql": "project = ENG AND priority in (P0, P1) AND updated >= \"{lastRunAt}\" ORDER BY updated DESC",
+          "maxResults": 20
+        },
+        "saveAs": "issues"
+      },
+      {
+        "id": "github_prs_for_issue",
+        "kind": "provider_call",
+        "foreach": "issues.items",
+        "tool": "github_search_issues",
+        "input": {
+          "query": "org:apelogic-ai is:pr is:open \"{item.key}\""
+        },
+        "saveAs": "issuePrMatches"
+      },
+      {
+        "id": "seen_state",
+        "kind": "provider_call",
+        "tool": "google_get_drive_file",
+        "input": { "fileId": "{state.seenDriveFileId}" },
+        "saveAs": "seen"
+      },
+      {
+        "id": "dedupe",
+        "kind": "transform",
+        "operation": "filter_new",
+        "input": {
+          "items": "issuePrMatches",
+          "seenKeys": "seen.json.keys"
+        },
+        "saveAs": "newPairs"
+      },
+      {
+        "id": "render",
+        "kind": "model",
+        "modelProfile": "summary",
+        "input": {
+          "data": "newPairs",
+          "outputSpec": "{task.outputSpec}"
+        },
+        "saveAs": "message"
+      },
+      {
+        "id": "update_seen",
+        "kind": "provider_call",
+        "tool": "google_update_drive_text_file",
+        "input": {
+          "fileId": "{state.seenDriveFileId}",
+          "text": "{mergeSeen(seen, newPairs)}"
+        },
+        "idempotencyKey": "{jobRunId}:update_seen"
+      },
+      {
+        "id": "deliver",
+        "kind": "delivery",
+        "tool": "conversation_send_message",
+        "input": {
+          "routeId": "{delivery.routeId}",
+          "text": "{message.text}"
+        },
+        "idempotencyKey": "{jobRunId}:deliver"
+      }
+    ]
+  },
+  "grants": {
+    "tools": [
+      "jira_search_issues",
+      "github_search_issues",
+      "google_get_drive_file",
+      "google_update_drive_text_file",
+      "conversation_send_message"
+    ]
+  },
+  "state": {
+    "seenDriveFileId": "drive-file-id"
+  }
+}
+```
+
+LLM call policy:
+
+- Use a **direct LLM call through Burble's inference gateway/LiteLLM** for bounded
+  `model` steps: summarize normalized data, classify items, rewrite into
+  `outputSpec`, extract a typed spec from a creation prompt. These calls should
+  receive no provider credentials and no broad tool surface.
+- Use a **runtime agent** only when the model needs an actual loop: exploratory
+  tool choice, skills/plugins, current attachments, coding/debugging workspace
+  state, or multi-turn reasoning that cannot be represented as typed steps.
+- A `model` step returns typed output or final prose for validation. It does not
+  invoke provider tools directly.
+
+Validation rules:
+
+- Provider-call steps must validate against tool schemas before execution.
+- Template variables must be bound and non-empty before a step runs.
+- Step output shapes are normalized before later steps consume them.
+- Mutating steps and delivery steps require idempotency keys.
+- The workflow can retry transient tool/model failures by step, but cannot widen
+  its grants or change provider tools at runtime.
+
+Exit: common scheduled jobs can run without giving the model the provider tool
+surface; multi-step provider workflows are inspectable before enabling; manual
+and timer-triggered Jobs run the same workflow spec; LLM involvement is explicit
+and bounded; the runner can later move to Restate without changing Task specs.
+
 ### P-burble-output — Task output contracts
 
 Goal: make scheduled/manual Task output stable at the product level. This is not
