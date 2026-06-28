@@ -623,6 +623,112 @@ describe("scheduler run executor", () => {
     store.close();
   });
 
+  test("does not retry progress-only scheduled write-capable runs", async () => {
+    const store = createTokenStore(":memory:");
+    const route = store.upsertConversationRoute({
+      workspaceId: "T123",
+      slackUserId: "U123",
+      transport: "slack",
+      destination: {
+        channelId: "C123",
+        isDirectMessage: false,
+        rootId: "slack:C123:1710000000.000000",
+      },
+      now: new Date("2026-06-25T17:00:00.000Z"),
+    });
+    const job = store.upsertScheduledJob({
+      jobId: "job-create-drive-file",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      title: "Create Drive summary file",
+      prompt: "Create a Google Drive text file with the latest summary.",
+      schedule: { kind: "interval", every: { hours: 1 } },
+      routeId: route.id,
+      runtimeType: "hermes",
+      state: "scheduled",
+      now: new Date("2026-06-25T17:01:00.000Z"),
+    });
+    store.upsertAgentJobCapability({
+      jobId: job.jobId,
+      workspaceId: "T123",
+      slackUserId: "U123",
+      requiredTools: ["google_create_drive_text_file"],
+      routeId: route.id,
+      runtimeType: "hermes",
+      now: new Date("2026-06-25T17:01:30.000Z"),
+    });
+    const run = store.createAgentJobRun({
+      runId: "jobrun-create-drive-file",
+      jobId: job.jobId,
+      workspaceId: "T123",
+      slackUserId: "U123",
+      triggerSource: "schedule",
+      status: "queued",
+      now: new Date("2026-06-25T17:02:00.000Z"),
+    });
+    let attempts = 0;
+    const runner: AgentRunner = {
+      name: "test-runner",
+      capabilities: {
+        streaming: true,
+        toolEvents: true,
+        remote: true,
+      },
+      async *run() {
+        attempts += 1;
+        yield {
+          type: "final",
+          response: {
+            classification: "user_private",
+            text: "Calling google create drive text file...\n\nFinal result in 2.0s.",
+          },
+        };
+      },
+    };
+    const posts: Array<{ channel: string; text: string; thread_ts?: string }> =
+      [];
+    const warnings: string[] = [];
+    const executor = createSchedulerRunExecutor({
+      store,
+      agentRunner: runner,
+      slackClient: {
+        chat: {
+          postMessage: async (message) => {
+            posts.push(message);
+            return {};
+          },
+        },
+      },
+      logWarn: (message) => warnings.push(message),
+    });
+
+    await executor.executeRun(run.runId);
+
+    expect(attempts).toBe(1);
+    expect(posts).toEqual([
+      {
+        channel: "C123",
+        text: [
+          "Scheduled job failed: Create Drive summary file",
+          "Job ID: job-create-drive-file",
+          "Run ID: jobrun-create-drive-file",
+          "Reason: Managed runtime final response contained only runtime-control/progress text",
+        ].join("\n"),
+      },
+    ]);
+    expect(warnings).toEqual([
+      "Scheduled job run failed runId=jobrun-create-drive-file error=Managed runtime final response contained only runtime-control/progress text",
+    ]);
+    expect(store.getAgentJobRun(run.runId)).toMatchObject({
+      runId: run.runId,
+      status: "failed",
+      failureReason:
+        "Managed runtime final response contained only runtime-control/progress text",
+    });
+
+    store.close();
+  });
+
   test("does not retry progress-only scheduled provider runs after a tool call", async () => {
     const store = createTokenStore(":memory:");
     const route = store.upsertConversationRoute({

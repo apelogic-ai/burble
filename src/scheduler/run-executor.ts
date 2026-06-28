@@ -8,6 +8,7 @@ import {
 import { isRuntimeProgressOnlyResponseText } from "../agent/runtime-control-notices";
 import { containsRuntimeToolCallProtocolFragments } from "@burble/runtime-sdk/runtime-text-protocol";
 import { inferAllowedToolsForScheduledJob } from "./job-capabilities";
+import { providerToolCatalog } from "../providers/catalog";
 import type {
   AgentJobRunRecord,
   AgentRuntimeEngine,
@@ -215,6 +216,14 @@ async function collectScheduledAgentRunWithProgressRetry(input: {
         scheduledJobContext: retryContext,
       });
     }
+    if (
+      isRuntimeProgressOnlyResponseText(result.text) &&
+      shouldFailUnsafeProgressOnlyResult(events, input.scheduledJobContext)
+    ) {
+      throw new Error(
+        "Managed runtime final response contained only runtime-control/progress text",
+      );
+    }
     return result;
   } catch (error) {
     const retryContext = progressOnlyScheduledRunRetryContext(
@@ -237,8 +246,43 @@ function progressOnlyScheduledRunRetryContext(
 ): ScheduledJobContext | null {
   const canRetry =
     !events.some((event) => event.type === "tool_call") &&
-    Boolean(scheduledJobContext?.allowedTools.length);
+    Boolean(scheduledJobContext?.allowedTools.length) &&
+    scheduledJobContextAllowsOnlyReadTools(scheduledJobContext);
   return canRetry && scheduledJobContext ? scheduledJobContext : null;
+}
+
+function shouldFailUnsafeProgressOnlyResult(
+  events: AgentRunEvent[],
+  scheduledJobContext: ScheduledJobContext | undefined,
+): boolean {
+  return (
+    !events.some((event) => event.type === "tool_call") &&
+    Boolean(scheduledJobContext?.allowedTools.length) &&
+    !scheduledJobContextAllowsOnlyReadTools(scheduledJobContext)
+  );
+}
+
+function scheduledJobContextAllowsOnlyReadTools(
+  scheduledJobContext: ScheduledJobContext | undefined,
+): boolean {
+  return Boolean(
+    scheduledJobContext?.allowedTools.length &&
+    scheduledJobContext.allowedTools.every((toolName) => {
+      const spec = findProviderToolSpec(toolName);
+      return spec?.risk === "read";
+    }),
+  );
+}
+
+function findProviderToolSpec(toolName: string) {
+  return (
+    providerToolCatalog.find(
+      (tool) =>
+        tool.name === toolName ||
+        tool.alias === toolName ||
+        tool.aliases?.includes(toolName),
+    ) ?? null
+  );
 }
 
 async function collectScheduledAgentRunProgressRetry(input: {
