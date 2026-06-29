@@ -500,6 +500,101 @@ describe("scheduler run executor", () => {
     store.close();
   });
 
+  test("manual workflow authority compensates attempt-start append failure after validation", async () => {
+    const store = createTokenStore(":memory:");
+    const workflowStore = createInMemoryTaskWorkflowEventStore();
+    let failAttemptStarted = true;
+    const flakyWorkflowStore = {
+      ...workflowStore,
+      appendEvent(input: Parameters<typeof workflowStore.appendEvent>[0]) {
+        if (input.event.type === "attempt_started" && failAttemptStarted) {
+          failAttemptStarted = false;
+          throw new Error("transient attempt start append failure");
+        }
+        return workflowStore.appendEvent(input);
+      },
+    };
+    const route = store.upsertConversationRoute({
+      workspaceId: "T123",
+      slackUserId: "U123",
+      transport: "slack",
+      destination: { channelId: "D123", isDirectMessage: true },
+    });
+    const job = store.upsertScheduledJob({
+      jobId: "job-attempt-compensate",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      title: "Attempt compensation",
+      prompt: "Post exactly this message: :heart:",
+      schedule: { kind: "interval", every: { minutes: 30 } },
+      routeId: route.id,
+      runtimeType: "openclaw",
+      state: "scheduled",
+    });
+    store.upsertAgentJobCapability({
+      jobId: job.jobId,
+      workspaceId: "T123",
+      slackUserId: "U123",
+      requiredTools: [],
+      routeId: route.id,
+      runtimeType: "openclaw",
+    });
+    const run = store.createAgentJobRun({
+      runId: "jobrun-attempt-compensate",
+      jobId: job.jobId,
+      workspaceId: "T123",
+      slackUserId: "U123",
+      triggerSource: "manual",
+      status: "queued",
+    });
+    let runnerCalled = false;
+    const runner: AgentRunner = {
+      name: "test-runner",
+      capabilities: { streaming: true, toolEvents: true, remote: true },
+      async *run() {
+        runnerCalled = true;
+        yield {
+          type: "final",
+          response: { classification: "public", text: ":heart:" },
+        };
+      },
+    };
+    const posts: Array<{ channel: string; text: string; thread_ts?: string }> =
+      [];
+    const executor = createSchedulerRunExecutor({
+      store,
+      agentRunner: runner,
+      slackClient: {
+        chat: {
+          postMessage: async (message) => {
+            posts.push(message);
+            return {};
+          },
+        },
+      },
+      workflowShadowStore: flakyWorkflowStore,
+      workflowAuthority: "manual",
+    });
+
+    await executor.executeRun(run.runId);
+
+    expect(runnerCalled).toBe(false);
+    expect(store.getAgentJobRun(run.runId)).toMatchObject({
+      status: "failed",
+      failureReason: "transient attempt start append failure",
+    });
+    expect(workflowStore.replayState().runs[run.runId]).toMatchObject({
+      status: "failed",
+      attempt: 1,
+      failureClass: "runtime_failed",
+    });
+    expect(posts).toHaveLength(1);
+    expect(posts[0]?.text).toContain("Scheduled job failed");
+    expect(failAttemptStarted).toBe(false);
+
+    store.close();
+  });
+
   test("mirrors terminal shadow state when finish returns null after an authoritative update", async () => {
     const store = createTokenStore(":memory:");
     const workflowStore = createInMemoryTaskWorkflowEventStore();

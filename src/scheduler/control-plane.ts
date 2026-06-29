@@ -118,12 +118,6 @@ export type SchedulerTriggerResult =
       reason: "already_running";
       jobId: string;
       run: AgentJobRunRecord;
-    }
-  | {
-      ok: false;
-      reason: "recent_validation_failure";
-      jobId: string;
-      run: AgentJobRunRecord;
     };
 
 export type SchedulerListJobRunsInput = {
@@ -478,7 +472,7 @@ export function createSchedulerControlPlane(
           };
         }
         const validation = validateScheduledTask(record, capability);
-        if (workflowAuthority !== "manual" && !validation.ok) {
+        if (!validation.ok) {
           return {
             ok: false,
             reason: "validation_failed",

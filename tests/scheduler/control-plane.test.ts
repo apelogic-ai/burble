@@ -596,7 +596,7 @@ describe("scheduler control plane", () => {
     store.close();
   });
 
-  test("manual workflow authority queues invalid tasks for driver validation", async () => {
+  test("manual workflow authority rejects invalid tasks before queueing", async () => {
     const store = createTokenStore(":memory:");
     const workflowStore = createInMemoryTaskWorkflowEventStore();
     store.upsertScheduledJob({
@@ -638,21 +638,26 @@ describe("scheduler control plane", () => {
         jobId: "github-pr-monitor",
       }),
     ).toMatchObject({
-      ok: true,
-      jobId: "github-pr-monitor",
-      run: {
-        runId: "jobrun-driver-validation",
-        status: "queued",
+      ok: false,
+      reason: "validation_failed",
+      task: {
+        taskId: "github-pr-monitor",
+        requiredTools: ["github_list_my_pull_requests"],
+      },
+      validation: {
+        ok: false,
+        expectedTools: ["github_search_issues"],
+        grantedTools: ["github_list_my_pull_requests"],
+        errors: [
+          {
+            code: "missing_required_tool",
+            tool: "github_search_issues",
+          },
+        ],
       },
     });
-    expect(store.listAgentJobRunsForJob("github-pr-monitor")).toEqual([
-      expect.objectContaining({
-        runId: "jobrun-driver-validation",
-        status: "queued",
-      }),
-    ]);
+    expect(store.listAgentJobRunsForJob("github-pr-monitor")).toEqual([]);
     expect(workflowStore.listEvents()).toEqual([]);
-    expect(store.listAgentJobRunsForJob("github-pr-monitor")).toHaveLength(1);
 
     store.close();
   });

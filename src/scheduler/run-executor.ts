@@ -117,13 +117,15 @@ export function createSchedulerRunExecutor(input: {
             reason: failedRun?.failureReason ?? message.slice(0, 500),
             logWarn: input.logWarn,
           });
-          await notifyWorkflowDriverFailure({
-            store: input.store,
-            slackClient: input.slackClient,
-            run: failedRun ?? run,
-            reason: failedRun?.failureReason ?? message.slice(0, 500),
-            logWarn: input.logWarn,
-          });
+          if (!workflowErrorNotificationWasSent(error)) {
+            await notifyWorkflowDriverFailure({
+              store: input.store,
+              slackClient: input.slackClient,
+              run: failedRun ?? run,
+              reason: failedRun?.failureReason ?? message.slice(0, 500),
+              logWarn: input.logWarn,
+            });
+          }
           input.logWarn?.(
             `Scheduled job workflow run failed runId=${run.runId} error=${message}`,
           );
@@ -351,6 +353,7 @@ async function executeWorkflowAuthoritativeManualRun(
     toolGroups.groups,
   );
   const outputByDigest = new Map<string, string>();
+  let failureNotificationSent = false;
 
   input.logInfo?.(
     `Scheduled job workflow run start runId=${run.runId} jobId=${job.jobId}`,
@@ -478,7 +481,7 @@ async function executeWorkflowAuthoritativeManualRun(
         deliveryKey,
         at: new Date().toISOString(),
       };
-      let outputDelivered = !destination;
+      let outputDelivered = false;
       try {
         if (!text) {
           throw new Error("Scheduled job output artifact is unavailable");
@@ -565,26 +568,33 @@ async function executeWorkflowAuthoritativeManualRun(
             ? { thread_ts: destination.threadTs }
             : {}),
         });
+        failureNotificationSent = true;
       }
       return null;
     },
   };
 
-  await runTaskWorkflowDriver({
-    initialState: input.workflowShadowStore.replayState(),
-    initialEvent: {
-      type: "task_triggered",
-      taskId: job.jobId,
-      jobRunId: run.runId,
-      triggerKey: workflowTriggerKey(run),
-      source: "manual",
-      at: run.createdAt,
-    },
-    handlers,
-    onEvent: async (event) => {
-      appendWorkflowEvent(input.workflowShadowStore, event);
-    },
-  });
+  try {
+    await runTaskWorkflowDriver({
+      initialState: input.workflowShadowStore.replayState(),
+      initialEvent: {
+        type: "task_triggered",
+        taskId: job.jobId,
+        jobRunId: run.runId,
+        triggerKey: workflowTriggerKey(run),
+        source: "manual",
+        at: run.createdAt,
+      },
+      handlers,
+      onEvent: async (event) => {
+        appendWorkflowEvent(input.workflowShadowStore, event);
+      },
+    });
+  } catch (error) {
+    throw new ScheduledWorkflowRunError(scheduledRunErrorMessage(error), {
+      failureNotificationSent,
+    });
+  }
 
   input.logInfo?.(
     `Scheduled job workflow run finish runId=${run.runId} jobId=${job.jobId}`,
@@ -622,12 +632,23 @@ function recordWorkflowDriverFailure(input: {
       });
       return;
     }
-    if (workflowRun?.status === "running" && workflowRun.attempt) {
+    if (workflowRun?.status === "running") {
+      const attempt = workflowRun.attempt ?? 1;
+      if (!workflowRun.attempt) {
+        appendWorkflowEvent(input.store, {
+          type: "attempt_started",
+          taskId: input.run.jobId,
+          jobRunId: input.run.runId,
+          attempt,
+          mode: TASK_WORKFLOW_AGENT_ATTEMPT_MODE,
+          at,
+        });
+      }
       appendWorkflowEvent(input.store, {
         type: "attempt_failed",
         taskId: input.run.jobId,
         jobRunId: input.run.runId,
-        attempt: workflowRun.attempt,
+        attempt,
         failureClass: TASK_WORKFLOW_RUNTIME_FAILURE_CLASS,
         reason: input.reason,
         at,
@@ -925,6 +946,22 @@ function workflowDeliveryKey(
   outputDigest: string,
 ): string {
   return `${runId}:${routeId ?? "no-route"}:${outputDigest}`;
+}
+
+class ScheduledWorkflowRunError extends Error {
+  readonly failureNotificationSent: boolean;
+
+  constructor(message: string, input: { failureNotificationSent: boolean }) {
+    super(message);
+    this.name = "ScheduledWorkflowRunError";
+    this.failureNotificationSent = input.failureNotificationSent;
+  }
+}
+
+function workflowErrorNotificationWasSent(error: unknown): boolean {
+  return (
+    error instanceof ScheduledWorkflowRunError && error.failureNotificationSent
+  );
 }
 
 function outputTextDigest(text: string): string {
