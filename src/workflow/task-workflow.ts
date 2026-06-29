@@ -19,6 +19,9 @@ export type TaskWorkflowTaskStatus = "active" | "needs_repair";
 export type TaskWorkflowAttemptMode =
   "provider" | "transform" | "model" | "agent";
 
+export const TASK_WORKFLOW_AGENT_ATTEMPT_MODE: TaskWorkflowAttemptMode =
+  "agent";
+
 export type TaskWorkflowCommand =
   | {
       type: "validate_task";

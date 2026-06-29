@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import type { AgentJobRunRecord } from "../db";
+import { TASK_WORKFLOW_AGENT_ATTEMPT_MODE } from "./task-workflow";
 import type {
   TaskWorkflowAppendEventInput,
   TaskWorkflowEventStore,
@@ -48,13 +49,13 @@ export function recordTaskWorkflowRunStarted(
     recordedAt: at,
   });
   appendShadowEvent(input, {
-    eventId: shadowEventId(input.run, "attempt_started"),
+    eventId: shadowEventId(input.run, "attempt_started", "1"),
     event: {
       type: "attempt_started",
       taskId: input.run.jobId,
       jobRunId: input.run.runId,
       attempt: 1,
-      mode: "agent",
+      mode: TASK_WORKFLOW_AGENT_ATTEMPT_MODE,
       at,
     },
     recordedAt: at,
@@ -89,12 +90,11 @@ export function recordTaskWorkflowRunSucceeded(
     routeId?: string | null;
   },
 ): void {
-  const at = shadowEventTime(input);
-  recordTaskWorkflowRunStarted(input);
+  const at = shadowEventTime(input, input.run.finishedAt);
   const outputDigest = outputTextDigest(input.outputText);
   const deliveryKey = `${input.run.runId}:${input.routeId ?? "no-route"}:${outputDigest}`;
   appendShadowEvent(input, {
-    eventId: shadowEventId(input.run, "attempt_succeeded"),
+    eventId: shadowEventId(input.run, "attempt_succeeded", "1", outputDigest),
     event: {
       type: "attempt_succeeded",
       taskId: input.run.jobId,
@@ -106,7 +106,7 @@ export function recordTaskWorkflowRunSucceeded(
     recordedAt: at,
   });
   appendShadowEvent(input, {
-    eventId: shadowEventId(input.run, "delivery_started"),
+    eventId: shadowEventId(input.run, "delivery_started", deliveryKey),
     event: {
       type: "delivery_started",
       taskId: input.run.jobId,
@@ -117,7 +117,7 @@ export function recordTaskWorkflowRunSucceeded(
     recordedAt: at,
   });
   appendShadowEvent(input, {
-    eventId: shadowEventId(input.run, "delivery_succeeded"),
+    eventId: shadowEventId(input.run, "delivery_succeeded", deliveryKey),
     event: {
       type: "delivery_succeeded",
       taskId: input.run.jobId,
@@ -135,10 +135,9 @@ export function recordTaskWorkflowRunFailed(
     reason: string;
   },
 ): void {
-  const at = shadowEventTime(input);
-  recordTaskWorkflowRunStarted(input);
+  const at = shadowEventTime(input, input.run.finishedAt);
   appendShadowEvent(input, {
-    eventId: shadowEventId(input.run, "attempt_failed"),
+    eventId: shadowEventId(input.run, "attempt_failed", "1", input.failureClass),
     event: {
       type: "attempt_failed",
       taskId: input.run.jobId,
@@ -181,8 +180,11 @@ function shadowEventId(
     | "attempt_failed"
     | "delivery_started"
     | "delivery_succeeded",
+  ...parts: string[]
 ): string {
-  return `shadow:${run.runId}:${eventName}`;
+  const suffix =
+    parts.length > 0 ? `:${parts.map(encodeURIComponent).join(":")}` : "";
+  return `shadow:${run.runId}:${eventName}${suffix}`;
 }
 
 function shadowTriggerKey(run: AgentJobRunRecord): string {

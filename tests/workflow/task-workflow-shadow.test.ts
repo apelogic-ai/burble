@@ -15,6 +15,7 @@ describe("task workflow shadow recorder", () => {
       triggerSource: "schedule",
       createdAt: "2026-06-29T10:00:00.000Z",
       startedAt: "2026-06-29T10:00:01.000Z",
+      finishedAt: "2026-06-29T10:00:05.000Z",
     });
 
     recordTaskWorkflowRunTriggered({ store, run });
@@ -24,16 +25,24 @@ describe("task workflow shadow recorder", () => {
       run,
       outputText: "Done.",
       routeId: "convrt_123",
-      at: new Date("2026-06-29T10:00:05.000Z"),
     });
 
-    expect(store.listEvents().map((event) => event.event.type)).toEqual([
+    const events = store.listEvents();
+    expect(events.map((event) => event.event.type)).toEqual([
       "task_triggered",
       "validation_passed",
       "attempt_started",
       "attempt_succeeded",
       "delivery_started",
       "delivery_succeeded",
+    ]);
+    expect(events.map((event) => event.event.at)).toEqual([
+      "2026-06-29T10:00:00.000Z",
+      "2026-06-29T10:00:01.000Z",
+      "2026-06-29T10:00:01.000Z",
+      "2026-06-29T10:00:05.000Z",
+      "2026-06-29T10:00:05.000Z",
+      "2026-06-29T10:00:05.000Z",
     ]);
     expect(store.replayState().runs["jobrun-1"]).toMatchObject({
       jobRunId: "jobrun-1",
@@ -51,18 +60,23 @@ describe("task workflow shadow recorder", () => {
       triggerSource: "manual",
       createdAt: "2026-06-29T10:00:00.000Z",
       startedAt: "2026-06-29T10:00:01.000Z",
+      finishedAt: "2026-06-29T10:00:07.000Z",
     });
 
+    recordTaskWorkflowRunTriggered({ store, run });
+    recordTaskWorkflowRunStarted({ store, run });
     recordTaskWorkflowRunFailed({
       store,
       run,
       failureClass: "runtime_failed",
       reason: "provider timeout",
-      at: new Date("2026-06-29T10:00:07.000Z"),
       logWarn: (message) => warnings.push(message),
     });
 
     expect(warnings).toEqual([]);
+    expect(store.listEvents().at(-1)?.event.at).toBe(
+      "2026-06-29T10:00:07.000Z",
+    );
     expect(store.replayState().runs["jobrun-1"]).toMatchObject({
       status: "failed",
       failureClass: "runtime_failed",

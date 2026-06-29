@@ -150,36 +150,39 @@ export function createSchedulerRunExecutor(input: {
               : {}),
           });
         }
-        recordTaskWorkflowRunSucceeded({
-          store: input.workflowShadowStore,
-          run,
-          outputText: output.text,
-          routeId: job.routeId,
-          logWarn: input.logWarn,
-        });
-
-        input.store.finishAgentJobRun({
+        const finishedRun = input.store.finishAgentJobRun({
           runId: run.runId,
           status: "succeeded",
         });
+        if (finishedRun) {
+          recordTaskWorkflowRunSucceeded({
+            store: input.workflowShadowStore,
+            run: finishedRun,
+            outputText: output.text,
+            routeId: job.routeId,
+            logWarn: input.logWarn,
+          });
+        }
         input.logInfo?.(
           `Scheduled job run finish runId=${run.runId} jobId=${job.jobId}`,
         );
       } catch (error) {
         const message =
           error instanceof Error ? error.message : "Scheduled job run failed";
-        input.store.finishAgentJobRun({
+        const failedRun = input.store.finishAgentJobRun({
           runId: run.runId,
           status: "failed",
           failureReason: message.slice(0, 500),
         });
-        recordTaskWorkflowRunFailed({
-          store: input.workflowShadowStore,
-          run,
-          failureClass: "runtime_failed",
-          reason: message.slice(0, 500),
-          logWarn: input.logWarn,
-        });
+        if (failedRun) {
+          recordTaskWorkflowRunFailed({
+            store: input.workflowShadowStore,
+            run: failedRun,
+            failureClass: "runtime_failed",
+            reason: message.slice(0, 500),
+            logWarn: input.logWarn,
+          });
+        }
         input.logWarn?.(
           `Scheduled job run failed runId=${run.runId} error=${message}`,
         );
