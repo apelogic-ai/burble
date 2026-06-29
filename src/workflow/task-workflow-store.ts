@@ -39,12 +39,20 @@ export type TaskWorkflowWriteSnapshotInput = {
   createdAt?: string;
 };
 
+export type TaskWorkflowCompactEventsResult = {
+  compactedThroughSequence: number;
+  deletedEvents: number;
+};
+
 export type TaskWorkflowEventStore = {
   appendEvent(input: TaskWorkflowAppendEventInput): TaskWorkflowStoredEvent;
   listEvents(): TaskWorkflowStoredEvent[];
   replayState(input?: { initialState?: TaskWorkflowState }): TaskWorkflowState;
   writeSnapshot(input?: TaskWorkflowWriteSnapshotInput): TaskWorkflowSnapshot;
   getLatestSnapshot(): TaskWorkflowSnapshot | null;
+  compactEventsThroughSnapshot(input?: {
+    snapshotSequence?: number;
+  }): TaskWorkflowCompactEventsResult;
   listResumableRuns(input?: {
     state?: TaskWorkflowState;
   }): TaskWorkflowRunState[];
@@ -114,6 +122,22 @@ export function createInMemoryTaskWorkflowEventStore(input?: {
     }
     return snapshot;
   };
+  const compactEventsThroughSnapshot = (compactInput?: {
+    snapshotSequence?: number;
+  }): TaskWorkflowCompactEventsResult => {
+    const sequence =
+      compactInput?.snapshotSequence ?? getLatestSnapshot()?.sequence ?? 0;
+    const before = events.length;
+    for (let index = events.length - 1; index >= 0; index -= 1) {
+      if (events[index]?.sequence && events[index].sequence <= sequence) {
+        events.splice(index, 1);
+      }
+    }
+    return {
+      compactedThroughSequence: sequence,
+      deletedEvents: before - events.length,
+    };
+  };
   const listResumableRuns = (listInput?: {
     state?: TaskWorkflowState;
   }): TaskWorkflowRunState[] => {
@@ -151,6 +175,7 @@ export function createInMemoryTaskWorkflowEventStore(input?: {
     replayState,
     writeSnapshot,
     getLatestSnapshot,
+    compactEventsThroughSnapshot,
     listResumableRuns,
     listSideEffectFailures,
   };

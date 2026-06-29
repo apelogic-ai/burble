@@ -9,6 +9,7 @@ import {
 } from "./task-workflow";
 import type {
   TaskWorkflowAppendEventInput,
+  TaskWorkflowCompactEventsResult,
   TaskWorkflowEventStore,
   TaskWorkflowSnapshot,
   TaskWorkflowStoredEvent,
@@ -30,7 +31,13 @@ type TaskWorkflowSnapshotRow = {
   createdAt: string;
 };
 
-export const TASK_WORKFLOW_SQLITE_SCHEMA_VERSION = 2;
+type TaskWorkflowEventIdRow = {
+  sequence: number;
+  eventId: string;
+  recordedAt: string;
+};
+
+export const TASK_WORKFLOW_SQLITE_SCHEMA_VERSION = 3;
 
 export function createSqliteTaskWorkflowEventStore(
   db: Database,
@@ -56,6 +63,22 @@ export function createSqliteTaskWorkflowEventStore(
       event_json as eventJson,
       recorded_at as recordedAt,
       signal_id as signalId
+  `);
+  const insertEventId = db.query<null, [string, number, string]>(`
+    INSERT OR IGNORE INTO task_workflow_event_ids (
+      event_id,
+      sequence,
+      recorded_at
+    )
+    VALUES (?, ?, ?)
+  `);
+  const getEventId = db.query<TaskWorkflowEventIdRow, [string]>(`
+    SELECT
+      event_id as eventId,
+      sequence,
+      recorded_at as recordedAt
+    FROM task_workflow_event_ids
+    WHERE event_id = ?
   `);
   const getEventById = db.query<TaskWorkflowEventRow, [string]>(`
     SELECT
@@ -130,6 +153,10 @@ export function createSqliteTaskWorkflowEventStore(
     ORDER BY sequence DESC
     LIMIT 1
   `);
+  const deleteEventsThroughSequence = db.query<never, [number]>(`
+    DELETE FROM task_workflow_events
+    WHERE sequence <= ?
+  `);
 
   const listEvents = (): TaskWorkflowStoredEvent[] =>
     listStoredEvents.all().map(rowToStoredEvent);
@@ -180,6 +207,17 @@ export function createSqliteTaskWorkflowEventStore(
     }
     return rowToSnapshot(row);
   };
+  const compactEventsThroughSnapshot = (compactInput?: {
+    snapshotSequence?: number;
+  }): TaskWorkflowCompactEventsResult => {
+    const sequence =
+      compactInput?.snapshotSequence ?? getLatestSnapshot()?.sequence ?? 0;
+    const result = deleteEventsThroughSequence.run(sequence);
+    return {
+      compactedThroughSequence: sequence,
+      deletedEvents: result.changes,
+    };
+  };
   const listResumableRuns = (listInput?: {
     state?: TaskWorkflowState;
   }): TaskWorkflowRunState[] => {
@@ -197,6 +235,21 @@ export function createSqliteTaskWorkflowEventStore(
 
   return {
     appendEvent(appendInput) {
+      const existingEventId = getEventId.get(appendInput.eventId);
+      if (existingEventId) {
+        const existingEvent = getEventById.get(appendInput.eventId);
+        if (existingEvent) {
+          return rowToStoredEvent(existingEvent);
+        }
+        return {
+          sequence: existingEventId.sequence,
+          eventId: existingEventId.eventId,
+          event: appendInput.event,
+          recordedAt: existingEventId.recordedAt,
+          ...(appendInput.signalId ? { signalId: appendInput.signalId } : {}),
+        };
+      }
+
       const recordedAt = appendInput.recordedAt ?? now().toISOString();
       const inserted = insertEvent.get(
         appendInput.eventId,
@@ -210,12 +263,15 @@ export function createSqliteTaskWorkflowEventStore(
           `Failed to append task workflow event ${appendInput.eventId}`,
         );
       }
-      return rowToStoredEvent(row);
+      const stored = rowToStoredEvent(row);
+      insertEventId.run(stored.eventId, stored.sequence, stored.recordedAt);
+      return stored;
     },
     listEvents,
     replayState,
     writeSnapshot,
     getLatestSnapshot,
+    compactEventsThroughSnapshot,
     listResumableRuns,
     listSideEffectFailures,
   };
@@ -255,6 +311,29 @@ function migrateTaskWorkflowSchema(db: Database): void {
       );
 
       PRAGMA user_version = 2;
+    `);
+  }
+
+  if (version < 3) {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS task_workflow_event_ids (
+        event_id TEXT PRIMARY KEY,
+        sequence INTEGER NOT NULL,
+        recorded_at TEXT NOT NULL
+      );
+
+      INSERT OR IGNORE INTO task_workflow_event_ids (
+        event_id,
+        sequence,
+        recorded_at
+      )
+      SELECT
+        event_id,
+        sequence,
+        recorded_at
+      FROM task_workflow_events;
+
+      PRAGMA user_version = 3;
     `);
   }
 }

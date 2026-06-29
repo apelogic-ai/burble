@@ -158,6 +158,115 @@ describe("SQLite task workflow event store", () => {
     db.close();
   });
 
+  test("compacts event payloads through a snapshot while preserving idempotency", () => {
+    const db = new Database(":memory:");
+    const store = createSqliteTaskWorkflowEventStore(db);
+    const trigger = {
+      eventId: "evt-trigger",
+      event: {
+        type: "task_triggered" as const,
+        taskId: "task-heart",
+        jobRunId: "jobrun-1",
+        triggerKey: "task-heart:manual:req-1",
+        source: "manual" as const,
+        at: "2026-06-28T17:00:00.000Z",
+      },
+    };
+    store.appendEvent(trigger);
+    store.appendEvent({
+      eventId: "evt-validation-passed",
+      event: {
+        type: "validation_passed",
+        taskId: "task-heart",
+        jobRunId: "jobrun-1",
+        at: "2026-06-28T17:00:01.000Z",
+      },
+    });
+    const snapshot = store.writeSnapshot();
+    store.appendEvent({
+      eventId: "evt-attempt-started",
+      event: {
+        type: "attempt_started",
+        taskId: "task-heart",
+        jobRunId: "jobrun-1",
+        attempt: 1,
+        mode: "agent",
+        at: "2026-06-28T17:00:03.000Z",
+      },
+    });
+
+    expect(store.compactEventsThroughSnapshot()).toEqual({
+      compactedThroughSequence: snapshot.sequence,
+      deletedEvents: 2,
+    });
+    expect(store.listEvents().map((event) => event.eventId)).toEqual([
+      "evt-attempt-started",
+    ]);
+    expect(store.replayState().runs["jobrun-1"]).toMatchObject({
+      status: "running",
+      attempt: 1,
+    });
+
+    const duplicate = store.appendEvent(trigger);
+    expect(duplicate.sequence).toBe(1);
+    expect(store.listEvents().map((event) => event.eventId)).toEqual([
+      "evt-attempt-started",
+    ]);
+    db.close();
+  });
+
+  test("backfills the event-id ledger when migrating an existing v2 database", () => {
+    const db = new Database(":memory:");
+    db.exec(`
+      CREATE TABLE task_workflow_events (
+        sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+        event_id TEXT NOT NULL UNIQUE,
+        signal_id TEXT,
+        event_json TEXT NOT NULL,
+        recorded_at TEXT NOT NULL
+      );
+      CREATE TABLE task_workflow_snapshots (
+        sequence INTEGER PRIMARY KEY,
+        state_json TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      );
+      INSERT INTO task_workflow_events (
+        event_id,
+        signal_id,
+        event_json,
+        recorded_at
+      )
+      VALUES (
+        'evt-trigger',
+        NULL,
+        '{"type":"task_triggered","taskId":"task-heart","jobRunId":"jobrun-1","triggerKey":"task-heart:manual:req-1","source":"manual","at":"2026-06-28T17:00:00.000Z"}',
+        '2026-06-28T17:00:00.000Z'
+      );
+      PRAGMA user_version = 2;
+    `);
+
+    const store = createSqliteTaskWorkflowEventStore(db);
+    db.query("DELETE FROM task_workflow_events WHERE event_id = ?").run(
+      "evt-trigger",
+    );
+
+    const duplicate = store.appendEvent({
+      eventId: "evt-trigger",
+      event: {
+        type: "task_triggered",
+        taskId: "task-heart",
+        jobRunId: "jobrun-1",
+        triggerKey: "task-heart:manual:req-1",
+        source: "manual",
+        at: "2026-06-28T17:00:00.000Z",
+      },
+    });
+
+    expect(duplicate.sequence).toBe(1);
+    expect(store.listEvents()).toEqual([]);
+    db.close();
+  });
+
   test("supports destructured read methods", () => {
     const db = new Database(":memory:");
     const store = createSqliteTaskWorkflowEventStore(db);
