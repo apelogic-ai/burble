@@ -103,6 +103,39 @@ describe("task workflow oracle", () => {
     ]);
   });
 
+  test("ignores old terminal workflow-only runs", () => {
+    const store = createInMemoryTaskWorkflowEventStore();
+    const run = agentRun({
+      status: "succeeded",
+      finishedAt: "2026-06-20T10:00:00.000Z",
+    });
+    recordTaskWorkflowRunTriggered({ store, run });
+    recordTaskWorkflowRunStarted({ store, run });
+    recordTaskWorkflowRunSucceeded({ store, run, outputText: "Done." });
+
+    const result = compareTaskWorkflowProjection({
+      workflowState: store.replayState(),
+      authoritativeRuns: [],
+      now: new Date("2026-06-29T10:00:00.000Z"),
+      maxWorkflowOnlyTerminalAgeMs: 24 * 60 * 60_000,
+    });
+
+    expect(result).toEqual({ ok: true, mismatches: [] });
+  });
+
+  test("tolerates in-flight nonterminal status skew", () => {
+    const store = createInMemoryTaskWorkflowEventStore();
+    const run = agentRun({ status: "running" });
+    recordTaskWorkflowRunTriggered({ store, run });
+
+    const result = compareTaskWorkflowProjection({
+      workflowState: store.replayState(),
+      authoritativeRuns: [run],
+    });
+
+    expect(result).toEqual({ ok: true, mismatches: [] });
+  });
+
   test("oracle loop logs mismatches from replayed state", async () => {
     const store = createInMemoryTaskWorkflowEventStore();
     const warnings: string[] = [];

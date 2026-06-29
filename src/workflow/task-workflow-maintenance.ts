@@ -3,6 +3,7 @@ import type {
   TaskWorkflowEventStore,
   TaskWorkflowSnapshot,
 } from "./task-workflow-store";
+import type { TaskWorkflowRunState, TaskWorkflowState } from "./task-workflow";
 
 export type TaskWorkflowMaintenanceResult = {
   skipped: boolean;
@@ -21,9 +22,11 @@ export type TaskWorkflowMaintenanceLoop = {
 export function maintainTaskWorkflowEventStore(input: {
   store: TaskWorkflowEventStore;
   minEvents?: number;
+  maxTerminalRunAgeMs?: number;
   now?: () => Date;
 }): TaskWorkflowMaintenanceResult {
   const minEvents = input.minEvents ?? 1;
+  const now = (input.now ?? (() => new Date()))();
   const eventCount = input.store.listEvents().length;
   if (eventCount < minEvents) {
     return {
@@ -34,7 +37,12 @@ export function maintainTaskWorkflowEventStore(input: {
   }
 
   const snapshot = input.store.writeSnapshot({
-    createdAt: (input.now ?? (() => new Date()))().toISOString(),
+    state: pruneTaskWorkflowStateForRetention({
+      state: input.store.replayState(),
+      now,
+      maxTerminalRunAgeMs: input.maxTerminalRunAgeMs ?? 7 * 24 * 60 * 60_000,
+    }),
+    createdAt: now.toISOString(),
   });
   const compaction = input.store.compactEventsThroughSnapshot({
     snapshotSequence: snapshot.sequence,
@@ -46,6 +54,59 @@ export function maintainTaskWorkflowEventStore(input: {
     snapshot,
     compaction,
   };
+}
+
+export function pruneTaskWorkflowStateForRetention(input: {
+  state: TaskWorkflowState;
+  now: Date;
+  maxTerminalRunAgeMs: number;
+}): TaskWorkflowState {
+  const retainedRuns: Record<string, TaskWorkflowRunState> = {};
+  const removedRunIds = new Set<string>();
+  for (const [runId, run] of Object.entries(input.state.runs)) {
+    if (shouldRetainWorkflowRun(run, input.now, input.maxTerminalRunAgeMs)) {
+      retainedRuns[runId] = run;
+    } else {
+      removedRunIds.add(runId);
+    }
+  }
+
+  if (removedRunIds.size === 0) {
+    return input.state;
+  }
+
+  return {
+    ...input.state,
+    runs: retainedRuns,
+    triggerKeys: Object.fromEntries(
+      Object.entries(input.state.triggerKeys).filter(
+        ([, runId]) => !removedRunIds.has(runId),
+      ),
+    ),
+  };
+}
+
+function shouldRetainWorkflowRun(
+  run: TaskWorkflowRunState,
+  now: Date,
+  maxTerminalRunAgeMs: number,
+): boolean {
+  if (!isTerminalWorkflowRun(run)) {
+    return true;
+  }
+  const updatedAtMs = Date.parse(run.updatedAt);
+  if (!Number.isFinite(updatedAtMs)) {
+    return true;
+  }
+  return now.getTime() - updatedAtMs <= maxTerminalRunAgeMs;
+}
+
+function isTerminalWorkflowRun(run: TaskWorkflowRunState): boolean {
+  return (
+    run.status === "succeeded" ||
+    run.status === "failed" ||
+    run.status === "paused_after_failures"
+  );
 }
 
 export function createTaskWorkflowMaintenanceLoop(input: {

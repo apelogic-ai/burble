@@ -1369,6 +1369,10 @@ describe("createTokenStore", () => {
     expect(
       store.getLatestAgentJobRunForPrincipal("T123", "U123", null)?.runId
     ).toBe("jobrun-other");
+    expect(store.listRecentAgentJobRuns(2).map((record) => record.runId)).toEqual([
+      "jobrun-other",
+      "jobrun-123"
+    ]);
     expect(store.listQueuedAgentJobRuns().map((record) => record.runId)).toEqual([
       "jobrun-123"
     ]);

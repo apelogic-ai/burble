@@ -1485,12 +1485,13 @@ Slices:
   forever. The compaction path must preserve idempotency-ledger semantics and
   leave enough recent event detail for oracle diagnosis.
 - **5e. Manual-run workflow authority.** Add
-  `TASK_WORKFLOW_AUTHORITY=off|manual|timer`, default `off`. In `manual`, manual
+  `TASK_WORKFLOW_AUTHORITY=off|manual`, default `off`. In `manual`, manual
   task runs (`/tasks run`, scheduler trigger tool, "test run job") append
   `task_triggered` and let the workflow driver own validation, attempt,
   delivery, terminal state, and legacy `agent_job_runs` projection updates.
   Timer fires continue through the legacy path in this slice.
-- **5f. Timer workflow authority.** After manual authority soaks cleanly, change
+- **5f. Timer workflow authority.** After manual authority soaks cleanly, add
+  `TASK_WORKFLOW_AUTHORITY=timer` and change
   timer fires to append workflow events instead of directly creating
   `agent_job_runs`. The timer becomes only a due-slot event source; the workflow
   driver owns deduplication, validation, retries, delivery, and terminal state.
@@ -1504,16 +1505,15 @@ Slices:
 
 Workflow authority rollout:
 
-- The authority switch is staged and reversible. The only supported rollout
+- The authority switch is staged and reversible. The currently supported rollout
   values are:
   - `TASK_WORKFLOW_AUTHORITY=off`: legacy scheduler is authoritative; workflow
     event store may be populated only as shadow.
   - `TASK_WORKFLOW_AUTHORITY=manual`: manual triggers are workflow-authoritative;
     timer fires remain legacy.
-  - `TASK_WORKFLOW_AUTHORITY=timer`: manual and timer triggers are
-    workflow-authoritative.
-- Do not skip from `off` to `timer`. `manual` must pass real hand tests and the
-  shadow oracle must stay clean before timer authority is enabled.
+  Timer authority is deliberately not accepted until slice 5f wires it.
+- Do not skip from `off` to timer authority. `manual` must pass real hand tests
+  and the shadow oracle must stay clean before timer authority is enabled.
 - `agent_job_runs` remains during rollout as a compatibility read model. The
   workflow driver writes it as a projection so existing Slack formatting,
   scheduler commands, tests, and admin surfaces continue to work.

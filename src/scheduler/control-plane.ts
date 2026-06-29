@@ -21,6 +21,7 @@ import {
   type TaskWorkflowShadowStore,
 } from "../workflow/task-workflow-shadow";
 import { TASK_WORKFLOW_VALIDATION_FAILURE_CLASS } from "../workflow/task-workflow";
+import { formatScheduledTaskValidationFailureReason } from "./task-validation-format";
 
 export type {
   SchedulerTaskGrant,
@@ -278,8 +279,9 @@ type SchedulerControlPlaneOptions = {
   now?: () => Date;
   newJobId?: () => string;
   newRunId?: () => string;
-  workflowAuthority?: "off" | "manual" | "timer";
+  workflowAuthority?: "off" | "manual";
   workflowShadowStore?: TaskWorkflowShadowStore;
+  logWarn?: (message: string) => void;
   resolveSlackChannelIdByName?: (input: {
     workspaceId: string;
     channelName: string;
@@ -475,6 +477,24 @@ export function createSchedulerControlPlane(
         const validation = validateScheduledTask(record, capability);
         if (!validation.ok) {
           if (workflowAuthority === "manual") {
+            const failureReason =
+              formatScheduledTaskValidationFailureReason(validation);
+            const recentFailure = findRecentFailedScheduledJobRun(
+              store,
+              input.workspaceId,
+              input.slackUserId,
+              record.jobId,
+              timestamp,
+              failureReason,
+            );
+            if (recentFailure) {
+              return {
+                ok: false,
+                reason: "already_running",
+                jobId: record.jobId,
+                run: recentFailure,
+              };
+            }
             const failedRun = store.createAgentJobRun({
               runId: newRunId(),
               jobId: record.jobId,
@@ -482,7 +502,7 @@ export function createSchedulerControlPlane(
               slackUserId: input.slackUserId,
               triggerSource: "manual",
               status: "failed",
-              failureReason: scheduledTaskValidationFailureReason(validation),
+              failureReason,
               finishedAt: timestamp.toISOString(),
               now: timestamp,
             });
@@ -492,6 +512,7 @@ export function createSchedulerControlPlane(
               failureClass: TASK_WORKFLOW_VALIDATION_FAILURE_CLASS,
               reason: failedRun.failureReason ?? "Scheduled task validation failed.",
               at: timestamp,
+              logWarn: options.logWarn,
             });
           }
           return {
@@ -547,20 +568,6 @@ export function createSchedulerControlPlane(
       return run ? { ok: true, run } : { ok: false, reason: "no_runs" };
     },
   };
-}
-
-function scheduledTaskValidationFailureReason(
-  validation: SchedulerTaskValidation,
-): string {
-  if (validation.ok) {
-    return "Scheduled task validation failed.";
-  }
-  return [
-    "Scheduled task validation failed:",
-    validation.errors
-      .map((issue) => `${issue.code}: ${issue.message}`)
-      .join("; "),
-  ].join(" ");
 }
 
 function updateScheduledJobSchedule(
@@ -809,6 +816,30 @@ function isActiveScheduledJobRun(run: AgentJobRunRecord, now: Date): boolean {
     return true;
   }
   return now.getTime() - updatedAtMs <= DEFAULT_ACTIVE_RUN_TTL_MS;
+}
+
+function findRecentFailedScheduledJobRun(
+  store: Pick<TokenStore, "listAgentJobRunsForPrincipal">,
+  workspaceId: string,
+  slackUserId: string,
+  jobId: string,
+  now: Date,
+  failureReason: string,
+): AgentJobRunRecord | null {
+  return (
+    store
+      .listAgentJobRunsForPrincipal(workspaceId, slackUserId, jobId, 10)
+      .find((run) => {
+        if (run.status !== "failed" || run.failureReason !== failureReason) {
+          return false;
+        }
+        const updatedAtMs = Date.parse(run.updatedAt);
+        if (!Number.isFinite(updatedAtMs)) {
+          return true;
+        }
+        return now.getTime() - updatedAtMs <= DEFAULT_ACTIVE_RUN_TTL_MS;
+      }) ?? null
+  );
 }
 
 function updateScheduledJobState(

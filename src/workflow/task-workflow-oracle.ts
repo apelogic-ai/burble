@@ -39,12 +39,17 @@ export type TaskWorkflowOracleLoop = {
 export function compareTaskWorkflowProjection(input: {
   workflowState: TaskWorkflowState;
   authoritativeRuns: AgentJobRunRecord[];
+  now?: Date;
+  maxWorkflowOnlyTerminalAgeMs?: number;
 }): TaskWorkflowOracleResult {
   const workflowRuns = input.workflowState.runs;
   const authoritativeByRunId = new Map(
     input.authoritativeRuns.map((run) => [run.runId, run]),
   );
   const mismatches: TaskWorkflowOracleMismatch[] = [];
+  const now = input.now ?? new Date();
+  const maxWorkflowOnlyTerminalAgeMs =
+    input.maxWorkflowOnlyTerminalAgeMs ?? 0;
 
   for (const authoritativeRun of input.authoritativeRuns) {
     const workflowRun = workflowRuns[authoritativeRun.runId];
@@ -68,6 +73,15 @@ export function compareTaskWorkflowProjection(input: {
 
   for (const workflowRun of Object.values(workflowRuns)) {
     if (!authoritativeByRunId.has(workflowRun.jobRunId)) {
+      if (
+        shouldIgnoreWorkflowOnlyRun({
+          workflowRun,
+          now,
+          maxWorkflowOnlyTerminalAgeMs,
+        })
+      ) {
+        continue;
+      }
       mismatches.push({
         kind: "missing_authoritative_run",
         runId: workflowRun.jobRunId,
@@ -87,6 +101,7 @@ export function createTaskWorkflowOracleLoop(input: {
   replayWorkflowState: () => TaskWorkflowState;
   listAuthoritativeRuns: () => AgentJobRunRecord[] | Promise<AgentJobRunRecord[]>;
   intervalMs?: number;
+  maxWorkflowOnlyTerminalAgeMs?: number;
   logWarn?: (message: string) => void;
   logInfo?: (message: string) => void;
 }): TaskWorkflowOracleLoop {
@@ -103,6 +118,7 @@ export function createTaskWorkflowOracleLoop(input: {
       const result = compareTaskWorkflowProjection({
         workflowState: input.replayWorkflowState(),
         authoritativeRuns: await input.listAuthoritativeRuns(),
+        maxWorkflowOnlyTerminalAgeMs: input.maxWorkflowOnlyTerminalAgeMs,
       });
       if (!result.ok) {
         input.logWarn?.(
@@ -237,15 +253,18 @@ function statusProjectionMatches(
   authoritativeStatus: AgentJobRunStatus,
   workflowStatus: TaskWorkflowRunStatus,
 ): boolean {
+  if (!isAuthoritativeTerminal(authoritativeStatus)) {
+    return !isWorkflowTerminal(workflowStatus);
+  }
+
   switch (authoritativeStatus) {
-    case "queued":
-      return workflowStatus === "created" || workflowStatus === "validating";
-    case "running":
-      return workflowStatus === "running" || workflowStatus === "delivering";
     case "succeeded":
       return workflowStatus === "succeeded";
     case "failed":
       return workflowStatus === "failed" || workflowStatus === "paused_after_failures";
+    case "queued":
+    case "running":
+      return false;
   }
 }
 
@@ -259,4 +278,22 @@ function isWorkflowTerminal(status: TaskWorkflowRunStatus): boolean {
     status === "failed" ||
     status === "paused_after_failures"
   );
+}
+
+function shouldIgnoreWorkflowOnlyRun(input: {
+  workflowRun: TaskWorkflowRunState;
+  now: Date;
+  maxWorkflowOnlyTerminalAgeMs: number;
+}): boolean {
+  if (!isWorkflowTerminal(input.workflowRun.status)) {
+    return false;
+  }
+  if (input.maxWorkflowOnlyTerminalAgeMs <= 0) {
+    return true;
+  }
+  const updatedAtMs = Date.parse(input.workflowRun.updatedAt);
+  if (!Number.isFinite(updatedAtMs)) {
+    return false;
+  }
+  return input.now.getTime() - updatedAtMs > input.maxWorkflowOnlyTerminalAgeMs;
 }

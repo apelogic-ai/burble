@@ -420,10 +420,7 @@ export function createSlackRuntime(
   const workflowOracleLoop = workflowShadowStore
     ? createTaskWorkflowOracleLoop({
         replayWorkflowState: () => workflowShadowStore.replayState(),
-        listAuthoritativeRuns: () =>
-          store
-            .listScheduledJobs()
-            .flatMap((job) => store.listAgentJobRunsForJob(job.jobId)),
+        listAuthoritativeRuns: () => store.listRecentAgentJobRuns(5_000),
         logWarn: (message) => app.logger.warn(withUtcTimestamp(message))
       })
     : undefined;

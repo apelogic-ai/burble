@@ -581,10 +581,6 @@ describe("readConfig", () => {
       readConfig({ ...validEnv, TASK_WORKFLOW_AUTHORITY: "manual" })
         .taskWorkflowAuthority
     ).toBe("manual");
-    expect(
-      readConfig({ ...validEnv, TASK_WORKFLOW_AUTHORITY: "timer" })
-        .taskWorkflowAuthority
-    ).toBe("timer");
   });
 
   test("rejects invalid task workflow authority flag", () => {

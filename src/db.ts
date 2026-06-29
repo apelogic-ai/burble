@@ -1210,6 +1210,23 @@ export function createTokenStore(path: string) {
     WHERE job_id = ?
     ORDER BY created_at DESC, run_id ASC
   `);
+  const listRecentAgentJobRuns = db.query<AgentJobRunRow, [number]>(`
+    SELECT
+      run_id AS runId,
+      job_id AS jobId,
+      workspace_id AS workspaceId,
+      slack_user_id AS slackUserId,
+      trigger_source AS triggerSource,
+      status,
+      failure_reason AS failureReason,
+      created_at AS createdAt,
+      updated_at AS updatedAt,
+      started_at AS startedAt,
+      finished_at AS finishedAt
+    FROM agent_job_runs
+    ORDER BY created_at DESC, run_id ASC
+    LIMIT ?
+  `);
   const listAgentJobRunsForPrincipal = db.query<
     AgentJobRunRow,
     [string, string, string | null, string | null, number]
@@ -2186,6 +2203,14 @@ export function createTokenStore(path: string) {
 
     listAgentJobRunsForJob(jobId: string): AgentJobRunRecord[] {
       return listAgentJobRunsForJob.all(jobId).map(toAgentJobRunRecord);
+    },
+
+    listRecentAgentJobRuns(limit = 1_000): AgentJobRunRecord[] {
+      const normalizedLimit =
+        Number.isSafeInteger(limit) && limit > 0
+          ? Math.min(limit, 10_000)
+          : 1_000;
+      return listRecentAgentJobRuns.all(normalizedLimit).map(toAgentJobRunRecord);
     },
 
     listAgentJobRunsForPrincipal(

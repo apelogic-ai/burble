@@ -656,6 +656,21 @@ describe("scheduler control plane", () => {
       status: "failed",
       failureClass: "validation_failed",
     });
+    expect(
+      await scheduler.triggerJob?.({
+        workspaceId: "T123",
+        slackUserId: "U123",
+        jobId: "github-pr-monitor",
+      }),
+    ).toMatchObject({
+      ok: false,
+      reason: "already_running",
+      run: {
+        runId: "jobrun-validation-failed",
+        status: "failed",
+      },
+    });
+    expect(store.listAgentJobRunsForJob("github-pr-monitor")).toHaveLength(1);
 
     store.close();
   });
