@@ -11,6 +11,11 @@ export type TaskWorkflowDriverCommandResult =
 
 export type TaskWorkflowDriverContext = {
   run<T>(name: string, fn: () => Promise<T>): Promise<T>;
+  heartbeat(input: {
+    taskId: string;
+    jobRunId: string;
+    at?: string;
+  }): Promise<void>;
 };
 
 export type TaskWorkflowDriverHandlers = {
@@ -49,7 +54,7 @@ export async function runTaskWorkflowDriver(input: {
   ctx?: TaskWorkflowDriverContext;
   maxCommands?: number;
 }): Promise<RunTaskWorkflowDriverResult> {
-  const ctx = input.ctx ?? createInProcessWorkflowDriverContext();
+  const baseCtx = input.ctx ?? createInProcessWorkflowDriverContext();
   const maxCommands = input.maxCommands ?? 100;
   const events: TaskWorkflowEvent[] = [];
   const commands: TaskWorkflowCommand[] = [];
@@ -62,6 +67,18 @@ export async function runTaskWorkflowDriver(input: {
     events.push(event);
     commands.push(...transition.commands);
     pendingCommands.push(...transition.commands);
+  };
+
+  const ctx: TaskWorkflowDriverContext = {
+    run: baseCtx.run.bind(baseCtx),
+    async heartbeat(heartbeatInput) {
+      applyEvent({
+        type: "run_heartbeat",
+        taskId: heartbeatInput.taskId,
+        jobRunId: heartbeatInput.jobRunId,
+        at: heartbeatInput.at ?? new Date().toISOString(),
+      });
+    },
   };
 
   applyEvent(input.initialEvent);
@@ -103,6 +120,9 @@ export function createInProcessWorkflowDriverContext(): TaskWorkflowDriverContex
   return {
     async run<T>(_name: string, fn: () => Promise<T>): Promise<T> {
       return fn();
+    },
+    async heartbeat(): Promise<void> {
+      return;
     },
   };
 }
