@@ -62,6 +62,7 @@ export type Config = {
   observabilityJsonlPath: string | null;
   observabilityJsonlDir: string | null;
   observabilityIncludeContent: boolean;
+  taskWorkflowShadowEnabled: boolean;
   testbed?: boolean;
 };
 
@@ -452,6 +453,11 @@ export function readConfig(env: Env): Config {
     observabilityIncludeContent: optionalBoolEnv(
       env,
       "OBSERVABILITY_INCLUDE_CONTENT",
+      false
+    ),
+    taskWorkflowShadowEnabled: optionalBoolEnv(
+      env,
+      "TASK_WORKFLOW_SHADOW_ENABLED",
       false
     ),
     testbed: optionalBoolEnv(env, "BURBLE_TESTBED", false)

@@ -2,6 +2,7 @@ import { App, LogLevel } from "@slack/bolt";
 import { stripRuntimeToolCallProtocolFragments } from "@burble/runtime-sdk/runtime-text-protocol";
 import type { View } from "@slack/types";
 import { randomUUID } from "node:crypto";
+import { Database } from "bun:sqlite";
 import { readFile } from "node:fs/promises";
 import {
   isRuntimeControlNotice,
@@ -110,6 +111,7 @@ import {
 import { defaultResolveSlackChannelIdByName } from "./tool-gateway";
 import { createSchedulerRunExecutor } from "./scheduler/run-executor";
 import { createSchedulerTimer } from "./scheduler/timer";
+import { createSqliteTaskWorkflowEventStore } from "./workflow/task-workflow-sqlite-store";
 import type {
   ConversationAttachment,
   ConversationRequest,
@@ -390,7 +392,17 @@ export function createSlackRuntime(
     searchSlackUsers,
     searchSlackMessages
   });
+  const workflowShadowStore = config.taskWorkflowShadowEnabled
+    ? createSqliteTaskWorkflowEventStore(new Database(config.databasePath))
+    : undefined;
+  if (workflowShadowStore) {
+    app.logger.info(
+      withUtcTimestamp("Task workflow shadow recording enabled")
+    );
+  }
+
   const schedulerControl = createSchedulerControlPlane(store, {
+    workflowShadowStore,
     resolveSlackChannelIdByName: (input) =>
       defaultResolveSlackChannelIdByName(config, input)
   });
@@ -430,6 +442,7 @@ export function createSlackRuntime(
           store,
           agentRunner,
           slackClient: app.client,
+          workflowShadowStore,
           logInfo: (message) => app.logger.info(withUtcTimestamp(message)),
           logWarn: (message) => app.logger.warn(withUtcTimestamp(message))
         })
@@ -438,6 +451,7 @@ export function createSlackRuntime(
     ? createSchedulerTimer({
         store,
         executeRun: (runId) => schedulerRunExecutor.executeRun(runId),
+        workflowShadowStore,
         logInfo: (message) => app.logger.info(withUtcTimestamp(message)),
         logWarn: (message) => app.logger.warn(withUtcTimestamp(message))
       })

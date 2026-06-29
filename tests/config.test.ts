@@ -67,6 +67,7 @@ describe("readConfig", () => {
       observabilityJsonlPath: null,
       observabilityJsonlDir: null,
       observabilityIncludeContent: false,
+      taskWorkflowShadowEnabled: false,
       testbed: false
     });
   });
@@ -525,6 +526,13 @@ describe("readConfig", () => {
     expect(config.observabilityJsonlPath).toBe("/var/log/burble/events.jsonl");
     expect(config.observabilityJsonlDir).toBe("/var/log/burble/partitions");
     expect(config.observabilityIncludeContent).toBe(true);
+  });
+
+  test("reads optional workflow shadow recording flag", () => {
+    expect(
+      readConfig({ ...validEnv, TASK_WORKFLOW_SHADOW_ENABLED: "true" })
+        .taskWorkflowShadowEnabled
+    ).toBe(true);
   });
 
   test("rejects invalid observability content setting", () => {
