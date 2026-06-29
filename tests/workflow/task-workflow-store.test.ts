@@ -88,6 +88,29 @@ describe("task workflow event store", () => {
     });
   });
 
+  test("supports destructured read methods", () => {
+    const store = createInMemoryTaskWorkflowEventStore();
+    store.appendEvent({
+      eventId: "evt-trigger",
+      event: {
+        type: "task_triggered",
+        taskId: "task-heart",
+        jobRunId: "jobrun-1",
+        triggerKey: "task-heart:manual:req-1",
+        source: "manual",
+        at: "2026-06-28T17:00:00.000Z",
+      },
+    });
+
+    const { replayState, listResumableRuns, listSideEffectFailures } = store;
+
+    expect(replayState().runs["jobrun-1"]).toMatchObject({
+      status: "created",
+    });
+    expect(listResumableRuns()).toHaveLength(1);
+    expect(listSideEffectFailures()).toEqual([]);
+  });
+
   test("lists non-terminal runs as resumable", () => {
     const store = createInMemoryTaskWorkflowEventStore();
     store.appendEvent({
@@ -173,6 +196,47 @@ describe("task workflow event store", () => {
       {
         jobRunId: "jobrun-running",
         status: "created",
+      },
+    ]);
+  });
+
+  test("lists side-effect failures for escalation consumers", () => {
+    const store = createInMemoryTaskWorkflowEventStore();
+    store.appendEvent({
+      eventId: "evt-notify-failed",
+      event: {
+        type: "side_effect_failed",
+        taskId: "task-heart",
+        jobRunId: "jobrun-1",
+        commandType: "notify_failure",
+        failureClass: "handler_failed",
+        reason: "Slack delivery failed",
+        at: "2026-06-28T17:00:04.000Z",
+      },
+    });
+    store.appendEvent({
+      eventId: "evt-pause-failed",
+      event: {
+        type: "side_effect_failed",
+        taskId: "task-prs",
+        commandType: "pause_task",
+        reason: "Scheduler update failed",
+        at: "2026-06-28T17:00:05.000Z",
+      },
+    });
+
+    expect(
+      store.listSideEffectFailures({ commandType: "notify_failure" }),
+    ).toEqual([
+      {
+        failureId:
+          "notify_failure:task-heart:jobrun-1:handler_failed:2026-06-28T17:00:04.000Z",
+        taskId: "task-heart",
+        jobRunId: "jobrun-1",
+        commandType: "notify_failure",
+        failureClass: "handler_failed",
+        reason: "Slack delivery failed",
+        at: "2026-06-28T17:00:04.000Z",
       },
     ]);
   });

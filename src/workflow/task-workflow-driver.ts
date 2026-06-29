@@ -11,6 +11,11 @@ export type TaskWorkflowDriverCommandResult =
 
 export type TaskWorkflowDriverContext = {
   run<T>(name: string, fn: () => Promise<T>): Promise<T>;
+  heartbeat(input: {
+    taskId: string;
+    jobRunId: string;
+    at?: string;
+  }): Promise<void>;
 };
 
 export type TaskWorkflowDriverHandlers = {
@@ -49,7 +54,7 @@ export async function runTaskWorkflowDriver(input: {
   ctx?: TaskWorkflowDriverContext;
   maxCommands?: number;
 }): Promise<RunTaskWorkflowDriverResult> {
-  const ctx = input.ctx ?? createInProcessWorkflowDriverContext();
+  const baseCtx = input.ctx ?? createInProcessWorkflowDriverContext();
   const maxCommands = input.maxCommands ?? 100;
   const events: TaskWorkflowEvent[] = [];
   const commands: TaskWorkflowCommand[] = [];
@@ -62,6 +67,18 @@ export async function runTaskWorkflowDriver(input: {
     events.push(event);
     commands.push(...transition.commands);
     pendingCommands.push(...transition.commands);
+  };
+
+  const ctx: TaskWorkflowDriverContext = {
+    run: baseCtx.run.bind(baseCtx),
+    async heartbeat(heartbeatInput) {
+      applyEvent({
+        type: "run_heartbeat",
+        taskId: heartbeatInput.taskId,
+        jobRunId: heartbeatInput.jobRunId,
+        at: heartbeatInput.at ?? new Date().toISOString(),
+      });
+    },
   };
 
   applyEvent(input.initialEvent);
@@ -91,7 +108,7 @@ export async function runTaskWorkflowDriver(input: {
     }
 
     const result = await executeCommand(command, input.handlers, ctx);
-    for (const event of normalizeCommandResult(result)) {
+    for (const event of normalizeCommandResultForCommand(command, result)) {
       applyEvent(event);
     }
   }
@@ -104,6 +121,9 @@ export function createInProcessWorkflowDriverContext(): TaskWorkflowDriverContex
     async run<T>(_name: string, fn: () => Promise<T>): Promise<T> {
       return fn();
     },
+    async heartbeat(): Promise<void> {
+      return;
+    },
   };
 }
 
@@ -114,6 +134,35 @@ function normalizeCommandResult(
     return [];
   }
   return Array.isArray(result) ? result : [result];
+}
+
+function normalizeCommandResultForCommand(
+  command: TaskWorkflowCommand,
+  result: TaskWorkflowDriverCommandResult,
+): TaskWorkflowEvent[] {
+  const events = normalizeCommandResult(result);
+  if (command.type !== "start_attempt") {
+    return events;
+  }
+
+  for (const event of events) {
+    if (
+      (event.type === "attempt_succeeded" ||
+        event.type === "attempt_failed") &&
+      event.attempt !== command.attempt
+    ) {
+      return [
+        commandHandlerFailedEvent(
+          command,
+          new Error(
+            `Workflow start_attempt handler returned ${event.type} for attempt ${event.attempt}, expected attempt ${command.attempt}.`,
+          ),
+        ),
+      ];
+    }
+  }
+
+  return events;
 }
 
 async function executeCommand(

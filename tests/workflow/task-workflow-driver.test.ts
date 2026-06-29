@@ -13,6 +13,9 @@ describe("task workflow driver", () => {
         runNames.push(name);
         return fn();
       },
+      async heartbeat() {
+        return;
+      },
     };
     const handlers: TaskWorkflowDriverHandlers = {
       validateTask: async (command) => ({
@@ -179,6 +182,107 @@ describe("task workflow driver", () => {
       notificationPending: true,
     });
     expect(observedCommands).toEqual(["notify_failure:handler_failed"]);
+  });
+
+  test("lets command handlers emit workflow heartbeats", async () => {
+    const result = await runTaskWorkflowDriver({
+      initialEvent: {
+        type: "task_triggered",
+        taskId: "task-heart",
+        jobRunId: "jobrun-1",
+        triggerKey: "task-heart:manual:req-1",
+        source: "manual",
+        at: "2026-06-28T17:00:00.000Z",
+      },
+      handlers: {
+        validateTask: async (command) => ({
+          type: "validation_passed",
+          taskId: command.taskId,
+          jobRunId: command.jobRunId,
+          at: "2026-06-28T17:00:01.000Z",
+        }),
+        startAttempt: async (command, ctx) => {
+          await ctx.heartbeat({
+            taskId: command.taskId,
+            jobRunId: command.jobRunId,
+            at: "2026-06-28T17:00:02.500Z",
+          });
+          return {
+            type: "attempt_succeeded",
+            taskId: command.taskId,
+            jobRunId: command.jobRunId,
+            attempt: command.attempt,
+            outputDigest: "sha256:heart",
+            at: "2026-06-28T17:00:03.000Z",
+          };
+        },
+        deliverOutput: async (command) => [
+          {
+            type: "delivery_started",
+            taskId: command.taskId,
+            jobRunId: command.jobRunId,
+            deliveryKey: "jobrun-1:route-1:sha256:heart",
+            at: "2026-06-28T17:00:04.000Z",
+          },
+          {
+            type: "delivery_succeeded",
+            taskId: command.taskId,
+            jobRunId: command.jobRunId,
+            deliveryKey: "jobrun-1:route-1:sha256:heart",
+            at: "2026-06-28T17:00:05.000Z",
+          },
+        ],
+      },
+    });
+
+    expect(result.events.map((event) => event.type)).toContain("run_heartbeat");
+    expect(result.state.runs["jobrun-1"]).toMatchObject({
+      status: "succeeded",
+      heartbeatAt: "2026-06-28T17:00:02.500Z",
+    });
+  });
+
+  test("fails when an attempt handler returns a mismatched attempt", async () => {
+    const result = await runTaskWorkflowDriver({
+      initialEvent: {
+        type: "task_triggered",
+        taskId: "task-heart",
+        jobRunId: "jobrun-1",
+        triggerKey: "task-heart:manual:req-1",
+        source: "manual",
+        at: "2026-06-28T17:00:00.000Z",
+      },
+      handlers: {
+        validateTask: async (command) => ({
+          type: "validation_passed",
+          taskId: command.taskId,
+          jobRunId: command.jobRunId,
+          at: "2026-06-28T17:00:01.000Z",
+        }),
+        startAttempt: async (command) => ({
+          type: "attempt_succeeded",
+          taskId: command.taskId,
+          jobRunId: command.jobRunId,
+          attempt: command.attempt + 1,
+          outputDigest: "sha256:heart",
+          at: "2026-06-28T17:00:03.000Z",
+        }),
+        deliverOutput: async () => null,
+      },
+    });
+
+    expect(result.events.map((event) => event.type)).toEqual([
+      "task_triggered",
+      "validation_passed",
+      "attempt_started",
+      "handler_failed",
+    ]);
+    expect(result.state.runs["jobrun-1"]).toMatchObject({
+      status: "failed",
+      failureClass: "handler_failed",
+      failureReason:
+        "Workflow start_attempt handler returned attempt_succeeded for attempt 2, expected attempt 1.",
+    });
   });
 
   test("records notify handler throws as side-effect failures", async () => {

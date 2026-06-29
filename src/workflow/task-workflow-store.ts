@@ -3,6 +3,7 @@ import {
   reduceTaskWorkflowEvents,
   type TaskWorkflowEvent,
   type TaskWorkflowRunState,
+  type TaskWorkflowSideEffectFailure,
   type TaskWorkflowState,
 } from "./task-workflow";
 
@@ -21,6 +22,11 @@ export type TaskWorkflowAppendEventInput = {
   signalId?: string;
 };
 
+export type TaskWorkflowSideEffectFailureRecord =
+  TaskWorkflowSideEffectFailure & {
+    failureId: string;
+  };
+
 export type TaskWorkflowEventStore = {
   appendEvent(input: TaskWorkflowAppendEventInput): TaskWorkflowStoredEvent;
   listEvents(): TaskWorkflowStoredEvent[];
@@ -28,6 +34,11 @@ export type TaskWorkflowEventStore = {
   listResumableRuns(input?: {
     state?: TaskWorkflowState;
   }): TaskWorkflowRunState[];
+  listSideEffectFailures(input?: {
+    state?: TaskWorkflowState;
+    taskId?: string;
+    commandType?: TaskWorkflowSideEffectFailure["commandType"];
+  }): TaskWorkflowSideEffectFailureRecord[];
 };
 
 export function createInMemoryTaskWorkflowEventStore(input?: {
@@ -39,6 +50,29 @@ export function createInMemoryTaskWorkflowEventStore(input?: {
   );
   const eventIds = new Map(events.map((event) => [event.eventId, event]));
   const now = input?.now ?? (() => new Date());
+
+  const listEvents = (): TaskWorkflowStoredEvent[] => [...events];
+  const replayState = (replayInput?: {
+    initialState?: TaskWorkflowState;
+  }): TaskWorkflowState =>
+    reduceTaskWorkflowEvents(
+      events.map((event) => event.event),
+      replayInput?.initialState ?? createInitialTaskWorkflowState(),
+    );
+  const listResumableRuns = (listInput?: {
+    state?: TaskWorkflowState;
+  }): TaskWorkflowRunState[] => {
+    const state = listInput?.state ?? replayState();
+    return Object.values(state.runs).filter(isResumableRun);
+  };
+  const listSideEffectFailures = (listInput?: {
+    state?: TaskWorkflowState;
+    taskId?: string;
+    commandType?: TaskWorkflowSideEffectFailure["commandType"];
+  }): TaskWorkflowSideEffectFailureRecord[] => {
+    const state = listInput?.state ?? replayState();
+    return listTaskWorkflowSideEffectFailures(state, listInput);
+  };
 
   return {
     appendEvent(appendInput) {
@@ -58,20 +92,35 @@ export function createInMemoryTaskWorkflowEventStore(input?: {
       eventIds.set(stored.eventId, stored);
       return stored;
     },
-    listEvents() {
-      return [...events];
-    },
-    replayState(replayInput) {
-      return reduceTaskWorkflowEvents(
-        events.map((event) => event.event),
-        replayInput?.initialState ?? createInitialTaskWorkflowState(),
-      );
-    },
-    listResumableRuns(listInput) {
-      const state = listInput?.state ?? this.replayState();
-      return Object.values(state.runs).filter(isResumableRun);
-    },
+    listEvents,
+    replayState,
+    listResumableRuns,
+    listSideEffectFailures,
   };
+}
+
+export function listTaskWorkflowSideEffectFailures(
+  state: TaskWorkflowState,
+  input?: {
+    taskId?: string;
+    commandType?: TaskWorkflowSideEffectFailure["commandType"];
+  },
+): TaskWorkflowSideEffectFailureRecord[] {
+  return Object.entries(state.sideEffectFailures ?? {})
+    .map(([failureId, failure]) => ({
+      failureId,
+      ...failure,
+    }))
+    .filter(
+      (failure) =>
+        (!input?.taskId || failure.taskId === input.taskId) &&
+        (!input?.commandType || failure.commandType === input.commandType),
+    )
+    .sort((left, right) =>
+      left.at === right.at
+        ? left.failureId.localeCompare(right.failureId)
+        : left.at.localeCompare(right.at),
+    );
 }
 
 function nextSequence(events: TaskWorkflowStoredEvent[]): number {
