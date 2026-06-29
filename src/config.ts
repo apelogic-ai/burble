@@ -1,3 +1,4 @@
+import { resolve as resolvePath } from "node:path";
 import { validateAgentModelId } from "./agent/providers";
 import {
   defaultSandboxStartCommandForEngine,
@@ -62,6 +63,8 @@ export type Config = {
   observabilityJsonlPath: string | null;
   observabilityJsonlDir: string | null;
   observabilityIncludeContent: boolean;
+  taskWorkflowShadowEnabled: boolean;
+  taskWorkflowShadowDatabasePath: string | null;
   testbed?: boolean;
 };
 
@@ -343,6 +346,18 @@ export function readConfig(env: Env): Config {
     optionalUrlEnv(env, "AGENT_RUNTIME_URL") ??
     optionalUrlEnv(env, "OPENCLAW_NEMOCLAW_URL");
 
+  const databasePath = env.DATABASE_PATH ?? "burble.db";
+  const taskWorkflowShadowEnabled = optionalBoolEnv(
+    env,
+    "TASK_WORKFLOW_SHADOW_ENABLED",
+    false
+  );
+  const taskWorkflowShadowDatabasePath = resolveTaskWorkflowShadowDatabasePath({
+    databasePath,
+    enabled: taskWorkflowShadowEnabled,
+    configuredPath: optionalStringEnv(env, "TASK_WORKFLOW_SHADOW_DATABASE_PATH")
+  });
+
   return {
     slackBotToken: requiredEnv(env, "SLACK_BOT_TOKEN"),
     slackAppToken: requiredEnv(env, "SLACK_APP_TOKEN"),
@@ -361,7 +376,7 @@ export function readConfig(env: Env): Config {
     hubspotClientSecret: optionalSecretEnv(env, "HUBSPOT_CLIENT_SECRET"),
     baseUrl,
     port: optionalIntEnv(env, "PORT", 3000),
-    databasePath: env.DATABASE_PATH ?? "burble.db",
+    databasePath,
     slackLogLevel: optionalSlackLogLevelEnv(env, "SLACK_LOG_LEVEL", "info"),
     agentMode: optionalAgentModeEnv(env, "AGENT_MODE", "deterministic"),
     agentFastTrack: optionalBoolEnv(env, "AGENT_FAST_TRACK", false),
@@ -454,12 +469,46 @@ export function readConfig(env: Env): Config {
       "OBSERVABILITY_INCLUDE_CONTENT",
       false
     ),
+    taskWorkflowShadowEnabled: taskWorkflowShadowDatabasePath !== null,
+    taskWorkflowShadowDatabasePath,
     testbed: optionalBoolEnv(env, "BURBLE_TESTBED", false)
   };
 }
 
 export function defaultAgentRuntimeImage(engine: AgentRuntimeEngine): string {
   return defaultRuntimeImageForEngine(engine);
+}
+
+export function defaultTaskWorkflowShadowDatabasePath(
+  databasePath: string
+): string {
+  return `${databasePath}.workflow-shadow.db`;
+}
+
+function resolveTaskWorkflowShadowDatabasePath(input: {
+  databasePath: string;
+  enabled: boolean;
+  configuredPath: string | null;
+}): string | null {
+  if (!input.enabled || input.databasePath === ":memory:") {
+    return null;
+  }
+  const path =
+    input.configuredPath ??
+    defaultTaskWorkflowShadowDatabasePath(input.databasePath);
+  if (sameSqliteFilePath(path, input.databasePath)) {
+    throw new Error(
+      "TASK_WORKFLOW_SHADOW_DATABASE_PATH must not equal DATABASE_PATH"
+    );
+  }
+  return path;
+}
+
+function sameSqliteFilePath(left: string, right: string): boolean {
+  if (left === ":memory:" || right === ":memory:") {
+    return left === right;
+  }
+  return resolvePath(left) === resolvePath(right);
 }
 
 export function defaultAgentRuntimeSandboxStartCommand(
@@ -476,6 +525,11 @@ export function isDefaultAgentRuntimeImage(
 }
 
 function optionalSecretEnv(env: Env, name: string): string | null {
+  const value = env[name]?.trim();
+  return value ? value : null;
+}
+
+function optionalStringEnv(env: Env, name: string): string | null {
   const value = env[name]?.trim();
   return value ? value : null;
 }

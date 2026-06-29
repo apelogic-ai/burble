@@ -4,10 +4,12 @@ import type { ScheduledJobContext } from "../../src/agent/scheduled-job-context"
 import { createTokenStore } from "../../src/db";
 import { createSchedulerRunExecutor } from "../../src/scheduler/run-executor";
 import type { AgentRunner } from "../../src/agent/types";
+import { createInMemoryTaskWorkflowEventStore } from "../../src/workflow/task-workflow-store";
 
 describe("scheduler run executor", () => {
   test("claims a queued run, executes the job prompt, delivers to the route, and marks success", async () => {
     const store = createTokenStore(":memory:");
+    const workflowStore = createInMemoryTaskWorkflowEventStore();
     const route = store.upsertConversationRoute({
       workspaceId: "T123",
       slackUserId: "U123",
@@ -72,6 +74,7 @@ describe("scheduler run executor", () => {
           },
         },
       },
+      workflowShadowStore: workflowStore,
     });
 
     await executor.executeRun(run.runId);
@@ -114,6 +117,91 @@ describe("scheduler run executor", () => {
     ]);
     expect(store.getAgentJobRun(run.runId)).toMatchObject({
       runId: run.runId,
+      status: "succeeded",
+    });
+    expect(workflowStore.replayState().runs[run.runId]).toMatchObject({
+      jobRunId: run.runId,
+      taskId: job.jobId,
+      source: "manual",
+      status: "succeeded",
+      attempt: 1,
+    });
+
+    store.close();
+  });
+
+  test("mirrors terminal shadow state when finish returns null after an authoritative update", async () => {
+    const store = createTokenStore(":memory:");
+    const workflowStore = createInMemoryTaskWorkflowEventStore();
+    const route = store.upsertConversationRoute({
+      workspaceId: "T123",
+      slackUserId: "U123",
+      transport: "slack",
+      destination: { channelId: "C123" },
+      kind: "origin",
+    });
+    const job = store.upsertScheduledJob({
+      jobId: "job-1",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      title: "Hourly check",
+      prompt: "Check something",
+      schedule: { kind: "interval", every: { hours: 1 } },
+      routeId: route.id,
+      state: "scheduled",
+      runtimeType: "openclaw",
+    });
+    const run = store.createAgentJobRun({
+      runId: "jobrun-1",
+      jobId: job.jobId,
+      workspaceId: "T123",
+      slackUserId: "U123",
+      triggerSource: "schedule",
+      status: "queued",
+    });
+    const agentRunner: AgentRunner = {
+      name: "test-runner",
+      capabilities: {
+        streaming: true,
+        toolEvents: true,
+        remote: true,
+      },
+      async *run() {
+        yield {
+          type: "final",
+          response: {
+            classification: "public",
+            text: "Done.",
+          },
+        };
+      },
+    };
+    const posted: unknown[] = [];
+    const executorStore = Object.create(store) as typeof store;
+    executorStore.finishAgentJobRun = (input) => {
+      store.finishAgentJobRun(input);
+      return null;
+    };
+    const executor = createSchedulerRunExecutor({
+      store: executorStore,
+      agentRunner,
+      slackClient: {
+        chat: {
+          postMessage: async (input) => {
+            posted.push(input);
+          },
+        },
+      },
+      workflowShadowStore: workflowStore,
+    });
+
+    await executor.executeRun(run.runId);
+
+    expect(posted).toHaveLength(1);
+    expect(store.getAgentJobRun(run.runId)).toMatchObject({
+      status: "succeeded",
+    });
+    expect(workflowStore.replayState().runs[run.runId]).toMatchObject({
       status: "succeeded",
     });
 
@@ -338,6 +426,7 @@ describe("scheduler run executor", () => {
 
   test("fails literal scheduled jobs when the runtime returns only progress text", async () => {
     const store = createTokenStore(":memory:");
+    const workflowStore = createInMemoryTaskWorkflowEventStore();
     const route = store.upsertConversationRoute({
       workspaceId: "T123",
       slackUserId: "U123",
@@ -411,6 +500,7 @@ describe("scheduler run executor", () => {
         },
       },
       logWarn: (message) => warnings.push(message),
+      workflowShadowStore: workflowStore,
     });
 
     await executor.executeRun(run.runId);
@@ -434,6 +524,13 @@ describe("scheduler run executor", () => {
       status: "failed",
       failureReason:
         "Managed runtime final response contained only runtime-control/progress text",
+    });
+    expect(workflowStore.replayState().runs[run.runId]).toMatchObject({
+      jobRunId: run.runId,
+      taskId: job.jobId,
+      source: "schedule",
+      status: "failed",
+      failureClass: "runtime_failed",
     });
 
     store.close();

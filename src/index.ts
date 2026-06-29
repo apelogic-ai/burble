@@ -98,6 +98,7 @@ if (config.testbed) {
 async function shutdown(): Promise<void> {
   runtimeReaper?.stop();
   server.stop();
+  slack.close();
   if (!config.testbed) {
     await slack.app.stop();
   }

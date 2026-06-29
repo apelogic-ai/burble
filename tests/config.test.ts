@@ -67,6 +67,8 @@ describe("readConfig", () => {
       observabilityJsonlPath: null,
       observabilityJsonlDir: null,
       observabilityIncludeContent: false,
+      taskWorkflowShadowEnabled: false,
+      taskWorkflowShadowDatabasePath: null,
       testbed: false
     });
   });
@@ -525,6 +527,52 @@ describe("readConfig", () => {
     expect(config.observabilityJsonlPath).toBe("/var/log/burble/events.jsonl");
     expect(config.observabilityJsonlDir).toBe("/var/log/burble/partitions");
     expect(config.observabilityIncludeContent).toBe(true);
+  });
+
+  test("reads optional workflow shadow recording flag", () => {
+    const config = readConfig({
+      ...validEnv,
+      TASK_WORKFLOW_SHADOW_ENABLED: "true"
+    });
+
+    expect(config.taskWorkflowShadowEnabled).toBe(true);
+    expect(config.taskWorkflowShadowDatabasePath).toBe(
+      "test.db.workflow-shadow.db"
+    );
+  });
+
+  test("reads optional workflow shadow database path", () => {
+    const config = readConfig({
+      ...validEnv,
+      TASK_WORKFLOW_SHADOW_ENABLED: "true",
+      TASK_WORKFLOW_SHADOW_DATABASE_PATH: "/var/lib/burble/workflow-shadow.db"
+    });
+
+    expect(config.taskWorkflowShadowDatabasePath).toBe(
+      "/var/lib/burble/workflow-shadow.db"
+    );
+  });
+
+  test("skips workflow shadow recording for in-memory databases", () => {
+    const config = readConfig({
+      ...validEnv,
+      DATABASE_PATH: ":memory:",
+      TASK_WORKFLOW_SHADOW_ENABLED: "true"
+    });
+
+    expect(config.taskWorkflowShadowEnabled).toBe(false);
+    expect(config.taskWorkflowShadowDatabasePath).toBeNull();
+  });
+
+  test("rejects workflow shadow database path equal to primary database path", () => {
+    expect(() =>
+      readConfig({
+        ...validEnv,
+        DATABASE_PATH: "burble.db",
+        TASK_WORKFLOW_SHADOW_ENABLED: "true",
+        TASK_WORKFLOW_SHADOW_DATABASE_PATH: "./burble.db"
+      })
+    ).toThrow("TASK_WORKFLOW_SHADOW_DATABASE_PATH must not equal DATABASE_PATH");
   });
 
   test("rejects invalid observability content setting", () => {

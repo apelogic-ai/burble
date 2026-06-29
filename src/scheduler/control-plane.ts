@@ -15,6 +15,10 @@ import {
 } from "./task-validation";
 import { validateScheduledJobSchedule } from "./timer";
 import { DEFAULT_ACTIVE_RUN_TTL_MS } from "./active-run";
+import {
+  recordTaskWorkflowRunTriggered,
+  type TaskWorkflowShadowStore,
+} from "../workflow/task-workflow-shadow";
 
 export type {
   SchedulerTaskGrant,
@@ -272,6 +276,7 @@ type SchedulerControlPlaneOptions = {
   now?: () => Date;
   newJobId?: () => string;
   newRunId?: () => string;
+  workflowShadowStore?: TaskWorkflowShadowStore;
   resolveSlackChannelIdByName?: (input: {
     workspaceId: string;
     channelName: string;
@@ -489,18 +494,24 @@ export function createSchedulerControlPlane(
         };
       }
 
+      const run = store.createAgentJobRun({
+        runId: newRunId(),
+        jobId: job.job.jobId,
+        workspaceId: input.workspaceId,
+        slackUserId: input.slackUserId,
+        triggerSource: "manual",
+        status: "queued",
+        now: timestamp,
+      });
+      recordTaskWorkflowRunTriggered({
+        store: options.workflowShadowStore,
+        run,
+        at: timestamp,
+      });
       return {
         ok: true,
         jobId: job.job.jobId,
-        run: store.createAgentJobRun({
-          runId: newRunId(),
-          jobId: job.job.jobId,
-          workspaceId: input.workspaceId,
-          slackUserId: input.slackUserId,
-          triggerSource: "manual",
-          status: "queued",
-          now: timestamp,
-        }),
+        run,
       };
     },
     getLatestRunStatus(input) {

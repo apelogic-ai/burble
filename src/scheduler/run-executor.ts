@@ -21,6 +21,13 @@ import type {
   ScheduledJobRecord,
   TokenStore,
 } from "../db";
+import {
+  recordTaskWorkflowRunFailed,
+  recordTaskWorkflowRunStarted,
+  recordTaskWorkflowRunSucceeded,
+  type TaskWorkflowShadowStore,
+} from "../workflow/task-workflow-shadow";
+import { TASK_WORKFLOW_RUNTIME_FAILURE_CLASS } from "../workflow/task-workflow";
 
 type SlackPostClient = {
   chat: {
@@ -41,6 +48,7 @@ export function createSchedulerRunExecutor(input: {
     TokenStore,
     | "claimAgentJobRun"
     | "finishAgentJobRun"
+    | "getAgentJobRun"
     | "getAgentJobCapability"
     | "getScheduledJob"
     | "getConversationRoute"
@@ -48,6 +56,7 @@ export function createSchedulerRunExecutor(input: {
   >;
   agentRunner: AgentRunner;
   slackClient: SlackPostClient;
+  workflowShadowStore?: TaskWorkflowShadowStore;
   logInfo?: (message: string) => void;
   logWarn?: (message: string) => void;
 }): SchedulerRunExecutor {
@@ -77,6 +86,11 @@ export function createSchedulerRunExecutor(input: {
         input.logInfo?.(
           `Scheduled job run start runId=${run.runId} jobId=${job.jobId}`,
         );
+        recordTaskWorkflowRunStarted({
+          store: input.workflowShadowStore,
+          run,
+          logWarn: input.logWarn,
+        });
         const runtimePrompt = scheduledTaskRuntimePrompt(job.prompt);
         const toolGroups = selectRuntimeToolGroups({
           text: runtimePrompt,
@@ -138,22 +152,49 @@ export function createSchedulerRunExecutor(input: {
               : {}),
           });
         }
-
-        input.store.finishAgentJobRun({
-          runId: run.runId,
-          status: "succeeded",
-        });
+        const finishedRun =
+          input.store.finishAgentJobRun({
+            runId: run.runId,
+            status: "succeeded",
+          }) ?? input.store.getAgentJobRun(run.runId);
+        if (finishedRun?.status === "succeeded") {
+          recordTaskWorkflowRunSucceeded({
+            store: input.workflowShadowStore,
+            run: finishedRun,
+            outputText: output.text,
+            routeId: job.routeId,
+            logWarn: input.logWarn,
+          });
+        } else if (finishedRun?.status === "failed") {
+          recordTaskWorkflowRunFailed({
+            store: input.workflowShadowStore,
+            run: finishedRun,
+            failureClass: TASK_WORKFLOW_RUNTIME_FAILURE_CLASS,
+            reason: finishedRun.failureReason ?? "Scheduled job run failed",
+            logWarn: input.logWarn,
+          });
+        }
         input.logInfo?.(
           `Scheduled job run finish runId=${run.runId} jobId=${job.jobId}`,
         );
       } catch (error) {
         const message =
           error instanceof Error ? error.message : "Scheduled job run failed";
-        input.store.finishAgentJobRun({
-          runId: run.runId,
-          status: "failed",
-          failureReason: message.slice(0, 500),
-        });
+        const failedRun =
+          input.store.finishAgentJobRun({
+            runId: run.runId,
+            status: "failed",
+            failureReason: message.slice(0, 500),
+          }) ?? input.store.getAgentJobRun(run.runId);
+        if (failedRun?.status === "failed") {
+          recordTaskWorkflowRunFailed({
+            store: input.workflowShadowStore,
+            run: failedRun,
+            failureClass: TASK_WORKFLOW_RUNTIME_FAILURE_CLASS,
+            reason: failedRun.failureReason ?? message.slice(0, 500),
+            logWarn: input.logWarn,
+          });
+        }
         input.logWarn?.(
           `Scheduled job run failed runId=${run.runId} error=${message}`,
         );

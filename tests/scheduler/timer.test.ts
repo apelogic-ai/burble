@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { createTokenStore } from "../../src/db";
 import { createSchedulerTimer } from "../../src/scheduler/timer";
+import { createInMemoryTaskWorkflowEventStore } from "../../src/workflow/task-workflow-store";
 
 describe("scheduler timer", () => {
   test("queues cron jobs on schedule boundaries instead of creation-relative intervals", async () => {
@@ -64,6 +65,7 @@ describe("scheduler timer", () => {
 
   test("queues due interval jobs and hands them to the run executor", async () => {
     const store = createTokenStore(":memory:");
+    const workflowStore = createInMemoryTaskWorkflowEventStore();
     store.upsertScheduledJob({
       jobId: "job-ai-news",
       workspaceId: "T123",
@@ -83,6 +85,7 @@ describe("scheduler timer", () => {
       executeRun: async (runId) => {
         executed.push(runId);
       },
+      workflowShadowStore: workflowStore,
     });
 
     const result = await timer.tick();
@@ -94,6 +97,12 @@ describe("scheduler timer", () => {
       jobId: "job-ai-news",
       triggerSource: "schedule",
       status: "queued",
+    });
+    expect(workflowStore.replayState().runs["jobrun-timer-1"]).toMatchObject({
+      jobRunId: "jobrun-timer-1",
+      taskId: "job-ai-news",
+      source: "schedule",
+      status: "created",
     });
 
     store.close();
@@ -214,6 +223,7 @@ describe("scheduler timer", () => {
 
   test("does not queue due jobs with invalid persisted tool grants", async () => {
     const store = createTokenStore(":memory:");
+    const workflowStore = createInMemoryTaskWorkflowEventStore();
     store.upsertScheduledJob({
       jobId: "job-open-prs",
       workspaceId: "T123",
@@ -250,6 +260,7 @@ describe("scheduler timer", () => {
         throw new Error("unexpected run execution");
       },
       logWarn: (message) => warnings.push(message),
+      workflowShadowStore: workflowStore,
     });
 
     expect(await timer.tick()).toEqual({ queuedRunIds: [] });
@@ -268,6 +279,15 @@ describe("scheduler timer", () => {
     expect(store.getAgentJobCapability("job-open-prs")?.requiredTools).toEqual([
       "github_list_my_pull_requests",
     ]);
+    expect(
+      workflowStore.replayState().runs["jobrun-invalid-grant"],
+    ).toMatchObject({
+      jobRunId: "jobrun-invalid-grant",
+      taskId: "job-open-prs",
+      source: "schedule",
+      status: "failed",
+      failureClass: "validation_failed",
+    });
     expect(warnings.join("\n")).toContain("missing_required_tool");
 
     store.close();

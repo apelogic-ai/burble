@@ -122,7 +122,9 @@ const agentConfig: Config = {
   internalApiToken: "internal-token",
   observabilityJsonlPath: null,
   observabilityJsonlDir: null,
-  observabilityIncludeContent: false
+  observabilityIncludeContent: false,
+  taskWorkflowShadowEnabled: false,
+  taskWorkflowShadowDatabasePath: null
 };
 
 describe("createManagedRuntimeFactory sandbox mode", () => {

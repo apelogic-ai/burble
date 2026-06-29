@@ -2,6 +2,7 @@ import { App, LogLevel } from "@slack/bolt";
 import { stripRuntimeToolCallProtocolFragments } from "@burble/runtime-sdk/runtime-text-protocol";
 import type { View } from "@slack/types";
 import { randomUUID } from "node:crypto";
+import { Database } from "bun:sqlite";
 import { readFile } from "node:fs/promises";
 import {
   isRuntimeControlNotice,
@@ -110,6 +111,7 @@ import {
 import { defaultResolveSlackChannelIdByName } from "./tool-gateway";
 import { createSchedulerRunExecutor } from "./scheduler/run-executor";
 import { createSchedulerTimer } from "./scheduler/timer";
+import { createSqliteTaskWorkflowEventStore } from "./workflow/task-workflow-sqlite-store";
 import type {
   ConversationAttachment,
   ConversationRequest,
@@ -171,6 +173,7 @@ export type SlackRuntime = {
   app: App;
   runtimeFactory?: RuntimeFactory;
   getSlackEmail: (userId: string) => Promise<string>;
+  close: () => void;
 };
 
 export type SlackRuntimeOptions = {
@@ -390,7 +393,23 @@ export function createSlackRuntime(
     searchSlackUsers,
     searchSlackMessages
   });
+  const workflowShadowDatabase =
+    config.taskWorkflowShadowEnabled && config.taskWorkflowShadowDatabasePath
+      ? new Database(config.taskWorkflowShadowDatabasePath)
+      : undefined;
+  const workflowShadowStore = workflowShadowDatabase
+    ? createSqliteTaskWorkflowEventStore(workflowShadowDatabase)
+    : undefined;
+  if (workflowShadowStore) {
+    app.logger.info(
+      withUtcTimestamp(
+        `Task workflow shadow recording enabled databasePath=${config.taskWorkflowShadowDatabasePath}`
+      )
+    );
+  }
+
   const schedulerControl = createSchedulerControlPlane(store, {
+    workflowShadowStore,
     resolveSlackChannelIdByName: (input) =>
       defaultResolveSlackChannelIdByName(config, input)
   });
@@ -430,6 +449,7 @@ export function createSlackRuntime(
           store,
           agentRunner,
           slackClient: app.client,
+          workflowShadowStore,
           logInfo: (message) => app.logger.info(withUtcTimestamp(message)),
           logWarn: (message) => app.logger.warn(withUtcTimestamp(message))
         })
@@ -438,6 +458,7 @@ export function createSlackRuntime(
     ? createSchedulerTimer({
         store,
         executeRun: (runId) => schedulerRunExecutor.executeRun(runId),
+        workflowShadowStore,
         logInfo: (message) => app.logger.info(withUtcTimestamp(message)),
         logWarn: (message) => app.logger.warn(withUtcTimestamp(message))
       })
@@ -1931,7 +1952,11 @@ export function createSlackRuntime(
   return {
     app,
     ...(runtimeFactory ? { runtimeFactory } : {}),
-    getSlackEmail
+    getSlackEmail,
+    close() {
+      schedulerTimer?.stop();
+      workflowShadowDatabase?.close();
+    }
   };
 }
 
