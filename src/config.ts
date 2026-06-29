@@ -77,14 +77,14 @@ export type AgentRuntimeFactory = "static" | "docker" | "sandbox";
 export type OpenClawNemoClawEngine = AgentRuntimeEngine;
 export type AgentRuntimeStreamingMode = "off" | "basic" | "native";
 export type AgentRuntimeSandboxTransport = "grpc" | "http" | "cli";
-export type TaskWorkflowAuthority = "off" | "manual";
+export type TaskWorkflowAuthority = "off" | "manual" | "timer";
 const slackLogLevels = ["debug", "info", "warn", "error"] as const;
 const agentModes = ["deterministic", "llm"] as const;
 const agentRuntimes = ["ai-sdk", "burble-runtime"] as const;
 const agentRuntimeFactories = ["static", "docker", "sandbox"] as const;
 const agentRuntimeStreamingModes = ["off", "basic", "native"] as const;
 const agentRuntimeSandboxTransports = ["grpc", "http", "cli"] as const;
-const taskWorkflowAuthorities = ["off", "manual"] as const;
+const taskWorkflowAuthorities = ["off", "manual", "timer"] as const;
 export const agentRuntimeEngines = runtimeEngines;
 
 function requiredEnv(env: Env, name: string): string {

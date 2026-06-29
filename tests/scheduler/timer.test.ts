@@ -108,6 +108,47 @@ describe("scheduler timer", () => {
     store.close();
   });
 
+  test("timer workflow authority leaves workflow trigger events to the executor", async () => {
+    const store = createTokenStore(":memory:");
+    const workflowStore = createInMemoryTaskWorkflowEventStore();
+    store.upsertScheduledJob({
+      jobId: "job-ai-news",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      title: "Hourly AI news summary",
+      prompt: "Find fresh AI news and summarize it.",
+      schedule: { kind: "interval", every: { hours: 1 } },
+      runtimeType: "openclaw",
+      state: "scheduled",
+      now: new Date("2026-06-25T17:00:00.000Z"),
+    });
+    const executed: string[] = [];
+    const timer = createSchedulerTimer({
+      store,
+      now: () => new Date("2026-06-25T18:00:01.000Z"),
+      newRunId: () => "jobrun-workflow-timer-1",
+      executeRun: async (runId) => {
+        executed.push(runId);
+      },
+      workflowAuthority: "timer",
+      workflowShadowStore: workflowStore,
+    });
+
+    const result = await timer.tick();
+
+    expect(result.queuedRunIds).toEqual(["jobrun-workflow-timer-1"]);
+    expect(executed).toEqual(["jobrun-workflow-timer-1"]);
+    expect(store.getAgentJobRun("jobrun-workflow-timer-1")).toMatchObject({
+      runId: "jobrun-workflow-timer-1",
+      jobId: "job-ai-news",
+      triggerSource: "schedule",
+      status: "queued",
+    });
+    expect(workflowStore.listEvents()).toEqual([]);
+
+    store.close();
+  });
+
   test("does not queue jobs before the next interval or while one is active", async () => {
     const store = createTokenStore(":memory:");
     store.upsertScheduledJob({
@@ -289,6 +330,66 @@ describe("scheduler timer", () => {
       failureClass: "validation_failed",
     });
     expect(warnings.join("\n")).toContain("missing_required_tool");
+
+    store.close();
+  });
+
+  test("timer workflow authority queues invalid persisted grants for driver validation", async () => {
+    const store = createTokenStore(":memory:");
+    const workflowStore = createInMemoryTaskWorkflowEventStore();
+    store.upsertScheduledJob({
+      jobId: "job-open-prs",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      title: "Check every 15 min for new PRs in apelogic-ai GitHub org",
+      prompt:
+        "Check every 15 min for new PRs in repos of https://github.com/apelogic-ai github org, post in this channel",
+      schedule: {
+        kind: "cron",
+        expression: "*/15 * * * *",
+        timezone: "UTC",
+      },
+      runtimeType: "openclaw",
+      state: "scheduled",
+      now: new Date("2026-06-27T17:10:00.000Z"),
+    });
+    store.upsertAgentJobCapability({
+      jobId: "job-open-prs",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      requiredTools: ["github_list_my_pull_requests"],
+      runtimeType: "openclaw",
+      capabilityProfile: "scheduled_job",
+      stateRefs: [],
+      visibilityPolicy: {},
+      now: new Date("2026-06-27T17:10:00.000Z"),
+    });
+    const executed: string[] = [];
+    const timer = createSchedulerTimer({
+      store,
+      now: () => new Date("2026-06-27T17:15:00.000Z"),
+      newRunId: () => "jobrun-invalid-grant-workflow",
+      executeRun: async (runId) => {
+        executed.push(runId);
+      },
+      workflowAuthority: "timer",
+      workflowShadowStore: workflowStore,
+    });
+
+    expect(await timer.tick()).toEqual({
+      queuedRunIds: ["jobrun-invalid-grant-workflow"],
+    });
+    expect(executed).toEqual(["jobrun-invalid-grant-workflow"]);
+    expect(store.getAgentJobRun("jobrun-invalid-grant-workflow")).toMatchObject({
+      runId: "jobrun-invalid-grant-workflow",
+      jobId: "job-open-prs",
+      triggerSource: "schedule",
+      status: "queued",
+    });
+    expect(store.getAgentJobCapability("job-open-prs")?.requiredTools).toEqual([
+      "github_list_my_pull_requests",
+    ]);
+    expect(workflowStore.listEvents()).toEqual([]);
 
     store.close();
   });

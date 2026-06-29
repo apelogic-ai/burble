@@ -237,6 +237,87 @@ describe("scheduler run executor", () => {
     store.close();
   });
 
+  test("uses workflow driver as authority for scheduled runs when timer authority is enabled", async () => {
+    const store = createTokenStore(":memory:");
+    const workflowStore = createInMemoryTaskWorkflowEventStore();
+    const route = store.upsertConversationRoute({
+      workspaceId: "T123",
+      slackUserId: "U123",
+      transport: "slack",
+      destination: { channelId: "D123", isDirectMessage: true },
+    });
+    const job = store.upsertScheduledJob({
+      jobId: "job-heart-timer",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      title: "Heart timer",
+      prompt: "Post exactly this message: :heart:",
+      schedule: { kind: "interval", every: { minutes: 30 } },
+      routeId: route.id,
+      runtimeType: "openclaw",
+      state: "scheduled",
+    });
+    store.upsertAgentJobCapability({
+      jobId: job.jobId,
+      workspaceId: "T123",
+      slackUserId: "U123",
+      requiredTools: [],
+      routeId: route.id,
+      runtimeType: "openclaw",
+    });
+    const run = store.createAgentJobRun({
+      runId: "jobrun-heart-timer",
+      jobId: job.jobId,
+      workspaceId: "T123",
+      slackUserId: "U123",
+      triggerSource: "schedule",
+      status: "queued",
+    });
+    const runner: AgentRunner = {
+      name: "test-runner",
+      capabilities: { streaming: true, toolEvents: true, remote: true },
+      async *run() {
+        yield {
+          type: "final",
+          response: { classification: "public", text: ":heart:" },
+        };
+      },
+    };
+    const posts: Array<{ channel: string; text: string; thread_ts?: string }> =
+      [];
+    const executor = createSchedulerRunExecutor({
+      store,
+      agentRunner: runner,
+      slackClient: {
+        chat: {
+          postMessage: async (message) => {
+            posts.push(message);
+            return {};
+          },
+        },
+      },
+      workflowShadowStore: workflowStore,
+      workflowAuthority: "timer",
+    });
+
+    await executor.executeRun(run.runId);
+
+    expect(posts).toEqual([{ channel: "D123", text: ":heart:" }]);
+    expect(store.getAgentJobRun(run.runId)).toMatchObject({
+      runId: run.runId,
+      status: "succeeded",
+    });
+    expect(workflowStore.replayState().runs[run.runId]).toMatchObject({
+      jobRunId: run.runId,
+      taskId: job.jobId,
+      source: "schedule",
+      status: "succeeded",
+      attempt: 1,
+    });
+
+    store.close();
+  });
+
   test("manual workflow authority records validation failures in the driver", async () => {
     const store = createTokenStore(":memory:");
     const workflowStore = createInMemoryTaskWorkflowEventStore();

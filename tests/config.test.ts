@@ -585,6 +585,14 @@ describe("readConfig", () => {
       })
         .taskWorkflowAuthority
     ).toBe("manual");
+    expect(
+      readConfig({
+        ...validEnv,
+        TASK_WORKFLOW_AUTHORITY: "timer",
+        TASK_WORKFLOW_SHADOW_ENABLED: "true"
+      })
+        .taskWorkflowAuthority
+    ).toBe("timer");
   });
 
   test("rejects workflow authority without a workflow database", () => {

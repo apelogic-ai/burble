@@ -69,7 +69,7 @@ export function createSchedulerRunExecutor(input: {
   agentRunner: AgentRunner;
   slackClient: SlackPostClient;
   workflowShadowStore?: TaskWorkflowEventStore;
-  workflowAuthority?: "off" | "manual";
+  workflowAuthority?: "off" | "manual" | "timer";
   logInfo?: (message: string) => void;
   logWarn?: (message: string) => void;
 }): SchedulerRunExecutor {
@@ -80,8 +80,7 @@ export function createSchedulerRunExecutor(input: {
         return;
       }
       if (
-        input.workflowAuthority === "manual" &&
-        run.triggerSource === "manual" &&
+        isWorkflowAuthoritativeRun(input.workflowAuthority, run) &&
         input.workflowShadowStore
       ) {
         const workflowShadowStore = input.workflowShadowStore;
@@ -286,6 +285,19 @@ export function createSchedulerRunExecutor(input: {
       }
     },
   };
+}
+
+function isWorkflowAuthoritativeRun(
+  authority: "off" | "manual" | "timer" | undefined,
+  run: AgentJobRunRecord,
+): boolean {
+  if (authority === "manual") {
+    return run.triggerSource === "manual";
+  }
+  if (authority === "timer") {
+    return run.triggerSource === "manual" || run.triggerSource === "schedule";
+  }
+  return false;
 }
 
 async function executeWorkflowAuthoritativeManualRun(
@@ -582,7 +594,7 @@ async function executeWorkflowAuthoritativeManualRun(
         taskId: job.jobId,
         jobRunId: run.runId,
         triggerKey: workflowTriggerKey(run),
-        source: "manual",
+        source: run.triggerSource,
         at: run.createdAt,
       },
       handlers,
