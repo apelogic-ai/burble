@@ -143,6 +143,90 @@ describe("task workflow event store", () => {
     });
   });
 
+  test("keeps monotonic sequences and replay after compaction", () => {
+    const store = createInMemoryTaskWorkflowEventStore();
+    store.appendEvent({
+      eventId: "evt-trigger-1",
+      event: {
+        type: "task_triggered",
+        taskId: "task-heart",
+        jobRunId: "jobrun-1",
+        triggerKey: "task-heart:manual:req-1",
+        source: "manual",
+        at: "2026-06-28T17:00:00.000Z",
+      },
+    });
+    store.appendEvent({
+      eventId: "evt-trigger-2",
+      event: {
+        type: "task_triggered",
+        taskId: "task-heart",
+        jobRunId: "jobrun-2",
+        triggerKey: "task-heart:manual:req-2",
+        source: "manual",
+        at: "2026-06-28T17:01:00.000Z",
+      },
+    });
+    store.writeSnapshot();
+    store.compactEventsThroughSnapshot();
+
+    const appended = store.appendEvent({
+      eventId: "evt-trigger-3",
+      event: {
+        type: "task_triggered",
+        taskId: "task-heart",
+        jobRunId: "jobrun-3",
+        triggerKey: "task-heart:manual:req-3",
+        source: "manual",
+        at: "2026-06-28T17:02:00.000Z",
+      },
+    });
+
+    expect(appended.sequence).toBe(3);
+    expect(Object.keys(store.replayState().runs).sort()).toEqual([
+      "jobrun-1",
+      "jobrun-2",
+      "jobrun-3",
+    ]);
+  });
+
+  test("does not compact past a real snapshot sequence", () => {
+    const store = createInMemoryTaskWorkflowEventStore();
+    store.appendEvent({
+      eventId: "evt-trigger-1",
+      event: {
+        type: "task_triggered",
+        taskId: "task-heart",
+        jobRunId: "jobrun-1",
+        triggerKey: "task-heart:manual:req-1",
+        source: "manual",
+        at: "2026-06-28T17:00:00.000Z",
+      },
+    });
+    store.writeSnapshot();
+    store.appendEvent({
+      eventId: "evt-trigger-2",
+      event: {
+        type: "task_triggered",
+        taskId: "task-heart",
+        jobRunId: "jobrun-2",
+        triggerKey: "task-heart:manual:req-2",
+        source: "manual",
+        at: "2026-06-28T17:01:00.000Z",
+      },
+    });
+
+    expect(
+      store.compactEventsThroughSnapshot({ snapshotSequence: 999 }),
+    ).toEqual({
+      compactedThroughSequence: 1,
+      deletedEvents: 1,
+    });
+    expect(store.listEvents().map((event) => event.eventId)).toEqual([
+      "evt-trigger-2",
+    ]);
+  });
+
   test("supports destructured read methods", () => {
     const store = createInMemoryTaskWorkflowEventStore();
     store.appendEvent({

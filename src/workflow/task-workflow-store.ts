@@ -72,6 +72,8 @@ export function createInMemoryTaskWorkflowEventStore(input?: {
   );
   const eventIds = new Map(events.map((event) => [event.eventId, event]));
   const snapshots: TaskWorkflowSnapshot[] = [];
+  let nextEventSequence =
+    Math.max(0, ...events.map((event) => event.sequence)) + 1;
   const now = input?.now ?? (() => new Date());
 
   const listEvents = (listInput?: {
@@ -83,33 +85,53 @@ export function createInMemoryTaskWorkflowEventStore(input?: {
   const replayState = (replayInput?: {
     initialState?: TaskWorkflowState;
   }): TaskWorkflowState => {
-    if (replayInput?.initialState) {
+    const snapshot = getLatestSnapshot();
+    if (!snapshot) {
       return reduceTaskWorkflowEvents(
         events.map((event) => event.event),
-        replayInput.initialState,
+        replayInput?.initialState ?? createInitialTaskWorkflowState(),
       );
     }
 
-    const snapshot = getLatestSnapshot();
     return reduceTaskWorkflowEvents(
       events
-        .filter((event) => !snapshot || event.sequence > snapshot.sequence)
+        .filter((event) => event.sequence > snapshot.sequence)
         .map((event) => event.event),
-      snapshot?.state ?? createInitialTaskWorkflowState(),
+      snapshotBaseState(snapshot, replayInput?.initialState),
     );
   };
   const getLatestSnapshot = (): TaskWorkflowSnapshot | null =>
     snapshots.at(-1) ?? null;
+  const getLatestSnapshotAtOrBefore = (
+    sequence: number,
+  ): TaskWorkflowSnapshot | null => {
+    for (let index = snapshots.length - 1; index >= 0; index -= 1) {
+      const snapshot = snapshots[index];
+      if (snapshot && snapshot.sequence <= sequence) {
+        return snapshot;
+      }
+    }
+    return null;
+  };
   const writeSnapshot = (
     snapshotInput?: TaskWorkflowWriteSnapshotInput,
   ): TaskWorkflowSnapshot => {
-    const sequence = snapshotInput?.sequence ?? events.at(-1)?.sequence ?? 0;
+    const latestSnapshot = getLatestSnapshot();
+    const sequence =
+      snapshotInput?.sequence ??
+      Math.max(events.at(-1)?.sequence ?? 0, latestSnapshot?.sequence ?? 0);
+    const baseSnapshot = getLatestSnapshotAtOrBefore(sequence);
     const state =
       snapshotInput?.state ??
       reduceTaskWorkflowEvents(
         events
-          .filter((event) => event.sequence <= sequence)
+          .filter(
+            (event) =>
+              event.sequence <= sequence &&
+              (!baseSnapshot || event.sequence > baseSnapshot.sequence),
+          )
           .map((event) => event.event),
+        baseSnapshot?.state ?? createInitialTaskWorkflowState(),
       );
     const snapshot: TaskWorkflowSnapshot = {
       sequence,
@@ -125,16 +147,19 @@ export function createInMemoryTaskWorkflowEventStore(input?: {
       snapshots.push(snapshot);
       snapshots.sort((left, right) => left.sequence - right.sequence);
     }
+    nextEventSequence = Math.max(nextEventSequence, sequence + 1);
     return snapshot;
   };
   const compactEventsThroughSnapshot = (compactInput?: {
     snapshotSequence?: number;
   }): TaskWorkflowCompactEventsResult => {
-    const sequence =
-      compactInput?.snapshotSequence ?? getLatestSnapshot()?.sequence ?? 0;
+    const sequence = compactableSnapshotSequence(
+      snapshots,
+      compactInput?.snapshotSequence,
+    );
     const before = events.length;
     for (let index = events.length - 1; index >= 0; index -= 1) {
-      if (events[index]?.sequence && events[index].sequence <= sequence) {
+      if (events[index] !== undefined && events[index].sequence <= sequence) {
         events.splice(index, 1);
       }
     }
@@ -166,12 +191,13 @@ export function createInMemoryTaskWorkflowEventStore(input?: {
       }
 
       const stored: TaskWorkflowStoredEvent = {
-        sequence: nextSequence(events),
+        sequence: nextEventSequence,
         eventId: appendInput.eventId,
         event: appendInput.event,
         recordedAt: appendInput.recordedAt ?? now().toISOString(),
         ...(appendInput.signalId ? { signalId: appendInput.signalId } : {}),
       };
+      nextEventSequence += 1;
       events.push(stored);
       eventIds.set(stored.eventId, stored);
       return stored;
@@ -210,8 +236,28 @@ export function listTaskWorkflowSideEffectFailures(
     );
 }
 
-function nextSequence(events: TaskWorkflowStoredEvent[]): number {
-  return (events.at(-1)?.sequence ?? 0) + 1;
+function snapshotBaseState(
+  snapshot: TaskWorkflowSnapshot,
+  initialState: TaskWorkflowState | undefined,
+): TaskWorkflowState {
+  if (!initialState) {
+    return snapshot.state;
+  }
+  return {
+    ...snapshot.state,
+    failurePauseThreshold: initialState.failurePauseThreshold,
+  };
+}
+
+function compactableSnapshotSequence(
+  snapshots: TaskWorkflowSnapshot[],
+  requestedSequence: number | undefined,
+): number {
+  const latestSequence = snapshots.at(-1)?.sequence ?? 0;
+  if (requestedSequence === undefined) {
+    return latestSequence;
+  }
+  return Math.min(requestedSequence, latestSequence);
 }
 
 function isResumableRun(run: TaskWorkflowRunState): boolean {

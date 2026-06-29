@@ -249,6 +249,158 @@ describe("SQLite task workflow event store", () => {
     db.close();
   });
 
+  test("folds the prior snapshot when writing a later snapshot after compaction", () => {
+    const db = new Database(":memory:");
+    const store = createSqliteTaskWorkflowEventStore(db);
+    for (const runId of ["jobrun-1", "jobrun-2"]) {
+      store.appendEvent({
+        eventId: `evt-trigger-${runId}`,
+        event: {
+          type: "task_triggered",
+          taskId: "task-heart",
+          jobRunId: runId,
+          triggerKey: `task-heart:manual:${runId}`,
+          source: "manual",
+          at: "2026-06-28T17:00:00.000Z",
+        },
+      });
+    }
+    store.writeSnapshot();
+    store.compactEventsThroughSnapshot();
+    store.appendEvent({
+      eventId: "evt-trigger-jobrun-3",
+      event: {
+        type: "task_triggered",
+        taskId: "task-heart",
+        jobRunId: "jobrun-3",
+        triggerKey: "task-heart:manual:jobrun-3",
+        source: "manual",
+        at: "2026-06-28T17:02:00.000Z",
+      },
+    });
+
+    const snapshot = store.writeSnapshot();
+
+    expect(snapshot.sequence).toBe(3);
+    expect(Object.keys(snapshot.state.runs).sort()).toEqual([
+      "jobrun-1",
+      "jobrun-2",
+      "jobrun-3",
+    ]);
+    expect(Object.keys(store.replayState().runs).sort()).toEqual([
+      "jobrun-1",
+      "jobrun-2",
+      "jobrun-3",
+    ]);
+    db.close();
+  });
+
+  test("does not compact past a real snapshot sequence", () => {
+    const db = new Database(":memory:");
+    const store = createSqliteTaskWorkflowEventStore(db);
+    store.appendEvent({
+      eventId: "evt-trigger-1",
+      event: {
+        type: "task_triggered",
+        taskId: "task-heart",
+        jobRunId: "jobrun-1",
+        triggerKey: "task-heart:manual:req-1",
+        source: "manual",
+        at: "2026-06-28T17:00:00.000Z",
+      },
+    });
+    store.writeSnapshot();
+    store.appendEvent({
+      eventId: "evt-trigger-2",
+      event: {
+        type: "task_triggered",
+        taskId: "task-heart",
+        jobRunId: "jobrun-2",
+        triggerKey: "task-heart:manual:req-2",
+        source: "manual",
+        at: "2026-06-28T17:01:00.000Z",
+      },
+    });
+
+    expect(
+      store.compactEventsThroughSnapshot({ snapshotSequence: 999 }),
+    ).toEqual({
+      compactedThroughSequence: 1,
+      deletedEvents: 1,
+    });
+    expect(store.listEvents().map((event) => event.eventId)).toEqual([
+      "evt-trigger-2",
+    ]);
+    db.close();
+  });
+
+  test("replay with initialState still folds snapshots after compaction", () => {
+    const db = new Database(":memory:");
+    const store = createSqliteTaskWorkflowEventStore(db);
+    store.appendEvent({
+      eventId: "evt-trigger-1",
+      event: {
+        type: "task_triggered",
+        taskId: "task-heart",
+        jobRunId: "jobrun-1",
+        triggerKey: "task-heart:manual:req-1",
+        source: "manual",
+        at: "2026-06-28T17:00:00.000Z",
+      },
+    });
+    store.writeSnapshot();
+    store.compactEventsThroughSnapshot();
+
+    const state = store.replayState({
+      initialState: {
+        failurePauseThreshold: 7,
+        triggerKeys: {},
+        failureCounts: {},
+        sideEffectFailures: {},
+        tasks: {},
+        runs: {},
+      },
+    });
+
+    expect(state.failurePauseThreshold).toBe(7);
+    expect(Object.keys(state.runs)).toEqual(["jobrun-1"]);
+    db.close();
+  });
+
+  test("dedup after compaction returns the original stored event shape", () => {
+    const db = new Database(":memory:");
+    const store = createSqliteTaskWorkflowEventStore(db);
+    const original = store.appendEvent({
+      eventId: "evt-trigger",
+      signalId: "manual:req-1",
+      event: {
+        type: "task_triggered",
+        taskId: "task-heart",
+        jobRunId: "jobrun-1",
+        triggerKey: "task-heart:manual:req-1",
+        source: "manual",
+        at: "2026-06-28T17:00:00.000Z",
+      },
+    });
+    store.writeSnapshot();
+    store.compactEventsThroughSnapshot();
+
+    const duplicate = store.appendEvent({
+      eventId: "evt-trigger",
+      event: {
+        type: "task_triggered",
+        taskId: "different-task",
+        jobRunId: "different-run",
+        triggerKey: "different",
+        source: "manual",
+        at: "2026-06-28T18:00:00.000Z",
+      },
+    });
+
+    expect(duplicate).toEqual(original);
+    db.close();
+  });
+
   test("backfills the event-id ledger when migrating an existing v2 database", () => {
     const db = new Database(":memory:");
     db.exec(`

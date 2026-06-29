@@ -35,9 +35,11 @@ type TaskWorkflowEventIdRow = {
   sequence: number;
   eventId: string;
   recordedAt: string;
+  signalId: string | null;
+  eventJson: string | null;
 };
 
-export const TASK_WORKFLOW_SQLITE_SCHEMA_VERSION = 3;
+export const TASK_WORKFLOW_SQLITE_SCHEMA_VERSION = 4;
 
 export function createSqliteTaskWorkflowEventStore(
   db: Database,
@@ -64,19 +66,26 @@ export function createSqliteTaskWorkflowEventStore(
       recorded_at as recordedAt,
       signal_id as signalId
   `);
-  const insertEventId = db.query<null, [string, number, string]>(`
+  const insertEventId = db.query<
+    null,
+    [string, number, string, string | null, string]
+  >(`
     INSERT OR IGNORE INTO task_workflow_event_ids (
       event_id,
       sequence,
-      recorded_at
+      recorded_at,
+      signal_id,
+      event_json
     )
-    VALUES (?, ?, ?)
+    VALUES (?, ?, ?, ?, ?)
   `);
   const getEventId = db.query<TaskWorkflowEventIdRow, [string]>(`
     SELECT
       event_id as eventId,
       sequence,
-      recorded_at as recordedAt
+      recorded_at as recordedAt,
+      signal_id as signalId,
+      event_json as eventJson
     FROM task_workflow_event_ids
     WHERE event_id = ?
   `);
@@ -164,6 +173,19 @@ export function createSqliteTaskWorkflowEventStore(
     ORDER BY sequence DESC
     LIMIT 1
   `);
+  const getLatestSnapshotThroughSequence = db.query<
+    TaskWorkflowSnapshotRow,
+    [number]
+  >(`
+    SELECT
+      sequence,
+      state_json as stateJson,
+      created_at as createdAt
+    FROM task_workflow_snapshots
+    WHERE sequence <= ?
+    ORDER BY sequence DESC
+    LIMIT 1
+  `);
   const deleteEventsThroughSequence = db.query<never, [number]>(`
     DELETE FROM task_workflow_events
     WHERE sequence <= ?
@@ -179,37 +201,51 @@ export function createSqliteTaskWorkflowEventStore(
   const replayState = (replayInput?: {
     initialState?: TaskWorkflowState;
   }): TaskWorkflowState => {
-    if (replayInput?.initialState) {
+    const snapshot = getLatestSnapshot();
+    if (!snapshot) {
       return reduceTaskWorkflowEvents(
         listEvents().map((event) => event.event),
-        replayInput.initialState,
+        replayInput?.initialState ?? createInitialTaskWorkflowState(),
       );
     }
 
-    const snapshot = getLatestSnapshot();
-    const events = snapshot
-      ? listStoredEventsAfterSequence.all(snapshot.sequence)
-      : listStoredEvents.all();
+    const events = listStoredEventsAfterSequence.all(snapshot.sequence);
     return reduceTaskWorkflowEvents(
       events.map((event) => rowToStoredEvent(event).event),
-      snapshot?.state ?? createInitialTaskWorkflowState(),
+      snapshotBaseState(snapshot, replayInput?.initialState),
     );
   };
   const getLatestSnapshot = (): TaskWorkflowSnapshot | null => {
     const row = getLatestSnapshotRow.get();
     return row ? rowToSnapshot(row) : null;
   };
+  const getSnapshotAtOrBefore = (
+    sequence: number,
+  ): TaskWorkflowSnapshot | null => {
+    const row = getLatestSnapshotThroughSequence.get(sequence);
+    return row ? rowToSnapshot(row) : null;
+  };
   const writeSnapshot = (
     snapshotInput?: TaskWorkflowWriteSnapshotInput,
   ): TaskWorkflowSnapshot => {
+    const latestSnapshot = getLatestSnapshot();
     const sequence =
-      snapshotInput?.sequence ?? getLatestEventSequence.get()?.sequence ?? 0;
+      snapshotInput?.sequence ??
+      Math.max(
+        getLatestEventSequence.get()?.sequence ?? 0,
+        latestSnapshot?.sequence ?? 0,
+      );
+    const baseSnapshot = getSnapshotAtOrBefore(sequence);
+    const events = baseSnapshot
+      ? listStoredEventsAfterSequence
+          .all(baseSnapshot.sequence)
+          .filter((event) => event.sequence <= sequence)
+      : listStoredEventsThroughSequence.all(sequence);
     const state =
       snapshotInput?.state ??
       reduceTaskWorkflowEvents(
-        listStoredEventsThroughSequence
-          .all(sequence)
-          .map((event) => rowToStoredEvent(event).event),
+        events.map((event) => rowToStoredEvent(event).event),
+        baseSnapshot?.state ?? createInitialTaskWorkflowState(),
       );
     const row = upsertSnapshot.get(
       sequence,
@@ -226,8 +262,11 @@ export function createSqliteTaskWorkflowEventStore(
   const compactEventsThroughSnapshot = (compactInput?: {
     snapshotSequence?: number;
   }): TaskWorkflowCompactEventsResult => {
+    const latestSnapshotSequence = getLatestSnapshot()?.sequence ?? 0;
     const sequence =
-      compactInput?.snapshotSequence ?? getLatestSnapshot()?.sequence ?? 0;
+      compactInput?.snapshotSequence === undefined
+        ? latestSnapshotSequence
+        : Math.min(compactInput.snapshotSequence, latestSnapshotSequence);
     const result = deleteEventsThroughSequence.run(sequence);
     return {
       compactedThroughSequence: sequence,
@@ -260,17 +299,24 @@ export function createSqliteTaskWorkflowEventStore(
         return {
           sequence: existingEventId.sequence,
           eventId: existingEventId.eventId,
-          event: appendInput.event,
+          event: existingEventId.eventJson
+            ? (JSON.parse(existingEventId.eventJson) as TaskWorkflowEvent)
+            : appendInput.event,
           recordedAt: existingEventId.recordedAt,
-          ...(appendInput.signalId ? { signalId: appendInput.signalId } : {}),
+          ...(existingEventId.signalId
+            ? { signalId: existingEventId.signalId }
+            : appendInput.signalId
+              ? { signalId: appendInput.signalId }
+              : {}),
         };
       }
 
       const recordedAt = appendInput.recordedAt ?? now().toISOString();
+      const eventJson = JSON.stringify(appendInput.event);
       const inserted = insertEvent.get(
         appendInput.eventId,
         appendInput.signalId ?? null,
-        JSON.stringify(appendInput.event),
+        eventJson,
         recordedAt,
       );
       const row = inserted ?? getEventById.get(appendInput.eventId);
@@ -280,7 +326,13 @@ export function createSqliteTaskWorkflowEventStore(
         );
       }
       const stored = rowToStoredEvent(row);
-      insertEventId.run(stored.eventId, stored.sequence, stored.recordedAt);
+      insertEventId.run(
+        stored.eventId,
+        stored.sequence,
+        stored.recordedAt,
+        stored.signalId ?? null,
+        eventJson,
+      );
       return stored;
     },
     listEvents,
@@ -335,21 +387,57 @@ function migrateTaskWorkflowSchema(db: Database): void {
       CREATE TABLE IF NOT EXISTS task_workflow_event_ids (
         event_id TEXT PRIMARY KEY,
         sequence INTEGER NOT NULL,
-        recorded_at TEXT NOT NULL
+        recorded_at TEXT NOT NULL,
+        signal_id TEXT,
+        event_json TEXT
       );
 
       INSERT OR IGNORE INTO task_workflow_event_ids (
         event_id,
         sequence,
-        recorded_at
+        recorded_at,
+        signal_id,
+        event_json
       )
       SELECT
         event_id,
         sequence,
-        recorded_at
+        recorded_at,
+        signal_id,
+        event_json
       FROM task_workflow_events;
 
       PRAGMA user_version = 3;
+    `);
+  }
+
+  if (version < 4) {
+    if (!sqliteTableHasColumn(db, "task_workflow_event_ids", "signal_id")) {
+      db.exec("ALTER TABLE task_workflow_event_ids ADD COLUMN signal_id TEXT");
+    }
+    if (!sqliteTableHasColumn(db, "task_workflow_event_ids", "event_json")) {
+      db.exec("ALTER TABLE task_workflow_event_ids ADD COLUMN event_json TEXT");
+    }
+    db.exec(`
+      UPDATE task_workflow_event_ids
+      SET
+        signal_id = (
+          SELECT task_workflow_events.signal_id
+          FROM task_workflow_events
+          WHERE task_workflow_events.event_id = task_workflow_event_ids.event_id
+        ),
+        event_json = (
+          SELECT task_workflow_events.event_json
+          FROM task_workflow_events
+          WHERE task_workflow_events.event_id = task_workflow_event_ids.event_id
+        )
+      WHERE EXISTS (
+        SELECT 1
+        FROM task_workflow_events
+        WHERE task_workflow_events.event_id = task_workflow_event_ids.event_id
+      );
+
+      PRAGMA user_version = 4;
     `);
   }
 }
@@ -359,6 +447,30 @@ function readSchemaVersion(db: Database): number {
     .query<{ user_version: number }, []>("PRAGMA user_version")
     .get();
   return row?.user_version ?? 0;
+}
+
+function sqliteTableHasColumn(
+  db: Database,
+  tableName: string,
+  columnName: string,
+): boolean {
+  return db
+    .query<{ name: string }, []>(`PRAGMA table_info(${tableName})`)
+    .all()
+    .some((column) => column.name === columnName);
+}
+
+function snapshotBaseState(
+  snapshot: TaskWorkflowSnapshot,
+  initialState: TaskWorkflowState | undefined,
+): TaskWorkflowState {
+  if (!initialState) {
+    return snapshot.state;
+  }
+  return {
+    ...snapshot.state,
+    failurePauseThreshold: initialState.failurePauseThreshold,
+  };
 }
 
 function rowToStoredEvent(row: TaskWorkflowEventRow): TaskWorkflowStoredEvent {
