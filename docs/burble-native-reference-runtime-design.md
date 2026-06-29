@@ -1390,15 +1390,85 @@ authority is realized — on Burble's side).
 
 Slices:
 
-- **5a. Event-sourced run store** (`job_triggered`, `runtime_started`, `tool_*`,
-  `delivery_completed`, terminal). Status becomes a projection; runs are resumable.
-- **5b. Bounded retry-as-state.** A contract violation or transient failure retries
-  a small bounded count tracked in the run, then fails loud — replacing today's
-  fail-only behavior.
-- **5c. Reconciliation + native-job migration.** Promote the PR's minimal
-  reconciler to a full loop; add `needs_repair` and import/migration of any
-  runtime-native jobs. Record usage/audit (runtime id, model, tokens, route,
-  visibility) per run.
+- **5a. Event-sourced run store** (`task_triggered`, `validation_passed`,
+  `attempt_started`, `attempt_succeeded`, `delivery_succeeded`, terminal).
+  Status becomes a projection; runs are resumable. This slice is scaffolding
+  until it is wired into live scheduler observations.
+- **5b. Shadow wiring.** Mirror existing scheduler control-plane, timer, and
+  run-executor observations into the workflow event store without changing
+  execution authority. The legacy scheduler remains source of truth; workflow
+  state is write-only until the oracle slice.
+- **5c. Shadow oracle.** Replay workflow state and compare it to the
+  authoritative `agent_job_runs` rows. Log structured mismatches, at minimum:
+  missing workflow run, missing authoritative run, status mismatch, terminal
+  mismatch, stale-running workflow projection, and invalid transition/timestamp
+  anomalies. This slice is the first point where workflow shadow data provides
+  signal instead of only cost.
+- **5d. Retention and compaction.** Snapshot and compact the workflow event store
+  on a bounded cadence before any authority switch. Shadow data must not grow
+  forever. The compaction path must preserve idempotency-ledger semantics and
+  leave enough recent event detail for oracle diagnosis.
+- **5e. Manual-run workflow authority.** Add
+  `TASK_WORKFLOW_AUTHORITY=off|manual|timer`, default `off`. In `manual`, manual
+  task runs (`/tasks run`, scheduler trigger tool, "test run job") append
+  `task_triggered` and let the workflow driver own validation, attempt,
+  delivery, terminal state, and legacy `agent_job_runs` projection updates.
+  Timer fires continue through the legacy path in this slice.
+- **5f. Timer workflow authority.** After manual authority soaks cleanly, change
+  timer fires to append workflow events instead of directly creating
+  `agent_job_runs`. The timer becomes only a due-slot event source; the workflow
+  driver owns deduplication, validation, retries, delivery, and terminal state.
+- **5g. Bounded retry-as-state.** A contract violation or transient failure
+  retries a small bounded count tracked in the run, then fails loud — replacing
+  today's fail-only behavior. Retry eligibility is determined by workflow step
+  risk/idempotency, not by model prose.
+- **5h. Reconciliation + native-job migration.** Promote the current reconciler
+  to a full loop; add `needs_repair` and import/migration of any runtime-native
+  jobs. Record usage/audit (runtime id, model, tokens, route, visibility) per run.
+
+Workflow authority rollout:
+
+- The authority switch is staged and reversible. The only supported rollout
+  values are:
+  - `TASK_WORKFLOW_AUTHORITY=off`: legacy scheduler is authoritative; workflow
+    event store may be populated only as shadow.
+  - `TASK_WORKFLOW_AUTHORITY=manual`: manual triggers are workflow-authoritative;
+    timer fires remain legacy.
+  - `TASK_WORKFLOW_AUTHORITY=timer`: manual and timer triggers are
+    workflow-authoritative.
+- Do not skip from `off` to `timer`. `manual` must pass real hand tests and the
+  shadow oracle must stay clean before timer authority is enabled.
+- `agent_job_runs` remains during rollout as a compatibility read model. The
+  workflow driver writes it as a projection so existing Slack formatting,
+  scheduler commands, tests, and admin surfaces continue to work.
+- The workflow event log becomes the source of truth only after the oracle has
+  proven parity and the projection has soaked. Until then, any disagreement is a
+  rollout blocker, not something to hide with formatting.
+- Rollback is a flag flip from `manual` or `timer` back to `off`. Existing
+  workflow events are retained for diagnosis, but new runs return to the legacy
+  scheduler path. Because `agent_job_runs` is maintained as a projection, the
+  user-visible run history survives rollback.
+
+Migration rules:
+
+- Existing scheduled Task definitions do not need eager migration. The first
+  manual trigger or timer fire after authority is enabled creates the workflow
+  run event log for that execution.
+- Existing `agent_job_runs` rows remain immutable historical records. They may be
+  imported into workflow state for diagnostics, but they are not required for the
+  forward execution path.
+- Existing runtime-native jobs, if any, are imported or marked `needs_repair`
+  under reconciliation. Burble-owned scheduled Tasks should not depend on
+  runtime-native scheduler state after Sprint 5.
+- During migration, job ids and task ids remain stable. Slack commands that
+  reference old ids must resolve to the same Task and current projection.
+- The migration is successful only when:
+  - manual workflow-authoritative runs and legacy manual runs produce equivalent
+    `agent_job_runs` projections;
+  - timer workflow-authoritative runs deduplicate by `taskId + dueSlot`;
+  - delivery idempotency is keyed by `jobRunId + routeId + outputDigest`;
+  - oracle mismatches are zero for the soak window;
+  - rollback to `off` is tested and does not orphan runs.
 
 Exit: a process crash mid-run is recoverable from events; retries are bounded and
 observable; no run is orphaned; scheduled runs carry full usage/audit.
