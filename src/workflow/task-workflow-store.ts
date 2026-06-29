@@ -46,7 +46,7 @@ export type TaskWorkflowCompactEventsResult = {
 
 export type TaskWorkflowEventStore = {
   appendEvent(input: TaskWorkflowAppendEventInput): TaskWorkflowStoredEvent;
-  listEvents(): TaskWorkflowStoredEvent[];
+  listEvents(input?: { signalId?: string }): TaskWorkflowStoredEvent[];
   replayState(input?: { initialState?: TaskWorkflowState }): TaskWorkflowState;
   writeSnapshot(input?: TaskWorkflowWriteSnapshotInput): TaskWorkflowSnapshot;
   getLatestSnapshot(): TaskWorkflowSnapshot | null;
@@ -74,7 +74,12 @@ export function createInMemoryTaskWorkflowEventStore(input?: {
   const snapshots: TaskWorkflowSnapshot[] = [];
   const now = input?.now ?? (() => new Date());
 
-  const listEvents = (): TaskWorkflowStoredEvent[] => [...events];
+  const listEvents = (listInput?: {
+    signalId?: string;
+  }): TaskWorkflowStoredEvent[] =>
+    events.filter(
+      (event) => !listInput?.signalId || event.signalId === listInput.signalId,
+    );
   const replayState = (replayInput?: {
     initialState?: TaskWorkflowState;
   }): TaskWorkflowState => {

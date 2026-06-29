@@ -33,6 +33,38 @@ describe("task workflow event store", () => {
     expect(store.listEvents()).toEqual([first]);
   });
 
+  test("lists events by signal id", () => {
+    const store = createInMemoryTaskWorkflowEventStore();
+    store.appendEvent({
+      eventId: "evt-trigger-1",
+      signalId: "manual:req-1",
+      event: {
+        type: "task_triggered",
+        taskId: "task-heart",
+        jobRunId: "jobrun-1",
+        triggerKey: "task-heart:manual:req-1",
+        source: "manual",
+        at: "2026-06-28T17:00:00.000Z",
+      },
+    });
+    store.appendEvent({
+      eventId: "evt-trigger-2",
+      signalId: "manual:req-2",
+      event: {
+        type: "task_triggered",
+        taskId: "task-heart",
+        jobRunId: "jobrun-2",
+        triggerKey: "task-heart:manual:req-2",
+        source: "manual",
+        at: "2026-06-28T17:01:00.000Z",
+      },
+    });
+
+    expect(
+      store.listEvents({ signalId: "manual:req-1" }).map((event) => event.eventId),
+    ).toEqual(["evt-trigger-1"]);
+  });
+
   test("replays stored events into workflow state", () => {
     const store = createInMemoryTaskWorkflowEventStore();
     store.appendEvent({

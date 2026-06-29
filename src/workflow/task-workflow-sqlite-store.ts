@@ -100,6 +100,17 @@ export function createSqliteTaskWorkflowEventStore(
     FROM task_workflow_events
     ORDER BY sequence ASC
   `);
+  const listStoredEventsBySignalId = db.query<TaskWorkflowEventRow, [string]>(`
+    SELECT
+      sequence,
+      event_id as eventId,
+      event_json as eventJson,
+      recorded_at as recordedAt,
+      signal_id as signalId
+    FROM task_workflow_events
+    WHERE signal_id = ?
+    ORDER BY sequence ASC
+  `);
   const listStoredEventsAfterSequence = db.query<TaskWorkflowEventRow, [number]>(`
     SELECT
       sequence,
@@ -158,8 +169,13 @@ export function createSqliteTaskWorkflowEventStore(
     WHERE sequence <= ?
   `);
 
-  const listEvents = (): TaskWorkflowStoredEvent[] =>
-    listStoredEvents.all().map(rowToStoredEvent);
+  const listEvents = (listInput?: {
+    signalId?: string;
+  }): TaskWorkflowStoredEvent[] =>
+    (listInput?.signalId
+      ? listStoredEventsBySignalId.all(listInput.signalId)
+      : listStoredEvents.all()
+    ).map(rowToStoredEvent);
   const replayState = (replayInput?: {
     initialState?: TaskWorkflowState;
   }): TaskWorkflowState => {
