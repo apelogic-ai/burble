@@ -80,6 +80,31 @@ describe("SQLite task workflow event store", () => {
     db.close();
   });
 
+  test("supports destructured read methods", () => {
+    const db = new Database(":memory:");
+    const store = createSqliteTaskWorkflowEventStore(db);
+    store.appendEvent({
+      eventId: "evt-trigger",
+      event: {
+        type: "task_triggered",
+        taskId: "task-heart",
+        jobRunId: "jobrun-1",
+        triggerKey: "task-heart:manual:req-1",
+        source: "manual",
+        at: "2026-06-28T17:00:00.000Z",
+      },
+    });
+
+    const { replayState, listResumableRuns, listSideEffectFailures } = store;
+
+    expect(replayState().runs["jobrun-1"]).toMatchObject({
+      status: "created",
+    });
+    expect(listResumableRuns()).toHaveLength(1);
+    expect(listSideEffectFailures()).toEqual([]);
+    db.close();
+  });
+
   test("lists side-effect failures after reopening the database", () => {
     const path = join(
       mkdtempSync(join(tmpdir(), "burble-workflow-store-")),

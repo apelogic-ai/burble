@@ -51,6 +51,29 @@ export function createInMemoryTaskWorkflowEventStore(input?: {
   const eventIds = new Map(events.map((event) => [event.eventId, event]));
   const now = input?.now ?? (() => new Date());
 
+  const listEvents = (): TaskWorkflowStoredEvent[] => [...events];
+  const replayState = (replayInput?: {
+    initialState?: TaskWorkflowState;
+  }): TaskWorkflowState =>
+    reduceTaskWorkflowEvents(
+      events.map((event) => event.event),
+      replayInput?.initialState ?? createInitialTaskWorkflowState(),
+    );
+  const listResumableRuns = (listInput?: {
+    state?: TaskWorkflowState;
+  }): TaskWorkflowRunState[] => {
+    const state = listInput?.state ?? replayState();
+    return Object.values(state.runs).filter(isResumableRun);
+  };
+  const listSideEffectFailures = (listInput?: {
+    state?: TaskWorkflowState;
+    taskId?: string;
+    commandType?: TaskWorkflowSideEffectFailure["commandType"];
+  }): TaskWorkflowSideEffectFailureRecord[] => {
+    const state = listInput?.state ?? replayState();
+    return listTaskWorkflowSideEffectFailures(state, listInput);
+  };
+
   return {
     appendEvent(appendInput) {
       const existing = eventIds.get(appendInput.eventId);
@@ -69,23 +92,10 @@ export function createInMemoryTaskWorkflowEventStore(input?: {
       eventIds.set(stored.eventId, stored);
       return stored;
     },
-    listEvents() {
-      return [...events];
-    },
-    replayState(replayInput) {
-      return reduceTaskWorkflowEvents(
-        events.map((event) => event.event),
-        replayInput?.initialState ?? createInitialTaskWorkflowState(),
-      );
-    },
-    listResumableRuns(listInput) {
-      const state = listInput?.state ?? this.replayState();
-      return Object.values(state.runs).filter(isResumableRun);
-    },
-    listSideEffectFailures(listInput) {
-      const state = listInput?.state ?? this.replayState();
-      return listTaskWorkflowSideEffectFailures(state, listInput);
-    },
+    listEvents,
+    replayState,
+    listResumableRuns,
+    listSideEffectFailures,
   };
 }
 

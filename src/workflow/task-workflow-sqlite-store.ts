@@ -4,6 +4,7 @@ import {
   reduceTaskWorkflowEvents,
   type TaskWorkflowEvent,
   type TaskWorkflowRunState,
+  type TaskWorkflowSideEffectFailure,
   type TaskWorkflowState,
 } from "./task-workflow";
 import type {
@@ -78,6 +79,30 @@ export function createSqliteTaskWorkflowEventStore(
     ORDER BY sequence ASC
   `);
 
+  const listEvents = (): TaskWorkflowStoredEvent[] =>
+    listStoredEvents.all().map(rowToStoredEvent);
+  const replayState = (replayInput?: {
+    initialState?: TaskWorkflowState;
+  }): TaskWorkflowState =>
+    reduceTaskWorkflowEvents(
+      listEvents().map((event) => event.event),
+      replayInput?.initialState ?? createInitialTaskWorkflowState(),
+    );
+  const listResumableRuns = (listInput?: {
+    state?: TaskWorkflowState;
+  }): TaskWorkflowRunState[] => {
+    const state = listInput?.state ?? replayState();
+    return Object.values(state.runs).filter(isResumableRun);
+  };
+  const listSideEffectFailures = (listInput?: {
+    state?: TaskWorkflowState;
+    taskId?: string;
+    commandType?: TaskWorkflowSideEffectFailure["commandType"];
+  }) => {
+    const state = listInput?.state ?? replayState();
+    return listTaskWorkflowSideEffectFailures(state, listInput);
+  };
+
   return {
     appendEvent(appendInput) {
       const recordedAt = appendInput.recordedAt ?? now().toISOString();
@@ -95,23 +120,10 @@ export function createSqliteTaskWorkflowEventStore(
       }
       return rowToStoredEvent(row);
     },
-    listEvents() {
-      return listStoredEvents.all().map(rowToStoredEvent);
-    },
-    replayState(replayInput) {
-      return reduceTaskWorkflowEvents(
-        this.listEvents().map((event) => event.event),
-        replayInput?.initialState ?? createInitialTaskWorkflowState(),
-      );
-    },
-    listResumableRuns(listInput) {
-      const state = listInput?.state ?? this.replayState();
-      return Object.values(state.runs).filter(isResumableRun);
-    },
-    listSideEffectFailures(listInput) {
-      const state = listInput?.state ?? this.replayState();
-      return listTaskWorkflowSideEffectFailures(state, listInput);
-    },
+    listEvents,
+    replayState,
+    listResumableRuns,
+    listSideEffectFailures,
   };
 }
 
