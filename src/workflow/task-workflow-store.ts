@@ -42,12 +42,22 @@ export type TaskWorkflowWriteSnapshotInput = {
 export type TaskWorkflowCompactEventsResult = {
   compactedThroughSequence: number;
   deletedEvents: number;
+  deletedSnapshots: number;
+};
+
+export type TaskWorkflowReplayConfig = Pick<
+  TaskWorkflowState,
+  "failurePauseThreshold"
+>;
+
+export type TaskWorkflowReplayStateInput = {
+  initialConfig?: TaskWorkflowReplayConfig;
 };
 
 export type TaskWorkflowEventStore = {
   appendEvent(input: TaskWorkflowAppendEventInput): TaskWorkflowStoredEvent;
   listEvents(input?: { signalId?: string }): TaskWorkflowStoredEvent[];
-  replayState(input?: { initialState?: TaskWorkflowState }): TaskWorkflowState;
+  replayState(input?: TaskWorkflowReplayStateInput): TaskWorkflowState;
   writeSnapshot(input?: TaskWorkflowWriteSnapshotInput): TaskWorkflowSnapshot;
   getLatestSnapshot(): TaskWorkflowSnapshot | null;
   compactEventsThroughSnapshot(input?: {
@@ -82,24 +92,12 @@ export function createInMemoryTaskWorkflowEventStore(input?: {
     events.filter(
       (event) => !listInput?.signalId || event.signalId === listInput.signalId,
     );
-  const replayState = (replayInput?: {
-    initialState?: TaskWorkflowState;
-  }): TaskWorkflowState => {
-    const snapshot = getLatestSnapshot();
-    if (!snapshot) {
-      return reduceTaskWorkflowEvents(
-        events.map((event) => event.event),
-        replayInput?.initialState ?? createInitialTaskWorkflowState(),
-      );
-    }
-
-    return reduceTaskWorkflowEvents(
-      events
-        .filter((event) => event.sequence > snapshot.sequence)
-        .map((event) => event.event),
-      snapshotBaseState(snapshot, replayInput?.initialState),
-    );
-  };
+  const replayState = (replayInput?: TaskWorkflowReplayStateInput) =>
+    replayTaskWorkflowStateFromSnapshot({
+      events,
+      snapshot: getLatestSnapshot(),
+      initialConfig: replayInput?.initialConfig,
+    });
   const getLatestSnapshot = (): TaskWorkflowSnapshot | null =>
     snapshots.at(-1) ?? null;
   const getLatestSnapshotAtOrBefore = (
@@ -120,19 +118,15 @@ export function createInMemoryTaskWorkflowEventStore(input?: {
     const sequence =
       snapshotInput?.sequence ??
       Math.max(events.at(-1)?.sequence ?? 0, latestSnapshot?.sequence ?? 0);
+    assertSnapshotSequenceIsKnown(sequence, events, latestSnapshot);
     const baseSnapshot = getLatestSnapshotAtOrBefore(sequence);
-    const state =
-      snapshotInput?.state ??
-      reduceTaskWorkflowEvents(
-        events
-          .filter(
-            (event) =>
-              event.sequence <= sequence &&
-              (!baseSnapshot || event.sequence > baseSnapshot.sequence),
-          )
-          .map((event) => event.event),
-        baseSnapshot?.state ?? createInitialTaskWorkflowState(),
-      );
+    const state = snapshotInput?.state
+      ? snapshotInput.state
+      : buildTaskWorkflowSnapshotState({
+          events,
+          sequence,
+          baseSnapshot,
+        });
     const snapshot: TaskWorkflowSnapshot = {
       sequence,
       state,
@@ -147,7 +141,6 @@ export function createInMemoryTaskWorkflowEventStore(input?: {
       snapshots.push(snapshot);
       snapshots.sort((left, right) => left.sequence - right.sequence);
     }
-    nextEventSequence = Math.max(nextEventSequence, sequence + 1);
     return snapshot;
   };
   const compactEventsThroughSnapshot = (compactInput?: {
@@ -163,9 +156,12 @@ export function createInMemoryTaskWorkflowEventStore(input?: {
         events.splice(index, 1);
       }
     }
+    const snapshotCountBefore = snapshots.length;
+    pruneSupersededSnapshots(snapshots, sequence);
     return {
       compactedThroughSequence: sequence,
       deletedEvents: before - events.length,
+      deletedSnapshots: snapshotCountBefore - snapshots.length,
     };
   };
   const listResumableRuns = (listInput?: {
@@ -242,20 +238,41 @@ export function selectTaskWorkflowResumableRuns(
   return Object.values(state.runs).filter(isResumableRun);
 }
 
-function snapshotBaseState(
-  snapshot: TaskWorkflowSnapshot,
-  initialState: TaskWorkflowState | undefined,
-): TaskWorkflowState {
-  if (!initialState) {
-    return snapshot.state;
-  }
-  return {
-    ...snapshot.state,
-    failurePauseThreshold: initialState.failurePauseThreshold,
-  };
+export function replayTaskWorkflowStateFromSnapshot(input: {
+  events: TaskWorkflowStoredEvent[];
+  snapshot: TaskWorkflowSnapshot | null;
+  initialConfig?: TaskWorkflowReplayConfig;
+}): TaskWorkflowState {
+  const baseState = input.snapshot
+    ? snapshotBaseState(input.snapshot, input.initialConfig)
+    : createInitialTaskWorkflowState(input.initialConfig);
+  const events = input.snapshot
+    ? input.events.filter((event) => event.sequence > input.snapshot!.sequence)
+    : input.events;
+  return reduceTaskWorkflowEvents(
+    events.map((event) => event.event),
+    baseState,
+  );
 }
 
-function compactableSnapshotSequence(
+export function buildTaskWorkflowSnapshotState(input: {
+  events: TaskWorkflowStoredEvent[];
+  sequence: number;
+  baseSnapshot: TaskWorkflowSnapshot | null;
+}): TaskWorkflowState {
+  return reduceTaskWorkflowEvents(
+    input.events
+      .filter(
+        (event) =>
+          event.sequence <= input.sequence &&
+          (!input.baseSnapshot || event.sequence > input.baseSnapshot.sequence),
+      )
+      .map((event) => event.event),
+    input.baseSnapshot?.state ?? createInitialTaskWorkflowState(),
+  );
+}
+
+export function compactableSnapshotSequence(
   snapshots: TaskWorkflowSnapshot[],
   requestedSequence: number | undefined,
 ): number {
@@ -264,6 +281,48 @@ function compactableSnapshotSequence(
     return latestSequence;
   }
   return Math.min(requestedSequence, latestSequence);
+}
+
+export function pruneSupersededSnapshots(
+  snapshots: TaskWorkflowSnapshot[],
+  compactedThroughSequence: number,
+): void {
+  const keepIndex = snapshots.findLastIndex(
+    (snapshot) => snapshot.sequence <= compactedThroughSequence,
+  );
+  if (keepIndex <= 0) {
+    return;
+  }
+  snapshots.splice(0, keepIndex);
+}
+
+function snapshotBaseState(
+  snapshot: TaskWorkflowSnapshot,
+  initialConfig: TaskWorkflowReplayConfig | undefined,
+): TaskWorkflowState {
+  if (!initialConfig) {
+    return snapshot.state;
+  }
+  return {
+    ...snapshot.state,
+    failurePauseThreshold: initialConfig.failurePauseThreshold,
+  };
+}
+
+function assertSnapshotSequenceIsKnown(
+  sequence: number,
+  events: TaskWorkflowStoredEvent[],
+  latestSnapshot: TaskWorkflowSnapshot | null,
+): void {
+  const latestKnownSequence = Math.max(
+    events.at(-1)?.sequence ?? 0,
+    latestSnapshot?.sequence ?? 0,
+  );
+  if (sequence > latestKnownSequence) {
+    throw new Error(
+      `Cannot write task workflow snapshot at future sequence ${sequence}; latest known sequence is ${latestKnownSequence}`,
+    );
+  }
 }
 
 function isResumableRun(run: TaskWorkflowRunState): boolean {

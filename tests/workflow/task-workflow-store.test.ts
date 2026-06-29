@@ -190,6 +190,36 @@ describe("task workflow event store", () => {
     ]);
   });
 
+  test("prunes superseded snapshots during compaction", () => {
+    const store = createInMemoryTaskWorkflowEventStore();
+    for (const runId of ["jobrun-1", "jobrun-2", "jobrun-3"]) {
+      store.appendEvent({
+        eventId: `evt-trigger-${runId}`,
+        event: {
+          type: "task_triggered",
+          taskId: "task-heart",
+          jobRunId: runId,
+          triggerKey: `task-heart:manual:${runId}`,
+          source: "manual",
+          at: "2026-06-28T17:00:00.000Z",
+        },
+      });
+      store.writeSnapshot();
+    }
+
+    expect(store.compactEventsThroughSnapshot()).toEqual({
+      compactedThroughSequence: 3,
+      deletedEvents: 3,
+      deletedSnapshots: 2,
+    });
+    expect(store.getLatestSnapshot()?.sequence).toBe(3);
+    expect(Object.keys(store.replayState().runs).sort()).toEqual([
+      "jobrun-1",
+      "jobrun-2",
+      "jobrun-3",
+    ]);
+  });
+
   test("does not compact past a real snapshot sequence", () => {
     const store = createInMemoryTaskWorkflowEventStore();
     store.appendEvent({
@@ -221,10 +251,30 @@ describe("task workflow event store", () => {
     ).toEqual({
       compactedThroughSequence: 1,
       deletedEvents: 1,
+      deletedSnapshots: 0,
     });
     expect(store.listEvents().map((event) => event.eventId)).toEqual([
       "evt-trigger-2",
     ]);
+  });
+
+  test("rejects snapshots past the latest known event sequence", () => {
+    const store = createInMemoryTaskWorkflowEventStore();
+    store.appendEvent({
+      eventId: "evt-trigger-1",
+      event: {
+        type: "task_triggered",
+        taskId: "task-heart",
+        jobRunId: "jobrun-1",
+        triggerKey: "task-heart:manual:req-1",
+        source: "manual",
+        at: "2026-06-28T17:00:00.000Z",
+      },
+    });
+
+    expect(() => store.writeSnapshot({ sequence: 100 })).toThrow(
+      "future sequence 100",
+    );
   });
 
   test("supports destructured read methods", () => {
