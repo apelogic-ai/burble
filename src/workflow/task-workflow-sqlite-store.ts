@@ -22,22 +22,13 @@ type TaskWorkflowEventRow = {
   signalId: string | null;
 };
 
+export const TASK_WORKFLOW_SQLITE_SCHEMA_VERSION = 1;
+
 export function createSqliteTaskWorkflowEventStore(
   db: Database,
   input?: { now?: () => Date },
 ): TaskWorkflowEventStore {
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS task_workflow_events (
-      sequence INTEGER PRIMARY KEY AUTOINCREMENT,
-      event_id TEXT NOT NULL UNIQUE,
-      signal_id TEXT,
-      event_json TEXT NOT NULL,
-      recorded_at TEXT NOT NULL
-    );
-
-    CREATE INDEX IF NOT EXISTS idx_task_workflow_events_signal
-      ON task_workflow_events (signal_id, sequence);
-  `);
+  migrateTaskWorkflowSchema(db);
 
   const now = input?.now ?? (() => new Date());
   const insertEvent = db.query<
@@ -125,6 +116,39 @@ export function createSqliteTaskWorkflowEventStore(
     listResumableRuns,
     listSideEffectFailures,
   };
+}
+
+function migrateTaskWorkflowSchema(db: Database): void {
+  const version = readSchemaVersion(db);
+  if (version > TASK_WORKFLOW_SQLITE_SCHEMA_VERSION) {
+    throw new Error(
+      `Task workflow SQLite schema version ${version} is newer than supported version ${TASK_WORKFLOW_SQLITE_SCHEMA_VERSION}`,
+    );
+  }
+
+  if (version < 1) {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS task_workflow_events (
+        sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+        event_id TEXT NOT NULL UNIQUE,
+        signal_id TEXT,
+        event_json TEXT NOT NULL,
+        recorded_at TEXT NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_task_workflow_events_signal
+        ON task_workflow_events (signal_id, sequence);
+
+      PRAGMA user_version = 1;
+    `);
+  }
+}
+
+function readSchemaVersion(db: Database): number {
+  const row = db
+    .query<{ user_version: number }, []>("PRAGMA user_version")
+    .get();
+  return row?.user_version ?? 0;
 }
 
 function rowToStoredEvent(row: TaskWorkflowEventRow): TaskWorkflowStoredEvent {

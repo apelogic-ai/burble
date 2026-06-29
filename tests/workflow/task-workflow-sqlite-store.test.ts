@@ -3,9 +3,24 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Database } from "bun:sqlite";
-import { createSqliteTaskWorkflowEventStore } from "../../src/workflow/task-workflow-sqlite-store";
+import {
+  TASK_WORKFLOW_SQLITE_SCHEMA_VERSION,
+  createSqliteTaskWorkflowEventStore,
+} from "../../src/workflow/task-workflow-sqlite-store";
 
 describe("SQLite task workflow event store", () => {
+  test("sets an explicit schema version", () => {
+    const db = new Database(":memory:");
+    createSqliteTaskWorkflowEventStore(db);
+
+    const row = db
+      .query<{ user_version: number }, []>("PRAGMA user_version")
+      .get();
+
+    expect(row?.user_version).toBe(TASK_WORKFLOW_SQLITE_SCHEMA_VERSION);
+    db.close();
+  });
+
   test("appends events idempotently by event id", () => {
     const db = new Database(":memory:");
     const store = createSqliteTaskWorkflowEventStore(db, {
