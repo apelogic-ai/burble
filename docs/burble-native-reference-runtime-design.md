@@ -1303,6 +1303,82 @@ surface; multi-step provider workflows are inspectable before enabling; manual
 and timer-triggered Jobs run the same workflow spec; LLM involvement is explicit
 and bounded; the runner can later move to Restate without changing Task specs.
 
+### P-burble-app-home — Task and Job operations in Slack App Home
+
+Goal: make Tasks and Jobs first-class Burble product objects, not artifacts that
+can only be managed through chat phrasing. Slack App Home should become the
+primary operational surface for inspecting, running, pausing, repairing, and
+debugging Burble-owned work.
+
+Rationale:
+
+- Natural-language management remains useful for quick actions, but it is a poor
+  sole interface for durable objects. It creates ambiguity ("this job", "emoji
+  job", "hourly summary") and hides state until the user asks exactly the right
+  thing.
+- We already have distinct Task and Job concepts. A durable product concept needs
+  a durable UI: list, detail, actions, history, health, and audit.
+- The workflow shadow/oracle and later workflow authority need a place to surface
+  mismatches, validation failures, repeated failures, and `needs_repair` state
+  without dumping noisy diagnostics into a channel.
+
+Home layout:
+
+- **Tasks tab/section**:
+  - title, state (`scheduled`, `paused`, `needs_repair`), schedule, timezone,
+    next due slot, delivery route, runtime/profile, workflow mode, outputSpec
+    summary, and granted tools;
+  - actions: run now, pause, resume, edit schedule, edit delivery, show details,
+    validate, repair, delete;
+  - warnings: invalid grant, unsupported schedule, missing delivery route,
+    shadow/oracle mismatch, repeated failures.
+- **Jobs/runs tab/section**:
+  - recent runs across Tasks, with status, trigger (`manual`/`schedule`), runtime,
+    duration, delivery result, failure class, and run id;
+  - actions: view run detail, retry when safe, copy diagnostic summary, open
+    delivered thread/message where available.
+- **Task detail modal**:
+  - full prompt/spec, schedule cron, delivery policy, output contract, grant list,
+    workflow execution mode, state refs, and latest validation result;
+  - last N runs with terminal reason and links to delivery/audit.
+- **Run detail modal**:
+  - authoritative run row, workflow projection, oracle comparison, tool/model
+    usage, output digest, delivery key, and failure/repair recommendation.
+
+Observability rules:
+
+- App Home should show product-level health, not raw runtime chatter. It may show
+  tool names, grants, failure classes, and validation errors; it should not show
+  provider credentials, raw tokens, hidden prompt scaffolding, or full private
+  tool payloads unless the user is authorized and explicitly opens a diagnostic
+  view.
+- Shadow oracle mismatches should appear as Task/Run health warnings in App Home
+  and structured logs. They should not be posted into the Task's delivery channel
+  unless the Task itself failed in a user-relevant way.
+- App Home uses the same control plane as slash commands and NL intents. It must
+  not create a parallel scheduler state path.
+
+Implementation slices:
+
+- **P-home-a. Read-only Task/Job dashboard.** List Tasks and recent Jobs from the
+  existing control plane. Include state, schedule, delivery, runtime/profile, last
+  run status, and next due slot.
+- **P-home-b. Task and Job detail modals.** Add inspectable Task spec, grant
+  validation, outputSpec, run history, and delivery route details.
+- **P-home-c. Safe actions.** Add run now, pause, resume, validate, and delete
+  using the same scheduler control-plane mutations as slash/NL commands. Actions
+  must be idempotent and must show the resulting Task/Job state.
+- **P-home-d. Workflow observability.** Once the shadow oracle exists, surface
+  workflow projection vs `agent_job_runs` comparison, mismatch state, and
+  `needs_repair` in the detail modal.
+- **P-home-e. Repair workflow.** For invalid grants/schedules/delivery routes,
+  App Home offers explicit repair actions or opens a guided modal; the agent may
+  draft a repair, but the control plane applies it.
+
+Exit: a user can understand what Tasks exist, what Jobs ran, why a Task failed,
+where output was delivered, and what action is safe next without asking the agent
+to reconstruct scheduler state from chat.
+
 ### P-burble-output — Task output contracts
 
 Goal: make scheduled/manual Task output stable at the product level. This is not
