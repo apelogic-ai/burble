@@ -386,7 +386,7 @@ export function readConfig(env: Env): Config {
   );
   if (taskWorkflowAuthority !== "off" && !taskWorkflowShadowDatabasePath) {
     throw new Error(
-      "TASK_WORKFLOW_AUTHORITY requires TASK_WORKFLOW_SHADOW_ENABLED=true with a persistent workflow database"
+      "TASK_WORKFLOW_AUTHORITY requires TASK_WORKFLOW_SHADOW_ENABLED=true with a persistent workflow database; DATABASE_PATH=:memory: cannot be used for workflow authority"
     );
   }
 

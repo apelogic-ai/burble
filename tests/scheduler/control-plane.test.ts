@@ -596,7 +596,7 @@ describe("scheduler control plane", () => {
     store.close();
   });
 
-  test("records manual workflow-authority validation failures as failed runs", async () => {
+  test("manual workflow authority queues invalid tasks for driver validation", async () => {
     const store = createTokenStore(":memory:");
     const workflowStore = createInMemoryTaskWorkflowEventStore();
     store.upsertScheduledJob({
@@ -628,7 +628,7 @@ describe("scheduler control plane", () => {
       workflowAuthority: "manual",
       workflowShadowStore: workflowStore,
       now: () => new Date("2026-06-24T12:05:00.000Z"),
-      newRunId: () => "jobrun-validation-failed",
+      newRunId: () => "jobrun-driver-validation",
     });
 
     expect(
@@ -638,38 +638,20 @@ describe("scheduler control plane", () => {
         jobId: "github-pr-monitor",
       }),
     ).toMatchObject({
-      ok: false,
-      reason: "validation_failed",
+      ok: true,
+      jobId: "github-pr-monitor",
+      run: {
+        runId: "jobrun-driver-validation",
+        status: "queued",
+      },
     });
     expect(store.listAgentJobRunsForJob("github-pr-monitor")).toEqual([
       expect.objectContaining({
-        runId: "jobrun-validation-failed",
-        status: "failed",
-        failureReason: expect.stringContaining(
-          "missing_required_tool: Task requires github_search_issues",
-        ),
+        runId: "jobrun-driver-validation",
+        status: "queued",
       }),
     ]);
-    expect(
-      workflowStore.replayState().runs["jobrun-validation-failed"],
-    ).toMatchObject({
-      status: "failed",
-      failureClass: "validation_failed",
-    });
-    expect(
-      await scheduler.triggerJob?.({
-        workspaceId: "T123",
-        slackUserId: "U123",
-        jobId: "github-pr-monitor",
-      }),
-    ).toMatchObject({
-      ok: false,
-      reason: "recent_validation_failure",
-      run: {
-        runId: "jobrun-validation-failed",
-        status: "failed",
-      },
-    });
+    expect(workflowStore.listEvents()).toEqual([]);
     expect(store.listAgentJobRunsForJob("github-pr-monitor")).toHaveLength(1);
 
     store.close();
