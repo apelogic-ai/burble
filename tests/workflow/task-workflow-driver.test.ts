@@ -242,6 +242,49 @@ describe("task workflow driver", () => {
     });
   });
 
+  test("fails when an attempt handler returns a mismatched attempt", async () => {
+    const result = await runTaskWorkflowDriver({
+      initialEvent: {
+        type: "task_triggered",
+        taskId: "task-heart",
+        jobRunId: "jobrun-1",
+        triggerKey: "task-heart:manual:req-1",
+        source: "manual",
+        at: "2026-06-28T17:00:00.000Z",
+      },
+      handlers: {
+        validateTask: async (command) => ({
+          type: "validation_passed",
+          taskId: command.taskId,
+          jobRunId: command.jobRunId,
+          at: "2026-06-28T17:00:01.000Z",
+        }),
+        startAttempt: async (command) => ({
+          type: "attempt_succeeded",
+          taskId: command.taskId,
+          jobRunId: command.jobRunId,
+          attempt: command.attempt + 1,
+          outputDigest: "sha256:heart",
+          at: "2026-06-28T17:00:03.000Z",
+        }),
+        deliverOutput: async () => null,
+      },
+    });
+
+    expect(result.events.map((event) => event.type)).toEqual([
+      "task_triggered",
+      "validation_passed",
+      "attempt_started",
+      "handler_failed",
+    ]);
+    expect(result.state.runs["jobrun-1"]).toMatchObject({
+      status: "failed",
+      failureClass: "handler_failed",
+      failureReason:
+        "Workflow start_attempt handler returned attempt_succeeded for attempt 2, expected attempt 1.",
+    });
+  });
+
   test("records notify handler throws as side-effect failures", async () => {
     const result = await runTaskWorkflowDriver({
       initialEvent: {

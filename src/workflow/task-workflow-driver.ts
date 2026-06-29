@@ -108,7 +108,7 @@ export async function runTaskWorkflowDriver(input: {
     }
 
     const result = await executeCommand(command, input.handlers, ctx);
-    for (const event of normalizeCommandResult(result)) {
+    for (const event of normalizeCommandResultForCommand(command, result)) {
       applyEvent(event);
     }
   }
@@ -134,6 +134,35 @@ function normalizeCommandResult(
     return [];
   }
   return Array.isArray(result) ? result : [result];
+}
+
+function normalizeCommandResultForCommand(
+  command: TaskWorkflowCommand,
+  result: TaskWorkflowDriverCommandResult,
+): TaskWorkflowEvent[] {
+  const events = normalizeCommandResult(result);
+  if (command.type !== "start_attempt") {
+    return events;
+  }
+
+  for (const event of events) {
+    if (
+      (event.type === "attempt_succeeded" ||
+        event.type === "attempt_failed") &&
+      event.attempt !== command.attempt
+    ) {
+      return [
+        commandHandlerFailedEvent(
+          command,
+          new Error(
+            `Workflow start_attempt handler returned ${event.type} for attempt ${event.attempt}, expected attempt ${command.attempt}.`,
+          ),
+        ),
+      ];
+    }
+  }
+
+  return events;
 }
 
 async function executeCommand(
