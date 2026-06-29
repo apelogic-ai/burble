@@ -470,6 +470,7 @@ export function createSlackRuntime(
           agentRunner,
           slackClient: app.client,
           workflowShadowStore,
+          workflowAuthority: config.taskWorkflowAuthority,
           logInfo: (message) => app.logger.info(withUtcTimestamp(message)),
           logWarn: (message) => app.logger.warn(withUtcTimestamp(message))
         })

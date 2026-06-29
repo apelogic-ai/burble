@@ -517,7 +517,8 @@ export function createSchedulerControlPlane(
               store: options.workflowShadowStore,
               run: failedRun,
               failureClass: TASK_WORKFLOW_VALIDATION_FAILURE_CLASS,
-              reason: failedRun.failureReason ?? "Scheduled task validation failed.",
+              reason:
+                failedRun.failureReason ?? "Scheduled task validation failed.",
               at: timestamp,
               logWarn: options.logWarn,
             });
@@ -555,11 +556,13 @@ export function createSchedulerControlPlane(
         status: "queued",
         now: timestamp,
       });
-      recordTaskWorkflowRunTriggered({
-        store: options.workflowShadowStore,
-        run,
-        at: timestamp,
-      });
+      if (workflowAuthority !== "manual") {
+        recordTaskWorkflowRunTriggered({
+          store: options.workflowShadowStore,
+          run,
+          at: timestamp,
+        });
+      }
       return {
         ok: true,
         jobId: job.job.jobId,

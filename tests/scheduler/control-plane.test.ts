@@ -675,6 +675,60 @@ describe("scheduler control plane", () => {
     store.close();
   });
 
+  test("manual workflow authority leaves valid trigger events to the executor", async () => {
+    const store = createTokenStore(":memory:");
+    const workflowStore = createInMemoryTaskWorkflowEventStore();
+    store.upsertScheduledJob({
+      jobId: "github-pr-monitor",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      title: "Open PR monitor",
+      prompt:
+        "check for new open PRs in https://github.com/apelogic-ai github org",
+      schedule: {
+        kind: "interval",
+        every: { minutes: 15 },
+      },
+      routeId: "convrt_123",
+      runtimeType: "hermes",
+      now: new Date("2026-06-24T12:00:00.000Z"),
+    });
+    store.upsertAgentJobCapability({
+      jobId: "github-pr-monitor",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      requiredTools: ["github_search_issues"],
+      routeId: "convrt_123",
+      runtimeType: "hermes",
+      now: new Date("2026-06-24T12:01:00.000Z"),
+    });
+
+    const scheduler = createSchedulerControlPlane(store, {
+      workflowAuthority: "manual",
+      workflowShadowStore: workflowStore,
+      now: () => new Date("2026-06-24T12:05:00.000Z"),
+      newRunId: () => "jobrun-workflow-manual",
+    });
+
+    expect(
+      await scheduler.triggerJob?.({
+        workspaceId: "T123",
+        slackUserId: "U123",
+        jobId: "github-pr-monitor",
+      }),
+    ).toMatchObject({
+      ok: true,
+      jobId: "github-pr-monitor",
+      run: {
+        runId: "jobrun-workflow-manual",
+        status: "queued",
+      },
+    });
+    expect(workflowStore.listEvents()).toEqual([]);
+
+    store.close();
+  });
+
   test("passes validation for scheduled task grants that match inferred tools", async () => {
     const store = createTokenStore(":memory:");
     store.upsertScheduledJob({

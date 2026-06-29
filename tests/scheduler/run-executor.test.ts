@@ -130,6 +130,113 @@ describe("scheduler run executor", () => {
     store.close();
   });
 
+  test("uses workflow driver as authority for manual runs when enabled", async () => {
+    const store = createTokenStore(":memory:");
+    const workflowStore = createInMemoryTaskWorkflowEventStore();
+    const route = store.upsertConversationRoute({
+      workspaceId: "T123",
+      slackUserId: "U123",
+      transport: "slack",
+      destination: {
+        channelId: "D123",
+        isDirectMessage: true,
+        rootId: "dm:D123",
+      },
+      now: new Date("2026-06-25T17:00:00.000Z"),
+    });
+    const job = store.upsertScheduledJob({
+      jobId: "job-heart",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      title: "Heart",
+      prompt: "Post exactly this message: :heart:",
+      schedule: { kind: "interval", every: { minutes: 30 } },
+      routeId: route.id,
+      runtimeType: "openclaw",
+      state: "scheduled",
+      now: new Date("2026-06-25T17:01:00.000Z"),
+    });
+    store.upsertAgentJobCapability({
+      jobId: job.jobId,
+      workspaceId: "T123",
+      slackUserId: "U123",
+      requiredTools: [],
+      routeId: route.id,
+      runtimeType: "openclaw",
+      now: new Date("2026-06-25T17:01:30.000Z"),
+    });
+    const run = store.createAgentJobRun({
+      runId: "jobrun-heart",
+      jobId: job.jobId,
+      workspaceId: "T123",
+      slackUserId: "U123",
+      triggerSource: "manual",
+      status: "queued",
+      now: new Date("2026-06-25T17:02:00.000Z"),
+    });
+    const runner: AgentRunner = {
+      name: "test-runner",
+      capabilities: {
+        streaming: true,
+        toolEvents: true,
+        remote: true,
+      },
+      async *run() {
+        yield {
+          type: "final",
+          response: {
+            classification: "public",
+            text: ":heart:",
+          },
+        };
+      },
+    };
+    const posts: Array<{ channel: string; text: string; thread_ts?: string }> =
+      [];
+    const executor = createSchedulerRunExecutor({
+      store,
+      agentRunner: runner,
+      slackClient: {
+        chat: {
+          postMessage: async (message) => {
+            posts.push(message);
+            return {};
+          },
+        },
+      },
+      workflowShadowStore: workflowStore,
+      workflowAuthority: "manual",
+    });
+
+    await executor.executeRun(run.runId);
+
+    expect(posts).toEqual([{ channel: "D123", text: ":heart:" }]);
+    expect(store.getAgentJobRun(run.runId)).toMatchObject({
+      runId: run.runId,
+      status: "succeeded",
+    });
+    expect(workflowStore.replayState().runs[run.runId]).toMatchObject({
+      jobRunId: run.runId,
+      taskId: job.jobId,
+      source: "manual",
+      status: "succeeded",
+      attempt: 1,
+    });
+    expect(workflowStore.listEvents().map((event) => event.event.type)).toEqual(
+      [
+        "task_triggered",
+        "validation_passed",
+        "attempt_started",
+        "run_heartbeat",
+        "attempt_succeeded",
+        "delivery_started",
+        "delivery_succeeded",
+      ],
+    );
+
+    store.close();
+  });
+
   test("mirrors terminal shadow state when finish returns null after an authoritative update", async () => {
     const store = createTokenStore(":memory:");
     const workflowStore = createInMemoryTaskWorkflowEventStore();

@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type { AgentInput, AgentRunEvent, AgentRunner } from "../agent/types";
 import { collectAgentRun } from "../agent/types";
 import { selectRuntimeToolGroups } from "../agent/tool-groups";
@@ -25,9 +26,20 @@ import {
   recordTaskWorkflowRunFailed,
   recordTaskWorkflowRunStarted,
   recordTaskWorkflowRunSucceeded,
-  type TaskWorkflowShadowStore,
 } from "../workflow/task-workflow-shadow";
-import { TASK_WORKFLOW_RUNTIME_FAILURE_CLASS } from "../workflow/task-workflow";
+import {
+  TASK_WORKFLOW_AGENT_ATTEMPT_MODE,
+  TASK_WORKFLOW_RUNTIME_FAILURE_CLASS,
+  TASK_WORKFLOW_VALIDATION_FAILURE_CLASS,
+  type TaskWorkflowEvent,
+} from "../workflow/task-workflow";
+import {
+  runTaskWorkflowDriver,
+  type TaskWorkflowDriverHandlers,
+} from "../workflow/task-workflow-driver";
+import type { TaskWorkflowEventStore } from "../workflow/task-workflow-store";
+import { validateScheduledTask } from "./task-validation";
+import { formatScheduledTaskValidationFailureReason } from "./task-validation-format";
 
 type SlackPostClient = {
   chat: {
@@ -56,7 +68,8 @@ export function createSchedulerRunExecutor(input: {
   >;
   agentRunner: AgentRunner;
   slackClient: SlackPostClient;
-  workflowShadowStore?: TaskWorkflowShadowStore;
+  workflowShadowStore?: TaskWorkflowEventStore;
+  workflowAuthority?: "off" | "manual";
   logInfo?: (message: string) => void;
   logWarn?: (message: string) => void;
 }): SchedulerRunExecutor {
@@ -64,6 +77,30 @@ export function createSchedulerRunExecutor(input: {
     async executeRun(runId) {
       const run = input.store.claimAgentJobRun(runId);
       if (!run) {
+        return;
+      }
+      if (
+        input.workflowAuthority === "manual" &&
+        run.triggerSource === "manual" &&
+        input.workflowShadowStore
+      ) {
+        const workflowShadowStore = input.workflowShadowStore;
+        try {
+          await executeWorkflowAuthoritativeManualRun(
+            { ...input, workflowShadowStore },
+            run,
+          );
+        } catch (error) {
+          const message = scheduledRunErrorMessage(error);
+          input.store.finishAgentJobRun({
+            runId: run.runId,
+            status: "failed",
+            failureReason: message.slice(0, 500),
+          });
+          input.logWarn?.(
+            `Scheduled job workflow run failed runId=${run.runId} error=${message}`,
+          );
+        }
         return;
       }
       let job: ScheduledJobRecord | null = null;
@@ -222,6 +259,285 @@ export function createSchedulerRunExecutor(input: {
   };
 }
 
+async function executeWorkflowAuthoritativeManualRun(
+  input: {
+    store: Pick<
+      TokenStore,
+      | "claimAgentJobRun"
+      | "finishAgentJobRun"
+      | "getAgentJobRun"
+      | "getAgentJobCapability"
+      | "getScheduledJob"
+      | "getConversationRoute"
+      | "getConnectionForSlackUser"
+    >;
+    agentRunner: AgentRunner;
+    slackClient: SlackPostClient;
+    workflowShadowStore: TaskWorkflowEventStore;
+    logInfo?: (message: string) => void;
+    logWarn?: (message: string) => void;
+  },
+  run: AgentJobRunRecord,
+): Promise<void> {
+  const job = input.store.getScheduledJob(run.jobId);
+  if (!job) {
+    const failedRun =
+      input.store.finishAgentJobRun({
+        runId: run.runId,
+        status: "failed",
+        failureReason: "Scheduled job not found",
+      }) ?? input.store.getAgentJobRun(run.runId);
+    if (failedRun?.status === "failed") {
+      appendWorkflowEvent(input.workflowShadowStore, {
+        type: "task_triggered",
+        taskId: run.jobId,
+        jobRunId: run.runId,
+        triggerKey: workflowTriggerKey(run),
+        source: run.triggerSource,
+        at: run.createdAt,
+      });
+      appendWorkflowEvent(input.workflowShadowStore, {
+        type: "validation_failed",
+        taskId: run.jobId,
+        jobRunId: run.runId,
+        failureClass: TASK_WORKFLOW_VALIDATION_FAILURE_CLASS,
+        reason: failedRun.failureReason ?? "Scheduled job not found",
+        at: failedRun.finishedAt ?? new Date().toISOString(),
+      });
+    }
+    return;
+  }
+
+  const route = job.routeId
+    ? input.store.getConversationRoute(job.routeId)
+    : null;
+  const destination = route ? readSlackRouteDestination(route) : null;
+  const runtimePrompt = scheduledTaskRuntimePrompt(job.prompt);
+  const toolGroups = selectRuntimeToolGroups({
+    text: runtimePrompt,
+    attachmentCount: 0,
+    contextTexts: [],
+  });
+  const scheduledJobContext = scheduledJobContextForRun(
+    input.store,
+    job,
+    toolGroups.groups,
+  );
+  const outputByDigest = new Map<string, string>();
+
+  input.logInfo?.(
+    `Scheduled job workflow run start runId=${run.runId} jobId=${job.jobId}`,
+  );
+
+  const handlers: TaskWorkflowDriverHandlers = {
+    validateTask: async (command) => {
+      const capability = input.store.getAgentJobCapability(command.taskId);
+      const validation = validateScheduledTask(job, capability);
+      if (!validation.ok) {
+        const failureReason =
+          formatScheduledTaskValidationFailureReason(validation);
+        const failedRun =
+          input.store.finishAgentJobRun({
+            runId: command.jobRunId,
+            status: "failed",
+            failureReason,
+          }) ?? input.store.getAgentJobRun(command.jobRunId);
+        return {
+          type: "validation_failed",
+          taskId: command.taskId,
+          jobRunId: command.jobRunId,
+          failureClass: TASK_WORKFLOW_VALIDATION_FAILURE_CLASS,
+          reason:
+            failedRun?.failureReason ?? "Scheduled task validation failed.",
+          at: failedRun?.finishedAt ?? new Date().toISOString(),
+        };
+      }
+      return {
+        type: "validation_passed",
+        taskId: command.taskId,
+        jobRunId: command.jobRunId,
+        at: new Date().toISOString(),
+      };
+    },
+    startAttempt: async (command, ctx) => {
+      try {
+        await ctx.heartbeat({
+          taskId: command.taskId,
+          jobRunId: command.jobRunId,
+        });
+        if (job.routeId && !destination) {
+          throw new Error("Scheduled job delivery route is unavailable");
+        }
+        const agentInput: AgentInput = {
+          principal: {
+            workspaceId: run.workspaceId,
+            slackUserId: run.slackUserId,
+          },
+          executionMode: "native-runtime",
+          ...(destination
+            ? {
+                conversation: {
+                  routeId: route?.id,
+                  source: "slack" as const,
+                  workspaceId: run.workspaceId,
+                  channelId: destination.channelId,
+                  rootId: scheduledRunConversationRoot(job, run),
+                  isDirectMessage: destination.isDirectMessage,
+                },
+              }
+            : {}),
+          text: runtimePrompt,
+          toolGroups,
+          ...(scheduledJobContext ? { scheduledJob: scheduledJobContext } : {}),
+          connections: {
+            github: connectionForSlackUser(input.store, "github", run),
+            google: connectionForSlackUser(input.store, "google", run),
+            hubspot: connectionForSlackUser(input.store, "hubspot", run),
+            jira: connectionForSlackUser(input.store, "jira", run),
+            slack: connectionForSlackUser(input.store, "slack", run),
+          },
+        };
+        const result = await collectScheduledAgentRunWithProgressRetry({
+          runner: input.agentRunner,
+          agentInput,
+          job,
+          scheduledJobContext,
+          logWarn: input.logWarn,
+        });
+        const output = validateScheduledJobOutput(result);
+        if (!output.ok) {
+          throw new Error(output.reason);
+        }
+        const outputDigest = outputTextDigest(output.text);
+        outputByDigest.set(outputDigest, output.text);
+        return {
+          type: "attempt_succeeded",
+          taskId: command.taskId,
+          jobRunId: command.jobRunId,
+          attempt: command.attempt,
+          outputDigest,
+          at: new Date().toISOString(),
+        };
+      } catch (error) {
+        const message = scheduledRunErrorMessage(error);
+        const failedRun =
+          input.store.finishAgentJobRun({
+            runId: command.jobRunId,
+            status: "failed",
+            failureReason: message.slice(0, 500),
+          }) ?? input.store.getAgentJobRun(command.jobRunId);
+        return {
+          type: "attempt_failed",
+          taskId: command.taskId,
+          jobRunId: command.jobRunId,
+          attempt: command.attempt,
+          failureClass: TASK_WORKFLOW_RUNTIME_FAILURE_CLASS,
+          reason: failedRun?.failureReason ?? message.slice(0, 500),
+          at: failedRun?.finishedAt ?? new Date().toISOString(),
+        };
+      }
+    },
+    deliverOutput: async (command) => {
+      const text = outputByDigest.get(command.outputDigest);
+      const deliveryKey = `${command.jobRunId}:${job.routeId ?? "no-route"}:${command.outputDigest}`;
+      const started: TaskWorkflowEvent = {
+        type: "delivery_started",
+        taskId: command.taskId,
+        jobRunId: command.jobRunId,
+        deliveryKey,
+        at: new Date().toISOString(),
+      };
+      try {
+        if (!text) {
+          throw new Error("Scheduled job output artifact is unavailable");
+        }
+        if (destination) {
+          await input.slackClient.chat.postMessage({
+            channel: destination.channelId,
+            text,
+            ...(destination.threadTs && !destination.isDirectMessage
+              ? { thread_ts: destination.threadTs }
+              : {}),
+          });
+        }
+        const finishedRun =
+          input.store.finishAgentJobRun({
+            runId: command.jobRunId,
+            status: "succeeded",
+          }) ?? input.store.getAgentJobRun(command.jobRunId);
+        if (finishedRun?.status !== "succeeded") {
+          throw new Error(
+            finishedRun?.failureReason ??
+              "Scheduled job run could not be marked succeeded",
+          );
+        }
+        return [
+          started,
+          {
+            type: "delivery_succeeded",
+            taskId: command.taskId,
+            jobRunId: command.jobRunId,
+            deliveryKey,
+            at: finishedRun.finishedAt ?? new Date().toISOString(),
+          },
+        ];
+      } catch (error) {
+        const message = scheduledRunErrorMessage(error);
+        const failedRun =
+          input.store.finishAgentJobRun({
+            runId: command.jobRunId,
+            status: "failed",
+            failureReason: message.slice(0, 500),
+          }) ?? input.store.getAgentJobRun(command.jobRunId);
+        return [
+          started,
+          {
+            type: "delivery_failed",
+            taskId: command.taskId,
+            jobRunId: command.jobRunId,
+            deliveryKey,
+            failureClass: "delivery_failed",
+            reason: failedRun?.failureReason ?? message.slice(0, 500),
+            at: failedRun?.finishedAt ?? new Date().toISOString(),
+          },
+        ];
+      }
+    },
+    notifyFailure: async (command) => {
+      if (destination) {
+        await input.slackClient.chat.postMessage({
+          channel: destination.channelId,
+          text: formatScheduledJobFailureMessage(job, run, command.reason),
+          ...(destination.threadTs && !destination.isDirectMessage
+            ? { thread_ts: destination.threadTs }
+            : {}),
+        });
+      }
+      return null;
+    },
+  };
+
+  await runTaskWorkflowDriver({
+    initialState: input.workflowShadowStore.replayState(),
+    initialEvent: {
+      type: "task_triggered",
+      taskId: job.jobId,
+      jobRunId: run.runId,
+      triggerKey: workflowTriggerKey(run),
+      source: "manual",
+      at: run.createdAt,
+    },
+    handlers,
+    onEvent: async (event) => {
+      appendWorkflowEvent(input.workflowShadowStore, event);
+    },
+  });
+
+  input.logInfo?.(
+    `Scheduled job workflow run finish runId=${run.runId} jobId=${job.jobId}`,
+  );
+}
+
 async function collectScheduledAgentRunWithProgressRetry(input: {
   runner: AgentRunner;
   agentInput: AgentInput;
@@ -357,6 +673,61 @@ function buildScheduledProgressRetryPrompt(
     "Scheduled task:",
     originalPrompt,
   ].join("\n");
+}
+
+function appendWorkflowEvent(
+  store: TaskWorkflowEventStore,
+  event: TaskWorkflowEvent,
+): void {
+  store.appendEvent({
+    eventId: workflowEventId(event),
+    event,
+    recordedAt: "at" in event ? event.at : new Date().toISOString(),
+    ...(event.type === "task_triggered" ? { signalId: event.triggerKey } : {}),
+  });
+}
+
+function workflowEventId(event: TaskWorkflowEvent): string {
+  switch (event.type) {
+    case "task_triggered":
+      return `workflow:${event.jobRunId}:task_triggered`;
+    case "validation_passed":
+      return `workflow:${event.jobRunId}:validation_passed`;
+    case "validation_failed":
+      return `workflow:${event.jobRunId}:validation_failed:${encodeURIComponent(event.failureClass)}`;
+    case "attempt_started":
+      return `workflow:${event.jobRunId}:attempt_started:${event.attempt}`;
+    case "attempt_succeeded":
+      return `workflow:${event.jobRunId}:attempt_succeeded:${event.attempt}:${encodeURIComponent(event.outputDigest)}`;
+    case "attempt_failed":
+      return `workflow:${event.jobRunId}:attempt_failed:${event.attempt}:${encodeURIComponent(event.failureClass)}`;
+    case "run_heartbeat":
+      return `workflow:${event.jobRunId}:heartbeat:${encodeURIComponent(event.at)}`;
+    case "delivery_started":
+      return `workflow:${event.jobRunId}:delivery_started:${encodeURIComponent(event.deliveryKey)}`;
+    case "delivery_succeeded":
+      return `workflow:${event.jobRunId}:delivery_succeeded:${encodeURIComponent(event.deliveryKey)}`;
+    case "delivery_failed":
+      return `workflow:${event.jobRunId}:delivery_failed:${encodeURIComponent(event.deliveryKey ?? "no-key")}:${encodeURIComponent(event.failureClass ?? "delivery_failed")}`;
+    case "handler_failed":
+      return `workflow:${event.jobRunId}:handler_failed:${event.commandType}:${encodeURIComponent(event.failureClass)}:${event.attempt ?? "no-attempt"}:${encodeURIComponent(event.outputDigest ?? "no-output")}`;
+    case "side_effect_failed":
+      return `workflow:${event.jobRunId ?? event.taskId}:side_effect_failed:${event.commandType}:${encodeURIComponent(event.failureClass ?? "no-class")}`;
+    case "side_effect_failure_acknowledged":
+      return `workflow:side_effect_acknowledged:${encodeURIComponent(event.failureId)}`;
+  }
+}
+
+function workflowTriggerKey(run: AgentJobRunRecord): string {
+  return `${run.jobId}:${run.triggerSource}:${run.runId}`;
+}
+
+function outputTextDigest(text: string): string {
+  return `sha256:${createHash("sha256").update(text).digest("hex")}`;
+}
+
+function scheduledRunErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : "Scheduled job run failed";
 }
 
 function scheduledJobContextForRun(
