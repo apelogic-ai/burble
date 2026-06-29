@@ -67,6 +67,23 @@ describe("task workflow oracle", () => {
     expect(result).toEqual({ ok: true, mismatches: [] });
   });
 
+  test("ignores terminal authoritative runs with malformed timestamps", () => {
+    const result = compareTaskWorkflowProjection({
+      workflowState: createInMemoryTaskWorkflowEventStore().replayState(),
+      authoritativeRuns: [
+        agentRun({
+          status: "succeeded",
+          updatedAt: "not-a-date",
+          finishedAt: "not-a-date",
+        }),
+      ],
+      now: new Date("2026-06-29T10:00:00.000Z"),
+      maxAuthoritativeTerminalAgeMs: 24 * 60 * 60_000,
+    });
+
+    expect(result).toEqual({ ok: true, mismatches: [] });
+  });
+
   test("reports terminal and reason divergence", () => {
     const store = createInMemoryTaskWorkflowEventStore();
     const authoritativeRun = agentRun({

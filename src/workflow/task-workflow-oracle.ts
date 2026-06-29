@@ -333,6 +333,10 @@ function shouldIgnoreAuthoritativeRun(input: {
   now: Date;
   maxAuthoritativeTerminalAgeMs: number;
 }): boolean {
+  // Shadow terminal events are recorded only from already-finished
+  // agent_job_runs rows. That ordering keeps this retention window aligned with
+  // maintenance pruning: terminal authoritative rows older than the window may
+  // have had their matching shadow run pruned.
   if (!isAuthoritativeTerminal(input.authoritativeRun.status)) {
     return false;
   }
@@ -341,7 +345,7 @@ function shouldIgnoreAuthoritativeRun(input: {
   }
   const updatedAtMs = Date.parse(input.authoritativeRun.updatedAt);
   if (!Number.isFinite(updatedAtMs)) {
-    return false;
+    return true;
   }
   return input.now.getTime() - updatedAtMs > input.maxAuthoritativeTerminalAgeMs;
 }

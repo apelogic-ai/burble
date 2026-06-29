@@ -826,10 +826,7 @@ function isActiveScheduledJobRun(run: AgentJobRunRecord, now: Date): boolean {
 }
 
 function findRecentFailedScheduledJobRun(
-  store: Pick<
-    TokenStore,
-    "listAgentJobRunsForPrincipal" | "findRecentFailedAgentJobRunForPrincipal"
-  >,
+  store: Pick<TokenStore, "findRecentFailedAgentJobRunForPrincipal">,
   workspaceId: string,
   slackUserId: string,
   jobId: string,
@@ -837,31 +834,13 @@ function findRecentFailedScheduledJobRun(
   failureReason: string,
 ): AgentJobRunRecord | null {
   const since = new Date(now.getTime() - DEFAULT_ACTIVE_RUN_TTL_MS);
-  const directMatch = store.findRecentFailedAgentJobRunForPrincipal({
+  return store.findRecentFailedAgentJobRunForPrincipal({
     workspaceId,
     slackUserId,
     jobId,
     failureReason,
     since,
   });
-  if (directMatch) {
-    return directMatch;
-  }
-
-  return (
-    store
-      .listAgentJobRunsForPrincipal(workspaceId, slackUserId, jobId, 100)
-      .find((run) => {
-        if (run.status !== "failed" || run.failureReason !== failureReason) {
-          return false;
-        }
-        const updatedAtMs = Date.parse(run.updatedAt);
-        if (!Number.isFinite(updatedAtMs)) {
-          return false;
-        }
-        return now.getTime() - updatedAtMs <= DEFAULT_ACTIVE_RUN_TTL_MS;
-      }) ?? null
-  );
 }
 
 function updateScheduledJobState(

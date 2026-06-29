@@ -253,9 +253,9 @@ export function createSqliteTaskWorkflowEventStore(
     const row = getLatestSnapshotThroughSequence.get(sequence);
     return row ? rowToSnapshot(row) : null;
   };
-  const writeSnapshot = (
-    snapshotInput?: TaskWorkflowWriteSnapshotInput,
-  ): TaskWorkflowSnapshot => {
+  const buildSnapshot: TaskWorkflowEventStore["buildSnapshot"] = (
+    snapshotInput,
+  ) => {
     const latestSnapshot = getLatestSnapshot();
     const latestKnownSequence = Math.max(
       getLatestEventSequence.get()?.sequence ?? 0,
@@ -270,21 +270,28 @@ export function createSqliteTaskWorkflowEventStore(
           .filter((event) => event.sequence <= sequence)
           .map(rowToStoredEvent)
       : listStoredEventsThroughSequence.all(sequence).map(rowToStoredEvent);
-    const state =
-      snapshotInput?.state ??
-      buildTaskWorkflowSnapshotState({
+    return {
+      sequence,
+      state: buildTaskWorkflowSnapshotState({
         events,
         sequence,
         baseSnapshot,
-      });
+      }),
+    };
+  };
+  const writeSnapshot = (
+    snapshotInput?: TaskWorkflowWriteSnapshotInput,
+  ): TaskWorkflowSnapshot => {
+    const builtSnapshot = buildSnapshot({ sequence: snapshotInput?.sequence });
+    const state = snapshotInput?.state ?? builtSnapshot.state;
     const row = upsertSnapshot.get(
-      sequence,
+      builtSnapshot.sequence,
       JSON.stringify(state),
       snapshotInput?.createdAt ?? now().toISOString(),
     );
     if (!row) {
       throw new Error(
-        `Failed to write task workflow snapshot at sequence ${sequence}`,
+        `Failed to write task workflow snapshot at sequence ${builtSnapshot.sequence}`,
       );
     }
     return rowToSnapshot(row);
@@ -375,6 +382,7 @@ export function createSqliteTaskWorkflowEventStore(
     },
     listEvents,
     replayState,
+    buildSnapshot,
     writeSnapshot,
     getLatestSnapshot,
     compactEventsThroughSnapshot,

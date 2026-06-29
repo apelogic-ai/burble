@@ -36,22 +36,17 @@ export function maintainTaskWorkflowEventStore(input: {
     };
   }
 
-  const rawSnapshot = input.store.writeSnapshot({
-    createdAt: now.toISOString(),
-  });
+  const rawSnapshot = input.store.buildSnapshot();
   const retainedState = pruneTaskWorkflowStateForRetention({
     state: rawSnapshot.state,
     now,
     maxTerminalRunAgeMs: input.maxTerminalRunAgeMs ?? 7 * 24 * 60 * 60_000,
   });
-  const snapshot =
-    retainedState === rawSnapshot.state
-      ? rawSnapshot
-      : input.store.writeSnapshot({
-          sequence: rawSnapshot.sequence,
-          state: retainedState,
-          createdAt: rawSnapshot.createdAt,
-        });
+  const snapshot = input.store.writeSnapshot({
+    sequence: rawSnapshot.sequence,
+    state: retainedState,
+    createdAt: now.toISOString(),
+  });
   const compaction = input.store.compactEventsThroughSnapshot({
     snapshotSequence: snapshot.sequence,
   });

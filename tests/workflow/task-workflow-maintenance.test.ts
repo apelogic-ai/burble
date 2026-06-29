@@ -1,6 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import { maintainTaskWorkflowEventStore } from "../../src/workflow/task-workflow-maintenance";
-import { createInMemoryTaskWorkflowEventStore } from "../../src/workflow/task-workflow-store";
+import {
+  createInMemoryTaskWorkflowEventStore,
+  type TaskWorkflowEventStore,
+} from "../../src/workflow/task-workflow-store";
 
 describe("task workflow maintenance", () => {
   test("skips compaction below the event threshold", () => {
@@ -84,6 +87,30 @@ describe("task workflow maintenance", () => {
     expect(Object.values(store.replayState().triggerKeys)).toEqual([
       "jobrun-new",
     ]);
+  });
+
+  test("writes one snapshot when pruning terminal runs", () => {
+    const store = createInMemoryTaskWorkflowEventStore();
+    appendSucceededRun(store, {
+      runId: "jobrun-old",
+      at: "2026-06-20T10:00:00.000Z",
+    });
+    let writeSnapshotCalls = 0;
+    const countedStore: TaskWorkflowEventStore = {
+      ...store,
+      writeSnapshot: (input) => {
+        writeSnapshotCalls += 1;
+        return store.writeSnapshot(input);
+      },
+    };
+
+    maintainTaskWorkflowEventStore({
+      store: countedStore,
+      now: () => new Date("2026-06-29T10:00:00.000Z"),
+      maxTerminalRunAgeMs: 24 * 60 * 60_000,
+    });
+
+    expect(writeSnapshotCalls).toBe(1);
   });
 });
 
