@@ -172,7 +172,7 @@ export function createInMemoryTaskWorkflowEventStore(input?: {
     state?: TaskWorkflowState;
   }): TaskWorkflowRunState[] => {
     const state = listInput?.state ?? replayState();
-    return Object.values(state.runs).filter(isResumableRun);
+    return selectTaskWorkflowResumableRuns(state);
   };
   const listSideEffectFailures = (listInput?: {
     state?: TaskWorkflowState;
@@ -234,6 +234,12 @@ export function listTaskWorkflowSideEffectFailures(
         ? left.failureId.localeCompare(right.failureId)
         : left.at.localeCompare(right.at),
     );
+}
+
+export function selectTaskWorkflowResumableRuns(
+  state: TaskWorkflowState,
+): TaskWorkflowRunState[] {
+  return Object.values(state.runs).filter(isResumableRun);
 }
 
 function snapshotBaseState(

@@ -3,7 +3,6 @@ import {
   createInitialTaskWorkflowState,
   reduceTaskWorkflowEvents,
   type TaskWorkflowEvent,
-  type TaskWorkflowRunState,
   type TaskWorkflowSideEffectFailure,
   type TaskWorkflowState,
 } from "./task-workflow";
@@ -15,7 +14,10 @@ import type {
   TaskWorkflowStoredEvent,
   TaskWorkflowWriteSnapshotInput,
 } from "./task-workflow-store";
-import { listTaskWorkflowSideEffectFailures } from "./task-workflow-store";
+import {
+  listTaskWorkflowSideEffectFailures,
+  selectTaskWorkflowResumableRuns,
+} from "./task-workflow-store";
 
 type TaskWorkflowEventRow = {
   sequence: number;
@@ -275,9 +277,9 @@ export function createSqliteTaskWorkflowEventStore(
   };
   const listResumableRuns = (listInput?: {
     state?: TaskWorkflowState;
-  }): TaskWorkflowRunState[] => {
+  }) => {
     const state = listInput?.state ?? replayState();
-    return Object.values(state.runs).filter(isResumableRun);
+    return selectTaskWorkflowResumableRuns(state);
   };
   const listSideEffectFailures = (listInput?: {
     state?: TaskWorkflowState;
@@ -489,13 +491,4 @@ function rowToSnapshot(row: TaskWorkflowSnapshotRow): TaskWorkflowSnapshot {
     state: JSON.parse(row.stateJson) as TaskWorkflowState,
     createdAt: row.createdAt,
   };
-}
-
-function isResumableRun(run: TaskWorkflowRunState): boolean {
-  return (
-    run.status === "created" ||
-    run.status === "validating" ||
-    run.status === "running" ||
-    run.status === "delivering"
-  );
 }
