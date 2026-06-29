@@ -544,4 +544,28 @@ describe("task workflow reducer", () => {
       },
     ]);
   });
+
+  test("acknowledges side-effect failures after escalation handles them", () => {
+    const failureId =
+      "notify_failure:task-heart:jobrun-1:handler_failed:2026-06-28T17:00:04.000Z";
+    let state = applyTaskWorkflowEvent(createInitialTaskWorkflowState(), {
+      type: "side_effect_failed",
+      taskId: "task-heart",
+      jobRunId: "jobrun-1",
+      commandType: "notify_failure",
+      failureClass: "handler_failed",
+      reason: "Slack delivery failed",
+      at: "2026-06-28T17:00:04.000Z",
+    });
+    expect(state.sideEffectFailures?.[failureId]).toBeDefined();
+
+    const result = transitionTaskWorkflowEvent(state, {
+      type: "side_effect_failure_acknowledged",
+      failureId,
+      at: "2026-06-28T17:01:00.000Z",
+    });
+
+    expect(result.commands).toEqual([]);
+    expect(result.state.sideEffectFailures?.[failureId]).toBeUndefined();
+  });
 });

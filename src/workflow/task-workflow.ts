@@ -153,6 +153,11 @@ export type TaskWorkflowEvent =
       at: string;
       jobRunId?: string;
       failureClass?: string;
+    }
+  | {
+      type: "side_effect_failure_acknowledged";
+      failureId: string;
+      at: string;
     };
 
 export type TaskWorkflowRunState = {
@@ -382,6 +387,8 @@ export function transitionTaskWorkflowEvent(
       });
     case "side_effect_failed":
       return withCommands(recordSideEffectFailure(state, event), []);
+    case "side_effect_failure_acknowledged":
+      return withCommands(acknowledgeSideEffectFailure(state, event), []);
   }
 }
 
@@ -682,5 +689,21 @@ function recordSideEffectFailure(
         ...(event.failureClass ? { failureClass: event.failureClass } : {}),
       },
     },
+  };
+}
+
+function acknowledgeSideEffectFailure(
+  state: TaskWorkflowState,
+  event: Extract<TaskWorkflowEvent, { type: "side_effect_failure_acknowledged" }>,
+): TaskWorkflowState {
+  if (!state.sideEffectFailures?.[event.failureId]) {
+    return state;
+  }
+
+  const nextFailures = { ...state.sideEffectFailures };
+  delete nextFailures[event.failureId];
+  return {
+    ...state,
+    sideEffectFailures: nextFailures,
   };
 }
