@@ -249,12 +249,8 @@ describe("task workflow reconciliation", () => {
     });
 
     const state = store.replayState({
-      initialState: {
+      initialConfig: {
         failurePauseThreshold: 2,
-        triggerKeys: {},
-        failureCounts: {},
-        tasks: {},
-        runs: {},
       },
     });
     expect(state.failureCounts["task-heart:stale_run_timeout"]).toBeUndefined();
@@ -390,12 +386,8 @@ describe("task workflow reconciliation", () => {
     });
 
     const state = store.replayState({
-      initialState: {
+      initialConfig: {
         failurePauseThreshold: 2,
-        triggerKeys: {},
-        failureCounts: {},
-        tasks: {},
-        runs: {},
       },
     });
     expect(
