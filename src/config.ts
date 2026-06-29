@@ -379,6 +379,16 @@ export function readConfig(env: Env): Config {
     enabled: taskWorkflowShadowEnabled,
     configuredPath: optionalStringEnv(env, "TASK_WORKFLOW_SHADOW_DATABASE_PATH")
   });
+  const taskWorkflowAuthority = optionalTaskWorkflowAuthorityEnv(
+    env,
+    "TASK_WORKFLOW_AUTHORITY",
+    "off"
+  );
+  if (taskWorkflowAuthority !== "off" && !taskWorkflowShadowDatabasePath) {
+    throw new Error(
+      "TASK_WORKFLOW_AUTHORITY requires TASK_WORKFLOW_SHADOW_ENABLED=true with a persistent workflow database; DATABASE_PATH=:memory: cannot be used for workflow authority"
+    );
+  }
 
   return {
     slackBotToken: requiredEnv(env, "SLACK_BOT_TOKEN"),
@@ -491,11 +501,7 @@ export function readConfig(env: Env): Config {
       "OBSERVABILITY_INCLUDE_CONTENT",
       false
     ),
-    taskWorkflowAuthority: optionalTaskWorkflowAuthorityEnv(
-      env,
-      "TASK_WORKFLOW_AUTHORITY",
-      "off"
-    ),
+    taskWorkflowAuthority,
     taskWorkflowShadowEnabled: taskWorkflowShadowDatabasePath !== null,
     taskWorkflowShadowDatabasePath,
     testbed: optionalBoolEnv(env, "BURBLE_TESTBED", false)

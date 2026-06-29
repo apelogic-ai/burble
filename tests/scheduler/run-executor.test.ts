@@ -130,6 +130,471 @@ describe("scheduler run executor", () => {
     store.close();
   });
 
+  test("uses workflow driver as authority for manual runs when enabled", async () => {
+    const store = createTokenStore(":memory:");
+    const workflowStore = createInMemoryTaskWorkflowEventStore();
+    const route = store.upsertConversationRoute({
+      workspaceId: "T123",
+      slackUserId: "U123",
+      transport: "slack",
+      destination: {
+        channelId: "D123",
+        isDirectMessage: true,
+        rootId: "dm:D123",
+      },
+      now: new Date("2026-06-25T17:00:00.000Z"),
+    });
+    const job = store.upsertScheduledJob({
+      jobId: "job-heart",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      title: "Heart",
+      prompt: "Post exactly this message: :heart:",
+      schedule: { kind: "interval", every: { minutes: 30 } },
+      routeId: route.id,
+      runtimeType: "openclaw",
+      state: "scheduled",
+      now: new Date("2026-06-25T17:01:00.000Z"),
+    });
+    store.upsertAgentJobCapability({
+      jobId: job.jobId,
+      workspaceId: "T123",
+      slackUserId: "U123",
+      requiredTools: [],
+      routeId: route.id,
+      runtimeType: "openclaw",
+      now: new Date("2026-06-25T17:01:30.000Z"),
+    });
+    const run = store.createAgentJobRun({
+      runId: "jobrun-heart",
+      jobId: job.jobId,
+      workspaceId: "T123",
+      slackUserId: "U123",
+      triggerSource: "manual",
+      status: "queued",
+      now: new Date("2026-06-25T17:02:00.000Z"),
+    });
+    const runner: AgentRunner = {
+      name: "test-runner",
+      capabilities: {
+        streaming: true,
+        toolEvents: true,
+        remote: true,
+      },
+      async *run() {
+        yield {
+          type: "final",
+          response: {
+            classification: "public",
+            text: ":heart:",
+          },
+        };
+      },
+    };
+    const posts: Array<{ channel: string; text: string; thread_ts?: string }> =
+      [];
+    const executor = createSchedulerRunExecutor({
+      store,
+      agentRunner: runner,
+      slackClient: {
+        chat: {
+          postMessage: async (message) => {
+            posts.push(message);
+            return {};
+          },
+        },
+      },
+      workflowShadowStore: workflowStore,
+      workflowAuthority: "manual",
+    });
+
+    await executor.executeRun(run.runId);
+
+    expect(posts).toEqual([{ channel: "D123", text: ":heart:" }]);
+    expect(store.getAgentJobRun(run.runId)).toMatchObject({
+      runId: run.runId,
+      status: "succeeded",
+    });
+    expect(workflowStore.replayState().runs[run.runId]).toMatchObject({
+      jobRunId: run.runId,
+      taskId: job.jobId,
+      source: "manual",
+      status: "succeeded",
+      attempt: 1,
+    });
+    expect(workflowStore.listEvents().map((event) => event.event.type)).toEqual(
+      [
+        "task_triggered",
+        "validation_passed",
+        "attempt_started",
+        "run_heartbeat",
+        "attempt_succeeded",
+        "delivery_started",
+        "delivery_succeeded",
+      ],
+    );
+
+    store.close();
+  });
+
+  test("manual workflow authority records validation failures in the driver", async () => {
+    const store = createTokenStore(":memory:");
+    const workflowStore = createInMemoryTaskWorkflowEventStore();
+    const route = store.upsertConversationRoute({
+      workspaceId: "T123",
+      slackUserId: "U123",
+      transport: "slack",
+      destination: { channelId: "D123", isDirectMessage: true },
+    });
+    const job = store.upsertScheduledJob({
+      jobId: "job-prs",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      title: "Open PR monitor",
+      prompt:
+        "check for new open PRs in https://github.com/apelogic-ai github org",
+      schedule: { kind: "interval", every: { minutes: 15 } },
+      routeId: route.id,
+      runtimeType: "openclaw",
+      state: "scheduled",
+    });
+    store.upsertAgentJobCapability({
+      jobId: job.jobId,
+      workspaceId: "T123",
+      slackUserId: "U123",
+      requiredTools: ["github_list_my_pull_requests"],
+      routeId: route.id,
+      runtimeType: "openclaw",
+    });
+    const run = store.createAgentJobRun({
+      runId: "jobrun-invalid",
+      jobId: job.jobId,
+      workspaceId: "T123",
+      slackUserId: "U123",
+      triggerSource: "manual",
+      status: "queued",
+    });
+    let runnerCalled = false;
+    const runner: AgentRunner = {
+      name: "test-runner",
+      capabilities: { streaming: true, toolEvents: true, remote: true },
+      async *run() {
+        runnerCalled = true;
+      },
+    };
+    const posts: Array<{ channel: string; text: string; thread_ts?: string }> =
+      [];
+    const executor = createSchedulerRunExecutor({
+      store,
+      agentRunner: runner,
+      slackClient: {
+        chat: {
+          postMessage: async (message) => {
+            posts.push(message);
+            return {};
+          },
+        },
+      },
+      workflowShadowStore: workflowStore,
+      workflowAuthority: "manual",
+    });
+
+    await executor.executeRun(run.runId);
+
+    expect(runnerCalled).toBe(false);
+    expect(store.getAgentJobRun(run.runId)).toMatchObject({
+      status: "failed",
+      failureReason: expect.stringContaining(
+        "missing_required_tool: Task requires github_search_issues",
+      ),
+    });
+    expect(workflowStore.replayState().runs[run.runId]).toMatchObject({
+      status: "failed",
+      failureClass: "validation_failed",
+    });
+    expect(posts).toHaveLength(1);
+    expect(posts[0]?.text).toContain("Scheduled job failed");
+
+    store.close();
+  });
+
+  test("manual workflow authority does not post failure after delivered output races terminal projection", async () => {
+    const store = createTokenStore(":memory:");
+    const workflowStore = createInMemoryTaskWorkflowEventStore();
+    const route = store.upsertConversationRoute({
+      workspaceId: "T123",
+      slackUserId: "U123",
+      transport: "slack",
+      destination: { channelId: "D123", isDirectMessage: true },
+    });
+    const job = store.upsertScheduledJob({
+      jobId: "job-heart-race",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      title: "Heart",
+      prompt: "Post exactly this message: :heart:",
+      schedule: { kind: "interval", every: { minutes: 30 } },
+      routeId: route.id,
+      runtimeType: "openclaw",
+      state: "scheduled",
+    });
+    store.upsertAgentJobCapability({
+      jobId: job.jobId,
+      workspaceId: "T123",
+      slackUserId: "U123",
+      requiredTools: [],
+      routeId: route.id,
+      runtimeType: "openclaw",
+    });
+    const run = store.createAgentJobRun({
+      runId: "jobrun-race",
+      jobId: job.jobId,
+      workspaceId: "T123",
+      slackUserId: "U123",
+      triggerSource: "manual",
+      status: "queued",
+    });
+    const executorStore = Object.create(store) as typeof store;
+    executorStore.finishAgentJobRun = (input) => {
+      if (input.status === "succeeded") {
+        store.finishAgentJobRun({
+          runId: input.runId,
+          status: "failed",
+          failureReason: "lease expired",
+        });
+        return null;
+      }
+      return store.finishAgentJobRun(input);
+    };
+    const runner: AgentRunner = {
+      name: "test-runner",
+      capabilities: { streaming: true, toolEvents: true, remote: true },
+      async *run() {
+        yield {
+          type: "final",
+          response: { classification: "public", text: ":heart:" },
+        };
+      },
+    };
+    const posts: Array<{ channel: string; text: string; thread_ts?: string }> =
+      [];
+    const executor = createSchedulerRunExecutor({
+      store: executorStore,
+      agentRunner: runner,
+      slackClient: {
+        chat: {
+          postMessage: async (message) => {
+            posts.push(message);
+            return {};
+          },
+        },
+      },
+      workflowShadowStore: workflowStore,
+      workflowAuthority: "manual",
+    });
+
+    await executor.executeRun(run.runId);
+
+    expect(posts).toEqual([{ channel: "D123", text: ":heart:" }]);
+    expect(store.getAgentJobRun(run.runId)).toMatchObject({
+      status: "failed",
+      failureReason: "lease expired",
+    });
+    expect(workflowStore.replayState().runs[run.runId]).toMatchObject({
+      status: "succeeded",
+      deliveryKey: expect.stringContaining("jobrun-race"),
+    });
+
+    store.close();
+  });
+
+  test("manual workflow authority compensates terminal workflow append failure after authoritative success", async () => {
+    const store = createTokenStore(":memory:");
+    const workflowStore = createInMemoryTaskWorkflowEventStore();
+    let failDeliverySucceeded = true;
+    const flakyWorkflowStore = {
+      ...workflowStore,
+      appendEvent(input: Parameters<typeof workflowStore.appendEvent>[0]) {
+        if (
+          input.event.type === "delivery_succeeded" &&
+          failDeliverySucceeded
+        ) {
+          failDeliverySucceeded = false;
+          throw new Error("transient workflow append failure");
+        }
+        return workflowStore.appendEvent(input);
+      },
+    };
+    const route = store.upsertConversationRoute({
+      workspaceId: "T123",
+      slackUserId: "U123",
+      transport: "slack",
+      destination: { channelId: "D123", isDirectMessage: true },
+    });
+    const job = store.upsertScheduledJob({
+      jobId: "job-heart-compensate",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      title: "Heart",
+      prompt: "Post exactly this message: :heart:",
+      schedule: { kind: "interval", every: { minutes: 30 } },
+      routeId: route.id,
+      runtimeType: "openclaw",
+      state: "scheduled",
+    });
+    store.upsertAgentJobCapability({
+      jobId: job.jobId,
+      workspaceId: "T123",
+      slackUserId: "U123",
+      requiredTools: [],
+      routeId: route.id,
+      runtimeType: "openclaw",
+    });
+    const run = store.createAgentJobRun({
+      runId: "jobrun-compensate",
+      jobId: job.jobId,
+      workspaceId: "T123",
+      slackUserId: "U123",
+      triggerSource: "manual",
+      status: "queued",
+    });
+    const runner: AgentRunner = {
+      name: "test-runner",
+      capabilities: { streaming: true, toolEvents: true, remote: true },
+      async *run() {
+        yield {
+          type: "final",
+          response: { classification: "public", text: ":heart:" },
+        };
+      },
+    };
+    const posts: Array<{ channel: string; text: string; thread_ts?: string }> =
+      [];
+    const executor = createSchedulerRunExecutor({
+      store,
+      agentRunner: runner,
+      slackClient: {
+        chat: {
+          postMessage: async (message) => {
+            posts.push(message);
+            return {};
+          },
+        },
+      },
+      workflowShadowStore: flakyWorkflowStore,
+      workflowAuthority: "manual",
+    });
+
+    await executor.executeRun(run.runId);
+
+    expect(posts).toEqual([{ channel: "D123", text: ":heart:" }]);
+    expect(store.getAgentJobRun(run.runId)).toMatchObject({
+      status: "succeeded",
+    });
+    expect(workflowStore.replayState().runs[run.runId]).toMatchObject({
+      status: "succeeded",
+      deliveryKey: expect.stringContaining("jobrun-compensate"),
+    });
+    expect(failDeliverySucceeded).toBe(false);
+
+    store.close();
+  });
+
+  test("manual workflow authority compensates attempt-start append failure after validation", async () => {
+    const store = createTokenStore(":memory:");
+    const workflowStore = createInMemoryTaskWorkflowEventStore();
+    let failAttemptStarted = true;
+    const flakyWorkflowStore = {
+      ...workflowStore,
+      appendEvent(input: Parameters<typeof workflowStore.appendEvent>[0]) {
+        if (input.event.type === "attempt_started" && failAttemptStarted) {
+          failAttemptStarted = false;
+          throw new Error("transient attempt start append failure");
+        }
+        return workflowStore.appendEvent(input);
+      },
+    };
+    const route = store.upsertConversationRoute({
+      workspaceId: "T123",
+      slackUserId: "U123",
+      transport: "slack",
+      destination: { channelId: "D123", isDirectMessage: true },
+    });
+    const job = store.upsertScheduledJob({
+      jobId: "job-attempt-compensate",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      title: "Attempt compensation",
+      prompt: "Post exactly this message: :heart:",
+      schedule: { kind: "interval", every: { minutes: 30 } },
+      routeId: route.id,
+      runtimeType: "openclaw",
+      state: "scheduled",
+    });
+    store.upsertAgentJobCapability({
+      jobId: job.jobId,
+      workspaceId: "T123",
+      slackUserId: "U123",
+      requiredTools: [],
+      routeId: route.id,
+      runtimeType: "openclaw",
+    });
+    const run = store.createAgentJobRun({
+      runId: "jobrun-attempt-compensate",
+      jobId: job.jobId,
+      workspaceId: "T123",
+      slackUserId: "U123",
+      triggerSource: "manual",
+      status: "queued",
+    });
+    let runnerCalled = false;
+    const runner: AgentRunner = {
+      name: "test-runner",
+      capabilities: { streaming: true, toolEvents: true, remote: true },
+      async *run() {
+        runnerCalled = true;
+        yield {
+          type: "final",
+          response: { classification: "public", text: ":heart:" },
+        };
+      },
+    };
+    const posts: Array<{ channel: string; text: string; thread_ts?: string }> =
+      [];
+    const executor = createSchedulerRunExecutor({
+      store,
+      agentRunner: runner,
+      slackClient: {
+        chat: {
+          postMessage: async (message) => {
+            posts.push(message);
+            return {};
+          },
+        },
+      },
+      workflowShadowStore: flakyWorkflowStore,
+      workflowAuthority: "manual",
+    });
+
+    await executor.executeRun(run.runId);
+
+    expect(runnerCalled).toBe(false);
+    expect(store.getAgentJobRun(run.runId)).toMatchObject({
+      status: "failed",
+      failureReason: "transient attempt start append failure",
+    });
+    expect(workflowStore.replayState().runs[run.runId]).toMatchObject({
+      status: "failed",
+      attempt: 1,
+      failureClass: "runtime_failed",
+    });
+    expect(posts).toHaveLength(1);
+    expect(posts[0]?.text).toContain("Scheduled job failed");
+    expect(failAttemptStarted).toBe(false);
+
+    store.close();
+  });
+
   test("mirrors terminal shadow state when finish returns null after an authoritative update", async () => {
     const store = createTokenStore(":memory:");
     const workflowStore = createInMemoryTaskWorkflowEventStore();

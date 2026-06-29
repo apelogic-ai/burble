@@ -578,9 +578,19 @@ describe("readConfig", () => {
 
   test("reads optional task workflow authority flag", () => {
     expect(
-      readConfig({ ...validEnv, TASK_WORKFLOW_AUTHORITY: "manual" })
+      readConfig({
+        ...validEnv,
+        TASK_WORKFLOW_AUTHORITY: "manual",
+        TASK_WORKFLOW_SHADOW_ENABLED: "true"
+      })
         .taskWorkflowAuthority
     ).toBe("manual");
+  });
+
+  test("rejects workflow authority without a workflow database", () => {
+    expect(() =>
+      readConfig({ ...validEnv, TASK_WORKFLOW_AUTHORITY: "manual" })
+    ).toThrow("TASK_WORKFLOW_AUTHORITY requires TASK_WORKFLOW_SHADOW_ENABLED");
   });
 
   test("rejects invalid task workflow authority flag", () => {

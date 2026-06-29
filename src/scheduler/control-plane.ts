@@ -17,11 +17,8 @@ import { validateScheduledJobSchedule } from "./timer";
 import { DEFAULT_ACTIVE_RUN_TTL_MS } from "./active-run";
 import {
   recordTaskWorkflowRunTriggered,
-  recordTaskWorkflowRunValidationFailed,
   type TaskWorkflowShadowStore,
 } from "../workflow/task-workflow-shadow";
-import { TASK_WORKFLOW_VALIDATION_FAILURE_CLASS } from "../workflow/task-workflow";
-import { formatScheduledTaskValidationFailureReason } from "./task-validation-format";
 
 export type {
   SchedulerTaskGrant,
@@ -119,12 +116,6 @@ export type SchedulerTriggerResult =
   | {
       ok: false;
       reason: "already_running";
-      jobId: string;
-      run: AgentJobRunRecord;
-    }
-  | {
-      ok: false;
-      reason: "recent_validation_failure";
       jobId: string;
       run: AgentJobRunRecord;
     };
@@ -302,7 +293,6 @@ export function createSchedulerControlPlane(
     | "deleteScheduledJob"
     | "createAgentJobRun"
     | "listAgentJobRunsForPrincipal"
-    | "findRecentFailedAgentJobRunForPrincipal"
     | "upsertAgentJobCapability"
     | "getAgentJobCapability"
     | "getLatestAgentJobRunForPrincipal"
@@ -483,45 +473,6 @@ export function createSchedulerControlPlane(
         }
         const validation = validateScheduledTask(record, capability);
         if (!validation.ok) {
-          if (workflowAuthority === "manual") {
-            const failureReason =
-              formatScheduledTaskValidationFailureReason(validation);
-            const recentFailure = findRecentFailedScheduledJobRun(
-              store,
-              input.workspaceId,
-              input.slackUserId,
-              record.jobId,
-              timestamp,
-              failureReason,
-            );
-            if (recentFailure) {
-              return {
-                ok: false,
-                reason: "recent_validation_failure",
-                jobId: record.jobId,
-                run: recentFailure,
-              };
-            }
-            const failedRun = store.createAgentJobRun({
-              runId: newRunId(),
-              jobId: record.jobId,
-              workspaceId: input.workspaceId,
-              slackUserId: input.slackUserId,
-              triggerSource: "manual",
-              status: "failed",
-              failureReason,
-              finishedAt: timestamp.toISOString(),
-              now: timestamp,
-            });
-            recordTaskWorkflowRunValidationFailed({
-              store: options.workflowShadowStore,
-              run: failedRun,
-              failureClass: TASK_WORKFLOW_VALIDATION_FAILURE_CLASS,
-              reason: failedRun.failureReason ?? "Scheduled task validation failed.",
-              at: timestamp,
-              logWarn: options.logWarn,
-            });
-          }
           return {
             ok: false,
             reason: "validation_failed",
@@ -555,11 +506,13 @@ export function createSchedulerControlPlane(
         status: "queued",
         now: timestamp,
       });
-      recordTaskWorkflowRunTriggered({
-        store: options.workflowShadowStore,
-        run,
-        at: timestamp,
-      });
+      if (workflowAuthority !== "manual") {
+        recordTaskWorkflowRunTriggered({
+          store: options.workflowShadowStore,
+          run,
+          at: timestamp,
+        });
+      }
       return {
         ok: true,
         jobId: job.job.jobId,
@@ -823,24 +776,6 @@ function isActiveScheduledJobRun(run: AgentJobRunRecord, now: Date): boolean {
     return true;
   }
   return now.getTime() - updatedAtMs <= DEFAULT_ACTIVE_RUN_TTL_MS;
-}
-
-function findRecentFailedScheduledJobRun(
-  store: Pick<TokenStore, "findRecentFailedAgentJobRunForPrincipal">,
-  workspaceId: string,
-  slackUserId: string,
-  jobId: string,
-  now: Date,
-  failureReason: string,
-): AgentJobRunRecord | null {
-  const since = new Date(now.getTime() - DEFAULT_ACTIVE_RUN_TTL_MS);
-  return store.findRecentFailedAgentJobRunForPrincipal({
-    workspaceId,
-    slackUserId,
-    jobId,
-    failureReason,
-    since,
-  });
 }
 
 function updateScheduledJobState(

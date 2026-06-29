@@ -88,6 +88,49 @@ describe("task workflow driver", () => {
     ]);
   });
 
+  test("calls onEvent before reducing each workflow event", async () => {
+    const observed: string[] = [];
+    const result = await runTaskWorkflowDriver({
+      initialEvent: {
+        type: "task_triggered",
+        taskId: "task-heart",
+        jobRunId: "jobrun-1",
+        triggerKey: "task-heart:manual:req-1",
+        source: "manual",
+        at: "2026-06-28T17:00:00.000Z",
+      },
+      onEvent: async (event) => {
+        observed.push(event.type);
+      },
+      handlers: {
+        validateTask: async (command) => ({
+          type: "validation_passed",
+          taskId: command.taskId,
+          jobRunId: command.jobRunId,
+          at: "2026-06-28T17:00:01.000Z",
+        }),
+        startAttempt: async (command) => ({
+          type: "attempt_succeeded",
+          taskId: command.taskId,
+          jobRunId: command.jobRunId,
+          attempt: command.attempt,
+          outputDigest: "sha256:heart",
+          at: "2026-06-28T17:00:02.000Z",
+        }),
+        deliverOutput: async (command) => ({
+          type: "delivery_succeeded",
+          taskId: command.taskId,
+          jobRunId: command.jobRunId,
+          deliveryKey: `${command.jobRunId}:route-1:${command.outputDigest}`,
+          at: "2026-06-28T17:00:03.000Z",
+        }),
+      },
+    });
+
+    expect(observed).toEqual(result.events.map((event) => event.type));
+    expect(observed).toContain("attempt_started");
+  });
+
   test("feeds validation failures through notify and pause command handlers", async () => {
     const observedCommands: string[] = [];
     const result = await runTaskWorkflowDriver({
