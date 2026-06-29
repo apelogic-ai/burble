@@ -14,6 +14,7 @@ import type {
 } from "./task-workflow-store";
 import {
   buildTaskWorkflowSnapshotState,
+  assertTaskWorkflowSnapshotSequenceKnown,
   compactableSnapshotSequence,
   listTaskWorkflowSideEffectFailures,
   replayTaskWorkflowStateFromSnapshot,
@@ -189,13 +190,9 @@ export function createSqliteTaskWorkflowEventStore(
     ORDER BY sequence DESC
     LIMIT 1
   `);
-  const listSnapshotRows = db.query<TaskWorkflowSnapshotRow, []>(`
-    SELECT
-      sequence,
-      state_json as stateJson,
-      created_at as createdAt
+  const getLatestSnapshotSequence = db.query<{ sequence: number | null }, []>(`
+    SELECT max(sequence) as sequence
     FROM task_workflow_snapshots
-    ORDER BY sequence ASC
   `);
   const deleteEventsThroughSequence = db.query<never, [number]>(`
     DELETE FROM task_workflow_events
@@ -260,19 +257,12 @@ export function createSqliteTaskWorkflowEventStore(
     snapshotInput?: TaskWorkflowWriteSnapshotInput,
   ): TaskWorkflowSnapshot => {
     const latestSnapshot = getLatestSnapshot();
-    const sequence =
-      snapshotInput?.sequence ??
-      Math.max(
-        getLatestEventSequence.get()?.sequence ?? 0,
-        latestSnapshot?.sequence ?? 0,
-      );
-    assertSnapshotSequenceIsKnown(
-      sequence,
-      Math.max(
-        getLatestEventSequence.get()?.sequence ?? 0,
-        latestSnapshot?.sequence ?? 0,
-      ),
+    const latestKnownSequence = Math.max(
+      getLatestEventSequence.get()?.sequence ?? 0,
+      latestSnapshot?.sequence ?? 0,
     );
+    const sequence = snapshotInput?.sequence ?? latestKnownSequence;
+    assertTaskWorkflowSnapshotSequenceKnown(sequence, latestKnownSequence);
     const baseSnapshot = getSnapshotAtOrBefore(sequence);
     const events = baseSnapshot
       ? listStoredEventsAfterSequence
@@ -302,19 +292,21 @@ export function createSqliteTaskWorkflowEventStore(
   const compactEventsThroughSnapshot = (compactInput?: {
     snapshotSequence?: number;
   }): TaskWorkflowCompactEventsResult => {
-    const snapshots = listSnapshotRows.all().map(rowToSnapshot);
     const sequence = compactableSnapshotSequence(
-      snapshots,
+      getLatestSnapshotSequence.get()?.sequence ?? 0,
       compactInput?.snapshotSequence,
     );
-    updateEventIdPayloadsThroughSequence.run(sequence);
-    const result = deleteEventsThroughSequence.run(sequence);
-    const deletedSnapshots = deleteSnapshotsBeforeSequence.run(sequence).changes;
-    return {
-      compactedThroughSequence: sequence,
-      deletedEvents: result.changes,
-      deletedSnapshots,
-    };
+    return runSqliteSavepoint(db, "task_workflow_compaction", () => {
+      updateEventIdPayloadsThroughSequence.run(sequence);
+      const result = deleteEventsThroughSequence.run(sequence);
+      const deletedSnapshots =
+        deleteSnapshotsBeforeSequence.run(sequence).changes;
+      return {
+        compactedThroughSequence: sequence,
+        deletedEvents: result.changes,
+        deletedSnapshots,
+      };
+    });
   };
   const listResumableRuns = (listInput?: {
     state?: TaskWorkflowState;
@@ -376,7 +368,7 @@ export function createSqliteTaskWorkflowEventStore(
         stored.eventId,
         stored.sequence,
         stored.recordedAt,
-        stored.signalId ?? null,
+        null,
         null,
       );
       return stored;
@@ -398,9 +390,11 @@ function migrateTaskWorkflowSchema(db: Database): void {
       `Task workflow SQLite schema version ${version} is newer than supported version ${TASK_WORKFLOW_SQLITE_SCHEMA_VERSION}`,
     );
   }
+  if (version >= TASK_WORKFLOW_SQLITE_SCHEMA_VERSION) {
+    return;
+  }
 
-  db.exec("BEGIN IMMEDIATE");
-  try {
+  runSqliteSavepoint(db, "task_workflow_schema_migration", () => {
     if (version < 1) {
       db.exec(`
       CREATE TABLE IF NOT EXISTS task_workflow_events (
@@ -492,7 +486,9 @@ function migrateTaskWorkflowSchema(db: Database): void {
     if (version < 5) {
       db.exec(`
       UPDATE task_workflow_event_ids
-      SET event_json = NULL
+      SET
+        signal_id = NULL,
+        event_json = NULL
       WHERE EXISTS (
         SELECT 1
         FROM task_workflow_events
@@ -502,12 +498,7 @@ function migrateTaskWorkflowSchema(db: Database): void {
       PRAGMA user_version = 5;
     `);
     }
-
-    db.exec("COMMIT");
-  } catch (error) {
-    db.exec("ROLLBACK");
-    throw error;
-  }
+  });
 }
 
 function readSchemaVersion(db: Database): number {
@@ -546,13 +537,19 @@ function rowToSnapshot(row: TaskWorkflowSnapshotRow): TaskWorkflowSnapshot {
   };
 }
 
-function assertSnapshotSequenceIsKnown(
-  sequence: number,
-  latestKnownSequence: number,
-): void {
-  if (sequence > latestKnownSequence) {
-    throw new Error(
-      `Cannot write task workflow snapshot at future sequence ${sequence}; latest known sequence is ${latestKnownSequence}`,
-    );
+function runSqliteSavepoint<T>(
+  db: Database,
+  name: string,
+  operation: () => T,
+): T {
+  db.exec(`SAVEPOINT ${name}`);
+  try {
+    const result = operation();
+    db.exec(`RELEASE SAVEPOINT ${name}`);
+    return result;
+  } catch (error) {
+    db.exec(`ROLLBACK TO SAVEPOINT ${name}`);
+    db.exec(`RELEASE SAVEPOINT ${name}`);
+    throw error;
   }
 }

@@ -382,22 +382,25 @@ describe("SQLite task workflow event store", () => {
 
     expect(
       db
-        .query<{ event_json: string | null }, []>(
-          "SELECT event_json FROM task_workflow_event_ids",
+        .query<{ signal_id: string | null; event_json: string | null }, []>(
+          "SELECT signal_id, event_json FROM task_workflow_event_ids",
         )
-        .get()?.event_json,
-    ).toBeNull();
+        .get(),
+    ).toEqual({
+      signal_id: null,
+      event_json: null,
+    });
 
     store.writeSnapshot();
     store.compactEventsThroughSnapshot();
 
-    expect(
-      db
-        .query<{ event_json: string | null }, []>(
-          "SELECT event_json FROM task_workflow_event_ids",
-        )
-        .get()?.event_json,
-    ).toContain("jobrun-1");
+    const ledgerRow = db
+      .query<{ signal_id: string | null; event_json: string | null }, []>(
+        "SELECT signal_id, event_json FROM task_workflow_event_ids",
+      )
+      .get();
+    expect(ledgerRow?.signal_id).toBe("manual:req-1");
+    expect(ledgerRow?.event_json).toContain("jobrun-1");
 
     const duplicate = store.appendEvent({
       eventId: "evt-trigger",
@@ -451,6 +454,59 @@ describe("SQLite task workflow event store", () => {
       "jobrun-2",
       "jobrun-3",
     ]);
+    db.close();
+  });
+
+  test("prunes snapshots below the requested compaction sequence", () => {
+    const db = new Database(":memory:");
+    const store = createSqliteTaskWorkflowEventStore(db);
+    for (const runId of ["jobrun-1", "jobrun-2", "jobrun-3", "jobrun-4"]) {
+      store.appendEvent({
+        eventId: `evt-trigger-${runId}`,
+        event: {
+          type: "task_triggered",
+          taskId: "task-heart",
+          jobRunId: runId,
+          triggerKey: `task-heart:manual:${runId}`,
+          source: "manual",
+          at: "2026-06-28T17:00:00.000Z",
+        },
+      });
+      if (runId === "jobrun-2" || runId === "jobrun-4") {
+        store.writeSnapshot();
+      }
+    }
+
+    expect(
+      store.compactEventsThroughSnapshot({ snapshotSequence: 3 }),
+    ).toEqual({
+      compactedThroughSequence: 3,
+      deletedEvents: 3,
+      deletedSnapshots: 1,
+    });
+    expect(
+      db
+        .query<{ sequences: string }, []>(
+          "SELECT group_concat(sequence, ',') as sequences FROM task_workflow_snapshots",
+        )
+        .get()?.sequences,
+    ).toBe("4");
+    expect(store.getLatestSnapshot()?.sequence).toBe(4);
+    expect(Object.keys(store.replayState().runs).sort()).toEqual([
+      "jobrun-1",
+      "jobrun-2",
+      "jobrun-3",
+      "jobrun-4",
+    ]);
+    db.close();
+  });
+
+  test("constructs the current-version store inside an outer transaction", () => {
+    const db = new Database(":memory:");
+    createSqliteTaskWorkflowEventStore(db);
+    db.exec("BEGIN");
+    expect(() => createSqliteTaskWorkflowEventStore(db)).not.toThrow();
+    db.exec("COMMIT");
     db.close();
   });
 

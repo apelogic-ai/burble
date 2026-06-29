@@ -220,6 +220,41 @@ describe("task workflow event store", () => {
     ]);
   });
 
+  test("prunes snapshots below the requested compaction sequence", () => {
+    const store = createInMemoryTaskWorkflowEventStore();
+    for (const runId of ["jobrun-1", "jobrun-2", "jobrun-3", "jobrun-4"]) {
+      store.appendEvent({
+        eventId: `evt-trigger-${runId}`,
+        event: {
+          type: "task_triggered",
+          taskId: "task-heart",
+          jobRunId: runId,
+          triggerKey: `task-heart:manual:${runId}`,
+          source: "manual",
+          at: "2026-06-28T17:00:00.000Z",
+        },
+      });
+      if (runId === "jobrun-2" || runId === "jobrun-4") {
+        store.writeSnapshot();
+      }
+    }
+
+    expect(
+      store.compactEventsThroughSnapshot({ snapshotSequence: 3 }),
+    ).toEqual({
+      compactedThroughSequence: 3,
+      deletedEvents: 3,
+      deletedSnapshots: 1,
+    });
+    expect(store.getLatestSnapshot()?.sequence).toBe(4);
+    expect(Object.keys(store.replayState().runs).sort()).toEqual([
+      "jobrun-1",
+      "jobrun-2",
+      "jobrun-3",
+      "jobrun-4",
+    ]);
+  });
+
   test("does not compact past a real snapshot sequence", () => {
     const store = createInMemoryTaskWorkflowEventStore();
     store.appendEvent({

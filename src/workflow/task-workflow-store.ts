@@ -115,10 +115,13 @@ export function createInMemoryTaskWorkflowEventStore(input?: {
     snapshotInput?: TaskWorkflowWriteSnapshotInput,
   ): TaskWorkflowSnapshot => {
     const latestSnapshot = getLatestSnapshot();
+    const latestKnownSequence = Math.max(
+      events.at(-1)?.sequence ?? 0,
+      latestSnapshot?.sequence ?? 0,
+    );
     const sequence =
-      snapshotInput?.sequence ??
-      Math.max(events.at(-1)?.sequence ?? 0, latestSnapshot?.sequence ?? 0);
-    assertSnapshotSequenceIsKnown(sequence, events, latestSnapshot);
+      snapshotInput?.sequence ?? latestKnownSequence;
+    assertTaskWorkflowSnapshotSequenceKnown(sequence, latestKnownSequence);
     const baseSnapshot = getLatestSnapshotAtOrBefore(sequence);
     const state = snapshotInput?.state
       ? snapshotInput.state
@@ -147,7 +150,7 @@ export function createInMemoryTaskWorkflowEventStore(input?: {
     snapshotSequence?: number;
   }): TaskWorkflowCompactEventsResult => {
     const sequence = compactableSnapshotSequence(
-      snapshots,
+      snapshots.at(-1)?.sequence ?? 0,
       compactInput?.snapshotSequence,
     );
     const before = events.length;
@@ -273,27 +276,27 @@ export function buildTaskWorkflowSnapshotState(input: {
 }
 
 export function compactableSnapshotSequence(
-  snapshots: TaskWorkflowSnapshot[],
+  latestSnapshotSequence: number,
   requestedSequence: number | undefined,
 ): number {
-  const latestSequence = snapshots.at(-1)?.sequence ?? 0;
   if (requestedSequence === undefined) {
-    return latestSequence;
+    return latestSnapshotSequence;
   }
-  return Math.min(requestedSequence, latestSequence);
+  return Math.min(requestedSequence, latestSnapshotSequence);
 }
 
 export function pruneSupersededSnapshots(
   snapshots: TaskWorkflowSnapshot[],
   compactedThroughSequence: number,
 ): void {
-  const keepIndex = snapshots.findLastIndex(
-    (snapshot) => snapshot.sequence <= compactedThroughSequence,
-  );
-  if (keepIndex <= 0) {
-    return;
+  for (let index = snapshots.length - 1; index >= 0; index -= 1) {
+    if (
+      snapshots[index] !== undefined &&
+      snapshots[index].sequence < compactedThroughSequence
+    ) {
+      snapshots.splice(index, 1);
+    }
   }
-  snapshots.splice(0, keepIndex);
 }
 
 function snapshotBaseState(
@@ -309,15 +312,10 @@ function snapshotBaseState(
   };
 }
 
-function assertSnapshotSequenceIsKnown(
+export function assertTaskWorkflowSnapshotSequenceKnown(
   sequence: number,
-  events: TaskWorkflowStoredEvent[],
-  latestSnapshot: TaskWorkflowSnapshot | null,
+  latestKnownSequence: number,
 ): void {
-  const latestKnownSequence = Math.max(
-    events.at(-1)?.sequence ?? 0,
-    latestSnapshot?.sequence ?? 0,
-  );
   if (sequence > latestKnownSequence) {
     throw new Error(
       `Cannot write task workflow snapshot at future sequence ${sequence}; latest known sequence is ${latestKnownSequence}`,
