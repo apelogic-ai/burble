@@ -53,6 +53,7 @@ export async function runTaskWorkflowDriver(input: {
   handlers: TaskWorkflowDriverHandlers;
   ctx?: TaskWorkflowDriverContext;
   maxCommands?: number;
+  onEvent?: (event: TaskWorkflowEvent) => void | Promise<void>;
 }): Promise<RunTaskWorkflowDriverResult> {
   const baseCtx = input.ctx ?? createInProcessWorkflowDriverContext();
   const maxCommands = input.maxCommands ?? 100;
@@ -61,7 +62,8 @@ export async function runTaskWorkflowDriver(input: {
   const pendingCommands: TaskWorkflowCommand[] = [];
   let state = input.initialState ?? createInitialTaskWorkflowState();
 
-  const applyEvent = (event: TaskWorkflowEvent): void => {
+  const applyEvent = async (event: TaskWorkflowEvent): Promise<void> => {
+    await input.onEvent?.(event);
     const transition = transitionTaskWorkflowEvent(state, event);
     state = transition.state;
     events.push(event);
@@ -72,7 +74,7 @@ export async function runTaskWorkflowDriver(input: {
   const ctx: TaskWorkflowDriverContext = {
     run: baseCtx.run.bind(baseCtx),
     async heartbeat(heartbeatInput) {
-      applyEvent({
+      await applyEvent({
         type: "run_heartbeat",
         taskId: heartbeatInput.taskId,
         jobRunId: heartbeatInput.jobRunId,
@@ -81,7 +83,7 @@ export async function runTaskWorkflowDriver(input: {
     },
   };
 
-  applyEvent(input.initialEvent);
+  await applyEvent(input.initialEvent);
 
   let executedCommands = 0;
   while (pendingCommands.length > 0) {
@@ -96,7 +98,7 @@ export async function runTaskWorkflowDriver(input: {
         new Error(`Task workflow driver exceeded maxCommands=${maxCommands}`),
       );
       if (event) {
-        applyEvent(event);
+        await applyEvent(event);
       }
       break;
     }
@@ -104,12 +106,12 @@ export async function runTaskWorkflowDriver(input: {
 
     const startedEvent = commandStartedEvent(command);
     if (startedEvent) {
-      applyEvent(startedEvent);
+      await applyEvent(startedEvent);
     }
 
     const result = await executeCommand(command, input.handlers, ctx);
     for (const event of normalizeCommandResultForCommand(command, result)) {
-      applyEvent(event);
+      await applyEvent(event);
     }
   }
 
