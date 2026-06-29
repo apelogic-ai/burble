@@ -49,6 +49,7 @@ export function createSchedulerTimer(input: {
   newRunId?: () => string;
   intervalMs?: number;
   activeRunTtlMs?: number;
+  workflowAuthority?: "off" | "manual" | "timer";
   workflowShadowStore?: TaskWorkflowShadowStore;
   logInfo?: (message: string) => void;
   logWarn?: (message: string) => void;
@@ -57,6 +58,7 @@ export function createSchedulerTimer(input: {
   const newRunId = input.newRunId ?? (() => `jobrun_${randomUUID()}`);
   const intervalMs = input.intervalMs ?? 60_000;
   const activeRunTtlMs = input.activeRunTtlMs ?? DEFAULT_ACTIVE_RUN_TTL_MS;
+  const workflowTimerAuthority = input.workflowAuthority === "timer";
   let timer: ReturnType<typeof setInterval> | undefined;
   let ticking = false;
 
@@ -88,7 +90,7 @@ export function createSchedulerTimer(input: {
         const existingCapability = input.store.getAgentJobCapability(job.jobId);
         if (existingCapability) {
           const validation = validateScheduledTask(job, existingCapability);
-          if (!validation.ok) {
+          if (!validation.ok && !workflowTimerAuthority) {
             const failureReason =
               formatScheduledTaskValidationFailureReason(validation);
             const run = input.store.createAgentJobRun({
@@ -122,18 +124,20 @@ export function createSchedulerTimer(input: {
             continue;
           }
         }
-        input.store.upsertAgentJobCapability({
-          jobId: job.jobId,
-          workspaceId: job.workspaceId,
-          slackUserId: job.slackUserId,
-          requiredTools: inferAllowedToolsForScheduledJob(job),
-          routeId: job.routeId,
-          runtimeType: job.runtimeType,
-          capabilityProfile: "scheduled_job",
-          stateRefs: [],
-          visibilityPolicy: {},
-          now: timestamp,
-        });
+        if (!workflowTimerAuthority || !existingCapability) {
+          input.store.upsertAgentJobCapability({
+            jobId: job.jobId,
+            workspaceId: job.workspaceId,
+            slackUserId: job.slackUserId,
+            requiredTools: inferAllowedToolsForScheduledJob(job),
+            routeId: job.routeId,
+            runtimeType: job.runtimeType,
+            capabilityProfile: "scheduled_job",
+            stateRefs: [],
+            visibilityPolicy: {},
+            now: timestamp,
+          });
+        }
         const run = input.store.createAgentJobRun({
           runId: newRunId(),
           jobId: job.jobId,
@@ -143,12 +147,14 @@ export function createSchedulerTimer(input: {
           status: "queued",
           now: timestamp,
         });
-        recordTaskWorkflowRunTriggered({
-          store: input.workflowShadowStore,
-          run,
-          at: timestamp,
-          logWarn: input.logWarn,
-        });
+        if (!workflowTimerAuthority) {
+          recordTaskWorkflowRunTriggered({
+            store: input.workflowShadowStore,
+            run,
+            at: timestamp,
+            logWarn: input.logWarn,
+          });
+        }
         queuedRunIds.push(run.runId);
         activePrincipals.add(principalKey);
         input.logInfo?.(

@@ -276,7 +276,7 @@ type SchedulerControlPlaneOptions = {
   now?: () => Date;
   newJobId?: () => string;
   newRunId?: () => string;
-  workflowAuthority?: "off" | "manual";
+  workflowAuthority?: "off" | "manual" | "timer";
   workflowShadowStore?: TaskWorkflowShadowStore;
   logWarn?: (message: string) => void;
   resolveSlackChannelIdByName?: (input: {
@@ -506,7 +506,7 @@ export function createSchedulerControlPlane(
         status: "queued",
         now: timestamp,
       });
-      if (workflowAuthority !== "manual") {
+      if (workflowAuthority === "off") {
         recordTaskWorkflowRunTriggered({
           store: options.workflowShadowStore,
           run,

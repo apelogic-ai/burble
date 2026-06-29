@@ -479,6 +479,7 @@ export function createSlackRuntime(
     ? createSchedulerTimer({
         store,
         executeRun: (runId) => schedulerRunExecutor.executeRun(runId),
+        workflowAuthority: config.taskWorkflowAuthority,
         workflowShadowStore,
         logInfo: (message) => app.logger.info(withUtcTimestamp(message)),
         logWarn: (message) => app.logger.warn(withUtcTimestamp(message))

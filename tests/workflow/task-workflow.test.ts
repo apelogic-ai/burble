@@ -9,7 +9,7 @@ import {
 } from "../../src/workflow/task-workflow";
 
 describe("task workflow reducer", () => {
-  test("documents that the workflow layer is not wired into production execution yet", () => {
+  test("documents that workflow authority is still default-off", () => {
     expect(TASK_WORKFLOW_PRODUCTION_WIRED).toBe(false);
   });
 
