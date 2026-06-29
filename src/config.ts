@@ -1,3 +1,4 @@
+import { resolve as resolvePath } from "node:path";
 import { validateAgentModelId } from "./agent/providers";
 import {
   defaultSandboxStartCommandForEngine,
@@ -351,6 +352,11 @@ export function readConfig(env: Env): Config {
     "TASK_WORKFLOW_SHADOW_ENABLED",
     false
   );
+  const taskWorkflowShadowDatabasePath = resolveTaskWorkflowShadowDatabasePath({
+    databasePath,
+    enabled: taskWorkflowShadowEnabled,
+    configuredPath: optionalStringEnv(env, "TASK_WORKFLOW_SHADOW_DATABASE_PATH")
+  });
 
   return {
     slackBotToken: requiredEnv(env, "SLACK_BOT_TOKEN"),
@@ -463,11 +469,8 @@ export function readConfig(env: Env): Config {
       "OBSERVABILITY_INCLUDE_CONTENT",
       false
     ),
-    taskWorkflowShadowEnabled,
-    taskWorkflowShadowDatabasePath: taskWorkflowShadowEnabled
-      ? optionalSecretEnv(env, "TASK_WORKFLOW_SHADOW_DATABASE_PATH") ??
-        defaultTaskWorkflowShadowDatabasePath(databasePath)
-      : null,
+    taskWorkflowShadowEnabled: taskWorkflowShadowDatabasePath !== null,
+    taskWorkflowShadowDatabasePath,
     testbed: optionalBoolEnv(env, "BURBLE_TESTBED", false)
   };
 }
@@ -479,13 +482,33 @@ export function defaultAgentRuntimeImage(engine: AgentRuntimeEngine): string {
 export function defaultTaskWorkflowShadowDatabasePath(
   databasePath: string
 ): string {
-  if (databasePath === ":memory:") {
-    return ":memory:";
-  }
-  if (databasePath.endsWith(".db")) {
-    return `${databasePath.slice(0, -3)}.workflow-shadow.db`;
-  }
   return `${databasePath}.workflow-shadow.db`;
+}
+
+function resolveTaskWorkflowShadowDatabasePath(input: {
+  databasePath: string;
+  enabled: boolean;
+  configuredPath: string | null;
+}): string | null {
+  if (!input.enabled || input.databasePath === ":memory:") {
+    return null;
+  }
+  const path =
+    input.configuredPath ??
+    defaultTaskWorkflowShadowDatabasePath(input.databasePath);
+  if (sameSqliteFilePath(path, input.databasePath)) {
+    throw new Error(
+      "TASK_WORKFLOW_SHADOW_DATABASE_PATH must not equal DATABASE_PATH"
+    );
+  }
+  return path;
+}
+
+function sameSqliteFilePath(left: string, right: string): boolean {
+  if (left === ":memory:" || right === ":memory:") {
+    return left === right;
+  }
+  return resolvePath(left) === resolvePath(right);
 }
 
 export function defaultAgentRuntimeSandboxStartCommand(
@@ -502,6 +525,11 @@ export function isDefaultAgentRuntimeImage(
 }
 
 function optionalSecretEnv(env: Env, name: string): string | null {
+  const value = env[name]?.trim();
+  return value ? value : null;
+}
+
+function optionalStringEnv(env: Env, name: string): string | null {
   const value = env[name]?.trim();
   return value ? value : null;
 }

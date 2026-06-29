@@ -8,6 +8,9 @@ import {
   recordTaskWorkflowRunValidationFailed,
   type TaskWorkflowShadowStore,
 } from "../workflow/task-workflow-shadow";
+import {
+  TASK_WORKFLOW_VALIDATION_FAILURE_CLASS,
+} from "../workflow/task-workflow";
 
 type SchedulerTimerStore = Pick<
   TokenStore,
@@ -105,7 +108,7 @@ export function createSchedulerTimer(input: {
             recordTaskWorkflowRunValidationFailed({
               store: input.workflowShadowStore,
               run,
-              failureClass: "validation_failed",
+              failureClass: TASK_WORKFLOW_VALIDATION_FAILURE_CLASS,
               reason: failureReason,
               at: timestamp,
               logWarn: input.logWarn,

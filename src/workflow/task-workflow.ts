@@ -21,6 +21,8 @@ export type TaskWorkflowAttemptMode =
 
 export const TASK_WORKFLOW_AGENT_ATTEMPT_MODE: TaskWorkflowAttemptMode =
   "agent";
+export const TASK_WORKFLOW_RUNTIME_FAILURE_CLASS = "runtime_failed";
+export const TASK_WORKFLOW_VALIDATION_FAILURE_CLASS = "validation_failed";
 
 export type TaskWorkflowCommand =
   | {

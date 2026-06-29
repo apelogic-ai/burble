@@ -537,7 +537,7 @@ describe("readConfig", () => {
 
     expect(config.taskWorkflowShadowEnabled).toBe(true);
     expect(config.taskWorkflowShadowDatabasePath).toBe(
-      "test.workflow-shadow.db"
+      "test.db.workflow-shadow.db"
     );
   });
 
@@ -551,6 +551,28 @@ describe("readConfig", () => {
     expect(config.taskWorkflowShadowDatabasePath).toBe(
       "/var/lib/burble/workflow-shadow.db"
     );
+  });
+
+  test("skips workflow shadow recording for in-memory databases", () => {
+    const config = readConfig({
+      ...validEnv,
+      DATABASE_PATH: ":memory:",
+      TASK_WORKFLOW_SHADOW_ENABLED: "true"
+    });
+
+    expect(config.taskWorkflowShadowEnabled).toBe(false);
+    expect(config.taskWorkflowShadowDatabasePath).toBeNull();
+  });
+
+  test("rejects workflow shadow database path equal to primary database path", () => {
+    expect(() =>
+      readConfig({
+        ...validEnv,
+        DATABASE_PATH: "burble.db",
+        TASK_WORKFLOW_SHADOW_ENABLED: "true",
+        TASK_WORKFLOW_SHADOW_DATABASE_PATH: "./burble.db"
+      })
+    ).toThrow("TASK_WORKFLOW_SHADOW_DATABASE_PATH must not equal DATABASE_PATH");
   });
 
   test("rejects invalid observability content setting", () => {

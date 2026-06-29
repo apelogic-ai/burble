@@ -173,6 +173,7 @@ export type SlackRuntime = {
   app: App;
   runtimeFactory?: RuntimeFactory;
   getSlackEmail: (userId: string) => Promise<string>;
+  close: () => void;
 };
 
 export type SlackRuntimeOptions = {
@@ -392,11 +393,12 @@ export function createSlackRuntime(
     searchSlackUsers,
     searchSlackMessages
   });
-  const workflowShadowStore =
+  const workflowShadowDatabase =
     config.taskWorkflowShadowEnabled && config.taskWorkflowShadowDatabasePath
-    ? createSqliteTaskWorkflowEventStore(
-        new Database(config.taskWorkflowShadowDatabasePath)
-      )
+      ? new Database(config.taskWorkflowShadowDatabasePath)
+      : undefined;
+  const workflowShadowStore = workflowShadowDatabase
+    ? createSqliteTaskWorkflowEventStore(workflowShadowDatabase)
     : undefined;
   if (workflowShadowStore) {
     app.logger.info(
@@ -1950,7 +1952,11 @@ export function createSlackRuntime(
   return {
     app,
     ...(runtimeFactory ? { runtimeFactory } : {}),
-    getSlackEmail
+    getSlackEmail,
+    close() {
+      schedulerTimer?.stop();
+      workflowShadowDatabase?.close();
+    }
   };
 }
 

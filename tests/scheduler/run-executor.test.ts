@@ -130,6 +130,84 @@ describe("scheduler run executor", () => {
     store.close();
   });
 
+  test("mirrors terminal shadow state when finish returns null after an authoritative update", async () => {
+    const store = createTokenStore(":memory:");
+    const workflowStore = createInMemoryTaskWorkflowEventStore();
+    const route = store.upsertConversationRoute({
+      workspaceId: "T123",
+      slackUserId: "U123",
+      transport: "slack",
+      destination: { channelId: "C123" },
+      kind: "origin",
+    });
+    const job = store.upsertScheduledJob({
+      jobId: "job-1",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      title: "Hourly check",
+      prompt: "Check something",
+      schedule: { kind: "interval", every: { hours: 1 } },
+      routeId: route.id,
+      state: "scheduled",
+      runtimeType: "openclaw",
+    });
+    const run = store.createAgentJobRun({
+      runId: "jobrun-1",
+      jobId: job.jobId,
+      workspaceId: "T123",
+      slackUserId: "U123",
+      triggerSource: "schedule",
+      status: "queued",
+    });
+    const agentRunner: AgentRunner = {
+      name: "test-runner",
+      capabilities: {
+        streaming: true,
+        toolEvents: true,
+        remote: true,
+      },
+      async *run() {
+        yield {
+          type: "final",
+          response: {
+            classification: "public",
+            text: "Done.",
+          },
+        };
+      },
+    };
+    const posted: unknown[] = [];
+    const executorStore = Object.create(store) as typeof store;
+    executorStore.finishAgentJobRun = (input) => {
+      store.finishAgentJobRun(input);
+      return null;
+    };
+    const executor = createSchedulerRunExecutor({
+      store: executorStore,
+      agentRunner,
+      slackClient: {
+        chat: {
+          postMessage: async (input) => {
+            posted.push(input);
+          },
+        },
+      },
+      workflowShadowStore: workflowStore,
+    });
+
+    await executor.executeRun(run.runId);
+
+    expect(posted).toHaveLength(1);
+    expect(store.getAgentJobRun(run.runId)).toMatchObject({
+      status: "succeeded",
+    });
+    expect(workflowStore.replayState().runs[run.runId]).toMatchObject({
+      status: "succeeded",
+    });
+
+    store.close();
+  });
+
   test("uses registered scheduled job capability tools when present", async () => {
     const store = createTokenStore(":memory:");
     const route = store.upsertConversationRoute({
