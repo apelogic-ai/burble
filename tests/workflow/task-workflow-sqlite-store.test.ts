@@ -79,4 +79,43 @@ describe("SQLite task workflow event store", () => {
     expect(store.listResumableRuns()).toHaveLength(1);
     db.close();
   });
+
+  test("lists side-effect failures after reopening the database", () => {
+    const path = join(
+      mkdtempSync(join(tmpdir(), "burble-workflow-store-")),
+      "workflow.sqlite",
+    );
+    let db = new Database(path);
+    let store = createSqliteTaskWorkflowEventStore(db);
+    store.appendEvent({
+      eventId: "evt-notify-failed",
+      event: {
+        type: "side_effect_failed",
+        taskId: "task-heart",
+        jobRunId: "jobrun-1",
+        commandType: "notify_failure",
+        failureClass: "handler_failed",
+        reason: "Slack delivery failed",
+        at: "2026-06-28T17:00:04.000Z",
+      },
+    });
+    db.close();
+
+    db = new Database(path);
+    store = createSqliteTaskWorkflowEventStore(db);
+
+    expect(store.listSideEffectFailures()).toEqual([
+      {
+        failureId:
+          "notify_failure:task-heart:jobrun-1:handler_failed:2026-06-28T17:00:04.000Z",
+        taskId: "task-heart",
+        jobRunId: "jobrun-1",
+        commandType: "notify_failure",
+        failureClass: "handler_failed",
+        reason: "Slack delivery failed",
+        at: "2026-06-28T17:00:04.000Z",
+      },
+    ]);
+    db.close();
+  });
 });

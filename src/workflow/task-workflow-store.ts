@@ -3,6 +3,7 @@ import {
   reduceTaskWorkflowEvents,
   type TaskWorkflowEvent,
   type TaskWorkflowRunState,
+  type TaskWorkflowSideEffectFailure,
   type TaskWorkflowState,
 } from "./task-workflow";
 
@@ -21,6 +22,11 @@ export type TaskWorkflowAppendEventInput = {
   signalId?: string;
 };
 
+export type TaskWorkflowSideEffectFailureRecord =
+  TaskWorkflowSideEffectFailure & {
+    failureId: string;
+  };
+
 export type TaskWorkflowEventStore = {
   appendEvent(input: TaskWorkflowAppendEventInput): TaskWorkflowStoredEvent;
   listEvents(): TaskWorkflowStoredEvent[];
@@ -28,6 +34,11 @@ export type TaskWorkflowEventStore = {
   listResumableRuns(input?: {
     state?: TaskWorkflowState;
   }): TaskWorkflowRunState[];
+  listSideEffectFailures(input?: {
+    state?: TaskWorkflowState;
+    taskId?: string;
+    commandType?: TaskWorkflowSideEffectFailure["commandType"];
+  }): TaskWorkflowSideEffectFailureRecord[];
 };
 
 export function createInMemoryTaskWorkflowEventStore(input?: {
@@ -71,7 +82,35 @@ export function createInMemoryTaskWorkflowEventStore(input?: {
       const state = listInput?.state ?? this.replayState();
       return Object.values(state.runs).filter(isResumableRun);
     },
+    listSideEffectFailures(listInput) {
+      const state = listInput?.state ?? this.replayState();
+      return listTaskWorkflowSideEffectFailures(state, listInput);
+    },
   };
+}
+
+export function listTaskWorkflowSideEffectFailures(
+  state: TaskWorkflowState,
+  input?: {
+    taskId?: string;
+    commandType?: TaskWorkflowSideEffectFailure["commandType"];
+  },
+): TaskWorkflowSideEffectFailureRecord[] {
+  return Object.entries(state.sideEffectFailures ?? {})
+    .map(([failureId, failure]) => ({
+      failureId,
+      ...failure,
+    }))
+    .filter(
+      (failure) =>
+        (!input?.taskId || failure.taskId === input.taskId) &&
+        (!input?.commandType || failure.commandType === input.commandType),
+    )
+    .sort((left, right) =>
+      left.at === right.at
+        ? left.failureId.localeCompare(right.failureId)
+        : left.at.localeCompare(right.at),
+    );
 }
 
 function nextSequence(events: TaskWorkflowStoredEvent[]): number {

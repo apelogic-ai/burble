@@ -11,6 +11,7 @@ import type {
   TaskWorkflowEventStore,
   TaskWorkflowStoredEvent,
 } from "./task-workflow-store";
+import { listTaskWorkflowSideEffectFailures } from "./task-workflow-store";
 
 type TaskWorkflowEventRow = {
   sequence: number;
@@ -106,6 +107,10 @@ export function createSqliteTaskWorkflowEventStore(
     listResumableRuns(listInput) {
       const state = listInput?.state ?? this.replayState();
       return Object.values(state.runs).filter(isResumableRun);
+    },
+    listSideEffectFailures(listInput) {
+      const state = listInput?.state ?? this.replayState();
+      return listTaskWorkflowSideEffectFailures(state, listInput);
     },
   };
 }
