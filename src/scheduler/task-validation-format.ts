@@ -19,7 +19,9 @@ export function formatScheduledTaskValidationFailureReason(
 }
 
 export function truncateScheduledTaskFailureReason(reason: string): string {
-  return reason.length > MAX_SCHEDULED_TASK_FAILURE_REASON_CHARS
-    ? reason.slice(0, MAX_SCHEDULED_TASK_FAILURE_REASON_CHARS)
-    : reason;
+  const chars = Array.from(reason);
+  if (chars.length <= MAX_SCHEDULED_TASK_FAILURE_REASON_CHARS) {
+    return reason;
+  }
+  return `${chars.slice(0, MAX_SCHEDULED_TASK_FAILURE_REASON_CHARS - 1).join("")}…`;
 }

@@ -139,6 +139,7 @@ function createFakeStore() {
     getAgentJobRun: () => null,
     listAgentJobRunsForJob: () => [],
     listRecentAgentJobRuns: () => [],
+    findRecentFailedAgentJobRunForPrincipal: () => null,
     listAgentJobRunsForPrincipal: () => [],
     getLatestAgentJobRunForPrincipal: () => null,
     listQueuedAgentJobRuns: () => [],

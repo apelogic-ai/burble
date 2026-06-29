@@ -1532,9 +1532,14 @@ export function formatScheduledJobTriggerResult(
   }
   if (result.reason === "already_running") {
     return [
-      result.run.status === "failed"
-        ? `Scheduled job ${result.jobId} already has a recent failed run.`
-        : `Scheduled job ${result.jobId} already has an active run.`,
+      `Scheduled job ${result.jobId} already has an active run.`,
+      `Run ID: ${result.run.runId}`,
+      `Status: ${result.run.status}`,
+    ].join("\n");
+  }
+  if (result.reason === "recent_validation_failure") {
+    return [
+      `Scheduled job ${result.jobId} already has a recent validation failure.`,
       `Run ID: ${result.run.runId}`,
       `Status: ${result.run.status}`,
     ].join("\n");

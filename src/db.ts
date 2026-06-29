@@ -1227,6 +1227,32 @@ export function createTokenStore(path: string) {
     ORDER BY created_at DESC, run_id ASC
     LIMIT ?
   `);
+  const findRecentFailedAgentJobRunForPrincipal = db.query<
+    AgentJobRunRow,
+    [string, string, string, string, string]
+  >(`
+    SELECT
+      run_id AS runId,
+      job_id AS jobId,
+      workspace_id AS workspaceId,
+      slack_user_id AS slackUserId,
+      trigger_source AS triggerSource,
+      status,
+      failure_reason AS failureReason,
+      created_at AS createdAt,
+      updated_at AS updatedAt,
+      started_at AS startedAt,
+      finished_at AS finishedAt
+    FROM agent_job_runs
+    WHERE workspace_id = ?
+      AND slack_user_id = ?
+      AND job_id = ?
+      AND status = 'failed'
+      AND failure_reason = ?
+      AND updated_at >= ?
+    ORDER BY updated_at DESC, run_id ASC
+    LIMIT 1
+  `);
   const listAgentJobRunsForPrincipal = db.query<
     AgentJobRunRow,
     [string, string, string | null, string | null, number]
@@ -2211,6 +2237,23 @@ export function createTokenStore(path: string) {
           ? Math.min(limit, 10_000)
           : 1_000;
       return listRecentAgentJobRuns.all(normalizedLimit).map(toAgentJobRunRecord);
+    },
+
+    findRecentFailedAgentJobRunForPrincipal(input: {
+      workspaceId: string;
+      slackUserId: string;
+      jobId: string;
+      failureReason: string;
+      since: Date;
+    }): AgentJobRunRecord | null {
+      const record = findRecentFailedAgentJobRunForPrincipal.get(
+        input.workspaceId,
+        input.slackUserId,
+        input.jobId,
+        input.failureReason,
+        input.since.toISOString()
+      );
+      return record ? toAgentJobRunRecord(record) : null;
     },
 
     listAgentJobRunsForPrincipal(

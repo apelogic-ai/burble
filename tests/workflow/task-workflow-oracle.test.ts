@@ -27,6 +27,7 @@ describe("task workflow oracle", () => {
     const result = compareTaskWorkflowProjection({
       workflowState: store.replayState(),
       authoritativeRuns: [run],
+      now: new Date("2026-06-29T10:00:30.000Z"),
     });
 
     expect(result).toEqual({ ok: true, mismatches: [] });
@@ -47,6 +48,23 @@ describe("task workflow oracle", () => {
         authoritativeStatus: "queued",
       },
     ]);
+  });
+
+  test("ignores old terminal authoritative runs outside the retention window", () => {
+    const result = compareTaskWorkflowProjection({
+      workflowState: createInMemoryTaskWorkflowEventStore().replayState(),
+      authoritativeRuns: [
+        agentRun({
+          status: "succeeded",
+          updatedAt: "2026-06-20T10:00:00.000Z",
+          finishedAt: "2026-06-20T10:00:00.000Z",
+        }),
+      ],
+      now: new Date("2026-06-29T10:00:00.000Z"),
+      maxAuthoritativeTerminalAgeMs: 24 * 60 * 60_000,
+    });
+
+    expect(result).toEqual({ ok: true, mismatches: [] });
   });
 
   test("reports terminal and reason divergence", () => {
@@ -131,9 +149,35 @@ describe("task workflow oracle", () => {
     const result = compareTaskWorkflowProjection({
       workflowState: store.replayState(),
       authoritativeRuns: [run],
+      now: new Date("2026-06-29T10:00:30.000Z"),
     });
 
     expect(result).toEqual({ ok: true, mismatches: [] });
+  });
+
+  test("reports stale active status skew after the tolerance window", () => {
+    const store = createInMemoryTaskWorkflowEventStore();
+    const run = agentRun({
+      status: "running",
+      updatedAt: "2026-06-29T10:10:00.000Z",
+    });
+    recordTaskWorkflowRunTriggered({ store, run });
+
+    const result = compareTaskWorkflowProjection({
+      workflowState: store.replayState(),
+      authoritativeRuns: [run],
+      now: new Date("2026-06-29T10:10:00.000Z"),
+      activeStatusSkewToleranceMs: 60_000,
+    });
+
+    expect(result.mismatches).toEqual([
+      expect.objectContaining({
+        kind: "status_mismatch",
+        runId: "jobrun-1",
+        expected: "running",
+        actual: "created",
+      }),
+    ]);
   });
 
   test("oracle loop logs mismatches from replayed state", async () => {

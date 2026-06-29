@@ -121,6 +121,12 @@ export type SchedulerTriggerResult =
       reason: "already_running";
       jobId: string;
       run: AgentJobRunRecord;
+    }
+  | {
+      ok: false;
+      reason: "recent_validation_failure";
+      jobId: string;
+      run: AgentJobRunRecord;
     };
 
 export type SchedulerListJobRunsInput = {
@@ -296,6 +302,7 @@ export function createSchedulerControlPlane(
     | "deleteScheduledJob"
     | "createAgentJobRun"
     | "listAgentJobRunsForPrincipal"
+    | "findRecentFailedAgentJobRunForPrincipal"
     | "upsertAgentJobCapability"
     | "getAgentJobCapability"
     | "getLatestAgentJobRunForPrincipal"
@@ -490,7 +497,7 @@ export function createSchedulerControlPlane(
             if (recentFailure) {
               return {
                 ok: false,
-                reason: "already_running",
+                reason: "recent_validation_failure",
                 jobId: record.jobId,
                 run: recentFailure,
               };
@@ -819,23 +826,38 @@ function isActiveScheduledJobRun(run: AgentJobRunRecord, now: Date): boolean {
 }
 
 function findRecentFailedScheduledJobRun(
-  store: Pick<TokenStore, "listAgentJobRunsForPrincipal">,
+  store: Pick<
+    TokenStore,
+    "listAgentJobRunsForPrincipal" | "findRecentFailedAgentJobRunForPrincipal"
+  >,
   workspaceId: string,
   slackUserId: string,
   jobId: string,
   now: Date,
   failureReason: string,
 ): AgentJobRunRecord | null {
+  const since = new Date(now.getTime() - DEFAULT_ACTIVE_RUN_TTL_MS);
+  const directMatch = store.findRecentFailedAgentJobRunForPrincipal({
+    workspaceId,
+    slackUserId,
+    jobId,
+    failureReason,
+    since,
+  });
+  if (directMatch) {
+    return directMatch;
+  }
+
   return (
     store
-      .listAgentJobRunsForPrincipal(workspaceId, slackUserId, jobId, 10)
+      .listAgentJobRunsForPrincipal(workspaceId, slackUserId, jobId, 100)
       .find((run) => {
         if (run.status !== "failed" || run.failureReason !== failureReason) {
           return false;
         }
         const updatedAtMs = Date.parse(run.updatedAt);
         if (!Number.isFinite(updatedAtMs)) {
-          return true;
+          return false;
         }
         return now.getTime() - updatedAtMs <= DEFAULT_ACTIVE_RUN_TTL_MS;
       }) ?? null

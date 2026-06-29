@@ -664,7 +664,7 @@ describe("scheduler control plane", () => {
       }),
     ).toMatchObject({
       ok: false,
-      reason: "already_running",
+      reason: "recent_validation_failure",
       run: {
         runId: "jobrun-validation-failed",
         status: "failed",
