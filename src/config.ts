@@ -63,6 +63,7 @@ export type Config = {
   observabilityJsonlDir: string | null;
   observabilityIncludeContent: boolean;
   taskWorkflowShadowEnabled: boolean;
+  taskWorkflowShadowDatabasePath: string | null;
   testbed?: boolean;
 };
 
@@ -344,6 +345,13 @@ export function readConfig(env: Env): Config {
     optionalUrlEnv(env, "AGENT_RUNTIME_URL") ??
     optionalUrlEnv(env, "OPENCLAW_NEMOCLAW_URL");
 
+  const databasePath = env.DATABASE_PATH ?? "burble.db";
+  const taskWorkflowShadowEnabled = optionalBoolEnv(
+    env,
+    "TASK_WORKFLOW_SHADOW_ENABLED",
+    false
+  );
+
   return {
     slackBotToken: requiredEnv(env, "SLACK_BOT_TOKEN"),
     slackAppToken: requiredEnv(env, "SLACK_APP_TOKEN"),
@@ -362,7 +370,7 @@ export function readConfig(env: Env): Config {
     hubspotClientSecret: optionalSecretEnv(env, "HUBSPOT_CLIENT_SECRET"),
     baseUrl,
     port: optionalIntEnv(env, "PORT", 3000),
-    databasePath: env.DATABASE_PATH ?? "burble.db",
+    databasePath,
     slackLogLevel: optionalSlackLogLevelEnv(env, "SLACK_LOG_LEVEL", "info"),
     agentMode: optionalAgentModeEnv(env, "AGENT_MODE", "deterministic"),
     agentFastTrack: optionalBoolEnv(env, "AGENT_FAST_TRACK", false),
@@ -455,17 +463,29 @@ export function readConfig(env: Env): Config {
       "OBSERVABILITY_INCLUDE_CONTENT",
       false
     ),
-    taskWorkflowShadowEnabled: optionalBoolEnv(
-      env,
-      "TASK_WORKFLOW_SHADOW_ENABLED",
-      false
-    ),
+    taskWorkflowShadowEnabled,
+    taskWorkflowShadowDatabasePath: taskWorkflowShadowEnabled
+      ? optionalSecretEnv(env, "TASK_WORKFLOW_SHADOW_DATABASE_PATH") ??
+        defaultTaskWorkflowShadowDatabasePath(databasePath)
+      : null,
     testbed: optionalBoolEnv(env, "BURBLE_TESTBED", false)
   };
 }
 
 export function defaultAgentRuntimeImage(engine: AgentRuntimeEngine): string {
   return defaultRuntimeImageForEngine(engine);
+}
+
+export function defaultTaskWorkflowShadowDatabasePath(
+  databasePath: string
+): string {
+  if (databasePath === ":memory:") {
+    return ":memory:";
+  }
+  if (databasePath.endsWith(".db")) {
+    return `${databasePath.slice(0, -3)}.workflow-shadow.db`;
+  }
+  return `${databasePath}.workflow-shadow.db`;
 }
 
 export function defaultAgentRuntimeSandboxStartCommand(

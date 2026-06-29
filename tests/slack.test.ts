@@ -123,7 +123,8 @@ const agentConfig: Config = {
   observabilityJsonlPath: null,
   observabilityJsonlDir: null,
   observabilityIncludeContent: false,
-  taskWorkflowShadowEnabled: false
+  taskWorkflowShadowEnabled: false,
+  taskWorkflowShadowDatabasePath: null
 };
 
 describe("createManagedRuntimeFactory sandbox mode", () => {

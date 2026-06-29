@@ -392,12 +392,17 @@ export function createSlackRuntime(
     searchSlackUsers,
     searchSlackMessages
   });
-  const workflowShadowStore = config.taskWorkflowShadowEnabled
-    ? createSqliteTaskWorkflowEventStore(new Database(config.databasePath))
+  const workflowShadowStore =
+    config.taskWorkflowShadowEnabled && config.taskWorkflowShadowDatabasePath
+    ? createSqliteTaskWorkflowEventStore(
+        new Database(config.taskWorkflowShadowDatabasePath)
+      )
     : undefined;
   if (workflowShadowStore) {
     app.logger.info(
-      withUtcTimestamp("Task workflow shadow recording enabled")
+      withUtcTimestamp(
+        `Task workflow shadow recording enabled databasePath=${config.taskWorkflowShadowDatabasePath}`
+      )
     );
   }
 

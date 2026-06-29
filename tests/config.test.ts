@@ -68,6 +68,7 @@ describe("readConfig", () => {
       observabilityJsonlDir: null,
       observabilityIncludeContent: false,
       taskWorkflowShadowEnabled: false,
+      taskWorkflowShadowDatabasePath: null,
       testbed: false
     });
   });
@@ -529,10 +530,27 @@ describe("readConfig", () => {
   });
 
   test("reads optional workflow shadow recording flag", () => {
-    expect(
-      readConfig({ ...validEnv, TASK_WORKFLOW_SHADOW_ENABLED: "true" })
-        .taskWorkflowShadowEnabled
-    ).toBe(true);
+    const config = readConfig({
+      ...validEnv,
+      TASK_WORKFLOW_SHADOW_ENABLED: "true"
+    });
+
+    expect(config.taskWorkflowShadowEnabled).toBe(true);
+    expect(config.taskWorkflowShadowDatabasePath).toBe(
+      "test.workflow-shadow.db"
+    );
+  });
+
+  test("reads optional workflow shadow database path", () => {
+    const config = readConfig({
+      ...validEnv,
+      TASK_WORKFLOW_SHADOW_ENABLED: "true",
+      TASK_WORKFLOW_SHADOW_DATABASE_PATH: "/var/lib/burble/workflow-shadow.db"
+    });
+
+    expect(config.taskWorkflowShadowDatabasePath).toBe(
+      "/var/lib/burble/workflow-shadow.db"
+    );
   });
 
   test("rejects invalid observability content setting", () => {
