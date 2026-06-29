@@ -424,6 +424,169 @@ describe("task workflow reducer", () => {
     expect(result.state.runs["jobrun-1"]?.outputDigest).toBeUndefined();
   });
 
+  test("retries explicitly retryable attempt failures up to the configured maximum", () => {
+    let state = createInitialTaskWorkflowState({
+      maxAttempts: 2,
+    });
+    state = reduceTaskWorkflowEvents(
+      [
+        {
+          type: "task_triggered",
+          taskId: "task-heart",
+          jobRunId: "jobrun-1",
+          triggerKey: "task-heart:manual:req-1",
+          source: "manual",
+          at: "2026-06-28T17:00:00.000Z",
+        },
+        {
+          type: "validation_passed",
+          taskId: "task-heart",
+          jobRunId: "jobrun-1",
+          at: "2026-06-28T17:00:01.000Z",
+        },
+        {
+          type: "attempt_started",
+          taskId: "task-heart",
+          jobRunId: "jobrun-1",
+          attempt: 1,
+          mode: "agent",
+          at: "2026-06-28T17:00:02.000Z",
+        },
+      ],
+      state,
+    );
+
+    const firstFailure = transitionTaskWorkflowEvent(state, {
+      type: "attempt_failed",
+      taskId: "task-heart",
+      jobRunId: "jobrun-1",
+      attempt: 1,
+      failureClass: "runtime_timeout",
+      reason: "model provider timed out",
+      retryable: true,
+      at: "2026-06-28T17:00:03.000Z",
+    });
+
+    expect(firstFailure.state.runs["jobrun-1"]).toMatchObject({
+      status: "running",
+      attempt: 1,
+      failureClass: "runtime_timeout",
+      failureReason: "model provider timed out",
+      notificationPending: false,
+    });
+    expect(
+      firstFailure.state.failureCounts["task-heart:runtime_timeout"],
+    ).toBeUndefined();
+    expect(firstFailure.commands).toEqual([
+      {
+        type: "start_attempt",
+        taskId: "task-heart",
+        jobRunId: "jobrun-1",
+        attempt: 2,
+        mode: "agent",
+      },
+    ]);
+
+    state = applyTaskWorkflowEvent(firstFailure.state, {
+      type: "attempt_started",
+      taskId: "task-heart",
+      jobRunId: "jobrun-1",
+      attempt: 2,
+      mode: "agent",
+      at: "2026-06-28T17:00:04.000Z",
+    });
+
+    const finalFailure = transitionTaskWorkflowEvent(state, {
+      type: "attempt_failed",
+      taskId: "task-heart",
+      jobRunId: "jobrun-1",
+      attempt: 2,
+      failureClass: "runtime_timeout",
+      reason: "model provider timed out again",
+      retryable: true,
+      at: "2026-06-28T17:00:05.000Z",
+    });
+
+    expect(finalFailure.state.runs["jobrun-1"]).toMatchObject({
+      status: "failed",
+      attempt: 2,
+      failureClass: "runtime_timeout",
+      failureReason: "model provider timed out again",
+      notificationPending: true,
+    });
+    expect(finalFailure.state.failureCounts["task-heart:runtime_timeout"]).toBe(
+      1,
+    );
+    expect(finalFailure.commands).toEqual([
+      {
+        type: "notify_failure",
+        taskId: "task-heart",
+        jobRunId: "jobrun-1",
+        failureClass: "runtime_timeout",
+        reason: "model provider timed out again",
+      },
+    ]);
+  });
+
+  test("does not retry attempt failures unless they are explicitly retryable", () => {
+    let state = createInitialTaskWorkflowState({
+      maxAttempts: 2,
+    });
+    state = reduceTaskWorkflowEvents(
+      [
+        {
+          type: "task_triggered",
+          taskId: "task-heart",
+          jobRunId: "jobrun-1",
+          triggerKey: "task-heart:manual:req-1",
+          source: "manual",
+          at: "2026-06-28T17:00:00.000Z",
+        },
+        {
+          type: "validation_passed",
+          taskId: "task-heart",
+          jobRunId: "jobrun-1",
+          at: "2026-06-28T17:00:01.000Z",
+        },
+        {
+          type: "attempt_started",
+          taskId: "task-heart",
+          jobRunId: "jobrun-1",
+          attempt: 1,
+          mode: "agent",
+          at: "2026-06-28T17:00:02.000Z",
+        },
+      ],
+      state,
+    );
+
+    const result = transitionTaskWorkflowEvent(state, {
+      type: "attempt_failed",
+      taskId: "task-heart",
+      jobRunId: "jobrun-1",
+      attempt: 1,
+      failureClass: "unsafe_runtime_error",
+      reason: "provider write may have happened",
+      at: "2026-06-28T17:00:03.000Z",
+    });
+
+    expect(result.state.runs["jobrun-1"]).toMatchObject({
+      status: "failed",
+      attempt: 1,
+      failureClass: "unsafe_runtime_error",
+      notificationPending: true,
+    });
+    expect(result.commands).toEqual([
+      {
+        type: "notify_failure",
+        taskId: "task-heart",
+        jobRunId: "jobrun-1",
+        failureClass: "unsafe_runtime_error",
+        reason: "provider write may have happened",
+      },
+    ]);
+  });
+
   test("emits notify and pause commands for repeated failures", () => {
     let state = createInitialTaskWorkflowState({
       failurePauseThreshold: 1,

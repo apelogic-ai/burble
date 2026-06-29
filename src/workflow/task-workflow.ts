@@ -23,6 +23,7 @@ export const TASK_WORKFLOW_AGENT_ATTEMPT_MODE: TaskWorkflowAttemptMode =
   "agent";
 export const TASK_WORKFLOW_RUNTIME_FAILURE_CLASS = "runtime_failed";
 export const TASK_WORKFLOW_VALIDATION_FAILURE_CLASS = "validation_failed";
+export const DEFAULT_TASK_WORKFLOW_MAX_ATTEMPTS = 2;
 
 export type TaskWorkflowCommand =
   | {
@@ -94,6 +95,7 @@ export type TaskWorkflowEvent =
       attempt: number;
       failureClass: string;
       reason: string;
+      retryable?: boolean;
       at: string;
     }
   | {
@@ -202,6 +204,7 @@ export type TaskWorkflowSideEffectFailure = {
 
 export type TaskWorkflowState = {
   failurePauseThreshold: number;
+  maxAttempts: number;
   triggerKeys: Record<string, string>;
   failureCounts: Record<string, number>;
   sideEffectFailures?: Record<string, TaskWorkflowSideEffectFailure>;
@@ -219,9 +222,11 @@ type TaskWorkflowFailureInput = {
 
 export function createInitialTaskWorkflowState(input?: {
   failurePauseThreshold?: number;
+  maxAttempts?: number;
 }): TaskWorkflowState {
   return {
     failurePauseThreshold: input?.failurePauseThreshold ?? 3,
+    maxAttempts: input?.maxAttempts ?? DEFAULT_TASK_WORKFLOW_MAX_ATTEMPTS,
     triggerKeys: {},
     failureCounts: {},
     sideEffectFailures: {},
@@ -302,11 +307,7 @@ export function transitionTaskWorkflowEvent(
       if (!canFinishAttempt(state, event.jobRunId, event.attempt)) {
         return withCommands(state, []);
       }
-      return transitionRunFailure(state, event, {
-        status: "failed",
-        attempt: event.attempt,
-        notificationPending: true,
-      });
+      return transitionAttemptFailure(state, event);
     case "attempt_succeeded":
       if (!canFinishAttempt(state, event.jobRunId, event.attempt)) {
         return withCommands(state, []);
@@ -564,6 +565,54 @@ function transitionRunFailure(
   return withCommands(nextState, commands);
 }
 
+function transitionAttemptFailure(
+  state: TaskWorkflowState,
+  event: Extract<TaskWorkflowEvent, { type: "attempt_failed" }>,
+): TaskWorkflowTransitionResult {
+  if (shouldRetryAttemptFailure(state, event)) {
+    const run = state.runs[event.jobRunId];
+    const nextAttempt = event.attempt + 1;
+    return withCommands(
+      updateRun(state, event.jobRunId, event.at, (currentRun) => ({
+        ...currentRun,
+        status: "running",
+        attempt: event.attempt,
+        failureClass: event.failureClass,
+        failureReason: event.reason,
+        notificationPending: false,
+      })),
+      run
+        ? [
+            {
+              type: "start_attempt",
+              taskId: event.taskId,
+              jobRunId: event.jobRunId,
+              attempt: nextAttempt,
+              mode: run.attemptMode ?? TASK_WORKFLOW_AGENT_ATTEMPT_MODE,
+            },
+          ]
+        : [],
+    );
+  }
+
+  return transitionRunFailure(state, event, {
+    status: "failed",
+    attempt: event.attempt,
+    notificationPending: true,
+  });
+}
+
+function shouldRetryAttemptFailure(
+  state: TaskWorkflowState,
+  event: Extract<TaskWorkflowEvent, { type: "attempt_failed" }>,
+): boolean {
+  return event.retryable === true && event.attempt < maxWorkflowAttempts(state);
+}
+
+function maxWorkflowAttempts(state: TaskWorkflowState): number {
+  return state.maxAttempts ?? DEFAULT_TASK_WORKFLOW_MAX_ATTEMPTS;
+}
+
 function applyTaskTriggered(
   state: TaskWorkflowState,
   event: Extract<TaskWorkflowEvent, { type: "task_triggered" }>,
@@ -699,7 +748,10 @@ function recordSideEffectFailure(
 
 function acknowledgeSideEffectFailure(
   state: TaskWorkflowState,
-  event: Extract<TaskWorkflowEvent, { type: "side_effect_failure_acknowledged" }>,
+  event: Extract<
+    TaskWorkflowEvent,
+    { type: "side_effect_failure_acknowledged" }
+  >,
 ): TaskWorkflowState {
   if (!state.sideEffectFailures?.[event.failureId]) {
     return state;

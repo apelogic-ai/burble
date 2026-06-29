@@ -131,6 +131,87 @@ describe("task workflow driver", () => {
     expect(observed).toContain("attempt_started");
   });
 
+  test("drives a retryable attempt failure into the next bounded attempt", async () => {
+    const startedAttempts: number[] = [];
+    const result = await runTaskWorkflowDriver({
+      initialEvent: {
+        type: "task_triggered",
+        taskId: "task-heart",
+        jobRunId: "jobrun-1",
+        triggerKey: "task-heart:manual:req-1",
+        source: "manual",
+        at: "2026-06-28T17:00:00.000Z",
+      },
+      handlers: {
+        validateTask: async (command) => ({
+          type: "validation_passed",
+          taskId: command.taskId,
+          jobRunId: command.jobRunId,
+          at: "2026-06-28T17:00:01.000Z",
+        }),
+        startAttempt: async (command) => {
+          startedAttempts.push(command.attempt);
+          if (command.attempt === 1) {
+            return {
+              type: "attempt_failed",
+              taskId: command.taskId,
+              jobRunId: command.jobRunId,
+              attempt: command.attempt,
+              failureClass: "runtime_timeout",
+              reason: "model provider timed out",
+              retryable: true,
+              at: "2026-06-28T17:00:02.000Z",
+            };
+          }
+          return {
+            type: "attempt_succeeded",
+            taskId: command.taskId,
+            jobRunId: command.jobRunId,
+            attempt: command.attempt,
+            outputDigest: "sha256:heart",
+            at: "2026-06-28T17:00:03.000Z",
+          };
+        },
+        deliverOutput: async (command) => [
+          {
+            type: "delivery_started",
+            taskId: command.taskId,
+            jobRunId: command.jobRunId,
+            deliveryKey: `${command.jobRunId}:route-1:${command.outputDigest}`,
+            at: "2026-06-28T17:00:04.000Z",
+          },
+          {
+            type: "delivery_succeeded",
+            taskId: command.taskId,
+            jobRunId: command.jobRunId,
+            deliveryKey: `${command.jobRunId}:route-1:${command.outputDigest}`,
+            at: "2026-06-28T17:00:05.000Z",
+          },
+        ],
+      },
+    });
+
+    expect(startedAttempts).toEqual([1, 2]);
+    expect(result.events.map((event) => event.type)).toEqual([
+      "task_triggered",
+      "validation_passed",
+      "attempt_started",
+      "attempt_failed",
+      "attempt_started",
+      "attempt_succeeded",
+      "delivery_started",
+      "delivery_succeeded",
+    ]);
+    expect(result.state.runs["jobrun-1"]).toMatchObject({
+      status: "succeeded",
+      attempt: 2,
+      outputDigest: "sha256:heart",
+    });
+    expect(
+      result.state.failureCounts["task-heart:runtime_timeout"],
+    ).toBeUndefined();
+  });
+
   test("feeds validation failures through notify and pause command handlers", async () => {
     const observedCommands: string[] = [];
     const result = await runTaskWorkflowDriver({
@@ -144,6 +225,7 @@ describe("task workflow driver", () => {
       },
       initialState: {
         failurePauseThreshold: 1,
+        maxAttempts: 2,
         triggerKeys: {},
         failureCounts: {},
         tasks: {},
@@ -383,6 +465,7 @@ describe("task workflow driver", () => {
       },
       initialState: {
         failurePauseThreshold: 1,
+        maxAttempts: 2,
         triggerKeys: {},
         failureCounts: {},
         tasks: {},
