@@ -58,6 +58,9 @@ export type TaskWorkflowEventStore = {
   appendEvent(input: TaskWorkflowAppendEventInput): TaskWorkflowStoredEvent;
   listEvents(input?: { signalId?: string }): TaskWorkflowStoredEvent[];
   replayState(input?: TaskWorkflowReplayStateInput): TaskWorkflowState;
+  buildSnapshot(input?: {
+    sequence?: number;
+  }): Pick<TaskWorkflowSnapshot, "sequence" | "state">;
   writeSnapshot(input?: TaskWorkflowWriteSnapshotInput): TaskWorkflowSnapshot;
   getLatestSnapshot(): TaskWorkflowSnapshot | null;
   compactEventsThroughSnapshot(input?: {
@@ -111,25 +114,36 @@ export function createInMemoryTaskWorkflowEventStore(input?: {
     }
     return null;
   };
-  const writeSnapshot = (
-    snapshotInput?: TaskWorkflowWriteSnapshotInput,
-  ): TaskWorkflowSnapshot => {
+  const buildSnapshot = (snapshotInput?: {
+    sequence?: number;
+  }): Pick<TaskWorkflowSnapshot, "sequence" | "state"> => {
     const latestSnapshot = getLatestSnapshot();
     const latestKnownSequence = Math.max(
       events.at(-1)?.sequence ?? 0,
       latestSnapshot?.sequence ?? 0,
     );
-    const sequence =
-      snapshotInput?.sequence ?? latestKnownSequence;
+    const sequence = snapshotInput?.sequence ?? latestKnownSequence;
     assertTaskWorkflowSnapshotSequenceKnown(sequence, latestKnownSequence);
     const baseSnapshot = getLatestSnapshotAtOrBefore(sequence);
+    return {
+      sequence,
+      state: buildTaskWorkflowSnapshotState({
+        events,
+        sequence,
+        baseSnapshot,
+      }),
+    };
+  };
+  const writeSnapshot = (
+    snapshotInput?: TaskWorkflowWriteSnapshotInput,
+  ): TaskWorkflowSnapshot => {
+    const builtSnapshot = buildSnapshot({
+      sequence: snapshotInput?.sequence,
+    });
+    const sequence = builtSnapshot.sequence;
     const state = snapshotInput?.state
       ? snapshotInput.state
-      : buildTaskWorkflowSnapshotState({
-          events,
-          sequence,
-          baseSnapshot,
-        });
+      : builtSnapshot.state;
     const snapshot: TaskWorkflowSnapshot = {
       sequence,
       state,
@@ -203,6 +217,7 @@ export function createInMemoryTaskWorkflowEventStore(input?: {
     },
     listEvents,
     replayState,
+    buildSnapshot,
     writeSnapshot,
     getLatestSnapshot,
     compactEventsThroughSnapshot,

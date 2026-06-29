@@ -123,6 +123,7 @@ const agentConfig: Config = {
   observabilityJsonlPath: null,
   observabilityJsonlDir: null,
   observabilityIncludeContent: false,
+  taskWorkflowAuthority: "off",
   taskWorkflowShadowEnabled: false,
   taskWorkflowShadowDatabasePath: null
 };

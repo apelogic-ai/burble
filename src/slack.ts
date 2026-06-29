@@ -111,6 +111,8 @@ import {
 import { defaultResolveSlackChannelIdByName } from "./tool-gateway";
 import { createSchedulerRunExecutor } from "./scheduler/run-executor";
 import { createSchedulerTimer } from "./scheduler/timer";
+import { createTaskWorkflowMaintenanceLoop } from "./workflow/task-workflow-maintenance";
+import { createTaskWorkflowOracleLoop } from "./workflow/task-workflow-oracle";
 import { createSqliteTaskWorkflowEventStore } from "./workflow/task-workflow-sqlite-store";
 import type {
   ConversationAttachment,
@@ -407,8 +409,26 @@ export function createSlackRuntime(
       )
     );
   }
+  const workflowMaintenanceLoop = workflowShadowStore
+    ? createTaskWorkflowMaintenanceLoop({
+        store: workflowShadowStore,
+        minEvents: 1_000,
+        logInfo: (message) => app.logger.info(withUtcTimestamp(message)),
+        logWarn: (message) => app.logger.warn(withUtcTimestamp(message))
+      })
+    : undefined;
+  const workflowOracleLoop = workflowShadowStore
+    ? createTaskWorkflowOracleLoop({
+        replayWorkflowState: () => workflowShadowStore.replayState(),
+        listAuthoritativeRuns: () => store.listRecentAgentJobRuns(5_000),
+        logWarn: (message) => app.logger.warn(withUtcTimestamp(message))
+      })
+    : undefined;
+  workflowMaintenanceLoop?.start();
+  workflowOracleLoop?.start();
 
   const schedulerControl = createSchedulerControlPlane(store, {
+    workflowAuthority: config.taskWorkflowAuthority,
     workflowShadowStore,
     resolveSlackChannelIdByName: (input) =>
       defaultResolveSlackChannelIdByName(config, input)
@@ -1955,6 +1975,8 @@ export function createSlackRuntime(
     getSlackEmail,
     close() {
       schedulerTimer?.stop();
+      workflowOracleLoop?.stop();
+      workflowMaintenanceLoop?.stop();
       workflowShadowDatabase?.close();
     }
   };

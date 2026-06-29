@@ -66,6 +66,7 @@ const config: Config = {
   observabilityJsonlPath: null,
   observabilityJsonlDir: null,
   observabilityIncludeContent: false,
+  taskWorkflowAuthority: "off",
   taskWorkflowShadowEnabled: false,
   taskWorkflowShadowDatabasePath: null,
   aiModel: "openai:gpt-5.4"
@@ -357,6 +358,8 @@ function createStore(
     },
     getAgentJobRun: () => null,
     listAgentJobRunsForJob: () => [],
+    listRecentAgentJobRuns: () => [],
+    findRecentFailedAgentJobRunForPrincipal: () => null,
     listAgentJobRunsForPrincipal: () => jobRuns.created ?? [],
     getLatestAgentJobRunForPrincipal: () => jobRuns.latest ?? null,
     listQueuedAgentJobRuns: () => [],

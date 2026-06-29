@@ -596,6 +596,85 @@ describe("scheduler control plane", () => {
     store.close();
   });
 
+  test("records manual workflow-authority validation failures as failed runs", async () => {
+    const store = createTokenStore(":memory:");
+    const workflowStore = createInMemoryTaskWorkflowEventStore();
+    store.upsertScheduledJob({
+      jobId: "github-pr-monitor",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      title: "Open PR monitor",
+      prompt:
+        "check for new open PRs in https://github.com/apelogic-ai github org",
+      schedule: {
+        kind: "interval",
+        every: { minutes: 15 },
+      },
+      routeId: "convrt_123",
+      runtimeType: "hermes",
+      now: new Date("2026-06-24T12:00:00.000Z"),
+    });
+    store.upsertAgentJobCapability({
+      jobId: "github-pr-monitor",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      requiredTools: ["github_list_my_pull_requests"],
+      routeId: "convrt_123",
+      runtimeType: "hermes",
+      now: new Date("2026-06-24T12:01:00.000Z"),
+    });
+
+    const scheduler = createSchedulerControlPlane(store, {
+      workflowAuthority: "manual",
+      workflowShadowStore: workflowStore,
+      now: () => new Date("2026-06-24T12:05:00.000Z"),
+      newRunId: () => "jobrun-validation-failed",
+    });
+
+    expect(
+      await scheduler.triggerJob?.({
+        workspaceId: "T123",
+        slackUserId: "U123",
+        jobId: "github-pr-monitor",
+      }),
+    ).toMatchObject({
+      ok: false,
+      reason: "validation_failed",
+    });
+    expect(store.listAgentJobRunsForJob("github-pr-monitor")).toEqual([
+      expect.objectContaining({
+        runId: "jobrun-validation-failed",
+        status: "failed",
+        failureReason: expect.stringContaining(
+          "missing_required_tool: Task requires github_search_issues",
+        ),
+      }),
+    ]);
+    expect(
+      workflowStore.replayState().runs["jobrun-validation-failed"],
+    ).toMatchObject({
+      status: "failed",
+      failureClass: "validation_failed",
+    });
+    expect(
+      await scheduler.triggerJob?.({
+        workspaceId: "T123",
+        slackUserId: "U123",
+        jobId: "github-pr-monitor",
+      }),
+    ).toMatchObject({
+      ok: false,
+      reason: "recent_validation_failure",
+      run: {
+        runId: "jobrun-validation-failed",
+        status: "failed",
+      },
+    });
+    expect(store.listAgentJobRunsForJob("github-pr-monitor")).toHaveLength(1);
+
+    store.close();
+  });
+
   test("passes validation for scheduled task grants that match inferred tools", async () => {
     const store = createTokenStore(":memory:");
     store.upsertScheduledJob({

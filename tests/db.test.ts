@@ -1369,6 +1369,38 @@ describe("createTokenStore", () => {
     expect(
       store.getLatestAgentJobRunForPrincipal("T123", "U123", null)?.runId
     ).toBe("jobrun-other");
+    expect(store.listRecentAgentJobRuns(2).map((record) => record.runId)).toEqual([
+      "jobrun-other",
+      "jobrun-123"
+    ]);
+    expect(
+      store.findRecentFailedAgentJobRunForPrincipal({
+        workspaceId: "T123",
+        slackUserId: "U123",
+        jobId: "other-job",
+        failureReason: "not failed",
+        since: new Date("2026-06-24T11:00:00.000Z")
+      })
+    ).toBeNull();
+    const failedRun = store.createAgentJobRun({
+      runId: "jobrun-failed",
+      jobId: "other-job",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      triggerSource: "manual",
+      status: "failed",
+      failureReason: "validation failed",
+      now: new Date("2026-06-24T12:01:30.000Z")
+    });
+    expect(
+      store.findRecentFailedAgentJobRunForPrincipal({
+        workspaceId: "T123",
+        slackUserId: "U123",
+        jobId: "other-job",
+        failureReason: "validation failed",
+        since: new Date("2026-06-24T12:01:00.000Z")
+      })
+    ).toEqual(failedRun);
     expect(store.listQueuedAgentJobRuns().map((record) => record.runId)).toEqual([
       "jobrun-123"
     ]);

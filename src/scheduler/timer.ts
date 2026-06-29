@@ -3,6 +3,7 @@ import type { AgentJobRunRecord, ScheduledJobRecord, TokenStore } from "../db";
 import { DEFAULT_ACTIVE_RUN_TTL_MS } from "./active-run";
 import { inferAllowedToolsForScheduledJob } from "./job-capabilities";
 import { validateScheduledTask } from "./task-validation";
+import { formatScheduledTaskValidationFailureReason } from "./task-validation-format";
 import {
   recordTaskWorkflowRunTriggered,
   recordTaskWorkflowRunValidationFailed,
@@ -88,12 +89,8 @@ export function createSchedulerTimer(input: {
         if (existingCapability) {
           const validation = validateScheduledTask(job, existingCapability);
           if (!validation.ok) {
-            const failureReason = [
-              "Scheduled task validation failed:",
-              validation.errors
-                .map((issue) => `${issue.code}: ${issue.message}`)
-                .join("; "),
-            ].join(" ");
+            const failureReason =
+              formatScheduledTaskValidationFailureReason(validation);
             const run = input.store.createAgentJobRun({
               runId: newRunId(),
               jobId: job.jobId,

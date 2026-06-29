@@ -67,6 +67,7 @@ describe("readConfig", () => {
       observabilityJsonlPath: null,
       observabilityJsonlDir: null,
       observabilityIncludeContent: false,
+      taskWorkflowAuthority: "off",
       taskWorkflowShadowEnabled: false,
       taskWorkflowShadowDatabasePath: null,
       testbed: false
@@ -573,6 +574,19 @@ describe("readConfig", () => {
         TASK_WORKFLOW_SHADOW_DATABASE_PATH: "./burble.db"
       })
     ).toThrow("TASK_WORKFLOW_SHADOW_DATABASE_PATH must not equal DATABASE_PATH");
+  });
+
+  test("reads optional task workflow authority flag", () => {
+    expect(
+      readConfig({ ...validEnv, TASK_WORKFLOW_AUTHORITY: "manual" })
+        .taskWorkflowAuthority
+    ).toBe("manual");
+  });
+
+  test("rejects invalid task workflow authority flag", () => {
+    expect(() =>
+      readConfig({ ...validEnv, TASK_WORKFLOW_AUTHORITY: "everything" })
+    ).toThrow("Environment variable TASK_WORKFLOW_AUTHORITY must be one of");
   });
 
   test("rejects invalid observability content setting", () => {

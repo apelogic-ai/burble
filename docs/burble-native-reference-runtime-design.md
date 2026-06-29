@@ -1303,6 +1303,82 @@ surface; multi-step provider workflows are inspectable before enabling; manual
 and timer-triggered Jobs run the same workflow spec; LLM involvement is explicit
 and bounded; the runner can later move to Restate without changing Task specs.
 
+### P-burble-app-home — Task and Job operations in Slack App Home
+
+Goal: make Tasks and Jobs first-class Burble product objects, not artifacts that
+can only be managed through chat phrasing. Slack App Home should become the
+primary operational surface for inspecting, running, pausing, repairing, and
+debugging Burble-owned work.
+
+Rationale:
+
+- Natural-language management remains useful for quick actions, but it is a poor
+  sole interface for durable objects. It creates ambiguity ("this job", "emoji
+  job", "hourly summary") and hides state until the user asks exactly the right
+  thing.
+- We already have distinct Task and Job concepts. A durable product concept needs
+  a durable UI: list, detail, actions, history, health, and audit.
+- The workflow shadow/oracle and later workflow authority need a place to surface
+  mismatches, validation failures, repeated failures, and `needs_repair` state
+  without dumping noisy diagnostics into a channel.
+
+Home layout:
+
+- **Tasks tab/section**:
+  - title, state (`scheduled`, `paused`, `needs_repair`), schedule, timezone,
+    next due slot, delivery route, runtime/profile, workflow mode, outputSpec
+    summary, and granted tools;
+  - actions: run now, pause, resume, edit schedule, edit delivery, show details,
+    validate, repair, delete;
+  - warnings: invalid grant, unsupported schedule, missing delivery route,
+    shadow/oracle mismatch, repeated failures.
+- **Jobs/runs tab/section**:
+  - recent runs across Tasks, with status, trigger (`manual`/`schedule`), runtime,
+    duration, delivery result, failure class, and run id;
+  - actions: view run detail, retry when safe, copy diagnostic summary, open
+    delivered thread/message where available.
+- **Task detail modal**:
+  - full prompt/spec, schedule cron, delivery policy, output contract, grant list,
+    workflow execution mode, state refs, and latest validation result;
+  - last N runs with terminal reason and links to delivery/audit.
+- **Run detail modal**:
+  - authoritative run row, workflow projection, oracle comparison, tool/model
+    usage, output digest, delivery key, and failure/repair recommendation.
+
+Observability rules:
+
+- App Home should show product-level health, not raw runtime chatter. It may show
+  tool names, grants, failure classes, and validation errors; it should not show
+  provider credentials, raw tokens, hidden prompt scaffolding, or full private
+  tool payloads unless the user is authorized and explicitly opens a diagnostic
+  view.
+- Shadow oracle mismatches should appear as Task/Run health warnings in App Home
+  and structured logs. They should not be posted into the Task's delivery channel
+  unless the Task itself failed in a user-relevant way.
+- App Home uses the same control plane as slash commands and NL intents. It must
+  not create a parallel scheduler state path.
+
+Implementation slices:
+
+- **P-home-a. Read-only Task/Job dashboard.** List Tasks and recent Jobs from the
+  existing control plane. Include state, schedule, delivery, runtime/profile, last
+  run status, and next due slot.
+- **P-home-b. Task and Job detail modals.** Add inspectable Task spec, grant
+  validation, outputSpec, run history, and delivery route details.
+- **P-home-c. Safe actions.** Add run now, pause, resume, validate, and delete
+  using the same scheduler control-plane mutations as slash/NL commands. Actions
+  must be idempotent and must show the resulting Task/Job state.
+- **P-home-d. Workflow observability.** Once the shadow oracle exists, surface
+  workflow projection vs `agent_job_runs` comparison, mismatch state, and
+  `needs_repair` in the detail modal.
+- **P-home-e. Repair workflow.** For invalid grants/schedules/delivery routes,
+  App Home offers explicit repair actions or opens a guided modal; the agent may
+  draft a repair, but the control plane applies it.
+
+Exit: a user can understand what Tasks exist, what Jobs ran, why a Task failed,
+where output was delivered, and what action is safe next without asking the agent
+to reconstruct scheduler state from chat.
+
 ### P-burble-output — Task output contracts
 
 Goal: make scheduled/manual Task output stable at the product level. This is not
@@ -1390,15 +1466,85 @@ authority is realized — on Burble's side).
 
 Slices:
 
-- **5a. Event-sourced run store** (`job_triggered`, `runtime_started`, `tool_*`,
-  `delivery_completed`, terminal). Status becomes a projection; runs are resumable.
-- **5b. Bounded retry-as-state.** A contract violation or transient failure retries
-  a small bounded count tracked in the run, then fails loud — replacing today's
-  fail-only behavior.
-- **5c. Reconciliation + native-job migration.** Promote the PR's minimal
-  reconciler to a full loop; add `needs_repair` and import/migration of any
-  runtime-native jobs. Record usage/audit (runtime id, model, tokens, route,
-  visibility) per run.
+- **5a. Event-sourced run store** (`task_triggered`, `validation_passed`,
+  `attempt_started`, `attempt_succeeded`, `delivery_succeeded`, terminal).
+  Status becomes a projection; runs are resumable. This slice is scaffolding
+  until it is wired into live scheduler observations.
+- **5b. Shadow wiring.** Mirror existing scheduler control-plane, timer, and
+  run-executor observations into the workflow event store without changing
+  execution authority. The legacy scheduler remains source of truth; workflow
+  state is write-only until the oracle slice.
+- **5c. Shadow oracle.** Replay workflow state and compare it to the
+  authoritative `agent_job_runs` rows. Log structured mismatches, at minimum:
+  missing workflow run, missing authoritative run, status mismatch, terminal
+  mismatch, stale-running workflow projection, and invalid transition/timestamp
+  anomalies. This slice is the first point where workflow shadow data provides
+  signal instead of only cost.
+- **5d. Retention and compaction.** Snapshot and compact the workflow event store
+  on a bounded cadence before any authority switch. Shadow data must not grow
+  forever. The compaction path must preserve idempotency-ledger semantics and
+  leave enough recent event detail for oracle diagnosis.
+- **5e. Manual-run workflow authority.** Add
+  `TASK_WORKFLOW_AUTHORITY=off|manual`, default `off`. In `manual`, manual
+  task runs (`/tasks run`, scheduler trigger tool, "test run job") append
+  `task_triggered` and let the workflow driver own validation, attempt,
+  delivery, terminal state, and legacy `agent_job_runs` projection updates.
+  Timer fires continue through the legacy path in this slice.
+- **5f. Timer workflow authority.** After manual authority soaks cleanly, add
+  `TASK_WORKFLOW_AUTHORITY=timer` and change
+  timer fires to append workflow events instead of directly creating
+  `agent_job_runs`. The timer becomes only a due-slot event source; the workflow
+  driver owns deduplication, validation, retries, delivery, and terminal state.
+- **5g. Bounded retry-as-state.** A contract violation or transient failure
+  retries a small bounded count tracked in the run, then fails loud — replacing
+  today's fail-only behavior. Retry eligibility is determined by workflow step
+  risk/idempotency, not by model prose.
+- **5h. Reconciliation + native-job migration.** Promote the current reconciler
+  to a full loop; add `needs_repair` and import/migration of any runtime-native
+  jobs. Record usage/audit (runtime id, model, tokens, route, visibility) per run.
+
+Workflow authority rollout:
+
+- The authority switch is staged and reversible. The currently supported rollout
+  values are:
+  - `TASK_WORKFLOW_AUTHORITY=off`: legacy scheduler is authoritative; workflow
+    event store may be populated only as shadow.
+  - `TASK_WORKFLOW_AUTHORITY=manual`: manual triggers are workflow-authoritative;
+    timer fires remain legacy.
+  Timer authority is deliberately not accepted until slice 5f wires it.
+- Do not skip from `off` to timer authority. `manual` must pass real hand tests
+  and the shadow oracle must stay clean before timer authority is enabled.
+- `agent_job_runs` remains during rollout as a compatibility read model. The
+  workflow driver writes it as a projection so existing Slack formatting,
+  scheduler commands, tests, and admin surfaces continue to work.
+- The workflow event log becomes the source of truth only after the oracle has
+  proven parity and the projection has soaked. Until then, any disagreement is a
+  rollout blocker, not something to hide with formatting.
+- Rollback is a flag flip from `manual` or `timer` back to `off`. Existing
+  workflow events are retained for diagnosis, but new runs return to the legacy
+  scheduler path. Because `agent_job_runs` is maintained as a projection, the
+  user-visible run history survives rollback.
+
+Migration rules:
+
+- Existing scheduled Task definitions do not need eager migration. The first
+  manual trigger or timer fire after authority is enabled creates the workflow
+  run event log for that execution.
+- Existing `agent_job_runs` rows remain immutable historical records. They may be
+  imported into workflow state for diagnostics, but they are not required for the
+  forward execution path.
+- Existing runtime-native jobs, if any, are imported or marked `needs_repair`
+  under reconciliation. Burble-owned scheduled Tasks should not depend on
+  runtime-native scheduler state after Sprint 5.
+- During migration, job ids and task ids remain stable. Slack commands that
+  reference old ids must resolve to the same Task and current projection.
+- The migration is successful only when:
+  - manual workflow-authoritative runs and legacy manual runs produce equivalent
+    `agent_job_runs` projections;
+  - timer workflow-authoritative runs deduplicate by `taskId + dueSlot`;
+  - delivery idempotency is keyed by `jobRunId + routeId + outputDigest`;
+  - oracle mismatches are zero for the soak window;
+  - rollback to `off` is tested and does not orphan runs.
 
 Exit: a process crash mid-run is recoverable from events; retries are bounded and
 observable; no run is orphaned; scheduled runs carry full usage/audit.

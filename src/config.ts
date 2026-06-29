@@ -63,6 +63,7 @@ export type Config = {
   observabilityJsonlPath: string | null;
   observabilityJsonlDir: string | null;
   observabilityIncludeContent: boolean;
+  taskWorkflowAuthority: TaskWorkflowAuthority;
   taskWorkflowShadowEnabled: boolean;
   taskWorkflowShadowDatabasePath: string | null;
   testbed?: boolean;
@@ -76,12 +77,14 @@ export type AgentRuntimeFactory = "static" | "docker" | "sandbox";
 export type OpenClawNemoClawEngine = AgentRuntimeEngine;
 export type AgentRuntimeStreamingMode = "off" | "basic" | "native";
 export type AgentRuntimeSandboxTransport = "grpc" | "http" | "cli";
+export type TaskWorkflowAuthority = "off" | "manual";
 const slackLogLevels = ["debug", "info", "warn", "error"] as const;
 const agentModes = ["deterministic", "llm"] as const;
 const agentRuntimes = ["ai-sdk", "burble-runtime"] as const;
 const agentRuntimeFactories = ["static", "docker", "sandbox"] as const;
 const agentRuntimeStreamingModes = ["off", "basic", "native"] as const;
 const agentRuntimeSandboxTransports = ["grpc", "http", "cli"] as const;
+const taskWorkflowAuthorities = ["off", "manual"] as const;
 export const agentRuntimeEngines = runtimeEngines;
 
 function requiredEnv(env: Env, name: string): string {
@@ -181,6 +184,25 @@ function optionalAgentRuntimeEnv(
   }
 
   return normalized as AgentRuntime;
+}
+
+function optionalTaskWorkflowAuthorityEnv(
+  env: Env,
+  name: string,
+  fallback: TaskWorkflowAuthority
+): TaskWorkflowAuthority {
+  const value = env[name]?.trim().toLowerCase();
+  if (!value) {
+    return fallback;
+  }
+
+  if (!taskWorkflowAuthorities.includes(value as TaskWorkflowAuthority)) {
+    throw new Error(
+      `Environment variable ${name} must be one of ${taskWorkflowAuthorities.join(", ")}`
+    );
+  }
+
+  return value as TaskWorkflowAuthority;
 }
 
 function optionalAgentRuntimeFactoryEnv(
@@ -468,6 +490,11 @@ export function readConfig(env: Env): Config {
       env,
       "OBSERVABILITY_INCLUDE_CONTENT",
       false
+    ),
+    taskWorkflowAuthority: optionalTaskWorkflowAuthorityEnv(
+      env,
+      "TASK_WORKFLOW_AUTHORITY",
+      "off"
     ),
     taskWorkflowShadowEnabled: taskWorkflowShadowDatabasePath !== null,
     taskWorkflowShadowDatabasePath,
