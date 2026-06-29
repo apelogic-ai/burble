@@ -88,6 +88,29 @@ describe("task workflow event store", () => {
     });
   });
 
+  test("writes and replays from snapshots", () => {
+    const store = createInMemoryTaskWorkflowEventStore();
+    store.appendEvent({
+      eventId: "evt-trigger",
+      event: {
+        type: "task_triggered",
+        taskId: "task-heart",
+        jobRunId: "jobrun-1",
+        triggerKey: "task-heart:manual:req-1",
+        source: "manual",
+        at: "2026-06-28T17:00:00.000Z",
+      },
+    });
+    const snapshot = store.writeSnapshot({
+      createdAt: "2026-06-28T17:00:01.000Z",
+    });
+
+    expect(store.getLatestSnapshot()).toEqual(snapshot);
+    expect(store.replayState().runs["jobrun-1"]).toMatchObject({
+      status: "created",
+    });
+  });
+
   test("supports destructured read methods", () => {
     const store = createInMemoryTaskWorkflowEventStore();
     store.appendEvent({

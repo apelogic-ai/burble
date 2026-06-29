@@ -95,6 +95,69 @@ describe("SQLite task workflow event store", () => {
     db.close();
   });
 
+  test("replays from a persisted snapshot plus later events", () => {
+    const path = join(
+      mkdtempSync(join(tmpdir(), "burble-workflow-store-")),
+      "workflow.sqlite",
+    );
+    let db = new Database(path);
+    let store = createSqliteTaskWorkflowEventStore(db);
+    store.appendEvent({
+      eventId: "evt-trigger",
+      event: {
+        type: "task_triggered",
+        taskId: "task-heart",
+        jobRunId: "jobrun-1",
+        triggerKey: "task-heart:manual:req-1",
+        source: "manual",
+        at: "2026-06-28T17:00:00.000Z",
+      },
+    });
+    store.appendEvent({
+      eventId: "evt-validation-passed",
+      event: {
+        type: "validation_passed",
+        taskId: "task-heart",
+        jobRunId: "jobrun-1",
+        at: "2026-06-28T17:00:01.000Z",
+      },
+    });
+
+    const snapshot = store.writeSnapshot({
+      createdAt: "2026-06-28T17:00:02.000Z",
+    });
+    expect(snapshot.sequence).toBe(2);
+    expect(snapshot.state.runs["jobrun-1"]).toMatchObject({
+      status: "running",
+    });
+
+    store.appendEvent({
+      eventId: "evt-attempt-started",
+      event: {
+        type: "attempt_started",
+        taskId: "task-heart",
+        jobRunId: "jobrun-1",
+        attempt: 1,
+        mode: "agent",
+        at: "2026-06-28T17:00:03.000Z",
+      },
+    });
+    db.query("DELETE FROM task_workflow_events WHERE sequence <= ?").run(
+      snapshot.sequence,
+    );
+    db.close();
+
+    db = new Database(path);
+    store = createSqliteTaskWorkflowEventStore(db);
+
+    expect(store.getLatestSnapshot()?.sequence).toBe(2);
+    expect(store.replayState().runs["jobrun-1"]).toMatchObject({
+      status: "running",
+      attempt: 1,
+    });
+    db.close();
+  });
+
   test("supports destructured read methods", () => {
     const db = new Database(":memory:");
     const store = createSqliteTaskWorkflowEventStore(db);

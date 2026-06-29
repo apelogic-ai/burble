@@ -27,10 +27,24 @@ export type TaskWorkflowSideEffectFailureRecord =
     failureId: string;
   };
 
+export type TaskWorkflowSnapshot = {
+  sequence: number;
+  state: TaskWorkflowState;
+  createdAt: string;
+};
+
+export type TaskWorkflowWriteSnapshotInput = {
+  sequence?: number;
+  state?: TaskWorkflowState;
+  createdAt?: string;
+};
+
 export type TaskWorkflowEventStore = {
   appendEvent(input: TaskWorkflowAppendEventInput): TaskWorkflowStoredEvent;
   listEvents(): TaskWorkflowStoredEvent[];
   replayState(input?: { initialState?: TaskWorkflowState }): TaskWorkflowState;
+  writeSnapshot(input?: TaskWorkflowWriteSnapshotInput): TaskWorkflowSnapshot;
+  getLatestSnapshot(): TaskWorkflowSnapshot | null;
   listResumableRuns(input?: {
     state?: TaskWorkflowState;
   }): TaskWorkflowRunState[];
@@ -49,16 +63,57 @@ export function createInMemoryTaskWorkflowEventStore(input?: {
     (left, right) => left.sequence - right.sequence,
   );
   const eventIds = new Map(events.map((event) => [event.eventId, event]));
+  const snapshots: TaskWorkflowSnapshot[] = [];
   const now = input?.now ?? (() => new Date());
 
   const listEvents = (): TaskWorkflowStoredEvent[] => [...events];
   const replayState = (replayInput?: {
     initialState?: TaskWorkflowState;
-  }): TaskWorkflowState =>
-    reduceTaskWorkflowEvents(
-      events.map((event) => event.event),
-      replayInput?.initialState ?? createInitialTaskWorkflowState(),
+  }): TaskWorkflowState => {
+    if (replayInput?.initialState) {
+      return reduceTaskWorkflowEvents(
+        events.map((event) => event.event),
+        replayInput.initialState,
+      );
+    }
+
+    const snapshot = getLatestSnapshot();
+    return reduceTaskWorkflowEvents(
+      events
+        .filter((event) => !snapshot || event.sequence > snapshot.sequence)
+        .map((event) => event.event),
+      snapshot?.state ?? createInitialTaskWorkflowState(),
     );
+  };
+  const getLatestSnapshot = (): TaskWorkflowSnapshot | null =>
+    snapshots.at(-1) ?? null;
+  const writeSnapshot = (
+    snapshotInput?: TaskWorkflowWriteSnapshotInput,
+  ): TaskWorkflowSnapshot => {
+    const sequence = snapshotInput?.sequence ?? events.at(-1)?.sequence ?? 0;
+    const state =
+      snapshotInput?.state ??
+      reduceTaskWorkflowEvents(
+        events
+          .filter((event) => event.sequence <= sequence)
+          .map((event) => event.event),
+      );
+    const snapshot: TaskWorkflowSnapshot = {
+      sequence,
+      state,
+      createdAt: snapshotInput?.createdAt ?? now().toISOString(),
+    };
+    const existingIndex = snapshots.findIndex(
+      (existing) => existing.sequence === sequence,
+    );
+    if (existingIndex >= 0) {
+      snapshots[existingIndex] = snapshot;
+    } else {
+      snapshots.push(snapshot);
+      snapshots.sort((left, right) => left.sequence - right.sequence);
+    }
+    return snapshot;
+  };
   const listResumableRuns = (listInput?: {
     state?: TaskWorkflowState;
   }): TaskWorkflowRunState[] => {
@@ -94,6 +149,8 @@ export function createInMemoryTaskWorkflowEventStore(input?: {
     },
     listEvents,
     replayState,
+    writeSnapshot,
+    getLatestSnapshot,
     listResumableRuns,
     listSideEffectFailures,
   };
