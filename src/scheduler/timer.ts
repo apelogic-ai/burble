@@ -3,6 +3,11 @@ import type { AgentJobRunRecord, ScheduledJobRecord, TokenStore } from "../db";
 import { DEFAULT_ACTIVE_RUN_TTL_MS } from "./active-run";
 import { inferAllowedToolsForScheduledJob } from "./job-capabilities";
 import { validateScheduledTask } from "./task-validation";
+import {
+  recordTaskWorkflowRunTriggered,
+  recordTaskWorkflowRunValidationFailed,
+  type TaskWorkflowShadowStore,
+} from "../workflow/task-workflow-shadow";
 
 type SchedulerTimerStore = Pick<
   TokenStore,
@@ -40,6 +45,7 @@ export function createSchedulerTimer(input: {
   newRunId?: () => string;
   intervalMs?: number;
   activeRunTtlMs?: number;
+  workflowShadowStore?: TaskWorkflowShadowStore;
   logInfo?: (message: string) => void;
   logWarn?: (message: string) => void;
 }): SchedulerTimer {
@@ -96,6 +102,14 @@ export function createSchedulerTimer(input: {
               finishedAt: timestamp.toISOString(),
               now: timestamp,
             });
+            recordTaskWorkflowRunValidationFailed({
+              store: input.workflowShadowStore,
+              run,
+              failureClass: "validation_failed",
+              reason: failureReason,
+              at: timestamp,
+              logWarn: input.logWarn,
+            });
             activePrincipals.add(principalKey);
             input.logWarn?.(
               [
@@ -128,6 +142,12 @@ export function createSchedulerTimer(input: {
           triggerSource: "schedule",
           status: "queued",
           now: timestamp,
+        });
+        recordTaskWorkflowRunTriggered({
+          store: input.workflowShadowStore,
+          run,
+          at: timestamp,
+          logWarn: input.logWarn,
         });
         queuedRunIds.push(run.runId);
         activePrincipals.add(principalKey);

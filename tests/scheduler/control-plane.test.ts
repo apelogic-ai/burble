@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { createTokenStore } from "../../src/db";
 import { createSchedulerControlPlane } from "../../src/scheduler/control-plane";
+import { createInMemoryTaskWorkflowEventStore } from "../../src/workflow/task-workflow-store";
 
 describe("scheduler control plane", () => {
   test("lists Burble-owned scheduled jobs for a principal", async () => {
@@ -155,6 +156,7 @@ describe("scheduler control plane", () => {
 
   test("creates manual trigger runs, self-heals capability state, and reports latest status", async () => {
     const store = createTokenStore(":memory:");
+    const workflowStore = createInMemoryTaskWorkflowEventStore();
     store.upsertScheduledJob({
       jobId: "ai-news-hourly",
       workspaceId: "T123",
@@ -172,6 +174,7 @@ describe("scheduler control plane", () => {
     const scheduler = createSchedulerControlPlane(store, {
       now: () => new Date("2026-06-24T12:05:00.000Z"),
       newRunId: () => "jobrun-manual-1",
+      workflowShadowStore: workflowStore,
     });
 
     expect(
@@ -204,6 +207,12 @@ describe("scheduler control plane", () => {
       requiredTools: ["web_search"],
       runtimeType: "hermes",
       capabilityProfile: "scheduled_job",
+    });
+    expect(workflowStore.replayState().runs["jobrun-manual-1"]).toMatchObject({
+      jobRunId: "jobrun-manual-1",
+      taskId: "ai-news-hourly",
+      source: "manual",
+      status: "created",
     });
     expect(
       await scheduler.getLatestRunStatus?.({

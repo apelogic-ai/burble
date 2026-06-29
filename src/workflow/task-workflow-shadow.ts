@@ -61,6 +61,28 @@ export function recordTaskWorkflowRunStarted(
   });
 }
 
+export function recordTaskWorkflowRunValidationFailed(
+  input: TaskWorkflowShadowInput & {
+    failureClass: string;
+    reason: string;
+  },
+): void {
+  const at = shadowEventTime(input);
+  recordTaskWorkflowRunTriggered(input);
+  appendShadowEvent(input, {
+    eventId: shadowEventId(input.run, "validation_failed"),
+    event: {
+      type: "validation_failed",
+      taskId: input.run.jobId,
+      jobRunId: input.run.runId,
+      failureClass: input.failureClass,
+      reason: input.reason,
+      at,
+    },
+    recordedAt: at,
+  });
+}
+
 export function recordTaskWorkflowRunSucceeded(
   input: TaskWorkflowShadowInput & {
     outputText: string;
@@ -153,6 +175,7 @@ function shadowEventId(
   eventName:
     | "task_triggered"
     | "validation_passed"
+    | "validation_failed"
     | "attempt_started"
     | "attempt_succeeded"
     | "attempt_failed"
