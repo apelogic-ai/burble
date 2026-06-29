@@ -1,6 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import type { AgentJobRunRecord } from "../../src/db";
-import { compareTaskWorkflowProjection } from "../../src/workflow/task-workflow-oracle";
+import {
+  compareTaskWorkflowProjection,
+  createTaskWorkflowOracleLoop,
+} from "../../src/workflow/task-workflow-oracle";
 import {
   recordTaskWorkflowRunFailed,
   recordTaskWorkflowRunStarted,
@@ -98,6 +101,26 @@ describe("task workflow oracle", () => {
         workflowStatus: "created",
       },
     ]);
+  });
+
+  test("oracle loop logs mismatches from replayed state", async () => {
+    const store = createInMemoryTaskWorkflowEventStore();
+    const warnings: string[] = [];
+    recordTaskWorkflowRunTriggered({
+      store,
+      run: agentRun({ status: "queued" }),
+    });
+    const loop = createTaskWorkflowOracleLoop({
+      replayWorkflowState: () => store.replayState(),
+      listAuthoritativeRuns: () => [],
+      logWarn: (message) => warnings.push(message),
+    });
+
+    const result = await loop.tick();
+
+    expect(result.ok).toBe(false);
+    expect(result.mismatches[0]?.kind).toBe("missing_authoritative_run");
+    expect(warnings[0]).toContain("Task workflow oracle found mismatches");
   });
 });
 

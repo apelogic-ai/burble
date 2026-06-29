@@ -12,7 +12,8 @@ export type TaskWorkflowOracleMismatchKind =
   | "trigger_source_mismatch"
   | "status_mismatch"
   | "terminal_mismatch"
-  | "failure_reason_mismatch";
+  | "failure_reason_mismatch"
+  | "oracle_failed";
 
 export type TaskWorkflowOracleMismatch = {
   kind: TaskWorkflowOracleMismatchKind;
@@ -27,6 +28,12 @@ export type TaskWorkflowOracleMismatch = {
 export type TaskWorkflowOracleResult = {
   ok: boolean;
   mismatches: TaskWorkflowOracleMismatch[];
+};
+
+export type TaskWorkflowOracleLoop = {
+  tick(): Promise<TaskWorkflowOracleResult>;
+  start(): void;
+  stop(): void;
 };
 
 export function compareTaskWorkflowProjection(input: {
@@ -73,6 +80,79 @@ export function compareTaskWorkflowProjection(input: {
   return {
     ok: mismatches.length === 0,
     mismatches,
+  };
+}
+
+export function createTaskWorkflowOracleLoop(input: {
+  replayWorkflowState: () => TaskWorkflowState;
+  listAuthoritativeRuns: () => AgentJobRunRecord[] | Promise<AgentJobRunRecord[]>;
+  intervalMs?: number;
+  logWarn?: (message: string) => void;
+  logInfo?: (message: string) => void;
+}): TaskWorkflowOracleLoop {
+  const intervalMs = input.intervalMs ?? 5 * 60_000;
+  let timer: ReturnType<typeof setInterval> | undefined;
+  let running = false;
+
+  const tick = async (): Promise<TaskWorkflowOracleResult> => {
+    if (running) {
+      return { ok: true, mismatches: [] };
+    }
+    running = true;
+    try {
+      const result = compareTaskWorkflowProjection({
+        workflowState: input.replayWorkflowState(),
+        authoritativeRuns: await input.listAuthoritativeRuns(),
+      });
+      if (!result.ok) {
+        input.logWarn?.(
+          `Task workflow oracle found mismatches count=${result.mismatches.length} details=${JSON.stringify(
+            result.mismatches.slice(0, 20),
+          )}`,
+        );
+      } else {
+        input.logInfo?.("Task workflow oracle found no mismatches");
+      }
+      return result;
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "unknown workflow oracle error";
+      input.logWarn?.(`Task workflow oracle failed error=${message}`);
+      return {
+        ok: false,
+        mismatches: [
+          {
+            kind: "oracle_failed",
+            runId: "oracle",
+            expected: "oracle_tick",
+            actual: message,
+          },
+        ],
+      };
+    } finally {
+      running = false;
+    }
+  };
+
+  return {
+    tick,
+    start() {
+      if (timer) {
+        return;
+      }
+      timer = setInterval(() => {
+        void tick();
+      }, intervalMs);
+      if ("unref" in timer && typeof timer.unref === "function") {
+        timer.unref();
+      }
+    },
+    stop() {
+      if (timer) {
+        clearInterval(timer);
+        timer = undefined;
+      }
+    },
   };
 }
 
