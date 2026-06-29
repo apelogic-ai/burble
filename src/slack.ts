@@ -111,6 +111,7 @@ import {
 import { defaultResolveSlackChannelIdByName } from "./tool-gateway";
 import { createSchedulerRunExecutor } from "./scheduler/run-executor";
 import { createSchedulerTimer } from "./scheduler/timer";
+import { createTaskWorkflowMaintenanceLoop } from "./workflow/task-workflow-maintenance";
 import { createSqliteTaskWorkflowEventStore } from "./workflow/task-workflow-sqlite-store";
 import type {
   ConversationAttachment,
@@ -407,6 +408,15 @@ export function createSlackRuntime(
       )
     );
   }
+  const workflowMaintenanceLoop = workflowShadowStore
+    ? createTaskWorkflowMaintenanceLoop({
+        store: workflowShadowStore,
+        minEvents: 1_000,
+        logInfo: (message) => app.logger.info(withUtcTimestamp(message)),
+        logWarn: (message) => app.logger.warn(withUtcTimestamp(message))
+      })
+    : undefined;
+  workflowMaintenanceLoop?.start();
 
   const schedulerControl = createSchedulerControlPlane(store, {
     workflowShadowStore,
@@ -1955,6 +1965,7 @@ export function createSlackRuntime(
     getSlackEmail,
     close() {
       schedulerTimer?.stop();
+      workflowMaintenanceLoop?.stop();
       workflowShadowDatabase?.close();
     }
   };
