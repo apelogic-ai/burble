@@ -1,5 +1,10 @@
 export type TaskWorkflowTriggerSource = "schedule" | "manual";
 
+// The workflow FSM is tested scaffolding only; live scheduler execution still
+// uses src/scheduler/run-executor.ts and src/scheduler/timer.ts until the
+// durable workflow-state wiring sprint explicitly flips this marker.
+export const TASK_WORKFLOW_PRODUCTION_WIRED = false;
+
 export type TaskWorkflowRunStatus =
   | "created"
   | "validating"

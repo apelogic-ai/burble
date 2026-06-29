@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
+  TASK_WORKFLOW_PRODUCTION_WIRED,
   applyTaskWorkflowEvent,
   createInitialTaskWorkflowState,
   reduceTaskWorkflowEvents,
@@ -8,6 +9,10 @@ import {
 } from "../../src/workflow/task-workflow";
 
 describe("task workflow reducer", () => {
+  test("documents that the workflow layer is not wired into production execution yet", () => {
+    expect(TASK_WORKFLOW_PRODUCTION_WIRED).toBe(false);
+  });
+
   test("uses trigger keys to make scheduled/manual run creation idempotent", () => {
     const events: TaskWorkflowEvent[] = [
       {
