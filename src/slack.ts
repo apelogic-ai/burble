@@ -431,6 +431,7 @@ export function createSlackRuntime(
   workflowOracleLoop?.start();
 
   const schedulerControl = createSchedulerControlPlane(store, {
+    workflowAuthority: config.taskWorkflowAuthority,
     workflowShadowStore,
     resolveSlackChannelIdByName: (input) =>
       defaultResolveSlackChannelIdByName(config, input)

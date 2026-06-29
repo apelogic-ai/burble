@@ -66,6 +66,7 @@ const config: Config = {
   observabilityJsonlPath: null,
   observabilityJsonlDir: null,
   observabilityIncludeContent: false,
+  taskWorkflowAuthority: "off",
   taskWorkflowShadowEnabled: false,
   taskWorkflowShadowDatabasePath: null,
   aiModel: "openai:gpt-5.4"

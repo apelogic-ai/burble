@@ -17,8 +17,10 @@ import { validateScheduledJobSchedule } from "./timer";
 import { DEFAULT_ACTIVE_RUN_TTL_MS } from "./active-run";
 import {
   recordTaskWorkflowRunTriggered,
+  recordTaskWorkflowRunValidationFailed,
   type TaskWorkflowShadowStore,
 } from "../workflow/task-workflow-shadow";
+import { TASK_WORKFLOW_VALIDATION_FAILURE_CLASS } from "../workflow/task-workflow";
 
 export type {
   SchedulerTaskGrant,
@@ -276,6 +278,7 @@ type SchedulerControlPlaneOptions = {
   now?: () => Date;
   newJobId?: () => string;
   newRunId?: () => string;
+  workflowAuthority?: "off" | "manual" | "timer";
   workflowShadowStore?: TaskWorkflowShadowStore;
   resolveSlackChannelIdByName?: (input: {
     workspaceId: string;
@@ -301,6 +304,7 @@ export function createSchedulerControlPlane(
   const now = options.now ?? (() => new Date());
   const newJobId = options.newJobId ?? (() => `job_${randomUUID()}`);
   const newRunId = options.newRunId ?? (() => `jobrun_${randomUUID()}`);
+  const workflowAuthority = options.workflowAuthority ?? "off";
   const listJobs = (input: {
     workspaceId: string;
     slackUserId: string;
@@ -470,6 +474,26 @@ export function createSchedulerControlPlane(
         }
         const validation = validateScheduledTask(record, capability);
         if (!validation.ok) {
+          if (workflowAuthority === "manual") {
+            const failedRun = store.createAgentJobRun({
+              runId: newRunId(),
+              jobId: record.jobId,
+              workspaceId: input.workspaceId,
+              slackUserId: input.slackUserId,
+              triggerSource: "manual",
+              status: "failed",
+              failureReason: scheduledTaskValidationFailureReason(validation),
+              finishedAt: timestamp.toISOString(),
+              now: timestamp,
+            });
+            recordTaskWorkflowRunValidationFailed({
+              store: options.workflowShadowStore,
+              run: failedRun,
+              failureClass: TASK_WORKFLOW_VALIDATION_FAILURE_CLASS,
+              reason: failedRun.failureReason ?? "Scheduled task validation failed.",
+              at: timestamp,
+            });
+          }
           return {
             ok: false,
             reason: "validation_failed",
@@ -523,6 +547,20 @@ export function createSchedulerControlPlane(
       return run ? { ok: true, run } : { ok: false, reason: "no_runs" };
     },
   };
+}
+
+function scheduledTaskValidationFailureReason(
+  validation: SchedulerTaskValidation,
+): string {
+  if (validation.ok) {
+    return "Scheduled task validation failed.";
+  }
+  return [
+    "Scheduled task validation failed:",
+    validation.errors
+      .map((issue) => `${issue.code}: ${issue.message}`)
+      .join("; "),
+  ].join(" ");
 }
 
 function updateScheduledJobSchedule(
