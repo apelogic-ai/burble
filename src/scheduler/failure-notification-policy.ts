@@ -15,5 +15,11 @@ export function shouldNotifyScheduledRunFailure(input: {
     case "manual":
     case "schedule":
       return true;
+    default:
+      return assertNever(input.run.triggerSource);
   }
+}
+
+function assertNever(value: never): never {
+  throw new Error(`Unhandled scheduled run trigger source: ${value}`);
 }
