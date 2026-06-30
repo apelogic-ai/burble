@@ -1446,6 +1446,103 @@ describe("createTokenStore", () => {
     store.close();
   });
 
+  test("upserts scheduled job run audit metadata", () => {
+    const store = createTokenStore(":memory:");
+
+    const audit = store.upsertAgentJobRunAudit({
+      runId: "jobrun-audit",
+      jobId: "ai-news-hourly",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      runtimeType: "openclaw",
+      runnerName: "managed-runtime",
+      executionMode: "native-runtime",
+      routeId: "convrt_123",
+      outputDigest: "digest-a",
+      outputBytes: 42,
+      usage: {
+        inputTokens: 12,
+        outputTokens: 8,
+        totalTokens: 20,
+        usageSource: "provider-output"
+      },
+      telemetry: {
+        promptChars: 144
+      },
+      visibility: {
+        destination: "slack",
+        isDirectMessage: false
+      },
+      now: new Date("2026-06-24T12:05:00.000Z")
+    });
+
+    expect(audit).toEqual({
+      runId: "jobrun-audit",
+      jobId: "ai-news-hourly",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      runtimeType: "openclaw",
+      runnerName: "managed-runtime",
+      executionMode: "native-runtime",
+      routeId: "convrt_123",
+      outputDigest: "digest-a",
+      outputBytes: 42,
+      usage: {
+        inputTokens: 12,
+        outputTokens: 8,
+        totalTokens: 20,
+        usageSource: "provider-output"
+      },
+      telemetry: {
+        promptChars: 144
+      },
+      visibility: {
+        destination: "slack",
+        isDirectMessage: false
+      },
+      createdAt: "2026-06-24T12:05:00.000Z",
+      updatedAt: "2026-06-24T12:05:00.000Z"
+    });
+    expect(store.getAgentJobRunAudit("jobrun-audit")).toEqual(audit);
+
+    const updated = store.upsertAgentJobRunAudit({
+      ...audit,
+      outputDigest: "digest-b",
+      outputBytes: 84,
+      usage: {
+        totalTokens: 30,
+        usageSource: "estimate-only"
+      },
+      telemetry: null,
+      visibility: {
+        destination: "none"
+      },
+      now: new Date("2026-06-24T12:06:00.000Z")
+    });
+    expect(updated).toMatchObject({
+      runId: "jobrun-audit",
+      outputDigest: "digest-b",
+      outputBytes: 84,
+      usage: {
+        totalTokens: 30,
+        usageSource: "estimate-only"
+      },
+      telemetry: null,
+      visibility: {
+        destination: "none"
+      },
+      createdAt: "2026-06-24T12:05:00.000Z",
+      updatedAt: "2026-06-24T12:06:00.000Z"
+    });
+    expect(
+      store
+        .listAgentJobRunAuditsForPrincipal("T123", "U123", 10)
+        .map((record) => record.runId)
+    ).toEqual(["jobrun-audit"]);
+
+    store.close();
+  });
+
   test("stores skill catalog and workspace/user skill enablement", () => {
     const store = createTokenStore(":memory:");
 
