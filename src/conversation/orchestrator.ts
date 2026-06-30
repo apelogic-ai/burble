@@ -1714,6 +1714,11 @@ export function formatScheduledRunStatusResult(
   if (!result.ok) {
     return "No scheduled job runs have been recorded yet.";
   }
+  const audit = result.audit;
+  const usage =
+    audit?.usage && typeof audit.usage === "object"
+      ? (audit.usage as Record<string, unknown>)
+      : null;
 
   return [
     "Latest scheduled job run",
@@ -1722,6 +1727,17 @@ export function formatScheduledRunStatusResult(
     `- status: ${result.run.status}`,
     `- triggered: ${result.run.triggerSource}`,
     `- updated: ${result.run.updatedAt}`,
+    ...(audit
+      ? [
+          audit.runtimeType ? `- runtime: ${audit.runtimeType}` : null,
+          audit.runnerName ? `- runner: ${audit.runnerName}` : null,
+          audit.routeId ? `- route: ${audit.routeId}` : null,
+          audit.outputDigest ? `- output: ${audit.outputDigest}` : null,
+          typeof usage?.totalTokens === "number"
+            ? `- tokens: ${usage.totalTokens}`
+            : null,
+        ].filter((line): line is string => Boolean(line))
+      : []),
     ...(result.run.failureReason
       ? [`- failure: ${result.run.failureReason}`]
       : []),

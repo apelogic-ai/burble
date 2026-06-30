@@ -183,6 +183,24 @@ export type AgentJobRunRecord = {
   finishedAt: string | null;
 };
 
+export type AgentJobRunAuditRecord = {
+  runId: string;
+  jobId: string;
+  workspaceId: string;
+  slackUserId: string;
+  runtimeType: AgentRuntimeEngine | null;
+  runnerName: string | null;
+  executionMode: "default" | "native-runtime" | null;
+  routeId: string | null;
+  outputDigest: string | null;
+  outputBytes: number | null;
+  usage: unknown;
+  telemetry: unknown;
+  visibility: unknown;
+  createdAt: string;
+  updatedAt: string;
+};
+
 export type AgentJobCapabilityRecord = {
   jobId: string;
   workspaceId: string;
@@ -248,6 +266,16 @@ type ScheduledJobRow = Omit<ScheduledJobRecord, "schedule" | "runtimeType"> & {
 };
 
 type AgentJobRunRow = AgentJobRunRecord;
+
+type AgentJobRunAuditRow = Omit<
+  AgentJobRunAuditRecord,
+  "runtimeType" | "usage" | "telemetry" | "visibility"
+> & {
+  runtimeType: string | null;
+  usageJson: string;
+  telemetryJson: string;
+  visibilityJson: string;
+};
 
 type AgentJobCapabilityRow = Omit<
   AgentJobCapabilityRecord,
@@ -446,6 +474,27 @@ export function createTokenStore(path: string) {
 
     CREATE INDEX IF NOT EXISTS idx_agent_job_runs_principal_created
       ON agent_job_runs (workspace_id, slack_user_id, created_at);
+
+    CREATE TABLE IF NOT EXISTS agent_job_run_audit (
+      run_id TEXT PRIMARY KEY,
+      job_id TEXT NOT NULL,
+      workspace_id TEXT NOT NULL,
+      slack_user_id TEXT NOT NULL,
+      runtime_type TEXT,
+      runner_name TEXT,
+      execution_mode TEXT,
+      route_id TEXT,
+      output_digest TEXT,
+      output_bytes INTEGER,
+      usage_json TEXT NOT NULL,
+      telemetry_json TEXT NOT NULL,
+      visibility_json TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_agent_job_run_audit_principal_updated
+      ON agent_job_run_audit (workspace_id, slack_user_id, updated_at);
 
     CREATE TABLE IF NOT EXISTS agent_job_capabilities (
       job_id TEXT PRIMARY KEY,
@@ -1252,6 +1301,86 @@ export function createTokenStore(path: string) {
       AND updated_at >= ?
     ORDER BY updated_at DESC, run_id ASC
     LIMIT 1
+  `);
+  const upsertAgentJobRunAudit = db.query(`
+    INSERT INTO agent_job_run_audit (
+      run_id,
+      job_id,
+      workspace_id,
+      slack_user_id,
+      runtime_type,
+      runner_name,
+      execution_mode,
+      route_id,
+      output_digest,
+      output_bytes,
+      usage_json,
+      telemetry_json,
+      visibility_json,
+      created_at,
+      updated_at
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(run_id) DO UPDATE SET
+      job_id = excluded.job_id,
+      workspace_id = excluded.workspace_id,
+      slack_user_id = excluded.slack_user_id,
+      runtime_type = excluded.runtime_type,
+      runner_name = excluded.runner_name,
+      execution_mode = excluded.execution_mode,
+      route_id = excluded.route_id,
+      output_digest = excluded.output_digest,
+      output_bytes = excluded.output_bytes,
+      usage_json = excluded.usage_json,
+      telemetry_json = excluded.telemetry_json,
+      visibility_json = excluded.visibility_json,
+      updated_at = excluded.updated_at
+  `);
+  const getAgentJobRunAudit = db.query<AgentJobRunAuditRow, [string]>(`
+    SELECT
+      run_id AS runId,
+      job_id AS jobId,
+      workspace_id AS workspaceId,
+      slack_user_id AS slackUserId,
+      runtime_type AS runtimeType,
+      runner_name AS runnerName,
+      execution_mode AS executionMode,
+      route_id AS routeId,
+      output_digest AS outputDigest,
+      output_bytes AS outputBytes,
+      usage_json AS usageJson,
+      telemetry_json AS telemetryJson,
+      visibility_json AS visibilityJson,
+      created_at AS createdAt,
+      updated_at AS updatedAt
+    FROM agent_job_run_audit
+    WHERE run_id = ?
+  `);
+  const listAgentJobRunAuditsForPrincipal = db.query<
+    AgentJobRunAuditRow,
+    [string, string, number]
+  >(`
+    SELECT
+      run_id AS runId,
+      job_id AS jobId,
+      workspace_id AS workspaceId,
+      slack_user_id AS slackUserId,
+      runtime_type AS runtimeType,
+      runner_name AS runnerName,
+      execution_mode AS executionMode,
+      route_id AS routeId,
+      output_digest AS outputDigest,
+      output_bytes AS outputBytes,
+      usage_json AS usageJson,
+      telemetry_json AS telemetryJson,
+      visibility_json AS visibilityJson,
+      created_at AS createdAt,
+      updated_at AS updatedAt
+    FROM agent_job_run_audit
+    WHERE workspace_id = ?
+      AND slack_user_id = ?
+    ORDER BY updated_at DESC, run_id ASC
+    LIMIT ?
   `);
   const listAgentJobRunsForPrincipal = db.query<
     AgentJobRunRow,
@@ -2256,6 +2385,64 @@ export function createTokenStore(path: string) {
       return record ? toAgentJobRunRecord(record) : null;
     },
 
+    upsertAgentJobRunAudit(input: {
+      runId: string;
+      jobId: string;
+      workspaceId: string;
+      slackUserId: string;
+      runtimeType?: AgentRuntimeEngine | null;
+      runnerName?: string | null;
+      executionMode?: "default" | "native-runtime" | null;
+      routeId?: string | null;
+      outputDigest?: string | null;
+      outputBytes?: number | null;
+      usage?: unknown;
+      telemetry?: unknown;
+      visibility?: unknown;
+      now?: Date;
+    }): AgentJobRunAuditRecord {
+      const now = (input.now ?? new Date()).toISOString();
+      upsertAgentJobRunAudit.run(
+        input.runId,
+        input.jobId,
+        input.workspaceId,
+        input.slackUserId,
+        input.runtimeType ?? null,
+        input.runnerName ?? null,
+        input.executionMode ?? null,
+        input.routeId ?? null,
+        input.outputDigest ?? null,
+        normalizeOptionalInteger(input.outputBytes),
+        stableJson(input.usage ?? null),
+        stableJson(input.telemetry ?? null),
+        stableJson(input.visibility ?? null),
+        now,
+        now
+      );
+      const record = getAgentJobRunAudit.get(input.runId);
+      if (!record) {
+        throw new Error("Failed to store agent job run audit");
+      }
+      return toAgentJobRunAuditRecord(record);
+    },
+
+    getAgentJobRunAudit(runId: string): AgentJobRunAuditRecord | null {
+      const record = getAgentJobRunAudit.get(runId);
+      return record ? toAgentJobRunAuditRecord(record) : null;
+    },
+
+    listAgentJobRunAuditsForPrincipal(
+      workspaceId: string,
+      slackUserId: string,
+      limit = 100
+    ): AgentJobRunAuditRecord[] {
+      const normalizedLimit =
+        Number.isSafeInteger(limit) && limit > 0 ? Math.min(limit, 500) : 100;
+      return listAgentJobRunAuditsForPrincipal
+        .all(workspaceId, slackUserId, normalizedLimit)
+        .map(toAgentJobRunAuditRecord);
+    },
+
     listAgentJobRunsForPrincipal(
       workspaceId: string,
       slackUserId: string,
@@ -2697,6 +2884,28 @@ function toAgentJobRunRecord(row: AgentJobRunRow): AgentJobRunRecord {
   };
 }
 
+function toAgentJobRunAuditRecord(
+  row: AgentJobRunAuditRow
+): AgentJobRunAuditRecord {
+  return {
+    runId: row.runId,
+    jobId: row.jobId,
+    workspaceId: row.workspaceId,
+    slackUserId: row.slackUserId,
+    runtimeType: normalizeAgentRuntimeEngine(row.runtimeType),
+    runnerName: row.runnerName,
+    executionMode: normalizeAgentExecutionMode(row.executionMode),
+    routeId: row.routeId,
+    outputDigest: row.outputDigest,
+    outputBytes: row.outputBytes,
+    usage: parseStoredJson(row.usageJson),
+    telemetry: parseStoredJson(row.telemetryJson),
+    visibility: parseStoredJson(row.visibilityJson),
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt
+  };
+}
+
 function toAgentJobCapabilityRecord(
   row: AgentJobCapabilityRow
 ): AgentJobCapabilityRecord {
@@ -2733,6 +2942,15 @@ function normalizeAgentJobRunTriggerSource(
   triggerSource: string
 ): AgentJobRunTriggerSource {
   return triggerSource === "schedule" ? "schedule" : "manual";
+}
+
+function normalizeAgentExecutionMode(
+  executionMode: string | null
+): "default" | "native-runtime" | null {
+  if (executionMode === "default" || executionMode === "native-runtime") {
+    return executionMode;
+  }
+  return null;
 }
 
 function toSkillCatalogRecord(row: SkillCatalogRow): SkillCatalogRecord {
@@ -2806,6 +3024,13 @@ function normalizeAgentRuntimeEngine(
 
 function normalizeStateRefs(value: unknown[] | null | undefined): unknown[] {
   return Array.isArray(value) ? value : [];
+}
+
+function normalizeOptionalInteger(value: number | null | undefined): number | null {
+  if (typeof value !== "number") {
+    return null;
+  }
+  return Number.isSafeInteger(value) && value >= 0 ? value : null;
 }
 
 function requiredToolsFromJson(valueJson: string): string[] {

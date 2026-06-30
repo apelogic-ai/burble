@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type {
+  AgentJobRunAuditRecord,
   AgentJobRunRecord,
   AgentRuntimeEngine,
   ConversationRouteRecord,
@@ -266,6 +267,7 @@ export type SchedulerRunStatusResult =
   | {
       ok: true;
       run: AgentJobRunRecord;
+      audit?: AgentJobRunAuditRecord | null;
     }
   | {
       ok: false;
@@ -296,6 +298,7 @@ export function createSchedulerControlPlane(
     | "upsertAgentJobCapability"
     | "getAgentJobCapability"
     | "getLatestAgentJobRunForPrincipal"
+    | "getAgentJobRunAudit"
     | "getConversationGrantRouteForSlackChannel"
   >,
   options: SchedulerControlPlaneOptions = {},
@@ -525,7 +528,9 @@ export function createSchedulerControlPlane(
         input.slackUserId,
         input.jobId,
       );
-      return run ? { ok: true, run } : { ok: false, reason: "no_runs" };
+      return run
+        ? { ok: true, run, audit: store.getAgentJobRunAudit(run.runId) }
+        : { ok: false, reason: "no_runs" };
     },
   };
 }

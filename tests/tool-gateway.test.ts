@@ -361,6 +361,11 @@ function createStore(
     listAgentJobRunsForJob: () => [],
     listRecentAgentJobRuns: () => [],
     findRecentFailedAgentJobRunForPrincipal: () => null,
+    upsertAgentJobRunAudit: () => {
+      throw new Error("unexpected agent job run audit write");
+    },
+    getAgentJobRunAudit: () => null,
+    listAgentJobRunAuditsForPrincipal: () => [],
     listAgentJobRunsForPrincipal: () => jobRuns.created ?? [],
     getLatestAgentJobRunForPrincipal: () => jobRuns.latest ?? null,
     listQueuedAgentJobRuns: () => [],
@@ -2207,7 +2212,8 @@ describe("handleToolGatewayRequest", () => {
       classification: "user_private",
       content: {
         ok: true,
-        run: latest
+        run: latest,
+        audit: null
       }
     });
   });

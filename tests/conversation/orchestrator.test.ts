@@ -2360,6 +2360,27 @@ describe("handleConversation", () => {
               startedAt: null,
               finishedAt: null,
             },
+            audit: {
+              runId: "jobrun-manual-1",
+              jobId: "ai-news-hourly",
+              workspaceId: "T123",
+              slackUserId: "U123",
+              runtimeType: "openclaw",
+              runnerName: "managed-runtime",
+              executionMode: "native-runtime",
+              routeId: "convrt_123",
+              outputDigest: "sha256:abc",
+              outputBytes: 12,
+              usage: {
+                totalTokens: 42,
+              },
+              telemetry: null,
+              visibility: {
+                destination: "slack",
+              },
+              createdAt: "2026-06-24T12:06:00.000Z",
+              updatedAt: "2026-06-24T12:06:00.000Z",
+            },
           }),
         },
         agentRunner: stubAgentRunner(() => {
@@ -2375,6 +2396,10 @@ describe("handleConversation", () => {
     expect(called).toBe(false);
     expect(response.text).toContain("Latest scheduled job run");
     expect(response.text).toContain("status: queued");
+    expect(response.text).toContain("runtime: openclaw");
+    expect(response.text).toContain("runner: managed-runtime");
+    expect(response.text).toContain("route: convrt_123");
+    expect(response.text).toContain("tokens: 42");
   });
 
   test("pauses, resumes, and deletes scheduled jobs without invoking the LLM runner", async () => {

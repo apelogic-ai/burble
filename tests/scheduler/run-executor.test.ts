@@ -57,6 +57,15 @@ describe("scheduler run executor", () => {
           response: {
             classification: "public",
             text: "AI news summary result.",
+            usage: {
+              inputTokens: 30,
+              outputTokens: 12,
+              totalTokens: 42,
+              usageSource: "provider-output",
+            },
+            telemetry: {
+              promptChars: 512,
+            },
           },
         };
       },
@@ -119,6 +128,31 @@ describe("scheduler run executor", () => {
       runId: run.runId,
       status: "succeeded",
     });
+    expect(store.getAgentJobRunAudit(run.runId)).toMatchObject({
+      runId: run.runId,
+      jobId: job.jobId,
+      workspaceId: "T123",
+      slackUserId: "U123",
+      runtimeType: "openclaw",
+      runnerName: "test-runner",
+      executionMode: "native-runtime",
+      routeId: route.id,
+      outputBytes: 23,
+      usage: {
+        inputTokens: 30,
+        outputTokens: 12,
+        totalTokens: 42,
+        usageSource: "provider-output",
+      },
+      telemetry: {
+        promptChars: 512,
+      },
+      visibility: {
+        destination: "slack",
+        isDirectMessage: true,
+        channelId: "D123",
+      },
+    });
     expect(workflowStore.replayState().runs[run.runId]).toMatchObject({
       jobRunId: run.runId,
       taskId: job.jobId,
@@ -126,6 +160,100 @@ describe("scheduler run executor", () => {
       status: "succeeded",
       attempt: 1,
     });
+
+    store.close();
+  });
+
+  test("keeps scheduled run audit core fields when telemetry is not JSON-serializable", async () => {
+    const store = createTokenStore(":memory:");
+    const route = store.upsertConversationRoute({
+      workspaceId: "T123",
+      slackUserId: "U123",
+      transport: "slack",
+      destination: {
+        channelId: "D123",
+        isDirectMessage: true,
+        rootId: "dm:D123",
+      },
+    });
+    const job = store.upsertScheduledJob({
+      jobId: "job-ai-news",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      title: "Hourly AI news summary",
+      prompt: "Find fresh AI news and summarize it.",
+      schedule: { kind: "interval", every: { hours: 1 } },
+      routeId: route.id,
+      runtimeType: "openclaw",
+      state: "scheduled",
+    });
+    const run = store.createAgentJobRun({
+      runId: "jobrun-ai-news",
+      jobId: job.jobId,
+      workspaceId: "T123",
+      slackUserId: "U123",
+      triggerSource: "manual",
+      status: "queued",
+    });
+    const circularTelemetry: Record<string, unknown> = {
+      promptChars: 512,
+    };
+    circularTelemetry.self = circularTelemetry;
+    const warnings: string[] = [];
+    const runner: AgentRunner = {
+      name: "test-runner",
+      capabilities: {
+        streaming: true,
+        toolEvents: true,
+        remote: true,
+      },
+      async *run() {
+        yield {
+          type: "final",
+          response: {
+            classification: "public",
+            text: "AI news summary result.",
+            usage: {
+              totalTokens: 42,
+            },
+            telemetry: circularTelemetry,
+          },
+        };
+      },
+    };
+    const executor = createSchedulerRunExecutor({
+      store,
+      agentRunner: runner,
+      slackClient: {
+        chat: {
+          postMessage: async () => ({}),
+        },
+      },
+      logWarn: (message) => warnings.push(message),
+    });
+
+    await executor.executeRun(run.runId);
+
+    expect(store.getAgentJobRun(run.runId)).toMatchObject({
+      status: "succeeded",
+    });
+    expect(store.getAgentJobRunAudit(run.runId)).toMatchObject({
+      runId: run.runId,
+      runtimeType: "openclaw",
+      runnerName: "test-runner",
+      outputBytes: 23,
+      usage: {
+        totalTokens: 42,
+      },
+      telemetry: null,
+      visibility: {
+        destination: "slack",
+        channelId: "D123",
+      },
+    });
+    expect(warnings).toContain(
+      "Scheduled job run audit field telemetry was not JSON-serializable runId=jobrun-ai-news",
+    );
 
     store.close();
   });
