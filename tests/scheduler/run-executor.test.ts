@@ -399,6 +399,212 @@ describe("scheduler run executor", () => {
     store.close();
   });
 
+  test("manual workflow authority retries read-only contract failures as workflow attempts", async () => {
+    const store = createTokenStore(":memory:");
+    const workflowStore = createInMemoryTaskWorkflowEventStore();
+    const route = store.upsertConversationRoute({
+      workspaceId: "T123",
+      slackUserId: "U123",
+      transport: "slack",
+      destination: {
+        channelId: "C123",
+        isDirectMessage: false,
+        rootId: "slack:C123:1710000000.000000",
+        threadTs: "1710000000.000000",
+      },
+    });
+    const job = store.upsertScheduledJob({
+      jobId: "job-pr-monitor",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      title: "Open PR monitor",
+      prompt:
+        "check every 15 min for new PRs in repos of https://github.com/apelogic-ai github org, post in this channel",
+      schedule: { kind: "interval", every: { minutes: 15 } },
+      routeId: route.id,
+      runtimeType: "openclaw",
+      state: "scheduled",
+    });
+    store.upsertAgentJobCapability({
+      jobId: job.jobId,
+      workspaceId: "T123",
+      slackUserId: "U123",
+      requiredTools: ["github_search_issues", "slack_search_messages"],
+      routeId: route.id,
+      runtimeType: "openclaw",
+    });
+    const run = store.createAgentJobRun({
+      runId: "jobrun-pr-monitor",
+      jobId: job.jobId,
+      workspaceId: "T123",
+      slackUserId: "U123",
+      triggerSource: "manual",
+      status: "queued",
+    });
+    const runnerTexts: string[] = [];
+    const runner: AgentRunner = {
+      name: "test-runner",
+      capabilities: { streaming: true, toolEvents: true, remote: true },
+      async *run(input) {
+        runnerTexts.push(input.text);
+        if (runnerTexts.length < 3) {
+          yield {
+            type: "final",
+            response: {
+              classification: "user_private",
+              text: `:gear: github_search_issues: "org:apelogic-ai is:pr is:open"`,
+            },
+          };
+          return;
+        }
+        yield {
+          type: "final",
+          response: {
+            classification: "public",
+            text: "No new PRs found.",
+          },
+        };
+      },
+    };
+    const posts: Array<{ channel: string; text: string; thread_ts?: string }> =
+      [];
+    const executor = createSchedulerRunExecutor({
+      store,
+      agentRunner: runner,
+      slackClient: {
+        chat: {
+          postMessage: async (message) => {
+            posts.push(message);
+            return {};
+          },
+        },
+      },
+      workflowShadowStore: workflowStore,
+      workflowAuthority: "manual",
+      workflowMaxAttempts: 3,
+    });
+
+    await executor.executeRun(run.runId);
+
+    expect(runnerTexts).toHaveLength(3);
+    expect(posts).toEqual([
+      {
+        channel: "C123",
+        text: "No new PRs found.",
+        thread_ts: "1710000000.000000",
+      },
+    ]);
+    expect(store.getAgentJobRun(run.runId)).toMatchObject({
+      status: "succeeded",
+      failureReason: null,
+    });
+    expect(
+      workflowStore.replayState({ initialConfig: { maxAttempts: 3 } }).runs[
+        run.runId
+      ],
+    ).toMatchObject({
+      status: "succeeded",
+      attempt: 3,
+      failureClass: "runtime_failed",
+      failureReason:
+        "Managed runtime final response leaked tool-call protocol text",
+    });
+
+    store.close();
+  });
+
+  test("manual workflow authority does not retry write-capable contract failures", async () => {
+    const store = createTokenStore(":memory:");
+    const workflowStore = createInMemoryTaskWorkflowEventStore();
+    const route = store.upsertConversationRoute({
+      workspaceId: "T123",
+      slackUserId: "U123",
+      transport: "slack",
+      destination: { channelId: "C123", isDirectMessage: false },
+    });
+    const job = store.upsertScheduledJob({
+      jobId: "job-pr-monitor",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      title: "Open PR monitor",
+      prompt:
+        "check every 15 min for new PRs in repos of https://github.com/apelogic-ai github org, post in this channel",
+      schedule: { kind: "interval", every: { minutes: 15 } },
+      routeId: route.id,
+      runtimeType: "openclaw",
+      state: "scheduled",
+    });
+    store.upsertAgentJobCapability({
+      jobId: job.jobId,
+      workspaceId: "T123",
+      slackUserId: "U123",
+      requiredTools: [
+        "github_search_issues",
+        "slack_search_messages",
+        "conversation.sendMessage",
+      ],
+      routeId: route.id,
+      runtimeType: "openclaw",
+    });
+    const run = store.createAgentJobRun({
+      runId: "jobrun-pr-monitor",
+      jobId: job.jobId,
+      workspaceId: "T123",
+      slackUserId: "U123",
+      triggerSource: "manual",
+      status: "queued",
+    });
+    let runnerCalls = 0;
+    const runner: AgentRunner = {
+      name: "test-runner",
+      capabilities: { streaming: true, toolEvents: true, remote: true },
+      async *run() {
+        runnerCalls += 1;
+        yield {
+          type: "final",
+          response: {
+            classification: "user_private",
+            text: `:gear: github_search_issues: "org:apelogic-ai is:pr is:open"`,
+          },
+        };
+      },
+    };
+    const posts: Array<{ channel: string; text: string; thread_ts?: string }> =
+      [];
+    const executor = createSchedulerRunExecutor({
+      store,
+      agentRunner: runner,
+      slackClient: {
+        chat: {
+          postMessage: async (message) => {
+            posts.push(message);
+            return {};
+          },
+        },
+      },
+      workflowShadowStore: workflowStore,
+      workflowAuthority: "manual",
+    });
+
+    await executor.executeRun(run.runId);
+
+    expect(runnerCalls).toBe(1);
+    expect(store.getAgentJobRun(run.runId)).toMatchObject({
+      status: "failed",
+      failureReason:
+        "Managed runtime final response leaked tool-call protocol text",
+    });
+    expect(workflowStore.replayState().runs[run.runId]).toMatchObject({
+      status: "failed",
+      attempt: 1,
+      failureClass: "runtime_failed",
+    });
+    expect(posts).toHaveLength(1);
+    expect(posts[0]?.text).toContain("Scheduled job failed");
+
+    store.close();
+  });
+
   test("manual workflow authority does not post failure after delivered output races terminal projection", async () => {
     const store = createTokenStore(":memory:");
     const workflowStore = createInMemoryTaskWorkflowEventStore();

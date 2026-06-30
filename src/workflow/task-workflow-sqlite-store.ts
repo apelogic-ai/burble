@@ -276,6 +276,7 @@ export function createSqliteTaskWorkflowEventStore(
         events,
         sequence,
         baseSnapshot,
+        initialConfig: snapshotInput?.initialConfig,
       }),
     };
   };

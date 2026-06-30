@@ -28,6 +28,7 @@ import {
   recordTaskWorkflowRunSucceeded,
 } from "../workflow/task-workflow-shadow";
 import {
+  DEFAULT_TASK_WORKFLOW_MAX_ATTEMPTS,
   TASK_WORKFLOW_AGENT_ATTEMPT_MODE,
   TASK_WORKFLOW_RUNTIME_FAILURE_CLASS,
   TASK_WORKFLOW_VALIDATION_FAILURE_CLASS,
@@ -70,6 +71,7 @@ export function createSchedulerRunExecutor(input: {
   slackClient: SlackPostClient;
   workflowShadowStore?: TaskWorkflowEventStore;
   workflowAuthority?: "off" | "manual" | "timer";
+  workflowMaxAttempts?: number;
   logInfo?: (message: string) => void;
   logWarn?: (message: string) => void;
 }): SchedulerRunExecutor {
@@ -315,6 +317,7 @@ async function executeWorkflowAuthoritativeManualRun(
     agentRunner: AgentRunner;
     slackClient: SlackPostClient;
     workflowShadowStore: TaskWorkflowEventStore;
+    workflowMaxAttempts?: number;
     logInfo?: (message: string) => void;
     logWarn?: (message: string) => void;
   },
@@ -366,6 +369,15 @@ async function executeWorkflowAuthoritativeManualRun(
   );
   const outputByDigest = new Map<string, string>();
   let failureNotificationSent = false;
+  const workflowReplayConfig = {
+    maxAttempts:
+      input.workflowMaxAttempts ?? DEFAULT_TASK_WORKFLOW_MAX_ATTEMPTS,
+  };
+  const initialWorkflowState = input.workflowShadowStore.replayState({
+    initialConfig: workflowReplayConfig,
+  });
+  const maxWorkflowAttempts =
+    initialWorkflowState.maxAttempts ?? DEFAULT_TASK_WORKFLOW_MAX_ATTEMPTS;
 
   input.logInfo?.(
     `Scheduled job workflow run start runId=${run.runId} jobId=${job.jobId}`,
@@ -462,6 +474,23 @@ async function executeWorkflowAuthoritativeManualRun(
         };
       } catch (error) {
         const message = scheduledRunErrorMessage(error);
+        const retryable = shouldRetryWorkflowAttempt({
+          attempt: command.attempt,
+          maxAttempts: maxWorkflowAttempts,
+          scheduledJobContext,
+        });
+        if (retryable) {
+          return {
+            type: "attempt_failed",
+            taskId: command.taskId,
+            jobRunId: command.jobRunId,
+            attempt: command.attempt,
+            failureClass: TASK_WORKFLOW_RUNTIME_FAILURE_CLASS,
+            reason: message.slice(0, 500),
+            retryable: true,
+            at: new Date().toISOString(),
+          };
+        }
         const failedRun =
           input.store.finishAgentJobRun({
             runId: command.jobRunId,
@@ -588,7 +617,7 @@ async function executeWorkflowAuthoritativeManualRun(
 
   try {
     await runTaskWorkflowDriver({
-      initialState: input.workflowShadowStore.replayState(),
+      initialState: initialWorkflowState,
       initialEvent: {
         type: "task_triggered",
         taskId: job.jobId,
@@ -610,6 +639,17 @@ async function executeWorkflowAuthoritativeManualRun(
 
   input.logInfo?.(
     `Scheduled job workflow run finish runId=${run.runId} jobId=${job.jobId}`,
+  );
+}
+
+function shouldRetryWorkflowAttempt(input: {
+  attempt: number;
+  maxAttempts: number;
+  scheduledJobContext: ScheduledJobContext | undefined;
+}): boolean {
+  return (
+    input.attempt < input.maxAttempts &&
+    scheduledJobContextAllowsOnlyReadTools(input.scheduledJobContext)
   );
 }
 

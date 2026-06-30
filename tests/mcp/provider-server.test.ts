@@ -60,6 +60,7 @@ const config: Config = {
   taskWorkflowAuthority: "off",
   taskWorkflowShadowEnabled: false,
   taskWorkflowShadowDatabasePath: null,
+  taskWorkflowMaxAttempts: 2,
   aiModel: "openai:gpt-5.4"
 };
 

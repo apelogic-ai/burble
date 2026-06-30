@@ -7,6 +7,10 @@ import {
   runtimeEngines
 } from "./agent/runtime-descriptors";
 import type { AgentRuntimeEngine } from "./db";
+import {
+  DEFAULT_TASK_WORKFLOW_MAX_ATTEMPTS,
+  MAX_TASK_WORKFLOW_MAX_ATTEMPTS
+} from "./workflow/task-workflow";
 
 export type Config = {
   slackBotToken: string;
@@ -66,6 +70,7 @@ export type Config = {
   taskWorkflowAuthority: TaskWorkflowAuthority;
   taskWorkflowShadowEnabled: boolean;
   taskWorkflowShadowDatabasePath: string | null;
+  taskWorkflowMaxAttempts: number;
   testbed?: boolean;
 };
 
@@ -104,6 +109,19 @@ function optionalIntEnv(env: Env, name: string, fallback: number): number {
   const parsed = Number.parseInt(value, 10);
   if (!Number.isInteger(parsed) || parsed <= 0) {
     throw new Error(`Environment variable ${name} must be a positive integer`);
+  }
+  return parsed;
+}
+
+function optionalBoundedIntEnv(
+  env: Env,
+  name: string,
+  fallback: number,
+  max: number
+): number {
+  const parsed = optionalIntEnv(env, name, fallback);
+  if (parsed > max) {
+    throw new Error(`Environment variable ${name} must be <= ${max}`);
   }
   return parsed;
 }
@@ -384,6 +402,15 @@ export function readConfig(env: Env): Config {
     "TASK_WORKFLOW_AUTHORITY",
     "off"
   );
+  const taskWorkflowMaxAttempts =
+    taskWorkflowAuthority === "off"
+      ? DEFAULT_TASK_WORKFLOW_MAX_ATTEMPTS
+      : optionalBoundedIntEnv(
+          env,
+          "TASK_WORKFLOW_MAX_ATTEMPTS",
+          DEFAULT_TASK_WORKFLOW_MAX_ATTEMPTS,
+          MAX_TASK_WORKFLOW_MAX_ATTEMPTS
+        );
   if (taskWorkflowAuthority !== "off" && !taskWorkflowShadowDatabasePath) {
     throw new Error(
       "TASK_WORKFLOW_AUTHORITY requires TASK_WORKFLOW_SHADOW_ENABLED=true with a persistent workflow database; DATABASE_PATH=:memory: cannot be used for workflow authority"
@@ -504,6 +531,7 @@ export function readConfig(env: Env): Config {
     taskWorkflowAuthority,
     taskWorkflowShadowEnabled: taskWorkflowShadowDatabasePath !== null,
     taskWorkflowShadowDatabasePath,
+    taskWorkflowMaxAttempts,
     testbed: optionalBoolEnv(env, "BURBLE_TESTBED", false)
   };
 }

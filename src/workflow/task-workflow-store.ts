@@ -1,4 +1,5 @@
 import {
+  DEFAULT_TASK_WORKFLOW_MAX_ATTEMPTS,
   createInitialTaskWorkflowState,
   reduceTaskWorkflowEvents,
   type TaskWorkflowEvent,
@@ -45,9 +46,8 @@ export type TaskWorkflowCompactEventsResult = {
   deletedSnapshots: number;
 };
 
-export type TaskWorkflowReplayConfig = Pick<
-  TaskWorkflowState,
-  "failurePauseThreshold"
+export type TaskWorkflowReplayConfig = Partial<
+  Pick<TaskWorkflowState, "failurePauseThreshold" | "maxAttempts">
 >;
 
 export type TaskWorkflowReplayStateInput = {
@@ -60,6 +60,7 @@ export type TaskWorkflowEventStore = {
   replayState(input?: TaskWorkflowReplayStateInput): TaskWorkflowState;
   buildSnapshot(input?: {
     sequence?: number;
+    initialConfig?: TaskWorkflowReplayConfig;
   }): Pick<TaskWorkflowSnapshot, "sequence" | "state">;
   writeSnapshot(input?: TaskWorkflowWriteSnapshotInput): TaskWorkflowSnapshot;
   getLatestSnapshot(): TaskWorkflowSnapshot | null;
@@ -116,6 +117,7 @@ export function createInMemoryTaskWorkflowEventStore(input?: {
   };
   const buildSnapshot = (snapshotInput?: {
     sequence?: number;
+    initialConfig?: TaskWorkflowReplayConfig;
   }): Pick<TaskWorkflowSnapshot, "sequence" | "state"> => {
     const latestSnapshot = getLatestSnapshot();
     const latestKnownSequence = Math.max(
@@ -131,6 +133,7 @@ export function createInMemoryTaskWorkflowEventStore(input?: {
         events,
         sequence,
         baseSnapshot,
+        initialConfig: snapshotInput?.initialConfig,
       }),
     };
   };
@@ -277,7 +280,11 @@ export function buildTaskWorkflowSnapshotState(input: {
   events: TaskWorkflowStoredEvent[];
   sequence: number;
   baseSnapshot: TaskWorkflowSnapshot | null;
+  initialConfig?: TaskWorkflowReplayConfig;
 }): TaskWorkflowState {
+  const baseState = input.baseSnapshot
+    ? snapshotBaseState(input.baseSnapshot, input.initialConfig)
+    : createInitialTaskWorkflowState(input.initialConfig);
   return reduceTaskWorkflowEvents(
     input.events
       .filter(
@@ -286,7 +293,7 @@ export function buildTaskWorkflowSnapshotState(input: {
           (!input.baseSnapshot || event.sequence > input.baseSnapshot.sequence),
       )
       .map((event) => event.event),
-    input.baseSnapshot?.state ?? createInitialTaskWorkflowState(),
+    baseState,
   );
 }
 
@@ -318,12 +325,20 @@ function snapshotBaseState(
   snapshot: TaskWorkflowSnapshot,
   initialConfig: TaskWorkflowReplayConfig | undefined,
 ): TaskWorkflowState {
+  const snapshotState = {
+    ...snapshot.state,
+    maxAttempts:
+      snapshot.state.maxAttempts ?? DEFAULT_TASK_WORKFLOW_MAX_ATTEMPTS,
+  };
   if (!initialConfig) {
-    return snapshot.state;
+    return snapshotState;
   }
   return {
-    ...snapshot.state,
-    failurePauseThreshold: initialConfig.failurePauseThreshold,
+    ...snapshotState,
+    failurePauseThreshold:
+      initialConfig.failurePauseThreshold ??
+      snapshotState.failurePauseThreshold,
+    maxAttempts: initialConfig.maxAttempts ?? snapshotState.maxAttempts,
   };
 }
 
