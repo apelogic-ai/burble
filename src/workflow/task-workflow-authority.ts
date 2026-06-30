@@ -1,5 +1,5 @@
 import type { AgentJobRunRecord, TokenStore } from "../db";
-import type { TaskWorkflowStaleRunFailure } from "./task-workflow-reconcile";
+import type { TaskWorkflowStaleRunFailureCandidate } from "./task-workflow-reconcile";
 
 type AuthoritativeRunStore = Pick<
   TokenStore,
@@ -14,7 +14,7 @@ export type FinishAuthoritativeWorkflowRunResult =
 
 export function finishAuthoritativeRunForStaleWorkflowFailure(input: {
   store: AuthoritativeRunStore;
-  failure: TaskWorkflowStaleRunFailure;
+  failure: TaskWorkflowStaleRunFailureCandidate;
 }): FinishAuthoritativeWorkflowRunResult {
   const reason = staleWorkflowFailureReason(input.failure).slice(0, 500);
   const finished =
@@ -38,7 +38,7 @@ export function finishAuthoritativeRunForStaleWorkflowFailure(input: {
 }
 
 function staleWorkflowFailureReason(
-  failure: TaskWorkflowStaleRunFailure,
+  failure: TaskWorkflowStaleRunFailureCandidate,
 ): string {
   return "reason" in failure.event
     ? failure.event.reason

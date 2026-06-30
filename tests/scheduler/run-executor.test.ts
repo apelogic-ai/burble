@@ -310,6 +310,7 @@ describe("scheduler run executor", () => {
         remote: true,
       },
       async *run() {
+        await new Promise((resolve) => setTimeout(resolve, 25));
         yield {
           type: "final",
           response: {
@@ -334,6 +335,7 @@ describe("scheduler run executor", () => {
       },
       workflowShadowStore: workflowStore,
       workflowAuthority: "manual",
+      workflowHeartbeatIntervalMs: 1,
     });
 
     await executor.executeRun(run.runId);
@@ -350,17 +352,15 @@ describe("scheduler run executor", () => {
       status: "succeeded",
       attempt: 1,
     });
-    expect(workflowStore.listEvents().map((event) => event.event.type)).toEqual(
-      [
-        "task_triggered",
-        "validation_passed",
-        "attempt_started",
-        "run_heartbeat",
-        "attempt_succeeded",
-        "delivery_started",
-        "delivery_succeeded",
-      ],
+    const eventTypes = workflowStore
+      .listEvents()
+      .map((event) => event.event.type);
+    expect(eventTypes.filter((type) => type === "run_heartbeat").length).toBeGreaterThan(
+      1,
     );
+    expect(eventTypes[0]).toBe("task_triggered");
+    expect(eventTypes).toContain("attempt_succeeded");
+    expect(eventTypes.at(-1)).toBe("delivery_succeeded");
 
     store.close();
   });

@@ -26,6 +26,7 @@ import type {
 } from "../workflow/task-workflow-store";
 import type {
   TaskWorkflowRunState,
+  TaskWorkflowState,
   TaskWorkflowTaskState,
 } from "../workflow/task-workflow";
 
@@ -298,6 +299,8 @@ type SchedulerWorkflowStore = TaskWorkflowShadowStore &
     "replayState" | "listSideEffectFailures"
   >;
 
+const WORKFLOW_STATUS_CACHE_MS = 1_000;
+
 type SchedulerControlPlaneOptions = {
   now?: () => Date;
   newJobId?: () => string;
@@ -331,6 +334,24 @@ export function createSchedulerControlPlane(
   const newJobId = options.newJobId ?? (() => `job_${randomUUID()}`);
   const newRunId = options.newRunId ?? (() => `jobrun_${randomUUID()}`);
   const workflowAuthority = options.workflowAuthority ?? "off";
+  let workflowStatusCache:
+    | { state: TaskWorkflowState; expiresAtMs: number }
+    | null = null;
+  const readWorkflowStatusState = (): TaskWorkflowState | null => {
+    if (!options.workflowShadowStore) {
+      return null;
+    }
+    const nowMs = now().getTime();
+    if (workflowStatusCache && workflowStatusCache.expiresAtMs > nowMs) {
+      return workflowStatusCache.state;
+    }
+    const state = options.workflowShadowStore.replayState();
+    workflowStatusCache = {
+      state,
+      expiresAtMs: nowMs + WORKFLOW_STATUS_CACHE_MS,
+    };
+    return state;
+  };
   const listJobs = (input: {
     workspaceId: string;
     slackUserId: string;
@@ -553,7 +574,11 @@ export function createSchedulerControlPlane(
         input.jobId,
       );
       const workflow = run
-        ? schedulerRunWorkflowStatus(options.workflowShadowStore, run)
+        ? schedulerRunWorkflowStatus(
+            options.workflowShadowStore,
+            readWorkflowStatusState(),
+            run,
+          )
         : null;
       return run
         ? {
@@ -569,12 +594,12 @@ export function createSchedulerControlPlane(
 
 function schedulerRunWorkflowStatus(
   workflowStore: SchedulerWorkflowStore | undefined,
+  state: TaskWorkflowState | null,
   run: AgentJobRunRecord,
 ): SchedulerRunWorkflowStatus | null {
-  if (!workflowStore) {
+  if (!workflowStore || !state) {
     return null;
   }
-  const state = workflowStore.replayState();
   const workflowRun = state.runs[run.runId];
   const task = state.tasks[run.jobId];
   const taskNeedsRepair = task?.status === "needs_repair" ? task : undefined;

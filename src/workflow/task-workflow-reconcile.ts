@@ -25,11 +25,20 @@ export type TaskWorkflowStaleRunFailure = {
   storedEvent: TaskWorkflowStoredEvent;
 };
 
+export type TaskWorkflowStaleRunFailureCandidate = Omit<
+  TaskWorkflowStaleRunFailure,
+  "storedEvent"
+>;
+
 export function reconcileTaskWorkflowRuns(input: {
   store: TaskWorkflowEventStore;
   now: Date;
   staleAfterMs: number;
+  shouldIngestStaleRunFailure?: (
+    failure: TaskWorkflowStaleRunFailureCandidate,
+  ) => boolean;
   onStaleRunFailed?: (failure: TaskWorkflowStaleRunFailure) => void;
+  onError?: (input: { run: TaskWorkflowRunState; error: unknown }) => void;
 }): ReconcileTaskWorkflowRunsResult {
   const events: TaskWorkflowStoredEvent[] = [];
   const nowMs = input.now.getTime();
@@ -39,14 +48,35 @@ export function reconcileTaskWorkflowRuns(input: {
       continue;
     }
     const event = staleRunFailedEvent(run, input.now);
-    const storedEvent = input.store.appendEvent({
-      eventId: staleRunEventId(run),
-      signalId: `stale_run:${run.jobRunId}`,
-      event,
-      recordedAt: input.now.toISOString(),
-    });
+    try {
+      if (
+        input.shouldIngestStaleRunFailure &&
+        !input.shouldIngestStaleRunFailure({ run, event })
+      ) {
+        continue;
+      }
+    } catch (error) {
+      input.onError?.({ run, error });
+      continue;
+    }
+    let storedEvent: TaskWorkflowStoredEvent;
+    try {
+      storedEvent = input.store.appendEvent({
+        eventId: staleRunEventId(run),
+        signalId: `stale_run:${run.jobRunId}`,
+        event,
+        recordedAt: input.now.toISOString(),
+      });
+    } catch (error) {
+      input.onError?.({ run, error });
+      continue;
+    }
     events.push(storedEvent);
-    input.onStaleRunFailed?.({ run, event, storedEvent });
+    try {
+      input.onStaleRunFailed?.({ run, event, storedEvent });
+    } catch (error) {
+      input.onError?.({ run, error });
+    }
   }
 
   return { events };
@@ -57,6 +87,9 @@ export function createTaskWorkflowReconcileLoop(input: {
   staleAfterMs: number;
   intervalMs?: number;
   now?: () => Date;
+  shouldIngestStaleRunFailure?: (
+    failure: TaskWorkflowStaleRunFailureCandidate,
+  ) => boolean;
   onStaleRunFailed?: (failure: TaskWorkflowStaleRunFailure) => void;
   logInfo?: (message: string) => void;
   logWarn?: (message: string) => void;
@@ -79,7 +112,15 @@ export function createTaskWorkflowReconcileLoop(input: {
         store: input.store,
         now: (input.now ?? (() => new Date()))(),
         staleAfterMs: input.staleAfterMs,
+        shouldIngestStaleRunFailure: input.shouldIngestStaleRunFailure,
         onStaleRunFailed: input.onStaleRunFailed,
+        onError: ({ run, error }) => {
+          const message =
+            error instanceof Error ? error.message : "unknown workflow reconcile error";
+          input.logWarn?.(
+            `Task workflow reconcile run failed runId=${run.jobRunId} error=${message}`,
+          );
+        },
       });
       if (result.events.length) {
         input.logInfo?.(

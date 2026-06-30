@@ -72,6 +72,8 @@ type ScheduledRunAttemptResult = {
   output: AgentOutput;
 };
 
+const DEFAULT_WORKFLOW_ATTEMPT_HEARTBEAT_INTERVAL_MS = 60_000;
+
 export type SchedulerRunExecutor = {
   executeRun(runId: string): Promise<void>;
 };
@@ -93,6 +95,7 @@ export function createSchedulerRunExecutor(input: {
   workflowShadowStore?: TaskWorkflowEventStore;
   workflowAuthority?: "off" | "manual" | "timer";
   workflowMaxAttempts?: number;
+  workflowHeartbeatIntervalMs?: number;
   logInfo?: (message: string) => void;
   logWarn?: (message: string) => void;
 }): SchedulerRunExecutor {
@@ -510,6 +513,7 @@ async function executeWorkflowAuthoritativeManualRun(
     slackClient: SlackPostClient;
     workflowShadowStore: TaskWorkflowEventStore;
     workflowMaxAttempts?: number;
+    workflowHeartbeatIntervalMs?: number;
     logInfo?: (message: string) => void;
     logWarn?: (message: string) => void;
   },
@@ -594,15 +598,23 @@ async function executeWorkflowAuthoritativeManualRun(
     },
     startAttempt: async (command, ctx) => {
       try {
-        await ctx.heartbeat({
-          taskId: command.taskId,
-          jobRunId: command.jobRunId,
-        });
-        const attemptResult = await executeScheduledRunAttempt({
-          runner: input.agentRunner,
-          store: input.store,
-          run,
-          executionContext,
+        const attemptResult = await runWithWorkflowAttemptHeartbeats({
+          intervalMs:
+            input.workflowHeartbeatIntervalMs ??
+            DEFAULT_WORKFLOW_ATTEMPT_HEARTBEAT_INTERVAL_MS,
+          heartbeat: () =>
+            ctx.heartbeat({
+              taskId: command.taskId,
+              jobRunId: command.jobRunId,
+            }),
+          run: () =>
+            executeScheduledRunAttempt({
+              runner: input.agentRunner,
+              store: input.store,
+              run,
+              executionContext,
+              logWarn: input.logWarn,
+            }),
           logWarn: input.logWarn,
         });
         const outputDigest = outputTextDigest(attemptResult.text);
@@ -1026,6 +1038,34 @@ function shouldFailUnsafeProgressOnlyResult(
     Boolean(scheduledJobContext?.allowedTools.length) &&
     !scheduledJobContextAllowsOnlyReadTools(scheduledJobContext)
   );
+}
+
+async function runWithWorkflowAttemptHeartbeats<T>(input: {
+  intervalMs: number;
+  heartbeat: () => Promise<void>;
+  run: () => Promise<T>;
+  logWarn?: (message: string) => void;
+}): Promise<T> {
+  await input.heartbeat();
+  const intervalMs =
+    Number.isFinite(input.intervalMs) && input.intervalMs > 0
+      ? input.intervalMs
+      : DEFAULT_WORKFLOW_ATTEMPT_HEARTBEAT_INTERVAL_MS;
+  const timer = setInterval(() => {
+    input.heartbeat().catch((error) => {
+      input.logWarn?.(
+        `Scheduled job workflow heartbeat failed error=${scheduledRunErrorMessage(error)}`,
+      );
+    });
+  }, intervalMs);
+  if (typeof timer.unref === "function") {
+    timer.unref();
+  }
+  try {
+    return await input.run();
+  } finally {
+    clearInterval(timer);
+  }
 }
 
 function scheduledJobContextAllowsOnlyReadTools(

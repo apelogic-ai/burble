@@ -429,29 +429,44 @@ export function createSlackRuntime(
     ? createTaskWorkflowReconcileLoop({
         store: workflowShadowStore,
         staleAfterMs: DEFAULT_ACTIVE_RUN_TTL_MS,
+        ...(config.taskWorkflowAuthority !== "off"
+          ? {
+              shouldIngestStaleRunFailure: (failure) => {
+                const result = finishAuthoritativeRunForStaleWorkflowFailure({
+                  store,
+                  failure
+                });
+                if (result.status === "failed") {
+                  app.logger.warn(
+                    withUtcTimestamp(
+                      `Task workflow reconcile failed authoritative runId=${result.run.runId} status=failed`
+                    )
+                  );
+                  return true;
+                }
+                app.logger.warn(
+                  withUtcTimestamp(
+                    [
+                      "Task workflow reconcile could not fail authoritative run",
+                      `runId=${failure.run.jobRunId}`,
+                      `status=${result.status}`,
+                      ...(result.status === "missing"
+                        ? []
+                        : [`authoritativeStatus=${result.run.status}`])
+                    ].join(" ")
+                  )
+                );
+                return result.status === "already_terminal";
+              }
+            }
+          : {}),
         onStaleRunFailed: (failure) => {
-          const result = finishAuthoritativeRunForStaleWorkflowFailure({
-            store,
-            failure
-          });
-          if (result.status === "failed") {
-            app.logger.warn(
-              withUtcTimestamp(
-                `Task workflow reconcile failed authoritative runId=${result.run.runId} status=failed`
-              )
-            );
+          if (config.taskWorkflowAuthority !== "off") {
             return;
           }
           app.logger.warn(
             withUtcTimestamp(
-              [
-                "Task workflow reconcile could not fail authoritative run",
-                `runId=${failure.run.jobRunId}`,
-                `status=${result.status}`,
-                ...(result.status === "missing"
-                  ? []
-                  : [`authoritativeStatus=${result.run.status}`])
-              ].join(" ")
+              `Task workflow shadow reconcile recorded stale runId=${failure.run.jobRunId}`
             )
           );
         },
