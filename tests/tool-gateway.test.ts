@@ -2212,7 +2212,8 @@ describe("handleToolGatewayRequest", () => {
       classification: "user_private",
       content: {
         ok: true,
-        run: latest
+        run: latest,
+        audit: null
       }
     });
   });
