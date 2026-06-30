@@ -397,13 +397,20 @@ export function transitionTaskWorkflowEvent(
         return withCommands(state, []);
       }
       return withCommands(
-        updateRun(state, event.jobRunId, event.at, (run) => ({
-          ...run,
-          status: "succeeded",
-          reconciledFromAuthoritative: true,
-          reconciliationReason: event.reason,
-          notificationPending: false,
-        })),
+        updateRun(state, event.jobRunId, event.at, (run) => {
+          const {
+            failureClass: _failureClass,
+            failureReason: _failureReason,
+            ...runWithoutFailure
+          } = run;
+          return {
+            ...runWithoutFailure,
+            status: "succeeded",
+            reconciledFromAuthoritative: true,
+            reconciliationReason: event.reason,
+            notificationPending: false,
+          };
+        }),
         [],
       );
     case "handler_failed":

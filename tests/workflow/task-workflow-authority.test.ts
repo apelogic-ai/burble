@@ -165,11 +165,32 @@ describe("task workflow authority reconciliation", () => {
       jobRunId: "jobrun-sync-succeeded",
       at: "2026-06-28T17:00:30.000Z",
     });
+    appendWorkflowStoreEvent(workflowStore, {
+      type: "attempt_started",
+      taskId: "task-heart",
+      jobRunId: "jobrun-sync-succeeded",
+      attempt: 1,
+      mode: "agent",
+      at: "2026-06-28T17:00:40.000Z",
+    });
+    appendWorkflowStoreEvent(workflowStore, {
+      type: "attempt_failed",
+      taskId: "task-heart",
+      jobRunId: "jobrun-sync-succeeded",
+      attempt: 1,
+      failureClass: "runtime_failed",
+      reason: "Transient runtime failure before authoritative success sync.",
+      retryable: true,
+      at: "2026-06-28T17:01:00.000Z",
+    });
     const staleRun = workflowStore.replayState().runs["jobrun-sync-succeeded"];
     expect(staleRun).toMatchObject({
       status: "running",
+      attempt: 1,
+      failureClass: "runtime_failed",
+      failureReason:
+        "Transient runtime failure before authoritative success sync.",
     });
-    expect(staleRun?.attempt).toBeUndefined();
 
     recordWorkflowRunSucceededFromAuthoritative({
       store: workflowStore,
@@ -183,14 +204,17 @@ describe("task workflow authority reconciliation", () => {
       reconciledFromAuthoritative: true,
       reconciliationReason: "Authoritative run already succeeded.",
     });
-    expect(syncedRun?.attempt).toBeUndefined();
+    expect(syncedRun?.attempt).toBe(1);
     expect(syncedRun?.outputDigest).toBeUndefined();
     expect(syncedRun?.deliveryKey).toBeUndefined();
     expect(syncedRun?.failureClass).toBeUndefined();
+    expect(syncedRun?.failureReason).toBeUndefined();
     expect(workflowStore.listEvents().map((event) => event.event.type)).toEqual(
       [
         "task_triggered",
         "validation_passed",
+        "attempt_started",
+        "attempt_failed",
         "run_reconciled_succeeded",
       ],
     );
