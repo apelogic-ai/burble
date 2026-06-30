@@ -7,6 +7,7 @@ import {
   type ScheduledJobContext,
 } from "../agent/scheduled-job-context";
 import { isRuntimeProgressOnlyResponseText } from "../agent/runtime-control-notices";
+import { shouldNotifyScheduledRunFailure } from "./failure-notification-policy";
 import { inferAllowedToolsForScheduledJob } from "./job-capabilities";
 import { findProviderToolSpec } from "../providers/catalog";
 import {
@@ -50,6 +51,15 @@ type SlackPostClient = {
       thread_ts?: string;
     }): Promise<unknown>;
   };
+};
+
+type ScheduledRunExecutionContext = {
+  job: ScheduledJobRecord;
+  route: ConversationRouteRecord | null;
+  destination: ReturnType<typeof readSlackRouteDestination>;
+  runtimePrompt: string;
+  toolGroups: ReturnType<typeof selectRuntimeToolGroups>;
+  scheduledJobContext: ScheduledJobContext | undefined;
 };
 
 export type SchedulerRunExecutor = {
@@ -133,92 +143,32 @@ export function createSchedulerRunExecutor(input: {
         }
         return;
       }
-      let job: ScheduledJobRecord | null = null;
-      let destination: ReturnType<typeof readSlackRouteDestination> = null;
+      let executionContext: ScheduledRunExecutionContext | null = null;
 
       try {
-        job = input.store.getScheduledJob(run.jobId);
-        if (!job) {
-          throw new Error("Scheduled job not found");
-        }
-
-        const route = job.routeId
-          ? input.store.getConversationRoute(job.routeId)
-          : null;
-        destination = route ? readSlackRouteDestination(route) : null;
-        if (job.routeId && !destination) {
-          throw new Error("Scheduled job delivery route is unavailable");
-        }
+        executionContext = prepareScheduledRunExecution(input.store, run);
+        assertScheduledRunDestinationAvailable(executionContext);
 
         input.logInfo?.(
-          `Scheduled job run start runId=${run.runId} jobId=${job.jobId}`,
+          `Scheduled job run start runId=${run.runId} jobId=${executionContext.job.jobId}`,
         );
         recordTaskWorkflowRunStarted({
           store: input.workflowShadowStore,
           run,
           logWarn: input.logWarn,
         });
-        const runtimePrompt = scheduledTaskRuntimePrompt(job.prompt);
-        const toolGroups = selectRuntimeToolGroups({
-          text: runtimePrompt,
-          attachmentCount: 0,
-          contextTexts: [],
-        });
-        const scheduledJobContext = scheduledJobContextForRun(
-          input.store,
-          job,
-          toolGroups.groups,
-        );
-        const agentInput: AgentInput = {
-          principal: {
-            workspaceId: run.workspaceId,
-            slackUserId: run.slackUserId,
-          },
-          executionMode: "native-runtime",
-          ...(destination
-            ? {
-                conversation: {
-                  routeId: route?.id,
-                  source: "slack" as const,
-                  workspaceId: run.workspaceId,
-                  channelId: destination.channelId,
-                  rootId: scheduledRunConversationRoot(job, run),
-                  isDirectMessage: destination.isDirectMessage,
-                },
-              }
-            : {}),
-          text: runtimePrompt,
-          toolGroups,
-          ...(scheduledJobContext ? { scheduledJob: scheduledJobContext } : {}),
-          connections: {
-            github: connectionForSlackUser(input.store, "github", run),
-            google: connectionForSlackUser(input.store, "google", run),
-            hubspot: connectionForSlackUser(input.store, "hubspot", run),
-            jira: connectionForSlackUser(input.store, "jira", run),
-            slack: connectionForSlackUser(input.store, "slack", run),
-          },
-        };
-        const result = await collectScheduledAgentRunWithProgressRetry({
+        const outputText = await executeScheduledRunAttempt({
           runner: input.agentRunner,
-          agentInput,
-          job,
-          scheduledJobContext,
+          store: input.store,
+          run,
+          executionContext,
           logWarn: input.logWarn,
         });
-
-        const output = validateScheduledJobOutput(result);
-        if (!output.ok) {
-          throw new Error(output.reason);
-        }
-        if (destination) {
-          await input.slackClient.chat.postMessage({
-            channel: destination.channelId,
-            text: output.text,
-            ...(destination.threadTs && !destination.isDirectMessage
-              ? { thread_ts: destination.threadTs }
-              : {}),
-          });
-        }
+        await postScheduledRunOutput({
+          slackClient: input.slackClient,
+          destination: executionContext.destination,
+          text: outputText,
+        });
         const finishedRun =
           input.store.finishAgentJobRun({
             runId: run.runId,
@@ -228,8 +178,8 @@ export function createSchedulerRunExecutor(input: {
           recordTaskWorkflowRunSucceeded({
             store: input.workflowShadowStore,
             run: finishedRun,
-            outputText: output.text,
-            routeId: job.routeId,
+            outputText,
+            routeId: executionContext.job.routeId,
             logWarn: input.logWarn,
           });
         } else if (finishedRun?.status === "failed") {
@@ -242,7 +192,7 @@ export function createSchedulerRunExecutor(input: {
           });
         }
         input.logInfo?.(
-          `Scheduled job run finish runId=${run.runId} jobId=${job.jobId}`,
+          `Scheduled job run finish runId=${run.runId} jobId=${executionContext.job.jobId}`,
         );
       } catch (error) {
         const message =
@@ -265,14 +215,14 @@ export function createSchedulerRunExecutor(input: {
         input.logWarn?.(
           `Scheduled job run failed runId=${run.runId} error=${message}`,
         );
-        if (job && destination) {
+        if (executionContext) {
           try {
-            await input.slackClient.chat.postMessage({
-              channel: destination.channelId,
-              text: formatScheduledJobFailureMessage(job, run, message),
-              ...(destination.threadTs && !destination.isDirectMessage
-                ? { thread_ts: destination.threadTs }
-                : {}),
+            await postScheduledRunFailureNotification({
+              slackClient: input.slackClient,
+              job: executionContext.job,
+              run,
+              destination: executionContext.destination,
+              reason: message,
             });
           } catch (deliveryError) {
             const deliveryMessage =
@@ -300,6 +250,156 @@ function isWorkflowAuthoritativeRun(
     return run.triggerSource === "manual" || run.triggerSource === "schedule";
   }
   return false;
+}
+
+function prepareScheduledRunExecution(
+  store: Pick<
+    TokenStore,
+    "getScheduledJob" | "getConversationRoute" | "getAgentJobCapability"
+  >,
+  run: AgentJobRunRecord,
+  preloadedJob?: ScheduledJobRecord,
+): ScheduledRunExecutionContext {
+  const job = preloadedJob ?? store.getScheduledJob(run.jobId);
+  if (!job) {
+    throw new Error("Scheduled job not found");
+  }
+  const route = job.routeId ? store.getConversationRoute(job.routeId) : null;
+  const destination = route ? readSlackRouteDestination(route) : null;
+  const runtimePrompt = scheduledTaskRuntimePrompt(job.prompt);
+  const toolGroups = selectRuntimeToolGroups({
+    text: runtimePrompt,
+    attachmentCount: 0,
+    contextTexts: [],
+  });
+  return {
+    job,
+    route,
+    destination,
+    runtimePrompt,
+    toolGroups,
+    scheduledJobContext: scheduledJobContextForRun(
+      store,
+      job,
+      toolGroups.groups,
+    ),
+  };
+}
+
+function assertScheduledRunDestinationAvailable(
+  executionContext: ScheduledRunExecutionContext,
+): void {
+  if (executionContext.job.routeId && !executionContext.destination) {
+    throw new Error("Scheduled job delivery route is unavailable");
+  }
+}
+
+function buildScheduledRunAgentInput(input: {
+  store: Pick<TokenStore, "getConnectionForSlackUser">;
+  run: AgentJobRunRecord;
+  executionContext: ScheduledRunExecutionContext;
+}): AgentInput {
+  const { job, route, destination, runtimePrompt, toolGroups, scheduledJobContext } =
+    input.executionContext;
+  return {
+    principal: {
+      workspaceId: input.run.workspaceId,
+      slackUserId: input.run.slackUserId,
+    },
+    executionMode: "native-runtime",
+    ...(destination
+      ? {
+          conversation: {
+            routeId: route?.id,
+            source: "slack" as const,
+            workspaceId: input.run.workspaceId,
+            channelId: destination.channelId,
+            rootId: scheduledRunConversationRoot(job, input.run),
+            isDirectMessage: destination.isDirectMessage,
+          },
+        }
+      : {}),
+    text: runtimePrompt,
+    toolGroups,
+    ...(scheduledJobContext ? { scheduledJob: scheduledJobContext } : {}),
+    connections: {
+      github: connectionForSlackUser(input.store, "github", input.run),
+      google: connectionForSlackUser(input.store, "google", input.run),
+      hubspot: connectionForSlackUser(input.store, "hubspot", input.run),
+      jira: connectionForSlackUser(input.store, "jira", input.run),
+      slack: connectionForSlackUser(input.store, "slack", input.run),
+    },
+  };
+}
+
+async function executeScheduledRunAttempt(input: {
+  runner: AgentRunner;
+  store: Pick<TokenStore, "getConnectionForSlackUser">;
+  run: AgentJobRunRecord;
+  executionContext: ScheduledRunExecutionContext;
+  logWarn?: (message: string) => void;
+}): Promise<string> {
+  assertScheduledRunDestinationAvailable(input.executionContext);
+  const result = await collectScheduledAgentRunWithProgressRetry({
+    runner: input.runner,
+    agentInput: buildScheduledRunAgentInput({
+      store: input.store,
+      run: input.run,
+      executionContext: input.executionContext,
+    }),
+    job: input.executionContext.job,
+    scheduledJobContext: input.executionContext.scheduledJobContext,
+    logWarn: input.logWarn,
+  });
+  const output = validateScheduledJobOutput(result);
+  if (!output.ok) {
+    throw new Error(output.reason);
+  }
+  return output.text;
+}
+
+async function postScheduledRunOutput(input: {
+  slackClient: SlackPostClient;
+  destination: ReturnType<typeof readSlackRouteDestination>;
+  text: string;
+}): Promise<boolean> {
+  if (!input.destination) {
+    return false;
+  }
+  await input.slackClient.chat.postMessage({
+    channel: input.destination.channelId,
+    text: input.text,
+    ...(input.destination.threadTs && !input.destination.isDirectMessage
+      ? { thread_ts: input.destination.threadTs }
+      : {}),
+  });
+  return true;
+}
+
+async function postScheduledRunFailureNotification(input: {
+  slackClient: SlackPostClient;
+  job: ScheduledJobRecord;
+  run: AgentJobRunRecord;
+  destination: ReturnType<typeof readSlackRouteDestination>;
+  reason: string;
+}): Promise<boolean> {
+  if (
+    !shouldNotifyScheduledRunFailure({
+      run: input.run,
+      hasDestination: Boolean(input.destination),
+    }) ||
+    !input.destination
+  ) {
+    return false;
+  }
+  await input.slackClient.chat.postMessage({
+    channel: input.destination.channelId,
+    text: formatScheduledJobFailureMessage(input.job, input.run, input.reason),
+    ...(input.destination.threadTs && !input.destination.isDirectMessage
+      ? { thread_ts: input.destination.threadTs }
+      : {}),
+  });
+  return true;
 }
 
 async function executeWorkflowAuthoritativeManualRun(
@@ -352,21 +452,8 @@ async function executeWorkflowAuthoritativeManualRun(
     return;
   }
 
-  const route = job.routeId
-    ? input.store.getConversationRoute(job.routeId)
-    : null;
-  const destination = route ? readSlackRouteDestination(route) : null;
-  const runtimePrompt = scheduledTaskRuntimePrompt(job.prompt);
-  const toolGroups = selectRuntimeToolGroups({
-    text: runtimePrompt,
-    attachmentCount: 0,
-    contextTexts: [],
-  });
-  const scheduledJobContext = scheduledJobContextForRun(
-    input.store,
-    job,
-    toolGroups.groups,
-  );
+  const executionContext = prepareScheduledRunExecution(input.store, run, job);
+  const { destination, scheduledJobContext } = executionContext;
   const outputByDigest = new Map<string, string>();
   let failureNotificationSent = false;
   const workflowReplayConfig = {
@@ -419,51 +506,15 @@ async function executeWorkflowAuthoritativeManualRun(
           taskId: command.taskId,
           jobRunId: command.jobRunId,
         });
-        if (job.routeId && !destination) {
-          throw new Error("Scheduled job delivery route is unavailable");
-        }
-        const agentInput: AgentInput = {
-          principal: {
-            workspaceId: run.workspaceId,
-            slackUserId: run.slackUserId,
-          },
-          executionMode: "native-runtime",
-          ...(destination
-            ? {
-                conversation: {
-                  routeId: route?.id,
-                  source: "slack" as const,
-                  workspaceId: run.workspaceId,
-                  channelId: destination.channelId,
-                  rootId: scheduledRunConversationRoot(job, run),
-                  isDirectMessage: destination.isDirectMessage,
-                },
-              }
-            : {}),
-          text: runtimePrompt,
-          toolGroups,
-          ...(scheduledJobContext ? { scheduledJob: scheduledJobContext } : {}),
-          connections: {
-            github: connectionForSlackUser(input.store, "github", run),
-            google: connectionForSlackUser(input.store, "google", run),
-            hubspot: connectionForSlackUser(input.store, "hubspot", run),
-            jira: connectionForSlackUser(input.store, "jira", run),
-            slack: connectionForSlackUser(input.store, "slack", run),
-          },
-        };
-        const result = await collectScheduledAgentRunWithProgressRetry({
+        const outputText = await executeScheduledRunAttempt({
           runner: input.agentRunner,
-          agentInput,
-          job,
-          scheduledJobContext,
+          store: input.store,
+          run,
+          executionContext,
           logWarn: input.logWarn,
         });
-        const output = validateScheduledJobOutput(result);
-        if (!output.ok) {
-          throw new Error(output.reason);
-        }
-        const outputDigest = outputTextDigest(output.text);
-        outputByDigest.set(outputDigest, output.text);
+        const outputDigest = outputTextDigest(outputText);
+        outputByDigest.set(outputDigest, outputText);
         return {
           type: "attempt_succeeded",
           taskId: command.taskId,
@@ -527,16 +578,11 @@ async function executeWorkflowAuthoritativeManualRun(
         if (!text) {
           throw new Error("Scheduled job output artifact is unavailable");
         }
-        if (destination) {
-          await input.slackClient.chat.postMessage({
-            channel: destination.channelId,
-            text,
-            ...(destination.threadTs && !destination.isDirectMessage
-              ? { thread_ts: destination.threadTs }
-              : {}),
-          });
-          outputDelivered = true;
-        }
+        outputDelivered = await postScheduledRunOutput({
+          slackClient: input.slackClient,
+          destination,
+          text,
+        });
         const finishedRun =
           input.store.finishAgentJobRun({
             runId: command.jobRunId,
@@ -602,12 +648,12 @@ async function executeWorkflowAuthoritativeManualRun(
     },
     notifyFailure: async (command) => {
       if (destination) {
-        await input.slackClient.chat.postMessage({
-          channel: destination.channelId,
-          text: formatScheduledJobFailureMessage(job, run, command.reason),
-          ...(destination.threadTs && !destination.isDirectMessage
-            ? { thread_ts: destination.threadTs }
-            : {}),
+        await postScheduledRunFailureNotification({
+          slackClient: input.slackClient,
+          job,
+          run,
+          destination,
+          reason: command.reason,
         });
         failureNotificationSent = true;
       }

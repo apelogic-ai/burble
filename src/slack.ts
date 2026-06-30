@@ -113,6 +113,7 @@ import { createSchedulerRunExecutor } from "./scheduler/run-executor";
 import { createSchedulerTimer } from "./scheduler/timer";
 import { createTaskWorkflowMaintenanceLoop } from "./workflow/task-workflow-maintenance";
 import { createTaskWorkflowOracleLoop } from "./workflow/task-workflow-oracle";
+import { assessTaskWorkflowAuthorityReadiness } from "./workflow/task-workflow-readiness";
 import { createSqliteTaskWorkflowEventStore } from "./workflow/task-workflow-sqlite-store";
 import type {
   ConversationAttachment,
@@ -431,6 +432,32 @@ export function createSlackRuntime(
         logWarn: (message) => app.logger.warn(withUtcTimestamp(message))
       })
     : undefined;
+  const workflowAuthorityReadiness = assessTaskWorkflowAuthorityReadiness({
+    authority: config.taskWorkflowAuthority,
+    hasWorkflowStore: Boolean(workflowShadowStore),
+    hasMaintenanceLoop: Boolean(workflowMaintenanceLoop),
+    hasOracleLoop: Boolean(workflowOracleLoop)
+  });
+  if (!workflowAuthorityReadiness.ok) {
+    throw new Error(
+      [
+        `Task workflow authority ${config.taskWorkflowAuthority} is not ready.`,
+        ...workflowAuthorityReadiness.issues.map((issue) => issue.message)
+      ].join(" ")
+    );
+  }
+  if (config.taskWorkflowAuthority !== "off") {
+    app.logger.info(
+      withUtcTimestamp(
+        [
+          "Task workflow authority enabled",
+          `mode=${config.taskWorkflowAuthority}`,
+          `maxAttempts=${config.taskWorkflowMaxAttempts}`,
+          `databasePath=${config.taskWorkflowShadowDatabasePath}`
+        ].join(" ")
+      )
+    );
+  }
   workflowMaintenanceLoop?.start();
   workflowOracleLoop?.start();
 
