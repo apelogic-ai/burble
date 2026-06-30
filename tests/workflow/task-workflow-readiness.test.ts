@@ -8,16 +8,18 @@ describe("task workflow authority readiness", () => {
         authority: "off",
         hasWorkflowStore: false,
         hasMaintenanceLoop: false,
+        hasReconcileLoop: false,
         hasOracleLoop: false,
       }),
     ).toEqual({ ok: true, issues: [] });
   });
 
-  test("requires store, maintenance, and oracle when authority is enabled", () => {
+  test("requires store, maintenance, reconcile, and oracle when authority is enabled", () => {
     const result = assessTaskWorkflowAuthorityReadiness({
       authority: "manual",
       hasWorkflowStore: false,
       hasMaintenanceLoop: false,
+      hasReconcileLoop: false,
       hasOracleLoop: false,
     });
 
@@ -25,6 +27,7 @@ describe("task workflow authority readiness", () => {
     expect(result.issues.map((issue) => issue.code)).toEqual([
       "missing_workflow_store",
       "missing_maintenance_loop",
+      "missing_reconcile_loop",
       "missing_oracle_loop",
     ]);
   });
@@ -35,6 +38,7 @@ describe("task workflow authority readiness", () => {
         authority: "timer",
         hasWorkflowStore: true,
         hasMaintenanceLoop: true,
+        hasReconcileLoop: true,
         hasOracleLoop: true,
       }).ok,
     ).toBe(true);

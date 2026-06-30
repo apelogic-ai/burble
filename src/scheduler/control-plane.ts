@@ -20,6 +20,15 @@ import {
   recordTaskWorkflowRunTriggered,
   type TaskWorkflowShadowStore,
 } from "../workflow/task-workflow-shadow";
+import type {
+  TaskWorkflowEventStore,
+  TaskWorkflowSideEffectFailureRecord,
+} from "../workflow/task-workflow-store";
+import type {
+  TaskWorkflowRunState,
+  TaskWorkflowState,
+  TaskWorkflowTaskState,
+} from "../workflow/task-workflow";
 
 export type {
   SchedulerTaskGrant,
@@ -268,18 +277,36 @@ export type SchedulerRunStatusResult =
       ok: true;
       run: AgentJobRunRecord;
       audit?: AgentJobRunAuditRecord | null;
+      workflow?: SchedulerRunWorkflowStatus;
     }
   | {
       ok: false;
       reason: "no_runs";
     };
 
+export type SchedulerRunWorkflowStatus = {
+  run?: Pick<
+    TaskWorkflowRunState,
+    "status" | "failureClass" | "failureReason" | "updatedAt"
+  >;
+  task?: TaskWorkflowTaskState;
+  sideEffectFailures: TaskWorkflowSideEffectFailureRecord[];
+};
+
+type SchedulerWorkflowStore = TaskWorkflowShadowStore &
+  Pick<
+    TaskWorkflowEventStore,
+    "replayState" | "listSideEffectFailures"
+  >;
+
+const WORKFLOW_STATUS_CACHE_MS = 1_000;
+
 type SchedulerControlPlaneOptions = {
   now?: () => Date;
   newJobId?: () => string;
   newRunId?: () => string;
   workflowAuthority?: "off" | "manual" | "timer";
-  workflowShadowStore?: TaskWorkflowShadowStore;
+  workflowShadowStore?: SchedulerWorkflowStore;
   logWarn?: (message: string) => void;
   resolveSlackChannelIdByName?: (input: {
     workspaceId: string;
@@ -307,6 +334,24 @@ export function createSchedulerControlPlane(
   const newJobId = options.newJobId ?? (() => `job_${randomUUID()}`);
   const newRunId = options.newRunId ?? (() => `jobrun_${randomUUID()}`);
   const workflowAuthority = options.workflowAuthority ?? "off";
+  let workflowStatusCache:
+    | { state: TaskWorkflowState; expiresAtMs: number }
+    | null = null;
+  const readWorkflowStatusState = (): TaskWorkflowState | null => {
+    if (!options.workflowShadowStore) {
+      return null;
+    }
+    const nowMs = now().getTime();
+    if (workflowStatusCache && workflowStatusCache.expiresAtMs > nowMs) {
+      return workflowStatusCache.state;
+    }
+    const state = options.workflowShadowStore.replayState();
+    workflowStatusCache = {
+      state,
+      expiresAtMs: nowMs + WORKFLOW_STATUS_CACHE_MS,
+    };
+    return state;
+  };
   const listJobs = (input: {
     workspaceId: string;
     slackUserId: string;
@@ -528,10 +573,60 @@ export function createSchedulerControlPlane(
         input.slackUserId,
         input.jobId,
       );
+      const workflow = run
+        ? schedulerRunWorkflowStatus(
+            options.workflowShadowStore,
+            readWorkflowStatusState(),
+            run,
+          )
+        : null;
       return run
-        ? { ok: true, run, audit: store.getAgentJobRunAudit(run.runId) }
+        ? {
+            ok: true,
+            run,
+            audit: store.getAgentJobRunAudit(run.runId),
+            ...(workflow ? { workflow } : {}),
+          }
         : { ok: false, reason: "no_runs" };
     },
+  };
+}
+
+function schedulerRunWorkflowStatus(
+  workflowStore: SchedulerWorkflowStore | undefined,
+  state: TaskWorkflowState | null,
+  run: AgentJobRunRecord,
+): SchedulerRunWorkflowStatus | null {
+  if (!workflowStore || !state) {
+    return null;
+  }
+  const workflowRun = state.runs[run.runId];
+  const task = state.tasks[run.jobId];
+  const taskNeedsRepair = task?.status === "needs_repair" ? task : undefined;
+  const sideEffectFailures = workflowStore.listSideEffectFailures({
+    state,
+    taskId: run.jobId,
+  });
+  if (!workflowRun && !taskNeedsRepair && sideEffectFailures.length === 0) {
+    return null;
+  }
+  return {
+    ...(workflowRun
+      ? {
+          run: {
+            status: workflowRun.status,
+            updatedAt: workflowRun.updatedAt,
+            ...(workflowRun.failureClass
+              ? { failureClass: workflowRun.failureClass }
+              : {}),
+            ...(workflowRun.failureReason
+              ? { failureReason: workflowRun.failureReason }
+              : {}),
+          },
+        }
+      : {}),
+    ...(taskNeedsRepair ? { task: taskNeedsRepair } : {}),
+    sideEffectFailures,
   };
 }
 

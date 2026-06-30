@@ -72,6 +72,8 @@ type ScheduledRunAttemptResult = {
   output: AgentOutput;
 };
 
+const DEFAULT_WORKFLOW_ATTEMPT_HEARTBEAT_INTERVAL_MS = 60_000;
+
 export type SchedulerRunExecutor = {
   executeRun(runId: string): Promise<void>;
 };
@@ -93,6 +95,7 @@ export function createSchedulerRunExecutor(input: {
   workflowShadowStore?: TaskWorkflowEventStore;
   workflowAuthority?: "off" | "manual" | "timer";
   workflowMaxAttempts?: number;
+  workflowHeartbeatIntervalMs?: number;
   logInfo?: (message: string) => void;
   logWarn?: (message: string) => void;
 }): SchedulerRunExecutor {
@@ -157,27 +160,53 @@ export function createSchedulerRunExecutor(input: {
       let executionContext: ScheduledRunExecutionContext | null = null;
 
       try {
-        executionContext = prepareScheduledRunExecution(input.store, run);
-        assertScheduledRunDestinationAvailable(executionContext);
+        const preparedExecutionContext = prepareScheduledRunExecution(
+          input.store,
+          run,
+        );
+        executionContext = preparedExecutionContext;
+        assertScheduledRunDestinationAvailable(preparedExecutionContext);
 
         input.logInfo?.(
-          `Scheduled job run start runId=${run.runId} jobId=${executionContext.job.jobId}`,
+          `Scheduled job run start runId=${run.runId} jobId=${preparedExecutionContext.job.jobId}`,
         );
         recordTaskWorkflowRunStarted({
           store: input.workflowShadowStore,
           run,
           logWarn: input.logWarn,
         });
-        const attemptResult = await executeScheduledRunAttempt({
-          runner: input.agentRunner,
-          store: input.store,
-          run,
-          executionContext,
-          logWarn: input.logWarn,
-        });
+        const attemptResult =
+          input.workflowShadowStore && input.workflowAuthority !== "off"
+            ? await runWithWorkflowAttemptHeartbeats({
+                intervalMs:
+                  input.workflowHeartbeatIntervalMs ??
+                  DEFAULT_WORKFLOW_ATTEMPT_HEARTBEAT_INTERVAL_MS,
+                heartbeat: () =>
+                  appendWorkflowRunHeartbeat({
+                    store: input.workflowShadowStore!,
+                    taskId: run.jobId,
+                    jobRunId: run.runId,
+                  }),
+                run: () =>
+                  executeScheduledRunAttempt({
+                    runner: input.agentRunner,
+                    store: input.store,
+                    run,
+                    executionContext: preparedExecutionContext,
+                    logWarn: input.logWarn,
+                  }),
+                logWarn: input.logWarn,
+              })
+            : await executeScheduledRunAttempt({
+                runner: input.agentRunner,
+                store: input.store,
+                run,
+                executionContext: preparedExecutionContext,
+                logWarn: input.logWarn,
+              });
         await postScheduledRunOutput({
           slackClient: input.slackClient,
-          destination: executionContext.destination,
+          destination: preparedExecutionContext.destination,
           text: attemptResult.text,
         });
         const finishedRun =
@@ -318,8 +347,14 @@ function buildScheduledRunAgentInput(input: {
   run: AgentJobRunRecord;
   executionContext: ScheduledRunExecutionContext;
 }): AgentInput {
-  const { job, route, destination, runtimePrompt, toolGroups, scheduledJobContext } =
-    input.executionContext;
+  const {
+    job,
+    route,
+    destination,
+    runtimePrompt,
+    toolGroups,
+    scheduledJobContext,
+  } = input.executionContext;
   return {
     principal: {
       workspaceId: input.run.workspaceId,
@@ -510,6 +545,7 @@ async function executeWorkflowAuthoritativeManualRun(
     slackClient: SlackPostClient;
     workflowShadowStore: TaskWorkflowEventStore;
     workflowMaxAttempts?: number;
+    workflowHeartbeatIntervalMs?: number;
     logInfo?: (message: string) => void;
     logWarn?: (message: string) => void;
   },
@@ -594,15 +630,24 @@ async function executeWorkflowAuthoritativeManualRun(
     },
     startAttempt: async (command, ctx) => {
       try {
-        await ctx.heartbeat({
-          taskId: command.taskId,
-          jobRunId: command.jobRunId,
-        });
-        const attemptResult = await executeScheduledRunAttempt({
-          runner: input.agentRunner,
-          store: input.store,
-          run,
-          executionContext,
+        const attemptResult = await runWithWorkflowAttemptHeartbeats({
+          intervalMs:
+            input.workflowHeartbeatIntervalMs ??
+            DEFAULT_WORKFLOW_ATTEMPT_HEARTBEAT_INTERVAL_MS,
+          heartbeat: () =>
+            appendWorkflowRunHeartbeat({
+              store: input.workflowShadowStore,
+              taskId: command.taskId,
+              jobRunId: command.jobRunId,
+            }),
+          run: () =>
+            executeScheduledRunAttempt({
+              runner: input.agentRunner,
+              store: input.store,
+              run,
+              executionContext,
+              logWarn: input.logWarn,
+            }),
           logWarn: input.logWarn,
         });
         const outputDigest = outputTextDigest(attemptResult.text);
@@ -1028,6 +1073,47 @@ function shouldFailUnsafeProgressOnlyResult(
   );
 }
 
+async function appendWorkflowRunHeartbeat(input: {
+  store: TaskWorkflowEventStore;
+  taskId: string;
+  jobRunId: string;
+}): Promise<void> {
+  appendWorkflowEvent(input.store, {
+    type: "run_heartbeat",
+    taskId: input.taskId,
+    jobRunId: input.jobRunId,
+    at: new Date().toISOString(),
+  });
+}
+
+async function runWithWorkflowAttemptHeartbeats<T>(input: {
+  intervalMs: number;
+  heartbeat: () => Promise<void>;
+  run: () => Promise<T>;
+  logWarn?: (message: string) => void;
+}): Promise<T> {
+  await input.heartbeat();
+  const intervalMs =
+    Number.isFinite(input.intervalMs) && input.intervalMs > 0
+      ? input.intervalMs
+      : DEFAULT_WORKFLOW_ATTEMPT_HEARTBEAT_INTERVAL_MS;
+  const timer = setInterval(() => {
+    input.heartbeat().catch((error) => {
+      input.logWarn?.(
+        `Scheduled job workflow heartbeat failed error=${scheduledRunErrorMessage(error)}`,
+      );
+    });
+  }, intervalMs);
+  if (typeof timer.unref === "function") {
+    timer.unref();
+  }
+  try {
+    return await input.run();
+  } finally {
+    clearInterval(timer);
+  }
+}
+
 function scheduledJobContextAllowsOnlyReadTools(
   scheduledJobContext: ScheduledJobContext | undefined,
 ): boolean {
@@ -1125,6 +1211,8 @@ function workflowEventId(event: TaskWorkflowEvent): string {
       return `shadow:${event.jobRunId}:delivery_started:${encodeURIComponent(event.deliveryKey)}`;
     case "delivery_succeeded":
       return `shadow:${event.jobRunId}:delivery_succeeded:${encodeURIComponent(event.deliveryKey)}`;
+    case "run_reconciled_succeeded":
+      return `workflow:${event.jobRunId}:run_reconciled_succeeded`;
     case "delivery_failed":
       return `shadow:${event.jobRunId}:delivery_failed:${encodeURIComponent(event.deliveryKey ?? "no-key")}:${encodeURIComponent(event.failureClass ?? "delivery_failed")}`;
     case "handler_failed":

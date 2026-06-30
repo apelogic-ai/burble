@@ -214,13 +214,18 @@ describe("scheduler control plane", () => {
       source: "manual",
       status: "created",
     });
-    expect(
-      await scheduler.getLatestRunStatus?.({
-        workspaceId: "T123",
-        slackUserId: "U123",
-        jobId: "ai-news-hourly",
-      }),
-    ).toEqual({
+    let replayCount = 0;
+    const replayState = workflowStore.replayState.bind(workflowStore);
+    workflowStore.replayState = ((input) => {
+      replayCount += 1;
+      return replayState(input);
+    }) as typeof workflowStore.replayState;
+    const latestStatusInput = {
+      workspaceId: "T123",
+      slackUserId: "U123",
+      jobId: "ai-news-hourly",
+    };
+    expect(await scheduler.getLatestRunStatus?.(latestStatusInput)).toEqual({
       ok: true,
       run: {
         runId: "jobrun-manual-1",
@@ -236,7 +241,16 @@ describe("scheduler control plane", () => {
         finishedAt: null,
       },
       audit: null,
+      workflow: {
+        run: {
+          status: "created",
+          updatedAt: "2026-06-24T12:05:00.000Z",
+        },
+        sideEffectFailures: [],
+      },
     });
+    await scheduler.getLatestRunStatus?.(latestStatusInput);
+    expect(replayCount).toBe(1);
 
     store.close();
   });

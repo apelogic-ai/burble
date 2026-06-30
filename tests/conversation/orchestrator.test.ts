@@ -2381,6 +2381,29 @@ describe("handleConversation", () => {
               createdAt: "2026-06-24T12:06:00.000Z",
               updatedAt: "2026-06-24T12:06:00.000Z",
             },
+            workflow: {
+              run: {
+                status: "paused_after_failures",
+                failureClass: "runtime_failed",
+                failureReason: "Repeated runtime failures",
+                updatedAt: "2026-06-24T12:07:00.000Z",
+              },
+              task: {
+                status: "needs_repair",
+                pausedReason: "Repeated runtime_failed failures",
+              },
+              sideEffectFailures: [
+                {
+                  failureId: "notify_failure:ai-news-hourly:jobrun-manual-1:runtime_failed:2026-06-24T12:07:00.000Z",
+                  taskId: "ai-news-hourly",
+                  commandType: "notify_failure",
+                  reason: "Slack delivery failed",
+                  at: "2026-06-24T12:07:00.000Z",
+                  jobRunId: "jobrun-manual-1",
+                  failureClass: "runtime_failed",
+                },
+              ],
+            },
           }),
         },
         agentRunner: stubAgentRunner(() => {
@@ -2400,6 +2423,10 @@ describe("handleConversation", () => {
     expect(response.text).toContain("runner: managed-runtime");
     expect(response.text).toContain("route: convrt_123");
     expect(response.text).toContain("tokens: 42");
+    expect(response.text).toContain("workflow: paused_after_failures");
+    expect(response.text).toContain("workflow failure: runtime_failed");
+    expect(response.text).toContain("task repair: needs_repair");
+    expect(response.text).toContain("workflow side-effect failures: 1");
   });
 
   test("pauses, resumes, and deletes scheduled jobs without invoking the LLM runner", async () => {

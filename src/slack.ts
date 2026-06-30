@@ -108,12 +108,18 @@ import {
   createSchedulerControlPlane,
   type SchedulerControlPlane
 } from "./scheduler/control-plane";
+import { DEFAULT_ACTIVE_RUN_TTL_MS } from "./scheduler/active-run";
 import { defaultResolveSlackChannelIdByName } from "./tool-gateway";
 import { createSchedulerRunExecutor } from "./scheduler/run-executor";
 import { createSchedulerTimer } from "./scheduler/timer";
 import { createTaskWorkflowMaintenanceLoop } from "./workflow/task-workflow-maintenance";
 import { createTaskWorkflowOracleLoop } from "./workflow/task-workflow-oracle";
+import { createTaskWorkflowReconcileLoop } from "./workflow/task-workflow-reconcile";
 import { assessTaskWorkflowAuthorityReadiness } from "./workflow/task-workflow-readiness";
+import {
+  finishAuthoritativeRunForStaleWorkflowFailure,
+  recordWorkflowRunSucceededFromAuthoritative
+} from "./workflow/task-workflow-authority";
 import { createSqliteTaskWorkflowEventStore } from "./workflow/task-workflow-sqlite-store";
 import type {
   ConversationAttachment,
@@ -422,6 +428,68 @@ export function createSlackRuntime(
         logWarn: (message) => app.logger.warn(withUtcTimestamp(message))
       })
     : undefined;
+  const workflowReconcileLoop = workflowShadowStore
+    ? createTaskWorkflowReconcileLoop({
+        store: workflowShadowStore,
+        staleAfterMs: DEFAULT_ACTIVE_RUN_TTL_MS,
+        ...(config.taskWorkflowAuthority !== "off"
+          ? {
+              shouldIngestStaleRunFailure: (failure) => {
+                const result = finishAuthoritativeRunForStaleWorkflowFailure({
+                  store,
+                  failure
+                });
+                if (result.status === "failed") {
+                  app.logger.warn(
+                    withUtcTimestamp(
+                      `Task workflow reconcile failed authoritative runId=${result.run.runId} status=failed`
+                    )
+                  );
+                  return true;
+                }
+                if (result.status === "succeeded") {
+                  recordWorkflowRunSucceededFromAuthoritative({
+                    store: workflowShadowStore,
+                    run: result.run,
+                    workflowRun: failure.run
+                  });
+                  app.logger.warn(
+                    withUtcTimestamp(
+                      `Task workflow reconcile synced succeeded authoritative runId=${result.run.runId}`
+                    )
+                  );
+                  return false;
+                }
+                app.logger.warn(
+                  withUtcTimestamp(
+                    [
+                      "Task workflow reconcile could not fail authoritative run",
+                      `runId=${failure.run.jobRunId}`,
+                      `status=${result.status}`,
+                      ...(result.status === "missing"
+                        ? []
+                        : [`authoritativeStatus=${result.run.status}`])
+                    ].join(" ")
+                  )
+                );
+                return false;
+              }
+            }
+          : {}),
+        onStaleRunFailed: (failure) => {
+          if (config.taskWorkflowAuthority !== "off") {
+            return;
+          }
+          app.logger.warn(
+            withUtcTimestamp(
+              `Task workflow shadow reconcile recorded stale runId=${failure.run.jobRunId}`
+            )
+          );
+        },
+        logInfo: (message) => app.logger.info(withUtcTimestamp(message)),
+        logWarn: (message) => app.logger.warn(withUtcTimestamp(message))
+      })
+    : undefined;
   const workflowOracleLoop = workflowShadowStore
     ? createTaskWorkflowOracleLoop({
         replayWorkflowState: () =>
@@ -436,6 +504,7 @@ export function createSlackRuntime(
     authority: config.taskWorkflowAuthority,
     hasWorkflowStore: Boolean(workflowShadowStore),
     hasMaintenanceLoop: Boolean(workflowMaintenanceLoop),
+    hasReconcileLoop: Boolean(workflowReconcileLoop),
     hasOracleLoop: Boolean(workflowOracleLoop)
   });
   if (!workflowAuthorityReadiness.ok) {
@@ -459,6 +528,7 @@ export function createSlackRuntime(
     );
   }
   workflowMaintenanceLoop?.start();
+  workflowReconcileLoop?.start();
   workflowOracleLoop?.start();
 
   const schedulerControl = createSchedulerControlPlane(store, {
@@ -2013,6 +2083,7 @@ export function createSlackRuntime(
     close() {
       schedulerTimer?.stop();
       workflowOracleLoop?.stop();
+      workflowReconcileLoop?.stop();
       workflowMaintenanceLoop?.stop();
       workflowShadowDatabase?.close();
     }
