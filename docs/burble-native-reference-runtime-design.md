@@ -1518,14 +1518,34 @@ Slack App Home task management.
 
 Workflow authority rollout:
 
-- The authority switch is staged and reversible. The currently supported rollout
-  values are:
-  - `TASK_WORKFLOW_AUTHORITY=off`: legacy scheduler is authoritative; workflow
-    event store may be populated only as shadow.
-  - `TASK_WORKFLOW_AUTHORITY=manual`: manual triggers are workflow-authoritative;
-    timer fires remain legacy.
-  - `TASK_WORKFLOW_AUTHORITY=timer`: manual triggers and timer fires are
-    workflow-authoritative.
+- The authority switch is staged and reversible. Rollout happens in three
+  explicit modes:
+  - Shadow-only:
+    - `TASK_WORKFLOW_SHADOW_ENABLED=true`
+    - `TASK_WORKFLOW_AUTHORITY=off`
+    - Optional: `TASK_WORKFLOW_SHADOW_DATABASE_PATH=<primary>.workflow-shadow.db`
+    - Optional: `SCHEDULED_RUN_AUDIT_RETENTION_DAYS=90`
+    - Optional: `SCHEDULED_RUN_AUDIT_PRUNE_INTERVAL_MS=86400000` (max 7 days)
+    - Expected behavior: legacy scheduler remains authoritative. Workflow events,
+      oracle checks, reconciliation reads, maintenance, and scheduled-run audit
+      retention may run, but no workflow path may finish or fail an
+      authoritative `agent_job_runs` row.
+  - Manual authority:
+    - `TASK_WORKFLOW_SHADOW_ENABLED=true`
+    - `TASK_WORKFLOW_AUTHORITY=manual`
+    - Optional: `TASK_WORKFLOW_MAX_ATTEMPTS=2`
+    - Expected behavior: manual triggers are workflow-authoritative; timer fires
+      remain legacy. The workflow driver owns validation, attempt execution,
+      retries, delivery, terminal state, and the compatibility
+      `agent_job_runs` projection for manual runs only.
+  - Timer authority:
+    - `TASK_WORKFLOW_SHADOW_ENABLED=true`
+    - `TASK_WORKFLOW_AUTHORITY=timer`
+    - Optional: `TASK_WORKFLOW_MAX_ATTEMPTS=2`
+    - Expected behavior: manual triggers and timer fires are
+      workflow-authoritative. The timer is reduced to a due-slot event source;
+      workflow state owns deduplication, validation, retries, delivery,
+      reconciliation, and terminal projection updates.
 - Do not skip from `off` to timer authority. `manual` must pass real hand tests
   and the shadow oracle must stay clean before timer authority is enabled.
 - `agent_job_runs` remains during rollout as a compatibility read model. The
@@ -1538,6 +1558,51 @@ Workflow authority rollout:
   workflow events are retained for diagnosis, but new runs return to the legacy
   scheduler path. Because `agent_job_runs` is maintained as a projection, the
   user-visible run history survives rollback.
+- Startup must fail closed when authority is enabled without required workflow
+  infrastructure. A misconfigured shadow database path, missing workflow store,
+  missing maintenance loop, missing oracle loop, or missing reconcile loop is an
+  authority-readiness failure, not a partial-degraded mode.
+- Scheduled-run audit is live once deployed, independent of workflow authority.
+  It records successful run runtime/runner/route/output/usage visibility as a
+  read model and is bounded by `SCHEDULED_RUN_AUDIT_RETENTION_DAYS`.
+
+Required hand tests before `TASK_WORKFLOW_AUTHORITY=manual`:
+
+- Shadow-only soak:
+  - enable `TASK_WORKFLOW_SHADOW_ENABLED=true` with authority `off`;
+  - run at least one valid manual task, one valid scheduled task, one invalid
+    manual task, and one route-delivered task;
+  - confirm the oracle reports no persistent mismatches after the retention and
+    skew windows;
+  - confirm audit rows are written for successful scheduled runs and old audit
+    rows are pruned by the maintenance loop;
+  - confirm rollback to shadow disabled starts cleanly and leaves existing run
+    history readable.
+- Manual authority:
+  - run a valid manual task and verify Slack delivery, `agent_job_runs`
+    terminal state, workflow terminal state, audit visibility where applicable,
+    and oracle agreement;
+  - run an invalid manual task and verify synchronous diagnostics or a single
+    bounded failure path, with no repeat-failure spam;
+  - run a read-only task that fails transiently and verify retries stop at
+    `TASK_WORKFLOW_MAX_ATTEMPTS`;
+  - run a write-capable task that fails and verify it does not retry;
+  - run a long manual task and verify periodic workflow heartbeats prevent stale
+    reconciliation from failing it mid-flight;
+  - force a process restart or simulated driver failure between workflow events
+    and verify reconciliation converges to the authoritative terminal state;
+  - flip authority back to `off` and verify the next manual run uses the legacy
+    path without orphaning existing workflow events.
+- Timer authority:
+  - only start after manual authority has soaked cleanly;
+  - run due scheduled tasks through timer authority and verify `taskId + dueSlot`
+    deduplication;
+  - verify route delivery idempotency is keyed by
+    `jobRunId + routeId + outputDigest`;
+  - verify scheduled long-running jobs heartbeat on both workflow and legacy
+    paths during the rollout;
+  - verify oracle mismatches remain zero for the soak window and rollback to
+    `manual` or `off` does not orphan queued/running runs.
 
 Migration rules:
 

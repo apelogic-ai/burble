@@ -11,6 +11,11 @@ import {
   DEFAULT_TASK_WORKFLOW_MAX_ATTEMPTS,
   MAX_TASK_WORKFLOW_MAX_ATTEMPTS
 } from "./workflow/task-workflow";
+import {
+  DEFAULT_SCHEDULED_RUN_AUDIT_PRUNE_INTERVAL_MS,
+  DEFAULT_SCHEDULED_RUN_AUDIT_RETENTION_DAYS,
+  MAX_SCHEDULED_RUN_AUDIT_PRUNE_INTERVAL_MS
+} from "./scheduler/run-audit-maintenance";
 
 export type Config = {
   slackBotToken: string;
@@ -71,6 +76,8 @@ export type Config = {
   taskWorkflowShadowEnabled: boolean;
   taskWorkflowShadowDatabasePath: string | null;
   taskWorkflowMaxAttempts: number;
+  scheduledRunAuditRetentionDays: number;
+  scheduledRunAuditPruneIntervalMs: number;
   testbed?: boolean;
 };
 
@@ -411,6 +418,17 @@ export function readConfig(env: Env): Config {
           DEFAULT_TASK_WORKFLOW_MAX_ATTEMPTS,
           MAX_TASK_WORKFLOW_MAX_ATTEMPTS
         );
+  const scheduledRunAuditRetentionDays = optionalIntEnv(
+    env,
+    "SCHEDULED_RUN_AUDIT_RETENTION_DAYS",
+    DEFAULT_SCHEDULED_RUN_AUDIT_RETENTION_DAYS
+  );
+  const scheduledRunAuditPruneIntervalMs = optionalBoundedIntEnv(
+    env,
+    "SCHEDULED_RUN_AUDIT_PRUNE_INTERVAL_MS",
+    DEFAULT_SCHEDULED_RUN_AUDIT_PRUNE_INTERVAL_MS,
+    MAX_SCHEDULED_RUN_AUDIT_PRUNE_INTERVAL_MS
+  );
   if (taskWorkflowAuthority !== "off" && !taskWorkflowShadowDatabasePath) {
     throw new Error(
       "TASK_WORKFLOW_AUTHORITY requires TASK_WORKFLOW_SHADOW_ENABLED=true with a persistent workflow database; DATABASE_PATH=:memory: cannot be used for workflow authority"
@@ -532,6 +550,8 @@ export function readConfig(env: Env): Config {
     taskWorkflowShadowEnabled: taskWorkflowShadowDatabasePath !== null,
     taskWorkflowShadowDatabasePath,
     taskWorkflowMaxAttempts,
+    scheduledRunAuditRetentionDays,
+    scheduledRunAuditPruneIntervalMs,
     testbed: optionalBoolEnv(env, "BURBLE_TESTBED", false)
   };
 }

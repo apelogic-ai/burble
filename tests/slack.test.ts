@@ -126,7 +126,9 @@ const agentConfig: Config = {
   taskWorkflowAuthority: "off",
   taskWorkflowShadowEnabled: false,
   taskWorkflowShadowDatabasePath: null,
-  taskWorkflowMaxAttempts: 2
+  taskWorkflowMaxAttempts: 2,
+  scheduledRunAuditRetentionDays: 90,
+  scheduledRunAuditPruneIntervalMs: 86400000
 };
 
 describe("createManagedRuntimeFactory sandbox mode", () => {

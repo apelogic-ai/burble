@@ -496,6 +496,9 @@ export function createTokenStore(path: string) {
     CREATE INDEX IF NOT EXISTS idx_agent_job_run_audit_principal_updated
       ON agent_job_run_audit (workspace_id, slack_user_id, updated_at);
 
+    CREATE INDEX IF NOT EXISTS idx_agent_job_run_audit_updated
+      ON agent_job_run_audit (updated_at);
+
     CREATE TABLE IF NOT EXISTS agent_job_capabilities (
       job_id TEXT PRIMARY KEY,
       workspace_id TEXT NOT NULL,
@@ -1381,6 +1384,16 @@ export function createTokenStore(path: string) {
       AND slack_user_id = ?
     ORDER BY updated_at DESC, run_id ASC
     LIMIT ?
+  `);
+  const pruneAgentJobRunAuditsBefore = db.query(`
+    DELETE FROM agent_job_run_audit
+    WHERE run_id IN (
+      SELECT run_id
+      FROM agent_job_run_audit
+      WHERE updated_at < ?
+      ORDER BY updated_at ASC, run_id ASC
+      LIMIT ?
+    )
   `);
   const listAgentJobRunsForPrincipal = db.query<
     AgentJobRunRow,
@@ -2441,6 +2454,16 @@ export function createTokenStore(path: string) {
       return listAgentJobRunAuditsForPrincipal
         .all(workspaceId, slackUserId, normalizedLimit)
         .map(toAgentJobRunAuditRecord);
+    },
+
+    pruneAgentJobRunAuditsBefore(before: Date, limit = 1000): number {
+      const normalizedLimit =
+        Number.isSafeInteger(limit) && limit > 0 ? Math.min(limit, 10000) : 1000;
+      const result = pruneAgentJobRunAuditsBefore.run(
+        before.toISOString(),
+        normalizedLimit
+      );
+      return result.changes;
     },
 
     listAgentJobRunsForPrincipal(
