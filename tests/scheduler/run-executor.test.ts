@@ -355,9 +355,9 @@ describe("scheduler run executor", () => {
     const eventTypes = workflowStore
       .listEvents()
       .map((event) => event.event.type);
-    expect(eventTypes.filter((type) => type === "run_heartbeat").length).toBeGreaterThan(
-      1,
-    );
+    expect(
+      eventTypes.filter((type) => type === "run_heartbeat").length,
+    ).toBeGreaterThan(1);
     expect(eventTypes[0]).toBe("task_triggered");
     expect(eventTypes).toContain("attempt_succeeded");
     expect(eventTypes.at(-1)).toBe("delivery_succeeded");
@@ -442,6 +442,81 @@ describe("scheduler run executor", () => {
       status: "succeeded",
       attempt: 1,
     });
+
+    store.close();
+  });
+
+  test("heartbeats legacy scheduled runs while manual workflow authority reconciliation is enabled", async () => {
+    const store = createTokenStore(":memory:");
+    const workflowStore = createInMemoryTaskWorkflowEventStore();
+    const job = store.upsertScheduledJob({
+      jobId: "job-scheduled-heartbeat",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      title: "Scheduled heartbeat",
+      prompt: "Return a status update.",
+      schedule: { kind: "interval", every: { minutes: 30 } },
+      runtimeType: "openclaw",
+      state: "scheduled",
+      now: new Date("2026-06-25T17:01:00.000Z"),
+    });
+    store.upsertAgentJobCapability({
+      jobId: job.jobId,
+      workspaceId: "T123",
+      slackUserId: "U123",
+      requiredTools: [],
+      runtimeType: "openclaw",
+      now: new Date("2026-06-25T17:01:30.000Z"),
+    });
+    const run = store.createAgentJobRun({
+      runId: "jobrun-scheduled-heartbeat",
+      jobId: job.jobId,
+      workspaceId: "T123",
+      slackUserId: "U123",
+      triggerSource: "schedule",
+      status: "queued",
+      now: new Date("2026-06-25T17:02:00.000Z"),
+    });
+    const runner: AgentRunner = {
+      name: "test-runner",
+      capabilities: {
+        streaming: true,
+        toolEvents: true,
+        remote: true,
+      },
+      async *run() {
+        await new Promise((resolve) => setTimeout(resolve, 25));
+        yield {
+          type: "final",
+          response: {
+            classification: "public",
+            text: "Scheduled status update.",
+          },
+        };
+      },
+    };
+    const executor = createSchedulerRunExecutor({
+      store,
+      agentRunner: runner,
+      slackClient: {
+        chat: {
+          postMessage: async () => ({}),
+        },
+      },
+      workflowShadowStore: workflowStore,
+      workflowAuthority: "manual",
+      workflowHeartbeatIntervalMs: 1,
+    });
+
+    await executor.executeRun(run.runId);
+
+    expect(store.getAgentJobRun(run.runId)).toMatchObject({
+      status: "succeeded",
+    });
+    const heartbeatCount = workflowStore
+      .listEvents()
+      .filter((event) => event.event.type === "run_heartbeat").length;
+    expect(heartbeatCount).toBeGreaterThan(1);
 
     store.close();
   });

@@ -116,7 +116,10 @@ import { createTaskWorkflowMaintenanceLoop } from "./workflow/task-workflow-main
 import { createTaskWorkflowOracleLoop } from "./workflow/task-workflow-oracle";
 import { createTaskWorkflowReconcileLoop } from "./workflow/task-workflow-reconcile";
 import { assessTaskWorkflowAuthorityReadiness } from "./workflow/task-workflow-readiness";
-import { finishAuthoritativeRunForStaleWorkflowFailure } from "./workflow/task-workflow-authority";
+import {
+  finishAuthoritativeRunForStaleWorkflowFailure,
+  recordWorkflowRunSucceededFromAuthoritative
+} from "./workflow/task-workflow-authority";
 import { createSqliteTaskWorkflowEventStore } from "./workflow/task-workflow-sqlite-store";
 import type {
   ConversationAttachment,
@@ -444,6 +447,19 @@ export function createSlackRuntime(
                   );
                   return true;
                 }
+                if (result.status === "succeeded") {
+                  recordWorkflowRunSucceededFromAuthoritative({
+                    store: workflowShadowStore,
+                    run: result.run,
+                    workflowRun: failure.run
+                  });
+                  app.logger.warn(
+                    withUtcTimestamp(
+                      `Task workflow reconcile synced succeeded authoritative runId=${result.run.runId}`
+                    )
+                  );
+                  return false;
+                }
                 app.logger.warn(
                   withUtcTimestamp(
                     [
@@ -456,7 +472,7 @@ export function createSlackRuntime(
                     ].join(" ")
                   )
                 );
-                return result.status === "already_terminal";
+                return false;
               }
             }
           : {}),
