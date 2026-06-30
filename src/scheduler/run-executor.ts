@@ -1,5 +1,10 @@
 import { createHash } from "node:crypto";
-import type { AgentInput, AgentRunEvent, AgentRunner } from "../agent/types";
+import type {
+  AgentInput,
+  AgentOutput,
+  AgentRunEvent,
+  AgentRunner,
+} from "../agent/types";
 import { collectAgentRun } from "../agent/types";
 import { selectRuntimeToolGroups } from "../agent/tool-groups";
 import {
@@ -62,6 +67,11 @@ type ScheduledRunExecutionContext = {
   scheduledJobContext: ScheduledJobContext | undefined;
 };
 
+type ScheduledRunAttemptResult = {
+  text: string;
+  output: AgentOutput;
+};
+
 export type SchedulerRunExecutor = {
   executeRun(runId: string): Promise<void>;
 };
@@ -76,6 +86,7 @@ export function createSchedulerRunExecutor(input: {
     | "getScheduledJob"
     | "getConversationRoute"
     | "getConnectionForSlackUser"
+    | "upsertAgentJobRunAudit"
   >;
   agentRunner: AgentRunner;
   slackClient: SlackPostClient;
@@ -157,7 +168,7 @@ export function createSchedulerRunExecutor(input: {
           run,
           logWarn: input.logWarn,
         });
-        const outputText = await executeScheduledRunAttempt({
+        const attemptResult = await executeScheduledRunAttempt({
           runner: input.agentRunner,
           store: input.store,
           run,
@@ -167,7 +178,7 @@ export function createSchedulerRunExecutor(input: {
         await postScheduledRunOutput({
           slackClient: input.slackClient,
           destination: executionContext.destination,
-          text: outputText,
+          text: attemptResult.text,
         });
         const finishedRun =
           input.store.finishAgentJobRun({
@@ -178,8 +189,16 @@ export function createSchedulerRunExecutor(input: {
           recordTaskWorkflowRunSucceeded({
             store: input.workflowShadowStore,
             run: finishedRun,
-            outputText,
+            outputText: attemptResult.text,
             routeId: executionContext.job.routeId,
+            logWarn: input.logWarn,
+          });
+          recordScheduledRunAudit({
+            store: input.store,
+            runner: input.agentRunner,
+            run: finishedRun,
+            executionContext,
+            attemptResult,
             logWarn: input.logWarn,
           });
         } else if (finishedRun?.status === "failed") {
@@ -338,7 +357,7 @@ async function executeScheduledRunAttempt(input: {
   run: AgentJobRunRecord;
   executionContext: ScheduledRunExecutionContext;
   logWarn?: (message: string) => void;
-}): Promise<string> {
+}): Promise<ScheduledRunAttemptResult> {
   assertScheduledRunDestinationAvailable(input.executionContext);
   const result = await collectScheduledAgentRunWithProgressRetry({
     runner: input.runner,
@@ -355,7 +374,10 @@ async function executeScheduledRunAttempt(input: {
   if (!output.ok) {
     throw new Error(output.reason);
   }
-  return output.text;
+  return {
+    text: output.text,
+    output: result,
+  };
 }
 
 async function postScheduledRunOutput(input: {
@@ -402,6 +424,47 @@ async function postScheduledRunFailureNotification(input: {
   return true;
 }
 
+function recordScheduledRunAudit(input: {
+  store: Pick<TokenStore, "upsertAgentJobRunAudit">;
+  runner: AgentRunner;
+  run: AgentJobRunRecord;
+  executionContext: ScheduledRunExecutionContext;
+  attemptResult: ScheduledRunAttemptResult;
+  logWarn?: (message: string) => void;
+}): void {
+  try {
+    const { job, destination } = input.executionContext;
+    input.store.upsertAgentJobRunAudit({
+      runId: input.run.runId,
+      jobId: input.run.jobId,
+      workspaceId: input.run.workspaceId,
+      slackUserId: input.run.slackUserId,
+      runtimeType: job.runtimeType,
+      runnerName: input.runner.name,
+      executionMode: "native-runtime",
+      routeId: job.routeId,
+      outputDigest: outputTextDigest(input.attemptResult.text),
+      outputBytes: textByteLength(input.attemptResult.text),
+      usage: input.attemptResult.output.usage ?? null,
+      telemetry: input.attemptResult.output.telemetry ?? null,
+      visibility: destination
+        ? {
+            destination: "slack",
+            channelId: destination.channelId,
+            isDirectMessage: destination.isDirectMessage,
+            threadTs: destination.threadTs ?? null,
+          }
+        : {
+            destination: "none",
+          },
+    });
+  } catch (error) {
+    input.logWarn?.(
+      `Scheduled job run audit write failed runId=${input.run.runId} error=${scheduledRunErrorMessage(error)}`,
+    );
+  }
+}
+
 async function executeWorkflowAuthoritativeManualRun(
   input: {
     store: Pick<
@@ -413,6 +476,7 @@ async function executeWorkflowAuthoritativeManualRun(
       | "getScheduledJob"
       | "getConversationRoute"
       | "getConnectionForSlackUser"
+      | "upsertAgentJobRunAudit"
     >;
     agentRunner: AgentRunner;
     slackClient: SlackPostClient;
@@ -454,7 +518,7 @@ async function executeWorkflowAuthoritativeManualRun(
 
   const executionContext = prepareScheduledRunExecution(input.store, run, job);
   const { destination, scheduledJobContext } = executionContext;
-  const outputByDigest = new Map<string, string>();
+  const outputByDigest = new Map<string, ScheduledRunAttemptResult>();
   let failureNotificationSent = false;
   const workflowReplayConfig = {
     maxAttempts:
@@ -506,15 +570,15 @@ async function executeWorkflowAuthoritativeManualRun(
           taskId: command.taskId,
           jobRunId: command.jobRunId,
         });
-        const outputText = await executeScheduledRunAttempt({
+        const attemptResult = await executeScheduledRunAttempt({
           runner: input.agentRunner,
           store: input.store,
           run,
           executionContext,
           logWarn: input.logWarn,
         });
-        const outputDigest = outputTextDigest(outputText);
-        outputByDigest.set(outputDigest, outputText);
+        const outputDigest = outputTextDigest(attemptResult.text);
+        outputByDigest.set(outputDigest, attemptResult);
         return {
           type: "attempt_succeeded",
           taskId: command.taskId,
@@ -560,7 +624,7 @@ async function executeWorkflowAuthoritativeManualRun(
       }
     },
     deliverOutput: async (command) => {
-      const text = outputByDigest.get(command.outputDigest);
+      const artifact = outputByDigest.get(command.outputDigest);
       const deliveryKey = workflowDeliveryKey(
         command.jobRunId,
         job.routeId,
@@ -575,13 +639,13 @@ async function executeWorkflowAuthoritativeManualRun(
       };
       let outputDelivered = false;
       try {
-        if (!text) {
+        if (!artifact) {
           throw new Error("Scheduled job output artifact is unavailable");
         }
         outputDelivered = await postScheduledRunOutput({
           slackClient: input.slackClient,
           destination,
-          text,
+          text: artifact.text,
         });
         const finishedRun =
           input.store.finishAgentJobRun({
@@ -598,6 +662,16 @@ async function executeWorkflowAuthoritativeManualRun(
           input.logWarn?.(
             `Scheduled job workflow output delivered but run projection was not marked succeeded runId=${command.jobRunId} status=${finishedRun?.status ?? "missing"} reason=${reason}`,
           );
+        }
+        if (finishedRun?.status === "succeeded") {
+          recordScheduledRunAudit({
+            store: input.store,
+            runner: input.agentRunner,
+            run: finishedRun,
+            executionContext,
+            attemptResult: artifact,
+            logWarn: input.logWarn,
+          });
         }
         return [
           started,
@@ -1064,6 +1138,10 @@ function workflowErrorNotificationWasSent(error: unknown): boolean {
 
 function outputTextDigest(text: string): string {
   return `sha256:${createHash("sha256").update(text).digest("hex")}`;
+}
+
+function textByteLength(text: string): number {
+  return new TextEncoder().encode(text).length;
 }
 
 function scheduledRunErrorMessage(error: unknown): string {

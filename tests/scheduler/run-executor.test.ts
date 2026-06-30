@@ -57,6 +57,15 @@ describe("scheduler run executor", () => {
           response: {
             classification: "public",
             text: "AI news summary result.",
+            usage: {
+              inputTokens: 30,
+              outputTokens: 12,
+              totalTokens: 42,
+              usageSource: "provider-output",
+            },
+            telemetry: {
+              promptChars: 512,
+            },
           },
         };
       },
@@ -118,6 +127,31 @@ describe("scheduler run executor", () => {
     expect(store.getAgentJobRun(run.runId)).toMatchObject({
       runId: run.runId,
       status: "succeeded",
+    });
+    expect(store.getAgentJobRunAudit(run.runId)).toMatchObject({
+      runId: run.runId,
+      jobId: job.jobId,
+      workspaceId: "T123",
+      slackUserId: "U123",
+      runtimeType: "openclaw",
+      runnerName: "test-runner",
+      executionMode: "native-runtime",
+      routeId: route.id,
+      outputBytes: 23,
+      usage: {
+        inputTokens: 30,
+        outputTokens: 12,
+        totalTokens: 42,
+        usageSource: "provider-output",
+      },
+      telemetry: {
+        promptChars: 512,
+      },
+      visibility: {
+        destination: "slack",
+        isDirectMessage: true,
+        channelId: "D123",
+      },
     });
     expect(workflowStore.replayState().runs[run.runId]).toMatchObject({
       jobRunId: run.runId,
