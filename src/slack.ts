@@ -409,17 +409,24 @@ export function createSlackRuntime(
       )
     );
   }
+  const taskWorkflowReplayConfig = {
+    maxAttempts: config.taskWorkflowMaxAttempts
+  };
   const workflowMaintenanceLoop = workflowShadowStore
     ? createTaskWorkflowMaintenanceLoop({
         store: workflowShadowStore,
         minEvents: 1_000,
+        initialConfig: taskWorkflowReplayConfig,
         logInfo: (message) => app.logger.info(withUtcTimestamp(message)),
         logWarn: (message) => app.logger.warn(withUtcTimestamp(message))
       })
     : undefined;
   const workflowOracleLoop = workflowShadowStore
     ? createTaskWorkflowOracleLoop({
-        replayWorkflowState: () => workflowShadowStore.replayState(),
+        replayWorkflowState: () =>
+          workflowShadowStore.replayState({
+            initialConfig: taskWorkflowReplayConfig
+          }),
         listAuthoritativeRuns: () => store.listRecentAgentJobRuns(5_000),
         logWarn: (message) => app.logger.warn(withUtcTimestamp(message))
       })
@@ -471,6 +478,7 @@ export function createSlackRuntime(
           slackClient: app.client,
           workflowShadowStore,
           workflowAuthority: config.taskWorkflowAuthority,
+          workflowMaxAttempts: config.taskWorkflowMaxAttempts,
           logInfo: (message) => app.logger.info(withUtcTimestamp(message)),
           logWarn: (message) => app.logger.warn(withUtcTimestamp(message))
         })

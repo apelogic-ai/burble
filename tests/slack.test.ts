@@ -125,7 +125,8 @@ const agentConfig: Config = {
   observabilityIncludeContent: false,
   taskWorkflowAuthority: "off",
   taskWorkflowShadowEnabled: false,
-  taskWorkflowShadowDatabasePath: null
+  taskWorkflowShadowDatabasePath: null,
+  taskWorkflowMaxAttempts: 2
 };
 
 describe("createManagedRuntimeFactory sandbox mode", () => {

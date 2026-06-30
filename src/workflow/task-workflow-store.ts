@@ -60,6 +60,7 @@ export type TaskWorkflowEventStore = {
   replayState(input?: TaskWorkflowReplayStateInput): TaskWorkflowState;
   buildSnapshot(input?: {
     sequence?: number;
+    initialConfig?: TaskWorkflowReplayConfig;
   }): Pick<TaskWorkflowSnapshot, "sequence" | "state">;
   writeSnapshot(input?: TaskWorkflowWriteSnapshotInput): TaskWorkflowSnapshot;
   getLatestSnapshot(): TaskWorkflowSnapshot | null;
@@ -116,6 +117,7 @@ export function createInMemoryTaskWorkflowEventStore(input?: {
   };
   const buildSnapshot = (snapshotInput?: {
     sequence?: number;
+    initialConfig?: TaskWorkflowReplayConfig;
   }): Pick<TaskWorkflowSnapshot, "sequence" | "state"> => {
     const latestSnapshot = getLatestSnapshot();
     const latestKnownSequence = Math.max(
@@ -131,6 +133,7 @@ export function createInMemoryTaskWorkflowEventStore(input?: {
         events,
         sequence,
         baseSnapshot,
+        initialConfig: snapshotInput?.initialConfig,
       }),
     };
   };
@@ -277,10 +280,11 @@ export function buildTaskWorkflowSnapshotState(input: {
   events: TaskWorkflowStoredEvent[];
   sequence: number;
   baseSnapshot: TaskWorkflowSnapshot | null;
+  initialConfig?: TaskWorkflowReplayConfig;
 }): TaskWorkflowState {
   const baseState = input.baseSnapshot
-    ? snapshotBaseState(input.baseSnapshot, undefined)
-    : createInitialTaskWorkflowState();
+    ? snapshotBaseState(input.baseSnapshot, input.initialConfig)
+    : createInitialTaskWorkflowState(input.initialConfig);
   return reduceTaskWorkflowEvents(
     input.events
       .filter(

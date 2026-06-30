@@ -447,7 +447,7 @@ describe("scheduler run executor", () => {
       capabilities: { streaming: true, toolEvents: true, remote: true },
       async *run(input) {
         runnerTexts.push(input.text);
-        if (runnerTexts.length === 1) {
+        if (runnerTexts.length < 3) {
           yield {
             type: "final",
             response: {
@@ -481,11 +481,12 @@ describe("scheduler run executor", () => {
       },
       workflowShadowStore: workflowStore,
       workflowAuthority: "manual",
+      workflowMaxAttempts: 3,
     });
 
     await executor.executeRun(run.runId);
 
-    expect(runnerTexts).toHaveLength(2);
+    expect(runnerTexts).toHaveLength(3);
     expect(posts).toEqual([
       {
         channel: "C123",
@@ -497,9 +498,13 @@ describe("scheduler run executor", () => {
       status: "succeeded",
       failureReason: null,
     });
-    expect(workflowStore.replayState().runs[run.runId]).toMatchObject({
+    expect(
+      workflowStore.replayState({ initialConfig: { maxAttempts: 3 } }).runs[
+        run.runId
+      ],
+    ).toMatchObject({
       status: "succeeded",
-      attempt: 2,
+      attempt: 3,
       failureClass: "runtime_failed",
       failureReason:
         "Managed runtime final response leaked tool-call protocol text",

@@ -112,6 +112,47 @@ describe("task workflow maintenance", () => {
 
     expect(writeSnapshotCalls).toBe(1);
   });
+
+  test("applies configured max attempts when compacting an older snapshot", () => {
+    const store = createInMemoryTaskWorkflowEventStore({
+      now: () => new Date("2026-06-29T10:00:05.000Z"),
+    });
+    store.appendEvent({
+      eventId: "evt-trigger",
+      event: {
+        type: "task_triggered",
+        taskId: "job-1",
+        jobRunId: "jobrun-1",
+        triggerKey: "job-1:manual:jobrun-1",
+        source: "manual",
+        at: "2026-06-29T10:00:00.000Z",
+      },
+    });
+    const currentState = store.buildSnapshot().state;
+    const { maxAttempts: _oldMaxAttempts, ...legacyState } = currentState;
+    store.writeSnapshot({
+      state: legacyState as typeof currentState,
+    });
+    store.appendEvent({
+      eventId: "evt-validation-passed",
+      event: {
+        type: "validation_passed",
+        taskId: "job-1",
+        jobRunId: "jobrun-1",
+        at: "2026-06-29T10:00:01.000Z",
+      },
+    });
+
+    maintainTaskWorkflowEventStore({
+      store,
+      initialConfig: { maxAttempts: 4 },
+    });
+
+    expect(store.getLatestSnapshot()?.state.maxAttempts).toBe(4);
+    expect(
+      store.replayState({ initialConfig: { maxAttempts: 4 } }).maxAttempts,
+    ).toBe(4);
+  });
 });
 
 function appendSucceededRun(

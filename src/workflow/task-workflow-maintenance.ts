@@ -1,6 +1,7 @@
 import type {
   TaskWorkflowCompactEventsResult,
   TaskWorkflowEventStore,
+  TaskWorkflowReplayConfig,
   TaskWorkflowSnapshot,
 } from "./task-workflow-store";
 import type { TaskWorkflowRunState, TaskWorkflowState } from "./task-workflow";
@@ -23,6 +24,7 @@ export function maintainTaskWorkflowEventStore(input: {
   store: TaskWorkflowEventStore;
   minEvents?: number;
   maxTerminalRunAgeMs?: number;
+  initialConfig?: TaskWorkflowReplayConfig;
   now?: () => Date;
 }): TaskWorkflowMaintenanceResult {
   const minEvents = input.minEvents ?? 1;
@@ -36,7 +38,9 @@ export function maintainTaskWorkflowEventStore(input: {
     };
   }
 
-  const rawSnapshot = input.store.buildSnapshot();
+  const rawSnapshot = input.store.buildSnapshot({
+    initialConfig: input.initialConfig,
+  });
   const retainedState = pruneTaskWorkflowStateForRetention({
     state: rawSnapshot.state,
     now,
@@ -116,6 +120,7 @@ export function createTaskWorkflowMaintenanceLoop(input: {
   store: TaskWorkflowEventStore;
   intervalMs?: number;
   minEvents?: number;
+  initialConfig?: TaskWorkflowReplayConfig;
   now?: () => Date;
   logInfo?: (message: string) => void;
   logWarn?: (message: string) => void;

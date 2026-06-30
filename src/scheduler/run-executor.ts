@@ -71,6 +71,7 @@ export function createSchedulerRunExecutor(input: {
   slackClient: SlackPostClient;
   workflowShadowStore?: TaskWorkflowEventStore;
   workflowAuthority?: "off" | "manual" | "timer";
+  workflowMaxAttempts?: number;
   logInfo?: (message: string) => void;
   logWarn?: (message: string) => void;
 }): SchedulerRunExecutor {
@@ -316,6 +317,7 @@ async function executeWorkflowAuthoritativeManualRun(
     agentRunner: AgentRunner;
     slackClient: SlackPostClient;
     workflowShadowStore: TaskWorkflowEventStore;
+    workflowMaxAttempts?: number;
     logInfo?: (message: string) => void;
     logWarn?: (message: string) => void;
   },
@@ -367,7 +369,13 @@ async function executeWorkflowAuthoritativeManualRun(
   );
   const outputByDigest = new Map<string, string>();
   let failureNotificationSent = false;
-  const initialWorkflowState = input.workflowShadowStore.replayState();
+  const workflowReplayConfig = {
+    maxAttempts:
+      input.workflowMaxAttempts ?? DEFAULT_TASK_WORKFLOW_MAX_ATTEMPTS,
+  };
+  const initialWorkflowState = input.workflowShadowStore.replayState({
+    initialConfig: workflowReplayConfig,
+  });
   const maxWorkflowAttempts =
     initialWorkflowState.maxAttempts ?? DEFAULT_TASK_WORKFLOW_MAX_ATTEMPTS;
 

@@ -70,6 +70,7 @@ describe("readConfig", () => {
       taskWorkflowAuthority: "off",
       taskWorkflowShadowEnabled: false,
       taskWorkflowShadowDatabasePath: null,
+      taskWorkflowMaxAttempts: 2,
       testbed: false
     });
   });
@@ -593,6 +594,23 @@ describe("readConfig", () => {
       })
         .taskWorkflowAuthority
     ).toBe("timer");
+  });
+
+  test("reads optional task workflow max attempts", () => {
+    expect(
+      readConfig({
+        ...validEnv,
+        TASK_WORKFLOW_MAX_ATTEMPTS: "4"
+      }).taskWorkflowMaxAttempts
+    ).toBe(4);
+  });
+
+  test("rejects invalid task workflow max attempts", () => {
+    expect(() =>
+      readConfig({ ...validEnv, TASK_WORKFLOW_MAX_ATTEMPTS: "0" })
+    ).toThrow(
+      "Environment variable TASK_WORKFLOW_MAX_ATTEMPTS must be a positive integer"
+    );
   });
 
   test("rejects workflow authority without a workflow database", () => {

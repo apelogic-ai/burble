@@ -7,6 +7,7 @@ import {
   runtimeEngines
 } from "./agent/runtime-descriptors";
 import type { AgentRuntimeEngine } from "./db";
+import { DEFAULT_TASK_WORKFLOW_MAX_ATTEMPTS } from "./workflow/task-workflow";
 
 export type Config = {
   slackBotToken: string;
@@ -66,6 +67,7 @@ export type Config = {
   taskWorkflowAuthority: TaskWorkflowAuthority;
   taskWorkflowShadowEnabled: boolean;
   taskWorkflowShadowDatabasePath: string | null;
+  taskWorkflowMaxAttempts: number;
   testbed?: boolean;
 };
 
@@ -384,6 +386,11 @@ export function readConfig(env: Env): Config {
     "TASK_WORKFLOW_AUTHORITY",
     "off"
   );
+  const taskWorkflowMaxAttempts = optionalIntEnv(
+    env,
+    "TASK_WORKFLOW_MAX_ATTEMPTS",
+    DEFAULT_TASK_WORKFLOW_MAX_ATTEMPTS
+  );
   if (taskWorkflowAuthority !== "off" && !taskWorkflowShadowDatabasePath) {
     throw new Error(
       "TASK_WORKFLOW_AUTHORITY requires TASK_WORKFLOW_SHADOW_ENABLED=true with a persistent workflow database; DATABASE_PATH=:memory: cannot be used for workflow authority"
@@ -504,6 +511,7 @@ export function readConfig(env: Env): Config {
     taskWorkflowAuthority,
     taskWorkflowShadowEnabled: taskWorkflowShadowDatabasePath !== null,
     taskWorkflowShadowDatabasePath,
+    taskWorkflowMaxAttempts,
     testbed: optionalBoolEnv(env, "BURBLE_TESTBED", false)
   };
 }
