@@ -76,6 +76,53 @@ describe("task workflow reconciliation", () => {
     });
   });
 
+  test("notifies callers after a stale failure event is appended", () => {
+    const store = createInMemoryTaskWorkflowEventStore();
+    store.appendEvent({
+      eventId: "evt-trigger",
+      recordedAt: "2026-06-28T17:00:00.000Z",
+      event: {
+        type: "task_triggered",
+        taskId: "task-heart",
+        jobRunId: "jobrun-1",
+        triggerKey: "task-heart:manual:req-1",
+        source: "manual",
+        at: "2026-06-28T17:00:00.000Z",
+      },
+    });
+
+    const notifications: Array<{
+      runId: string;
+      eventId: string;
+      failureClass?: string;
+      replayedStatus?: string;
+    }> = [];
+    const result = reconcileTaskWorkflowRuns({
+      store,
+      now: new Date("2026-06-28T17:10:00.000Z"),
+      staleAfterMs: 10 * 60 * 1000,
+      onStaleRunFailed: ({ run, event, storedEvent }) => {
+        notifications.push({
+          runId: run.jobRunId,
+          eventId: storedEvent.eventId,
+          failureClass:
+            "failureClass" in event ? event.failureClass : undefined,
+          replayedStatus: store.replayState().runs[run.jobRunId]?.status,
+        });
+      },
+    });
+
+    expect(result.events).toHaveLength(1);
+    expect(notifications).toEqual([
+      {
+        runId: "jobrun-1",
+        eventId: "stale_run:jobrun-1",
+        failureClass: "stale_validation_timeout",
+        replayedStatus: "failed",
+      },
+    ]);
+  });
+
   test("falls back to updatedAt for running attempts without heartbeat evidence", () => {
     const store = createInMemoryTaskWorkflowEventStore();
     store.appendEvent({

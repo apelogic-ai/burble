@@ -8,10 +8,17 @@ export type ReconcileTaskWorkflowRunsResult = {
   events: TaskWorkflowStoredEvent[];
 };
 
+export type TaskWorkflowStaleRunFailure = {
+  run: TaskWorkflowRunState;
+  event: TaskWorkflowEvent;
+  storedEvent: TaskWorkflowStoredEvent;
+};
+
 export function reconcileTaskWorkflowRuns(input: {
   store: TaskWorkflowEventStore;
   now: Date;
   staleAfterMs: number;
+  onStaleRunFailed?: (failure: TaskWorkflowStaleRunFailure) => void;
 }): ReconcileTaskWorkflowRunsResult {
   const events: TaskWorkflowStoredEvent[] = [];
   const nowMs = input.now.getTime();
@@ -21,14 +28,14 @@ export function reconcileTaskWorkflowRuns(input: {
       continue;
     }
     const event = staleRunFailedEvent(run, input.now);
-    events.push(
-      input.store.appendEvent({
-        eventId: staleRunEventId(run),
-        signalId: `stale_run:${run.jobRunId}`,
-        event,
-        recordedAt: input.now.toISOString(),
-      }),
-    );
+    const storedEvent = input.store.appendEvent({
+      eventId: staleRunEventId(run),
+      signalId: `stale_run:${run.jobRunId}`,
+      event,
+      recordedAt: input.now.toISOString(),
+    });
+    events.push(storedEvent);
+    input.onStaleRunFailed?.({ run, event, storedEvent });
   }
 
   return { events };
