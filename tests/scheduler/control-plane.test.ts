@@ -236,6 +236,13 @@ describe("scheduler control plane", () => {
         finishedAt: null,
       },
       audit: null,
+      workflow: {
+        run: {
+          status: "created",
+          updatedAt: "2026-06-24T12:05:00.000Z",
+        },
+        sideEffectFailures: [],
+      },
     });
 
     store.close();

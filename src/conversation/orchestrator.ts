@@ -1719,6 +1719,7 @@ export function formatScheduledRunStatusResult(
     audit?.usage && typeof audit.usage === "object"
       ? (audit.usage as Record<string, unknown>)
       : null;
+  const workflow = result.workflow;
 
   return [
     "Latest scheduled job run",
@@ -1740,6 +1741,25 @@ export function formatScheduledRunStatusResult(
       : []),
     ...(result.run.failureReason
       ? [`- failure: ${result.run.failureReason}`]
+      : []),
+    ...(workflow?.run
+      ? [
+          `- workflow: ${workflow.run.status}`,
+          workflow.run.failureClass
+            ? `- workflow failure: ${workflow.run.failureClass}`
+            : null,
+        ].filter((line): line is string => Boolean(line))
+      : []),
+    ...(workflow?.task?.status === "needs_repair"
+      ? [
+          `- task repair: needs_repair`,
+          workflow.task.pausedReason
+            ? `- repair reason: ${workflow.task.pausedReason}`
+            : null,
+        ].filter((line): line is string => Boolean(line))
+      : []),
+    ...(workflow?.sideEffectFailures.length
+      ? [`- workflow side-effect failures: ${workflow.sideEffectFailures.length}`]
       : []),
   ].join("\n");
 }
