@@ -1508,6 +1508,9 @@ Slack App Home task management.
 - **5h. Reconciliation + native-job migration.** Promote the current reconciler
   to a full loop; add `needs_repair` and import/migration of any runtime-native
   jobs. Record usage/audit (runtime id, model, tokens, route, visibility) per run.
+  This can land as a consolidated set of commits: first persist and surface
+  scheduled-run audit metadata on successful runs, then wire the reconciliation
+  loop/native-job repair path once the read model is observable.
 
 Workflow authority rollout:
 
