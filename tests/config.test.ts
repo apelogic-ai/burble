@@ -71,6 +71,8 @@ describe("readConfig", () => {
       taskWorkflowShadowEnabled: false,
       taskWorkflowShadowDatabasePath: null,
       taskWorkflowMaxAttempts: 2,
+      scheduledRunAuditRetentionDays: 90,
+      scheduledRunAuditPruneIntervalMs: 86400000,
       testbed: false
     });
   });
@@ -636,6 +638,30 @@ describe("readConfig", () => {
       readConfig({ ...validEnv, TASK_WORKFLOW_MAX_ATTEMPTS: "0" })
         .taskWorkflowMaxAttempts
     ).toBe(2);
+  });
+
+  test("reads scheduled run audit retention settings", () => {
+    const config = readConfig({
+      ...validEnv,
+      SCHEDULED_RUN_AUDIT_RETENTION_DAYS: "14",
+      SCHEDULED_RUN_AUDIT_PRUNE_INTERVAL_MS: "60000"
+    });
+
+    expect(config.scheduledRunAuditRetentionDays).toBe(14);
+    expect(config.scheduledRunAuditPruneIntervalMs).toBe(60000);
+  });
+
+  test("rejects invalid scheduled run audit retention settings", () => {
+    expect(() =>
+      readConfig({ ...validEnv, SCHEDULED_RUN_AUDIT_RETENTION_DAYS: "0" })
+    ).toThrow(
+      "Environment variable SCHEDULED_RUN_AUDIT_RETENTION_DAYS must be a positive integer"
+    );
+    expect(() =>
+      readConfig({ ...validEnv, SCHEDULED_RUN_AUDIT_PRUNE_INTERVAL_MS: "0" })
+    ).toThrow(
+      "Environment variable SCHEDULED_RUN_AUDIT_PRUNE_INTERVAL_MS must be a positive integer"
+    );
   });
 
   test("rejects workflow authority without a workflow database", () => {

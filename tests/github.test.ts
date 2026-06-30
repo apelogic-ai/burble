@@ -66,6 +66,8 @@ const config: Config = {
   taskWorkflowShadowEnabled: false,
   taskWorkflowShadowDatabasePath: null,
   taskWorkflowMaxAttempts: 2,
+  scheduledRunAuditRetentionDays: 90,
+  scheduledRunAuditPruneIntervalMs: 86400000,
   aiModel: "openai:gpt-5.4"
 };
 

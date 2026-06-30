@@ -1540,6 +1540,22 @@ describe("createTokenStore", () => {
         .map((record) => record.runId)
     ).toEqual(["jobrun-audit"]);
 
+    store.upsertAgentJobRunAudit({
+      ...audit,
+      runId: "jobrun-old-audit",
+      outputDigest: "digest-old",
+      now: new Date("2026-03-01T12:00:00.000Z")
+    });
+    expect(
+      store.pruneAgentJobRunAuditsBefore(
+        new Date("2026-06-01T00:00:00.000Z")
+      )
+    ).toBe(1);
+    expect(store.getAgentJobRunAudit("jobrun-old-audit")).toBeNull();
+    expect(store.getAgentJobRunAudit("jobrun-audit")?.outputDigest).toBe(
+      "digest-b"
+    );
+
     store.close();
   });
 

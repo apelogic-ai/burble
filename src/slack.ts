@@ -111,6 +111,7 @@ import {
 import { DEFAULT_ACTIVE_RUN_TTL_MS } from "./scheduler/active-run";
 import { defaultResolveSlackChannelIdByName } from "./tool-gateway";
 import { createSchedulerRunExecutor } from "./scheduler/run-executor";
+import { createScheduledRunAuditMaintenanceLoop } from "./scheduler/run-audit-maintenance";
 import { createSchedulerTimer } from "./scheduler/timer";
 import { createTaskWorkflowMaintenanceLoop } from "./workflow/task-workflow-maintenance";
 import { createTaskWorkflowOracleLoop } from "./workflow/task-workflow-oracle";
@@ -590,6 +591,14 @@ export function createSlackRuntime(
         logWarn: (message) => app.logger.warn(withUtcTimestamp(message))
       })
     : undefined;
+  const scheduledRunAuditMaintenanceLoop = createScheduledRunAuditMaintenanceLoop({
+    store,
+    retentionDays: config.scheduledRunAuditRetentionDays,
+    intervalMs: config.scheduledRunAuditPruneIntervalMs,
+    logInfo: (message) => app.logger.info(withUtcTimestamp(message)),
+    logWarn: (message) => app.logger.warn(withUtcTimestamp(message))
+  });
+  scheduledRunAuditMaintenanceLoop.start();
   schedulerTimer?.start();
   const agentExecTasks = new Map<string, AgentExecTask>();
 
@@ -2082,6 +2091,7 @@ export function createSlackRuntime(
     getSlackEmail,
     close() {
       schedulerTimer?.stop();
+      scheduledRunAuditMaintenanceLoop.stop();
       workflowOracleLoop?.stop();
       workflowReconcileLoop?.stop();
       workflowMaintenanceLoop?.stop();
