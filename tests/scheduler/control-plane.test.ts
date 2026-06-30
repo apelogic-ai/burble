@@ -235,6 +235,7 @@ describe("scheduler control plane", () => {
         startedAt: null,
         finishedAt: null,
       },
+      audit: null,
     });
 
     store.close();
