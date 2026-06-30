@@ -1211,6 +1211,8 @@ function workflowEventId(event: TaskWorkflowEvent): string {
       return `shadow:${event.jobRunId}:delivery_started:${encodeURIComponent(event.deliveryKey)}`;
     case "delivery_succeeded":
       return `shadow:${event.jobRunId}:delivery_succeeded:${encodeURIComponent(event.deliveryKey)}`;
+    case "run_reconciled_succeeded":
+      return `workflow:${event.jobRunId}:run_reconciled_succeeded`;
     case "delivery_failed":
       return `shadow:${event.jobRunId}:delivery_failed:${encodeURIComponent(event.deliveryKey ?? "no-key")}:${encodeURIComponent(event.failureClass ?? "delivery_failed")}`;
     case "handler_failed":

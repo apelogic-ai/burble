@@ -137,6 +137,13 @@ export type TaskWorkflowEvent =
       at: string;
     }
   | {
+      type: "run_reconciled_succeeded";
+      taskId: string;
+      jobRunId: string;
+      reason: string;
+      at: string;
+    }
+  | {
       type: "handler_failed";
       taskId: string;
       jobRunId: string;
@@ -181,6 +188,8 @@ export type TaskWorkflowRunState = {
   heartbeatAt?: string;
   outputDigest?: string;
   deliveryKey?: string;
+  reconciledFromAuthoritative?: boolean;
+  reconciliationReason?: string;
   failureClass?: string;
   failureReason?: string;
   notificationPending?: boolean;
@@ -383,6 +392,20 @@ export function transitionTaskWorkflowEvent(
         })),
         [],
       );
+    case "run_reconciled_succeeded":
+      if (!canReconcileRunSucceeded(state, event.jobRunId)) {
+        return withCommands(state, []);
+      }
+      return withCommands(
+        updateRun(state, event.jobRunId, event.at, (run) => ({
+          ...run,
+          status: "succeeded",
+          reconciledFromAuthoritative: true,
+          reconciliationReason: event.reason,
+          notificationPending: false,
+        })),
+        [],
+      );
     case "handler_failed":
       if (!canApplyHandlerFailure(state, event)) {
         return withCommands(state, []);
@@ -466,6 +489,20 @@ function canFinishDelivery(
   const run = state.runs[jobRunId];
   return Boolean(
     run && run.status === "delivering" && run.deliveryKey === deliveryKey,
+  );
+}
+
+function canReconcileRunSucceeded(
+  state: TaskWorkflowState,
+  jobRunId: string,
+): boolean {
+  const run = state.runs[jobRunId];
+  return Boolean(
+    run &&
+      (run.status === "created" ||
+        run.status === "validating" ||
+        run.status === "running" ||
+        run.status === "delivering"),
   );
 }
 

@@ -1,5 +1,4 @@
 import type { AgentJobRunRecord, TokenStore } from "../db";
-import { TASK_WORKFLOW_AGENT_ATTEMPT_MODE } from "./task-workflow";
 import type { TaskWorkflowEventStore } from "./task-workflow-store";
 import type { TaskWorkflowStaleRunFailureCandidate } from "./task-workflow-reconcile";
 
@@ -53,76 +52,13 @@ export function recordWorkflowRunSucceededFromAuthoritative(input: {
   workflowRun: TaskWorkflowStaleRunFailureCandidate["run"];
 }): void {
   const at = input.run.finishedAt ?? new Date().toISOString();
-  const attempt = input.workflowRun.attempt ?? 1;
-  const outputDigest =
-    input.workflowRun.outputDigest ?? `reconciled:${input.run.runId}`;
-  const deliveryKey =
-    input.workflowRun.deliveryKey ??
-    `${input.run.runId}:reconciled:${outputDigest}`;
-
-  if (
-    input.workflowRun.status === "created" ||
-    input.workflowRun.status === "validating"
-  ) {
-    appendAuthorityEvent(input.store, {
-      eventId: `reconcile:${input.run.runId}:validation_passed`,
-      event: {
-        type: "validation_passed",
-        taskId: input.run.jobId,
-        jobRunId: input.run.runId,
-        at,
-      },
-    });
-  }
-
-  if (!input.workflowRun.attempt || input.workflowRun.status !== "delivering") {
-    appendAuthorityEvent(input.store, {
-      eventId: `reconcile:${input.run.runId}:attempt_started:${attempt}`,
-      event: {
-        type: "attempt_started",
-        taskId: input.run.jobId,
-        jobRunId: input.run.runId,
-        attempt,
-        mode: TASK_WORKFLOW_AGENT_ATTEMPT_MODE,
-        at,
-      },
-    });
-  }
-
-  if (input.workflowRun.status !== "delivering") {
-    appendAuthorityEvent(input.store, {
-      eventId: `reconcile:${input.run.runId}:attempt_succeeded:${attempt}:${encodeURIComponent(outputDigest)}`,
-      event: {
-        type: "attempt_succeeded",
-        taskId: input.run.jobId,
-        jobRunId: input.run.runId,
-        attempt,
-        outputDigest,
-        at,
-      },
-    });
-  }
-
-  if (!input.workflowRun.deliveryKey) {
-    appendAuthorityEvent(input.store, {
-      eventId: `reconcile:${input.run.runId}:delivery_started:${encodeURIComponent(deliveryKey)}`,
-      event: {
-        type: "delivery_started",
-        taskId: input.run.jobId,
-        jobRunId: input.run.runId,
-        deliveryKey,
-        at,
-      },
-    });
-  }
-
   appendAuthorityEvent(input.store, {
-    eventId: `reconcile:${input.run.runId}:delivery_succeeded:${encodeURIComponent(deliveryKey)}`,
+    eventId: `reconcile:${input.run.runId}:run_reconciled_succeeded`,
     event: {
-      type: "delivery_succeeded",
+      type: "run_reconciled_succeeded",
       taskId: input.run.jobId,
       jobRunId: input.run.runId,
-      deliveryKey,
+      reason: "Authoritative run already succeeded.",
       at,
     },
   });

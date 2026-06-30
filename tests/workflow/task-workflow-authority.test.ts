@@ -180,20 +180,18 @@ describe("task workflow authority reconciliation", () => {
     const syncedRun = workflowStore.replayState().runs["jobrun-sync-succeeded"];
     expect(syncedRun).toMatchObject({
       status: "succeeded",
-      attempt: 1,
-      outputDigest: "reconciled:jobrun-sync-succeeded",
-      deliveryKey:
-        "jobrun-sync-succeeded:reconciled:reconciled:jobrun-sync-succeeded",
+      reconciledFromAuthoritative: true,
+      reconciliationReason: "Authoritative run already succeeded.",
     });
+    expect(syncedRun?.attempt).toBeUndefined();
+    expect(syncedRun?.outputDigest).toBeUndefined();
+    expect(syncedRun?.deliveryKey).toBeUndefined();
     expect(syncedRun?.failureClass).toBeUndefined();
     expect(workflowStore.listEvents().map((event) => event.event.type)).toEqual(
       [
         "task_triggered",
         "validation_passed",
-        "attempt_started",
-        "attempt_succeeded",
-        "delivery_started",
-        "delivery_succeeded",
+        "run_reconciled_succeeded",
       ],
     );
 
