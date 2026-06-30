@@ -1546,9 +1546,24 @@ describe("createTokenStore", () => {
       outputDigest: "digest-old",
       now: new Date("2026-03-01T12:00:00.000Z")
     });
+    store.upsertAgentJobRunAudit({
+      ...audit,
+      runId: "jobrun-older-audit",
+      outputDigest: "digest-older",
+      now: new Date("2026-02-01T12:00:00.000Z")
+    });
     expect(
       store.pruneAgentJobRunAuditsBefore(
-        new Date("2026-06-01T00:00:00.000Z")
+        new Date("2026-06-01T00:00:00.000Z"),
+        1
+      )
+    ).toBe(1);
+    expect(store.getAgentJobRunAudit("jobrun-older-audit")).toBeNull();
+    expect(store.getAgentJobRunAudit("jobrun-old-audit")).not.toBeNull();
+    expect(
+      store.pruneAgentJobRunAuditsBefore(
+        new Date("2026-06-01T00:00:00.000Z"),
+        1
       )
     ).toBe(1);
     expect(store.getAgentJobRunAudit("jobrun-old-audit")).toBeNull();

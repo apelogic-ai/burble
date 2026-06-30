@@ -1387,7 +1387,13 @@ export function createTokenStore(path: string) {
   `);
   const pruneAgentJobRunAuditsBefore = db.query(`
     DELETE FROM agent_job_run_audit
-    WHERE updated_at < ?
+    WHERE run_id IN (
+      SELECT run_id
+      FROM agent_job_run_audit
+      WHERE updated_at < ?
+      ORDER BY updated_at ASC, run_id ASC
+      LIMIT ?
+    )
   `);
   const listAgentJobRunsForPrincipal = db.query<
     AgentJobRunRow,
@@ -2450,8 +2456,13 @@ export function createTokenStore(path: string) {
         .map(toAgentJobRunAuditRecord);
     },
 
-    pruneAgentJobRunAuditsBefore(before: Date): number {
-      const result = pruneAgentJobRunAuditsBefore.run(before.toISOString());
+    pruneAgentJobRunAuditsBefore(before: Date, limit = 1000): number {
+      const normalizedLimit =
+        Number.isSafeInteger(limit) && limit > 0 ? Math.min(limit, 10000) : 1000;
+      const result = pruneAgentJobRunAuditsBefore.run(
+        before.toISOString(),
+        normalizedLimit
+      );
       return result.changes;
     },
 

@@ -13,7 +13,8 @@ import {
 } from "./workflow/task-workflow";
 import {
   DEFAULT_SCHEDULED_RUN_AUDIT_PRUNE_INTERVAL_MS,
-  DEFAULT_SCHEDULED_RUN_AUDIT_RETENTION_DAYS
+  DEFAULT_SCHEDULED_RUN_AUDIT_RETENTION_DAYS,
+  MAX_SCHEDULED_RUN_AUDIT_PRUNE_INTERVAL_MS
 } from "./scheduler/run-audit-maintenance";
 
 export type Config = {
@@ -422,10 +423,11 @@ export function readConfig(env: Env): Config {
     "SCHEDULED_RUN_AUDIT_RETENTION_DAYS",
     DEFAULT_SCHEDULED_RUN_AUDIT_RETENTION_DAYS
   );
-  const scheduledRunAuditPruneIntervalMs = optionalIntEnv(
+  const scheduledRunAuditPruneIntervalMs = optionalBoundedIntEnv(
     env,
     "SCHEDULED_RUN_AUDIT_PRUNE_INTERVAL_MS",
-    DEFAULT_SCHEDULED_RUN_AUDIT_PRUNE_INTERVAL_MS
+    DEFAULT_SCHEDULED_RUN_AUDIT_PRUNE_INTERVAL_MS,
+    MAX_SCHEDULED_RUN_AUDIT_PRUNE_INTERVAL_MS
   );
   if (taskWorkflowAuthority !== "off" && !taskWorkflowShadowDatabasePath) {
     throw new Error(

@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { defaultAgentRuntimeImage, readConfig } from "../src/config";
+import { MAX_SCHEDULED_RUN_AUDIT_PRUNE_INTERVAL_MS } from "../src/scheduler/run-audit-maintenance";
 
 const validEnv = {
   SLACK_BOT_TOKEN: "xoxb-test",
@@ -661,6 +662,14 @@ describe("readConfig", () => {
       readConfig({ ...validEnv, SCHEDULED_RUN_AUDIT_PRUNE_INTERVAL_MS: "0" })
     ).toThrow(
       "Environment variable SCHEDULED_RUN_AUDIT_PRUNE_INTERVAL_MS must be a positive integer"
+    );
+    expect(() =>
+      readConfig({
+        ...validEnv,
+        SCHEDULED_RUN_AUDIT_PRUNE_INTERVAL_MS: "2592000000"
+      })
+    ).toThrow(
+      `Environment variable SCHEDULED_RUN_AUDIT_PRUNE_INTERVAL_MS must be <= ${MAX_SCHEDULED_RUN_AUDIT_PRUNE_INTERVAL_MS}`
     );
   });
 

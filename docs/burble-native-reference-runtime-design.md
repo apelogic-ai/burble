@@ -1525,7 +1525,7 @@ Workflow authority rollout:
     - `TASK_WORKFLOW_AUTHORITY=off`
     - Optional: `TASK_WORKFLOW_SHADOW_DATABASE_PATH=<primary>.workflow-shadow.db`
     - Optional: `SCHEDULED_RUN_AUDIT_RETENTION_DAYS=90`
-    - Optional: `SCHEDULED_RUN_AUDIT_PRUNE_INTERVAL_MS=86400000`
+    - Optional: `SCHEDULED_RUN_AUDIT_PRUNE_INTERVAL_MS=86400000` (max 7 days)
     - Expected behavior: legacy scheduler remains authoritative. Workflow events,
       oracle checks, reconciliation reads, maintenance, and scheduled-run audit
       retention may run, but no workflow path may finish or fail an
