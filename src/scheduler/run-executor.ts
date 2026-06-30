@@ -445,23 +445,51 @@ function recordScheduledRunAudit(input: {
       routeId: job.routeId,
       outputDigest: outputTextDigest(input.attemptResult.text),
       outputBytes: textByteLength(input.attemptResult.text),
-      usage: input.attemptResult.output.usage ?? null,
-      telemetry: input.attemptResult.output.telemetry ?? null,
-      visibility: destination
-        ? {
-            destination: "slack",
-            channelId: destination.channelId,
-            isDirectMessage: destination.isDirectMessage,
-            threadTs: destination.threadTs ?? null,
-          }
-        : {
-            destination: "none",
-          },
+      usage: auditJsonField(
+        "usage",
+        input.attemptResult.output.usage ?? null,
+        input,
+      ),
+      telemetry: auditJsonField(
+        "telemetry",
+        input.attemptResult.output.telemetry ?? null,
+        input,
+      ),
+      visibility: auditJsonField(
+        "visibility",
+        destination
+          ? {
+              destination: "slack",
+              channelId: destination.channelId,
+              isDirectMessage: destination.isDirectMessage,
+              threadTs: destination.threadTs ?? null,
+            }
+          : {
+              destination: "none",
+            },
+        input,
+      ),
     });
   } catch (error) {
     input.logWarn?.(
       `Scheduled job run audit write failed runId=${input.run.runId} error=${scheduledRunErrorMessage(error)}`,
     );
+  }
+}
+
+function auditJsonField(
+  fieldName: "usage" | "telemetry" | "visibility",
+  value: unknown,
+  input: { run: AgentJobRunRecord; logWarn?: (message: string) => void },
+): unknown {
+  try {
+    JSON.stringify(value);
+    return value;
+  } catch {
+    input.logWarn?.(
+      `Scheduled job run audit field ${fieldName} was not JSON-serializable runId=${input.run.runId}`,
+    );
+    return null;
   }
 }
 

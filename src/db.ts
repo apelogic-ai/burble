@@ -2402,7 +2402,6 @@ export function createTokenStore(path: string) {
       now?: Date;
     }): AgentJobRunAuditRecord {
       const now = (input.now ?? new Date()).toISOString();
-      const existing = getAgentJobRunAudit.get(input.runId);
       upsertAgentJobRunAudit.run(
         input.runId,
         input.jobId,
@@ -2417,7 +2416,7 @@ export function createTokenStore(path: string) {
         stableJson(input.usage ?? null),
         stableJson(input.telemetry ?? null),
         stableJson(input.visibility ?? null),
-        existing?.createdAt ?? now,
+        now,
         now
       );
       const record = getAgentJobRunAudit.get(input.runId);
