@@ -99,6 +99,12 @@ OPENSHELL_BIND_HOST=0.0.0.0
 OPENSHELL_PORT=8080
 OPENSHELL_HEALTH_PORT=8081
 OPENSHELL_DATA_ROOT=/var/lib/openshell
+TASK_WORKFLOW_SHADOW_ENABLED=false
+TASK_WORKFLOW_SHADOW_DATABASE_PATH=
+TASK_WORKFLOW_AUTHORITY=off
+TASK_WORKFLOW_MAX_ATTEMPTS=2
+SCHEDULED_RUN_AUDIT_RETENTION_DAYS=90
+SCHEDULED_RUN_AUDIT_PRUNE_INTERVAL_MS=86400000
 AI_MODEL=openai:gpt-5.4
 OPENCLAW_NEMOCLAW_URL=
 INTERNAL_API_TOKEN=
@@ -123,6 +129,13 @@ normalized model selector for both AI SDK and OpenClaw/NemoClaw runtimes. Use
 `provider:model` format, for example `openai:gpt-5.4`,
 `anthropic:claude-opus-4.6`, or `ollama:qwen3-coder:30b-cloud`, and set the
 matching provider key before enabling it.
+
+Workflow flags are explicitly passed through but default to observationally
+off. Keep `TASK_WORKFLOW_AUTHORITY=off` until a deployment has passed the
+workflow rollout smoke test. `TASK_WORKFLOW_SHADOW_ENABLED=true` records the
+workflow shadow sidecar database; set `TASK_WORKFLOW_AUTHORITY=manual` only
+when manual task runs should execute through the workflow driver. Audit
+retention defaults to 90 days and prunes daily.
 
 For Jira hand testing, create an Atlassian OAuth 2.0 3LO app, add:
 

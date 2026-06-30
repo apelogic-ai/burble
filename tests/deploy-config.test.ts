@@ -30,6 +30,7 @@ const personalRuntimeDeployScript = await Bun.file(
 ).text();
 const rootEnvExample = await Bun.file(".env.example").text();
 const composeEnvExample = await Bun.file("deploy/dev/compose/.env.example").text();
+const deployReadme = await Bun.file("deploy/dev/README.md").text();
 const caddyfile = await Bun.file("deploy/dev/compose/Caddyfile").text();
 const openClawOpenAiPatch = await Bun.file(
   "deploy/dev/compose/openclaw-patches/openai.json5"
@@ -104,6 +105,12 @@ describe("dev deploy config", () => {
       "RUNTIME_JWT_PRIVATE_KEY_PATH",
       "OBSERVABILITY_JSONL_PATH",
       "OBSERVABILITY_INCLUDE_CONTENT",
+      "TASK_WORKFLOW_SHADOW_ENABLED",
+      "TASK_WORKFLOW_SHADOW_DATABASE_PATH",
+      "TASK_WORKFLOW_AUTHORITY",
+      "TASK_WORKFLOW_MAX_ATTEMPTS",
+      "SCHEDULED_RUN_AUDIT_RETENTION_DAYS",
+      "SCHEDULED_RUN_AUDIT_PRUNE_INTERVAL_MS",
       "AI_MODEL",
       "OPENCLAW_NEMOCLAW_URL",
       "OPENCLAW_CONFIG_PATCH_HOST_PATH",
@@ -206,6 +213,42 @@ describe("dev deploy config", () => {
     expect(ansibleEnvTemplate).toContain(
       "OBSERVABILITY_INCLUDE_CONTENT={{ observability_include_content | default('false') }}"
     );
+  });
+
+  test("passes workflow and scheduled-run audit settings to the app", () => {
+    for (const entry of [
+      "TASK_WORKFLOW_SHADOW_ENABLED=${TASK_WORKFLOW_SHADOW_ENABLED:-false}",
+      "TASK_WORKFLOW_SHADOW_DATABASE_PATH=${TASK_WORKFLOW_SHADOW_DATABASE_PATH:-}",
+      "TASK_WORKFLOW_AUTHORITY=${TASK_WORKFLOW_AUTHORITY:-off}",
+      "TASK_WORKFLOW_MAX_ATTEMPTS=${TASK_WORKFLOW_MAX_ATTEMPTS:-2}",
+      "SCHEDULED_RUN_AUDIT_RETENTION_DAYS=${SCHEDULED_RUN_AUDIT_RETENTION_DAYS:-90}",
+      "SCHEDULED_RUN_AUDIT_PRUNE_INTERVAL_MS=${SCHEDULED_RUN_AUDIT_PRUNE_INTERVAL_MS:-86400000}",
+    ]) {
+      expect(compose).toContain(entry);
+    }
+    for (const entry of [
+      "TASK_WORKFLOW_SHADOW_ENABLED={{ task_workflow_shadow_enabled | default('false') }}",
+      "TASK_WORKFLOW_SHADOW_DATABASE_PATH={{ task_workflow_shadow_database_path | default('') }}",
+      "TASK_WORKFLOW_AUTHORITY={{ task_workflow_authority | default('off') }}",
+      "TASK_WORKFLOW_MAX_ATTEMPTS={{ task_workflow_max_attempts | default('2') }}",
+      "SCHEDULED_RUN_AUDIT_RETENTION_DAYS={{ scheduled_run_audit_retention_days | default('90') }}",
+      "SCHEDULED_RUN_AUDIT_PRUNE_INTERVAL_MS={{ scheduled_run_audit_prune_interval_ms | default('86400000') }}",
+    ]) {
+      expect(ansibleEnvTemplate).toContain(entry);
+    }
+    for (const entry of [
+      "TASK_WORKFLOW_SHADOW_ENABLED=false",
+      "TASK_WORKFLOW_SHADOW_DATABASE_PATH=",
+      "TASK_WORKFLOW_AUTHORITY=off",
+      "TASK_WORKFLOW_MAX_ATTEMPTS=2",
+      "SCHEDULED_RUN_AUDIT_RETENTION_DAYS=90",
+      "SCHEDULED_RUN_AUDIT_PRUNE_INTERVAL_MS=86400000",
+    ]) {
+      expect(rootEnvExample).toContain(entry);
+      expect(composeEnvExample).toContain(entry);
+    }
+    expect(deployReadme).toContain("TASK_WORKFLOW_AUTHORITY=off");
+    expect(deployReadme).toContain("retention defaults to 90 days");
   });
 
   test("does not reference Observer runtime service names", () => {
