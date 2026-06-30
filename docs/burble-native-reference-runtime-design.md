@@ -1466,6 +1466,12 @@ authority is realized — on Burble's side).
 
 Slices:
 
+Packaging note: in this sprint, a slice is a commit-level increment, not
+automatically a separate pull request. Related authority-readiness slices should
+land together in one coherent PR when they are small enough to review as one
+rollout package. Separate PRs are reserved for distinct product surfaces such as
+Slack App Home task management.
+
 - **5a. Event-sourced run store** (`task_triggered`, `validation_passed`,
   `attempt_started`, `attempt_succeeded`, `delivery_succeeded`, terminal).
   Status becomes a projection; runs are resumable. This slice is scaffolding

@@ -7,6 +7,7 @@ import {
   type ScheduledJobContext,
 } from "../agent/scheduled-job-context";
 import { isRuntimeProgressOnlyResponseText } from "../agent/runtime-control-notices";
+import { shouldNotifyScheduledRunFailure } from "./failure-notification-policy";
 import { inferAllowedToolsForScheduledJob } from "./job-capabilities";
 import { findProviderToolSpec } from "../providers/catalog";
 import {
@@ -382,7 +383,13 @@ async function postScheduledRunFailureNotification(input: {
   destination: ReturnType<typeof readSlackRouteDestination>;
   reason: string;
 }): Promise<boolean> {
-  if (!input.destination) {
+  if (
+    !shouldNotifyScheduledRunFailure({
+      run: input.run,
+      hasDestination: Boolean(input.destination),
+    }) ||
+    !input.destination
+  ) {
     return false;
   }
   await input.slackClient.chat.postMessage({
