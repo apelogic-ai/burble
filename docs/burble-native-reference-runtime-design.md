@@ -1506,11 +1506,15 @@ Slack App Home task management.
   today's fail-only behavior. Retry eligibility is determined by workflow step
   risk/idempotency, not by model prose.
 - **5h. Reconciliation + native-job migration.** Promote the current reconciler
-  to a full loop; add `needs_repair` and import/migration of any runtime-native
-  jobs. Record usage/audit (runtime id, model, tokens, route, visibility) per run.
-  This can land as a consolidated set of commits: first persist and surface
-  scheduled-run audit metadata on successful runs, then wire the reconciliation
-  loop/native-job repair path once the read model is observable.
+  to a full loop; sync stale workflow failures back to the `agent_job_runs`
+  compatibility projection; surface workflow `needs_repair` and side-effect
+  failures in scheduled run status; and import or explicitly mark any
+  discoverable runtime-native scheduler jobs as repair-required. Record
+  usage/audit (runtime id, model, tokens, route, visibility) per run. The audit
+  read model lands first; the reconciliation loop and repair visibility land
+  once the read model is observable. Native-job import is only executable when a
+  runtime exposes concrete native scheduler records; generic `agent_job_state`
+  rows are not treated as scheduled jobs by themselves.
 
 Workflow authority rollout:
 
@@ -1520,7 +1524,8 @@ Workflow authority rollout:
     event store may be populated only as shadow.
   - `TASK_WORKFLOW_AUTHORITY=manual`: manual triggers are workflow-authoritative;
     timer fires remain legacy.
-  Timer authority is deliberately not accepted until slice 5f wires it.
+  - `TASK_WORKFLOW_AUTHORITY=timer`: manual triggers and timer fires are
+    workflow-authoritative.
 - Do not skip from `off` to timer authority. `manual` must pass real hand tests
   and the shadow oracle must stay clean before timer authority is enabled.
 - `agent_job_runs` remains during rollout as a compatibility read model. The
@@ -1542,9 +1547,12 @@ Migration rules:
 - Existing `agent_job_runs` rows remain immutable historical records. They may be
   imported into workflow state for diagnostics, but they are not required for the
   forward execution path.
-- Existing runtime-native jobs, if any, are imported or marked `needs_repair`
-  under reconciliation. Burble-owned scheduled Tasks should not depend on
-  runtime-native scheduler state after Sprint 5.
+- Existing runtime-native scheduler jobs, if any, are imported or marked
+  `needs_repair` under reconciliation once a runtime exposes those native
+  scheduler records. Burble-owned scheduled Tasks must not depend on
+  runtime-native scheduler state after Sprint 5. Capability-only registrations
+  and generic `agent_job_state` rows are not sufficient evidence of an active
+  scheduled task.
 - During migration, job ids and task ids remain stable. Slack commands that
   reference old ids must resolve to the same Task and current projection.
 - The migration is successful only when:
