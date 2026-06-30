@@ -3,6 +3,7 @@ export type TaskWorkflowAuthority = "off" | "manual" | "timer";
 export type TaskWorkflowAuthorityReadinessIssueCode =
   | "missing_workflow_store"
   | "missing_maintenance_loop"
+  | "missing_reconcile_loop"
   | "missing_oracle_loop";
 
 export type TaskWorkflowAuthorityReadinessIssue = {
@@ -19,6 +20,7 @@ export function assessTaskWorkflowAuthorityReadiness(input: {
   authority: TaskWorkflowAuthority;
   hasWorkflowStore: boolean;
   hasMaintenanceLoop: boolean;
+  hasReconcileLoop: boolean;
   hasOracleLoop: boolean;
 }): TaskWorkflowAuthorityReadinessResult {
   if (input.authority === "off") {
@@ -36,6 +38,12 @@ export function assessTaskWorkflowAuthorityReadiness(input: {
     issues.push({
       code: "missing_maintenance_loop",
       message: "Workflow authority requires workflow maintenance/compaction.",
+    });
+  }
+  if (!input.hasReconcileLoop) {
+    issues.push({
+      code: "missing_reconcile_loop",
+      message: "Workflow authority requires stale-run reconciliation.",
     });
   }
   if (!input.hasOracleLoop) {
