@@ -1,5 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { reconcileTaskWorkflowRuns } from "../../src/workflow/task-workflow-reconcile";
+import {
+  createTaskWorkflowReconcileLoop,
+  reconcileTaskWorkflowRuns,
+} from "../../src/workflow/task-workflow-reconcile";
 import { createInMemoryTaskWorkflowEventStore } from "../../src/workflow/task-workflow-store";
 
 describe("task workflow reconciliation", () => {
@@ -441,5 +444,81 @@ describe("task workflow reconciliation", () => {
       state.failureCounts["task-heart:stale_delivery_timeout"],
     ).toBeUndefined();
     expect(state.tasks["task-heart"]).toEqual({ status: "active" });
+  });
+
+  test("reconcile loop emits stale failures from tick", () => {
+    const store = createInMemoryTaskWorkflowEventStore();
+    store.appendEvent({
+      eventId: "evt-trigger",
+      event: {
+        type: "task_triggered",
+        taskId: "task-heart",
+        jobRunId: "jobrun-1",
+        triggerKey: "task-heart:manual:req-1",
+        source: "manual",
+        at: "2026-06-28T17:00:00.000Z",
+      },
+    });
+    const logInfo: string[] = [];
+    const loop = createTaskWorkflowReconcileLoop({
+      store,
+      staleAfterMs: 10 * 60 * 1000,
+      now: () => new Date("2026-06-28T17:10:00.000Z"),
+      logInfo: (message) => logInfo.push(message),
+    });
+
+    const result = loop.tick();
+
+    expect(result).toMatchObject({
+      skipped: false,
+      events: [
+        {
+          eventId: "stale_run:jobrun-1",
+          event: {
+            type: "validation_failed",
+            failureClass: "stale_validation_timeout",
+          },
+        },
+      ],
+    });
+    expect(logInfo).toEqual(["Task workflow reconcile failed staleRuns=1"]);
+  });
+
+  test("reconcile loop contains append errors", () => {
+    const store = createInMemoryTaskWorkflowEventStore();
+    store.appendEvent({
+      eventId: "evt-trigger",
+      event: {
+        type: "task_triggered",
+        taskId: "task-heart",
+        jobRunId: "jobrun-1",
+        triggerKey: "task-heart:manual:req-1",
+        source: "manual",
+        at: "2026-06-28T17:00:00.000Z",
+      },
+    });
+    const appendEvent = store.appendEvent.bind(store);
+    store.appendEvent = ((input) => {
+      if (input.eventId === "stale_run:jobrun-1") {
+        throw new Error("database locked");
+      }
+      return appendEvent(input);
+    }) as typeof store.appendEvent;
+    const logWarn: string[] = [];
+    const loop = createTaskWorkflowReconcileLoop({
+      store,
+      staleAfterMs: 10 * 60 * 1000,
+      now: () => new Date("2026-06-28T17:10:00.000Z"),
+      logWarn: (message) => logWarn.push(message),
+    });
+
+    expect(loop.tick()).toEqual({
+      skipped: true,
+      reason: "reconcile_failed",
+      events: [],
+    });
+    expect(logWarn).toEqual([
+      "Task workflow reconcile failed error=database locked",
+    ]);
   });
 });

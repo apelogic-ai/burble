@@ -8,6 +8,17 @@ export type ReconcileTaskWorkflowRunsResult = {
   events: TaskWorkflowStoredEvent[];
 };
 
+export type TaskWorkflowReconcileLoopResult = ReconcileTaskWorkflowRunsResult & {
+  skipped: boolean;
+  reason?: "already_running" | "reconcile_failed";
+};
+
+export type TaskWorkflowReconcileLoop = {
+  tick(): TaskWorkflowReconcileLoopResult;
+  start(): void;
+  stop(): void;
+};
+
 export type TaskWorkflowStaleRunFailure = {
   run: TaskWorkflowRunState;
   event: TaskWorkflowEvent;
@@ -39,6 +50,78 @@ export function reconcileTaskWorkflowRuns(input: {
   }
 
   return { events };
+}
+
+export function createTaskWorkflowReconcileLoop(input: {
+  store: TaskWorkflowEventStore;
+  staleAfterMs: number;
+  intervalMs?: number;
+  now?: () => Date;
+  onStaleRunFailed?: (failure: TaskWorkflowStaleRunFailure) => void;
+  logInfo?: (message: string) => void;
+  logWarn?: (message: string) => void;
+}): TaskWorkflowReconcileLoop {
+  const intervalMs = input.intervalMs ?? 60_000;
+  let timer: ReturnType<typeof setInterval> | undefined;
+  let running = false;
+
+  const tick = (): TaskWorkflowReconcileLoopResult => {
+    if (running) {
+      return {
+        skipped: true,
+        reason: "already_running",
+        events: [],
+      };
+    }
+    running = true;
+    try {
+      const result = reconcileTaskWorkflowRuns({
+        store: input.store,
+        now: (input.now ?? (() => new Date()))(),
+        staleAfterMs: input.staleAfterMs,
+        onStaleRunFailed: input.onStaleRunFailed,
+      });
+      if (result.events.length) {
+        input.logInfo?.(
+          `Task workflow reconcile failed staleRuns=${result.events.length}`,
+        );
+      }
+      return {
+        skipped: false,
+        events: result.events,
+      };
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "unknown workflow reconcile error";
+      input.logWarn?.(`Task workflow reconcile failed error=${message}`);
+      return {
+        skipped: true,
+        reason: "reconcile_failed",
+        events: [],
+      };
+    } finally {
+      running = false;
+    }
+  };
+
+  return {
+    tick,
+    start() {
+      if (timer) {
+        return;
+      }
+      timer = setInterval(tick, intervalMs);
+      if ("unref" in timer && typeof timer.unref === "function") {
+        timer.unref();
+      }
+    },
+    stop() {
+      if (timer) {
+        clearInterval(timer);
+        timer = undefined;
+      }
+    },
+  };
 }
 
 function isStaleRun(
