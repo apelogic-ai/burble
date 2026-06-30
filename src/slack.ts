@@ -81,6 +81,7 @@ import {
 } from "./providers/descriptors";
 import type {
   AgentRuntimeRecord,
+  AgentJobRunRecord,
   AgentRuntimeEngine,
   AgentRuntimeStatus,
   ConversationRouteRecord,
@@ -106,7 +107,10 @@ import { normalizeMentionText } from "./conversation/normalize";
 import { createLlmSchedulerIntentResolver } from "./conversation/scheduler-intent-resolver";
 import {
   createSchedulerControlPlane,
-  type SchedulerControlPlane
+  type SchedulerControlPlane,
+  type SchedulerRunStatusResult,
+  type SchedulerValidateTaskResult,
+  type SchedulerTaskSummary
 } from "./scheduler/control-plane";
 import { DEFAULT_ACTIVE_RUN_TTL_MS } from "./scheduler/active-run";
 import { defaultResolveSlackChannelIdByName } from "./tool-gateway";
@@ -638,7 +642,12 @@ export function createSlackRuntime(
         store.createOAuthState(input.slackUserId)
       ),
       connections: providerConnectionsForUser(store, input.slackUserId),
-      agentSettings
+      agentSettings,
+      scheduledTasks: await buildScheduledTaskHomeView({
+        schedulerControl,
+        workspaceId: input.workspaceId,
+        slackUserId: input.slackUserId
+      })
     });
   };
 
@@ -817,6 +826,94 @@ export function createSlackRuntime(
       logger.error(formatLogError(error));
     }
   });
+
+  const handleScheduledTaskHomeMutation = async (
+    action:
+      | "run"
+      | "pause"
+      | "resume"
+      | "delete"
+      | "validate"
+      | "runs",
+    body: unknown,
+    client: SlackViewsClient,
+    logger: { warn(message: string): void; error(message: string): void }
+  ) => {
+    const context = slackInteractionContext(body);
+    const jobId = readSlackActionSelectedValue(body);
+    if (!context || !jobId) {
+      logger.warn(withUtcTimestamp(`Ignoring scheduled task ${action} action without context`));
+      return;
+    }
+
+    try {
+      if (action === "run") {
+        const result = schedulerControl.triggerJob
+          ? await schedulerControl.triggerJob({ ...context, jobId })
+          : { ok: false as const, reason: "not_found" as const, jobs: [] };
+        if (result.ok) {
+          void schedulerRunExecutor
+            ?.executeRun(result.run.runId)
+            .catch((error) => logger.error(formatLogError(error)));
+        }
+      } else if (action === "pause") {
+        await schedulerControl.pauseJob?.({ ...context, jobId });
+      } else if (action === "resume") {
+        await schedulerControl.resumeJob?.({ ...context, jobId });
+      } else if (action === "delete") {
+        await schedulerControl.deleteJob?.({ ...context, jobId });
+      } else if (action === "validate") {
+        const result = schedulerControl.validateTask
+          ? await schedulerControl.validateTask({ ...context, taskId: jobId })
+          : { ok: false as const, reason: "not_found" as const, tasks: [] };
+        if (context.triggerId && client.views.open) {
+          await client.views.open({
+            trigger_id: context.triggerId,
+            view: buildScheduledTaskValidationModalView(result)
+          });
+        }
+      } else if (action === "runs") {
+        const result = schedulerControl.listJobRuns
+          ? await schedulerControl.listJobRuns({
+              ...context,
+              jobId,
+              limit: MAX_HOME_RUNS_PER_TASK
+            })
+          : { runs: [] };
+        if (context.triggerId && client.views.open) {
+          await client.views.open({
+            trigger_id: context.triggerId,
+            view: buildScheduledTaskRunsModalView({
+              jobId,
+              runs: result.runs.slice(0, MAX_HOME_RUNS_PER_TASK)
+            })
+          });
+        }
+      }
+
+      await publishHomeViewForUser({
+        client,
+        workspaceId: context.workspaceId,
+        slackUserId: context.slackUserId
+      });
+    } catch (error) {
+      logger.error(formatLogError(error));
+    }
+  };
+
+  for (const action of [
+    "run",
+    "pause",
+    "resume",
+    "delete",
+    "validate",
+    "runs"
+  ] as const) {
+    app.action(`scheduled_task_${action}`, async ({ ack, body, client, logger }) => {
+      await ack();
+      await handleScheduledTaskHomeMutation(action, body, client, logger);
+    });
+  }
 
   app.action("agent_runtime_engine_select", async ({ ack, body, client, logger }) => {
     await ack();
@@ -3039,6 +3136,9 @@ function formatJobSlashHelp(): string {
   ].join("\n");
 }
 
+const MAX_HOME_TASKS = 5;
+const MAX_HOME_RUNS_PER_TASK = 5;
+
 type ProviderConnectionViewInput = {
   githubUrl: string;
   googleUrl: string | null;
@@ -3049,13 +3149,17 @@ type ProviderConnectionViewInput = {
     [provider in Provider]?: ProviderConnection | null;
   };
   agentSettings?: AgentHomeSettingsView;
+  scheduledTasks?: ScheduledTaskHomeView;
 };
 
-type SlackViewsPublishClient = {
+type SlackViewsClient = {
   views: {
     publish(input: { user_id: string; view: View }): Promise<unknown>;
+    open?(input: { trigger_id: string; view: View }): Promise<unknown>;
   };
 };
+
+type SlackViewsPublishClient = SlackViewsClient;
 
 type AgentHomeSettingsView = {
   model: string;
@@ -3085,6 +3189,16 @@ type AgentHomeSettingsView = {
   };
 };
 
+type ScheduledTaskHomeView = {
+  items: ScheduledTaskHomeItem[];
+  totalTasks: number;
+};
+
+type ScheduledTaskHomeItem = {
+  task: SchedulerTaskSummary;
+  latestRun: SchedulerRunStatusResult | null;
+};
+
 function providerConnectionsForUser(
   store: TokenStore,
   slackUserId: string
@@ -3095,6 +3209,38 @@ function providerConnectionsForUser(
       store.getConnectionForSlackUser(provider, slackUserId)
     ])
   ) as ProviderConnectionViewInput["connections"];
+}
+
+async function buildScheduledTaskHomeView(input: {
+  schedulerControl: SchedulerControlPlane;
+  workspaceId: string;
+  slackUserId: string;
+}): Promise<ScheduledTaskHomeView> {
+  const tasks = input.schedulerControl.listTasks
+    ? await input.schedulerControl.listTasks(input)
+    : (await input.schedulerControl.listJobs(input)).map((job) => ({
+        ...job,
+        taskId: job.jobId
+      }));
+  const visibleTasks = tasks.slice(0, MAX_HOME_TASKS);
+  const items: ScheduledTaskHomeItem[] = [];
+  for (const task of visibleTasks) {
+    const latestRun = input.schedulerControl.getLatestRunStatus
+      ? await input.schedulerControl.getLatestRunStatus({
+          workspaceId: input.workspaceId,
+          slackUserId: input.slackUserId,
+          jobId: task.taskId
+        })
+      : null;
+    items.push({
+      task,
+      latestRun
+    });
+  }
+  return {
+    items,
+    totalTasks: tasks.length
+  };
 }
 
 export function buildAppHomeView(input: ProviderConnectionViewInput): View {
@@ -3116,6 +3262,7 @@ export function buildAppHomeView(input: ProviderConnectionViewInput): View {
         }
       },
       ...buildAgentRuntimeHomeBlocks(input.agentSettings),
+      ...buildScheduledTaskHomeBlocks(input.scheduledTasks),
       {
         type: "divider"
       },
@@ -3178,6 +3325,243 @@ export function buildAuthResponse(input: ProviderConnectionViewInput) {
       }
     ]
   } as const;
+}
+
+function buildScheduledTaskHomeBlocks(input?: ScheduledTaskHomeView): View["blocks"] {
+  if (!input) {
+    return [];
+  }
+
+  const blocks: unknown[] = [
+    {
+      type: "divider"
+    },
+    {
+      type: "header",
+      text: {
+        type: "plain_text",
+        text: "Scheduled tasks"
+      }
+    }
+  ];
+
+  if (input.items.length === 0) {
+    blocks.push({
+      type: "section",
+      text: {
+        type: "mrkdwn",
+        text: "No scheduled tasks are configured."
+      }
+    });
+    return blocks as View["blocks"];
+  }
+
+  blocks.push({
+    type: "context",
+    elements: [
+      {
+        type: "mrkdwn",
+        text:
+          input.totalTasks > input.items.length
+            ? `Showing ${input.items.length} of ${input.totalTasks} tasks. Use \`/tasks list\` for the full list.`
+            : "Manage task execution and recent runs."
+      }
+    ]
+  });
+
+  for (const item of input.items) {
+    blocks.push(
+      {
+        type: "section",
+        text: {
+          type: "mrkdwn",
+          text: formatScheduledTaskHomeSummary(item)
+        }
+      },
+      {
+        type: "actions",
+        elements: buildScheduledTaskHomeActions(item.task)
+      }
+    );
+  }
+
+  return blocks as View["blocks"];
+}
+
+function buildScheduledTaskHomeActions(task: SchedulerTaskSummary) {
+  const isPaused = task.state === "paused";
+  return [
+    {
+      type: "button",
+      text: {
+        type: "plain_text",
+        text: "Run now"
+      },
+      style: "primary",
+      action_id: "scheduled_task_run",
+      value: task.taskId
+    },
+    {
+      type: "button",
+      text: {
+        type: "plain_text",
+        text: isPaused ? "Resume" : "Pause"
+      },
+      ...(isPaused ? { style: "primary" } : {}),
+      action_id: isPaused ? "scheduled_task_resume" : "scheduled_task_pause",
+      value: task.taskId,
+      confirm: {
+        title: {
+          type: "plain_text",
+          text: isPaused ? "Resume task?" : "Pause task?"
+        },
+        text: {
+          type: "mrkdwn",
+          text: isPaused
+            ? "This allows the task to run on its schedule again."
+            : "This stops future scheduled dispatches until resumed."
+        },
+        confirm: {
+          type: "plain_text",
+          text: isPaused ? "Resume" : "Pause"
+        },
+        deny: {
+          type: "plain_text",
+          text: "Cancel"
+        }
+      }
+    },
+    {
+      type: "button",
+      text: {
+        type: "plain_text",
+        text: "Validate"
+      },
+      action_id: "scheduled_task_validate",
+      value: task.taskId
+    },
+    {
+      type: "button",
+      text: {
+        type: "plain_text",
+        text: "Runs"
+      },
+      action_id: "scheduled_task_runs",
+      value: task.taskId
+    },
+    {
+      type: "button",
+      text: {
+        type: "plain_text",
+        text: "Delete"
+      },
+      style: "danger",
+      action_id: "scheduled_task_delete",
+      value: task.taskId,
+      confirm: {
+        title: {
+          type: "plain_text",
+          text: "Delete task?"
+        },
+        text: {
+          type: "mrkdwn",
+          text: "This removes the scheduled task. Existing run history remains."
+        },
+        confirm: {
+          type: "plain_text",
+          text: "Delete"
+        },
+        deny: {
+          type: "plain_text",
+          text: "Cancel"
+        }
+      }
+    }
+  ];
+}
+
+function formatScheduledTaskHomeSummary(item: ScheduledTaskHomeItem): string {
+  const task = item.task;
+  const title = task.title?.trim() || task.taskId;
+  const latest = item.latestRun?.ok
+    ? `latest: \`${item.latestRun.run.status}\` ${formatRelativeIsoTime(item.latestRun.run.updatedAt)}`
+    : "latest: no runs";
+  return [
+    `*${escapeSlackMrkdwn(truncateSlackText(title, 120))}*`,
+    `\`${task.state}\` · ${formatScheduleForHome(task.schedule)} · ${latest}`,
+    `id: \`${task.taskId}\`${task.routeId ? ` · route: \`${task.routeId}\`` : ""}`
+  ].join("\n");
+}
+
+function buildScheduledTaskValidationModalView(
+  result: SchedulerValidateTaskResult
+): View {
+  const text = formatScheduledTaskValidationResult(result);
+  return {
+    type: "modal",
+    title: {
+      type: "plain_text",
+      text: "Task validation"
+    },
+    close: {
+      type: "plain_text",
+      text: "Close"
+    },
+    blocks: [
+      {
+        type: "section",
+        text: {
+          type: "mrkdwn",
+          text: truncateSlackText(escapeSlackMrkdwn(text), 2900)
+        }
+      }
+    ]
+  };
+}
+
+export function buildScheduledTaskRunsModalView(input: {
+  jobId: string;
+  runs: AgentJobRunRecord[];
+}): View {
+  return {
+    type: "modal",
+    title: {
+      type: "plain_text",
+      text: "Task runs"
+    },
+    close: {
+      type: "plain_text",
+      text: "Close"
+    },
+    blocks: [
+      {
+        type: "section",
+        text: {
+          type: "mrkdwn",
+          text: formatScheduledTaskRunsModalText(input)
+        }
+      }
+    ]
+  };
+}
+
+function formatScheduledTaskRunsModalText(input: {
+  jobId: string;
+  runs: AgentJobRunRecord[];
+}): string {
+  if (input.runs.length === 0) {
+    return `No runs recorded for \`${input.jobId}\`.`;
+  }
+
+  return [
+    `Recent runs for \`${input.jobId}\``,
+    ...input.runs.slice(0, MAX_HOME_RUNS_PER_TASK).map((run) => {
+      const failure = run.failureReason
+        ? ` · failure: ${escapeSlackMrkdwn(truncateSlackText(run.failureReason, 180))}`
+        : "";
+      return `• \`${run.runId}\` · \`${run.status}\` · ${run.triggerSource} · ${formatRelativeIsoTime(run.updatedAt)}${failure}`;
+    })
+  ].join("\n");
 }
 
 function buildProviderConnectionBlocks(input: ProviderConnectionViewInput) {
@@ -5666,6 +6050,58 @@ function parseStringListConfigValue(value: string): string[] {
     .split(/[,\s]+/)
     .map((entry) => entry.trim())
     .filter(Boolean);
+}
+
+function formatScheduleForHome(schedule: unknown): string {
+  if (!schedule || typeof schedule !== "object") {
+    return "`schedule unknown`";
+  }
+  const record = schedule as Record<string, unknown>;
+  if (record.kind === "cron") {
+    const expression =
+      typeof record.expression === "string" && record.expression.trim()
+        ? record.expression.trim().replace(/\s+/g, " ")
+        : "unknown";
+    const timezone =
+      typeof record.timezone === "string" && record.timezone.trim()
+        ? record.timezone.trim()
+        : "UTC";
+    return `\`cron ${expression} (${timezone})\``;
+  }
+  if (record.kind === "interval") {
+    return "`interval`";
+  }
+  return `\`${String(record.kind ?? "schedule unknown")}\``;
+}
+
+function formatRelativeIsoTime(value: string): string {
+  const timestamp = Date.parse(value);
+  if (!Number.isFinite(timestamp)) {
+    return value;
+  }
+  const secondsAgo = Math.max(0, Math.floor((Date.now() - timestamp) / 1000));
+  if (secondsAgo < 60) {
+    return `${secondsAgo}s ago`;
+  }
+  const minutesAgo = Math.floor(secondsAgo / 60);
+  if (minutesAgo < 60) {
+    return `${minutesAgo}m ago`;
+  }
+  const hoursAgo = Math.floor(minutesAgo / 60);
+  if (hoursAgo < 48) {
+    return `${hoursAgo}h ago`;
+  }
+  const daysAgo = Math.floor(hoursAgo / 24);
+  return `${daysAgo}d ago`;
+}
+
+function escapeSlackMrkdwn(value: string): string {
+  return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+function truncateSlackText(value: string, maxLength: number): string {
+  const chars = Array.from(value);
+  return chars.length > maxLength ? `${chars.slice(0, maxLength - 1).join("")}…` : value;
 }
 
 function formatStringList(values: string[]): string {

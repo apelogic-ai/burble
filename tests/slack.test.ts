@@ -25,6 +25,7 @@ import {
   buildAgentHomeSettings,
   buildSyncedAgentHomeSettings,
   buildAgentRuntimeManageModalView,
+  buildScheduledTaskRunsModalView,
   buildAuthResponse,
   buildHelpResponse,
   formatAgentProgressEvent,
@@ -60,6 +61,7 @@ import {
   verifySlackDestinationGrantChannel
 } from "../src/slack";
 import type { Config } from "../src/config";
+import type { AgentJobRunRecord } from "../src/db";
 import { createTokenStore } from "../src/db";
 import {
   cloneSandboxHandle,
@@ -2160,6 +2162,117 @@ describe("buildAppHomeView", () => {
     expect(serialized).toContain("Edit settings");
     expect(serialized).toContain("agent_config_edit");
     expect(serialized).toContain("openai:gpt-5.4");
+  });
+
+  test("shows scheduled tasks with management actions in App Home", () => {
+    const view = buildAppHomeView({
+      githubUrl: "https://example.test/github",
+      googleUrl: "https://example.test/google",
+      hubspotUrl: "https://example.test/hubspot",
+      jiraUrl: "https://example.test/jira",
+      slackUrl: "https://example.test/slack",
+      connections: {
+        github: null,
+        google: null,
+        hubspot: null,
+        jira: null,
+        slack: null
+      },
+      scheduledTasks: {
+        totalTasks: 6,
+        items: [
+          {
+            task: {
+              taskId: "job_daily",
+              jobId: "job_daily",
+              title: "Daily account summary",
+              prompt: "Summarize the account",
+              schedule: {
+                kind: "cron",
+                expression: "0 9 * * *",
+                timezone: "UTC"
+              },
+              state: "scheduled",
+              runtimeType: "burble-native",
+              requiredTools: ["github.searchIssues"],
+              routeId: "route_123",
+              updatedAt: "2026-06-30T10:00:00.000Z"
+            },
+            latestRun: {
+              ok: true,
+              run: {
+                runId: "jobrun_1",
+                jobId: "job_daily",
+                workspaceId: "T123",
+                slackUserId: "U123",
+                triggerSource: "schedule",
+                status: "succeeded",
+                failureReason: null,
+                createdAt: "2026-06-30T10:00:00.000Z",
+                updatedAt: "2026-06-30T10:05:00.000Z",
+                startedAt: "2026-06-30T10:00:01.000Z",
+                finishedAt: "2026-06-30T10:05:00.000Z"
+              },
+              audit: null
+            }
+          },
+          {
+            task: {
+              taskId: "job_paused",
+              jobId: "job_paused",
+              title: "Paused task",
+              prompt: "Wait",
+              schedule: { kind: "interval", every: { hours: 1 } },
+              state: "paused",
+              runtimeType: null,
+              requiredTools: [],
+              routeId: null,
+              updatedAt: "2026-06-30T10:00:00.000Z"
+            },
+            latestRun: { ok: false, reason: "no_runs" }
+          }
+        ]
+      }
+    });
+    const serialized = JSON.stringify(view);
+
+    expect(serialized).toContain("Scheduled tasks");
+    expect(serialized).toContain("Showing 2 of 6 tasks");
+    expect(serialized).toContain("Daily account summary");
+    expect(serialized).toContain("latest: `succeeded`");
+    expect(serialized).toContain("scheduled_task_run");
+    expect(serialized).toContain("scheduled_task_pause");
+    expect(serialized).toContain("scheduled_task_resume");
+    expect(serialized).toContain("scheduled_task_validate");
+    expect(serialized).toContain("scheduled_task_runs");
+    expect(serialized).toContain("scheduled_task_delete");
+  });
+
+  test("caps the scheduled task run modal at five runs", () => {
+    const runs: AgentJobRunRecord[] = Array.from({ length: 7 }, (_, index) => ({
+      runId: `jobrun_${index + 1}`,
+      jobId: "job_daily",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      triggerSource: index % 2 === 0 ? "manual" : "schedule",
+      status: index === 0 ? "failed" : "succeeded",
+      failureReason: index === 0 ? "temporary failure" : null,
+      createdAt: "2026-06-30T10:00:00.000Z",
+      updatedAt: "2026-06-30T10:00:00.000Z",
+      startedAt: "2026-06-30T10:00:01.000Z",
+      finishedAt: "2026-06-30T10:05:00.000Z"
+    }));
+
+    const view = buildScheduledTaskRunsModalView({
+      jobId: "job_daily",
+      runs
+    });
+    const serialized = JSON.stringify(view);
+
+    expect(serialized).toContain("jobrun_1");
+    expect(serialized).toContain("jobrun_5");
+    expect(serialized).not.toContain("jobrun_6");
+    expect(serialized).not.toContain("jobrun_7");
   });
 
   test("shows a runtime selector when multiple engines are selectable", () => {
