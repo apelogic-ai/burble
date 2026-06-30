@@ -93,14 +93,17 @@ export async function runTaskWorkflowDriver(input: {
     }
 
     if (executedCommands >= maxCommands) {
+      const error = new Error(
+        `Task workflow driver exceeded maxCommands=${maxCommands}`,
+      );
       const event = commandHandlerFailedEvent(
         command,
-        new Error(`Task workflow driver exceeded maxCommands=${maxCommands}`),
+        error,
       );
       if (event) {
         await applyEvent(event);
       }
-      break;
+      throw error;
     }
     executedCommands += 1;
 

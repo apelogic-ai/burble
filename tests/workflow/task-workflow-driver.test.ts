@@ -1,5 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import {
+  reduceTaskWorkflowEvents,
+  type TaskWorkflowEvent,
+  type TaskWorkflowState,
+} from "../../src/workflow/task-workflow";
+import {
   runTaskWorkflowDriver,
   type TaskWorkflowDriverContext,
   type TaskWorkflowDriverHandlers,
@@ -503,37 +508,107 @@ describe("task workflow driver", () => {
   });
 
   test("records a workflow failure when maxCommands is exceeded", async () => {
-    const result = await runTaskWorkflowDriver({
-      maxCommands: 1,
-      initialEvent: {
-        type: "task_triggered",
-        taskId: "task-loop",
-        jobRunId: "jobrun-1",
-        triggerKey: "task-loop:manual:req-1",
-        source: "manual",
-        at: "2026-06-28T17:00:00.000Z",
-      },
-      handlers: {
-        validateTask: async (command) => ({
-          type: "validation_passed",
-          taskId: command.taskId,
-          jobRunId: command.jobRunId,
-          at: "2026-06-28T17:00:01.000Z",
-        }),
-        startAttempt: async () => null,
-        deliverOutput: async () => null,
-      },
-    });
+    const events: TaskWorkflowEvent[] = [];
 
-    expect(result.events.map((event) => event.type)).toEqual([
+    await expect(
+      runTaskWorkflowDriver({
+        maxCommands: 1,
+        initialEvent: {
+          type: "task_triggered",
+          taskId: "task-loop",
+          jobRunId: "jobrun-1",
+          triggerKey: "task-loop:manual:req-1",
+          source: "manual",
+          at: "2026-06-28T17:00:00.000Z",
+        },
+        handlers: {
+          validateTask: async (command) => ({
+            type: "validation_passed",
+            taskId: command.taskId,
+            jobRunId: command.jobRunId,
+            at: "2026-06-28T17:00:01.000Z",
+          }),
+          startAttempt: async () => null,
+          deliverOutput: async () => null,
+        },
+        onEvent: (event) => {
+          events.push(event);
+        },
+      }),
+    ).rejects.toThrow("Task workflow driver exceeded maxCommands=1");
+
+    expect(events.map((event) => event.type)).toEqual([
       "task_triggered",
       "validation_passed",
       "handler_failed",
     ]);
-    expect(result.state.runs["jobrun-1"]).toMatchObject({
+    expect(reduceTaskWorkflowEvents(events).runs["jobrun-1"]).toMatchObject({
       status: "failed",
       failureClass: "handler_failed",
       failureReason: "Task workflow driver exceeded maxCommands=1",
+    });
+  });
+
+  test("throws when maxCommands is exceeded before a retry attempt starts", async () => {
+    const events: TaskWorkflowEvent[] = [];
+    const initialState: TaskWorkflowState = {
+      failurePauseThreshold: 3,
+      maxAttempts: 3,
+      triggerKeys: {},
+      failureCounts: {},
+      tasks: {},
+      runs: {},
+    };
+
+    await expect(
+      runTaskWorkflowDriver({
+        maxCommands: 2,
+        initialState,
+        initialEvent: {
+          type: "task_triggered",
+          taskId: "task-loop",
+          jobRunId: "jobrun-1",
+          triggerKey: "task-loop:manual:req-1",
+          source: "manual",
+          at: "2026-06-28T17:00:00.000Z",
+        },
+        handlers: {
+          validateTask: async (command) => ({
+            type: "validation_passed",
+            taskId: command.taskId,
+            jobRunId: command.jobRunId,
+            at: "2026-06-28T17:00:01.000Z",
+          }),
+          startAttempt: async (command) => ({
+            type: "attempt_failed",
+            taskId: command.taskId,
+            jobRunId: command.jobRunId,
+            attempt: command.attempt,
+            failureClass: "runtime_failed",
+            reason: "runtime timeout",
+            retryable: true,
+            at: "2026-06-28T17:00:02.000Z",
+          }),
+          deliverOutput: async () => null,
+        },
+        onEvent: (event) => {
+          events.push(event);
+        },
+      }),
+    ).rejects.toThrow("Task workflow driver exceeded maxCommands=2");
+
+    expect(events.map((event) => event.type)).toEqual([
+      "task_triggered",
+      "validation_passed",
+      "attempt_started",
+      "attempt_failed",
+      "handler_failed",
+    ]);
+    expect(
+      reduceTaskWorkflowEvents(events, initialState).runs["jobrun-1"],
+    ).toMatchObject({
+      status: "running",
+      attempt: 1,
     });
   });
 });

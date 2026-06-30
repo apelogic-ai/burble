@@ -24,6 +24,7 @@ export const TASK_WORKFLOW_AGENT_ATTEMPT_MODE: TaskWorkflowAttemptMode =
 export const TASK_WORKFLOW_RUNTIME_FAILURE_CLASS = "runtime_failed";
 export const TASK_WORKFLOW_VALIDATION_FAILURE_CLASS = "validation_failed";
 export const DEFAULT_TASK_WORKFLOW_MAX_ATTEMPTS = 2;
+export const MAX_TASK_WORKFLOW_MAX_ATTEMPTS = 10;
 
 export type TaskWorkflowCommand =
   | {

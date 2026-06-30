@@ -600,6 +600,8 @@ describe("readConfig", () => {
     expect(
       readConfig({
         ...validEnv,
+        TASK_WORKFLOW_AUTHORITY: "manual",
+        TASK_WORKFLOW_SHADOW_ENABLED: "true",
         TASK_WORKFLOW_MAX_ATTEMPTS: "4"
       }).taskWorkflowMaxAttempts
     ).toBe(4);
@@ -607,10 +609,33 @@ describe("readConfig", () => {
 
   test("rejects invalid task workflow max attempts", () => {
     expect(() =>
-      readConfig({ ...validEnv, TASK_WORKFLOW_MAX_ATTEMPTS: "0" })
+      readConfig({
+        ...validEnv,
+        TASK_WORKFLOW_AUTHORITY: "manual",
+        TASK_WORKFLOW_SHADOW_ENABLED: "true",
+        TASK_WORKFLOW_MAX_ATTEMPTS: "0"
+      })
     ).toThrow(
       "Environment variable TASK_WORKFLOW_MAX_ATTEMPTS must be a positive integer"
     );
+  });
+
+  test("rejects excessive task workflow max attempts", () => {
+    expect(() =>
+      readConfig({
+        ...validEnv,
+        TASK_WORKFLOW_AUTHORITY: "manual",
+        TASK_WORKFLOW_SHADOW_ENABLED: "true",
+        TASK_WORKFLOW_MAX_ATTEMPTS: "11"
+      })
+    ).toThrow("Environment variable TASK_WORKFLOW_MAX_ATTEMPTS must be <= 10");
+  });
+
+  test("ignores invalid task workflow max attempts when workflow authority is off", () => {
+    expect(
+      readConfig({ ...validEnv, TASK_WORKFLOW_MAX_ATTEMPTS: "0" })
+        .taskWorkflowMaxAttempts
+    ).toBe(2);
   });
 
   test("rejects workflow authority without a workflow database", () => {
