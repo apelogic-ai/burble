@@ -20,6 +20,7 @@ import {
   createGoogleSlidesSlide,
   createGoogleDriveTextFile,
   createGoogleDocsDocument,
+  listGoogleSharedDriveFiles,
   listGoogleSharedDrives,
   runGoogleAnalyticsReport,
   searchGoogleDriveFiles,
@@ -386,6 +387,84 @@ describe("Google OAuth and API helpers", () => {
       expect(url.searchParams.get("corpora")).toBe("drive");
       expect(url.searchParams.get("driveId")).toBe("0AMVzF1MTcSu3Uk9PVA");
       expect(url.searchParams.get("q")).toBe(
+        "trashed = false and mimeType = 'application/vnd.google-apps.document'"
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  test("searches direct children in Shared with me folders", async () => {
+    const originalFetch = globalThis.fetch;
+    let requestedUrl = "";
+    globalThis.fetch = (async (input) => {
+      requestedUrl = String(input);
+      return Response.json({
+        files: [{ id: "doc-2", name: "Shared folder doc" }]
+      });
+    }) as typeof fetch;
+
+    try {
+      const files = await searchGoogleDriveFiles("google-token", {
+        parentId: "folder-1",
+        sharedWithMe: true,
+        mimeType: "application/vnd.google-apps.document",
+        limit: 4
+      });
+      expect(files).toEqual([{ id: "doc-2", name: "Shared folder doc" }]);
+      const url = new URL(requestedUrl);
+      expect(url.searchParams.get("q")).toBe(
+        "trashed = false and mimeType = 'application/vnd.google-apps.document' and 'folder-1' in parents and sharedWithMe = true"
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  test("lists files per Shared Drive without searching My Drive", async () => {
+    const originalFetch = globalThis.fetch;
+    const requestedUrls: string[] = [];
+    globalThis.fetch = (async (input) => {
+      requestedUrls.push(String(input));
+      const url = new URL(String(input));
+      if (url.pathname.endsWith("/drives")) {
+        return Response.json({
+          drives: [{ id: "drive-1", name: "Buble Shared Drive" }]
+        });
+      }
+      return Response.json({
+        files: [
+          {
+            id: "doc-1",
+            name: "Shared doc",
+            mimeType: "application/vnd.google-apps.document"
+          }
+        ]
+      });
+    }) as typeof fetch;
+
+    try {
+      const lists = await listGoogleSharedDriveFiles("google-token", {
+        sharedDriveName: "Buble",
+        mimeType: "application/vnd.google-apps.document",
+        limit: 3
+      });
+      expect(lists).toEqual([
+        {
+          drive: { id: "drive-1", name: "Buble Shared Drive" },
+          files: [
+            {
+              id: "doc-1",
+              name: "Shared doc",
+              mimeType: "application/vnd.google-apps.document"
+            }
+          ]
+        }
+      ]);
+      const fileSearchUrl = new URL(requestedUrls[1]);
+      expect(fileSearchUrl.searchParams.get("corpora")).toBe("drive");
+      expect(fileSearchUrl.searchParams.get("driveId")).toBe("drive-1");
+      expect(fileSearchUrl.searchParams.get("q")).toBe(
         "trashed = false and mimeType = 'application/vnd.google-apps.document'"
       );
     } finally {

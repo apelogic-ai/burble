@@ -33,6 +33,11 @@ export type GoogleSharedDrive = {
   name: string;
 };
 
+export type GoogleSharedDriveFileList = {
+  drive: GoogleSharedDrive;
+  files: GoogleDriveFile[];
+};
+
 export type GoogleDriveFileContent = GoogleDriveFile & {
   content?: string;
 };
@@ -403,7 +408,14 @@ export async function getGoogleUser(token: string): Promise<GoogleUser> {
 
 export async function searchGoogleDriveFiles(
   token: string,
-  input: { query?: string; limit?: number; sharedDriveId?: string; mimeType?: string }
+  input: {
+    query?: string;
+    limit?: number;
+    sharedDriveId?: string;
+    mimeType?: string;
+    parentId?: string;
+    sharedWithMe?: boolean;
+  }
 ): Promise<GoogleDriveFile[]> {
   const url = new URL("https://www.googleapis.com/drive/v3/files");
   url.searchParams.set("pageSize", String(clampLimit(input.limit, 10, 20)));
@@ -426,6 +438,12 @@ export async function searchGoogleDriveFiles(
   if (input.mimeType?.trim()) {
     clauses.push(`mimeType = '${escapeDriveQueryString(input.mimeType.trim())}'`);
   }
+  if (input.parentId?.trim()) {
+    clauses.push(`'${escapeDriveQueryString(input.parentId.trim())}' in parents`);
+  }
+  if (input.sharedWithMe === true) {
+    clauses.push("sharedWithMe = true");
+  }
   url.searchParams.set("q", clauses.join(" and "));
 
   const response = await fetch(url, { headers: googleHeaders(token) });
@@ -438,6 +456,41 @@ export async function searchGoogleDriveFiles(
   }
 
   return body.files ?? [];
+}
+
+export async function listGoogleSharedDriveFiles(
+  token: string,
+  input: {
+    sharedDriveId?: string;
+    sharedDriveName?: string;
+    query?: string;
+    mimeType?: string;
+    limit?: number;
+  }
+): Promise<GoogleSharedDriveFileList[]> {
+  const driveFilter = input.sharedDriveName?.trim();
+  const drives = input.sharedDriveId?.trim()
+    ? [
+        {
+          id: input.sharedDriveId.trim(),
+          name: driveFilter || input.sharedDriveId.trim()
+        }
+      ]
+    : await listGoogleSharedDrives(token, {
+        ...(driveFilter ? { query: driveFilter } : {}),
+        limit: 20
+      });
+  const results: GoogleSharedDriveFileList[] = [];
+  for (const drive of drives) {
+    const files = await searchGoogleDriveFiles(token, {
+      sharedDriveId: drive.id,
+      query: input.query,
+      mimeType: input.mimeType,
+      limit: input.limit
+    });
+    results.push({ drive, files });
+  }
+  return results;
 }
 
 export async function listGoogleSharedDrives(

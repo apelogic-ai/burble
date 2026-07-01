@@ -64,6 +64,7 @@ describe("provider tool specs", () => {
     const names = googleProviderToolSpecs.map((tool) => tool.name);
 
     expect(names).toContain("google_search_drive_files");
+    expect(names).toContain("google_list_shared_drive_files");
     expect(names).toContain("google_list_shared_drives");
     expect(names).toContain("google_docs_create_document");
     expect(names).toContain("google_create_calendar_event");

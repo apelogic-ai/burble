@@ -58,6 +58,7 @@ import {
   getGoogleUser,
   isGoogleWorkspaceDocumentMimeType,
   listGoogleAnalyticsProperties,
+  listGoogleSharedDriveFiles,
   listGoogleSharedDrives,
   moveGoogleDriveFile,
   getGoogleSlidesPresentation,
@@ -236,6 +237,7 @@ const defaultDeps = {
   createBranch: createGitHubBranch,
   getGoogleUser,
   searchGoogleDriveFiles,
+  listGoogleSharedDriveFiles,
   listGoogleSharedDrives,
   createGoogleDriveTextFile,
   createGoogleDocsDocument,
@@ -1479,6 +1481,19 @@ export async function handleToolGatewayRequest(
       );
     }
 
+    case "google.listSharedDriveFiles": {
+      if (!isListGoogleSharedDriveFilesInput(body.input)) {
+        return new Response("Invalid tool input", { status: 400 });
+      }
+
+      return respondWithAudit(
+        await googleTools.listSharedDriveFiles.execute({
+          connection,
+          input: body.input
+        })
+      );
+    }
+
     case "google.listSharedDrives": {
       if (!isListGoogleSharedDrivesInput(body.input)) {
         return new Response("Invalid tool input", { status: 400 });
@@ -2066,6 +2081,7 @@ function isKnownTool(toolName: string): boolean {
     toolName === "github.createBranch" ||
     toolName === "google.getAuthenticatedUser" ||
     toolName === "google.searchDriveFiles" ||
+    toolName === "google.listSharedDriveFiles" ||
     toolName === "google.listSharedDrives" ||
     toolName === "google.getDriveFile" ||
     toolName === "google.createDriveTextFile" ||
@@ -3166,11 +3182,32 @@ function isSearchGoogleDriveFilesInput(input: unknown): input is {
   limit?: number;
   sharedDriveId?: string;
   mimeType?: string;
+  parentId?: string;
+  sharedWithMe?: boolean;
 } {
   return (
     isOptionalObject(input) &&
     optionalString(input.query) &&
     optionalString(input.sharedDriveId) &&
+    optionalString(input.mimeType) &&
+    optionalString(input.parentId) &&
+    optionalBoolean(input.sharedWithMe) &&
+    optionalLimit(input.limit, 20)
+  );
+}
+
+function isListGoogleSharedDriveFilesInput(input: unknown): input is {
+  sharedDriveId?: string;
+  sharedDriveName?: string;
+  query?: string;
+  mimeType?: string;
+  limit?: number;
+} {
+  return (
+    isOptionalObject(input) &&
+    optionalString(input.sharedDriveId) &&
+    optionalString(input.sharedDriveName) &&
+    optionalString(input.query) &&
     optionalString(input.mimeType) &&
     optionalLimit(input.limit, 20)
   );

@@ -856,6 +856,40 @@
           }
         },
         {
+          "name": "google_list_shared_drive_files",
+          "alias": "google.listSharedDriveFiles",
+          "description": "List files inside one or all Google Shared Drives visible to this Slack user's connected Google account. This tool is strictly scoped to Shared Drives and will not return My Drive files. Use mimeType application/vnd.google-apps.document when the user asks for Google Docs in Shared Drives. Use google.searchDriveFiles with sharedWithMe=true for Google Drive's separate Shared with me area.",
+          "input": {
+            "sharedDriveId": {
+              "optional": true,
+              "description": "Optional Shared Drive id returned by google.listSharedDrives. If omitted, lists files from all visible Shared Drives.",
+              "type": "string"
+            },
+            "sharedDriveName": {
+              "optional": true,
+              "description": "Optional Shared Drive name filter, such as Buble Shared Drive.",
+              "type": "string"
+            },
+            "query": {
+              "optional": true,
+              "description": "Optional file-name search terms within the selected Shared Drive(s).",
+              "type": "string"
+            },
+            "mimeType": {
+              "optional": true,
+              "description": "Optional exact MIME type filter, such as application/vnd.google-apps.document for Google Docs.",
+              "type": "string"
+            },
+            "limit": {
+              "optional": true,
+              "type": "number",
+              "int": true,
+              "max": 20,
+              "positive": true
+            }
+          }
+        },
+        {
           "name": "google_list_shared_drives",
           "alias": "google.listSharedDrives",
           "description": "List Shared Drives visible to this Slack user's connected Google account. Use this when the user asks for Shared Drives or Team Drives; Google Drive file search only searches files and folders.",
@@ -942,6 +976,16 @@
               "optional": true,
               "description": "Optional Shared Drive id returned by google.listSharedDrives. When set, search is scoped to that Shared Drive.",
               "type": "string"
+            },
+            "parentId": {
+              "optional": true,
+              "description": "Optional folder id. When set, search is scoped to direct children of that folder.",
+              "type": "string"
+            },
+            "sharedWithMe": {
+              "optional": true,
+              "description": "Set true to search files and folders in Google Drive's Shared with me area. This is different from Shared Drives.",
+              "type": "boolean"
             },
             "mimeType": {
               "optional": true,

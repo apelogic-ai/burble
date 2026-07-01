@@ -1448,6 +1448,61 @@ describe("handleToolGatewayRequest", () => {
     });
   });
 
+  test("lists Google Shared Drive files through the provider gateway", async () => {
+    const response = await handleToolGatewayRequest(
+      config,
+      createStore(googleConnection),
+      "google.listSharedDriveFiles",
+      request("google.listSharedDriveFiles", {
+        user: { email: "person@example.com" },
+        input: {
+          sharedDriveName: "Buble",
+          mimeType: "application/vnd.google-apps.document",
+          limit: 5
+        }
+      }),
+      {
+        listGoogleSharedDriveFiles: async (token, input) => {
+          expect(token).toBe("google-token");
+          expect(input).toEqual({
+            sharedDriveName: "Buble",
+            mimeType: "application/vnd.google-apps.document",
+            limit: 5
+          });
+          return [
+            {
+              drive: { id: "drive-1", name: "Buble Shared Drive" },
+              files: [
+                {
+                  id: "doc-1",
+                  name: "Shared doc",
+                  mimeType: "application/vnd.google-apps.document"
+                }
+              ]
+            }
+          ];
+        }
+      }
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      classification: "user_private",
+      content: [
+        {
+          drive: { id: "drive-1", name: "Buble Shared Drive" },
+          files: [
+            {
+              id: "doc-1",
+              name: "Shared doc",
+              mimeType: "application/vnd.google-apps.document"
+            }
+          ]
+        }
+      ]
+    });
+  });
+
   test("rejects Google Workspace MIME types for Drive text file creation", async () => {
     let didCallProvider = false;
     const response = await handleToolGatewayRequest(

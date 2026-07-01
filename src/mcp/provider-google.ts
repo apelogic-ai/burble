@@ -65,6 +65,22 @@ function createGoogleMcpHandlers(
         connection,
         input: {
           ...optionalTruthyStringField(args, "query"),
+          ...optionalTruthyStringField(args, "sharedDriveId"),
+          ...optionalTruthyStringField(args, "parentId"),
+          ...optionalTruthyStringField(args, "mimeType"),
+          ...optionalBooleanField(args, "sharedWithMe"),
+          ...optionalTruthyNumberField(args, "limit")
+        }
+      }),
+
+    listSharedDriveFiles: (connection, args) =>
+      googleTools.listSharedDriveFiles.execute({
+        connection,
+        input: {
+          ...optionalTruthyStringField(args, "sharedDriveId"),
+          ...optionalTruthyStringField(args, "sharedDriveName"),
+          ...optionalTruthyStringField(args, "query"),
+          ...optionalTruthyStringField(args, "mimeType"),
           ...optionalTruthyNumberField(args, "limit")
         }
       }),
