@@ -9,7 +9,7 @@ runtime services.
 contract, prompt assembly, tool-call parsing, MCP tool execution, and final
 Slack response handling stay in Burble.
 
-![Engine routing overview](assets/openclaw-runtime-flows/engine-routing-overview.svg)
+![Engine routing overview](../assets/openclaw-runtime-flows/engine-routing-overview.svg)
 
 ## OpenClaw Gateway Path
 
@@ -17,9 +17,9 @@ Use `OPENCLAW_NEMOCLAW_ENGINE=openclaw-gateway` when testing the real OpenClaw
 Gateway and agent runtime. Burble asks OpenClaw to plan; OpenClaw then talks to
 the model provider.
 
-![OpenClaw Gateway flow](assets/openclaw-runtime-flows/openclaw-gateway-flow.svg)
+![OpenClaw Gateway flow](../assets/openclaw-runtime-flows/openclaw-gateway-flow.svg)
 
-PNG: [openclaw-gateway-flow.png](assets/openclaw-runtime-flows/openclaw-gateway-flow.png)
+PNG: [openclaw-gateway-flow.png](../assets/openclaw-runtime-flows/openclaw-gateway-flow.png)
 
 ## Provider Tool Path
 

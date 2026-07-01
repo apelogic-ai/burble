@@ -43,8 +43,6 @@ Three observations frame the design:
 
 ## Architecture
 
-![Architecture](./architecture.svg)
-
 The runtime separates into three concerns, color-coded above.
 
 ### Agent control plane (purple)
@@ -90,8 +88,6 @@ held by `db-mcp`, not anything in the agent runtime.
 ---
 
 ## Authentication and authorization flow
-
-![Auth flow](./auth-flow.svg)
 
 The credential chain has three distinct transformations.
 

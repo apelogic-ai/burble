@@ -78,7 +78,7 @@ smoke test; it is not sufficient for Burble production semantics because it
 does not provide durable two-way channel integration.
 
 Autonomous workgroup and company agents use the authority model in
-[Autonomous Agent Authority Model](autonomous-agent-authority-model.md). This
+[Autonomous Agent Authority Model](../architecture/autonomous-agent-authority-model.md). This
 runtime configuration plan consumes their effective principal and grants, but
 does not define non-user authority by itself.
 

@@ -1,9 +1,9 @@
 # Burble Native Reference Runtime Design
 
 Status: draft / design note.
-Companion to [burble-native-harness-scope.md](burble-native-harness-scope.md),
-[agent-runtime-scheduler-boundary-plan.md](agent-runtime-scheduler-boundary-plan.md),
-and [runtime-pluggability-next-targets.md](runtime-pluggability-next-targets.md).
+Companion to [burble-native-harness-scope.md](../roadmap/burble-native-harness-scope.md),
+[agent-runtime-scheduler-boundary-plan.md](../roadmap/agent-runtime-scheduler-boundary-plan.md),
+and [runtime-pluggability-next-targets.md](../roadmap/runtime-pluggability-next-targets.md).
 
 ## Purpose
 
