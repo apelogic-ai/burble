@@ -1,0 +1,15 @@
+Burble has been rendered.
+
+App service:
+  {{ include "burble.fullname" . }}:{{ .Values.service.port }}
+
+LiteLLM mode:
+  {{ .Values.litellm.mode }}
+
+agentgateway mode:
+  {{ .Values.agentgateway.mode }}
+
+Required next checks:
+  kubectl -n {{ .Release.Namespace }} rollout status deploy/{{ include "burble.fullname" . }}
+  kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "burble.fullname" . }} 3000:{{ .Values.service.port }}
+  curl -fsS http://localhost:3000/healthz

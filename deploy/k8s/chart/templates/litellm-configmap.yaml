@@ -1,0 +1,12 @@
+{{- if eq .Values.litellm.mode "managed" -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "burble.litellm.fullname" . }}
+  labels:
+    {{- include "burble.labels" . | nindent 4 }}
+    app.kubernetes.io/component: litellm
+data:
+  config.yaml: |
+{{ .Values.litellm.config | indent 4 }}
+{{- end }}

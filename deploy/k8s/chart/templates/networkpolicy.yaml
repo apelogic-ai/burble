@@ -1,0 +1,67 @@
+{{- if .Values.networkPolicy.enabled -}}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "burble.fullname" . }}
+  labels:
+    {{- include "burble.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "burble.selectorLabels" . | nindent 6 }}
+  policyTypes:
+    - Ingress
+    - Egress
+  {{- if .Values.networkPolicy.ingressFrom }}
+  ingress:
+    - from:
+        {{- toYaml .Values.networkPolicy.ingressFrom | nindent 8 }}
+      ports:
+        - protocol: TCP
+          port: {{ .Values.service.targetPort }}
+  {{- else }}
+  ingress: []
+  {{- end }}
+  egress:
+    {{- if .Values.networkPolicy.egress.dnsEnabled }}
+    - to: []
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    {{- end }}
+    {{- if eq .Values.litellm.mode "managed" }}
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: {{ include "burble.name" . }}
+              app.kubernetes.io/instance: {{ .Release.Name }}
+              app.kubernetes.io/component: litellm
+      ports:
+        - protocol: TCP
+          port: {{ .Values.litellm.service.port }}
+    {{- end }}
+    {{- if eq .Values.agentgateway.mode "managed" }}
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: {{ include "burble.name" . }}
+              app.kubernetes.io/instance: {{ .Release.Name }}
+              app.kubernetes.io/component: agentgateway
+      ports:
+        - protocol: TCP
+          port: {{ .Values.agentgateway.service.port }}
+    {{- end }}
+    {{- range .Values.networkPolicy.egress.allowHttpsCidrs }}
+    - to:
+        - ipBlock:
+            cidr: {{ . | quote }}
+      ports:
+        - protocol: TCP
+          port: 443
+    {{- end }}
+    {{- with .Values.networkPolicy.egress.extra }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+{{- end }}

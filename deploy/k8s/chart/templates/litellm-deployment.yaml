@@ -1,0 +1,51 @@
+{{- if eq .Values.litellm.mode "managed" -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "burble.litellm.fullname" . }}
+  labels:
+    {{- include "burble.labels" . | nindent 4 }}
+    app.kubernetes.io/component: litellm
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "burble.name" . }}
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/component: litellm
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: {{ include "burble.name" . }}
+        app.kubernetes.io/instance: {{ .Release.Name }}
+        app.kubernetes.io/component: litellm
+    spec:
+      containers:
+        - name: litellm
+          image: {{ .Values.litellm.image.repository }}{{- if .Values.litellm.image.digest }}@{{ .Values.litellm.image.digest }}{{- else }}:{{ .Values.litellm.image.tag }}{{- end }}
+          imagePullPolicy: {{ .Values.litellm.image.pullPolicy }}
+          args:
+            - --config
+            - /app/config.yaml
+            - --host
+            - 0.0.0.0
+            - --port
+            - {{ .Values.litellm.service.port | quote }}
+          envFrom:
+            - secretRef:
+                name: {{ include "burble.secretName" . }}
+                optional: true
+          ports:
+            - name: http
+              containerPort: {{ .Values.litellm.service.port }}
+          resources:
+            {{- toYaml .Values.litellm.resources | nindent 12 }}
+          volumeMounts:
+            - name: config
+              mountPath: /app/config.yaml
+              subPath: config.yaml
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "burble.litellm.fullname" . }}
+{{- end }}

@@ -1,0 +1,29 @@
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata:
+  name: burble
+  namespace: flux-system
+spec:
+  interval: 1m
+  url: https://github.com/<client>/burble.git
+  ref:
+    branch: main
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: burble
+  namespace: burble
+spec:
+  interval: 5m
+  chart:
+    spec:
+      chart: ./deploy/k8s/chart
+      sourceRef:
+        kind: GitRepository
+        name: burble
+        namespace: flux-system
+  valuesFrom:
+    - kind: ConfigMap
+      name: burble-values
+      valuesKey: values.yaml
