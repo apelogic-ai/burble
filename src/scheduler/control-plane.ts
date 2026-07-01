@@ -13,6 +13,7 @@ import {
   type SchedulerTaskGrant,
   type SchedulerTaskValidation,
   type SchedulerTaskValidationIssue,
+  type SchedulerTaskRuntimeAdmission,
 } from "./task-validation";
 import { validateScheduledJobSchedule } from "./timer";
 import { DEFAULT_ACTIVE_RUN_TTL_MS } from "./active-run";
@@ -307,6 +308,12 @@ type SchedulerControlPlaneOptions = {
   newRunId?: () => string;
   workflowAuthority?: "off" | "manual" | "timer";
   workflowShadowStore?: SchedulerWorkflowStore;
+  validateRuntimeAdmission?: (input: {
+    workspaceId: string;
+    slackUserId: string;
+    job: ScheduledJobRecord;
+    capability: SchedulerTaskGrant | null;
+  }) => Promise<SchedulerTaskRuntimeAdmission> | SchedulerTaskRuntimeAdmission;
   logWarn?: (message: string) => void;
   resolveSlackChannelIdByName?: (input: {
     workspaceId: string;
@@ -411,7 +418,7 @@ export function createSchedulerControlPlane(
         ),
       };
     },
-    validateTask(input) {
+    async validateTask(input) {
       const records = store.listScheduledJobsForPrincipal(
         input.workspaceId,
         input.slackUserId,
@@ -430,12 +437,22 @@ export function createSchedulerControlPlane(
       if (!record) {
         return { ok: false, reason: "not_found", tasks };
       }
+      const capability = store.getAgentJobCapability(record.jobId);
+      const validation = validateScheduledTask(record, capability);
+      const runtimeAdmission = options.validateRuntimeAdmission
+        ? await options.validateRuntimeAdmission({
+            workspaceId: input.workspaceId,
+            slackUserId: input.slackUserId,
+            job: record,
+            capability,
+          })
+        : undefined;
       return {
         ok: true,
         taskId: record.jobId,
-        validation: validateScheduledTask(
-          record,
-          store.getAgentJobCapability(record.jobId),
+        validation: applyRuntimeAdmissionToTaskValidation(
+          validation,
+          runtimeAdmission,
         ),
       };
     },
@@ -832,6 +849,34 @@ function activeGrantRoute(
   route: ConversationRouteRecord | null,
 ): ConversationRouteRecord | null {
   return route && !route.revokedAt ? route : null;
+}
+
+function applyRuntimeAdmissionToTaskValidation(
+  validation: SchedulerTaskValidation,
+  runtimeAdmission: SchedulerTaskRuntimeAdmission | undefined,
+): SchedulerTaskValidation {
+  if (!runtimeAdmission) {
+    return validation;
+  }
+  if (!runtimeAdmission.checked || runtimeAdmission.ok) {
+    return {
+      ...validation,
+      runtimeAdmission,
+    };
+  }
+  const errors = [
+    ...validation.errors,
+    {
+      code: "runtime_admission_failed",
+      message: runtimeAdmission.reason,
+    },
+  ];
+  return {
+    ...validation,
+    runtimeAdmission,
+    errors,
+    ok: false,
+  };
 }
 
 function ensureScheduledJobCapability(

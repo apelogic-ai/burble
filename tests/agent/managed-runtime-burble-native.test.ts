@@ -1,5 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { createManagedRuntimeAgentRunner } from "../../src/agent/runners/managed-runtime";
+import {
+  createManagedRuntimeAgentRunner,
+  validateManagedRuntimeAgentInput,
+} from "../../src/agent/runners/managed-runtime";
 import {
   hashRuntimeToken,
   type RuntimeHandle,
@@ -111,6 +114,45 @@ class InProcessRuntimeWebSocket {
 }
 
 describe("managed runtime Burble Native integration", () => {
+  test("validates runtime admission locally without provisioning a runtime", async () => {
+    const result = await validateManagedRuntimeAgentInput(
+      {
+        runtimeFactory: {
+          getOrCreateRuntime: async () => {
+            throw new Error("runtime should not be provisioned");
+          },
+          stopRuntime: async () => undefined,
+          reapIdleRuntimes: async () => undefined,
+        },
+        fetch: async () => {
+          throw new Error("runtime endpoint should not be called");
+        },
+      },
+      {
+        principal,
+        text: "scheduled web task",
+        scheduledJob: {
+          jobId: "job_scheduled",
+          capabilityProfile: "scheduled_job",
+          allowedTools: ["web_search"],
+          runtimeType: "burble-native",
+          stateRefs: [],
+          visibilityPolicy: {},
+        },
+        connections: {
+          github: null,
+        },
+      },
+    );
+
+    expect(result).toEqual({
+      checked: true,
+      ok: true,
+      runtimeId: "admission:burble-native",
+      runtimeType: "burble-native",
+    });
+  });
+
   test("executes a provider tool through the real app tool gateway auth path", async () => {
     const store = createTokenStore(":memory:");
     const runtimeToken = "runtime-token-u123";

@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import type {
   AgentInput,
   AgentOutput,
@@ -77,6 +77,41 @@ const DEFAULT_WORKFLOW_ATTEMPT_HEARTBEAT_INTERVAL_MS = 60_000;
 export type SchedulerRunExecutor = {
   executeRun(runId: string): Promise<void>;
 };
+
+export function buildScheduledRunAdmissionAgentInput(input: {
+  store: Pick<
+    TokenStore,
+    | "getAgentJobCapability"
+    | "getConversationRoute"
+    | "getConnectionForSlackUser"
+    | "getScheduledJob"
+  >;
+  job: ScheduledJobRecord;
+  workspaceId: string;
+  slackUserId: string;
+  runId?: string;
+  now?: Date;
+}): AgentInput {
+  const timestamp = (input.now ?? new Date()).toISOString();
+  const run: AgentJobRunRecord = {
+    runId: input.runId ?? `jobrun_admission_${randomUUID()}`,
+    jobId: input.job.jobId,
+    workspaceId: input.workspaceId,
+    slackUserId: input.slackUserId,
+    triggerSource: "manual",
+    status: "queued",
+    failureReason: null,
+    createdAt: timestamp,
+    updatedAt: timestamp,
+    startedAt: null,
+    finishedAt: null,
+  };
+  return buildScheduledRunAgentInput({
+    store: input.store,
+    run,
+    executionContext: prepareScheduledRunExecution(input.store, run, input.job),
+  });
+}
 
 export function createSchedulerRunExecutor(input: {
   store: Pick<

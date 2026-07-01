@@ -1480,6 +1480,15 @@ export function formatScheduledTaskValidationResult(
       ? `- granted tools: ${validation.grantedTools.join(", ")}`
       : "- granted tools: none",
   ];
+  if (validation.runtimeAdmission) {
+    lines.push(
+      validation.runtimeAdmission.checked
+        ? validation.runtimeAdmission.ok
+          ? `- runtime admission: passed (${validation.runtimeAdmission.runtimeType})`
+          : `- runtime admission: failed (${validation.runtimeAdmission.reason})`
+        : `- runtime admission: skipped (${validation.runtimeAdmission.reason})`,
+    );
+  }
 
   if (validation.errors.length) {
     lines.push("Errors");

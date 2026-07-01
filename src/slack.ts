@@ -116,6 +116,7 @@ import { DEFAULT_ACTIVE_RUN_TTL_MS } from "./scheduler/active-run";
 import { defaultResolveSlackChannelIdByName } from "./tool-gateway";
 import { createSchedulerRunExecutor } from "./scheduler/run-executor";
 import { createScheduledRunAuditMaintenanceLoop } from "./scheduler/run-audit-maintenance";
+import { createScheduledRuntimeAdmissionValidator } from "./scheduler/runtime-admission";
 import { createSchedulerTimer } from "./scheduler/timer";
 import { createTaskWorkflowMaintenanceLoop } from "./workflow/task-workflow-maintenance";
 import { createTaskWorkflowOracleLoop } from "./workflow/task-workflow-oracle";
@@ -536,9 +537,20 @@ export function createSlackRuntime(
   workflowReconcileLoop?.start();
   workflowOracleLoop?.start();
 
+  const runtimeFactory = createManagedRuntimeFactory(
+    config,
+    store,
+    runtimeJwtIssuer,
+    options
+  );
   const schedulerControl = createSchedulerControlPlane(store, {
     workflowAuthority: config.taskWorkflowAuthority,
     workflowShadowStore,
+    validateRuntimeAdmission: createScheduledRuntimeAdmissionValidator({
+      config,
+      store,
+      logWarn: (message) => app.logger.warn(withUtcTimestamp(message)),
+    }),
     resolveSlackChannelIdByName: (input) =>
       defaultResolveSlackChannelIdByName(config, input)
   });
@@ -549,12 +561,6 @@ export function createSlackRuntime(
           logWarn: (message) => app.logger.warn(withUtcTimestamp(message))
         })
       : undefined;
-  const runtimeFactory = createManagedRuntimeFactory(
-    config,
-    store,
-    runtimeJwtIssuer,
-    options
-  );
   const agentRunner =
     config.agentMode === "llm"
       ? createConfiguredAgentRunner({

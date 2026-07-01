@@ -164,6 +164,19 @@ export function createRuntimeContractServer<
         return undefined as unknown as Response;
       }
 
+      if (url.pathname === "/runs/validate") {
+        if (request.method !== "POST") {
+          return new Response("Method not allowed", { status: 405 });
+        }
+        const rawBody = await readJsonBody(request);
+        const runId = readRunId(rawBody) ?? createRunId();
+        const body = await input.normalizeRunRequest(rawBody, runId, context);
+        if (!body) {
+          return new Response("Invalid run request", { status: 400 });
+        }
+        return Response.json({ ok: true, runId }, { headers: noStoreHeaders() });
+      }
+
       const runSnapshotMatch = /^\/runs\/([^/]+)$/.exec(url.pathname);
       if (runSnapshotMatch) {
         if (request.method !== "GET") {
@@ -295,6 +308,7 @@ export function authorizeRuntimeBearerOrHeaderToken(
 function protectedRuntimeContractPath(pathname: string): boolean {
   return (
     pathname === "/runs" ||
+    pathname === "/runs/validate" ||
     /^\/runs\/[^/]+(?:\/events)?$/.test(pathname)
   );
 }
