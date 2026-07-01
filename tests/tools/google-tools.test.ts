@@ -335,66 +335,6 @@ describe("createGoogleTools", () => {
     });
   });
 
-  test("lists Shared Drive files with the caller token", async () => {
-    const tools = createGoogleTools({
-      getGoogleUser: async () => ({
-        email: "person@google.example"
-      }),
-      searchGoogleDriveFiles: async () => [],
-      listGoogleSharedDriveFiles: async (token, input) => {
-        expect(token).toBe("google-token");
-        expect(input).toEqual({
-          sharedDriveName: "Buble",
-          mimeType: "application/vnd.google-apps.document",
-          limit: 5
-        });
-        return [
-          {
-            drive: { id: "drive-1", name: "Buble Shared Drive" },
-            files: [
-              {
-                id: "doc-1",
-                name: "Shared doc",
-                mimeType: "application/vnd.google-apps.document"
-              }
-            ]
-          }
-        ];
-      },
-      createGoogleDriveTextFile: async () => ({
-        id: "file-1",
-        name: "Test"
-      }),
-      searchGoogleCalendarEvents: async () => [],
-      searchGoogleMailMessages: async () => []
-    });
-
-    const result = await tools.listSharedDriveFiles.execute({
-      connection,
-      input: {
-        sharedDriveName: "Buble",
-        mimeType: "application/vnd.google-apps.document",
-        limit: 5
-      }
-    });
-
-    expect(result).toEqual({
-      classification: "user_private",
-      content: [
-        {
-          drive: { id: "drive-1", name: "Buble Shared Drive" },
-          files: [
-            {
-              id: "doc-1",
-              name: "Shared doc",
-              mimeType: "application/vnd.google-apps.document"
-            }
-          ]
-        }
-      ]
-    });
-  });
-
   test("creates Google Docs documents with caller token and sanitized result", async () => {
     const tools = createGoogleTools({
       getGoogleUser: async () => ({

@@ -75,18 +75,6 @@ function createGoogleMcpHandlers(
         }
       }),
 
-    listSharedDriveFiles: (connection, args) =>
-      googleTools.listSharedDriveFiles.execute({
-        connection,
-        input: {
-          ...optionalTruthyStringField(args, "sharedDriveId"),
-          ...optionalTruthyStringField(args, "sharedDriveName"),
-          ...optionalTruthyStringField(args, "query"),
-          ...optionalTruthyStringField(args, "mimeType"),
-          ...optionalTruthyNumberField(args, "limit")
-        }
-      }),
-
     listSharedDrives: (connection, args) =>
       googleTools.listSharedDrives.execute({
         connection,
@@ -112,7 +100,12 @@ function createGoogleMcpHandlers(
         input: {
           name: stringArg(args, "name"),
           text: optionalStringArg(args, "text") ?? "",
-          ...optionalTruthyStringField(args, "sourceMimeType"),
+          ...optionalTruthyStringValueField(
+            "sourceMimeType",
+            optionalStringArg(args, "sourceMimeType") ??
+              optionalStringArg(args, "mimeType") ??
+              optionalStringArg(args, "source_mime_type")
+          ),
           ...optionalTruthyStringField(args, "parentId")
         }
       }),
@@ -377,6 +370,13 @@ function optionalTruthyStringField(
   key: string
 ): Partial<Record<string, string>> {
   return args[key] ? { [key]: args[key] as string } : {};
+}
+
+function optionalTruthyStringValueField(
+  key: string,
+  value: string | undefined
+): Partial<Record<string, string>> {
+  return value ? { [key]: value } : {};
 }
 
 function optionalTruthyNumberField(

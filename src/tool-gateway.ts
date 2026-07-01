@@ -58,7 +58,6 @@ import {
   getGoogleUser,
   isGoogleWorkspaceDocumentMimeType,
   listGoogleAnalyticsProperties,
-  listGoogleSharedDriveFiles,
   listGoogleSharedDrives,
   moveGoogleDriveFile,
   getGoogleSlidesPresentation,
@@ -237,7 +236,6 @@ const defaultDeps = {
   createBranch: createGitHubBranch,
   getGoogleUser,
   searchGoogleDriveFiles,
-  listGoogleSharedDriveFiles,
   listGoogleSharedDrives,
   createGoogleDriveTextFile,
   createGoogleDocsDocument,
@@ -1481,19 +1479,6 @@ export async function handleToolGatewayRequest(
       );
     }
 
-    case "google.listSharedDriveFiles": {
-      if (!isListGoogleSharedDriveFilesInput(body.input)) {
-        return new Response("Invalid tool input", { status: 400 });
-      }
-
-      return respondWithAudit(
-        await googleTools.listSharedDriveFiles.execute({
-          connection,
-          input: body.input
-        })
-      );
-    }
-
     case "google.listSharedDrives": {
       if (!isListGoogleSharedDrivesInput(body.input)) {
         return new Response("Invalid tool input", { status: 400 });
@@ -1546,10 +1531,7 @@ export async function handleToolGatewayRequest(
       return respondWithAudit(
         await googleTools.createDocsDocument.execute({
           connection,
-          input: {
-            ...body.input,
-            text: body.input.text ?? ""
-          }
+          input: normalizeCreateGoogleDocsDocumentInput(body.input)
         })
       );
     }
@@ -2081,7 +2063,6 @@ function isKnownTool(toolName: string): boolean {
     toolName === "github.createBranch" ||
     toolName === "google.getAuthenticatedUser" ||
     toolName === "google.searchDriveFiles" ||
-    toolName === "google.listSharedDriveFiles" ||
     toolName === "google.listSharedDrives" ||
     toolName === "google.getDriveFile" ||
     toolName === "google.createDriveTextFile" ||
@@ -3205,23 +3186,6 @@ function isSearchGoogleDriveFilesInput(input: unknown): input is {
   );
 }
 
-function isListGoogleSharedDriveFilesInput(input: unknown): input is {
-  sharedDriveId?: string;
-  sharedDriveName?: string;
-  query?: string;
-  mimeType?: string;
-  limit?: number;
-} {
-  return (
-    isOptionalObject(input) &&
-    optionalString(input.sharedDriveId) &&
-    optionalString(input.sharedDriveName) &&
-    optionalString(input.query) &&
-    optionalString(input.mimeType) &&
-    optionalLimit(input.limit, 20)
-  );
-}
-
 function isListGoogleSharedDrivesInput(input: unknown): input is {
   query?: string;
   limit?: number;
@@ -3265,6 +3229,8 @@ function isCreateGoogleDocsDocumentInput(input: unknown): input is {
   name: string;
   text?: string;
   sourceMimeType?: string;
+  mimeType?: string;
+  source_mime_type?: string;
   parentId?: string;
 } {
   if (!isOptionalObject(input)) {
@@ -3277,10 +3243,48 @@ function isCreateGoogleDocsDocumentInput(input: unknown): input is {
     (input.text === undefined ||
       (typeof input.text === "string" && input.text.length <= 200_000)) &&
     optionalString(input.sourceMimeType) &&
+    optionalString(input.mimeType) &&
+    optionalString(input.source_mime_type) &&
     optionalString(input.parentId) &&
-    (typeof input.sourceMimeType !== "string" ||
-      !isGoogleWorkspaceDocumentMimeType(input.sourceMimeType))
+    validSourceMimeTypeAlias(input.sourceMimeType) &&
+    validSourceMimeTypeAlias(input.mimeType) &&
+    validSourceMimeTypeAlias(input.source_mime_type)
   );
+}
+
+function normalizeCreateGoogleDocsDocumentInput(input: {
+  name: string;
+  text?: string;
+  sourceMimeType?: string;
+  mimeType?: string;
+  source_mime_type?: string;
+  parentId?: string;
+}): {
+  name: string;
+  text: string;
+  sourceMimeType?: string;
+  parentId?: string;
+} {
+  const sourceMimeType =
+    input.sourceMimeType ?? input.mimeType ?? input.source_mime_type;
+  return {
+    name: input.name,
+    text: input.text ?? "",
+    ...(sourceMimeType ? { sourceMimeType } : {}),
+    ...(input.parentId ? { parentId: input.parentId } : {})
+  };
+}
+
+function validSourceMimeTypeAlias(value: unknown): boolean {
+  if (typeof value !== "string") {
+    return true;
+  }
+  return isSimpleMediaType(value) && !isGoogleWorkspaceDocumentMimeType(value);
+}
+
+function isSimpleMediaType(value: string): boolean {
+  const token = "[!#$%&'*+.^_`|~0-9A-Za-z-]+";
+  return new RegExp(`^${token}/${token}$`).test(value.trim());
 }
 
 function isUpdateGoogleDriveTextFileInput(input: unknown): input is {

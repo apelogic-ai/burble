@@ -34,11 +34,6 @@ export type GoogleSharedDrive = {
   name: string;
 };
 
-export type GoogleSharedDriveFileList = {
-  drive: GoogleSharedDrive;
-  files: GoogleDriveFile[];
-};
-
 export type GoogleDriveFileSearchScope =
   | "all"
   | "shared_with_me"
@@ -429,20 +424,30 @@ export async function searchGoogleDriveFiles(
   const scope = normalizeDriveFileSearchScope(input);
   if (scope === "all_shared_drives" || (scope === "shared_drive" && !input.sharedDriveId?.trim())) {
     const driveFilter = input.sharedDriveName?.trim();
+    const limit = clampLimit(input.limit, 10, 20);
     const drives = await listGoogleSharedDrives(token, {
       ...(driveFilter ? { query: driveFilter } : {}),
       limit: 20
     });
-    const files: GoogleDriveFile[] = [];
-    for (const drive of drives) {
-      const driveFiles = await searchGoogleDriveFilesInScope(token, {
-        ...input,
-        scope: "shared_drive",
-        sharedDriveId: drive.id
-      });
-      files.push(...driveFiles.map((file) => ({ ...file, drive })));
-    }
-    return files;
+    const results = await Promise.all(
+      drives.map(async (drive) => {
+        try {
+          const driveFiles = await searchGoogleDriveFilesInScope(token, {
+            ...input,
+            limit,
+            scope: "shared_drive",
+            sharedDriveId: drive.id
+          });
+          return driveFiles.map((file) => ({ ...file, drive }));
+        } catch {
+          return [];
+        }
+      })
+    );
+    return results
+      .flat()
+      .sort(compareGoogleDriveFilesByModifiedTimeDesc)
+      .slice(0, limit);
   }
 
   return searchGoogleDriveFilesInScope(token, { ...input, scope });
@@ -515,41 +520,6 @@ function normalizeDriveFileSearchScope(input: {
     return "shared_drive";
   }
   return "all";
-}
-
-export async function listGoogleSharedDriveFiles(
-  token: string,
-  input: {
-    sharedDriveId?: string;
-    sharedDriveName?: string;
-    query?: string;
-    mimeType?: string;
-    limit?: number;
-  }
-): Promise<GoogleSharedDriveFileList[]> {
-  const driveFilter = input.sharedDriveName?.trim();
-  const drives = input.sharedDriveId?.trim()
-    ? [
-        {
-          id: input.sharedDriveId.trim(),
-          name: driveFilter || input.sharedDriveId.trim()
-        }
-      ]
-    : await listGoogleSharedDrives(token, {
-        ...(driveFilter ? { query: driveFilter } : {}),
-        limit: 20
-      });
-  const results: GoogleSharedDriveFileList[] = [];
-  for (const drive of drives) {
-    const files = await searchGoogleDriveFiles(token, {
-      sharedDriveId: drive.id,
-      query: input.query,
-      mimeType: input.mimeType,
-      limit: input.limit
-    });
-    results.push({ drive, files });
-  }
-  return results;
 }
 
 export async function listGoogleSharedDrives(
@@ -931,7 +901,7 @@ export async function createGoogleDocsDocument(
     parentId?: string;
   }
 ): Promise<GoogleDriveCreatedFile> {
-  const mediaMimeType = input.sourceMimeType ?? "text/markdown";
+  const mediaMimeType = normalizeSourceMimeType(input.sourceMimeType ?? "text/markdown");
   if (isGoogleWorkspaceDocumentMimeType(mediaMimeType)) {
     throw new Error(
       "Google Docs document import requires a source text MIME type such as text/markdown or text/plain."
@@ -988,6 +958,36 @@ export async function createGoogleDocsDocument(
     ...(body.mimeType ? { mimeType: body.mimeType } : {}),
     ...(body.webViewLink ? { webViewLink: body.webViewLink } : {})
   };
+}
+
+function compareGoogleDriveFilesByModifiedTimeDesc(
+  left: GoogleDriveFile,
+  right: GoogleDriveFile
+): number {
+  const rightTime = Date.parse(right.modifiedTime ?? "");
+  const leftTime = Date.parse(left.modifiedTime ?? "");
+  if (Number.isFinite(rightTime) && Number.isFinite(leftTime)) {
+    return rightTime - leftTime;
+  }
+  if (Number.isFinite(rightTime)) {
+    return 1;
+  }
+  if (Number.isFinite(leftTime)) {
+    return -1;
+  }
+  return left.name.localeCompare(right.name);
+}
+
+function normalizeSourceMimeType(value: string): string {
+  const trimmed = value.trim();
+  const token = "[!#$%&'*+.^_`|~0-9A-Za-z-]+";
+  const mediaTypePattern = new RegExp(`^${token}/${token}$`);
+  if (!mediaTypePattern.test(trimmed)) {
+    throw new Error(
+      "Google Docs document import source MIME type must be a simple media type such as text/markdown or text/plain."
+    );
+  }
+  return trimmed;
 }
 
 export async function getGoogleDriveFile(

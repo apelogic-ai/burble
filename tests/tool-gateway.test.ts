@@ -1423,6 +1423,64 @@ describe("handleToolGatewayRequest", () => {
     });
   });
 
+  test("maps Google Docs source MIME aliases through the provider gateway", async () => {
+    const response = await handleToolGatewayRequest(
+      config,
+      createStore(googleConnection),
+      "google.docsCreateDocument",
+      request("google.docsCreateDocument", {
+        user: { email: "person@example.com" },
+        input: {
+          name: "HTML Import",
+          text: "<h1>Title</h1>",
+          mimeType: "text/html"
+        }
+      }),
+      {
+        createGoogleDocsDocument: async (_token, input) => {
+          expect(input).toEqual({
+            name: "HTML Import",
+            text: "<h1>Title</h1>",
+            sourceMimeType: "text/html"
+          });
+          return {
+            id: "doc-1",
+            name: "HTML Import",
+            mimeType: "application/vnd.google-apps.document"
+          };
+        }
+      }
+    );
+
+    expect(response.status).toBe(200);
+  });
+
+  test("rejects malformed Google Docs source MIME types", async () => {
+    let didCallProvider = false;
+    const response = await handleToolGatewayRequest(
+      config,
+      createStore(googleConnection),
+      "google.docsCreateDocument",
+      request("google.docsCreateDocument", {
+        user: { email: "person@example.com" },
+        input: {
+          name: "Injected",
+          text: "body",
+          sourceMimeType: "text/plain\r\nX-Burble-Test: injected"
+        }
+      }),
+      {
+        createGoogleDocsDocument: async () => {
+          didCallProvider = true;
+          return { id: "doc-1", name: "Injected" };
+        }
+      }
+    );
+
+    expect(response.status).toBe(400);
+    expect(didCallProvider).toBe(false);
+  });
+
   test("lists Google Shared Drives through the provider gateway", async () => {
     const response = await handleToolGatewayRequest(
       config,
@@ -1445,61 +1503,6 @@ describe("handleToolGatewayRequest", () => {
     expect(await response.json()).toEqual({
       classification: "user_private",
       content: [{ id: "drive-1", name: "Engineering" }]
-    });
-  });
-
-  test("lists Google Shared Drive files through the provider gateway", async () => {
-    const response = await handleToolGatewayRequest(
-      config,
-      createStore(googleConnection),
-      "google.listSharedDriveFiles",
-      request("google.listSharedDriveFiles", {
-        user: { email: "person@example.com" },
-        input: {
-          sharedDriveName: "Buble",
-          mimeType: "application/vnd.google-apps.document",
-          limit: 5
-        }
-      }),
-      {
-        listGoogleSharedDriveFiles: async (token, input) => {
-          expect(token).toBe("google-token");
-          expect(input).toEqual({
-            sharedDriveName: "Buble",
-            mimeType: "application/vnd.google-apps.document",
-            limit: 5
-          });
-          return [
-            {
-              drive: { id: "drive-1", name: "Buble Shared Drive" },
-              files: [
-                {
-                  id: "doc-1",
-                  name: "Shared doc",
-                  mimeType: "application/vnd.google-apps.document"
-                }
-              ]
-            }
-          ];
-        }
-      }
-    );
-
-    expect(response.status).toBe(200);
-    expect(await response.json()).toEqual({
-      classification: "user_private",
-      content: [
-        {
-          drive: { id: "drive-1", name: "Buble Shared Drive" },
-          files: [
-            {
-              id: "doc-1",
-              name: "Shared doc",
-              mimeType: "application/vnd.google-apps.document"
-            }
-          ]
-        }
-      ]
     });
   });
 

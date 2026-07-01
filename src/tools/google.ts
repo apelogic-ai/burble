@@ -12,7 +12,6 @@ import {
   type GoogleDriveFileContent,
   type GoogleDriveFileSearchScope,
   type GoogleSharedDrive,
-  type GoogleSharedDriveFileList,
   type GoogleSlidesCreateSlideInput,
   type GoogleSlidesCreatedSlide,
   type GoogleSlidesCopiedPresentation,
@@ -49,16 +48,6 @@ export type GoogleToolDeps = {
     token: string,
     input: { query?: string; limit?: number }
   ) => Promise<GoogleSharedDrive[]>;
-  listGoogleSharedDriveFiles?: (
-    token: string,
-    input: {
-      sharedDriveId?: string;
-      sharedDriveName?: string;
-      query?: string;
-      mimeType?: string;
-      limit?: number;
-    }
-  ) => Promise<GoogleSharedDriveFileList[]>;
   searchGoogleCalendarEvents: (
     token: string,
     input: { query?: string; timeMin?: string; timeMax?: string; limit?: number }
@@ -257,51 +246,6 @@ export function createGoogleTools(deps: GoogleToolDeps) {
         return {
           classification: "user_private",
           content: drives.slice(0, 20)
-        };
-      }
-    },
-
-    listSharedDriveFiles: {
-      async execute(
-        context: GoogleToolContext & {
-          input?: {
-            sharedDriveId?: string;
-            sharedDriveName?: string;
-            query?: string;
-            mimeType?: string;
-            limit?: number;
-          };
-        }
-      ): Promise<ToolResult<GoogleSharedDriveFileList[] | GoogleAuthErrorContent>> {
-        const lists = await withGoogleToken(
-          deps,
-          context.connection,
-          (accessToken) => {
-            if (!deps.listGoogleSharedDriveFiles) {
-              throw new Error("Google Shared Drive file listing is not configured");
-            }
-            return deps.listGoogleSharedDriveFiles(accessToken, context.input ?? {});
-          }
-        );
-        if (isGoogleAuthErrorResult(lists)) {
-          return lists;
-        }
-
-        return {
-          classification: "user_private",
-          content: lists.map((list) => ({
-            drive: {
-              id: list.drive.id,
-              name: list.drive.name
-            },
-            files: list.files.slice(0, 20).map((file) => ({
-              id: file.id,
-              name: file.name,
-              ...(file.mimeType ? { mimeType: file.mimeType } : {}),
-              ...(file.webViewLink ? { webViewLink: file.webViewLink } : {}),
-              ...(file.modifiedTime ? { modifiedTime: file.modifiedTime } : {})
-            }))
-          }))
         };
       }
     },

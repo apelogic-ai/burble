@@ -110,6 +110,99 @@ describe("scheduler timer", () => {
     store.close();
   });
 
+  test("supports Sunday as 7 in cron day-of-week fields", async () => {
+    const store = createTokenStore(":memory:");
+    store.upsertScheduledJob({
+      jobId: "job-sunday-digest",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      title: "Sunday digest",
+      prompt: "Post Sunday digest.",
+      schedule: {
+        kind: "cron",
+        expression: "0 9 * * 7",
+        timezone: "UTC",
+      },
+      runtimeType: "openclaw",
+      state: "scheduled",
+      now: new Date("2026-06-27T08:00:00.000Z"),
+    });
+    const timer = createSchedulerTimer({
+      store,
+      now: () => new Date("2026-06-28T09:00:00.000Z"),
+      newRunId: () => "jobrun-sunday",
+      executeRun: async () => {},
+    });
+
+    expect(await timer.tick()).toEqual({
+      queuedRunIds: ["jobrun-sunday"],
+    });
+
+    store.close();
+  });
+
+  test("supports named cron day-of-week ranges", async () => {
+    const store = createTokenStore(":memory:");
+    store.upsertScheduledJob({
+      jobId: "job-weekday-named-digest",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      title: "Weekday named digest",
+      prompt: "Post weekday digest.",
+      schedule: {
+        kind: "cron",
+        expression: "0 9 * * MON-FRI",
+        timezone: "UTC",
+      },
+      runtimeType: "openclaw",
+      state: "scheduled",
+      now: new Date("2026-06-26T08:00:00.000Z"),
+    });
+    const timer = createSchedulerTimer({
+      store,
+      now: () => new Date("2026-06-26T09:00:00.000Z"),
+      newRunId: () => "jobrun-friday-named",
+      executeRun: async () => {},
+    });
+
+    expect(await timer.tick()).toEqual({
+      queuedRunIds: ["jobrun-friday-named"],
+    });
+
+    store.close();
+  });
+
+  test("uses standard cron OR semantics when day-of-month and day-of-week are both restricted", async () => {
+    const store = createTokenStore(":memory:");
+    store.upsertScheduledJob({
+      jobId: "job-dom-dow",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      title: "DOM or DOW digest",
+      prompt: "Post digest.",
+      schedule: {
+        kind: "cron",
+        expression: "0 9 15 * MON",
+        timezone: "UTC",
+      },
+      runtimeType: "openclaw",
+      state: "scheduled",
+      now: new Date("2026-06-20T08:00:00.000Z"),
+    });
+    const timer = createSchedulerTimer({
+      store,
+      now: () => new Date("2026-06-22T09:00:00.000Z"),
+      newRunId: () => "jobrun-monday",
+      executeRun: async () => {},
+    });
+
+    expect(await timer.tick()).toEqual({
+      queuedRunIds: ["jobrun-monday"],
+    });
+
+    store.close();
+  });
+
   test("queues due interval jobs and hands them to the run executor", async () => {
     const store = createTokenStore(":memory:");
     const workflowStore = createInMemoryTaskWorkflowEventStore();

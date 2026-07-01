@@ -362,7 +362,6 @@ function validateScheduledJobCron(
     ["minute", minuteExpr, 0, 59],
     ["hour", hourExpr, 0, 23],
     ["day of month", dayOfMonthExpr, 1, 31],
-    ["day of week", dayOfWeekExpr, 0, 6],
   ];
   for (const [label, expression, min, max] of supportedFields) {
     if (!isSupportedCronFieldExpression(expression, min, max)) {
@@ -371,6 +370,12 @@ function validateScheduledJobCron(
         message: `unsupported cron field ${label}: ${expression}`,
       };
     }
+  }
+  if (!isSupportedCronDayOfWeekExpression(dayOfWeekExpr)) {
+    return {
+      ok: false,
+      message: `unsupported cron field day of week: ${dayOfWeekExpr}`,
+    };
   }
   if (monthExpr !== "*") {
     return {
@@ -412,8 +417,7 @@ function scheduledJobCronDueSlotMs(
     if (
       cronFieldMatches(slot.getUTCMinutes(), minuteExpr, 0, 59) &&
       cronFieldMatches(slot.getUTCHours(), hourExpr, 0, 23) &&
-      cronFieldMatches(slot.getUTCDate(), dayOfMonthExpr, 1, 31) &&
-      cronFieldMatches(slot.getUTCDay(), dayOfWeekExpr, 0, 6)
+      cronDayFieldsMatch(slot, dayOfMonthExpr, dayOfWeekExpr)
     ) {
       return slot.getTime();
     }
@@ -421,6 +425,62 @@ function scheduledJobCronDueSlotMs(
   }
 
   return null;
+}
+
+function cronDayFieldsMatch(
+  slot: Date,
+  dayOfMonthExpr: string,
+  dayOfWeekExpr: string
+): boolean {
+  const dayOfMonthMatches = cronFieldMatches(
+    slot.getUTCDate(),
+    dayOfMonthExpr,
+    1,
+    31
+  );
+  const dayOfWeekMatches = cronDayOfWeekMatches(
+    slot.getUTCDay(),
+    dayOfWeekExpr
+  );
+  if (dayOfMonthExpr !== "*" && dayOfWeekExpr !== "*") {
+    return dayOfMonthMatches || dayOfWeekMatches;
+  }
+  return dayOfMonthMatches && dayOfWeekMatches;
+}
+
+function cronDayOfWeekMatches(value: number, expression: string): boolean {
+  const normalized = normalizeCronDayOfWeekExpression(expression);
+  if (!isSupportedCronFieldExpression(normalized, 0, 7)) {
+    return false;
+  }
+  if (normalized === "*") {
+    return true;
+  }
+  const step = /^\*\/(\d+)$/.exec(normalized);
+  if (step) {
+    const interval = Number(step[1]);
+    return (
+      Number.isSafeInteger(interval) &&
+      interval > 0 &&
+      (value % interval === 0 || (value === 0 && 7 % interval === 0))
+    );
+  }
+  const range = /^(\d+)-(\d+)$/.exec(normalized);
+  if (range) {
+    const start = Number(range[1]);
+    const end = Number(range[2]);
+    return (
+      Number.isSafeInteger(start) &&
+      Number.isSafeInteger(end) &&
+      start <= end &&
+      ((value >= start && value <= end) || (value === 0 && 7 >= start && 7 <= end))
+    );
+  }
+  const exact = Number(normalized);
+  if (exact === 7) {
+    return value === 0;
+  }
+  return value === exact;
 }
 
 function cronFieldMatches(
@@ -493,6 +553,27 @@ function isSupportedCronFieldExpression(
   }
   const exact = Number(expression);
   return Number.isSafeInteger(exact) && exact >= min && exact <= max;
+}
+
+function isSupportedCronDayOfWeekExpression(expression: string): boolean {
+  return isSupportedCronFieldExpression(
+    normalizeCronDayOfWeekExpression(expression),
+    0,
+    7
+  );
+}
+
+function normalizeCronDayOfWeekExpression(expression: string): string {
+  const days: Record<string, string> = {
+    sun: "0",
+    mon: "1",
+    tue: "2",
+    wed: "3",
+    thu: "4",
+    fri: "5",
+    sat: "6"
+  };
+  return expression.replace(/[a-z]{3}/gi, (value) => days[value.toLowerCase()] ?? value);
 }
 
 function intervalPartMs(value: unknown, multiplier: number): number {

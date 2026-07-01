@@ -2619,6 +2619,118 @@ describe("handleConversation", () => {
     }
   });
 
+  test("does not create scheduler jobs from free-form chat in deterministic mode", async () => {
+    let created = false;
+    const response = await handleConversation(
+      {
+        ...baseRequest,
+        text: "create an hourly job to post AI news here",
+      },
+      createDeps({
+        schedulerControl: {
+          listJobs: () => [],
+          createJob: () => {
+            created = true;
+            throw new Error("unexpected create");
+          },
+        },
+      }),
+    );
+
+    expect(created).toBe(false);
+    expect(response.text).toContain("Try one of these:");
+  });
+
+  test("uses explicit scheduler job ids without the LLM resolver", async () => {
+    let schedulerCalledWith: unknown = null;
+    const response = await handleConversation(
+      {
+        ...baseRequest,
+        text: "pause job job_ai_news_hourly",
+      },
+      createDeps({
+        schedulerControl: {
+          listJobs: () => [],
+          pauseJob: (input) => {
+            schedulerCalledWith = input;
+            return {
+              ok: true,
+              job: {
+                jobId: input.jobId!,
+                workspaceId: "T123",
+                slackUserId: "U123",
+                title: "Hourly AI news summary",
+                prompt: "Find fresh AI news and summarize it.",
+                schedule: { kind: "interval", every: { hours: 1 } },
+                routeId: "convrt_123",
+                state: "paused",
+                runtimeType: "hermes",
+                createdAt: "2026-06-24T12:00:00.000Z",
+                updatedAt: "2026-06-24T12:05:00.000Z",
+              },
+            };
+          },
+        },
+      }),
+    );
+
+    expect(schedulerCalledWith).toEqual({
+      workspaceId: "T123",
+      slackUserId: "U123",
+      jobId: "job_ai_news_hourly",
+    });
+    expect(response.text).toContain("Paused scheduled job job_ai_news_hourly.");
+  });
+
+  test("falls back to explicit scheduler job ids when the resolver throws", async () => {
+    let schedulerCalledWith: unknown = null;
+    const response = await handleConversation(
+      {
+        ...baseRequest,
+        text: "pause job job_ai_news_hourly",
+      },
+      createDeps({
+        agentMode: "llm",
+        schedulerIntentResolver: async () => {
+          throw new Error("resolver timeout");
+        },
+        schedulerControl: {
+          listJobs: () => [],
+          pauseJob: (input) => {
+            schedulerCalledWith = input;
+            return {
+              ok: true,
+              job: {
+                jobId: input.jobId!,
+                workspaceId: "T123",
+                slackUserId: "U123",
+                title: "Hourly AI news summary",
+                prompt: "Find fresh AI news and summarize it.",
+                schedule: { kind: "interval", every: { hours: 1 } },
+                routeId: "convrt_123",
+                state: "paused",
+                runtimeType: "hermes",
+                createdAt: "2026-06-24T12:00:00.000Z",
+                updatedAt: "2026-06-24T12:05:00.000Z",
+              },
+            };
+          },
+        },
+        agentRunner: stubAgentRunner(() => ({
+          classification: "public",
+          text: "unexpected",
+        })),
+      }),
+    );
+
+    expect(schedulerCalledWith).toEqual({
+      workspaceId: "T123",
+      slackUserId: "U123",
+      jobId: "job_ai_news_hourly",
+    });
+    expect(response.text).toContain("Paused scheduled job job_ai_news_hourly.");
+  });
+
   test("delegates Slack history task wording to the agent when resolver returns none", async () => {
     let calledWith = "";
     const text =

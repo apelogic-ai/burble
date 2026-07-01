@@ -43,7 +43,6 @@ import {
   getGoogleSlidesPresentation,
   getGoogleUser,
   listGoogleAnalyticsProperties,
-  listGoogleSharedDriveFiles,
   listGoogleSharedDrives,
   probeGoogleSlidesTemplate,
   refreshGoogleAccessToken,
@@ -371,7 +370,6 @@ export function createSlackRuntime(
   const googleTools = createGoogleTools({
     getGoogleUser,
     searchGoogleDriveFiles,
-    listGoogleSharedDriveFiles,
     listGoogleSharedDrives,
     createGoogleDriveTextFile,
     createGoogleDocsDocument,
