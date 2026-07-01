@@ -8,7 +8,7 @@ metadata:
 spec:
   podSelector:
     matchLabels:
-      {{- include "burble.selectorLabels" . | nindent 6 }}
+      {{- include "burble.appSelectorLabels" . | nindent 6 }}
   policyTypes:
     - Ingress
     - Egress
@@ -20,7 +20,10 @@ spec:
         - protocol: TCP
           port: {{ .Values.service.targetPort }}
   {{- else }}
-  ingress: []
+  ingress:
+    - ports:
+        - protocol: TCP
+          port: {{ .Values.service.targetPort }}
   {{- end }}
   egress:
     {{- if .Values.networkPolicy.egress.dnsEnabled }}
@@ -64,4 +67,56 @@ spec:
     {{- with .Values.networkPolicy.egress.extra }}
     {{- toYaml . | nindent 4 }}
     {{- end }}
+{{- if eq .Values.litellm.mode "managed" }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "burble.litellm.fullname" . }}
+  labels:
+    {{- include "burble.labels" . | nindent 4 }}
+    app.kubernetes.io/component: litellm
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "burble.name" . }}
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/component: litellm
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "burble.appSelectorLabels" . | nindent 14 }}
+      ports:
+        - protocol: TCP
+          port: {{ .Values.litellm.service.port }}
+{{- end }}
+{{- if eq .Values.agentgateway.mode "managed" }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "burble.agentgateway.fullname" . }}
+  labels:
+    {{- include "burble.labels" . | nindent 4 }}
+    app.kubernetes.io/component: agentgateway
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "burble.name" . }}
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/component: agentgateway
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "burble.appSelectorLabels" . | nindent 14 }}
+      ports:
+        - protocol: TCP
+          port: {{ .Values.agentgateway.service.port }}
+{{- end }}
 {{- end }}

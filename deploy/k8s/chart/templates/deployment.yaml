@@ -4,17 +4,18 @@ metadata:
   name: {{ include "burble.fullname" . }}
   labels:
     {{- include "burble.labels" . | nindent 4 }}
+    app.kubernetes.io/component: app
 spec:
   {{- if not .Values.autoscaling.enabled }}
   replicas: {{ .Values.replicaCount }}
   {{- end }}
   selector:
     matchLabels:
-      {{- include "burble.selectorLabels" . | nindent 6 }}
+      {{- include "burble.appSelectorLabels" . | nindent 6 }}
   template:
     metadata:
       labels:
-        {{- include "burble.selectorLabels" . | nindent 8 }}
+        {{- include "burble.appSelectorLabels" . | nindent 8 }}
       {{- with .Values.podAnnotations }}
       annotations:
         {{- toYaml . | nindent 8 }}

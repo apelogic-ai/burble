@@ -5,6 +5,7 @@ metadata:
   name: {{ include "burble.fullname" . }}
   labels:
     {{- include "burble.labels" . | nindent 4 }}
+    app.kubernetes.io/component: app
 spec:
   scaleTargetRef:
     apiVersion: apps/v1

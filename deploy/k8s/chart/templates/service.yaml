@@ -4,6 +4,7 @@ metadata:
   name: {{ include "burble.fullname" . }}
   labels:
     {{- include "burble.labels" . | nindent 4 }}
+    app.kubernetes.io/component: app
 spec:
   type: {{ .Values.service.type }}
   ports:
@@ -12,4 +13,4 @@ spec:
       protocol: TCP
       name: http
   selector:
-    {{- include "burble.selectorLabels" . | nindent 4 }}
+    {{- include "burble.appSelectorLabels" . | nindent 4 }}

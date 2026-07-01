@@ -78,7 +78,7 @@ deployment overlay.
 
 | Control | Current state | Owner |
 | --- | --- | --- |
-| NetworkPolicy | Default-deny with explicit DNS, HTTPS CIDRs, and managed dependency egress | Burble/client |
+| NetworkPolicy | App-scoped policy with configurable ingress sources, explicit DNS/HTTPS egress, and managed dependency egress | Burble/client |
 | Public routes | `/internal/*` must not be exposed by ingress | Client/operator |
 | Slack connectivity | Outbound HTTPS/WebSocket to Slack required for Socket Mode | Client/operator |
 | Provider connectivity | Outbound HTTPS to GitHub, Atlassian, Google, HubSpot, model providers | Client/operator |

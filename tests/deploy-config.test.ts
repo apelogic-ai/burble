@@ -57,6 +57,7 @@ const k8sConfigMap = await Bun.file(
 const k8sDeployment = await Bun.file(
   "deploy/k8s/chart/templates/deployment.yaml"
 ).text();
+const k8sService = await Bun.file("deploy/k8s/chart/templates/service.yaml").text();
 const k8sNetworkPolicy = await Bun.file(
   "deploy/k8s/chart/templates/networkpolicy.yaml"
 ).text();
@@ -463,10 +464,18 @@ describe("dev deploy config", () => {
       'com.docker.compose.project.config_files'
     );
     expect(ansibleRoleTasks).toContain("burble_compose_config_files");
+    expect(ansibleRoleTasks).toContain(
+      "label=com.docker.compose.service=burble-app"
+    );
+    expect(ansibleRoleTasks).toContain(
+      "label=com.docker.compose.project.working_dir={{ burble_install_path }}/deploy/dev/compose"
+    );
     expect(ansibleRoleTasks).toContain("burble_compose_files");
     expect(ansibleRoleTasks).toContain("map('basename') | list");
+    expect(ansibleRoleTasks).toContain("burble_active_compose_config_files != '<no value>'");
     expect(ansibleRoleTasks).toContain("['docker-compose.yml']");
     expect(ansibleRoleTasks).toContain("files: \"{{ burble_compose_files }}\"");
+    expect(ansibleRoleTasks).not.toContain("compose-burble-app-1");
     expect(ansibleRoleHandlers).toContain(
       "files: \"{{ burble_compose_files | default(['docker-compose.yml']) }}\""
     );
@@ -898,11 +907,26 @@ describe("dev deploy config", () => {
     expect(k8sHelpers).toContain("litellm.mode=external");
     expect(k8sHelpers).toContain("burble.agentgateway.url");
     expect(k8sHelpers).toContain("agentgateway.mode=external");
+    expect(k8sHelpers).toContain("burble.appSelectorLabels");
+    expect(k8sHelpers).toContain("app.kubernetes.io/component: app");
     expect(k8sConfigMap).toContain("LLM_GW_BASE_URL");
     expect(k8sConfigMap).toContain("BURBLE_INFERENCE_BASE_URL");
     expect(k8sConfigMap).toContain("AGENT_RUNTIME_MCP_GATEWAY_URL");
     expect(k8sConfigMap).toContain("AGENT_RUNTIME_MCP_AUDIENCE");
     expect(k8sConfigMap).toContain("TASK_WORKFLOW_AUTHORITY");
+    expect(k8sDeployment).toContain("app.kubernetes.io/component: app");
+    expect(k8sDeployment).toContain(
+      '{{- include "burble.appSelectorLabels" . | nindent 6 }}'
+    );
+    expect(k8sDeployment).toContain(
+      '{{- include "burble.appSelectorLabels" . | nindent 8 }}'
+    );
+    expect(k8sDeployment).not.toContain(
+      '{{- include "burble.selectorLabels" . | nindent 6 }}'
+    );
+    expect(k8sService).toContain(
+      '{{- include "burble.appSelectorLabels" . | nindent 4 }}'
+    );
     expect(k8sDeployment).toContain("secretRef:");
     expect(k8sDeployment).toContain("persistentVolumeClaim:");
     expect(k8sLiteLlmDeployment).toContain('eq .Values.litellm.mode "managed"');
@@ -915,5 +939,12 @@ describe("dev deploy config", () => {
     expect(k8sNetworkPolicy).toContain(
       'eq .Values.agentgateway.mode "managed"'
     );
+    expect(k8sNetworkPolicy).toContain(
+      '{{- include "burble.appSelectorLabels" . | nindent 6 }}'
+    );
+    expect(k8sNetworkPolicy).toContain(
+      '{{- include "burble.appSelectorLabels" . | nindent 14 }}'
+    );
+    expect(k8sNetworkPolicy).not.toContain("ingress: []");
   });
 });

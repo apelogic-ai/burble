@@ -15,6 +15,7 @@ values, account IDs, registry names, and customer-specific topology.
 | `persistence.*` | yes unless ephemeral dev | Client storage class and PVC policy |
 | `litellm.mode` | yes | `managed`, `external`, or `disabled` |
 | `agentgateway.mode` | yes | `managed`, `external`, or `disabled` |
+| `networkPolicy.ingressFrom` | no | Optional ingress-controller/client source selectors; empty allows the app HTTP port from any source |
 | `networkPolicy.egress.*` | yes when NetworkPolicy is enabled | Client allowed CIDRs/selectors |
 
 ## Secret Keys

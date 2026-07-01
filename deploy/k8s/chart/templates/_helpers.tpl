@@ -26,6 +26,11 @@ app.kubernetes.io/name: {{ include "burble.name" . }}
 app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end -}}
 
+{{- define "burble.appSelectorLabels" -}}
+{{ include "burble.selectorLabels" . }}
+app.kubernetes.io/component: app
+{{- end -}}
+
 {{- define "burble.labels" -}}
 helm.sh/chart: {{ include "burble.chart" . }}
 {{ include "burble.selectorLabels" . }}

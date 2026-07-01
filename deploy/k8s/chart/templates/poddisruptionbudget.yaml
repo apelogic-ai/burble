@@ -5,9 +5,10 @@ metadata:
   name: {{ include "burble.fullname" . }}
   labels:
     {{- include "burble.labels" . | nindent 4 }}
+    app.kubernetes.io/component: app
 spec:
   minAvailable: {{ .Values.podDisruptionBudget.minAvailable }}
   selector:
     matchLabels:
-      {{- include "burble.selectorLabels" . | nindent 6 }}
+      {{- include "burble.appSelectorLabels" . | nindent 6 }}
 {{- end }}
