@@ -69,6 +69,15 @@ function createGoogleMcpHandlers(
         }
       }),
 
+    listSharedDrives: (connection, args) =>
+      googleTools.listSharedDrives.execute({
+        connection,
+        input: {
+          ...optionalTruthyStringField(args, "query"),
+          ...optionalTruthyNumberField(args, "limit")
+        }
+      }),
+
     createDriveTextFile: (connection, args) =>
       googleTools.createDriveTextFile.execute({
         connection,
@@ -76,6 +85,17 @@ function createGoogleMcpHandlers(
           name: stringArg(args, "name"),
           text: optionalStringArg(args, "text") ?? "",
           ...optionalTruthyStringField(args, "mimeType")
+        }
+      }),
+
+    createDocsDocument: (connection, args) =>
+      googleTools.createDocsDocument.execute({
+        connection,
+        input: {
+          name: stringArg(args, "name"),
+          text: optionalStringArg(args, "text") ?? "",
+          ...optionalTruthyStringField(args, "sourceMimeType"),
+          ...optionalTruthyStringField(args, "parentId")
         }
       }),
 

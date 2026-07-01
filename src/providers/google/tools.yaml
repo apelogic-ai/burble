@@ -26,6 +26,24 @@ tools:
         max: 20
         optional: true
 
+  - name: google_list_shared_drives
+    alias: google.listSharedDrives
+    implementation: listSharedDrives
+    title: Google Shared Drives list
+    description: List Shared Drives visible to this Slack user's connected Google account. Use this when the user asks for Shared Drives or Team Drives; Google Drive file search only searches files and folders.
+    risk: read
+    input:
+      query:
+        type: string
+        optional: true
+        description: Optional Shared Drive name filter
+      limit:
+        type: number
+        int: true
+        positive: true
+        max: 20
+        optional: true
+
   - name: google_create_drive_text_file
     alias: google.createDriveTextFile
     implementation: createDriveTextFile
@@ -48,6 +66,38 @@ tools:
         type: string
         optional: true
         description: Optional non-Google-Workspace MIME type. Defaults to text/plain.
+
+  - name: google_docs_create_document
+    alias: google.docsCreateDocument
+    aliases:
+      - google.createGoogleDoc
+      - google.createDocsDocument
+    implementation: createDocsDocument
+    title: Google Docs create document
+    description: Create a Google Docs document from plain text or Markdown content by importing it into Google Drive as a Google Workspace document. Use this for explicit requests to convert text or Markdown into a Google Doc.
+    risk: low_write
+    confirmation: none
+    input:
+      name:
+        type: string
+        min: 1
+        max: 200
+        description: Google Docs document title
+      text:
+        type: string
+        max: 200000
+        optional: true
+        description: Text or Markdown body to import. Defaults to an empty document.
+      sourceMimeType:
+        type: string
+        aliases: [mimeType, source_mime_type]
+        optional: true
+        description: Source content MIME type. Defaults to text/markdown; use text/plain for plain text.
+      parentId:
+        type: string
+        min: 1
+        optional: true
+        description: Optional destination Drive folder ID.
 
   - name: google_get_drive_file
     alias: google.getDriveFile

@@ -36,12 +36,14 @@ import {
   buildGoogleOAuthUrl,
   copyGoogleSlidesPresentation,
   createGoogleDriveTextFile,
+  createGoogleDocsDocument,
   createGoogleSlidesSlide,
   fillGoogleSlidesPlaceholders,
   getGoogleAnalyticsMetadata,
   getGoogleSlidesPresentation,
   getGoogleUser,
   listGoogleAnalyticsProperties,
+  listGoogleSharedDrives,
   probeGoogleSlidesTemplate,
   refreshGoogleAccessToken,
   runGoogleAnalyticsReport,
@@ -197,6 +199,7 @@ export type SlackRuntimeOptions = {
   sandboxStartCommand?: string[];
   sandboxModelProviderUrls?: string[];
   sandboxFetch?: SandboxRuntimeFetch;
+  schedulerIntentResolver?: SchedulerIntentResolver;
   testbed?: boolean;
 };
 
@@ -367,7 +370,9 @@ export function createSlackRuntime(
   const googleTools = createGoogleTools({
     getGoogleUser,
     searchGoogleDriveFiles,
+    listGoogleSharedDrives,
     createGoogleDriveTextFile,
+    createGoogleDocsDocument,
     searchGoogleCalendarEvents,
     searchGoogleMailMessages,
     searchGoogleSlidesPresentations,
@@ -556,12 +561,13 @@ export function createSlackRuntime(
       defaultResolveSlackChannelIdByName(config, input)
   });
   const schedulerIntentResolver =
-    config.agentMode === "llm"
+    options.schedulerIntentResolver ??
+    (config.agentMode === "llm"
       ? createLlmSchedulerIntentResolver({
           model: config.aiModel,
           logWarn: (message) => app.logger.warn(withUtcTimestamp(message))
         })
-      : undefined;
+      : undefined);
   const agentRunner =
     config.agentMode === "llm"
       ? createConfiguredAgentRunner({

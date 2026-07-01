@@ -19,6 +19,8 @@ import {
   copyGoogleSlidesPresentation,
   createGoogleSlidesSlide,
   createGoogleDriveTextFile,
+  createGoogleDocsDocument,
+  listGoogleSharedDrives,
   runGoogleAnalyticsReport,
   searchGoogleDriveFiles,
   searchGoogleSlidesPresentations
@@ -187,6 +189,53 @@ describe("buildGoogleOAuthUrl", () => {
       globalThis.fetch = originalFetch;
     }
   });
+
+  test("creates a Google Docs document by importing Markdown through Drive", async () => {
+    const originalFetch = globalThis.fetch;
+    let requestedUrl = "";
+    let requestedBody = "";
+    globalThis.fetch = (async (input, init) => {
+      requestedUrl = String(input);
+      requestedBody = String(init?.body);
+      const headers = new Headers(init?.headers);
+      expect(init?.method).toBe("POST");
+      expect(headers.get("authorization")).toBe("Bearer google-token");
+      expect(headers.get("content-type")).toContain("multipart/related");
+      return Response.json({
+        id: "doc-1",
+        name: "Contribution Map",
+        mimeType: "application/vnd.google-apps.document",
+        webViewLink: "https://docs.google.com/document/d/doc-1/edit"
+      });
+    }) as typeof fetch;
+
+    try {
+      const file = await createGoogleDocsDocument("google-token", {
+        name: "Contribution Map",
+        text: "# Enterprise Agent Runtime",
+        parentId: "folder-1"
+      });
+      expect(file).toEqual({
+        id: "doc-1",
+        name: "Contribution Map",
+        mimeType: "application/vnd.google-apps.document",
+        webViewLink: "https://docs.google.com/document/d/doc-1/edit"
+      });
+      const url = new URL(requestedUrl);
+      expect(url.origin + url.pathname).toBe(
+        "https://www.googleapis.com/upload/drive/v3/files"
+      );
+      expect(url.searchParams.get("uploadType")).toBe("multipart");
+      expect(requestedBody).toContain(
+        '"mimeType":"application/vnd.google-apps.document"'
+      );
+      expect(requestedBody).toContain('"parents":["folder-1"]');
+      expect(requestedBody).toContain("Content-Type: text/markdown; charset=UTF-8");
+      expect(requestedBody).toContain("# Enterprise Agent Runtime");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
 });
 
 describe("Google OAuth and API helpers", () => {
@@ -295,6 +344,42 @@ describe("Google OAuth and API helpers", () => {
       expect(url.searchParams.get("q")).toBe(
         "trashed = false and name contains 'roadmap'"
       );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  test("lists Google Shared Drives through the Drive drives endpoint", async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input, init) => {
+      const url = new URL(String(input));
+      expect(url.origin + url.pathname).toBe(
+        "https://www.googleapis.com/drive/v3/drives"
+      );
+      expect(url.searchParams.get("pageSize")).toBe("2");
+      expect(url.searchParams.get("fields")).toBe("drives(id,name)");
+      expect(url.searchParams.get("q")).toBe("name contains 'Engineering'");
+      expect(new Headers(init?.headers).get("authorization")).toBe(
+        "Bearer google-token"
+      );
+      return Response.json({
+        drives: [
+          { id: "drive-1", name: "Engineering" },
+          { id: "drive-2", name: "Engineering Archive" },
+          { name: "missing id" }
+        ]
+      });
+    }) as typeof fetch;
+
+    try {
+      const drives = await listGoogleSharedDrives("google-token", {
+        query: "Engineering",
+        limit: 2
+      });
+      expect(drives).toEqual([
+        { id: "drive-1", name: "Engineering" },
+        { id: "drive-2", name: "Engineering Archive" }
+      ]);
     } finally {
       globalThis.fetch = originalFetch;
     }

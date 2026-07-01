@@ -28,6 +28,11 @@ export type GoogleDriveCreatedFile = {
   webViewLink?: string;
 };
 
+export type GoogleSharedDrive = {
+  id: string;
+  name: string;
+};
+
 export type GoogleDriveFileContent = GoogleDriveFile & {
   content?: string;
 };
@@ -426,6 +431,35 @@ export async function searchGoogleDriveFiles(
   return body.files ?? [];
 }
 
+export async function listGoogleSharedDrives(
+  token: string,
+  input: { query?: string; limit?: number }
+): Promise<GoogleSharedDrive[]> {
+  const url = new URL("https://www.googleapis.com/drive/v3/drives");
+  url.searchParams.set("pageSize", String(clampLimit(input.limit, 10, 20)));
+  url.searchParams.set("fields", "drives(id,name)");
+  if (input.query?.trim()) {
+    url.searchParams.set("q", `name contains '${escapeDriveQueryString(input.query.trim())}'`);
+  }
+
+  const response = await fetch(url, { headers: googleHeaders(token) });
+  const body = (await response.json()) as {
+    drives?: Array<{ id?: string; name?: string }>;
+    error?: { message?: string };
+  };
+  if (!response.ok) {
+    throw googleError(
+      response,
+      "Google Shared Drives list failed",
+      body.error?.message
+    );
+  }
+
+  return (body.drives ?? []).flatMap((drive) =>
+    drive.id && drive.name ? [{ id: drive.id, name: drive.name }] : []
+  );
+}
+
 export async function searchGoogleSlidesPresentations(
   token: string,
   input: { query?: string; limit?: number }
@@ -757,6 +791,74 @@ export async function createGoogleDriveTextFile(
   };
   if (!response.ok || !body.id || !body.name) {
     throw googleError(response, "Google Drive file creation failed", body.error?.message);
+  }
+
+  return {
+    id: body.id,
+    name: body.name,
+    ...(body.mimeType ? { mimeType: body.mimeType } : {}),
+    ...(body.webViewLink ? { webViewLink: body.webViewLink } : {})
+  };
+}
+
+export async function createGoogleDocsDocument(
+  token: string,
+  input: {
+    name: string;
+    text: string;
+    sourceMimeType?: string;
+    parentId?: string;
+  }
+): Promise<GoogleDriveCreatedFile> {
+  const mediaMimeType = input.sourceMimeType ?? "text/markdown";
+  if (isGoogleWorkspaceDocumentMimeType(mediaMimeType)) {
+    throw new Error(
+      "Google Docs document import requires a source text MIME type such as text/markdown or text/plain."
+    );
+  }
+
+  const url = new URL("https://www.googleapis.com/upload/drive/v3/files");
+  url.searchParams.set("uploadType", "multipart");
+  url.searchParams.set("fields", "id,name,mimeType,webViewLink");
+
+  const boundary = `burble_${crypto.randomUUID().replace(/-/g, "")}`;
+  const response = await fetch(url, {
+    method: "POST",
+    headers: {
+      ...googleHeaders(token),
+      "Content-Type": `multipart/related; boundary=${boundary}`
+    },
+    body: [
+      `--${boundary}`,
+      "Content-Type: application/json; charset=UTF-8",
+      "",
+      JSON.stringify({
+        name: input.name,
+        mimeType: "application/vnd.google-apps.document",
+        ...(input.parentId ? { parents: [input.parentId] } : {})
+      }),
+      `--${boundary}`,
+      `Content-Type: ${mediaMimeType}; charset=UTF-8`,
+      "",
+      input.text,
+      `--${boundary}--`,
+      ""
+    ].join("\r\n")
+  });
+
+  const body = (await response.json()) as {
+    id?: string;
+    name?: string;
+    mimeType?: string;
+    webViewLink?: string;
+    error?: { message?: string };
+  };
+  if (!response.ok || !body.id || !body.name) {
+    throw googleError(
+      response,
+      "Google Docs document creation failed",
+      body.error?.message
+    );
   }
 
   return {

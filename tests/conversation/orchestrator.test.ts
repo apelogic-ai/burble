@@ -944,7 +944,7 @@ describe("handleConversation", () => {
     }
   });
 
-  test("creates explicit interval scheduled jobs without invoking the LLM runner", async () => {
+  test("creates scheduled jobs from scheduler resolver output", async () => {
     let called = false;
     const created: unknown[] = [];
     const response = await handleConversation(
@@ -956,6 +956,20 @@ describe("handleConversation", () => {
       createDeps({
         agentMode: "llm",
         agentRuntimeEngine: "hermes",
+        schedulerIntentResolver: async () => ({
+          intent: "create_job",
+          confidence: 0.96,
+          jobId: null,
+          create: {
+            title: "Hourly AI news summary",
+            prompt: "look for latest AI news, summarize them in one paragraph",
+            schedule: {
+              kind: "cron",
+              expression: "0 * * * *",
+              timezone: "UTC",
+            },
+          },
+        }),
         schedulerControl: {
           listJobs: () => [],
           createJob: (input) => {
@@ -1011,7 +1025,7 @@ describe("handleConversation", () => {
     expect(response.text).toContain("delivery: this conversation");
   });
 
-  test("normalizes scheduled job runtime and prompt for scheduled cron wording", async () => {
+  test("normalizes scheduled job runtime for scheduler resolver output", async () => {
     const cases = [
       {
         text: "add scheduled cron job, to be run every hour, to look for new open PRs in https://github.com/apelogic-ai github org and report back to this channel",
@@ -1042,6 +1056,16 @@ describe("handleConversation", () => {
           agentMode: "llm",
           agentRuntimeEngine: "openclaw-gateway",
           schedulerRuntimeEngine: "hermes",
+          schedulerIntentResolver: async () => ({
+            intent: "create_job",
+            confidence: 0.96,
+            jobId: null,
+            create: {
+              title: testCase.title,
+              prompt: testCase.prompt,
+              schedule: testCase.schedule,
+            },
+          }),
           schedulerControl: {
             listJobs: () => [],
             createJob: (input) => {
@@ -1101,6 +1125,20 @@ describe("handleConversation", () => {
       createDeps({
         agentMode: "llm",
         schedulerRuntimeEngine: "hermes",
+        schedulerIntentResolver: async () => ({
+          intent: "create_job",
+          confidence: 0.96,
+          jobId: null,
+          create: {
+            title: "Scheduled heart emoji",
+            prompt: "Post exactly this message: ❤️",
+            schedule: {
+              kind: "cron",
+              expression: "*/15 * * * *",
+              timezone: "UTC",
+            },
+          },
+        }),
         schedulerControl: {
           listJobs: () => [],
           createJob: (input) => {
@@ -1512,7 +1550,7 @@ describe("handleConversation", () => {
     expect(response.text).toContain("Post exactly this message: ❤️❤️");
   });
 
-  test("updates scheduled job delivery from a Slack channel mention without invoking the LLM runner", async () => {
+  test("updates scheduled job delivery from scheduler resolver output", async () => {
     let called = false;
     const updates: unknown[] = [];
     const response = await handleConversation(
@@ -1522,6 +1560,11 @@ describe("handleConversation", () => {
       },
       createDeps({
         agentMode: "llm",
+        schedulerIntentResolver: async () => ({
+          intent: "update_job_delivery",
+          confidence: 0.96,
+          jobId: null,
+        }),
         schedulerControl: {
           listJobs: () => [
             {
@@ -1585,7 +1628,7 @@ describe("handleConversation", () => {
     );
   });
 
-  test("does not delegate unresolved scheduled job delivery updates to the LLM runner", async () => {
+  test("keeps unresolved scheduled job delivery updates in scheduler control after resolver intent", async () => {
     let called = false;
     const response = await handleConversation(
       {
@@ -1594,6 +1637,11 @@ describe("handleConversation", () => {
       },
       createDeps({
         agentMode: "llm",
+        schedulerIntentResolver: async () => ({
+          intent: "update_job_delivery",
+          confidence: 0.96,
+          jobId: null,
+        }),
         schedulerControl: {
           listJobs: () => [
             {
@@ -1630,7 +1678,7 @@ describe("handleConversation", () => {
     expect(response.text).toContain("I can’t resolve `#ai-news`");
   });
 
-  test("lists scheduled task specs without invoking the LLM runner", async () => {
+  test("lists scheduled task specs from scheduler resolver intent", async () => {
     const texts = [
       "do we have any cron jobs configured?",
       "show me current cron jobs",
@@ -1650,6 +1698,11 @@ describe("handleConversation", () => {
         },
         createDeps({
           agentMode: "llm",
+          schedulerIntentResolver: async () => ({
+            intent: "list_jobs",
+            confidence: 0.96,
+            jobId: null,
+          }),
           schedulerControl: {
             listJobs: () => [
               {
@@ -1690,7 +1743,7 @@ describe("handleConversation", () => {
     }
   });
 
-  test("validates scheduled task specs without invoking the LLM runner", async () => {
+  test("validates scheduled task specs from scheduler resolver intent", async () => {
     let called = false;
     const response = await handleConversation(
       {
@@ -1699,6 +1752,11 @@ describe("handleConversation", () => {
       },
       createDeps({
         agentMode: "llm",
+        schedulerIntentResolver: async () => ({
+          intent: "validate_task",
+          confidence: 0.96,
+          jobId: "job_github_checker",
+        }),
         schedulerControl: {
           listJobs: () => [],
           validateTask: (input) => {
@@ -1754,7 +1812,7 @@ describe("handleConversation", () => {
     expect(response.text).toContain("wrong_github_pr_scope");
   });
 
-  test("shows scheduled task details without invoking the LLM runner", async () => {
+  test("shows scheduled task details from scheduler resolver intent", async () => {
     let called = false;
     const response = await handleConversation(
       {
@@ -1763,6 +1821,11 @@ describe("handleConversation", () => {
       },
       createDeps({
         agentMode: "llm",
+        schedulerIntentResolver: async () => ({
+          intent: "show_task",
+          confidence: 0.96,
+          jobId: "job_github_checker",
+        }),
         schedulerControl: {
           listJobs: () => [],
           showTask: (input) => {
@@ -1827,7 +1890,7 @@ describe("handleConversation", () => {
     expect(response.text).toContain("validation: failed");
   });
 
-  test("lists job runs independently from scheduled task specs without invoking the LLM runner", async () => {
+  test("lists job runs from scheduler resolver intent", async () => {
     let called = false;
     const response = await handleConversation(
       {
@@ -1836,6 +1899,11 @@ describe("handleConversation", () => {
       },
       createDeps({
         agentMode: "llm",
+        schedulerIntentResolver: async () => ({
+          intent: "list_job_runs",
+          confidence: 0.96,
+          jobId: null,
+        }),
         schedulerControl: {
           listJobs: () => [
             {
@@ -1890,7 +1958,7 @@ describe("handleConversation", () => {
     expect(response.text).toContain("status: succeeded");
   });
 
-  test("manually triggers the only scheduled job without invoking the LLM runner", async () => {
+  test("manually triggers scheduled jobs from scheduler resolver intent", async () => {
     const texts = [
       "let's manually run our existing cron job",
       "run cron job",
@@ -1910,6 +1978,11 @@ describe("handleConversation", () => {
         },
         createDeps({
           agentMode: "llm",
+          schedulerIntentResolver: async () => ({
+            intent: "trigger_job",
+            confidence: 0.96,
+            jobId: null,
+          }),
           schedulerControl: {
             listJobs: () => [],
             triggerJob: () => ({
@@ -1960,6 +2033,11 @@ describe("handleConversation", () => {
       },
       createDeps({
         agentMode: "llm",
+        schedulerIntentResolver: async () => ({
+          intent: "trigger_job",
+          confidence: 0.96,
+          jobId: "job_github_checker",
+        }),
         schedulerControl: {
           listJobs: () => [],
           triggerJob: () => ({
@@ -2256,7 +2334,7 @@ describe("handleConversation", () => {
     expect(response.text).toContain("job_good_ai_news");
   });
 
-  test("triggers explicit scheduler job ids without invoking the LLM runner", async () => {
+  test("triggers explicit scheduler job ids from scheduler resolver intent", async () => {
     let called = false;
     let triggerJobId: string | null | undefined;
     const response = await handleConversation(
@@ -2266,6 +2344,11 @@ describe("handleConversation", () => {
       },
       createDeps({
         agentMode: "llm",
+        schedulerIntentResolver: async () => ({
+          intent: "trigger_job",
+          confidence: 0.96,
+          jobId: "job_7a7bf7cb-451f-4626-8b4b-6affe71e4b4b",
+        }),
         schedulerControl: {
           listJobs: () => [],
           triggerJob: (input) => {
@@ -2334,7 +2417,7 @@ describe("handleConversation", () => {
     expect(response.text).toBe("Agent handled generic job wording.");
   });
 
-  test("reports latest scheduled run status without invoking the LLM runner", async () => {
+  test("reports latest scheduled run status from scheduler resolver intent", async () => {
     let called = false;
     const response = await handleConversation(
       {
@@ -2343,6 +2426,11 @@ describe("handleConversation", () => {
       },
       createDeps({
         agentMode: "llm",
+        schedulerIntentResolver: async () => ({
+          intent: "latest_run_status",
+          confidence: 0.96,
+          jobId: null,
+        }),
         schedulerControl: {
           listJobs: () => [],
           getLatestRunStatus: () => ({
@@ -2429,18 +2517,21 @@ describe("handleConversation", () => {
     expect(response.text).toContain("workflow side-effect failures: 1");
   });
 
-  test("pauses, resumes, and deletes scheduled jobs without invoking the LLM runner", async () => {
+  test("pauses, resumes, and deletes scheduled jobs from scheduler resolver intent", async () => {
     const cases = [
       {
         text: "pause the existing cron job",
+        intent: "pause_job" as const,
         expected: "Paused scheduled job ai-news-hourly.",
       },
       {
         text: "resume the existing cron job",
+        intent: "resume_job" as const,
         expected: "Resumed scheduled job ai-news-hourly.",
       },
       {
         text: "delete the existing cron job",
+        intent: "delete_job" as const,
         expected: "Deleted scheduled job ai-news-hourly.",
       },
     ];
@@ -2455,6 +2546,11 @@ describe("handleConversation", () => {
         },
         createDeps({
           agentMode: "llm",
+          schedulerIntentResolver: async () => ({
+            intent: item.intent,
+            confidence: 0.96,
+            jobId: null,
+          }),
           schedulerControl: {
             listJobs: () => [],
             pauseJob: (input) => {
@@ -2521,6 +2617,44 @@ describe("handleConversation", () => {
       });
       expect(response.text).toBe(item.expected);
     }
+  });
+
+  test("delegates Slack history task wording to the agent when resolver returns none", async () => {
+    let calledWith = "";
+    const text =
+      "use slack search tool to inspect broader session history and pull the latest 5 failed task/job creation requests from the full conversation, limit search to the past 5 days";
+    const response = await handleConversation(
+      {
+        ...baseRequest,
+        text,
+      },
+      createDeps({
+        agentMode: "llm",
+        schedulerControl: {
+          listJobs: () => {
+            throw new Error("unexpected scheduler control call");
+          },
+          showTask: () => {
+            throw new Error("unexpected scheduler control call");
+          },
+        },
+        schedulerIntentResolver: async () => ({
+          intent: "none",
+          confidence: 0.96,
+          jobId: null,
+        }),
+        agentRunner: stubAgentRunner((input) => {
+          calledWith = input.text;
+          return {
+            classification: "user_private",
+            text: "Searched Slack history.",
+          };
+        }),
+      }),
+    );
+
+    expect(calledWith).toBe(text);
+    expect(response.text).toBe("Searched Slack history.");
   });
 
   test("delegates explicit agent, task, and subagent requests before GitHub fast-paths", async () => {

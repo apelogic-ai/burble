@@ -1380,6 +1380,74 @@ describe("handleToolGatewayRequest", () => {
     });
   });
 
+  test("creates a Google Docs document through the provider gateway", async () => {
+    const response = await handleToolGatewayRequest(
+      config,
+      createStore(googleConnection),
+      "google.docsCreateDocument",
+      request("google.docsCreateDocument", {
+        user: { email: "person@example.com" },
+        input: {
+          name: "Contribution Map",
+          text: "# Enterprise Agent Runtime",
+          sourceMimeType: "text/markdown"
+        }
+      }),
+      {
+        createGoogleDocsDocument: async (token, input) => {
+          expect(token).toBe("google-token");
+          expect(input).toEqual({
+            name: "Contribution Map",
+            text: "# Enterprise Agent Runtime",
+            sourceMimeType: "text/markdown"
+          });
+          return {
+            id: "doc-1",
+            name: "Contribution Map",
+            mimeType: "application/vnd.google-apps.document",
+            webViewLink: "https://docs.google.com/document/d/doc-1/edit"
+          };
+        }
+      }
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      classification: "user_private",
+      content: {
+        id: "doc-1",
+        name: "Contribution Map",
+        mimeType: "application/vnd.google-apps.document",
+        webViewLink: "https://docs.google.com/document/d/doc-1/edit"
+      }
+    });
+  });
+
+  test("lists Google Shared Drives through the provider gateway", async () => {
+    const response = await handleToolGatewayRequest(
+      config,
+      createStore(googleConnection),
+      "google.listSharedDrives",
+      request("google.listSharedDrives", {
+        user: { email: "person@example.com" },
+        input: { query: "Engineering", limit: 2 }
+      }),
+      {
+        listGoogleSharedDrives: async (token, input) => {
+          expect(token).toBe("google-token");
+          expect(input).toEqual({ query: "Engineering", limit: 2 });
+          return [{ id: "drive-1", name: "Engineering" }];
+        }
+      }
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      classification: "user_private",
+      content: [{ id: "drive-1", name: "Engineering" }]
+    });
+  });
+
   test("rejects Google Workspace MIME types for Drive text file creation", async () => {
     let didCallProvider = false;
     const response = await handleToolGatewayRequest(

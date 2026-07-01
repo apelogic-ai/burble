@@ -49,6 +49,7 @@ import {
   createGoogleCalendarEvent,
   createGoogleDriveFolder,
   createGoogleDriveTextFile,
+  createGoogleDocsDocument,
   createGoogleSlidesSlide,
   copyGoogleSlidesPresentation,
   fillGoogleSlidesPlaceholders,
@@ -57,6 +58,7 @@ import {
   getGoogleUser,
   isGoogleWorkspaceDocumentMimeType,
   listGoogleAnalyticsProperties,
+  listGoogleSharedDrives,
   moveGoogleDriveFile,
   getGoogleSlidesPresentation,
   probeGoogleSlidesTemplate,
@@ -234,7 +236,9 @@ const defaultDeps = {
   createBranch: createGitHubBranch,
   getGoogleUser,
   searchGoogleDriveFiles,
+  listGoogleSharedDrives,
   createGoogleDriveTextFile,
+  createGoogleDocsDocument,
   getGoogleDriveFile,
   updateGoogleDriveTextFile,
   appendGoogleDriveTextFile,
@@ -1475,6 +1479,19 @@ export async function handleToolGatewayRequest(
       );
     }
 
+    case "google.listSharedDrives": {
+      if (!isListGoogleSharedDrivesInput(body.input)) {
+        return new Response("Invalid tool input", { status: 400 });
+      }
+
+      return respondWithAudit(
+        await googleTools.listSharedDrives.execute({
+          connection,
+          input: body.input
+        })
+      );
+    }
+
     case "google.getDriveFile": {
       if (!isGetGoogleDriveFileInput(body.input)) {
         return new Response("Invalid tool input", { status: 400 });
@@ -1495,6 +1512,24 @@ export async function handleToolGatewayRequest(
 
       return respondWithAudit(
         await googleTools.createDriveTextFile.execute({
+          connection,
+          input: {
+            ...body.input,
+            text: body.input.text ?? ""
+          }
+        })
+      );
+    }
+
+    case "google.docsCreateDocument":
+    case "google.createGoogleDoc":
+    case "google.createDocsDocument": {
+      if (!isCreateGoogleDocsDocumentInput(body.input)) {
+        return new Response("Invalid tool input", { status: 400 });
+      }
+
+      return respondWithAudit(
+        await googleTools.createDocsDocument.execute({
           connection,
           input: {
             ...body.input,
@@ -2031,8 +2066,12 @@ function isKnownTool(toolName: string): boolean {
     toolName === "github.createBranch" ||
     toolName === "google.getAuthenticatedUser" ||
     toolName === "google.searchDriveFiles" ||
+    toolName === "google.listSharedDrives" ||
     toolName === "google.getDriveFile" ||
     toolName === "google.createDriveTextFile" ||
+    toolName === "google.docsCreateDocument" ||
+    toolName === "google.createGoogleDoc" ||
+    toolName === "google.createDocsDocument" ||
     toolName === "google.updateDriveTextFile" ||
     toolName === "google.appendToDriveTextFile" ||
     toolName === "google.createDriveFolder" ||
@@ -3129,6 +3168,13 @@ function isSearchGoogleDriveFilesInput(input: unknown): input is {
   return isOptionalObject(input) && optionalString(input.query) && optionalLimit(input.limit, 20);
 }
 
+function isListGoogleSharedDrivesInput(input: unknown): input is {
+  query?: string;
+  limit?: number;
+} {
+  return isOptionalObject(input) && optionalString(input.query) && optionalLimit(input.limit, 20);
+}
+
 function isGetGoogleDriveFileInput(input: unknown): input is {
   fileId: string;
   includeContent?: boolean;
@@ -3158,6 +3204,28 @@ function isCreateGoogleDriveTextFileInput(input: unknown): input is {
     optionalString(input.mimeType) &&
     (typeof input.mimeType !== "string" ||
       !isGoogleWorkspaceDocumentMimeType(input.mimeType))
+  );
+}
+
+function isCreateGoogleDocsDocumentInput(input: unknown): input is {
+  name: string;
+  text?: string;
+  sourceMimeType?: string;
+  parentId?: string;
+} {
+  if (!isOptionalObject(input)) {
+    return false;
+  }
+  return (
+    typeof input.name === "string" &&
+    input.name.trim().length > 0 &&
+    input.name.length <= 200 &&
+    (input.text === undefined ||
+      (typeof input.text === "string" && input.text.length <= 200_000)) &&
+    optionalString(input.sourceMimeType) &&
+    optionalString(input.parentId) &&
+    (typeof input.sourceMimeType !== "string" ||
+      !isGoogleWorkspaceDocumentMimeType(input.sourceMimeType))
   );
 }
 

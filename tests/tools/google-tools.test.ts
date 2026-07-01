@@ -305,6 +305,84 @@ describe("createGoogleTools", () => {
     });
   });
 
+  test("lists Shared Drives with the caller token", async () => {
+    const tools = createGoogleTools({
+      getGoogleUser: async () => ({
+        email: "person@google.example"
+      }),
+      searchGoogleDriveFiles: async () => [],
+      listGoogleSharedDrives: async (token, input) => {
+        expect(token).toBe("google-token");
+        expect(input).toEqual({ query: "Engineering", limit: 2 });
+        return [{ id: "drive-1", name: "Engineering" }];
+      },
+      createGoogleDriveTextFile: async () => ({
+        id: "file-1",
+        name: "Test"
+      }),
+      searchGoogleCalendarEvents: async () => [],
+      searchGoogleMailMessages: async () => []
+    });
+
+    const result = await tools.listSharedDrives.execute({
+      connection,
+      input: { query: "Engineering", limit: 2 }
+    });
+
+    expect(result).toEqual({
+      classification: "user_private",
+      content: [{ id: "drive-1", name: "Engineering" }]
+    });
+  });
+
+  test("creates Google Docs documents with caller token and sanitized result", async () => {
+    const tools = createGoogleTools({
+      getGoogleUser: async () => ({
+        email: "person@google.example"
+      }),
+      searchGoogleDriveFiles: async () => [],
+      createGoogleDriveTextFile: async () => ({
+        id: "file-1",
+        name: "Test"
+      }),
+      createGoogleDocsDocument: async (token, input) => {
+        expect(token).toBe("google-token");
+        expect(input).toEqual({
+          name: "Contribution Map",
+          text: "# Enterprise Agent Runtime",
+          sourceMimeType: "text/markdown"
+        });
+        return {
+          id: "doc-1",
+          name: "Contribution Map",
+          mimeType: "application/vnd.google-apps.document",
+          webViewLink: "https://docs.google.com/document/d/doc-1/edit"
+        };
+      },
+      searchGoogleCalendarEvents: async () => [],
+      searchGoogleMailMessages: async () => []
+    });
+
+    const result = await tools.createDocsDocument.execute({
+      connection,
+      input: {
+        name: "Contribution Map",
+        text: "# Enterprise Agent Runtime",
+        sourceMimeType: "text/markdown"
+      }
+    });
+
+    expect(result).toEqual({
+      classification: "user_private",
+      content: {
+        id: "doc-1",
+        name: "Contribution Map",
+        mimeType: "application/vnd.google-apps.document",
+        webViewLink: "https://docs.google.com/document/d/doc-1/edit"
+      }
+    });
+  });
+
   test("lists Google Analytics properties with the caller token", async () => {
     const tools = createGoogleTools({
       getGoogleUser: async () => ({

@@ -10,6 +10,7 @@ import {
   type GoogleCreatedDraft,
   type GoogleDriveCreatedFile,
   type GoogleDriveFileContent,
+  type GoogleSharedDrive,
   type GoogleSlidesCreateSlideInput,
   type GoogleSlidesCreatedSlide,
   type GoogleSlidesCopiedPresentation,
@@ -33,6 +34,10 @@ export type GoogleToolDeps = {
     token: string,
     input: { query?: string; limit?: number }
   ) => Promise<GoogleDriveFile[]>;
+  listGoogleSharedDrives?: (
+    token: string,
+    input: { query?: string; limit?: number }
+  ) => Promise<GoogleSharedDrive[]>;
   searchGoogleCalendarEvents: (
     token: string,
     input: { query?: string; timeMin?: string; timeMax?: string; limit?: number }
@@ -85,6 +90,15 @@ export type GoogleToolDeps = {
   createGoogleDriveTextFile: (
     token: string,
     input: { name: string; text: string; mimeType?: string }
+  ) => Promise<GoogleDriveCreatedFile>;
+  createGoogleDocsDocument?: (
+    token: string,
+    input: {
+      name: string;
+      text: string;
+      sourceMimeType?: string;
+      parentId?: string;
+    }
   ) => Promise<GoogleDriveCreatedFile>;
   getGoogleDriveFile?: (
     token: string,
@@ -187,6 +201,33 @@ export function createGoogleTools(deps: GoogleToolDeps) {
       }
     },
 
+    listSharedDrives: {
+      async execute(
+        context: GoogleToolContext & {
+          input?: { query?: string; limit?: number };
+        }
+      ): Promise<ToolResult<GoogleSharedDrive[] | GoogleAuthErrorContent>> {
+        const drives = await withGoogleToken(
+          deps,
+          context.connection,
+          (accessToken) => {
+            if (!deps.listGoogleSharedDrives) {
+              throw new Error("Google Shared Drives listing is not configured");
+            }
+            return deps.listGoogleSharedDrives(accessToken, context.input ?? {});
+          }
+        );
+        if (isGoogleAuthErrorResult(drives)) {
+          return drives;
+        }
+
+        return {
+          classification: "user_private",
+          content: drives.slice(0, 20)
+        };
+      }
+    },
+
     createDriveTextFile: {
       async execute(
         context: GoogleToolContext & {
@@ -214,6 +255,41 @@ export function createGoogleTools(deps: GoogleToolDeps) {
             ...(file.mimeType ? { mimeType: file.mimeType } : {}),
             ...(file.webViewLink ? { webViewLink: file.webViewLink } : {})
           }
+        };
+      }
+    },
+
+    createDocsDocument: {
+      async execute(
+        context: GoogleToolContext & {
+          input: {
+            name: string;
+            text?: string;
+            sourceMimeType?: string;
+            parentId?: string;
+          };
+        }
+      ): Promise<ToolResult<GoogleDriveCreatedFile | GoogleAuthErrorContent>> {
+        const file = await withGoogleToken(
+          deps,
+          context.connection,
+          (accessToken) => {
+            if (!deps.createGoogleDocsDocument) {
+              throw new Error("Google Docs document creation is not configured");
+            }
+            return deps.createGoogleDocsDocument(accessToken, {
+              ...context.input,
+              text: context.input.text ?? ""
+            });
+          }
+        );
+        if (isGoogleAuthErrorResult(file)) {
+          return file;
+        }
+
+        return {
+          classification: "user_private",
+          content: sanitizeCreatedDriveFile(file)
         };
       }
     },

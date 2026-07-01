@@ -799,6 +799,40 @@
           }
         },
         {
+          "name": "google_docs_create_document",
+          "alias": "google.docsCreateDocument",
+          "description": "Create a Google Docs document from plain text or Markdown content by importing it into Google Drive as a Google Workspace document. Use this for explicit requests to convert text or Markdown into a Google Doc.",
+          "input": {
+            "name": {
+              "description": "Google Docs document title",
+              "type": "string",
+              "min": 1,
+              "max": 200
+            },
+            "text": {
+              "optional": true,
+              "description": "Text or Markdown body to import. Defaults to an empty document.",
+              "type": "string",
+              "max": 200000
+            },
+            "sourceMimeType": {
+              "optional": true,
+              "description": "Source content MIME type. Defaults to text/markdown; use text/plain for plain text.",
+              "aliases": [
+                "mimeType",
+                "source_mime_type"
+              ],
+              "type": "string"
+            },
+            "parentId": {
+              "optional": true,
+              "description": "Optional destination Drive folder ID.",
+              "type": "string",
+              "min": 1
+            }
+          }
+        },
+        {
           "name": "google_get_authenticated_user",
           "alias": "google.getAuthenticatedUser",
           "description": "Return the Google identity connected to this Slack user.",
@@ -818,6 +852,25 @@
               "optional": true,
               "description": "Whether to include exported/downloaded text content. Defaults to true.",
               "type": "boolean"
+            }
+          }
+        },
+        {
+          "name": "google_list_shared_drives",
+          "alias": "google.listSharedDrives",
+          "description": "List Shared Drives visible to this Slack user's connected Google account. Use this when the user asks for Shared Drives or Team Drives; Google Drive file search only searches files and folders.",
+          "input": {
+            "query": {
+              "optional": true,
+              "description": "Optional Shared Drive name filter",
+              "type": "string"
+            },
+            "limit": {
+              "optional": true,
+              "type": "number",
+              "int": true,
+              "max": 20,
+              "positive": true
             }
           }
         },

@@ -34,7 +34,8 @@ function runtimeRequest(
 }
 
 function schedulerConversationDeps(
-  schedulerControl: ConversationDeps["schedulerControl"]
+  schedulerControl: ConversationDeps["schedulerControl"],
+  schedulerIntentResolver: NonNullable<ConversationDeps["schedulerIntentResolver"]>
 ): ConversationDeps {
   return {
     createGitHubOAuthUrl: () => "https://github.example/oauth",
@@ -49,6 +50,7 @@ function schedulerConversationDeps(
     },
     agentMode: "llm",
     schedulerControl,
+    schedulerIntentResolver,
     agentRunner: {
       name: "throwing-test-runner",
       capabilities: {
@@ -64,7 +66,7 @@ function schedulerConversationDeps(
 }
 
 describe("scheduler control conformance", () => {
-  test("runtime gateway triggers are visible to deterministic scheduler commands", async () => {
+  test("runtime gateway triggers are visible to resolver-driven scheduler commands", async () => {
     const store = createTokenStore(":memory:");
     const runtimeToken = "runtime-token-u123";
     const runtime = store.getOrCreateAgentRuntime({
@@ -91,7 +93,20 @@ describe("scheduler control conformance", () => {
     });
 
     const schedulerControl = createSchedulerControlPlane(store);
-    const deps = schedulerConversationDeps(schedulerControl);
+    const deps = schedulerConversationDeps(schedulerControl, async ({ text }) => {
+      if (text.includes("manual cron job run")) {
+        return {
+          intent: "latest_run_status",
+          confidence: 0.96,
+          jobId: null
+        };
+      }
+      return {
+        intent: "list_jobs",
+        confidence: 0.96,
+        jobId: null
+      };
+    });
     const listResponse = await handleConversation(
       {
         source: "slack",
@@ -209,7 +224,7 @@ describe("scheduler control conformance", () => {
     store.close();
   });
 
-  test("runtime-created scheduler jobs are controlled by deterministic commands", async () => {
+  test("runtime-created scheduler jobs are controlled by resolver-driven commands", async () => {
     const store = createTokenStore(":memory:");
     const runtimeToken = "runtime-token-u123";
     const runtime = store.getOrCreateAgentRuntime({
@@ -242,7 +257,11 @@ describe("scheduler control conformance", () => {
     expect(jobId).toStartWith("job_");
 
     const schedulerControl = createSchedulerControlPlane(store);
-    const deps = schedulerConversationDeps(schedulerControl);
+    const deps = schedulerConversationDeps(schedulerControl, async () => ({
+      intent: "list_jobs",
+      confidence: 0.96,
+      jobId: null
+    }));
     const listResponse = await handleConversation(
       {
         source: "slack",
