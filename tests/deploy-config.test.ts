@@ -41,6 +41,12 @@ const ansibleEnvTemplate = await Bun.file(
 const ansibleGroupVars = await Bun.file(
   "deploy/dev/ansible/group_vars/all.yml"
 ).text();
+const ansibleRoleTasks = await Bun.file(
+  "deploy/dev/ansible/roles/burble-app/tasks/main.yml"
+).text();
+const ansibleRoleHandlers = await Bun.file(
+  "deploy/dev/ansible/roles/burble-app/handlers/main.yml"
+).text();
 const k8sReadme = await Bun.file("deploy/k8s/README.md").text();
 const k8sConsumerRunbook = await Bun.file("deploy/k8s/CONSUMER.md").text();
 const k8sValues = await Bun.file("deploy/k8s/chart/values.yaml").text();
@@ -450,6 +456,20 @@ describe("dev deploy config", () => {
     ]) {
       expect(ansibleGroupVars).toContain(name);
     }
+  });
+
+  test("preserves the active Docker Compose overlay stack in Ansible deploys", () => {
+    expect(ansibleRoleTasks).toContain(
+      'com.docker.compose.project.config_files'
+    );
+    expect(ansibleRoleTasks).toContain("burble_compose_config_files");
+    expect(ansibleRoleTasks).toContain("burble_compose_files");
+    expect(ansibleRoleTasks).toContain("map('basename') | list");
+    expect(ansibleRoleTasks).toContain("['docker-compose.yml']");
+    expect(ansibleRoleTasks).toContain("files: \"{{ burble_compose_files }}\"");
+    expect(ansibleRoleHandlers).toContain(
+      "files: \"{{ burble_compose_files | default(['docker-compose.yml']) }}\""
+    );
   });
 
   test("provides an optional personal runtime compose override", () => {

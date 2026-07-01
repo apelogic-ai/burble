@@ -58,9 +58,38 @@
     backup: yes
   notify: Restart burble-app
 
+- name: Inspect active Docker Compose file stack
+  ansible.builtin.command:
+    argv:
+      - docker
+      - inspect
+      - compose-burble-app-1
+      - --format
+      - '{{ "{{" }} index .Config.Labels "com.docker.compose.project.config_files" {{ "}}" }}'
+  register: burble_compose_config_files
+  changed_when: false
+  failed_when: false
+  become_user: ubuntu
+
+- name: Preserve active Docker Compose files
+  ansible.builtin.set_fact:
+    burble_compose_files: >-
+      {{
+        (burble_compose_config_files.rc == 0 and (burble_compose_config_files.stdout | trim | length) > 0)
+        | ternary(
+          (burble_compose_config_files.stdout | trim).split(':') | map('basename') | list,
+          ['docker-compose.yml']
+        )
+      }}
+
+- name: Show Docker Compose file stack
+  ansible.builtin.debug:
+    msg: "Using Docker Compose files: {{ burble_compose_files | join(', ') }}"
+
 - name: Build images and bring the stack up
   community.docker.docker_compose_v2:
     project_src: "{{ burble_install_path }}/deploy/dev/compose"
+    files: "{{ burble_compose_files }}"
     state: present
     build: always
   become_user: ubuntu

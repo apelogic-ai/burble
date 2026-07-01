@@ -1,6 +1,7 @@
 - name: Restart burble-app
   community.docker.docker_compose_v2:
     project_src: "{{ burble_install_path }}/deploy/dev/compose"
+    files: "{{ burble_compose_files | default(['docker-compose.yml']) }}"
     state: restarted
     services:
       - burble-app
