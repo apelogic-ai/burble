@@ -998,7 +998,7 @@ describe("scheduler control plane", () => {
     store.close();
   });
 
-  test("rejects scheduled job schedule updates the timer cannot fire", async () => {
+  test("accepts scheduled job schedule updates with numeric cron ranges", async () => {
     const store = createTokenStore(":memory:");
     store.upsertScheduledJob({
       jobId: "job-heart",
@@ -1026,19 +1026,25 @@ describe("scheduler control plane", () => {
         jobId: "job-heart",
         schedule: {
           kind: "cron",
-          expression: "1-5 9 * * mon-fri",
+          expression: "0 9 * * 1-5",
           timezone: "UTC",
         },
       }),
     ).toEqual({
-      ok: false,
-      reason: "invalid_schedule",
-      message: expect.stringContaining("unsupported cron field"),
-      jobs: [expect.objectContaining({ jobId: "job-heart" })],
+      ok: true,
+      job: expect.objectContaining({
+        jobId: "job-heart",
+        schedule: {
+          kind: "cron",
+          expression: "0 9 * * 1-5",
+          timezone: "UTC",
+        },
+        updatedAt: "2026-06-27T17:40:00.000Z",
+      }),
     });
     expect(store.getScheduledJob("job-heart")?.schedule).toEqual({
       kind: "cron",
-      expression: "*/30 * * * *",
+      expression: "0 9 * * 1-5",
       timezone: "UTC",
     });
 

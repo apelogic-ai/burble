@@ -1968,7 +1968,7 @@ describe("handleToolGatewayRequest", () => {
     });
   });
 
-  test("rejects unsupported scheduled job create schedules with HTTP 400", async () => {
+  test("accepts scheduled job create schedules with numeric cron ranges", async () => {
     const response = await handleToolGatewayRequest(
       config,
       createStore(null, runtime, [], null, [], {}, [], null, {}),
@@ -1981,7 +1981,7 @@ describe("handleToolGatewayRequest", () => {
             prompt: "look for fresh AI-related news and post a short summary",
             schedule: {
               kind: "cron",
-              expression: "1-5 9 * * mon-fri",
+              expression: "0 9 * * 1-5",
               timezone: "UTC"
             },
             routeId: "convrt_abcdefabcdefabcdefabcdef"
@@ -1992,13 +1992,19 @@ describe("handleToolGatewayRequest", () => {
       )
     );
 
-    expect(response.status).toBe(400);
-    expect(await response.json()).toEqual({
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
       classification: "user_private",
       content: {
-        ok: false,
-        reason: "invalid_schedule",
-        message: expect.stringContaining("unsupported cron field")
+        ok: true,
+        job: {
+          title: "Weekday AI news summary",
+          schedule: {
+            kind: "cron",
+            expression: "0 9 * * 1-5",
+            timezone: "UTC"
+          }
+        }
       }
     });
   });

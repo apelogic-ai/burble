@@ -63,6 +63,53 @@ describe("scheduler timer", () => {
     store.close();
   });
 
+  test("supports numeric cron ranges for weekday schedules", async () => {
+    const store = createTokenStore(":memory:");
+    store.upsertScheduledJob({
+      jobId: "job-weekday-digest",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      title: "Weekday digest",
+      prompt: "Summarize blockers and stale reviews.",
+      schedule: {
+        kind: "cron",
+        expression: "0 9 * * 1-5",
+        timezone: "UTC",
+      },
+      runtimeType: "openclaw",
+      state: "scheduled",
+      now: new Date("2026-06-26T08:00:00.000Z"),
+    });
+    const executed: string[] = [];
+    const fridayTimer = createSchedulerTimer({
+      store,
+      now: () => new Date("2026-06-26T09:00:00.000Z"),
+      newRunId: () => "jobrun-friday",
+      executeRun: async (runId) => {
+        executed.push(runId);
+      },
+    });
+
+    expect(await fridayTimer.tick()).toEqual({
+      queuedRunIds: ["jobrun-friday"],
+    });
+    expect(executed).toEqual(["jobrun-friday"]);
+
+    const saturdayTimer = createSchedulerTimer({
+      store,
+      now: () => new Date("2026-06-27T09:00:00.000Z"),
+      newRunId: () => "jobrun-saturday",
+      executeRun: async (runId) => {
+        executed.push(runId);
+      },
+    });
+
+    expect(await saturdayTimer.tick()).toEqual({ queuedRunIds: [] });
+    expect(store.getAgentJobRun("jobrun-saturday")).toBeNull();
+
+    store.close();
+  });
+
   test("queues due interval jobs and hands them to the run executor", async () => {
     const store = createTokenStore(":memory:");
     const workflowStore = createInMemoryTaskWorkflowEventStore();

@@ -138,6 +138,7 @@ describe("scheduler intent resolver", () => {
 
   test("includes current task specs for bounded job disambiguation", async () => {
     let prompt = "";
+    let system = "";
     const resolver = createLlmSchedulerIntentResolver({
       model: "openai:gpt-test",
       resolveModel: () =>
@@ -147,6 +148,7 @@ describe("scheduler intent resolver", () => {
         }) as never,
       generateText: async (request) => {
         prompt = request.prompt;
+        system = request.system;
         return {
           text: '{"intent":"trigger_job","confidence":0.97,"jobId":"job_github_checker"}',
         };
@@ -174,6 +176,7 @@ describe("scheduler intent resolver", () => {
     expect(prompt).toContain("Current task/job specs");
     expect(prompt).toContain('"create"');
     expect(prompt).toContain('"schedule"');
+    expect(system).toContain('"0 9 * * 1-5"');
     expect(prompt).toContain("job_github_checker");
     expect(prompt).toContain("GitHub PR checker");
     expect(result).toEqual({

@@ -446,6 +446,20 @@ function cronFieldMatches(
       (value - min) % interval === 0
     );
   }
+  const range = /^(\d+)-(\d+)$/.exec(expression);
+  if (range) {
+    const start = Number(range[1]);
+    const end = Number(range[2]);
+    return (
+      Number.isSafeInteger(start) &&
+      Number.isSafeInteger(end) &&
+      start >= min &&
+      end <= max &&
+      start <= end &&
+      value >= start &&
+      value <= end
+    );
+  }
   const exact = Number(expression);
   return Number.isSafeInteger(exact) && exact >= min && exact <= max
     ? value === exact
@@ -464,6 +478,18 @@ function isSupportedCronFieldExpression(
   if (step) {
     const interval = Number(step[1]);
     return Number.isSafeInteger(interval) && interval > 0;
+  }
+  const range = /^(\d+)-(\d+)$/.exec(expression);
+  if (range) {
+    const start = Number(range[1]);
+    const end = Number(range[2]);
+    return (
+      Number.isSafeInteger(start) &&
+      Number.isSafeInteger(end) &&
+      start >= min &&
+      end <= max &&
+      start <= end
+    );
   }
   const exact = Number(expression);
   return Number.isSafeInteger(exact) && exact >= min && exact <= max;
