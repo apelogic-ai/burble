@@ -25,6 +25,7 @@ import {
   buildAgentHomeSettings,
   buildSyncedAgentHomeSettings,
   buildAgentRuntimeManageModalView,
+  buildScheduledTaskDetailsModalView,
   buildScheduledTaskRunsModalView,
   buildAuthResponse,
   buildHelpResponse,
@@ -2165,6 +2166,25 @@ describe("buildAppHomeView", () => {
   });
 
   test("shows scheduled tasks with management actions in App Home", () => {
+    const store = createTokenStore(":memory:");
+    store.getOrCreateAgentRuntime({
+      workspaceId: "T123",
+      slackUserId: "U123",
+      engine: "burble-native",
+      endpointUrl: "http://runtime:8080",
+      authTokenHash: "hash",
+      statePath: "/data/state",
+      configPath: "/data/config/runtime.json",
+      workspacePath: "/data/workspace",
+      sandboxId: "sandbox-home",
+      policyHash: "policy-home"
+    });
+    const agentSettings = buildAgentHomeSettings({
+      config: agentConfig,
+      store,
+      workspaceId: "T123",
+      slackUserId: "U123"
+    });
     const view = buildAppHomeView({
       githubUrl: "https://example.test/github",
       googleUrl: "https://example.test/google",
@@ -2232,10 +2252,14 @@ describe("buildAppHomeView", () => {
             latestRun: { ok: false, reason: "no_runs" }
           }
         ]
-      }
+      },
+      agentSettings
     });
     const serialized = JSON.stringify(view);
 
+    expect(serialized.indexOf("Scheduled tasks")).toBeLessThan(
+      serialized.indexOf("Agent runtime")
+    );
     expect(serialized).toContain("Scheduled tasks");
     expect(serialized).toContain("Showing 2 of 6 tasks");
     expect(serialized).toContain("Daily account summary");
@@ -2243,9 +2267,75 @@ describe("buildAppHomeView", () => {
     expect(serialized).toContain("scheduled_task_run");
     expect(serialized).toContain("scheduled_task_pause");
     expect(serialized).toContain("scheduled_task_resume");
+    expect(serialized).toContain("scheduled_task_details");
     expect(serialized).toContain("scheduled_task_validate");
     expect(serialized).toContain("scheduled_task_runs");
     expect(serialized).toContain("scheduled_task_delete");
+
+    store.close();
+  });
+
+  test("explains empty scheduled tasks in App Home", () => {
+    const view = buildAppHomeView({
+      githubUrl: "https://example.test/github",
+      googleUrl: "https://example.test/google",
+      hubspotUrl: "https://example.test/hubspot",
+      jiraUrl: "https://example.test/jira",
+      slackUrl: "https://example.test/slack",
+      connections: {
+        github: null,
+        google: null,
+        hubspot: null,
+        jira: null,
+        slack: null
+      },
+      scheduledTasks: {
+        totalTasks: 0,
+        items: []
+      }
+    });
+    const serialized = JSON.stringify(view);
+
+    expect(serialized).toContain("No scheduled tasks are configured yet.");
+    expect(serialized).toContain("Messages");
+    expect(serialized).toContain("create task every weekday at 9 AM");
+  });
+
+  test("shows scheduled task details with prompt and tools", () => {
+    const view = buildScheduledTaskDetailsModalView({
+      ok: true,
+      task: {
+        taskId: "job_daily",
+        jobId: "job_daily",
+        title: "Daily account summary",
+        prompt: "Summarize GitHub PRs and Jira issues.",
+        schedule: {
+          kind: "cron",
+          expression: "0 9 * * 1-5",
+          timezone: "UTC"
+        },
+        state: "scheduled",
+        runtimeType: "burble-native",
+        requiredTools: ["github_search_issues", "jira_search_issues"],
+        routeId: "route_123",
+        updatedAt: "2026-06-30T10:00:00.000Z"
+      },
+      validation: {
+        ok: true,
+        expectedTools: ["github_search_issues", "jira_search_issues"],
+        grantedTools: ["github_search_issues", "jira_search_issues"],
+        errors: [],
+        warnings: []
+      }
+    });
+    const serialized = JSON.stringify(view);
+
+    expect(view.type).toBe("modal");
+    expect(serialized).toContain("Task details");
+    expect(serialized).toContain("Daily account summary");
+    expect(serialized).toContain("Summarize GitHub PRs and Jira issues.");
+    expect(serialized).toContain("github_search_issues");
+    expect(serialized).toContain("jira_search_issues");
   });
 
   test("caps the scheduled task run modal at five runs", () => {
