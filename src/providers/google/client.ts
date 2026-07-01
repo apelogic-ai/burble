@@ -403,7 +403,7 @@ export async function getGoogleUser(token: string): Promise<GoogleUser> {
 
 export async function searchGoogleDriveFiles(
   token: string,
-  input: { query?: string; limit?: number }
+  input: { query?: string; limit?: number; sharedDriveId?: string; mimeType?: string }
 ): Promise<GoogleDriveFile[]> {
   const url = new URL("https://www.googleapis.com/drive/v3/files");
   url.searchParams.set("pageSize", String(clampLimit(input.limit, 10, 20)));
@@ -412,12 +412,21 @@ export async function searchGoogleDriveFiles(
     "files(id,name,mimeType,webViewLink,modifiedTime)"
   );
   url.searchParams.set("orderBy", "modifiedTime desc");
+  url.searchParams.set("supportsAllDrives", "true");
+  url.searchParams.set("includeItemsFromAllDrives", "true");
+  if (input.sharedDriveId?.trim()) {
+    url.searchParams.set("corpora", "drive");
+    url.searchParams.set("driveId", input.sharedDriveId.trim());
+  }
+  const clauses = ["trashed = false"];
   if (input.query?.trim()) {
     const escaped = escapeDriveQueryString(input.query.trim());
-    url.searchParams.set("q", `trashed = false and name contains '${escaped}'`);
-  } else {
-    url.searchParams.set("q", "trashed = false");
+    clauses.push(`name contains '${escaped}'`);
   }
+  if (input.mimeType?.trim()) {
+    clauses.push(`mimeType = '${escapeDriveQueryString(input.mimeType.trim())}'`);
+  }
+  url.searchParams.set("q", clauses.join(" and "));
 
   const response = await fetch(url, { headers: googleHeaders(token) });
   const body = (await response.json()) as {

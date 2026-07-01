@@ -3691,7 +3691,9 @@ describe("handleToolGatewayRequest", () => {
           input: {
             job_id: "ai-news-hourly",
             query: "AI News Scratchpad",
-            limit: 1
+            limit: 1,
+            sharedDriveId: "drive-1",
+            mimeType: "application/vnd.google-apps.document"
           }
         },
         "runtime-token-u123",
@@ -3702,7 +3704,9 @@ describe("handleToolGatewayRequest", () => {
           expect(token).toBe("google-token");
           expect(input).toEqual({
             query: "AI News Scratchpad",
-            limit: 1
+            limit: 1,
+            sharedDriveId: "drive-1",
+            mimeType: "application/vnd.google-apps.document"
           });
           return [{ id: "file-1", name: "AI News Scratchpad" }];
         }

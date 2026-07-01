@@ -12,13 +12,21 @@ tools:
     alias: google.searchDriveFiles
     implementation: searchDriveFiles
     title: Google Drive file search
-    description: Search Google Drive files visible to this Slack user's connected Google account.
+    description: Search Google Drive files visible to this Slack user's connected Google account. To search inside a Shared Drive, first call google.listSharedDrives, then pass the selected Shared Drive id as sharedDriveId. Use mimeType application/vnd.google-apps.document when the user asks for Google Docs.
     risk: read
     input:
       query:
         type: string
         optional: true
         description: Optional Drive search terms
+      sharedDriveId:
+        type: string
+        optional: true
+        description: Optional Shared Drive id returned by google.listSharedDrives. When set, search is scoped to that Shared Drive.
+      mimeType:
+        type: string
+        optional: true
+        description: Optional exact MIME type filter, such as application/vnd.google-apps.document for Google Docs.
       limit:
         type: number
         int: true

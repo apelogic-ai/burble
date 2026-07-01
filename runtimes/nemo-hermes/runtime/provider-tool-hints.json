@@ -931,11 +931,21 @@
         {
           "name": "google_search_drive_files",
           "alias": "google.searchDriveFiles",
-          "description": "Search Google Drive files visible to this Slack user's connected Google account.",
+          "description": "Search Google Drive files visible to this Slack user's connected Google account. To search inside a Shared Drive, first call google.listSharedDrives, then pass the selected Shared Drive id as sharedDriveId. Use mimeType application/vnd.google-apps.document when the user asks for Google Docs.",
           "input": {
             "query": {
               "optional": true,
               "description": "Optional Drive search terms",
+              "type": "string"
+            },
+            "sharedDriveId": {
+              "optional": true,
+              "description": "Optional Shared Drive id returned by google.listSharedDrives. When set, search is scoped to that Shared Drive.",
+              "type": "string"
+            },
+            "mimeType": {
+              "optional": true,
+              "description": "Optional exact MIME type filter, such as application/vnd.google-apps.document for Google Docs.",
               "type": "string"
             },
             "limit": {

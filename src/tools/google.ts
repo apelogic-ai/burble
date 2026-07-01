@@ -32,7 +32,7 @@ export type GoogleToolDeps = {
   getGoogleUser: (token: string) => Promise<GoogleUser>;
   searchGoogleDriveFiles: (
     token: string,
-    input: { query?: string; limit?: number }
+    input: { query?: string; limit?: number; sharedDriveId?: string; mimeType?: string }
   ) => Promise<GoogleDriveFile[]>;
   listGoogleSharedDrives?: (
     token: string,
@@ -175,7 +175,7 @@ export function createGoogleTools(deps: GoogleToolDeps) {
     searchDriveFiles: {
       async execute(
         context: GoogleToolContext & {
-          input?: { query?: string; limit?: number };
+          input?: { query?: string; limit?: number; sharedDriveId?: string; mimeType?: string };
         }
       ): Promise<ToolResult<GoogleDriveFile[] | GoogleAuthErrorContent>> {
         const files = await withGoogleToken(

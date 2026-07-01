@@ -3164,8 +3164,16 @@ function isGitHubCreateBranchInput(input: unknown): input is {
 function isSearchGoogleDriveFilesInput(input: unknown): input is {
   query?: string;
   limit?: number;
+  sharedDriveId?: string;
+  mimeType?: string;
 } {
-  return isOptionalObject(input) && optionalString(input.query) && optionalLimit(input.limit, 20);
+  return (
+    isOptionalObject(input) &&
+    optionalString(input.query) &&
+    optionalString(input.sharedDriveId) &&
+    optionalString(input.mimeType) &&
+    optionalLimit(input.limit, 20)
+  );
 }
 
 function isListGoogleSharedDrivesInput(input: unknown): input is {

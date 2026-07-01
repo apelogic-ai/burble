@@ -349,6 +349,50 @@ describe("Google OAuth and API helpers", () => {
     }
   });
 
+  test("searches Google Docs inside a Shared Drive", async () => {
+    const originalFetch = globalThis.fetch;
+    let requestedUrl = "";
+    globalThis.fetch = (async (input) => {
+      requestedUrl = String(input);
+      return Response.json({
+        files: [
+          {
+            id: "doc-1",
+            name: "Shared roadmap",
+            mimeType: "application/vnd.google-apps.document",
+            webViewLink: "https://docs"
+          }
+        ]
+      });
+    }) as typeof fetch;
+
+    try {
+      const files = await searchGoogleDriveFiles("google-token", {
+        sharedDriveId: "0AMVzF1MTcSu3Uk9PVA",
+        mimeType: "application/vnd.google-apps.document",
+        limit: 5
+      });
+      expect(files).toEqual([
+        {
+          id: "doc-1",
+          name: "Shared roadmap",
+          mimeType: "application/vnd.google-apps.document",
+          webViewLink: "https://docs"
+        }
+      ]);
+      const url = new URL(requestedUrl);
+      expect(url.searchParams.get("supportsAllDrives")).toBe("true");
+      expect(url.searchParams.get("includeItemsFromAllDrives")).toBe("true");
+      expect(url.searchParams.get("corpora")).toBe("drive");
+      expect(url.searchParams.get("driveId")).toBe("0AMVzF1MTcSu3Uk9PVA");
+      expect(url.searchParams.get("q")).toBe(
+        "trashed = false and mimeType = 'application/vnd.google-apps.document'"
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
   test("lists Google Shared Drives through the Drive drives endpoint", async () => {
     const originalFetch = globalThis.fetch;
     globalThis.fetch = (async (input, init) => {
