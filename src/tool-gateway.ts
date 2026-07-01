@@ -49,6 +49,7 @@ import {
   createGoogleCalendarEvent,
   createGoogleDriveFolder,
   createGoogleDriveTextFile,
+  createGoogleDocsDocument,
   createGoogleSlidesSlide,
   copyGoogleSlidesPresentation,
   fillGoogleSlidesPlaceholders,
@@ -57,6 +58,7 @@ import {
   getGoogleUser,
   isGoogleWorkspaceDocumentMimeType,
   listGoogleAnalyticsProperties,
+  listGoogleSharedDrives,
   moveGoogleDriveFile,
   getGoogleSlidesPresentation,
   probeGoogleSlidesTemplate,
@@ -234,7 +236,9 @@ const defaultDeps = {
   createBranch: createGitHubBranch,
   getGoogleUser,
   searchGoogleDriveFiles,
+  listGoogleSharedDrives,
   createGoogleDriveTextFile,
+  createGoogleDocsDocument,
   getGoogleDriveFile,
   updateGoogleDriveTextFile,
   appendGoogleDriveTextFile,
@@ -1475,6 +1479,19 @@ export async function handleToolGatewayRequest(
       );
     }
 
+    case "google.listSharedDrives": {
+      if (!isListGoogleSharedDrivesInput(body.input)) {
+        return new Response("Invalid tool input", { status: 400 });
+      }
+
+      return respondWithAudit(
+        await googleTools.listSharedDrives.execute({
+          connection,
+          input: body.input
+        })
+      );
+    }
+
     case "google.getDriveFile": {
       if (!isGetGoogleDriveFileInput(body.input)) {
         return new Response("Invalid tool input", { status: 400 });
@@ -1500,6 +1517,21 @@ export async function handleToolGatewayRequest(
             ...body.input,
             text: body.input.text ?? ""
           }
+        })
+      );
+    }
+
+    case "google.docsCreateDocument":
+    case "google.createGoogleDoc":
+    case "google.createDocsDocument": {
+      if (!isCreateGoogleDocsDocumentInput(body.input)) {
+        return new Response("Invalid tool input", { status: 400 });
+      }
+
+      return respondWithAudit(
+        await googleTools.createDocsDocument.execute({
+          connection,
+          input: normalizeCreateGoogleDocsDocumentInput(body.input)
         })
       );
     }
@@ -2031,8 +2063,12 @@ function isKnownTool(toolName: string): boolean {
     toolName === "github.createBranch" ||
     toolName === "google.getAuthenticatedUser" ||
     toolName === "google.searchDriveFiles" ||
+    toolName === "google.listSharedDrives" ||
     toolName === "google.getDriveFile" ||
     toolName === "google.createDriveTextFile" ||
+    toolName === "google.docsCreateDocument" ||
+    toolName === "google.createGoogleDoc" ||
+    toolName === "google.createDocsDocument" ||
     toolName === "google.updateDriveTextFile" ||
     toolName === "google.appendToDriveTextFile" ||
     toolName === "google.createDriveFolder" ||
@@ -3125,6 +3161,34 @@ function isGitHubCreateBranchInput(input: unknown): input is {
 function isSearchGoogleDriveFilesInput(input: unknown): input is {
   query?: string;
   limit?: number;
+  scope?: "all" | "shared_with_me" | "shared_drive" | "all_shared_drives";
+  sharedDriveId?: string;
+  sharedDriveName?: string;
+  mimeType?: string;
+  parentId?: string;
+  sharedWithMe?: boolean;
+} {
+  return (
+    isOptionalObject(input) &&
+    optionalString(input.query) &&
+    optionalEnum(input.scope, [
+      "all",
+      "shared_with_me",
+      "shared_drive",
+      "all_shared_drives"
+    ]) &&
+    optionalString(input.sharedDriveId) &&
+    optionalString(input.sharedDriveName) &&
+    optionalString(input.mimeType) &&
+    optionalString(input.parentId) &&
+    optionalBoolean(input.sharedWithMe) &&
+    optionalLimit(input.limit, 20)
+  );
+}
+
+function isListGoogleSharedDrivesInput(input: unknown): input is {
+  query?: string;
+  limit?: number;
 } {
   return isOptionalObject(input) && optionalString(input.query) && optionalLimit(input.limit, 20);
 }
@@ -3159,6 +3223,68 @@ function isCreateGoogleDriveTextFileInput(input: unknown): input is {
     (typeof input.mimeType !== "string" ||
       !isGoogleWorkspaceDocumentMimeType(input.mimeType))
   );
+}
+
+function isCreateGoogleDocsDocumentInput(input: unknown): input is {
+  name: string;
+  text?: string;
+  sourceMimeType?: string;
+  mimeType?: string;
+  source_mime_type?: string;
+  parentId?: string;
+} {
+  if (!isOptionalObject(input)) {
+    return false;
+  }
+  return (
+    typeof input.name === "string" &&
+    input.name.trim().length > 0 &&
+    input.name.length <= 200 &&
+    (input.text === undefined ||
+      (typeof input.text === "string" && input.text.length <= 200_000)) &&
+    optionalString(input.sourceMimeType) &&
+    optionalString(input.mimeType) &&
+    optionalString(input.source_mime_type) &&
+    optionalString(input.parentId) &&
+    validSourceMimeTypeAlias(input.sourceMimeType) &&
+    validSourceMimeTypeAlias(input.mimeType) &&
+    validSourceMimeTypeAlias(input.source_mime_type)
+  );
+}
+
+function normalizeCreateGoogleDocsDocumentInput(input: {
+  name: string;
+  text?: string;
+  sourceMimeType?: string;
+  mimeType?: string;
+  source_mime_type?: string;
+  parentId?: string;
+}): {
+  name: string;
+  text: string;
+  sourceMimeType?: string;
+  parentId?: string;
+} {
+  const sourceMimeType =
+    input.sourceMimeType ?? input.mimeType ?? input.source_mime_type;
+  return {
+    name: input.name,
+    text: input.text ?? "",
+    ...(sourceMimeType ? { sourceMimeType } : {}),
+    ...(input.parentId ? { parentId: input.parentId } : {})
+  };
+}
+
+function validSourceMimeTypeAlias(value: unknown): boolean {
+  if (typeof value !== "string") {
+    return true;
+  }
+  return isSimpleMediaType(value) && !isGoogleWorkspaceDocumentMimeType(value);
+}
+
+function isSimpleMediaType(value: string): boolean {
+  const token = "[!#$%&'*+.^_`|~0-9A-Za-z-]+";
+  return new RegExp(`^${token}/${token}$`).test(value.trim());
 }
 
 function isUpdateGoogleDriveTextFileInput(input: unknown): input is {
@@ -3802,6 +3928,13 @@ function optionalString(value: unknown): boolean {
 
 function optionalBoolean(value: unknown): boolean {
   return value === undefined || typeof value === "boolean";
+}
+
+function optionalEnum(value: unknown, values: readonly string[]): boolean {
+  return (
+    value === undefined ||
+    (typeof value === "string" && values.includes(value))
+  );
 }
 
 function isNonEmptyString(value: unknown): value is string {

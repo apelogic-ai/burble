@@ -11,6 +11,8 @@ import {
   testbedWorkspaceId,
 } from "../src/testbed/slack";
 
+const slackTestbedTimeoutMs = 15_000;
+
 describe("local Slack testbed", () => {
   test("injects Slack-shaped App Home and DM events through Bolt", async () => {
     const config = readConfig({
@@ -113,7 +115,7 @@ describe("local Slack testbed", () => {
       server.stop();
       store.close();
     }
-  });
+  }, slackTestbedTimeoutMs);
 
   test("routes scheduler control DMs through Burble before the runtime", async () => {
     const config = readConfig({
@@ -153,6 +155,20 @@ describe("local Slack testbed", () => {
       runtimeJwtIssuer,
       undefined,
       {
+        schedulerIntentResolver: async ({ text }) => {
+          if (text.includes("run this job")) {
+            return {
+              intent: "trigger_job",
+              confidence: 0.96,
+              jobId: "ai-news-hourly",
+            };
+          }
+          return {
+            intent: "list_jobs",
+            confidence: 0.96,
+            jobId: null,
+          };
+        },
         testbed: true,
       },
     );
@@ -237,7 +253,7 @@ describe("local Slack testbed", () => {
       server.stop();
       store.close();
     }
-  });
+  }, slackTestbedTimeoutMs);
 
   test("creates explicit scheduler DMs through Burble before the runtime", async () => {
     const config = readConfig({
@@ -264,6 +280,30 @@ describe("local Slack testbed", () => {
       runtimeJwtIssuer,
       undefined,
       {
+        schedulerIntentResolver: async ({ text, jobs }) => {
+          if (text.includes("test-run")) {
+            return {
+              intent: "trigger_job",
+              confidence: 0.96,
+              jobId: jobs[0]?.jobId ?? null,
+            };
+          }
+          return {
+            intent: "create_job",
+            confidence: 0.96,
+            jobId: null,
+            create: {
+              title: "Hourly AI news summary",
+              prompt:
+                "Look for latest AI news and summarize them in one paragraph.",
+              schedule: {
+                kind: "cron",
+                expression: "0 * * * *",
+                timezone: "UTC",
+              },
+            },
+          };
+        },
         testbed: true,
       },
     );
@@ -344,5 +384,5 @@ describe("local Slack testbed", () => {
       server.stop();
       store.close();
     }
-  });
+  }, slackTestbedTimeoutMs);
 });

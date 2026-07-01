@@ -64,12 +64,10 @@ async function handleConversationInternal(
     deps,
   );
   const schedulerControlIntent = schedulerResolution.intent;
-  const schedulerJobIdHint =
-    schedulerResolution.jobId ?? readSchedulerJobIdHint(request.text);
+  const schedulerJobIdHint = schedulerResolution.jobId;
   const schedulerCreateRequest =
     schedulerControlIntent === "create_job"
-      ? (schedulerResolution.create ??
-        parseSchedulerCreateRequest(request.text))
+      ? schedulerResolution.create
       : null;
   const schedulerDeliveryUpdateRequest =
     schedulerControlIntent === "update_job_delivery"
@@ -77,9 +75,7 @@ async function handleConversationInternal(
       : null;
   const schedulerScheduleUpdateRequest =
     schedulerControlIntent === "update_job_schedule"
-      ? (normalizeResolvedSchedule(schedulerResolution.schedule) ??
-        parseExplicitIntervalSchedule(request.text)?.value ??
-        null)
+      ? normalizeResolvedSchedule(schedulerResolution.schedule)
       : null;
   const schedulerPromptUpdateRequest =
     schedulerControlIntent === "update_job_prompt"
@@ -544,57 +540,6 @@ function scheduledJobRuntimeType(
   return isAgentRuntimeEngine(family) ? family : engine;
 }
 
-function classifySchedulerControlIntent(text: string): SchedulerControlIntent {
-  const tokens = tokenizeSchedulerControlText(text);
-
-  if (isSchedulerValidateTaskIntent(tokens)) {
-    return "validate_task";
-  }
-  if (isSchedulerJobRunListIntent(tokens)) {
-    return "list_job_runs";
-  }
-  if (isSchedulerListIntent(tokens) && hasSchedulerListReference(tokens)) {
-    return "list_jobs";
-  }
-  if (
-    isSchedulerScheduleUpdateIntent(tokens) &&
-    hasAnyToken(tokens, ["job", "jobs", "task", "tasks", "cron"])
-  ) {
-    return "update_job_schedule";
-  }
-  if (!hasSchedulerActionReference(tokens)) {
-    return null;
-  }
-  if (isSchedulerRunStatusIntent(tokens)) {
-    return "latest_run_status";
-  }
-  if (isSchedulerShowTaskIntent(tokens)) {
-    return "show_task";
-  }
-  if (hasAnyToken(tokens, ["validate", "inspect"])) {
-    return "validate_task";
-  }
-  if (hasAnyToken(tokens, ["pause", "disable", "stop"])) {
-    return "pause_job";
-  }
-  if (hasAnyToken(tokens, ["resume", "enable", "unpause"])) {
-    return "resume_job";
-  }
-  if (hasAnyToken(tokens, ["delete", "remove", "cancel"])) {
-    return "delete_job";
-  }
-  if (isSchedulerDeliveryUpdateIntent(tokens)) {
-    return "update_job_delivery";
-  }
-  if (isSchedulerScheduleUpdateIntent(tokens)) {
-    return "update_job_schedule";
-  }
-  if (isSchedulerTriggerIntent(tokens)) {
-    return "trigger_job";
-  }
-  return null;
-}
-
 async function resolveSchedulerControlIntent(
   request: ConversationRequest,
   deps: ConversationDeps,
@@ -605,13 +550,6 @@ async function resolveSchedulerControlIntent(
   schedule: unknown | null;
   prompt: string | null;
 }> {
-  const fallbackJobId = readSchedulerJobIdHint(request.text);
-  const fallbackCreate = parseSchedulerCreateRequest(request.text);
-  const deterministicIntent =
-    classifyExplicitSchedulerJobIdIntent(request.text) ??
-    classifySchedulerControlIntent(request.text) ??
-    (fallbackCreate ? "create_job" : null);
-
   if (deps.schedulerIntentResolver) {
     try {
       const jobs = deps.schedulerControl
@@ -633,11 +571,10 @@ async function resolveSchedulerControlIntent(
             request.text,
             resolved.jobId,
             jobs,
-            fallbackJobId,
           ),
           create:
             intent === "create_job"
-              ? (normalizeResolverCreateJob(resolved.create) ?? fallbackCreate)
+              ? normalizeResolverCreateJob(resolved.create)
               : null,
           schedule:
             intent === "update_job_schedule"
@@ -652,20 +589,12 @@ async function resolveSchedulerControlIntent(
     } catch {
       // Resolver failures should not make ordinary conversation turns fail.
     }
-
-    return {
-      intent: deterministicIntent,
-      jobId: fallbackJobId,
-      create: fallbackCreate,
-      schedule: null,
-      prompt: null,
-    };
   }
 
   return {
-    intent: deterministicIntent,
+    intent: null,
     jobId: null,
-    create: fallbackCreate,
+    create: null,
     schedule: null,
     prompt: null,
   };
@@ -728,12 +657,7 @@ function resolveSchedulerResolverJobId(
   text: string,
   resolvedJobId: string | null | undefined,
   jobs: Array<{ jobId: string; title: string | null }>,
-  explicitJobId: string | null,
 ): string | null {
-  if (explicitJobId) {
-    return explicitJobId;
-  }
-
   const jobId = sanitizeSchedulerJobId(resolvedJobId);
   if (!jobId) {
     return null;
@@ -760,43 +684,6 @@ function normalizeSchedulerJobTitle(title: string | null): string | null {
   return normalized || null;
 }
 
-function classifyExplicitSchedulerJobIdIntent(
-  text: string,
-): SchedulerControlIntent {
-  if (!readSchedulerJobIdHint(text)) {
-    return null;
-  }
-  const tokens = tokenizeSchedulerControlText(text);
-  if (isSchedulerRunStatusIntent(tokens)) {
-    return "latest_run_status";
-  }
-  if (isSchedulerShowTaskIntent(tokens)) {
-    return "show_task";
-  }
-  if (hasAnyToken(tokens, ["validate", "inspect"])) {
-    return "validate_task";
-  }
-  if (hasAnyToken(tokens, ["pause", "disable", "stop"])) {
-    return "pause_job";
-  }
-  if (hasAnyToken(tokens, ["resume", "enable", "unpause"])) {
-    return "resume_job";
-  }
-  if (hasAnyToken(tokens, ["delete", "remove", "cancel"])) {
-    return "delete_job";
-  }
-  if (isSchedulerDeliveryUpdateIntent(tokens)) {
-    return "update_job_delivery";
-  }
-  if (isSchedulerScheduleUpdateIntent(tokens)) {
-    return "update_job_schedule";
-  }
-  if (hasAnyToken(tokens, ["run", "running", "trigger", "start", "test"])) {
-    return "trigger_job";
-  }
-  return null;
-}
-
 function normalizeResolvedSchedulerIntent(
   result: SchedulerIntentResolverResult,
 ): Exclude<SchedulerControlIntent, null> | null {
@@ -814,6 +701,7 @@ function normalizeResolvedSchedulerIntent(
     result.intent === "update_job_delivery" ||
     result.intent === "update_job_schedule" ||
     result.intent === "update_job_prompt" ||
+    result.intent === "show_task" ||
     result.intent === "validate_task" ||
     result.intent === "latest_run_status"
   ) {
@@ -830,215 +718,6 @@ function sanitizeSchedulerJobId(
     return null;
   }
   return trimmed;
-}
-
-function tokenizeSchedulerControlText(text: string): string[] {
-  return text
-    .toLowerCase()
-    .replace(/cronjobs?/g, "cron jobs")
-    .replace(/[^a-z0-9]+/g, " ")
-    .trim()
-    .split(/\s+/)
-    .filter(Boolean);
-}
-
-function hasSchedulerListReference(tokens: string[]): boolean {
-  if (hasAnyToken(tokens, ["cron"])) {
-    return true;
-  }
-  if (hasAnyToken(tokens, ["task", "tasks"])) {
-    return true;
-  }
-  if (hasScheduledJobReference(tokens)) {
-    return true;
-  }
-  return (
-    tokens.includes("jobs") &&
-    hasAnyToken(tokens, ["current", "configured", "existing"])
-  );
-}
-
-function hasSchedulerActionReference(tokens: string[]): boolean {
-  if (hasSchedulerListReference(tokens)) {
-    return true;
-  }
-  return (
-    tokens.includes("job") &&
-    hasAnyToken(tokens, [
-      "this",
-      "that",
-      "existing",
-      "current",
-      "manual",
-      "manually",
-      "our",
-      "my",
-      "the",
-    ])
-  );
-}
-
-function hasScheduledJobReference(tokens: string[]): boolean {
-  return (
-    hasAdjacentTokens(tokens, "scheduled", "job") ||
-    hasAdjacentTokens(tokens, "scheduled", "jobs")
-  );
-}
-
-function isSchedulerListIntent(tokens: string[]): boolean {
-  if (
-    tokens.length <= 2 &&
-    (hasAdjacentTokens(tokens, "cron", "job") ||
-      hasAdjacentTokens(tokens, "cron", "jobs") ||
-      hasScheduledJobReference(tokens))
-  ) {
-    return true;
-  }
-  if (hasAnyToken(tokens, ["list", "show", "display", "view"])) {
-    return true;
-  }
-  if (
-    hasAnyToken(tokens, ["configured", "existing", "current"]) &&
-    hasAnyToken(tokens, ["what", "which", "any", "have", "there"])
-  ) {
-    return true;
-  }
-  return (
-    hasSequence(tokens, ["set", "up"]) && hasAnyToken(tokens, ["what", "which"])
-  );
-}
-
-function isSchedulerRunStatusIntent(tokens: string[]): boolean {
-  if (hasAnyToken(tokens, ["status", "state"])) {
-    return true;
-  }
-  return (
-    hasAnyToken(tokens, [
-      "finish",
-      "finished",
-      "complete",
-      "completed",
-      "succeed",
-      "succeeded",
-      "fail",
-      "failed",
-    ]) && hasAnyToken(tokens, ["run", "execution", "manual", "manually"])
-  );
-}
-
-function isSchedulerJobRunListIntent(tokens: string[]): boolean {
-  if (!hasAnyToken(tokens, ["list", "show", "display", "view", "recent"])) {
-    return false;
-  }
-  if (hasAnyToken(tokens, ["cron", "task", "tasks", "scheduled"])) {
-    return false;
-  }
-  return (
-    hasAnyToken(tokens, ["run", "runs", "execution", "executions"]) ||
-    hasAdjacentTokens(tokens, "job", "history") ||
-    hasAdjacentTokens(tokens, "job", "runs") ||
-    hasAdjacentTokens(tokens, "jobs", "history") ||
-    hasAnyToken(tokens, ["jobs"])
-  );
-}
-
-function isSchedulerValidateTaskIntent(tokens: string[]): boolean {
-  if (!hasAnyToken(tokens, ["validate", "inspect"])) {
-    return false;
-  }
-  return hasAnyToken(tokens, ["task", "tasks", "job", "jobs", "cron"]);
-}
-
-function isSchedulerShowTaskIntent(tokens: string[]): boolean {
-  if (
-    !hasAnyToken(tokens, ["show", "describe", "detail", "details", "inspect"])
-  ) {
-    return false;
-  }
-  if (
-    hasAnyToken(tokens, ["list", "all", "current"]) &&
-    !hasAnyToken(tokens, ["detail", "details"])
-  ) {
-    return false;
-  }
-  return hasAnyToken(tokens, ["task", "job", "cron"]);
-}
-
-function isSchedulerTriggerIntent(tokens: string[]): boolean {
-  if (!hasAnyToken(tokens, ["run", "running", "trigger", "start"])) {
-    return false;
-  }
-  if (looksLikeSchedulerCreationRequest(tokens)) {
-    return false;
-  }
-  if (
-    hasAnyToken(tokens, ["cron"]) ||
-    hasScheduledJobReference(tokens) ||
-    tokens.some((token) => /^job[_-][a-z0-9_.-]{2,}$/i.test(token))
-  ) {
-    return true;
-  }
-  return (
-    hasAnyToken(tokens, [
-      "manual",
-      "manually",
-      "now",
-      "this",
-      "that",
-      "existing",
-      "current",
-      "our",
-      "my",
-      "the",
-    ]) || hasAnyToken(tokens, ["trigger"])
-  );
-}
-
-function isSchedulerDeliveryUpdateIntent(tokens: string[]): boolean {
-  if (looksLikeSchedulerCreationRequest(tokens)) {
-    return false;
-  }
-  if (!hasAnyToken(tokens, ["change", "modify", "move", "switch", "update"])) {
-    return false;
-  }
-  if (
-    !hasAnyToken(tokens, ["channel", "delivery", "deliver", "post", "send"])
-  ) {
-    return false;
-  }
-  return (
-    hasAnyToken(tokens, ["cron", "task", "tasks"]) ||
-    hasScheduledJobReference(tokens) ||
-    hasSchedulerActionReference(tokens) ||
-    tokens.some((token) => /^job[_-][a-z0-9_.-]{2,}$/i.test(token))
-  );
-}
-
-function isSchedulerScheduleUpdateIntent(tokens: string[]): boolean {
-  if (!hasAnyToken(tokens, ["change", "modify", "reschedule", "update"])) {
-    return false;
-  }
-  if (!(
-    hasAnyToken(tokens, ["hourly", "daily", "weekly"]) ||
-    hasAdjacentTokens(tokens, "every", "minute") ||
-    hasAdjacentTokens(tokens, "every", "minutes") ||
-    tokens.includes("every")
-  )) {
-    return false;
-  }
-  return (
-    hasAnyToken(tokens, ["cron", "job", "jobs", "task", "tasks"]) ||
-    hasScheduledJobReference(tokens) ||
-    tokens.some((token) => /^job[_-][a-z0-9_.-]{2,}$/i.test(token))
-  );
-}
-
-function looksLikeSchedulerCreationRequest(tokens: string[]): boolean {
-  return (
-    hasAnyToken(tokens, ["create", "make", "schedule", "add"]) ||
-    hasAnyToken(tokens, ["every", "hourly", "daily", "weekly"]) ||
-    hasSequence(tokens, ["set", "up"])
-  );
 }
 
 type ParsedSchedulerCreateRequest = {
@@ -1091,150 +770,6 @@ function normalizeSlackChannelName(value: string | null): string | null {
   return normalized || null;
 }
 
-function parseSchedulerCreateRequest(
-  text: string,
-): ParsedSchedulerCreateRequest | null {
-  const tokens = tokenizeSchedulerControlText(text);
-  if (!looksLikeSchedulerCreationRequest(tokens)) {
-    return null;
-  }
-  if (
-    !hasAnyToken(tokens, ["cron", "job"]) &&
-    !hasScheduledJobReference(tokens)
-  ) {
-    return null;
-  }
-
-  const schedule = parseExplicitIntervalSchedule(text);
-  if (!schedule) {
-    return null;
-  }
-
-  const prompt = extractScheduledTaskPrompt(text);
-  if (!prompt) {
-    return null;
-  }
-
-  return {
-    title: inferScheduledJobTitle(prompt, schedule.label),
-    prompt,
-    schedule: schedule.value,
-    scheduleLabel: schedule.label,
-  };
-}
-
-function parseExplicitIntervalSchedule(
-  text: string,
-): { value: unknown; label: string } | null {
-  const normalized = text.toLowerCase();
-  if (
-    /\bhourly\b|\bevery\s+(?:1\s+)?hours?\b|\bevery\s+60\s*(?:m|min|mins|minutes?)\b/.test(
-      normalized,
-    )
-  ) {
-    return {
-      value: { kind: "cron", expression: "0 * * * *", timezone: "UTC" },
-      label: "every 60m",
-    };
-  }
-  if (/\bdaily\b|\bevery\s+(?:1\s+)?days?\b/.test(normalized)) {
-    return {
-      value: { kind: "cron", expression: "0 0 * * *", timezone: "UTC" },
-      label: "every 1d",
-    };
-  }
-  if (/\bweekly\b|\bevery\s+(?:1\s+)?weeks?\b/.test(normalized)) {
-    return {
-      value: { kind: "cron", expression: "0 0 * * 1", timezone: "UTC" },
-      label: "every 1w",
-    };
-  }
-
-  const everyMatch =
-    /\bevery\s+(\d+)\s*(minutes?|mins?|m|hours?|hrs?|h|days?|d)\b/i.exec(text);
-  if (!everyMatch) {
-    return null;
-  }
-
-  const amount = Number(everyMatch[1]);
-  if (!Number.isSafeInteger(amount) || amount <= 0) {
-    return null;
-  }
-  const unit = everyMatch[2].toLowerCase();
-  if (["minute", "minutes", "min", "mins", "m"].includes(unit)) {
-    return {
-      value: {
-        kind: "cron",
-        expression: amount === 1 ? "* * * * *" : `*/${amount} * * * *`,
-        timezone: "UTC",
-      },
-      label: `every ${amount}m`,
-    };
-  }
-  if (["hour", "hours", "hr", "hrs", "h"].includes(unit)) {
-    return {
-      value: {
-        kind: "cron",
-        expression: amount === 1 ? "0 * * * *" : `0 */${amount} * * *`,
-        timezone: "UTC",
-      },
-      label: `every ${amount}h`,
-    };
-  }
-  if (["day", "days", "d"].includes(unit)) {
-    return {
-      value: {
-        kind: "cron",
-        expression: amount === 1 ? "0 0 * * *" : `0 0 */${amount} * *`,
-        timezone: "UTC",
-      },
-      label: `every ${amount}d`,
-    };
-  }
-  return null;
-}
-
-function extractScheduledTaskPrompt(text: string): string {
-  const prompt = text
-    .trim()
-    .replace(
-      /^\s*(?:please\s+)?(?:create|add|make|schedule|set\s+up)\s+(?:an?\s+|new\s+)?(?:(?:hourly|daily|weekly)\s+|every\s+\d+\s*(?:minutes?|mins?|m|hours?|hrs?|h|days?|d|weeks?|w)\s+)?(?:(?:scheduled\s+)?(?:cron\s+job|cronjob|job|task))\s*[,;:-]?\s*(?:to|that|which|for)?\s*/i,
-      "",
-    )
-    .trim()
-    .replace(
-      /^(?:to\s+)?(?:be\s+)?run\s+(?:hourly|daily|weekly|every\s+(?:\d+\s*)?(?:minutes?|mins?|m|hours?|hrs?|h|days?|d|weeks?|w))\s*[,;:-]?\s*(?:to\s+)?/i,
-      "",
-    )
-    .trim()
-    .replace(
-      /\s*(?:,|;|-)?\s*(?:to\s+be\s+)?run\s+(?:hourly|daily|weekly|every\s+(?:\d+\s*)?(?:minutes?|mins?|m|hours?|hrs?|h|days?|d|weeks?|w))\b\s*,?\s*/gi,
-      " ",
-    )
-    .replace(
-      /\s*\b(?:hourly|daily|weekly|every\s+\d+\s*(?:minutes?|mins?|m|hours?|hrs?|h|days?|d|weeks?|w))\b\s*,?\s*/gi,
-      " ",
-    )
-    .replace(
-      /\s*(?:,|;|-)?\s*(?:and\s+)?(?:post|send|report)\s+(?:the\s+)?(?:result|results|output|report)?\s*(?:back\s+)?(?:in|to)\s+(?:this|the\s+current)\s+(?:channel|chat|conversation|thread)\b/gi,
-      " ",
-    )
-    .replace(
-      /\s*(?:,|;|-)?\s*(?:and\s+)?(?:post|send|report)\s+(?:back\s+)?(?:in|to)\s+(?:this|the\s+current)\s+(?:channel|chat|conversation|thread)\b/gi,
-      " ",
-    )
-    .replace(
-      /\s*(?:,|;|-)?\s*(?:in|to)\s+(?:this|the\s+current)\s+(?:channel|chat|conversation|thread)\b/gi,
-      " ",
-    )
-    .replace(/\s+,/g, ",")
-    .replace(/\s{2,}/g, " ")
-    .trim()
-    .replace(/[.。]\s*$/, "")
-    .trim();
-  return normalizeScheduledTaskPrompt(prompt);
-}
-
 function normalizeScheduledTaskPrompt(prompt: string): string {
   const stripped = stripScheduledTaskControlClauses(prompt);
   const normalized = stripped.toLowerCase();
@@ -1275,66 +810,6 @@ function stripScheduledTaskControlClauses(prompt: string): string {
     .trim()
     .replace(/[.。]\s*$/, "")
     .trim();
-}
-
-function inferScheduledJobTitle(prompt: string, scheduleLabel: string): string {
-  const normalized = prompt.toLowerCase();
-  const prefix =
-    scheduleLabel === "every 60m"
-      ? "Hourly"
-      : scheduleLabel === "every 1d"
-        ? "Daily"
-        : scheduleLabel === "every 1w"
-          ? "Weekly"
-          : "Scheduled";
-  if (normalized.includes("ai") && normalized.includes("news")) {
-    return `${prefix} AI news summary`;
-  }
-  if (
-    normalized.includes("github") &&
-    /\b(?:open\s+prs?|pull\s+requests?)\b/.test(normalized)
-  ) {
-    const org = /github\.com\/([a-z0-9_.-]+)/i.exec(prompt)?.[1];
-    return org ? `${prefix} open PRs for ${org}` : `${prefix} open PRs`;
-  }
-  if (normalized.includes("❤️") || /\bheart\s+emoji\b/.test(normalized)) {
-    return `${prefix} heart emoji`;
-  }
-  const words = prompt
-    .replace(/[^a-z0-9 ]+/gi, " ")
-    .trim()
-    .split(/\s+/)
-    .filter(Boolean)
-    .slice(0, 6);
-  if (words.length === 0) {
-    return `${prefix} scheduled job`;
-  }
-  return `${prefix} ${words.join(" ")}`;
-}
-
-function hasAnyToken(tokens: string[], candidates: string[]): boolean {
-  return candidates.some((candidate) => tokens.includes(candidate));
-}
-
-function hasAdjacentTokens(
-  tokens: string[],
-  first: string,
-  second: string,
-): boolean {
-  return tokens.some(
-    (token, index) => token === first && tokens[index + 1] === second,
-  );
-}
-
-function hasSequence(tokens: string[], sequence: string[]): boolean {
-  return tokens.some((token, index) => {
-    if (token !== sequence[0]) {
-      return false;
-    }
-    return sequence.every(
-      (sequenceToken, offset) => tokens[index + offset] === sequenceToken,
-    );
-  });
 }
 
 export function formatScheduledJobList(
@@ -1771,20 +1246,6 @@ export function formatScheduledRunStatusResult(
       ? [`- workflow side-effect failures: ${workflow.sideEffectFailures.length}`]
       : []),
   ].join("\n");
-}
-
-function readSchedulerJobIdHint(text: string): string | null {
-  const match =
-    /\b(?:task|job|cron\s+job|scheduled\s+job)\s+(job_[a-z0-9_.-]{3,})\b/i.exec(
-      text,
-    ) ??
-    /\b(?:task|job|cron\s+job|scheduled\s+job)\s+(?:id\s*)?(?:[:#]\s*|\bis\s+)([a-z0-9][a-z0-9_.-]{2,})\b/i.exec(
-      text,
-    ) ??
-    /\b(?:task|job|cron\s+job|scheduled\s+job)\s+id\s+([a-z0-9][a-z0-9_.-]{2,})\b/i.exec(
-      text,
-    );
-  return match?.[1] ?? null;
 }
 
 function emitConversationStarted(

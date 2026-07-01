@@ -90,7 +90,7 @@ const schedulerIntentSystemPrompt = [
   "create.prompt is the executable task only. Remove schedule and delivery clauses such as every 30 min, hourly, report back here, to this channel.",
   "For update_job_schedule, include schedule with the new cron schedule and include jobId when one current task/job clearly matches the user reference.",
   "For update_job_prompt, include prompt with the new executable task prompt and include jobId when one current task/job clearly matches the user reference.",
-  'Use cron schedules with UTC timezone. Examples: every 30 min => {"kind":"cron","expression":"*/30 * * * *","timezone":"UTC"}; hourly => {"kind":"cron","expression":"0 * * * *","timezone":"UTC"}.',
+  'Use cron schedules with UTC timezone. Examples: every 30 min => {"kind":"cron","expression":"*/30 * * * *","timezone":"UTC"}; hourly => {"kind":"cron","expression":"0 * * * *","timezone":"UTC"}; every weekday at 9 AM => {"kind":"cron","expression":"0 9 * * 1-5","timezone":"UTC"}.',
   "For simple emoji posting tasks, normalize the prompt to: Post exactly this message: <emoji>",
   "Use confidence from 0 to 1.",
   "Only include jobId when the user gives a job id or clearly refers to exactly one current job by title/prompt.",

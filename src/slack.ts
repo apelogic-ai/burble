@@ -36,12 +36,14 @@ import {
   buildGoogleOAuthUrl,
   copyGoogleSlidesPresentation,
   createGoogleDriveTextFile,
+  createGoogleDocsDocument,
   createGoogleSlidesSlide,
   fillGoogleSlidesPlaceholders,
   getGoogleAnalyticsMetadata,
   getGoogleSlidesPresentation,
   getGoogleUser,
   listGoogleAnalyticsProperties,
+  listGoogleSharedDrives,
   probeGoogleSlidesTemplate,
   refreshGoogleAccessToken,
   runGoogleAnalyticsReport,
@@ -109,6 +111,7 @@ import {
   createSchedulerControlPlane,
   type SchedulerControlPlane,
   type SchedulerRunStatusResult,
+  type SchedulerShowTaskResult,
   type SchedulerValidateTaskResult,
   type SchedulerTaskSummary
 } from "./scheduler/control-plane";
@@ -196,6 +199,7 @@ export type SlackRuntimeOptions = {
   sandboxStartCommand?: string[];
   sandboxModelProviderUrls?: string[];
   sandboxFetch?: SandboxRuntimeFetch;
+  schedulerIntentResolver?: SchedulerIntentResolver;
   testbed?: boolean;
 };
 
@@ -366,7 +370,9 @@ export function createSlackRuntime(
   const googleTools = createGoogleTools({
     getGoogleUser,
     searchGoogleDriveFiles,
+    listGoogleSharedDrives,
     createGoogleDriveTextFile,
+    createGoogleDocsDocument,
     searchGoogleCalendarEvents,
     searchGoogleMailMessages,
     searchGoogleSlidesPresentations,
@@ -555,12 +561,11 @@ export function createSlackRuntime(
       defaultResolveSlackChannelIdByName(config, input)
   });
   const schedulerIntentResolver =
-    config.agentMode === "llm"
-      ? createLlmSchedulerIntentResolver({
-          model: config.aiModel,
-          logWarn: (message) => app.logger.warn(withUtcTimestamp(message))
-        })
-      : undefined;
+    options.schedulerIntentResolver ??
+    createLlmSchedulerIntentResolver({
+      model: config.aiModel,
+      logWarn: (message) => app.logger.warn(withUtcTimestamp(message))
+    });
   const agentRunner =
     config.agentMode === "llm"
       ? createConfiguredAgentRunner({
@@ -839,6 +844,7 @@ export function createSlackRuntime(
       | "pause"
       | "resume"
       | "delete"
+      | "details"
       | "validate"
       | "runs",
     body: unknown,
@@ -868,6 +874,16 @@ export function createSlackRuntime(
         await schedulerControl.resumeJob?.({ ...context, jobId });
       } else if (action === "delete") {
         await schedulerControl.deleteJob?.({ ...context, jobId });
+      } else if (action === "details") {
+        const result = schedulerControl.showTask
+          ? await schedulerControl.showTask({ ...context, taskId: jobId })
+          : { ok: false as const, reason: "not_found" as const, tasks: [] };
+        if (context.triggerId && client.views.open) {
+          await client.views.open({
+            trigger_id: context.triggerId,
+            view: buildScheduledTaskDetailsModalView(result)
+          });
+        }
       } else if (action === "validate") {
         const result = schedulerControl.validateTask
           ? await schedulerControl.validateTask({ ...context, taskId: jobId })
@@ -912,6 +928,7 @@ export function createSlackRuntime(
     "pause",
     "resume",
     "delete",
+    "details",
     "validate",
     "runs"
   ] as const) {
@@ -1201,7 +1218,7 @@ export function createSlackRuntime(
             slack: slackTools
           },
           schedulerControl,
-          ...(schedulerIntentResolver ? { schedulerIntentResolver } : {}),
+          schedulerIntentResolver,
           ...(schedulerRunExecutor
             ? {
                 onSchedulerRunQueued: (run) =>
@@ -1401,7 +1418,7 @@ export function createSlackRuntime(
             slack: slackTools
           },
           schedulerControl,
-          ...(schedulerIntentResolver ? { schedulerIntentResolver } : {}),
+          schedulerIntentResolver,
           ...(schedulerRunExecutor
             ? {
                 onSchedulerRunQueued: (run) =>
@@ -3267,8 +3284,8 @@ export function buildAppHomeView(input: ProviderConnectionViewInput): View {
           text: buildAppHomeIntroText(input)
         }
       },
-      ...buildAgentRuntimeHomeBlocks(input.agentSettings),
       ...buildScheduledTaskHomeBlocks(input.scheduledTasks),
+      ...buildAgentRuntimeHomeBlocks(input.agentSettings),
       {
         type: "divider"
       },
@@ -3356,7 +3373,10 @@ function buildScheduledTaskHomeBlocks(input?: ScheduledTaskHomeView): View["bloc
       type: "section",
       text: {
         type: "mrkdwn",
-        text: "No scheduled tasks are configured."
+        text: [
+          "No scheduled tasks are configured yet.",
+          "Open the *Messages* tab and ask Burble to create one, for example: `create task every weekday at 9 AM to summarize my GitHub PRs and Jira issues`."
+        ].join(" ")
       }
     });
     return blocks as View["blocks"];
@@ -3384,14 +3404,25 @@ function buildScheduledTaskHomeBlocks(input?: ScheduledTaskHomeView): View["bloc
           text: formatScheduledTaskHomeSummary(item)
         }
       },
-      {
-        type: "actions",
-        elements: buildScheduledTaskHomeActions(item.task)
-      }
+      ...buildScheduledTaskHomeActionBlocks(item.task)
     );
   }
 
   return blocks as View["blocks"];
+}
+
+function buildScheduledTaskHomeActionBlocks(task: SchedulerTaskSummary) {
+  const actions = buildScheduledTaskHomeActions(task);
+  return [
+    {
+      type: "actions",
+      elements: actions.slice(0, 5)
+    },
+    {
+      type: "actions",
+      elements: actions.slice(5)
+    }
+  ];
 }
 
 function buildScheduledTaskHomeActions(task: SchedulerTaskSummary) {
@@ -3436,6 +3467,15 @@ function buildScheduledTaskHomeActions(task: SchedulerTaskSummary) {
           text: "Cancel"
         }
       }
+    },
+    {
+      type: "button",
+      text: {
+        type: "plain_text",
+        text: "Details"
+      },
+      action_id: "scheduled_task_details",
+      value: task.taskId
     },
     {
       type: "button",
@@ -3523,6 +3563,83 @@ function buildScheduledTaskValidationModalView(
       }
     ]
   };
+}
+
+export function buildScheduledTaskDetailsModalView(
+  result: SchedulerShowTaskResult
+): View {
+  const text = formatScheduledTaskDetailsModalText(result);
+  return {
+    type: "modal",
+    title: {
+      type: "plain_text",
+      text: "Task details"
+    },
+    close: {
+      type: "plain_text",
+      text: "Close"
+    },
+    blocks: [
+      {
+        type: "section",
+        text: {
+          type: "mrkdwn",
+          text: truncateSlackText(escapeSlackMrkdwn(text), 2900)
+        }
+      }
+    ]
+  };
+}
+
+function formatScheduledTaskDetailsModalText(
+  result: SchedulerShowTaskResult
+): string {
+  if (!result.ok) {
+    return formatScheduledTaskDetailResult(result);
+  }
+
+  const task = result.task;
+  const validation = result.validation;
+  const title = task.title?.trim() || task.taskId;
+  const lines = [
+    `*${title}*`,
+    "*Task steps*",
+    "1. Run scheduled agent prompt",
+    task.prompt?.trim()
+      ? `   prompt: ${task.prompt.trim()}`
+      : "   prompt: none",
+    validation.expectedTools.length
+      ? `   expected tools: ${validation.expectedTools.join(", ")}`
+      : "   expected tools: none",
+    task.requiredTools.length
+      ? `   granted tools: ${task.requiredTools.join(", ")}`
+      : "   granted tools: none",
+    `   validation: ${validation.ok ? "passed" : "failed"}`,
+    "",
+    "*Task metadata*",
+    `task: ${task.taskId}`,
+    task.schedule ? `schedule: ${formatScheduleForHome(task.schedule)}` : null,
+    `state: ${task.state}`,
+    task.runtimeType ? `runtime: ${task.runtimeType}` : null,
+    task.routeId ? `route: ${task.routeId}` : null,
+    `updated: ${task.updatedAt}`
+  ].filter((line): line is string => line !== null);
+
+  if (validation.errors.length) {
+    lines.push("", "*Errors*");
+    for (const issue of validation.errors) {
+      lines.push(`- ${issue.code}: ${issue.message}`);
+    }
+  }
+
+  if (validation.warnings.length) {
+    lines.push("", "*Warnings*");
+    for (const issue of validation.warnings) {
+      lines.push(`- ${issue.code}: ${issue.message}`);
+    }
+  }
+
+  return lines.join("\n");
 }
 
 export function buildScheduledTaskRunsModalView(input: {

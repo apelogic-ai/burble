@@ -1380,6 +1380,132 @@ describe("handleToolGatewayRequest", () => {
     });
   });
 
+  test("creates a Google Docs document through the provider gateway", async () => {
+    const response = await handleToolGatewayRequest(
+      config,
+      createStore(googleConnection),
+      "google.docsCreateDocument",
+      request("google.docsCreateDocument", {
+        user: { email: "person@example.com" },
+        input: {
+          name: "Contribution Map",
+          text: "# Enterprise Agent Runtime",
+          sourceMimeType: "text/markdown"
+        }
+      }),
+      {
+        createGoogleDocsDocument: async (token, input) => {
+          expect(token).toBe("google-token");
+          expect(input).toEqual({
+            name: "Contribution Map",
+            text: "# Enterprise Agent Runtime",
+            sourceMimeType: "text/markdown"
+          });
+          return {
+            id: "doc-1",
+            name: "Contribution Map",
+            mimeType: "application/vnd.google-apps.document",
+            webViewLink: "https://docs.google.com/document/d/doc-1/edit"
+          };
+        }
+      }
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      classification: "user_private",
+      content: {
+        id: "doc-1",
+        name: "Contribution Map",
+        mimeType: "application/vnd.google-apps.document",
+        webViewLink: "https://docs.google.com/document/d/doc-1/edit"
+      }
+    });
+  });
+
+  test("maps Google Docs source MIME aliases through the provider gateway", async () => {
+    const response = await handleToolGatewayRequest(
+      config,
+      createStore(googleConnection),
+      "google.docsCreateDocument",
+      request("google.docsCreateDocument", {
+        user: { email: "person@example.com" },
+        input: {
+          name: "HTML Import",
+          text: "<h1>Title</h1>",
+          mimeType: "text/html"
+        }
+      }),
+      {
+        createGoogleDocsDocument: async (_token, input) => {
+          expect(input).toEqual({
+            name: "HTML Import",
+            text: "<h1>Title</h1>",
+            sourceMimeType: "text/html"
+          });
+          return {
+            id: "doc-1",
+            name: "HTML Import",
+            mimeType: "application/vnd.google-apps.document"
+          };
+        }
+      }
+    );
+
+    expect(response.status).toBe(200);
+  });
+
+  test("rejects malformed Google Docs source MIME types", async () => {
+    let didCallProvider = false;
+    const response = await handleToolGatewayRequest(
+      config,
+      createStore(googleConnection),
+      "google.docsCreateDocument",
+      request("google.docsCreateDocument", {
+        user: { email: "person@example.com" },
+        input: {
+          name: "Injected",
+          text: "body",
+          sourceMimeType: "text/plain\r\nX-Burble-Test: injected"
+        }
+      }),
+      {
+        createGoogleDocsDocument: async () => {
+          didCallProvider = true;
+          return { id: "doc-1", name: "Injected" };
+        }
+      }
+    );
+
+    expect(response.status).toBe(400);
+    expect(didCallProvider).toBe(false);
+  });
+
+  test("lists Google Shared Drives through the provider gateway", async () => {
+    const response = await handleToolGatewayRequest(
+      config,
+      createStore(googleConnection),
+      "google.listSharedDrives",
+      request("google.listSharedDrives", {
+        user: { email: "person@example.com" },
+        input: { query: "Engineering", limit: 2 }
+      }),
+      {
+        listGoogleSharedDrives: async (token, input) => {
+          expect(token).toBe("google-token");
+          expect(input).toEqual({ query: "Engineering", limit: 2 });
+          return [{ id: "drive-1", name: "Engineering" }];
+        }
+      }
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      classification: "user_private",
+      content: [{ id: "drive-1", name: "Engineering" }]
+    });
+  });
+
   test("rejects Google Workspace MIME types for Drive text file creation", async () => {
     let didCallProvider = false;
     const response = await handleToolGatewayRequest(
@@ -1968,7 +2094,7 @@ describe("handleToolGatewayRequest", () => {
     });
   });
 
-  test("rejects unsupported scheduled job create schedules with HTTP 400", async () => {
+  test("accepts scheduled job create schedules with numeric cron ranges", async () => {
     const response = await handleToolGatewayRequest(
       config,
       createStore(null, runtime, [], null, [], {}, [], null, {}),
@@ -1981,7 +2107,7 @@ describe("handleToolGatewayRequest", () => {
             prompt: "look for fresh AI-related news and post a short summary",
             schedule: {
               kind: "cron",
-              expression: "1-5 9 * * mon-fri",
+              expression: "0 9 * * 1-5",
               timezone: "UTC"
             },
             routeId: "convrt_abcdefabcdefabcdefabcdef"
@@ -1992,13 +2118,19 @@ describe("handleToolGatewayRequest", () => {
       )
     );
 
-    expect(response.status).toBe(400);
-    expect(await response.json()).toEqual({
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
       classification: "user_private",
       content: {
-        ok: false,
-        reason: "invalid_schedule",
-        message: expect.stringContaining("unsupported cron field")
+        ok: true,
+        job: {
+          title: "Weekday AI news summary",
+          schedule: {
+            kind: "cron",
+            expression: "0 9 * * 1-5",
+            timezone: "UTC"
+          }
+        }
       }
     });
   });
@@ -3617,7 +3749,9 @@ describe("handleToolGatewayRequest", () => {
           input: {
             job_id: "ai-news-hourly",
             query: "AI News Scratchpad",
-            limit: 1
+            limit: 1,
+            sharedDriveId: "drive-1",
+            mimeType: "application/vnd.google-apps.document"
           }
         },
         "runtime-token-u123",
@@ -3628,7 +3762,9 @@ describe("handleToolGatewayRequest", () => {
           expect(token).toBe("google-token");
           expect(input).toEqual({
             query: "AI News Scratchpad",
-            limit: 1
+            limit: 1,
+            sharedDriveId: "drive-1",
+            mimeType: "application/vnd.google-apps.document"
           });
           return [{ id: "file-1", name: "AI News Scratchpad" }];
         }
