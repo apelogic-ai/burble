@@ -65,7 +65,9 @@ function createGoogleMcpHandlers(
         connection,
         input: {
           ...optionalTruthyStringField(args, "query"),
+          ...optionalTruthyStringField(args, "scope"),
           ...optionalTruthyStringField(args, "sharedDriveId"),
+          ...optionalTruthyStringField(args, "sharedDriveName"),
           ...optionalTruthyStringField(args, "parentId"),
           ...optionalTruthyStringField(args, "mimeType"),
           ...optionalBooleanField(args, "sharedWithMe"),

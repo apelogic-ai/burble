@@ -369,6 +369,7 @@ describe("Google OAuth and API helpers", () => {
 
     try {
       const files = await searchGoogleDriveFiles("google-token", {
+        scope: "shared_drive",
         sharedDriveId: "0AMVzF1MTcSu3Uk9PVA",
         mimeType: "application/vnd.google-apps.document",
         limit: 5
@@ -406,15 +407,62 @@ describe("Google OAuth and API helpers", () => {
 
     try {
       const files = await searchGoogleDriveFiles("google-token", {
+        scope: "shared_with_me",
         parentId: "folder-1",
-        sharedWithMe: true,
         mimeType: "application/vnd.google-apps.document",
         limit: 4
       });
       expect(files).toEqual([{ id: "doc-2", name: "Shared folder doc" }]);
       const url = new URL(requestedUrl);
       expect(url.searchParams.get("q")).toBe(
-        "trashed = false and mimeType = 'application/vnd.google-apps.document' and 'folder-1' in parents and sharedWithMe = true"
+        "trashed = false and mimeType = 'application/vnd.google-apps.document' and 'folder-1' in parents"
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  test("searches all Shared Drives through the Drive file search tool", async () => {
+    const originalFetch = globalThis.fetch;
+    const requestedUrls: string[] = [];
+    globalThis.fetch = (async (input) => {
+      requestedUrls.push(String(input));
+      const url = new URL(String(input));
+      if (url.pathname.endsWith("/drives")) {
+        return Response.json({
+          drives: [{ id: "drive-1", name: "Buble Shared Drive" }]
+        });
+      }
+      return Response.json({
+        files: [
+          {
+            id: "doc-1",
+            name: "Shared doc",
+            mimeType: "application/vnd.google-apps.document"
+          }
+        ]
+      });
+    }) as typeof fetch;
+
+    try {
+      const files = await searchGoogleDriveFiles("google-token", {
+        scope: "all_shared_drives",
+        mimeType: "application/vnd.google-apps.document",
+        limit: 3
+      });
+      expect(files).toEqual([
+        {
+          id: "doc-1",
+          name: "Shared doc",
+          mimeType: "application/vnd.google-apps.document",
+          drive: { id: "drive-1", name: "Buble Shared Drive" }
+        }
+      ]);
+      const fileSearchUrl = new URL(requestedUrls[1]);
+      expect(fileSearchUrl.searchParams.get("corpora")).toBe("drive");
+      expect(fileSearchUrl.searchParams.get("driveId")).toBe("drive-1");
+      expect(fileSearchUrl.searchParams.get("q")).toBe(
+        "trashed = false and mimeType = 'application/vnd.google-apps.document'"
       );
     } finally {
       globalThis.fetch = originalFetch;

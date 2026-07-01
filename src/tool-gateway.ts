@@ -3180,7 +3180,9 @@ function isGitHubCreateBranchInput(input: unknown): input is {
 function isSearchGoogleDriveFilesInput(input: unknown): input is {
   query?: string;
   limit?: number;
+  scope?: "all" | "shared_with_me" | "shared_drive" | "all_shared_drives";
   sharedDriveId?: string;
+  sharedDriveName?: string;
   mimeType?: string;
   parentId?: string;
   sharedWithMe?: boolean;
@@ -3188,7 +3190,14 @@ function isSearchGoogleDriveFilesInput(input: unknown): input is {
   return (
     isOptionalObject(input) &&
     optionalString(input.query) &&
+    optionalEnum(input.scope, [
+      "all",
+      "shared_with_me",
+      "shared_drive",
+      "all_shared_drives"
+    ]) &&
     optionalString(input.sharedDriveId) &&
+    optionalString(input.sharedDriveName) &&
     optionalString(input.mimeType) &&
     optionalString(input.parentId) &&
     optionalBoolean(input.sharedWithMe) &&
@@ -3915,6 +3924,13 @@ function optionalString(value: unknown): boolean {
 
 function optionalBoolean(value: unknown): boolean {
   return value === undefined || typeof value === "boolean";
+}
+
+function optionalEnum(value: unknown, values: readonly string[]): boolean {
+  return (
+    value === undefined ||
+    (typeof value === "string" && values.includes(value))
+  );
 }
 
 function isNonEmptyString(value: unknown): value is string {

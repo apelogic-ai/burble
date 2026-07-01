@@ -19,6 +19,7 @@ export type GoogleDriveFile = {
   mimeType?: string;
   webViewLink?: string;
   modifiedTime?: string;
+  drive?: GoogleSharedDrive;
 };
 
 export type GoogleDriveCreatedFile = {
@@ -37,6 +38,12 @@ export type GoogleSharedDriveFileList = {
   drive: GoogleSharedDrive;
   files: GoogleDriveFile[];
 };
+
+export type GoogleDriveFileSearchScope =
+  | "all"
+  | "shared_with_me"
+  | "shared_drive"
+  | "all_shared_drives";
 
 export type GoogleDriveFileContent = GoogleDriveFile & {
   content?: string;
@@ -411,10 +418,45 @@ export async function searchGoogleDriveFiles(
   input: {
     query?: string;
     limit?: number;
+    scope?: GoogleDriveFileSearchScope;
     sharedDriveId?: string;
+    sharedDriveName?: string;
     mimeType?: string;
     parentId?: string;
     sharedWithMe?: boolean;
+  }
+): Promise<GoogleDriveFile[]> {
+  const scope = normalizeDriveFileSearchScope(input);
+  if (scope === "all_shared_drives" || (scope === "shared_drive" && !input.sharedDriveId?.trim())) {
+    const driveFilter = input.sharedDriveName?.trim();
+    const drives = await listGoogleSharedDrives(token, {
+      ...(driveFilter ? { query: driveFilter } : {}),
+      limit: 20
+    });
+    const files: GoogleDriveFile[] = [];
+    for (const drive of drives) {
+      const driveFiles = await searchGoogleDriveFilesInScope(token, {
+        ...input,
+        scope: "shared_drive",
+        sharedDriveId: drive.id
+      });
+      files.push(...driveFiles.map((file) => ({ ...file, drive })));
+    }
+    return files;
+  }
+
+  return searchGoogleDriveFilesInScope(token, { ...input, scope });
+}
+
+async function searchGoogleDriveFilesInScope(
+  token: string,
+  input: {
+    query?: string;
+    limit?: number;
+    scope: GoogleDriveFileSearchScope;
+    sharedDriveId?: string;
+    mimeType?: string;
+    parentId?: string;
   }
 ): Promise<GoogleDriveFile[]> {
   const url = new URL("https://www.googleapis.com/drive/v3/files");
@@ -426,7 +468,7 @@ export async function searchGoogleDriveFiles(
   url.searchParams.set("orderBy", "modifiedTime desc");
   url.searchParams.set("supportsAllDrives", "true");
   url.searchParams.set("includeItemsFromAllDrives", "true");
-  if (input.sharedDriveId?.trim()) {
+  if (input.scope === "shared_drive" && input.sharedDriveId?.trim()) {
     url.searchParams.set("corpora", "drive");
     url.searchParams.set("driveId", input.sharedDriveId.trim());
   }
@@ -441,7 +483,7 @@ export async function searchGoogleDriveFiles(
   if (input.parentId?.trim()) {
     clauses.push(`'${escapeDriveQueryString(input.parentId.trim())}' in parents`);
   }
-  if (input.sharedWithMe === true) {
+  if (input.scope === "shared_with_me" && !input.parentId?.trim()) {
     clauses.push("sharedWithMe = true");
   }
   url.searchParams.set("q", clauses.join(" and "));
@@ -456,6 +498,23 @@ export async function searchGoogleDriveFiles(
   }
 
   return body.files ?? [];
+}
+
+function normalizeDriveFileSearchScope(input: {
+  scope?: GoogleDriveFileSearchScope;
+  sharedDriveId?: string;
+  sharedWithMe?: boolean;
+}): GoogleDriveFileSearchScope {
+  if (input.scope) {
+    return input.scope;
+  }
+  if (input.sharedWithMe === true) {
+    return "shared_with_me";
+  }
+  if (input.sharedDriveId?.trim()) {
+    return "shared_drive";
+  }
+  return "all";
 }
 
 export async function listGoogleSharedDriveFiles(

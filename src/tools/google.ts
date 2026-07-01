@@ -10,6 +10,7 @@ import {
   type GoogleCreatedDraft,
   type GoogleDriveCreatedFile,
   type GoogleDriveFileContent,
+  type GoogleDriveFileSearchScope,
   type GoogleSharedDrive,
   type GoogleSharedDriveFileList,
   type GoogleSlidesCreateSlideInput,
@@ -36,7 +37,9 @@ export type GoogleToolDeps = {
     input: {
       query?: string;
       limit?: number;
+      scope?: GoogleDriveFileSearchScope;
       sharedDriveId?: string;
+      sharedDriveName?: string;
       mimeType?: string;
       parentId?: string;
       sharedWithMe?: boolean;
@@ -196,7 +199,9 @@ export function createGoogleTools(deps: GoogleToolDeps) {
           input?: {
             query?: string;
             limit?: number;
+            scope?: GoogleDriveFileSearchScope;
             sharedDriveId?: string;
+            sharedDriveName?: string;
             mimeType?: string;
             parentId?: string;
             sharedWithMe?: boolean;
@@ -220,7 +225,10 @@ export function createGoogleTools(deps: GoogleToolDeps) {
             name: file.name,
             ...(file.mimeType ? { mimeType: file.mimeType } : {}),
             ...(file.webViewLink ? { webViewLink: file.webViewLink } : {}),
-            ...(file.modifiedTime ? { modifiedTime: file.modifiedTime } : {})
+            ...(file.modifiedTime ? { modifiedTime: file.modifiedTime } : {}),
+            ...(file.drive
+              ? { drive: { id: file.drive.id, name: file.drive.name } }
+              : {})
           }))
         };
       }

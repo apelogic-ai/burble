@@ -64,7 +64,7 @@ describe("provider tool specs", () => {
     const names = googleProviderToolSpecs.map((tool) => tool.name);
 
     expect(names).toContain("google_search_drive_files");
-    expect(names).toContain("google_list_shared_drive_files");
+    expect(names).not.toContain("google_list_shared_drive_files");
     expect(names).toContain("google_list_shared_drives");
     expect(names).toContain("google_docs_create_document");
     expect(names).toContain("google_create_calendar_event");
@@ -74,6 +74,16 @@ describe("provider tool specs", () => {
     expect(names).toContain("google_slides_copy_presentation");
     expect(names).toContain("google_slides_create_slide");
     expect(names).toContain("google_slides_fill_placeholders");
+    expect(
+      googleProviderToolSpecs
+        .find((tool) => tool.name === "google_search_drive_files")
+        ?.input.scope
+    ).toEqual({
+      type: "enum",
+      optional: true,
+      values: ["all", "shared_with_me", "shared_drive", "all_shared_drives"],
+      description: expect.any(String)
+    });
     expect(
       googleProviderToolSpecs.find(
         (tool) => tool.name === "google_slides_copy_presentation"
