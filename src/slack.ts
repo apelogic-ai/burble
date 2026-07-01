@@ -562,12 +562,10 @@ export function createSlackRuntime(
   });
   const schedulerIntentResolver =
     options.schedulerIntentResolver ??
-    (config.agentMode === "llm"
-      ? createLlmSchedulerIntentResolver({
-          model: config.aiModel,
-          logWarn: (message) => app.logger.warn(withUtcTimestamp(message))
-        })
-      : undefined);
+    createLlmSchedulerIntentResolver({
+      model: config.aiModel,
+      logWarn: (message) => app.logger.warn(withUtcTimestamp(message))
+    });
   const agentRunner =
     config.agentMode === "llm"
       ? createConfiguredAgentRunner({
@@ -1220,7 +1218,7 @@ export function createSlackRuntime(
             slack: slackTools
           },
           schedulerControl,
-          ...(schedulerIntentResolver ? { schedulerIntentResolver } : {}),
+          schedulerIntentResolver,
           ...(schedulerRunExecutor
             ? {
                 onSchedulerRunQueued: (run) =>
@@ -1420,7 +1418,7 @@ export function createSlackRuntime(
             slack: slackTools
           },
           schedulerControl,
-          ...(schedulerIntentResolver ? { schedulerIntentResolver } : {}),
+          schedulerIntentResolver,
           ...(schedulerRunExecutor
             ? {
                 onSchedulerRunQueued: (run) =>

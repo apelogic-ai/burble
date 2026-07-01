@@ -2641,8 +2641,8 @@ describe("handleConversation", () => {
     expect(response.text).toContain("Try one of these:");
   });
 
-  test("uses explicit scheduler job ids without the LLM resolver", async () => {
-    let schedulerCalledWith: unknown = null;
+  test("does not infer explicit scheduler job id actions without the LLM resolver", async () => {
+    let called = false;
     const response = await handleConversation(
       {
         ...baseRequest,
@@ -2651,39 +2651,21 @@ describe("handleConversation", () => {
       createDeps({
         schedulerControl: {
           listJobs: () => [],
-          pauseJob: (input) => {
-            schedulerCalledWith = input;
-            return {
-              ok: true,
-              job: {
-                jobId: input.jobId!,
-                workspaceId: "T123",
-                slackUserId: "U123",
-                title: "Hourly AI news summary",
-                prompt: "Find fresh AI news and summarize it.",
-                schedule: { kind: "interval", every: { hours: 1 } },
-                routeId: "convrt_123",
-                state: "paused",
-                runtimeType: "hermes",
-                createdAt: "2026-06-24T12:00:00.000Z",
-                updatedAt: "2026-06-24T12:05:00.000Z",
-              },
-            };
+          pauseJob: () => {
+            called = true;
+            throw new Error("unexpected pause");
           },
         },
       }),
     );
 
-    expect(schedulerCalledWith).toEqual({
-      workspaceId: "T123",
-      slackUserId: "U123",
-      jobId: "job_ai_news_hourly",
-    });
-    expect(response.text).toContain("Paused scheduled job job_ai_news_hourly.");
+    expect(called).toBe(false);
+    expect(response.text).toContain("Try one of these:");
   });
 
-  test("falls back to explicit scheduler job ids when the resolver throws", async () => {
-    let schedulerCalledWith: unknown = null;
+  test("does not deterministically fall back when the scheduler resolver throws", async () => {
+    let schedulerCalled = false;
+    let agentCalledWith = "";
     const response = await handleConversation(
       {
         ...baseRequest,
@@ -2696,39 +2678,24 @@ describe("handleConversation", () => {
         },
         schedulerControl: {
           listJobs: () => [],
-          pauseJob: (input) => {
-            schedulerCalledWith = input;
-            return {
-              ok: true,
-              job: {
-                jobId: input.jobId!,
-                workspaceId: "T123",
-                slackUserId: "U123",
-                title: "Hourly AI news summary",
-                prompt: "Find fresh AI news and summarize it.",
-                schedule: { kind: "interval", every: { hours: 1 } },
-                routeId: "convrt_123",
-                state: "paused",
-                runtimeType: "hermes",
-                createdAt: "2026-06-24T12:00:00.000Z",
-                updatedAt: "2026-06-24T12:05:00.000Z",
-              },
-            };
+          pauseJob: () => {
+            schedulerCalled = true;
+            throw new Error("unexpected pause");
           },
         },
-        agentRunner: stubAgentRunner(() => ({
-          classification: "public",
-          text: "unexpected",
-        })),
+        agentRunner: stubAgentRunner((input) => {
+          agentCalledWith = input.text;
+          return {
+            classification: "public",
+            text: "handled by agent",
+          };
+        }),
       }),
     );
 
-    expect(schedulerCalledWith).toEqual({
-      workspaceId: "T123",
-      slackUserId: "U123",
-      jobId: "job_ai_news_hourly",
-    });
-    expect(response.text).toContain("Paused scheduled job job_ai_news_hourly.");
+    expect(schedulerCalled).toBe(false);
+    expect(agentCalledWith).toBe("pause job job_ai_news_hourly");
+    expect(response.text).toBe("handled by agent");
   });
 
   test("delegates Slack history task wording to the agent when resolver returns none", async () => {

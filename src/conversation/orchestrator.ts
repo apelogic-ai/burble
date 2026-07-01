@@ -550,11 +550,6 @@ async function resolveSchedulerControlIntent(
   schedule: unknown | null;
   prompt: string | null;
 }> {
-  const fallbackJobId = readSchedulerJobIdHint(request.text);
-  const fallbackIntent = fallbackJobId
-    ? classifyExplicitSchedulerJobIdIntent(request.text)
-    : null;
-  const fallbackSchedule = parseExplicitCronSchedule(request.text);
   if (deps.schedulerIntentResolver) {
     try {
       const jobs = deps.schedulerControl
@@ -576,7 +571,6 @@ async function resolveSchedulerControlIntent(
             request.text,
             resolved.jobId,
             jobs,
-            fallbackJobId,
           ),
           create:
             intent === "create_job"
@@ -584,7 +578,7 @@ async function resolveSchedulerControlIntent(
               : null,
           schedule:
             intent === "update_job_schedule"
-              ? (normalizeResolvedSchedule(resolved.schedule) ?? fallbackSchedule)
+              ? normalizeResolvedSchedule(resolved.schedule)
               : null,
           prompt:
             intent === "update_job_prompt"
@@ -595,24 +589,13 @@ async function resolveSchedulerControlIntent(
     } catch {
       // Resolver failures should not make ordinary conversation turns fail.
     }
-
-    if (fallbackIntent) {
-      return {
-        intent: fallbackIntent,
-        jobId: fallbackJobId,
-        create: null,
-        schedule:
-          fallbackIntent === "update_job_schedule" ? fallbackSchedule : null,
-        prompt: null,
-      };
-    }
   }
 
   return {
-    intent: fallbackIntent,
-    jobId: fallbackJobId,
+    intent: null,
+    jobId: null,
     create: null,
-    schedule: fallbackIntent === "update_job_schedule" ? fallbackSchedule : null,
+    schedule: null,
     prompt: null,
   };
 }
@@ -674,11 +657,10 @@ function resolveSchedulerResolverJobId(
   text: string,
   resolvedJobId: string | null | undefined,
   jobs: Array<{ jobId: string; title: string | null }>,
-  fallbackJobId: string | null = null,
 ): string | null {
   const jobId = sanitizeSchedulerJobId(resolvedJobId);
   if (!jobId) {
-    return fallbackJobId;
+    return null;
   }
 
   if (text.includes(jobId)) {
@@ -695,53 +677,6 @@ function resolveSchedulerResolverJobId(
     (job) => normalizeSchedulerJobTitle(job.title) === selectedTitle,
   ).length;
   return matchingTitleCount > 1 ? null : jobId;
-}
-
-function classifyExplicitSchedulerJobIdIntent(
-  text: string,
-): Exclude<SchedulerControlIntent, null> | null {
-  if (!readSchedulerJobIdHint(text)) {
-    return null;
-  }
-  const normalized = text.toLowerCase();
-  if (/\b(pause|disable|stop)\b/.test(normalized)) {
-    return "pause_job";
-  }
-  if (/\b(resume|enable|unpause)\b/.test(normalized)) {
-    return "resume_job";
-  }
-  if (/\b(delete|remove|cancel)\b/.test(normalized)) {
-    return "delete_job";
-  }
-  if (/\b(run|trigger|start)\b/.test(normalized)) {
-    return "trigger_job";
-  }
-  if (/\b(runs|history|attempts?)\b/.test(normalized)) {
-    return "list_job_runs";
-  }
-  if (/\b(status|latest|last|finished|failed|succeeded)\b/.test(normalized)) {
-    return "latest_run_status";
-  }
-  if (/\b(validate|inspect)\b/.test(normalized)) {
-    return "validate_task";
-  }
-  if (/\b(details?|show|spec|steps?)\b/.test(normalized)) {
-    return "show_task";
-  }
-  if (/\b(schedule|cron|every)\b/.test(normalized)) {
-    return "update_job_schedule";
-  }
-  return null;
-}
-
-function parseExplicitCronSchedule(text: string): unknown | null {
-  const match =
-    /\bcron\s+((?:\S+\s+){4}\S+)/i.exec(text) ??
-    /(?:^|\s)((?:[*\d/-]+\s+){4}[*\d/-]+)(?:\s|$)/.exec(text);
-  const expression = match?.[1]?.trim();
-  return expression
-    ? { kind: "cron", expression, timezone: "UTC" }
-    : null;
 }
 
 function normalizeSchedulerJobTitle(title: string | null): string | null {
@@ -783,20 +718,6 @@ function sanitizeSchedulerJobId(
     return null;
   }
   return trimmed;
-}
-
-function readSchedulerJobIdHint(text: string): string | null {
-  const match =
-    /\b(?:task|job|cron\s+job|scheduled\s+job)\s+(job_[a-z0-9_.-]{3,})\b/i.exec(
-      text,
-    ) ??
-    /\b(?:task|job|cron\s+job|scheduled\s+job)\s+(?:id\s*)?(?:[:#]\s*|\bis\s+)([a-z0-9][a-z0-9_.-]{2,})\b/i.exec(
-      text,
-    ) ??
-    /\b(?:task|job|cron\s+job|scheduled\s+job)\s+id\s+([a-z0-9][a-z0-9_.-]{2,})\b/i.exec(
-      text,
-    );
-  return sanitizeSchedulerJobId(match?.[1]);
 }
 
 type ParsedSchedulerCreateRequest = {
