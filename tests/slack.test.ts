@@ -2333,9 +2333,16 @@ describe("buildAppHomeView", () => {
     expect(view.type).toBe("modal");
     expect(serialized).toContain("Task details");
     expect(serialized).toContain("Daily account summary");
+    expect(serialized).toContain("Task steps");
+    expect(serialized).toContain("Run scheduled agent prompt");
     expect(serialized).toContain("Summarize GitHub PRs and Jira issues.");
     expect(serialized).toContain("github_search_issues");
     expect(serialized).toContain("jira_search_issues");
+    expect(serialized).toContain("Task metadata");
+    expect(serialized.indexOf("Task steps")).toBeLessThan(
+      serialized.indexOf("Task metadata")
+    );
+    expect(serialized).not.toContain("Scheduled prompt");
   });
 
   test("caps the scheduled task run modal at five runs", () => {

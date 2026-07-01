@@ -3605,15 +3605,8 @@ function formatScheduledTaskDetailsModalText(
   const title = task.title?.trim() || task.taskId;
   const lines = [
     `*${title}*`,
-    `task: ${task.taskId}`,
-    task.schedule ? `schedule: ${formatScheduleForHome(task.schedule)}` : null,
-    `state: ${task.state}`,
-    task.runtimeType ? `runtime: ${task.runtimeType}` : null,
-    task.routeId ? `route: ${task.routeId}` : null,
-    `updated: ${task.updatedAt}`,
-    "",
-    "*Steps*",
-    "1. Scheduled prompt",
+    "*Task steps*",
+    "1. Run scheduled agent prompt",
     task.prompt?.trim()
       ? `   prompt: ${task.prompt.trim()}`
       : "   prompt: none",
@@ -3623,7 +3616,15 @@ function formatScheduledTaskDetailsModalText(
     task.requiredTools.length
       ? `   granted tools: ${task.requiredTools.join(", ")}`
       : "   granted tools: none",
-    `   validation: ${validation.ok ? "passed" : "failed"}`
+    `   validation: ${validation.ok ? "passed" : "failed"}`,
+    "",
+    "*Task metadata*",
+    `task: ${task.taskId}`,
+    task.schedule ? `schedule: ${formatScheduleForHome(task.schedule)}` : null,
+    `state: ${task.state}`,
+    task.runtimeType ? `runtime: ${task.runtimeType}` : null,
+    task.routeId ? `route: ${task.routeId}` : null,
+    `updated: ${task.updatedAt}`
   ].filter((line): line is string => line !== null);
 
   if (validation.errors.length) {
