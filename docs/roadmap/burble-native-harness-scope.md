@@ -2,7 +2,9 @@
 
 Status: incremental; Increment 1 is the current implementation target.
 Companion to [[runtime-pluggability-next-targets]] and
-[[burble-direct-removal-scope]].
+[[burble-direct-removal-scope]]. For the broader rationale that `burble-native`
+should be Burble's contract oracle / reference runtime, see
+[burble-native-reference-runtime-design.md](../architecture/burble-native-reference-runtime-design.md).
 
 ## Decision
 
@@ -11,6 +13,11 @@ Grow `burble-native` from a contract-conformant **skeleton** into Burble's own
 — built on `@burble/runtime-sdk`. This is **option A** (a thin turn executor),
 **not** a full agent framework. It is the correctly-built successor to the
 in-process `burble-direct` path we removed.
+
+Production `burble-native` runs inside OpenShell. Docker-backed startup remains
+useful for local development, test harnesses, and compatibility, but the target
+is an OpenShell-isolated runtime service with Burble owning product state and
+policy outside the sandbox.
 
 ## The boundary (the rule that keeps A from becoming B)
 
@@ -103,3 +110,25 @@ artifact versioned with the SDK.
   worth reimplementing. Pluggability means you don't have to.
 - Not a multi-agent / orchestration framework. If it starts growing one, that's
   option B — out of scope.
+
+## Notes / observations (parked, not roadmap)
+
+### Data layer lock-in (`bun:sqlite`) — escape cost is async, not dialect
+
+We use Bun's built-in `bun:sqlite` directly (`src/db.ts`, `src/workflow/task-workflow-sqlite-store.ts`, the shadow DB in `src/slack.ts`) — no ORM, no DB dependency in `package.json`. Triple lock-in: Bun runtime, SQLite-only, **synchronous API**.
+
+If/when we want an external DB (Postgres) or to introduce Drizzle, the real cost is **not** Drizzle and **not** the SQL dialect — it's the synchronous→asynchronous flip:
+
+- `db.ts` is one ~3070-line `createTokenStore()` factory with ~67 methods, all synchronous; **0** store calls are `await`ed anywhere. Every external driver (pg, Drizzle's pg/mysql/libsql) is async, so async-ifying ripples transitively through every caller (scheduler loops, run-executor, FSM driver, maintenance/oracle loops, MCP providers).
+- The dangerous part: much of the code's safety reasoning is *"bun:sqlite is single-threaded + synchronous, so calls can't interleave"* (e.g. claim-then-shadow-write, no `busy_timeout`/WAL, two handles to one file). Async **dissolves that invariant** — real interleaving, lost-update races, explicit transactions/locks needed. Every "safe because sync" spot must be re-audited.
+- Dialect is small/mechanical (~25 SQLite-isms: `ON CONFLICT` ~13×, `PRAGMA user_version`/`table_info` migrations, `AUTOINCREMENT`, `INSERT OR IGNORE`, `RETURNING`; no JSON1). This is exactly what Drizzle abstracts well. Drizzle does **not** solve async — its bun-sqlite driver is sync, but pg/mysql/libsql are async.
+
+Positives in current shape: callers already depend on narrow `Pick<TokenStore, …>` slices (11 sites) — a clean seam. The workflow store (`TaskWorkflowEventStore` interface + in-memory **and** sqlite backends) is the **template** for what `db.ts` should look like.
+
+De-risked sequence if we ever do it (separate the axes; don't do Drizzle+Postgres+async in one change):
+1. Extract a hand-declared `TokenStore` interface (replace the `ReturnType<>` inference) — nothing to implement against today.
+2. Make the interface **async while the impl stays `bun:sqlite`** — pay the async-ripple tax once, decoupled from the swap, behavior still on SQLite so we can diff; re-audit the sync-safety assumptions here.
+3. Split the monolith into per-aggregate repos behind the interface.
+4. Introduce Drizzle on SQLite first (validate parity), then add a Postgres adapter.
+
+ROI caveat: justified if we need Postgres for HA / scale / multi-region; thin if it's only lock-in aversion (`bun:sqlite` is fast + zero-ops). A cheap hedge is steps 1–2 alone — breaks the hard part of the lock-in without committing to Drizzle or an external DB.
