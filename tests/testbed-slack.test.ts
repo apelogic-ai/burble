@@ -11,6 +11,8 @@ import {
   testbedWorkspaceId,
 } from "../src/testbed/slack";
 
+const slackTestbedTimeoutMs = 15_000;
+
 describe("local Slack testbed", () => {
   test("injects Slack-shaped App Home and DM events through Bolt", async () => {
     const config = readConfig({
@@ -113,7 +115,7 @@ describe("local Slack testbed", () => {
       server.stop();
       store.close();
     }
-  });
+  }, slackTestbedTimeoutMs);
 
   test("routes scheduler control DMs through Burble before the runtime", async () => {
     const config = readConfig({
@@ -237,7 +239,7 @@ describe("local Slack testbed", () => {
       server.stop();
       store.close();
     }
-  });
+  }, slackTestbedTimeoutMs);
 
   test("creates explicit scheduler DMs through Burble before the runtime", async () => {
     const config = readConfig({
@@ -344,5 +346,5 @@ describe("local Slack testbed", () => {
       server.stop();
       store.close();
     }
-  });
+  }, slackTestbedTimeoutMs);
 });
