@@ -300,6 +300,59 @@ describe("runtime SDK contract server", () => {
     });
   });
 
+  test("validates run admission without starting execution", async () => {
+    const admitted = await server.handleRequest(
+      new Request("http://runtime/runs/validate", {
+        method: "POST",
+        body: JSON.stringify({ runId: "run-admit", input: { text: "hello" } })
+      }),
+      { suffix: "world" }
+    );
+    const invalid = await server.handleRequest(
+      new Request("http://runtime/runs/validate", {
+        method: "POST",
+        body: JSON.stringify({ runId: "run-bad", input: {} })
+      }),
+      { suffix: "world" }
+    );
+    const notStarted = await server.handleRequest(
+      new Request("http://runtime/runs/run-admit"),
+      { suffix: "world" }
+    );
+
+    expect(admitted?.status).toBe(200);
+    expect(await admitted?.json()).toEqual({ ok: true, runId: "run-admit" });
+    expect(invalid?.status).toBe(400);
+    expect(await invalid?.text()).toBe("Invalid run request");
+    expect(notStarted?.status).toBe(404);
+  });
+
+  test("requires bearer auth for run admission validation", async () => {
+    const unauthorized = await authorizedServer.handleRequest(
+      new Request("http://runtime/runs/validate", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ input: { text: "hello" } })
+      }),
+      { suffix: "world" }
+    );
+    const authorized = await authorizedServer.handleRequest(
+      new Request("http://runtime/runs/validate", {
+        method: "POST",
+        headers: {
+          authorization: "Bearer runtime-token",
+          "content-type": "application/json"
+        },
+        body: JSON.stringify({ runId: "run-admit", input: { text: "hello" } })
+      }),
+      { suffix: "world" }
+    );
+
+    expect(unauthorized?.status).toBe(401);
+    expect(authorized?.status).toBe(200);
+    expect(await authorized?.json()).toEqual({ ok: true, runId: "run-admit" });
+  });
+
   test("requires bearer auth before upgrading run event streams", async () => {
     const unauthorizedEvents = await authorizedServer.handleRequest(
       new Request("http://runtime/runs/run-123/events"),

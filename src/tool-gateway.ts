@@ -16,6 +16,7 @@ import {
   runtimeCompatibilityFamily
 } from "./agent/runtime-descriptors";
 import { createSchedulerControlPlane } from "./scheduler/control-plane";
+import { createScheduledRuntimeAdmissionValidator } from "./scheduler/runtime-admission";
 import { createHash, timingSafeEqual } from "node:crypto";
 import { connectionProviderForToolName } from "./providers/descriptors";
 import { findProviderToolSpec } from "./providers/catalog";
@@ -715,7 +716,12 @@ export async function handleToolGatewayRequest(
     if (auth.kind !== "runtime") {
       return new Response("Runtime auth required", { status: 403 });
     }
-    const schedulerControl = createSchedulerControlPlane(store);
+    const schedulerControl = createSchedulerControlPlane(store, {
+      validateRuntimeAdmission: createScheduledRuntimeAdmissionValidator({
+        config,
+        store,
+      }),
+    });
     const result = await schedulerControl.validateTask?.({
       workspaceId: auth.runtime.workspaceId,
       slackUserId: auth.runtime.slackUserId,

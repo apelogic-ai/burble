@@ -12,9 +12,30 @@ export type SchedulerTaskValidation = {
   ok: boolean;
   expectedTools: string[];
   grantedTools: string[];
+  runtimeAdmission?: SchedulerTaskRuntimeAdmission;
   errors: SchedulerTaskValidationIssue[];
   warnings: SchedulerTaskValidationIssue[];
 };
+
+export type SchedulerTaskRuntimeAdmission =
+  | {
+      checked: true;
+      ok: true;
+      runtimeId: string;
+      runtimeType: string;
+    }
+  | {
+      checked: true;
+      ok: false;
+      runtimeId?: string;
+      runtimeType?: string;
+      reason: string;
+    }
+  | {
+      checked: false;
+      ok: true;
+      reason: string;
+    };
 
 export type SchedulerTaskGrant = Pick<
   AgentJobCapabilityRecord,

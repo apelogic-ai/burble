@@ -781,6 +781,75 @@ describe("scheduler control plane", () => {
     store.close();
   });
 
+  test("adds runtime admission failures to task validation", async () => {
+    const store = createTokenStore(":memory:");
+    store.upsertScheduledJob({
+      jobId: "ai-news-hourly",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      title: "Hourly AI news summary",
+      prompt: "look for latest AI news and post result in this channel",
+      schedule: {
+        kind: "interval",
+        every: { hours: 1 },
+      },
+      routeId: "convrt_123",
+      runtimeType: "openclaw",
+      now: new Date("2026-06-24T12:00:00.000Z"),
+    });
+    store.upsertAgentJobCapability({
+      jobId: "ai-news-hourly",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      requiredTools: ["slack_search_messages", "web_search"],
+      routeId: "convrt_123",
+      runtimeType: "openclaw",
+      now: new Date("2026-06-24T12:01:00.000Z"),
+    });
+
+    const scheduler = createSchedulerControlPlane(store, {
+      validateRuntimeAdmission: () => ({
+        checked: true,
+        ok: false,
+        runtimeId: "rt_123",
+        runtimeType: "openclaw",
+        reason: "Managed runtime returned HTTP 400: Invalid run request",
+      }),
+    });
+
+    expect(
+      await scheduler.validateTask?.({
+        workspaceId: "T123",
+        slackUserId: "U123",
+        taskId: "ai-news-hourly",
+      }),
+    ).toEqual({
+      ok: true,
+      taskId: "ai-news-hourly",
+      validation: {
+        ok: false,
+        expectedTools: ["slack_search_messages", "web_search"],
+        grantedTools: ["slack_search_messages", "web_search"],
+        runtimeAdmission: {
+          checked: true,
+          ok: false,
+          runtimeId: "rt_123",
+          runtimeType: "openclaw",
+          reason: "Managed runtime returned HTTP 400: Invalid run request",
+        },
+        errors: [
+          {
+            code: "runtime_admission_failed",
+            message: "Managed runtime returned HTTP 400: Invalid run request",
+          },
+        ],
+        warnings: [],
+      },
+    });
+
+    store.close();
+  });
+
   test("does not treat capability-only registrations as current scheduled jobs", async () => {
     const store = createTokenStore(":memory:");
     store.upsertAgentJobCapability({

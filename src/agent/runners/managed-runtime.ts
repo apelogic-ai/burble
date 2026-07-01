@@ -8,7 +8,10 @@ import type {
 import type { ToolClassification } from "../../conversation/types";
 import type { RuntimeFactory, RuntimeHandle } from "../runtime-factory";
 import type { ObservabilitySink } from "../../observability";
-import type { RuntimeCapabilityManifest } from "@burble/runtime-sdk/runtime-contract";
+import {
+  parseRuntimeRunRequest,
+  type RuntimeCapabilityManifest,
+} from "@burble/runtime-sdk/runtime-contract";
 import {
   createAgentRunnerFromRuntimeAdapter,
   type RuntimeAdapter,
@@ -61,6 +64,26 @@ export type ManagedRuntimeAgentRunnerDeps = {
   logInfo?: (message: string) => void;
   observability?: ObservabilitySink;
 };
+
+export type ManagedRuntimeAdmissionResult =
+  | {
+      checked: true;
+      ok: true;
+      runtimeId: string;
+      runtimeType: string;
+    }
+  | {
+      checked: true;
+      ok: false;
+      runtimeId?: string;
+      runtimeType?: string;
+      reason: string;
+    }
+  | {
+      checked: false;
+      ok: true;
+      reason: string;
+    };
 
 type RemoteRunResponse = {
   response?: AgentOutput;
@@ -124,6 +147,49 @@ export function createManagedRuntimeAgentRunner(
   return createAgentRunnerFromRuntimeAdapter(createManagedRuntimeAdapter(deps));
 }
 
+export async function validateManagedRuntimeAgentInput(
+  deps: ManagedRuntimeAgentRunnerDeps,
+  input: AgentInput,
+): Promise<ManagedRuntimeAdmissionResult> {
+  const runtime = buildManagedRuntimeAdmissionHandle(deps, input);
+  if (!runtime) {
+    return {
+      checked: false,
+      ok: true,
+      reason: "Managed runtime endpoint is unavailable",
+    };
+  }
+
+  const runId = crypto.randomUUID();
+  const runBody = buildManagedRuntimeRunBody(input, {
+    runtime,
+    runId,
+    config: deps.config,
+  });
+
+  try {
+    parseRuntimeRunRequest(runBody);
+  } catch (error) {
+    return {
+      checked: true,
+      ok: false,
+      runtimeId: runtime.id,
+      runtimeType: runtime.engine,
+      reason:
+        error instanceof Error
+          ? `Runtime run request is invalid: ${error.message}`
+          : "Runtime run request is invalid",
+    };
+  }
+
+  return {
+    checked: true,
+    ok: true,
+    runtimeId: runtime.id,
+    runtimeType: runtime.engine,
+  };
+}
+
 export function createManagedRuntimeAdapter(
   deps: ManagedRuntimeAgentRunnerDeps,
 ): RuntimeAdapter {
@@ -170,16 +236,7 @@ export function createManagedRuntimeAdapter(
         type: "status",
         text: "Starting agent runtime...",
       };
-      const runtime = deps.runtimeFactory
-        ? await deps.runtimeFactory.getOrCreateRuntime(input.principal, {
-            ...(input.attachments && input.attachments.length > 0
-              ? { attachments: true }
-              : {}),
-            ...(input.scheduledJob?.runtimeType
-              ? { engine: input.scheduledJob.runtimeType }
-              : {}),
-          })
-        : null;
+      const runtime = await getManagedRuntimeForInput(deps, input);
       const baseUrl =
         runtime?.endpointUrl.replace(/\/+$/, "") ?? fallbackBaseUrl;
       if (!baseUrl) {
@@ -269,17 +326,11 @@ export function createManagedRuntimeAdapter(
         });
       }
 
-      const runBody = {
+      const runBody = buildManagedRuntimeRunBody(input, {
+        runtime,
         runId,
-        principal: input.principal,
-        ...(input.executionMode ? { executionMode: input.executionMode } : {}),
-        ...(runtime ? { runtime: sanitizeRuntimeHandle(runtime) } : {}),
-        input: sanitizeAgentInput(input, {
-          ...(deps.config ? { config: deps.config } : {}),
-          ...(runtime?.id ? { runtimeId: runtime.id } : {}),
-          runId,
-        }),
-      };
+        config: deps.config,
+      });
       const runUrl = `${baseUrl}/runs`;
       let agentResponse: AgentOutput | null;
       try {
@@ -773,6 +824,66 @@ function toRuntimeObservabilityError(error: unknown): {
   }
   return {
     message: String(error),
+  };
+}
+
+async function getManagedRuntimeForInput(
+  deps: ManagedRuntimeAgentRunnerDeps,
+  input: AgentInput,
+): Promise<RuntimeHandle | null> {
+  return deps.runtimeFactory
+    ? await deps.runtimeFactory.getOrCreateRuntime(input.principal, {
+        ...(input.attachments && input.attachments.length > 0
+          ? { attachments: true }
+          : {}),
+        ...(input.scheduledJob?.runtimeType
+          ? { engine: input.scheduledJob.runtimeType }
+          : {}),
+      })
+    : null;
+}
+
+function buildManagedRuntimeAdmissionHandle(
+  deps: ManagedRuntimeAgentRunnerDeps,
+  input: AgentInput,
+): RuntimeHandle | null {
+  const engine =
+    input.scheduledJob?.runtimeType ?? deps.config?.agentRuntimeEngine;
+  if (!engine) {
+    return null;
+  }
+  return {
+    id: `admission:${engine}`,
+    engine,
+    endpointUrl: deps.baseUrl ?? "",
+    authToken: "",
+    status: "ready",
+    statePath: "",
+    configPath: "",
+    workspacePath: "",
+  };
+}
+
+function buildManagedRuntimeRunBody(
+  input: AgentInput,
+  options: {
+    runtime: RuntimeHandle | null;
+    runId: string;
+    config?: Config;
+  },
+): unknown {
+  return {
+    runId: options.runId,
+    principal: input.principal,
+    ...(input.executionMode ? { executionMode: input.executionMode } : {}),
+    ...(options.runtime
+      ? { runtime: sanitizeRuntimeHandle(options.runtime) }
+      : {}),
+    input: sanitizeAgentInput(input, {
+      ...(options.config ? { config: options.config } : {}),
+      ...(options.runtime?.id ? { runtimeId: options.runtime.id } : {}),
+      runId: options.runId,
+    }),
   };
 }
 
