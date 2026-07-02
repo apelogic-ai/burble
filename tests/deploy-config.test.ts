@@ -471,6 +471,7 @@ describe("dev deploy config", () => {
       "label=com.docker.compose.project.working_dir={{ burble_install_path }}/deploy/dev/compose"
     );
     expect(ansibleRoleTasks).toContain("burble_compose_files");
+    expect(ansibleRoleTasks).toContain("replace(',', ':')");
     expect(ansibleRoleTasks).toContain("map('basename') | list");
     expect(ansibleRoleTasks).toContain("burble_active_compose_config_files != '<no value>'");
     expect(ansibleRoleTasks).toContain("['docker-compose.yml']");

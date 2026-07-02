@@ -105,7 +105,7 @@
           and burble_active_compose_config_files != '<no value>'
         )
         | ternary(
-          burble_active_compose_config_files.split(':') | map('basename') | list,
+          (burble_active_compose_config_files | replace(',', ':')).split(':') | map('basename') | list,
           ['docker-compose.yml']
         )
       }}
