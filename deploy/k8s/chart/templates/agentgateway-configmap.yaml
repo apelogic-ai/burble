@@ -1,0 +1,66 @@
+{{- if eq .Values.agentgateway.mode "managed" -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "burble.agentgateway.fullname" . }}
+  labels:
+    {{- include "burble.labels" . | nindent 4 }}
+    app.kubernetes.io/component: agentgateway
+data:
+  config.yaml: |
+    binds:
+      - port: 3000
+        listeners:
+          - routes:
+              - matches:
+                  - path:
+                      exact: /mcp
+                  - path:
+                      exact: /.well-known/oauth-protected-resource/mcp
+                policies: &burble_mcp_policies
+                  cors:
+                    allowOrigins: ["*"]
+                    allowHeaders:
+                      - mcp-protocol-version
+                      - content-type
+                      - authorization
+                    exposeHeaders:
+                      - Mcp-Session-Id
+                  mcpAuthentication:
+                    mode: strict
+                    issuer: {{ default .Values.config.baseUrl .Values.config.runtimeJwtIssuer }}
+                    audiences:
+                      - {{ include "burble.agentgateway.url" . }}
+                    jwks:
+                      url: http://{{ include "burble.fullname" . }}:{{ .Values.service.port }}/oauth/jwks
+                    resourceMetadata:
+                      resource: {{ default (include "burble.agentgateway.url" .) .Values.agentgateway.publicResourceUrl }}
+                      scopesSupported:
+                        - read:all
+                      bearerMethodsSupported:
+                        - header
+                backends:
+                  - mcp:
+                      targets:
+                        - name: burble
+                          policies:
+                            backendAuth:
+                              passthrough: {}
+                          mcp:
+                            host: http://{{ include "burble.fullname" . }}:{{ .Values.service.port }}/mcp
+              {{- range $path := list "github" "jira" "slack" "atlassian" }}
+              - matches:
+                  - path:
+                      exact: /mcp/{{ $path }}
+                policies: *burble_mcp_policies
+                backends:
+                  - mcp:
+                      targets:
+                        - name: burble-{{ $path }}
+                          policies:
+                            backendAuth:
+                              passthrough: {}
+                          mcp:
+                            host: http://{{ include "burble.fullname" $ }}:{{ $.Values.service.port }}/mcp/{{ $path }}
+              {{- end }}
+{{- end }}

@@ -1,0 +1,76 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "burble.fullname" . }}-env
+  labels:
+    {{- include "burble.labels" . | nindent 4 }}
+data:
+  NODE_ENV: production
+  PORT: {{ .Values.service.targetPort | quote }}
+  BASE_URL: {{ required "config.baseUrl is required" .Values.config.baseUrl | quote }}
+  DATABASE_PATH: {{ .Values.config.databasePath | quote }}
+  SLACK_LOG_LEVEL: {{ .Values.config.slackLogLevel | quote }}
+  AGENT_MODE: {{ .Values.config.agentMode | quote }}
+  AGENT_FAST_TRACK: {{ .Values.config.agentFastTrack | quote }}
+  AGENT_RUNTIME: {{ .Values.config.agentRuntime | quote }}
+  AGENT_RUNTIME_FACTORY: {{ .Values.config.agentRuntimeFactory | quote }}
+  AGENT_RUNTIME_DATA_ROOT: {{ .Values.config.agentRuntimeDataRoot | quote }}
+  AGENT_RUNTIME_ENGINE: {{ .Values.config.agentRuntimeEngine | quote }}
+  AGENT_RUNTIME_IMAGE: {{ .Values.config.agentRuntimeImage | quote }}
+  AGENT_RUNTIME_DOCKER_NETWORK: {{ .Values.config.agentRuntimeDockerNetwork | quote }}
+  AGENT_RUNTIME_IDLE_TTL_MS: {{ .Values.config.agentRuntimeIdleTtlMs | quote }}
+  AGENT_RUNTIME_REAPER_ENABLED: {{ .Values.config.agentRuntimeReaperEnabled | quote }}
+  AGENT_RUNTIME_REAPER_INTERVAL_MS: {{ .Values.config.agentRuntimeReaperIntervalMs | quote }}
+  AGENT_RUNTIME_JWT_TTL_SECONDS: {{ .Values.config.agentRuntimeJwtTtlSeconds | quote }}
+  AGENT_RUNTIME_TOOL_GATEWAY_URL: {{ default (printf "http://%s:%v/internal/tools" (include "burble.fullname" .) .Values.service.port) .Values.config.agentRuntimeToolGatewayUrl | quote }}
+  AGENT_RUNTIME_MCP_GATEWAY_URL: {{ default (include "burble.agentgateway.url" .) .Values.config.agentRuntimeMcpGatewayUrl | quote }}
+  AGENT_RUNTIME_MCP_AUDIENCE: {{ default (include "burble.agentgateway.url" .) .Values.config.agentRuntimeMcpAudience | quote }}
+  AGENT_RUNTIME_STREAMING: {{ .Values.config.agentRuntimeStreaming | quote }}
+  AGENT_RUNTIME_URL: {{ .Values.config.agentRuntimeUrl | quote }}
+  LLM_GW_BASE_URL: {{ default (include "burble.litellm.baseUrl" .) .Values.config.agentRuntimeInferenceBaseUrl | quote }}
+  BURBLE_INFERENCE_BASE_URL: {{ default (include "burble.litellm.baseUrl" .) .Values.config.agentRuntimeInferenceBaseUrl | quote }}
+  AGENT_RUNTIME_SANDBOX_URL: {{ .Values.config.agentRuntimeSandboxUrl | quote }}
+  AGENT_RUNTIME_SANDBOX_TRANSPORT: {{ .Values.config.agentRuntimeSandboxTransport | quote }}
+  AGENT_RUNTIME_SANDBOX_START_COMMAND: {{ .Values.config.agentRuntimeSandboxStartCommand | quote }}
+  AGENT_RUNTIME_OPENSHELL_CLI_BIN: {{ .Values.config.agentRuntimeOpenShellCliBin | quote }}
+  AGENT_RUNTIME_OPENSHELL_DIAL_HOST: {{ .Values.config.agentRuntimeOpenShellDialHost | quote }}
+  AGENT_RUNTIME_CONFIG_PATCH_HOST_PATH: {{ .Values.config.agentRuntimeConfigPatchHostPath | quote }}
+  AI_MODEL: {{ .Values.config.aiModel | quote }}
+  ATLASSIAN_MCP_URL: {{ .Values.config.atlassianMcpUrl | quote }}
+  RUNTIME_JWT_ISSUER: {{ default .Values.config.baseUrl .Values.config.runtimeJwtIssuer | quote }}
+  RUNTIME_JWT_PRIVATE_KEY_PATH: {{ .Values.config.runtimeJwtPrivateKeyPath | quote }}
+  OBSERVABILITY_JSONL_PATH: {{ .Values.config.observabilityJsonlPath | quote }}
+  OBSERVABILITY_JSONL_DIR: {{ .Values.config.observabilityJsonlDir | quote }}
+  OBSERVABILITY_INCLUDE_CONTENT: {{ .Values.config.observabilityIncludeContent | quote }}
+  TASK_WORKFLOW_SHADOW_ENABLED: {{ .Values.config.taskWorkflowShadowEnabled | quote }}
+  TASK_WORKFLOW_SHADOW_DATABASE_PATH: {{ .Values.config.taskWorkflowShadowDatabasePath | quote }}
+  TASK_WORKFLOW_AUTHORITY: {{ .Values.config.taskWorkflowAuthority | quote }}
+  TASK_WORKFLOW_MAX_ATTEMPTS: {{ .Values.config.taskWorkflowMaxAttempts | quote }}
+  SCHEDULED_RUN_AUDIT_RETENTION_DAYS: {{ .Values.config.scheduledRunAuditRetentionDays | quote }}
+  SCHEDULED_RUN_AUDIT_PRUNE_INTERVAL_MS: {{ .Values.config.scheduledRunAuditPruneIntervalMs | quote }}
+  OPENCLAW_NEMOCLAW_URL: {{ .Values.config.openClawNemoClawUrl | quote }}
+  OPENCLAW_NEMOCLAW_ENGINE: {{ .Values.config.openClawNemoClawEngine | quote }}
+  OPENCLAW_COMMAND: {{ .Values.config.openClawCommand | quote }}
+  OPENCLAW_AGENT: {{ .Values.config.openClawAgent | quote }}
+  OPENCLAW_TIMEOUT_MS: {{ .Values.config.openClawTimeoutMs | quote }}
+  OPENCLAW_STATE_DIR: {{ .Values.config.openClawStateDir | quote }}
+  OPENCLAW_CONFIG_PATH: {{ .Values.config.openClawConfigPath | quote }}
+  OPENCLAW_WORKSPACE_DIR: {{ .Values.config.openClawWorkspaceDir | quote }}
+  OPENCLAW_SETUP_ON_START: {{ .Values.config.openClawSetupOnStart | quote }}
+  OPENCLAW_CONFIG_PATCH_PATH: {{ .Values.config.openClawConfigPatchPath | quote }}
+  OPENCLAW_VALIDATE_ON_START: {{ .Values.config.openClawValidateOnStart | quote }}
+  OPENCLAW_STREAM_DEBUG: {{ .Values.config.openClawStreamDebug | quote }}
+  OPENCLAW_LOG_LEVEL: {{ .Values.config.openClawLogLevel | quote }}
+  OPENCLAW_DIAGNOSTICS: {{ .Values.config.openClawDiagnostics | quote }}
+  OPENCLAW_DEBUG_MODEL_TRANSPORT: {{ .Values.config.openClawDebugModelTransport | quote }}
+  OPENCLAW_DEBUG_MODEL_PAYLOAD: {{ .Values.config.openClawDebugModelPayload | quote }}
+  OPENCLAW_DEBUG_SSE: {{ .Values.config.openClawDebugSse | quote }}
+  OPENCLAW_DEBUG_CODE_MODE: {{ .Values.config.openClawDebugCodeMode | quote }}
+  OPENCLAW_CODE_MODE: {{ .Values.config.openClawCodeMode | quote }}
+  OPENCLAW_MODEL_API: {{ .Values.config.openClawModelApi | quote }}
+  OPENCLAW_FAST_MODE: {{ .Values.config.openClawFastMode | quote }}
+  OPENCLAW_RAW_STREAM_DEBUG: {{ .Values.config.openClawRawStreamDebug | quote }}
+  OPENCLAW_GATEWAY_PORT: {{ .Values.config.openClawGatewayPort | quote }}
+  OPENCLAW_GATEWAY_BIND: {{ .Values.config.openClawGatewayBind | quote }}
+  OPENCLAW_GATEWAY_TOKEN: {{ .Values.config.openClawGatewayToken | quote }}
+  OLLAMA_BASE_URL: {{ .Values.config.ollamaBaseUrl | quote }}

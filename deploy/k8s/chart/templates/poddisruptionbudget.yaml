@@ -1,0 +1,14 @@
+{{- if .Values.podDisruptionBudget.enabled -}}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "burble.fullname" . }}
+  labels:
+    {{- include "burble.labels" . | nindent 4 }}
+    app.kubernetes.io/component: app
+spec:
+  minAvailable: {{ .Values.podDisruptionBudget.minAvailable }}
+  selector:
+    matchLabels:
+      {{- include "burble.appSelectorLabels" . | nindent 6 }}
+{{- end }}

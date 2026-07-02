@@ -1,0 +1,29 @@
+image:
+  repository: example.com/burble
+  tag: test
+
+config:
+  baseUrl: https://burble.example.test
+  taskWorkflowShadowEnabled: "true"
+  taskWorkflowAuthority: manual
+
+secret:
+  existingSecret: burble-secrets
+
+litellm:
+  mode: managed
+  config: |
+    model_list:
+      - model_name: gpt-5.4
+        litellm_params:
+          model: openai/gpt-5.4
+          api_key: os.environ/OPENAI_API_KEY
+
+agentgateway:
+  mode: managed
+
+networkPolicy:
+  egress:
+    dnsEnabled: true
+    allowHttpsCidrs:
+      - 0.0.0.0/0

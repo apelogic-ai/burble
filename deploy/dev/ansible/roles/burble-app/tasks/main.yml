@@ -58,9 +58,66 @@
     backup: yes
   notify: Restart burble-app
 
+- name: Find active Burble app container for this Compose project
+  ansible.builtin.command:
+    argv:
+      - docker
+      - ps
+      - --filter
+      - label=com.docker.compose.service=burble-app
+      - --filter
+      - label=com.docker.compose.project.working_dir={{ burble_install_path }}/deploy/dev/compose
+      - --format
+      - '{{ "{{" }} .ID {{ "}}" }}'
+  register: burble_compose_app_containers
+  changed_when: false
+  failed_when: false
+  become_user: ubuntu
+
+- name: Select active Burble app container
+  ansible.builtin.set_fact:
+    burble_compose_app_container_id: "{{ (burble_compose_app_containers.stdout_lines | default([]) | first | default('')) | trim }}"
+
+- name: Inspect active Docker Compose file stack
+  ansible.builtin.command:
+    argv:
+      - docker
+      - inspect
+      - "{{ burble_compose_app_container_id }}"
+      - --format
+      - '{{ "{{" }} index .Config.Labels "com.docker.compose.project.config_files" {{ "}}" }}'
+  register: burble_compose_config_files
+  changed_when: false
+  failed_when: false
+  become_user: ubuntu
+  when: burble_compose_app_container_id | length > 0
+
+- name: Normalize active Docker Compose file stack
+  ansible.builtin.set_fact:
+    burble_active_compose_config_files: "{{ burble_compose_config_files.stdout | default('') | trim }}"
+
+- name: Preserve active Docker Compose files
+  ansible.builtin.set_fact:
+    burble_compose_files: >-
+      {{
+        (
+          burble_active_compose_config_files | length > 0
+          and burble_active_compose_config_files != '<no value>'
+        )
+        | ternary(
+          (burble_active_compose_config_files | replace(',', ':')).split(':') | map('basename') | list,
+          ['docker-compose.yml']
+        )
+      }}
+
+- name: Show Docker Compose file stack
+  ansible.builtin.debug:
+    msg: "Using Docker Compose files: {{ burble_compose_files | join(', ') }}"
+
 - name: Build images and bring the stack up
   community.docker.docker_compose_v2:
     project_src: "{{ burble_install_path }}/deploy/dev/compose"
+    files: "{{ burble_compose_files }}"
     state: present
     build: always
   become_user: ubuntu

@@ -38,6 +38,35 @@ const openClawOpenAiPatch = await Bun.file(
 const ansibleEnvTemplate = await Bun.file(
   "deploy/dev/ansible/roles/burble-app/templates/env.j2"
 ).text();
+const ansibleGroupVars = await Bun.file(
+  "deploy/dev/ansible/group_vars/all.yml"
+).text();
+const ansibleRoleTasks = await Bun.file(
+  "deploy/dev/ansible/roles/burble-app/tasks/main.yml"
+).text();
+const ansibleRoleHandlers = await Bun.file(
+  "deploy/dev/ansible/roles/burble-app/handlers/main.yml"
+).text();
+const k8sReadme = await Bun.file("deploy/k8s/README.md").text();
+const k8sConsumerRunbook = await Bun.file("deploy/k8s/CONSUMER.md").text();
+const k8sValues = await Bun.file("deploy/k8s/chart/values.yaml").text();
+const k8sHelpers = await Bun.file("deploy/k8s/chart/templates/_helpers.tpl").text();
+const k8sConfigMap = await Bun.file(
+  "deploy/k8s/chart/templates/configmap.yaml"
+).text();
+const k8sDeployment = await Bun.file(
+  "deploy/k8s/chart/templates/deployment.yaml"
+).text();
+const k8sService = await Bun.file("deploy/k8s/chart/templates/service.yaml").text();
+const k8sNetworkPolicy = await Bun.file(
+  "deploy/k8s/chart/templates/networkpolicy.yaml"
+).text();
+const k8sLiteLlmDeployment = await Bun.file(
+  "deploy/k8s/chart/templates/litellm-deployment.yaml"
+).text();
+const k8sAgentGatewayDeployment = await Bun.file(
+  "deploy/k8s/chart/templates/agentgateway-deployment.yaml"
+).text();
 const appDockerfile = await Bun.file("Dockerfile").text();
 const hermesDockerfile = await Bun.file("runtimes/nemo-hermes/Dockerfile").text();
 const burbleNativeDockerfile = await Bun.file(
@@ -91,6 +120,7 @@ describe("dev deploy config", () => {
       "AGENT_RUNTIME_TOOL_GATEWAY_URL",
       "AGENT_RUNTIME_MCP_GATEWAY_URL",
       "AGENT_RUNTIME_MCP_AUDIENCE",
+      "AGENT_RUNTIME_STREAMING",
       "LLM_GW_BASE_URL",
       "BURBLE_INFERENCE_BASE_URL",
       "AGENT_RUNTIME_SANDBOX_URL",
@@ -398,6 +428,8 @@ describe("dev deploy config", () => {
       "AGENT_RUNTIME_MCP_GATEWAY_URL",
       "AGENT_RUNTIME_MCP_AUDIENCE",
       "BURBLE_INFERENCE_BASE_URL",
+      "LLM_GW_BASE_URL",
+      "AGENT_RUNTIME_STREAMING",
       "AGENT_RUNTIME_SANDBOX_URL",
       "AGENT_RUNTIME_SANDBOX_TOKEN",
       "AGENT_RUNTIME_SANDBOX_TRANSPORT",
@@ -411,6 +443,43 @@ describe("dev deploy config", () => {
     ]) {
       expect(ansibleEnvTemplate).toContain(name);
     }
+    for (const name of [
+      "agent_runtime_factory: static",
+      "agent_runtime_streaming: native",
+      "llm_gw_base_url: http://host.openshell.internal:4000/v1",
+      "burble_inference_base_url: http://llm-gw:4000/v1",
+      "task_workflow_shadow_enabled: false",
+      "task_workflow_authority: off",
+      "task_workflow_max_attempts: 2",
+      "scheduled_run_audit_retention_days: 90",
+      "scheduled_run_audit_prune_interval_ms: 86400000",
+      "openclaw_model_api: openai-responses",
+    ]) {
+      expect(ansibleGroupVars).toContain(name);
+    }
+  });
+
+  test("preserves the active Docker Compose overlay stack in Ansible deploys", () => {
+    expect(ansibleRoleTasks).toContain(
+      'com.docker.compose.project.config_files'
+    );
+    expect(ansibleRoleTasks).toContain("burble_compose_config_files");
+    expect(ansibleRoleTasks).toContain(
+      "label=com.docker.compose.service=burble-app"
+    );
+    expect(ansibleRoleTasks).toContain(
+      "label=com.docker.compose.project.working_dir={{ burble_install_path }}/deploy/dev/compose"
+    );
+    expect(ansibleRoleTasks).toContain("burble_compose_files");
+    expect(ansibleRoleTasks).toContain("replace(',', ':')");
+    expect(ansibleRoleTasks).toContain("map('basename') | list");
+    expect(ansibleRoleTasks).toContain("burble_active_compose_config_files != '<no value>'");
+    expect(ansibleRoleTasks).toContain("['docker-compose.yml']");
+    expect(ansibleRoleTasks).toContain("files: \"{{ burble_compose_files }}\"");
+    expect(ansibleRoleTasks).not.toContain("compose-burble-app-1");
+    expect(ansibleRoleHandlers).toContain(
+      "files: \"{{ burble_compose_files | default(['docker-compose.yml']) }}\""
+    );
   });
 
   test("provides an optional personal runtime compose override", () => {
@@ -823,5 +892,60 @@ describe("dev deploy config", () => {
         "            ."
       ].join("\n")
     );
+  });
+
+  test("ships a Kubernetes blueprint with optional LiteLLM and agentgateway modes", () => {
+    expect(k8sReadme).toContain("LiteLLM: `managed`, `external`, or `disabled`");
+    expect(k8sReadme).toContain("agentgateway: `managed`, `external`, or `disabled`");
+    expect(k8sConsumerRunbook).toContain("litellm.mode=external");
+    expect(k8sConsumerRunbook).toContain("agentgateway.mode=external");
+    expect(k8sValues).toContain("litellm:");
+    expect(k8sValues).toContain("mode: disabled");
+    expect(k8sValues).toContain("externalBaseUrl");
+    expect(k8sValues).toContain("agentgateway:");
+    expect(k8sValues).toContain("externalUrl");
+    expect(k8sHelpers).toContain("burble.litellm.baseUrl");
+    expect(k8sHelpers).toContain("litellm.mode=external");
+    expect(k8sHelpers).toContain("burble.agentgateway.url");
+    expect(k8sHelpers).toContain("agentgateway.mode=external");
+    expect(k8sHelpers).toContain("burble.appSelectorLabels");
+    expect(k8sHelpers).toContain("app.kubernetes.io/component: app");
+    expect(k8sConfigMap).toContain("LLM_GW_BASE_URL");
+    expect(k8sConfigMap).toContain("BURBLE_INFERENCE_BASE_URL");
+    expect(k8sConfigMap).toContain("AGENT_RUNTIME_MCP_GATEWAY_URL");
+    expect(k8sConfigMap).toContain("AGENT_RUNTIME_MCP_AUDIENCE");
+    expect(k8sConfigMap).toContain("TASK_WORKFLOW_AUTHORITY");
+    expect(k8sDeployment).toContain("app.kubernetes.io/component: app");
+    expect(k8sDeployment).toContain(
+      '{{- include "burble.appSelectorLabels" . | nindent 6 }}'
+    );
+    expect(k8sDeployment).toContain(
+      '{{- include "burble.appSelectorLabels" . | nindent 8 }}'
+    );
+    expect(k8sDeployment).not.toContain(
+      '{{- include "burble.selectorLabels" . | nindent 6 }}'
+    );
+    expect(k8sService).toContain(
+      '{{- include "burble.appSelectorLabels" . | nindent 4 }}'
+    );
+    expect(k8sDeployment).toContain("secretRef:");
+    expect(k8sDeployment).toContain("persistentVolumeClaim:");
+    expect(k8sLiteLlmDeployment).toContain('eq .Values.litellm.mode "managed"');
+    expect(k8sValues).toContain("repository: ghcr.io/berriai/litellm");
+    expect(k8sAgentGatewayDeployment).toContain(
+      'eq .Values.agentgateway.mode "managed"'
+    );
+    expect(k8sValues).toContain("repository: ghcr.io/agentgateway/agentgateway");
+    expect(k8sNetworkPolicy).toContain('eq .Values.litellm.mode "managed"');
+    expect(k8sNetworkPolicy).toContain(
+      'eq .Values.agentgateway.mode "managed"'
+    );
+    expect(k8sNetworkPolicy).toContain(
+      '{{- include "burble.appSelectorLabels" . | nindent 6 }}'
+    );
+    expect(k8sNetworkPolicy).toContain(
+      '{{- include "burble.appSelectorLabels" . | nindent 14 }}'
+    );
+    expect(k8sNetworkPolicy).not.toContain("ingress: []");
   });
 });
