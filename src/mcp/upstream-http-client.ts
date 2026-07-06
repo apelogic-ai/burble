@@ -21,7 +21,7 @@ export type UpstreamMcpToolResult = {
 type JsonRpcResponse = {
   result?: unknown;
   error?: {
-    code?: number;
+    code?: number | string;
     message?: string;
     data?: unknown;
   };
@@ -30,6 +30,38 @@ type JsonRpcResponse = {
 type UpstreamSession = {
   sessionId: string | null;
 };
+
+export class UpstreamMcpHttpError extends Error {
+  readonly name = "UpstreamMcpHttpError";
+  readonly status: number;
+  readonly wwwAuthenticate: string | null;
+
+  constructor(input: {
+    status: number;
+    detail: string;
+    wwwAuthenticate: string | null;
+  }) {
+    super(`Upstream MCP returned HTTP ${input.status}${input.detail}`);
+    this.status = input.status;
+    this.wwwAuthenticate = input.wwwAuthenticate;
+  }
+}
+
+export class UpstreamMcpJsonRpcError extends Error {
+  readonly name = "UpstreamMcpJsonRpcError";
+  readonly code: number | string | undefined;
+  readonly data: unknown;
+
+  constructor(input: {
+    code?: number | string;
+    message?: string;
+    data?: unknown;
+  }) {
+    super(`Upstream MCP error: ${input.message ?? "unknown error"}`);
+    this.code = input.code;
+    this.data = input.data;
+  }
+}
 
 export async function listUpstreamMcpTools(
   config: UpstreamMcpClientConfig
@@ -172,9 +204,11 @@ async function sendRawUpstreamMcpRequest(
     body: JSON.stringify(body)
   });
   if (!response.ok) {
-    throw new Error(
-      `Upstream MCP returned HTTP ${response.status}${await readErrorDetail(response)}`
-    );
+    throw new UpstreamMcpHttpError({
+      status: response.status,
+      detail: await readErrorDetail(response),
+      wwwAuthenticate: response.headers.get("www-authenticate")
+    });
   }
 
   return response;
@@ -219,9 +253,7 @@ function readSseData(text: string): string {
 
 function throwIfJsonRpcError(payload: JsonRpcResponse): void {
   if (payload.error) {
-    throw new Error(
-      `Upstream MCP error: ${payload.error.message ?? "unknown error"}`
-    );
+    throw new UpstreamMcpJsonRpcError(payload.error);
   }
 }
 
