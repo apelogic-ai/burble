@@ -5,6 +5,7 @@ import { startOAuthServer } from "./server";
 import { createSlackRuntime } from "./slack";
 import { formatLogError, formatLogLine, withUtcTimestamp } from "./logging";
 import { createRuntimeJwtIssuer } from "./runtime-jwt";
+import { createMcpIdentityIssuer } from "./mcp-identity";
 import { createObservabilitySink } from "./observability";
 import { createConfiguredSandboxProvider } from "./agent/sandbox-providers/configured";
 import {
@@ -32,6 +33,10 @@ const runtimeJwtIssuer = createRuntimeJwtIssuer({
   issuer: config.runtimeJwtIssuer,
   privateKeyPath: config.runtimeJwtPrivateKeyPath
 });
+const mcpIdentityIssuer = createMcpIdentityIssuer({
+  issuer: config.mcpIdentityIssuer,
+  privateKeyPath: config.mcpIdentityPrivateKeyPath
+});
 const slack = createSlackRuntime(
   config,
   store,
@@ -55,7 +60,7 @@ const server = startOAuthServer(
   store,
   slack,
   runtimeJwtIssuer,
-  observability,
+  { observability, mcpIdentityIssuer },
   slackTestbed
 );
 const logDebug =
