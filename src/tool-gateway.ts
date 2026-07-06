@@ -109,6 +109,13 @@ import {
   type UpstreamMcpTool,
   type UpstreamMcpToolResult
 } from "./mcp/upstream-http-client";
+import {
+  callMcpGwTool,
+  McpGwUnauthorizedError,
+  type McpGwToolCallResult
+} from "./mcp/mcp-gw-client";
+import { resolveMcpUserAssertion } from "./mcp/user-assertion";
+import type { McpIdentityIssuer } from "./mcp-identity";
 import { searchSlackMessages, searchSlackUsers } from "./providers/slack/client";
 import { searchWeb, type WebSearchDeps } from "./providers/web/client";
 import {
@@ -189,6 +196,9 @@ type ToolGatewayDeps = Partial<Parameters<typeof createGitHubTools>[0]> &
       name: string;
       arguments?: Record<string, unknown>;
     }) => Promise<UpstreamMcpToolResult>;
+    mcpIdentityIssuer?: McpIdentityIssuer | null;
+    getSlackEmail?: (slackUserId: string) => Promise<string>;
+    callMcpGwTool?: typeof callMcpGwTool;
     observability?: ObservabilitySink;
   };
 
@@ -969,6 +979,12 @@ export async function handleToolGatewayRequest(
     });
   }
   body = { ...body, input: inputCoercion.input };
+
+  if (shouldRouteGoogleViaMcpGw(config, auth, providerToolSpec)) {
+    return respondWithAudit(
+      await handleMcpGwGoogleToolRequest(config, auth, toolName, body, deps)
+    );
+  }
 
   const provider = readToolProvider(toolName);
   const connection = resolveToolGatewayConnection(store, auth, provider, body);
@@ -2136,6 +2152,157 @@ function isKnownTool(toolName: string): boolean {
 
 function readToolProvider(toolName: string): Provider {
   return connectionProviderForToolName(toolName) ?? "github";
+}
+
+function shouldRouteGoogleViaMcpGw(
+  config: Config,
+  auth: ToolGatewayAuth,
+  providerToolSpec: ProviderToolSpec | null
+): boolean {
+  return (
+    auth.kind === "runtime" &&
+    config.googleViaMcpGw &&
+    providerToolSpec?.provider === "google"
+  );
+}
+
+async function handleMcpGwGoogleToolRequest(
+  config: Config,
+  auth: ToolGatewayAuth,
+  toolName: string,
+  body: ToolGatewayBody,
+  deps: ToolGatewayDeps
+): Promise<ToolResult<unknown>> {
+  if (auth.kind !== "runtime") {
+    return {
+      classification: "user_private",
+      content: {
+        error: "runtime_auth_required",
+        message: "Runtime auth required."
+      }
+    };
+  }
+
+  const mcpGwToolName = resolveMcpGwGoogleToolName(toolName);
+  if (!mcpGwToolName) {
+    return {
+      classification: "user_private",
+      content: {
+        error: "mcp_gw_tool_not_mapped",
+        message: `Google tool ${toolName} is not mapped for MCP-GW.`
+      }
+    };
+  }
+
+  if (!config.mcpGwMcpUrl || !config.mcpGwAudience || !deps.mcpIdentityIssuer) {
+    return {
+      classification: "user_private",
+      content: {
+        error: "mcp_gw_not_configured",
+        message:
+          "Google via MCP-GW is enabled but MCP-GW URL, audience, or identity issuer is not configured."
+      }
+    };
+  }
+
+  const getSlackEmail = resolveMcpGwEmailGetter(body, deps);
+  if (!getSlackEmail) {
+    return {
+      classification: "user_private",
+      content: {
+        error: "mcp_gw_identity_unavailable",
+        message:
+          "Google via MCP-GW requires a Slack email resolver or a runtime user email."
+      }
+    };
+  }
+
+  try {
+    const assertion = await resolveMcpUserAssertion({
+      workspaceId: auth.runtime.workspaceId,
+      slackUserId: auth.runtime.slackUserId,
+      audience: config.mcpGwAudience,
+      issuer: deps.mcpIdentityIssuer,
+      getSlackEmail
+    });
+    const result = await (deps.callMcpGwTool ?? callMcpGwTool)(
+      {
+        url: config.mcpGwMcpUrl,
+        bearerToken: assertion.token
+      },
+      {
+        name: mcpGwToolName,
+        arguments: isOptionalObject(body.input) ? body.input : {}
+      }
+    );
+
+    return mcpGwToolResult(mcpGwToolName, result);
+  } catch (error) {
+    if (error instanceof McpGwUnauthorizedError) {
+      return {
+        classification: "user_private",
+        content: {
+          error: "mcp_gw_unauthorized",
+          message: error.message,
+          ...(error.protectedResourceMetadataUrl
+            ? { protectedResourceMetadataUrl: error.protectedResourceMetadataUrl }
+            : {})
+        }
+      };
+    }
+
+    return {
+      classification: "user_private",
+      content: {
+        error: "mcp_gw_call_failed",
+        message: formatToolGatewayErrorMessage(error)
+      }
+    };
+  }
+}
+
+function resolveMcpGwGoogleToolName(toolName: string): string | null {
+  const tool = findProviderToolSpec(toolName);
+  if (tool?.provider === "google") {
+    return tool.name;
+  }
+  return null;
+}
+
+function resolveMcpGwEmailGetter(
+  body: ToolGatewayBody,
+  deps: ToolGatewayDeps
+): ((slackUserId: string) => Promise<string>) | null {
+  if (typeof body.user?.email === "string" && body.user.email.trim()) {
+    const email = body.user.email.trim();
+    return async () => email;
+  }
+  return deps.getSlackEmail ?? null;
+}
+
+function mcpGwToolResult(
+  toolName: string,
+  result: McpGwToolCallResult
+): ToolResult<unknown> {
+  if (result.status === "needs_google_connect") {
+    return {
+      classification: "user_private",
+      content: {
+        error: "google_not_connected",
+        message: result.message,
+        ...(result.connectUrl ? { connectUrl: result.connectUrl } : {})
+      }
+    };
+  }
+
+  return {
+    classification: "user_private",
+    content: {
+      mcpGw: true,
+      toolName,
+      result: result.result
+    }
+  };
 }
 
 function resolveToolGatewayConnection(

@@ -17,6 +17,7 @@ import {
   withProviderCassette,
   type ProviderCassette
 } from "./helpers/provider-cassettes";
+import { createMcpIdentityIssuer } from "../src/mcp-identity";
 
 const config: Config = {
   slackBotToken: "xoxb-test",
@@ -641,6 +642,142 @@ describe("handleToolGatewayRequest", () => {
             metrics: { activeUsers: "42" }
           }
         ]
+      }
+    });
+  });
+
+  test("keeps Google tools on the legacy connection path when MCP-GW is disabled", async () => {
+    const response = await handleToolGatewayRequest(
+      config,
+      createStore(null, runtime),
+      "google.searchDriveFiles",
+      request(
+        "google.searchDriveFiles",
+        { input: { query: "qbr" } },
+        "runtime-token-u123",
+        runtime.id
+      )
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      content: {
+        error: "google_not_connected",
+        message: "Connect Google first: `/auth google`."
+      }
+    });
+  });
+
+  test("routes runtime Google tools through MCP-GW without a Burble Google connection when enabled", async () => {
+    const issuer = createMcpIdentityIssuer({
+      issuer: "https://example.ngrok-free.app/mcp-identity",
+      now: () => new Date("2026-07-06T12:00:00.000Z"),
+      randomId: () => "assertion-1"
+    });
+    const calls: unknown[] = [];
+
+    const response = await handleToolGatewayRequest(
+      {
+        ...config,
+        googleViaMcpGw: true,
+        mcpGwMcpUrl: "https://18.210.100.44.nip.io/mcp",
+        mcpGwAudience: "https://18.210.100.44.nip.io/mcp"
+      },
+      createStore(null, runtime),
+      "google.searchDriveFiles",
+      request(
+        "google.searchDriveFiles",
+        { input: { query: "qbr", limit: 2 } },
+        "runtime-token-u123",
+        runtime.id
+      ),
+      {
+        mcpIdentityIssuer: issuer,
+        getSlackEmail: async (slackUserId) => {
+          expect(slackUserId).toBe("U123");
+          return "person@example.com";
+        },
+        callMcpGwTool: async (clientConfig, input) => {
+          calls.push({ clientConfig, input });
+          expect(clientConfig.url).toBe("https://18.210.100.44.nip.io/mcp");
+          expect(
+            issuer.verifyUserAssertion({
+              token: clientConfig.bearerToken,
+              audience: "https://18.210.100.44.nip.io/mcp",
+              now: new Date("2026-07-06T12:00:30.000Z")
+            })
+          ).toMatchObject({
+            sub: "T123:U123",
+            email: "person@example.com",
+            workspace_id: "T123",
+            jti: "assertion-1"
+          });
+          expect(input).toEqual({
+            name: "google_search_drive_files",
+            arguments: { query: "qbr", limit: 2 }
+          });
+          return {
+            status: "ok",
+            result: {
+              content: [{ type: "text", text: "QBR deck" }]
+            }
+          };
+        }
+      }
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      classification: "user_private",
+      content: {
+        mcpGw: true,
+        toolName: "google_search_drive_files",
+        result: {
+          content: [{ type: "text", text: "QBR deck" }]
+        }
+      }
+    });
+    expect(calls).toHaveLength(1);
+  });
+
+  test("returns a Google connect response when MCP-GW requires reauth", async () => {
+    const issuer = createMcpIdentityIssuer({
+      issuer: "https://example.ngrok-free.app/mcp-identity"
+    });
+
+    const response = await handleToolGatewayRequest(
+      {
+        ...config,
+        googleViaMcpGw: true,
+        mcpGwMcpUrl: "https://18.210.100.44.nip.io/mcp",
+        mcpGwAudience: "https://18.210.100.44.nip.io/mcp"
+      },
+      createStore(null, runtime),
+      "google.searchDriveFiles",
+      request(
+        "google.searchDriveFiles",
+        { input: { query: "qbr" } },
+        "runtime-token-u123",
+        runtime.id
+      ),
+      {
+        mcpIdentityIssuer: issuer,
+        getSlackEmail: async () => "person@example.com",
+        callMcpGwTool: async () => ({
+          status: "needs_google_connect",
+          message: "Google Workspace reauthorization required",
+          connectUrl: "https://18.210.100.44.nip.io/connect/google"
+        })
+      }
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      classification: "user_private",
+      content: {
+        error: "google_not_connected",
+        message: "Google Workspace reauthorization required",
+        connectUrl: "https://18.210.100.44.nip.io/connect/google"
       }
     });
   });

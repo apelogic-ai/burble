@@ -136,7 +136,11 @@ export function startOAuthServer(
           store,
           decodeURIComponent(toolGatewayMatch[1]),
           request,
-          { observability: options.observability }
+          {
+            observability: options.observability,
+            mcpIdentityIssuer: options.mcpIdentityIssuer,
+            getSlackEmail: (slackUserId) => slack.getSlackEmail(slackUserId)
+          }
         );
       }
 
