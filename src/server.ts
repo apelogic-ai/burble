@@ -10,6 +10,7 @@ import { exchangeJiraCode, getJiraUser } from "./providers/jira/client";
 import { formatLogError } from "./logging";
 import { handleProviderMcpRequest } from "./mcp/provider-server";
 import type { RuntimeJwtIssuer } from "./runtime-jwt";
+import type { McpIdentityIssuer } from "./mcp-identity";
 import { exchangeSlackCode } from "./providers/slack/client";
 import type { SlackRuntime } from "./slack";
 import { handleToolGatewayRequest } from "./tool-gateway";
@@ -46,6 +47,11 @@ export type SlackOAuthDeps = {
   exchangeSlackCode: typeof exchangeSlackCode;
 };
 
+export type StartOAuthServerOptions = {
+  observability?: ObservabilitySink;
+  mcpIdentityIssuer?: McpIdentityIssuer | null;
+};
+
 const defaultGitHubOAuthDeps: GitHubOAuthDeps = {
   exchangeGitHubCode,
   getGitHubUser
@@ -79,9 +85,10 @@ export function startOAuthServer(
   store: TokenStore,
   slack: SlackRuntime,
   runtimeJwtIssuer: RuntimeJwtIssuer,
-  observability?: ObservabilitySink,
+  observabilityOrOptions?: ObservabilitySink | StartOAuthServerOptions,
   testbed?: SlackTestbed
 ): ReturnType<typeof Bun.serve> {
+  const options = normalizeStartOAuthServerOptions(observabilityOrOptions);
   return Bun.serve({
     port: config.port,
     async fetch(request) {
@@ -93,6 +100,14 @@ export function startOAuthServer(
 
       if (url.pathname === "/oauth/jwks") {
         return jsonResponse(runtimeJwtIssuer.jwks());
+      }
+
+      if (
+        (url.pathname === "/.well-known/jwks.json" ||
+          url.pathname === "/mcp-identity/jwks") &&
+        options.mcpIdentityIssuer
+      ) {
+        return jsonResponse(options.mcpIdentityIssuer.jwks());
       }
 
       if (config.testbed && testbed && url.pathname.startsWith("/__testbed")) {
@@ -121,7 +136,7 @@ export function startOAuthServer(
           store,
           decodeURIComponent(toolGatewayMatch[1]),
           request,
-          { observability }
+          { observability: options.observability }
         );
       }
 
@@ -148,6 +163,18 @@ export function startOAuthServer(
       return new Response("Not found", { status: 404 });
     }
   });
+}
+
+function normalizeStartOAuthServerOptions(
+  input: ObservabilitySink | StartOAuthServerOptions | undefined
+): StartOAuthServerOptions {
+  if (!input) {
+    return {};
+  }
+  if ("emit" in input) {
+    return { observability: input };
+  }
+  return input;
 }
 
 function providerMcpScopeFromPath(value: string | undefined): "all" | ProviderDescriptorId {

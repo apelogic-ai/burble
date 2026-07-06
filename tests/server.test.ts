@@ -6,8 +6,11 @@ import {
   handleGoogleCallback,
   handleHubSpotCallback,
   handleJiraCallback,
-  handleSlackCallback
+  handleSlackCallback,
+  startOAuthServer
 } from "../src/server";
+import { createMcpIdentityIssuer } from "../src/mcp-identity";
+import { createRuntimeJwtIssuer } from "../src/runtime-jwt";
 import type { SlackRuntime } from "../src/slack";
 
 const config: Config = {
@@ -53,6 +56,11 @@ const config: Config = {
   atlassianMcpUrl: "https://mcp.atlassian.com/v1/mcp",
   runtimeJwtIssuer: "https://example.ngrok-free.app",
   runtimeJwtPrivateKeyPath: null,
+  mcpIdentityIssuer: "https://example.ngrok-free.app/mcp-identity",
+  mcpIdentityPrivateKeyPath: null,
+  mcpGwAudience: null,
+  mcpGwMcpUrl: null,
+  googleViaMcpGw: false,
   openClawConfigPatchHostPath: null,
   internalApiToken: null,
   observabilityJsonlPath: null,
@@ -66,6 +74,39 @@ const config: Config = {
   scheduledRunAuditPruneIntervalMs: 86400000,
   aiModel: "openai:gpt-5.4"
 };
+
+test("serves MCP identity JWKS separately from runtime JWKS", async () => {
+  const runtimeJwtIssuer = createRuntimeJwtIssuer({
+    issuer: config.runtimeJwtIssuer
+  });
+  const mcpIdentityIssuer = createMcpIdentityIssuer({
+    issuer: config.mcpIdentityIssuer
+  });
+  const server = startOAuthServer(
+    { ...config, port: 0 },
+    {} as TokenStore,
+    {} as SlackRuntime,
+    runtimeJwtIssuer,
+    { mcpIdentityIssuer }
+  );
+  const baseUrl = `http://127.0.0.1:${server.port}`;
+
+  try {
+    const [identityJwks, runtimeJwks] = await Promise.all([
+      fetch(`${baseUrl}/.well-known/jwks.json`).then(
+        (response) => response.json() as Promise<{ keys: Array<{ kid: string }> }>
+      ),
+      fetch(`${baseUrl}/oauth/jwks`).then(
+        (response) => response.json() as Promise<{ keys: Array<{ kid: string }> }>
+      )
+    ]);
+
+    expect(identityJwks.keys[0]?.kid).toBe(mcpIdentityIssuer.jwks().keys[0]?.kid);
+    expect(identityJwks.keys[0]?.kid).not.toBe(runtimeJwks.keys[0]?.kid);
+  } finally {
+    server.stop();
+  }
+});
 
 function createFakeStore() {
   const connectedUsers: unknown[] = [];

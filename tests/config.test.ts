@@ -63,6 +63,11 @@ describe("readConfig", () => {
       atlassianMcpUrl: "https://mcp.atlassian.com/v1/mcp",
       runtimeJwtIssuer: "https://example.ngrok-free.app",
       runtimeJwtPrivateKeyPath: null,
+      mcpIdentityIssuer: "https://example.ngrok-free.app/mcp-identity",
+      mcpIdentityPrivateKeyPath: null,
+      mcpGwAudience: null,
+      mcpGwMcpUrl: null,
+      googleViaMcpGw: false,
       openClawConfigPatchHostPath: null,
       internalApiToken: null,
       observabilityJsonlPath: null,
@@ -368,6 +373,27 @@ describe("readConfig", () => {
         ATLASSIAN_MCP_URL: "https://mcp.atlassian.com/v1/mcp/authv2/"
       }).atlassianMcpUrl
     ).toBe("https://mcp.atlassian.com/v1/mcp/authv2");
+  });
+
+  test("reads optional MCP-GW identity settings", () => {
+    const config = readConfig({
+      ...validEnv,
+      MCP_IDENTITY_ISSUER: "https://burble.example.com/mcp-identity/",
+      MCP_IDENTITY_PRIVATE_KEY_PATH: "/data/mcp-identity-private.pem",
+      MCP_GW_AUDIENCE: "https://18.210.100.44.nip.io/mcp/",
+      MCP_GW_MCP_URL: "https://18.210.100.44.nip.io/mcp/",
+      GOOGLE_VIA_MCP_GW: "true"
+    });
+
+    expect(config.mcpIdentityIssuer).toBe(
+      "https://burble.example.com/mcp-identity"
+    );
+    expect(config.mcpIdentityPrivateKeyPath).toBe(
+      "/data/mcp-identity-private.pem"
+    );
+    expect(config.mcpGwAudience).toBe("https://18.210.100.44.nip.io/mcp");
+    expect(config.mcpGwMcpUrl).toBe("https://18.210.100.44.nip.io/mcp");
+    expect(config.googleViaMcpGw).toBe(true);
   });
 
   test("allows OpenClaw gateway runtime engine override", () => {
