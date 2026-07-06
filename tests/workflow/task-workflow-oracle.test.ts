@@ -104,6 +104,7 @@ describe("task workflow oracle", () => {
     const result = compareTaskWorkflowProjection({
       workflowState: store.replayState(),
       authoritativeRuns: [authoritativeRun],
+      now: new Date("2026-06-29T10:00:06.000Z"),
     });
 
     expect(result.mismatches.map((mismatch) => mismatch.kind)).toEqual([
