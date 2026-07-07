@@ -713,8 +713,12 @@ describe("handleToolGatewayRequest", () => {
             jti: "assertion-1"
           });
           expect(input).toEqual({
-            name: "google_search_drive_files",
-            arguments: { query: "qbr", limit: 2 }
+            name: "google_drive_files_list",
+            arguments: {
+              q: "trashed = false and name contains 'qbr'",
+              pageSize: 2,
+              orderBy: "modifiedTime desc"
+            }
           });
           return {
             status: "ok",
@@ -731,13 +735,114 @@ describe("handleToolGatewayRequest", () => {
       classification: "user_private",
       content: {
         mcpGw: true,
-        toolName: "google_search_drive_files",
+        toolName: "google_drive_files_list",
+        burbleToolName: "google_search_drive_files",
         result: {
           content: [{ type: "text", text: "QBR deck" }]
         }
       }
     });
     expect(calls).toHaveLength(1);
+  });
+
+  test("adapts Gmail search inputs for MCP-GW", async () => {
+    const issuer = createMcpIdentityIssuer({
+      issuer: "https://example.ngrok-free.app/mcp-identity"
+    });
+    const calls: unknown[] = [];
+
+    const response = await handleToolGatewayRequest(
+      {
+        ...config,
+        googleViaMcpGw: true,
+        mcpGwMcpUrl: "https://18.210.100.44.nip.io/mcp",
+        mcpGwAudience: "https://18.210.100.44.nip.io/mcp"
+      },
+      createStore(null, runtime),
+      "google.searchMailMessages",
+      request(
+        "google.searchMailMessages",
+        { input: { query: "from:alice@example.com", limit: 3 } },
+        "runtime-token-u123",
+        runtime.id
+      ),
+      {
+        mcpIdentityIssuer: issuer,
+        getSlackEmail: async () => "person@example.com",
+        callMcpGwTool: async (_clientConfig, input) => {
+          calls.push(input);
+          expect(input).toEqual({
+            name: "google_gmail_messages_list",
+            arguments: {
+              userId: "me",
+              q: "from:alice@example.com",
+              maxResults: 3
+            }
+          });
+          return {
+            status: "ok",
+            result: { content: [{ type: "text", text: "message-1" }] }
+          };
+        }
+      }
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      classification: "user_private",
+      content: {
+        mcpGw: true,
+        toolName: "google_gmail_messages_list",
+        burbleToolName: "google_search_mail_messages"
+      }
+    });
+    expect(calls).toHaveLength(1);
+  });
+
+  test("returns a clear error for Google tools not yet adapted to MCP-GW", async () => {
+    const issuer = createMcpIdentityIssuer({
+      issuer: "https://example.ngrok-free.app/mcp-identity"
+    });
+
+    const response = await handleToolGatewayRequest(
+      {
+        ...config,
+        googleViaMcpGw: true,
+        mcpGwMcpUrl: "https://18.210.100.44.nip.io/mcp",
+        mcpGwAudience: "https://18.210.100.44.nip.io/mcp"
+      },
+      createStore(null, runtime),
+      "google.analyticsRunReport",
+      request(
+        "google.analyticsRunReport",
+        {
+          input: {
+            propertyId: "properties/123",
+            startDate: "7daysAgo",
+            endDate: "today",
+            metrics: ["activeUsers"]
+          }
+        },
+        "runtime-token-u123",
+        runtime.id
+      ),
+      {
+        mcpIdentityIssuer: issuer,
+        getSlackEmail: async () => "person@example.com",
+        callMcpGwTool: async () => {
+          throw new Error("should not call MCP-GW for unsupported adapter");
+        }
+      }
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      classification: "user_private",
+      content: {
+        error: "mcp_gw_tool_not_adapted",
+        burbleToolName: "google_analytics_run_report"
+      }
+    });
   });
 
   test("returns a Google connect response when MCP-GW requires reauth", async () => {

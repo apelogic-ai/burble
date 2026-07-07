@@ -2183,13 +2183,14 @@ async function handleMcpGwGoogleToolRequest(
     };
   }
 
-  const mcpGwToolName = resolveMcpGwGoogleToolName(toolName);
-  if (!mcpGwToolName) {
+  const adaptedTool = adaptMcpGwGoogleToolCall(toolName, body.input);
+  if (!adaptedTool.ok) {
     return {
       classification: "user_private",
       content: {
-        error: "mcp_gw_tool_not_mapped",
-        message: `Google tool ${toolName} is not mapped for MCP-GW.`
+        error: "mcp_gw_tool_not_adapted",
+        burbleToolName: adaptedTool.burbleToolName,
+        message: adaptedTool.message
       }
     };
   }
@@ -2231,12 +2232,12 @@ async function handleMcpGwGoogleToolRequest(
         bearerToken: assertion.token
       },
       {
-        name: mcpGwToolName,
-        arguments: isOptionalObject(body.input) ? body.input : {}
+        name: adaptedTool.name,
+        arguments: adaptedTool.arguments
       }
     );
 
-    return mcpGwToolResult(mcpGwToolName, result);
+    return mcpGwToolResult(adaptedTool, result);
   } catch (error) {
     if (error instanceof McpGwUnauthorizedError) {
       return {
@@ -2261,12 +2262,143 @@ async function handleMcpGwGoogleToolRequest(
   }
 }
 
-function resolveMcpGwGoogleToolName(toolName: string): string | null {
+type McpGwGoogleAdaptedToolCall = {
+  ok: true;
+  burbleToolName: string;
+  name: string;
+  arguments: Record<string, unknown>;
+};
+
+type McpGwGoogleToolCallAdaptation =
+  | McpGwGoogleAdaptedToolCall
+  | {
+      ok: false;
+      burbleToolName: string;
+      message: string;
+    };
+
+function adaptMcpGwGoogleToolCall(
+  toolName: string,
+  input: unknown
+): McpGwGoogleToolCallAdaptation {
   const tool = findProviderToolSpec(toolName);
-  if (tool?.provider === "google") {
-    return tool.name;
+  const burbleToolName = tool?.provider === "google" ? tool.name : toolName;
+  const args = isOptionalObject(input) ? input : {};
+
+  switch (burbleToolName) {
+    case "google_search_drive_files":
+      return {
+        ok: true,
+        burbleToolName,
+        name: "google_drive_files_list",
+        arguments: adaptMcpGwDriveFilesListArgs(args)
+      };
+
+    case "google_search_mail_messages":
+      return {
+        ok: true,
+        burbleToolName,
+        name: "google_gmail_messages_list",
+        arguments: adaptMcpGwGmailMessagesListArgs(args)
+      };
+
+    case "google_docs_create_document":
+      return adaptMcpGwDocsCreateArgs(burbleToolName, args);
+
+    default:
+      return {
+        ok: false,
+        burbleToolName,
+        message: `Google tool ${burbleToolName} is not adapted for MCP-GW yet.`
+      };
   }
-  return null;
+}
+
+function adaptMcpGwDriveFilesListArgs(
+  input: Record<string, unknown>
+): Record<string, unknown> {
+  const q = buildMcpGwDriveFilesQuery(input);
+  return {
+    ...(q ? { q } : {}),
+    ...(typeof input.limit === "number" ? { pageSize: input.limit } : {}),
+    orderBy: "modifiedTime desc"
+  };
+}
+
+function buildMcpGwDriveFilesQuery(input: Record<string, unknown>): string {
+  const clauses = ["trashed = false"];
+  if (typeof input.query === "string" && input.query.trim()) {
+    clauses.push(
+      `name contains '${escapeMcpGwDriveQueryString(input.query.trim())}'`
+    );
+  }
+  if (typeof input.mimeType === "string" && input.mimeType.trim()) {
+    clauses.push(
+      `mimeType = '${escapeMcpGwDriveQueryString(input.mimeType.trim())}'`
+    );
+  }
+  if (typeof input.parentId === "string" && input.parentId.trim()) {
+    clauses.push(
+      `'${escapeMcpGwDriveQueryString(input.parentId.trim())}' in parents`
+    );
+  }
+  if (
+    input.sharedWithMe === true ||
+    (typeof input.scope === "string" && input.scope === "shared_with_me")
+  ) {
+    clauses.push("sharedWithMe = true");
+  }
+  return clauses.join(" and ");
+}
+
+function escapeMcpGwDriveQueryString(value: string): string {
+  return value.replace(/\\/g, "\\\\").replace(/'/g, "\\'");
+}
+
+function adaptMcpGwGmailMessagesListArgs(
+  input: Record<string, unknown>
+): Record<string, unknown> {
+  return {
+    userId: "me",
+    ...(typeof input.query === "string" ? { q: input.query } : {}),
+    ...(typeof input.limit === "number" ? { maxResults: input.limit } : {})
+  };
+}
+
+function adaptMcpGwDocsCreateArgs(
+  burbleToolName: string,
+  input: Record<string, unknown>
+): McpGwGoogleToolCallAdaptation {
+  const text = typeof input.text === "string" ? input.text : "";
+  if (text.trim()) {
+    return {
+      ok: false,
+      burbleToolName,
+      message:
+        "Google Docs creation with imported text is not adapted for MCP-GW yet."
+    };
+  }
+  if (typeof input.parentId === "string" && input.parentId.trim()) {
+    return {
+      ok: false,
+      burbleToolName,
+      message:
+        "Google Docs creation into a parent folder is not adapted for MCP-GW yet."
+    };
+  }
+  if (typeof input.name !== "string" || !input.name.trim()) {
+    return {
+      ok: false,
+      burbleToolName,
+      message: "Google Docs creation requires a document name."
+    };
+  }
+  return {
+    ok: true,
+    burbleToolName,
+    name: "google_docs_create",
+    arguments: { title: input.name.trim() }
+  };
 }
 
 function resolveMcpGwEmailGetter(
@@ -2281,7 +2413,7 @@ function resolveMcpGwEmailGetter(
 }
 
 function mcpGwToolResult(
-  toolName: string,
+  tool: McpGwGoogleAdaptedToolCall,
   result: McpGwToolCallResult
 ): ToolResult<unknown> {
   if (result.status === "needs_google_connect") {
@@ -2299,7 +2431,8 @@ function mcpGwToolResult(
     classification: "user_private",
     content: {
       mcpGw: true,
-      toolName,
+      toolName: tool.name,
+      burbleToolName: tool.burbleToolName,
       result: result.result
     }
   };
