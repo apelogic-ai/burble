@@ -34,6 +34,53 @@ export function adaptMcpGwGoogleToolCall(
         arguments: adaptMcpGwDriveFilesListArgs(args)
       };
 
+    case "google_get_drive_file":
+      return {
+        ok: true,
+        burbleToolName,
+        ...(args.includeContent === false
+          ? {
+              name: "gws_drive_files_get",
+              arguments: adaptMcpGwDriveFilesGetArgs(args)
+            }
+          : {
+              name: "gws_drive_files_export",
+              arguments: adaptMcpGwDriveFilesExportArgs(args)
+            })
+      };
+
+    case "google_list_shared_drives":
+      return {
+        ok: true,
+        burbleToolName,
+        name: "gws_drive_drives_list",
+        arguments: adaptMcpGwSharedDrivesListArgs(args)
+      };
+
+    case "google_search_calendar_events":
+      return {
+        ok: true,
+        burbleToolName,
+        name: "google_calendar_events_list",
+        arguments: adaptMcpGwCalendarEventsListArgs(args)
+      };
+
+    case "google_create_calendar_event":
+      return {
+        ok: true,
+        burbleToolName,
+        name: "google_calendar_events_insert",
+        arguments: adaptMcpGwCalendarEventWriteArgs(args)
+      };
+
+    case "google_update_calendar_event":
+      return {
+        ok: true,
+        burbleToolName,
+        name: "google_calendar_events_update",
+        arguments: adaptMcpGwCalendarEventUpdateArgs(args)
+      };
+
     case "google_search_mail_messages":
       return {
         ok: true,
@@ -44,6 +91,22 @@ export function adaptMcpGwGoogleToolCall(
 
     case "google_docs_create_document":
       return adaptMcpGwDocsCreateArgs(burbleToolName, args);
+
+    case "google_slides_search_presentations":
+      return {
+        ok: true,
+        burbleToolName,
+        name: "google_drive_files_list",
+        arguments: adaptMcpGwSlidesPresentationsListArgs(args)
+      };
+
+    case "google_slides_get_presentation":
+      return {
+        ok: true,
+        burbleToolName,
+        name: "gws_slides_presentations_get",
+        arguments: adaptMcpGwSlidesPresentationGetArgs(args)
+      };
 
     default:
       return {
@@ -91,6 +154,89 @@ function adaptMcpGwDriveFilesListArgs(
   };
 }
 
+function adaptMcpGwDriveFilesGetArgs(
+  input: Record<string, unknown>
+): Record<string, unknown> {
+  return {
+    params: {
+      fileId: stringInput(input, "fileId"),
+      fields: "id,name,mimeType,webViewLink,modifiedTime"
+    },
+    format: "json"
+  };
+}
+
+function adaptMcpGwDriveFilesExportArgs(
+  input: Record<string, unknown>
+): Record<string, unknown> {
+  return {
+    params: {
+      fileId: stringInput(input, "fileId"),
+      mimeType: "text/csv"
+    }
+  };
+}
+
+function adaptMcpGwSharedDrivesListArgs(
+  input: Record<string, unknown>
+): Record<string, unknown> {
+  const query = typeof input.query === "string" ? input.query.trim() : "";
+  return {
+    params: {
+      ...(query ? { q: `name contains '${escapeMcpGwDriveQueryString(query)}'` } : {}),
+      ...(typeof input.limit === "number" ? { pageSize: input.limit } : {})
+    },
+    format: "json"
+  };
+}
+
+function adaptMcpGwCalendarEventsListArgs(
+  input: Record<string, unknown>
+): Record<string, unknown> {
+  return {
+    calendarId: stringInput(input, "calendarId", "primary"),
+    ...(typeof input.query === "string" ? { q: input.query } : {}),
+    ...(typeof input.timeMin === "string" ? { timeMin: input.timeMin } : {}),
+    ...(typeof input.timeMax === "string" ? { timeMax: input.timeMax } : {}),
+    ...(typeof input.limit === "number" ? { maxResults: input.limit } : {}),
+    singleEvents: true
+  };
+}
+
+function adaptMcpGwCalendarEventWriteArgs(
+  input: Record<string, unknown>
+): Record<string, unknown> {
+  return {
+    calendarId: stringInput(input, "calendarId", "primary"),
+    summary: stringInput(input, "summary"),
+    start: JSON.stringify(calendarTimeInput(input, "start", input.timeZone)),
+    end: JSON.stringify(calendarTimeInput(input, "end", input.timeZone)),
+    ...(typeof input.description === "string"
+      ? { description: input.description }
+      : {}),
+    ...(typeof input.location === "string" ? { location: input.location } : {})
+  };
+}
+
+function adaptMcpGwCalendarEventUpdateArgs(
+  input: Record<string, unknown>
+): Record<string, unknown> {
+  return {
+    calendarId: stringInput(input, "calendarId", "primary"),
+    eventId: stringInput(input, "eventId"),
+    ...(typeof input.summary === "string" ? { summary: input.summary } : {}),
+    ...(typeof input.start === "string"
+      ? { start: JSON.stringify(calendarTimeInput(input, "start", input.timeZone)) }
+      : {}),
+    ...(typeof input.end === "string"
+      ? { end: JSON.stringify(calendarTimeInput(input, "end", input.timeZone)) }
+      : {}),
+    ...(typeof input.description === "string"
+      ? { description: input.description }
+      : {})
+  };
+}
+
 function buildMcpGwDriveFilesQuery(input: Record<string, unknown>): string {
   const clauses = ["trashed = false"];
   if (typeof input.query === "string" && input.query.trim()) {
@@ -128,6 +274,33 @@ function adaptMcpGwGmailMessagesListArgs(
     userId: "me",
     ...(typeof input.query === "string" ? { q: input.query } : {}),
     ...(typeof input.limit === "number" ? { maxResults: input.limit } : {})
+  };
+}
+
+function adaptMcpGwSlidesPresentationsListArgs(
+  input: Record<string, unknown>
+): Record<string, unknown> {
+  return {
+    q: [
+      "trashed = false",
+      "mimeType = 'application/vnd.google-apps.presentation'",
+      ...(typeof input.query === "string" && input.query.trim()
+        ? [`name contains '${escapeMcpGwDriveQueryString(input.query.trim())}'`]
+        : [])
+    ].join(" and "),
+    ...(typeof input.limit === "number" ? { pageSize: input.limit } : {}),
+    orderBy: "modifiedTime desc"
+  };
+}
+
+function adaptMcpGwSlidesPresentationGetArgs(
+  input: Record<string, unknown>
+): Record<string, unknown> {
+  return {
+    params: {
+      presentationId: stringInput(input, "presentationId")
+    },
+    format: "json"
   };
 }
 
@@ -169,4 +342,28 @@ function adaptMcpGwDocsCreateArgs(
 
 function isOptionalObject(input: unknown): input is Record<string, unknown> {
   return Boolean(input) && typeof input === "object" && !Array.isArray(input);
+}
+
+function stringInput(
+  input: Record<string, unknown>,
+  key: string,
+  fallback?: string
+): string {
+  return typeof input[key] === "string" && input[key].trim()
+    ? input[key].trim()
+    : (fallback ?? "");
+}
+
+function calendarTimeInput(
+  input: Record<string, unknown>,
+  key: "start" | "end",
+  timeZone: unknown
+): Record<string, string> {
+  const value = stringInput(input, key);
+  return {
+    dateTime: value,
+    ...(typeof timeZone === "string" && timeZone.trim()
+      ? { timeZone: timeZone.trim() }
+      : {})
+  };
 }

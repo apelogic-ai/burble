@@ -1019,6 +1019,100 @@ describe("handleProviderMcpRequest", () => {
     store.close();
   });
 
+  test("routes Google Drive file reads through MCP-GW from provider MCP", async () => {
+    const issuer = createRuntimeJwtIssuer({ issuer: config.runtimeJwtIssuer });
+    const identityIssuer = createMcpIdentityIssuer({
+      issuer: config.mcpIdentityIssuer
+    });
+    const mcpGwConfig: Config = {
+      ...config,
+      googleViaMcpGw: true,
+      mcpGwAudience: "https://mcp-gw.example/mcp",
+      mcpGwMcpUrl: "https://mcp-gw.example/mcp"
+    };
+    const store = createTokenStore(":memory:");
+    const runtime = store.getOrCreateAgentRuntime({
+      workspaceId: "T123",
+      slackUserId: "U123",
+      engine: "openclaw",
+      endpointUrl: "http://runtime-u123:8080",
+      authTokenHash: "hash-u123",
+      statePath: "/data/runtimes/u123/state",
+      configPath: "/data/runtimes/u123/config/openclaw.json",
+      workspacePath: "/data/runtimes/u123/workspace"
+    });
+    const token = issuer.issueRuntimeJwt({
+      audience: "http://agentgateway:3000/mcp",
+      runtimeId: runtime.id,
+      workspaceId: "T123",
+      slackUserId: "U123"
+    });
+
+    const response = await handleProviderMcpRequest(
+      mcpGwConfig,
+      store,
+      issuer,
+      mcpRequest(
+        {
+          method: "tools/call",
+          params: {
+            name: "google_get_drive_file",
+            arguments: { fileId: "sheet-123" }
+          }
+        },
+        token
+      ),
+      {
+        mcpIdentityIssuer: identityIssuer,
+        getSlackEmail: async () => "person@example.com",
+        callMcpGwTool: async (_clientConfig, input) => {
+          expect(input).toEqual({
+            name: "gws_drive_files_export",
+            arguments: {
+              params: {
+                fileId: "sheet-123",
+                mimeType: "text/csv"
+              }
+            }
+          });
+          return {
+            status: "ok",
+            result: {
+              content: [
+                {
+                  type: "text",
+                  text: "Question,Result\nHow many active users?,OK"
+                }
+              ]
+            }
+          };
+        }
+      },
+      "google"
+    );
+    const body = readMcpBody(await response.text());
+    const toolResult = JSON.parse(body.result.content[0].text);
+
+    expect(response.status).toBe(200);
+    expect(toolResult).toEqual({
+      classification: "user_private",
+      content: {
+        mcpGw: true,
+        toolName: "gws_drive_files_export",
+        burbleToolName: "google_get_drive_file",
+        result: {
+          content: [
+            {
+              type: "text",
+              text: "Question,Result\nHow many active users?,OK"
+            }
+          ]
+        }
+      }
+    });
+    store.close();
+  });
+
   test("does not fall back to local Google for unadapted MCP-GW provider tools", async () => {
     const issuer = createRuntimeJwtIssuer({ issuer: config.runtimeJwtIssuer });
     const mcpGwConfig: Config = {
