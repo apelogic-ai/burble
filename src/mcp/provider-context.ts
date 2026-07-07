@@ -6,11 +6,16 @@ import type { JiraToolDeps } from "../tools/jira";
 import type { SlackToolDeps } from "../tools/slack";
 import type { ToolResult } from "../tools/types";
 import type { WebSearchDeps } from "../providers/web/client";
+import type { McpIdentityIssuer } from "../mcp-identity";
 import {
   providerDescriptor,
   type ProviderDescriptorId
 } from "../providers/descriptors";
-import type { UpstreamMcpTool, UpstreamMcpToolResult } from "./upstream-http-client";
+import type { callMcpGwTool } from "./mcp-gw-client";
+import type {
+  UpstreamMcpTool,
+  UpstreamMcpToolResult
+} from "./upstream-http-client";
 
 export type ProviderMcpScope = "all" | ProviderDescriptorId;
 
@@ -30,6 +35,9 @@ export type ProviderMcpDeps = Partial<GitHubToolDeps> &
       name: string;
       arguments?: Record<string, unknown>;
     }) => Promise<UpstreamMcpToolResult>;
+    mcpIdentityIssuer?: McpIdentityIssuer | null;
+    getSlackEmail?: (slackUserId: string) => Promise<string>;
+    callMcpGwTool?: typeof callMcpGwTool;
   };
 
 export async function withConnection<TContent>(

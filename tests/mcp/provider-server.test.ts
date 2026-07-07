@@ -8,6 +8,7 @@ import {
 } from "../../src/mcp/provider-server";
 import { createRuntimeJwtIssuer } from "../../src/runtime-jwt";
 import { buildRuntimeManifestForRecord } from "../../src/agent/runtime-policy";
+import { createMcpIdentityIssuer } from "../../src/mcp-identity";
 
 const config: Config = {
   slackBotToken: "xoxb-test",
@@ -917,6 +918,176 @@ describe("handleProviderMcpRequest", () => {
           webViewLink: "https://drive.google.com/file-1"
         }
       ]
+    });
+    store.close();
+  });
+
+  test("routes Google provider MCP calls through MCP-GW when enabled", async () => {
+    const issuer = createRuntimeJwtIssuer({ issuer: config.runtimeJwtIssuer });
+    const identityIssuer = createMcpIdentityIssuer({
+      issuer: config.mcpIdentityIssuer
+    });
+    const mcpGwConfig: Config = {
+      ...config,
+      googleViaMcpGw: true,
+      mcpGwAudience: "https://mcp-gw.example/mcp",
+      mcpGwMcpUrl: "https://mcp-gw.example/mcp"
+    };
+    const store = createTokenStore(":memory:");
+    const runtime = store.getOrCreateAgentRuntime({
+      workspaceId: "T123",
+      slackUserId: "U123",
+      engine: "openclaw",
+      endpointUrl: "http://runtime-u123:8080",
+      authTokenHash: "hash-u123",
+      statePath: "/data/runtimes/u123/state",
+      configPath: "/data/runtimes/u123/config/openclaw.json",
+      workspacePath: "/data/runtimes/u123/workspace"
+    });
+    const token = issuer.issueRuntimeJwt({
+      audience: "http://agentgateway:3000/mcp",
+      runtimeId: runtime.id,
+      workspaceId: "T123",
+      slackUserId: "U123"
+    });
+
+    const response = await handleProviderMcpRequest(
+      mcpGwConfig,
+      store,
+      issuer,
+      mcpRequest(
+        {
+          method: "tools/call",
+          params: {
+            name: "google_search_drive_files",
+            arguments: { query: "qbr", limit: 5 }
+          }
+        },
+        token
+      ),
+      {
+        mcpIdentityIssuer: identityIssuer,
+        getSlackEmail: async (slackUserId) => {
+          expect(slackUserId).toBe("U123");
+          return "person@example.com";
+        },
+        callMcpGwTool: async (clientConfig, input) => {
+          expect(clientConfig.url).toBe("https://mcp-gw.example/mcp");
+          expect(input).toEqual({
+            name: "google_drive_files_list",
+            arguments: {
+              q: "trashed = false and name contains 'qbr'",
+              pageSize: 5,
+              orderBy: "modifiedTime desc"
+            }
+          });
+          expect(
+            identityIssuer.verifyUserAssertion({
+              token: clientConfig.bearerToken,
+              audience: "https://mcp-gw.example/mcp"
+            })
+          ).toMatchObject({
+            sub: "T123:U123",
+            email: "person@example.com",
+            workspace_id: "T123"
+          });
+          return {
+            status: "ok",
+            result: {
+              content: [{ type: "text", text: "[]" }]
+            }
+          };
+        }
+      },
+      "google"
+    );
+    const body = readMcpBody(await response.text());
+    const toolResult = JSON.parse(body.result.content[0].text);
+
+    expect(response.status).toBe(200);
+    expect(toolResult).toEqual({
+      classification: "user_private",
+      content: {
+        mcpGw: true,
+        toolName: "google_drive_files_list",
+        burbleToolName: "google_search_drive_files",
+        result: {
+          content: [{ type: "text", text: "[]" }]
+        }
+      }
+    });
+    store.close();
+  });
+
+  test("does not fall back to local Google for unadapted MCP-GW provider tools", async () => {
+    const issuer = createRuntimeJwtIssuer({ issuer: config.runtimeJwtIssuer });
+    const mcpGwConfig: Config = {
+      ...config,
+      googleViaMcpGw: true,
+      mcpGwAudience: "https://mcp-gw.example/mcp",
+      mcpGwMcpUrl: "https://mcp-gw.example/mcp"
+    };
+    const store = createTokenStore(":memory:");
+    const runtime = store.getOrCreateAgentRuntime({
+      workspaceId: "T123",
+      slackUserId: "U123",
+      engine: "openclaw",
+      endpointUrl: "http://runtime-u123:8080",
+      authTokenHash: "hash-u123",
+      statePath: "/data/runtimes/u123/state",
+      configPath: "/data/runtimes/u123/config/openclaw.json",
+      workspacePath: "/data/runtimes/u123/workspace"
+    });
+    const token = issuer.issueRuntimeJwt({
+      audience: "http://agentgateway:3000/mcp",
+      runtimeId: runtime.id,
+      workspaceId: "T123",
+      slackUserId: "U123"
+    });
+    let calledMcpGw = false;
+
+    const response = await handleProviderMcpRequest(
+      mcpGwConfig,
+      store,
+      issuer,
+      mcpRequest(
+        {
+          method: "tools/call",
+          params: {
+            name: "google_analytics_run_report",
+            arguments: {
+              propertyId: "123",
+              startDate: "7daysAgo",
+              endDate: "today",
+              metrics: ["activeUsers"]
+            }
+          }
+        },
+        token
+      ),
+      {
+        callMcpGwTool: async () => {
+          calledMcpGw = true;
+          throw new Error("unexpected MCP-GW call");
+        },
+        runGoogleAnalyticsReport: async () => {
+          throw new Error("unexpected local Google call");
+        }
+      },
+      "google"
+    );
+    const body = readMcpBody(await response.text());
+    const toolResult = JSON.parse(body.result.content[0].text);
+
+    expect(response.status).toBe(200);
+    expect(calledMcpGw).toBe(false);
+    expect(toolResult).toEqual({
+      classification: "user_private",
+      content: {
+        error: "mcp_gw_tool_not_adapted",
+        message:
+          "Google tool google_analytics_run_report is not adapted for MCP-GW yet."
+      }
     });
     store.close();
   });

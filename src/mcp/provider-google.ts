@@ -1,14 +1,25 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { Config } from "../config";
 import type { AgentRuntimeRecord, ProviderConnection, TokenStore } from "../db";
 import { googleProviderToolSpecs } from "../providers/google/tool-specs";
 import { providerToolInputSchema } from "../providers/tool-specs";
 import { createGoogleTools } from "../tools/google";
 import type { ToolResult } from "../tools/types";
-import { mcpToolResult, type ProviderMcpDeps, withConnection } from "./provider-context";
+import { callMcpGwTool, McpGwUnauthorizedError } from "./mcp-gw-client";
+import {
+  adaptMcpGwGoogleToolCall,
+  mcpGwGoogleToolResult
+} from "./mcp-gw-google-adapter";
+import {
+  mcpToolResult,
+  type ProviderMcpDeps,
+  withConnection
+} from "./provider-context";
 import {
   isProviderMcpToolEnabled,
   type ProviderMcpToolPolicy
 } from "./provider-policy";
+import { resolveMcpUserAssertion } from "./user-assertion";
 
 type GoogleTools = ReturnType<typeof createGoogleTools>;
 type GoogleToolArgs = Record<string, unknown>;
@@ -19,6 +30,7 @@ type GoogleMcpHandler = (
 
 export function registerGoogleMcpTools(input: {
   server: McpServer;
+  config: Config;
   store: TokenStore;
   runtime: AgentRuntimeRecord;
   deps: Parameters<typeof createGoogleTools>[0] & ProviderMcpDeps;
@@ -43,13 +55,117 @@ export function registerGoogleMcpTools(input: {
         description: spec.description,
         inputSchema: providerToolInputSchema(spec)
       },
-      async (args) =>
-        mcpToolResult(
-          await withConnection(input.store, input.runtime, "google", (connection) =>
-            handler(connection, args as GoogleToolArgs)
+      async (args) => {
+        if (input.config.googleViaMcpGw) {
+          return mcpToolResult(
+            await handleMcpGwGoogleToolRequest({
+              config: input.config,
+              runtime: input.runtime,
+              deps: input.deps,
+              toolName: spec.name,
+              args: args as GoogleToolArgs
+            })
+          );
+        }
+
+        return mcpToolResult(
+          await withConnection(
+            input.store,
+            input.runtime,
+            "google",
+            (connection) => handler(connection, args as GoogleToolArgs)
           )
-        )
+        );
+      }
     );
+  }
+}
+
+async function handleMcpGwGoogleToolRequest(input: {
+  config: Config;
+  runtime: AgentRuntimeRecord;
+  deps: ProviderMcpDeps;
+  toolName: string;
+  args: GoogleToolArgs;
+}): Promise<ToolResult<unknown>> {
+  const adaptedTool = adaptMcpGwGoogleToolCall(input.toolName, input.args);
+  if (!adaptedTool.ok) {
+    return {
+      classification: "user_private",
+      content: {
+        error: "mcp_gw_tool_not_adapted",
+        message: adaptedTool.message
+      }
+    };
+  }
+
+  if (
+    !input.config.mcpGwMcpUrl ||
+    !input.config.mcpGwAudience ||
+    !input.deps.mcpIdentityIssuer
+  ) {
+    return {
+      classification: "user_private",
+      content: {
+        error: "mcp_gw_not_configured",
+        message:
+          "Google via MCP-GW is enabled but MCP-GW URL, audience, or identity issuer is not configured."
+      }
+    };
+  }
+
+  if (!input.deps.getSlackEmail) {
+    return {
+      classification: "user_private",
+      content: {
+        error: "mcp_gw_identity_unavailable",
+        message:
+          "Google via MCP-GW requires a Slack email resolver or a runtime user email."
+      }
+    };
+  }
+
+  try {
+    const assertion = await resolveMcpUserAssertion({
+      workspaceId: input.runtime.workspaceId,
+      slackUserId: input.runtime.slackUserId,
+      audience: input.config.mcpGwAudience,
+      issuer: input.deps.mcpIdentityIssuer,
+      getSlackEmail: input.deps.getSlackEmail
+    });
+    const result = await (input.deps.callMcpGwTool ?? callMcpGwTool)(
+      {
+        url: input.config.mcpGwMcpUrl,
+        bearerToken: assertion.token
+      },
+      {
+        name: adaptedTool.name,
+        arguments: adaptedTool.arguments
+      }
+    );
+
+    return mcpGwGoogleToolResult(adaptedTool, result);
+  } catch (error) {
+    if (error instanceof McpGwUnauthorizedError) {
+      return {
+        classification: "user_private",
+        content: {
+          error: "mcp_gw_unauthorized",
+          message: error.message,
+          ...(error.protectedResourceMetadataUrl
+            ? { protectedResourceMetadataUrl: error.protectedResourceMetadataUrl }
+            : {})
+        }
+      };
+    }
+
+    return {
+      classification: "user_private",
+      content: {
+        error: "mcp_gw_call_failed",
+        message: error instanceof Error ? error.message : String(error)
+      }
+    };
   }
 }
 

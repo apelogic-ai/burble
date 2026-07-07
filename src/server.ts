@@ -122,7 +122,10 @@ export function startOAuthServer(
           store,
           runtimeJwtIssuer,
           request,
-          {},
+          {
+            mcpIdentityIssuer: options.mcpIdentityIssuer,
+            getSlackEmail: (slackUserId) => slack.getSlackEmail(slackUserId)
+          },
           providerScope
         );
       }
