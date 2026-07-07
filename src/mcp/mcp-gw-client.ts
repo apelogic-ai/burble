@@ -55,6 +55,10 @@ export async function callMcpGwTool(
 ): Promise<McpGwToolCallResult> {
   try {
     const result = await callUpstreamMcpTool(toUpstreamConfig(config), input);
+    const reauthResult = readToolResultReauth(result);
+    if (reauthResult) {
+      return reauthResult;
+    }
     return { status: "ok", result };
   } catch (error) {
     if (error instanceof UpstreamMcpJsonRpcError && isReauthRequired(error)) {
@@ -97,6 +101,47 @@ function isReauthRequired(error: UpstreamMcpJsonRpcError): boolean {
     typeof data === "object" &&
     (data as Record<string, unknown>).code === "reauth_required"
   );
+}
+
+function readToolResultReauth(
+  result: UpstreamMcpToolResult
+): McpGwToolCallResult | null {
+  if (!result.isError) {
+    return null;
+  }
+  for (const item of result.content ?? []) {
+    const parsed = parseToolResultTextJson(item);
+    if (parsed?.code === "reauth_required") {
+      const message =
+        typeof parsed.error === "string" && parsed.error.trim()
+          ? parsed.error.trim()
+          : "Google Workspace reauthorization required";
+      return {
+        status: "needs_google_connect",
+        message,
+        ...readConnectUrl(parsed)
+      };
+    }
+  }
+  return null;
+}
+
+function parseToolResultTextJson(item: unknown): Record<string, unknown> | null {
+  if (!item || typeof item !== "object") {
+    return null;
+  }
+  const text = (item as Record<string, unknown>).text;
+  if (typeof text !== "string" || !text.trim()) {
+    return null;
+  }
+  try {
+    const parsed = JSON.parse(text) as unknown;
+    return parsed && typeof parsed === "object"
+      ? (parsed as Record<string, unknown>)
+      : null;
+  } catch {
+    return null;
+  }
 }
 
 function readConnectUrl(data: unknown): { connectUrl?: string } {

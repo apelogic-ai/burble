@@ -189,4 +189,58 @@ describe("MCP-GW client", () => {
       connectUrl: "https://18.210.100.44.nip.io/connect/google"
     });
   });
+
+  test("maps MCP-GW tool-result reauth errors to a Google connect result", async () => {
+    const fetchStub = (async (input, init) => {
+      const request = new Request(input, init);
+      const payload = await request.json();
+
+      if (payload.method === "initialize") {
+        return Response.json({
+          jsonrpc: "2.0",
+          id: payload.id,
+          result: { protocolVersion: "2025-06-18", capabilities: {} }
+        });
+      }
+
+      if (payload.method === "notifications/initialized") {
+        return new Response(null, { status: 202 });
+      }
+
+      return Response.json({
+        jsonrpc: "2.0",
+        id: payload.id,
+        result: {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify({
+                error: "Google account must be reconnected",
+                name: "GoogleOAuthError",
+                code: "reauth_required"
+              })
+            }
+          ],
+          isError: true
+        }
+      });
+    }) as typeof fetch;
+
+    await expect(
+      callMcpGwTool(
+        {
+          url: "https://18.210.100.44.nip.io/mcp",
+          bearerToken: "burble-user-assertion",
+          fetch: fetchStub
+        },
+        {
+          name: "google_drive_files_list",
+          arguments: { q: "trashed = false" }
+        }
+      )
+    ).resolves.toEqual({
+      status: "needs_google_connect",
+      message: "Google account must be reconnected"
+    });
+  });
 });
