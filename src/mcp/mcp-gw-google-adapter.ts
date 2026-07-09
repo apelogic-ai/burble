@@ -172,9 +172,20 @@ function adaptMcpGwDriveFilesExportArgs(
   return {
     params: {
       fileId: stringInput(input, "fileId"),
-      mimeType: "text/csv"
+      mimeType: googleDriveExportMimeType(input)
     }
   };
+}
+
+function googleDriveExportMimeType(input: Record<string, unknown>): string {
+  const explicit = stringInput(input, "exportMimeType");
+  if (explicit) {
+    return explicit;
+  }
+  const mimeType = stringInput(input, "mimeType");
+  return mimeType === "application/vnd.google-apps.spreadsheet"
+    ? "text/csv"
+    : "text/plain";
 }
 
 function adaptMcpGwSharedDrivesListArgs(

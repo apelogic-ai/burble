@@ -5,7 +5,8 @@ describe("adaptMcpGwGoogleToolCall", () => {
   test("adapts Drive file content reads to MCP-GW Drive export", () => {
     expect(
       adaptMcpGwGoogleToolCall("google_get_drive_file", {
-        fileId: "sheet-123"
+        fileId: "sheet-123",
+        mimeType: "application/vnd.google-apps.spreadsheet"
       })
     ).toEqual({
       ok: true,
@@ -15,6 +16,25 @@ describe("adaptMcpGwGoogleToolCall", () => {
         params: {
           fileId: "sheet-123",
           mimeType: "text/csv"
+        }
+      }
+    });
+  });
+
+  test("does not force CSV export for non-spreadsheet Drive content reads", () => {
+    expect(
+      adaptMcpGwGoogleToolCall("google_get_drive_file", {
+        fileId: "doc-123",
+        mimeType: "application/vnd.google-apps.document"
+      })
+    ).toEqual({
+      ok: true,
+      burbleToolName: "google_get_drive_file",
+      name: "gws_drive_files_export",
+      arguments: {
+        params: {
+          fileId: "doc-123",
+          mimeType: "text/plain"
         }
       }
     });

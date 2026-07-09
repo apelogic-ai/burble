@@ -151,6 +151,16 @@ tools:
         type: boolean
         optional: true
         description: Whether to include exported/downloaded text content. Defaults to true.
+      mimeType:
+        type: string
+        min: 1
+        optional: true
+        description: Optional Drive MIME type hint from search results. Used to choose the safest MCP-GW export format.
+      exportMimeType:
+        type: string
+        min: 1
+        optional: true
+        description: Optional explicit export MIME type override for Google Workspace files.
 
   - name: google_update_drive_text_file
     alias: google.updateDriveTextFile

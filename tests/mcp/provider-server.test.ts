@@ -1057,7 +1057,10 @@ describe("handleProviderMcpRequest", () => {
           method: "tools/call",
           params: {
             name: "google_get_drive_file",
-            arguments: { fileId: "sheet-123" }
+            arguments: {
+              fileId: "sheet-123",
+              mimeType: "application/vnd.google-apps.spreadsheet"
+            }
           }
         },
         token

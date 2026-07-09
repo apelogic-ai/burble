@@ -687,7 +687,10 @@ describe("handleToolGatewayRequest", () => {
       "google.searchDriveFiles",
       request(
         "google.searchDriveFiles",
-        { input: { query: "qbr", limit: 2 } },
+        {
+          user: { email: "spoofed@example.com" },
+          input: { query: "qbr", limit: 2 }
+        },
         "runtime-token-u123",
         runtime.id
       ),
@@ -740,6 +743,66 @@ describe("handleToolGatewayRequest", () => {
         result: {
           content: [{ type: "text", text: "QBR deck" }]
         }
+      }
+    });
+    expect(calls).toHaveLength(1);
+  });
+
+  test("uses the shared MCP-GW Google adapter for Drive file reads through the tool gateway", async () => {
+    const issuer = createMcpIdentityIssuer({
+      issuer: "https://example.ngrok-free.app/mcp-identity"
+    });
+    const calls: unknown[] = [];
+
+    const response = await handleToolGatewayRequest(
+      {
+        ...config,
+        googleViaMcpGw: true,
+        mcpGwMcpUrl: "https://18.210.100.44.nip.io/mcp",
+        mcpGwAudience: "https://18.210.100.44.nip.io/mcp"
+      },
+      createStore(null, runtime),
+      "google.getDriveFile",
+      request(
+        "google.getDriveFile",
+        {
+          input: {
+            fileId: "sheet-123",
+            mimeType: "application/vnd.google-apps.spreadsheet"
+          }
+        },
+        "runtime-token-u123",
+        runtime.id
+      ),
+      {
+        mcpIdentityIssuer: issuer,
+        getSlackEmail: async () => "person@example.com",
+        callMcpGwTool: async (_clientConfig, input) => {
+          calls.push(input);
+          expect(input).toEqual({
+            name: "gws_drive_files_export",
+            arguments: {
+              params: {
+                fileId: "sheet-123",
+                mimeType: "text/csv"
+              }
+            }
+          });
+          return {
+            status: "ok",
+            result: { content: [{ type: "text", text: "question,result" }] }
+          };
+        }
+      }
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      classification: "user_private",
+      content: {
+        mcpGw: true,
+        toolName: "gws_drive_files_export",
+        burbleToolName: "google_get_drive_file"
       }
     });
     expect(calls).toHaveLength(1);
