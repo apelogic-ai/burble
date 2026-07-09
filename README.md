@@ -11,6 +11,15 @@ cp .env.example .env
 bun run dev
 ```
 
+## Releases
+
+Release automation and the manual tag-cutting process are documented in
+[`docs/releases.md`](docs/releases.md). The release guard is:
+
+```bash
+bun run release:check
+```
+
 Expose the local callback server with a tunnel such as:
 
 ```bash

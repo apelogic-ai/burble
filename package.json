@@ -7,10 +7,13 @@
     "packages/*"
   ],
   "scripts": {
+    "ci": "bun run typecheck && bun test",
     "dev": "bun --watch src/index.ts",
     "start": "bun src/index.ts",
     "typecheck": "tsc --noEmit",
     "test": "bun test",
+    "deploy:check": "bun test tests/deploy-config.test.ts",
+    "release:check": "bun scripts/check-release-metadata.ts",
     "provider-tools:generate-hints": "bun src/providers/generate-runtime-tool-hints.ts",
     "openclaw:replay": "bun scripts/openclaw-replay-harness.ts",
     "runtime-sdk:generate-schema": "bun packages/runtime-sdk/scripts/generate-json-schema.ts",

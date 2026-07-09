@@ -18,7 +18,7 @@ jobs:
       - name: Set up Bun
         uses: oven-sh/setup-bun@v2
         with:
-          bun-version: latest
+          bun-version: "1.2.21"
 
       - name: Install dependencies
         run: bun install --frozen-lockfile
@@ -32,6 +32,9 @@ jobs:
       - name: Test
         run: bun test
 
+      - name: Check release metadata
+        run: bun run release:check
+
   runtime-readiness:
     name: Runtime readiness E2E
     runs-on: ubuntu-latest
@@ -44,7 +47,7 @@ jobs:
       - name: Set up Bun
         uses: oven-sh/setup-bun@v2
         with:
-          bun-version: latest
+          bun-version: "1.2.21"
 
       - name: Install dependencies
         run: bun install --frozen-lockfile
@@ -120,7 +123,7 @@ jobs:
       - name: Set up Bun
         uses: oven-sh/setup-bun@v2
         with:
-          bun-version: latest
+          bun-version: "1.2.21"
 
       - name: Install dependencies
         run: bun install --frozen-lockfile
