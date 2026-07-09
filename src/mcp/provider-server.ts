@@ -297,7 +297,14 @@ function createProviderMcpServer(
     registerGitHubMcpTools({ server, store, runtime, deps: allDeps, policy });
   }
   if (scope === "all" || scope === "google") {
-    registerGoogleMcpTools({ server, store, runtime, deps: allDeps, policy });
+    registerGoogleMcpTools({
+      server,
+      config,
+      store,
+      runtime,
+      deps: allDeps,
+      policy
+    });
   }
   if (scope === "all" || scope === "hubspot") {
     registerHubSpotMcpTools({ server, store, runtime, deps: allDeps, policy });

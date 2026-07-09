@@ -565,6 +565,23 @@ async function resolveSchedulerControlIntent(
       });
       const intent = normalizeResolvedSchedulerIntent(resolved);
       if (intent) {
+        const create =
+          intent === "create_job"
+            ? normalizeResolverCreateJob(resolved.create)
+            : null;
+        if (
+          intent === "create_job" &&
+          !create &&
+          !hasExplicitSchedulerCreateLanguage(request.text)
+        ) {
+          return {
+            intent: null,
+            jobId: null,
+            create: null,
+            schedule: null,
+            prompt: null,
+          };
+        }
         return {
           intent,
           jobId: resolveSchedulerResolverJobId(
@@ -572,10 +589,7 @@ async function resolveSchedulerControlIntent(
             resolved.jobId,
             jobs,
           ),
-          create:
-            intent === "create_job"
-              ? normalizeResolverCreateJob(resolved.create)
-              : null,
+          create,
           schedule:
             intent === "update_job_schedule"
               ? normalizeResolvedSchedule(resolved.schedule)
@@ -598,6 +612,13 @@ async function resolveSchedulerControlIntent(
     schedule: null,
     prompt: null,
   };
+}
+
+function hasExplicitSchedulerCreateLanguage(text: string): boolean {
+  const normalized = text.toLowerCase();
+  return /\b(create|add|set up|setup|schedule|scheduled|cron|recurring|repeat|automate|remind|task|job)\b/.test(
+    normalized,
+  );
 }
 
 function normalizeResolverCreateJob(

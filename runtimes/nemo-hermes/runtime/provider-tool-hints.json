@@ -852,6 +852,18 @@
               "optional": true,
               "description": "Whether to include exported/downloaded text content. Defaults to true.",
               "type": "boolean"
+            },
+            "mimeType": {
+              "optional": true,
+              "description": "Optional Drive MIME type hint from search results. Used to choose the safest MCP-GW export format.",
+              "type": "string",
+              "min": 1
+            },
+            "exportMimeType": {
+              "optional": true,
+              "description": "Optional explicit export MIME type override for Google Workspace files.",
+              "type": "string",
+              "min": 1
             }
           }
         },

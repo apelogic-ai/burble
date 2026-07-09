@@ -122,7 +122,10 @@ export function startOAuthServer(
           store,
           runtimeJwtIssuer,
           request,
-          {},
+          {
+            mcpIdentityIssuer: options.mcpIdentityIssuer,
+            getSlackEmail: (slackUserId) => slack.getSlackEmail(slackUserId)
+          },
           providerScope
         );
       }
@@ -136,7 +139,11 @@ export function startOAuthServer(
           store,
           decodeURIComponent(toolGatewayMatch[1]),
           request,
-          { observability: options.observability }
+          {
+            observability: options.observability,
+            mcpIdentityIssuer: options.mcpIdentityIssuer,
+            getSlackEmail: (slackUserId) => slack.getSlackEmail(slackUserId)
+          }
         );
       }
 

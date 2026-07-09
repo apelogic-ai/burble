@@ -1025,6 +1025,43 @@ describe("handleConversation", () => {
     expect(response.text).toContain("delivery: this conversation");
   });
 
+  test("does not treat one-shot report requests as unresolved scheduled task creates", async () => {
+    let called = false;
+    const response = await handleConversation(
+      {
+        ...baseRequest,
+        text: "Run a Google Analytics report for activeUsers for the last 7 days",
+      },
+      createDeps({
+        agentMode: "llm",
+        schedulerControl: {
+          listJobs: () => [],
+          createJob: () => {
+            throw new Error("unexpected create");
+          },
+        },
+        schedulerIntentResolver: async () => ({
+          intent: "create_job",
+          confidence: 0.91,
+          jobId: null,
+        }),
+        agentRunner: stubAgentRunner((input) => {
+          called = true;
+          expect(input.text).toBe(
+            "Run a Google Analytics report for activeUsers for the last 7 days",
+          );
+          return {
+            classification: "user_private",
+            text: "Agent handled the one-shot report.",
+          };
+        }),
+      }),
+    );
+
+    expect(called).toBe(true);
+    expect(response.text).toBe("Agent handled the one-shot report.");
+  });
+
   test("normalizes scheduled job runtime for scheduler resolver output", async () => {
     const cases = [
       {

@@ -423,6 +423,63 @@ describe("createSandboxRuntimeFactory", () => {
     store.close();
   });
 
+  test("reprovisions existing MCP-enabled sandboxes before the injected runtime JWT expires", async () => {
+    const store = createTokenStore(":memory:");
+    const provider = createFakeRuntimeSandboxProvider();
+    let now = new Date("2026-07-08T12:00:00.000Z");
+    const factory = createSandboxRuntimeFactory({
+      store,
+      sandboxProvider: provider,
+      engine: "openclaw",
+      image: "burble-openclaw-nemoclaw:dev",
+      toolGatewayUrl: "http://burble-app:3000/internal/tools",
+      mcpGatewayUrl: "http://agentgateway:3000/mcp",
+      mcpAudience: "http://agentgateway:3000/mcp",
+      modelProviderUrls: ["https://api.openai.com/v1"],
+      runtimeTokenSecret: "runtime-secret",
+      runtimeJwtIssuer: {
+        issueRuntimeJwt: (claims: {
+          audience: string;
+          runtimeId: string;
+          workspaceId: string;
+          slackUserId: string;
+          ttlSeconds?: number;
+        }) =>
+          `jwt:${claims.audience}:${claims.runtimeId}:${claims.workspaceId}:${claims.slackUserId}:${claims.ttlSeconds}`,
+      } as never,
+      runtimeJwtTtlSeconds: 60,
+      startCommand: ["openclaw-entrypoint"],
+      healthCheckAttempts: 1,
+      fetch: async () => new Response("ok"),
+      now: () => now,
+    });
+
+    const first = await factory.getOrCreateRuntime(principal);
+    now = new Date("2026-07-08T12:00:50.000Z");
+    const second = await factory.getOrCreateRuntime(principal);
+    now = new Date("2026-07-08T12:00:51.000Z");
+    const third = await factory.getOrCreateRuntime(principal);
+
+    expect(second.id).toBe(first.id);
+    expect(third.id).toBe(first.id);
+    expect(provider.terminated).toEqual(["sandbox-1"]);
+    expect(provider.provisionCalls).toHaveLength(2);
+    expect(provider.attachCalls).toEqual(["sandbox-2"]);
+    expect(store.getAgentRuntime(first.id)).toMatchObject({
+      sandboxId: "sandbox-2",
+      createdAt: "2026-07-08T12:00:50.000Z",
+      status: "ready",
+    });
+    expect(
+      store
+        .listAgentRuntimeEvents(first.id)
+        .map((event) => event.summaryJson)
+        .join("\n"),
+    ).toContain("mcp_runtime_jwt_expiring");
+
+    store.close();
+  });
+
   test("refreshes env-derived sandbox policy on durable reattach", async () => {
     const store = createTokenStore(":memory:");
     const provider = createFakeRuntimeSandboxProvider();

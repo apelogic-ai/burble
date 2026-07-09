@@ -70,6 +70,11 @@ services:
       - ATLASSIAN_MCP_URL=${ATLASSIAN_MCP_URL:-https://mcp.atlassian.com/v1/mcp}
       - RUNTIME_JWT_ISSUER=${RUNTIME_JWT_ISSUER:-https://${DOMAIN:?DOMAIN is required}}
       - RUNTIME_JWT_PRIVATE_KEY_PATH=${RUNTIME_JWT_PRIVATE_KEY_PATH:-/data/runtime-jwt-private.pem}
+      - MCP_IDENTITY_ISSUER=${MCP_IDENTITY_ISSUER:-https://${DOMAIN:?DOMAIN is required}/mcp-identity}
+      - MCP_IDENTITY_PRIVATE_KEY_PATH=${MCP_IDENTITY_PRIVATE_KEY_PATH:-/data/mcp-identity-private.pem}
+      - MCP_GW_AUDIENCE=${MCP_GW_AUDIENCE:-}
+      - MCP_GW_MCP_URL=${MCP_GW_MCP_URL:-}
+      - GOOGLE_VIA_MCP_GW=${GOOGLE_VIA_MCP_GW:-false}
       - OBSERVABILITY_JSONL_PATH=${OBSERVABILITY_JSONL_PATH:-}
       - OBSERVABILITY_JSONL_DIR=${OBSERVABILITY_JSONL_DIR:-/data/observability/events}
       - OBSERVABILITY_INCLUDE_CONTENT=${OBSERVABILITY_INCLUDE_CONTENT:-false}

@@ -17,6 +17,7 @@ import {
   withProviderCassette,
   type ProviderCassette
 } from "./helpers/provider-cassettes";
+import { createMcpIdentityIssuer } from "../src/mcp-identity";
 
 const config: Config = {
   slackBotToken: "xoxb-test",
@@ -641,6 +642,323 @@ describe("handleToolGatewayRequest", () => {
             metrics: { activeUsers: "42" }
           }
         ]
+      }
+    });
+  });
+
+  test("keeps Google tools on the legacy connection path when MCP-GW is disabled", async () => {
+    const response = await handleToolGatewayRequest(
+      config,
+      createStore(null, runtime),
+      "google.searchDriveFiles",
+      request(
+        "google.searchDriveFiles",
+        { input: { query: "qbr" } },
+        "runtime-token-u123",
+        runtime.id
+      )
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      content: {
+        error: "google_not_connected",
+        message: "Connect Google first: `/auth google`."
+      }
+    });
+  });
+
+  test("routes runtime Google tools through MCP-GW without a Burble Google connection when enabled", async () => {
+    const issuer = createMcpIdentityIssuer({
+      issuer: "https://example.ngrok-free.app/mcp-identity",
+      now: () => new Date("2026-07-06T12:00:00.000Z"),
+      randomId: () => "assertion-1"
+    });
+    const calls: unknown[] = [];
+
+    const response = await handleToolGatewayRequest(
+      {
+        ...config,
+        googleViaMcpGw: true,
+        mcpGwMcpUrl: "https://18.210.100.44.nip.io/mcp",
+        mcpGwAudience: "https://18.210.100.44.nip.io/mcp"
+      },
+      createStore(null, runtime),
+      "google.searchDriveFiles",
+      request(
+        "google.searchDriveFiles",
+        {
+          user: { email: "spoofed@example.com" },
+          input: { query: "qbr", limit: 2 }
+        },
+        "runtime-token-u123",
+        runtime.id
+      ),
+      {
+        mcpIdentityIssuer: issuer,
+        getSlackEmail: async (slackUserId) => {
+          expect(slackUserId).toBe("U123");
+          return "person@example.com";
+        },
+        callMcpGwTool: async (clientConfig, input) => {
+          calls.push({ clientConfig, input });
+          expect(clientConfig.url).toBe("https://18.210.100.44.nip.io/mcp");
+          expect(
+            issuer.verifyUserAssertion({
+              token: clientConfig.bearerToken,
+              audience: "https://18.210.100.44.nip.io/mcp",
+              now: new Date("2026-07-06T12:00:30.000Z")
+            })
+          ).toMatchObject({
+            sub: "T123:U123",
+            email: "person@example.com",
+            workspace_id: "T123",
+            jti: "assertion-1"
+          });
+          expect(input).toEqual({
+            name: "google_drive_files_list",
+            arguments: {
+              q: "trashed = false and name contains 'qbr'",
+              pageSize: 2,
+              orderBy: "modifiedTime desc"
+            }
+          });
+          return {
+            status: "ok",
+            result: {
+              content: [{ type: "text", text: "QBR deck" }]
+            }
+          };
+        }
+      }
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      classification: "user_private",
+      content: {
+        mcpGw: true,
+        toolName: "google_drive_files_list",
+        burbleToolName: "google_search_drive_files",
+        result: {
+          content: [{ type: "text", text: "QBR deck" }]
+        }
+      }
+    });
+    expect(calls).toHaveLength(1);
+  });
+
+  test("uses the shared MCP-GW Google adapter for Drive file reads through the tool gateway", async () => {
+    const issuer = createMcpIdentityIssuer({
+      issuer: "https://example.ngrok-free.app/mcp-identity"
+    });
+    const calls: unknown[] = [];
+
+    const response = await handleToolGatewayRequest(
+      {
+        ...config,
+        googleViaMcpGw: true,
+        mcpGwMcpUrl: "https://18.210.100.44.nip.io/mcp",
+        mcpGwAudience: "https://18.210.100.44.nip.io/mcp"
+      },
+      createStore(null, runtime),
+      "google.getDriveFile",
+      request(
+        "google.getDriveFile",
+        {
+          input: {
+            fileId: "sheet-123",
+            mimeType: "application/vnd.google-apps.spreadsheet"
+          }
+        },
+        "runtime-token-u123",
+        runtime.id
+      ),
+      {
+        mcpIdentityIssuer: issuer,
+        getSlackEmail: async () => "person@example.com",
+        callMcpGwTool: async (_clientConfig, input) => {
+          calls.push(input);
+          expect(input).toEqual({
+            name: "gws_drive_files_export",
+            arguments: {
+              params: {
+                fileId: "sheet-123",
+                mimeType: "text/csv"
+              }
+            }
+          });
+          return {
+            status: "ok",
+            result: { content: [{ type: "text", text: "question,result" }] }
+          };
+        }
+      }
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      classification: "user_private",
+      content: {
+        mcpGw: true,
+        toolName: "gws_drive_files_export",
+        burbleToolName: "google_get_drive_file"
+      }
+    });
+    expect(calls).toHaveLength(1);
+  });
+
+  test("adapts Gmail search inputs for MCP-GW", async () => {
+    const issuer = createMcpIdentityIssuer({
+      issuer: "https://example.ngrok-free.app/mcp-identity"
+    });
+    const calls: unknown[] = [];
+
+    const response = await handleToolGatewayRequest(
+      {
+        ...config,
+        googleViaMcpGw: true,
+        mcpGwMcpUrl: "https://18.210.100.44.nip.io/mcp",
+        mcpGwAudience: "https://18.210.100.44.nip.io/mcp"
+      },
+      createStore(null, runtime),
+      "google.searchMailMessages",
+      request(
+        "google.searchMailMessages",
+        { input: { query: "from:alice@example.com", limit: 3 } },
+        "runtime-token-u123",
+        runtime.id
+      ),
+      {
+        mcpIdentityIssuer: issuer,
+        getSlackEmail: async () => "person@example.com",
+        callMcpGwTool: async (_clientConfig, input) => {
+          calls.push(input);
+          expect(input).toEqual({
+            name: "google_gmail_messages_list",
+            arguments: {
+              userId: "me",
+              q: "from:alice@example.com",
+              maxResults: 3
+            }
+          });
+          return {
+            status: "ok",
+            result: { content: [{ type: "text", text: "message-1" }] }
+          };
+        }
+      }
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      classification: "user_private",
+      content: {
+        mcpGw: true,
+        toolName: "google_gmail_messages_list",
+        burbleToolName: "google_search_mail_messages"
+      }
+    });
+    expect(calls).toHaveLength(1);
+  });
+
+  test("falls back to the homegrown Google path for tools not yet adapted to MCP-GW", async () => {
+    const issuer = createMcpIdentityIssuer({
+      issuer: "https://example.ngrok-free.app/mcp-identity"
+    });
+
+    const response = await handleToolGatewayRequest(
+      {
+        ...config,
+        googleViaMcpGw: true,
+        mcpGwMcpUrl: "https://18.210.100.44.nip.io/mcp",
+        mcpGwAudience: "https://18.210.100.44.nip.io/mcp"
+      },
+      createStore(googleConnection, runtime),
+      "google.createDriveTextFile",
+      request(
+        "google.createDriveTextFile",
+        {
+          input: {
+            name: "Fallback",
+            text: "created through homegrown path"
+          }
+        },
+        "runtime-token-u123",
+        runtime.id
+      ),
+      {
+        mcpIdentityIssuer: issuer,
+        getSlackEmail: async () => "person@example.com",
+        callMcpGwTool: async () => {
+          throw new Error("should not call MCP-GW for unsupported adapter");
+        },
+        createGoogleDriveTextFile: async (token, input) => {
+          expect(token).toBe("google-token");
+          expect(input).toEqual({
+            name: "Fallback",
+            text: "created through homegrown path"
+          });
+          return {
+            id: "file-123",
+            name: "Fallback",
+            mimeType: "text/plain",
+            webViewLink: "https://drive.google.com/file/d/file-123/view"
+          };
+        }
+      }
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({
+      classification: "user_private",
+      content: {
+        id: "file-123",
+        name: "Fallback",
+        mimeType: "text/plain",
+        webViewLink: "https://drive.google.com/file/d/file-123/view"
+      }
+    });
+  });
+
+  test("returns a Google connect response when MCP-GW requires reauth", async () => {
+    const issuer = createMcpIdentityIssuer({
+      issuer: "https://example.ngrok-free.app/mcp-identity"
+    });
+
+    const response = await handleToolGatewayRequest(
+      {
+        ...config,
+        googleViaMcpGw: true,
+        mcpGwMcpUrl: "https://18.210.100.44.nip.io/mcp",
+        mcpGwAudience: "https://18.210.100.44.nip.io/mcp"
+      },
+      createStore(null, runtime),
+      "google.searchDriveFiles",
+      request(
+        "google.searchDriveFiles",
+        { input: { query: "qbr" } },
+        "runtime-token-u123",
+        runtime.id
+      ),
+      {
+        mcpIdentityIssuer: issuer,
+        getSlackEmail: async () => "person@example.com",
+        callMcpGwTool: async () => ({
+          status: "needs_google_connect",
+          message: "Google Workspace reauthorization required",
+          connectUrl: "https://18.210.100.44.nip.io/connect/google"
+        })
+      }
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      classification: "user_private",
+      content: {
+        error: "google_not_connected",
+        message: "Google Workspace reauthorization required",
+        connectUrl: "https://18.210.100.44.nip.io/connect/google"
       }
     });
   });

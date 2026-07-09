@@ -11,6 +11,7 @@ export type McpGwClientConfig = {
   url: string;
   bearerToken: string;
   fetch?: typeof fetch;
+  requestTimeoutMs?: number;
 };
 
 export type McpGwToolCallResult =
@@ -55,13 +56,17 @@ export async function callMcpGwTool(
 ): Promise<McpGwToolCallResult> {
   try {
     const result = await callUpstreamMcpTool(toUpstreamConfig(config), input);
+    const reauthResult = readToolResultReauth(result, config.url);
+    if (reauthResult) {
+      return reauthResult;
+    }
     return { status: "ok", result };
   } catch (error) {
     if (error instanceof UpstreamMcpJsonRpcError && isReauthRequired(error)) {
       return {
         status: "needs_google_connect",
         message: cleanUpstreamMcpErrorMessage(error.message),
-        ...readConnectUrl(error.data)
+        ...readConnectUrl(error.data, config.url)
       };
     }
     throw mapMcpGwError(error);
@@ -73,6 +78,7 @@ function toUpstreamConfig(config: McpGwClientConfig) {
     url: config.url,
     authorization: `Bearer ${config.bearerToken}`,
     ...(config.fetch ? { fetch: config.fetch } : {}),
+    ...(config.requestTimeoutMs ? { requestTimeoutMs: config.requestTimeoutMs } : {}),
     clientName: "burble-mcp-gw-client",
     clientVersion: "0.1.0"
   };
@@ -99,14 +105,85 @@ function isReauthRequired(error: UpstreamMcpJsonRpcError): boolean {
   );
 }
 
-function readConnectUrl(data: unknown): { connectUrl?: string } {
+function readToolResultReauth(
+  result: UpstreamMcpToolResult,
+  mcpGwUrl: string
+): McpGwToolCallResult | null {
+  if (!result.isError) {
+    return null;
+  }
+  for (const item of result.content ?? []) {
+    const parsed = parseToolResultTextJson(item);
+    if (parsed?.code === "reauth_required") {
+      const message =
+        typeof parsed.error === "string" && parsed.error.trim()
+          ? parsed.error.trim()
+          : "Google Workspace reauthorization required";
+      return {
+        status: "needs_google_connect",
+        message,
+        ...readConnectUrl(parsed, mcpGwUrl)
+      };
+    }
+  }
+  return null;
+}
+
+function parseToolResultTextJson(item: unknown): Record<string, unknown> | null {
+  if (!item || typeof item !== "object") {
+    return null;
+  }
+  const text = (item as Record<string, unknown>).text;
+  if (typeof text !== "string" || !text.trim()) {
+    return null;
+  }
+  try {
+    const parsed = JSON.parse(text) as unknown;
+    return parsed && typeof parsed === "object"
+      ? (parsed as Record<string, unknown>)
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function readConnectUrl(
+  data: unknown,
+  mcpGwUrl: string
+): { connectUrl?: string } {
   if (!data || typeof data !== "object") {
     return {};
   }
   const value = (data as Record<string, unknown>).connectUrl;
-  return typeof value === "string" && value.trim()
-    ? { connectUrl: value.trim() }
-    : {};
+  if (typeof value !== "string" || !value.trim()) {
+    return {};
+  }
+  const connectUrl = normalizeTrustedConnectUrl(value.trim(), mcpGwUrl);
+  return connectUrl ? { connectUrl } : {};
+}
+
+function normalizeTrustedConnectUrl(
+  value: string,
+  mcpGwUrl: string
+): string | null {
+  try {
+    const url = new URL(value);
+    if (url.protocol !== "https:") {
+      return null;
+    }
+    if (url.origin === "https://accounts.google.com") {
+      return url.toString();
+    }
+    if (mcpGwUrl) {
+      const gateway = new URL(mcpGwUrl);
+      if (url.origin === gateway.origin) {
+        return url.toString();
+      }
+    }
+    return null;
+  } catch {
+    return null;
+  }
 }
 
 function cleanUpstreamMcpErrorMessage(message: string): string {

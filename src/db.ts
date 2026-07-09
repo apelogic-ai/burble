@@ -827,6 +827,7 @@ export function createTokenStore(path: string) {
       config_path = ?,
       workspace_path = ?,
       sandbox_id = ?,
+      created_at = ?,
       last_seen_at = ?
     WHERE id = ?
   `);
@@ -1816,6 +1817,7 @@ export function createTokenStore(path: string) {
             input.configPath,
             input.workspacePath,
             input.sandboxId ?? null,
+            now,
             now,
             existing.id
           );
