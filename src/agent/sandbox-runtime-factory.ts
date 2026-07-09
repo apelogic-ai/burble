@@ -35,6 +35,8 @@ import {
 } from "./runtime-env";
 import { routeRuntimeEndpointFetch } from "./runtime-endpoint-routing";
 
+const mcpRuntimeJwtRefreshMarginSeconds = 15 * 60;
+
 export type SandboxRuntimeFetch = (
   input: string,
   init?: RequestInit,
@@ -80,6 +82,7 @@ export function createSandboxRuntimeFactory(input: {
   buildCredentials?: SandboxRuntimeFactoryCredentialBuilder;
   env?: Record<string, string | undefined>;
   preserveFailedSandboxes?: boolean;
+  now?: () => Date;
 }): RuntimeFactory {
   assertSandboxProviderCapabilities(input.sandboxProvider);
   assertSandboxStartCommand(input.startCommand);
@@ -87,6 +90,7 @@ export function createSandboxRuntimeFactory(input: {
     openShellDialHost: input.openShellDialHost,
   });
   const runtimeLocks = new Map<string, Promise<void>>();
+  const now = input.now ?? (() => new Date());
 
   const stopRuntime = async (runtimeId: string): Promise<void> => {
     const runtime = input.store.getAgentRuntime(runtimeId);
@@ -130,69 +134,81 @@ export function createSandboxRuntimeFactory(input: {
       existing.status !== "stopped" &&
       existing.status !== "failed"
     ) {
-      try {
-        const attached = await input.sandboxProvider.attach(existing.sandboxId);
-        const paths = sandboxRuntimePaths(attached.workspacePath, input.engine);
-        const policy =
-          (await input.buildPolicy?.({
-            principal,
+      if (shouldReprovisionForMcpRuntimeJwt(existing, input)) {
+        await retireSandboxRuntimeForReprovision({
+          store: input.store,
+          sandboxProvider: input.sandboxProvider,
+          runtime: existing,
+          reason: "mcp_runtime_jwt_expiring",
+          now: now(),
+        });
+      } else {
+        try {
+          const attached = await input.sandboxProvider.attach(existing.sandboxId);
+          const paths = sandboxRuntimePaths(attached.workspacePath, input.engine);
+          const policy =
+            (await input.buildPolicy?.({
+              principal,
+              engine: input.engine,
+              runtimeId: existing.id,
+              runtimeDataId,
+              manifest,
+            })) ?? buildDefaultSandboxPolicy(input, manifest);
+          const policyHash = sandboxRuntimePolicyHash(manifest, policy);
+          if (existing.policyHash !== policyHash) {
+            await input.sandboxProvider.applyPolicy(attached.id, policy);
+          }
+          const updated = input.store.getOrCreateAgentRuntime({
+            workspaceId: principal.workspaceId,
+            slackUserId: principal.slackUserId,
             engine: input.engine,
-            runtimeId: existing.id,
-            runtimeDataId,
+            endpointUrl: attached.endpointUrl,
+            authTokenHash: hashRuntimeToken(token),
+            statePath: paths.statePath,
+            configPath: paths.configPath,
+            workspacePath: attached.workspacePath,
+            sandboxId: attached.id,
+            policyHash,
+            now: now(),
+          });
+          await waitForSandboxRuntimeHealth({
+            sandboxId: attached.id,
+            endpointUrl: attached.endpointUrl,
+            fetch: requestFetch,
+            attempts:
+              input.healthCheckAttempts ??
+              runtimeHealthCheckAttempts(input.engine),
+            intervalMs: input.healthCheckIntervalMs ?? 1000,
+          });
+          input.store.touchAgentRuntime(existing.id, now());
+          if (existing.status === "provisioning") {
+            input.store.updateAgentRuntimeStatus(existing.id, {
+              status: "ready",
+            });
+          }
+          return toRuntimeHandle(
+            input.store.getAgentRuntime(existing.id) ?? updated,
+            token,
             manifest,
-          })) ?? buildDefaultSandboxPolicy(input, manifest);
-        const policyHash = sandboxRuntimePolicyHash(manifest, policy);
-        if (existing.policyHash !== policyHash) {
-          await input.sandboxProvider.applyPolicy(attached.id, policy);
-        }
-        const updated = input.store.getOrCreateAgentRuntime({
-          workspaceId: principal.workspaceId,
-          slackUserId: principal.slackUserId,
-          engine: input.engine,
-          endpointUrl: attached.endpointUrl,
-          authTokenHash: hashRuntimeToken(token),
-          statePath: paths.statePath,
-          configPath: paths.configPath,
-          workspacePath: attached.workspacePath,
-          sandboxId: attached.id,
-          policyHash,
-        });
-        await waitForSandboxRuntimeHealth({
-          sandboxId: attached.id,
-          endpointUrl: attached.endpointUrl,
-          fetch: requestFetch,
-          attempts:
-            input.healthCheckAttempts ??
-            runtimeHealthCheckAttempts(input.engine),
-          intervalMs: input.healthCheckIntervalMs ?? 1000,
-        });
-        input.store.touchAgentRuntime(existing.id);
-        if (existing.status === "provisioning") {
+          );
+        } catch (error) {
+          if (!isSandboxNotFoundError(error)) {
+            throw error;
+          }
           input.store.updateAgentRuntimeStatus(existing.id, {
-            status: "ready",
+            status: "stopped",
+            failureReason: `Sandbox ${existing.sandboxId} was not found`,
+            now: now(),
+          });
+          input.store.recordAgentRuntimeEvent({
+            runtimeId: existing.id,
+            eventType: "runtime_stopped",
+            summary: {
+              reason: "sandbox_missing",
+              sandboxId: existing.sandboxId,
+            },
           });
         }
-        return toRuntimeHandle(
-          input.store.getAgentRuntime(existing.id) ?? updated,
-          token,
-          manifest,
-        );
-      } catch (error) {
-        if (!isSandboxNotFoundError(error)) {
-          throw error;
-        }
-        input.store.updateAgentRuntimeStatus(existing.id, {
-          status: "stopped",
-          failureReason: `Sandbox ${existing.sandboxId} was not found`,
-        });
-        input.store.recordAgentRuntimeEvent({
-          runtimeId: existing.id,
-          eventType: "runtime_stopped",
-          summary: {
-            reason: "sandbox_missing",
-            sandboxId: existing.sandboxId,
-          },
-        });
       }
     }
 
@@ -268,6 +284,7 @@ export function createSandboxRuntimeFactory(input: {
         workspacePath: sandbox.workspacePath,
         sandboxId: sandbox.id,
         policyHash,
+        now: now(),
       });
       const credentials = (await input.buildCredentials?.(context)) ?? [];
 
@@ -680,6 +697,65 @@ async function waitForSandboxRuntimeHealth(input: {
       lastError instanceof Error ? lastError.message : "unknown error"
     }. The runtime process may have started and then exited (e.g. denied egress/filesystem path); inspect /tmp/burble-runtime.log inside the sandbox for its captured stderr.`,
   );
+}
+
+function shouldReprovisionForMcpRuntimeJwt(
+  runtime: AgentRuntimeRecord,
+  input: {
+    mcpGatewayUrl?: string | null;
+    runtimeJwtIssuer?: RuntimeJwtIssuer | null;
+    runtimeJwtTtlSeconds?: number;
+    now?: () => Date;
+  },
+): boolean {
+  if (!input.mcpGatewayUrl || !input.runtimeJwtIssuer) {
+    return false;
+  }
+  const ttlSeconds = input.runtimeJwtTtlSeconds;
+  if (!ttlSeconds || ttlSeconds <= 0) {
+    return false;
+  }
+  const issuedAtMs = Date.parse(runtime.createdAt);
+  if (!Number.isFinite(issuedAtMs)) {
+    return true;
+  }
+  const marginSeconds = Math.min(
+    mcpRuntimeJwtRefreshMarginSeconds,
+    Math.max(1, Math.floor(ttlSeconds / 2)),
+  );
+  const refreshAtMs = issuedAtMs + (ttlSeconds - marginSeconds) * 1000;
+  return (input.now ?? (() => new Date()))().getTime() >= refreshAtMs;
+}
+
+async function retireSandboxRuntimeForReprovision(input: {
+  store: TokenStore;
+  sandboxProvider: SandboxProvider;
+  runtime: AgentRuntimeRecord;
+  reason: string;
+  now: Date;
+}): Promise<void> {
+  if (input.runtime.sandboxId) {
+    try {
+      await input.sandboxProvider.terminate(input.runtime.sandboxId);
+    } catch (error) {
+      if (!isSandboxNotFoundError(error)) {
+        throw error;
+      }
+    }
+  }
+  input.store.updateAgentRuntimeStatus(input.runtime.id, {
+    status: "stopped",
+    failureReason: input.reason,
+    now: input.now,
+  });
+  input.store.recordAgentRuntimeEvent({
+    runtimeId: input.runtime.id,
+    eventType: "runtime_stopped",
+    summary: {
+      reason: input.reason,
+      sandboxId: input.runtime.sandboxId,
+    },
+  });
 }
 
 function isSandboxNotFoundError(error: unknown): boolean {

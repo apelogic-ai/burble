@@ -396,6 +396,19 @@ describe("readConfig", () => {
     expect(config.googleViaMcpGw).toBe(true);
   });
 
+  test("requires a persistent MCP identity signing key when Google via MCP-GW is enabled", () => {
+    expect(() =>
+      readConfig({
+        ...validEnv,
+        MCP_GW_AUDIENCE: "https://18.210.100.44.nip.io/mcp/",
+        MCP_GW_MCP_URL: "https://18.210.100.44.nip.io/mcp/",
+        GOOGLE_VIA_MCP_GW: "true"
+      })
+    ).toThrow(
+      "GOOGLE_VIA_MCP_GW requires MCP_IDENTITY_PRIVATE_KEY_PATH to use a persistent MCP identity signing key"
+    );
+  });
+
   test("allows OpenClaw gateway runtime engine override", () => {
     const config = readConfig({
       ...validEnv,

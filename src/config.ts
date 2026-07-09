@@ -439,6 +439,20 @@ export function readConfig(env: Env): Config {
       "TASK_WORKFLOW_AUTHORITY requires TASK_WORKFLOW_SHADOW_ENABLED=true with a persistent workflow database; DATABASE_PATH=:memory: cannot be used for workflow authority"
     );
   }
+  const mcpIdentityIssuer =
+    optionalUrlEnv(env, "MCP_IDENTITY_ISSUER") ?? `${baseUrl}/mcp-identity`;
+  const mcpIdentityPrivateKeyPath = optionalSecretEnv(
+    env,
+    "MCP_IDENTITY_PRIVATE_KEY_PATH"
+  );
+  const mcpGwAudience = optionalUrlEnv(env, "MCP_GW_AUDIENCE");
+  const mcpGwMcpUrl = optionalUrlEnv(env, "MCP_GW_MCP_URL");
+  const googleViaMcpGw = optionalBoolEnv(env, "GOOGLE_VIA_MCP_GW", false);
+  if (googleViaMcpGw && !mcpIdentityPrivateKeyPath) {
+    throw new Error(
+      "GOOGLE_VIA_MCP_GW requires MCP_IDENTITY_PRIVATE_KEY_PATH to use a persistent MCP identity signing key"
+    );
+  }
 
   return {
     slackBotToken: requiredEnv(env, "SLACK_BOT_TOKEN"),
@@ -540,16 +554,11 @@ export function readConfig(env: Env): Config {
       env,
       "RUNTIME_JWT_PRIVATE_KEY_PATH"
     ),
-    mcpIdentityIssuer:
-      optionalUrlEnv(env, "MCP_IDENTITY_ISSUER") ??
-      `${baseUrl}/mcp-identity`,
-    mcpIdentityPrivateKeyPath: optionalSecretEnv(
-      env,
-      "MCP_IDENTITY_PRIVATE_KEY_PATH"
-    ),
-    mcpGwAudience: optionalUrlEnv(env, "MCP_GW_AUDIENCE"),
-    mcpGwMcpUrl: optionalUrlEnv(env, "MCP_GW_MCP_URL"),
-    googleViaMcpGw: optionalBoolEnv(env, "GOOGLE_VIA_MCP_GW", false),
+    mcpIdentityIssuer,
+    mcpIdentityPrivateKeyPath,
+    mcpGwAudience,
+    mcpGwMcpUrl,
+    googleViaMcpGw,
     openClawConfigPatchHostPath:
       optionalSecretEnv(env, "AGENT_RUNTIME_CONFIG_PATCH_HOST_PATH") ??
       optionalSecretEnv(env, "OPENCLAW_CONFIG_PATCH_HOST_PATH"),
