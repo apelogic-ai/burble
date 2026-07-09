@@ -17,6 +17,25 @@ export type McpGwGoogleToolCallAdaptation =
       message: string;
     };
 
+const adaptedGoogleToolNames = new Set([
+  "google_search_drive_files",
+  "google_get_drive_file",
+  "google_list_shared_drives",
+  "google_search_calendar_events",
+  "google_create_calendar_event",
+  "google_update_calendar_event",
+  "google_search_mail_messages",
+  "google_docs_create_document",
+  "google_slides_search_presentations",
+  "google_slides_get_presentation"
+]);
+
+export function canAdaptMcpGwGoogleToolCall(toolName: string): boolean {
+  const tool = findProviderToolSpec(toolName);
+  const burbleToolName = tool?.provider === "google" ? tool.name : toolName;
+  return adaptedGoogleToolNames.has(burbleToolName);
+}
+
 export function adaptMcpGwGoogleToolCall(
   toolName: string,
   input: unknown

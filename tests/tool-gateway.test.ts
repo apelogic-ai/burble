@@ -862,7 +862,7 @@ describe("handleToolGatewayRequest", () => {
     expect(calls).toHaveLength(1);
   });
 
-  test("returns a clear error for Google tools not yet adapted to MCP-GW", async () => {
+  test("falls back to the homegrown Google path for tools not yet adapted to MCP-GW", async () => {
     const issuer = createMcpIdentityIssuer({
       issuer: "https://example.ngrok-free.app/mcp-identity"
     });
@@ -874,16 +874,14 @@ describe("handleToolGatewayRequest", () => {
         mcpGwMcpUrl: "https://18.210.100.44.nip.io/mcp",
         mcpGwAudience: "https://18.210.100.44.nip.io/mcp"
       },
-      createStore(null, runtime),
-      "google.analyticsRunReport",
+      createStore(googleConnection, runtime),
+      "google.createDriveTextFile",
       request(
-        "google.analyticsRunReport",
+        "google.createDriveTextFile",
         {
           input: {
-            propertyId: "properties/123",
-            startDate: "7daysAgo",
-            endDate: "today",
-            metrics: ["activeUsers"]
+            name: "Fallback",
+            text: "created through homegrown path"
           }
         },
         "runtime-token-u123",
@@ -894,16 +892,31 @@ describe("handleToolGatewayRequest", () => {
         getSlackEmail: async () => "person@example.com",
         callMcpGwTool: async () => {
           throw new Error("should not call MCP-GW for unsupported adapter");
+        },
+        createGoogleDriveTextFile: async (token, input) => {
+          expect(token).toBe("google-token");
+          expect(input).toEqual({
+            name: "Fallback",
+            text: "created through homegrown path"
+          });
+          return {
+            id: "file-123",
+            name: "Fallback",
+            mimeType: "text/plain",
+            webViewLink: "https://drive.google.com/file/d/file-123/view"
+          };
         }
       }
     );
 
     expect(response.status).toBe(200);
-    await expect(response.json()).resolves.toMatchObject({
+    await expect(response.json()).resolves.toEqual({
       classification: "user_private",
       content: {
-        error: "mcp_gw_tool_not_adapted",
-        burbleToolName: "google_analytics_run_report"
+        id: "file-123",
+        name: "Fallback",
+        mimeType: "text/plain",
+        webViewLink: "https://drive.google.com/file/d/file-123/view"
       }
     });
   });

@@ -115,6 +115,7 @@ import {
 } from "./mcp/mcp-gw-client";
 import {
   adaptMcpGwGoogleToolCall,
+  canAdaptMcpGwGoogleToolCall,
   mcpGwGoogleToolResult
 } from "./mcp/mcp-gw-google-adapter";
 import { resolveMcpUserAssertion } from "./mcp/user-assertion";
@@ -2165,7 +2166,8 @@ function shouldRouteGoogleViaMcpGw(
   return (
     auth.kind === "runtime" &&
     config.googleViaMcpGw &&
-    providerToolSpec?.provider === "google"
+    providerToolSpec?.provider === "google" &&
+    canAdaptMcpGwGoogleToolCall(providerToolSpec.name)
   );
 }
 

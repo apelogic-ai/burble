@@ -1,5 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { adaptMcpGwGoogleToolCall } from "../../src/mcp/mcp-gw-google-adapter";
+import {
+  adaptMcpGwGoogleToolCall,
+  canAdaptMcpGwGoogleToolCall
+} from "../../src/mcp/mcp-gw-google-adapter";
 
 describe("adaptMcpGwGoogleToolCall", () => {
   test("adapts Drive file content reads to MCP-GW Drive export", () => {
@@ -138,6 +141,8 @@ describe("adaptMcpGwGoogleToolCall", () => {
   });
 
   test("keeps Analytics intentionally unadapted", () => {
+    expect(canAdaptMcpGwGoogleToolCall("google_analytics_run_report")).toBe(false);
+
     expect(
       adaptMcpGwGoogleToolCall("google_analytics_run_report", {})
     ).toEqual({
