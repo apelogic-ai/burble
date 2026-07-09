@@ -11,6 +11,7 @@ export type McpGwClientConfig = {
   url: string;
   bearerToken: string;
   fetch?: typeof fetch;
+  requestTimeoutMs?: number;
 };
 
 export type McpGwToolCallResult =
@@ -55,7 +56,7 @@ export async function callMcpGwTool(
 ): Promise<McpGwToolCallResult> {
   try {
     const result = await callUpstreamMcpTool(toUpstreamConfig(config), input);
-    const reauthResult = readToolResultReauth(result);
+    const reauthResult = readToolResultReauth(result, config.url);
     if (reauthResult) {
       return reauthResult;
     }
@@ -65,7 +66,7 @@ export async function callMcpGwTool(
       return {
         status: "needs_google_connect",
         message: cleanUpstreamMcpErrorMessage(error.message),
-        ...readConnectUrl(error.data)
+        ...readConnectUrl(error.data, config.url)
       };
     }
     throw mapMcpGwError(error);
@@ -77,6 +78,7 @@ function toUpstreamConfig(config: McpGwClientConfig) {
     url: config.url,
     authorization: `Bearer ${config.bearerToken}`,
     ...(config.fetch ? { fetch: config.fetch } : {}),
+    ...(config.requestTimeoutMs ? { requestTimeoutMs: config.requestTimeoutMs } : {}),
     clientName: "burble-mcp-gw-client",
     clientVersion: "0.1.0"
   };
@@ -104,7 +106,8 @@ function isReauthRequired(error: UpstreamMcpJsonRpcError): boolean {
 }
 
 function readToolResultReauth(
-  result: UpstreamMcpToolResult
+  result: UpstreamMcpToolResult,
+  mcpGwUrl: string
 ): McpGwToolCallResult | null {
   if (!result.isError) {
     return null;
@@ -119,7 +122,7 @@ function readToolResultReauth(
       return {
         status: "needs_google_connect",
         message,
-        ...readConnectUrl(parsed)
+        ...readConnectUrl(parsed, mcpGwUrl)
       };
     }
   }
@@ -144,14 +147,43 @@ function parseToolResultTextJson(item: unknown): Record<string, unknown> | null 
   }
 }
 
-function readConnectUrl(data: unknown): { connectUrl?: string } {
+function readConnectUrl(
+  data: unknown,
+  mcpGwUrl: string
+): { connectUrl?: string } {
   if (!data || typeof data !== "object") {
     return {};
   }
   const value = (data as Record<string, unknown>).connectUrl;
-  return typeof value === "string" && value.trim()
-    ? { connectUrl: value.trim() }
-    : {};
+  if (typeof value !== "string" || !value.trim()) {
+    return {};
+  }
+  const connectUrl = normalizeTrustedConnectUrl(value.trim(), mcpGwUrl);
+  return connectUrl ? { connectUrl } : {};
+}
+
+function normalizeTrustedConnectUrl(
+  value: string,
+  mcpGwUrl: string
+): string | null {
+  try {
+    const url = new URL(value);
+    if (url.protocol !== "https:") {
+      return null;
+    }
+    if (url.origin === "https://accounts.google.com") {
+      return url.toString();
+    }
+    if (mcpGwUrl) {
+      const gateway = new URL(mcpGwUrl);
+      if (url.origin === gateway.origin) {
+        return url.toString();
+      }
+    }
+    return null;
+  } catch {
+    return null;
+  }
 }
 
 function cleanUpstreamMcpErrorMessage(message: string): string {

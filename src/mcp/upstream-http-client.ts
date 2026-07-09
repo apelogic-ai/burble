@@ -4,6 +4,7 @@ export type UpstreamMcpClientConfig = {
   fetch?: typeof fetch;
   clientName?: string;
   clientVersion?: string;
+  requestTimeoutMs?: number;
 };
 
 export type UpstreamMcpTool = {
@@ -19,6 +20,7 @@ export type UpstreamMcpToolResult = {
 };
 
 type JsonRpcResponse = {
+  id?: unknown;
   result?: unknown;
   error?: {
     code?: number | string;
@@ -30,6 +32,8 @@ type JsonRpcResponse = {
 type UpstreamSession = {
   sessionId: string | null;
 };
+
+const defaultUpstreamMcpRequestTimeoutMs = 30_000;
 
 export class UpstreamMcpHttpError extends Error {
   readonly name = "UpstreamMcpHttpError";
@@ -67,11 +71,12 @@ export async function listUpstreamMcpTools(
   config: UpstreamMcpClientConfig
 ): Promise<UpstreamMcpTool[]> {
   return withUpstreamSession(config, async (session) => {
+    const id = crypto.randomUUID();
     const payload = await sendUpstreamMcpRequest(config, session, {
       jsonrpc: "2.0",
-      id: crypto.randomUUID(),
+      id,
       method: "tools/list"
-    });
+    }, id);
     const result = payload.result;
     if (!isRecord(result) || !Array.isArray(result.tools)) {
       throw new Error("Upstream MCP tools/list returned malformed result");
@@ -101,15 +106,16 @@ export async function callUpstreamMcpTool(
   input: { name: string; arguments?: Record<string, unknown> }
 ): Promise<UpstreamMcpToolResult> {
   return withUpstreamSession(config, async (session) => {
+    const id = crypto.randomUUID();
     const payload = await sendUpstreamMcpRequest(config, session, {
       jsonrpc: "2.0",
-      id: crypto.randomUUID(),
+      id,
       method: "tools/call",
       params: {
         name: input.name,
         arguments: input.arguments ?? {}
       }
-    });
+    }, id);
     const result = payload.result;
     if (!isRecord(result)) {
       throw new Error("Upstream MCP tools/call returned malformed result");
@@ -137,9 +143,10 @@ async function withUpstreamSession<T>(
 async function initializeUpstreamMcpSession(
   config: UpstreamMcpClientConfig
 ): Promise<UpstreamSession> {
+  const id = crypto.randomUUID();
   const response = await sendRawUpstreamMcpRequest(config, null, {
     jsonrpc: "2.0",
-    id: crypto.randomUUID(),
+    id,
     method: "initialize",
     params: {
       protocolVersion: "2025-06-18",
@@ -151,7 +158,7 @@ async function initializeUpstreamMcpSession(
     }
   });
 
-  const payload = await readJsonRpcResponse(response);
+  const payload = await readJsonRpcResponse(response, id, requestTimeoutMs(config));
   throwIfJsonRpcError(payload);
 
   return {
@@ -162,10 +169,15 @@ async function initializeUpstreamMcpSession(
 async function sendUpstreamMcpRequest(
   config: UpstreamMcpClientConfig,
   session: UpstreamSession,
-  body: Record<string, unknown>
+  body: Record<string, unknown>,
+  expectedId: string
 ): Promise<JsonRpcResponse> {
   const response = await sendRawUpstreamMcpRequest(config, session.sessionId, body);
-  const payload = await readJsonRpcResponse(response);
+  const payload = await readJsonRpcResponse(
+    response,
+    expectedId,
+    requestTimeoutMs(config)
+  );
   throwIfJsonRpcError(payload);
   return payload;
 }
@@ -178,7 +190,7 @@ async function sendUpstreamMcpNotification(
   const response = await sendRawUpstreamMcpRequest(config, session.sessionId, body);
   if (!response.ok) {
     throw new Error(
-      `Upstream MCP notification returned HTTP ${response.status}${await readErrorDetail(response)}`
+      `Upstream MCP notification returned HTTP ${response.status}${await readErrorDetail(response, requestTimeoutMs(config))}`
     );
   }
 }
@@ -198,7 +210,7 @@ async function sendRawUpstreamMcpRequest(
     headers.set("mcp-session-id", sessionId);
   }
 
-  const response = await (config.fetch ?? fetch)(config.url, {
+  const response = await fetchWithTimeout(config, {
     method: "POST",
     headers,
     body: JSON.stringify(body)
@@ -206,7 +218,7 @@ async function sendRawUpstreamMcpRequest(
   if (!response.ok) {
     throw new UpstreamMcpHttpError({
       status: response.status,
-      detail: await readErrorDetail(response),
+      detail: await readErrorDetail(response, requestTimeoutMs(config)),
       wwwAuthenticate: response.headers.get("www-authenticate")
     });
   }
@@ -214,28 +226,64 @@ async function sendRawUpstreamMcpRequest(
   return response;
 }
 
-async function readJsonRpcResponse(response: Response): Promise<JsonRpcResponse> {
-  const text = await response.text();
+async function fetchWithTimeout(
+  config: UpstreamMcpClientConfig,
+  init: RequestInit
+): Promise<Response> {
+  const timeoutMs = requestTimeoutMs(config);
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await (config.fetch ?? fetch)(config.url, {
+      ...init,
+      signal: controller.signal
+    });
+  } catch (error) {
+    if (controller.signal.aborted) {
+      throw new Error(`Upstream MCP request timed out after ${timeoutMs}ms`);
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function readJsonRpcResponse(
+  response: Response,
+  expectedId: unknown,
+  timeoutMs: number
+): Promise<JsonRpcResponse> {
+  const text = await readResponseTextWithTimeout(response, timeoutMs);
   if (!text.trim()) {
     return {};
   }
 
-  const raw = response.headers
+  const rawResponses = response.headers
     .get("content-type")
     ?.toLowerCase()
     .includes("text/event-stream")
-    ? readSseData(text)
-    : text;
+    ? readSseJsonRpcResponses(text)
+    : [text];
 
-  try {
-    const parsed = JSON.parse(raw);
-    return isRecord(parsed) ? parsed : {};
-  } catch {
-    throw new Error("Upstream MCP returned invalid JSON");
+  for (const raw of rawResponses) {
+    try {
+      const parsed = JSON.parse(raw);
+      if (!isRecord(parsed)) {
+        continue;
+      }
+      if (parsed.id === expectedId) {
+        return parsed;
+      }
+    } catch {
+      throw new Error("Upstream MCP returned invalid JSON");
+    }
   }
+
+  throw new Error("Upstream MCP returned no matching JSON-RPC response");
 }
 
-function readSseData(text: string): string {
+function readSseJsonRpcResponses(text: string): string[] {
+  const responses: string[] = [];
   for (const event of text.split(/\r?\n\r?\n/)) {
     const data = event
       .split(/\r?\n/)
@@ -244,11 +292,14 @@ function readSseData(text: string): string {
       .join("\n")
       .trim();
     if (data) {
-      return data;
+      responses.push(data);
     }
   }
 
-  throw new Error("Upstream MCP returned no SSE data");
+  if (!responses.length) {
+    throw new Error("Upstream MCP returned no SSE data");
+  }
+  return responses;
 }
 
 function throwIfJsonRpcError(payload: JsonRpcResponse): void {
@@ -257,9 +308,42 @@ function throwIfJsonRpcError(payload: JsonRpcResponse): void {
   }
 }
 
-async function readErrorDetail(response: Response): Promise<string> {
-  const text = (await response.text()).trim().replace(/\s+/g, " ");
+async function readErrorDetail(
+  response: Response,
+  timeoutMs: number
+): Promise<string> {
+  const text = (await readResponseTextWithTimeout(response, timeoutMs))
+    .trim()
+    .replace(/\s+/g, " ");
   return text ? `: ${text.slice(0, 300)}` : "";
+}
+
+function requestTimeoutMs(config: UpstreamMcpClientConfig): number {
+  return typeof config.requestTimeoutMs === "number" && config.requestTimeoutMs > 0
+    ? config.requestTimeoutMs
+    : defaultUpstreamMcpRequestTimeoutMs;
+}
+
+async function readResponseTextWithTimeout(
+  response: Response,
+  timeoutMs: number
+): Promise<string> {
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      response.text(),
+      new Promise<string>((_resolve, reject) => {
+        timeout = setTimeout(
+          () => reject(new Error(`Upstream MCP response timed out after ${timeoutMs}ms`)),
+          timeoutMs
+        );
+      })
+    ]);
+  } finally {
+    if (timeout) {
+      clearTimeout(timeout);
+    }
+  }
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

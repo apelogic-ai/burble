@@ -117,6 +117,113 @@ describe("MCP-GW client", () => {
     });
   });
 
+  test("uses the matching JSON-RPC response from SSE streams", async () => {
+    const fetchStub = (async (input, init) => {
+      const request = new Request(input, init);
+      const payload = await request.json();
+
+      if (payload.method === "initialize") {
+        return Response.json({
+          jsonrpc: "2.0",
+          id: payload.id,
+          result: { protocolVersion: "2025-06-18", capabilities: {} }
+        });
+      }
+
+      if (payload.method === "notifications/initialized") {
+        return new Response(null, { status: 202 });
+      }
+
+      return new Response(
+        [
+          `data: ${JSON.stringify({
+            jsonrpc: "2.0",
+            method: "notifications/message",
+            params: { level: "info" }
+          })}`,
+          "",
+          `data: ${JSON.stringify({
+            jsonrpc: "2.0",
+            id: payload.id,
+            result: {
+              content: [{ type: "text", text: "QBR deck" }]
+            }
+          })}`,
+          ""
+        ].join("\n"),
+        { headers: { "content-type": "text/event-stream" } }
+      );
+    }) as typeof fetch;
+
+    await expect(
+      callMcpGwTool(
+        {
+          url: "https://18.210.100.44.nip.io/mcp",
+          bearerToken: "burble-user-assertion",
+          fetch: fetchStub
+        },
+        { name: "google_search_drive_files", arguments: { query: "qbr" } }
+      )
+    ).resolves.toEqual({
+      status: "ok",
+      result: {
+        content: [{ type: "text", text: "QBR deck" }]
+      }
+    });
+  });
+
+  test("times out stalled MCP-GW requests", async () => {
+    const fetchStub = (async (
+      _input: Parameters<typeof fetch>[0],
+      init: Parameters<typeof fetch>[1]
+    ) => {
+      await new Promise((_resolve, reject) => {
+        init?.signal?.addEventListener("abort", () => {
+          reject(new DOMException("aborted", "AbortError"));
+        });
+      });
+      throw new Error("unreachable");
+    }) as unknown as typeof fetch;
+
+    await expect(
+      listMcpGwTools({
+        url: "https://18.210.100.44.nip.io/mcp",
+        bearerToken: "burble-user-assertion",
+        fetch: fetchStub,
+        requestTimeoutMs: 1
+      })
+    ).rejects.toThrow("Upstream MCP request timed out after 1ms");
+  });
+
+  test("times out stalled MCP-GW response bodies", async () => {
+    const fetchStub = (async (input, init) => {
+      const request = new Request(input, init);
+      const payload = await request.json();
+
+      if (payload.method === "initialize") {
+        return new Response(
+          new ReadableStream({
+            start() {
+              // Intentionally leave the stream open.
+            }
+          }),
+          { headers: { "content-type": "application/json" } }
+        );
+      }
+
+      return new Response(null, { status: 202 });
+    }) as typeof fetch;
+
+    await expect(
+      listMcpGwTools({
+        url: "https://18.210.100.44.nip.io/mcp",
+        bearerToken: "burble-user-assertion",
+        fetch: fetchStub,
+        requestTimeoutMs: 1
+      })
+    ).rejects.toThrow("Upstream MCP response timed out after 1ms");
+  });
+
   test("surfaces MCP-GW HOP-1 bearer challenges", async () => {
     const fetchStub = (async () =>
       new Response("Unauthorized", {
@@ -187,6 +294,52 @@ describe("MCP-GW client", () => {
       status: "needs_google_connect",
       message: "Google Workspace reauthorization required",
       connectUrl: "https://18.210.100.44.nip.io/connect/google"
+    });
+  });
+
+  test("drops untrusted MCP-GW connect URLs from reauth results", async () => {
+    const fetchStub = (async (input, init) => {
+      const request = new Request(input, init);
+      const payload = await request.json();
+
+      if (payload.method === "initialize") {
+        return Response.json({
+          jsonrpc: "2.0",
+          id: payload.id,
+          result: { protocolVersion: "2025-06-18", capabilities: {} }
+        });
+      }
+
+      if (payload.method === "notifications/initialized") {
+        return new Response(null, { status: 202 });
+      }
+
+      return Response.json({
+        jsonrpc: "2.0",
+        id: payload.id,
+        error: {
+          code: -32001,
+          message: "Google Workspace reauthorization required",
+          data: {
+            code: "reauth_required",
+            connectUrl: "https://evil.example/connect/google"
+          }
+        }
+      });
+    }) as typeof fetch;
+
+    await expect(
+      callMcpGwTool(
+        {
+          url: "https://18.210.100.44.nip.io/mcp",
+          bearerToken: "burble-user-assertion",
+          fetch: fetchStub
+        },
+        { name: "google_search_drive_files", arguments: { query: "qbr" } }
+      )
+    ).resolves.toEqual({
+      status: "needs_google_connect",
+      message: "Google Workspace reauthorization required"
     });
   });
 
