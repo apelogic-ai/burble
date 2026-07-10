@@ -17,23 +17,11 @@ export type McpGwGoogleToolCallAdaptation =
       message: string;
     };
 
-const adaptedGoogleToolNames = new Set([
-  "google_search_drive_files",
-  "google_get_drive_file",
-  "google_list_shared_drives",
-  "google_search_calendar_events",
-  "google_create_calendar_event",
-  "google_update_calendar_event",
-  "google_search_mail_messages",
-  "google_docs_create_document",
-  "google_slides_search_presentations",
-  "google_slides_get_presentation"
-]);
-
-export function canAdaptMcpGwGoogleToolCall(toolName: string): boolean {
-  const tool = findProviderToolSpec(toolName);
-  const burbleToolName = tool?.provider === "google" ? tool.name : toolName;
-  return adaptedGoogleToolNames.has(burbleToolName);
+export function canAdaptMcpGwGoogleToolCall(
+  toolName: string,
+  input: unknown = {}
+): boolean {
+  return adaptMcpGwGoogleToolCall(toolName, input).ok;
 }
 
 export function adaptMcpGwGoogleToolCall(
@@ -54,19 +42,16 @@ export function adaptMcpGwGoogleToolCall(
       };
 
     case "google_get_drive_file":
-      return {
-        ok: true,
-        burbleToolName,
-        ...(args.includeContent === false
-          ? {
-              name: "gws_drive_files_get",
-              arguments: adaptMcpGwDriveFilesGetArgs(args)
-            }
-          : {
-              name: "gws_drive_files_export",
-              arguments: adaptMcpGwDriveFilesExportArgs(args)
-            })
-      };
+      return adaptMcpGwDriveFilesReadArgs(burbleToolName, args);
+
+    case "google_create_drive_text_file":
+      return adaptMcpGwDriveFilesCreateTextArgs(burbleToolName, args);
+
+    case "google_create_drive_folder":
+      return adaptMcpGwDriveFolderCreateArgs(burbleToolName, args);
+
+    case "google_move_drive_file":
+      return adaptMcpGwDriveFileMoveArgs(burbleToolName, args);
 
     case "google_list_shared_drives":
       return {
@@ -108,6 +93,14 @@ export function adaptMcpGwGoogleToolCall(
         arguments: adaptMcpGwGmailMessagesListArgs(args)
       };
 
+    case "gmail_create_draft":
+      return {
+        ok: true,
+        burbleToolName,
+        name: "gws_gmail_users_drafts_create",
+        arguments: adaptMcpGwGmailDraftCreateArgs(args)
+      };
+
     case "google_docs_create_document":
       return adaptMcpGwDocsCreateArgs(burbleToolName, args);
 
@@ -126,6 +119,17 @@ export function adaptMcpGwGoogleToolCall(
         name: "gws_slides_presentations_get",
         arguments: adaptMcpGwSlidesPresentationGetArgs(args)
       };
+
+    case "google_slides_copy_presentation":
+      return {
+        ok: true,
+        burbleToolName,
+        name: "gws_drive_files_copy",
+        arguments: adaptMcpGwSlidesPresentationCopyArgs(args)
+      };
+
+    case "google_slides_create_slide":
+      return adaptMcpGwSlidesCreateSlideArgs(burbleToolName, args);
 
     default:
       return {
@@ -185,6 +189,42 @@ function adaptMcpGwDriveFilesGetArgs(
   };
 }
 
+function adaptMcpGwDriveFilesReadArgs(
+  burbleToolName: string,
+  input: Record<string, unknown>
+): McpGwGoogleToolCallAdaptation {
+  if (input.includeContent === false) {
+    return {
+      ok: true,
+      burbleToolName,
+      name: "gws_drive_files_get",
+      arguments: adaptMcpGwDriveFilesGetArgs(input)
+    };
+  }
+
+  const mimeType = stringInput(input, "mimeType");
+  if (!mimeType || isGoogleWorkspaceMimeType(mimeType)) {
+    return {
+      ok: true,
+      burbleToolName,
+      name: "gws_drive_files_export",
+      arguments: adaptMcpGwDriveFilesExportArgs(input)
+    };
+  }
+
+  return {
+    ok: true,
+    burbleToolName,
+    name: "gws_drive_files_download",
+    arguments: {
+      params: {
+        fileId: stringInput(input, "fileId")
+      },
+      format: "text"
+    }
+  };
+}
+
 function adaptMcpGwDriveFilesExportArgs(
   input: Record<string, unknown>
 ): Record<string, unknown> {
@@ -192,6 +232,86 @@ function adaptMcpGwDriveFilesExportArgs(
     params: {
       fileId: stringInput(input, "fileId"),
       mimeType: googleDriveExportMimeType(input)
+    }
+  };
+}
+
+function adaptMcpGwDriveFilesCreateTextArgs(
+  burbleToolName: string,
+  input: Record<string, unknown>
+): McpGwGoogleToolCallAdaptation {
+  const text = typeof input.text === "string" ? input.text : "";
+  if (text.length > 0) {
+    return {
+      ok: false,
+      burbleToolName,
+      message:
+        "Google Drive text file creation with content requires upload support and is not adapted for MCP-GW yet."
+    };
+  }
+
+  return {
+    ok: true,
+    burbleToolName,
+    name: "google_drive_files_create",
+    arguments: {
+      fields: "id,name,mimeType,webViewLink",
+      name: stringInput(input, "name"),
+      mimeType: stringInput(input, "mimeType", "text/plain")
+    }
+  };
+}
+
+function adaptMcpGwDriveFolderCreateArgs(
+  burbleToolName: string,
+  input: Record<string, unknown>
+): McpGwGoogleToolCallAdaptation {
+  return {
+    ok: true,
+    burbleToolName,
+    name: "google_drive_files_create",
+    arguments: {
+      fields: "id,name,mimeType,webViewLink",
+      name: stringInput(input, "name"),
+      mimeType: "application/vnd.google-apps.folder",
+      ...(typeof input.parentId === "string" && input.parentId.trim()
+        ? { parents: JSON.stringify([input.parentId.trim()]) }
+        : {})
+    }
+  };
+}
+
+function adaptMcpGwDriveFileMoveArgs(
+  burbleToolName: string,
+  input: Record<string, unknown>
+): McpGwGoogleToolCallAdaptation {
+  if (!Array.isArray(input.removeParentIds)) {
+    return {
+      ok: false,
+      burbleToolName,
+      message:
+        "Google Drive file move without explicit removeParentIds requires reading current parents and is not adapted for MCP-GW yet."
+    };
+  }
+
+  const removeParentIds = input.removeParentIds.filter(
+    (value): value is string => typeof value === "string" && value.trim().length > 0
+  );
+  return {
+    ok: true,
+    burbleToolName,
+    name: "gws_drive_files_update",
+    arguments: {
+      params: {
+        fileId: stringInput(input, "fileId"),
+        addParents: stringInput(input, "parentId"),
+        ...(removeParentIds.length
+          ? { removeParents: removeParentIds.map((value) => value.trim()).join(",") }
+          : {}),
+        fields: "id,name,mimeType,webViewLink",
+        supportsAllDrives: true
+      },
+      format: "json"
     }
   };
 }
@@ -215,6 +335,26 @@ function adaptMcpGwSharedDrivesListArgs(
     params: {
       ...(query ? { q: `name contains '${escapeMcpGwDriveQueryString(query)}'` } : {}),
       ...(typeof input.limit === "number" ? { pageSize: input.limit } : {})
+    },
+    format: "json"
+  };
+}
+
+function adaptMcpGwGmailDraftCreateArgs(
+  input: Record<string, unknown>
+): Record<string, unknown> {
+  return {
+    params: { userId: "me" },
+    json: {
+      message: {
+        raw: encodeGmailRawMessage({
+          to: stringArrayInput(input, "to"),
+          subject: stringInput(input, "subject"),
+          body: stringInput(input, "body"),
+          cc: stringArrayInput(input, "cc"),
+          bcc: stringArrayInput(input, "bcc")
+        })
+      }
     },
     format: "json"
   };
@@ -334,6 +474,66 @@ function adaptMcpGwSlidesPresentationGetArgs(
   };
 }
 
+function adaptMcpGwSlidesPresentationCopyArgs(
+  input: Record<string, unknown>
+): Record<string, unknown> {
+  return {
+    params: {
+      fileId: stringInput(input, "presentationId"),
+      fields: "id,name,mimeType,webViewLink"
+    },
+    json: {
+      name: stringInput(input, "name")
+    },
+    format: "json"
+  };
+}
+
+function adaptMcpGwSlidesCreateSlideArgs(
+  burbleToolName: string,
+  input: Record<string, unknown>
+): McpGwGoogleToolCallAdaptation {
+  if (Array.isArray(input.replacements) && input.replacements.length > 0) {
+    return {
+      ok: false,
+      burbleToolName,
+      message:
+        "Google Slides slide creation with placeholder fills requires a follow-up placeholder resolution step and is not adapted for MCP-GW yet."
+    };
+  }
+
+  const createSlide: Record<string, unknown> = {};
+  const objectId = stringInput(input, "objectId");
+  if (objectId) {
+    createSlide.objectId = objectId;
+  }
+  if (typeof input.insertionIndex === "number") {
+    createSlide.insertionIndex = input.insertionIndex;
+  }
+  const layoutObjectId = stringInput(input, "layoutObjectId");
+  const predefinedLayout = stringInput(input, "predefinedLayout");
+  if (layoutObjectId) {
+    createSlide.slideLayoutReference = { layoutId: layoutObjectId };
+  } else if (predefinedLayout) {
+    createSlide.slideLayoutReference = { predefinedLayout };
+  }
+
+  return {
+    ok: true,
+    burbleToolName,
+    name: "gws_slides_presentations_batch_update",
+    arguments: {
+      params: {
+        presentationId: stringInput(input, "presentationId")
+      },
+      json: {
+        requests: [{ createSlide }]
+      },
+      format: "json"
+    }
+  };
+}
+
 function adaptMcpGwDocsCreateArgs(
   burbleToolName: string,
   input: Record<string, unknown>
@@ -368,6 +568,44 @@ function adaptMcpGwDocsCreateArgs(
     name: "google_docs_create",
     arguments: { title: input.name.trim() }
   };
+}
+
+function isGoogleWorkspaceMimeType(mimeType: string): boolean {
+  return mimeType.startsWith("application/vnd.google-apps.");
+}
+
+function stringArrayInput(
+  input: Record<string, unknown>,
+  key: string
+): string[] {
+  const value = input[key];
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === "string")
+    : [];
+}
+
+function encodeGmailRawMessage(input: {
+  to: string[];
+  subject: string;
+  body: string;
+  cc?: string[];
+  bcc?: string[];
+}): string {
+  const lines = [
+    `To: ${input.to.join(", ")}`,
+    ...(input.cc?.length ? [`Cc: ${input.cc.join(", ")}`] : []),
+    ...(input.bcc?.length ? [`Bcc: ${input.bcc.join(", ")}`] : []),
+    `Subject: ${input.subject}`,
+    "MIME-Version: 1.0",
+    "Content-Type: text/plain; charset=UTF-8",
+    "",
+    input.body
+  ];
+  return Buffer.from(lines.join("\r\n"), "utf8")
+    .toString("base64")
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/g, "");
 }
 
 function isOptionalObject(input: unknown): input is Record<string, unknown> {

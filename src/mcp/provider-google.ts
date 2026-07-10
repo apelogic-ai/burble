@@ -8,6 +8,7 @@ import type { ToolResult } from "../tools/types";
 import { callMcpGwTool, McpGwUnauthorizedError } from "./mcp-gw-client";
 import {
   adaptMcpGwGoogleToolCall,
+  canAdaptMcpGwGoogleToolCall,
   mcpGwGoogleToolResult
 } from "./mcp-gw-google-adapter";
 import {
@@ -56,7 +57,10 @@ export function registerGoogleMcpTools(input: {
         inputSchema: providerToolInputSchema(spec)
       },
       async (args) => {
-        if (input.config.googleViaMcpGw) {
+        if (
+          input.config.googleViaMcpGw &&
+          canAdaptMcpGwGoogleToolCall(spec.name, args)
+        ) {
           return mcpToolResult(
             await handleMcpGwGoogleToolRequest({
               config: input.config,
