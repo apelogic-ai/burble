@@ -1116,7 +1116,7 @@ describe("handleProviderMcpRequest", () => {
     store.close();
   });
 
-  test("does not fall back to local Google for unadapted MCP-GW provider tools", async () => {
+  test("falls back to local Google for provider tools not adapted to MCP-GW", async () => {
     const issuer = createRuntimeJwtIssuer({ issuer: config.runtimeJwtIssuer });
     const mcpGwConfig: Config = {
       ...config,
@@ -1135,6 +1135,15 @@ describe("handleProviderMcpRequest", () => {
       configPath: "/data/runtimes/u123/config/openclaw.json",
       workspacePath: "/data/runtimes/u123/workspace"
     });
+    store.upsertProviderConnection({
+      provider: "google",
+      email: "person@example.com",
+      slackUserId: "U123",
+      providerLogin: "google-user@example.com",
+      accessToken: "google-token",
+      refreshToken: null,
+      accessTokenExpiresAt: null
+    });
     const token = issuer.issueRuntimeJwt({
       audience: "http://agentgateway:3000/mcp",
       runtimeId: runtime.id,
@@ -1142,6 +1151,7 @@ describe("handleProviderMcpRequest", () => {
       slackUserId: "U123"
     });
     let calledMcpGw = false;
+    let calledLocal = false;
 
     const response = await handleProviderMcpRequest(
       mcpGwConfig,
@@ -1167,8 +1177,27 @@ describe("handleProviderMcpRequest", () => {
           calledMcpGw = true;
           throw new Error("unexpected MCP-GW call");
         },
-        runGoogleAnalyticsReport: async () => {
-          throw new Error("unexpected local Google call");
+        runGoogleAnalyticsReport: async (token, input) => {
+          calledLocal = true;
+          expect(token).toBe("google-token");
+          expect(input).toEqual({
+            propertyId: "123",
+            startDate: "7daysAgo",
+            endDate: "today",
+            metrics: ["activeUsers"]
+          });
+          return {
+            propertyId: "123",
+            dimensionHeaders: [],
+            metricHeaders: ["activeUsers"],
+            rows: [
+              {
+                dimensions: {},
+                metrics: { activeUsers: "21" }
+              }
+            ],
+            rowCount: 1
+          };
         }
       },
       "google"
@@ -1178,12 +1207,20 @@ describe("handleProviderMcpRequest", () => {
 
     expect(response.status).toBe(200);
     expect(calledMcpGw).toBe(false);
+    expect(calledLocal).toBe(true);
     expect(toolResult).toEqual({
       classification: "user_private",
       content: {
-        error: "mcp_gw_tool_not_adapted",
-        message:
-          "Google tool google_analytics_run_report is not adapted for MCP-GW yet."
+        propertyId: "123",
+        dimensionHeaders: [],
+        metricHeaders: ["activeUsers"],
+        rows: [
+          {
+            dimensions: {},
+            metrics: { activeUsers: "21" }
+          }
+        ],
+        rowCount: 1
       }
     });
     store.close();

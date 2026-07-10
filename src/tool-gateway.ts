@@ -984,7 +984,7 @@ export async function handleToolGatewayRequest(
   }
   body = { ...body, input: inputCoercion.input };
 
-  if (shouldRouteGoogleViaMcpGw(config, auth, providerToolSpec)) {
+  if (shouldRouteGoogleViaMcpGw(config, auth, providerToolSpec, body.input)) {
     return respondWithAudit(
       await handleMcpGwGoogleToolRequest(config, auth, toolName, body, deps)
     );
@@ -2161,13 +2161,14 @@ function readToolProvider(toolName: string): Provider {
 function shouldRouteGoogleViaMcpGw(
   config: Config,
   auth: ToolGatewayAuth,
-  providerToolSpec: ProviderToolSpec | null
+  providerToolSpec: ProviderToolSpec | null,
+  input: unknown
 ): boolean {
   return (
     auth.kind === "runtime" &&
     config.googleViaMcpGw &&
     providerToolSpec?.provider === "google" &&
-    canAdaptMcpGwGoogleToolCall(providerToolSpec.name)
+    canAdaptMcpGwGoogleToolCall(providerToolSpec.name, input)
   );
 }
 

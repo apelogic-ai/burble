@@ -43,6 +43,25 @@ describe("adaptMcpGwGoogleToolCall", () => {
     });
   });
 
+  test("downloads non-Google-native Drive content instead of exporting it", () => {
+    expect(
+      adaptMcpGwGoogleToolCall("google_get_drive_file", {
+        fileId: "pdf-123",
+        mimeType: "application/pdf"
+      })
+    ).toEqual({
+      ok: true,
+      burbleToolName: "google_get_drive_file",
+      name: "gws_drive_files_download",
+      arguments: {
+        params: {
+          fileId: "pdf-123"
+        },
+        format: "text"
+      }
+    });
+  });
+
   test("adapts Drive metadata-only reads to MCP-GW Drive get", () => {
     expect(
       adaptMcpGwGoogleToolCall("google_get_drive_file", {
@@ -80,6 +99,82 @@ describe("adaptMcpGwGoogleToolCall", () => {
         },
         format: "json"
       }
+    });
+  });
+
+  test("adapts Drive metadata-only writes that do not need upload content", () => {
+    expect(
+      adaptMcpGwGoogleToolCall("google_create_drive_text_file", {
+        name: "Blank"
+      })
+    ).toEqual({
+      ok: true,
+      burbleToolName: "google_create_drive_text_file",
+      name: "google_drive_files_create",
+      arguments: {
+        fields: "id,name,mimeType,webViewLink",
+        name: "Blank",
+        mimeType: "text/plain"
+      }
+    });
+
+    expect(
+      adaptMcpGwGoogleToolCall("google_create_drive_text_file", {
+        name: "Notes",
+        text: "hello"
+      })
+    ).toMatchObject({
+      ok: false,
+      burbleToolName: "google_create_drive_text_file"
+    });
+
+    expect(
+      adaptMcpGwGoogleToolCall("google_create_drive_folder", {
+        name: "QBR",
+        parentId: "parent-1"
+      })
+    ).toEqual({
+      ok: true,
+      burbleToolName: "google_create_drive_folder",
+      name: "google_drive_files_create",
+      arguments: {
+        fields: "id,name,mimeType,webViewLink",
+        name: "QBR",
+        mimeType: "application/vnd.google-apps.folder",
+        parents: JSON.stringify(["parent-1"])
+      }
+    });
+
+    expect(
+      adaptMcpGwGoogleToolCall("google_move_drive_file", {
+        fileId: "file-1",
+        parentId: "folder-2",
+        removeParentIds: ["folder-1"]
+      })
+    ).toEqual({
+      ok: true,
+      burbleToolName: "google_move_drive_file",
+      name: "gws_drive_files_update",
+      arguments: {
+        params: {
+          fileId: "file-1",
+          addParents: "folder-2",
+          removeParents: "folder-1",
+          fields: "id,name,mimeType,webViewLink",
+          supportsAllDrives: true
+        },
+        format: "json"
+      }
+    });
+
+    expect(
+      adaptMcpGwGoogleToolCall("google_move_drive_file", {
+        fileId: "file-1",
+        parentId: "folder-2"
+      })
+    ).toMatchObject({
+      ok: false,
+      burbleToolName: "google_move_drive_file"
     });
   });
 
@@ -138,6 +233,113 @@ describe("adaptMcpGwGoogleToolCall", () => {
         format: "json"
       }
     });
+  });
+
+  test("adapts Gmail draft creation", () => {
+    const adapted = adaptMcpGwGoogleToolCall("gmail_create_draft", {
+      to: ["to@example.com"],
+      cc: ["cc@example.com"],
+      subject: "Hello",
+      body: "Draft body"
+    });
+
+    expect(adapted).toMatchObject({
+      ok: true,
+      burbleToolName: "gmail_create_draft",
+      name: "gws_gmail_users_drafts_create",
+      arguments: {
+        params: { userId: "me" },
+        format: "json"
+      }
+    });
+    if (adapted.ok) {
+      const raw = (adapted.arguments.json as { message: { raw: string } }).message.raw;
+      const decoded = Buffer.from(
+        raw.replace(/-/g, "+").replace(/_/g, "/"),
+        "base64"
+      ).toString("utf8");
+      expect(decoded).toContain("To: to@example.com");
+      expect(decoded).toContain("Cc: cc@example.com");
+      expect(decoded).toContain("Subject: Hello");
+      expect(decoded).toContain("Draft body");
+    }
+  });
+
+  test("adapts simple Slides authoring operations and declines multi-step fills", () => {
+    expect(
+      adaptMcpGwGoogleToolCall("google_slides_copy_presentation", {
+        presentationId: "deck-1",
+        name: "Copy"
+      })
+    ).toEqual({
+      ok: true,
+      burbleToolName: "google_slides_copy_presentation",
+      name: "gws_drive_files_copy",
+      arguments: {
+        params: {
+          fileId: "deck-1",
+          fields: "id,name,mimeType,webViewLink"
+        },
+        json: { name: "Copy" },
+        format: "json"
+      }
+    });
+
+    expect(
+      adaptMcpGwGoogleToolCall("google_slides_create_slide", {
+        presentationId: "deck-1",
+        objectId: "slide-2",
+        insertionIndex: 1,
+        predefinedLayout: "TITLE_AND_BODY"
+      })
+    ).toEqual({
+      ok: true,
+      burbleToolName: "google_slides_create_slide",
+      name: "gws_slides_presentations_batch_update",
+      arguments: {
+        params: { presentationId: "deck-1" },
+        json: {
+          requests: [
+            {
+              createSlide: {
+                objectId: "slide-2",
+                insertionIndex: 1,
+                slideLayoutReference: { predefinedLayout: "TITLE_AND_BODY" }
+              }
+            }
+          ]
+        },
+        format: "json"
+      }
+    });
+
+    expect(
+      adaptMcpGwGoogleToolCall("google_slides_create_slide", {
+        presentationId: "deck-1",
+        replacements: [{ placeholderType: "TITLE", text: "Hello" }]
+      })
+    ).toMatchObject({
+      ok: false,
+      burbleToolName: "google_slides_create_slide"
+    });
+  });
+
+  test("keeps Docs imports on fallback until MCP-GW has content import support", () => {
+    expect(
+      adaptMcpGwGoogleToolCall("google_docs_create_document", {
+        name: "Doc",
+        text: "# Hello"
+      })
+    ).toMatchObject({
+      ok: false,
+      burbleToolName: "google_docs_create_document"
+    });
+    expect(
+      canAdaptMcpGwGoogleToolCall("google_docs_create_document", {
+        name: "Doc",
+        text: "# Hello"
+      })
+    ).toBe(false);
   });
 
   test("keeps Analytics intentionally unadapted", () => {
