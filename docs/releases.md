@@ -14,7 +14,7 @@ Use SemVer:
 - `PATCH`: bug fixes, documentation fixes, test improvements, and non-breaking deployment-template
   corrections.
 
-The current initial release line is `v0.1.0`.
+The current release line is `v0.1.1`.
 
 ## Release Artifacts
 
