@@ -4592,6 +4592,82 @@ describe("runOpenClawCliRequest", () => {
     ).toBe(true);
   });
 
+  test("times out OpenClaw Gateway streams that only send keepalives", async () => {
+    const requests: Array<{
+      headers: Headers;
+      body: Record<string, unknown>;
+    }> = [];
+    const logs: string[] = [];
+    const encoder = new TextEncoder();
+
+    await expect(
+      withMockFetch(
+        (async (_input, init) => {
+          requests.push({
+            headers: new Headers(init?.headers),
+            body: JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>
+          });
+          let interval: ReturnType<typeof setInterval> | undefined;
+          return new Response(
+            new ReadableStream<Uint8Array>({
+              start(controller) {
+                controller.enqueue(
+                  encoder.encode(
+                    `data: ${JSON.stringify({ type: "response.created" })}\n\n`
+                  )
+                );
+                interval = setInterval(() => {
+                  controller.enqueue(encoder.encode(": keepalive\n\n"));
+                }, 1);
+              },
+              cancel() {
+                if (interval) {
+                  clearInterval(interval);
+                }
+              }
+            }),
+            {
+              status: 200,
+              headers: { "content-type": "text/event-stream" }
+            }
+          );
+        }) as typeof fetch,
+        async () => {
+          const events: RunEvent[] = [];
+          for await (const event of runOpenClawCliRequestStream(
+            {
+              runId: "run-openclaw-keepalive-stream",
+              executionMode: "native-runtime",
+              input: {
+                text: "what can you do?",
+                connections: {
+                  github: { connected: false }
+                }
+              }
+            },
+            {
+              ...config,
+              engine: "openclaw-gateway",
+              openClawTimeoutMs: 5
+            },
+            async () => {
+              throw new Error("unexpected tool call");
+            },
+            async function* () {
+              throw new Error("unexpected cli call");
+            },
+            (line) => logs.push(line)
+          )) {
+            events.push(event);
+          }
+        }
+      )
+    ).rejects.toThrow("OpenClaw Gateway returned no assistant text");
+
+    expect(requests.length).toBeGreaterThanOrEqual(2);
+    expect(requests[0].body.stream).toBe(true);
+  });
+
   test("uses turn-scoped OpenClaw sessions with Burble channel routing", async () => {
     const requests: Array<{
       headers: Headers;

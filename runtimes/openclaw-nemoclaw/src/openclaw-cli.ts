@@ -886,11 +886,13 @@ async function readGatewayHttpStreamingResponse(
   let responseText = "";
   let stdout = "";
   let deltaCount = 0;
+  let lastSemanticProgressAt = Date.now();
 
   while (true) {
     const { value, done } = await readStreamChunkWithIdleTimeout(
       reader,
-      idleTimeoutMs
+      idleTimeoutMs,
+      () => Math.max(0, idleTimeoutMs - (Date.now() - lastSemanticProgressAt))
     );
     if (done) {
       break;
@@ -900,13 +902,18 @@ async function readGatewayHttpStreamingResponse(
     buffer = parsed.remainder;
     for (const payload of parsed.payloads) {
       if (payload === "[DONE]") {
-        continue;
+        return {
+          responseText,
+          stdout: stdout || extractOpenResponsesText(responseText) || "",
+          deltaCount
+        };
       }
       responseText = appendStreamRecord(responseText, payload);
       const event = parseJsonObject(payload);
       if (!event) {
         continue;
       }
+      lastSemanticProgressAt = Date.now();
       const failureText = extractOpenResponsesFailureEventText(event);
       if (failureText) {
         return { responseText, stdout: "", deltaCount, errorText: failureText };
@@ -932,13 +939,18 @@ async function readGatewayHttpStreamingResponse(
   const parsed = readCompleteSsePayloads(`${buffer}\n\n`);
   for (const payload of parsed.payloads) {
     if (payload === "[DONE]") {
-      continue;
+      return {
+        responseText,
+        stdout: stdout || extractOpenResponsesText(responseText) || "",
+        deltaCount
+      };
     }
     responseText = appendStreamRecord(responseText, payload);
     const event = parseJsonObject(payload);
     if (!event) {
       continue;
     }
+    lastSemanticProgressAt = Date.now();
     const failureText = extractOpenResponsesFailureEventText(event);
     if (failureText) {
       return { responseText, stdout: "", deltaCount, errorText: failureText };
@@ -1011,12 +1023,15 @@ function createGatewayHttpDeltaGate(
 
 async function readStreamChunkWithIdleTimeout(
   reader: ReadableStreamDefaultReader<Uint8Array>,
-  idleTimeoutMs: number
+  idleTimeoutMs: number,
+  semanticRemainingMs?: () => number
 ) {
   let timeout: ReturnType<typeof setTimeout> | undefined;
+  let semanticTimeout: ReturnType<typeof setTimeout> | undefined;
   try {
-    return await Promise.race([
-      reader.read(),
+    const read = reader.read();
+    const candidates = [
+      read,
       new Promise<never>((_, reject) => {
         timeout = setTimeout(() => {
           reader.cancel().catch(() => undefined);
@@ -1027,10 +1042,29 @@ async function readStreamChunkWithIdleTimeout(
           );
         }, idleTimeoutMs);
       })
-    ]);
+    ];
+    const semanticMs = semanticRemainingMs?.();
+    if (typeof semanticMs === "number" && Number.isFinite(semanticMs)) {
+      candidates.push(
+        new Promise<never>((_, reject) => {
+          semanticTimeout = setTimeout(() => {
+            reader.cancel().catch(() => undefined);
+            reject(
+              new Error(
+                `OpenClaw Gateway response stream produced no semantic events for ${idleTimeoutMs}ms`
+              )
+            );
+          }, Math.max(0, semanticMs));
+        })
+      );
+    }
+    return await Promise.race(candidates);
   } finally {
     if (timeout) {
       clearTimeout(timeout);
+    }
+    if (semanticTimeout) {
+      clearTimeout(semanticTimeout);
     }
   }
 }
