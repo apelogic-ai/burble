@@ -111,6 +111,57 @@ describe("handleProviderMcpRequest", () => {
     store.close();
   });
 
+  test("returns a JSON-RPC provider error when MCP handling throws", async () => {
+    const issuer = createRuntimeJwtIssuer({ issuer: config.runtimeJwtIssuer });
+    const store = createTokenStore(":memory:");
+    const runtime = store.getOrCreateAgentRuntime({
+      workspaceId: "T123",
+      slackUserId: "U123",
+      engine: "openclaw",
+      endpointUrl: "http://runtime-u123:8080",
+      authTokenHash: "hash-u123",
+      statePath: "/data/runtimes/u123/state",
+      configPath: "/data/runtimes/u123/config/openclaw.json",
+      workspacePath: "/data/runtimes/u123/workspace"
+    });
+    const token = issuer.issueRuntimeJwt({
+      audience: "http://agentgateway:3000/mcp",
+      runtimeId: runtime.id,
+      workspaceId: "T123",
+      slackUserId: "U123"
+    });
+    store.getAgentRuntime = () => {
+      throw new Error("database is locked");
+    };
+
+    const response = await handleProviderMcpRequest(
+      config,
+      store,
+      issuer,
+      mcpRequest(
+        {
+          method: "tools/call",
+          params: {
+            name: "github_get_authenticated_user",
+            arguments: {}
+          }
+        },
+        token
+      )
+    );
+    const body = readMcpBody(await response.text());
+
+    expect(response.status).toBe(200);
+    expect(body).toMatchObject({
+      error: {
+        code: -32603,
+        message:
+          "Burble provider MCP request failed: database is locked"
+      }
+    });
+    store.close();
+  });
+
   test("exposes provider tools under the runtime principal", async () => {
     const issuer = createRuntimeJwtIssuer({ issuer: config.runtimeJwtIssuer });
     const store = createTokenStore(":memory:");
@@ -2591,7 +2642,7 @@ function mcpRequest(
 
 function readMcpBody(text: string): {
   result: { content: Array<{ text: string }>; tools: Array<{ name: string }> };
-  error: { message: string };
+  error: { code: number; message: string };
 } {
   const dataLine = text
     .split("\n")

@@ -295,6 +295,11 @@ export type TokenStore = ReturnType<typeof createTokenStore>;
 export function createTokenStore(path: string) {
   const db = new Database(path);
   db.exec(`
+    PRAGMA busy_timeout = 5000;
+    PRAGMA journal_mode = WAL;
+    PRAGMA synchronous = NORMAL;
+  `);
+  db.exec(`
     CREATE TABLE IF NOT EXISTS users (
       email TEXT PRIMARY KEY,
       slack_user_id TEXT NOT NULL,
