@@ -4503,6 +4503,76 @@ describe("runOpenClawCliRequest", () => {
     ).toBe(true);
   });
 
+  test("bounds streaming OpenClaw Gateway requests that never return headers", async () => {
+    const requests: Array<{
+      headers: Headers;
+      body: Record<string, unknown>;
+    }> = [];
+    const logs: string[] = [];
+
+    await expect(
+      withMockFetch(
+        (async (_input, init) => {
+          requests.push({
+            headers: new Headers(init?.headers),
+            body: JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>
+          });
+          const signal = init?.signal;
+          return await new Promise<Response>((_resolve, reject) => {
+            signal?.addEventListener(
+              "abort",
+              () => reject(new Error("aborted before headers")),
+              { once: true }
+            );
+          });
+        }) as typeof fetch,
+        async () =>
+          runOpenClawCliRequest(
+            {
+              runId: "run-openclaw-header-timeout",
+              input: {
+                text: "what can you do?",
+                connections: {
+                  github: { connected: false }
+                }
+              }
+            },
+            {
+              ...config,
+              engine: "openclaw-gateway",
+              openClawTimeoutMs: 5,
+              openClawGatewayRetryBaseMs: 1,
+              openClawGatewayRetryMaxMs: 1
+            },
+            async () => {
+              throw new Error("unexpected tool call");
+            },
+            async (_command, args) => {
+              throw new Error(`unexpected cli call: ${args.join(" ")}`);
+            },
+            (line) => logs.push(line)
+          )
+      )
+    ).rejects.toThrow("OpenClaw Gateway HTTP request failed");
+
+    expect(requests).toHaveLength(3);
+    expect(requests[0].body.input).toBe(requests[1].body.input);
+    expect(requests[1].body.input).toBe(requests[2].body.input);
+    expect(requests[0].headers.get("x-openclaw-session-key")).not.toBe(
+      requests[1].headers.get("x-openclaw-session-key")
+    );
+    expect(requests[1].headers.get("x-openclaw-session-key")).not.toBe(
+      requests[2].headers.get("x-openclaw-session-key")
+    );
+    expect(
+      logs.some((line) =>
+        line.includes(
+          "OpenClaw Gateway did not return response headers within 5ms"
+        )
+      )
+    ).toBe(true);
+  });
+
   test("times out retryable OpenClaw Gateway streams that never finish", async () => {
     const requests: Array<{
       headers: Headers;
@@ -4554,7 +4624,9 @@ describe("runOpenClawCliRequest", () => {
             {
               ...config,
               engine: "openclaw-gateway",
-              openClawTimeoutMs: 5
+              openClawTimeoutMs: 5,
+              openClawGatewayRetryBaseMs: 1,
+              openClawGatewayRetryMaxMs: 1
             },
             async () => {
               throw new Error("unexpected tool call");

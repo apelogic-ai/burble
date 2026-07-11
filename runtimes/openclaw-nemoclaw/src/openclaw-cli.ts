@@ -86,6 +86,7 @@ type CliSpawnProcess = {
 
 const streamHeartbeatMs = 8_000;
 const openClawGatewayStreamIdleTimeoutMs = 12_000;
+const openClawGatewayInitialResponseTimeoutMs = 12_000;
 const defaultOpenClawGatewayRetryBaseMs = 1_500;
 const defaultOpenClawGatewayRetryMaxMs = 10_000;
 const maxPlannedToolCalls = 5;
@@ -410,7 +411,14 @@ async function runOpenClawGatewayHttpRequest(
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     const attemptStartedAt = Date.now();
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), config.openClawTimeoutMs);
+    const requestTimeoutMs = onDelta
+      ? Math.min(config.openClawTimeoutMs, openClawGatewayInitialResponseTimeoutMs)
+      : config.openClawTimeoutMs;
+    let responseHeadersTimedOut = false;
+    const timeout = setTimeout(() => {
+      responseHeadersTimedOut = true;
+      controller.abort();
+    }, requestTimeoutMs);
     const attemptSessionId = buildGatewayHttpAttemptSessionId(
       sessionId,
       attempt
@@ -473,21 +481,23 @@ async function runOpenClawGatewayHttpRequest(
         return { exitCode: 1, stdout, stderr, ...usageTelemetry };
       }
 
-      const responseResult = onDelta && isGatewayHttpStreamingResponse(response)
-        ? await readGatewayHttpStreamingResponse(
-            response,
-            onDelta,
-            Math.min(
-              config.openClawTimeoutMs,
-              openClawGatewayStreamIdleTimeoutMs
-            ),
-            suppressedBaselineText
-          )
-        : {
-            responseText: await response.text(),
-            stdout: "",
-            deltaCount: 0
-          };
+      let responseResult: GatewayHttpResponseResult;
+      if (onDelta && isGatewayHttpStreamingResponse(response)) {
+        clearTimeout(timeout);
+        responseResult = await readGatewayHttpStreamingResponse(
+          response,
+          onDelta,
+          Math.min(config.openClawTimeoutMs, openClawGatewayStreamIdleTimeoutMs),
+          suppressedBaselineText,
+          () => controller.abort()
+        );
+      } else {
+        responseResult = {
+          responseText: await response.text(),
+          stdout: "",
+          deltaCount: 0
+        };
+      }
       const responseText = responseResult.responseText;
       if (responseResult.errorText) {
         stderr = responseResult.errorText;
@@ -556,10 +566,15 @@ async function runOpenClawGatewayHttpRequest(
         ...usageTelemetry
       };
     } catch (error) {
-      stderr = error instanceof Error ? error.message : String(error);
+      stderr = responseHeadersTimedOut
+        ? `OpenClaw Gateway did not return response headers within ${requestTimeoutMs}ms`
+        : error instanceof Error
+          ? error.message
+          : String(error);
       if (
         attempt < maxAttempts &&
-        isRetryableOpenClawGatewayTransportError(error)
+        (responseHeadersTimedOut ||
+          isRetryableOpenClawGatewayTransportError(error))
       ) {
         const retryDelayMs = openClawGatewayRetryDelayMs(config, attempt);
         const nextSessionKey = buildGatewayHttpSessionKey(
@@ -866,7 +881,8 @@ async function readGatewayHttpStreamingResponse(
   response: Response,
   onDelta: (delta: string) => void,
   idleTimeoutMs: number,
-  suppressedBaselineText?: string
+  suppressedBaselineText?: string,
+  onTimeout?: () => void
 ): Promise<GatewayHttpResponseResult> {
   if (!response.body) {
     const responseText = await response.text();
@@ -892,7 +908,8 @@ async function readGatewayHttpStreamingResponse(
     const { value, done } = await readStreamChunkWithIdleTimeout(
       reader,
       idleTimeoutMs,
-      () => Math.max(0, idleTimeoutMs - (Date.now() - lastSemanticProgressAt))
+      () => Math.max(0, idleTimeoutMs - (Date.now() - lastSemanticProgressAt)),
+      onTimeout
     );
     if (done) {
       break;
@@ -1024,7 +1041,8 @@ function createGatewayHttpDeltaGate(
 async function readStreamChunkWithIdleTimeout(
   reader: ReadableStreamDefaultReader<Uint8Array>,
   idleTimeoutMs: number,
-  semanticRemainingMs?: () => number
+  semanticRemainingMs?: () => number,
+  onTimeout?: () => void
 ) {
   let timeout: ReturnType<typeof setTimeout> | undefined;
   let semanticTimeout: ReturnType<typeof setTimeout> | undefined;
@@ -1034,6 +1052,7 @@ async function readStreamChunkWithIdleTimeout(
       read,
       new Promise<never>((_, reject) => {
         timeout = setTimeout(() => {
+          onTimeout?.();
           reader.cancel().catch(() => undefined);
           reject(
             new Error(
@@ -1048,6 +1067,7 @@ async function readStreamChunkWithIdleTimeout(
       candidates.push(
         new Promise<never>((_, reject) => {
           semanticTimeout = setTimeout(() => {
+            onTimeout?.();
             reader.cancel().catch(() => undefined);
             reject(
               new Error(
