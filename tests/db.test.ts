@@ -1,11 +1,46 @@
 import { describe, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
-import { mkdtempSync } from "node:fs";
+import { existsSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createTokenStore } from "../src/db";
 
 describe("createTokenStore", () => {
+  test("refuses a second write-capable connection to the same SQLite file", () => {
+    const path = join(mkdtempSync(join(tmpdir(), "burble-db-lock-")), "burble.db");
+    const store = createTokenStore(path);
+
+    expect(() => createTokenStore(path)).toThrow(
+      /already open by pid .* refusing a second write-capable SQLite connection/
+    );
+
+    store.close();
+
+    const reopenedStore = createTokenStore(path);
+    reopenedStore.close();
+  });
+
+  test("recovers a stale token store lock from a dead process", () => {
+    const path = join(mkdtempSync(join(tmpdir(), "burble-db-lock-")), "burble.db");
+    const lockPath = `${path}.burble-store.lock`;
+    writeFileSync(
+      lockPath,
+      JSON.stringify({
+        pid: 2_147_483_647,
+        token: "stale-lock",
+        createdAt: "2026-01-01T00:00:00.000Z"
+      })
+    );
+
+    const store = createTokenStore(path);
+
+    expect(existsSync(lockPath)).toBe(true);
+
+    store.close();
+
+    expect(existsSync(lockPath)).toBe(false);
+  });
+
   test("stores and consumes OAuth state with the Slack user id", () => {
     const store = createTokenStore(":memory:");
 
