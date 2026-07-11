@@ -37,6 +37,7 @@ export type RuntimeConfig = {
   openClawGatewayRetryBaseMs?: number;
   openClawGatewayRetryMaxMs?: number;
   llmModel: string;
+  llmModelFallbacks?: string[];
   openClawModelApi?: OpenClawModelApi;
   inferenceBaseUrl?: string | null;
   ollamaBaseUrl: string;
@@ -158,6 +159,12 @@ export function readRuntimeConfig(env: Env): RuntimeConfig {
         readOptionalEnv(env.OPENCLAW_MODEL) ??
         "openai:gpt-5.4"
     ),
+    llmModelFallbacks: readLlmModelFallbacks(
+      readOptionalEnv(env.OPENCLAW_MODEL_FALLBACKS) ?? undefined,
+      readOptionalEnv(env.AI_MODEL) ??
+        readOptionalEnv(env.OPENCLAW_MODEL) ??
+        "openai:gpt-5.4"
+    ),
     openClawModelApi: validateOpenClawModelApi(
       readOptionalEnv(env.OPENCLAW_MODEL_API) ?? "openai-responses"
     ),
@@ -262,6 +269,27 @@ function validateLlmModelId(modelId: string): string {
   }
 
   return modelId;
+}
+
+function readLlmModelFallbacks(value: string | undefined, primary: string): string[] {
+  const configured = value
+    ?.split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+  const candidates =
+    configured && configured.length > 0
+      ? configured
+      : defaultLlmModelFallbacks(primary);
+  const normalizedPrimary = validateLlmModelId(primary);
+  return candidates
+    .map(validateLlmModelId)
+    .filter((modelId, index, all) => modelId !== normalizedPrimary && all.indexOf(modelId) === index);
+}
+
+function defaultLlmModelFallbacks(primary: string): string[] {
+  const separatorIndex = primary.indexOf(":");
+  const provider = separatorIndex >= 0 ? primary.slice(0, separatorIndex) : "";
+  return provider === "openai" ? ["openai:gpt-5.5"] : [];
 }
 
 function validateOpenClawModelApi(value: string): OpenClawModelApi {

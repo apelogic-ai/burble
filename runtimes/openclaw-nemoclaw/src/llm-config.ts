@@ -9,6 +9,7 @@ export type OpenClawModelApi = "openai-responses" | "openai-completions";
 
 type OpenClawPatchInput = {
   modelId: string;
+  fallbackModelIds?: string[];
   inferenceBaseUrl?: string | null;
   modelApi?: OpenClawModelApi;
   ollamaBaseUrl: string;
@@ -43,9 +44,12 @@ export function parseLlmModelId(modelId: string): ParsedLlmModel {
 export function buildOpenClawLlmPatch(input: OpenClawPatchInput): string {
   const parsed = parseLlmModelId(input.modelId);
   const modelRef = `${parsed.provider}/${parsed.model}`;
+  const fallbackModels = normalizeFallbackModels(input.fallbackModelIds ?? []);
+  const fallbackRefs = fallbackModels.map(toModelRef);
   const agentId = input.agentId ?? "main";
   const providerConfig = buildProviderConfig(
     parsed,
+    fallbackModels,
     input.inferenceBaseUrl ?? null,
     input.modelApi ?? "openai-responses",
     input.ollamaBaseUrl,
@@ -69,12 +73,19 @@ export function buildOpenClawLlmPatch(input: OpenClawPatchInput): string {
   ].join(" ");
   const agentRuntimeDefaults = {
     model: {
-      primary: modelRef
+      primary: modelRef,
+      ...(fallbackRefs.length > 0 ? { fallbacks: fallbackRefs } : {})
     },
     models: {
       [modelRef]: {
         alias: modelAlias(parsed.provider)
-      }
+      },
+      ...Object.fromEntries(
+        fallbackModels.map((fallback) => [
+          toModelRef(fallback),
+          { alias: modelAlias(fallback.provider) }
+        ])
+      )
     },
     heartbeat: {
       every: "0m"
@@ -173,6 +184,7 @@ function readObject(value: unknown): Record<string, unknown> {
 
 function buildProviderConfig(
   parsed: ParsedLlmModel,
+  fallbackModels: ParsedLlmModel[],
   inferenceBaseUrl: string | null,
   modelApi: OpenClawModelApi,
   ollamaBaseUrl: string,
@@ -191,11 +203,7 @@ function buildProviderConfig(
             api: modelApi,
             timeoutSeconds: 300,
             models: [
-              {
-                id: parsed.model,
-                name: parsed.model,
-                input: ["text"]
-              }
+              ...providerModelsFor(parsed.provider, parsed, fallbackModels)
             ]
           }
         }
@@ -217,11 +225,7 @@ function buildProviderConfig(
             api: "ollama",
             timeoutSeconds: 300,
             models: [
-              {
-                id: parsed.model,
-                name: parsed.model,
-                input: ["text"]
-              }
+              ...providerModelsFor("ollama", parsed, fallbackModels)
             ]
           }
         }
@@ -233,18 +237,11 @@ function buildProviderConfig(
 
   return {
     ...burbleChannelConfig(),
-    plugins: pluginConfig(parsed.provider, burbleChannelPluginPath),
-    auth: {
-      profiles: {
-        [`${parsed.provider}:default`]: {
-          provider: parsed.provider,
-          mode: "api_key"
-        }
-      },
-      order: {
-        [parsed.provider]: [`${parsed.provider}:default`]
-      }
-    }
+    plugins: pluginConfig(
+      providersFor(parsed, fallbackModels),
+      burbleChannelPluginPath
+    ),
+    auth: authProfilesFor(providersFor(parsed, fallbackModels))
   };
 
   function burbleChannelConfig(): Record<string, unknown> {
@@ -260,24 +257,82 @@ function buildProviderConfig(
 }
 
 function pluginConfig(
-  provider: LlmProvider,
+  providers: LlmProvider[] | LlmProvider,
   burbleChannelPluginPath: string
 ): Record<string, unknown> {
+  const providerList = Array.isArray(providers) ? providers : [providers];
   return {
     enabled: true,
     bundledDiscovery: "allowlist",
-    allow: [provider, BURBLE_OPENCLAW_CHANNEL_ID],
+    allow: [...providerList, BURBLE_OPENCLAW_CHANNEL_ID],
     load: {
       paths: [burbleChannelPluginPath]
     },
     entries: {
-      [provider]: {
-        enabled: true
-      },
+      ...Object.fromEntries(
+        providerList.map((provider) => [provider, { enabled: true }])
+      ),
       [BURBLE_OPENCLAW_CHANNEL_ID]: {
         enabled: true
       }
     }
+  };
+}
+
+function normalizeFallbackModels(modelIds: string[]): ParsedLlmModel[] {
+  const parsedModels = modelIds.map(parseLlmModelId);
+  const seen = new Set<string>();
+  return parsedModels.filter((model) => {
+    const ref = toModelRef(model);
+    if (seen.has(ref)) {
+      return false;
+    }
+    seen.add(ref);
+    return true;
+  });
+}
+
+function toModelRef(model: ParsedLlmModel): string {
+  return `${model.provider}/${model.model}`;
+}
+
+function providerModelsFor(
+  provider: LlmProvider,
+  primary: ParsedLlmModel,
+  fallbacks: ParsedLlmModel[]
+): Array<{ id: string; name: string; input: string[] }> {
+  return [primary, ...fallbacks]
+    .filter((model) => model.provider === provider)
+    .map((model) => ({
+      id: model.model,
+      name: model.model,
+      input: ["text"]
+    }));
+}
+
+function providersFor(
+  primary: ParsedLlmModel,
+  fallbacks: ParsedLlmModel[]
+): LlmProvider[] {
+  return Array.from(
+    new Set([primary.provider, ...fallbacks.map((model) => model.provider)])
+  );
+}
+
+function authProfilesFor(providers: LlmProvider[]): Record<string, unknown> {
+  return {
+    profiles: Object.fromEntries(
+      providers.map((provider) => [
+        `${provider}:default`,
+        {
+          provider,
+          mode: "api_key"
+        }
+      ])
+    ),
+    order: Object.fromEntries(
+      providers.map((provider) => [provider, [`${provider}:default`]])
+    )
   };
 }
 

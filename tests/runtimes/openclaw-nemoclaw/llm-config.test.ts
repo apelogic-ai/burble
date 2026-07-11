@@ -19,11 +19,16 @@ describe("buildOpenClawLlmPatch", () => {
     const patch = JSON.parse(
       buildOpenClawLlmPatch({
         modelId: "openai:gpt-5.4",
+        fallbackModelIds: ["openai:gpt-5.5"],
         ollamaBaseUrl: "https://ollama.com"
       })
     );
 
     expect(patch.agents.defaults.model.primary).toBe("openai/gpt-5.4");
+    expect(patch.agents.defaults.model.fallbacks).toEqual(["openai/gpt-5.5"]);
+    expect(patch.agents.defaults.models["openai/gpt-5.5"]).toEqual({
+      alias: "GPT"
+    });
     expect(patch.agents.defaults.heartbeat.every).toBe("0m");
     expect(patch.agents.defaults.skills).toEqual([]);
     expect(patch.agents.defaults.contextInjection).toBe("never");
@@ -123,6 +128,7 @@ describe("buildOpenClawLlmPatch", () => {
     const patch = JSON.parse(
       buildOpenClawLlmPatch({
         modelId: "openai:gpt-5.4",
+        fallbackModelIds: ["openai:gpt-5.5"],
         inferenceBaseUrl: "http://llm-gw:4000/v1",
         ollamaBaseUrl: "https://ollama.com"
       })
@@ -135,6 +141,11 @@ describe("buildOpenClawLlmPatch", () => {
       apiKey: "OPENAI_API_KEY",
       api: "openai-responses"
     });
+    expect(
+      patch.models.providers.openai.models.map(
+        (model: { id: string }) => model.id
+      )
+    ).toEqual(["gpt-5.4", "gpt-5.5"]);
     expect(JSON.stringify(patch)).not.toContain("sk-");
   });
 
