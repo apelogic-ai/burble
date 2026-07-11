@@ -1495,26 +1495,23 @@ export async function runCliCommand(
   options: { timeoutMs: number; env?: Record<string, string> }
 ): Promise<CliCommandResult> {
   const proc = spawnOpenClawCli(command, args, options.env);
-  let timedOut = false;
-  const timer = setTimeout(() => {
-    timedOut = true;
-    proc.kill();
-  }, options.timeoutMs);
+  const timeout = createOpenClawCliTimeout(proc, options.timeoutMs);
+  const result = Promise.all([
+    new Response(proc.stdout).text(),
+    new Response(proc.stderr).text(),
+    proc.exited
+  ]);
+  result.catch(() => undefined);
+  proc.exited.catch(() => undefined);
 
   try {
-    const [stdout, stderr, exitCode] = await Promise.all([
-      new Response(proc.stdout).text(),
-      new Response(proc.stderr).text(),
-      proc.exited
+    const [stdout, stderr, exitCode] = await Promise.race([
+      result,
+      timeout.promise
     ]);
-
-    if (timedOut) {
-      throw new Error("OpenClaw CLI timed out");
-    }
-
     return { exitCode, stdout, stderr };
   } finally {
-    clearTimeout(timer);
+    timeout.clear();
   }
 }
 
@@ -1524,23 +1521,22 @@ export async function* runCliCommandStream(
   options: { timeoutMs: number; env?: Record<string, string> }
 ): AsyncIterable<CliCommandStreamEvent> {
   const proc = spawnOpenClawCli(command, args, options.env);
-  let timedOut = false;
-  const timer = setTimeout(() => {
-    timedOut = true;
-    proc.kill();
-  }, options.timeoutMs);
+  const timeout = createOpenClawCliTimeout(proc, options.timeoutMs);
+  proc.exited.catch(() => undefined);
 
+  let stdoutNext: Promise<DecodedStreamChunk> | null = null;
+  let stderrNext: Promise<DecodedStreamChunk> | null = null;
   try {
     const stdoutReader = proc.stdout.getReader();
     const stderrReader = proc.stderr.getReader();
     const stdoutDecoder = new TextDecoder();
     const stderrDecoder = new TextDecoder();
-    let stdoutNext: Promise<DecodedStreamChunk> | null = readDecodedStreamChunk(
+    stdoutNext = readDecodedStreamChunk(
       "stdout",
       stdoutReader,
       stdoutDecoder
     );
-    let stderrNext: Promise<DecodedStreamChunk> | null = readDecodedStreamChunk(
+    stderrNext = readDecodedStreamChunk(
       "stderr",
       stderrReader,
       stderrDecoder
@@ -1550,7 +1546,7 @@ export async function* runCliCommandStream(
       const pending = [stdoutNext, stderrNext].filter(
         (item): item is Promise<DecodedStreamChunk> => Boolean(item)
       );
-      const result = await Promise.race(pending);
+      const result = await Promise.race([...pending, timeout.promise]);
       if (result.text) {
         yield {
           type: result.stream,
@@ -1571,14 +1567,63 @@ export async function* runCliCommandStream(
       }
     }
 
-    const exitCode = await proc.exited;
-    if (timedOut) {
-      throw new Error("OpenClaw CLI timed out");
-    }
-
+    const exitCode = await Promise.race([proc.exited, timeout.promise]);
     yield { type: "exit", exitCode };
   } finally {
-    clearTimeout(timer);
+    timeout.clear();
+    stdoutNext?.catch(() => undefined);
+    stderrNext?.catch(() => undefined);
+  }
+}
+
+function createOpenClawCliTimeout(
+  proc: CliSpawnProcess,
+  timeoutMs: number
+): {
+  promise: Promise<never>;
+  clear: () => void;
+} {
+  let timeoutTimer: ReturnType<typeof setTimeout> | undefined;
+  let forceKillTimer: ReturnType<typeof setTimeout> | undefined;
+  const promise = new Promise<never>((_, reject) => {
+    timeoutTimer = setTimeout(() => {
+      terminateOpenClawCliProcess(proc);
+      forceKillTimer = setTimeout(() => {
+        forceKillOpenClawCliProcess(proc);
+      }, 250);
+      forceKillTimer.unref?.();
+      reject(new Error("OpenClaw CLI timed out"));
+    }, timeoutMs);
+    timeoutTimer.unref?.();
+  });
+  promise.catch(() => undefined);
+
+  return {
+    promise,
+    clear: () => {
+      if (timeoutTimer) {
+        clearTimeout(timeoutTimer);
+      }
+      if (forceKillTimer) {
+        clearTimeout(forceKillTimer);
+      }
+    }
+  };
+}
+
+function terminateOpenClawCliProcess(proc: CliSpawnProcess): void {
+  try {
+    proc.kill();
+  } catch {
+    // The process may already have exited.
+  }
+}
+
+function forceKillOpenClawCliProcess(proc: CliSpawnProcess): void {
+  try {
+    (proc.kill as (signal?: string) => void)("SIGKILL");
+  } catch {
+    // The process may already have exited.
   }
 }
 

@@ -2,6 +2,8 @@ import { describe, expect, test } from "bun:test";
 import {
   resolveOpenClawCliArgv,
   resolveOpenClawCliCommand,
+  runCliCommand,
+  runCliCommandStream,
   runOpenClawCliRequest,
   runOpenClawCliRequestStream
 } from "../../../runtimes/openclaw-nemoclaw/src/openclaw-cli";
@@ -61,6 +63,38 @@ describe("OpenClaw CLI command resolution", () => {
     expect(resolveOpenClawCliCommand("/custom/openclaw", () => true)).toBe(
       "/custom/openclaw"
     );
+  });
+});
+
+describe("OpenClaw CLI process timeouts", () => {
+  test("command runner throws promptly even when the child ignores SIGTERM", async () => {
+    const startedAt = Date.now();
+
+    await expect(
+      runCliCommand("/bin/sh", ["-c", "trap '' TERM; sleep 2"], {
+        timeoutMs: 20
+      })
+    ).rejects.toThrow("OpenClaw CLI timed out");
+
+    expect(Date.now() - startedAt).toBeLessThan(500);
+  });
+
+  test("stream runner throws promptly even when the child ignores SIGTERM", async () => {
+    const startedAt = Date.now();
+
+    await expect(
+      (async () => {
+        for await (const _event of runCliCommandStream(
+          "/bin/sh",
+          ["-c", "trap '' TERM; sleep 2"],
+          { timeoutMs: 20 }
+        )) {
+          // Drain the stream until it fails.
+        }
+      })()
+    ).rejects.toThrow("OpenClaw CLI timed out");
+
+    expect(Date.now() - startedAt).toBeLessThan(500);
   });
 });
 
