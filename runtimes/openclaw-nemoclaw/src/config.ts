@@ -289,7 +289,7 @@ function readLlmModelFallbacks(value: string | undefined, primary: string): stri
 function defaultLlmModelFallbacks(primary: string): string[] {
   const separatorIndex = primary.indexOf(":");
   const provider = separatorIndex >= 0 ? primary.slice(0, separatorIndex) : "";
-  return provider === "openai" ? ["openai:gpt-5.5"] : [];
+  return provider === "openai" ? ["openai:gpt-5.4-mini"] : [];
 }
 
 function validateOpenClawModelApi(value: string): OpenClawModelApi {

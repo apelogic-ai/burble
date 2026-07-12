@@ -19,14 +19,14 @@ describe("buildOpenClawLlmPatch", () => {
     const patch = JSON.parse(
       buildOpenClawLlmPatch({
         modelId: "openai:gpt-5.4",
-        fallbackModelIds: ["openai:gpt-5.5"],
+        fallbackModelIds: ["openai:gpt-5.4-mini"],
         ollamaBaseUrl: "https://ollama.com"
       })
     );
 
     expect(patch.agents.defaults.model.primary).toBe("openai/gpt-5.4");
-    expect(patch.agents.defaults.model.fallbacks).toEqual(["openai/gpt-5.5"]);
-    expect(patch.agents.defaults.models["openai/gpt-5.5"]).toEqual({
+    expect(patch.agents.defaults.model.fallbacks).toEqual(["openai/gpt-5.4-mini"]);
+    expect(patch.agents.defaults.models["openai/gpt-5.4-mini"]).toEqual({
       alias: "GPT"
     });
     expect(patch.agents.defaults.heartbeat.every).toBe("0m");
@@ -128,7 +128,7 @@ describe("buildOpenClawLlmPatch", () => {
     const patch = JSON.parse(
       buildOpenClawLlmPatch({
         modelId: "openai:gpt-5.4",
-        fallbackModelIds: ["openai:gpt-5.5"],
+        fallbackModelIds: ["openai:gpt-5.4-mini"],
         inferenceBaseUrl: "http://llm-gw:4000/v1",
         ollamaBaseUrl: "https://ollama.com"
       })
@@ -145,7 +145,7 @@ describe("buildOpenClawLlmPatch", () => {
       patch.models.providers.openai.models.map(
         (model: { id: string }) => model.id
       )
-    ).toEqual(["gpt-5.4", "gpt-5.5"]);
+    ).toEqual(["gpt-5.4", "gpt-5.4-mini"]);
     expect(JSON.stringify(patch)).not.toContain("sk-");
   });
 

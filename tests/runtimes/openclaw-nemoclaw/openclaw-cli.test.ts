@@ -79,6 +79,26 @@ describe("OpenClaw CLI process timeouts", () => {
     expect(Date.now() - startedAt).toBeLessThan(500);
   });
 
+  test("command runner force-kills children that ignore SIGTERM", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "burble-openclaw-timeout-"));
+    const pidPath = join(dir, "pid");
+
+    await expect(
+      runCliCommand(
+        "/bin/sh",
+        [
+          "-c",
+          `echo $$ > ${JSON.stringify(pidPath)}; trap '' TERM; while true; do sleep 1; done`
+        ],
+        { timeoutMs: 20 }
+      )
+    ).rejects.toThrow("OpenClaw CLI timed out");
+
+    const pid = Number((await readFile(pidPath, "utf8")).trim());
+    await waitUntilProcessExits(pid);
+    expect(isProcessAlive(pid)).toBe(false);
+  });
+
   test("stream runner throws promptly even when the child ignores SIGTERM", async () => {
     const startedAt = Date.now();
 
@@ -96,7 +116,48 @@ describe("OpenClaw CLI process timeouts", () => {
 
     expect(Date.now() - startedAt).toBeLessThan(500);
   });
+
+  test("stream runner kills the child when the consumer stops early", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "burble-openclaw-stream-return-"));
+    const pidPath = join(dir, "pid");
+    const iterator = runCliCommandStream(
+      "/bin/sh",
+      [
+        "-c",
+        `echo $$ > ${JSON.stringify(pidPath)}; echo ready; trap '' TERM; while true; do sleep 1; done`
+      ],
+      { timeoutMs: 60_000 }
+    )[Symbol.asyncIterator]();
+
+    const first = await iterator.next();
+    expect(first.done).toBe(false);
+    expect(first.value).toEqual({ type: "stdout", text: "ready\n" });
+    await iterator.return?.();
+
+    const pid = Number((await readFile(pidPath, "utf8")).trim());
+    await waitUntilProcessExits(pid);
+    expect(isProcessAlive(pid)).toBe(false);
+  });
 });
+
+function isProcessAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function waitUntilProcessExits(pid: number): Promise<void> {
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < 1_500) {
+    if (!isProcessAlive(pid)) {
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+}
 
 function readSessionIdArg(args: string[]): string {
   const index = args.indexOf("--session-id");

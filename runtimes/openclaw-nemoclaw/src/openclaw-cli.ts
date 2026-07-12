@@ -1550,13 +1550,21 @@ export async function runCliCommand(
 ): Promise<CliCommandResult> {
   const proc = spawnOpenClawCli(command, args, options.env);
   const timeout = createOpenClawCliTimeout(proc, options.timeoutMs);
+  let exited = false;
   const result = Promise.all([
     new Response(proc.stdout).text(),
     new Response(proc.stderr).text(),
-    proc.exited
+    proc.exited.then((exitCode) => {
+      exited = true;
+      return exitCode;
+    })
   ]);
   result.catch(() => undefined);
-  proc.exited.catch(() => undefined);
+  proc.exited
+    .then(() => {
+      exited = true;
+    })
+    .catch(() => undefined);
 
   try {
     const [stdout, stderr, exitCode] = await Promise.race([
@@ -1566,6 +1574,9 @@ export async function runCliCommand(
     return { exitCode, stdout, stderr };
   } finally {
     timeout.clear();
+    if (!exited && timeout.didFire()) {
+      await waitForOpenClawCliExit(proc);
+    }
   }
 }
 
@@ -1576,7 +1587,12 @@ export async function* runCliCommandStream(
 ): AsyncIterable<CliCommandStreamEvent> {
   const proc = spawnOpenClawCli(command, args, options.env);
   const timeout = createOpenClawCliTimeout(proc, options.timeoutMs);
-  proc.exited.catch(() => undefined);
+  let exited = false;
+  proc.exited
+    .then(() => {
+      exited = true;
+    })
+    .catch(() => undefined);
 
   let stdoutNext: Promise<DecodedStreamChunk> | null = null;
   let stderrNext: Promise<DecodedStreamChunk> | null = null;
@@ -1622,9 +1638,16 @@ export async function* runCliCommandStream(
     }
 
     const exitCode = await Promise.race([proc.exited, timeout.promise]);
+    exited = true;
     yield { type: "exit", exitCode };
   } finally {
     timeout.clear();
+    if (!exited) {
+      terminateOpenClawCliProcess(proc);
+      await sleep(250);
+      forceKillOpenClawCliProcess(proc);
+      await waitForOpenClawCliExit(proc);
+    }
     stdoutNext?.catch(() => undefined);
     stderrNext?.catch(() => undefined);
   }
@@ -1636,11 +1659,14 @@ function createOpenClawCliTimeout(
 ): {
   promise: Promise<never>;
   clear: () => void;
+  didFire: () => boolean;
 } {
   let timeoutTimer: ReturnType<typeof setTimeout> | undefined;
   let forceKillTimer: ReturnType<typeof setTimeout> | undefined;
+  let fired = false;
   const promise = new Promise<never>((_, reject) => {
     timeoutTimer = setTimeout(() => {
+      fired = true;
       terminateOpenClawCliProcess(proc);
       forceKillTimer = setTimeout(() => {
         forceKillOpenClawCliProcess(proc);
@@ -1658,11 +1684,22 @@ function createOpenClawCliTimeout(
       if (timeoutTimer) {
         clearTimeout(timeoutTimer);
       }
-      if (forceKillTimer) {
+      if (forceKillTimer && !fired) {
         clearTimeout(forceKillTimer);
       }
-    }
+    },
+    didFire: () => fired
   };
+}
+
+async function waitForOpenClawCliExit(
+  proc: CliSpawnProcess,
+  timeoutMs = 1_000
+): Promise<void> {
+  await Promise.race([
+    proc.exited.catch(() => undefined).then(() => undefined),
+    sleep(timeoutMs)
+  ]);
 }
 
 function terminateOpenClawCliProcess(proc: CliSpawnProcess): void {
