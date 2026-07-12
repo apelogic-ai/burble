@@ -6,6 +6,7 @@ describe("buildOpenClawProcessEnv", () => {
     const env = buildOpenClawProcessEnv({}, {});
 
     expect(env).toMatchObject({
+      OPENCLAW_NO_AUTO_UPDATE: "1",
       npm_config_audit: "false",
       npm_config_cache: "/tmp/npm-cache",
       npm_config_fund: "false",
@@ -51,6 +52,7 @@ describe("buildOpenClawProcessEnv", () => {
       NODE_OPTIONS: "--max-old-space-size=2048 --require /tmp/ciao-network-guard.cjs",
       OPENAI_API_KEY: "sk-BURBLE-INFERENCE-PROXY",
       OPENCLAW_CONFIG_PATH: "/data/openclaw/config/openclaw.json",
+      OPENCLAW_NO_AUTO_UPDATE: "1",
       XDG_CACHE_HOME: "/tmp/openclaw-cache",
       npm_config_cache: "/tmp/npm-cache",
       npm_config_audit: "false",

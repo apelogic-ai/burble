@@ -411,6 +411,7 @@ export function createManagedRuntimeAdapter(
             response,
             runtimeMessageDeltasEnabled(runtime),
             observeEvent,
+            runSnapshotTimeoutMs,
           );
         } else {
           const startPayload = (await response.json()) as RemoteRunResponse &
@@ -437,6 +438,7 @@ export function createManagedRuntimeAdapter(
                 createWebSocket(eventsUrl, runtimeWebSocketOptions(runtime)),
                 runtimeMessageDeltasEnabled(runtime),
                 observeEvent,
+                runSnapshotTimeoutMs,
               );
             } catch (error) {
               if (!isRuntimeStreamClosedError(error)) {
@@ -483,6 +485,27 @@ export function createManagedRuntimeAdapter(
           durationMs: Date.now() - runStartedAt,
           error,
         });
+        if (runtime && isManagedRuntimeFinalResponseTimeout(error)) {
+          try {
+            await deps.runtimeFactory?.stopRuntime(runtime.id);
+            logInfo(
+              [
+                "Managed runtime stopped after final response timeout",
+                `runId=${runId}`,
+                `runtimeId=${runtime.id}`,
+              ].join(" "),
+            );
+          } catch (stopError) {
+            logInfo(
+              [
+                "Managed runtime stop after timeout failed",
+                `runId=${runId}`,
+                `runtimeId=${runtime.id}`,
+                `error=${formatRuntimeStopError(stopError)}`,
+              ].join(" "),
+            );
+          }
+        }
         throw error;
       }
 
@@ -827,6 +850,19 @@ function toRuntimeObservabilityError(error: unknown): {
   };
 }
 
+function isManagedRuntimeFinalResponseTimeout(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    /Managed runtime did not produce a final response within \d+ms/.test(
+      error.message,
+    )
+  );
+}
+
+function formatRuntimeStopError(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
 async function getManagedRuntimeForInput(
   deps: ManagedRuntimeAgentRunnerDeps,
   input: AgentInput,
@@ -1051,6 +1087,7 @@ async function* readWebSocketRunResponse(
   socket: AgentRuntimeWebSocket,
   emitMessageDeltas: boolean,
   onEvent?: (event: AgentRunEvent) => void,
+  finalTimeoutMs = defaultRunSnapshotTimeoutMs,
 ): AsyncIterable<AgentRunEvent, AgentOutput | null> {
   const queue: unknown[] = [];
   let closed = false;
@@ -1079,6 +1116,13 @@ async function* readWebSocketRunResponse(
     closed = true;
     wakeReader();
   });
+  const timeout = setTimeout(() => {
+    failed = new Error(
+      `Managed runtime did not produce a final response within ${finalTimeoutMs}ms`,
+    );
+    socket.close();
+    wakeReader();
+  }, finalTimeoutMs);
 
   try {
     while (true) {
@@ -1122,6 +1166,7 @@ async function* readWebSocketRunResponse(
       });
     }
   } finally {
+    clearTimeout(timeout);
     socket.close();
   }
 }
@@ -1134,14 +1179,33 @@ async function* readStreamingRunResponse(
   response: Response,
   emitMessageDeltas = true,
   onEvent?: (event: AgentRunEvent) => void,
+  finalTimeoutMs = defaultRunSnapshotTimeoutMs,
 ): AsyncIterable<AgentRunEvent, AgentOutput | null> {
   if (!response.body) {
     return null;
   }
 
   let streamedText = "";
+  const events = readRuntimeEventStream(response);
+  const iterator = events[Symbol.asyncIterator]();
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  const timeoutPromise = new Promise<IteratorResult<unknown>>((_, reject) => {
+    timeout = setTimeout(() => {
+      reject(
+        new Error(
+          `Managed runtime did not produce a final response within ${finalTimeoutMs}ms`,
+        ),
+      );
+    }, finalTimeoutMs);
+  });
+
   try {
-    for await (const payload of readRuntimeEventStream(response)) {
+    while (true) {
+      const result = await Promise.race([iterator.next(), timeoutPromise]);
+      if (result.done) {
+        break;
+      }
+      const payload = result.value;
       const event = validateRemoteRunEvent(payload);
       if (!event) {
         throw new Error("Managed runtime returned an invalid stream event");
@@ -1181,6 +1245,11 @@ async function* readStreamingRunResponse(
     }
 
     throw error;
+  } finally {
+    if (timeout) {
+      clearTimeout(timeout);
+    }
+    iterator.return?.().catch(() => undefined);
   }
 
   if (streamedText.trim()) {

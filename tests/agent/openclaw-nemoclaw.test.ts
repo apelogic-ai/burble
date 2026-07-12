@@ -1231,6 +1231,118 @@ describe("createOpenClawNemoClawAgentRunner", () => {
     });
   });
 
+  test("times out HTTP streaming runs that never produce a final response", async () => {
+    const observabilityEvents: ObservabilityEventInput[] = [];
+    const encoder = new TextEncoder();
+    const runner = createOpenClawNemoClawAgentRunner({
+      baseUrl: "http://openclaw-runtime:8080",
+      runSnapshotTimeoutMs: 5,
+      observability: {
+        emit: (event) => observabilityEvents.push(event)
+      },
+      fetch: async (url) => {
+        if (String(url).endsWith("/capabilities")) {
+          return Response.json({
+            ...openClawCapabilityManifest,
+            transports: ["http", "ndjson", "websocket"]
+          });
+        }
+        return new Response(
+          new ReadableStream({
+            start(controller) {
+              controller.enqueue(
+                encoder.encode(
+                  `${JSON.stringify({ type: "status", text: "Still working..." })}\n`
+                )
+              );
+            }
+          }),
+          {
+            headers: {
+              "content-type": "application/x-ndjson; charset=utf-8"
+            }
+          }
+        );
+      }
+    });
+
+    await expect(
+      collectAgentRun(runner, {
+        principal,
+        conversation,
+        text: "summarize my GitHub work",
+        connections: { github: connection }
+      })
+    ).rejects.toThrow("Managed runtime did not produce a final response within 5ms");
+    expect(observabilityEvents.at(-1)).toMatchObject({
+      name: "runtime.run.failed",
+      status: "error",
+      error: {
+        message: "Managed runtime did not produce a final response within 5ms"
+      }
+    });
+  });
+
+  test("stops managed runtimes after final response timeouts", async () => {
+    const stoppedRuntimeIds: string[] = [];
+    const encoder = new TextEncoder();
+    const runner = createOpenClawNemoClawAgentRunner({
+      runSnapshotTimeoutMs: 5,
+      runtimeFactory: {
+        async getOrCreateRuntime() {
+          return {
+            id: "rt_timeout",
+            engine: "openclaw",
+            endpointUrl: "http://openclaw-runtime:8080",
+            authToken: "runtime-token",
+            status: "ready",
+            statePath: "/runtime/state",
+            configPath: "/runtime/config/openclaw.json",
+            workspacePath: "/runtime/workspace"
+          };
+        },
+        async stopRuntime(runtimeId) {
+          stoppedRuntimeIds.push(runtimeId);
+        },
+        async reapIdleRuntimes() {}
+      },
+      fetch: async (url) => {
+        if (String(url).endsWith("/capabilities")) {
+          return Response.json({
+            ...openClawCapabilityManifest,
+            transports: ["http", "ndjson", "websocket"]
+          });
+        }
+        return new Response(
+          new ReadableStream({
+            start(controller) {
+              controller.enqueue(
+                encoder.encode(
+                  `${JSON.stringify({ type: "status", text: "Still working..." })}\n`
+                )
+              );
+            }
+          }),
+          {
+            headers: {
+              "content-type": "application/x-ndjson; charset=utf-8"
+            }
+          }
+        );
+      }
+    });
+
+    await expect(
+      collectAgentRun(runner, {
+        principal,
+        conversation,
+        text: "summarize my GitHub work",
+        connections: { github: connection }
+      })
+    ).rejects.toThrow("Managed runtime did not produce a final response within 5ms");
+    expect(stoppedRuntimeIds).toEqual(["rt_timeout"]);
+  });
+
   test("accepts attachment-only final responses from managed runtimes", async () => {
     const runner = createOpenClawNemoClawAgentRunner({
       baseUrl: "http://openclaw-runtime:8080",
@@ -1846,6 +1958,48 @@ describe("createOpenClawNemoClawAgentRunner", () => {
     });
     const socket = await waitForSocket(sockets);
     socket.closeFromRuntime();
+
+    await expect(resultPromise).rejects.toThrow(
+      "Managed runtime did not produce a final response within 5ms"
+    );
+    expect(observabilityEvents.at(-1)).toMatchObject({
+      name: "runtime.run.failed",
+      status: "error",
+      error: {
+        message: "Managed runtime did not produce a final response within 5ms"
+      }
+    });
+  });
+
+  test("times out WebSocket runs that keep streaming status without final", async () => {
+    const observabilityEvents: ObservabilityEventInput[] = [];
+    const sockets: FakeRuntimeWebSocket[] = [];
+    const runner = createOpenClawNemoClawAgentRunner({
+      baseUrl: "http://openclaw-runtime:8080",
+      runSnapshotTimeoutMs: 5,
+      observability: {
+        emit: (event) => observabilityEvents.push(event)
+      },
+      fetch: async () =>
+        Response.json({
+          runId: "run-status-only",
+          eventsUrl: "/runs/run-status-only/events"
+        }),
+      webSocketFactory: (url) => {
+        const socket = new FakeRuntimeWebSocket(url);
+        sockets.push(socket);
+        return socket;
+      }
+    });
+
+    const resultPromise = collectAgentRun(runner, {
+      principal,
+      conversation,
+      text: "Use my GitHub connection and list my assigned GitHub issues.",
+      connections: { github: connection }
+    });
+    const socket = await waitForSocket(sockets);
+    socket.sendEvent({ type: "status", text: "Still working..." });
 
     await expect(resultPromise).rejects.toThrow(
       "Managed runtime did not produce a final response within 5ms"
