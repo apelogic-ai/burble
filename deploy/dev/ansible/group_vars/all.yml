@@ -64,7 +64,7 @@ openclaw_raw_stream_debug: false
 openclaw_gateway_port: 18789
 openclaw_gateway_bind: loopback
 openclaw_gateway_token: ""
-openclaw_version: "2026.5.19"
+openclaw_version: "2026.6.11"
 internal_api_token: ""
 atlassian_mcp_url: https://mcp.atlassian.com/v1/mcp
 runtime_jwt_issuer: ""

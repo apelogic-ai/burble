@@ -10,6 +10,9 @@ const openClawCliCompose = await Bun.file(
 const personalRuntimesCompose = await Bun.file(
   "deploy/dev/compose/docker-compose.personal-runtimes.yml"
 ).text();
+const testbedCompose = await Bun.file(
+  "deploy/testbed/compose/docker-compose.yml"
+).text();
 const agentGatewayCompose = await Bun.file(
   "deploy/dev/compose/docker-compose.agentgateway.yml"
 ).text();
@@ -863,12 +866,27 @@ describe("dev deploy config", () => {
     );
     expect(openClawCliCompose).toContain("OPENCLAW_VERSION");
     expect(openClawCliCompose).toContain(
+      "OPENCLAW_VERSION: ${OPENCLAW_VERSION:-2026.6.11}"
+    );
+    expect(personalRuntimesCompose).toContain(
+      "OPENCLAW_VERSION: ${OPENCLAW_VERSION:-2026.6.11}"
+    );
+    expect(testbedCompose).toContain(
+      "OPENCLAW_VERSION: ${OPENCLAW_VERSION:-2026.6.11}"
+    );
+    expect(composeEnvExample).toContain("OPENCLAW_VERSION=2026.6.11");
+    expect(ansibleGroupVars).toContain('openclaw_version: "2026.6.11"');
+    expect(ansibleEnvTemplate).toContain(
+      "OPENCLAW_VERSION={{ openclaw_version | default('2026.6.11') }}"
+    );
+    expect(openClawCliCompose).toContain(
       "OPENCLAW_NEMOCLAW_ENGINE=${OPENCLAW_NEMOCLAW_ENGINE:-openclaw}"
     );
     expect(openClawCliCompose).toContain(
       "burble-openclaw-nemoclaw-openclaw-cli:dev"
     );
     expect(dockerfile).toContain("FROM node:22.19-trixie-slim");
+    expect(dockerfile).toContain("ARG OPENCLAW_VERSION=2026.6.11");
     expect(dockerfile).not.toContain("python");
     expect(dockerfile).toContain("npm install -g bun");
     expect(dockerfile).toContain("npm install -g \"openclaw@${OPENCLAW_VERSION}\"");

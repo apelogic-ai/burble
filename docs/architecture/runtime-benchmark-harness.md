@@ -117,7 +117,7 @@ surfaces:
 - plugin discovery is allowlisted to the selected provider plus Burble channel
 
 OpenClaw still defaulted the gateway agent to `thinking=medium, fast=off`.
-OpenClaw 2026.5.19 exposes these config fields:
+OpenClaw 2026.6.11 exposes these config fields:
 
 - `agents.defaults.thinkingDefault`: `off | minimal | low | medium | high | xhigh | adaptive | max`
 - `agents.defaults.reasoningDefault`: `off | on | stream`

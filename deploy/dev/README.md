@@ -401,7 +401,7 @@ docker compose \
 Optional version pin:
 
 ```env
-OPENCLAW_VERSION=2026.5.19
+OPENCLAW_VERSION=2026.6.11
 ```
 
 The CLI image installs the `openclaw` npm package during Docker build. If that
