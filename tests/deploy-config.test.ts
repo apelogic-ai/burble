@@ -163,7 +163,7 @@ describe("dev deploy config", () => {
 
   test("runs a neutral LLM gateway service for sandbox inference", () => {
     expect(compose).toContain("llm-gw:");
-    expect(compose).toContain("ghcr.io/berriai/litellm:main-latest");
+    expect(compose).toContain("ghcr.io/berriai/litellm:v1.92.0");
     expect(compose).toContain(
       "LLM_GW_BASE_URL=${LLM_GW_BASE_URL:-http://host.openshell.internal:4000/v1}"
     );
@@ -932,6 +932,7 @@ describe("dev deploy config", () => {
     expect(k8sDeployment).toContain("persistentVolumeClaim:");
     expect(k8sLiteLlmDeployment).toContain('eq .Values.litellm.mode "managed"');
     expect(k8sValues).toContain("repository: ghcr.io/berriai/litellm");
+    expect(k8sValues).toContain("tag: v1.92.0");
     expect(k8sAgentGatewayDeployment).toContain(
       'eq .Values.agentgateway.mode "managed"'
     );

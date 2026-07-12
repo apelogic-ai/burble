@@ -119,7 +119,7 @@ services:
       start_period: 10s
 
   llm-gw:
-    image: ghcr.io/berriai/litellm:main-latest
+    image: ghcr.io/berriai/litellm:v1.92.0
     restart: unless-stopped
     expose:
       - "4000"
