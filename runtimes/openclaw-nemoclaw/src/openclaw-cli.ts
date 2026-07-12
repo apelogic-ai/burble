@@ -84,6 +84,13 @@ type CliSpawnProcess = {
   kill: () => void;
 };
 
+class OpenClawGatewayHardDeadlineError extends Error {
+  constructor(timeoutMs: number) {
+    super(`OpenClaw Gateway request exceeded the ${timeoutMs}ms hard deadline`);
+    this.name = "OpenClawGatewayHardDeadlineError";
+  }
+}
+
 const streamHeartbeatMs = 8_000;
 const openClawGatewayStreamIdleTimeoutMs = 12_000;
 const openClawGatewayInitialResponseTimeoutMs = 12_000;
@@ -408,17 +415,13 @@ async function runOpenClawGatewayHttpRequest(
   let stdout = "";
   let stderr = "";
   const maxAttempts = 3;
+  const hardDeadlineAt = startedAt + config.openClawTimeoutMs;
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     const attemptStartedAt = Date.now();
     const controller = new AbortController();
     const requestTimeoutMs = onDelta
       ? Math.min(config.openClawTimeoutMs, openClawGatewayInitialResponseTimeoutMs)
       : config.openClawTimeoutMs;
-    let responseHeadersTimedOut = false;
-    const timeout = setTimeout(() => {
-      responseHeadersTimedOut = true;
-      controller.abort();
-    }, requestTimeoutMs);
     const attemptSessionId = buildGatewayHttpAttemptSessionId(
       sessionId,
       attempt
@@ -427,18 +430,40 @@ async function runOpenClawGatewayHttpRequest(
       config,
       attemptSessionId
     );
+    const hardDeadlineRemainingMs =
+      openClawGatewayHardDeadlineRemainingMs(hardDeadlineAt);
+    const headerTimeoutIsHardDeadline =
+      hardDeadlineRemainingMs <= requestTimeoutMs;
     try {
-      const response = await fetchGatewayHttpResponse(
-        endpoint,
-        config,
-        request,
-        attemptSessionKey,
-        prompt,
-        Boolean(onDelta),
-        controller.signal
+      const response = await raceWithOpenClawGatewayTimeout(
+        fetchGatewayHttpResponse(
+          endpoint,
+          config,
+          request,
+          attemptSessionKey,
+          prompt,
+          Boolean(onDelta),
+          controller.signal
+        ),
+        Math.min(
+          requestTimeoutMs,
+          hardDeadlineRemainingMs
+        ),
+        () =>
+          headerTimeoutIsHardDeadline
+            ? new OpenClawGatewayHardDeadlineError(config.openClawTimeoutMs)
+            : new Error(
+                `OpenClaw Gateway did not return response headers within ${requestTimeoutMs}ms`
+              ),
+        () => controller.abort()
       );
       if (!response.ok) {
-        const responseText = await response.text();
+        const responseText = await raceWithOpenClawGatewayHardDeadline(
+          response.text(),
+          hardDeadlineAt,
+          config.openClawTimeoutMs,
+          () => controller.abort()
+        );
         stderr = responseText;
         logInfo(
           `OpenClaw gateway http error runId=${request.runId ?? "unknown"} step=${step} status=${response.status}${summarizeLogObject("bodyPreview", responseText)}`
@@ -461,7 +486,6 @@ async function runOpenClawGatewayHttpRequest(
           logInfo(
             `OpenClaw gateway http retry runId=${request.runId ?? "unknown"} step=${step} attempt=${attempt} status=${response.status} reason=upstream_provider_timeout elapsedMs=${Date.now() - attemptStartedAt} retryDelayMs=${retryDelayMs} nextSessionKey=${nextSessionKey}`
           );
-          clearTimeout(timeout);
           await sleep(retryDelayMs);
           continue;
         }
@@ -483,17 +507,26 @@ async function runOpenClawGatewayHttpRequest(
 
       let responseResult: GatewayHttpResponseResult;
       if (onDelta && isGatewayHttpStreamingResponse(response)) {
-        clearTimeout(timeout);
-        responseResult = await readGatewayHttpStreamingResponse(
-          response,
-          onDelta,
-          Math.min(config.openClawTimeoutMs, openClawGatewayStreamIdleTimeoutMs),
-          suppressedBaselineText,
+        responseResult = await raceWithOpenClawGatewayHardDeadline(
+          readGatewayHttpStreamingResponse(
+            response,
+            onDelta,
+            Math.min(config.openClawTimeoutMs, openClawGatewayStreamIdleTimeoutMs),
+            suppressedBaselineText,
+            () => controller.abort()
+          ),
+          hardDeadlineAt,
+          config.openClawTimeoutMs,
           () => controller.abort()
         );
       } else {
         responseResult = {
-          responseText: await response.text(),
+          responseText: await raceWithOpenClawGatewayHardDeadline(
+            response.text(),
+            hardDeadlineAt,
+            config.openClawTimeoutMs,
+            () => controller.abort()
+          ),
           stdout: "",
           deltaCount: 0
         };
@@ -519,7 +552,6 @@ async function runOpenClawGatewayHttpRequest(
           logInfo(
             `OpenClaw gateway http retry runId=${request.runId ?? "unknown"} step=${step} attempt=${attempt} status=${response.status} reason=response_failed elapsedMs=${Date.now() - attemptStartedAt} retryDelayMs=${retryDelayMs} nextSessionKey=${nextSessionKey}${summarizeLogObject("error", stderr)}`
           );
-          clearTimeout(timeout);
           await sleep(retryDelayMs);
           continue;
         }
@@ -566,15 +598,11 @@ async function runOpenClawGatewayHttpRequest(
         ...usageTelemetry
       };
     } catch (error) {
-      stderr = responseHeadersTimedOut
-        ? `OpenClaw Gateway did not return response headers within ${requestTimeoutMs}ms`
-        : error instanceof Error
-          ? error.message
-          : String(error);
+      stderr = error instanceof Error ? error.message : String(error);
       if (
         attempt < maxAttempts &&
-        (responseHeadersTimedOut ||
-          isRetryableOpenClawGatewayTransportError(error))
+        !(error instanceof OpenClawGatewayHardDeadlineError) &&
+        isRetryableOpenClawGatewayTransportError(error)
       ) {
         const retryDelayMs = openClawGatewayRetryDelayMs(config, attempt);
         const nextSessionKey = buildGatewayHttpSessionKey(
@@ -590,7 +618,6 @@ async function runOpenClawGatewayHttpRequest(
         logInfo(
           `OpenClaw gateway http retry runId=${request.runId ?? "unknown"} step=${step} attempt=${attempt} reason=transport_error elapsedMs=${Date.now() - attemptStartedAt} retryDelayMs=${retryDelayMs} nextSessionKey=${nextSessionKey}${summarizeLogObject("error", stderr)}`
         );
-        clearTimeout(timeout);
         await sleep(retryDelayMs);
         continue;
       }
@@ -611,8 +638,6 @@ async function runOpenClawGatewayHttpRequest(
         `OpenClaw gateway http error runId=${request.runId ?? "unknown"} step=${step}${summarizeLogObject("error", stderr)}`
       );
       return { exitCode: 1, stdout, stderr, ...usageTelemetry };
-    } finally {
-      clearTimeout(timeout);
     }
   }
   throw new Error("OpenClaw gateway HTTP retry loop exhausted unexpectedly");
@@ -666,6 +691,7 @@ function isRetryableOpenClawGatewayTransportError(error: unknown): boolean {
     normalized.includes("abort") ||
     normalized.includes("timeout") ||
     normalized.includes("timed out") ||
+    normalized.includes("did not return response headers") ||
     normalized.includes("econnreset") ||
     normalized.includes("econnrefused") ||
     normalized.includes("socket hang up") ||
@@ -1052,13 +1078,12 @@ async function readStreamChunkWithIdleTimeout(
       read,
       new Promise<never>((_, reject) => {
         timeout = setTimeout(() => {
-          onTimeout?.();
-          reader.cancel().catch(() => undefined);
           reject(
             new Error(
               `OpenClaw Gateway response stream stalled for ${idleTimeoutMs}ms`
             )
           );
+          scheduleOpenClawGatewayStreamCleanup(reader, onTimeout);
         }, idleTimeoutMs);
       })
     ];
@@ -1067,13 +1092,12 @@ async function readStreamChunkWithIdleTimeout(
       candidates.push(
         new Promise<never>((_, reject) => {
           semanticTimeout = setTimeout(() => {
-            onTimeout?.();
-            reader.cancel().catch(() => undefined);
             reject(
               new Error(
                 `OpenClaw Gateway response stream produced no semantic events for ${idleTimeoutMs}ms`
               )
             );
+            scheduleOpenClawGatewayStreamCleanup(reader, onTimeout);
           }, Math.max(0, semanticMs));
         })
       );
@@ -1087,6 +1111,71 @@ async function readStreamChunkWithIdleTimeout(
       clearTimeout(semanticTimeout);
     }
   }
+}
+
+function openClawGatewayHardDeadlineRemainingMs(hardDeadlineAt: number): number {
+  return Math.max(0, hardDeadlineAt - Date.now());
+}
+
+async function raceWithOpenClawGatewayHardDeadline<T>(
+  operation: Promise<T>,
+  hardDeadlineAt: number,
+  timeoutMs: number,
+  onTimeout?: () => void
+): Promise<T> {
+  return raceWithOpenClawGatewayTimeout(
+    operation,
+    openClawGatewayHardDeadlineRemainingMs(hardDeadlineAt),
+    () => new OpenClawGatewayHardDeadlineError(timeoutMs),
+    onTimeout
+  );
+}
+
+async function raceWithOpenClawGatewayTimeout<T>(
+  operation: Promise<T>,
+  timeoutMs: number,
+  createError: () => Error,
+  onTimeout?: () => void
+): Promise<T> {
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      operation,
+      new Promise<never>((_, reject) => {
+        timeout = setTimeout(() => {
+          reject(createError());
+          scheduleOpenClawGatewayCleanup(onTimeout);
+        }, Math.max(0, timeoutMs));
+      })
+    ]);
+  } finally {
+    if (timeout) {
+      clearTimeout(timeout);
+    }
+  }
+}
+
+function scheduleOpenClawGatewayStreamCleanup(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+  onTimeout?: () => void
+): void {
+  scheduleOpenClawGatewayCleanup(() => {
+    onTimeout?.();
+    reader.cancel().catch(() => undefined);
+  });
+}
+
+function scheduleOpenClawGatewayCleanup(cleanup?: () => void): void {
+  if (!cleanup) {
+    return;
+  }
+  setTimeout(() => {
+    try {
+      cleanup();
+    } catch {
+      // Deadline rejection must not depend on transport cleanup succeeding.
+    }
+  }, 0);
 }
 
 function readCompleteSsePayloads(input: string): {

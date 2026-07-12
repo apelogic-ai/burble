@@ -4564,7 +4564,7 @@ describe("runOpenClawCliRequest", () => {
     ).toBe(true);
   });
 
-  test("bounds streaming OpenClaw Gateway requests that never return headers", async () => {
+  test("hard-bounds streaming OpenClaw Gateway requests before headers", async () => {
     const requests: Array<{
       headers: Headers;
       body: Record<string, unknown>;
@@ -4616,25 +4616,17 @@ describe("runOpenClawCliRequest", () => {
       )
     ).rejects.toThrow("OpenClaw Gateway HTTP request failed");
 
-    expect(requests).toHaveLength(3);
-    expect(requests[0].body.input).toBe(requests[1].body.input);
-    expect(requests[1].body.input).toBe(requests[2].body.input);
-    expect(requests[0].headers.get("x-openclaw-session-key")).not.toBe(
-      requests[1].headers.get("x-openclaw-session-key")
-    );
-    expect(requests[1].headers.get("x-openclaw-session-key")).not.toBe(
-      requests[2].headers.get("x-openclaw-session-key")
-    );
+    expect(requests).toHaveLength(1);
     expect(
       logs.some((line) =>
         line.includes(
-          "OpenClaw Gateway did not return response headers within 5ms"
+          "OpenClaw Gateway request exceeded the 5ms hard deadline"
         )
       )
     ).toBe(true);
   });
 
-  test("times out retryable OpenClaw Gateway streams that never finish", async () => {
+  test("bounds OpenClaw Gateway streams that never finish", async () => {
     const requests: Array<{
       headers: Headers;
       body: Record<string, unknown>;
@@ -4700,26 +4692,11 @@ describe("runOpenClawCliRequest", () => {
       )
     ).rejects.toThrow("OpenClaw Gateway HTTP request failed");
 
-    expect(requests).toHaveLength(3);
-    expect(requests[0].body.input).toBe(requests[1].body.input);
-    expect(requests[1].body.input).toBe(requests[2].body.input);
-    expect(requests[0].headers.get("x-openclaw-session-key")).not.toBe(
-      requests[1].headers.get("x-openclaw-session-key")
-    );
-    expect(requests[1].headers.get("x-openclaw-session-key")).not.toBe(
-      requests[2].headers.get("x-openclaw-session-key")
-    );
+    expect(requests).toHaveLength(1);
     expect(
       logs.some((line) =>
         line.includes(
-          "OpenClaw gateway http retry runId=run-openclaw-hung-stream step=1 attempt=1 reason=transport_error"
-        )
-      )
-    ).toBe(true);
-    expect(
-      logs.some((line) =>
-        line.includes(
-          "OpenClaw gateway http retry runId=run-openclaw-hung-stream step=1 attempt=2 reason=transport_error"
+          "OpenClaw Gateway request exceeded the 5ms hard deadline"
         )
       )
     ).toBe(true);
@@ -4795,10 +4772,92 @@ describe("runOpenClawCliRequest", () => {
           }
         }
       )
-    ).rejects.toThrow("OpenClaw Gateway returned no assistant text");
+    ).rejects.toThrow("OpenClaw Gateway HTTP request failed");
 
-    expect(requests.length).toBeGreaterThanOrEqual(2);
+    expect(requests).toHaveLength(1);
     expect(requests[0].body.stream).toBe(true);
+  });
+
+  test("bounds OpenClaw Gateway streams with endless progress events", async () => {
+    const requests: Array<{
+      headers: Headers;
+      body: Record<string, unknown>;
+    }> = [];
+    const logs: string[] = [];
+    const encoder = new TextEncoder();
+
+    await expect(
+      withMockFetch(
+        (async (_input, init) => {
+          requests.push({
+            headers: new Headers(init?.headers),
+            body: JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>
+          });
+          let interval: ReturnType<typeof setInterval> | undefined;
+          return new Response(
+            new ReadableStream<Uint8Array>({
+              start(controller) {
+                interval = setInterval(() => {
+                  controller.enqueue(
+                    encoder.encode(
+                      `data: ${JSON.stringify({ type: "response.in_progress" })}\n\n`
+                    )
+                  );
+                }, 1);
+              },
+              cancel() {
+                if (interval) {
+                  clearInterval(interval);
+                }
+              }
+            }),
+            {
+              status: 200,
+              headers: { "content-type": "text/event-stream" }
+            }
+          );
+        }) as typeof fetch,
+        async () => {
+          const events: RunEvent[] = [];
+          for await (const event of runOpenClawCliRequestStream(
+            {
+              runId: "run-openclaw-progress-stream",
+              executionMode: "native-runtime",
+              input: {
+                text: "what can you do?",
+                connections: {
+                  github: { connected: false }
+                }
+              }
+            },
+            {
+              ...config,
+              engine: "openclaw-gateway",
+              openClawTimeoutMs: 5
+            },
+            async () => {
+              throw new Error("unexpected tool call");
+            },
+            async function* () {
+              throw new Error("unexpected cli call");
+            },
+            (line) => logs.push(line)
+          )) {
+            events.push(event);
+          }
+        }
+      )
+    ).rejects.toThrow("OpenClaw Gateway HTTP request failed");
+
+    expect(requests).toHaveLength(1);
+    expect(requests[0].body.stream).toBe(true);
+    expect(
+      logs.some((line) =>
+        line.includes(
+          "OpenClaw Gateway request exceeded the 5ms hard deadline"
+        )
+      )
+    ).toBe(true);
   });
 
   test("uses turn-scoped OpenClaw sessions with Burble channel routing", async () => {
