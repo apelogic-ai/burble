@@ -183,6 +183,43 @@ describe("createManagedRuntimeFactory sandbox mode", () => {
     store.close();
   });
 
+  test("forwards runtime diagnostics capture to the selected sandbox delegate", async () => {
+    const store = createTokenStore(":memory:");
+    const sandboxProvider = createSlackRuntimeSandboxProvider();
+    const runtimeFactory = createManagedRuntimeFactory(
+      { ...agentConfig, agentRuntimeFactory: "sandbox" },
+      store,
+      undefined,
+      {
+        sandboxProvider,
+        sandboxFetch: async () => new Response("ok")
+      }
+    );
+
+    const runtime = await runtimeFactory?.getOrCreateRuntime({
+      workspaceId: "T123",
+      slackUserId: "U123"
+    });
+    const summary = await runtimeFactory?.captureRuntimeDiagnostics?.(
+      runtime?.id ?? "",
+      {
+        reason: "final_response_timeout",
+        runId: "run_123",
+        errorMessage: "Managed runtime did not produce a final response"
+      }
+    );
+
+    expect(summary?.reason).toBe("final_response_timeout");
+    expect(summary?.runId).toBe("run_123");
+    expect(
+      store
+        .listAgentRuntimeEvents(runtime?.id ?? "")
+        .some((event) => event.eventType === "runtime_diagnostics_captured")
+    ).toBe(true);
+
+    store.close();
+  });
+
   test("uses the selected engine's sandbox start command when users switch engines", async () => {
     const store = createTokenStore(":memory:");
     const sandboxProvider = createSlackRuntimeSandboxProvider();
