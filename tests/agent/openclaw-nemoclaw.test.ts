@@ -139,6 +139,17 @@ async function waitForSocket(
   throw new Error("Timed out waiting for fake runtime WebSocket");
 }
 
+function deferred<T = void>(): {
+  promise: Promise<T>;
+  resolve: (value: T | PromiseLike<T>) => void;
+} {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  const promise = new Promise<T>((innerResolve) => {
+    resolve = innerResolve;
+  });
+  return { promise, resolve };
+}
+
 describe("createOpenClawNemoClawAgentRunner", () => {
   test("posts a sanitized run request to the remote runtime", async () => {
     const requests: Array<{ url: string; init: RequestInit }> = [];
@@ -333,6 +344,77 @@ describe("createOpenClawNemoClawAgentRunner", () => {
       (seenRunBodies[1].runtime as { manifest?: { tools?: unknown } }).manifest
         ?.tools
     ).toEqual(toolCatalog);
+  });
+
+  test("serializes concurrent managed runtime runs for the same principal", async () => {
+    const firstPostStarted = deferred();
+    const firstPostMayFinish = deferred();
+    const postTexts: string[] = [];
+    let activePosts = 0;
+    let maxActivePosts = 0;
+    const runner = createOpenClawNemoClawAgentRunner({
+      runtimeFactory: {
+        async getOrCreateRuntime() {
+          return {
+            id: "rt_shared",
+            engine: "openclaw",
+            endpointUrl: "http://shared-runtime:8080",
+            authToken: "runtime-token",
+            status: "ready",
+            statePath: "/data/runtimes/rt_shared/state",
+            configPath: "/data/runtimes/rt_shared/config/openclaw.json",
+            workspacePath: "/data/runtimes/rt_shared/workspace"
+          };
+        },
+        async stopRuntime() {},
+        async reapIdleRuntimes() {}
+      },
+      fetch: async (url, init) => {
+        if (String(url).endsWith("/capabilities")) {
+          return Response.json(openClawCapabilityManifest);
+        }
+
+        const body = JSON.parse(String(init.body));
+        const text = String(body.input.text);
+        postTexts.push(text);
+        activePosts += 1;
+        maxActivePosts = Math.max(maxActivePosts, activePosts);
+        if (text === "first") {
+          firstPostStarted.resolve();
+          await firstPostMayFinish.promise;
+        }
+        activePosts -= 1;
+        return Response.json({
+          response: {
+            classification: "user_private",
+            text: `${text} done`
+          }
+        });
+      }
+    });
+
+    const firstRun = collectAgentRun(runner, {
+      principal,
+      conversation,
+      text: "first",
+      connections: { github: connection }
+    });
+    await firstPostStarted.promise;
+    const secondRun = collectAgentRun(runner, {
+      principal,
+      conversation,
+      text: "second",
+      connections: { github: connection }
+    });
+
+    await Bun.sleep(10);
+    expect(postTexts).toEqual(["first"]);
+
+    firstPostMayFinish.resolve();
+    await expect(firstRun).resolves.toMatchObject({ text: "first done" });
+    await expect(secondRun).resolves.toMatchObject({ text: "second done" });
+    expect(postTexts).toEqual(["first", "second"]);
+    expect(maxActivePosts).toBe(1);
   });
 
   test("builds SDK-parseable run requests for Burble Native runtimes", async () => {

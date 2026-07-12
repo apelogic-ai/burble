@@ -141,6 +141,11 @@ type RuntimeCapabilityCacheEntry = {
 
 type RuntimeCapabilityCache = Map<string, RuntimeCapabilityCacheEntry>;
 
+type RuntimeRunLease = {
+  waitedMs: number;
+  release: () => void;
+};
+
 export function createManagedRuntimeAgentRunner(
   deps: ManagedRuntimeAgentRunnerDeps,
 ): AgentRunner {
@@ -221,6 +226,7 @@ export function createManagedRuntimeAdapter(
   const runSnapshotTimeoutMs =
     deps.runSnapshotTimeoutMs ?? defaultRunSnapshotTimeoutMs;
   const runtimeCapabilityCache: RuntimeCapabilityCache = new Map();
+  const runtimeRunLeases = new Map<string, Promise<void>>();
 
   return {
     name: "burble-runtime",
@@ -236,6 +242,24 @@ export function createManagedRuntimeAdapter(
         type: "status",
         text: "Starting agent runtime...",
       };
+      const principalId = `${input.principal.workspaceId}:${input.principal.slackUserId}`;
+      let runLease: RuntimeRunLease | null = null;
+      try {
+        if (deps.runtimeFactory) {
+          runLease = await acquireRuntimeRunLease(
+            runtimeRunLeases,
+            principalId,
+          );
+          if (runLease.waitedMs > 0) {
+            logInfo(
+              [
+                "Managed runtime run lease acquired",
+                `principal=${principalId}`,
+                `waitedMs=${runLease.waitedMs}`,
+              ].join(" "),
+            );
+          }
+        }
       const runtime = await getManagedRuntimeForInput(deps, input);
       const baseUrl =
         runtime?.endpointUrl.replace(/\/+$/, "") ?? fallbackBaseUrl;
@@ -248,7 +272,6 @@ export function createManagedRuntimeAdapter(
       const runStartedAt = Date.now();
       const runtimeId = runtime?.id ?? "static";
       const runtimeType = runtime?.engine ?? "static";
-      const principalId = `${input.principal.workspaceId}:${input.principal.slackUserId}`;
       const scheduledJobSummary = summarizeScheduledJob(input);
       const capabilityManifest = await discoverRuntimeCapabilityManifest({
         baseUrl,
@@ -552,6 +575,40 @@ export function createManagedRuntimeAdapter(
       }
 
       yield { type: "final", response: agentResponse };
+      } finally {
+        runLease?.release();
+      }
+    },
+  };
+}
+
+async function acquireRuntimeRunLease(
+  leases: Map<string, Promise<void>>,
+  key: string,
+): Promise<RuntimeRunLease> {
+  const previous = leases.get(key) ?? Promise.resolve();
+  let releaseCurrent!: () => void;
+  const current = new Promise<void>((resolve) => {
+    releaseCurrent = resolve;
+  });
+  const chained = previous.catch(() => undefined).then(() => current);
+  leases.set(key, chained);
+
+  const startedAt = Date.now();
+  await previous.catch(() => undefined);
+  let released = false;
+
+  return {
+    waitedMs: Date.now() - startedAt,
+    release() {
+      if (released) {
+        return;
+      }
+      released = true;
+      releaseCurrent();
+      if (leases.get(key) === chained) {
+        leases.delete(key);
+      }
     },
   };
 }
