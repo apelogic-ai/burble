@@ -1076,13 +1076,26 @@ async function collectScheduledAgentRunWithProgressRetry(input: {
       events,
       input.scheduledJobContext,
     );
-    if (!isProgressOnlyRuntimeFinalError(error) || !retryContext) {
-      throw error;
+    if (isProgressOnlyRuntimeFinalError(error) && retryContext) {
+      return collectScheduledAgentRunProgressRetry({
+        ...input,
+        scheduledJobContext: retryContext,
+      });
     }
-    return collectScheduledAgentRunProgressRetry({
-      ...input,
-      scheduledJobContext: retryContext,
-    });
+    const transientRetryContext = transientScheduledRunRetryContext(
+      input.scheduledJobContext,
+    );
+    if (
+      isRetryableScheduledRuntimeError(error) &&
+      transientRetryContext
+    ) {
+      return collectScheduledAgentRunTransientRetry({
+        ...input,
+        error,
+        scheduledJobContext: transientRetryContext,
+      });
+    }
+    throw error;
   }
 }
 
@@ -1092,6 +1105,15 @@ function progressOnlyScheduledRunRetryContext(
 ): ScheduledJobContext | null {
   const canRetry =
     !events.some((event) => event.type === "tool_call") &&
+    Boolean(scheduledJobContext?.allowedTools.length) &&
+    scheduledJobContextAllowsOnlyReadTools(scheduledJobContext);
+  return canRetry && scheduledJobContext ? scheduledJobContext : null;
+}
+
+function transientScheduledRunRetryContext(
+  scheduledJobContext: ScheduledJobContext | undefined,
+): ScheduledJobContext | null {
+  const canRetry =
     Boolean(scheduledJobContext?.allowedTools.length) &&
     scheduledJobContextAllowsOnlyReadTools(scheduledJobContext);
   return canRetry && scheduledJobContext ? scheduledJobContext : null;
@@ -1189,11 +1211,43 @@ async function collectScheduledAgentRunProgressRetry(input: {
   return result;
 }
 
+async function collectScheduledAgentRunTransientRetry(input: {
+  runner: AgentRunner;
+  agentInput: AgentInput;
+  job: ScheduledJobRecord;
+  scheduledJobContext: ScheduledJobContext;
+  error: unknown;
+  logWarn?: (message: string) => void;
+}) {
+  input.logWarn?.(
+    `Scheduled job runtime failed with retryable error; retrying run jobId=${input.job.jobId} error=${scheduledRunErrorMessage(input.error)}`,
+  );
+  return collectAgentRun(input.runner, {
+    ...input.agentInput,
+    text: buildScheduledRuntimeRetryPrompt(
+      input.job.prompt,
+      input.scheduledJobContext.allowedTools,
+      scheduledRunErrorMessage(input.error),
+    ),
+  });
+}
+
 function isProgressOnlyRuntimeFinalError(error: unknown): boolean {
   return (
     error instanceof Error &&
     error.message ===
       "Managed runtime final response contained only runtime-control/progress text"
+  );
+}
+
+function isRetryableScheduledRuntimeError(error: unknown): boolean {
+  const message = scheduledRunErrorMessage(error);
+  return (
+    /\boperation timed out\b/i.test(message) ||
+    /\bupstream provider timeout\b/i.test(message) ||
+    /\bdid not produce a final response\b/i.test(message) ||
+    /\breturned no assistant text\b/i.test(message) ||
+    /\bconnection reset by peer\b/i.test(message)
   );
 }
 
@@ -1208,6 +1262,25 @@ function buildScheduledProgressRetryPrompt(
     `Allowed task tools: ${allowedTools.join(", ")}`,
     "",
     "Run the scheduled task now. If the task needs provider data, invoke the appropriate allowed tool through the structured tool protocol. Then return a normal final answer for Burble to deliver.",
+    "",
+    "Scheduled task:",
+    originalPrompt,
+  ].join("\n");
+}
+
+function buildScheduledRuntimeRetryPrompt(
+  originalPrompt: string,
+  allowedTools: string[],
+  previousError: string,
+): string {
+  return [
+    "Retry this same scheduled task.",
+    "",
+    "The previous runtime attempt failed before producing deliverable output.",
+    `Previous error: ${previousError.slice(0, 240)}`,
+    `Allowed task tools: ${allowedTools.join(", ")}`,
+    "",
+    "Run the scheduled task now. Use only the allowed read-only tools needed for the task, then return a normal final answer for Burble to deliver.",
     "",
     "Scheduled task:",
     originalPrompt,

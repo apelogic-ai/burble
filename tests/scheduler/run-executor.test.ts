@@ -1796,6 +1796,199 @@ describe("scheduler run executor", () => {
     store.close();
   });
 
+  test("retries transient runtime timeouts for read-only scheduled jobs", async () => {
+    const store = createTokenStore(":memory:");
+    const route = store.upsertConversationRoute({
+      workspaceId: "T123",
+      slackUserId: "U123",
+      transport: "slack",
+      destination: {
+        channelId: "C123",
+        isDirectMessage: false,
+        rootId: "slack:C123:1710000000.000000",
+      },
+      now: new Date("2026-06-25T17:00:00.000Z"),
+    });
+    const job = store.upsertScheduledJob({
+      jobId: "job-ai-news",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      title: "Hourly AI news summary",
+      prompt:
+        "look for latest AI news, summarize them in two paragraphs and post result in this channel",
+      schedule: { kind: "interval", every: { hours: 1 } },
+      routeId: route.id,
+      runtimeType: "openclaw",
+      state: "scheduled",
+      now: new Date("2026-06-25T17:01:00.000Z"),
+    });
+    store.upsertAgentJobCapability({
+      jobId: job.jobId,
+      workspaceId: "T123",
+      slackUserId: "U123",
+      requiredTools: ["web_search", "slack_search_messages"],
+      routeId: route.id,
+      runtimeType: "openclaw",
+      now: new Date("2026-06-25T17:01:30.000Z"),
+    });
+    const run = store.createAgentJobRun({
+      runId: "jobrun-ai-news",
+      jobId: job.jobId,
+      workspaceId: "T123",
+      slackUserId: "U123",
+      triggerSource: "schedule",
+      status: "queued",
+      now: new Date("2026-06-25T17:02:00.000Z"),
+    });
+    const runnerInputs: string[] = [];
+    const runner: AgentRunner = {
+      name: "test-runner",
+      capabilities: {
+        streaming: true,
+        toolEvents: true,
+        remote: true,
+      },
+      async *run(input) {
+        runnerInputs.push(input.text);
+        if (runnerInputs.length === 1) {
+          throw new Error("The operation timed out.");
+        }
+        yield {
+          type: "final",
+          response: {
+            classification: "user_private",
+            text: "Latest AI news summary.",
+          },
+        };
+      },
+    };
+    const posts: Array<{ channel: string; text: string; thread_ts?: string }> =
+      [];
+    const warnings: string[] = [];
+    const executor = createSchedulerRunExecutor({
+      store,
+      agentRunner: runner,
+      slackClient: {
+        chat: {
+          postMessage: async (message) => {
+            posts.push(message);
+            return {};
+          },
+        },
+      },
+      logWarn: (message) => warnings.push(message),
+    });
+
+    await executor.executeRun(run.runId);
+
+    expect(runnerInputs).toHaveLength(2);
+    expect(runnerInputs[1]).toContain("Retry this same scheduled task.");
+    expect(runnerInputs[1]).toContain("Previous error: The operation timed out.");
+    expect(runnerInputs[1]).toContain(
+      "Allowed task tools: slack_search_messages, web_search",
+    );
+    expect(posts).toEqual([
+      {
+        channel: "C123",
+        text: "Latest AI news summary.",
+      },
+    ]);
+    expect(warnings).toEqual([
+      "Scheduled job runtime failed with retryable error; retrying run jobId=job-ai-news error=The operation timed out.",
+    ]);
+    expect(store.getAgentJobRun(run.runId)).toMatchObject({
+      runId: run.runId,
+      status: "succeeded",
+    });
+
+    store.close();
+  });
+
+  test("does not retry transient runtime timeouts for write-capable scheduled jobs", async () => {
+    const store = createTokenStore(":memory:");
+    const route = store.upsertConversationRoute({
+      workspaceId: "T123",
+      slackUserId: "U123",
+      transport: "slack",
+      destination: {
+        channelId: "C123",
+        isDirectMessage: false,
+        rootId: "slack:C123:1710000000.000000",
+      },
+      now: new Date("2026-06-25T17:00:00.000Z"),
+    });
+    const job = store.upsertScheduledJob({
+      jobId: "job-drive-write",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      title: "Create Drive summary file",
+      prompt: "Create a Google Drive text file with the latest AI news.",
+      schedule: { kind: "interval", every: { hours: 1 } },
+      routeId: route.id,
+      runtimeType: "openclaw",
+      state: "scheduled",
+      now: new Date("2026-06-25T17:01:00.000Z"),
+    });
+    store.upsertAgentJobCapability({
+      jobId: job.jobId,
+      workspaceId: "T123",
+      slackUserId: "U123",
+      requiredTools: ["web_search", "google_create_drive_text_file"],
+      routeId: route.id,
+      runtimeType: "openclaw",
+      now: new Date("2026-06-25T17:01:30.000Z"),
+    });
+    const run = store.createAgentJobRun({
+      runId: "jobrun-drive-write",
+      jobId: job.jobId,
+      workspaceId: "T123",
+      slackUserId: "U123",
+      triggerSource: "schedule",
+      status: "queued",
+      now: new Date("2026-06-25T17:02:00.000Z"),
+    });
+    let attempts = 0;
+    const runner: AgentRunner = {
+      name: "test-runner",
+      capabilities: {
+        streaming: true,
+        toolEvents: true,
+        remote: true,
+      },
+      async *run() {
+        attempts += 1;
+        throw new Error("The operation timed out.");
+      },
+    };
+    const posts: Array<{ channel: string; text: string; thread_ts?: string }> =
+      [];
+    const executor = createSchedulerRunExecutor({
+      store,
+      agentRunner: runner,
+      slackClient: {
+        chat: {
+          postMessage: async (message) => {
+            posts.push(message);
+            return {};
+          },
+        },
+      },
+    });
+
+    await executor.executeRun(run.runId);
+
+    expect(attempts).toBe(1);
+    expect(posts[0]?.text).toContain("Scheduled job failed: Create Drive summary file");
+    expect(posts[0]?.text).toContain("Reason: The operation timed out.");
+    expect(store.getAgentJobRun(run.runId)).toMatchObject({
+      runId: run.runId,
+      status: "failed",
+      failureReason: "The operation timed out.",
+    });
+
+    store.close();
+  });
+
   test("does not retry progress-only scheduled runs with delivery tool grants", async () => {
     const store = createTokenStore(":memory:");
     const route = store.upsertConversationRoute({
