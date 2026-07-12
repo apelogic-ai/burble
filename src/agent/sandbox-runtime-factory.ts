@@ -22,6 +22,7 @@ import {
   hashRuntimeToken,
   nativeAgentConfigFileName,
   type PrincipalId,
+  type RuntimeDiagnosticsInput,
   type RuntimeFactory,
   type RuntimeHandle,
   type RuntimeManifestBuilder,
@@ -416,6 +417,25 @@ export function createSandboxRuntimeFactory(input: {
       }
     },
 
+    async captureRuntimeDiagnostics(runtimeId, diagnosticInput) {
+      const runtime = input.store.getAgentRuntime(runtimeId);
+      if (!runtime?.sandboxId) {
+        return null;
+      }
+
+      const summary = await captureSandboxRuntimeDiagnostics({
+        sandboxProvider: input.sandboxProvider,
+        runtime,
+        input: diagnosticInput,
+      });
+      input.store.recordAgentRuntimeEvent({
+        runtimeId: runtime.id,
+        eventType: "runtime_diagnostics_captured",
+        summary,
+      });
+      return summary;
+    },
+
     async stopRuntime(runtimeId) {
       await stopRuntime(runtimeId);
     },
@@ -466,6 +486,125 @@ function assertSandboxStartCommand(startCommand: string[]): void {
   ) {
     throw new Error("Sandbox runtime start command must be non-empty");
   }
+}
+
+const maxSandboxRuntimeDiagnosticOutputChars = 16_000;
+
+async function captureSandboxRuntimeDiagnostics(input: {
+  sandboxProvider: SandboxProvider;
+  runtime: AgentRuntimeRecord;
+  input: RuntimeDiagnosticsInput;
+}): Promise<Record<string, unknown>> {
+  const descriptor = runtimeDescriptor(input.runtime.engine);
+  let sandboxSummary: Record<string, unknown> | null = null;
+  try {
+    const sandbox = await input.sandboxProvider.attach(input.runtime.sandboxId!);
+    sandboxSummary = {
+      id: sandbox.id,
+      provider: sandbox.provider,
+      status: sandbox.status,
+      endpointUrl: sandbox.endpointUrl,
+      workspacePath: sandbox.workspacePath,
+      labels: sandbox.labels,
+    };
+  } catch (error) {
+    sandboxSummary = {
+      attachError: sanitizeSandboxDiagnosticText(
+        error instanceof Error ? error.message : String(error),
+      ),
+    };
+  }
+
+  const results: Array<Record<string, unknown>> = [
+    {
+      name: "sandbox_state",
+      code: sandboxSummary && "attachError" in sandboxSummary ? 1 : 0,
+      stdout: "",
+      stderr: "",
+      sandbox: sandboxSummary,
+    },
+  ];
+
+  try {
+    const startedAt = Date.now();
+    const run = await input.sandboxProvider.run(input.runtime.sandboxId!, {
+      argv: [
+        "sh",
+        "-lc",
+        buildSandboxRuntimeLogTailScript(
+          descriptor.container.dataRootTarget,
+        ),
+      ],
+    });
+    results.push({
+      name: "runtime_logs_tail",
+      code: run.exitCode ?? (run.status === "failed" ? 1 : 0),
+      durationMs: Date.now() - startedAt,
+      stdout: sanitizeSandboxDiagnosticText(run.output ?? ""),
+      stderr: "",
+      runId: run.id,
+      runStatus: run.status,
+    });
+  } catch (error) {
+    results.push({
+      name: "runtime_logs_tail",
+      code: 1,
+      stdout: "",
+      stderr: sanitizeSandboxDiagnosticText(
+        error instanceof Error ? error.message : String(error),
+      ),
+    });
+  }
+
+  return {
+    reason: input.input.reason,
+    ...(input.input.runId ? { runId: input.input.runId } : {}),
+    ...(input.input.errorMessage
+      ? {
+          errorMessage: sanitizeSandboxDiagnosticText(
+            input.input.errorMessage,
+          ),
+        }
+      : {}),
+    sandboxId: input.runtime.sandboxId,
+    capturedAt: new Date().toISOString(),
+    results,
+  };
+}
+
+function buildSandboxRuntimeLogTailScript(containerRoot: string): string {
+  const openClawLogPath = `${containerRoot.replace(/\/+$/, "")}/logs/openclaw.log`;
+  return [
+    "set +e",
+    `for file in ${shellQuote(openClawLogPath)} /tmp/openclaw-*/*.log /tmp/burble-runtime.log; do`,
+    '  [ -f "$file" ] || continue',
+    '  echo "===== $file ====="',
+    '  tail -n 240 "$file"',
+    "done",
+  ].join("\n");
+}
+
+function sanitizeSandboxDiagnosticText(value: string): string {
+  const redacted = value
+    .replace(/Bearer\s+[A-Za-z0-9._~+/=-]+/gi, "Bearer [redacted]")
+    .replace(/sk-[A-Za-z0-9_-]+/g, "[redacted-openai-key]")
+    .replace(
+      /((?:api[_-]?key|authorization|credential|jwt|oauth|password|refresh|secret|token)["']?\s*[:=]\s*["']?)[^\s"',}]+/gi,
+      "$1[redacted]",
+    )
+    .replace(
+      /([A-Z0-9_]*(?:API_KEY|AUTHORIZATION|CREDENTIAL|JWT|OAUTH|PASSWORD|REFRESH|SECRET|TOKEN)[A-Z0-9_]*=)[^\s]+/g,
+      "$1[redacted]",
+    );
+
+  if (redacted.length <= maxSandboxRuntimeDiagnosticOutputChars) {
+    return redacted;
+  }
+  return `${redacted.slice(0, maxSandboxRuntimeDiagnosticOutputChars)}\n[truncated ${redacted.length - maxSandboxRuntimeDiagnosticOutputChars} chars]`;
+}
+
+function shellQuote(value: string): string {
+  return `'${value.replace(/'/g, "'\\''")}'`;
 }
 
 async function withRuntimeProvisionLock<T>(
