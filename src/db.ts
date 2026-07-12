@@ -81,6 +81,7 @@ export type AgentRuntimeEventType =
   | "runtime_provision_failed"
   | "runtime_policy_changed"
   | "runtime_stopped"
+  | "runtime_diagnostics_captured"
   | "runtime_run_started"
   | "runtime_run_finished"
   | "runtime_tool_called"

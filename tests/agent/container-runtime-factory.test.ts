@@ -467,6 +467,93 @@ describe("createDockerRuntimeFactory", () => {
     store.close();
   });
 
+  test("captures runtime diagnostics from the container before teardown", async () => {
+    const store = createTokenStore(":memory:");
+    const commands: Array<{ command: string; args: string[] }> = [];
+    const factory = createDockerRuntimeFactory({
+      store,
+      engine: "openclaw",
+      image: "burble-openclaw-nemoclaw:dev",
+      dataRoot: "/data/runtimes",
+      dockerNetwork: "compose_default",
+      toolGatewayUrl: "http://burble-app:3000/internal/tools",
+      runtimeTokenSecret: "runtime-secret",
+      healthCheckAttempts: 1,
+      healthCheckIntervalMs: 0,
+      execute: async (command, args) => {
+        commands.push({ command, args });
+        const dockerArgs =
+          command === "timeout" && args[1] === "docker" ? args.slice(2) : args;
+        if (dockerArgs[0] === "inspect" && dockerArgs[2] === "{{.State.Running}} {{.Config.Image}}") {
+          return { code: 1, stdout: "", stderr: "not found" };
+        }
+        if (dockerArgs[0] === "inspect") {
+          return {
+            code: 0,
+            stdout: "{\"Running\":true,\"Restarting\":false,\"ExitCode\":0}\n",
+            stderr: ""
+          };
+        }
+        if (dockerArgs[0] === "logs") {
+          return {
+            code: 0,
+            stdout:
+              "OpenClaw model timeout OPENAI_API_KEY=sk-secret Bearer abc.def\n",
+            stderr: ""
+          };
+        }
+        if (dockerArgs[0] === "exec") {
+          return {
+            code: 0,
+            stdout:
+              "===== /data/openclaw/logs/openclaw.log =====\nresponse_failed api_key: sk-another\n",
+            stderr: ""
+          };
+        }
+        return { code: 0, stdout: "container-id\n", stderr: "" };
+      },
+      fetch: async () => new Response("ok")
+    });
+
+    const handle = await factory.getOrCreateRuntime(principal);
+    const summary = await factory.captureRuntimeDiagnostics?.(handle.id, {
+      reason: "final_response_timeout",
+      runId: "run-timeout",
+      errorMessage: "Managed runtime did not produce a final response within 180000ms"
+    });
+    const events = store.listAgentRuntimeEvents(handle.id);
+    const diagnosticEvent = events.find(
+      (event) => event.eventType === "runtime_diagnostics_captured"
+    );
+    const diagnosticSummary = JSON.parse(diagnosticEvent?.summaryJson ?? "{}");
+
+    expect(summary).toMatchObject({
+      reason: "final_response_timeout",
+      runId: "run-timeout",
+      containerName: `burble-rt-${buildRuntimeDataId(principal, "openclaw")}`
+    });
+    expect(
+      commands.some(
+        (command) =>
+          command.args.includes("exec") &&
+          command.args.some((arg) =>
+            arg.includes("/data/openclaw/logs/openclaw.log")
+          )
+      )
+    ).toBe(true);
+    expect(diagnosticSummary.results.map((result: { name: string }) => result.name)).toEqual([
+      "container_state",
+      "docker_logs_tail",
+      "runtime_logs_tail"
+    ]);
+    expect(diagnosticEvent?.summaryJson).toContain("OpenClaw model timeout");
+    expect(diagnosticEvent?.summaryJson).not.toContain("sk-secret");
+    expect(diagnosticEvent?.summaryJson).not.toContain("sk-another");
+    expect(diagnosticEvent?.summaryJson).not.toContain("Bearer abc.def");
+
+    store.close();
+  });
+
   test("recreates a stopped MCP runtime instead of reusing stale JWT env", async () => {
     const store = createTokenStore(":memory:");
     const commands: Array<{ command: string; args: string[] }> = [];

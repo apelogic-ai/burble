@@ -6,7 +6,11 @@ import type {
   AgentRunner,
 } from "../types";
 import type { ToolClassification } from "../../conversation/types";
-import type { RuntimeFactory, RuntimeHandle } from "../runtime-factory";
+import type {
+  RuntimeDiagnosticsInput,
+  RuntimeFactory,
+  RuntimeHandle,
+} from "../runtime-factory";
 import type { ObservabilitySink } from "../../observability";
 import {
   parseRuntimeRunRequest,
@@ -509,6 +513,13 @@ export function createManagedRuntimeAdapter(
           error,
         });
         if (runtime && isManagedRuntimeFinalResponseTimeout(error)) {
+          await captureRuntimeTimeoutDiagnostics({
+            runtimeFactory: deps.runtimeFactory,
+            runtime,
+            runId,
+            error,
+            logInfo,
+          });
           try {
             await deps.runtimeFactory?.stopRuntime(runtime.id);
             logInfo(
@@ -580,6 +591,47 @@ export function createManagedRuntimeAdapter(
       }
     },
   };
+}
+
+async function captureRuntimeTimeoutDiagnostics(input: {
+  runtimeFactory?: RuntimeFactory;
+  runtime: RuntimeHandle;
+  runId: string;
+  error: unknown;
+  logInfo: (message: string) => void;
+}): Promise<void> {
+  const capture = input.runtimeFactory?.captureRuntimeDiagnostics;
+  if (!capture) {
+    return;
+  }
+
+  const diagnosticsInput: RuntimeDiagnosticsInput = {
+    reason: "final_response_timeout",
+    runId: input.runId,
+    errorMessage:
+      input.error instanceof Error ? input.error.message : String(input.error),
+  };
+
+  try {
+    const summary = await capture(input.runtime.id, diagnosticsInput);
+    input.logInfo(
+      [
+        "Managed runtime diagnostics captured",
+        `runId=${input.runId}`,
+        `runtimeId=${input.runtime.id}`,
+        `summaryKeys=${summary ? Object.keys(summary).join(",") || "-" : "-"}`,
+      ].join(" "),
+    );
+  } catch (diagnosticError) {
+    input.logInfo(
+      [
+        "Managed runtime diagnostics capture failed",
+        `runId=${input.runId}`,
+        `runtimeId=${input.runtime.id}`,
+        `error=${formatRuntimeStopError(diagnosticError)}`,
+      ].join(" "),
+    );
+  }
 }
 
 async function acquireRuntimeRunLease(

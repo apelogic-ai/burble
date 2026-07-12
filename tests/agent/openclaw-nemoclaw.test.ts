@@ -1367,6 +1367,8 @@ describe("createOpenClawNemoClawAgentRunner", () => {
 
   test("stops managed runtimes after final response timeouts", async () => {
     const stoppedRuntimeIds: string[] = [];
+    const capturedDiagnostics: Array<{ runtimeId: string; runId?: string }> = [];
+    const operationOrder: string[] = [];
     const encoder = new TextEncoder();
     const runner = createOpenClawNemoClawAgentRunner({
       runSnapshotTimeoutMs: 5,
@@ -1383,7 +1385,13 @@ describe("createOpenClawNemoClawAgentRunner", () => {
             workspacePath: "/runtime/workspace"
           };
         },
+        async captureRuntimeDiagnostics(runtimeId, input) {
+          operationOrder.push("capture");
+          capturedDiagnostics.push({ runtimeId, runId: input.runId });
+          return { captured: true };
+        },
         async stopRuntime(runtimeId) {
+          operationOrder.push("stop");
           stoppedRuntimeIds.push(runtimeId);
         },
         async reapIdleRuntimes() {}
@@ -1422,7 +1430,11 @@ describe("createOpenClawNemoClawAgentRunner", () => {
         connections: { github: connection }
       })
     ).rejects.toThrow("Managed runtime did not produce a final response within 5ms");
+    expect(capturedDiagnostics).toEqual([
+      { runtimeId: "rt_timeout", runId: expect.any(String) }
+    ]);
     expect(stoppedRuntimeIds).toEqual(["rt_timeout"]);
+    expect(operationOrder).toEqual(["capture", "stop"]);
   });
 
   test("accepts attachment-only final responses from managed runtimes", async () => {
