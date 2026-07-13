@@ -852,6 +852,9 @@ describe("dev deploy config", () => {
     expect(openClawRuntimeDockerfile).toContain("/data/openclaw/logs");
     expect(openClawCliDockerfile).toContain("/data/openclaw/config");
     expect(openClawCliDockerfile).toContain("/data/openclaw/logs");
+    expect(openClawCliDockerfile).toContain(
+      "chown -R root:root /runtime/openclaw-plugins"
+    );
     expect(burbleNativeDockerfile).toContain("/data/burble-native/config");
     expect(burbleNativeDockerfile).toContain("/data/burble-native/workspace");
   });
