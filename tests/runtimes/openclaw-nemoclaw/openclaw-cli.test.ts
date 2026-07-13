@@ -3479,6 +3479,77 @@ describe("runOpenClawCliRequest", () => {
     });
   });
 
+  test("allows a live OpenClaw gateway stream to stay silent within its hard deadline", async () => {
+    const events: RunEvent[] = [];
+
+    await withMockFetch(
+      (async (_input, _init) => {
+        const stream = new ReadableStream<Uint8Array>({
+          start(controller) {
+            const encoder = new TextEncoder();
+            controller.enqueue(
+              encoder.encode(
+                `data: ${JSON.stringify({ type: "response.created" })}\n\n`
+              )
+            );
+            setTimeout(() => {
+              controller.enqueue(
+                encoder.encode(
+                  `data: ${JSON.stringify({
+                    type: "response.output_text.delta",
+                    delta: "Finished after quiet work."
+                  })}\n\n`
+                )
+              );
+              controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+              controller.close();
+            }, 25);
+          }
+        });
+        return new Response(stream, {
+          status: 200,
+          headers: { "content-type": "text/event-stream" }
+        });
+      }) as typeof fetch,
+      async () => {
+        for await (const event of runOpenClawCliRequestStream(
+          {
+            runId: "run-gateway-quiet-stream",
+            executionMode: "native-runtime",
+            input: {
+              text: "say hello after working quietly",
+              connections: {
+                github: { connected: false }
+              }
+            }
+          },
+          {
+            ...config,
+            engine: "openclaw-gateway",
+            openClawTimeoutMs: 250
+          },
+          async () => ({
+            classification: "user_private",
+            content: []
+          }),
+          async function* () {
+            throw new Error("unexpected cli call");
+          },
+          () => undefined
+        )) {
+          events.push(event);
+        }
+      }
+    );
+
+    expect(events.at(-1)).toMatchObject({
+      type: "final",
+      response: {
+        text: "Finished after quiet work."
+      }
+    });
+  });
+
   test("keeps OpenClaw gateway HTTP buffered when runtime streaming is disabled", async () => {
     const requests: Array<Record<string, unknown>> = [];
     const events: Array<RunEvent> = [];

@@ -92,7 +92,6 @@ class OpenClawGatewayHardDeadlineError extends Error {
 }
 
 const streamHeartbeatMs = 8_000;
-const openClawGatewayStreamIdleTimeoutMs = 12_000;
 const openClawGatewayInitialResponseTimeoutMs = 12_000;
 const defaultOpenClawGatewayRetryBaseMs = 1_500;
 const defaultOpenClawGatewayRetryMaxMs = 10_000;
@@ -511,9 +510,7 @@ async function runOpenClawGatewayHttpRequest(
           readGatewayHttpStreamingResponse(
             response,
             onDelta,
-            Math.min(config.openClawTimeoutMs, openClawGatewayStreamIdleTimeoutMs),
-            suppressedBaselineText,
-            () => controller.abort()
+            suppressedBaselineText
           ),
           hardDeadlineAt,
           config.openClawTimeoutMs,
@@ -906,9 +903,7 @@ async function fetchGatewayHttpResponse(
 async function readGatewayHttpStreamingResponse(
   response: Response,
   onDelta: (delta: string) => void,
-  idleTimeoutMs: number,
-  suppressedBaselineText?: string,
-  onTimeout?: () => void
+  suppressedBaselineText?: string
 ): Promise<GatewayHttpResponseResult> {
   if (!response.body) {
     const responseText = await response.text();
@@ -928,15 +923,9 @@ async function readGatewayHttpStreamingResponse(
   let responseText = "";
   let stdout = "";
   let deltaCount = 0;
-  let lastSemanticProgressAt = Date.now();
 
   while (true) {
-    const { value, done } = await readStreamChunkWithIdleTimeout(
-      reader,
-      idleTimeoutMs,
-      () => Math.max(0, idleTimeoutMs - (Date.now() - lastSemanticProgressAt)),
-      onTimeout
-    );
+    const { value, done } = await reader.read();
     if (done) {
       break;
     }
@@ -956,7 +945,6 @@ async function readGatewayHttpStreamingResponse(
       if (!event) {
         continue;
       }
-      lastSemanticProgressAt = Date.now();
       const failureText = extractOpenResponsesFailureEventText(event);
       if (failureText) {
         return { responseText, stdout: "", deltaCount, errorText: failureText };
@@ -993,7 +981,6 @@ async function readGatewayHttpStreamingResponse(
     if (!event) {
       continue;
     }
-    lastSemanticProgressAt = Date.now();
     const failureText = extractOpenResponsesFailureEventText(event);
     if (failureText) {
       return { responseText, stdout: "", deltaCount, errorText: failureText };
@@ -1064,55 +1051,6 @@ function createGatewayHttpDeltaGate(
   };
 }
 
-async function readStreamChunkWithIdleTimeout(
-  reader: ReadableStreamDefaultReader<Uint8Array>,
-  idleTimeoutMs: number,
-  semanticRemainingMs?: () => number,
-  onTimeout?: () => void
-) {
-  let timeout: ReturnType<typeof setTimeout> | undefined;
-  let semanticTimeout: ReturnType<typeof setTimeout> | undefined;
-  try {
-    const read = reader.read();
-    const candidates = [
-      read,
-      new Promise<never>((_, reject) => {
-        timeout = setTimeout(() => {
-          reject(
-            new Error(
-              `OpenClaw Gateway response stream stalled for ${idleTimeoutMs}ms`
-            )
-          );
-          scheduleOpenClawGatewayStreamCleanup(reader, onTimeout);
-        }, idleTimeoutMs);
-      })
-    ];
-    const semanticMs = semanticRemainingMs?.();
-    if (typeof semanticMs === "number" && Number.isFinite(semanticMs)) {
-      candidates.push(
-        new Promise<never>((_, reject) => {
-          semanticTimeout = setTimeout(() => {
-            reject(
-              new Error(
-                `OpenClaw Gateway response stream produced no semantic events for ${idleTimeoutMs}ms`
-              )
-            );
-            scheduleOpenClawGatewayStreamCleanup(reader, onTimeout);
-          }, Math.max(0, semanticMs));
-        })
-      );
-    }
-    return await Promise.race(candidates);
-  } finally {
-    if (timeout) {
-      clearTimeout(timeout);
-    }
-    if (semanticTimeout) {
-      clearTimeout(semanticTimeout);
-    }
-  }
-}
-
 function openClawGatewayHardDeadlineRemainingMs(hardDeadlineAt: number): number {
   return Math.max(0, hardDeadlineAt - Date.now());
 }
@@ -1153,16 +1091,6 @@ async function raceWithOpenClawGatewayTimeout<T>(
       clearTimeout(timeout);
     }
   }
-}
-
-function scheduleOpenClawGatewayStreamCleanup(
-  reader: ReadableStreamDefaultReader<Uint8Array>,
-  onTimeout?: () => void
-): void {
-  scheduleOpenClawGatewayCleanup(() => {
-    onTimeout?.();
-    reader.cancel().catch(() => undefined);
-  });
 }
 
 function scheduleOpenClawGatewayCleanup(cleanup?: () => void): void {
