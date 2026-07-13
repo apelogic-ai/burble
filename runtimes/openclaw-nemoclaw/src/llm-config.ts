@@ -65,12 +65,6 @@ export function buildOpenClawLlmPatch(input: OpenClawPatchInput): string {
       }
     };
   }
-  const systemPromptOverride = [
-    "You are Burble's OpenClaw runtime.",
-    "Follow the user prompt exactly.",
-    "Answer final responses in concise Slack mrkdwn.",
-    "When the user prompt requests a JSON tool_call object, output only that JSON object and no prose."
-  ].join(" ");
   const agentRuntimeDefaults = {
     model: {
       primary: modelRef,
@@ -93,7 +87,6 @@ export function buildOpenClawLlmPatch(input: OpenClawPatchInput): string {
     skills: [],
     contextInjection: "never",
     skipBootstrap: true,
-    systemPromptOverride,
     ...(input.fastModeEnabled
       ? {
           thinkingDefault: "minimal",
@@ -103,7 +96,6 @@ export function buildOpenClawLlmPatch(input: OpenClawPatchInput): string {
   };
   const concreteAgentRuntimeConfig = {
     id: agentId,
-    systemPromptOverride,
     ...(input.fastModeEnabled
       ? {
           fastModeDefault: true,

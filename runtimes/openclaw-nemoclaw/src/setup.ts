@@ -185,7 +185,6 @@ function buildOpenClawNemoClawAgentConfig(
     {
       id: config.openClawAgent,
       default: true,
-      systemPromptOverride: defaults.systemPromptOverride,
       identity: {
         name: "Burble",
         theme: "Slack assistant",

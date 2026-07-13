@@ -33,18 +33,9 @@ describe("buildOpenClawLlmPatch", () => {
     expect(patch.agents.defaults.skills).toEqual([]);
     expect(patch.agents.defaults.contextInjection).toBe("never");
     expect(patch.agents.defaults.skipBootstrap).toBe(true);
-    expect(patch.agents.defaults.systemPromptOverride).toContain(
-      "Burble's OpenClaw runtime"
-    );
-    expect(patch.agents.defaults.systemPromptOverride).not.toContain(
-      "BOOTSTRAP.md"
-    );
-    expect(patch.agents.list).toEqual([
-      {
-        id: "main",
-        systemPromptOverride: patch.agents.defaults.systemPromptOverride
-      }
-    ]);
+    expect(patch.agents.defaults).not.toHaveProperty("systemPromptOverride");
+    expect(patch.agents.list).toEqual([{ id: "main" }]);
+    expect(JSON.stringify(patch)).not.toContain("systemPromptOverride");
     expect(patch.memory.qmd.update.startup).toBe("off");
     expect(patch.skills.allowBundled).toEqual([]);
     expect(patch.gateway.http.endpoints.responses.enabled).toBe(true);
@@ -92,7 +83,6 @@ describe("buildOpenClawLlmPatch", () => {
     expect(patch.agents.list).toEqual([
       {
         id: "burble",
-        systemPromptOverride: patch.agents.defaults.systemPromptOverride,
         fastModeDefault: true,
         thinkingDefault: "minimal",
         reasoningDefault: "off"

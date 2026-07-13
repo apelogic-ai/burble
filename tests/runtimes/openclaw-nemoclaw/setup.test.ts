@@ -390,7 +390,6 @@ describe("ensureOpenClawSetup", () => {
       expect.objectContaining({
         id: "burble",
         default: true,
-        systemPromptOverride: generatedPatch.agents.defaults.systemPromptOverride,
         identity: {
           name: "Burble",
           theme: "Slack assistant",
@@ -423,14 +422,15 @@ describe("ensureOpenClawSetup", () => {
     expect(generatedPatch.agents.defaults).toMatchObject({
       skipBootstrap: true,
       contextInjection: "never",
-      skills: [],
-      systemPromptOverride: expect.stringContaining("Burble's OpenClaw runtime")
+      skills: []
     });
+    expect(generatedPatch.agents.defaults).not.toHaveProperty(
+      "systemPromptOverride"
+    );
     expect(generatedPatch.agents.list).toEqual([
       {
         id: "burble",
         default: true,
-        systemPromptOverride: generatedPatch.agents.defaults.systemPromptOverride,
         identity: {
           name: "Burble",
           theme: "Slack assistant",
@@ -440,6 +440,7 @@ describe("ensureOpenClawSetup", () => {
     ]);
     expect(JSON.stringify(generatedPatch.agents.list)).not.toContain("nature");
     expect(JSON.stringify(generatedPatch.agents.list)).not.toContain("vibe");
+    expect(JSON.stringify(generatedPatch)).not.toContain("systemPromptOverride");
     expect(generatedPatch.memory.qmd.update.startup).toBe("off");
   });
 
