@@ -73,6 +73,9 @@ type ScheduledRunAttemptResult = {
 };
 
 const DEFAULT_WORKFLOW_ATTEMPT_HEARTBEAT_INTERVAL_MS = 60_000;
+const DEFAULT_SCHEDULED_RUNTIME_RETRY_BASE_MS = 5_000;
+const DEFAULT_SCHEDULED_RUNTIME_RETRY_MAX_MS = 30_000;
+const DEFAULT_SCHEDULED_RUNTIME_RETRY_JITTER_RATIO = 0.5;
 
 export type SchedulerRunExecutor = {
   executeRun(runId: string): Promise<void>;
@@ -131,6 +134,8 @@ export function createSchedulerRunExecutor(input: {
   workflowAuthority?: "off" | "manual" | "timer";
   workflowMaxAttempts?: number;
   workflowHeartbeatIntervalMs?: number;
+  scheduledRuntimeRetryDelayMs?: (attempt: number) => number;
+  scheduledRuntimeRetrySleep?: (delayMs: number) => Promise<void>;
   logInfo?: (message: string) => void;
   logWarn?: (message: string) => void;
 }): SchedulerRunExecutor {
@@ -228,6 +233,10 @@ export function createSchedulerRunExecutor(input: {
                     store: input.store,
                     run,
                     executionContext: preparedExecutionContext,
+                    scheduledRuntimeRetryDelayMs:
+                      input.scheduledRuntimeRetryDelayMs,
+                    scheduledRuntimeRetrySleep:
+                      input.scheduledRuntimeRetrySleep,
                     logWarn: input.logWarn,
                   }),
                 logWarn: input.logWarn,
@@ -237,6 +246,9 @@ export function createSchedulerRunExecutor(input: {
                 store: input.store,
                 run,
                 executionContext: preparedExecutionContext,
+                scheduledRuntimeRetryDelayMs:
+                  input.scheduledRuntimeRetryDelayMs,
+                scheduledRuntimeRetrySleep: input.scheduledRuntimeRetrySleep,
                 logWarn: input.logWarn,
               });
         await postScheduledRunOutput({
@@ -426,6 +438,8 @@ async function executeScheduledRunAttempt(input: {
   store: Pick<TokenStore, "getConnectionForSlackUser">;
   run: AgentJobRunRecord;
   executionContext: ScheduledRunExecutionContext;
+  scheduledRuntimeRetryDelayMs?: (attempt: number) => number;
+  scheduledRuntimeRetrySleep?: (delayMs: number) => Promise<void>;
   logWarn?: (message: string) => void;
 }): Promise<ScheduledRunAttemptResult> {
   assertScheduledRunDestinationAvailable(input.executionContext);
@@ -438,6 +452,8 @@ async function executeScheduledRunAttempt(input: {
     }),
     job: input.executionContext.job,
     scheduledJobContext: input.executionContext.scheduledJobContext,
+    scheduledRuntimeRetryDelayMs: input.scheduledRuntimeRetryDelayMs,
+    scheduledRuntimeRetrySleep: input.scheduledRuntimeRetrySleep,
     logWarn: input.logWarn,
   });
   const output = validateScheduledJobOutput(result);
@@ -581,6 +597,8 @@ async function executeWorkflowAuthoritativeManualRun(
     workflowShadowStore: TaskWorkflowEventStore;
     workflowMaxAttempts?: number;
     workflowHeartbeatIntervalMs?: number;
+    scheduledRuntimeRetryDelayMs?: (attempt: number) => number;
+    scheduledRuntimeRetrySleep?: (delayMs: number) => Promise<void>;
     logInfo?: (message: string) => void;
     logWarn?: (message: string) => void;
   },
@@ -681,6 +699,9 @@ async function executeWorkflowAuthoritativeManualRun(
               store: input.store,
               run,
               executionContext,
+              scheduledRuntimeRetryDelayMs:
+                input.scheduledRuntimeRetryDelayMs,
+              scheduledRuntimeRetrySleep: input.scheduledRuntimeRetrySleep,
               logWarn: input.logWarn,
             }),
           logWarn: input.logWarn,
@@ -1041,6 +1062,8 @@ async function collectScheduledAgentRunWithProgressRetry(input: {
   agentInput: AgentInput;
   job: ScheduledJobRecord;
   scheduledJobContext: ScheduledJobContext | undefined;
+  scheduledRuntimeRetryDelayMs?: (attempt: number) => number;
+  scheduledRuntimeRetrySleep?: (delayMs: number) => Promise<void>;
   logWarn?: (message: string) => void;
 }) {
   const events: AgentRunEvent[] = [];
@@ -1217,11 +1240,21 @@ async function collectScheduledAgentRunTransientRetry(input: {
   job: ScheduledJobRecord;
   scheduledJobContext: ScheduledJobContext;
   error: unknown;
+  scheduledRuntimeRetryDelayMs?: (attempt: number) => number;
+  scheduledRuntimeRetrySleep?: (delayMs: number) => Promise<void>;
   logWarn?: (message: string) => void;
 }) {
-  input.logWarn?.(
-    `Scheduled job runtime failed with retryable error; retrying run jobId=${input.job.jobId} error=${scheduledRunErrorMessage(input.error)}`,
+  const delayMs = Math.max(
+    0,
+    Math.round(
+      input.scheduledRuntimeRetryDelayMs?.(1) ??
+        scheduledRuntimeRetryDelayMs(1),
+    ),
   );
+  input.logWarn?.(
+    `Scheduled job runtime failed with retryable error; retrying run jobId=${input.job.jobId} delayMs=${delayMs} error=${scheduledRunErrorMessage(input.error)}`,
+  );
+  await (input.scheduledRuntimeRetrySleep ?? sleepFor)(delayMs);
   return collectAgentRun(input.runner, {
     ...input.agentInput,
     text: buildScheduledRuntimeRetryPrompt(
@@ -1230,6 +1263,28 @@ async function collectScheduledAgentRunTransientRetry(input: {
       scheduledRunErrorMessage(input.error),
     ),
   });
+}
+
+export function scheduledRuntimeRetryDelayMs(
+  attempt: number,
+  random: () => number = Math.random,
+): number {
+  const exponentialMs = Math.min(
+    DEFAULT_SCHEDULED_RUNTIME_RETRY_MAX_MS,
+    DEFAULT_SCHEDULED_RUNTIME_RETRY_BASE_MS *
+      2 ** Math.max(0, Math.floor(attempt) - 1),
+  );
+  const jitterMs =
+    exponentialMs *
+    DEFAULT_SCHEDULED_RUNTIME_RETRY_JITTER_RATIO *
+    Math.min(1, Math.max(0, random()));
+  return Math.round(
+    Math.min(DEFAULT_SCHEDULED_RUNTIME_RETRY_MAX_MS, exponentialMs + jitterMs),
+  );
+}
+
+async function sleepFor(delayMs: number): Promise<void> {
+  await new Promise<void>((resolve) => setTimeout(resolve, delayMs));
 }
 
 function isProgressOnlyRuntimeFinalError(error: unknown): boolean {

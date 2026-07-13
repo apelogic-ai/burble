@@ -3629,10 +3629,12 @@ describe("runOpenClawCliRequest", () => {
   test("treats streamed OpenClaw gateway response failures as errors without leaking protocol JSON", async () => {
     const events: Array<RunEvent> = [];
     const logs: string[] = [];
+    let requestCount = 0;
 
     await expect(
       withMockFetch(
         (async (_input, init) => {
+          requestCount += 1;
           const requestBody = JSON.parse(String(init?.body ?? "{}")) as Record<
             string,
             unknown
@@ -3755,14 +3757,13 @@ describe("runOpenClawCliRequest", () => {
       })
     );
     expect(events.filter((event) => event.type === "message_delta")).toHaveLength(0);
-    expect(events).toContainEqual({
-      type: "status",
-      text: "The LLM provider timed out. Retrying in 1s (2/3)..."
-    });
-    expect(events).toContainEqual({
-      type: "status",
-      text: "The LLM provider timed out. Retrying in 1s (3/3)..."
-    });
+    expect(requestCount).toBe(1);
+    expect(events).not.toContainEqual(
+      expect.objectContaining({
+        type: "status",
+        text: expect.stringContaining("Retrying")
+      })
+    );
     expect(logs.join("\n")).toContain(
       "OpenClaw gateway http response_failed runId=run-gateway-response-failed"
     );
@@ -4489,21 +4490,21 @@ describe("runOpenClawCliRequest", () => {
     expect(requests[0].body.input).toContain("what can you do?");
   });
 
-  test("retries retryable OpenClaw Gateway provider timeouts", async () => {
+  test("does not replay explicit OpenClaw Gateway provider failures", async () => {
     const requests: Array<{
       url: string;
       headers: Headers;
       body: Record<string, unknown>;
     }> = [];
     const logs: string[] = [];
-    const response = await withMockFetch(
-      (async (input, init) => {
-        requests.push({
-          url: String(input),
-          headers: new Headers(init?.headers),
-          body: JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>
-        });
-        if (requests.length <= 2) {
+    await expect(
+      withMockFetch(
+        (async (input, init) => {
+          requests.push({
+            url: String(input),
+            headers: new Headers(init?.headers),
+            body: JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>
+          });
           return new Response(
             JSON.stringify({
               status: "failed",
@@ -4522,58 +4523,34 @@ describe("runOpenClawCliRequest", () => {
               headers: { "content-type": "application/json" }
             }
           );
-        }
-        return new Response(JSON.stringify(openResponsesText("Gateway answer.")), {
-          status: 200,
-          headers: { "content-type": "application/json" }
-        });
-      }) as typeof fetch,
-      async () =>
-        runOpenClawCliRequest(
-          {
-            runId: "run-openclaw-retry",
-            input: {
-              text: "what can you do?",
-              connections: {
-                github: { connected: false }
+        }) as typeof fetch,
+        async () =>
+          runOpenClawCliRequest(
+            {
+              runId: "run-openclaw-provider-failure",
+              input: {
+                text: "what can you do?",
+                connections: {
+                  github: { connected: false }
+                }
               }
-            }
-          },
-          { ...config, engine: "openclaw-gateway" },
-          async () => {
-            throw new Error("unexpected tool call");
-          },
-          async (_command, args) => {
-            throw new Error(`unexpected cli call: ${args.join(" ")}`);
-          },
-          (line) => logs.push(line)
-        )
-    );
+            },
+            { ...config, engine: "openclaw-gateway" },
+            async () => {
+              throw new Error("unexpected tool call");
+            },
+            async (_command, args) => {
+              throw new Error(`unexpected cli call: ${args.join(" ")}`);
+            },
+            (line) => logs.push(line)
+          )
+      )
+    ).rejects.toThrow("upstream provider timeout");
 
-    expect(response.response.text).toBe("Gateway answer.");
-    expect(requests).toHaveLength(3);
-    expect(requests[0].body.input).toBe(requests[1].body.input);
-    expect(requests[1].body.input).toBe(requests[2].body.input);
-    expect(requests[0].headers.get("x-openclaw-session-key")).not.toBe(
-      requests[1].headers.get("x-openclaw-session-key")
-    );
-    expect(requests[1].headers.get("x-openclaw-session-key")).not.toBe(
-      requests[2].headers.get("x-openclaw-session-key")
-    );
+    expect(requests).toHaveLength(1);
     expect(
-      logs.some((line) =>
-        line.includes(
-          "OpenClaw gateway http retry runId=run-openclaw-retry step=1 attempt=1 status=408 reason=upstream_provider_timeout"
-        )
-      )
-    ).toBe(true);
-    expect(
-      logs.some((line) =>
-        line.includes(
-          "OpenClaw gateway http retry runId=run-openclaw-retry step=1 attempt=2 status=408 reason=upstream_provider_timeout"
-        )
-      )
-    ).toBe(true);
+      logs.some((line) => line.includes("reason=upstream_provider_timeout"))
+    ).toBe(false);
   });
 
   test("routes scheduled runs through the minimal-tool OpenClaw agent", async () => {

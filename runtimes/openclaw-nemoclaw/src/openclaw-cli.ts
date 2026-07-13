@@ -472,27 +472,6 @@ async function runOpenClawGatewayHttpRequest(
         logInfo(
           `OpenClaw gateway http error runId=${request.runId ?? "unknown"} step=${step} status=${response.status}${summarizeLogObject("bodyPreview", responseText)}`
         );
-        if (
-          attempt < maxAttempts &&
-          isRetryableOpenClawGatewayProviderError(response.status, responseText)
-        ) {
-          const retryDelayMs = openClawGatewayRetryDelayMs(config, attempt);
-          const nextSessionKey = buildGatewayHttpSessionKey(
-            agentId,
-            buildGatewayHttpAttemptSessionId(sessionId, attempt + 1)
-          );
-          const status = formatOpenClawGatewayRetryStatus(
-            retryDelayMs,
-            attempt + 1,
-            maxAttempts
-          );
-          onStatus?.(status);
-          logInfo(
-            `OpenClaw gateway http retry runId=${request.runId ?? "unknown"} step=${step} attempt=${attempt} status=${response.status} reason=upstream_provider_timeout elapsedMs=${Date.now() - attemptStartedAt} retryDelayMs=${retryDelayMs} nextSessionKey=${nextSessionKey}`
-          );
-          await sleep(retryDelayMs);
-          continue;
-        }
         const gatewayDiagnostics = readGatewayDiagnosticTextSince(startedAt);
         const usageTelemetry = logOpenClawUsageFromOutput(
           request,
@@ -536,27 +515,6 @@ async function runOpenClawGatewayHttpRequest(
       const responseText = responseResult.responseText;
       if (responseResult.errorText) {
         stderr = responseResult.errorText;
-        if (
-          attempt < maxAttempts &&
-          isRetryableOpenClawGatewayProviderMessage(stderr)
-        ) {
-          const retryDelayMs = openClawGatewayRetryDelayMs(config, attempt);
-          const nextSessionKey = buildGatewayHttpSessionKey(
-            agentId,
-            buildGatewayHttpAttemptSessionId(sessionId, attempt + 1)
-          );
-          const status = formatOpenClawGatewayRetryStatus(
-            retryDelayMs,
-            attempt + 1,
-            maxAttempts
-          );
-          onStatus?.(status);
-          logInfo(
-            `OpenClaw gateway http retry runId=${request.runId ?? "unknown"} step=${step} attempt=${attempt} status=${response.status} reason=response_failed elapsedMs=${Date.now() - attemptStartedAt} retryDelayMs=${retryDelayMs} nextSessionKey=${nextSessionKey}${summarizeLogObject("error", stderr)}`
-          );
-          await sleep(retryDelayMs);
-          continue;
-        }
         const gatewayDiagnostics = readGatewayDiagnosticTextSince(startedAt);
         const usageTelemetry = logOpenClawUsageFromOutput(
           request,
@@ -661,27 +619,7 @@ function formatOpenClawGatewayRetryStatus(
   maxAttempts: number
 ): string {
   const retrySeconds = Math.max(1, Math.ceil(retryDelayMs / 1000));
-  return `The LLM provider timed out. Retrying in ${retrySeconds}s (${nextAttempt}/${maxAttempts})...`;
-}
-
-function isRetryableOpenClawGatewayProviderError(
-  status: number,
-  responseText: string
-): boolean {
-  if (status !== 408 && status < 500) {
-    return false;
-  }
-  return isRetryableOpenClawGatewayProviderMessage(responseText);
-}
-
-function isRetryableOpenClawGatewayProviderMessage(responseText: string): boolean {
-  const normalized = responseText.toLowerCase();
-  return (
-    normalized.includes("upstream provider timeout") ||
-    normalized.includes("server_error") ||
-    normalized.includes('"code":"api_error"') ||
-    normalized.includes('"code":"server_error"')
-  );
+  return `The runtime connection failed. Retrying in ${retrySeconds}s (${nextAttempt}/${maxAttempts})...`;
 }
 
 function isRetryableOpenClawGatewayTransportError(error: unknown): boolean {

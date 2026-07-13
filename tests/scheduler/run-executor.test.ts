@@ -2,11 +2,21 @@ import { describe, expect, test } from "bun:test";
 import { parseRuntimeRunRequest } from "@burble/runtime-sdk/runtime-contract";
 import type { ScheduledJobContext } from "../../src/agent/scheduled-job-context";
 import { createTokenStore } from "../../src/db";
-import { createSchedulerRunExecutor } from "../../src/scheduler/run-executor";
+import {
+  createSchedulerRunExecutor,
+  scheduledRuntimeRetryDelayMs,
+} from "../../src/scheduler/run-executor";
 import type { AgentRunner } from "../../src/agent/types";
 import { createInMemoryTaskWorkflowEventStore } from "../../src/workflow/task-workflow-store";
 
 describe("scheduler run executor", () => {
+  test("uses bounded exponential backoff with jitter for runtime retries", () => {
+    expect(scheduledRuntimeRetryDelayMs(1, () => 0)).toBe(5_000);
+    expect(scheduledRuntimeRetryDelayMs(1, () => 1)).toBe(7_500);
+    expect(scheduledRuntimeRetryDelayMs(2, () => 1)).toBe(15_000);
+    expect(scheduledRuntimeRetryDelayMs(4, () => 1)).toBe(30_000);
+  });
+
   test("claims a queued run, executes the job prompt, delivers to the route, and marks success", async () => {
     const store = createTokenStore(":memory:");
     const workflowStore = createInMemoryTaskWorkflowEventStore();
@@ -1865,6 +1875,7 @@ describe("scheduler run executor", () => {
     const posts: Array<{ channel: string; text: string; thread_ts?: string }> =
       [];
     const warnings: string[] = [];
+    const retryDelays: number[] = [];
     const executor = createSchedulerRunExecutor({
       store,
       agentRunner: runner,
@@ -1875,6 +1886,10 @@ describe("scheduler run executor", () => {
             return {};
           },
         },
+      },
+      scheduledRuntimeRetryDelayMs: () => 1250,
+      scheduledRuntimeRetrySleep: async (delayMs) => {
+        retryDelays.push(delayMs);
       },
       logWarn: (message) => warnings.push(message),
     });
@@ -1894,8 +1909,9 @@ describe("scheduler run executor", () => {
       },
     ]);
     expect(warnings).toEqual([
-      "Scheduled job runtime failed with retryable error; retrying run jobId=job-ai-news error=The operation timed out.",
+      "Scheduled job runtime failed with retryable error; retrying run jobId=job-ai-news delayMs=1250 error=The operation timed out.",
     ]);
+    expect(retryDelays).toEqual([1250]);
     expect(store.getAgentJobRun(run.runId)).toMatchObject({
       runId: run.runId,
       status: "succeeded",
