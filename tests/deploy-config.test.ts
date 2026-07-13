@@ -791,6 +791,7 @@ describe("dev deploy config", () => {
       for (const name of [
         "AGENT_RUNTIME_FACTORY",
         "AGENT_RUNTIME_ENGINE",
+        "AGENT_RUNTIME_ALLOWED_ENGINES",
         "AGENT_RUNTIME_IMAGE",
         "AGENT_RUNTIME_TOKEN_SECRET",
         "AGENT_RUNTIME_MCP_GATEWAY_URL",
@@ -814,6 +815,9 @@ describe("dev deploy config", () => {
   test("documents Burble Native deployment and hand testing", () => {
     expect(deployReadme).toContain("### Burble Native hand test");
     expect(deployReadme).toContain("AGENT_RUNTIME_ENGINE=burble-native");
+    expect(deployReadme).toContain(
+      "AGENT_RUNTIME_ALLOWED_ENGINES=openclaw-gateway,burble-native"
+    );
     expect(deployReadme).toContain(
       "Use GitHub tools and tell me my authenticated GitHub login."
     );

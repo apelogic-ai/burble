@@ -40,6 +40,7 @@ describe("readConfig", () => {
       managedRuntimeUrl: null,
       openClawNemoClawUrl: null,
       agentRuntimeEngine: "openclaw",
+      agentRuntimeAllowedEngines: ["openclaw"],
       openClawNemoClawEngine: "openclaw",
       agentRuntimeDataRoot: "/data/runtimes",
       agentRuntimeDockerNetwork: "compose_default",
@@ -427,6 +428,43 @@ describe("readConfig", () => {
 
     expect(config.agentRuntimeEngine).toBe("hermes");
     expect(config.openClawNemoClawEngine).toBe("hermes");
+  });
+
+  test("allows a deployment runtime engine allowlist", () => {
+    const config = readConfig({
+      ...validEnv,
+      AGENT_RUNTIME_ENGINE: "burble-native",
+      AGENT_RUNTIME_ALLOWED_ENGINES: "openclaw-gateway, burble-native"
+    });
+
+    expect(config.agentRuntimeEngine).toBe("burble-native");
+    expect(config.agentRuntimeAllowedEngines).toEqual([
+      "openclaw-gateway",
+      "burble-native"
+    ]);
+  });
+
+  test("requires the configured runtime engine in its deployment allowlist", () => {
+    expect(() =>
+      readConfig({
+        ...validEnv,
+        AGENT_RUNTIME_ENGINE: "burble-native",
+        AGENT_RUNTIME_ALLOWED_ENGINES: "openclaw-gateway"
+      })
+    ).toThrow(
+      "AGENT_RUNTIME_ALLOWED_ENGINES must include configured AGENT_RUNTIME_ENGINE burble-native"
+    );
+  });
+
+  test("rejects invalid deployment runtime engines", () => {
+    expect(() =>
+      readConfig({
+        ...validEnv,
+        AGENT_RUNTIME_ALLOWED_ENGINES: "openclaw,magic"
+      })
+    ).toThrow(
+      "Environment variable AGENT_RUNTIME_ALLOWED_ENGINES must contain only deterministic, openclaw, openclaw-gateway, burble-native, hermes"
+    );
   });
 
   test("prefers generic agent runtime engine over legacy OpenClaw engine", () => {

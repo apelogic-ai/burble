@@ -44,6 +44,7 @@ export type Config = {
   /** Compatibility alias for existing OPENCLAW_NEMOCLAW_URL deployments. */
   openClawNemoClawUrl: string | null;
   agentRuntimeEngine: AgentRuntimeEngine;
+  agentRuntimeAllowedEngines?: AgentRuntimeEngine[];
   openClawNemoClawEngine: OpenClawNemoClawEngine;
   agentRuntimeDataRoot: string;
   agentRuntimeDockerNetwork: string;
@@ -263,22 +264,55 @@ function optionalAgentRuntimeEngineEnv(
   if (!value) {
     return fallback;
   }
-
-  const normalized =
-    value === "openclaw-cli"
-      ? "openclaw"
-      : value === "direct-provider" || value === "burble-direct"
-        ? "burble-native"
-        : value === "nemo-hermes"
-          ? "hermes"
-        : value;
-  if (!agentRuntimeEngines.includes(normalized as AgentRuntimeEngine)) {
+  const normalized = normalizeAgentRuntimeEngineEnvValue(value);
+  if (!normalized) {
     throw new Error(
       `Environment variable ${name} must be one of ${agentRuntimeEngines.join(", ")}`
     );
   }
+  return normalized;
+}
 
-  return normalized as AgentRuntimeEngine;
+function optionalAgentRuntimeEngineListEnv(
+  env: Env,
+  name: string,
+  fallback: AgentRuntimeEngine[]
+): AgentRuntimeEngine[] {
+  const raw = env[name]?.trim();
+  if (!raw) {
+    return fallback;
+  }
+  const engines = [
+    ...new Set(
+      raw
+        .split(/[,\s]+/)
+        .filter(Boolean)
+        .map((value) => normalizeAgentRuntimeEngineEnvValue(value))
+    )
+  ];
+  if (engines.some((engine) => engine === null)) {
+    throw new Error(
+      `Environment variable ${name} must contain only ${agentRuntimeEngines.join(", ")}`
+    );
+  }
+  return engines as AgentRuntimeEngine[];
+}
+
+function normalizeAgentRuntimeEngineEnvValue(
+  value: string
+): AgentRuntimeEngine | null {
+  const normalized = value.trim().toLowerCase();
+  const canonical =
+    normalized === "openclaw-cli"
+      ? "openclaw"
+      : normalized === "direct-provider" || normalized === "burble-direct"
+        ? "burble-native"
+        : normalized === "nemo-hermes"
+          ? "hermes"
+          : normalized;
+  return agentRuntimeEngines.includes(canonical as AgentRuntimeEngine)
+    ? (canonical as AgentRuntimeEngine)
+    : null;
 }
 
 function optionalAgentRuntimeStreamingModeEnv(
@@ -380,6 +414,16 @@ export function readConfig(env: Env): Config {
     "AGENT_RUNTIME_FACTORY",
     "static"
   );
+  const agentRuntimeAllowedEngines = optionalAgentRuntimeEngineListEnv(
+    env,
+    "AGENT_RUNTIME_ALLOWED_ENGINES",
+    [agentRuntimeEngine]
+  );
+  if (!agentRuntimeAllowedEngines.includes(agentRuntimeEngine)) {
+    throw new Error(
+      `AGENT_RUNTIME_ALLOWED_ENGINES must include configured AGENT_RUNTIME_ENGINE ${agentRuntimeEngine}`
+    );
+  }
   const defaultAgentRuntimeMcpGatewayUrl =
     agentRuntimeFactory === "docker" || agentRuntimeFactory === "sandbox"
       ? "http://burble-app:3000/mcp"
@@ -482,6 +526,7 @@ export function readConfig(env: Env): Config {
     managedRuntimeUrl,
     openClawNemoClawUrl: managedRuntimeUrl,
     agentRuntimeEngine,
+    agentRuntimeAllowedEngines,
     openClawNemoClawEngine: agentRuntimeEngine,
     agentRuntimeDataRoot: env.AGENT_RUNTIME_DATA_ROOT ?? "/data/runtimes",
     agentRuntimeDockerNetwork:
