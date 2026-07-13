@@ -139,6 +139,7 @@ services:
       - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-https://ollama.com}
     volumes:
       - ./litellm/config.yaml:/app/config.yaml:ro
+      - ./litellm/burble_observability.py:/app/burble_observability.py:ro
 
 volumes:
   caddy_data:

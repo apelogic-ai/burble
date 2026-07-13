@@ -13,6 +13,7 @@ import { providerToolCatalog } from "../../../src/providers/catalog";
 import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { createHash } from "node:crypto";
 
 const config: RuntimeConfig = {
   port: 8080,
@@ -4443,6 +4444,7 @@ describe("runOpenClawCliRequest", () => {
       headers: Headers;
       body: Record<string, unknown>;
     }> = [];
+    const logs: string[] = [];
     const response = await withMockFetch(
       (async (input, init) => {
         requests.push({
@@ -4473,7 +4475,7 @@ describe("runOpenClawCliRequest", () => {
             commands.push({ args });
             throw new Error("unexpected cli call");
           },
-          () => undefined
+          (message) => logs.push(message)
         )
     );
 
@@ -4488,6 +4490,18 @@ describe("runOpenClawCliRequest", () => {
     );
     expect(requests[0].body.model).toBe("openclaw/main");
     expect(requests[0].body.input).toContain("what can you do?");
+    const promptCacheKey = Array.from(
+      requests[0].headers.get("x-openclaw-session-key") ?? ""
+    )
+      .slice(0, 64)
+      .join("");
+    const correlationId = createHash("sha256")
+      .update(promptCacheKey)
+      .digest("hex")
+      .slice(0, 16);
+    expect(
+      logs.some((line) => line.includes(`llmCorrelationId=${correlationId}`))
+    ).toBe(true);
   });
 
   test("does not replay explicit OpenClaw Gateway provider failures", async () => {

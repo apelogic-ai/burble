@@ -433,6 +433,10 @@ async function runOpenClawGatewayHttpRequest(
       agentId,
       attemptSessionId
     );
+    const llmCorrelationId = hashOpenClawPromptCacheKey(attemptSessionKey);
+    logInfo(
+      `OpenClaw gateway provider correlation runId=${request.runId ?? "unknown"} step=${step} attempt=${attempt} llmCorrelationId=${llmCorrelationId}`
+    );
     const hardDeadlineRemainingMs =
       openClawGatewayHardDeadlineRemainingMs(hardDeadlineAt);
     const headerTimeoutIsHardDeadline =
@@ -1109,6 +1113,10 @@ function buildGatewayHttpAttemptSessionId(
   }
 
   return `${sessionId}-attempt-${attempt}`;
+}
+
+function hashOpenClawPromptCacheKey(sessionKey: string): string {
+  return hashLogValue(Array.from(sessionKey).slice(0, 64).join(""));
 }
 
 function buildGatewayHttpResponsesUrl(config: RuntimeConfig): string {

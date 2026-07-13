@@ -25,6 +25,9 @@ const openShellGatewayConfig = await Bun.file(
 const litellmGatewayConfig = await Bun.file(
   "deploy/dev/compose/litellm/config.yaml"
 ).text();
+const litellmBoundaryLogger = await Bun.file(
+  "deploy/dev/compose/litellm/burble_observability.py"
+).text();
 const agentGatewayConfig = await Bun.file(
   "deploy/dev/compose/agentgateway/config.yaml"
 ).text();
@@ -197,6 +200,20 @@ describe("dev deploy config", () => {
     expect(litellmGatewayConfig).toContain("os.environ/OPENAI_API_KEY");
     expect(litellmGatewayConfig).toContain("os.environ/ANTHROPIC_API_KEY");
     expect(litellmGatewayConfig).toContain("os.environ/OLLAMA_API_KEY");
+  });
+
+  test("emits redacted LLM boundary telemetry through a custom callback", () => {
+    expect(compose).toContain(
+      "./litellm/burble_observability.py:/app/burble_observability.py:ro"
+    );
+    expect(litellmGatewayConfig).toContain("callbacks:");
+    expect(litellmGatewayConfig).toContain(
+      "burble_observability.boundary_logger"
+    );
+    expect(litellmBoundaryLogger).toContain("turn_off_message_logging=True");
+    expect(litellmBoundaryLogger).not.toContain("print(kwargs)");
+    expect(litellmBoundaryLogger).not.toContain("print(data)");
+    expect(litellmBoundaryLogger).not.toContain('event["traceback"]');
   });
 
   test("documents the required Slack slash commands in the app manifest", () => {
