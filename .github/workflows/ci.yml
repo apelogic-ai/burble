@@ -105,6 +105,17 @@ jobs:
           BURBLE_RUNTIME_CONTRACT_PROBE: "1"
         run: bun test tests/e2e/runtime-readiness.test.ts
 
+      - name: Run Burble Native model and tool boundary E2E
+        env:
+          BURBLE_E2E_BURBLE_NATIVE_BOUNDARY_SMOKE: "1"
+          BURBLE_E2E_BURBLE_NATIVE_IMAGE: burble-native-runtime:dev
+          BURBLE_E2E_DOCKER_NETWORK: burble-runtime-e2e
+          BURBLE_E2E_RUNTIME_DATA_ROOT: /tmp/burble-runtime-e2e
+          BURBLE_E2E_HEALTH_ATTEMPTS: "60"
+          BURBLE_E2E_HEALTH_INTERVAL_MS: "1000"
+          BURBLE_E2E_TIMEOUT_MS: "120000"
+        run: bun test tests/e2e/runtime-readiness.test.ts
+
       - name: Clean up runtime containers
         if: always()
         run: |

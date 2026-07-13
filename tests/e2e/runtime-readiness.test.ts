@@ -22,6 +22,10 @@ const runtimeConformanceDescribe =
   Bun.env.BURBLE_E2E_CONFORMANCE === "1" ? describe : describe.skip;
 const runtimeBootSmokeDescribe =
   Bun.env.BURBLE_E2E_RUNTIME_BOOT_SMOKE === "1" ? describe : describe.skip;
+const burbleNativeBoundaryDescribe =
+  Bun.env.BURBLE_E2E_BURBLE_NATIVE_BOUNDARY_SMOKE === "1"
+    ? describe
+    : describe.skip;
 
 runtimeReadinessDescribe("runtime readiness e2e", () => {
   for (const engine of e2eRuntimeEngines()) {
@@ -184,6 +188,132 @@ runtimeConformanceDescribe("runtime contract conformance e2e", () => {
       { timeout: Number.parseInt(Bun.env.BURBLE_E2E_TIMEOUT_MS ?? "180000", 10) }
     );
   }
+});
+
+burbleNativeBoundaryDescribe("Burble Native image boundary e2e", () => {
+  test(
+    "runs model to tool gateway to final through the built image",
+    async () => {
+      const boundary = startBurbleNativeBoundaryServer();
+      const store = createTokenStore(":memory:");
+      const principal = {
+        workspaceId: "T_E2E",
+        slackUserId: `U_E2E_NATIVE_BOUNDARY_${Date.now()}`
+      };
+      const dockerNetwork = requiredE2eEnv("BURBLE_E2E_DOCKER_NETWORK");
+      const runtimeFetch = createDockerRuntimeNetworkFetch(dockerNetwork);
+      const hostBaseUrl = `http://host.docker.internal:${boundary.port}`;
+      const factory = createDockerRuntimeFactory({
+        store,
+        engine: "burble-native",
+        image: runtimeImageForEngine("burble-native"),
+        dataRoot: Bun.env.BURBLE_E2E_RUNTIME_DATA_ROOT ?? "/tmp/burble-runtimes",
+        dockerNetwork,
+        toolGatewayUrl: `${hostBaseUrl}/internal/tools`,
+        inferenceBaseUrl: `${hostBaseUrl}/v1`,
+        runtimeTokenSecret:
+          Bun.env.BURBLE_E2E_RUNTIME_TOKEN_SECRET ?? "runtime-e2e-secret",
+        env: { AI_MODEL: "openai:gpt-5.4" },
+        execute: executeDockerWithPublishedRuntimePort,
+        fetch: runtimeFetch,
+        healthCheckAttempts: Number.parseInt(
+          Bun.env.BURBLE_E2E_HEALTH_ATTEMPTS ?? "60",
+          10
+        ),
+        healthCheckIntervalMs: Number.parseInt(
+          Bun.env.BURBLE_E2E_HEALTH_INTERVAL_MS ?? "1000",
+          10
+        )
+      });
+      let runtimeId: string | null = null;
+
+      try {
+        const runtime = await factory.getOrCreateRuntime(principal);
+        runtimeId = runtime.id;
+        const response = await runtimeFetch(`${runtime.endpointUrl}/runs`, {
+          method: "POST",
+          headers: {
+            accept: "application/x-ndjson",
+            authorization: `Bearer ${runtime.authToken}`,
+            "content-type": "application/json",
+            "x-burble-runtime-id": runtime.id
+          },
+          body: JSON.stringify({
+            runId: `native-boundary-${crypto.randomUUID()}`,
+            principal,
+            runtime: {
+              id: runtime.id,
+              engine: "burble-native",
+              manifest: burbleNativeBoundaryRequestManifest()
+            },
+            input: {
+              text: "Who am I on GitHub?",
+              conversation: {
+                source: "slack",
+                workspaceId: principal.workspaceId,
+                channelId: "D_NATIVE_BOUNDARY",
+                rootId: "dm:D_NATIVE_BOUNDARY",
+                isDirectMessage: true
+              },
+              toolGroups: {
+                groups: ["github"],
+                reasons: ["boundary smoke"]
+              },
+              connections: {
+                github: { connected: true, login: "octocat" }
+              }
+            }
+          })
+        });
+        expect(response.status).toBe(200);
+        const events = (await response.text())
+          .trim()
+          .split("\n")
+          .map((line) => parseRuntimeRunEvent(JSON.parse(line)));
+
+        expect(events.map((event) => event.type)).toEqual([
+          "status",
+          "tool_call",
+          "tool_result",
+          "message_delta",
+          "final"
+        ]);
+        expect(readFinalEvent(events)?.response).toMatchObject({
+          classification: "user_private",
+          text: "Authenticated as octocat."
+        });
+        expect(boundary.providerRequests).toHaveLength(2);
+        expect(boundary.toolRequests).toHaveLength(1);
+        const continuation = boundary.providerRequests[1].body as {
+          input?: unknown[];
+        };
+        expect(continuation.input).toContainEqual({
+          type: "function_call_output",
+          call_id: "call_native_boundary",
+          output: JSON.stringify({
+            classification: "user_private",
+            content: { login: "octocat" }
+          })
+        });
+        expect(boundary.providerRequests[0].headers.get("authorization")).toBe(
+          "Bearer sk-BURBLE-INFERENCE-PROXY"
+        );
+        expect(boundary.toolRequests[0].headers.get("authorization")).toBe(
+          `Bearer ${runtime.authToken}`
+        );
+        expect(
+          boundary.toolRequests[0].headers.get("x-burble-runtime-id")
+        ).toBe(runtime.id);
+      } finally {
+        if (runtimeId) {
+          await factory.stopRuntime(runtimeId);
+        }
+        store.close();
+        await boundary.stop();
+      }
+    },
+    { timeout: Number.parseInt(Bun.env.BURBLE_E2E_TIMEOUT_MS ?? "120000", 10) }
+  );
 });
 
 runtimeBootSmokeDescribe("runtime boot smoke e2e", () => {
@@ -415,11 +545,152 @@ const executeDockerWithPublishedRuntimePort: RuntimeCommandExecutor = (
   const imageIndex = args.length - 1;
   return runCommand(command, [
     ...args.slice(0, imageIndex),
+    "--add-host",
+    "host.docker.internal:host-gateway",
     "--publish",
     "127.0.0.1::8080",
     args[imageIndex] ?? ""
   ]);
 };
+
+function startBurbleNativeBoundaryServer(): {
+  port: number;
+  providerRequests: BoundaryRequest[];
+  toolRequests: BoundaryRequest[];
+  stop(): Promise<void>;
+} {
+  const providerRequests: BoundaryRequest[] = [];
+  const toolRequests: BoundaryRequest[] = [];
+  const server = Bun.serve({
+    hostname: "0.0.0.0",
+    port: 0,
+    async fetch(request) {
+      const url = new URL(request.url);
+      if (url.pathname === "/v1/responses") {
+        providerRequests.push(await captureBoundaryRequest(request));
+        if (providerRequests.length === 1) {
+          return sseResponse({
+            type: "response.completed",
+            response: {
+              output: [
+                {
+                  type: "function_call",
+                  call_id: "call_native_boundary",
+                  name: "burble_provider_call",
+                  arguments: JSON.stringify({
+                    toolName: "github.getAuthenticatedUser",
+                    input: {}
+                  })
+                }
+              ],
+              usage: {
+                input_tokens: 20,
+                output_tokens: 4,
+                total_tokens: 24
+              }
+            }
+          });
+        }
+        return new Response(
+          [
+            sseData({
+              type: "response.output_text.delta",
+              delta: "Authenticated as octocat."
+            }),
+            sseData({
+              type: "response.completed",
+              response: {
+                output_text: "Authenticated as octocat.",
+                usage: {
+                  input_tokens: 30,
+                  output_tokens: 6,
+                  total_tokens: 36
+                }
+              }
+            })
+          ].join(""),
+          { headers: { "content-type": "text/event-stream" } }
+        );
+      }
+      if (
+        url.pathname ===
+        "/internal/tools/github.getAuthenticatedUser/execute"
+      ) {
+        toolRequests.push(await captureBoundaryRequest(request));
+        return Response.json({
+          classification: "user_private",
+          content: { login: "octocat" }
+        });
+      }
+      return new Response("Not found", { status: 404 });
+    }
+  });
+  const port = server.port;
+  if (!port) {
+    void server.stop(true);
+    throw new Error("Burble Native boundary server did not bind a port");
+  }
+  return {
+    port,
+    providerRequests,
+    toolRequests,
+    async stop() {
+      await server.stop(true);
+    }
+  };
+}
+
+type BoundaryRequest = {
+  headers: Headers;
+  body: unknown;
+};
+
+async function captureBoundaryRequest(request: Request): Promise<BoundaryRequest> {
+  return {
+    headers: new Headers(request.headers),
+    body: await request.json()
+  };
+}
+
+function sseResponse(payload: Record<string, unknown>): Response {
+  return new Response(sseData(payload), {
+    headers: { "content-type": "text/event-stream" }
+  });
+}
+
+function sseData(payload: Record<string, unknown>): string {
+  return `data: ${JSON.stringify(payload)}\n\n`;
+}
+
+function burbleNativeBoundaryRequestManifest() {
+  return {
+    version: "1",
+    policyHash: "policy-native-boundary",
+    skills: [],
+    tools: [
+      {
+        name: "github_get_authenticated_user",
+        alias: "github.getAuthenticatedUser",
+        provider: "github",
+        title: "GitHub authenticated user",
+        description: "Return the connected GitHub identity.",
+        enabled: true,
+        risk: "read",
+        routeRequired: true,
+        confirmation: "none",
+        retrySafe: true,
+        input: []
+      }
+    ],
+    memory: {
+      userMemoryEnabled: false,
+      workspaceMemoryEnabled: false,
+      jobMemoryEnabled: true
+    },
+    streaming: { messageDeltasEnabled: true },
+    memoryContext: []
+  };
+}
 
 async function assertContainerAttachedToNetwork(
   containerName: string,

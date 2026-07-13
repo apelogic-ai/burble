@@ -828,6 +828,12 @@ describe("dev deploy config", () => {
     expect(ciWorkflow).toContain(
       "BURBLE_E2E_BURBLE_NATIVE_IMAGE: burble-native-runtime:dev"
     );
+    expect(ciWorkflow).toContain(
+      "Run Burble Native model and tool boundary E2E"
+    );
+    expect(ciWorkflow).toContain(
+      'BURBLE_E2E_BURBLE_NATIVE_BOUNDARY_SMOKE: "1"'
+    );
   });
 
   test("runs both sandbox agents through real OpenShell in CI", () => {
