@@ -2,7 +2,10 @@ import { createHash } from "node:crypto";
 import { mkdir, readFile, unlink, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import type { RuntimeConfig } from "./config";
-import { buildOpenClawLlmPatch } from "./llm-config";
+import {
+  buildOpenClawLlmPatch,
+  scheduledOpenClawAgentId
+} from "./llm-config";
 import { info, type RuntimeLogger } from "./logger";
 import { openClawEnv, runCliCommand, type CliCommandRunner } from "./openclaw-cli";
 
@@ -189,6 +192,12 @@ function buildOpenClawNemoClawAgentConfig(
         name: "Burble",
         theme: "Slack assistant",
         emoji: ":robot_face:"
+      }
+    },
+    {
+      id: scheduledOpenClawAgentId(config.openClawAgent),
+      tools: {
+        profile: "minimal"
       }
     }
   ];

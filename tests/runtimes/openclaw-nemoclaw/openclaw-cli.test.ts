@@ -4576,6 +4576,62 @@ describe("runOpenClawCliRequest", () => {
     ).toBe(true);
   });
 
+  test("routes scheduled runs through the minimal-tool OpenClaw agent", async () => {
+    const requests: Array<{
+      headers: Headers;
+      body: Record<string, unknown>;
+    }> = [];
+    const response = await withMockFetch(
+      (async (_input, init) => {
+        requests.push({
+          headers: new Headers(init?.headers),
+          body: JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>
+        });
+        return new Response(JSON.stringify(openResponsesText("Scheduled answer.")), {
+          status: 200,
+          headers: { "content-type": "application/json" }
+        });
+      }) as typeof fetch,
+      async () =>
+        runOpenClawCliRequest(
+          {
+            runId: "run-openclaw-scheduled-agent",
+            input: {
+              text: "say hello",
+              connections: {
+                github: { connected: false }
+              },
+              scheduledJob: {
+                jobId: "job-ai-news",
+                capabilityProfile: "scheduled_job",
+                allowedTools: [],
+                stateRefs: [],
+                visibilityPolicy: {}
+              }
+            }
+          },
+          { ...config, engine: "openclaw-gateway" },
+          async () => {
+            throw new Error("unexpected tool call");
+          },
+          async (_command, args) => {
+            throw new Error(`unexpected cli call: ${args.join(" ")}`);
+          },
+          () => undefined
+        )
+    );
+
+    expect(response.response.text).toBe("Scheduled answer.");
+    expect(requests).toHaveLength(1);
+    expect(requests[0].headers.get("x-openclaw-agent-id")).toBe(
+      "main-scheduled"
+    );
+    expect(requests[0].headers.get("x-openclaw-session-key")).toStartWith(
+      "agent:main-scheduled:explicit:burble-step-"
+    );
+    expect(requests[0].body.model).toBe("openclaw/main-scheduled");
+  });
+
   test("retries retryable OpenClaw Gateway transport timeouts", async () => {
     const requests: Array<{
       headers: Headers;

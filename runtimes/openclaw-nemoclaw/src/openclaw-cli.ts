@@ -13,6 +13,7 @@ import { mkdir, readFile, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import type { RuntimeConfig } from "./config";
 import { readGatewayDiagnosticTextSince } from "./gateway-diagnostics";
+import { scheduledOpenClawAgentId } from "./llm-config";
 import { info, type RuntimeLogger } from "./logger";
 import { buildOpenClawProcessEnv } from "./process-env";
 import {
@@ -163,8 +164,9 @@ export async function runOpenClawCliRequest(
 
   const sessionId = buildRunSessionId(request);
   const sessionScope = buildRunSessionScope(request);
+  const agentId = resolveOpenClawAgentId(request, config);
   logInfo(
-    `OpenClaw agent start runId=${request.runId ?? "unknown"} agent=${config.openClawAgent} sessionId=${sessionId} sessionScope=${sessionScope} textLength=${request.input.text.length} classification=${baseline.response.classification}`
+    `OpenClaw agent start runId=${request.runId ?? "unknown"} agent=${agentId} sessionId=${sessionId} sessionScope=${sessionScope} textLength=${request.input.text.length} classification=${baseline.response.classification}`
   );
   const executedTools: ExecutedToolCall[] = [];
   const rejectedDirectResponses: string[] = [];
@@ -323,10 +325,11 @@ async function runOpenClawCommand(
 
   const startedAt = Date.now();
   const rawStreamPath = await prepareRawStreamPath(config, request, step, logInfo);
-  const args = buildOpenClawArgs(config, prompt, sessionId, rawStreamPath);
+  const agentId = resolveOpenClawAgentId(request, config);
+  const args = buildOpenClawArgs(config, prompt, sessionId, rawStreamPath, agentId);
   const env = openClawEnv(config);
   logInfo(
-    `OpenClaw command start runId=${request.runId ?? "unknown"} step=${step} command=${config.openClawCommand} agent=${config.openClawAgent} timeoutMs=${config.openClawTimeoutMs}${summarizePromptForLog(prompt)}${summarizeOpenClawArgsForLog(args)}${summarizeLogObject("env", env)}`
+    `OpenClaw command start runId=${request.runId ?? "unknown"} step=${step} command=${config.openClawCommand} agent=${agentId} timeoutMs=${config.openClawTimeoutMs}${summarizePromptForLog(prompt)}${summarizeOpenClawArgsForLog(args)}${summarizeLogObject("env", env)}`
   );
   const result = await runCommand(
     config.openClawCommand,
@@ -399,10 +402,11 @@ async function runOpenClawGatewayHttpRequest(
   onStatus?: (status: string) => void
 ): Promise<CliCommandResult> {
   const startedAt = Date.now();
-  const baseSessionKey = buildGatewayHttpSessionKey(config, sessionId);
+  const agentId = resolveOpenClawAgentId(request, config);
+  const baseSessionKey = buildGatewayHttpSessionKey(agentId, sessionId);
   const endpoint = buildGatewayHttpResponsesUrl(config);
   logInfo(
-    `OpenClaw gateway http start runId=${request.runId ?? "unknown"} step=${step} agent=${config.openClawAgent} endpoint=/v1/responses timeoutMs=${config.openClawTimeoutMs}${summarizePromptForLog(prompt)} sessionKey=${baseSessionKey}`
+    `OpenClaw gateway http start runId=${request.runId ?? "unknown"} step=${step} agent=${agentId} endpoint=/v1/responses timeoutMs=${config.openClawTimeoutMs}${summarizePromptForLog(prompt)} sessionKey=${baseSessionKey}`
   );
   logStreamDebug(config, logInfo, "prompt preview", {
     runId: request.runId ?? "unknown",
@@ -426,7 +430,7 @@ async function runOpenClawGatewayHttpRequest(
       attempt
     );
     const attemptSessionKey = buildGatewayHttpSessionKey(
-      config,
+      agentId,
       attemptSessionId
     );
     const hardDeadlineRemainingMs =
@@ -439,6 +443,7 @@ async function runOpenClawGatewayHttpRequest(
           endpoint,
           config,
           request,
+          agentId,
           attemptSessionKey,
           prompt,
           Boolean(onDelta),
@@ -473,7 +478,7 @@ async function runOpenClawGatewayHttpRequest(
         ) {
           const retryDelayMs = openClawGatewayRetryDelayMs(config, attempt);
           const nextSessionKey = buildGatewayHttpSessionKey(
-            config,
+            agentId,
             buildGatewayHttpAttemptSessionId(sessionId, attempt + 1)
           );
           const status = formatOpenClawGatewayRetryStatus(
@@ -537,7 +542,7 @@ async function runOpenClawGatewayHttpRequest(
         ) {
           const retryDelayMs = openClawGatewayRetryDelayMs(config, attempt);
           const nextSessionKey = buildGatewayHttpSessionKey(
-            config,
+            agentId,
             buildGatewayHttpAttemptSessionId(sessionId, attempt + 1)
           );
           const status = formatOpenClawGatewayRetryStatus(
@@ -603,7 +608,7 @@ async function runOpenClawGatewayHttpRequest(
       ) {
         const retryDelayMs = openClawGatewayRetryDelayMs(config, attempt);
         const nextSessionKey = buildGatewayHttpSessionKey(
-          config,
+          agentId,
           buildGatewayHttpAttemptSessionId(sessionId, attempt + 1)
         );
         const status = formatOpenClawGatewayRetryStatus(
@@ -877,6 +882,7 @@ async function fetchGatewayHttpResponse(
   endpoint: string,
   config: RuntimeConfig,
   request: RunRequest,
+  agentId: string,
   sessionKey: string,
   prompt: string,
   stream: boolean,
@@ -887,12 +893,12 @@ async function fetchGatewayHttpResponse(
     headers: {
       "authorization": `Bearer ${config.openClawGatewayToken}`,
       "content-type": "application/json",
-      "x-openclaw-agent-id": config.openClawAgent,
+      "x-openclaw-agent-id": agentId,
       "x-openclaw-message-channel": resolveGatewayHttpMessageChannel(request),
       "x-openclaw-session-key": sessionKey
     },
     body: JSON.stringify({
-      model: `openclaw/${config.openClawAgent}`,
+      model: `openclaw/${agentId}`,
       input: prompt,
       stream
     }),
@@ -1141,10 +1147,19 @@ function appendStreamRecord(current: string, payload: string): string {
 }
 
 function buildGatewayHttpSessionKey(
-  config: RuntimeConfig,
+  agentId: string,
   sessionId: string
 ): string {
-  return `agent:${config.openClawAgent}:explicit:${sessionId}`;
+  return `agent:${agentId}:explicit:${sessionId}`;
+}
+
+function resolveOpenClawAgentId(
+  request: RunRequest,
+  config: RuntimeConfig
+): string {
+  return request.input.scheduledJob
+    ? scheduledOpenClawAgentId(config.openClawAgent)
+    : config.openClawAgent;
 }
 
 function buildGatewayHttpAttemptSessionId(
@@ -1197,8 +1212,9 @@ export async function* runOpenClawCliRequestStream(
 
   const sessionId = buildRunSessionId(request);
   const sessionScope = buildRunSessionScope(request);
+  const agentId = resolveOpenClawAgentId(request, config);
   logInfo(
-    `OpenClaw agent start runId=${request.runId ?? "unknown"} agent=${config.openClawAgent} sessionId=${sessionId} sessionScope=${sessionScope} textLength=${request.input.text.length} classification=${baseline.response.classification}`
+    `OpenClaw agent start runId=${request.runId ?? "unknown"} agent=${agentId} sessionId=${sessionId} sessionScope=${sessionScope} textLength=${request.input.text.length} classification=${baseline.response.classification}`
   );
   yield { type: "status", text: "Agent is thinking..." };
 
@@ -1387,10 +1403,11 @@ async function* collectOpenClawStream(
   let firstStderrLogged = false;
   const startedAt = Date.now();
   const rawStreamPath = await prepareRawStreamPath(config, request, step, logInfo);
-  const args = buildOpenClawArgs(config, prompt, sessionId, rawStreamPath);
+  const agentId = resolveOpenClawAgentId(request, config);
+  const args = buildOpenClawArgs(config, prompt, sessionId, rawStreamPath, agentId);
   const env = openClawEnv(config);
   logInfo(
-    `OpenClaw command stream start runId=${request.runId ?? "unknown"} command=${config.openClawCommand} agent=${config.openClawAgent} engine=${config.engine} timeoutMs=${config.openClawTimeoutMs}${summarizePromptForLog(prompt)}${summarizeOpenClawArgsForLog(args)}${summarizeLogObject("env", env)}`
+    `OpenClaw command stream start runId=${request.runId ?? "unknown"} command=${config.openClawCommand} agent=${agentId} engine=${config.engine} timeoutMs=${config.openClawTimeoutMs}${summarizePromptForLog(prompt)}${summarizeOpenClawArgsForLog(args)}${summarizeLogObject("env", env)}`
   );
   logStreamDebug(config, logInfo, "prompt preview", {
     runId: request.runId ?? "unknown",
@@ -4505,12 +4522,13 @@ function buildOpenClawArgs(
   config: RuntimeConfig,
   prompt: string,
   sessionId: string,
-  rawStreamPath: string | null = null
+  rawStreamPath: string | null = null,
+  agentId: string = config.openClawAgent
 ): string[] {
   const args = [
     "agent",
     "--agent",
-    config.openClawAgent,
+    agentId,
     "--message",
     prompt,
     "--session-id",

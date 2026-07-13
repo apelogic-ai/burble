@@ -25,6 +25,10 @@ export const BURBLE_OPENCLAW_CHANNEL_ID = "burble";
 export const BURBLE_OPENCLAW_CHANNEL_PLUGIN_PATH =
   "/runtime/openclaw-plugins/burble-channel";
 
+export function scheduledOpenClawAgentId(agentId: string): string {
+  return `${agentId}-scheduled`;
+}
+
 export function parseLlmModelId(modelId: string): ParsedLlmModel {
   const separatorIndex = modelId.indexOf(":");
   const provider = separatorIndex >= 0 ? modelId.slice(0, separatorIndex) : "";

@@ -70,6 +70,12 @@ describe("ensureOpenClawSetup", () => {
               theme: "Slack assistant",
               emoji: ":robot_face:"
             }
+          },
+          {
+            id: "main-scheduled",
+            tools: {
+              profile: "minimal"
+            }
           }
         ]
       },
@@ -435,6 +441,12 @@ describe("ensureOpenClawSetup", () => {
           name: "Burble",
           theme: "Slack assistant",
           emoji: ":robot_face:"
+        }
+      },
+      {
+        id: "burble-scheduled",
+        tools: {
+          profile: "minimal"
         }
       }
     ]);
