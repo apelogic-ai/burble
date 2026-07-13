@@ -1,6 +1,9 @@
 import { createHash, randomUUID } from "node:crypto";
 import { formatRuntimeScheduledJobContextLines } from "@burble/runtime-sdk/scheduled-job-context";
-import { stripRuntimeToolCallProtocolFragments } from "@burble/runtime-sdk/runtime-text-protocol";
+import {
+  containsRuntimeToolCallProtocolFragments,
+  stripRuntimeToolCallProtocolFragments
+} from "@burble/runtime-sdk/runtime-text-protocol";
 import {
   accessSync,
   constants as fsConstants,
@@ -97,7 +100,7 @@ const openClawGatewayInitialResponseTimeoutMs = 12_000;
 const defaultOpenClawGatewayRetryBaseMs = 1_500;
 const defaultOpenClawGatewayRetryMaxMs = 10_000;
 const maxPlannedToolCalls = 5;
-const maxBootstrapRetries = 1;
+const maxDirectResponseRetries = 1;
 
 type ToolCatalogItem = {
   name: string;
@@ -108,6 +111,17 @@ type ToolCatalogItem = {
 type PlannedToolCall = {
   name: string;
   arguments: Record<string, unknown>;
+};
+
+type DirectResponseRejectionReason =
+  | "bootstrap_response"
+  | "baseline_echo"
+  | "empty_response"
+  | "invalid_tool_protocol";
+
+type RejectedDirectResponse = {
+  text: string;
+  reason: DirectResponseRejectionReason;
 };
 
 type ExecutedToolCall = {
@@ -169,7 +183,7 @@ export async function runOpenClawCliRequest(
     `OpenClaw agent start runId=${request.runId ?? "unknown"} agent=${agentId} sessionId=${sessionId} sessionScope=${sessionScope} textLength=${request.input.text.length} classification=${baseline.response.classification}`
   );
   const executedTools: ExecutedToolCall[] = [];
-  const rejectedDirectResponses: string[] = [];
+  const rejectedDirectResponses: RejectedDirectResponse[] = [];
   let classification = baseline.response.classification;
   let totalUsage: RunUsage | undefined;
   let totalTelemetry: RunTelemetry | undefined;
@@ -214,10 +228,10 @@ export async function runOpenClawCliRequest(
         Boolean(openClawText)
       );
       if (
-        rejectedDirectResponses.length < maxBootstrapRetries &&
+        rejectedDirectResponses.length < maxDirectResponseRetries &&
         rejectedReason
       ) {
-        rejectedDirectResponses.push(rawText);
+        rejectedDirectResponses.push({ text: rawText, reason: rejectedReason });
         logInfo(
           `OpenClaw bootstrap retry runId=${request.runId ?? "unknown"} step=${step + 1} reason=${rejectedReason}`
         );
@@ -225,6 +239,11 @@ export async function runOpenClawCliRequest(
       }
       if (rejectedReason === "empty_response") {
         throw new Error("OpenClaw Gateway returned no assistant text");
+      }
+      if (rejectedReason === "invalid_tool_protocol") {
+        throw new Error(
+          "OpenClaw Gateway repeatedly returned invalid Burble tool-call protocol"
+        );
       }
       const text = sanitizeBootstrapFragments(rawText, baseline.response.text);
       logInfo(
@@ -670,10 +689,11 @@ async function* collectOpenClawGatewayHttpResponse(
   const startedAt = Date.now();
   const deltas: string[] = [];
   const statuses: string[] = [];
+  const deltaBuffer = createProtocolAwareDeltaBuffer();
   let wakeDeltas: (() => void) | null = null;
   let wakeStatus: (() => void) | null = null;
   const pushDelta = (delta: string) => {
-    const sanitizedDelta = stripRuntimeToolCallProtocolFragments(delta);
+    const sanitizedDelta = appendProtocolAwareDelta(deltaBuffer, delta);
     if (sanitizedDelta.trim()) {
       deltas.push(sanitizedDelta);
     }
@@ -751,6 +771,10 @@ async function* collectOpenClawGatewayHttpResponse(
 
     result = raced.value;
   }
+  const bufferedDelta = flushProtocolAwareDelta(deltaBuffer, result.stdout);
+  if (bufferedDelta.trim()) {
+    deltas.push(bufferedDelta);
+  }
   while (statuses.length > 0) {
     const status = statuses.shift();
     if (status) {
@@ -810,8 +834,65 @@ function isGatewayHttpStreamingResponse(response: Response): boolean {
 }
 
 function shouldEmitGatewayHttpDelta(stdout: string): boolean {
-  const parsed = parseJsonObject(stdout.trim());
-  return !(parsed && typeof parsed.tool_call === "object" && parsed.tool_call !== null);
+  return !containsRuntimeToolCallProtocolFragments(stdout);
+}
+
+type ProtocolAwareDeltaBuffer = {
+  mode: "undecided" | "prose";
+  pending: string;
+};
+
+function createProtocolAwareDeltaBuffer(): ProtocolAwareDeltaBuffer {
+  return { mode: "undecided", pending: "" };
+}
+
+function appendProtocolAwareDelta(
+  buffer: ProtocolAwareDeltaBuffer,
+  delta: string
+): string {
+  if (buffer.mode === "prose") {
+    return stripRuntimeToolCallProtocolFragments(delta);
+  }
+
+  buffer.pending += delta;
+  if (couldStartRuntimeToolCallProtocol(buffer.pending)) {
+    return "";
+  }
+
+  buffer.mode = "prose";
+  const text = stripRuntimeToolCallProtocolFragments(buffer.pending);
+  buffer.pending = "";
+  return text;
+}
+
+function flushProtocolAwareDelta(
+  buffer: ProtocolAwareDeltaBuffer,
+  completeText: string
+): string {
+  if (buffer.mode === "prose" || !buffer.pending) {
+    return "";
+  }
+  const pending = buffer.pending;
+  buffer.pending = "";
+  return containsRuntimeToolCallProtocolFragments(completeText)
+    ? ""
+    : stripRuntimeToolCallProtocolFragments(pending);
+}
+
+function couldStartRuntimeToolCallProtocol(text: string): boolean {
+  const trimmed = text.trimStart();
+  if (!trimmed) {
+    return true;
+  }
+  if (trimmed.startsWith("```")) {
+    return true;
+  }
+  if (!trimmed.startsWith("{")) {
+    return false;
+  }
+  const compact = trimmed.replace(/\s+/g, "").replace(/^\{+/, "{");
+  const marker = '{"tool_call"';
+  return marker.startsWith(compact) || compact.startsWith(marker);
 }
 
 function shouldEmitDirectOpenClawDelta(
@@ -1204,7 +1285,7 @@ export async function* runOpenClawCliRequestStream(
   yield { type: "status", text: "Agent is thinking..." };
 
   const executedTools: ExecutedToolCall[] = [];
-  const rejectedDirectResponses: string[] = [];
+  const rejectedDirectResponses: RejectedDirectResponse[] = [];
   let classification = baseline.response.classification;
   let totalUsage: RunUsage | undefined;
   let totalTelemetry: RunTelemetry | undefined;
@@ -1252,10 +1333,10 @@ export async function* runOpenClawCliRequestStream(
         Boolean(openClawText)
       );
       if (
-        rejectedDirectResponses.length < maxBootstrapRetries &&
+        rejectedDirectResponses.length < maxDirectResponseRetries &&
         rejectedReason
       ) {
-        rejectedDirectResponses.push(rawText);
+        rejectedDirectResponses.push({ text: rawText, reason: rejectedReason });
         logInfo(
           `OpenClaw bootstrap retry runId=${request.runId ?? "unknown"} step=${step + 1} reason=${rejectedReason}`
         );
@@ -1263,6 +1344,11 @@ export async function* runOpenClawCliRequestStream(
       }
       if (rejectedReason === "empty_response") {
         throw new Error("OpenClaw Gateway returned no assistant text");
+      }
+      if (rejectedReason === "invalid_tool_protocol") {
+        throw new Error(
+          "OpenClaw Gateway repeatedly returned invalid Burble tool-call protocol"
+        );
       }
       const text = sanitizeBootstrapFragments(rawText, baseline.response.text);
       logInfo(
@@ -1384,6 +1470,7 @@ async function* collectOpenClawStream(
   let chunkCount = 0;
   let stderrChunkCount = 0;
   let deltaCount = 0;
+  const deltaBuffer = createProtocolAwareDeltaBuffer();
   let firstStdoutLogged = false;
   let firstStderrLogged = false;
   const startedAt = Date.now();
@@ -1447,7 +1534,10 @@ async function* collectOpenClawStream(
         chars: event.text.length,
         preview: event.text
       });
-      const delta = extractOpenClawStreamDelta(event.text);
+      const parsedDelta = extractOpenClawStreamDelta(event.text);
+      const delta = parsedDelta
+        ? appendProtocolAwareDelta(deltaBuffer, parsedDelta)
+        : "";
       if (delta && emitDeltas) {
         deltaCount += 1;
         logStreamDebug(config, logInfo, "delta parsed", {
@@ -1483,6 +1573,22 @@ async function* collectOpenClawStream(
     }
 
     exitCode = event.exitCode;
+  }
+
+  const bufferedDelta = flushProtocolAwareDelta(
+    deltaBuffer,
+    extractOpenClawText(stdout) || stdout
+  );
+  if (bufferedDelta && emitDeltas) {
+    deltaCount += 1;
+    logStreamDebug(config, logInfo, "delta parsed", {
+      runId: request.runId ?? "unknown",
+      elapsedMs: Date.now() - startedAt,
+      deltaCount,
+      chars: bufferedDelta.length,
+      preview: bufferedDelta
+    });
+    yield { type: "message_delta", text: bufferedDelta };
   }
 
   logStreamDebug(config, logInfo, "stdout complete", {
@@ -3104,7 +3210,7 @@ function buildPlanningPrompt(
   request: RunRequest,
   toolContext: BurbleToolContext,
   executedTools: ExecutedToolCall[] = [],
-  rejectedDirectResponses: string[] = []
+  rejectedDirectResponses: RejectedDirectResponse[] = []
 ): string {
   return buildOpenClawPrompt(
     config,
@@ -3120,7 +3226,7 @@ function buildOpenClawPrompt(
   request: RunRequest,
   toolContext: BurbleToolContext,
   executedTools: ExecutedToolCall[] = [],
-  rejectedBootstrapResponses: string[] = []
+  rejectedDirectResponses: RejectedDirectResponse[] = []
 ): string {
   const sections = [
     "Preloaded Burble runtime skills:",
@@ -3160,11 +3266,19 @@ function buildOpenClawPrompt(
       "Return either exactly one more tool_call JSON object if another provider action is required, or the final Slack-ready answer."
     );
   } else {
-    if (rejectedBootstrapResponses.length > 0) {
+    const rejectedResponse = rejectedDirectResponses.at(-1);
+    if (rejectedResponse?.reason === "invalid_tool_protocol") {
+      sections.push(
+        "",
+        "Your previous response looked like a Burble tool call but was invalid or incomplete:",
+        truncate(rejectedResponse.text, 600),
+        "Repair it now. Return exactly one complete tool_call JSON object matching an Available Burble tool, or return normal final Slack-ready prose with no tool protocol text."
+      );
+    } else if (rejectedResponse) {
       sections.push(
         "",
         "Previous response was rejected because it asked for assistant/user setup instead of answering the request:",
-        truncate(rejectedBootstrapResponses.at(-1) ?? "", 600),
+        truncate(rejectedResponse.text, 600),
         "Do not repeat setup/onboarding. Answer the current user request directly or use an available tool."
       );
     }
@@ -3377,9 +3491,12 @@ function shouldRejectDirectOpenClawResponse(
   baselineText: string,
   hasToolResult: boolean,
   hasOpenClawText: boolean
-): "bootstrap_response" | "baseline_echo" | "empty_response" | null {
+): DirectResponseRejectionReason | null {
   if (!hasToolResult && !hasOpenClawText) {
     return "empty_response";
+  }
+  if (containsRuntimeToolCallProtocolFragments(text)) {
+    return "invalid_tool_protocol";
   }
   if (isBootstrapSetupAnswer(text)) {
     return "bootstrap_response";

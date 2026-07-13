@@ -2221,6 +2221,148 @@ describe("runOpenClawCliRequest", () => {
     expect(response.response.text).toContain("burble #75");
   });
 
+  test("repairs an unterminated scheduled provider tool call before executing it", async () => {
+    const prompts: string[] = [];
+    const toolCalls: Array<{ toolName: string; body: unknown }> = [];
+    const logs: string[] = [];
+    const validToolCall = JSON.stringify({
+      tool_call: {
+        name: "burble_provider_call",
+        arguments: {
+          toolName: "github_search_issues",
+          input: {
+            jobId: "job-pr-monitor",
+            query: "org:apelogic-ai is:pr is:open",
+          },
+        },
+      },
+    });
+    const responses = [
+      validToolCall.slice(0, -1),
+      validToolCall,
+      "New PRs in apelogic-ai: burble #99",
+    ];
+
+    const response = await runOpenClawCliRequest(
+      {
+        runId: "run-repair-malformed-tool-call",
+        executionMode: "native-runtime",
+        runtime: {
+          id: "rt_test",
+          manifest: providerManifest(),
+        },
+        input: {
+          text: "Check for new PRs in the apelogic-ai GitHub org",
+          toolGroups: {
+            groups: ["github"],
+            reasons: ["scheduled-job:allowed-tools"],
+          },
+          scheduledJob: {
+            jobId: "job-pr-monitor",
+            capabilityProfile: "scheduled_job",
+            allowedTools: ["github_search_issues"],
+            routeId: "convrt_abc123",
+            runtimeType: "openclaw",
+            stateRefs: [],
+            visibilityPolicy: {},
+          },
+          connections: {
+            github: {
+              connected: true,
+              email: "person@example.com",
+              providerLogin: "person",
+            },
+          },
+        },
+      },
+      config,
+      async (toolName, body) => {
+        toolCalls.push({ toolName, body });
+        return {
+          classification: "user_private",
+          content: { items: [] },
+        };
+      },
+      async (_command, args) => {
+        prompts.push(args[args.indexOf("--message") + 1]);
+        const stdout = responses.shift();
+        if (!stdout) {
+          throw new Error("unexpected OpenClaw call");
+        }
+        return { exitCode: 0, stdout, stderr: "" };
+      },
+      (message) => logs.push(message),
+    );
+
+    expect(prompts).toHaveLength(3);
+    expect(prompts[1]).toContain(
+      "Your previous response looked like a Burble tool call but was invalid or incomplete",
+    );
+    expect(toolCalls).toHaveLength(1);
+    expect(response.response.text).toBe("New PRs in apelogic-ai: burble #99");
+    expect(logs.join("\n")).toContain(
+      "reason=invalid_tool_protocol",
+    );
+  });
+
+  test("fails closed when OpenClaw repeats an unterminated tool call", async () => {
+    const malformed =
+      '{"tool_call":{"name":"burble_provider_call","arguments":{"toolName":"github_search_issues","input":{"query":"org:apelogic-ai is:pr is:open"}}}';
+    let modelCalls = 0;
+    let toolCalls = 0;
+
+    await expect(
+      runOpenClawCliRequest(
+        {
+          runId: "run-repeat-malformed-tool-call",
+          executionMode: "native-runtime",
+          runtime: {
+            id: "rt_test",
+            manifest: providerManifest(),
+          },
+          input: {
+            text: "Check for new PRs in the apelogic-ai GitHub org",
+            toolGroups: {
+              groups: ["github"],
+              reasons: ["scheduled-job:allowed-tools"],
+            },
+            scheduledJob: {
+              jobId: "job-pr-monitor",
+              capabilityProfile: "scheduled_job",
+              allowedTools: ["github_search_issues"],
+              routeId: "convrt_abc123",
+              runtimeType: "openclaw",
+              stateRefs: [],
+              visibilityPolicy: {},
+            },
+            connections: {
+              github: {
+                connected: true,
+                email: "person@example.com",
+                providerLogin: "person",
+              },
+            },
+          },
+        },
+        config,
+        async () => {
+          toolCalls += 1;
+          return { classification: "user_private", content: [] };
+        },
+        async () => {
+          modelCalls += 1;
+          return { exitCode: 0, stdout: malformed, stderr: "" };
+        },
+        () => undefined,
+      ),
+    ).rejects.toThrow(
+      "OpenClaw Gateway repeatedly returned invalid Burble tool-call protocol",
+    );
+
+    expect(modelCalls).toBe(2);
+    expect(toolCalls).toBe(0);
+  });
+
   test("hides scheduled web provider tools selected by group without a grant", async () => {
     const prompts: string[] = [];
     const toolCalls: Array<{ toolName: string; body: unknown }> = [];
@@ -3795,15 +3937,18 @@ describe("runOpenClawCliRequest", () => {
     );
   });
 
-  test("buffers streamed OpenClaw gateway HTTP tool-call JSON instead of showing it", async () => {
+  test("repairs and buffers malformed streamed gateway tool-call JSON", async () => {
     const events: Array<RunEvent> = [];
+    const requests: Array<Record<string, unknown>> = [];
+    const validToolCall = JSON.stringify({
+      tool_call: {
+        name: "jira.searchIssues",
+        arguments: { jql: 'text ~ "blocked"' }
+      }
+    });
     const providerTexts = [
-      JSON.stringify({
-        tool_call: {
-          name: "jira.searchIssues",
-          arguments: { jql: 'text ~ "blocked"' }
-        }
-      }),
+      validToolCall.slice(0, -1),
+      validToolCall,
       "ENG-7 is blocked."
     ];
 
@@ -3813,6 +3958,7 @@ describe("runOpenClawCliRequest", () => {
           string,
           unknown
         >;
+        requests.push(requestBody);
         expect(requestBody.stream).toBe(true);
         const text = providerTexts.shift();
         if (!text) {
@@ -3920,6 +4066,10 @@ describe("runOpenClawCliRequest", () => {
         text: "ENG-7 is blocked."
       }
     });
+    expect(requests).toHaveLength(3);
+    expect(String(requests[1].input)).toContain(
+      "Your previous response looked like a Burble tool call but was invalid or incomplete"
+    );
     expect(
       events.some(
         (event) =>
