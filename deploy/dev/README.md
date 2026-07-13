@@ -455,6 +455,62 @@ For default Burble runtime images, the sandbox start command is selected from
 the engine automatically. Override `AGENT_RUNTIME_SANDBOX_START_COMMAND` only
 for custom runtime images.
 
+### Burble Native hand test
+
+This switches the default runtime for the DEV deployment. Do not use it as a
+single-user canary: users with an active allowed runtime preference may keep
+that preference, while other new and reprovisioned runtimes use Burble Native.
+
+Set these values in `deploy/dev/compose/.env`:
+
+```env
+AGENT_MODE=llm
+AGENT_RUNTIME=burble-runtime
+AGENT_RUNTIME_FACTORY=sandbox
+AGENT_RUNTIME_ENGINE=burble-native
+AGENT_RUNTIME_IMAGE=burble-native-runtime:dev
+```
+
+Keep `LLM_GW_BASE_URL` pointed at the same-host LiteLLM endpoint, then deploy
+through the normal OpenShell path:
+
+```bash
+./deploy-personal-runtimes.sh --agentgateway --openshell
+```
+
+In Slack, run `/agent status` and confirm the effective engine is
+`burble-native`. Then exercise the packaged model path, one provider call, and
+attachment fetch with these messages:
+
+```text
+Reply exactly: Burble Native is running.
+Use GitHub tools and tell me my authenticated GitHub login.
+Summarize the attached text file in one sentence.
+```
+
+The first request must complete without a tool. The second must show one GitHub
+tool completion before the final answer. Attach a small text file to the third;
+it must show `conversation get Attachment` before the summary. On the host,
+confirm the runtime engine and image:
+
+```bash
+docker ps --filter name=openshell-b- --format '{{.Names}} {{.Image}}'
+docker compose logs --since=10m burble-app llm-gw
+```
+
+#### Rollback to OpenClaw
+
+Restore these `.env` values and run the same deployment helper:
+
+```env
+AGENT_RUNTIME_ENGINE=openclaw
+AGENT_RUNTIME_IMAGE=burble-openclaw-nemoclaw-openclaw-cli:dev
+```
+
+```bash
+./deploy-personal-runtimes.sh --agentgateway --openshell
+```
+
 After connecting Jira, a hand-test for the upstream MCP path is:
 
 ```text

@@ -12,7 +12,8 @@ request. The gap is runtime-side capability parity:
 
 - OpenClaw has a current-turn attachment fetch path.
 - Hermes does not expose attachment metadata or a fetch tool to the model.
-- burble-native is also not attachment-capable yet.
+- burble-native now exposes current-turn attachment metadata and fetches content
+  through `conversation.getAttachment`.
 
 The user-visible failure mode is an agent saying that the attached file is not
 available even though the user can see it attached to the Slack message.
@@ -27,7 +28,7 @@ available even though the user can see it attached to the Slack message.
 | Tool gateway | Exposes `conversation.getAttachment` for current-turn fetches |
 | OpenClaw | Lists current request attachments and exposes `conversation.getAttachment` |
 | Hermes | Claims `attachments: false`; no prompt section or fetch tool |
-| burble-native | Claims `attachments: false`; no fetch tool in the native tool loop |
+| burble-native | Claims `attachments: true`; catalog-driven native loop exposes `conversation.getAttachment` |
 | Direct AI-SDK runner | Lists attachment metadata, but has no fetch tool equivalent |
 
 ## Target Behavior
@@ -119,6 +120,8 @@ Hand test:
   and does not ask the user to re-upload or paste the file.
 
 ## Increment 3: burble-native Attachment Parity
+
+Status: complete.
 
 Goal: make the owned SDK runtime the reference implementation for attachment
 turns.

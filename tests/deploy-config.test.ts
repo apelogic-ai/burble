@@ -811,6 +811,15 @@ describe("dev deploy config", () => {
     }
   });
 
+  test("documents Burble Native deployment and hand testing", () => {
+    expect(deployReadme).toContain("### Burble Native hand test");
+    expect(deployReadme).toContain("AGENT_RUNTIME_ENGINE=burble-native");
+    expect(deployReadme).toContain(
+      "Use GitHub tools and tell me my authenticated GitHub login."
+    );
+    expect(deployReadme).toContain("Rollback to OpenClaw");
+  });
+
   test("runs selectable runtime images in CI readiness and boots Burble Native", () => {
     expect(ciWorkflow).toContain("Build OpenClaw/NemoClaw CLI runtime image");
     expect(ciWorkflow).toContain("Build Hermes runtime image");
