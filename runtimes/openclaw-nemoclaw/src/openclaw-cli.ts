@@ -1,6 +1,9 @@
 import { createHash, randomUUID } from "node:crypto";
 import { formatRuntimeScheduledJobContextLines } from "@burble/runtime-sdk/scheduled-job-context";
-import { stripRuntimeToolCallProtocolFragments } from "@burble/runtime-sdk/runtime-text-protocol";
+import {
+  containsRuntimeToolCallProtocolFragments,
+  stripRuntimeToolCallProtocolFragments
+} from "@burble/runtime-sdk/runtime-text-protocol";
 import {
   accessSync,
   constants as fsConstants,
@@ -13,6 +16,7 @@ import { mkdir, readFile, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import type { RuntimeConfig } from "./config";
 import { readGatewayDiagnosticTextSince } from "./gateway-diagnostics";
+import { scheduledOpenClawAgentId } from "./llm-config";
 import { info, type RuntimeLogger } from "./logger";
 import { buildOpenClawProcessEnv } from "./process-env";
 import {
@@ -84,12 +88,19 @@ type CliSpawnProcess = {
   kill: () => void;
 };
 
+class OpenClawGatewayHardDeadlineError extends Error {
+  constructor(timeoutMs: number) {
+    super(`OpenClaw Gateway request exceeded the ${timeoutMs}ms hard deadline`);
+    this.name = "OpenClawGatewayHardDeadlineError";
+  }
+}
+
 const streamHeartbeatMs = 8_000;
-const openClawGatewayStreamIdleTimeoutMs = 12_000;
+const openClawGatewayInitialResponseTimeoutMs = 12_000;
 const defaultOpenClawGatewayRetryBaseMs = 1_500;
 const defaultOpenClawGatewayRetryMaxMs = 10_000;
 const maxPlannedToolCalls = 5;
-const maxBootstrapRetries = 1;
+const maxDirectResponseRetries = 1;
 
 type ToolCatalogItem = {
   name: string;
@@ -100,6 +111,17 @@ type ToolCatalogItem = {
 type PlannedToolCall = {
   name: string;
   arguments: Record<string, unknown>;
+};
+
+type DirectResponseRejectionReason =
+  | "bootstrap_response"
+  | "baseline_echo"
+  | "empty_response"
+  | "invalid_tool_protocol";
+
+type RejectedDirectResponse = {
+  text: string;
+  reason: DirectResponseRejectionReason;
 };
 
 type ExecutedToolCall = {
@@ -156,11 +178,12 @@ export async function runOpenClawCliRequest(
 
   const sessionId = buildRunSessionId(request);
   const sessionScope = buildRunSessionScope(request);
+  const agentId = resolveOpenClawAgentId(request, config);
   logInfo(
-    `OpenClaw agent start runId=${request.runId ?? "unknown"} agent=${config.openClawAgent} sessionId=${sessionId} sessionScope=${sessionScope} textLength=${request.input.text.length} classification=${baseline.response.classification}`
+    `OpenClaw agent start runId=${request.runId ?? "unknown"} agent=${agentId} sessionId=${sessionId} sessionScope=${sessionScope} textLength=${request.input.text.length} classification=${baseline.response.classification}`
   );
   const executedTools: ExecutedToolCall[] = [];
-  const rejectedDirectResponses: string[] = [];
+  const rejectedDirectResponses: RejectedDirectResponse[] = [];
   let classification = baseline.response.classification;
   let totalUsage: RunUsage | undefined;
   let totalTelemetry: RunTelemetry | undefined;
@@ -205,10 +228,10 @@ export async function runOpenClawCliRequest(
         Boolean(openClawText)
       );
       if (
-        rejectedDirectResponses.length < maxBootstrapRetries &&
+        rejectedDirectResponses.length < maxDirectResponseRetries &&
         rejectedReason
       ) {
-        rejectedDirectResponses.push(rawText);
+        rejectedDirectResponses.push({ text: rawText, reason: rejectedReason });
         logInfo(
           `OpenClaw bootstrap retry runId=${request.runId ?? "unknown"} step=${step + 1} reason=${rejectedReason}`
         );
@@ -216,6 +239,11 @@ export async function runOpenClawCliRequest(
       }
       if (rejectedReason === "empty_response") {
         throw new Error("OpenClaw Gateway returned no assistant text");
+      }
+      if (rejectedReason === "invalid_tool_protocol") {
+        throw new Error(
+          "OpenClaw Gateway repeatedly returned invalid Burble tool-call protocol"
+        );
       }
       const text = sanitizeBootstrapFragments(rawText, baseline.response.text);
       logInfo(
@@ -316,10 +344,11 @@ async function runOpenClawCommand(
 
   const startedAt = Date.now();
   const rawStreamPath = await prepareRawStreamPath(config, request, step, logInfo);
-  const args = buildOpenClawArgs(config, prompt, sessionId, rawStreamPath);
+  const agentId = resolveOpenClawAgentId(request, config);
+  const args = buildOpenClawArgs(config, prompt, sessionId, rawStreamPath, agentId);
   const env = openClawEnv(config);
   logInfo(
-    `OpenClaw command start runId=${request.runId ?? "unknown"} step=${step} command=${config.openClawCommand} agent=${config.openClawAgent} timeoutMs=${config.openClawTimeoutMs}${summarizePromptForLog(prompt)}${summarizeOpenClawArgsForLog(args)}${summarizeLogObject("env", env)}`
+    `OpenClaw command start runId=${request.runId ?? "unknown"} step=${step} command=${config.openClawCommand} agent=${agentId} timeoutMs=${config.openClawTimeoutMs}${summarizePromptForLog(prompt)}${summarizeOpenClawArgsForLog(args)}${summarizeLogObject("env", env)}`
   );
   const result = await runCommand(
     config.openClawCommand,
@@ -392,10 +421,11 @@ async function runOpenClawGatewayHttpRequest(
   onStatus?: (status: string) => void
 ): Promise<CliCommandResult> {
   const startedAt = Date.now();
-  const baseSessionKey = buildGatewayHttpSessionKey(config, sessionId);
+  const agentId = resolveOpenClawAgentId(request, config);
+  const baseSessionKey = buildGatewayHttpSessionKey(agentId, sessionId);
   const endpoint = buildGatewayHttpResponsesUrl(config);
   logInfo(
-    `OpenClaw gateway http start runId=${request.runId ?? "unknown"} step=${step} agent=${config.openClawAgent} endpoint=/v1/responses timeoutMs=${config.openClawTimeoutMs}${summarizePromptForLog(prompt)} sessionKey=${baseSessionKey}`
+    `OpenClaw gateway http start runId=${request.runId ?? "unknown"} step=${step} agent=${agentId} endpoint=/v1/responses timeoutMs=${config.openClawTimeoutMs}${summarizePromptForLog(prompt)} sessionKey=${baseSessionKey}`
   );
   logStreamDebug(config, logInfo, "prompt preview", {
     runId: request.runId ?? "unknown",
@@ -407,56 +437,64 @@ async function runOpenClawGatewayHttpRequest(
   let stdout = "";
   let stderr = "";
   const maxAttempts = 3;
+  const hardDeadlineAt = startedAt + config.openClawTimeoutMs;
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     const attemptStartedAt = Date.now();
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), config.openClawTimeoutMs);
+    const requestTimeoutMs = onDelta
+      ? Math.min(config.openClawTimeoutMs, openClawGatewayInitialResponseTimeoutMs)
+      : config.openClawTimeoutMs;
     const attemptSessionId = buildGatewayHttpAttemptSessionId(
       sessionId,
       attempt
     );
     const attemptSessionKey = buildGatewayHttpSessionKey(
-      config,
+      agentId,
       attemptSessionId
     );
+    const gatewayCorrelationId = hashOpenClawPromptCacheKey(attemptSessionKey);
+    logInfo(
+      `OpenClaw gateway provider correlation pending runId=${request.runId ?? "unknown"} step=${step} attempt=${attempt} gatewayCorrelationId=${gatewayCorrelationId}`
+    );
+    const hardDeadlineRemainingMs =
+      openClawGatewayHardDeadlineRemainingMs(hardDeadlineAt);
+    const headerTimeoutIsHardDeadline =
+      hardDeadlineRemainingMs <= requestTimeoutMs;
     try {
-      const response = await fetchGatewayHttpResponse(
-        endpoint,
-        config,
-        request,
-        attemptSessionKey,
-        prompt,
-        Boolean(onDelta),
-        controller.signal
+      const response = await raceWithOpenClawGatewayTimeout(
+        fetchGatewayHttpResponse(
+          endpoint,
+          config,
+          request,
+          agentId,
+          attemptSessionKey,
+          prompt,
+          Boolean(onDelta),
+          controller.signal
+        ),
+        Math.min(
+          requestTimeoutMs,
+          hardDeadlineRemainingMs
+        ),
+        () =>
+          headerTimeoutIsHardDeadline
+            ? new OpenClawGatewayHardDeadlineError(config.openClawTimeoutMs)
+            : new Error(
+                `OpenClaw Gateway did not return response headers within ${requestTimeoutMs}ms`
+              ),
+        () => controller.abort()
       );
       if (!response.ok) {
-        const responseText = await response.text();
+        const responseText = await raceWithOpenClawGatewayHardDeadline(
+          response.text(),
+          hardDeadlineAt,
+          config.openClawTimeoutMs,
+          () => controller.abort()
+        );
         stderr = responseText;
         logInfo(
           `OpenClaw gateway http error runId=${request.runId ?? "unknown"} step=${step} status=${response.status}${summarizeLogObject("bodyPreview", responseText)}`
         );
-        if (
-          attempt < maxAttempts &&
-          isRetryableOpenClawGatewayProviderError(response.status, responseText)
-        ) {
-          const retryDelayMs = openClawGatewayRetryDelayMs(config, attempt);
-          const nextSessionKey = buildGatewayHttpSessionKey(
-            config,
-            buildGatewayHttpAttemptSessionId(sessionId, attempt + 1)
-          );
-          const status = formatOpenClawGatewayRetryStatus(
-            retryDelayMs,
-            attempt + 1,
-            maxAttempts
-          );
-          onStatus?.(status);
-          logInfo(
-            `OpenClaw gateway http retry runId=${request.runId ?? "unknown"} step=${step} attempt=${attempt} status=${response.status} reason=upstream_provider_timeout elapsedMs=${Date.now() - attemptStartedAt} retryDelayMs=${retryDelayMs} nextSessionKey=${nextSessionKey}`
-          );
-          clearTimeout(timeout);
-          await sleep(retryDelayMs);
-          continue;
-        }
         const gatewayDiagnostics = readGatewayDiagnosticTextSince(startedAt);
         const usageTelemetry = logOpenClawUsageFromOutput(
           request,
@@ -473,46 +511,33 @@ async function runOpenClawGatewayHttpRequest(
         return { exitCode: 1, stdout, stderr, ...usageTelemetry };
       }
 
-      const responseResult = onDelta && isGatewayHttpStreamingResponse(response)
-        ? await readGatewayHttpStreamingResponse(
+      let responseResult: GatewayHttpResponseResult;
+      if (onDelta && isGatewayHttpStreamingResponse(response)) {
+        responseResult = await raceWithOpenClawGatewayHardDeadline(
+          readGatewayHttpStreamingResponse(
             response,
             onDelta,
-            Math.min(
-              config.openClawTimeoutMs,
-              openClawGatewayStreamIdleTimeoutMs
-            ),
             suppressedBaselineText
-          )
-        : {
-            responseText: await response.text(),
-            stdout: "",
-            deltaCount: 0
-          };
+          ),
+          hardDeadlineAt,
+          config.openClawTimeoutMs,
+          () => controller.abort()
+        );
+      } else {
+        responseResult = {
+          responseText: await raceWithOpenClawGatewayHardDeadline(
+            response.text(),
+            hardDeadlineAt,
+            config.openClawTimeoutMs,
+            () => controller.abort()
+          ),
+          stdout: "",
+          deltaCount: 0
+        };
+      }
       const responseText = responseResult.responseText;
       if (responseResult.errorText) {
         stderr = responseResult.errorText;
-        if (
-          attempt < maxAttempts &&
-          isRetryableOpenClawGatewayProviderMessage(stderr)
-        ) {
-          const retryDelayMs = openClawGatewayRetryDelayMs(config, attempt);
-          const nextSessionKey = buildGatewayHttpSessionKey(
-            config,
-            buildGatewayHttpAttemptSessionId(sessionId, attempt + 1)
-          );
-          const status = formatOpenClawGatewayRetryStatus(
-            retryDelayMs,
-            attempt + 1,
-            maxAttempts
-          );
-          onStatus?.(status);
-          logInfo(
-            `OpenClaw gateway http retry runId=${request.runId ?? "unknown"} step=${step} attempt=${attempt} status=${response.status} reason=response_failed elapsedMs=${Date.now() - attemptStartedAt} retryDelayMs=${retryDelayMs} nextSessionKey=${nextSessionKey}${summarizeLogObject("error", stderr)}`
-          );
-          clearTimeout(timeout);
-          await sleep(retryDelayMs);
-          continue;
-        }
         const gatewayDiagnostics = readGatewayDiagnosticTextSince(startedAt);
         const usageTelemetry = logOpenClawUsageFromOutput(
           request,
@@ -559,11 +584,12 @@ async function runOpenClawGatewayHttpRequest(
       stderr = error instanceof Error ? error.message : String(error);
       if (
         attempt < maxAttempts &&
+        !(error instanceof OpenClawGatewayHardDeadlineError) &&
         isRetryableOpenClawGatewayTransportError(error)
       ) {
         const retryDelayMs = openClawGatewayRetryDelayMs(config, attempt);
         const nextSessionKey = buildGatewayHttpSessionKey(
-          config,
+          agentId,
           buildGatewayHttpAttemptSessionId(sessionId, attempt + 1)
         );
         const status = formatOpenClawGatewayRetryStatus(
@@ -575,7 +601,6 @@ async function runOpenClawGatewayHttpRequest(
         logInfo(
           `OpenClaw gateway http retry runId=${request.runId ?? "unknown"} step=${step} attempt=${attempt} reason=transport_error elapsedMs=${Date.now() - attemptStartedAt} retryDelayMs=${retryDelayMs} nextSessionKey=${nextSessionKey}${summarizeLogObject("error", stderr)}`
         );
-        clearTimeout(timeout);
         await sleep(retryDelayMs);
         continue;
       }
@@ -597,7 +622,14 @@ async function runOpenClawGatewayHttpRequest(
       );
       return { exitCode: 1, stdout, stderr, ...usageTelemetry };
     } finally {
-      clearTimeout(timeout);
+      const llmCorrelationId = await resolveOpenClawProviderCorrelationId(
+        config,
+        agentId,
+        attemptSessionKey
+      );
+      logInfo(
+        `OpenClaw gateway provider correlation resolved runId=${request.runId ?? "unknown"} step=${step} attempt=${attempt} gatewayCorrelationId=${gatewayCorrelationId} llmCorrelationId=${llmCorrelationId ?? "unresolved"}`
+      );
     }
   }
   throw new Error("OpenClaw gateway HTTP retry loop exhausted unexpectedly");
@@ -619,27 +651,7 @@ function formatOpenClawGatewayRetryStatus(
   maxAttempts: number
 ): string {
   const retrySeconds = Math.max(1, Math.ceil(retryDelayMs / 1000));
-  return `The LLM provider timed out. Retrying in ${retrySeconds}s (${nextAttempt}/${maxAttempts})...`;
-}
-
-function isRetryableOpenClawGatewayProviderError(
-  status: number,
-  responseText: string
-): boolean {
-  if (status !== 408 && status < 500) {
-    return false;
-  }
-  return isRetryableOpenClawGatewayProviderMessage(responseText);
-}
-
-function isRetryableOpenClawGatewayProviderMessage(responseText: string): boolean {
-  const normalized = responseText.toLowerCase();
-  return (
-    normalized.includes("upstream provider timeout") ||
-    normalized.includes("server_error") ||
-    normalized.includes('"code":"api_error"') ||
-    normalized.includes('"code":"server_error"')
-  );
+  return `The runtime connection failed. Retrying in ${retrySeconds}s (${nextAttempt}/${maxAttempts})...`;
 }
 
 function isRetryableOpenClawGatewayTransportError(error: unknown): boolean {
@@ -651,6 +663,7 @@ function isRetryableOpenClawGatewayTransportError(error: unknown): boolean {
     normalized.includes("abort") ||
     normalized.includes("timeout") ||
     normalized.includes("timed out") ||
+    normalized.includes("did not return response headers") ||
     normalized.includes("econnreset") ||
     normalized.includes("econnrefused") ||
     normalized.includes("socket hang up") ||
@@ -676,10 +689,11 @@ async function* collectOpenClawGatewayHttpResponse(
   const startedAt = Date.now();
   const deltas: string[] = [];
   const statuses: string[] = [];
+  const deltaBuffer = createProtocolAwareDeltaBuffer();
   let wakeDeltas: (() => void) | null = null;
   let wakeStatus: (() => void) | null = null;
   const pushDelta = (delta: string) => {
-    const sanitizedDelta = stripRuntimeToolCallProtocolFragments(delta);
+    const sanitizedDelta = appendProtocolAwareDelta(deltaBuffer, delta);
     if (sanitizedDelta.trim()) {
       deltas.push(sanitizedDelta);
     }
@@ -757,6 +771,10 @@ async function* collectOpenClawGatewayHttpResponse(
 
     result = raced.value;
   }
+  const bufferedDelta = flushProtocolAwareDelta(deltaBuffer, result.stdout);
+  if (bufferedDelta.trim()) {
+    deltas.push(bufferedDelta);
+  }
   while (statuses.length > 0) {
     const status = statuses.shift();
     if (status) {
@@ -816,8 +834,65 @@ function isGatewayHttpStreamingResponse(response: Response): boolean {
 }
 
 function shouldEmitGatewayHttpDelta(stdout: string): boolean {
-  const parsed = parseJsonObject(stdout.trim());
-  return !(parsed && typeof parsed.tool_call === "object" && parsed.tool_call !== null);
+  return !containsRuntimeToolCallProtocolFragments(stdout);
+}
+
+type ProtocolAwareDeltaBuffer = {
+  mode: "undecided" | "prose";
+  pending: string;
+};
+
+function createProtocolAwareDeltaBuffer(): ProtocolAwareDeltaBuffer {
+  return { mode: "undecided", pending: "" };
+}
+
+function appendProtocolAwareDelta(
+  buffer: ProtocolAwareDeltaBuffer,
+  delta: string
+): string {
+  if (buffer.mode === "prose") {
+    return stripRuntimeToolCallProtocolFragments(delta);
+  }
+
+  buffer.pending += delta;
+  if (couldStartRuntimeToolCallProtocol(buffer.pending)) {
+    return "";
+  }
+
+  buffer.mode = "prose";
+  const text = stripRuntimeToolCallProtocolFragments(buffer.pending);
+  buffer.pending = "";
+  return text;
+}
+
+function flushProtocolAwareDelta(
+  buffer: ProtocolAwareDeltaBuffer,
+  completeText: string
+): string {
+  if (buffer.mode === "prose" || !buffer.pending) {
+    return "";
+  }
+  const pending = buffer.pending;
+  buffer.pending = "";
+  return containsRuntimeToolCallProtocolFragments(completeText)
+    ? ""
+    : stripRuntimeToolCallProtocolFragments(pending);
+}
+
+function couldStartRuntimeToolCallProtocol(text: string): boolean {
+  const trimmed = text.trimStart();
+  if (!trimmed) {
+    return true;
+  }
+  if (trimmed.startsWith("```")) {
+    return true;
+  }
+  if (!trimmed.startsWith("{")) {
+    return false;
+  }
+  const compact = trimmed.replace(/\s+/g, "").replace(/^\{+/, "{");
+  const marker = '{"tool_call"';
+  return marker.startsWith(compact) || compact.startsWith(marker);
 }
 
 function shouldEmitDirectOpenClawDelta(
@@ -839,6 +914,7 @@ async function fetchGatewayHttpResponse(
   endpoint: string,
   config: RuntimeConfig,
   request: RunRequest,
+  agentId: string,
   sessionKey: string,
   prompt: string,
   stream: boolean,
@@ -849,12 +925,12 @@ async function fetchGatewayHttpResponse(
     headers: {
       "authorization": `Bearer ${config.openClawGatewayToken}`,
       "content-type": "application/json",
-      "x-openclaw-agent-id": config.openClawAgent,
+      "x-openclaw-agent-id": agentId,
       "x-openclaw-message-channel": resolveGatewayHttpMessageChannel(request),
       "x-openclaw-session-key": sessionKey
     },
     body: JSON.stringify({
-      model: `openclaw/${config.openClawAgent}`,
+      model: `openclaw/${agentId}`,
       input: prompt,
       stream
     }),
@@ -865,7 +941,6 @@ async function fetchGatewayHttpResponse(
 async function readGatewayHttpStreamingResponse(
   response: Response,
   onDelta: (delta: string) => void,
-  idleTimeoutMs: number,
   suppressedBaselineText?: string
 ): Promise<GatewayHttpResponseResult> {
   if (!response.body) {
@@ -888,10 +963,7 @@ async function readGatewayHttpStreamingResponse(
   let deltaCount = 0;
 
   while (true) {
-    const { value, done } = await readStreamChunkWithIdleTimeout(
-      reader,
-      idleTimeoutMs
-    );
+    const { value, done } = await reader.read();
     if (done) {
       break;
     }
@@ -900,7 +972,11 @@ async function readGatewayHttpStreamingResponse(
     buffer = parsed.remainder;
     for (const payload of parsed.payloads) {
       if (payload === "[DONE]") {
-        continue;
+        return {
+          responseText,
+          stdout: stdout || extractOpenResponsesText(responseText) || "",
+          deltaCount
+        };
       }
       responseText = appendStreamRecord(responseText, payload);
       const event = parseJsonObject(payload);
@@ -932,7 +1008,11 @@ async function readGatewayHttpStreamingResponse(
   const parsed = readCompleteSsePayloads(`${buffer}\n\n`);
   for (const payload of parsed.payloads) {
     if (payload === "[DONE]") {
-      continue;
+      return {
+        responseText,
+        stdout: stdout || extractOpenResponsesText(responseText) || "",
+        deltaCount
+      };
     }
     responseText = appendStreamRecord(responseText, payload);
     const event = parseJsonObject(payload);
@@ -1009,23 +1089,39 @@ function createGatewayHttpDeltaGate(
   };
 }
 
-async function readStreamChunkWithIdleTimeout(
-  reader: ReadableStreamDefaultReader<Uint8Array>,
-  idleTimeoutMs: number
-) {
+function openClawGatewayHardDeadlineRemainingMs(hardDeadlineAt: number): number {
+  return Math.max(0, hardDeadlineAt - Date.now());
+}
+
+async function raceWithOpenClawGatewayHardDeadline<T>(
+  operation: Promise<T>,
+  hardDeadlineAt: number,
+  timeoutMs: number,
+  onTimeout?: () => void
+): Promise<T> {
+  return raceWithOpenClawGatewayTimeout(
+    operation,
+    openClawGatewayHardDeadlineRemainingMs(hardDeadlineAt),
+    () => new OpenClawGatewayHardDeadlineError(timeoutMs),
+    onTimeout
+  );
+}
+
+async function raceWithOpenClawGatewayTimeout<T>(
+  operation: Promise<T>,
+  timeoutMs: number,
+  createError: () => Error,
+  onTimeout?: () => void
+): Promise<T> {
   let timeout: ReturnType<typeof setTimeout> | undefined;
   try {
     return await Promise.race([
-      reader.read(),
+      operation,
       new Promise<never>((_, reject) => {
         timeout = setTimeout(() => {
-          reader.cancel().catch(() => undefined);
-          reject(
-            new Error(
-              `OpenClaw Gateway response stream stalled for ${idleTimeoutMs}ms`
-            )
-          );
-        }, idleTimeoutMs);
+          reject(createError());
+          scheduleOpenClawGatewayCleanup(onTimeout);
+        }, Math.max(0, timeoutMs));
       })
     ]);
   } finally {
@@ -1033,6 +1129,19 @@ async function readStreamChunkWithIdleTimeout(
       clearTimeout(timeout);
     }
   }
+}
+
+function scheduleOpenClawGatewayCleanup(cleanup?: () => void): void {
+  if (!cleanup) {
+    return;
+  }
+  setTimeout(() => {
+    try {
+      cleanup();
+    } catch {
+      // Deadline rejection must not depend on transport cleanup succeeding.
+    }
+  }, 0);
 }
 
 function readCompleteSsePayloads(input: string): {
@@ -1070,10 +1179,19 @@ function appendStreamRecord(current: string, payload: string): string {
 }
 
 function buildGatewayHttpSessionKey(
-  config: RuntimeConfig,
+  agentId: string,
   sessionId: string
 ): string {
-  return `agent:${config.openClawAgent}:explicit:${sessionId}`;
+  return `agent:${agentId}:explicit:${sessionId}`;
+}
+
+function resolveOpenClawAgentId(
+  request: RunRequest,
+  config: RuntimeConfig
+): string {
+  return request.input.scheduledJob
+    ? scheduledOpenClawAgentId(config.openClawAgent)
+    : config.openClawAgent;
 }
 
 function buildGatewayHttpAttemptSessionId(
@@ -1085,6 +1203,40 @@ function buildGatewayHttpAttemptSessionId(
   }
 
   return `${sessionId}-attempt-${attempt}`;
+}
+
+function hashOpenClawPromptCacheKey(sessionKey: string): string {
+  return hashLogValue(Array.from(sessionKey).slice(0, 64).join(""));
+}
+
+export async function resolveOpenClawProviderCorrelationId(
+  config: RuntimeConfig,
+  agentId: string,
+  sessionKey: string
+): Promise<string | null> {
+  const sessionsPath = join(
+    config.openClawStateDir,
+    "agents",
+    agentId,
+    "sessions",
+    "sessions.json"
+  );
+  try {
+    const parsed = JSON.parse(await readFile(sessionsPath, "utf8")) as Record<
+      string,
+      unknown
+    >;
+    const entry = parsed[sessionKey];
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+      return null;
+    }
+    const sessionId = (entry as Record<string, unknown>).sessionId;
+    return typeof sessionId === "string" && sessionId.trim()
+      ? hashOpenClawPromptCacheKey(sessionId)
+      : null;
+  } catch {
+    return null;
+  }
 }
 
 function buildGatewayHttpResponsesUrl(config: RuntimeConfig): string {
@@ -1126,13 +1278,14 @@ export async function* runOpenClawCliRequestStream(
 
   const sessionId = buildRunSessionId(request);
   const sessionScope = buildRunSessionScope(request);
+  const agentId = resolveOpenClawAgentId(request, config);
   logInfo(
-    `OpenClaw agent start runId=${request.runId ?? "unknown"} agent=${config.openClawAgent} sessionId=${sessionId} sessionScope=${sessionScope} textLength=${request.input.text.length} classification=${baseline.response.classification}`
+    `OpenClaw agent start runId=${request.runId ?? "unknown"} agent=${agentId} sessionId=${sessionId} sessionScope=${sessionScope} textLength=${request.input.text.length} classification=${baseline.response.classification}`
   );
   yield { type: "status", text: "Agent is thinking..." };
 
   const executedTools: ExecutedToolCall[] = [];
-  const rejectedDirectResponses: string[] = [];
+  const rejectedDirectResponses: RejectedDirectResponse[] = [];
   let classification = baseline.response.classification;
   let totalUsage: RunUsage | undefined;
   let totalTelemetry: RunTelemetry | undefined;
@@ -1180,10 +1333,10 @@ export async function* runOpenClawCliRequestStream(
         Boolean(openClawText)
       );
       if (
-        rejectedDirectResponses.length < maxBootstrapRetries &&
+        rejectedDirectResponses.length < maxDirectResponseRetries &&
         rejectedReason
       ) {
-        rejectedDirectResponses.push(rawText);
+        rejectedDirectResponses.push({ text: rawText, reason: rejectedReason });
         logInfo(
           `OpenClaw bootstrap retry runId=${request.runId ?? "unknown"} step=${step + 1} reason=${rejectedReason}`
         );
@@ -1191,6 +1344,11 @@ export async function* runOpenClawCliRequestStream(
       }
       if (rejectedReason === "empty_response") {
         throw new Error("OpenClaw Gateway returned no assistant text");
+      }
+      if (rejectedReason === "invalid_tool_protocol") {
+        throw new Error(
+          "OpenClaw Gateway repeatedly returned invalid Burble tool-call protocol"
+        );
       }
       const text = sanitizeBootstrapFragments(rawText, baseline.response.text);
       logInfo(
@@ -1312,14 +1470,16 @@ async function* collectOpenClawStream(
   let chunkCount = 0;
   let stderrChunkCount = 0;
   let deltaCount = 0;
+  const deltaBuffer = createProtocolAwareDeltaBuffer();
   let firstStdoutLogged = false;
   let firstStderrLogged = false;
   const startedAt = Date.now();
   const rawStreamPath = await prepareRawStreamPath(config, request, step, logInfo);
-  const args = buildOpenClawArgs(config, prompt, sessionId, rawStreamPath);
+  const agentId = resolveOpenClawAgentId(request, config);
+  const args = buildOpenClawArgs(config, prompt, sessionId, rawStreamPath, agentId);
   const env = openClawEnv(config);
   logInfo(
-    `OpenClaw command stream start runId=${request.runId ?? "unknown"} command=${config.openClawCommand} agent=${config.openClawAgent} engine=${config.engine} timeoutMs=${config.openClawTimeoutMs}${summarizePromptForLog(prompt)}${summarizeOpenClawArgsForLog(args)}${summarizeLogObject("env", env)}`
+    `OpenClaw command stream start runId=${request.runId ?? "unknown"} command=${config.openClawCommand} agent=${agentId} engine=${config.engine} timeoutMs=${config.openClawTimeoutMs}${summarizePromptForLog(prompt)}${summarizeOpenClawArgsForLog(args)}${summarizeLogObject("env", env)}`
   );
   logStreamDebug(config, logInfo, "prompt preview", {
     runId: request.runId ?? "unknown",
@@ -1374,7 +1534,10 @@ async function* collectOpenClawStream(
         chars: event.text.length,
         preview: event.text
       });
-      const delta = extractOpenClawStreamDelta(event.text);
+      const parsedDelta = extractOpenClawStreamDelta(event.text);
+      const delta = parsedDelta
+        ? appendProtocolAwareDelta(deltaBuffer, parsedDelta)
+        : "";
       if (delta && emitDeltas) {
         deltaCount += 1;
         logStreamDebug(config, logInfo, "delta parsed", {
@@ -1410,6 +1573,22 @@ async function* collectOpenClawStream(
     }
 
     exitCode = event.exitCode;
+  }
+
+  const bufferedDelta = flushProtocolAwareDelta(
+    deltaBuffer,
+    extractOpenClawText(stdout) || stdout
+  );
+  if (bufferedDelta && emitDeltas) {
+    deltaCount += 1;
+    logStreamDebug(config, logInfo, "delta parsed", {
+      runId: request.runId ?? "unknown",
+      elapsedMs: Date.now() - startedAt,
+      deltaCount,
+      chars: bufferedDelta.length,
+      preview: bufferedDelta
+    });
+    yield { type: "message_delta", text: bufferedDelta };
   }
 
   logStreamDebug(config, logInfo, "stdout complete", {
@@ -1495,26 +1674,34 @@ export async function runCliCommand(
   options: { timeoutMs: number; env?: Record<string, string> }
 ): Promise<CliCommandResult> {
   const proc = spawnOpenClawCli(command, args, options.env);
-  let timedOut = false;
-  const timer = setTimeout(() => {
-    timedOut = true;
-    proc.kill();
-  }, options.timeoutMs);
+  const timeout = createOpenClawCliTimeout(proc, options.timeoutMs);
+  let exited = false;
+  const result = Promise.all([
+    new Response(proc.stdout).text(),
+    new Response(proc.stderr).text(),
+    proc.exited.then((exitCode) => {
+      exited = true;
+      return exitCode;
+    })
+  ]);
+  result.catch(() => undefined);
+  proc.exited
+    .then(() => {
+      exited = true;
+    })
+    .catch(() => undefined);
 
   try {
-    const [stdout, stderr, exitCode] = await Promise.all([
-      new Response(proc.stdout).text(),
-      new Response(proc.stderr).text(),
-      proc.exited
+    const [stdout, stderr, exitCode] = await Promise.race([
+      result,
+      timeout.promise
     ]);
-
-    if (timedOut) {
-      throw new Error("OpenClaw CLI timed out");
-    }
-
     return { exitCode, stdout, stderr };
   } finally {
-    clearTimeout(timer);
+    timeout.clear();
+    if (!exited && timeout.didFire()) {
+      await waitForOpenClawCliExit(proc);
+    }
   }
 }
 
@@ -1524,23 +1711,27 @@ export async function* runCliCommandStream(
   options: { timeoutMs: number; env?: Record<string, string> }
 ): AsyncIterable<CliCommandStreamEvent> {
   const proc = spawnOpenClawCli(command, args, options.env);
-  let timedOut = false;
-  const timer = setTimeout(() => {
-    timedOut = true;
-    proc.kill();
-  }, options.timeoutMs);
+  const timeout = createOpenClawCliTimeout(proc, options.timeoutMs);
+  let exited = false;
+  proc.exited
+    .then(() => {
+      exited = true;
+    })
+    .catch(() => undefined);
 
+  let stdoutNext: Promise<DecodedStreamChunk> | null = null;
+  let stderrNext: Promise<DecodedStreamChunk> | null = null;
   try {
     const stdoutReader = proc.stdout.getReader();
     const stderrReader = proc.stderr.getReader();
     const stdoutDecoder = new TextDecoder();
     const stderrDecoder = new TextDecoder();
-    let stdoutNext: Promise<DecodedStreamChunk> | null = readDecodedStreamChunk(
+    stdoutNext = readDecodedStreamChunk(
       "stdout",
       stdoutReader,
       stdoutDecoder
     );
-    let stderrNext: Promise<DecodedStreamChunk> | null = readDecodedStreamChunk(
+    stderrNext = readDecodedStreamChunk(
       "stderr",
       stderrReader,
       stderrDecoder
@@ -1550,7 +1741,7 @@ export async function* runCliCommandStream(
       const pending = [stdoutNext, stderrNext].filter(
         (item): item is Promise<DecodedStreamChunk> => Boolean(item)
       );
-      const result = await Promise.race(pending);
+      const result = await Promise.race([...pending, timeout.promise]);
       if (result.text) {
         yield {
           type: result.stream,
@@ -1571,14 +1762,84 @@ export async function* runCliCommandStream(
       }
     }
 
-    const exitCode = await proc.exited;
-    if (timedOut) {
-      throw new Error("OpenClaw CLI timed out");
-    }
-
+    const exitCode = await Promise.race([proc.exited, timeout.promise]);
+    exited = true;
     yield { type: "exit", exitCode };
   } finally {
-    clearTimeout(timer);
+    timeout.clear();
+    if (!exited) {
+      terminateOpenClawCliProcess(proc);
+      await sleep(250);
+      forceKillOpenClawCliProcess(proc);
+      await waitForOpenClawCliExit(proc);
+    }
+    stdoutNext?.catch(() => undefined);
+    stderrNext?.catch(() => undefined);
+  }
+}
+
+function createOpenClawCliTimeout(
+  proc: CliSpawnProcess,
+  timeoutMs: number
+): {
+  promise: Promise<never>;
+  clear: () => void;
+  didFire: () => boolean;
+} {
+  let timeoutTimer: ReturnType<typeof setTimeout> | undefined;
+  let forceKillTimer: ReturnType<typeof setTimeout> | undefined;
+  let fired = false;
+  const promise = new Promise<never>((_, reject) => {
+    timeoutTimer = setTimeout(() => {
+      fired = true;
+      terminateOpenClawCliProcess(proc);
+      forceKillTimer = setTimeout(() => {
+        forceKillOpenClawCliProcess(proc);
+      }, 250);
+      forceKillTimer.unref?.();
+      reject(new Error("OpenClaw CLI timed out"));
+    }, timeoutMs);
+    timeoutTimer.unref?.();
+  });
+  promise.catch(() => undefined);
+
+  return {
+    promise,
+    clear: () => {
+      if (timeoutTimer) {
+        clearTimeout(timeoutTimer);
+      }
+      if (forceKillTimer && !fired) {
+        clearTimeout(forceKillTimer);
+      }
+    },
+    didFire: () => fired
+  };
+}
+
+async function waitForOpenClawCliExit(
+  proc: CliSpawnProcess,
+  timeoutMs = 1_000
+): Promise<void> {
+  await Promise.race([
+    proc.exited.catch(() => undefined).then(() => undefined),
+    sleep(timeoutMs)
+  ]);
+}
+
+function terminateOpenClawCliProcess(proc: CliSpawnProcess): void {
+  try {
+    proc.kill();
+  } catch {
+    // The process may already have exited.
+  }
+}
+
+function forceKillOpenClawCliProcess(proc: CliSpawnProcess): void {
+  try {
+    (proc.kill as (signal?: string) => void)("SIGKILL");
+  } catch {
+    // The process may already have exited.
   }
 }
 
@@ -2949,7 +3210,7 @@ function buildPlanningPrompt(
   request: RunRequest,
   toolContext: BurbleToolContext,
   executedTools: ExecutedToolCall[] = [],
-  rejectedDirectResponses: string[] = []
+  rejectedDirectResponses: RejectedDirectResponse[] = []
 ): string {
   return buildOpenClawPrompt(
     config,
@@ -2965,7 +3226,7 @@ function buildOpenClawPrompt(
   request: RunRequest,
   toolContext: BurbleToolContext,
   executedTools: ExecutedToolCall[] = [],
-  rejectedBootstrapResponses: string[] = []
+  rejectedDirectResponses: RejectedDirectResponse[] = []
 ): string {
   const sections = [
     "Preloaded Burble runtime skills:",
@@ -3005,11 +3266,19 @@ function buildOpenClawPrompt(
       "Return either exactly one more tool_call JSON object if another provider action is required, or the final Slack-ready answer."
     );
   } else {
-    if (rejectedBootstrapResponses.length > 0) {
+    const rejectedResponse = rejectedDirectResponses.at(-1);
+    if (rejectedResponse?.reason === "invalid_tool_protocol") {
+      sections.push(
+        "",
+        "Your previous response looked like a Burble tool call but was invalid or incomplete:",
+        truncate(rejectedResponse.text, 600),
+        "Repair it now. Return exactly one complete tool_call JSON object matching an Available Burble tool, or return normal final Slack-ready prose with no tool protocol text."
+      );
+    } else if (rejectedResponse) {
       sections.push(
         "",
         "Previous response was rejected because it asked for assistant/user setup instead of answering the request:",
-        truncate(rejectedBootstrapResponses.at(-1) ?? "", 600),
+        truncate(rejectedResponse.text, 600),
         "Do not repeat setup/onboarding. Answer the current user request directly or use an available tool."
       );
     }
@@ -3222,9 +3491,12 @@ function shouldRejectDirectOpenClawResponse(
   baselineText: string,
   hasToolResult: boolean,
   hasOpenClawText: boolean
-): "bootstrap_response" | "baseline_echo" | "empty_response" | null {
+): DirectResponseRejectionReason | null {
   if (!hasToolResult && !hasOpenClawText) {
     return "empty_response";
+  }
+  if (containsRuntimeToolCallProtocolFragments(text)) {
+    return "invalid_tool_protocol";
   }
   if (isBootstrapSetupAnswer(text)) {
     return "bootstrap_response";
@@ -4352,12 +4624,13 @@ function buildOpenClawArgs(
   config: RuntimeConfig,
   prompt: string,
   sessionId: string,
-  rawStreamPath: string | null = null
+  rawStreamPath: string | null = null,
+  agentId: string = config.openClawAgent
 ): string[] {
   const args = [
     "agent",
     "--agent",
-    config.openClawAgent,
+    agentId,
     "--message",
     prompt,
     "--session-id",

@@ -6,7 +6,11 @@ import type {
   AgentRunner,
 } from "../types";
 import type { ToolClassification } from "../../conversation/types";
-import type { RuntimeFactory, RuntimeHandle } from "../runtime-factory";
+import type {
+  RuntimeDiagnosticsInput,
+  RuntimeFactory,
+  RuntimeHandle,
+} from "../runtime-factory";
 import type { ObservabilitySink } from "../../observability";
 import {
   parseRuntimeRunRequest,
@@ -141,6 +145,11 @@ type RuntimeCapabilityCacheEntry = {
 
 type RuntimeCapabilityCache = Map<string, RuntimeCapabilityCacheEntry>;
 
+type RuntimeRunLease = {
+  waitedMs: number;
+  release: () => void;
+};
+
 export function createManagedRuntimeAgentRunner(
   deps: ManagedRuntimeAgentRunnerDeps,
 ): AgentRunner {
@@ -221,6 +230,7 @@ export function createManagedRuntimeAdapter(
   const runSnapshotTimeoutMs =
     deps.runSnapshotTimeoutMs ?? defaultRunSnapshotTimeoutMs;
   const runtimeCapabilityCache: RuntimeCapabilityCache = new Map();
+  const runtimeRunLeases = new Map<string, Promise<void>>();
 
   return {
     name: "burble-runtime",
@@ -236,6 +246,24 @@ export function createManagedRuntimeAdapter(
         type: "status",
         text: "Starting agent runtime...",
       };
+      const principalId = `${input.principal.workspaceId}:${input.principal.slackUserId}`;
+      let runLease: RuntimeRunLease | null = null;
+      try {
+        if (deps.runtimeFactory) {
+          runLease = await acquireRuntimeRunLease(
+            runtimeRunLeases,
+            principalId,
+          );
+          if (runLease.waitedMs > 0) {
+            logInfo(
+              [
+                "Managed runtime run lease acquired",
+                `principal=${principalId}`,
+                `waitedMs=${runLease.waitedMs}`,
+              ].join(" "),
+            );
+          }
+        }
       const runtime = await getManagedRuntimeForInput(deps, input);
       const baseUrl =
         runtime?.endpointUrl.replace(/\/+$/, "") ?? fallbackBaseUrl;
@@ -248,7 +276,6 @@ export function createManagedRuntimeAdapter(
       const runStartedAt = Date.now();
       const runtimeId = runtime?.id ?? "static";
       const runtimeType = runtime?.engine ?? "static";
-      const principalId = `${input.principal.workspaceId}:${input.principal.slackUserId}`;
       const scheduledJobSummary = summarizeScheduledJob(input);
       const capabilityManifest = await discoverRuntimeCapabilityManifest({
         baseUrl,
@@ -411,6 +438,7 @@ export function createManagedRuntimeAdapter(
             response,
             runtimeMessageDeltasEnabled(runtime),
             observeEvent,
+            runSnapshotTimeoutMs,
           );
         } else {
           const startPayload = (await response.json()) as RemoteRunResponse &
@@ -437,6 +465,7 @@ export function createManagedRuntimeAdapter(
                 createWebSocket(eventsUrl, runtimeWebSocketOptions(runtime)),
                 runtimeMessageDeltasEnabled(runtime),
                 observeEvent,
+                runSnapshotTimeoutMs,
               );
             } catch (error) {
               if (!isRuntimeStreamClosedError(error)) {
@@ -483,6 +512,34 @@ export function createManagedRuntimeAdapter(
           durationMs: Date.now() - runStartedAt,
           error,
         });
+        if (runtime && isManagedRuntimeFinalResponseTimeout(error)) {
+          await captureRuntimeTimeoutDiagnostics({
+            runtimeFactory: deps.runtimeFactory,
+            runtime,
+            runId,
+            error,
+            logInfo,
+          });
+          try {
+            await deps.runtimeFactory?.stopRuntime(runtime.id);
+            logInfo(
+              [
+                "Managed runtime stopped after final response timeout",
+                `runId=${runId}`,
+                `runtimeId=${runtime.id}`,
+              ].join(" "),
+            );
+          } catch (stopError) {
+            logInfo(
+              [
+                "Managed runtime stop after timeout failed",
+                `runId=${runId}`,
+                `runtimeId=${runtime.id}`,
+                `error=${formatRuntimeStopError(stopError)}`,
+              ].join(" "),
+            );
+          }
+        }
         throw error;
       }
 
@@ -529,6 +586,81 @@ export function createManagedRuntimeAdapter(
       }
 
       yield { type: "final", response: agentResponse };
+      } finally {
+        runLease?.release();
+      }
+    },
+  };
+}
+
+async function captureRuntimeTimeoutDiagnostics(input: {
+  runtimeFactory?: RuntimeFactory;
+  runtime: RuntimeHandle;
+  runId: string;
+  error: unknown;
+  logInfo: (message: string) => void;
+}): Promise<void> {
+  const capture = input.runtimeFactory?.captureRuntimeDiagnostics;
+  if (!capture) {
+    return;
+  }
+
+  const diagnosticsInput: RuntimeDiagnosticsInput = {
+    reason: "final_response_timeout",
+    runId: input.runId,
+    errorMessage:
+      input.error instanceof Error ? input.error.message : String(input.error),
+  };
+
+  try {
+    const summary = await capture(input.runtime.id, diagnosticsInput);
+    input.logInfo(
+      [
+        "Managed runtime diagnostics captured",
+        `runId=${input.runId}`,
+        `runtimeId=${input.runtime.id}`,
+        `summaryKeys=${summary ? Object.keys(summary).join(",") || "-" : "-"}`,
+      ].join(" "),
+    );
+  } catch (diagnosticError) {
+    input.logInfo(
+      [
+        "Managed runtime diagnostics capture failed",
+        `runId=${input.runId}`,
+        `runtimeId=${input.runtime.id}`,
+        `error=${formatRuntimeStopError(diagnosticError)}`,
+      ].join(" "),
+    );
+  }
+}
+
+async function acquireRuntimeRunLease(
+  leases: Map<string, Promise<void>>,
+  key: string,
+): Promise<RuntimeRunLease> {
+  const previous = leases.get(key) ?? Promise.resolve();
+  let releaseCurrent!: () => void;
+  const current = new Promise<void>((resolve) => {
+    releaseCurrent = resolve;
+  });
+  const chained = previous.catch(() => undefined).then(() => current);
+  leases.set(key, chained);
+
+  const startedAt = Date.now();
+  await previous.catch(() => undefined);
+  let released = false;
+
+  return {
+    waitedMs: Date.now() - startedAt,
+    release() {
+      if (released) {
+        return;
+      }
+      released = true;
+      releaseCurrent();
+      if (leases.get(key) === chained) {
+        leases.delete(key);
+      }
     },
   };
 }
@@ -827,6 +959,19 @@ function toRuntimeObservabilityError(error: unknown): {
   };
 }
 
+function isManagedRuntimeFinalResponseTimeout(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    /Managed runtime did not produce a final response within \d+ms/.test(
+      error.message,
+    )
+  );
+}
+
+function formatRuntimeStopError(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
 async function getManagedRuntimeForInput(
   deps: ManagedRuntimeAgentRunnerDeps,
   input: AgentInput,
@@ -1051,6 +1196,7 @@ async function* readWebSocketRunResponse(
   socket: AgentRuntimeWebSocket,
   emitMessageDeltas: boolean,
   onEvent?: (event: AgentRunEvent) => void,
+  finalTimeoutMs = defaultRunSnapshotTimeoutMs,
 ): AsyncIterable<AgentRunEvent, AgentOutput | null> {
   const queue: unknown[] = [];
   let closed = false;
@@ -1079,6 +1225,13 @@ async function* readWebSocketRunResponse(
     closed = true;
     wakeReader();
   });
+  const timeout = setTimeout(() => {
+    failed = new Error(
+      `Managed runtime did not produce a final response within ${finalTimeoutMs}ms`,
+    );
+    socket.close();
+    wakeReader();
+  }, finalTimeoutMs);
 
   try {
     while (true) {
@@ -1122,6 +1275,7 @@ async function* readWebSocketRunResponse(
       });
     }
   } finally {
+    clearTimeout(timeout);
     socket.close();
   }
 }
@@ -1134,14 +1288,33 @@ async function* readStreamingRunResponse(
   response: Response,
   emitMessageDeltas = true,
   onEvent?: (event: AgentRunEvent) => void,
+  finalTimeoutMs = defaultRunSnapshotTimeoutMs,
 ): AsyncIterable<AgentRunEvent, AgentOutput | null> {
   if (!response.body) {
     return null;
   }
 
   let streamedText = "";
+  const events = readRuntimeEventStream(response);
+  const iterator = events[Symbol.asyncIterator]();
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  const timeoutPromise = new Promise<IteratorResult<unknown>>((_, reject) => {
+    timeout = setTimeout(() => {
+      reject(
+        new Error(
+          `Managed runtime did not produce a final response within ${finalTimeoutMs}ms`,
+        ),
+      );
+    }, finalTimeoutMs);
+  });
+
   try {
-    for await (const payload of readRuntimeEventStream(response)) {
+    while (true) {
+      const result = await Promise.race([iterator.next(), timeoutPromise]);
+      if (result.done) {
+        break;
+      }
+      const payload = result.value;
       const event = validateRemoteRunEvent(payload);
       if (!event) {
         throw new Error("Managed runtime returned an invalid stream event");
@@ -1181,6 +1354,11 @@ async function* readStreamingRunResponse(
     }
 
     throw error;
+  } finally {
+    if (timeout) {
+      clearTimeout(timeout);
+    }
+    iterator.return?.().catch(() => undefined);
   }
 
   if (streamedText.trim()) {

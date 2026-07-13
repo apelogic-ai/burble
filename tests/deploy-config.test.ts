@@ -10,6 +10,12 @@ const openClawCliCompose = await Bun.file(
 const personalRuntimesCompose = await Bun.file(
   "deploy/dev/compose/docker-compose.personal-runtimes.yml"
 ).text();
+const testbedCompose = await Bun.file(
+  "deploy/testbed/compose/docker-compose.yml"
+).text();
+const llmAbCompose = await Bun.file(
+  "deploy/testbed/compose/docker-compose.llm-ab.yml"
+).text();
 const agentGatewayCompose = await Bun.file(
   "deploy/dev/compose/docker-compose.agentgateway.yml"
 ).text();
@@ -21,6 +27,9 @@ const openShellGatewayConfig = await Bun.file(
 ).text();
 const litellmGatewayConfig = await Bun.file(
   "deploy/dev/compose/litellm/config.yaml"
+).text();
+const litellmBoundaryLogger = await Bun.file(
+  "deploy/dev/compose/litellm/burble_observability.py"
 ).text();
 const agentGatewayConfig = await Bun.file(
   "deploy/dev/compose/agentgateway/config.yaml"
@@ -163,7 +172,7 @@ describe("dev deploy config", () => {
 
   test("runs a neutral LLM gateway service for sandbox inference", () => {
     expect(compose).toContain("llm-gw:");
-    expect(compose).toContain("ghcr.io/berriai/litellm:main-latest");
+    expect(compose).toContain("ghcr.io/berriai/litellm:v1.92.0");
     expect(compose).toContain(
       "LLM_GW_BASE_URL=${LLM_GW_BASE_URL:-http://host.openshell.internal:4000/v1}"
     );
@@ -194,6 +203,20 @@ describe("dev deploy config", () => {
     expect(litellmGatewayConfig).toContain("os.environ/OPENAI_API_KEY");
     expect(litellmGatewayConfig).toContain("os.environ/ANTHROPIC_API_KEY");
     expect(litellmGatewayConfig).toContain("os.environ/OLLAMA_API_KEY");
+  });
+
+  test("emits redacted LLM boundary telemetry through a custom callback", () => {
+    expect(compose).toContain(
+      "./litellm/burble_observability.py:/app/burble_observability.py:ro"
+    );
+    expect(litellmGatewayConfig).toContain("callbacks:");
+    expect(litellmGatewayConfig).toContain(
+      "burble_observability.boundary_logger"
+    );
+    expect(litellmBoundaryLogger).toContain("turn_off_message_logging=True");
+    expect(litellmBoundaryLogger).not.toContain("print(kwargs)");
+    expect(litellmBoundaryLogger).not.toContain("print(data)");
+    expect(litellmBoundaryLogger).not.toContain('event["traceback"]');
   });
 
   test("documents the required Slack slash commands in the app manifest", () => {
@@ -849,6 +872,9 @@ describe("dev deploy config", () => {
     expect(openClawRuntimeDockerfile).toContain("/data/openclaw/logs");
     expect(openClawCliDockerfile).toContain("/data/openclaw/config");
     expect(openClawCliDockerfile).toContain("/data/openclaw/logs");
+    expect(openClawCliDockerfile).toContain(
+      "chown -R root:root /runtime/openclaw-plugins"
+    );
     expect(burbleNativeDockerfile).toContain("/data/burble-native/config");
     expect(burbleNativeDockerfile).toContain("/data/burble-native/workspace");
   });
@@ -863,12 +889,27 @@ describe("dev deploy config", () => {
     );
     expect(openClawCliCompose).toContain("OPENCLAW_VERSION");
     expect(openClawCliCompose).toContain(
+      "OPENCLAW_VERSION: ${OPENCLAW_VERSION:-2026.6.11}"
+    );
+    expect(personalRuntimesCompose).toContain(
+      "OPENCLAW_VERSION: ${OPENCLAW_VERSION:-2026.6.11}"
+    );
+    expect(testbedCompose).toContain(
+      "OPENCLAW_VERSION: ${OPENCLAW_VERSION:-2026.6.11}"
+    );
+    expect(composeEnvExample).toContain("OPENCLAW_VERSION=2026.6.11");
+    expect(ansibleGroupVars).toContain('openclaw_version: "2026.6.11"');
+    expect(ansibleEnvTemplate).toContain(
+      "OPENCLAW_VERSION={{ openclaw_version | default('2026.6.11') }}"
+    );
+    expect(openClawCliCompose).toContain(
       "OPENCLAW_NEMOCLAW_ENGINE=${OPENCLAW_NEMOCLAW_ENGINE:-openclaw}"
     );
     expect(openClawCliCompose).toContain(
       "burble-openclaw-nemoclaw-openclaw-cli:dev"
     );
     expect(dockerfile).toContain("FROM node:22.19-trixie-slim");
+    expect(dockerfile).toContain("ARG OPENCLAW_VERSION=2026.6.11");
     expect(dockerfile).not.toContain("python");
     expect(dockerfile).toContain("npm install -g bun");
     expect(dockerfile).toContain("npm install -g \"openclaw@${OPENCLAW_VERSION}\"");
@@ -932,6 +973,7 @@ describe("dev deploy config", () => {
     expect(k8sDeployment).toContain("persistentVolumeClaim:");
     expect(k8sLiteLlmDeployment).toContain('eq .Values.litellm.mode "managed"');
     expect(k8sValues).toContain("repository: ghcr.io/berriai/litellm");
+    expect(k8sValues).toContain("tag: v1.92.0");
     expect(k8sAgentGatewayDeployment).toContain(
       'eq .Values.agentgateway.mode "managed"'
     );
@@ -947,5 +989,43 @@ describe("dev deploy config", () => {
       '{{- include "burble.appSelectorLabels" . | nindent 14 }}'
     );
     expect(k8sNetworkPolicy).not.toContain("ingress: []");
+  });
+});
+
+describe("local LLM A/B testbed", () => {
+  test("keeps direct and LiteLLM runtimes identical except for inference routing", () => {
+    expect(llmAbCompose).toContain("name: burble-llm-ab");
+    expect(llmAbCompose).toContain("runtime-direct:");
+    expect(llmAbCompose).toContain("runtime-litellm:");
+    expect(llmAbCompose).toContain("openai-direct:");
+    expect(llmAbCompose).toContain("ghcr.io/berriai/litellm:v1.92.0");
+    expect(llmAbCompose).toContain("OPENCLAW_MODEL_API: openai-responses");
+    expect(llmAbCompose).toContain("AI_MODEL: ${AI_MODEL:-openai:gpt-5.4}");
+    expect(llmAbCompose).toContain(
+      "AGENT_RUNTIME_INFERENCE_BASE_URL: http://llm-gw:4000/v1"
+    );
+    expect(llmAbCompose).toContain(
+      "AGENT_RUNTIME_INFERENCE_BASE_URL: http://openai-direct:4100/v1"
+    );
+    expect(llmAbCompose).toContain(
+      "OPENAI_API_KEY: sk-BURBLE-INFERENCE-PROXY"
+    );
+    expect(llmAbCompose.match(/Dockerfile\.openclaw-cli/g)).toHaveLength(1);
+    expect(llmAbCompose.match(/build: \*openclaw-build/g)).toHaveLength(1);
+    expect(
+      llmAbCompose.match(
+        /OPENCLAW_VERSION: \$\{OPENCLAW_VERSION:-2026\.6\.11\}/g
+      )
+    ).toHaveLength(1);
+    expect(llmAbCompose).toContain('profiles: ["soak"]');
+    expect(llmAbCompose).toContain(
+      "LLM_AB_DIRECT_URL: http://runtime-direct:8080"
+    );
+    expect(llmAbCompose).toContain(
+      "LLM_AB_LITELLM_URL: http://runtime-litellm:8080"
+    );
+    expect(llmAbCompose).not.toContain('"14000:4000"');
+    expect(llmAbCompose).toContain('"127.0.0.1:18080:8080"');
+    expect(llmAbCompose).toContain('"127.0.0.1:18081:8080"');
   });
 });

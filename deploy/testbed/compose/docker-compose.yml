@@ -133,7 +133,7 @@ services:
       context: ../../..
       dockerfile: runtimes/openclaw-nemoclaw/Dockerfile.openclaw-cli
       args:
-        OPENCLAW_VERSION: ${OPENCLAW_VERSION:-2026.5.19}
+        OPENCLAW_VERSION: ${OPENCLAW_VERSION:-2026.6.11}
     command: ["bun", "--version"]
 
 volumes:

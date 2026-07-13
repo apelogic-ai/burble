@@ -19,27 +19,23 @@ describe("buildOpenClawLlmPatch", () => {
     const patch = JSON.parse(
       buildOpenClawLlmPatch({
         modelId: "openai:gpt-5.4",
+        fallbackModelIds: ["openai:gpt-5.4-mini"],
         ollamaBaseUrl: "https://ollama.com"
       })
     );
 
     expect(patch.agents.defaults.model.primary).toBe("openai/gpt-5.4");
+    expect(patch.agents.defaults.model.fallbacks).toEqual(["openai/gpt-5.4-mini"]);
+    expect(patch.agents.defaults.models["openai/gpt-5.4-mini"]).toEqual({
+      alias: "GPT"
+    });
     expect(patch.agents.defaults.heartbeat.every).toBe("0m");
     expect(patch.agents.defaults.skills).toEqual([]);
     expect(patch.agents.defaults.contextInjection).toBe("never");
     expect(patch.agents.defaults.skipBootstrap).toBe(true);
-    expect(patch.agents.defaults.systemPromptOverride).toContain(
-      "Burble's OpenClaw runtime"
-    );
-    expect(patch.agents.defaults.systemPromptOverride).not.toContain(
-      "BOOTSTRAP.md"
-    );
-    expect(patch.agents.list).toEqual([
-      {
-        id: "main",
-        systemPromptOverride: patch.agents.defaults.systemPromptOverride
-      }
-    ]);
+    expect(patch.agents.defaults).not.toHaveProperty("systemPromptOverride");
+    expect(patch.agents.list).toEqual([{ id: "main" }]);
+    expect(JSON.stringify(patch)).not.toContain("systemPromptOverride");
     expect(patch.memory.qmd.update.startup).toBe("off");
     expect(patch.skills.allowBundled).toEqual([]);
     expect(patch.gateway.http.endpoints.responses.enabled).toBe(true);
@@ -87,7 +83,6 @@ describe("buildOpenClawLlmPatch", () => {
     expect(patch.agents.list).toEqual([
       {
         id: "burble",
-        systemPromptOverride: patch.agents.defaults.systemPromptOverride,
         fastModeDefault: true,
         thinkingDefault: "minimal",
         reasoningDefault: "off"
@@ -123,6 +118,7 @@ describe("buildOpenClawLlmPatch", () => {
     const patch = JSON.parse(
       buildOpenClawLlmPatch({
         modelId: "openai:gpt-5.4",
+        fallbackModelIds: ["openai:gpt-5.4-mini"],
         inferenceBaseUrl: "http://llm-gw:4000/v1",
         ollamaBaseUrl: "https://ollama.com"
       })
@@ -135,6 +131,17 @@ describe("buildOpenClawLlmPatch", () => {
       apiKey: "OPENAI_API_KEY",
       api: "openai-responses"
     });
+    expect(
+      patch.models.providers.openai.models.map(
+        (model: { id: string }) => model.id
+      )
+    ).toEqual(["gpt-5.4", "gpt-5.4-mini"]);
+    expect(
+      patch.models.providers.openai.models.every(
+        (model: { compat?: { supportsPromptCacheKey?: boolean } }) =>
+          model.compat?.supportsPromptCacheKey === true
+      )
+    ).toBe(true);
     expect(JSON.stringify(patch)).not.toContain("sk-");
   });
 

@@ -2,15 +2,19 @@ import { describe, expect, test } from "bun:test";
 import {
   resolveOpenClawCliArgv,
   resolveOpenClawCliCommand,
+  resolveOpenClawProviderCorrelationId,
+  runCliCommand,
+  runCliCommandStream,
   runOpenClawCliRequest,
   runOpenClawCliRequestStream
 } from "../../../runtimes/openclaw-nemoclaw/src/openclaw-cli";
 import type { RuntimeConfig } from "../../../runtimes/openclaw-nemoclaw/src/config";
 import type { RunEvent } from "../../../runtimes/openclaw-nemoclaw/src/types";
 import { providerToolCatalog } from "../../../src/providers/catalog";
-import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { createHash } from "node:crypto";
 
 const config: RuntimeConfig = {
   port: 8080,
@@ -63,6 +67,123 @@ describe("OpenClaw CLI command resolution", () => {
     );
   });
 });
+
+describe("OpenClaw provider correlation", () => {
+  test("hashes the internal session id used as the downstream prompt cache key", async () => {
+    const stateDir = await mkdtemp(join(tmpdir(), "burble-openclaw-correlation-"));
+    const sessionsDir = join(stateDir, "agents", "main", "sessions");
+    const sessionKey = "agent:main:explicit:burble-step-example";
+    const internalSessionId = "566217da-d5a3-4afb-a65c-2048d7f6e79c";
+    await mkdir(sessionsDir, { recursive: true });
+    await writeFile(
+      join(sessionsDir, "sessions.json"),
+      JSON.stringify({ [sessionKey]: { sessionId: internalSessionId } })
+    );
+
+    expect(
+      await resolveOpenClawProviderCorrelationId(
+        { ...config, openClawStateDir: stateDir },
+        "main",
+        sessionKey
+      )
+    ).toBe(
+      createHash("sha256").update(internalSessionId).digest("hex").slice(0, 16)
+    );
+  });
+});
+
+describe("OpenClaw CLI process timeouts", () => {
+  test("command runner throws promptly even when the child ignores SIGTERM", async () => {
+    const startedAt = Date.now();
+
+    await expect(
+      runCliCommand("/bin/sh", ["-c", "trap '' TERM; sleep 2"], {
+        timeoutMs: 20
+      })
+    ).rejects.toThrow("OpenClaw CLI timed out");
+
+    expect(Date.now() - startedAt).toBeLessThan(500);
+  });
+
+  test("command runner force-kills children that ignore SIGTERM", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "burble-openclaw-timeout-"));
+    const pidPath = join(dir, "pid");
+
+    await expect(
+      runCliCommand(
+        "/bin/sh",
+        [
+          "-c",
+          `echo $$ > ${JSON.stringify(pidPath)}; trap '' TERM; while true; do sleep 1; done`
+        ],
+        { timeoutMs: 20 }
+      )
+    ).rejects.toThrow("OpenClaw CLI timed out");
+
+    const pid = Number((await readFile(pidPath, "utf8")).trim());
+    await waitUntilProcessExits(pid);
+    expect(isProcessAlive(pid)).toBe(false);
+  });
+
+  test("stream runner throws promptly even when the child ignores SIGTERM", async () => {
+    const startedAt = Date.now();
+
+    await expect(
+      (async () => {
+        for await (const _event of runCliCommandStream(
+          "/bin/sh",
+          ["-c", "trap '' TERM; sleep 2"],
+          { timeoutMs: 20 }
+        )) {
+          // Drain the stream until it fails.
+        }
+      })()
+    ).rejects.toThrow("OpenClaw CLI timed out");
+
+    expect(Date.now() - startedAt).toBeLessThan(500);
+  });
+
+  test("stream runner kills the child when the consumer stops early", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "burble-openclaw-stream-return-"));
+    const pidPath = join(dir, "pid");
+    const iterator = runCliCommandStream(
+      "/bin/sh",
+      [
+        "-c",
+        `echo $$ > ${JSON.stringify(pidPath)}; echo ready; trap '' TERM; while true; do sleep 1; done`
+      ],
+      { timeoutMs: 60_000 }
+    )[Symbol.asyncIterator]();
+
+    const first = await iterator.next();
+    expect(first.done).toBe(false);
+    expect(first.value).toEqual({ type: "stdout", text: "ready\n" });
+    await iterator.return?.();
+
+    const pid = Number((await readFile(pidPath, "utf8")).trim());
+    await waitUntilProcessExits(pid);
+    expect(isProcessAlive(pid)).toBe(false);
+  });
+});
+
+function isProcessAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function waitUntilProcessExits(pid: number): Promise<void> {
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < 1_500) {
+    if (!isProcessAlive(pid)) {
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+}
 
 function readSessionIdArg(args: string[]): string {
   const index = args.indexOf("--session-id");
@@ -2100,6 +2221,148 @@ describe("runOpenClawCliRequest", () => {
     expect(response.response.text).toContain("burble #75");
   });
 
+  test("repairs an unterminated scheduled provider tool call before executing it", async () => {
+    const prompts: string[] = [];
+    const toolCalls: Array<{ toolName: string; body: unknown }> = [];
+    const logs: string[] = [];
+    const validToolCall = JSON.stringify({
+      tool_call: {
+        name: "burble_provider_call",
+        arguments: {
+          toolName: "github_search_issues",
+          input: {
+            jobId: "job-pr-monitor",
+            query: "org:apelogic-ai is:pr is:open",
+          },
+        },
+      },
+    });
+    const responses = [
+      validToolCall.slice(0, -1),
+      validToolCall,
+      "New PRs in apelogic-ai: burble #99",
+    ];
+
+    const response = await runOpenClawCliRequest(
+      {
+        runId: "run-repair-malformed-tool-call",
+        executionMode: "native-runtime",
+        runtime: {
+          id: "rt_test",
+          manifest: providerManifest(),
+        },
+        input: {
+          text: "Check for new PRs in the apelogic-ai GitHub org",
+          toolGroups: {
+            groups: ["github"],
+            reasons: ["scheduled-job:allowed-tools"],
+          },
+          scheduledJob: {
+            jobId: "job-pr-monitor",
+            capabilityProfile: "scheduled_job",
+            allowedTools: ["github_search_issues"],
+            routeId: "convrt_abc123",
+            runtimeType: "openclaw",
+            stateRefs: [],
+            visibilityPolicy: {},
+          },
+          connections: {
+            github: {
+              connected: true,
+              email: "person@example.com",
+              providerLogin: "person",
+            },
+          },
+        },
+      },
+      config,
+      async (toolName, body) => {
+        toolCalls.push({ toolName, body });
+        return {
+          classification: "user_private",
+          content: { items: [] },
+        };
+      },
+      async (_command, args) => {
+        prompts.push(args[args.indexOf("--message") + 1]);
+        const stdout = responses.shift();
+        if (!stdout) {
+          throw new Error("unexpected OpenClaw call");
+        }
+        return { exitCode: 0, stdout, stderr: "" };
+      },
+      (message) => logs.push(message),
+    );
+
+    expect(prompts).toHaveLength(3);
+    expect(prompts[1]).toContain(
+      "Your previous response looked like a Burble tool call but was invalid or incomplete",
+    );
+    expect(toolCalls).toHaveLength(1);
+    expect(response.response.text).toBe("New PRs in apelogic-ai: burble #99");
+    expect(logs.join("\n")).toContain(
+      "reason=invalid_tool_protocol",
+    );
+  });
+
+  test("fails closed when OpenClaw repeats an unterminated tool call", async () => {
+    const malformed =
+      '{"tool_call":{"name":"burble_provider_call","arguments":{"toolName":"github_search_issues","input":{"query":"org:apelogic-ai is:pr is:open"}}}';
+    let modelCalls = 0;
+    let toolCalls = 0;
+
+    await expect(
+      runOpenClawCliRequest(
+        {
+          runId: "run-repeat-malformed-tool-call",
+          executionMode: "native-runtime",
+          runtime: {
+            id: "rt_test",
+            manifest: providerManifest(),
+          },
+          input: {
+            text: "Check for new PRs in the apelogic-ai GitHub org",
+            toolGroups: {
+              groups: ["github"],
+              reasons: ["scheduled-job:allowed-tools"],
+            },
+            scheduledJob: {
+              jobId: "job-pr-monitor",
+              capabilityProfile: "scheduled_job",
+              allowedTools: ["github_search_issues"],
+              routeId: "convrt_abc123",
+              runtimeType: "openclaw",
+              stateRefs: [],
+              visibilityPolicy: {},
+            },
+            connections: {
+              github: {
+                connected: true,
+                email: "person@example.com",
+                providerLogin: "person",
+              },
+            },
+          },
+        },
+        config,
+        async () => {
+          toolCalls += 1;
+          return { classification: "user_private", content: [] };
+        },
+        async () => {
+          modelCalls += 1;
+          return { exitCode: 0, stdout: malformed, stderr: "" };
+        },
+        () => undefined,
+      ),
+    ).rejects.toThrow(
+      "OpenClaw Gateway repeatedly returned invalid Burble tool-call protocol",
+    );
+
+    expect(modelCalls).toBe(2);
+    expect(toolCalls).toBe(0);
+  });
+
   test("hides scheduled web provider tools selected by group without a grant", async () => {
     const prompts: string[] = [];
     const toolCalls: Array<{ toolName: string; body: unknown }> = [];
@@ -3384,6 +3647,77 @@ describe("runOpenClawCliRequest", () => {
     });
   });
 
+  test("allows a live OpenClaw gateway stream to stay silent within its hard deadline", async () => {
+    const events: RunEvent[] = [];
+
+    await withMockFetch(
+      (async (_input, _init) => {
+        const stream = new ReadableStream<Uint8Array>({
+          start(controller) {
+            const encoder = new TextEncoder();
+            controller.enqueue(
+              encoder.encode(
+                `data: ${JSON.stringify({ type: "response.created" })}\n\n`
+              )
+            );
+            setTimeout(() => {
+              controller.enqueue(
+                encoder.encode(
+                  `data: ${JSON.stringify({
+                    type: "response.output_text.delta",
+                    delta: "Finished after quiet work."
+                  })}\n\n`
+                )
+              );
+              controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+              controller.close();
+            }, 25);
+          }
+        });
+        return new Response(stream, {
+          status: 200,
+          headers: { "content-type": "text/event-stream" }
+        });
+      }) as typeof fetch,
+      async () => {
+        for await (const event of runOpenClawCliRequestStream(
+          {
+            runId: "run-gateway-quiet-stream",
+            executionMode: "native-runtime",
+            input: {
+              text: "say hello after working quietly",
+              connections: {
+                github: { connected: false }
+              }
+            }
+          },
+          {
+            ...config,
+            engine: "openclaw-gateway",
+            openClawTimeoutMs: 250
+          },
+          async () => ({
+            classification: "user_private",
+            content: []
+          }),
+          async function* () {
+            throw new Error("unexpected cli call");
+          },
+          () => undefined
+        )) {
+          events.push(event);
+        }
+      }
+    );
+
+    expect(events.at(-1)).toMatchObject({
+      type: "final",
+      response: {
+        text: "Finished after quiet work."
+      }
+    });
+  });
+
   test("keeps OpenClaw gateway HTTP buffered when runtime streaming is disabled", async () => {
     const requests: Array<Record<string, unknown>> = [];
     const events: Array<RunEvent> = [];
@@ -3463,10 +3797,12 @@ describe("runOpenClawCliRequest", () => {
   test("treats streamed OpenClaw gateway response failures as errors without leaking protocol JSON", async () => {
     const events: Array<RunEvent> = [];
     const logs: string[] = [];
+    let requestCount = 0;
 
     await expect(
       withMockFetch(
         (async (_input, init) => {
+          requestCount += 1;
           const requestBody = JSON.parse(String(init?.body ?? "{}")) as Record<
             string,
             unknown
@@ -3589,28 +3925,30 @@ describe("runOpenClawCliRequest", () => {
       })
     );
     expect(events.filter((event) => event.type === "message_delta")).toHaveLength(0);
-    expect(events).toContainEqual({
-      type: "status",
-      text: "The LLM provider timed out. Retrying in 1s (2/3)..."
-    });
-    expect(events).toContainEqual({
-      type: "status",
-      text: "The LLM provider timed out. Retrying in 1s (3/3)..."
-    });
+    expect(requestCount).toBe(1);
+    expect(events).not.toContainEqual(
+      expect.objectContaining({
+        type: "status",
+        text: expect.stringContaining("Retrying")
+      })
+    );
     expect(logs.join("\n")).toContain(
       "OpenClaw gateway http response_failed runId=run-gateway-response-failed"
     );
   });
 
-  test("buffers streamed OpenClaw gateway HTTP tool-call JSON instead of showing it", async () => {
+  test("repairs and buffers malformed streamed gateway tool-call JSON", async () => {
     const events: Array<RunEvent> = [];
+    const requests: Array<Record<string, unknown>> = [];
+    const validToolCall = JSON.stringify({
+      tool_call: {
+        name: "jira.searchIssues",
+        arguments: { jql: 'text ~ "blocked"' }
+      }
+    });
     const providerTexts = [
-      JSON.stringify({
-        tool_call: {
-          name: "jira.searchIssues",
-          arguments: { jql: 'text ~ "blocked"' }
-        }
-      }),
+      validToolCall.slice(0, -1),
+      validToolCall,
       "ENG-7 is blocked."
     ];
 
@@ -3620,6 +3958,7 @@ describe("runOpenClawCliRequest", () => {
           string,
           unknown
         >;
+        requests.push(requestBody);
         expect(requestBody.stream).toBe(true);
         const text = providerTexts.shift();
         if (!text) {
@@ -3727,6 +4066,10 @@ describe("runOpenClawCliRequest", () => {
         text: "ENG-7 is blocked."
       }
     });
+    expect(requests).toHaveLength(3);
+    expect(String(requests[1].input)).toContain(
+      "Your previous response looked like a Burble tool call but was invalid or incomplete"
+    );
     expect(
       events.some(
         (event) =>
@@ -4276,6 +4619,7 @@ describe("runOpenClawCliRequest", () => {
       headers: Headers;
       body: Record<string, unknown>;
     }> = [];
+    const logs: string[] = [];
     const response = await withMockFetch(
       (async (input, init) => {
         requests.push({
@@ -4306,7 +4650,7 @@ describe("runOpenClawCliRequest", () => {
             commands.push({ args });
             throw new Error("unexpected cli call");
           },
-          () => undefined
+          (message) => logs.push(message)
         )
     );
 
@@ -4321,23 +4665,29 @@ describe("runOpenClawCliRequest", () => {
     );
     expect(requests[0].body.model).toBe("openclaw/main");
     expect(requests[0].body.input).toContain("what can you do?");
+    expect(requests[0].body.metadata).toBeUndefined();
+    expect(
+      logs.some((line) =>
+        line.includes("llmCorrelationId=unresolved")
+      )
+    ).toBe(true);
   });
 
-  test("retries retryable OpenClaw Gateway provider timeouts", async () => {
+  test("does not replay explicit OpenClaw Gateway provider failures", async () => {
     const requests: Array<{
       url: string;
       headers: Headers;
       body: Record<string, unknown>;
     }> = [];
     const logs: string[] = [];
-    const response = await withMockFetch(
-      (async (input, init) => {
-        requests.push({
-          url: String(input),
-          headers: new Headers(init?.headers),
-          body: JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>
-        });
-        if (requests.length <= 2) {
+    await expect(
+      withMockFetch(
+        (async (input, init) => {
+          requests.push({
+            url: String(input),
+            headers: new Headers(init?.headers),
+            body: JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>
+          });
           return new Response(
             JSON.stringify({
               status: "failed",
@@ -4356,8 +4706,48 @@ describe("runOpenClawCliRequest", () => {
               headers: { "content-type": "application/json" }
             }
           );
-        }
-        return new Response(JSON.stringify(openResponsesText("Gateway answer.")), {
+        }) as typeof fetch,
+        async () =>
+          runOpenClawCliRequest(
+            {
+              runId: "run-openclaw-provider-failure",
+              input: {
+                text: "what can you do?",
+                connections: {
+                  github: { connected: false }
+                }
+              }
+            },
+            { ...config, engine: "openclaw-gateway" },
+            async () => {
+              throw new Error("unexpected tool call");
+            },
+            async (_command, args) => {
+              throw new Error(`unexpected cli call: ${args.join(" ")}`);
+            },
+            (line) => logs.push(line)
+          )
+      )
+    ).rejects.toThrow("upstream provider timeout");
+
+    expect(requests).toHaveLength(1);
+    expect(
+      logs.some((line) => line.includes("reason=upstream_provider_timeout"))
+    ).toBe(false);
+  });
+
+  test("routes scheduled runs through the minimal-tool OpenClaw agent", async () => {
+    const requests: Array<{
+      headers: Headers;
+      body: Record<string, unknown>;
+    }> = [];
+    const response = await withMockFetch(
+      (async (_input, init) => {
+        requests.push({
+          headers: new Headers(init?.headers),
+          body: JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>
+        });
+        return new Response(JSON.stringify(openResponsesText("Scheduled answer.")), {
           status: 200,
           headers: { "content-type": "application/json" }
         });
@@ -4365,11 +4755,18 @@ describe("runOpenClawCliRequest", () => {
       async () =>
         runOpenClawCliRequest(
           {
-            runId: "run-openclaw-retry",
+            runId: "run-openclaw-scheduled-agent",
             input: {
-              text: "what can you do?",
+              text: "say hello",
               connections: {
                 github: { connected: false }
+              },
+              scheduledJob: {
+                jobId: "job-ai-news",
+                capabilityProfile: "scheduled_job",
+                allowedTools: [],
+                stateRefs: [],
+                visibilityPolicy: {}
               }
             }
           },
@@ -4380,34 +4777,19 @@ describe("runOpenClawCliRequest", () => {
           async (_command, args) => {
             throw new Error(`unexpected cli call: ${args.join(" ")}`);
           },
-          (line) => logs.push(line)
+          () => undefined
         )
     );
 
-    expect(response.response.text).toBe("Gateway answer.");
-    expect(requests).toHaveLength(3);
-    expect(requests[0].body.input).toBe(requests[1].body.input);
-    expect(requests[1].body.input).toBe(requests[2].body.input);
-    expect(requests[0].headers.get("x-openclaw-session-key")).not.toBe(
-      requests[1].headers.get("x-openclaw-session-key")
+    expect(response.response.text).toBe("Scheduled answer.");
+    expect(requests).toHaveLength(1);
+    expect(requests[0].headers.get("x-openclaw-agent-id")).toBe(
+      "main-scheduled"
     );
-    expect(requests[1].headers.get("x-openclaw-session-key")).not.toBe(
-      requests[2].headers.get("x-openclaw-session-key")
+    expect(requests[0].headers.get("x-openclaw-session-key")).toStartWith(
+      "agent:main-scheduled:explicit:burble-step-"
     );
-    expect(
-      logs.some((line) =>
-        line.includes(
-          "OpenClaw gateway http retry runId=run-openclaw-retry step=1 attempt=1 status=408 reason=upstream_provider_timeout"
-        )
-      )
-    ).toBe(true);
-    expect(
-      logs.some((line) =>
-        line.includes(
-          "OpenClaw gateway http retry runId=run-openclaw-retry step=1 attempt=2 status=408 reason=upstream_provider_timeout"
-        )
-      )
-    ).toBe(true);
+    expect(requests[0].body.model).toBe("openclaw/main-scheduled");
   });
 
   test("retries retryable OpenClaw Gateway transport timeouts", async () => {
@@ -4469,7 +4851,69 @@ describe("runOpenClawCliRequest", () => {
     ).toBe(true);
   });
 
-  test("times out retryable OpenClaw Gateway streams that never finish", async () => {
+  test("hard-bounds streaming OpenClaw Gateway requests before headers", async () => {
+    const requests: Array<{
+      headers: Headers;
+      body: Record<string, unknown>;
+    }> = [];
+    const logs: string[] = [];
+
+    await expect(
+      withMockFetch(
+        (async (_input, init) => {
+          requests.push({
+            headers: new Headers(init?.headers),
+            body: JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>
+          });
+          const signal = init?.signal;
+          return await new Promise<Response>((_resolve, reject) => {
+            signal?.addEventListener(
+              "abort",
+              () => reject(new Error("aborted before headers")),
+              { once: true }
+            );
+          });
+        }) as typeof fetch,
+        async () =>
+          runOpenClawCliRequest(
+            {
+              runId: "run-openclaw-header-timeout",
+              input: {
+                text: "what can you do?",
+                connections: {
+                  github: { connected: false }
+                }
+              }
+            },
+            {
+              ...config,
+              engine: "openclaw-gateway",
+              openClawTimeoutMs: 5,
+              openClawGatewayRetryBaseMs: 1,
+              openClawGatewayRetryMaxMs: 1
+            },
+            async () => {
+              throw new Error("unexpected tool call");
+            },
+            async (_command, args) => {
+              throw new Error(`unexpected cli call: ${args.join(" ")}`);
+            },
+            (line) => logs.push(line)
+          )
+      )
+    ).rejects.toThrow("OpenClaw Gateway HTTP request failed");
+
+    expect(requests).toHaveLength(1);
+    expect(
+      logs.some((line) =>
+        line.includes(
+          "OpenClaw Gateway request exceeded the 5ms hard deadline"
+        )
+      )
+    ).toBe(true);
+  });
+
+  test("bounds OpenClaw Gateway streams that never finish", async () => {
     const requests: Array<{
       headers: Headers;
       body: Record<string, unknown>;
@@ -4520,7 +4964,9 @@ describe("runOpenClawCliRequest", () => {
             {
               ...config,
               engine: "openclaw-gateway",
-              openClawTimeoutMs: 5
+              openClawTimeoutMs: 5,
+              openClawGatewayRetryBaseMs: 1,
+              openClawGatewayRetryMaxMs: 1
             },
             async () => {
               throw new Error("unexpected tool call");
@@ -4533,26 +4979,169 @@ describe("runOpenClawCliRequest", () => {
       )
     ).rejects.toThrow("OpenClaw Gateway HTTP request failed");
 
-    expect(requests).toHaveLength(3);
-    expect(requests[0].body.input).toBe(requests[1].body.input);
-    expect(requests[1].body.input).toBe(requests[2].body.input);
-    expect(requests[0].headers.get("x-openclaw-session-key")).not.toBe(
-      requests[1].headers.get("x-openclaw-session-key")
-    );
-    expect(requests[1].headers.get("x-openclaw-session-key")).not.toBe(
-      requests[2].headers.get("x-openclaw-session-key")
-    );
+    expect(requests).toHaveLength(1);
     expect(
       logs.some((line) =>
         line.includes(
-          "OpenClaw gateway http retry runId=run-openclaw-hung-stream step=1 attempt=1 reason=transport_error"
+          "OpenClaw Gateway request exceeded the 5ms hard deadline"
         )
       )
     ).toBe(true);
+  });
+
+  test("times out OpenClaw Gateway streams that only send keepalives", async () => {
+    const requests: Array<{
+      headers: Headers;
+      body: Record<string, unknown>;
+    }> = [];
+    const logs: string[] = [];
+    const encoder = new TextEncoder();
+
+    await expect(
+      withMockFetch(
+        (async (_input, init) => {
+          requests.push({
+            headers: new Headers(init?.headers),
+            body: JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>
+          });
+          let interval: ReturnType<typeof setInterval> | undefined;
+          return new Response(
+            new ReadableStream<Uint8Array>({
+              start(controller) {
+                controller.enqueue(
+                  encoder.encode(
+                    `data: ${JSON.stringify({ type: "response.created" })}\n\n`
+                  )
+                );
+                interval = setInterval(() => {
+                  controller.enqueue(encoder.encode(": keepalive\n\n"));
+                }, 1);
+              },
+              cancel() {
+                if (interval) {
+                  clearInterval(interval);
+                }
+              }
+            }),
+            {
+              status: 200,
+              headers: { "content-type": "text/event-stream" }
+            }
+          );
+        }) as typeof fetch,
+        async () => {
+          const events: RunEvent[] = [];
+          for await (const event of runOpenClawCliRequestStream(
+            {
+              runId: "run-openclaw-keepalive-stream",
+              executionMode: "native-runtime",
+              input: {
+                text: "what can you do?",
+                connections: {
+                  github: { connected: false }
+                }
+              }
+            },
+            {
+              ...config,
+              engine: "openclaw-gateway",
+              openClawTimeoutMs: 5
+            },
+            async () => {
+              throw new Error("unexpected tool call");
+            },
+            async function* () {
+              throw new Error("unexpected cli call");
+            },
+            (line) => logs.push(line)
+          )) {
+            events.push(event);
+          }
+        }
+      )
+    ).rejects.toThrow("OpenClaw Gateway HTTP request failed");
+
+    expect(requests).toHaveLength(1);
+    expect(requests[0].body.stream).toBe(true);
+  });
+
+  test("bounds OpenClaw Gateway streams with endless progress events", async () => {
+    const requests: Array<{
+      headers: Headers;
+      body: Record<string, unknown>;
+    }> = [];
+    const logs: string[] = [];
+    const encoder = new TextEncoder();
+
+    await expect(
+      withMockFetch(
+        (async (_input, init) => {
+          requests.push({
+            headers: new Headers(init?.headers),
+            body: JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>
+          });
+          let interval: ReturnType<typeof setInterval> | undefined;
+          return new Response(
+            new ReadableStream<Uint8Array>({
+              start(controller) {
+                interval = setInterval(() => {
+                  controller.enqueue(
+                    encoder.encode(
+                      `data: ${JSON.stringify({ type: "response.in_progress" })}\n\n`
+                    )
+                  );
+                }, 1);
+              },
+              cancel() {
+                if (interval) {
+                  clearInterval(interval);
+                }
+              }
+            }),
+            {
+              status: 200,
+              headers: { "content-type": "text/event-stream" }
+            }
+          );
+        }) as typeof fetch,
+        async () => {
+          const events: RunEvent[] = [];
+          for await (const event of runOpenClawCliRequestStream(
+            {
+              runId: "run-openclaw-progress-stream",
+              executionMode: "native-runtime",
+              input: {
+                text: "what can you do?",
+                connections: {
+                  github: { connected: false }
+                }
+              }
+            },
+            {
+              ...config,
+              engine: "openclaw-gateway",
+              openClawTimeoutMs: 5
+            },
+            async () => {
+              throw new Error("unexpected tool call");
+            },
+            async function* () {
+              throw new Error("unexpected cli call");
+            },
+            (line) => logs.push(line)
+          )) {
+            events.push(event);
+          }
+        }
+      )
+    ).rejects.toThrow("OpenClaw Gateway HTTP request failed");
+
+    expect(requests).toHaveLength(1);
+    expect(requests[0].body.stream).toBe(true);
     expect(
       logs.some((line) =>
         line.includes(
-          "OpenClaw gateway http retry runId=run-openclaw-hung-stream step=1 attempt=2 reason=transport_error"
+          "OpenClaw Gateway request exceeded the 5ms hard deadline"
         )
       )
     ).toBe(true);

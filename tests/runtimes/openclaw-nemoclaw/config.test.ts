@@ -74,6 +74,7 @@ describe("readRuntimeConfig", () => {
       openClawGatewayToken: "configured-gateway-token",
       runtimeHeartbeatIntervalMs: 120000,
       llmModel: "ollama:qwen3-coder:30b-cloud",
+      llmModelFallbacks: [],
       openClawModelApi: "openai-completions",
       inferenceBaseUrl: "http://llm-gw:4000/v1",
       ollamaBaseUrl: "https://ollama.com"
@@ -107,6 +108,7 @@ describe("readRuntimeConfig", () => {
       openClawGatewayPort: 18789,
       openClawGatewayBind: "loopback",
       llmModel: "openai:gpt-5.4",
+      llmModelFallbacks: ["openai:gpt-5.4-mini"],
       openClawModelApi: "openai-responses",
       inferenceBaseUrl: null,
       ollamaBaseUrl: "https://ollama.com"
@@ -135,6 +137,17 @@ describe("readRuntimeConfig", () => {
         AI_MODEL: "ollama:qwen3-coder:30b-cloud"
       }).llmModel
     ).toBe("ollama:qwen3-coder:30b-cloud");
+  });
+
+  test("reads explicit OpenClaw model fallbacks", () => {
+    expect(
+      readRuntimeConfig({
+        BURBLE_TOOL_GATEWAY_URL: "http://burble-app:3000/internal/tools",
+        BURBLE_INTERNAL_TOKEN: "secret",
+        AI_MODEL: "openai:gpt-5.4",
+        OPENCLAW_MODEL_FALLBACKS: "openai:gpt-5.4-mini, openai:gpt-5.4, openai:gpt-5.4-mini"
+      }).llmModelFallbacks
+    ).toEqual(["openai:gpt-5.4-mini"]);
   });
 
   test("rejects invalid runtime engines", () => {

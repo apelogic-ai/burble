@@ -190,75 +190,84 @@ export async function handleProviderMcpRequest(
   deps: ProviderMcpDeps = {},
   scope: ProviderMcpScope = "all"
 ): Promise<Response> {
-  const auth = authorizeProviderMcpRequest(
-    config,
-    store,
-    runtimeJwtIssuer,
-    request
-  );
-  const runtime = auth.runtime;
-  if (!runtime) {
-    return Response.json(
-      {
-        error: "unauthorized",
-        error_description:
-          auth.reason === "missing_bearer"
-            ? "Runtime JWT token required"
-            : "Runtime JWT token invalid"
-      },
-      { status: 401 }
-    );
-  }
-  store.touchAgentRuntime(runtime.id);
-
-  const manifest = buildRuntimeManifestForRecord({ config, store, runtime });
-  const jobClaimValidation = validateJobScopedProviderMcpClaims(
-    store,
-    runtime,
-    auth.claims
-  );
-  if (jobClaimValidation.response) {
-    return jobClaimValidation.response;
-  }
-
-  const routeValidation = await validateProviderMcpRoute(
-    request,
-    store,
-    runtime,
-    manifest
-  );
-  if (routeValidation.response) {
-    return routeValidation.response;
-  }
-
-  const enabledTools = enabledToolsForClaims(manifest, auth.claims);
-  const jobScopeValidation = await validateJobScopedProviderMcpToolAccess(
-    routeValidation.request,
-    store,
-    runtime,
-    auth.claims,
-    enabledTools
-  );
-  if (jobScopeValidation.response) {
-    return jobScopeValidation.response;
-  }
-  const jobArgumentValidation =
-    await validateScheduledJobArgumentProviderMcpToolAccess(
-      jobScopeValidation.request,
+  const errorRequest = request.clone();
+  try {
+    const auth = authorizeProviderMcpRequest(
+      config,
       store,
-      runtime
+      runtimeJwtIssuer,
+      request
     );
-  if (jobArgumentValidation.response) {
-    return jobArgumentValidation.response;
+    const runtime = auth.runtime;
+    if (!runtime) {
+      return Response.json(
+        {
+          error: "unauthorized",
+          error_description:
+            auth.reason === "missing_bearer"
+              ? "Runtime JWT token required"
+              : "Runtime JWT token invalid"
+        },
+        { status: 401 }
+      );
+    }
+    store.touchAgentRuntime(runtime.id);
+
+    const manifest = buildRuntimeManifestForRecord({ config, store, runtime });
+    const jobClaimValidation = validateJobScopedProviderMcpClaims(
+      store,
+      runtime,
+      auth.claims
+    );
+    if (jobClaimValidation.response) {
+      return jobClaimValidation.response;
+    }
+
+    const routeValidation = await validateProviderMcpRoute(
+      request,
+      store,
+      runtime,
+      manifest
+    );
+    if (routeValidation.response) {
+      return routeValidation.response;
+    }
+
+    const enabledTools = enabledToolsForClaims(manifest, auth.claims);
+    const jobScopeValidation = await validateJobScopedProviderMcpToolAccess(
+      routeValidation.request,
+      store,
+      runtime,
+      auth.claims,
+      enabledTools
+    );
+    if (jobScopeValidation.response) {
+      return jobScopeValidation.response;
+    }
+    const jobArgumentValidation =
+      await validateScheduledJobArgumentProviderMcpToolAccess(
+        jobScopeValidation.request,
+        store,
+        runtime
+      );
+    if (jobArgumentValidation.response) {
+      return jobArgumentValidation.response;
+    }
+
+    const server = createProviderMcpServer(config, store, runtime, deps, scope, {
+      enabledTools
+    });
+    const transport = new WebStandardStreamableHTTPServerTransport();
+
+    await server.connect(transport);
+    return transport.handleRequest(jobArgumentValidation.request);
+  } catch (error) {
+    return mcpJsonRpcErrorResponse(
+      await readRequestJsonRpcId(errorRequest),
+      -32603,
+      `Burble provider MCP request failed: ${providerMcpErrorMessage(error)}`
+    );
   }
-
-  const server = createProviderMcpServer(config, store, runtime, deps, scope, {
-    enabledTools
-  });
-  const transport = new WebStandardStreamableHTTPServerTransport();
-
-  await server.connect(transport);
-  return transport.handleRequest(jobArgumentValidation.request);
 }
 
 function createProviderMcpServer(
@@ -960,6 +969,21 @@ function readJsonRpcId(payload: unknown): unknown {
     return null;
   }
   return (payload as { id?: unknown }).id ?? null;
+}
+
+async function readRequestJsonRpcId(request: Request): Promise<unknown> {
+  try {
+    return readJsonRpcId(await request.json());
+  } catch {
+    return null;
+  }
+}
+
+function providerMcpErrorMessage(error: unknown): string {
+  if (error instanceof Error && error.message.trim()) {
+    return error.message.trim();
+  }
+  return String(error || "unknown error");
 }
 
 function parseRouteDestination(destinationJson: string): Record<string, unknown> {

@@ -1051,6 +1051,59 @@ describe("scheduler control plane", () => {
     store.close();
   });
 
+  test("accepts scheduled job schedule updates with comma-separated cron minute lists", async () => {
+    const store = createTokenStore(":memory:");
+    store.upsertScheduledJob({
+      jobId: "job-heart",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      title: "Heart emoji every 30 min",
+      prompt: "Post exactly this message: ❤️",
+      schedule: {
+        kind: "cron",
+        expression: "*/30 * * * *",
+        timezone: "UTC",
+      },
+      routeId: "convrt_heart",
+      runtimeType: "hermes",
+      now: new Date("2026-06-27T17:39:00.000Z"),
+    });
+    const scheduler = createSchedulerControlPlane(store, {
+      now: () => new Date("2026-06-27T17:40:00.000Z"),
+    });
+
+    expect(
+      await scheduler.updateJobSchedule?.({
+        workspaceId: "T123",
+        slackUserId: "U123",
+        jobId: "job-heart",
+        schedule: {
+          kind: "cron",
+          expression: "5,20,35,50 * * * *",
+          timezone: "UTC",
+        },
+      }),
+    ).toEqual({
+      ok: true,
+      job: expect.objectContaining({
+        jobId: "job-heart",
+        schedule: {
+          kind: "cron",
+          expression: "5,20,35,50 * * * *",
+          timezone: "UTC",
+        },
+        updatedAt: "2026-06-27T17:40:00.000Z",
+      }),
+    });
+    expect(store.getScheduledJob("job-heart")?.schedule).toEqual({
+      kind: "cron",
+      expression: "5,20,35,50 * * * *",
+      timezone: "UTC",
+    });
+
+    store.close();
+  });
+
   test("updates scheduled job prompt and refreshes inferred capabilities", async () => {
     const store = createTokenStore(":memory:");
     store.upsertScheduledJob({

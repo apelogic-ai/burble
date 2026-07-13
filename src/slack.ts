@@ -2487,6 +2487,17 @@ export function createManagedRuntimeFactory(
           summary: event.summary
         });
       }
+    },
+
+    async captureRuntimeDiagnostics(runtimeId, input) {
+      const runtime = store.getAgentRuntime(runtimeId);
+      if (!runtime) {
+        return null;
+      }
+      return delegateForEngine(runtime.engine).captureRuntimeDiagnostics?.(
+        runtimeId,
+        input
+      ) ?? null;
     }
   };
 }

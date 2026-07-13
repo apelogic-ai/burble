@@ -36,6 +36,12 @@ export type RuntimeSelectionRequirements = {
   engine?: AgentRuntimeEngine;
 };
 
+export type RuntimeDiagnosticsInput = {
+  reason: "final_response_timeout";
+  runId?: string;
+  errorMessage?: string;
+};
+
 export type RuntimeFactory = {
   getOrCreateRuntime(
     principal: PrincipalId,
@@ -43,6 +49,10 @@ export type RuntimeFactory = {
   ): Promise<RuntimeHandle>;
   syncRuntimeStatus?(runtimeId: string): Promise<AgentRuntimeRecord | null>;
   readRuntimeConfig?(runtimeId: string): Promise<RuntimeConfigRead>;
+  captureRuntimeDiagnostics?(
+    runtimeId: string,
+    input: RuntimeDiagnosticsInput,
+  ): Promise<Record<string, unknown> | null>;
   stopRuntime(runtimeId: string): Promise<void>;
   reapIdleRuntimes(now: Date): Promise<void>;
   recordRuntimeEvent?: (

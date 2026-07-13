@@ -110,6 +110,53 @@ describe("scheduler timer", () => {
     store.close();
   });
 
+  test("supports comma-separated cron minute lists for shifted intervals", async () => {
+    const store = createTokenStore(":memory:");
+    store.upsertScheduledJob({
+      jobId: "job-heart",
+      workspaceId: "T123",
+      slackUserId: "U123",
+      title: "Post heart",
+      prompt: "Post exactly this message: ❤️",
+      schedule: {
+        kind: "cron",
+        expression: "5,20,35,50 * * * *",
+        timezone: "UTC",
+      },
+      runtimeType: "hermes",
+      state: "scheduled",
+      now: new Date("2026-06-27T01:01:00.000Z"),
+    });
+    const executed: string[] = [];
+    const dueTimer = createSchedulerTimer({
+      store,
+      now: () => new Date("2026-06-27T01:20:00.000Z"),
+      newRunId: () => "jobrun-shifted-quarter-hour",
+      executeRun: async (runId) => {
+        executed.push(runId);
+      },
+    });
+
+    expect(await dueTimer.tick()).toEqual({
+      queuedRunIds: ["jobrun-shifted-quarter-hour"],
+    });
+    expect(executed).toEqual(["jobrun-shifted-quarter-hour"]);
+
+    const offSlotTimer = createSchedulerTimer({
+      store,
+      now: () => new Date("2026-06-27T01:30:00.000Z"),
+      newRunId: () => "jobrun-off-slot",
+      executeRun: async (runId) => {
+        executed.push(runId);
+      },
+    });
+
+    expect(await offSlotTimer.tick()).toEqual({ queuedRunIds: [] });
+    expect(store.getAgentJobRun("jobrun-off-slot")).toBeNull();
+
+    store.close();
+  });
+
   test("supports Sunday as 7 in cron day-of-week fields", async () => {
     const store = createTokenStore(":memory:");
     store.upsertScheduledJob({

@@ -5,6 +5,10 @@ export function containsRuntimeToolCallProtocolFragments(
     return true;
   }
 
+  if (containsRuntimeToolCallEnvelopePrefix(text)) {
+    return true;
+  }
+
   let index = 0;
   while (index < text.length) {
     if (text[index] !== "{") {
@@ -32,6 +36,12 @@ export function containsRuntimeToolCallProtocolFragments(
   }
 
   return false;
+}
+
+function containsRuntimeToolCallEnvelopePrefix(text: string): boolean {
+  return text.split(/\r?\n/).some((line) =>
+    /^\s*(?:```(?:json)?\s*)?\{+\s*"tool_call"\s*:/i.test(line),
+  );
 }
 
 export function stripRuntimeToolCallProtocolFragments(text: string): string {

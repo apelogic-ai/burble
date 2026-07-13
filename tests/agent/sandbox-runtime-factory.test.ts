@@ -207,6 +207,62 @@ describe("createSandboxRuntimeFactory", () => {
     store.close();
   });
 
+  test("captures runtime diagnostics from an active sandbox before teardown", async () => {
+    const store = createTokenStore(":memory:");
+    const provider = createFakeRuntimeSandboxProvider(undefined, {
+      runOutput:
+        "===== /data/openclaw/logs/openclaw.log =====\nresponse_failed OPENAI_API_KEY=sk-secret Bearer abc.def\n",
+    });
+    const factory = createSandboxRuntimeFactory({
+      store,
+      sandboxProvider: provider,
+      engine: "openclaw",
+      image: "burble-openclaw-nemoclaw:dev",
+      toolGatewayUrl: "http://burble-app:3000/internal/tools",
+      modelProviderUrls: ["https://api.openai.com/v1"],
+      runtimeTokenSecret: "runtime-secret",
+      startCommand: ["runtime-entrypoint"],
+      healthCheckAttempts: 1,
+      fetch: async () => new Response("ok"),
+    });
+
+    const handle = await factory.getOrCreateRuntime(principal);
+    const summary = await factory.captureRuntimeDiagnostics?.(handle.id, {
+      reason: "final_response_timeout",
+      runId: "run-timeout",
+      errorMessage: "Managed runtime did not produce a final response within 180000ms",
+    });
+    const diagnosticEvent = store
+      .listAgentRuntimeEvents(handle.id)
+      .find((event) => event.eventType === "runtime_diagnostics_captured");
+    const diagnosticSummary = JSON.parse(diagnosticEvent?.summaryJson ?? "{}");
+
+    expect(summary).toMatchObject({
+      reason: "final_response_timeout",
+      runId: "run-timeout",
+      sandboxId: "sandbox-1",
+    });
+    expect(provider.attachCalls).toContain("sandbox-1");
+    expect(provider.runCalls.at(-1)).toMatchObject({
+      sandboxId: "sandbox-1",
+      request: {
+        argv: [
+          "sh",
+          "-lc",
+          expect.stringContaining("/data/openclaw/logs/openclaw.log"),
+        ],
+      },
+    });
+    expect(
+      diagnosticSummary.results.map((result: { name: string }) => result.name),
+    ).toEqual(["sandbox_state", "runtime_logs_tail"]);
+    expect(diagnosticEvent?.summaryJson).toContain("response_failed");
+    expect(diagnosticEvent?.summaryJson).not.toContain("sk-secret");
+    expect(diagnosticEvent?.summaryJson).not.toContain("Bearer abc.def");
+
+    store.close();
+  });
+
   test("does not provision a sandbox when runtime JWT issuance fails", async () => {
     const store = createTokenStore(":memory:");
     const provider = createFakeRuntimeSandboxProvider();
@@ -805,6 +861,7 @@ type FakeRuntimeSandboxProvider = SandboxProvider & {
 
 function createFakeRuntimeSandboxProvider(
   capabilities?: Partial<SandboxProviderCapabilities>,
+  options?: { runOutput?: string },
 ): FakeRuntimeSandboxProvider {
   const sandboxes = new Map<string, SandboxHandle>();
   const provisionCalls: Parameters<SandboxProvider["provision"]>[0][] = [];
@@ -884,7 +941,8 @@ function createFakeRuntimeSandboxProvider(
       return {
         id: `${sandboxId}-run-1`,
         sandboxId,
-        status: "running",
+        status: options?.runOutput ? "finished" : "running",
+        ...(options?.runOutput ? { exitCode: 0, output: options.runOutput } : {}),
       };
     },
 

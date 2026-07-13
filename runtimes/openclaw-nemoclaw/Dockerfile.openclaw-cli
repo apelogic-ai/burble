@@ -3,7 +3,7 @@ WORKDIR /runtime
 ENV NODE_ENV=production
 ENV OPENCLAW_COMMAND=/usr/local/bin/openclaw
 
-ARG OPENCLAW_VERSION=2026.5.19
+ARG OPENCLAW_VERSION=2026.6.11
 RUN apt-get update \
   && apt-get install -y --no-install-recommends git openssh-client ca-certificates iproute2 \
   && rm -rf /var/lib/apt/lists/* \
@@ -23,6 +23,7 @@ RUN mkdir -p /runtime/openclaw-plugins/burble-channel/node_modules \
 RUN groupadd --gid 1000660000 sandbox \
   && useradd --uid 1000660000 --gid 1000660000 --home-dir /runtime --shell /bin/sh sandbox \
   && mkdir -p /runtime/config /runtime/state /runtime/workspace /data/openclaw/config /data/openclaw/state /data/openclaw/workspace /data/openclaw/logs \
-  && chown -R sandbox:sandbox /runtime /data/openclaw
+  && chown -R sandbox:sandbox /runtime /data/openclaw \
+  && chown -R root:root /runtime/openclaw-plugins
 EXPOSE 8080
 CMD ["bun", "src/index.ts"]

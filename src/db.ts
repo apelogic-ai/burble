@@ -1,6 +1,14 @@
 import { Database } from "bun:sqlite";
 import { createHash, randomUUID } from "node:crypto";
 import {
+  closeSync,
+  existsSync,
+  openSync,
+  readFileSync,
+  unlinkSync,
+  writeFileSync
+} from "node:fs";
+import {
   isAgentRuntimeEngine,
   type AgentRuntimeEngine
 } from "@burble/runtime-sdk/runtime-engines";
@@ -73,6 +81,7 @@ export type AgentRuntimeEventType =
   | "runtime_provision_failed"
   | "runtime_policy_changed"
   | "runtime_stopped"
+  | "runtime_diagnostics_captured"
   | "runtime_run_started"
   | "runtime_run_finished"
   | "runtime_tool_called"
@@ -293,7 +302,20 @@ type SkillCatalogRow = Omit<SkillCatalogRecord, "metadata"> & {
 export type TokenStore = ReturnType<typeof createTokenStore>;
 
 export function createTokenStore(path: string) {
-  const db = new Database(path);
+  const releaseStoreLock = acquireTokenStoreLock(path);
+  let db: Database;
+  try {
+    db = new Database(path);
+  } catch (error) {
+    releaseStoreLock?.();
+    throw error;
+  }
+  try {
+  db.exec(`
+    PRAGMA busy_timeout = 5000;
+    PRAGMA journal_mode = WAL;
+    PRAGMA synchronous = NORMAL;
+  `);
   db.exec(`
     CREATE TABLE IF NOT EXISTS users (
       email TEXT PRIMARY KEY,
@@ -2722,9 +2744,128 @@ export function createTokenStore(path: string) {
     },
 
     close(): void {
-      db.close();
+      try {
+        db.close();
+      } finally {
+        releaseStoreLock?.();
+      }
     }
   };
+  } catch (error) {
+    try {
+      db.close();
+    } catch {
+      // Ignore close failures while preserving the original initialization error.
+    }
+    releaseStoreLock?.();
+    throw error;
+  }
+}
+
+type TokenStoreLock = {
+  pid: number;
+  token: string;
+  createdAt: string;
+};
+
+function acquireTokenStoreLock(path: string): (() => void) | null {
+  if (isInMemorySqlitePath(path)) {
+    return null;
+  }
+
+  const lockPath = `${path}.burble-store.lock`;
+  const token = randomUUID();
+  const lock: TokenStoreLock = {
+    pid: process.pid,
+    token,
+    createdAt: new Date().toISOString()
+  };
+
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      const fd = openSync(lockPath, "wx", 0o600);
+      try {
+        writeFileSync(fd, JSON.stringify(lock));
+      } finally {
+        closeSync(fd);
+      }
+      return () => releaseTokenStoreLock(lockPath, token);
+    } catch (error) {
+      if (!isFileExistsError(error)) {
+        throw error;
+      }
+      const existingLock = readTokenStoreLock(lockPath);
+      if (
+        existingLock !== null &&
+        !isProcessRunning(existingLock.pid) &&
+        existsSync(lockPath)
+      ) {
+        unlinkSync(lockPath);
+        continue;
+      }
+      const owner = existingLock
+        ? `pid ${existingLock.pid} since ${existingLock.createdAt}`
+        : "an unknown owner";
+      throw new Error(
+        `Token store database ${path} is already open by ${owner}; refusing a second write-capable SQLite connection`
+      );
+    }
+  }
+
+  throw new Error(`Unable to acquire token store lock for ${path}`);
+}
+
+function isInMemorySqlitePath(path: string): boolean {
+  return path === ":memory:" || path.startsWith("file::memory:");
+}
+
+function readTokenStoreLock(path: string): TokenStoreLock | null {
+  try {
+    const lock = JSON.parse(readFileSync(path, "utf8")) as Partial<TokenStoreLock>;
+    if (
+      typeof lock.pid !== "number" ||
+      typeof lock.token !== "string" ||
+      typeof lock.createdAt !== "string"
+    ) {
+      return null;
+    }
+    return {
+      pid: lock.pid,
+      token: lock.token,
+      createdAt: lock.createdAt
+    };
+  } catch {
+    return null;
+  }
+}
+
+function releaseTokenStoreLock(path: string, token: string): void {
+  const lock = readTokenStoreLock(path);
+  if (lock?.token !== token) {
+    return;
+  }
+  unlinkSync(path);
+}
+
+function isProcessRunning(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    const code = typeof error === "object" && error !== null && "code" in error
+      ? String(error.code)
+      : "";
+    return code === "EPERM";
+  }
+}
+
+function isFileExistsError(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    error.code === "EEXIST"
+  );
 }
 
 function ensureProviderConnectionColumn(

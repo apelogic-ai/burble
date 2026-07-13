@@ -119,7 +119,7 @@ services:
       start_period: 10s
 
   llm-gw:
-    image: ghcr.io/berriai/litellm:main-latest
+    image: ghcr.io/berriai/litellm:v1.92.0
     restart: unless-stopped
     expose:
       - "4000"
@@ -139,6 +139,7 @@ services:
       - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-https://ollama.com}
     volumes:
       - ./litellm/config.yaml:/app/config.yaml:ro
+      - ./litellm/burble_observability.py:/app/burble_observability.py:ro
 
 volumes:
   caddy_data:

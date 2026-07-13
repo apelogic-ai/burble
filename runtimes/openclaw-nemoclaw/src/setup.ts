@@ -2,7 +2,10 @@ import { createHash } from "node:crypto";
 import { mkdir, readFile, unlink, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import type { RuntimeConfig } from "./config";
-import { buildOpenClawLlmPatch } from "./llm-config";
+import {
+  buildOpenClawLlmPatch,
+  scheduledOpenClawAgentId
+} from "./llm-config";
 import { info, type RuntimeLogger } from "./logger";
 import { openClawEnv, runCliCommand, type CliCommandRunner } from "./openclaw-cli";
 
@@ -166,6 +169,7 @@ function buildOpenClawNemoClawAgentConfig(
   const agentConfig = JSON.parse(
     buildOpenClawLlmPatch({
       modelId: config.llmModel,
+      fallbackModelIds: config.llmModelFallbacks ?? [],
       inferenceBaseUrl: config.inferenceBaseUrl,
       modelApi: config.openClawModelApi,
       ollamaBaseUrl: config.ollamaBaseUrl,
@@ -184,11 +188,17 @@ function buildOpenClawNemoClawAgentConfig(
     {
       id: config.openClawAgent,
       default: true,
-      systemPromptOverride: defaults.systemPromptOverride,
       identity: {
         name: "Burble",
         theme: "Slack assistant",
         emoji: ":robot_face:"
+      }
+    },
+    {
+      id: scheduledOpenClawAgentId(config.openClawAgent),
+      tools: {
+        profile: "minimal",
+        alsoAllow: ["web_search", "web_fetch", "burble_provider_call"]
       }
     }
   ];

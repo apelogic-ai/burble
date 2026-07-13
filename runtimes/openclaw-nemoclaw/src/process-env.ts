@@ -61,6 +61,7 @@ const proxyEnvNames = new Set([
 ]);
 
 const defaultOpenClawProcessEnv: Record<string, string> = {
+  OPENCLAW_NO_AUTO_UPDATE: "1",
   npm_config_audit: "false",
   npm_config_cache: "/tmp/npm-cache",
   npm_config_fund: "false",

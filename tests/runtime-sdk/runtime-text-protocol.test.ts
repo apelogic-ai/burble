@@ -89,6 +89,14 @@ New open PRs:
     ).toBe(true);
   });
 
+  test("detects an unterminated runtime tool-call envelope", () => {
+    expect(
+      containsRuntimeToolCallProtocolFragments(
+        '{"tool_call":{"name":"burble_provider_call","arguments":{"toolName":"github_search_issues","input":{"query":"org:apelogic-ai is:pr is:open"}}}',
+      ),
+    ).toBe(true);
+  });
+
   test("detects Hermes-style leaked tool transcript lines", () => {
     expect(
       containsRuntimeToolCallProtocolFragments(`Checking the window.

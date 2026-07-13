@@ -453,6 +453,11 @@ function cronDayOfWeekMatches(value: number, expression: string): boolean {
   if (!isSupportedCronFieldExpression(normalized, 0, 7)) {
     return false;
   }
+  if (normalized.includes(",")) {
+    return normalized
+      .split(",")
+      .some((part) => cronDayOfWeekMatches(value, part));
+  }
   if (normalized === "*") {
     return true;
   }
@@ -491,6 +496,11 @@ function cronFieldMatches(
 ): boolean {
   if (!isSupportedCronFieldExpression(expression, min, max)) {
     return false;
+  }
+  if (expression.includes(",")) {
+    return expression
+      .split(",")
+      .some((part) => cronFieldMatches(value, part, min, max));
   }
   if (expression === "*") {
     return true;
@@ -531,6 +541,16 @@ function isSupportedCronFieldExpression(
   min: number,
   max: number,
 ): boolean {
+  if (expression.includes(",")) {
+    const parts = expression.split(",");
+    return (
+      parts.length > 0 &&
+      parts.every(
+        (part) =>
+          part !== "" && isSupportedCronFieldExpression(part, min, max),
+      )
+    );
+  }
   if (expression === "*") {
     return true;
   }

@@ -6,6 +6,7 @@ import {
   hashRuntimeToken,
   nativeAgentConfigFileName,
   type RuntimeConfigRead,
+  type RuntimeDiagnosticsInput,
   type PrincipalId,
   type RuntimeFactory,
   type RuntimeHandle,
@@ -292,6 +293,34 @@ export function createDockerRuntimeFactory(input: {
       } satisfies RuntimeConfigRead;
     },
 
+    async captureRuntimeDiagnostics(runtimeId, diagnosticInput) {
+      const runtime = input.store.getAgentRuntime(runtimeId);
+      if (!runtime) {
+        return null;
+      }
+
+      const runtimeDataId = buildRuntimeDataId(
+        {
+          workspaceId: runtime.workspaceId,
+          slackUserId: runtime.slackUserId
+        },
+        runtime.engine
+      );
+      const descriptor = runtimeDescriptor(runtime.engine);
+      const summary = await captureContainerRuntimeDiagnostics({
+        containerName: buildContainerName(runtimeDataId),
+        containerRoot: descriptor.container.dataRootTarget,
+        execute,
+        input: diagnosticInput
+      });
+      input.store.recordAgentRuntimeEvent({
+        runtimeId: runtime.id,
+        eventType: "runtime_diagnostics_captured",
+        summary
+      });
+      return summary;
+    },
+
     async stopRuntime(runtimeId) {
       await stopRuntime(runtimeId);
     },
@@ -330,6 +359,127 @@ type DockerContainerState =
       ok: false;
       failureReason: string;
     };
+
+type RuntimeDiagnosticCommand = {
+  name: string;
+  command: string;
+  args: string[];
+};
+
+const maxRuntimeDiagnosticOutputChars = 16_000;
+
+async function captureContainerRuntimeDiagnostics(input: {
+  containerName: string;
+  containerRoot: string;
+  execute: RuntimeCommandExecutor;
+  input: RuntimeDiagnosticsInput;
+}): Promise<Record<string, unknown>> {
+  const commands: RuntimeDiagnosticCommand[] = [
+    {
+      name: "container_state",
+      command: "docker",
+      args: [
+        "inspect",
+        "--format",
+        "{{json .State}}",
+        input.containerName
+      ]
+    },
+    {
+      name: "docker_logs_tail",
+      command: "docker",
+      args: ["logs", "--tail", "240", input.containerName]
+    },
+    {
+      name: "runtime_logs_tail",
+      command: "docker",
+      args: [
+        "exec",
+        input.containerName,
+        "sh",
+        "-lc",
+        buildRuntimeLogTailScript(input.containerRoot)
+      ]
+    }
+  ];
+
+  const results = [];
+  for (const diagnosticCommand of commands) {
+    const startedAt = Date.now();
+    const result = await executeDiagnosticCommand(
+      input.execute,
+      diagnosticCommand
+    );
+    results.push({
+      name: diagnosticCommand.name,
+      code: result.code,
+      durationMs: Date.now() - startedAt,
+      stdout: sanitizeDiagnosticText(result.stdout),
+      stderr: sanitizeDiagnosticText(result.stderr)
+    });
+  }
+
+  return {
+    reason: input.input.reason,
+    ...(input.input.runId ? { runId: input.input.runId } : {}),
+    ...(input.input.errorMessage
+      ? { errorMessage: sanitizeDiagnosticText(input.input.errorMessage) }
+      : {}),
+    containerName: input.containerName,
+    capturedAt: new Date().toISOString(),
+    results
+  };
+}
+
+async function executeDiagnosticCommand(
+  execute: RuntimeCommandExecutor,
+  diagnosticCommand: RuntimeDiagnosticCommand
+): Promise<RuntimeCommandResult> {
+  try {
+    return await execute("timeout", [
+      "8s",
+      diagnosticCommand.command,
+      ...diagnosticCommand.args
+    ]);
+  } catch {
+    return execute(diagnosticCommand.command, diagnosticCommand.args);
+  }
+}
+
+function buildRuntimeLogTailScript(containerRoot: string): string {
+  const openClawLogPath = `${containerRoot.replace(/\/+$/, "")}/logs/openclaw.log`;
+  return [
+    "set +e",
+    `for file in ${shellQuote(openClawLogPath)} /tmp/openclaw-*/*.log; do`,
+    '  [ -f "$file" ] || continue',
+    '  echo "===== $file ====="',
+    '  tail -n 240 "$file"',
+    "done"
+  ].join("\n");
+}
+
+function sanitizeDiagnosticText(value: string): string {
+  const redacted = value
+    .replace(/Bearer\s+[A-Za-z0-9._~+/=-]+/gi, "Bearer [redacted]")
+    .replace(/sk-[A-Za-z0-9_-]+/g, "[redacted-openai-key]")
+    .replace(
+      /((?:api[_-]?key|authorization|credential|jwt|oauth|password|refresh|secret|token)["']?\s*[:=]\s*["']?)[^\s"',}]+/gi,
+      "$1[redacted]"
+    )
+    .replace(
+      /([A-Z0-9_]*(?:API_KEY|AUTHORIZATION|CREDENTIAL|JWT|OAUTH|PASSWORD|REFRESH|SECRET|TOKEN)[A-Z0-9_]*=)[^\s]+/g,
+      "$1[redacted]"
+    );
+
+  if (redacted.length <= maxRuntimeDiagnosticOutputChars) {
+    return redacted;
+  }
+  return `${redacted.slice(0, maxRuntimeDiagnosticOutputChars)}\n[truncated ${redacted.length - maxRuntimeDiagnosticOutputChars} chars]`;
+}
+
+function shellQuote(value: string): string {
+  return `'${value.replace(/'/g, "'\\''")}'`;
+}
 
 async function inspectContainerState(
   containerName: string,

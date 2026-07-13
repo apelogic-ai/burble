@@ -131,7 +131,7 @@ litellm:
   externalBaseUrl: ""
   image:
     repository: ghcr.io/berriai/litellm
-    tag: main-latest
+    tag: v1.92.0
     digest: ""
     pullPolicy: IfNotPresent
   service:
