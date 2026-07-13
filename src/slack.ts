@@ -2363,6 +2363,7 @@ export function createManagedRuntimeFactory(
             dataRoot: config.agentRuntimeDataRoot,
             dockerNetwork: config.agentRuntimeDockerNetwork,
             toolGatewayUrl: config.agentRuntimeToolGatewayUrl,
+            inferenceBaseUrl: config.agentRuntimeInferenceBaseUrl,
             mcpGatewayUrl: config.agentRuntimeMcpGatewayUrl,
             mcpAudience: config.agentRuntimeMcpAudience,
             runtimeJwtIssuer,
