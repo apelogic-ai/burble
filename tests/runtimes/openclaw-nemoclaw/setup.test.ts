@@ -74,7 +74,8 @@ describe("ensureOpenClawSetup", () => {
           {
             id: "main-scheduled",
             tools: {
-              profile: "minimal"
+              profile: "minimal",
+              alsoAllow: ["web_search", "web_fetch", "burble_provider_call"]
             }
           }
         ]
@@ -446,7 +447,8 @@ describe("ensureOpenClawSetup", () => {
       {
         id: "burble-scheduled",
         tools: {
-          profile: "minimal"
+          profile: "minimal",
+          alsoAllow: ["web_search", "web_fetch", "burble_provider_call"]
         }
       }
     ]);

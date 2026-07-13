@@ -197,7 +197,8 @@ function buildOpenClawNemoClawAgentConfig(
     {
       id: scheduledOpenClawAgentId(config.openClawAgent),
       tools: {
-        profile: "minimal"
+        profile: "minimal",
+        alsoAllow: ["web_search", "web_fetch", "burble_provider_call"]
       }
     }
   ];
