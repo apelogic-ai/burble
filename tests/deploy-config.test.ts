@@ -1024,5 +1024,8 @@ describe("local LLM A/B testbed", () => {
     expect(llmAbCompose).toContain(
       "LLM_AB_LITELLM_URL: http://runtime-litellm:8080"
     );
+    expect(llmAbCompose).not.toContain('"14000:4000"');
+    expect(llmAbCompose).toContain('"127.0.0.1:18080:8080"');
+    expect(llmAbCompose).toContain('"127.0.0.1:18081:8080"');
   });
 });

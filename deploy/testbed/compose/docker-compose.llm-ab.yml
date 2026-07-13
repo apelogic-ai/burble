@@ -43,8 +43,6 @@ services:
   llm-gw:
     image: ghcr.io/berriai/litellm:v1.92.0
     command: ["--config", "/app/config.yaml", "--host", "0.0.0.0", "--port", "4000"]
-    ports:
-      - "14000:4000"
     environment:
       OPENAI_API_KEY: ${OPENAI_API_KEY:?OPENAI_API_KEY is required}
     volumes:
@@ -55,7 +53,7 @@ services:
     image: burble-openclaw-ab:dev
     build: *openclaw-build
     ports:
-      - "18080:8080"
+      - "127.0.0.1:18080:8080"
     environment:
       <<: *openclaw-environment
       AGENT_RUNTIME_INFERENCE_BASE_URL: http://openai-direct:4100/v1
@@ -68,7 +66,7 @@ services:
   runtime-litellm:
     image: burble-openclaw-ab:dev
     ports:
-      - "18081:8080"
+      - "127.0.0.1:18081:8080"
     environment:
       <<: *openclaw-environment
       AGENT_RUNTIME_INFERENCE_BASE_URL: http://llm-gw:4000/v1
